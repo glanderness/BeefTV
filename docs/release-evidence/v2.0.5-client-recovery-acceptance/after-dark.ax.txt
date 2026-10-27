@@ -1,0 +1,44 @@
+window_id=724 pid=62834 size=1366x937 elements=40 snapshot_id=s0000000f
+element_token for row [N] = s0000000f:N (row [1] is "s0000000f:1")
+
+- [0] AXWindow "BeefTV" [actions=[raise]]
+  - [1] AXWebArea (BeefTV)
+    - [2] AXLink "跳转到画布主内容" [actions=[press]]
+    - [4] AXButton "打开画布菜单" [actions=[press]]
+    - [5] AXButton "完整客户端免费恢复验收" [help="点击修改画布名称" actions=[press]]
+    - [6] AXButton "切换画布" [actions=[press]]
+    - [7] AXButton "画布保存状态：已保存在本地" [actions=[press]]
+    - [8] AXCheckBox "工作流" [actions=[press]]
+    - [9] AXCheckBox "Agent" [actions=[press]]
+    - [10] AXCheckBox "版本记录" [actions=[press]]
+    - [11] AXButton "拖动节点：历史图片恢复" [help="拖动此处移动节点；点击名称可重命名" actions=[press]]
+    - [12] AXButton "编辑节点名称：历史图片恢复" [help="历史图片恢复" actions=[press]]
+    - [13] AXImage (历史图片恢复)
+    - [14] AXButton "输入连接点，单击创建节点或拖动连线" [actions=[press]]
+    - [15] AXButton "输出连接点，单击创建节点或拖动连线" [actions=[press]]
+    - [16] AXToolbar "画布工具"
+      - [17] AXButton "添加节点" [actions=[press]]
+      - [18] AXButton "移动" [actions=[press]]
+      - [19] AXButton "资产管理" [actions=[press]]
+      - [20] AXButton "画布外观" [actions=[press]]
+      - [21] AXButton "生成历史" [actions=[press]]
+      - [22] AXButton "画布快捷键" [actions=[press]]
+    - [23] AXToolbar "素材空间"
+      - [24] AXButton "打开素材空间，共 2 项" [actions=[press]]
+    - [25] AXToolbar "画布视图控制"
+      - [26] AXCheckBox "隐藏节点连线" [actions=[press]]
+      - [27] AXButton "切换小地图" [actions=[press]]
+      - [28] AXButton "网格吸附" [actions=[press]]
+      - [29] AXButton "适合屏幕" [actions=[press]]
+      - [30] AXButton "自动整理节点" [actions=[press]]
+      - [31] AXButton "缩放画布" [actions=[press]]
+  - [32] AXButton [actions=[press]]
+  - [33] AXButton [help="this button also has an action to zoom the window" actions=[press,zoomwindow]]
+  - [34] AXButton [actions=[press]]
+- [35] AXMenuBar [actions=[cancel]] (menus collapsed: run an item with invoke_menu path, or pass query to search menu items)
+  - [36] AXMenuBarItem "Apple" [actions=[cancel,press,pick]]
+  - [37] AXMenuBarItem "BeefTVRecovery" [actions=[cancel,press,pick]]
+  - [38] AXMenuBarItem "Edit" [actions=[cancel,press,pick]]
+  - [39] AXMenuBarItem "Window" [actions=[cancel,press,pick]]
+
+Invalidated snapshots s0000000e: their element_tokens are stale.

@@ -1,0 +1,5 @@
+{"time": 1793124440.2759738, "event": "listening", "address": "127.0.0.1:19118"}
+{"time": 1793124447.289251, "event": "request", "method": "GET", "path": "/original.png"}
+{"time": 1793124478.290248, "event": "request", "method": "GET", "path": "/original.png"}
+{"time": 1793124502.023118, "event": "response", "status": 200, "bytes": 1263}
+{"time": 1793124502.059863, "event": "response", "status": 200, "bytes": 1263}

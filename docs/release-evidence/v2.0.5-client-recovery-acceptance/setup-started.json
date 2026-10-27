@@ -1,0 +1,76 @@
+{
+  "observedAt": 1793124365.3258371,
+  "tasks": [
+    {
+      "id": "v205-client-image",
+      "user_id": "local",
+      "project_id": "v205-client-canvas",
+      "type": "canvas_image",
+      "status": "failed",
+      "stage": "submission_unknown",
+      "route_run": 3,
+      "attempts": 0,
+      "error": "context deadline exceeded",
+      "recovery_outcome": null,
+      "next_poll_at": null,
+      "input_json": "{\"mode\":\"image\",\"metadata\":{\"source\":\"canvas\",\"nodeId\":\"n1\"}}",
+      "result_json": ""
+    }
+  ],
+  "canvases": [
+    {
+      "id": "v205-client-canvas",
+      "title": "完整客户端免费恢复验收",
+      "revision": 1,
+      "document": {
+        "connections": [],
+        "createdAt": "2026-10-28T02:03:18.469047+08:00",
+        "id": "v205-client-canvas",
+        "nodes": [
+          {
+            "height": 200,
+            "id": "n1",
+            "metadata": {
+              "error": "context deadline exceeded",
+              "generationSubmissionState": "unknown",
+              "status": "error",
+              "taskId": "v205-client-image"
+            },
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "title": "历史图片恢复",
+            "type": "image",
+            "width": 320
+          }
+        ],
+        "title": "完整客户端免费恢复验收",
+        "updatedAt": "2026-10-27T18:03:18.469154Z",
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "k": 1
+        }
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "id": "v205-client-receipt",
+      "task_id": "v205-client-image",
+      "request_kind": "create",
+      "method": "POST",
+      "status": "succeeded",
+      "status_code": 200,
+      "response_body": "{\"data\":[{\"url\":\"http://127.0.0.1:19117/original.png\"}]}"
+    }
+  ],
+  "counts": {
+    "tasks": 1,
+    "route_attempts": 0,
+    "resources": 0,
+    "results": 0,
+    "api_call_logs": 1
+  }
+}

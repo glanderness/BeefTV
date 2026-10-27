@@ -1,0 +1,65 @@
+{
+  "canvas": {
+    "connections": [],
+    "createdAt": "2026-10-28T02:07:13.88729+08:00",
+    "folderId": "",
+    "id": "v205-client-canvas",
+    "nodes": [
+      {
+        "height": 200,
+        "id": "n1",
+        "metadata": {
+          "error": "context deadline exceeded",
+          "generationSubmissionState": "unknown",
+          "status": "error",
+          "taskId": "v205-client-image"
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "title": "历史图片恢复",
+        "type": "image",
+        "width": 320
+      }
+    ],
+    "projectId": "",
+    "revision": 1,
+    "title": "完整客户端免费恢复验收",
+    "updatedAt": "2026-10-27T18:07:13.88757Z",
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "k": 1
+    }
+  },
+  "routeRun": 3,
+  "task": {
+    "id": "v205-client-image",
+    "userId": "1e5e8740ce817c54f44c56517ef4b3b4",
+    "projectId": "v205-client-canvas",
+    "type": "canvas_image",
+    "status": "failed",
+    "stage": "submission_unknown",
+    "progress": 0,
+    "prompt": "",
+    "operation": "",
+    "provider": "",
+    "model": "",
+    "inputJson": "{\"metadata\":{\"nodeId\":\"n1\",\"source\":\"canvas\"},\"mode\":\"image\"}",
+    "resultJson": "",
+    "error": "提交结果尚未确认，上游任务可能仍在执行。请先查询原任务状态，不要立即重新提交。",
+    "errorCode": "submission_uncertain",
+    "outcome": {
+      "phase": "retrievable",
+      "regenerate": "blocked",
+      "reason": "image_recovery_pending"
+    },
+    "resultState": "FAILED_PERMANENT",
+    "attempts": 0,
+    "startedAt": null,
+    "completedAt": null,
+    "createdAt": "2026-10-28T02:07:13.888762+08:00",
+    "updatedAt": "2026-10-28T02:07:13.888762+08:00"
+  }
+}

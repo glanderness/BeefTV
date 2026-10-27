@@ -1,0 +1,3 @@
+{"time": 1793124174.869076, "event": "listening", "address": "127.0.0.1:19117"}
+{"time": 1793124372.73553, "event": "request", "method": "GET", "path": "/original.png"}
+{"time": 1793124403.726197, "event": "request", "method": "GET", "path": "/original.png"}

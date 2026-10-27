@@ -1,0 +1,103 @@
+{
+  "observedAt": 1793124501.975968,
+  "tasks": [
+    {
+      "id": "v205-client-image",
+      "user_id": "1e5e8740ce817c54f44c56517ef4b3b4",
+      "project_id": "v205-client-canvas",
+      "type": "canvas_image",
+      "status": "succeeded",
+      "stage": "任务完成",
+      "route_run": 3,
+      "attempts": 0,
+      "error": "",
+      "recovery_outcome": null,
+      "next_poll_at": null,
+      "input_json": "{\"metadata\":{\"nodeId\":\"n1\",\"source\":\"canvas\"},\"mode\":\"image\"}",
+      "result_json": "{\"images\":[{\"url\":\"http://127.0.0.1:19118/original.png\"}],\"mode\":\"image\"}"
+    }
+  ],
+  "canvases": [
+    {
+      "id": "v205-client-canvas",
+      "title": "完整客户端免费恢复验收",
+      "revision": 2,
+      "document": {
+        "activeChatId": null,
+        "appearance": {
+          "mode": "dark"
+        },
+        "backgroundMode": "dots",
+        "chatSessions": [],
+        "connections": [],
+        "createdAt": "2026-10-28T02:07:13.88729+08:00",
+        "folderId": "",
+        "id": "v205-client-canvas",
+        "nodes": [
+          {
+            "height": 262.5,
+            "id": "n1",
+            "metadata": {
+              "error": "context deadline exceeded",
+              "generationSubmissionState": "accepted",
+              "status": "loading",
+              "taskId": "v205-client-image",
+              "nodeRole": "generator",
+              "taskType": "canvas_image",
+              "taskStatus": "succeeded",
+              "taskProgress": 100,
+              "taskStage": "任务完成",
+              "taskProvider": "",
+              "taskStartedAt": null,
+              "taskCompletedAt": "2026-10-28T02:07:22.222179+08:00",
+              "taskCreatedAt": "2026-10-28T02:07:13.888762+08:00",
+              "taskUpdatedAt": "2026-10-28T02:07:22.222638+08:00"
+            },
+            "position": {
+              "x": -50,
+              "y": -31.25
+            },
+            "title": "历史图片恢复",
+            "type": "image",
+            "width": 420,
+            "createdAt": "2026-10-28T02:07:13.88729+08:00",
+            "updatedAt": "2026-10-27T18:07:57.167Z"
+          }
+        ],
+        "projectId": "",
+        "showImageInfo": false,
+        "title": "完整客户端免费恢复验收",
+        "updatedAt": "2026-10-27T18:07:57.760066Z",
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "k": 1
+        }
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "id": "v205-client-receipt",
+      "task_id": "v205-client-image",
+      "request_kind": "create",
+      "method": "POST",
+      "status": "succeeded",
+      "status_code": 200,
+      "response_body": "{\"data\":[{\"url\":\"http://127.0.0.1:19118/original.png\"}]}"
+    }
+  ],
+  "counts": {
+    "tasks": 1,
+    "route_attempts": 0,
+    "resources": 0,
+    "results": 0,
+    "api_call_logs": 1
+  },
+  "runtime": {
+    "baseUrl": "http://127.0.0.1:51138/api",
+    "pid": 62834,
+    "version": "v2.0.5",
+    "startedAt": "2026-10-27T18:07:22.220006Z"
+  }
+}

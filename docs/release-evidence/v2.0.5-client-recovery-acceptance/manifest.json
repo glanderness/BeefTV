@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "sourceFingerprint": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+  "sourceModified": false,
+  "binarySha256": "ecf1c2f56043c03703f4bab946f5a759a1f944ae305ea404bafb348750b11c95",
+  "bundleId": "com.wails.beeftv.v205recovery",
+  "platform": "darwin-arm64",
+  "runtime": "Wails 2.16.0 production / macOS WebKit",
+  "go": "go version go1.26.3 darwin/arm64",
+  "bun": "1.4.2",
+  "guiTransport": "mcp__cua_driver",
+  "foregroundInputUsed": false,
+  "virtualDisplay": {
+    "x": 1920,
+    "y": 0,
+    "width": 1920,
+    "height": 1080
+  },
+  "acceptedPids": [
+    62834,
+    84171
+  ],
+  "setupPids": [
+    21388,
+    39130
+  ],
+  "newPaidSubmissions": 0,
+  "result": "passed"
+}
