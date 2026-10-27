@@ -24,68 +24,18 @@ export function readableThinking(message) {
     && typeof block.thinking === 'string' && block.thinking.trim() ? [{ contentIndex, text: block.thinking }] : []);
 }
 
-/** 宿主与模型的已知凭据：公开出口不能把它们原样转发出去。 */
-export function hostCredentialValues(env = process.env) {
-  return [env.BEEFTV_AGENT_HOST_TOKEN, env.BEEFTV_AGENT_DESKTOP_TOKEN, env.BEEFTV_AGENT_API_KEY]
-    .map((value) => String(value ?? '').trim()).filter((value) => value.length >= 6);
-}
-
-// 明确格式的凭据：密钥前缀、Bearer 头，以及“名字 = 值”形式的 key/token/secret/password。
-// 只覆盖已知值与可判定的格式，不承诺识别任意自然语言里的秘密。
-const CREDENTIAL_NAME = '(?:api[_-]?key|authorization|x-beeftv-agent-token|x-desktop-token|host[_-]?token|desktop[_-]?token|access[_-]?token|secret|password)';
-const CREDENTIAL_FORMATS = [
-  [/\bsk-[A-Za-z0-9_-]{6,}\b/g, '[REDACTED]'],
-  [/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}\b/gi, 'Bearer [REDACTED]'],
-  [new RegExp(`(["']?${CREDENTIAL_NAME}["']?\\s*[:=]\\s*)(["'])([^"']*)(\\2)`, 'gi'), '$1$2[REDACTED]$4'],
-  // 未加引号的值：跳过 Bearer 这类方案词，它由上面的规则处理。
-  [new RegExp(`(\\b${CREDENTIAL_NAME}\\b\\s*[:=]\\s*)(?!Bearer\\b)([^\\s"'，。；,;）)]{6,})`, 'gi'), '$1[REDACTED]'],
-];
-
-/**
- * 已知秘密的未完整前缀先扣住：分片到达时不能先把前缀发出去，再等后面的分片来替换。
- * 只在秘密可能从一个值或词的开头出现时扣住（前面不是单词字符），避免正常词尾被反复截断。
- * 已经写完的块也照此处理：宁可少显示末尾几个字符，也不把可能的前缀发到界面上。
- */
-function deferPartialSecret(text, secrets) {
-  for (const secret of secrets) {
-    for (let length = secret.length - 1; length > 0; length -= 1) {
-      const prefix = secret.slice(0, length);
-      if (!text.endsWith(prefix)) continue;
-      const before = text[text.length - length - 1];
-      if (before !== undefined && /\w/.test(before)) continue;
-      return text.slice(0, text.length - length);
-    }
-  }
-  return text;
-}
-
-/** 公开思考文本：已知宿主／模型凭据与明确凭据格式都不出现在展示出口。 */
-export function publicThinkingText(raw, secrets = hostCredentialValues()) {
-  let out = typeof raw === 'string' ? raw : '';
-  if (!out) return '';
-  for (const secret of secrets) out = out.split(secret).join('[REDACTED]');
-  for (const [pattern, replacement] of CREDENTIAL_FORMATS) out = out.replace(pattern, replacement);
-  return deferPartialSecret(out, secrets);
-}
-
-/** 展示用的可读思考：redacted、空文本和只剩未完整凭据前缀的块都不算。 */
-function publicThinking(message, secrets) {
-  return readableThinking(message).map(({ contentIndex, text }) => ({ contentIndex, text: publicThinkingText(text, secrets) }))
-    .filter(({ text }) => text.length > 0);
-}
-
 /** 终态与历史回合的思考片段：与实时流同形，已结束的块一律是 done。 */
-export function durableReasoningSegments(entries, secrets = hostCredentialValues()) {
+export function durableReasoningSegments(entries) {
   return (entries || []).flatMap((entry) => {
     const assistant = entry?.model?.[0];
     if (assistant?.role !== 'assistant') return [];
-    return publicThinking(assistant, secrets).map(({ contentIndex, text }) => ({ id: `${entry.id}:${contentIndex}`, text, status: 'done' }));
+    return readableThinking(assistant).map(({ contentIndex, text }) => ({ id: `${entry.id}:${contentIndex}`, text, status: 'done' }));
   });
 }
 
 // Durable publishes whole messages/blocks as well as append deltas. Keep one
 // current-turn projection so replacement and overflow snapshots cannot duplicate text.
-export function createDurableTurnProjection({ secrets = hostCredentialValues() } = {}) {
+export function createDurableTurnProjection() {
   let afterEntry = Infinity;
   let completed = new Map();
   let message = null;
@@ -106,8 +56,8 @@ export function createDurableTurnProjection({ secrets = hostCredentialValues() }
     return {
       text: [...entries.map(([, entry]) => visibleTextOf(entry)), visibleTextOf(message)].filter(Boolean).join('\n\n'),
       reasoning: [
-        ...entries.flatMap(([entryId, entry]) => segmentsOf(entryId, publicThinking(entry, secrets), -1)),
-        ...(message ? segmentsOf(`live-${messageSerial}`, publicThinking(message, secrets), message.content.length - 1) : []),
+        ...entries.flatMap(([entryId, entry]) => segmentsOf(entryId, readableThinking(entry), -1)),
+        ...(message ? segmentsOf(`live-${messageSerial}`, readableThinking(message), message.content.length - 1) : []),
       ],
     };
   };

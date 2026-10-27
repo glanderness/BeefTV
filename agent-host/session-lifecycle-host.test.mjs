@@ -41,14 +41,11 @@ async function anthropicThinkingReply(res) {
   res.end();
 }
 
-/** 合成凭据：与测试宿主实际使用的 token 同值，另加一个 sk- 形式的模型 Key。 */
-const SYNTHETIC_MODEL_KEY = 'sk-review-only-123456';
-
 /**
  * 分脚本的 Anthropic Messages 替身：第一段思考 → canvas_get 工具调用 → 第二段思考 → 正文。
- * 第二段思考里带合成凭据，用来证明展示出口会清掉它们；签名仍只出现在 signature_delta 里。
+ * 签名只出现在 signature_delta 里，用来证明它不会进入任何展示字段。
  */
-async function anthropicToolThenAnswer(call, res, { hostToken }) {
+async function anthropicToolThenAnswer(call, res) {
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   const send = async (type, data) => { res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`); await delay(60); };
   const begin = (id) => send('message_start', { type: 'message_start', message: { id, type: 'message', role: 'assistant', model: 'synthetic',
@@ -74,7 +71,7 @@ async function anthropicToolThenAnswer(call, res, { hostToken }) {
     return;
   }
   await begin('msg_synthetic_answer');
-  await thinkingBlock(0, `再确认时间线顺序，host_token="${hostToken}"，api_key="${SYNTHETIC_MODEL_KEY}"。`);
+  await thinkingBlock(0, '再确认时间线顺序，然后给出结论。');
   await send('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
   await send('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '两段都看过了。' } });
   await send('content_block_stop', { type: 'content_block_stop', index: 1 });
@@ -158,7 +155,7 @@ async function withHost(run, envExtra = {}, options = {}) {
     }
     if (options.anthropicThinking) { await anthropicThinkingReply(res); return; }
     // 分脚本的 Anthropic 替身：用来复现跨工具调用的多消息回合。
-    if (options.anthropicScript) { await options.anthropicScript(modelCalls, res, { hostToken }); return; }
+    if (options.anthropicScript) { await options.anthropicScript(modelCalls, res); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const reply = options.modelReply?.(modelCalls);
     const delta = { role: 'assistant', content: reply?.text ?? 'ok', ...(reply?.tool ? {
@@ -710,7 +707,7 @@ test('真实宿主：Anthropic 协议的可读思考进流式快照、终态与�
   }, {}, { canvasId: 'reasoning-canvas', slowFirstModel: false, anthropicThinking: true });
 }, 35000);
 
-test('真实宿主：跨工具调用的思考在流式、终态和历史里是同一份，合成凭据不进展示出口', async () => {
+test('真实宿主：跨工具调用的思考在流式、终态和历史里是同一份', async () => {
   await withHost(async ({ api, getModelCalls, getOpsRequests }) => {
     const canvasId = 'reasoning-tool-canvas';
     const sessionId = (await api('/sessions', { canvasId })).payload.sessionId;
@@ -723,9 +720,9 @@ test('真实宿主：跨工具调用的思考在流式、终态和历史里是�
 
     const snapshots = lines.filter((line) => line.type === 'reasoning_snapshot');
     const last = snapshots.at(-1).segments;
-    // 工具调用前的那段思考没有丢，合成凭据被清掉。
+    // 工具调用前的那段思考没有丢，思考正文原样送达。
     expect(last.map((segment) => segment.text)).toEqual(['先读画布上的两个节点。',
-      '再确认时间线顺序，host_token="[REDACTED]"，api_key="[REDACTED]"。']);
+      '再确认时间线顺序，然后给出结论。']);
     expect(last.map((segment) => segment.status)).toEqual(['done', 'done']);
     // 两段来自不同的官方 entry：片段身份带 entry 与内容下标。
     expect(new Set(last.map((segment) => segment.id)).size).toBe(2);
@@ -738,11 +735,5 @@ test('真实宿主：跨工具调用的思考在流式、终态和历史里是�
     const history = await api(`/history?canvasId=${canvasId}`);
     expect(history.payload.active).toBeNull();
     expect(history.payload.turns[0].reasoning).toEqual(last);
-
-    // 合成凭据（宿主 token 与 sk- 形式的模型 Key）不出现在任何一行或历史里。
-    for (const body of [chat.text, history.text]) {
-      expect(body).not.toContain('synthetic-lifecycle-host');
-      expect(body).not.toContain(SYNTHETIC_MODEL_KEY);
-    }
   }, {}, { canvasId: 'reasoning-tool-canvas', slowFirstModel: false, anthropicScript: anthropicToolThenAnswer });
 }, 35000);

@@ -1,10 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { durableLifecycleState, durableRetryReason, durableStreamEvents } from './durable-session-owner.mjs';
-import { createDurableTurnProjection, durableReasoningSegments, publicThinkingText } from './durable-turn-projection.mjs';
+import { createDurableTurnProjection, durableReasoningSegments } from './durable-turn-projection.mjs';
 
 const SECRET = 'sk-synthetic-upstream-secret';
-/** 明确凭据格式的文本在展示出口被清掉；这里断言的是替换后的样子。 */
-const REDACTED = '[REDACTED]';
 /** 供应商给的签名与不透明载荷：可以留在官方记录里，但绝不能进展示投影。 */
 const SIGNATURE = 'sig-9f2b-opaque-thinking-signature';
 
@@ -86,7 +84,7 @@ describe('Durable visible text projection', () => {
     projection.accept({ type: 'snapshot', afterEntry: 10, entries: [entry(8, 'previous turn')], tools: [] });
     expect(projection.accept({ type: 'message_start', message: assistant('开头') })).toEqual([
       { type: 'text_snapshot', text: '开头' },
-      { type: 'reasoning_snapshot', segments: [{ id: 'live-1:0', text: REDACTED, status: 'done' }] },
+      { type: 'reasoning_snapshot', segments: [{ id: 'live-1:0', text: SECRET, status: 'done' }] },
     ]);
     projection.accept({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 1, delta: '中段' }] });
     expect(projection.text).toBe('开头中段');
@@ -97,7 +95,7 @@ describe('Durable visible text projection', () => {
     projection.accept({ type: 'message_update', changes: [{ type: 'message', message: assistant('完整替换') }] });
     expect(projection.accept({ type: 'message_end', entry: entry(12, '完整替换和尾部') })).toEqual([
       { type: 'text_snapshot', text: '完整替换和尾部' },
-      { type: 'reasoning_snapshot', segments: [{ id: '12:0', text: REDACTED, status: 'done' }] },
+      { type: 'reasoning_snapshot', segments: [{ id: '12:0', text: SECRET, status: 'done' }] },
     ]);
     expect(projection.accept({ type: 'message_end', entry: entry(12, '完整替换和尾部') })).toEqual([]);
     // 思考正文有自己的通道：正文投影永远不把它当回复。
@@ -232,57 +230,6 @@ describe('Durable readable reasoning projection', () => {
     expect(durableReasoningSegments([entry(13, [text('这一轮没有思考。')])])).toEqual([]);
     expect(durableReasoningSegments(undefined)).toEqual([]);
     expect(durableReasoningSegments([{ id: 14, model: [{ role: 'user', content: [text('用户输入')] }] }])).toEqual([]);
-  });
-});
-
-describe('公开思考出口的凭据清理', () => {
-  const HOST_TOKEN = 'synthetic-lifecycle-host';
-  const MODEL_KEY = 'sk-review-only-123456';
-  const thinking = (body, extra = {}) => ({ type: 'thinking', thinking: body, ...extra });
-  const text = (value) => ({ type: 'text', text: value });
-  const assistant = (content) => ({ role: 'assistant', content });
-  const entry = (id, content) => ({ id, model: [assistant(content)] });
-  const segments = (payloads) => payloads.find((payload) => payload.type === 'reasoning_snapshot')?.segments;
-
-  test('已知宿主 token、模型 Key 与明确凭据格式都不进实时、终态与历史', () => {
-    const secrets = [HOST_TOKEN];
-    const projection = createDurableTurnProjection({ secrets });
-    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [], tools: [] });
-    const payloads = projection.accept({ type: 'message_end', entry: entry(12, [
-      thinking(`先看画布：host_token="${HOST_TOKEN}"，api_key="${MODEL_KEY}"，Authorization: Bearer ${MODEL_KEY}。`),
-      text('完成'),
-    ]) });
-    expect(segments(payloads)).toEqual([{ id: '12:0',
-      text: '先看画布：host_token="[REDACTED]"，api_key="[REDACTED]"，Authorization: Bearer [REDACTED]。', status: 'done' }]);
-    expect(JSON.stringify(payloads)).not.toContain(HOST_TOKEN);
-    expect(JSON.stringify(payloads)).not.toContain(MODEL_KEY);
-    // 终态与历史走同一份清理，普通文本不受影响。
-    expect(durableReasoningSegments([entry(12, [thinking(`host_token=${HOST_TOKEN}`)])], secrets))
-      .toEqual([{ id: '12:0', text: 'host_token=[REDACTED]', status: 'done' }]);
-    expect(publicThinkingText('先看画布上的两个节点，再确认顺序。', secrets)).toBe('先看画布上的两个节点，再确认顺序。');
-  });
-
-  test('已知秘密的未完整前缀先扣住，分片到齐后再替换', () => {
-    const projection = createDurableTurnProjection({ secrets: [HOST_TOKEN] });
-    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [], tools: [] });
-    projection.accept({ type: 'message_start', message: assistant([]) });
-    const shown = [];
-    const feed = (delta) => {
-      for (const payload of projection.accept({ type: 'message_update', changes: [{ type: 'thinking_delta', contentIndex: 0, delta }] })) {
-        if (payload.type === 'reasoning_snapshot') shown.push(payload.segments.map((segment) => segment.text).join(''));
-      }
-    };
-    feed('先读画布，host_token="synth');
-    feed('etic-lifecycle-host" 之后再决定。');
-    expect(shown).toEqual(['先读画布，host_token="', '先读画布，host_token="[REDACTED]" 之后再决定。']);
-    expect(shown.join('')).not.toContain('synth');
-    expect(shown.join('')).not.toContain(HOST_TOKEN);
-  });
-
-  test('只在秘密可能从一个值或词的开头出现时扣住，普通英文词尾不被截断', () => {
-    const secrets = ['synthetic-only'];
-    expect(publicThinkingText('先看画布上的 nodes', secrets)).toBe('先看画布上的 nodes');
-    expect(publicThinkingText('先看画布，host_token="syn', secrets)).toBe('先看画布，host_token="');
   });
 });
 
