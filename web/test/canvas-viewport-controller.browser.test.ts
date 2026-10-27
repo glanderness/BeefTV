@@ -36,10 +36,14 @@ test("视口裁剪持续更新，倍率重排分段提交且手势结束保持�
             const smallZoom = probe();
             wheel(0, -240, true);
             await wait(80);
+            // 1.37× 只靠世界层 transform 拉伸，不重新提交节点倍率。
+            const midZoom = probe();
+            wheel(0, -160, true);
+            await wait(80);
             const rebase = probe();
             const before = document.querySelector("#node")!.getBoundingClientRect().toJSON();
             await wait(180);
-            return { initial, pan, smallZoom, rebase, ended: probe(), before, after: document.querySelector("#node")!.getBoundingClientRect().toJSON() };
+            return { initial, pan, smallZoom, midZoom, rebase, ended: probe(), before, after: document.querySelector("#node")!.getBoundingClientRect().toJSON() };
         });
         expect(result.pan.virtualizationViewport.x).toBe(-30);
         expect(result.pan.viewport.x).toBe(0);
@@ -47,12 +51,39 @@ test("视口裁剪持续更新，倍率重排分段提交且手势结束保持�
         expect(result.smallZoom.live.k).toBeGreaterThan(1);
         expect(result.smallZoom.viewport.k).toBe(1);
         expect(result.smallZoom.nodeRenders).toBe(result.initial.nodeRenders);
-        expect(result.rebase.viewport.k).toBeGreaterThan(1.25);
+        expect(result.midZoom.live.k).toBeGreaterThan(1.25);
+        expect(result.midZoom.viewport.k).toBe(1);
+        expect(result.midZoom.nodeRenders).toBe(result.initial.nodeRenders);
+        expect(result.rebase.viewport.k).toBeGreaterThan(1.6);
+        // 中途提交倍率后仍处于手势中，裁剪窗口继续跟随实时视口。
+        expect(result.rebase.virtualizationViewport).not.toBeNull();
         expect(result.ended.virtualizationViewport).toBeNull();
         expect(result.ended.viewport).toEqual(result.ended.live);
         expect(result.after.x).toBeCloseTo(result.before.x, 2);
         expect(result.after.y).toBeCloseTo(result.before.y, 2);
         expect(result.after.width).toBeCloseTo(result.before.width, 2);
+        // 恢复保存的视口后持续平移：新页面里裁剪基准还是初始化时的 100%，加载画布把视口直接恢复成 200%。
+        // 向左平移时，视野在旧的 100% 窗口里，但已挂载的只有 200% 那一小块；必须照常刷新，不能等手势结束。
+        await page.reload();
+        await page.locator("#node").waitFor({ timeout: 5000 });
+        const restored = await page.evaluate(async () => {
+            const w = window as unknown as { viewportProbe(): any; restoreViewport(next: { x: number; y: number; k: number }): void };
+            const container = document.querySelector("[data-canvas-viewport]")!;
+            const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+            await wait(80);
+            w.restoreViewport({ x: 0, y: 0, k: 2 });
+            await wait(80);
+            const refreshes: number[] = [];
+            for (let i = 0; i < 6; i++) {
+                container.dispatchEvent(new WheelEvent("wheel", { deltaX: 100, deltaY: 0, clientX: 350, clientY: 220, bubbles: true, cancelable: true }));
+                await wait(70);
+                refreshes.push(w.viewportProbe().virtualizationViewport?.x ?? Number.NaN);
+            }
+            return { refreshes, live: w.viewportProbe().live };
+        });
+        expect(restored.live).toEqual({ x: -600, y: 0, k: 2 });
+        expect(restored.refreshes.some(Number.isFinite)).toBe(true);
+        expect(restored.refreshes.at(-1)).toBeLessThanOrEqual(-400);
         const scoped = await page.evaluate(() => (window as any).scopedScaleProbe());
         expect(scoped.first.titleWidth).toBeCloseTo(100, 2);
         expect(scoped.first.inverse.trim()).toBe("20");
