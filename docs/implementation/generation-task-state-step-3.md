@@ -118,6 +118,18 @@ go test ./... -count=1 -timeout=25m
 
 第一次补依赖后的全套运行曾因 `TestDesktopColdOpenBudgetAndNoIdleOutbound` 在一次机器抖动中达到 5.208 秒而失败；没有改动该测试或放宽预算，立即单独复跑为 1.064 秒并通过，随后第二次 `go test ./...` 全套通过。第一次失败原始日志保留在 `backend-go-test-all.txt`，单测复跑日志保留在 `bootstrap-cold-open-rerun.txt`，均在同一证据目录中。
 
+提交树核对：推送提交 `f936deb453e7e860901594fd67b2ec1d1ea89d0d` 的 `git ls-tree -r --long` 已确认以下 7 个实际日志均进入提交；字节数和 SHA-256 从 `HEAD:<path>` 重新读取核对，而不是用工作区代替：
+
+| 文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `agent-host-bun-install.txt` | 324 | `a1b29287819c0a92999f469597cd948f1c1cea1d7fff15dd6cfc98a500d152d2` |
+| `app-package-final.txt` | 51 | `3b9779c5c6fc11ae125b8b088e4c1e6ed3bf17611d5ddf27113413e5dc1be062` |
+| `special-tests-rerun.txt` | 286 | `6f1dfc7e932ed0e7c1c6143e1b5e946451436269dd3363d492d3cc5189d3eb62` |
+| `handler-real-host-rerun.txt` | 5,735 | `ac38214e86d80c06127d34794953bab0c1ed8cfbea062cc874d7376d06da00a6` |
+| `bootstrap-cold-open-rerun.txt` | 40,651 | `031016e240bacdd0eae197d3c08cd0affa893f6968a32b87f4e1f73352f60a16` |
+| `backend-go-test-all.txt` | 1,850,015 | `d69919a291f5538ee6c891ba964a20e2c9601a1aa4d08c476673b4f29077650c` |
+| `backend-go-test-all-rerun.txt` | 4,020 | `a3d8e67ef4dff0d209056f946feb0554a0d2986fd2a7874895c2c4363139b0f8` |
+
 第三方视频恢复问题现状：**已解决**。原任务查询、Gemini Veo query-only fallback、禁止 POST/创建、结果下载及显式缺失插件 fail-closed 断言均通过。
 
 图片异步任务现状：**已实现并有专项假上游验证**。当前轮次 job ID 只触发 `GET /v1/images/jobs/{id}`，随后只下载结果，假上游收到 POST=0；pending 不会落到生成重放，旧轮次 job ID 不会被采用，扣费字段会按当前轮次写入后台证据。
