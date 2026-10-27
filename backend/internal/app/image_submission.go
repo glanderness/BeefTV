@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 const imageRecoveryMaxSends = 12
@@ -26,6 +28,7 @@ type imageAttemptContext struct{}
 type imageTaskContext struct{}
 
 type imageWireRequest struct {
+	ChannelID      string
 	URL            string
 	Header         http.Header
 	Body           []byte
@@ -265,7 +268,18 @@ func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmissi
 	header := req.Header.Clone()
 	header.Del("X-Idempotency-Key")
 	header.Set("Idempotency-Key", key)
-	raw, err := json.Marshal(imageWireRequest{URL: req.URL.String(), Header: header, Body: body, ReplayProtocol: generation.ImageReplayProtocol})
+	original, err := s.repo.LatestRouteAttempt(task.ID)
+	if err != nil {
+		return nil, true, err
+	}
+	if original.ID != attemptID {
+		return nil, true, generation.ErrImageOwnerMissing
+	}
+	channelID := firstNonEmpty(original.ChannelID, call.ChannelID)
+	if channelID == "" && beefapi.IsEnterpriseBaseURL(req.URL.String()) {
+		channelID = beefapi.ChannelID
+	}
+	raw, err := json.Marshal(imageWireRequest{ChannelID: channelID, URL: req.URL.String(), Header: header, Body: body, ReplayProtocol: generation.ImageReplayProtocol})
 	if err != nil {
 		return nil, true, err
 	}
@@ -282,6 +296,16 @@ func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmissi
 	return row, true, err
 }
 
+func (s *Service) imageSubmissionWire(row *model.ImageSubmission) (imageWireRequest, error) {
+	var wire imageWireRequest
+	plain, err := s.decryptSettingSecret(row.RequestCipher)
+	if err != nil {
+		return wire, err
+	}
+	err = json.Unmarshal([]byte(plain), &wire)
+	return wire, err
+}
+
 func (s *Service) sendImageSubmission(ctx context.Context, task model.Task, row *model.ImageSubmission) ([]byte, string, error) {
 	return s.sendImageSubmissionWith(ctx, task, row, func(req *http.Request, admit func() error) ([]byte, string, error) {
 		return generation.DoBinaryWithDispatchAdmission(withHTTPRequestRuntime(req), admit)
@@ -289,18 +313,23 @@ func (s *Service) sendImageSubmission(ctx context.Context, task model.Task, row 
 }
 
 func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, row *model.ImageSubmission, send func(*http.Request, func() error) ([]byte, string, error), wait func(context.Context, time.Duration) error) ([]byte, string, error) {
+	return s.sendImageSubmissionWithMode(ctx, task, row, send, wait, false)
+}
+
+// singleReplay 只用于失败任务的后台同键取回，每轮最多发一次。
+func (s *Service) sendImageSubmissionWithMode(ctx context.Context, task model.Task, row *model.ImageSubmission, send func(*http.Request, func() error) ([]byte, string, error), wait func(context.Context, time.Duration) error, singleReplay bool) ([]byte, string, error) {
+	maxSends := imageRecoveryMaxSends
+	if singleReplay {
+		maxSends = 0
+	}
 	if row.TaskID != task.ID || row.UserID != task.UserID {
 		return nil, "", imageRecoveryError{errors.New("图片任务归属不一致")}
 	}
-	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= imageRecoveryLifetime || (!row.ResponseAccepted && row.SendCount >= imageRecoveryMaxSends) {
+	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= imageRecoveryLifetime || (!singleReplay && !row.ResponseAccepted && row.SendCount >= imageRecoveryMaxSends) {
 		return nil, "", imageRecoveryError{errors.New("图片结果恢复等待已结束")}
 	}
-	plain, err := s.decryptSettingSecret(row.RequestCipher)
+	wire, err := s.imageSubmissionWire(row)
 	if err != nil {
-		return nil, "", imageRecoveryError{err}
-	}
-	var wire imageWireRequest
-	if err := json.Unmarshal([]byte(plain), &wire); err != nil {
 		return nil, "", imageRecoveryError{err}
 	}
 	deadline := time.Now().Add(imageRecoveryWait)
@@ -334,7 +363,23 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 			if err := ctx.Err(); err != nil {
 				return imageRecoveryError{err}
 			}
-			if err := s.repo.ClaimImageSubmissionSend(row, task.LeaseOwner, imageRecoveryMaxSends); err != nil {
+			if singleReplay || row.SendCount > 0 || row.ResponseAccepted {
+				attempt, err := s.repo.LatestRouteAttempt(task.ID)
+				if err != nil {
+					return imageRecoveryError{err}
+				}
+				if attempt.ID != row.AttemptID || attempt.RouteRun != task.RouteRun {
+					return imageRecoveryError{repository.ErrTaskStateConflict}
+				}
+				available, err := s.imageRecoveryChannelAvailable(attempt, wire)
+				if err != nil {
+					return imageRecoveryError{err}
+				}
+				if !available {
+					return imageRecoveryError{errImageRecoveryIdentityUnavailable}
+				}
+			}
+			if err := s.repo.ClaimImageSubmissionSend(row, task.LeaseOwner, maxSends); err != nil {
 				return imageRecoveryError{err}
 			}
 			return nil
@@ -343,6 +388,9 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 			if err := s.repo.MarkImageSubmissionAccepted(row); err != nil {
 				return nil, "", imageRecoveryError{err}
 			}
+			if singleReplay {
+				return data, mime, nil
+			} // 自动扫描还需区分 2xx 正文中的业务失败。
 			var payload imageResponse
 			if err := json.Unmarshal(data, &payload); err != nil {
 				return nil, "", imageRecoveryError{err}
@@ -351,6 +399,9 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 				return nil, "", imageRecoveryError{err}
 			}
 			return data, mime, nil
+		}
+		if singleReplay {
+			return nil, "", imageRecoveryError{sendErr}
 		}
 		if definiteImageInputRejection(sendErr) && (row.ResponseAccepted || row.SendCount > 1) {
 			return nil, "", imageRecoveryError{sendErr}

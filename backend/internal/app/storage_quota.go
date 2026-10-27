@@ -179,6 +179,8 @@ func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJ
 	expectedStatus := task.Status
 	completed := *task
 	completed.Status = model.TaskStatusSucceeded
+	completed.RecoveryOutcome = nil
+	completed.NextPollAt = nil
 	completed.Stage = "任务完成"
 	completed.Progress = 100
 	completed.ResultJSON = string(resultJSON)
