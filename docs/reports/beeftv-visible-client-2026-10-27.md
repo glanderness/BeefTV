@@ -93,8 +93,13 @@
 | `cd web && bun test test/upscale-confirmation.browser.test.ts test/workspace-polish.browser.test.ts` | 4 pass / 0 fail |
 | `node plugin-packages/embed-documentation.mjs autodl-comfyui` | 重新生成插件文档，diff 仅目标行 |
 | `python3 -c "json.load(open('backend/internal/skills/seed/skills.json'))"` | JSON 合法，33 条 |
+| 带敌意继承值启动预览（见下） | `[preview] 代理自检通过：/api 命中模拟服务`，日志打印 `已丢弃继承的 VITE_* 变量：VITE_CANVAS_BACKEND_URL, VITE_API_PROXY_TARGET, VITE_FRAMEFIELD_LOCAL_RUNTIME_ENDPOINT` |
+| 页面内 `fetch("/api/media-upscale/capabilities")` | `X-Preview-Api: mock`，`cloudProcessing: true`，说明前端入口走同源 `/api` 并落到模拟服务 |
+| 模拟服务请求日志（整轮截图期间） | 只有 `GET /api/media-upscale/capabilities` 与 `POST /api/media-upscale/estimate`，没有其它去向 |
 
-未跑完整打包 `bun run build`（`tsc --noEmit` 已单独通过）。
+预览代理的验证方式：用会「毒化」的环境启动，`PREVIEW_API_PORT=18080`（改端口）、`VITE_API_PROXY_TARGET=http://127.0.0.1:9`（指向不存在的端口）、`VITE_CANVAS_BACKEND_URL=https://beefapi.com/api`（指向真实站点）三条同时给。结果模拟服务监听 18080、Vite 代理跟着指向 18080、继承的三条 `VITE_*` 全部被丢弃，自检命中模拟服务；说明改端口不会再错位，也无法被继承值改道到真实后端。
+
+未跑完整打包 `bun run build`（`tsc --noEmit` 已单独通过）。`web/preview/*` 不在 `tsconfig.json` 的 include 内，不进产品构建。
 
 ## 六、界面截图与检查结果
 
@@ -102,15 +107,25 @@
 
 可复现入口：`web/preview/visible-client-brand.html`，由 `bun web/preview/start-preview.mjs` 启动（Vite 开发服务器 + 一个只回放超分能力的模拟 API，`/api` 其余请求返回空数据）。截图用 ego-browser 打开该页、真实交互后保存。
 
+预览页的主题与样式上下文按产品源码搭：
+
+- `applySkinTheme` + `getAntThemeConfig` 取自 `components/layout/app-providers.tsx`（`AppProviders`），`getWorkspaceAntThemeConfig` 取自 `layouts/user-layout.tsx`（仅产品工作区套用）。
+- `document.documentElement` 的 `dark` 类与 `color-scheme`、`body` 的 `app-user-overlays` 与 `app-product-overlays` / `app-spatial-overlays` 保持一致；后两者在产品里按路由互斥，预览页用 `?overlay=product|spatial` 复现其中一条，不混用两套浮层 token。
+- 因此弹窗拿到的 `--user-*`（`--user-page-bg: #101010`、`--user-ink: #f3f3f5`、`--user-ink-muted: #b4b4bc`）与产品深色工作台一致。
+
 | 截图 | 覆盖的改动 | 页面实测文本 |
 | --- | --- | --- |
-| [`changelog-v1.7.22.png`](beeftv-visible-client-2026-10-27-shots/changelog-v1.7.22.png) | 应用内更新日志 v1.7.22 | 「内置 BeefTV 还可切换备用文件，无需重新生成。」（同条目无 `BeefAPI`） |
+| [`changelog-v1.7.22.png`](beeftv-visible-client-2026-10-27-shots/changelog-v1.7.22.png) | 应用内更新日志 v1.7.22 | 「所有视频渠道统一优先取回上游结果；下载中断或链接失效时刷新原任务链接，内置 BeefTV 还可切换备用文件，无需重新生成。」（同条目无 `BeefAPI`） |
 | [`changelog-v1.7.17.png`](beeftv-visible-client-2026-10-27-shots/changelog-v1.7.17.png) | 应用内更新日志 v1.7.17 | 「修复 BeefTV 视频模型调用错误，以及部分图片模型从出图列表消失的问题。」 |
 | [`upscale-model-option.png`](beeftv-visible-client-2026-10-27-shots/upscale-model-option.png) | 超分节点「超分模型」选项 | 下拉选项实测为「BeefTV 超分模型」 |
 | [`sidebar-donation.png`](beeftv-visible-client-2026-10-27-shots/sidebar-donation.png) | 侧栏捐赠气泡 | 「你的支持是我们不断优化迭代 BeefTV 的最大动力」 |
 | [`welcome-credits.png`](beeftv-visible-client-2026-10-27-shots/welcome-credits.png) | 首页演示素材署名页 | 返回链接「返回 BeefTV」；正文「…不是 BeefTV 生成的案例…」 |
 
-检查方式：ego-browser 打开预览页后，先用页面内实测文本（`page.evaluate`）核对上表文案，再截图；更新日志条目、超分下拉、捐赠气泡都由真实交互（点击按钮/下拉、悬停按钮）展开，不是静态拼字。预览页加载与产品同一套样式（`globals.css` 含 Tailwind 与设计 token，另加共享产品样式与侧栏样式），Tailwind 由 Vite 的 PostCSS 编译，渲染结果与真实界面一致。
+检查方式：ego-browser 打开预览页后，先用页面内实测文本（`page.evaluate`）核对上表文案，再截图；更新日志条目、超分下拉、捐赠气泡都由真实交互（点击按钮/下拉、悬停按钮）展开，不是静态拼字。
+
+可读性：更新日志正文用 `--user-ink-muted` 的 `rgb(180, 180, 188)` 渲染在 `rgb(16, 16, 16)` 的弹窗底色上，按 WCAG 相对亮度算得对比度 **9.24 : 1**（同一段 `page.evaluate` 里现算，不是估计）。截图按弹窗实际外框裁切，正文完整可读。
+
+与真实界面的差别的边界：样式表、设计 token、组件与交互都是产品同一份，浮层作用域也按路由还原；但页面只挂了本次改动涉及的组件，没有外层路由壳（侧栏、顶栏、页面容器）。所以这里的截图用于核对文案与配色，不等于整屏实机截图。
 
 未做实机截图：本次只改文案、未改界面结构，上面的真实组件预览已覆盖全部改动文案。如需实机留证，可按既有规范在隔离客户端补。
 

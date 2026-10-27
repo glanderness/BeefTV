@@ -2,8 +2,10 @@
 // 只用于把真实组件渲染成可截图的页面，不参与产品构建。
 //
 // 前端 API 入口与 Vite 代理在这里被显式固定到这个模拟服务：
-// 继承来的 VITE_API_PROXY_TARGET / VITE_CANVAS_BACKEND_URL（以及 web/.env*）都不能把
-// 请求改道到真实后端；模拟服务给每个响应打 X-Preview-Api: mock，启动后自检代理是否命中。
+//   1. 子进程环境先剔除所有继承来的 VITE_* 变量（含 VITE_API_PROXY_TARGET / VITE_CANVAS_BACKEND_URL /
+//      VITE_FRAMEFIELD_LOCAL_RUNTIME_ENDPOINT），再写入固定值，避免继承值或 web/.env* 把请求改道。
+//   2. 代理目标取自模拟服务实际监听的端口（api.port），改 PREVIEW_API_PORT 时代理跟着改。
+//   3. 模拟服务给每个响应打 X-Preview-Api: mock，启动后自检 /api 是否命中模拟服务。
 const webDir = new URL("..", import.meta.url).pathname;
 
 const apiPort = Number(process.env.PREVIEW_API_PORT || 8080);
@@ -34,24 +36,30 @@ const api = Bun.serve({
             return json({ mediaType: "image", source: { width: 100, height: 100 }, output: { width: 200, height: 200 }, currency: "CNY", reservation: 1.25, generationSubmitted: false, cloudProcessing: true });
         }
         if (path.startsWith("/api/")) return json([]);
-        return new Response("not found", { status: 404 });
+        return new Response("not found", { status: 404, headers: { "X-Preview-Api": "mock" } });
     },
+});
+
+// 继承环境里的 VITE_* 一律不带给 Vite：前端入口与代理只认下面这组固定值。
+const inheritedViteKeys = Object.keys(process.env).filter(key => key.startsWith("VITE_"));
+const childEnv = { ...process.env };
+for (const key of inheritedViteKeys) delete childEnv[key];
+Object.assign(childEnv, {
+    // 代理固定到模拟服务实际监听的端口；前端 API 入口固定为同源 /api。
+    VITE_API_PROXY_TARGET: `http://127.0.0.1:${api.port}`,
+    VITE_CANVAS_BACKEND_URL: "/api",
+    // 预览页不启动桌面宿主，不携带桌面启动令牌。
+    VITE_DESKTOP_LAUNCH_TOKEN: "",
 });
 
 const vite = Bun.spawn(["node_modules/.bin/vite", "--host", "127.0.0.1", "--port", port], {
     cwd: webDir,
     stdout: "inherit",
     stderr: "inherit",
-    env: {
-        ...process.env,
-        // 覆盖继承值，固定代理与前端 API 入口；Vite 的 import.meta.env 里进程环境优先于 .env 文件。
-        VITE_API_PROXY_TARGET: `http://127.0.0.1:${api.port}`,
-        VITE_CANVAS_BACKEND_URL: "/api",
-        // 预览页不启动桌面宿主，不携带桌面启动令牌。
-        VITE_DESKTOP_LAUNCH_TOKEN: "",
-    },
+    env: childEnv,
 });
-console.log(`preview api on http://127.0.0.1:${api.port} (proxy pinned) , vite pid ${vite.pid} , page ${base}/preview/visible-client-brand.html`);
+console.log(`preview api on http://127.0.0.1:${api.port} (proxy pinned to api.port) , vite pid ${vite.pid} , page ${base}/preview/visible-client-brand.html`);
+if (inheritedViteKeys.length) console.log(`[preview] 已丢弃继承的 VITE_* 变量：${inheritedViteKeys.join(", ")}`);
 
 // 自检：/api 必须由模拟服务应答，否则说明代理没固定住。
 async function checkProxy() {

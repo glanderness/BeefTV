@@ -4,6 +4,9 @@
 // 主题与样式上下文必须和产品一致，否则弹窗拿不到 --user-* 变量，会出现深底黑字：
 // AppProviders 的 ConfigProvider 主题 + applySkinTheme（application.tsx / app-providers.tsx），
 // UserLayout 的工作台 ConfigProvider、.app-user-workspace / .app-product-workspace 与 body 浮层类（user-layout.tsx）。
+//
+// body 浮层类按路由互斥：产品工作区只有 app-product-overlays，画布编辑器只有 app-spatial-overlays。
+// 预览页用 ?overlay=product|spatial 复现其中一条路由，不把两套浮层 token 混在一起。
 import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { App, ConfigProvider } from "antd";
@@ -31,13 +34,18 @@ import { setActiveUserScope } from "@/lib/user-scope";
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
+// 复现哪条路由的浮层作用域：产品工作区（更新日志、侧栏）或画布编辑器（超分节点）。
+const overlayScope = new URLSearchParams(window.location.search).get("overlay") === "spatial" ? "spatial" : "product";
+const spatialScope = overlayScope === "spatial";
+
 // 主题来源与产品一致：工作台跟随全局主题，画布跟随画布主题（默认跟随全局）。
 const appearance = { skin: "classic", theme: useThemeStore.getState().theme };
 applySkinTheme(appearance.skin, appearance.theme);
 document.documentElement.classList.toggle("dark", appearance.theme === "dark");
 document.documentElement.style.colorScheme = appearance.theme;
-// Ant Design 浮层挂载在 body，用户工作台的浮层 token 由 body 上的这两个类提供。
-document.body.classList.add("app-user-overlays", "app-product-overlays");
+// Ant Design 浮层挂载在 body，浮层 token 由 body 上的路由级标记提供（与 UserLayout 一致）。
+document.body.classList.add("app-user-overlays");
+document.body.classList.add(spatialScope ? "app-spatial-overlays" : "app-product-overlays");
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 
 const baseTheme = getAntThemeConfig(appearance.theme === "dark", appearance.skin);
@@ -89,34 +97,45 @@ function UpscalePreview() {
     );
 }
 
+function ProductRoute() {
+    // 产品工作区路由：UserLayout 在这里套工作台主题（getWorkspaceAntThemeConfig）。
+    return (
+        <ConfigProvider theme={workspaceTheme}>
+            <div className="app-user-workspace app-product-workspace" style={{ display: "grid", gap: 32, padding: 24, minHeight: "100vh", alignContent: "start" }}>
+                <section>
+                    <h2>更新日志入口（账户菜单里的同一个按钮）</h2>
+                    <div id="changelog-entry" style={{ width: 280, padding: 8, borderRadius: 12, background: "var(--user-surface-muted)" }}>
+                        <AppChangelogButton className="flex h-8 w-full items-center gap-2 rounded px-2 text-[var(--fs-label)] text-foreground/58 hover:bg-surface-hover hover:text-foreground [&_svg]:size-3.5" showLabel showVersion versionClassName="ml-auto text-[var(--fs-micro)] tabular-nums text-foreground/32" />
+                    </div>
+                </section>
+                <section>
+                    <h2>侧栏社交入口</h2>
+                    <div id="social-links" style={{ width: 320, display: "flex", justifyContent: "flex-end" }}>
+                        <WorkspaceSidebarSocialLinks />
+                    </div>
+                </section>
+            </div>
+        </ConfigProvider>
+    );
+}
+
+function SpatialRoute() {
+    // 画布编辑器路由：UserLayout 在这个路径上不套工作台主题。
+    return (
+        <div className="app-user-workspace app-spatial-workspace" style={{ display: "grid", gap: 32, padding: 24, paddingBottom: 520, alignContent: "start" }}>
+            <section>
+                <h2>超分模型</h2>
+                <UpscalePreview />
+            </section>
+        </div>
+    );
+}
+
 function Preview() {
     return (
         <ConfigProvider locale={zhCN} theme={baseTheme} modal={{ centered: true }}>
             <App message={{ duration: 3, maxCount: 3 }} notification={{ duration: 4.5, maxCount: 3, placement: "topRight" }}>
-                {/* 产品工作区：更新日志与侧栏社交入口所在的路由壳（UserLayout + app-product-workspace）。 */}
-                <ConfigProvider theme={workspaceTheme}>
-                    <div className="app-user-workspace app-product-workspace" style={{ display: "grid", gap: 32, padding: 24, minHeight: "100vh", alignContent: "start" }}>
-                        <section>
-                            <h2>更新日志入口（账户菜单里的同一个按钮）</h2>
-                            <div id="changelog-entry" style={{ width: 280, padding: 8, borderRadius: 12, background: "var(--user-surface-muted)" }}>
-                                <AppChangelogButton className="flex h-8 w-full items-center gap-2 rounded px-2 text-[var(--fs-label)] text-foreground/58 hover:bg-surface-hover hover:text-foreground [&_svg]:size-3.5" showLabel showVersion versionClassName="ml-auto text-[var(--fs-micro)] tabular-nums text-foreground/32" />
-                            </div>
-                        </section>
-                        <section>
-                            <h2>侧栏社交入口</h2>
-                            <div id="social-links" style={{ width: 320, display: "flex", justifyContent: "flex-end" }}>
-                                <WorkspaceSidebarSocialLinks />
-                            </div>
-                        </section>
-                    </div>
-                </ConfigProvider>
-                {/* 画布编辑器：超分节点所在的路由壳（app-spatial-workspace，不套工作台主题）。 */}
-                <div className="app-user-workspace app-spatial-workspace" style={{ display: "grid", gap: 32, padding: 24, paddingBottom: 520, alignContent: "start" }}>
-                    <section>
-                        <h2>超分模型</h2>
-                        <UpscalePreview />
-                    </section>
-                </div>
+                {spatialScope ? <SpatialRoute /> : <ProductRoute />}
             </App>
         </ConfigProvider>
     );
