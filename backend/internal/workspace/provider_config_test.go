@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -693,4 +694,82 @@ func requireEffectiveChannel(t *testing.T, effective EffectiveModelConfig, id st
 	}
 	t.Fatalf("channel %q missing", id)
 	return nil
+}
+
+// 新授权只补空缺：已保存的助手选择只要还在本次写入的目录里就保留，
+// 重连和换账号都不能把用户选过的模型改成默认值，即使该模型已不在新目录里：
+// 这时保留原值、由界面提示重新选择，而不是自动换一个模型。
+func TestSaveCatalogWithAssistantDefaultOnlyFillsMissingSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		saved    string
+		channels string
+		want     string
+	}{
+		{
+			name:     "saved model still listed",
+			saved:    "beefapi::claude-opus-5-5",
+			channels: `[{"id":"beefapi","models":["deepseek-v4.1-flash","claude-opus-5-5"]}]`,
+			want:     "beefapi::claude-opus-5-5",
+		},
+		{
+			name:     "saved model only through alias",
+			saved:    "beefapi::upstream-flash",
+			channels: `[{"id":"beefapi","models":["deepseek-v4.1-flash"],"modelAliases":{"deepseek-v4.1-flash":"upstream-flash"}}]`,
+			want:     "beefapi::upstream-flash",
+		},
+		{
+			name:     "saved custom channel model",
+			saved:    "custom::chat-x",
+			channels: `[{"id":"beefapi","models":["deepseek-v4.1-flash"]},{"id":"custom","models":["chat-x"]}]`,
+			want:     "custom::chat-x",
+		},
+		{
+			name:     "saved model gone from catalog",
+			saved:    "beefapi::claude-opus-5-5",
+			channels: `[{"id":"beefapi","models":["deepseek-v4.1-flash"]}]`,
+			want:     "beefapi::claude-opus-5-5",
+		},
+		{
+			name:     "saved model gone and no default available",
+			saved:    "beefapi::claude-opus-5-5",
+			channels: `[{"id":"beefapi","models":[]}]`,
+			want:     "beefapi::claude-opus-5-5",
+		},
+		{
+			name:     "no saved choice",
+			saved:    "",
+			channels: `[{"id":"beefapi","models":["deepseek-v4.1-flash"]}]`,
+			want:     "beefapi::deepseek-v4.1-flash",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := NewProviderConfig(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			seed := `{"assistantModel":` + strconv.Quote(tc.saved) + `,"channels":[{"id":"beefapi","models":["gpt-6-astra"]}]}`
+			if err := store.SaveLocalModelConfig([]byte(seed)); err != nil {
+				t.Fatal(err)
+			}
+			body := `{"assistantModel":"","channels":` + tc.channels + `}`
+			if err := store.SaveCatalogWithAssistantDefault([]byte(body), "auth-1", "beefapi::deepseek-v4.1-flash"); err != nil {
+				t.Fatal(err)
+			}
+			effective, _, err := store.LoadEffectiveModelConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := effective.Config["assistantModel"]; got != tc.want {
+				t.Fatalf("assistantModel = %v, want %q", got, tc.want)
+			}
+			document, err := store.loadPrimaryDocument()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if document.AssistantDefaultAuthorization != "auth-1" {
+				t.Fatalf("initialization marker = %q", document.AssistantDefaultAuthorization)
+			}
+		})
+	}
 }

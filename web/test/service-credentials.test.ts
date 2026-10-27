@@ -167,3 +167,19 @@ test("credential kinds follow the protocol, not the vendor name on the model", (
     expect(conflict).toContain("SecretId");
     expect(conflict).toContain("请拆成两个连接");
 });
+
+
+test("AK/SK cannot share one connection with bearer credentials", () => {
+    for (const baseUrl of ["https://api.example.com/v1", arkBaseUrl, "https://ark.cn-beijing.volces.com/api/plan/v3"]) {
+        const mixed = channel({
+            baseUrl, secretKey: "synthetic-secret",
+            models: ["text", "jimeng"],
+            modelProfiles: [
+                { model: "text", capability: "text", protocol: "chat-completion" },
+                { model: "jimeng", capability: "video", protocol: "volcengine-jimeng-video" },
+            ],
+        });
+        expect(serviceCredentialGuide(mixed).kind).toBe("mixed");
+        expect(serviceConnectionError(mixed)).toContain("请拆成两个连接");
+    }
+});

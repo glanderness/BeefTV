@@ -130,7 +130,7 @@ export function serviceCredentialGuide(channel: CredentialChannel, protocols: Mo
     }
     const awaitingCredential = [...kinds].some((kind) => kind !== "none");
     const arkMixed = kinds.has("ark-native") && kinds.has("ark-agent-plan");
-    const signatureMixed = signatureAuths.size > 1;
+    const signatureMixed = signatureAuths.size > 1 || (kinds.has("signature") && kinds.size > 1);
     if (arkMixed || signatureMixed) {
         const conflict = arkMixed ? ARK_MIXED
             : signatureAuths.size > 1 ? `这个连接里的模型分别要用 ${[...signatureAuths].map((auth) => SIGNATURE_CREDENTIALS[auth].apiKeyLabel).join(" 和 ")} 签名，一份密钥只能配一种：请拆成两个连接。`

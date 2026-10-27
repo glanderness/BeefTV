@@ -57,6 +57,10 @@ type ManifestResponse struct {
 	Videos        any  `json:"videos,omitempty"`
 	Audios        any  `json:"audios,omitempty"`
 	Usage         any  `json:"usage,omitempty"`
+	// SuccessCodes 声明协议自己的业务成功码：命中的 errorPaths 值不再算失败。
+	// 只有显式声明该字段的协议生效（即梦 CV 接口用 code=10000 表示成功），
+	// 未声明的协议继续沿用共享的「零值即成功」规则。
+	SuccessCodes []any `json:"successCodes,omitempty"`
 }
 
 // ManifestAgentResponse describes the provider response shape for a
@@ -609,7 +613,7 @@ func (a manifestAdapter) parse(payload map[string]any, c PollContext) CreateResu
 	if message == "" {
 		message = firstPathValue(payload, response.MessagePaths...)
 	}
-	if manifestError(payload, response.ErrorPaths...) {
+	if manifestError(payload, response.ErrorPaths, response.SuccessCodes) {
 		status = StatusFailed
 	}
 	result := &Result{
@@ -1384,9 +1388,15 @@ func manifestTextPathValues(value any, parts []string) []string {
 	return manifestTextPathValues(manifestPathValue(value, parts[0]), parts[1:])
 }
 
-func manifestError(payload map[string]any, paths ...string) bool {
+// manifestError 判断声明的错误路径上是否出现了失败值。successCodes 是协议自己
+// 声明的业务成功码（即梦 CV 用 code=10000 表示成功）：只有在该路径值命中成功码时
+// 才跳过失败判定，其余厂商的协议不声明这个字段，判定规则保持原样。
+func manifestError(payload map[string]any, paths []string, successCodes []any) bool {
 	for _, path := range paths {
 		value := pathValue(payload, path)
+		if manifestValueInSuccessCodes(value, successCodes) {
+			continue
+		}
 		switch typed := value.(type) {
 		case nil:
 			continue
@@ -1422,6 +1432,41 @@ func manifestError(payload map[string]any, paths ...string) bool {
 		}
 	}
 	return false
+}
+
+// manifestValueInSuccessCodes 用文本形式比较成功码，避免上游把 code 写成数字或
+// 字符串（10000 与 "10000"）时判定不一致。
+func manifestValueInSuccessCodes(value any, successCodes []any) bool {
+	if len(successCodes) == 0 {
+		return false
+	}
+	text := manifestCodeText(value)
+	if text == "" {
+		return false
+	}
+	for _, code := range successCodes {
+		if manifestCodeText(code) == text {
+			return true
+		}
+	}
+	return false
+}
+
+func manifestCodeText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case int, int8, int16, int32, int64:
+		return fmt.Sprintf("%d", typed)
+	case uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", typed)
+	default:
+		return ""
+	}
 }
 
 func reflectValueIsZero(value any) bool {

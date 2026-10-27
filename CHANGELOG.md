@@ -4,6 +4,8 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 内置助手在 BeefAPI 连接授权成功后默认使用 DeepSeek V4.1 Flash。默认值只在还没选过助手模型时写入，已经保存过选择的用户保持不变：目录刷新、重新授权和换账号都不会改写；GPT-6 Astra 仍可在托管目录中继续选用。
+- 即梦官方视频：接口返回 `code=10000` 视为成功，完成的任务不再被误判失败；时长改用官方 `frames` 表达（5 秒=121、10 秒=241），画幅改用 `aspect_ratio`，`req_json` 归到查询请求，不再混在创建正文里。
 - 模型服务的密钥栏按所选请求协议写明要填哪一种凭证：方舟原生接口用普通方舟 Key，Agent Plan 接口用 Agent Plan 专属 Key，即梦用 Access Key + Secret Key；一个连接里混用两种凭证会先被拦下，并提示拆成两个连接。
 - 读不到模型目录时写清可以手填模型 ID 继续，并保留服务商返回的真实错误原因。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.

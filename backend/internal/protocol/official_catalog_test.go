@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -778,6 +779,130 @@ func TestOfficialJimengImageSplitsPixelSize(t *testing.T) {
 	binary, ok := body["binary_data_base64"].([]any)
 	if !ok || len(binary) != 1 || binary[0] != "aGVsbG8=" {
 		t.Fatalf("binary_data_base64 = %#v", body["binary_data_base64"])
+	}
+}
+
+func TestOfficialJimengVideoUsesOfficialFramesAspectAndQueryConfig(t *testing.T) {
+	adapter := officialPackageAdapter(t, "volcengine-jimeng-video.beeftv-plugin", "volcengine-jimeng-video")
+	for _, test := range []struct {
+		duration int
+		frames   float64
+	}{{5, 121}, {10, 241}} {
+		create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Model: "jimeng_t2v_v30", Prompt: "镜头推进", Duration: test.duration, AspectRatio: "9:16", Resolution: "720p",
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := manifestTestBody(t, create)
+		if body["frames"] != test.frames {
+			t.Fatalf("duration %v frames = %#v, want %v", test.duration, body["frames"], test.frames)
+		}
+		if body["aspect_ratio"] != "9:16" {
+			t.Fatalf("duration %v aspect_ratio = %#v", test.duration, body["aspect_ratio"])
+		}
+		for _, unexpected := range []string{"duration", "ratio", "req_json"} {
+			if _, exists := body[unexpected]; exists {
+				t.Fatalf("duration %v create body must not carry %q: %#v", test.duration, unexpected, body)
+			}
+		}
+	}
+	// 官方只提供 5 秒和 10 秒两档，其他秒数取最近一档，不能发出不存在的帧数。
+	nearest, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "jimeng_t2v_v30", Prompt: "镜头推进", Duration: 6,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frames := manifestTestBody(t, nearest)["frames"]; frames != float64(121) {
+		t.Fatalf("6s frames = %#v, want 121", frames)
+	}
+}
+
+func TestOfficialJimengVideoSendsReqJSONOnQueryOnly(t *testing.T) {
+	adapter := officialPackageAdapter(t, "volcengine-jimeng-video.beeftv-plugin", "volcengine-jimeng-video")
+	request := GenerationRequest{
+		Model: "jimeng_t2v_v30", Prompt: "镜头推进", Duration: 5,
+		ProviderOptions: map[string]map[string]any{"volcengine-jimeng-video": {"req_json": `{"return_url":true}`}},
+	}
+	poll, err := adapter.BuildPoll(context.Background(), PollContext{TaskID: "task-1", Model: "jimeng_t2v_v30", Request: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pollBody := manifestTestBody(t, poll)
+	if pollBody["req_json"] != `{"return_url":true}` || pollBody["task_id"] != "task-1" || pollBody["req_key"] != "jimeng_t2v_v30" {
+		t.Fatalf("query body = %#v", pollBody)
+	}
+	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := manifestTestBody(t, create)["req_json"]; exists {
+		t.Fatalf("req_json belongs to the query request, not create: %#v", manifestTestBody(t, create))
+	}
+	// 未声明 req_json 时查询正文保持官方两字段形状，不发明默认值。
+	withoutOptions, err := adapter.BuildPoll(context.Background(), PollContext{TaskID: "task-1", Model: "jimeng_t2v_v30", Request: GenerationRequest{Model: "jimeng_t2v_v30"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := manifestTestBody(t, withoutOptions)
+	if _, exists := plain["req_json"]; exists {
+		t.Fatalf("query body must not invent req_json: %#v", plain)
+	}
+	if len(plain) != 2 {
+		t.Fatalf("query body = %#v", plain)
+	}
+}
+
+func TestOfficialJimengVideoTreatsCode10000AsSuccess(t *testing.T) {
+	adapter := officialPackageAdapter(t, "volcengine-jimeng-video.beeftv-plugin", "volcengine-jimeng-video")
+	done, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "task-1"}, []byte(`{"code":10000,"data":{"status":"done","video_url":"https://cdn.example/clip.mp4"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusSucceeded || done.Result == nil || len(done.Result.Videos) != 1 || done.Result.Videos[0].URL != "https://cdn.example/clip.mp4" {
+		t.Fatalf("code 10000 result = %#v", done)
+	}
+	accepted, err := adapter.ParseCreate(context.Background(), []byte(`{"code":10000,"data":{"task_id":"task-1"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Status == StatusFailed || accepted.TaskID != "task-1" {
+		t.Fatalf("code 10000 receipt = %#v", accepted)
+	}
+	failed, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "task-1"}, []byte(`{"code":100013,"message":"输入图片中存在不合规内容","data":{"status":"failed"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != StatusFailed || failed.Message == "" {
+		t.Fatalf("business error result = %#v", failed)
+	}
+}
+
+func TestDeclarativeSuccessCodesOnlyApplyToProtocolsThatDeclareThem(t *testing.T) {
+	body := `{"code":10000,"data":{"status":"done","video_url":"https://cdn.example/clip.mp4"}}`
+	base := `{"apiVersion":"beeftv.plugin/v1","id":"success-code-test","version":"1.0.0","name":"Success Code Test","author":"Test","documentation":"# Success Code Test","contributes":{"providers":[{"id":"success-code-test","label":"Success Code Test","capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks"},"response":{"statusPaths":["data.status"],"videos":["data.video_url"],"errorPaths":["code"],"messagePaths":["message"]%s}}]}}`
+	for name, test := range map[string]struct {
+		response string
+		want     Status
+	}{
+		"undeclared":       {response: "", want: StatusFailed},
+		"declared":         {response: `,"successCodes":[10000]`, want: StatusSucceeded},
+		"declared as text": {response: `,"successCodes":["10000"]`, want: StatusSucceeded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			adapter, err := LoadManifest([]byte(fmt.Sprintf(base, test.response)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "task-1"}, []byte(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != test.want {
+				t.Fatalf("status = %q, want %q", result.Status, test.want)
+			}
+		})
 	}
 }
 

@@ -103,6 +103,8 @@ type Service struct {
 	tasksOnce                sync.Once
 	workspaceOps             *operations.Registry
 	workspaceOpsMu           sync.Mutex
+	imageRecoveryActive      atomic.Bool
+	imageRecoveryAfterID     string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
