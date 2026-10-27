@@ -1,6 +1,6 @@
 # 生成任务「取回 / 重新生成 / 扣费」由后台判定：重构方案
 
-状态：方案稿第 4 轮，待架构师评审。只描述设计，不含代码改动。
+状态：第 4 轮原方案已由用户确认（2026-10-27「没问题了 开干吧 Codex 用pi」）。本次仅修订第 3 步及其依赖的扣费事实读取，修订建议与最小实验见第 3.11 节；不表示正式实现完成或获准发布。第 4–7 步保持原范围。
 依据：main `3632485`；PR #263（`tds/conv-01a1766b-…`）、#16 精简版（`tds/conv-01a17704-…`）及其四轮检查记录；Codex 两轮评审；三份调研（见第三节开头）；架构师 #30 报告 `docs/research/paid-permission-and-regenerate.md`（分支 `tds/conv-01a17917-…`，下称〔#30〕）。
 
 **第 4 轮改了什么（用户 2026-10-27 01:05、01:09）：** 「其实我们beefapi很容易知道能不能重新跑 任务是什么状态 但是第三方渠道就不一定 所以我们应该有一个用户确认要重新跑的按钮？」「别又多造状态机了」。据此：
@@ -131,8 +131,10 @@ type Outcome struct {
 
 读取这些字段要注意两点【已核】：
 - **视频要换查询路径。** BeefTV 现在查 BeefAPI 视频走 `GET /v1/videos/{id}`（`generation/video.go` 第 127、261 行，`generation/video_task_query.go` 第 51 行）。BeefAPI 对这个路径走 OpenAI 兼容格式（`relay/relay_task.go` 第 689、702 行 `isOpenAIVideoAPI` → `ConvertToOpenAIVideo`），返回体里**没有** `usage_state`、`reconcile_deadline`。同一个任务用 `GET /v1/video/generations/{id}` 查，走第 732 行起的 `TaskModel2Dto`，才带这几个字段。两条路由都在 `router/video-router.go`，GET 不选渠道、不经提交去重（`middleware/distributor.go` 第 1186–1202 行，`middleware/video_submission.go` 第 77 行只拦 POST），是只读查询。实施时 BeefTV 读扣费结论改用后一个路径，现有下载流程不动。
-- **图片要先拿到 job id，而且只有一部分图片支持。** `billing_state` 只在 `GET /v1/images/jobs/{job_id}` 里返回，而且只对走了「可恢复同步图片」的任务返回（`image_jobs.go` 第 246–248 行要求 `ImageRecovery` 非空）。这类任务目前只有腾讯 VOD 同步图片（`service/sync_image_recovery.go` 第 39–40 行 `IsDurableSyncImage`：`APITypeTencent`、Key 以 `vod|` 开头、非 playground、有 token、无自定义计费）【已核】；其他 BeefAPI 图片（新任务也一样）没有 job id，普通异步图片的 `GetImageJob` 也不带 `billing_state`。job id 由 BeefAPI 在原响应头 `X-Image-Job-Id` / `Location` 里给出，处理中、失败的错误体里也带 `task_id`（同文件第 83–84、352–359 行）。BeefTV 现在没有读这个头（`git grep X-Image-Job-Id` 为空），实施时在图片提交时把它存进现有的 `ImageSubmission`。
-  判定规则对新旧任务一样，只看 BeefAPI 实际给了什么：**有 job id 且返回体里有 `billing_state` 键**，才按上表照读（空值 = 未结算，`blocked`）；**没有 job id，或返回体里没有这个键**，就是「BeefAPI 不提供这类图片的扣费查询」，按 (2) 第三方处理，不能当成「未结算」一直等。视频的 `usage_state` 在 `TaskDto` 里没有 `omitempty`（`dto/task.go` 第 49 行），走 `/v1/video/generations/{id}` 总会返回；读不到（旧网关、接口报错）时同样按 (2) 处理，不当作 `pending`。
+- **图片要先拿到 job id，而且只有一部分图片支持扣费查询。** `billing_state` 只在 `GET /v1/images/jobs/{job_id}` 里返回，而且只对走了「可恢复同步图片」的任务返回（`image_jobs.go` 第 246–248 行要求 `ImageRecovery` 非空）。原方案核实的这类任务是腾讯 VOD 同步图片（`service/sync_image_recovery.go` 的 `IsDurableSyncImage`：`APITypeTencent`、Key 以 `vod|` 开头、非 playground、有 token、无自定义计费）；其他同步图片未必有 job id，普通异步图片即使有 job id，`GetImageJob` 也不带 `billing_state`。job id 由 BeefAPI 在原响应头 `X-Image-Job-Id` / `Location` 里给出，处理中、失败的错误体里也带 `task_id`。第 3 步复核：BeefTV `e08b6bea` 已保存响应头中的身份到 `ApiCallLog.ImageJobID`，并增加手动 job 查询；还没有完成当前轮次扣费事实存储和自动恢复复用，不能继续列作“尚未读取响应头”。
+  判定规则对新旧任务一样，只看 BeefAPI 实际给了什么：**有 job id 且成功查询的返回体里有 `billing_state` 键**，才按上表照读（空值 = 未结算，`blocked`）；**没有 job id，或成功响应没有这个键**，按不提供此类扣费查询处理，不能当成「未结算」一直等。图片可恢复同步任务的查询响应还可能只有 `result_url`，需要再 GET 该结果端点并解析 JSON 图片结果，不能把这个 JSON 端点当作图片地址。
+
+  **第 3 步复核更正：**视频 `TaskDto.usage_state` 没有 `omitempty`，不代表整个接口每个分支都有这个键。BeefAPI `be8f7072` 的 `tryRealtimeFetch → realtimeTaskResponse` 可以提前返回不含扣费字段的响应；原方案引用的 `b9343cb` 已有同一分支。正常 DTO 还包在 `{code,data}` 中。应按实际响应读取，不能只改 URL。成功查询但缺键按未提供事实处理；网络失败不是“字段不存在”，保留同轮已有事实等待下次查询，没有已有事实时保持未知。来源与夹具见[第 3 步复核](../research/generation-task-state-step-3-recheck.md)。
 
 结果不明的 BeefAPI 图片仍按第 3.7 节用同一个 `Idempotency-Key` 经原渠道重发，那是取回，不是重新生成。
 
@@ -154,7 +156,7 @@ type Outcome struct {
 
 对着已有节点的新提交（包括 `/retry`、带 `retryOf` 的提交、提示词面板的「生成」）一律按节点当前任务的 `regenerate` 判，改没改输入都一样：`blocked` 拒绝；`confirm` 必须带用户同意（第 3.4 节），否则不提交；`allowed` 放行。后台守门照旧，因为 2026-10-26 查出提示词面板能绕过前端确认框（#16 第 1 轮 P1）。
 
-输入全部是已持久化的事实：任务 `status/stage`、`routeRun`、最近一次 `RouteAttempt.DispatchState`（只用来判断「请求没发出」和「结果不明能不能同键重发」）、图片创建回执、`ProviderRequestID`、`outputs` 的入库状态、BeefAPI 返回的 `usage_state` / `billing_state` / `reconcile_deadline` 原值（存进任务，新增可空列，只存不改），加一个新列 `recovery_outcome`（第 3.2 节）。计算不读错误文案。
+输入全部是已持久化的事实：任务 `status/stage`、`routeRun`、最近一次 `RouteAttempt.DispatchState`（只用来判断「请求没发出」和「结果不明能不能同键重发」）、图片创建回执、`ProviderRequestID`、`outputs` 的入库状态，以及 BeefAPI 返回的 `usage_state` / `billing_state` / `reconcile_deadline` 原值，加已有的 `recovery_outcome`（第 3.2 节）。扣费事实作为当前任务的一份可空结构保存，包含字段是否存在及所属生成轮次、上游任务身份；不从“这个任务号的最新一条日志”反查授权依据。具体写入与替换规则见第 3.11 节。计算不读错误文案。
 
 这不是第二个状态机：没有新的状态转移，`Outcome` 是对已有事实的只读函数；`resultState` 并入 `phase` 的计算，过渡期两个字段都返回。ComfyUI `/api/jobs/{id}` 也是每次读取时从队列和历史现算状态（〔状态〕3.1、4.1）。
 
@@ -166,7 +168,7 @@ type Outcome struct {
 - 视频 / 超分：`failed` + 有 `ProviderRequestID` → 按退避调 `queryFailedVideoTask`。这是查询请求，不创建上游任务。**截止时间按渠道的结果保留期定**，不再统一 24 小时，见下表。
 - 已有的「成功但未入库」继续走原逻辑。
 
-截止时间改动依据〔状态〕2.4、5.2 第 1 条：各家保留期从 10 分钟到 30 天不等，统一 24 小时对 Replicate 类太长、对可灵太短。做法【推断，〔状态〕】：在每个渠道的协议声明（`internal/protocol/docs/*`、插件 manifest）里写「结果保留期」，退避在保留期内一直进行，过期写 `recovery_outcome = unrecoverable`（上游可能已扣费）。各家数据：
+截止时间改动依据〔状态〕2.4、5.2 第 1 条：渠道返回的结果保存时间不同，不能统一设为 24 小时。第 3 步修订建议：在现有协议声明中区分“结果本身不可取回的期限”和“下载链接失效时间”；只有核实过的前者可用于写 `recovery_outcome = unrecoverable`，后者先重新查询原任务。扫描不能用时间 WHERE 把任务直接过滤掉，必须先处理到期结论；未知期限保持现有退避查询，不凭摘要填一个默认期限。下表是历史调研线索，不是已生效的配置，也不能直接作为各视频渠道的验收合同：
 
 | 渠道 | 保留期 | 来源与核实情况 |
 | --- | --- | --- |
@@ -325,7 +327,9 @@ CREATE TABLE regeneration_consents (
 
 **一次同意只用于一轮**（〔#30〕4.2 节）：唯一键里有 `original_route_run`，同意用掉后记下 `consumed_route_run`；这一轮又失败了，再重跑就是新的一轮，要重新确认，旧同意不能再用。
 
-**每次重跑都有持久回执**（〔#30〕4.2 节）：`/retry` 复用原任务号、只把 `routeRun` +1（`repository/local_runtime.go` 的 `retryTask`），一个可变的任务行存不下多次重跑各自的操作 ID。所以每次付费接纳都写一条 `(用户, operationId) → 请求指纹、调用者、任务 ID、这次的 routeRun`，复用现有 `AgentOpRecord`（`Store.Run`，和业务变更同一事务）的做法，不另建执行引擎。同一 `operationId` 重放只返回这条回执对应的那一轮，不把任务再排一次队；回执不随报价过期或任务清理删掉。`allowed` 的重跑同样要写，不只 `confirm`；因此所有付费提交都必须带稳定 `operationId` 和预期的 `(taskId, routeRun)`，缺了就拒绝（`operation_id_required`，第 3.3 节），不为旧客户端放宽。免费取回不写这条回执，也不要求这两个字段。
+**每次重跑都有持久回执**（〔#30〕4.2 节）：`/retry` 复用原任务号、只把 `routeRun` +1（`repository/local_runtime.go` 的 `retryTask`），一个可变的任务行存不下多次重跑各自的操作 ID。所以每次付费接纳都写一条 `(用户, operationId) → 请求指纹、调用者、任务 ID、这次的 routeRun`，复用现有 `AgentOpRecord`（`Store.Run`，和业务变更同一事务）的做法，不另建执行引擎。同一 `operationId` 重放只返回这条回执对应的那一轮，不把任务再排一次队；回执不随报价过期或任务清理删掉。`allowed` 的重跑同样要写，不只 `confirm`；因此所有付费提交都必须带稳定 `operationId` 和预期的 `(taskId, routeRun)`，缺了就拒绝（`operation_id_required`，第 3.3 节），不为旧客户端放宽。
+
+**第 3 步修订：免费取回不写付费同意记录、不要求这两个字段；但 `/retry` 请求一旦带了 `clientOperationId`，即使选中免费取回，也要保存操作接纳回执。**原文“免费取回不写这条回执”把同意与操作去重混为一件事，与过渡期 `/retry` 的同编号重放约定冲突。接纳回执记录本次选中的动作和生成轮次，不代表已生成或已退款；免费取回和付费重跑都复用 `AgentOpRecord`。独立 `/recover` 仍无须操作编号。
 
 - 不发确认 ID、不设 10 分钟过期、不搞桌面专用鉴权。同意随付费提交一起带上：`consent: { originalTaskId, originalRouteRun, quoteId, operationId }`。
 - 接纳事务里先核对：报价存在、属于本调用者、没过报价有效期；本次请求的内容指纹、前台模型版本、费用、`operationId` 与报价一致；费用没有上涨、计费单位没变。任一不符返回 `paid_confirmation_required` 和新报价，**不提交上游**。
@@ -417,6 +421,68 @@ CREATE TABLE regeneration_consents (
 
 这个分派写在后台一个函数里（按类型选来源），前端不知道这些区别。深度任务里前端自己写 `taskStage: "submission_unknown"` 的两处（`use-canvas-media-tools.ts`）改为由后台根据执行器状态给出。对应 Google AIP-151「各接口不要各自定义长任务接口」（〔状态〕4.1）。
 
+### 3.11 第 3 步专项调整：先固定操作，再执行和投影
+
+本节只交给第 3 步的实现者使用。依据最新 #68 `e08b6bea`、BeefAPI `be8f7072` 和[隔离验证报告](../research/generation-task-state-step-3-recheck.md)，不继续按历次评审清单追加分支。正式代码本次未改。推荐复用现有任务、`AgentOpRecord`、恢复租约和交付器，不增加队列、计费状态机或通用工作流引擎。
+
+**用户行为与 Basis：**
+
+| 保持或澄清的行为 | Basis |
+| --- | --- |
+| 原结果能取回时只取回，不重新生成；暂停下载可恢复 | 用户已批准第 4 轮方案；本次两种暂停状态的真实交付测试通过 |
+| 同编号 `/retry` 始终代表同一次操作，免费分支也返回原接纳结果 | 已批准第 3.3 节“重复提交返回上一次结果”；[Google AIP-155](https://google.aip.dev/155)；本次免费取回重放反例 |
+| 同编号不跨到下一轮；新购买使用新编号 | 已批准第 3.6 节“一次同意只用于一轮”；本次回执丢失 `routeRun` 的反例 |
+| 已退款可重新生成，结算中等待，不提供查询时取不回则确认 | 用户“beefapi很容易知道……第三方渠道就不一定”“别又多造状态机了”；已批准第 3.1 节；上游实际字段 |
+| 临时下载失败不能变成永久取不回；不能只按 GET/POST 判断是否收费 | 已批准第 3.2 节；本次截断下载反例；仓库超分与 RunningHub 原有查询协议 |
+| 使用操作回执、原值快照和下面的职责分工 | 本次架构判断，属于建议；不是额外用户确认、过滤或渠道收费规则 |
+
+**一个操作入口，三个窄职责。**
+
+1. `app.RetryTaskWithOperation` 做兼容请求的唯一编排：读取已有回执；没有回执时加载同轮事实，选“取回”或“重新入队”。`RecoverTask`、自动扫描、人工查上游使用同一个免费恢复入口。把当前 `service.go` 中独立的成功交付、视频查询和图片恢复分支收进该入口；不要在 app 和 task 域各读一遍操作回执、各翻译一遍错误。
+2. repository 只负责短事务：核对读取时的任务轮次、写接纳回执，以及需要的本地更新。付费分支沿用 `withImmediateTransaction` 将 `routeRun+1`、入队、回执放一起；免费分支记录原轮次，暂停下载的解除也在同一事务。网络查询和下载在事务外，复用现有恢复租约。
+3. `task.ComputeOutcome` 是唯一对外结论计算函数。接收原值事实，先判断原结果能否继续取回，再按扣费事实计算 `regenerate`。`RecoveryUnrecoverable` 只改变结果结论，不能覆盖退款或结算中的结论。持有上游 ID 也不等于永远只能取回：已有明确 `no_result/unrecoverable` 时按扣费事实处理，不再盲目重复查询。
+
+**操作回执记录“接纳了什么”，不直接序列化 `model.Task`。**
+
+复用 `AgentOpRecord.ResultJSON`，存最小内部结构：动作（取回或重新入队）、`taskId`、`originalRouteRun`、`acceptedRouteRun`，以及已有的请求指纹。现在 `model.Task.RouteRun` 为 `json:"-"`，直接序列化会丢失轮次，本次实测 `4 → 0`。回执的 `succeeded` 指本地操作已经接纳，不表示上游生成成功。
+
+- 首次带编号的 `/retry` 在网络恢复前就固定选中的动作；“先取回成功再补回执”仍有进程退出的缺口。
+- 同编号回读必须先于任务当前状态、排空和重试资格检查；命中就返回原接纳身份与任务的当前投影，不再执行取回或入队。任务后来进入了另一轮时，不能把当前轮次伪称为原回执轮次，也不能回放旧指令修改新轮次。
+- 返回体保留原 Task JSON 外形，建议附加可选 `retryOperation`（动作、任务号、原轮次、接纳轮次）；`outcome` 始终是任务当前投影，操作身份来自回执。旧前端可忽略新增字段，不需要本步改前端。这样不必伪造上一轮的当前进度，也不丢失原操作所属轮次。
+- 免费接纳后、查询开始前退出：原失败任务仍由既有恢复扫描处理；暂停任务的解除已随接纳事务提交。恢复过程中退出靠已有任务事实和租约继续。记录回执后必须确实留下这条可继续的路径，不能只插一条“已完成”记录。
+- 无编号旧客户端保持第 3 步的原兼容行为；不承诺它跨轮次网络重试的持久去重。编号必填和付费同意守门仍是第 4–5 步，不在本步提前启用。
+- `AgentOpRecord` 不新增执行生命周期；不另建免费同意表。HTTP handler 只解析参数、转一次错误并返回投影。
+
+**扣费事实只保留原查询的事实，不让日志决定下一次购买。**
+
+建议在当前任务增加一份可空 `BillingObservation` 结构（具体数据库列名实施时定），记录字段存在性、`usage_state`、`billing_state`、`reconcile_deadline` 原值与观察时间，以及该响应所属的 `routeRun`、渠道/路由尝试和上游任务号。这是原方案“存进任务”的具体化，不新增 BeefTV 的“已退款/待结算”持久状态。
+
+- 仅正式渠道的明确扣费查询适配器写入该结构；写入时按任务、轮次和该次派发身份条件更新。查询尚未返回时用户已进入新轮次的，旧响应不覆盖新轮次。没有路由尝试的历史任务用其已保存的渠道和原上游 ID；身份不足时不借旧日志推断退款。
+- 新付费接纳在同一事务里清空上一轮观察。日志仍用于诊断和已有结果回执恢复，不能成为第二份扣费判断来源。不必为所有 API 日志增加一套收费授权过滤链。
+- 投影分开读“字段缺失”“字段存在且空”“有确定值”。`usage_state=failed` 与图片 `billing_state=refunded` 分别按协议映射，不用一个跨渠道字符串白名单；`pending` 和图片显式空值不能压成 `ConfirmedUncharged=false` 后再统一当 `confirm`。
+- 图片和视频查询必须使用真实响应夹具：视频 DTO 信封、实时查询缺键，图片 `result.url` 与 `result_url → 结果 JSON`。失败任务也要保存扣费响应，不能因没有媒体结果就提前丢弃结算事实。
+- 结果停止恢复与扣费轮询停止是两件事。已写 `no_result/unrecoverable` 但扣费仍 `pending` 的任务，继续在既有恢复循环读取扣费结论，直到得到上游结论；不能被结果扫描过滤掉。不新建一套计费 worker。
+
+**免费恢复按请求用途分，不按 HTTP 方法分。**
+
+仅调用已有协议的 `poll/query/recover` 构建入口，禁止调用 `create`、任务接纳或 `RetryTask`；允许协议中本就用于查询/取回的 POST。恢复验证记录请求用途、上游 ID、本地任务数和 `routeRun`。取消本次实现自行加入的 GET-only 判断；这不是放开生成 POST。
+
+上述限制约束本步新增的查询/取回执行路径。第 3.7 节已经批准、并在第 2 步实现的原键原字节图片重发保留在其原路径，仍以原渠道的去重协议为前提；本步统一它与其他路径共用的原结果读取、交付与投影，不把该例外推广到所有恢复 POST，也不删除它。
+
+查询成功与媒体下载分开保留进度。取得原上游结果后交给已有交付器；截断响应、磁盘/网络暂时错误只更新重试时间，不写 `no_result/unrecoverable`。上游明确终态、原结果确实过期和暂时无法访问要分别处理。期限未知不等于过期，下载链接过期不等于原结果删除。
+
+**内部实施顺序及完成证明（整体仍属第 3 步）：**
+
+| 顺序 | 可检查的交付 | 停止条件 |
+| --- | --- | --- |
+| 3A | 共用免费入口与操作接纳回执；保留现有付费事务 | 同编号并发、完成后重放、数据库重开后重放、免费接纳后中断均无新生成；回执轮次正确 |
+| 3B | 原查询值持久化到当前轮次，投影读同一份事实 | 六种扣费映射、跨轮次/渠道、过期响应回写、真实两类响应夹具全部通过 |
+| 3C | 查询/下载分别恢复；超分及合法 POST 查询参与扫描；渠道期限形成结论 | 两种暂停恢复、暂时下载失败、明确过期、未知期限、`pending` 后转退款完整回放 |
+
+新增验收必须从公开请求或既有 Service 入口贯穿数据库、假上游和任务读回；纯映射测试只是其中一层。每条记录固定源码提交与期望来源。修复后的代码必须重跑本次夹具，不能拿本次临时补丁的绿灯代替正式实现验收。3A 的本地去重通过，也不证明上游支持同键生成去重。
+
+回退本步时可停止自动扫描，保留 `/recover`、已有操作回执读取和原值字段；恢复旧的“一张任务快照”回放代码会丢轮次，不是可接受的无损回退。当前 #68 已写但没有轮次的旧回执仍只能防止再次入队，不能猜出原轮次；后续实现须报告此类历史回执的读取方式，不得删除它们来允许重跑。
+
 ## 四、迁移：每步单独上线、单独回退
 
 桌面版把前端打包在后端里（`backend/cmd/desktop/frontend.go` 的 `go:embed all:frontend/dist`），同一个安装包里前后端版本一致。但仓库还支持前后端分开部署（`docker-compose.yml` 里 `web` 是单独的镜像），浏览器里也可能还开着升级前加载的旧页面，所以**必须假设新后端会收到旧前端的请求**。还要兼容的是升级前保存的画布文档里的旧字段，以及外部调用方。
@@ -430,7 +496,7 @@ CREATE TABLE regeneration_consents (
 | --- | --- | --- | --- |
 | 1 | 后台：`Outcome` 纯函数 + 表格测试（含「重启后 `running` 不变 `cancelled`」、BeefAPI `usage_state` / `billing_state` 各取值的映射），挂到任务读接口上，只增字段 | 无 | 删字段 |
 | 2 | 后台：取回循环自动恢复图片（第 3.2 节的完整扫描范围，含没有路由记录的历史回执）；`recovery_outcome` 列（新增可空列）；`/retry` 现有的回执重建分支**原样保留**；BeefAPI 图片「提交未确认」按同键、原渠道自动重发（第 3.7 节）；BeefAPI 渠道读取并保存扣费结论（视频改用 `GET /v1/video/generations/{id}`，图片提交时存 `X-Image-Job-Id`，第 3.1 节） | **客户 A 的节点自己好了**：后台重建 → 下载 → 写回画布，旧前端照常显示成片；手动点也还能恢复 | 关掉循环里这一步 |
-| 3 | 后台：`POST /tasks/:id/recover`；视频/超分按渠道保留期自动查上游；`/retry` 加上面的兼容分支、加同一 `clientOperationId` 重放返回原任务 | 视频失败后能自己取回；双击「重新生成」不再报错 | 关闭自动查询，接口保留 |
+| 3 | 后台：按第 3.11 节先统一免费恢复与操作回执，再补当前轮次扣费事实，最后完成视频/超分自动查询及到期结论；同一 `clientOperationId` 包括免费分支都回放原接纳 | 视频失败后能自己取回；带同编号的重复请求返回原接纳结果 | 关闭自动查询，保留接口、回执读取和原值字段 |
 | 4 | 后台：费用预览、同意表、扣费入口守门**先只记日志、不拒绝**。前端只做最小改动：BeefTV 现有的扣费确认框（重新生成、提示词面板、任务中心、批次）点确认后带上 `quoteId` 和同一 `clientOperationId`；所有付费提交（含 `allowed` 重跑和 `ready` 后再生成）都带上 `clientOperationId` 和预期的 `(taskId, routeRun)`；内置助手的方案卡显示费用预览；其余前端保护不动。观察一个版本：日志里每一次「本应拦下」都要能对上前端确实带了同意 | 确认框里多了费用 | 关掉日志；前端多带的字段可以保留，后台不守门时不起作用 |
 | 5 | 后台：守门改成拒绝；`RecoverMediaUpscale` 去掉扣费分支；MCP/CLI 新工具、`paid_confirmation_required` 与外部客户端「允许发起付费生成」开关（第 3.5 节，默认关）同版上线 | 可能重复扣费时，任何入口都要先确认；外部调用方先要用户在 BeefTV 设置里打开开关，再在自己的界面里问 | 见下 |
 | 6 | 前端：所有判断改读 `taskOutcome`；「继续取回」按钮去掉，界面只剩错误卡上的「重新生成」（`confirm` 时先确认）；删掉第 3.8 节列出的推断函数和 `resourceReloadAvailable` | 错误卡、批次子节点、任务中心按钮一致；不再出现节点锁死 | 回退到第 5 步的前端：它会带同意，回退后重新生成照样可用 |

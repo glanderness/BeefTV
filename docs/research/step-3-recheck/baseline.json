@@ -1,0 +1,79 @@
+{
+  "source_commit": "e08b6bea5f35a4ebe48e942cd482805ccacce163",
+  "variant": "baseline",
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "./internal/repository",
+    "-run",
+    "^TestStep3",
+    "-count=1",
+    "-timeout=90s",
+    "-json"
+  ],
+  "exit_code": 1,
+  "tests": {
+    "TestStep3PaidAdmissionConcurrentAndReopen/single_admission_after_reopen": "pass",
+    "TestStep3PaidAdmissionConcurrentAndReopen/receipt_preserves_run": "fail",
+    "TestStep3PaidAdmissionConcurrentAndReopen": "fail",
+    "TestStep3BillingContract/video_failed": "fail",
+    "TestStep3BillingContract/video_pending": "fail",
+    "TestStep3BillingContract/image_empty": "fail",
+    "TestStep3BillingContract/image_absent": "pass",
+    "TestStep3BillingContract/refunded_unrecoverable": "fail",
+    "TestStep3BillingContract/settled_unrecoverable": "pass",
+    "TestStep3BillingContract": "fail",
+    "TestStep3OldBillingMustNotAuthorizeNewRun": "fail",
+    "TestStep3FreeRetryReplayAfterDelivery": "fail",
+    "TestStep3RecoverResumesBothPauseStages/delivery_paused": "pass",
+    "TestStep3RecoverResumesBothPauseStages/delivery_timed_out": "pass",
+    "TestStep3RecoverResumesBothPauseStages": "pass",
+    "TestStep3VideoBillingQueryPath": "fail",
+    "TestStep3DurableImageResultURLContract": "fail",
+    "TestStep3ScanMustNotStrandRecoverableTask": "fail",
+    "TestStep3DownloadFailureMustNotConcludeMissingResult": "fail"
+  },
+  "messages": {
+    "TestStep3PaidAdmissionConcurrentAndReopen/receipt_preserves_run": [
+      "step3_research_test.go:80: 回执丢失生成轮次：storedRun=4 replayedRun=0"
+    ],
+    "TestStep3BillingContract/video_failed": [
+      "step3_research_test.go:46: 持久事实投影={Phase:failed Regenerate:confirm Reason:no_result}，期望 failed/allowed"
+    ],
+    "TestStep3BillingContract/video_pending": [
+      "step3_research_test.go:46: 持久事实投影={Phase:failed Regenerate:confirm Reason:no_result}，期望 failed/blocked"
+    ],
+    "TestStep3BillingContract/image_empty": [
+      "step3_research_test.go:46: 持久事实投影={Phase:failed Regenerate:confirm Reason:no_result}，期望 failed/blocked"
+    ],
+    "TestStep3BillingContract/refunded_unrecoverable": [
+      "step3_research_test.go:46: 持久事实投影={Phase:failed Regenerate:confirm Reason:result_unrecoverable}，期望 failed/allowed"
+    ],
+    "TestStep3OldBillingMustNotAuthorizeNewRun": [
+      "step3_research_test.go:73: 第二轮沿用了第一轮退款：{Phase:failed Regenerate:allowed Reason:no_result}"
+    ],
+    "TestStep3FreeRetryReplayAfterDelivery": [
+      "step3_research_test.go:120: GET=1 create=0 tasks=1 routeRun=3 receipts=0 replayError=only failed or cancelled tasks can be retried",
+      "step3_research_test.go:125: 同编号重放应成功：only failed or cancelled tasks can be retried"
+    ],
+    "TestStep3VideoBillingQueryPath": [
+      "step3_research_test.go:193: 扣费查询实际路径=/v1/videos/original"
+    ],
+    "TestStep3DurableImageResultURLContract": [
+      "step3_research_test.go:202: 真实结果查询响应只有 result_url，当前解析器丢失结果入口；需再 GET 结果 JSON"
+    ],
+    "TestStep3ScanMustNotStrandRecoverableTask": [
+      "step3_research_test.go:225: 已被扫描排除，但仍投影为正在自动取回"
+    ],
+    "TestStep3DownloadFailureMustNotConcludeMissingResult": [
+      "step3_research_test.go:266: queries=1 downloads=4 outcome=unrecoverable error=<nil>",
+      "step3_research_test.go:271: 短暂下载失败变成永久结论：unrecoverable"
+    ]
+  },
+  "packages": {
+    "infinite-canvas/backend/internal/repository": "fail",
+    "infinite-canvas/backend/internal/app": "fail"
+  },
+  "stderr": ""
+}

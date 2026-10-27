@@ -1,0 +1,50 @@
+--- a/backend/internal/app/task_outcome.go
++++ b/backend/internal/app/task_outcome.go
+@@ -36,6 +36,8 @@
+ 		}
+ 		if b, ok := billing[task.ID]; ok && (b.UsageStatePresent || b.BillingStatePresent || b.UsageState != "" || b.BillingState != "") {
+ 			f.ConfirmedUncharged = billingEvidenceConfirmsNoCharge(b.UsageState, b.BillingState)
++			if b.UsageStatePresent { value := b.UsageState; f.UsageState = &value }
++			if b.BillingStatePresent { value := b.BillingState; f.BillingState = &value }
+ 		}
+ 		facts[task.ID] = f
+ 	}
+--- a/backend/internal/task/outcome.go
++++ b/backend/internal/task/outcome.go
+@@ -23,6 +23,8 @@
+ 	ImageResponseAccepted bool
+ 	SafeImageReplay       bool
+ 	ConfirmedUncharged    bool
++	UsageState            *string
++	BillingState          *string
+ }
+ 
+ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Outcome {
+@@ -51,6 +53,18 @@
+ 	if task.Type == model.TaskTypeDepthCapture || facts.ConfirmedUncharged || (!facts.ImageResponseAccepted && task.ProviderRequestID == "" && (facts.DispatchState == "not_sent" || facts.DispatchState == "rejected_no_job" || ((task.Stage == "request_not_sent" || task.Stage == "请求尚未提交") && facts.DispatchState != "accepted" && facts.DispatchState != "submission_unknown"))) {
+ 		regenerate = "allowed"
+ 	}
++	// 研究实验：原值只参与投影，不持久化新的计费状态。
++	if facts.UsageState != nil {
++		switch *facts.UsageState {
++		case "failed": regenerate = "allowed"
++		case "pending": regenerate = "blocked"
++		}
++	} else if facts.BillingState != nil {
++		switch *facts.BillingState {
++		case "refunded": regenerate = "allowed"
++		case "": regenerate = "blocked"
++		}
++	}
+ 	// 只读结构化上游错误码；不从 Error 文案重新推断审核或计费。
+ 	if d := task.FailureDiagnostics; d != nil {
+ 		code := d.ProviderCode
+@@ -61,7 +75,7 @@
+ 	if task.RecoveryOutcome != nil {
+ 		switch *task.RecoveryOutcome {
+ 		case RecoveryUnrecoverable:
+-			return out("failed", "confirm", "result_unrecoverable")
++			return out("failed", regenerate, "result_unrecoverable")
+ 		case RecoveryNoResult:
+ 			return out("failed", regenerate, "no_result")
+ 		}

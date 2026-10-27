@@ -1,0 +1,31 @@
+{
+  "source_commit": "e08b6bea5f35a4ebe48e942cd482805ccacce163",
+  "variant": "billing-probe",
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "./internal/repository",
+    "-run",
+    "^TestStep3BillingContract$",
+    "-count=1",
+    "-timeout=90s",
+    "-json"
+  ],
+  "exit_code": 0,
+  "tests": {
+    "TestStep3BillingContract/video_failed": "pass",
+    "TestStep3BillingContract/video_pending": "pass",
+    "TestStep3BillingContract/image_empty": "pass",
+    "TestStep3BillingContract/image_absent": "pass",
+    "TestStep3BillingContract/refunded_unrecoverable": "pass",
+    "TestStep3BillingContract/settled_unrecoverable": "pass",
+    "TestStep3BillingContract": "pass"
+  },
+  "messages": {},
+  "packages": {
+    "infinite-canvas/backend/internal/repository": "pass",
+    "infinite-canvas/backend/internal/app": "pass"
+  },
+  "stderr": ""
+}
