@@ -1,6 +1,5 @@
 {
   "title": "开发文档",
-  "root": true,
   "defaultOpen": true,
   "pages": [
     "local-development",
@@ -14,6 +13,7 @@
     "seedance-task-constraints",
     "video-model-contracts",
     "video-prompt-limits",
+    "environment-check",
     "desktop-updater",
     "desktop-account",
     "depth-video-runtime"

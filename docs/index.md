@@ -2,6 +2,8 @@
 
 BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只收录公开使用、开发和维护所需的文档。
 
+`content/docs/` 由文档站工程（Fumadocs 静态导出 + Cloudflare Workers）发布，构建、产物和部署步骤见 [README.md](README.md)。线上地址规划为 `https://docs.beeftv.app`，目前尚未部署。
+
 ## 开始使用
 
 - [项目首页与快速开始](../README.md)

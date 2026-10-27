@@ -20,6 +20,7 @@ node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
+const repoRoot = process.cwd();
 const roots = ["README.md", "CONTRIBUTING.md", "SECURITY.md", "AGENTS.md", "docs", "web/src/components/ui/README.md"];
 const files = [];
 
@@ -27,6 +28,10 @@ function collect(entry) {
   if (!fs.existsSync(entry)) return;
   const stat = fs.statSync(entry);
   if (stat.isDirectory()) {
+    // docs/ 下有文档站工程（Next.js）：依赖包的 README 和本地构建产物都不是本仓库的文档
+    const name = path.basename(entry);
+    if (name === "node_modules" || name === ".next" || name === ".source") return;
+    if (path.relative(repoRoot, entry).replace(/\\/g, "/") === "docs/out") return;
     for (const child of fs.readdirSync(entry)) collect(path.join(entry, child));
     return;
   }

@@ -1,0 +1,14 @@
+# 根 .gitignore 已忽略 node_modules/、.next/、out/、*.tsbuildinfo
+# 这里只补文档站自己的生成物，不提交
+
+# Fumadocs 编译产物
+.source/
+
+# Next 生成的路由类型
+next-env.d.ts
+
+# 由 scripts/prepare-content.mjs 从 assets/ 复制生成，源文件只有一份
+public/content-assets/
+
+# Cloudflare 本地调试状态
+.wrangler/

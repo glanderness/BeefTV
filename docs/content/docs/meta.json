@@ -1,0 +1,5 @@
+{
+  "title": "文档",
+  "root": false,
+  "pages": ["index", "overview", "backend", "plugins"]
+}
