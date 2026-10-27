@@ -180,7 +180,7 @@ func (p appReceiptPort) Observe(observation generation.TransportObservation) {
 		Outcome:               observation.Outcome,
 	}
 	recordTaskRequestEvidence(observation.Request, evidence, observation.Body, observation.Err)
-	recordProviderRequest(p.service, observation.Request, observation.StartedAt, observation.StatusCode, observation.Body, observation.Err)
+	recordProviderRequest(p.service, observation.Request, observation.StartedAt, observation.StatusCode, observation.ResponseHeaders, observation.Body, observation.Err)
 }
 
 func (p appReceiptPort) NotifyPoll(ctx context.Context, event string, err error) {

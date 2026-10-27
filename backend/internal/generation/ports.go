@@ -71,6 +71,7 @@ type TransportObservation struct {
 	Request               *http.Request
 	StartedAt             time.Time
 	StatusCode            int
+	ResponseHeaders       http.Header
 	Body                  []byte
 	Err                   error
 	ResponseLimitBytes    int64

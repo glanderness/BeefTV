@@ -153,6 +153,7 @@ func openVideoDownloadResponse(req *http.Request, limit int64) (*http.Response, 
 		return nil, err
 	}
 	observation.StatusCode, observation.HTTPStatus = response.StatusCode, response.StatusCode
+	observation.ResponseHeaders = response.Header.Clone()
 	observation.DeclaredResponseBytes = response.ContentLength
 	observation.RequestID = firstNonEmpty(response.Header.Get("X-Request-Id"), response.Header.Get("Request-Id"))
 	if transport, ok := outbound.OutboundHTTPClient(0).Transport.(*http.Transport); ok {

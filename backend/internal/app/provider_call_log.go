@@ -110,6 +110,8 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 		log.ProviderRequestID = firstNonEmpty(nestedTaskID, log.ProviderRequestID)
 	}
 	log.ProviderStatus = strings.ToLower(firstNonEmpty(stringField(payload, "status"), log.ProviderStatus))
+	log.UsageState = strings.ToLower(firstNonEmpty(stringField(payload, "usage_state"), stringField(payload, "usageState"), log.UsageState))
+	log.BillingState = strings.ToLower(firstNonEmpty(stringField(payload, "billing_state"), stringField(payload, "billingState"), log.BillingState))
 	if log.ProviderStatus == "failed" || log.ProviderStatus == "cancelled" || log.ProviderStatus == "expired" {
 		log.Status = model.ApiCallStatusFailed
 		errorCode, errorMessage := providerFailureDetails(payload)

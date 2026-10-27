@@ -186,6 +186,36 @@ func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 
 var ErrAmbiguousImageCreateReceipts = errors.New("图片包含多条已接受或结果未知的创建回执，不能重新生成")
 
+type ProviderBillingEvidence struct {
+	TaskID       string
+	UsageState   string
+	BillingState string
+}
+
+// TaskProviderBillingEvidence reads only the small billing fields needed by
+// the read-only task outcome projection. It never loads request or response
+// payloads, which may contain large encrypted media snapshots.
+func (r *Repository) TaskProviderBillingEvidence(taskIDs []string) (map[string]ProviderBillingEvidence, error) {
+	facts := make(map[string]ProviderBillingEvidence, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return facts, nil
+	}
+	var rows []ProviderBillingEvidence
+	err := r.db.Model(&model.ApiCallLog{}).
+		Select("api_call_logs.task_id, api_call_logs.usage_state, api_call_logs.billing_state").
+		Joins("JOIN tasks ON tasks.id = api_call_logs.task_id AND tasks.user_id = api_call_logs.user_id").
+		Where("api_call_logs.task_id IN ?", taskIDs).
+		Where(`api_call_logs.id = (SELECT latest.id FROM api_call_logs latest WHERE latest.task_id = api_call_logs.task_id AND latest.user_id = api_call_logs.user_id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1)`).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		facts[row.TaskID] = row
+	}
+	return facts, nil
+}
+
 // Recovery requires one unambiguous create receipt. A later failed/unknown
 // create must never be hidden by selecting an earlier successful response.
 func (r *Repository) ImageCreateReceipt(userID, taskID string) (*model.ApiCallLog, error) {

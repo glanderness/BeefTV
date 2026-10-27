@@ -182,7 +182,7 @@ func mediaBytes(media providerMedia) ([]byte, string, error) {
 	return generation.MediaBytes(media)
 }
 
-func recordProviderRequest(service *Service, req *http.Request, startedAt time.Time, statusCode int, responseBody []byte, requestErr error) {
+func recordProviderRequest(service *Service, req *http.Request, startedAt time.Time, statusCode int, responseHeaders http.Header, responseBody []byte, requestErr error) {
 	if req == nil || service == nil {
 		return
 	}
@@ -216,7 +216,7 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 		APIFormat:   apiFormat, Method: req.Method, Path: req.URL.Path, Model: call.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
 		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: call.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
-		ProviderRequestID: call.ProviderRequestID, RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
+		ProviderRequestID: call.ProviderRequestID, ImageJobID: responseHeaders.Get("X-Image-Job-Id"), RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
 	}
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {
 		callLog.ErrorCode = code

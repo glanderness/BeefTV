@@ -115,11 +115,7 @@ func (s *Service) RecoverMediaUpscale(ctx context.Context, user, id string) (*mo
 		return taskForOutput(*task), nil
 	}
 	if task.ProviderRequestID == "" {
-		attempt, err := s.repo.LatestRouteAttempt(task.ID)
-		if err != nil || (attempt.DispatchState != "not_sent" && attempt.DispatchState != "rejected_no_job") {
-			return nil, BadAuthRequest("原超分提交状态尚未确认，请保留任务记录并联系支持查询，暂勿重复提交")
-		}
-		return s.RetryTask(user, id)
+		return nil, BadAuthRequest("原超分任务没有可查询的上游任务 ID，请保留任务记录并联系支持查询")
 	}
 	result, err := s.QueryFailedVideoTask(ctx, user, id)
 	if err != nil {
