@@ -189,15 +189,44 @@ test("delayed real audio holds the clock at its cue while muted video still play
     } finally { delayVoice = false; releaseVoice?.(); await page.close(); }
 }, 45_000);
 
-test("a failed audio load exits buffering and pauses every player", async () => {
+test("a failed audio load exits buffering, skips that clip and keeps the rest playing", async () => {
     const page = await browser.newPage();
     try {
         await page.route("**/voice.wav", route => route.fulfill({ status: 404, body: "fixture missing audio" }));
         await page.goto(server.url.href);
         await page.getByRole("button", { name: "Play", exact: true }).click();
         await page.getByRole("alert").waitFor();
-        expect((await snapshot(page)).playing).toBe(false);
-        expect((await snapshot(page)).audio.every((audio: any) => audio.paused)).toBe(true);
+        // 报障场景：单个素材缺失不再停掉整条时间线，用户仍能看到画面并听到其它音轨，
+        // 提示点名失败的片段，而不是让人「重新打开剪辑」（重开也修不好素材本身）。
+        expect(await page.getByRole("alert").innerText()).toContain("voice");
+        await page.waitForFunction(() => (window as any).timelinePlaybackFixture.snapshot().playhead > 1400);
+        const state = await snapshot(page);
+        expect(state.playing).toBe(true);
+        expect(state.audio[0].paused).toBe(true);
+        expect(state.audio[1].paused).toBe(false);
+        const video = await page.locator("[data-playback-video]").evaluate((element: HTMLVideoElement) => ({ paused: element.paused, currentTime: element.currentTime }));
+        expect(video.paused).toBe(false);
+        expect(video.currentTime).toBeGreaterThan(1.4);
+    } finally { await page.close(); }
+}, 45_000);
+
+test("a missing video source skips the picture, keeps the clock and audio running", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.route("**/video.mp4", route => route.fulfill({ status: 404, body: "fixture missing video" }));
+        await page.goto(server.url.href);
+        await page.waitForFunction(() => Boolean((window as any).timelinePlaybackFixture));
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.getByRole("alert").waitFor();
+        expect(await page.getByRole("alert").innerText()).toContain("视频");
+        // 视频素材缺失也不能让时钟卡在缓冲：音轨继续走，时间线不会假死。
+        await page.waitForFunction(() => (window as any).timelinePlaybackFixture.snapshot().playhead > 1400);
+        const state = await snapshot(page);
+        expect(state.playing).toBe(true);
+        expect(state.audio[0].paused).toBe(false);
+        const video = await page.locator("[data-playback-video]").evaluate((element: HTMLVideoElement) => ({ paused: element.paused, error: element.error?.code || null }));
+        expect(video.paused).toBe(true);
+        expect(video.error).toBe(4);
     } finally { await page.close(); }
 }, 45_000);
 
@@ -220,7 +249,8 @@ test("a muted track failing after playback starts does not stop other media", as
         expect((await snapshot(page)).error).toBe("");
         await page.evaluate(() => { (window as any).timelinePlaybackFixture.seek(1000); (window as any).timelinePlaybackFixture.mute(false); });
         await page.getByRole("alert").waitFor();
-        expect((await snapshot(page)).playing).toBe(false);
+        expect(await page.getByRole("alert").innerText()).toContain("voice");
+        expect((await snapshot(page)).playing).toBe(true);
     } finally { releaseFailure?.(); await page.close(); }
 }, 45_000);
 
