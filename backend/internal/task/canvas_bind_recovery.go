@@ -17,11 +17,15 @@ type CanvasBindRecovery struct {
 }
 
 type CanvasBindRecoveryTarget struct {
-	NodeID      string `json:"nodeId"`
-	OutputIndex int    `json:"outputIndex"`
-	Reason      string `json:"reason"`
-	NodePresent bool   `json:"nodePresent"`
-	NodeTaskID  string `json:"nodeTaskId,omitempty"`
+	NodeID                string `json:"nodeId"`
+	OutputIndex           int    `json:"outputIndex"`
+	Reason                string `json:"reason"`
+	NodePresent           bool   `json:"nodePresent"`
+	NodeTaskID            string `json:"nodeTaskId,omitempty"`
+	NodeType              string `json:"nodeType,omitempty"`
+	NodeClientOperationID string `json:"nodeClientOperationId,omitempty"`
+	NodeStatus            string `json:"nodeStatus,omitempty"`
+	NodeHasMedia          bool   `json:"nodeHasMedia"`
 }
 
 // DecodeCanvasBindRecovery accepts only the marker written by this package.
@@ -32,14 +36,14 @@ func DecodeCanvasBindRecovery(raw *string) (CanvasBindRecovery, bool) {
 		return CanvasBindRecovery{}, false
 	}
 	var state CanvasBindRecovery
-	if json.Unmarshal([]byte(strings.TrimPrefix(*raw, canvasBindRecoveryPrefix)), &state) != nil || state.Version != 1 {
+	if json.Unmarshal([]byte(strings.TrimPrefix(*raw, canvasBindRecoveryPrefix)), &state) != nil || state.Version != 2 {
 		return CanvasBindRecovery{}, false
 	}
 	return state, true
 }
 
 func EncodeCanvasBindRecovery(state CanvasBindRecovery) (*string, error) {
-	state.Version = 1
+	state.Version = 2
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, err
