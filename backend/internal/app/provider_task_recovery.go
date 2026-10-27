@@ -13,6 +13,7 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 const providerTaskRecoveryLeaseDuration = 10 * time.Minute
@@ -101,6 +102,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
 	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
 	if !declarative && !beefVideo && !workflowVideo && !legacyVideo && !upscale {
+		if automaticGetOnlyRecovery(ctx) {
+			return s.concludeAutomaticProviderRecovery(task, "", localtask.RecoveryUnrecoverable, "unsupported_protocol", "")
+		}
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
@@ -166,6 +170,11 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	}
 	if err != nil {
 		_ = s.log(task.UserID, task.ID, "error", "人工查询上游视频任务失败", err.Error())
+		if automaticGetOnlyRecovery(ctx) {
+			if outcome := automaticProviderRecoveryOutcome(ctx, providerStatus, err); outcome != "" {
+				return s.concludeAutomaticProviderRecovery(task, owner, outcome, providerStatus, "")
+			}
+		}
 		return nil, err
 	}
 	if result == nil {
@@ -202,6 +211,41 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	projected := s.attachRecoveredProviderTask(task)
 	_ = s.log(task.UserID, task.ID, "info", "人工查询确认生成成功，任务已恢复并登记项目产物", providerStatus)
 	return &ProviderTaskQueryResult{Task: projected, ProviderStatus: providerStatus, Recovered: true}, nil
+}
+
+func (s *Service) concludeAutomaticProviderRecovery(task *model.Task, owner, outcome, providerStatus, pollStage string) (*ProviderTaskQueryResult, error) {
+	if task == nil {
+		return nil, BadAuthRequest("任务不存在")
+	}
+	if strings.TrimSpace(pollStage) == "" {
+		pollStage = strings.ToLower(strings.TrimSpace(providerStatus))
+	}
+	if err := s.repo.SetTaskProviderRecoveryOutcome(task.ID, owner, outcome, pollStage); err != nil {
+		return nil, err
+	}
+	conclusion := outcome
+	task.RecoveryOutcome = &conclusion
+	task.PollStage = pollStage
+	task.NextPollAt = nil
+	return &ProviderTaskQueryResult{Task: taskForOutput(*task), ProviderStatus: providerStatus, Recovered: false}, nil
+}
+
+func automaticProviderRecoveryOutcome(ctx context.Context, providerStatus string, err error) string {
+	if err == nil || ctx.Err() != nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(providerStatus)) {
+	case "failed", "cancelled", "canceled", "expired", "rejected", "denied", "error":
+		return localtask.RecoveryNoResult
+	}
+	// Keep transport and service-unavailable failures retryable, but do not
+	// poll forever when the original task is gone or the query is permanently
+	// rejected by the provider.
+	retry, notFound := generation.RetryableVideoPollError(ctx, err)
+	if retry && !notFound {
+		return ""
+	}
+	return localtask.RecoveryUnrecoverable
 }
 
 // Query-only: never route recovery through create, even when the original

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
@@ -209,9 +210,16 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 	if req.Header.Get("x-goog-api-key") != "" {
 		apiFormat = "gemini"
 	}
+	source := "backend-task"
+	if call.Capability == "image" || call.Capability == "video" {
+		origin := req.URL.Scheme + "://" + req.URL.Host
+		if beefapi.IsManagedChannel(call.ChannelID, "", origin) || generation.IsBeefAPIHost(req.URL.Hostname()) {
+			source = "beefapi"
+		}
+	}
 	callLog := model.ApiCallLog{
 		UserID: call.UserID, TraceID: call.TraceID, RequestID: call.RequestID, ChannelID: call.ChannelID, TaskID: call.TaskID,
-		Source: "backend-task", Capability: call.Capability, Operation: call.Operation,
+		Source: source, Capability: call.Capability, Operation: call.Operation,
 		RequestKind: requestKind,
 		APIFormat:   apiFormat, Method: req.Method, Path: req.URL.Path, Model: call.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),

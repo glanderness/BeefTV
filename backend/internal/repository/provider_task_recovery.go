@@ -6,6 +6,27 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+// SetTaskProviderRecoveryOutcome records a terminal recovery decision while
+// preserving the task lease owner check.
+func (r *Repository) SetTaskProviderRecoveryOutcome(id, owner, outcome, pollStage string) error {
+	updates := map[string]any{
+		"recovery_outcome": outcome,
+		"poll_stage":       pollStage,
+		"next_poll_at":     nil,
+		"updated_at":       time.Now(),
+	}
+	query := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+		Where("id = ? AND status = ?", id, model.TaskStatusFailed)
+	result := query.Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskStateConflict
+	}
+	return nil
+}
+
 // FailedVideoTasksForRecovery returns recent failed tasks that still retain an
 // accepted provider task identity. It only selects task metadata; the recovery
 // path loads the encrypted input for the one task it is about to query.
@@ -20,7 +41,7 @@ func (r *Repository) FailedVideoTasksForRecovery(afterID string, limit int) ([]m
 		Where("tasks.provider_request_id <> ''").
 		Where("(tasks.recovery_outcome IS NULL OR tasks.recovery_outcome = '')").
 		Where("(tasks.next_poll_at IS NULL OR tasks.next_poll_at <= ?)", now).
-		Where("(tasks.started_at IS NULL OR tasks.started_at >= ?)", now.Add(-24*time.Hour)).
+		Where("COALESCE(tasks.started_at, tasks.created_at) >= ?", now.Add(-24*time.Hour)).
 		Where("(tasks.type LIKE ? OR tasks.type LIKE ? OR tasks.operation = ?)", "canvas_video%", "video_%", "media.upscale.topaz").
 		Order("tasks.id ASC").Limit(limit)
 	var tasks []model.Task

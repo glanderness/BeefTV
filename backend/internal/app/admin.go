@@ -343,11 +343,18 @@ func (s *Service) mergeVideoAPICallLog(log model.ApiCallLog) (bool, error) {
 	if log.ProviderStatus != "" {
 		root.ProviderStatus = log.ProviderStatus
 	}
-	if log.UsageState != "" {
-		root.UsageState = log.UsageState
-	}
-	if log.BillingState != "" {
-		root.BillingState = log.BillingState
+	// Only logs explicitly classified as formal BeefAPI traffic may update
+	// billing evidence.  A third-party channel can use the same field names,
+	// but it must not influence the managed-channel retry decision.
+	if log.Source == "beefapi" {
+		if log.UsageStatePresent || log.UsageState != "" {
+			root.UsageState = log.UsageState
+			root.UsageStatePresent = true
+		}
+		if log.BillingStatePresent || log.BillingState != "" {
+			root.BillingState = log.BillingState
+			root.BillingStatePresent = true
+		}
 	}
 	if log.ImageJobID != "" {
 		root.ImageJobID = log.ImageJobID

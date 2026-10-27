@@ -207,7 +207,10 @@ func (r *Repository) TaskProviderBillingEvidence(taskIDs []string) (map[string]P
 		Select("api_call_logs.task_id, api_call_logs.usage_state, api_call_logs.billing_state, api_call_logs.usage_state_present, api_call_logs.billing_state_present").
 		Joins("JOIN tasks ON tasks.id = api_call_logs.task_id AND tasks.user_id = api_call_logs.user_id").
 		Where("api_call_logs.task_id IN ?", taskIDs).
-		Where(`api_call_logs.id = (SELECT latest.id FROM api_call_logs latest WHERE latest.task_id = api_call_logs.task_id AND latest.user_id = api_call_logs.user_id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1)`).
+		// Billing fields are authorization evidence only when emitted by the
+		// formal BeefAPI channel. Third-party logs may use identical JSON keys.
+		Where("api_call_logs.source = ?", "beefapi").
+		Where(`api_call_logs.id = (SELECT latest.id FROM api_call_logs latest WHERE latest.task_id = api_call_logs.task_id AND latest.user_id = api_call_logs.user_id AND latest.source = ? ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1)`, "beefapi").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err
