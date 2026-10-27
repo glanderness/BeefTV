@@ -17,7 +17,7 @@ description: 不经助手直接批量调用本地工作区的随包 CLI：连接
 | Windows | `BeefTV.exe` 同级的 `cli\beeftv.exe` |
 | Linux | `BeefTV-linux/cli/beeftv`（deb 安装后 `/usr/bin/beeftv` 指向它） |
 
-BeefTV 设置里的外部工具页会给出当前安装的绝对路径和接入命令，以那里显示的为准。macOS 也可以直接接到 PATH：
+侧栏的「BeefTV MCP」页底部有「命令行工具」，点「复制安装命令」拿到的就是接到 PATH 的命令；页面上的连接配置里也会带上随包 CLI 的绝对路径，以那里显示的为准。macOS 也可以直接接到 PATH：
 
 ```bash
 ln -sf '/Applications/BeefTV.app/Contents/MacOS/cli/beeftv' /usr/local/bin/beeftv
@@ -54,16 +54,21 @@ beeftv: runtime_not_found: 未发现运行中的 BeefTV 工作区。请先打开
 export BEEFTV_BASE_URL=http://127.0.0.1:8080/api
 ```
 
-## 3. 凭据：登记一个客户端
+## 3. 凭据：生成一份连接配置
 
-在 BeefTV 的外部工具页新建客户端，会得到 `BEEFTV_CLIENT_ID` 与 `BEEFTV_CLIENT_TOKEN`。token 只在生成时出现一次，服务端只保存哈希，之后取不回来。把它填进环境变量即可，不需要桌面令牌：
+凭据在侧栏的「BeefTV MCP」页生成：选一个工具（Codex、Claude Code、Claude Desktop、Cursor、其他 MCP 客户端），点「连接」→「生成连接配置」。生成的内容是一段可直接粘贴的接入命令或 MCP 配置，里面已经包含三个变量：
 
 ```bash
+export BEEFTV_DATA_DIR=<工作区数据目录>
 export BEEFTV_CLIENT_ID=client-xxxxxxxxxxxxxxxx
-export BEEFTV_CLIENT_TOKEN=<创建时给出的 token>
+export BEEFTV_CLIENT_TOKEN=<连接配置里给出的 token>
 ```
 
-模式分两种：`read-write` 可读写；`read-only` 只能读，任何写操作都会被拒绝，`ops` 也只列只读操作。历史只读凭据继续保持只读。
+把这三项从那段配置里抽出来放进 shell 就行。token 只显示这一次（服务端只保存哈希，之后取不回来），关掉面板就要重新生成；界面上不会单独展示 token。
+
+**不需要启动 MCP**：这三个变量对 `beeftv` 的子命令同样有效，纯脚本批量跑不会拉起任何 MCP 服务。
+
+模式分两种：新连接默认「全部创作工具」（`read-write`，可读写）；`read-only` 只能读，任何写操作都会被拒绝，`ops` 也只列只读操作。界面不提供只读选项，只读是历史连接的模式，也可以用 `beeftv client register --mode read-only` 显式登记（需要 owner 凭据）。
 
 ```bash
 # 登记需要 owner 凭据；外部客户端凭据不能登记或吊销客户端
@@ -151,9 +156,21 @@ beeftv canvas edge create --canvas "$CANVAS" --from "$IMG_NODE" --to "$VIDEO_NOD
   --expected-revision "$rev" --op-id batch-shot1-edge
 ```
 
-复用同一个 `--op-id` 时，回执里 `replayed` 为 `true`，`revision` 不再变化。缺幂等键会被拒绝，退出码 8：
+复用同一个 `--op-id` 时，回执里 `replayed` 为 `true`，`revision` 不再变化。反过来，同一个 `--op-id` 不能换内容重发：只要参数（含 `expectedRevision`）变了，服务端就按「同一操作 ID 换了请求内容」拒绝，退出码 4：
 
 ```text
+beeftv: operation_id_reused_with_different_payload: 同一操作 ID 已用于不同的请求内容；请换用新的操作 ID
+```
+
+所以重试要用**原来那次请求**（同一个 `opId`、同一个 `expectedRevision`）；要按新的 revision 重做，就得换一个新的操作 ID。
+
+缺幂等键也会被拒绝，但两条路径的退出码不同：`canvas` 子命令在 CLI 参数检查阶段就结束，退出码 2；`ops call` 到服务端才被拒，退出码 8。
+
+```text
+# beeftv canvas nodes create / node update / edge create 缺 --op-id
+beeftv: missing_flag: --canvas/--op-id/--expected-revision/--node 必填
+
+# beeftv ops call 缺幂等键
 beeftv: missing_op_id: 写操作必须提供 opId 作为幂等键
 ```
 
@@ -173,36 +190,60 @@ beeftv ops call canvas.script.rows.append --operation-id batch-rows-1 \
 
 ### 6.4 用 shell 循环批量跑，并把进度落盘
 
-把要处理的清单放进一个文件，每轮重新读 `revision`；成功就把 `opId` 与产物 ID 追加到 JSONL，失败只写 stderr。中断后可以按 JSONL 跳过已完成项：
+把要处理的清单放进一个文件。脚本要满足三点：同一批次用同一个批次标识（决定幂等键）、已完成项要跳过、任何失败都要让脚本以非 0 退出。计划里首次发送用的 `expectedRevision` 必须记下来复用，否则重试会因为换了请求内容被拒：
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 CANVAS=<canvasId>
-: > created.jsonl
+# 新批次换一个新值；续跑时传入与上次相同的值，才能复用同一个幂等键
+BATCH=${BATCH:-batch-$(date +%Y%m%d-%H%M%S)}
+PLAN="plan-$BATCH.jsonl"   # 已发送过的原请求：opId 与当时的 expectedRevision
+DONE="done-$BATCH.jsonl"   # 已成功的项
+touch "$PLAN" "$DONE"
+failed=0
+
+# 重试必须复用首次的原 revision，否则服务端按「同一操作 ID 换内容」拒绝
+planned_revision() {
+  grep -o "{\"opId\":\"$1\"[^}]*}" "$PLAN" 2>/dev/null | sed -n 's/.*"expectedRevision":\([0-9]*\).*/\1/p' | head -1 || true
+}
+
 i=0
 while IFS= read -r prompt; do
   [ -z "$prompt" ] && continue
   i=$((i + 1))
-  rev=$(beeftv canvas get --canvas "$CANVAS" --json \
-    | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["canvas"]["revision"])')
-  opid="batch-shots-$i"
+  opid="$BATCH-$i"
+  if grep -q "{\"opId\":\"$opid\"" "$DONE"; then continue; fi
+  rev=$(planned_revision "$opid")
+  if [ -z "$rev" ]; then
+    rev=$(beeftv canvas get --canvas "$CANVAS" --json | jq -r '.result.canvas.revision')
+    printf '{"opId":"%s","expectedRevision":%s}\n' "$opid" "$rev" >> "$PLAN"
+  fi
   if beeftv canvas nodes create --canvas "$CANVAS" --expected-revision "$rev" \
        --node "镜头$i:image:$prompt" --op-id "$opid" --json > last.json 2> last.err; then
-    python3 -c "import json;d=json.load(open('last.json'));n=d['result']['created'][0];print(json.dumps({'opId':'$opid','nodeId':n['id'],'title':n['title']},ensure_ascii=False))" >> created.jsonl
+    python3 -c "import json;d=json.load(open('last.json'));n=d['result']['created'][0];print(json.dumps({'opId':'$opid','nodeId':n['id'],'title':n['title']},ensure_ascii=False,separators=(',',':')))" >> "$DONE"
   else
     echo "失败：$opid $(cat last.err)" >&2
+    failed=$((failed + 1))
   fi
 done < shots.txt
+
+[ "$failed" -eq 0 ] || { echo "本次有 $failed 个镜头写入失败" >&2; exit 1; }
 ```
 
-跑完 `created.jsonl` 每行一条：
+跑完 `done-$BATCH.jsonl` 每行一条：
 
 ```json
-{"opId": "batch-shots-1", "nodeId": "node-dmf89ek3zuug-8f9f401621", "title": "镜头1"}
+{"opId":"fb2-batch-1-1","nodeId":"node-dmf8m0pus7c8-b384577949","title":"镜头1"}
 ```
 
-示例用 POSIX shell 写成，`bash` 和 `zsh` 都能直接跑；在 Windows 的 PowerShell 里需要自己改写循环，命令本身不变。
+几个要点：
+
+- **续跑用同一个 `BATCH`**：`BATCH=fb2-batch-1 ./batch.sh` 再跑一次，已完成的三项直接跳过，不会重复创建，也不会改动画布。
+- **结果未知时按原请求重试**：删掉某一条成功记录再跑，脚本会用 `PLAN` 里记的 `expectedRevision` 和同一个 `opId` 重发，服务端回放原回执（`replayed: true`），节点不会多出来。
+- **失败必须让脚本非 0 退出**：写入失败被 `if` 捕获，`set -e` 不会介入，所以脚本自己数失败项并在最后 `exit 1`；否则全部写入失败时脚本仍退出 0，调用方会误判成批处理成功。
+- **`stale_revision` 不能靠改 payload 绕过**：某项因为画布已被改动而失败时，它不会自动变成功；要么保留失败状态人工处理，要么换一个新的 `BATCH` 重新计划这一项（新 `opId`），不要拿旧 `opId` 配新 `revision`。
+- 示例用 POSIX shell 写成，`bash` 和 `zsh` 都能直接跑；在 Windows 的 PowerShell 里需要自己改写循环，命令本身不变。
 
 一次调用可以传多个 `--node`（单次最多 8 个），比逐个调用快；但整批要么全成功要么整批拒绝，所以批量失败时要整批重来。`ops call` 一次也只处理一个操作。
 
@@ -277,7 +318,7 @@ beeftv: diagnostics_bundle_invalid: 诊断包损坏或格式不受支持，需�
 
 - **付费批量生成与成片重跑示例**：等外部客户端付费许可、报价确认和持久操作回执的合同落地后再补。`canvas.generation.submit` 已经存在，但计费与审批口径未定，所以本页不给示例，也不把原始写入口包装成「安全自动重跑」。
 - **没有 `--yes`、费用上限参数或 dry-run**。需要「先预览再执行」时，只能由脚本自己用只读命令实现。
-- **CLI 侧的粗糙处**（本页如实记录，未改代码）：`ops call` 的 `--params` 不是合法 JSON 时按内部错误退出（1），不是用法错误（2）；`business call` 传未知 `--tool` 也退出 1；`business discover` 的读写标注按 HTTP 方法推断，`POST /assets/batch`（按 ID 批量读素材）被标成写；项目、资源、分镜行、时间线等没有专门子命令，只能拼 `ops call` 或 `business call` 的 JSON。
+- **CLI 侧的粗糙处**（本页如实记录，未改代码）：`ops call` 的 `--params` 不是合法 JSON 时按内部错误退出（1），不是用法错误（2）；`business call` 传未知 `--tool` 也退出 1；`business discover` 的读写标注按 HTTP 方法推断，`POST /assets/batch`（按 ID 批量读素材）被标成写；项目、资源、分镜行、时间线等没有专门子命令，只能拼 `ops call` 或 `business call` 的 JSON；`beeftv --help` 里写的「在 BeefTV 的设置里新建一个客户端」与实际入口（侧栏「BeefTV MCP」页）不一致，以本页第 3 节为准。
 
 ## 本页命令的核对方式
 

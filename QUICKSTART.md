@@ -52,7 +52,7 @@ BEEFTV_GO_DIR=/path/to/go ./scripts/verify-beeftv-local-release.sh
 
 安装包自带 `beeftv` 命令行工具，可以直接用 shell 脚本批量读取和整理画布、素材与任务，不需要经过助手，也不需要启动 MCP 服务。macOS 的路径是 `/Applications/BeefTV.app/Contents/MacOS/cli/beeftv`，Windows 是 `BeefTV.exe` 同级的 `cli\beeftv.exe`。
 
-在 BeefTV 的外部工具页新建一个客户端拿到凭据后，把它填进 `BEEFTV_CLIENT_ID` 与 `BEEFTV_CLIENT_TOKEN` 即可；只读凭据只能读。完整用法见 [beeftv 命令行基础使用](docs/content/docs/backend/beeftv-cli.mdx)。
+在侧栏的「BeefTV MCP」页选一个工具并「生成连接配置」，配置里已经包含 `BEEFTV_DATA_DIR`、`BEEFTV_CLIENT_ID` 与 `BEEFTV_CLIENT_TOKEN`，把它们抽出来放进环境变量即可；只读凭据只能读。纯命令行批量跑不需要启动 MCP。完整用法见 [beeftv 命令行基础使用](docs/content/docs/backend/beeftv-cli.mdx)。
 
 ## 数据位置与备份
 
