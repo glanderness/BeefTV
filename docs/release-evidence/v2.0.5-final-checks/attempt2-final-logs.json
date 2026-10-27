@@ -1,0 +1,20 @@
+[
+  {
+    "file": "darwin-arm64-attempt2-job.txt",
+    "jobId": "122410274315",
+    "bytes": 98475,
+    "sha256": "b01c13b14094d67b0383caead6cc80e17d032d2407c00d877d336cc068a25326"
+  },
+  {
+    "file": "publish-attempt2-job.txt",
+    "jobId": "122418636947",
+    "bytes": 47044,
+    "sha256": "ae5a2a4f980729eef3970c3c3274479d45c9aaa71cf9a0ed67934def4a1f8369"
+  },
+  {
+    "file": "mirror-attempt2-job.txt",
+    "jobId": "122423009991",
+    "bytes": 10581,
+    "sha256": "b838c95645b2e194e2667886f0888d364a0bd27a861a7d3c938482135118c421"
+  }
+]

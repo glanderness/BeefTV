@@ -1,0 +1,53 @@
+{
+  "checkedAt": "2026-10-27T20:19:35.256000+00:00",
+  "feedPlatformsMatchGitHub": 4,
+  "mirrorRecordMatchesGitHub": 4,
+  "websiteMirrorEntriesMatch": 4,
+  "cnbAnonymousRange": [
+    {
+      "platform": "darwin-arm64",
+      "name": "BeefTV-v2.0.5-darwin-arm64.dmg",
+      "url": "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.0.5/BeefTV-v2.0.5-darwin-arm64.dmg",
+      "httpStatus": 206,
+      "contentRange": "bytes 0-1023/166177647",
+      "first1024SHA256": "b1e00024f4f6c4038dc996e14d0625b1c28e9bfa50171da983d21051968d3ea4",
+      "expectedSize": 166177647,
+      "rangeSupported": true,
+      "matchesOfficialFirst1024": true
+    },
+    {
+      "platform": "darwin-amd64",
+      "name": "BeefTV-v2.0.5-darwin-amd64.dmg",
+      "url": "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.0.5/BeefTV-v2.0.5-darwin-amd64.dmg",
+      "httpStatus": 206,
+      "contentRange": "bytes 0-1023/172849561",
+      "first1024SHA256": "5c32e04d4772d3e8f8045393e0c4ec2d16fe29e65caf492fd27592d674c10e8c",
+      "expectedSize": 172849561,
+      "rangeSupported": true,
+      "matchesOfficialFirst1024": true
+    },
+    {
+      "platform": "windows-amd64",
+      "name": "BeefTV-v2.0.5-windows-amd64-setup.exe",
+      "url": "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.0.5/BeefTV-v2.0.5-windows-amd64-setup.exe",
+      "httpStatus": 206,
+      "contentRange": "bytes 0-1023/195351838",
+      "first1024SHA256": "68d6a70e4b8559a099fb14740aa7a85c7d5ccdb5f0ff7b74bf21f5091785ebb1",
+      "expectedSize": 195351838,
+      "rangeSupported": true,
+      "matchesOfficialFirst1024": true
+    },
+    {
+      "platform": "linux-amd64",
+      "name": "BeefTV-v2.0.5-linux-amd64.deb",
+      "url": "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.0.5/BeefTV-v2.0.5-linux-amd64.deb",
+      "httpStatus": 206,
+      "contentRange": "bytes 0-1023/114973954",
+      "first1024SHA256": "581e9f3bfad96a78880efe7b35d9e8b28f3b0a62dbaf5e632ee3214582c05358",
+      "expectedSize": 114973954,
+      "rangeSupported": true,
+      "matchesOfficialFirst1024": true
+    }
+  ],
+  "note": "CNB 完整大小/哈希与匿名续传证据来自本版成功镜像作业及其公开记录；本机另做四个匿名 Range 读取，不将片段检查冒称完整下载。"
+}

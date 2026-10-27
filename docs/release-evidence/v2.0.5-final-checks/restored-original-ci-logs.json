@@ -1,0 +1,23 @@
+[
+  {
+    "file": "quality-ci.log",
+    "run": "40544546612",
+    "bytes": 1662822,
+    "sha256": "1b54deeeff8511c6c167717f50a138ada52d86dfb4664ed68b5a3f185c0b1038",
+    "method": "gh run view --log，从原始 GitHub 运行导出完整日志；非旧本地丢失日志。"
+  },
+  {
+    "file": "linux-ci.log",
+    "run": "40544546660",
+    "bytes": 223274,
+    "sha256": "acf5daa297a130aa90e1ddac0cc9dd1b095107397b3b364b997a86c06536d3b2",
+    "method": "gh run view --log，从原始 GitHub 运行导出完整日志；非旧本地丢失日志。"
+  },
+  {
+    "file": "director-ci.log",
+    "run": "40544546692",
+    "bytes": 39384,
+    "sha256": "7fddcf5299037c7713f4021e0ff81ef67c8c306edaf34c4bf4dc789794f8a3ea",
+    "method": "gh run view --log，从原始 GitHub 运行导出完整日志；非旧本地丢失日志。"
+  }
+]

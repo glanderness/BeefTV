@@ -1,0 +1,32 @@
+[
+  {
+    "file": "r2-final-feed.json",
+    "exitCode": 0,
+    "stdout": "version=v2.0.5\ncommit=6a155448096d2425aa07e81cc6016410091ad0be\nplatforms=4\n",
+    "stderr": ""
+  },
+  {
+    "file": "r2-version-feed.json",
+    "exitCode": 0,
+    "stdout": "version=v2.0.5\ncommit=6a155448096d2425aa07e81cc6016410091ad0be\nplatforms=4\n",
+    "stderr": ""
+  },
+  {
+    "file": "cos-final-feed.json",
+    "exitCode": 0,
+    "stdout": "version=v2.0.5\ncommit=6a155448096d2425aa07e81cc6016410091ad0be\nplatforms=4\n",
+    "stderr": ""
+  },
+  {
+    "file": "github-version-feed.json",
+    "exitCode": 0,
+    "stdout": "version=v2.0.5\ncommit=6a155448096d2425aa07e81cc6016410091ad0be\nplatforms=4\n",
+    "stderr": ""
+  },
+  {
+    "file": "github-latest-feed.json",
+    "exitCode": 0,
+    "stdout": "version=v2.0.5\ncommit=6a155448096d2425aa07e81cc6016410091ad0be\nplatforms=4\n",
+    "stderr": ""
+  }
+]

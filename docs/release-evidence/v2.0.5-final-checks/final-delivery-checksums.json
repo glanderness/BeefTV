@@ -1,0 +1,155 @@
+{
+  "checkedAt": "2026-10-27T20:26:55.761296+00:00",
+  "method": "工作区待提交文件及报告校验；本清单不含自身。推送后须从固定提交树按此清单复核，不能把本次检查称为远端交付确认。",
+  "checks": {
+    "packageHashes": 8,
+    "signedFeeds": 5,
+    "macIntegrityChecks": 2,
+    "gatekeeperRejectionsPreserved": 2,
+    "originalLogs": 9,
+    "localReportLinks": 43,
+    "logIgnoreExceptionsVisible": true
+  },
+  "files": [
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/.gitignore",
+      "bytes": 47,
+      "sha256": "361179b12470a87bb60bf45b7a597332a286f7f4362174d6666a8e7f91e130ff"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/attempt2-final-logs.json",
+      "bytes": 544,
+      "sha256": "94cd53ddf2daf41648a2ff396ee55af81c0155d6e930a53c1783dcd948e6238a"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/cnb-final-mirror.json",
+      "bytes": 1083,
+      "sha256": "2d3ac751e3716d355711a4806ef8cfa0d13226e7ad820e75a664325be84f51f5"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/cos-final-feed.json",
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/darwin-arm64-attempt2-job.txt",
+      "bytes": 98475,
+      "sha256": "b01c13b14094d67b0383caead6cc80e17d032d2407c00d877d336cc068a25326"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/director-ci.log",
+      "bytes": 39384,
+      "sha256": "7fddcf5299037c7713f4021e0ff81ef67c8c306edaf34c4bf4dc789794f8a3ea"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-feed-signatures.json",
+      "bytes": 892,
+      "sha256": "ad4d902cb22964ad12f2f600b4c23dbccbef66aff1dc2514ad1d75899ff20239"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-macos-signatures.json",
+      "bytes": 5112,
+      "sha256": "f99e43fb6b419f6684fadea292a0b415b1f475c09cd7e9553883013c522d4a1d"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-mirror-comparison.json",
+      "bytes": 2300,
+      "sha256": "a63f642fa76cc884b0b10afad5d4c199e2a36f3d989beae60da98be7149fbceb"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-package-hashes.json",
+      "bytes": 3684,
+      "sha256": "753309d317149ff1ee5a89fea0fd6aaeb9515dc9154746d0ce5fd262d367d755"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-public-readback.json",
+      "bytes": 2153,
+      "sha256": "f8472eedb093e86ca6b01e62722912ecc7aed8bb0712695145506718e2701e7d"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-release-result.json",
+      "bytes": 2870,
+      "sha256": "f554879a6e1af231cba75552df6f601a38f5be68e95501478b9beaf552f7bcf1"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/final-windows-signatures.json",
+      "bytes": 551,
+      "sha256": "e379150295b358482ae81010c60a2696a1919cd610c92a3f18611211159ddab1"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/github-latest-feed.json",
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/github-version-feed.json",
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/linux-ci.log",
+      "bytes": 223274,
+      "sha256": "acf5daa297a130aa90e1ddac0cc9dd1b095107397b3b364b997a86c06536d3b2"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/mirror-attempt2-job.txt",
+      "bytes": 10581,
+      "sha256": "b838c95645b2e194e2667886f0888d364a0bd27a861a7d3c938482135118c421"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/publish-attempt2-job.txt",
+      "bytes": 47044,
+      "sha256": "ae5a2a4f980729eef3970c3c3274479d45c9aaa71cf9a0ed67934def4a1f8369"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/quality-ci.log",
+      "bytes": 1662822,
+      "sha256": "1b54deeeff8511c6c167717f50a138ada52d86dfb4664ed68b5a3f185c0b1038"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/r2-final-feed.json",
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/r2-version-feed.json",
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/release-final-github.json",
+      "bytes": 24165,
+      "sha256": "3b33477b1efa0e70e7bd053871a6556478dcea1a89e11c4a94bd6d5f6c3bfcb7"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/release-final-run.json",
+      "bytes": 29323,
+      "sha256": "8b9be08b9132452c5614648e7d8c02fe97ba4771366d24d2c95c7c2bf3d7c88b"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/release-final-tag.json",
+      "bytes": 376,
+      "sha256": "911f1fd216a66e3169859ce9920136972c2012ea8fa99875252981b785979930"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/restored-original-ci-logs.json",
+      "bytes": 830,
+      "sha256": "aa578884dfb6558b30f4c5412f111cd4f3e29e1b67dd6d4c9cf0dda47a70299b"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/updater-public-key.txt",
+      "bytes": 45,
+      "sha256": "29d67049eaafb7cf235fa58e5eb84a6e6aa53eb44274a6f148b235f75ebe7fa0"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-final-checks/website-final-releases.json",
+      "bytes": 78327,
+      "sha256": "564a3baede173d38bb76a50da8413b9dd3019b5121fef5d8f4c4913bf04b8388"
+    },
+    {
+      "file": "docs/release-evidence/v2.0.5-release.md",
+      "bytes": 28799,
+      "sha256": "c88e466c7c7612a6de6d93309a31cded360691288052bcfe6702e73e68fad78c"
+    }
+  ]
+}

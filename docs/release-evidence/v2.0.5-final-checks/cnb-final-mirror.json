@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "repository": "beeftv-downloads/desktop",
+  "version": "v2.0.5",
+  "source": "https://github.com/glanderness/BeefTV/releases/tag/v2.0.5",
+  "verification": "anonymous-resume-sha256",
+  "verifiedAt": "2026-10-27T20:09:29.770Z",
+  "assets": [
+    {
+      "platform": "darwin-arm64",
+      "name": "BeefTV-v2.0.5-darwin-arm64.dmg",
+      "size": 166177647,
+      "sha256": "34f23a77bede61a8fd0756c71261dd6d35c629d22f9d8b1e9d945d1d70c5fb29"
+    },
+    {
+      "platform": "darwin-amd64",
+      "name": "BeefTV-v2.0.5-darwin-amd64.dmg",
+      "size": 172849561,
+      "sha256": "e77fdf4a7ba959daf8cc6170e2675c2ee0bd57e261577926e4d7a28e09258fe9"
+    },
+    {
+      "platform": "windows-amd64",
+      "name": "BeefTV-v2.0.5-windows-amd64-setup.exe",
+      "size": 195351838,
+      "sha256": "0077c970923a3321b8ea097648817ea62d27c239464db4c10b54d7dbf158af0e"
+    },
+    {
+      "platform": "linux-amd64",
+      "name": "BeefTV-v2.0.5-linux-amd64.deb",
+      "size": 114973954,
+      "sha256": "713785e0bc42b1807643be2918c0c8b91a6ecf6942a30cc2543b225a27bfa84a"
+    }
+  ]
+}

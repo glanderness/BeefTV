@@ -1,0 +1,76 @@
+{
+  "verifiedAt": "2026-10-27T20:20:53.150194+00:00",
+  "version": "v2.0.5",
+  "commit": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+  "publishedAt": "2026-10-27T19:33:55Z",
+  "releaseURL": "https://github.com/glanderness/BeefTV/releases/tag/v2.0.5",
+  "workflowURL": "https://github.com/glanderness/BeefTV/actions/runs/40559746752",
+  "attempt": 2,
+  "workflowResult": "success",
+  "result": "published_verified_with_known_limitations",
+  "platformGates": [
+    {
+      "platform": "darwin-arm64",
+      "jobId": 122410274315,
+      "checks": {
+        "Package native installer": "success",
+        "Verify native installer lifecycle": "success",
+        "Verify MCP from final packaged CLI": "success",
+        "Store platform zip for publication": "success"
+      }
+    },
+    {
+      "platform": "darwin-amd64",
+      "jobId": 122410275755,
+      "checks": {
+        "Package native installer": "success",
+        "Verify native installer lifecycle": "success",
+        "Verify MCP from final packaged CLI": "success",
+        "Store platform zip for publication": "success"
+      }
+    },
+    {
+      "platform": "windows-amd64",
+      "jobId": 122410275872,
+      "checks": {
+        "Package native installer": "success",
+        "Verify native installer lifecycle": "success",
+        "Verify MCP from final packaged CLI": "success",
+        "Store platform zip for publication": "success",
+        "Verify upgrades from released Windows clients": "success"
+      }
+    },
+    {
+      "platform": "linux-amd64",
+      "jobId": 122410276138,
+      "checks": {
+        "Package native installer": "success",
+        "Verify native installer lifecycle": "success",
+        "Verify MCP from final packaged CLI": "success",
+        "Store platform zip for publication": "success",
+        "Verify Linux desktop window from final archive": "success"
+      }
+    }
+  ],
+  "packageFullHashesPassed": 8,
+  "signedFeedEndpointsPassed": 5,
+  "mirrorRecordsMatched": 4,
+  "cnbRangeProbesPassed": 4,
+  "newPaidSubmissions": 0,
+  "notTested": [
+    "完整付费生成矩阵",
+    "整套助手验收",
+    "干净 Mac 浏览器下载后 Finder 首次打开",
+    "单独 v2.0.4 → v2.0.5 升级专项",
+    "Mac/Linux 正式旧包失败回滚专项（本版运行的是安装生命周期；正式旧包回滚矩阵仅 Windows）"
+  ],
+  "knownLimitations": [
+    "两个 Mac 包均 ad hoc；codesign 完整性通过但 Gatekeeper rejected，未做 Developer ID 签名或公证",
+    "Windows EXE 与安装器没有内嵌 Authenticode 签名",
+    "历史影音/字幕/助手成片限制及未知账务保留",
+    "首次 Apple Mac hdiutil Resource busy 根因未确定；相同源码单作业重试通过"
+  ],
+  "temporaryDownloadsRemoved": true,
+  "productOrWorkflowChanged": false
+}

@@ -1,0 +1,18 @@
+{
+  "method": "静态读取正式 PE 文件的安全证书目录；未运行 Windows 程序，不替代 Windows SmartScreen 首次安装体验。",
+  "files": [
+    {
+      "name": "BeefTV-v2.0.5-windows-amd64-setup.exe",
+      "certificateTableOffset": 0,
+      "certificateTableBytes": 0,
+      "embeddedAuthenticodePresent": false
+    },
+    {
+      "name": "BeefTV.exe",
+      "archive": "BeefTV-v2.0.5-windows-amd64.zip",
+      "certificateTableOffset": 0,
+      "certificateTableBytes": 0,
+      "embeddedAuthenticodePresent": false
+    }
+  ]
+}

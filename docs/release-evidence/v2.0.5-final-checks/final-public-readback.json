@@ -1,0 +1,56 @@
+{
+  "checkedAt": "2026-10-27T20:17:25.318384+00:00",
+  "responses": [
+    {
+      "file": "r2-final-feed.json",
+      "url": "https://updates.beefapi.com/beeftv/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "r2-version-feed.json",
+      "url": "https://updates.beefapi.com/beeftv/v2.0.5/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "cos-final-feed.json",
+      "url": "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "github-version-feed.json",
+      "url": "https://github.com/glanderness/BeefTV/releases/download/v2.0.5/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "github-latest-feed.json",
+      "url": "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 4190,
+      "sha256": "aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62"
+    },
+    {
+      "file": "cnb-final-mirror.json",
+      "url": "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.0.5/beeftv-mirror.json",
+      "httpStatus": 200,
+      "bytes": 1083,
+      "sha256": "2d3ac751e3716d355711a4806ef8cfa0d13226e7ad820e75a664325be84f51f5"
+    },
+    {
+      "file": "website-final-releases.json",
+      "url": "https://beeftv.app/data/releases.json",
+      "httpStatus": 200,
+      "bytes": 78327,
+      "sha256": "564a3baede173d38bb76a50da8413b9dd3019b5121fef5d8f4c4913bf04b8388"
+    }
+  ],
+  "publicKeySource": "GitHub repository variable BEEFTV_UPDATER_PUBLIC_KEY（公钥，非私钥）",
+  "publicKeySHA256": "0e34bd5f26f970cf3409fa857f502ee34bbbc5351848ad8f07b13d28df2d0798"
+}

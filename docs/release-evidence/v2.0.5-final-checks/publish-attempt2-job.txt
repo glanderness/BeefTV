@@ -1,0 +1,603 @@
+﻿2026-10-27T19:27:12.9226369Z Current runner version: '2.338.0'
+2026-10-27T19:27:12.9254016Z ##[group]Runner Image Provisioner
+2026-10-27T19:27:12.9255056Z Hosted Compute Agent
+2026-10-27T19:27:12.9255714Z Version: 20261021.618
+2026-10-27T19:27:12.9256374Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T19:27:12.9257664Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T19:27:12.9258435Z Worker ID: {41716f37-deaf-48a5-aff0-1d7f6e289f92}
+2026-10-27T19:27:12.9259381Z Region: eastus
+2026-10-27T19:27:12.9259974Z Cloud: Azure
+2026-10-27T19:27:12.9260657Z ##[endgroup]
+2026-10-27T19:27:12.9262202Z ##[group]Operating System
+2026-10-27T19:27:12.9262880Z Ubuntu
+2026-10-27T19:27:12.9263552Z 26.04.1
+2026-10-27T19:27:12.9264090Z LTS
+2026-10-27T19:27:12.9264758Z ##[endgroup]
+2026-10-27T19:27:12.9265346Z ##[group]Runner Image
+2026-10-27T19:27:12.9266054Z Image: ubuntu-26.04
+2026-10-27T19:27:12.9266681Z Version: 20261012.163.1
+2026-10-27T19:27:12.9268543Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261012.163/images/ubuntu/Ubuntu2604-Readme.md
+2026-10-27T19:27:12.9270187Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261012.163
+2026-10-27T19:27:12.9271271Z ##[endgroup]
+2026-10-27T19:27:12.9272445Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T19:27:12.9274531Z Contents: write
+2026-10-27T19:27:12.9275206Z Metadata: read
+2026-10-27T19:27:12.9275903Z ##[endgroup]
+2026-10-27T19:27:12.9278303Z Secret source: Actions
+2026-10-27T19:27:12.9279414Z Cache mode: write
+2026-10-27T19:27:12.9280166Z Prepare workflow directory
+2026-10-27T19:27:12.9802675Z Prepare all required actions
+2026-10-27T19:27:12.9850805Z Getting action download info
+2026-10-27T19:27:13.1460884Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-27T19:27:13.2534477Z Download action repository 'actions/setup-go@v5' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+2026-10-27T19:27:13.4170375Z Download action repository 'actions/download-artifact@v4' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+2026-10-27T19:27:13.6626888Z Complete job name: Sign feed and publish
+2026-10-27T19:27:13.7465140Z ##[group]Run actions/checkout@v4
+2026-10-27T19:27:13.7466321Z with:
+2026-10-27T19:27:13.7466896Z   repository: glanderness/BeefTV
+2026-10-27T19:27:13.7471196Z   token: ***
+2026-10-27T19:27:13.7471793Z   ssh-strict: true
+2026-10-27T19:27:13.7472438Z   ssh-user: git
+2026-10-27T19:27:13.7473010Z   persist-credentials: true
+2026-10-27T19:27:13.7473701Z   clean: true
+2026-10-27T19:27:13.7474327Z   sparse-checkout-cone-mode: true
+2026-10-27T19:27:13.7474989Z   fetch-depth: 1
+2026-10-27T19:27:13.7475606Z   fetch-tags: false
+2026-10-27T19:27:13.7476165Z   show-progress: true
+2026-10-27T19:27:13.7476807Z   lfs: false
+2026-10-27T19:27:13.7477584Z   submodules: false
+2026-10-27T19:27:13.7478242Z   set-safe-directory: true
+2026-10-27T19:27:13.7478893Z   allow-unsafe-pr-checkout: false
+2026-10-27T19:27:13.7479884Z env:
+2026-10-27T19:27:13.7480545Z   GOTOOLCHAIN: local
+2026-10-27T19:27:13.7481421Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:27:13.7482631Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:27:13.7483711Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:27:13.7484791Z   RELEASE_REGION: auto
+2026-10-27T19:27:13.7485396Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:27:13.7486238Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:27:13.7487230Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:27:13.7488026Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:27:13.7492073Z   GH_TOKEN: ***
+2026-10-27T19:27:13.7492660Z   VERSION: v2.0.5
+2026-10-27T19:27:13.7493342Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:27:13.7494629Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:27:13.7495572Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:27:13.7496566Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:27:13.7498227Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:27:13.7498891Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:27:13.7499540Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:27:13.7500349Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:27:13.7501130Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:27:13.7501916Z ##[endgroup]
+2026-10-27T19:27:14.0245003Z Syncing repository: glanderness/BeefTV
+2026-10-27T19:27:14.0248277Z ##[group]Getting Git version info
+2026-10-27T19:27:14.0249416Z Working directory is '/home/runner/work/BeefTV/BeefTV'
+2026-10-27T19:27:14.0251425Z [command]/usr/bin/git version
+2026-10-27T19:27:14.0252702Z git version 2.55.0
+2026-10-27T19:27:14.0265009Z ##[endgroup]
+2026-10-27T19:27:14.0280112Z Temporarily overriding HOME='/home/runner/work/_temp/e85c9c84-4cd6-4745-b394-b9c188966aad' before making global git config changes
+2026-10-27T19:27:14.0283392Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T19:27:14.0287246Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/BeefTV/BeefTV
+2026-10-27T19:27:14.0342784Z Deleting the contents of '/home/runner/work/BeefTV/BeefTV'
+2026-10-27T19:27:14.0346694Z ##[group]Initializing the repository
+2026-10-27T19:27:14.0350788Z [command]/usr/bin/git init /home/runner/work/BeefTV/BeefTV
+2026-10-27T19:27:14.0484353Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-27T19:27:14.0486872Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-27T19:27:14.0581126Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-27T19:27:14.0583040Z hint: call:
+2026-10-27T19:27:14.0583871Z hint:
+2026-10-27T19:27:14.0585034Z hint: 	git config --global init.defaultBranch <name>
+2026-10-27T19:27:14.0586279Z hint:
+2026-10-27T19:27:14.0587714Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-27T19:27:14.0589719Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-27T19:27:14.0591258Z hint:
+2026-10-27T19:27:14.0592632Z hint: 	git branch -m <name>
+2026-10-27T19:27:14.0593676Z hint:
+2026-10-27T19:27:14.0594909Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-27T19:27:14.0596949Z Initialized empty Git repository in /home/runner/work/BeefTV/BeefTV/.git/
+2026-10-27T19:27:14.0600508Z [command]/usr/bin/git remote add origin https://github.com/glanderness/BeefTV
+2026-10-27T19:27:14.0603767Z ##[endgroup]
+2026-10-27T19:27:14.0605311Z ##[group]Disabling automatic garbage collection
+2026-10-27T19:27:14.0606634Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-27T19:27:14.0625652Z ##[endgroup]
+2026-10-27T19:27:14.0627415Z ##[group]Setting up auth
+2026-10-27T19:27:14.0628881Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T19:27:14.0645147Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T19:27:14.1119120Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T19:27:14.1150745Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T19:27:14.1439376Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T19:27:14.1475194Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T19:27:14.1748429Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-27T19:27:14.1788153Z ##[endgroup]
+2026-10-27T19:27:14.1789775Z ##[group]Fetching the repository
+2026-10-27T19:27:14.1798548Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6a155448096d2425aa07e81cc6016410091ad0be:refs/remotes/origin/main
+2026-10-27T19:27:21.5069161Z From https://github.com/glanderness/BeefTV
+2026-10-27T19:27:21.5071226Z  * [new ref]         6a155448096d2425aa07e81cc6016410091ad0be -> origin/main
+2026-10-27T19:27:21.5073979Z ##[endgroup]
+2026-10-27T19:27:21.5075039Z ##[group]Determining the checkout info
+2026-10-27T19:27:21.5076365Z ##[endgroup]
+2026-10-27T19:27:21.5076939Z [command]/usr/bin/git sparse-checkout disable
+2026-10-27T19:27:21.5133788Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-27T19:27:21.5169564Z ##[group]Checking out the ref
+2026-10-27T19:27:21.5173388Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-10-27T19:27:22.1098004Z Switched to a new branch 'main'
+2026-10-27T19:27:22.1101128Z branch 'main' set up to track 'origin/main'.
+2026-10-27T19:27:22.1145654Z ##[endgroup]
+2026-10-27T19:27:22.1206841Z [command]/usr/bin/git log -1 --format=%H
+2026-10-27T19:27:22.1227964Z 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:27:22.1493322Z ##[group]Run actions/setup-go@v5
+2026-10-27T19:27:22.1493654Z with:
+2026-10-27T19:27:22.1493888Z   go-version-file: backend/go.mod
+2026-10-27T19:27:22.1494158Z   cache: true
+2026-10-27T19:27:22.1494398Z   cache-dependency-path: backend/go.sum
+2026-10-27T19:27:22.1494701Z   check-latest: false
+2026-10-27T19:27:22.1497621Z   token: ***
+2026-10-27T19:27:22.1497842Z env:
+2026-10-27T19:27:22.1498043Z   GOTOOLCHAIN: local
+2026-10-27T19:27:22.1498443Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:27:22.1498966Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:27:22.1499511Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:27:22.1499964Z   RELEASE_REGION: auto
+2026-10-27T19:27:22.1500213Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:27:22.1500584Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:27:22.1501003Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:27:22.1501335Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:27:22.1504006Z   GH_TOKEN: ***
+2026-10-27T19:27:22.1504227Z   VERSION: v2.0.5
+2026-10-27T19:27:22.1504472Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:27:22.1505087Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:27:22.1505478Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:27:22.1505935Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:27:22.1506344Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:27:22.1506602Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:27:22.1506851Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:27:22.1507408Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:27:22.1507764Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:27:22.1508062Z ##[endgroup]
+2026-10-27T19:27:22.2851386Z Setup go version spec 1.25.0
+2026-10-27T19:27:22.2862312Z Attempting to download 1.25.0...
+2026-10-27T19:27:22.3035749Z (node:2387) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:27:22.3036822Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:27:22.8103814Z matching 1.25.0...
+2026-10-27T19:27:22.8169450Z Acquiring 1.25.0 from https://github.com/actions/go-versions/releases/download/1.25.0-16925932082/go-1.25.0-linux-x64.tar.gz
+2026-10-27T19:27:23.2891890Z Extracting Go...
+2026-10-27T19:27:23.3027750Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/870e214e-72c7-422e-8a4e-eb5b2a41db14 -f /home/runner/work/_temp/7b95c4dc-6acf-4ce9-ad79-2d54c841bb2b
+2026-10-27T19:27:24.3367627Z Successfully extracted go to /home/runner/work/_temp/870e214e-72c7-422e-8a4e-eb5b2a41db14
+2026-10-27T19:27:24.3368410Z Adding to the cache ...
+2026-10-27T19:27:28.6992973Z Successfully cached go to /opt/hostedtoolcache/go/1.25.0/x64
+2026-10-27T19:27:28.6996318Z Added go to the path
+2026-10-27T19:27:28.6999530Z Successfully set up Go version 1.25.0
+2026-10-27T19:27:28.7259389Z [command]/opt/hostedtoolcache/go/1.25.0/x64/bin/go env GOMODCACHE
+2026-10-27T19:27:28.7310799Z [command]/opt/hostedtoolcache/go/1.25.0/x64/bin/go env GOCACHE
+2026-10-27T19:27:28.7377669Z /home/runner/go/pkg/mod
+2026-10-27T19:27:28.7382584Z /home/runner/.cache/go-build
+2026-10-27T19:27:28.8139537Z Cache hit for: setup-go-Linux-x64-ubuntu26-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e
+2026-10-27T19:27:28.8256012Z (node:2387) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T19:27:29.8588686Z Received 205520896 of 255026296 (80.6%), 195.4 MBs/sec
+2026-10-27T19:27:30.0338161Z Received 255026296 of 255026296 (100.0%), 206.3 MBs/sec
+2026-10-27T19:27:30.0357713Z Cache Size: ~243 MB (255026296 B)
+2026-10-27T19:27:30.0471704Z [command]/usr/bin/tar -xf /home/runner/work/_temp/5f6531b7-0467-4bd4-a260-eaff10b4192b/cache.tzst -P -C /home/runner/work/BeefTV/BeefTV --use-compress-program unzstd
+2026-10-27T19:27:32.1713334Z Cache restored successfully
+2026-10-27T19:27:32.1826779Z Cache restored from key: setup-go-Linux-x64-ubuntu26-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e
+2026-10-27T19:27:32.1854463Z go version go1.25.0 linux/amd64
+2026-10-27T19:27:32.1854789Z 
+2026-10-27T19:27:32.1855253Z ##[group]go env
+2026-10-27T19:27:32.2970234Z AR='ar'
+2026-10-27T19:27:32.2970585Z CC='gcc'
+2026-10-27T19:27:32.2970854Z CGO_CFLAGS='-O2 -g'
+2026-10-27T19:27:32.2971153Z CGO_CPPFLAGS=''
+2026-10-27T19:27:32.2971433Z CGO_CXXFLAGS='-O2 -g'
+2026-10-27T19:27:32.2971726Z CGO_ENABLED='1'
+2026-10-27T19:27:32.2972032Z CGO_FFLAGS='-O2 -g'
+2026-10-27T19:27:32.2972307Z CGO_LDFLAGS='-O2 -g'
+2026-10-27T19:27:32.2972581Z CXX='g++'
+2026-10-27T19:27:32.2972857Z GCCGO='gccgo'
+2026-10-27T19:27:32.2973115Z GO111MODULE=''
+2026-10-27T19:27:32.2973364Z GOAMD64='v1'
+2026-10-27T19:27:32.2973647Z GOARCH='amd64'
+2026-10-27T19:27:32.2973993Z GOAUTH='netrc'
+2026-10-27T19:27:32.2974291Z GOBIN=''
+2026-10-27T19:27:32.2974574Z GOCACHE='/home/runner/.cache/go-build'
+2026-10-27T19:27:32.2974925Z GOCACHEPROG=''
+2026-10-27T19:27:32.2975180Z GODEBUG=''
+2026-10-27T19:27:32.2975476Z GOENV='/home/runner/.config/go/env'
+2026-10-27T19:27:32.2975804Z GOEXE=''
+2026-10-27T19:27:32.2976045Z GOEXPERIMENT=''
+2026-10-27T19:27:32.2976310Z GOFIPS140='off'
+2026-10-27T19:27:32.2976575Z GOFLAGS=''
+2026-10-27T19:27:32.2978763Z GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build1829940983=/tmp/go-build -gno-record-gcc-switches'
+2026-10-27T19:27:32.2979844Z GOHOSTARCH='amd64'
+2026-10-27T19:27:32.2980124Z GOHOSTOS='linux'
+2026-10-27T19:27:32.2980395Z GOINSECURE=''
+2026-10-27T19:27:32.2980653Z GOMOD='/dev/null'
+2026-10-27T19:27:32.2981348Z GOMODCACHE='/home/runner/go/pkg/mod'
+2026-10-27T19:27:32.2981699Z GONOPROXY=''
+2026-10-27T19:27:32.2981933Z GONOSUMDB=''
+2026-10-27T19:27:32.2982170Z GOOS='linux'
+2026-10-27T19:27:32.2982467Z GOPATH='/home/runner/go'
+2026-10-27T19:27:32.2982840Z GOPRIVATE=''
+2026-10-27T19:27:32.2983159Z GOPROXY='https://proxy.golang.org,direct'
+2026-10-27T19:27:32.2983553Z GOROOT='/opt/hostedtoolcache/go/1.25.0/x64'
+2026-10-27T19:27:32.2983910Z GOSUMDB='sum.golang.org'
+2026-10-27T19:27:32.2984194Z GOTELEMETRY='local'
+2026-10-27T19:27:32.2984525Z GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+2026-10-27T19:27:32.2984889Z GOTMPDIR=''
+2026-10-27T19:27:32.2985124Z GOTOOLCHAIN='local'
+2026-10-27T19:27:32.2985505Z GOTOOLDIR='/opt/hostedtoolcache/go/1.25.0/x64/pkg/tool/linux_amd64'
+2026-10-27T19:27:32.2985931Z GOVCS=''
+2026-10-27T19:27:32.2986157Z GOVERSION='go1.25.0'
+2026-10-27T19:27:32.2986406Z GOWORK=''
+2026-10-27T19:27:32.2986674Z PKG_CONFIG='pkg-config'
+2026-10-27T19:27:32.2986849Z 
+2026-10-27T19:27:32.2987589Z ##[endgroup]
+2026-10-27T19:27:32.3310681Z ##[group]Run actions/download-artifact@v4
+2026-10-27T19:27:32.3310997Z with:
+2026-10-27T19:27:32.3311215Z   pattern: desktop-*
+2026-10-27T19:27:32.3311453Z   merge-multiple: true
+2026-10-27T19:27:32.3311681Z   path: dist
+2026-10-27T19:27:32.3311910Z   repository: glanderness/BeefTV
+2026-10-27T19:27:32.3312170Z   run-id: 40559746752
+2026-10-27T19:27:32.3312391Z env:
+2026-10-27T19:27:32.3312588Z   GOTOOLCHAIN: local
+2026-10-27T19:27:32.3313003Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:27:32.3313537Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:27:32.3314085Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:27:32.3314545Z   RELEASE_REGION: auto
+2026-10-27T19:27:32.3314788Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:27:32.3315161Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:27:32.3315596Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:27:32.3315909Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:27:32.3319060Z   GH_TOKEN: ***
+2026-10-27T19:27:32.3319304Z   VERSION: v2.0.5
+2026-10-27T19:27:32.3319574Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:27:32.3320212Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:27:32.3320612Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:27:32.3321098Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:27:32.3321518Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:27:32.3321774Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:27:32.3322044Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:27:32.3322349Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:27:32.3322705Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:27:32.3323011Z ##[endgroup]
+2026-10-27T19:27:32.4990254Z (node:2445) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:27:32.4991738Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:27:32.6159985Z Found 6 artifact(s)
+2026-10-27T19:27:32.6160848Z Filtering artifacts by pattern 'desktop-*'
+2026-10-27T19:27:32.6181680Z Preparing to download the following artifacts:
+2026-10-27T19:27:32.6183204Z - desktop-darwin-arm64 (ID: 12764397016, Size: 325293396, Expected Digest: sha256:bc02edf8583e44c6071e05fa6fe2251beb5dd404135b5e86497d0c765f9621c6)
+2026-10-27T19:27:32.6185534Z - desktop-windows-amd64 (ID: 12763006782, Size: 471324951, Expected Digest: sha256:c93b2f366606693c7eceda8b48d537f7a2c1d1b667451bded675d64590505cc1)
+2026-10-27T19:27:32.6187920Z - desktop-darwin-amd64 (ID: 12762630917, Size: 334548137, Expected Digest: sha256:bdd4a713d42b83431d2faab567249633b9e1beb758656a4afdb3f7d8527288db)
+2026-10-27T19:27:32.6190268Z - desktop-linux-amd64 (ID: 12760348275, Size: 269233151, Expected Digest: sha256:da75ecb1472ee4a97814aefcceb426b7fd2a32df4968d09a45cff33d549d0ee4)
+2026-10-27T19:27:32.7713743Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/65441e21-b26e-8073-8826-c4189c4534c7/workflow-job-run-00fe29fa-debf-5d1a-bec8-965a20b6d5aa/artifacts/78a6ed8b9386c04bb2544e57d84cae762505b0b33e2e2e7d3bc49953aab12806.zip
+2026-10-27T19:27:32.7716412Z Starting download of artifact to: /home/runner/work/BeefTV/BeefTV/dist
+2026-10-27T19:27:32.7738153Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/90d404b8-485f-40f4-a621-767f24f9d947/workflow-job-run-f6c77b7e-4980-595b-9498-781ade94341b/artifacts/429006bf44de465228123fceda4af557149ee54a7a5051b11819f852290b180f.zip
+2026-10-27T19:27:32.7740929Z Starting download of artifact to: /home/runner/work/BeefTV/BeefTV/dist
+2026-10-27T19:27:32.7775870Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/90d404b8-485f-40f4-a621-767f24f9d947/workflow-job-run-eeaa148c-a671-5662-bdb5-972833f3d69f/artifacts/c0121afe8a5ac521230bbc8e40e6bd83ef76e484f955704a928f13960bc1bc9b.zip
+2026-10-27T19:27:32.7779314Z Starting download of artifact to: /home/runner/work/BeefTV/BeefTV/dist
+2026-10-27T19:27:32.7826552Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/90d404b8-485f-40f4-a621-767f24f9d947/workflow-job-run-5a3fee04-a654-530d-a089-6f017d03a06c/artifacts/e9ccc5e9eb881263d70da11d05441835782e79c4b3b0ac97475222a7b2550e02.zip
+2026-10-27T19:27:32.7829513Z Starting download of artifact to: /home/runner/work/BeefTV/BeefTV/dist
+2026-10-27T19:27:32.8795405Z (node:2445) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-10-27T19:27:40.3213618Z SHA256 digest of downloaded artifact is da75ecb1472ee4a97814aefcceb426b7fd2a32df4968d09a45cff33d549d0ee4
+2026-10-27T19:27:40.3215030Z Artifact download completed successfully.
+2026-10-27T19:27:41.5865400Z SHA256 digest of downloaded artifact is bc02edf8583e44c6071e05fa6fe2251beb5dd404135b5e86497d0c765f9621c6
+2026-10-27T19:27:41.5867613Z Artifact download completed successfully.
+2026-10-27T19:27:41.6722636Z SHA256 digest of downloaded artifact is bdd4a713d42b83431d2faab567249633b9e1beb758656a4afdb3f7d8527288db
+2026-10-27T19:27:41.6723336Z Artifact download completed successfully.
+2026-10-27T19:27:43.4228084Z SHA256 digest of downloaded artifact is c93b2f366606693c7eceda8b48d537f7a2c1d1b667451bded675d64590505cc1
+2026-10-27T19:27:43.4229276Z Artifact download completed successfully.
+2026-10-27T19:27:43.4229912Z Total of 4 artifact(s) downloaded
+2026-10-27T19:27:43.4236296Z Download artifact has finished successfully
+2026-10-27T19:27:43.4517903Z ##[group]Run actions/download-artifact@v4
+2026-10-27T19:27:43.4518282Z with:
+2026-10-27T19:27:43.4518533Z   name: media-wasm-source
+2026-10-27T19:27:43.4518809Z   path: dist
+2026-10-27T19:27:43.4519053Z   merge-multiple: false
+2026-10-27T19:27:43.4519334Z   repository: glanderness/BeefTV
+2026-10-27T19:27:43.4519643Z   run-id: 40559746752
+2026-10-27T19:27:43.4519886Z env:
+2026-10-27T19:27:43.4520107Z   GOTOOLCHAIN: local
+2026-10-27T19:27:43.4520528Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:27:43.4521073Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:27:43.4521629Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:27:43.4522126Z   RELEASE_REGION: auto
+2026-10-27T19:27:43.4522396Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:27:43.4522774Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:27:43.4523203Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:27:43.4523537Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:27:43.4526601Z   GH_TOKEN: ***
+2026-10-27T19:27:43.4526868Z   VERSION: v2.0.5
+2026-10-27T19:27:43.4527435Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:27:43.4528147Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:27:43.4528606Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:27:43.4529113Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:27:43.4529566Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:27:43.4529856Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:27:43.4530136Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:27:43.4530466Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:27:43.4530839Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:27:43.4531165Z ##[endgroup]
+2026-10-27T19:27:43.6128383Z Downloading single artifact
+2026-10-27T19:27:43.6280198Z (node:2462) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:27:43.6281239Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:27:43.7105748Z Preparing to download the following artifacts:
+2026-10-27T19:27:43.7107175Z - media-wasm-source (ID: 12759346572, Size: 107316097, Expected Digest: sha256:acc2940fda3c45ececfdf315e05ac5031cdef6e7923e35e0fbb5bfdc05dce8c0)
+2026-10-27T19:27:43.8925502Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/90d404b8-485f-40f4-a621-767f24f9d947/workflow-job-run-93f0ac35-ff38-5508-ab55-9e8e2d074198/artifacts/b27b7a0bb8c652b033a3b78b452d8b74ba42c9e0d524f63ff99f31d3ee2d70ab.zip
+2026-10-27T19:27:43.8929092Z Starting download of artifact to: /home/runner/work/BeefTV/BeefTV/dist
+2026-10-27T19:27:44.0247328Z (node:2462) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-10-27T19:27:45.1283381Z SHA256 digest of downloaded artifact is acc2940fda3c45ececfdf315e05ac5031cdef6e7923e35e0fbb5bfdc05dce8c0
+2026-10-27T19:27:45.1284086Z Artifact download completed successfully.
+2026-10-27T19:27:45.1284454Z Total of 1 artifact(s) downloaded
+2026-10-27T19:27:45.1291971Z Download artifact has finished successfully
+2026-10-27T19:27:45.2940557Z ##[group]Run python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+2026-10-27T19:27:45.2941774Z [36;1mpython3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'[0m
+2026-10-27T19:27:45.2942829Z [36;1mpython3 -m unittest discover -s scripts -p 'test_desktop_cos_store.py'[0m
+2026-10-27T19:27:45.2943629Z [36;1mcd backend[0m
+2026-10-27T19:27:45.2944260Z [36;1mgo build -o "$RUNNER_TEMP/update-release" ./cmd/update-release[0m
+2026-10-27T19:27:45.7005852Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:27:45.7006297Z env:
+2026-10-27T19:27:45.7006639Z   GOTOOLCHAIN: local
+2026-10-27T19:27:45.7007583Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:27:45.7008390Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:27:45.7009226Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:27:45.7009955Z   RELEASE_REGION: auto
+2026-10-27T19:27:45.7010409Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:27:45.7010975Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:27:45.7011557Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:27:45.7012059Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:27:45.7015691Z   GH_TOKEN: ***
+2026-10-27T19:27:45.7015960Z   VERSION: v2.0.5
+2026-10-27T19:27:45.7016255Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:27:45.7017151Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:27:45.7017633Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:27:45.7018177Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:27:45.7018656Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:27:45.7018965Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:27:45.7019265Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:27:45.7019618Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:27:45.7020027Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:27:45.7020399Z ##[endgroup]
+2026-10-27T19:27:47.9258371Z ......../usr/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 404: 'Not Found'>
+2026-10-27T19:27:47.9259312Z   _warnings.warn(self.warn_message, ResourceWarning)
+2026-10-27T19:27:56.0675303Z ................/usr/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 403: 'Forbidden'>
+2026-10-27T19:27:56.0676345Z   _warnings.warn(self.warn_message, ResourceWarning)
+2026-10-27T19:27:57.0901068Z ../usr/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 412: 'Precondition Failed'>
+2026-10-27T19:27:57.0902911Z   _warnings.warn(self.warn_message, ResourceWarning)
+2026-10-27T19:28:00.1914705Z ..................
+2026-10-27T19:28:00.1915462Z ----------------------------------------------------------------------
+2026-10-27T19:28:00.1916011Z Ran 44 tests in 14.362s
+2026-10-27T19:28:00.1916237Z 
+2026-10-27T19:28:00.1916376Z OK
+2026-10-27T19:28:00.3464408Z .............................
+2026-10-27T19:28:00.3465571Z ----------------------------------------------------------------------
+2026-10-27T19:28:00.3466277Z Ran 29 tests in 0.045s
+2026-10-27T19:28:00.3466564Z 
+2026-10-27T19:28:00.3466730Z OK
+2026-10-27T19:28:01.6512713Z ##[group]Run set -euo pipefail
+2026-10-27T19:28:01.6513195Z [36;1mset -euo pipefail[0m
+2026-10-27T19:28:01.6513852Z [36;1mmapfile -t zips < <(find dist -maxdepth 1 -name "BeefTV-${VERSION}-*.zip" | LC_ALL=C sort)[0m
+2026-10-27T19:28:01.6514391Z [36;1mif [[ "${#zips[@]}" -ne 4 ]]; then[0m
+2026-10-27T19:28:01.6514960Z [36;1m  echo "Expected 4 platform zips on draft $VERSION before signing desktop-update.json, found ${#zips[@]}."[0m
+2026-10-27T19:28:01.6515526Z [36;1m  printf '%s\n' "${zips[@]}"[0m
+2026-10-27T19:28:01.6515835Z [36;1m  exit 1[0m
+2026-10-27T19:28:01.6516066Z [36;1mfi[0m
+2026-10-27T19:28:01.6516520Z [36;1mfor name in "darwin-arm64.dmg" "darwin-amd64.dmg" "windows-amd64-setup.exe" "linux-amd64.deb"; do[0m
+2026-10-27T19:28:01.6517409Z [36;1m  test -s "dist/BeefTV-${VERSION}-${name}"[0m
+2026-10-27T19:28:01.6517885Z [36;1mdone[0m
+2026-10-27T19:28:01.6577398Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:28:01.6577716Z env:
+2026-10-27T19:28:01.6577993Z   GOTOOLCHAIN: local
+2026-10-27T19:28:01.6578443Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:28:01.6579016Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:28:01.6579581Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:28:01.6580075Z   RELEASE_REGION: auto
+2026-10-27T19:28:01.6580348Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:28:01.6580730Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:28:01.6581130Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:28:01.6581464Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:28:01.6584776Z   GH_TOKEN: ***
+2026-10-27T19:28:01.6585056Z   VERSION: v2.0.5
+2026-10-27T19:28:01.6585354Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:28:01.6586062Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:28:01.6586513Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:28:01.6587286Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:28:01.6587770Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:28:01.6588064Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:28:01.6588355Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:28:01.6588694Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:28:01.6589090Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:28:01.6589435Z ##[endgroup]
+2026-10-27T19:28:01.6757454Z ##[group]Run set -euo pipefail
+2026-10-27T19:28:01.6757878Z [36;1mset -euo pipefail[0m
+2026-10-27T19:28:01.6758206Z [36;1mgo run ./cmd/update-release sign \[0m
+2026-10-27T19:28:01.6758561Z [36;1m  --version "$VERSION" \[0m
+2026-10-27T19:28:01.6758874Z [36;1m  --commit "$COMMIT" \[0m
+2026-10-27T19:28:01.6759188Z [36;1m  --changelog ../CHANGELOG.md \[0m
+2026-10-27T19:28:01.6759574Z [36;1m  --download-base "$UPDATER_DOWNLOAD_BASE" \[0m
+2026-10-27T19:28:01.6760003Z [36;1m  --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \[0m
+2026-10-27T19:28:01.6760558Z [36;1m  --require-platforms darwin-arm64,darwin-amd64,windows-amd64,linux-amd64 \[0m
+2026-10-27T19:28:01.6761162Z [36;1m  --asset "darwin-arm64=../dist/BeefTV-${VERSION}-darwin-arm64.zip" \[0m
+2026-10-27T19:28:01.6761684Z [36;1m  --asset "darwin-amd64=../dist/BeefTV-${VERSION}-darwin-amd64.zip" \[0m
+2026-10-27T19:28:01.6762214Z [36;1m  --asset "windows-amd64=../dist/BeefTV-${VERSION}-windows-amd64.zip" \[0m
+2026-10-27T19:28:01.6762779Z [36;1m  --asset "linux-amd64=../dist/BeefTV-${VERSION}-linux-amd64.zip" \[0m
+2026-10-27T19:28:01.6763244Z [36;1m  --output "../dist/desktop-update.json"[0m
+2026-10-27T19:28:01.6763615Z [36;1mgo run ./cmd/update-release verify \[0m
+2026-10-27T19:28:01.6763991Z [36;1m  --envelope "../dist/desktop-update.json" \[0m
+2026-10-27T19:28:01.6764400Z [36;1m  --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"[0m
+2026-10-27T19:28:01.6825269Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:28:01.6825592Z env:
+2026-10-27T19:28:01.6825851Z   GOTOOLCHAIN: local
+2026-10-27T19:28:01.6826311Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:28:01.6826876Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:28:01.6827817Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:28:01.6828328Z   RELEASE_REGION: auto
+2026-10-27T19:28:01.6828614Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:28:01.6829021Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:28:01.6829441Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:28:01.6829782Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:28:01.6832891Z   GH_TOKEN: ***
+2026-10-27T19:28:01.6833155Z   VERSION: v2.0.5
+2026-10-27T19:28:01.6833442Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:28:01.6834133Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:28:01.6834571Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:28:01.6835065Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:28:01.6835510Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:28:01.6835793Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:28:01.6836075Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:28:01.6836415Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:28:01.6836798Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:28:01.6837382Z ##[endgroup]
+2026-10-27T19:28:02.7796057Z path=../dist/desktop-update.json
+2026-10-27T19:28:02.7808203Z sha256=aa07be3d188ff582ffd9c145f0f5b1c1f782249390666582d3f86ebb323c2e62
+2026-10-27T19:28:02.7809227Z size=4190
+2026-10-27T19:28:02.7809684Z platforms=4
+2026-10-27T19:28:02.8565297Z version=v2.0.5
+2026-10-27T19:28:02.8566098Z commit=6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:28:02.8566780Z platforms=4
+2026-10-27T19:28:02.8626887Z ##[group]Run python3 scripts/publish-desktop-r2.py stage \
+2026-10-27T19:28:02.8627688Z [36;1mpython3 scripts/publish-desktop-r2.py stage \[0m
+2026-10-27T19:28:02.8628225Z [36;1m  --manifest dist/desktop-update.json --assets-dir dist --with-installers \[0m
+2026-10-27T19:28:02.8628840Z [36;1m  --verification-receipt "$RUNNER_TEMP/release-public-verification.json" \[0m
+2026-10-27T19:28:02.8629399Z [36;1m  --verifier "$RUNNER_TEMP/update-release" --provider r2 \[0m
+2026-10-27T19:28:02.8629914Z [36;1m  --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \[0m
+2026-10-27T19:28:02.8630447Z [36;1m  --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"[0m
+2026-10-27T19:28:02.8688788Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:28:02.8689091Z env:
+2026-10-27T19:28:02.8689323Z   GOTOOLCHAIN: local
+2026-10-27T19:28:02.8689758Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:28:02.8690356Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:28:02.8690928Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:28:02.8691410Z   RELEASE_REGION: auto
+2026-10-27T19:28:02.8691684Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:28:02.8692062Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:28:02.8692459Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:28:02.8692801Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:28:02.8695643Z   GH_TOKEN: ***
+2026-10-27T19:28:02.8695908Z   VERSION: v2.0.5
+2026-10-27T19:28:02.8696194Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:28:02.8696855Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:28:02.8697455Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:28:02.8697965Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:28:02.8698410Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:28:02.8698697Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:28:02.8698985Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:28:02.8699494Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:28:02.8699879Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:28:02.8700219Z ##[endgroup]
+2026-10-27T19:33:37.4784837Z stage verified: v2.0.5
+2026-10-27T19:33:37.4950017Z ##[group]Run set -euo pipefail
+2026-10-27T19:33:37.4950552Z [36;1mset -euo pipefail[0m
+2026-10-27T19:33:37.4951713Z [36;1mgh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb dist/BeefTV-"$VERSION"-ffprobe-darwin-*-sources.tar.gz dist/BeefTV-"$VERSION"-ffmpeg-wasm-sources.tar.gz[0m
+2026-10-27T19:33:37.4952904Z [36;1mgh release edit "$VERSION" --draft=false --latest[0m
+2026-10-27T19:33:37.5013318Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:33:37.5013620Z env:
+2026-10-27T19:33:37.5013871Z   GOTOOLCHAIN: local
+2026-10-27T19:33:37.5014304Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:33:37.5014870Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:33:37.5015456Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:33:37.5015986Z   RELEASE_REGION: auto
+2026-10-27T19:33:37.5016261Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:33:37.5016643Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:33:37.5017312Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:33:37.5017660Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:33:37.5020475Z   GH_TOKEN: ***
+2026-10-27T19:33:37.5020759Z   VERSION: v2.0.5
+2026-10-27T19:33:37.5021047Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:33:37.5021717Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:33:37.5022165Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:33:37.5022669Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:33:37.5023143Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:33:37.5023439Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:33:37.5023727Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:33:37.5024063Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:33:37.5024453Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:33:37.5024788Z ##[endgroup]
+2026-10-27T19:33:55.5685056Z https://github.com/glanderness/BeefTV/releases/tag/v2.0.5
+2026-10-27T19:33:55.5721348Z ##[group]Run python3 scripts/publish-desktop-r2.py activate \
+2026-10-27T19:33:55.5721894Z [36;1mpython3 scripts/publish-desktop-r2.py activate \[0m
+2026-10-27T19:33:55.5722437Z [36;1m  --manifest dist/desktop-update.json --assets-dir dist --with-installers \[0m
+2026-10-27T19:33:55.5723050Z [36;1m  --verification-receipt "$RUNNER_TEMP/release-public-verification.json" \[0m
+2026-10-27T19:33:55.5723602Z [36;1m  --verifier "$RUNNER_TEMP/update-release" --provider r2 \[0m
+2026-10-27T19:33:55.5724100Z [36;1m  --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \[0m
+2026-10-27T19:33:55.5724648Z [36;1m  --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"[0m
+2026-10-27T19:33:55.5725141Z [36;1mecho "Published $VERSION at $BEEFTV_UPDATER_FEED_URL."[0m
+2026-10-27T19:33:55.5783520Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:33:55.5783801Z env:
+2026-10-27T19:33:55.5784039Z   GOTOOLCHAIN: local
+2026-10-27T19:33:55.5784498Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:33:55.5785058Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:33:55.5785630Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:33:55.5786116Z   RELEASE_REGION: auto
+2026-10-27T19:33:55.5786383Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:33:55.5786756Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:33:55.5787392Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:33:55.5787735Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:33:55.5790695Z   GH_TOKEN: ***
+2026-10-27T19:33:55.5790952Z   VERSION: v2.0.5
+2026-10-27T19:33:55.5791245Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:33:55.5791905Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:33:55.5792343Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:33:55.5792838Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:33:55.5793285Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:33:55.5793570Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:33:55.5793853Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:33:55.5794183Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:33:55.5794560Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:33:55.5794889Z ##[endgroup]
+2026-10-27T19:34:54.7758253Z activate verified: v2.0.5
+2026-10-27T19:34:54.7883708Z Published v2.0.5 at https://updates.beefapi.com/beeftv/desktop-update.json.
+2026-10-27T19:34:54.7937606Z ##[group]Run python3 scripts/publish-desktop-r2.py bridge-cos \
+2026-10-27T19:34:54.7938182Z [36;1mpython3 scripts/publish-desktop-r2.py bridge-cos \[0m
+2026-10-27T19:34:54.7938763Z [36;1m  --manifest dist/desktop-update.json --verifier "$RUNNER_TEMP/update-release" \[0m
+2026-10-27T19:34:54.7939438Z [36;1m  --provider cos --endpoint-url "$LEGACY_COS_ENDPOINT" --region "$LEGACY_COS_REGION" \[0m
+2026-10-27T19:34:54.7939942Z [36;1m  --bucket "$LEGACY_COS_BUCKET"[0m
+2026-10-27T19:34:54.7997652Z shell: /usr/bin/bash -e {0}
+2026-10-27T19:34:54.7997950Z env:
+2026-10-27T19:34:54.7998184Z   GOTOOLCHAIN: local
+2026-10-27T19:34:54.7998628Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:34:54.7999190Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:34:54.7999759Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:34:54.8000249Z   RELEASE_REGION: auto
+2026-10-27T19:34:54.8000558Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:34:54.8000938Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:34:54.8001336Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:34:54.8001675Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:34:54.8004450Z   GH_TOKEN: ***
+2026-10-27T19:34:54.8004704Z   VERSION: v2.0.5
+2026-10-27T19:34:54.8004995Z   COMMIT: 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T19:34:54.8005666Z   BEEFTV_UPDATER_PRIVATE_KEY: ***
+2026-10-27T19:34:54.8006108Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T19:34:54.8006641Z   AWS_ACCESS_KEY_ID: ***
+2026-10-27T19:34:54.8007213Z   AWS_SECRET_ACCESS_KEY: ***
+2026-10-27T19:34:54.8007590Z   AWS_DEFAULT_REGION: auto
+2026-10-27T19:34:54.8007886Z   AWS_EC2_METADATA_DISABLED: true
+2026-10-27T19:34:54.8008223Z   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+2026-10-27T19:34:54.8008603Z   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+2026-10-27T19:34:54.8008943Z ##[endgroup]
+2026-10-27T19:35:22.2644532Z bridge-cos verified: v2.0.5
+2026-10-27T19:35:22.2863195Z Post job cleanup.
+2026-10-27T19:35:22.4123533Z (node:4573) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:35:22.4124810Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:35:22.4209685Z [command]/opt/hostedtoolcache/go/1.25.0/x64/bin/go env GOMODCACHE
+2026-10-27T19:35:22.4259281Z [command]/opt/hostedtoolcache/go/1.25.0/x64/bin/go env GOCACHE
+2026-10-27T19:35:22.4287664Z /home/runner/go/pkg/mod
+2026-10-27T19:35:22.4317915Z /home/runner/.cache/go-build
+2026-10-27T19:35:22.4348570Z Cache hit occurred on the primary key setup-go-Linux-x64-ubuntu26-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e, not saving cache.
+2026-10-27T19:35:22.4529594Z Post job cleanup.
+2026-10-27T19:35:22.5382508Z [command]/usr/bin/git version
+2026-10-27T19:35:22.5426242Z git version 2.55.0
+2026-10-27T19:35:22.5464805Z Temporarily overriding HOME='/home/runner/work/_temp/604fc995-f49b-4079-a019-e5000ba1f248' before making global git config changes
+2026-10-27T19:35:22.5466804Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T19:35:22.5470053Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/BeefTV/BeefTV
+2026-10-27T19:35:22.5508955Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T19:35:22.5580669Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T19:35:22.5864238Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T19:35:22.5907659Z http.https://github.com/.extraheader
+2026-10-27T19:35:22.5929475Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-27T19:35:22.5960781Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T19:35:22.6401362Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T19:35:22.6442681Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T19:35:22.6901946Z Evaluate and set job outputs
+2026-10-27T19:35:22.6907973Z Set output 'activated'
+2026-10-27T19:35:22.6909710Z Cleaning up orphan processes
+2026-10-27T19:35:22.7272231Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-go@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -1,0 +1,113 @@
+{
+  "checkedAt": "2026-10-27T20:19:33.044247+00:00",
+  "method": "从公开 R2 最终 ZIP 解压后静态检查；保留原 bundle id 和签名字节，不启动应用。命令输出仅将本任务临时绝对路径替换为占位符。",
+  "cleanMacFinderFirstOpenTested": false,
+  "packages": [
+    {
+      "platform": "darwin-arm64",
+      "archive": "BeefTV-v2.0.5-darwin-arm64.zip",
+      "version": "2.0.5",
+      "bundleVersion": "2.0.5",
+      "bundleId": "com.wails.beeftv",
+      "executableSHA256": "64e204ae1fa0ac5629a90face387542e8c0f0f5f3c0174404949df0864994f71",
+      "architecture": {
+        "command": [
+          "file",
+          "<临时核验目录>/darwin-arm64/BeefTV.app/Contents/MacOS/BeefTV"
+        ],
+        "exitCode": 0,
+        "stdout": "<临时核验目录>/darwin-arm64/BeefTV.app/Contents/MacOS/BeefTV: Mach-O 64-bit executable arm64\n",
+        "stderr": ""
+      },
+      "codesignVerify": {
+        "command": [
+          "codesign",
+          "--verify",
+          "--deep",
+          "--strict",
+          "<临时核验目录>/darwin-arm64/BeefTV.app"
+        ],
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "codesignDisplay": {
+        "command": [
+          "codesign",
+          "--display",
+          "--verbose=4",
+          "<临时核验目录>/darwin-arm64/BeefTV.app"
+        ],
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": "Executable=<临时核验目录>/darwin-arm64/BeefTV.app/Contents/MacOS/BeefTV\nIdentifier=com.wails.beeftv\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=280937 flags=0x2(adhoc) hashes=8773+3 location=embedded\nVersionPlatform=1\nVersionMin=720896\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=c03263eb40dcfc94b2e11ef0b2e499de4d8ee3eb\nCandidateCDHashFull sha256=c03263eb40dcfc94b2e11ef0b2e499de4d8ee3eb81a7c045168643573f42a53e\nHash choices=sha256\nCMSDigest=c03263eb40dcfc94b2e11ef0b2e499de4d8ee3eb81a7c045168643573f42a53e\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=127827968\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=c03263eb40dcfc94b2e11ef0b2e499de4d8ee3eb\nSignature=adhoc\nInfo.plist entries=12\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=15569\nInternal requirements count=0 size=12\n"
+      },
+      "gatekeeper": {
+        "command": [
+          "spctl",
+          "--assess",
+          "--type",
+          "execute",
+          "--verbose=4",
+          "<临时核验目录>/darwin-arm64/BeefTV.app"
+        ],
+        "exitCode": 3,
+        "stdout": "",
+        "stderr": "<临时核验目录>/darwin-arm64/BeefTV.app: rejected\n"
+      }
+    },
+    {
+      "platform": "darwin-amd64",
+      "archive": "BeefTV-v2.0.5-darwin-amd64.zip",
+      "version": "2.0.5",
+      "bundleVersion": "2.0.5",
+      "bundleId": "com.wails.beeftv",
+      "executableSHA256": "3a3ae4b2bfe53dd30e7cb93c2893b8029604bcb2d1a8ed2815ae9e4a1eb7a05e",
+      "architecture": {
+        "command": [
+          "file",
+          "<临时核验目录>/darwin-amd64/BeefTV.app/Contents/MacOS/BeefTV"
+        ],
+        "exitCode": 0,
+        "stdout": "<临时核验目录>/darwin-amd64/BeefTV.app/Contents/MacOS/BeefTV: Mach-O 64-bit executable x86_64\n",
+        "stderr": ""
+      },
+      "codesignVerify": {
+        "command": [
+          "codesign",
+          "--verify",
+          "--deep",
+          "--strict",
+          "<临时核验目录>/darwin-amd64/BeefTV.app"
+        ],
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "codesignDisplay": {
+        "command": [
+          "codesign",
+          "--display",
+          "--verbose=4",
+          "<临时核验目录>/darwin-amd64/BeefTV.app"
+        ],
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": "Executable=<临时核验目录>/darwin-amd64/BeefTV.app/Contents/MacOS/BeefTV\nIdentifier=com.wails.beeftv\nFormat=app bundle with Mach-O thin (x86_64)\nCodeDirectory v=20400 size=1145897 flags=0x2(adhoc) hashes=35803+3 location=embedded\nVersionPlatform=1\nVersionMin=658688\nVersionSDK=984320\nHash type=sha256 size=32\nCandidateCDHash sha256=d9b63575ba22d044b12b93caabe93894d32831d8\nCandidateCDHashFull sha256=d9b63575ba22d044b12b93caabe93894d32831d85efad93d6b8a6e91603b2f92\nHash choices=sha256\nCMSDigest=d9b63575ba22d044b12b93caabe93894d32831d85efad93d6b8a6e91603b2f92\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=130465792\nExecutable Segment flags=0x1\nPage size=4096\nCDHash=d9b63575ba22d044b12b93caabe93894d32831d8\nSignature=adhoc\nInfo.plist entries=12\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=15569\nInternal requirements count=0 size=12\n"
+      },
+      "gatekeeper": {
+        "command": [
+          "spctl",
+          "--assess",
+          "--type",
+          "execute",
+          "--verbose=4",
+          "<临时核验目录>/darwin-amd64/BeefTV.app"
+        ],
+        "exitCode": 3,
+        "stdout": "",
+        "stderr": "<临时核验目录>/darwin-amd64/BeefTV.app: rejected\n"
+      }
+    }
+  ]
+}
