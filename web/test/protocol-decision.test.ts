@@ -4,7 +4,7 @@ import cases from "../../backend/internal/providerpreset/testdata/saved_protocol
 import { ensureModelProfilesWithUiDefaults, newModelProtocol, recordProtocolCatalog, savedModelProtocol, type ModelProtocolDefinition, type ProtocolCapability } from "@/lib/model-protocols";
 import { serviceModelProfile } from "@/lib/model-service-presets";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
-import { createModelChannel, defaultConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
+import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { loadProtocolCatalog } from "@/services/api/plugin-catalog";
 import { apiClient } from "@/services/api/request";
 
@@ -99,5 +99,53 @@ describe("the catalog loader feeds the same decision", () => {
         expect(catalog.protocols.map((item) => item.value)).toContain("chat-completion");
         expect(newModelProtocol("text").protocol).toBeUndefined();
         expect(ensureModelProfilesWithUiDefaults(["gpt-4.1-mini"], undefined, [])[0]).toMatchObject({ protocol: undefined, protocolPending: true });
+    });
+});
+
+describe("callers that rewrite profiles keep the saved decision", () => {
+    test("the model-service wizard keeps a legacy profile's default and a pending mark", () => {
+        // An OpenAI text profile without a protocol has always run with chat-completion;
+        // the wizard's OpenAI preset would otherwise pick openai-response.
+        const catalog = { status: "loaded" as const, protocols: [definition("chat-completion", "text"), definition("openai-response", "text"), definition("openai-audio", "audio")] };
+        const legacy = createModelChannel({ id: "svc", baseUrl: "https://api.openai.com/v1", apiKey: "fakekey", models: ["gpt-4.1-mini"], modelProfiles: [{ model: "gpt-4.1-mini", capability: "text" }] });
+        expect(serviceModelProfile(legacy, { id: "gpt-4.1-mini" }, catalog).protocol).toBe("chat-completion");
+        const pending = createModelChannel({ id: "svc", baseUrl: "https://relay.example/v1", apiKey: "fakekey", models: ["speech-x"], modelProfiles: [{ model: "speech-x", capability: "audio", protocolPending: true }] });
+        expect(serviceModelProfile(pending, { id: "speech-x" }, catalog)).toMatchObject({ protocol: undefined, protocolPending: true });
+    });
+
+    test("a wizard profile refused by the catalog stays pending all the way to the request", () => {
+        const catalog = { status: "loaded" as const, protocols: [definition("openai-image", "image", true)] };
+        const draft = createModelChannel({ id: "svc", baseUrl: "https://relay.example/v1", apiKey: "fakekey", models: [] });
+        const profile = serviceModelProfile(draft, { id: "gpt-image-3", modelType: "image" }, catalog);
+        expect(profile).toMatchObject({ protocol: undefined, protocolPending: true });
+        const channel = createModelChannel({ ...draft, models: ["gpt-image-3"], modelProfiles: [profile] });
+        expect(resolveModelRequestConfig({ ...defaultConfig, channels: [channel] }, "svc::gpt-image-3").interfaceType).toBeUndefined();
+    });
+
+    test("BeefAPI normalization does not fill a pending or retired protocol back in", () => {
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-audio", "audio", true)] });
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: ["minimax-speech-2.8-hd", "minimax-music-v3.0"], modelProfiles: [{ model: "minimax-speech-2.8-hd", capability: "audio", protocolPending: true }] });
+        const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
+        const beef = config.channels.find((item) => item.id === "beefapi");
+        // The pending model stays pending; the model with no profile is not given the retired template.
+        for (const model of ["minimax-speech-2.8-hd", "minimax-music-v3.0"]) {
+            expect(beef?.modelProfiles?.find((item) => item.model === model)).toMatchObject({ protocol: undefined, protocolPending: true });
+            expect(resolveModelRequestConfig(config, `beefapi::${model}`).interfaceType).toBeUndefined();
+        }
+    });
+
+    test("BeefAPI normalization still repairs saved profiles when nothing is retired", () => {
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: ["minimax-speech-2.8-hd"], modelProfiles: [{ model: "minimax-speech-2.8-hd", capability: "text", protocol: "chat-completion" }] });
+        const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
+        expect(resolveModelRequestConfig(config, "beefapi::minimax-speech-2.8-hd").interfaceType).toBe("openai-audio");
+    });
+
+    test("a newly fetched model does not inherit a retired channel protocol", () => {
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-image", "image", true)] });
+        const channel = createModelChannel({ id: "relay", baseUrl: "https://relay.example/v1", apiKey: "fakekey", interfaceType: "openai-image", models: [] });
+        expect(mergeFetchedChannelModelProfiles(channel, [{ id: "image-x", modelType: "image" }])).toEqual([expect.objectContaining({ model: "image-x", protocol: undefined, protocolPending: true })]);
+        // A channel protocol the host still offers is inherited as before.
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-image", "image")] });
+        expect(mergeFetchedChannelModelProfiles(channel, [{ id: "image-x", modelType: "image" }])[0]?.protocol).toBe("openai-image");
     });
 });

@@ -214,12 +214,13 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
     return next;
 }
 
-// A model the channel already declares a protocol for inherits it, exactly as a
-// model listed without a profile runs with it. Otherwise the shared new-model
-// decision applies, so a retired protocol is never assigned to a fresh entry.
+// A freshly discovered model goes through the shared new-model decision. The
+// channel's protocol is its first candidate when it serves the same capability,
+// but an existing model still running with it does not authorize a new one to:
+// a retired channel protocol is skipped like any other candidate.
 function protocolForNewCatalogModel(capability: ChannelModelProfile["capability"], channelProtocol: ModelProtocol | undefined) {
-    if (channelProtocol && modelProtocolCapability(channelProtocol) === capability) return { protocol: channelProtocol };
-    return newModelProtocol(capability, undefined, [CATALOG_TEMPLATES[capability]]);
+    const inherited = channelProtocol && modelProtocolCapability(channelProtocol) === capability ? channelProtocol : undefined;
+    return newModelProtocol(capability, undefined, [inherited, CATALOG_TEMPLATES[capability]]);
 }
 
 const CATALOG_TEMPLATES: Record<ChannelModelProfile["capability"], ModelProtocol> = { text: "chat-completion", image: "openai-image", video: "newapi", audio: "openai-audio" };

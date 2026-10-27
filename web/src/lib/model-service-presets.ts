@@ -1,7 +1,7 @@
 import type { ModelChannel, ModelCapability } from "@/stores/use-config-store";
 import { buildApiUrl } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { inferProtocolCapabilityFromModel, newModelProtocol, protocolSelectableForNewModel, type ModelProtocolDefinition, type ProtocolCatalog } from "@/lib/model-protocols";
+import { inferProtocolCapabilityFromModel, modelProtocolCapability, newModelProtocol, protocolPending, protocolSelectableForNewModel, savedModelProtocol, type ModelProtocolDefinition, type ProtocolCatalog } from "@/lib/model-protocols";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 
 export const MODEL_SERVICE_PRESETS = [
@@ -30,13 +30,29 @@ export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
 // Endpoint metadata is a hint, only resolve to protocols the host actually offers.
 // The protocol of a model being added is decided by newModelProtocol, so a
 // retired protocol or an unproven fallback list is never assigned automatically.
-export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCatalogItem, catalog: ProtocolCatalog | ModelProtocolDefinition[], explicitCapability?: ModelCapability): NonNullable<ModelChannel["modelProfiles"]>[number] {
+type ServiceModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
+
+export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCatalogItem, catalog: ProtocolCatalog | ModelProtocolDefinition[], explicitCapability?: ModelCapability): ServiceModelProfile {
     const protocols = Array.isArray(catalog) ? catalog : catalog.protocols;
     const existing = channel.modelProfiles?.find((profile) => profile.model === item.id);
-    if (existing?.protocol && !explicitCapability) {
-        const definition = protocols.find((protocol) => protocol.value === existing.protocol && protocol.enabled !== false);
-        if (definition && definition.authType !== existing.authType) return { ...existing, authType: definition.authType };
-        return existing;
+    // A model the channel already has keeps what it runs with: an explicit
+    // protocol, the legacy default a profile without the field has always used,
+    // or a deliberate "left unconfigured" mark. Only a model without any saved
+    // protocol is decided anew below.
+    if (!explicitCapability && existing && protocolPending(existing)) return existing;
+    const saved = !explicitCapability && (existing || channel.models.includes(item.id)) ? savedModelProtocol(channel, existing, item.id) : undefined;
+    // A protocol inherited from the channel is only kept when the host offers it
+    // for this capability; a mismatched or missing channel contract still asks the
+    // user, as before. Explicit and legacy-default protocols are always kept.
+    const inheritedFromChannel = Boolean(saved && !existing?.protocol && saved === channel.interfaceType);
+    const inheritedDefinition = inheritedFromChannel ? protocols.find((protocol) => protocol.value === saved && protocol.enabled !== false) : undefined;
+    const inheritedCapability = existing?.capability || item.modelType || inferProtocolCapabilityFromModel(item.id);
+    if (saved && (!inheritedFromChannel || inheritedDefinition?.capability === inheritedCapability)) {
+        const current: ServiceModelProfile = existing
+            ? { ...existing, protocol: saved }
+            : { model: item.id, capability: modelProtocolCapability(saved, protocols) || inferProtocolCapabilityFromModel(item.id), protocol: saved };
+        const definition = protocols.find((protocol) => protocol.value === saved && protocol.enabled !== false);
+        return definition && definition.authType !== current.authType ? { ...current, authType: definition.authType } : current;
     }
     const fullvideoFull = ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"].includes(item.id);
     const capability = explicitCapability || existing?.capability || item.modelType || catalogEndpointCapability(item) || (fullvideoFull ? "video" : inferProtocolCapabilityFromModel(item.id));
@@ -54,9 +70,13 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     // Model names identify a family, not a provider's wire protocol. Ask the
     // user to select its contract unless the catalog explicitly declares it.
     if (fullvideoFull && capability === "video" && !inherited) proposed = item.supportedEndpointTypes?.includes("full-video") ? "full-video" : undefined;
-    const protocol = newModelProtocol(capability, catalog, [proposed]).protocol;
+    const decision = newModelProtocol(capability, catalog, [proposed]);
+    const protocol = decision.protocol;
     const definition = protocols.find((p) => p.value === protocol);
-    return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, authType: definition ? definition.authType : existing?.authType, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id) : undefined };
+    // Keep the whole decision: without the mark, savedModelProtocol would later
+    // give this profile the legacy default the catalog just refused.
+    const protocolPendingMark = protocol ? undefined : decision.pending || undefined;
+    return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, protocolPending: protocolPendingMark, authType: definition ? definition.authType : existing?.authType, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id) : undefined };
 }
 
 export function channelAllowsEmptyAPIKey(channel: Pick<ModelChannel, "models" | "modelProfiles" | "interfaceType">, protocols?: ModelProtocolDefinition[]) {

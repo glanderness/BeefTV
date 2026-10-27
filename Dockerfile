@@ -18,6 +18,7 @@ COPY scripts/distribution-notices.mjs /app/scripts/distribution-notices.mjs
 COPY assets /app/assets
 COPY backend/internal/providerpreset/image_contracts.json /app/backend/internal/providerpreset/image_contracts.json
 COPY backend/internal/providerpreset/video_contracts.json /app/backend/internal/providerpreset/video_contracts.json
+COPY backend/internal/providerpreset/protocol_defaults.json /app/backend/internal/providerpreset/protocol_defaults.json
 COPY web ./
 # 生产镜像只构建云端工作台前端；Agent Runtime 在后端 Worker 中运行。
 RUN bun --bun ./node_modules/vite/bin/vite.js build

@@ -555,3 +555,43 @@ func TestUpgradeThatDropsASavedProviderIDIsDeferred(t *testing.T) {
 		t.Fatalf("upgrade did not resume once the old ID was unused: %#v", item.Manifest.Version)
 	}
 }
+
+// TestUpgradeRenamingAProviderNamedLikeItsPluginIsDeferred covers a plugin whose
+// ID equals its old provider ID (`xai-video`). The new version keeps the plugin
+// ID but renames the provider, so the old ID no longer resolves even though it
+// still names the package; saved configuration using it must keep the old
+// definition.
+func TestUpgradeRenamingAProviderNamedLikeItsPluginIsDeferred(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	shipPackage(t, release, retentionManifest("same-name-video", "same-name-video-v2", "2.0.0"))
+	stored := storedOfficialRecord(t, retentionManifest("same-name-video", "same-name-video", "1.0.0"), true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), staticReferences{"same-name-video": {Configured: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "same-name-video")
+	if !ok || item.Manifest.Version != "1.0.0" {
+		t.Fatalf("an upgrade renaming the provider named like its plugin was adopted: %#v", item.Manifest.Version)
+	}
+	if _, resolvable := runtime.Registry().Resolve("same-name-video"); !resolvable {
+		t.Fatal("saved configuration lost the provider ID it runs with")
+	}
+}
+
+// TestUpgradeKeepingALegacyAliasIsAdopted keeps the check about resolution: an
+// ID the new version still answers to through a legacy alias is not dropped.
+func TestUpgradeKeepingALegacyAliasIsAdopted(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	// openai-videos contributes `newapi` and keeps `openai-videos` as an alias.
+	shipPackage(t, release, retentionManifest("openai-videos", "newapi", "2.0.0"))
+	stored := storedOfficialRecord(t, retentionManifest("openai-videos", "newapi", "1.0.0"), true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), staticReferences{"openai-videos": {Configured: 1}, "newapi": {Configured: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item, ok := ByID(runtime.List(), "openai-videos"); !ok || item.Manifest.Version != "2.0.0" {
+		t.Fatalf("an upgrade that still resolves every saved ID was deferred: %#v", item.Manifest.Version)
+	}
+}

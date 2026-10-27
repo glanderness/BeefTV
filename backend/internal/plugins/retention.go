@@ -175,13 +175,17 @@ func deferralFor(stored, next RegistryRecord, snapshot referenceSnapshot) *Reten
 	return &RetentionView{Reasons: reasons}
 }
 
-// configuredOnlyIn counts saved configuration that uses a provider ID the stored
-// record contributes but the next one no longer does.
+// configuredOnlyIn counts saved configuration that uses an ID the stored record
+// answers to but the next one no longer resolves.
+//
+// The next side counts only what the registry would actually resolve: each
+// contributed provider ID and its legacy aliases. The plugin ID is deliberately
+// not proof that a protocol survives, because a plugin named like its old
+// provider (`xai-video`) can rename that provider (`xai-video-v2`) while keeping
+// its own name. An unloadable next manifest resolves nothing, so every saved
+// reference defers it.
 func (s referenceSnapshot) configuredOnlyIn(stored, next RegistryRecord) int64 {
-	kept := make(map[string]struct{})
-	for _, id := range recordProviderIDs(next.Raw) {
-		kept[id] = struct{}{}
-	}
+	kept := resolvableProviderIDs(next.Raw)
 	var configured int64
 	for _, id := range recordProviderIDs(stored.Raw) {
 		if _, ok := kept[id]; !ok {
@@ -189,6 +193,24 @@ func (s referenceSnapshot) configuredOnlyIn(stored, next RegistryRecord) int64 {
 		}
 	}
 	return configured
+}
+
+// resolvableProviderIDs lists the IDs the registry resolves to this manifest's
+// providers once installed: provider IDs and their legacy aliases.
+func resolvableProviderIDs(raw []byte) map[string]struct{} {
+	ids := make(map[string]struct{})
+	adapters, err := protocol.LoadInstalledProviders(raw, nil)
+	if err != nil {
+		return ids
+	}
+	for _, adapter := range adapters {
+		metadata := adapter.Metadata()
+		ids[strings.TrimSpace(metadata.ID)] = struct{}{}
+		for _, alias := range metadata.LegacyAliases {
+			ids[strings.TrimSpace(alias)] = struct{}{}
+		}
+	}
+	return ids
 }
 
 func retentionFor(record RegistryRecord, snapshot referenceSnapshot) *RetentionView {
