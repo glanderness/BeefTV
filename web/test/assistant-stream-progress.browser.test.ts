@@ -70,6 +70,30 @@ async function slowThinkingTurn(line: Line) {
     line({ type: "turn_end", reply: "第一段正文。第二段正文。", toolCalls: [{ toolCallId: "t1", tool: "canvas_get" }], reasoning: THINKING_DONE, error: null, cancelled: false });
 }
 
+/** 宿主在生成中把思考清空（块被替换成空或 redacted）：整段替换为空数组。 */
+async function clearedThinkingTurn(line: Line) {
+    const gap = () => new Promise((resolve) => setTimeout(resolve, THINKING_GAP_MS));
+    await gap();
+    line({ type: "reasoning_snapshot", segments: [{ id: "live-1:0", text: "这一段稍后会被清掉。", status: "streaming" }] });
+    await gap();
+    line({ type: "reasoning_snapshot", segments: [] });
+    await gap();
+    line({ type: "text_snapshot", text: "已经重新看过画布。" });
+    await gap();
+    line({ type: "turn_end", reply: "已经重新看过画布。", toolCalls: [], reasoning: [], error: null, cancelled: false });
+}
+
+/** 终态说这一轮没有可读思考：流里显示过的那段不能在结算后留下。 */
+async function settledEmptyThinkingTurn(line: Line) {
+    const gap = () => new Promise((resolve) => setTimeout(resolve, THINKING_GAP_MS));
+    await gap();
+    line({ type: "reasoning_snapshot", segments: [{ id: "live-1:0", text: "这一段终态会被清掉。", status: "streaming" }] });
+    await gap();
+    line({ type: "text_snapshot", text: "已经重新看过画布。" });
+    await gap();
+    line({ type: "turn_end", reply: "已经重新看过画布。", toolCalls: [], reasoning: [], error: null, cancelled: false });
+}
+
 beforeAll(async () => {
     const build = await Bun.build({
         entrypoints: [import.meta.dir + "/fixtures/assistant-stream-harness.tsx"],
@@ -99,7 +123,10 @@ beforeAll(async () => {
                 chatRequests++;
                 // 面板按钮决定脚本：思考用例走带思考分片的慢速替身。
                 const body = await req.json().catch(() => null) as { message?: string } | null;
-                return ndjsonStream(String(body?.message || "").includes("想") ? slowThinkingTurn : slowTextTurn);
+                const message = String(body?.message || "");
+                if (message.includes("清空")) return ndjsonStream(clearedThinkingTurn);
+                if (message.includes("终态")) return ndjsonStream(settledEmptyThinkingTurn);
+                return ndjsonStream(message.includes("想") ? slowThinkingTurn : slowTextTurn);
             }
             if (pathname.startsWith("/api/")) return ok({});
             return new Response('<html><div id="root"></div><script type="module" src="/harness.js"></script></html>', { headers: { "content-type": "text/html" } });
@@ -205,3 +232,36 @@ test("思考默认折叠，展开能看到增量，正文与思考分开", async
         expect(chatRequests).toBe(requestsBefore + 1);
     } finally { await page.close(); }
 }, 60000);
+
+test("宿主把思考清空时面板撤掉旧内容", async () => {
+    const page = await browser.newPage();
+    const requestsBefore = chatRequests;
+    try {
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "清空思考", exact: true }).click();
+        const drawer = page.locator('[data-testid="assistant-reasoning"]');
+        await drawer.waitFor({ timeout: 10_000 });
+        // 宿主发来完整空数组：旧思考立刻撤掉，不留在面板上。
+        await drawer.waitFor({ state: "detached", timeout: 10_000 });
+        expect(await page.locator('[data-testid="assistant-reasoning"]').count()).toBe(0);
+        await page.waitForFunction(() => document.querySelector('[data-testid="streaming"]')?.textContent === "false", undefined, { timeout: 10_000 });
+        expect(await page.locator('[data-testid="assistant-reasoning"]').count()).toBe(0);
+        expect(chatRequests).toBe(requestsBefore + 1);
+    } finally { await page.close(); }
+}, 40000);
+
+test("终态权威空思考清掉流里显示过的旧内容", async () => {
+    const page = await browser.newPage();
+    const requestsBefore = chatRequests;
+    try {
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "终态清空", exact: true }).click();
+        const drawer = page.locator('[data-testid="assistant-reasoning"]');
+        await drawer.waitFor({ timeout: 10_000 });
+        await page.waitForFunction(() => document.querySelector('[data-testid="streaming"]')?.textContent === "false", undefined, { timeout: 10_000 });
+        // 终态说这一轮没有可读思考：流里那段不能当成有效终态继续显示。
+        await drawer.waitFor({ state: "detached", timeout: 10_000 });
+        expect(await page.locator('[data-testid="assistant-reasoning"]').count()).toBe(0);
+        expect(chatRequests).toBe(requestsBefore + 1);
+    } finally { await page.close(); }
+}, 40000);

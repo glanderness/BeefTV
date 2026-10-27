@@ -22,6 +22,8 @@ function Harness() {
         </div>
         <button style={{ position: "fixed", left: 4, top: 4 }} onClick={() => void assistant.send("慢慢回答", [])}>开始</button>
         <button style={{ position: "fixed", left: 80, top: 4 }} onClick={() => void assistant.send("先想再答", [])}>开始思考</button>
+        <button style={{ position: "fixed", left: 190, top: 4 }} onClick={() => void assistant.send("先想再清空", [])}>清空思考</button>
+        <button style={{ position: "fixed", left: 290, top: 4 }} onClick={() => void assistant.send("先想再终态", [])}>终态清空</button>
         <output data-testid="streaming">{String(assistant.streaming)}</output>
     </App>;
 }

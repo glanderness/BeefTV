@@ -36,6 +36,7 @@ export type AgentHostStatus = {
  * 模型思考过程的一个可读片段。
  *
  * 宿主只投影可读纯文本：签名、加密占位、工具参数和上游原始报文都不在这里。
+ * 已知宿主／模型凭据与明确凭据格式的文本已在宿主出口清掉，界面不再做二次脱敏。
  * 一个回合的思考会被模型拆成多段（中间夹工具调用），`status` 表示这一段是否还在生成。
  */
 export type AssistantReasoningSegment = {
@@ -120,7 +121,7 @@ export type AgentTurnEnd = {
     permissionMode?: AssistantPermissionMode;
     reply: string;
     toolCalls: AgentToolCall[];
-    /** 本回合模型返回的思考片段；模型没有可读思考时宿主不写这个字段。 */
+    /** 本回合模型返回的思考片段；宿主总是写这个字段（没有可读思考时是空数组），旧记录可能没有。 */
     reasoning?: AssistantReasoningSegment[];
     change?: AssistantTurnChange | null;
     proposals?: AssistantGenerationProposal[];
@@ -146,7 +147,7 @@ export type AssistantTurn = {
     selectedNodeIds: string[];
     reply: string;
     toolCalls: AgentToolCall[];
-    /** 与 AgentTurnEnd.reasoning 同形；旧记录和没有思考的回合没有这个字段。 */
+    /** 与 AgentTurnEnd.reasoning 同形；旧记录没有这个字段，没有可读思考的回合是空数组。 */
     reasoning?: AssistantReasoningSegment[];
     change: AssistantTurnChange | null;
     proposals: AssistantGenerationProposal[];

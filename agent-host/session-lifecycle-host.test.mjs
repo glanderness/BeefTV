@@ -41,6 +41,46 @@ async function anthropicThinkingReply(res) {
   res.end();
 }
 
+/** 合成凭据：与测试宿主实际使用的 token 同值，另加一个 sk- 形式的模型 Key。 */
+const SYNTHETIC_MODEL_KEY = 'sk-review-only-123456';
+
+/**
+ * 分脚本的 Anthropic Messages 替身：第一段思考 → canvas_get 工具调用 → 第二段思考 → 正文。
+ * 第二段思考里带合成凭据，用来证明展示出口会清掉它们；签名仍只出现在 signature_delta 里。
+ */
+async function anthropicToolThenAnswer(call, res, { hostToken }) {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  const send = async (type, data) => { res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`); await delay(60); };
+  const begin = (id) => send('message_start', { type: 'message_start', message: { id, type: 'message', role: 'assistant', model: 'synthetic',
+    content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+  const thinkingBlock = async (index, text) => {
+    await send('content_block_start', { type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '', signature: '' } });
+    await send('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: text } });
+    await send('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: THINKING_SIGNATURE } });
+    await send('content_block_stop', { type: 'content_block_stop', index });
+  };
+  const end = async (stopReason) => {
+    await send('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 20 } });
+    await send('message_stop', { type: 'message_stop' });
+    res.end();
+  };
+  if (call === 1) {
+    await begin('msg_synthetic_tool');
+    await thinkingBlock(0, '先读画布上的两个节点。');
+    await send('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_synthetic_1', name: 'canvas_get', input: {} } });
+    await send('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ canvasId: 'reasoning-tool-canvas' }) } });
+    await send('content_block_stop', { type: 'content_block_stop', index: 1 });
+    await end('tool_use');
+    return;
+  }
+  await begin('msg_synthetic_answer');
+  await thinkingBlock(0, `再确认时间线顺序，host_token="${hostToken}"，api_key="${SYNTHETIC_MODEL_KEY}"。`);
+  await send('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+  await send('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '两段都看过了。' } });
+  await send('content_block_stop', { type: 'content_block_stop', index: 1 });
+  await end('end_turn');
+}
+
 async function withHost(run, envExtra = {}, options = {}) {
   const { slowFirstModel = true } = options;
   const directory = mkdtempSync(path.join(tmpdir(), 'beeftv session lifecycle '));
@@ -81,7 +121,7 @@ async function withHost(run, envExtra = {}, options = {}) {
     opsRequests.push(`${req.method} ${req.url}`);
     if (serveEmptySkillContext(req, res)) return;
     if (req.url === '/api/ops') {
-      res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.get', summary: 'Read', readOnly: true, scope: 'canvas', params: { type: 'object', properties: { canvasId: { type: 'string' } }, required: ['canvasId'] } }] } }));
+      res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.get', summary: 'Read', readOnly: true, scope: 'canvas', assistantModes: ['full-access', 'read-only', 'canvas'], params: { type: 'object', properties: { canvasId: { type: 'string' } }, required: ['canvasId'] } }] } }));
       return;
     }
     // Go 回合记录：宿主在开始/恢复前读取它，并按 canvasId 校验归属。
@@ -117,6 +157,8 @@ async function withHost(run, envExtra = {}, options = {}) {
       if (res.writableEnded) return;
     }
     if (options.anthropicThinking) { await anthropicThinkingReply(res); return; }
+    // 分脚本的 Anthropic 替身：用来复现跨工具调用的多消息回合。
+    if (options.anthropicScript) { await options.anthropicScript(modelCalls, res, { hostToken }); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const reply = options.modelReply?.(modelCalls);
     const delta = { role: 'assistant', content: reply?.text ?? 'ok', ...(reply?.tool ? {
@@ -147,10 +189,10 @@ async function withHost(run, envExtra = {}, options = {}) {
       BEEFTV_AGENT_HOST_TOKEN: hostToken,
       BEEFTV_AGENT_PORT: String(port),
       BEEFTV_OPS_URL: `http://127.0.0.1:${opsPort}/api`,
-      BEEFTV_AGENT_API: options.anthropicThinking ? 'anthropic-messages' : 'openai-completions',
+      BEEFTV_AGENT_API: options.anthropicThinking || options.anthropicScript ? 'anthropic-messages' : 'openai-completions',
       BEEFTV_AGENT_MODEL: 'synthetic',
       BEEFTV_AGENT_API_KEY: 'synthetic-only',
-      BEEFTV_AGENT_BASE_URL: `http://127.0.0.1:${modelPort}${options.anthropicThinking ? '' : '/v1'}`,
+      BEEFTV_AGENT_BASE_URL: `http://127.0.0.1:${modelPort}${options.anthropicThinking || options.anthropicScript ? '' : '/v1'}`,
       BEEFTV_AGENT_TURN_TIMEOUT_MS: '20000',
       ...envExtra,
     };
@@ -651,12 +693,13 @@ test('真实宿主：Anthropic 协议的可读思考进流式快照、终态与�
     expect(texts.every((text) => !text.includes('先看画布'))).toBe(true);
     expect(chat.text).not.toContain(THINKING_SIGNATURE);
 
-    // 终态与实时流同形：整段思考留在回执里，界面重新打开也能显示。
+    // 终态与实时流是同一份投影：片段身份由官方 entry 接管，界面重新打开也能显示。
     const end = lines.find((line) => line.type === 'turn_end');
     expect(end.reply).toBe('第一段正文。第二段正文。');
-    expect(end.reasoning).toEqual([
-      { id: 'reasoning:0', text: '先看画布上的两个节点，再确认时间线顺序。', status: 'done' },
-      { id: 'reasoning:1', text: '现在把结论写下来。', status: 'done' },
+    expect(end.reasoning).toEqual(snapshots.at(-1).segments);
+    expect(end.reasoning.map((segment) => segment.text)).toEqual([
+      '先看画布上的两个节点，再确认时间线顺序。',
+      '现在把结论写下来。',
     ]);
 
     // 历史回合保留同一份思考；活动回合结束后不再返回 active。
@@ -665,4 +708,41 @@ test('真实宿主：Anthropic 协议的可读思考进流式快照、终态与�
     expect(history.payload.turns[0].reasoning).toEqual(end.reasoning);
     expect(JSON.stringify(history.payload)).not.toContain(THINKING_SIGNATURE);
   }, {}, { canvasId: 'reasoning-canvas', slowFirstModel: false, anthropicThinking: true });
+}, 35000);
+
+test('真实宿主：跨工具调用的思考在流式、终态和历史里是同一份，合成凭据不进展示出口', async () => {
+  await withHost(async ({ api, getModelCalls, getOpsRequests }) => {
+    const canvasId = 'reasoning-tool-canvas';
+    const sessionId = (await api('/sessions', { canvasId })).payload.sessionId;
+    const chat = await api('/chat', { canvasId, sessionId, turnId: 'reasoning-tool-turn', requestId: 'reasoning-tool-req', revisionBefore: 1, message: '先读画布再回答' });
+    expect(chat.status).toBe(200);
+    const lines = chat.text.trim().split('\n').map((line) => JSON.parse(line));
+    // 第一段思考 → canvas_get 工具调用 → 第二段思考 → 正文：恰好两次本地模型请求。
+    expect(getModelCalls()).toBe(2);
+    expect(getOpsRequests()).toContain('POST /api/ops/canvas.get');
+
+    const snapshots = lines.filter((line) => line.type === 'reasoning_snapshot');
+    const last = snapshots.at(-1).segments;
+    // 工具调用前的那段思考没有丢，合成凭据被清掉。
+    expect(last.map((segment) => segment.text)).toEqual(['先读画布上的两个节点。',
+      '再确认时间线顺序，host_token="[REDACTED]"，api_key="[REDACTED]"。']);
+    expect(last.map((segment) => segment.status)).toEqual(['done', 'done']);
+    // 两段来自不同的官方 entry：片段身份带 entry 与内容下标。
+    expect(new Set(last.map((segment) => segment.id)).size).toBe(2);
+    expect(last.every((segment) => segment.id.endsWith(':0'))).toBe(true);
+
+    // 终态与实时流是同一份；重新读取历史也一致。
+    const end = lines.find((line) => line.type === 'turn_end');
+    expect(end.reply).toBe('两段都看过了。');
+    expect(end.reasoning).toEqual(last);
+    const history = await api(`/history?canvasId=${canvasId}`);
+    expect(history.payload.active).toBeNull();
+    expect(history.payload.turns[0].reasoning).toEqual(last);
+
+    // 合成凭据（宿主 token 与 sk- 形式的模型 Key）不出现在任何一行或历史里。
+    for (const body of [chat.text, history.text]) {
+      expect(body).not.toContain('synthetic-lifecycle-host');
+      expect(body).not.toContain(SYNTHETIC_MODEL_KEY);
+    }
+  }, {}, { canvasId: 'reasoning-tool-canvas', slowFirstModel: false, anthropicScript: anthropicToolThenAnswer });
 }, 35000);

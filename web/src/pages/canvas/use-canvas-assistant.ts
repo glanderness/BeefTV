@@ -502,8 +502,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         selectedNodeIds: selectedSnapshot,
                         reply: end.reply || current.streamed,
                         toolCalls: end.toolCalls || [],
-                        // 终态没有思考时退回流里已经收到的片段；这一轮已结束，不再有「正在思考」。
-                        reasoning: end.reasoning?.length ? end.reasoning : current.reasoning.map(segment => ({ ...segment, status: "done" as const })),
+                        // 宿主终态是权威值（含空数组）：照它替换，清掉流里可能已经过期的旧内容。
+                        // 只有字段确实缺失（旧记录、旧宿主）才退回流里已收到的片段，且这一轮已结束，不再有「正在思考」。
+                        reasoning: end.reasoning === undefined ? current.reasoning.map(segment => ({ ...segment, status: "done" as const })) : end.reasoning,
                         change: end.change ?? null,
                         proposals: end.proposals || [],
                         proposalsInvalidated: end.proposalsInvalidated,

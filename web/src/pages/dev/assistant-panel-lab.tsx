@@ -31,8 +31,8 @@ const TURNS: AssistantTurn[] = [
             { toolCallId: "t3", tool: "canvas.node.update", isError: true, error: "conflict" },
         ],
         reasoning: [
-            { id: "reasoning:0", text: "先确认三个镜头要覆盖的剧情节点：开场、冲突、收尾。\n用户已经给了两张参考图，可以直接沿用它们的构图和光线。", status: "done" },
-            { id: "reasoning:1", text: "连接顺序按时间线排，不新增多余节点。", status: "done" },
+            { id: "12:0", text: "先确认三个镜头要覆盖的剧情节点：开场、冲突、收尾。\n用户已经给了两张参考图，可以直接沿用它们的构图和光线。", status: "done" },
+            { id: "12:1", text: "连接顺序按时间线排，不新增多余节点。", status: "done" },
         ],
         change: { revisionBefore: 12, revisionAfter: 13, createdNodeIds: ["n3", "n4", "n5"], updatedNodeIds: [], createdEdgeIds: ["e1", "e2"] },
         proposals: [{ proposalId: "p1", kind: "image", nodeIds: ["n3", "n4", "n5"], model: "seedream-4", modelKey: "beefapi::seedream-4" }],

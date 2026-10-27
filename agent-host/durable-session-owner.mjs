@@ -1096,25 +1096,26 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     // last assistant in transcript: it may belong to a previous successful turn.
     const answer = settled.answer ? await entry.harness.commit((tx) => tx.entry(settled.answer), CTX) : null;
     let assistant = answer?.model?.find((message) => message.role === 'assistant');
+    // 本轮范围由原提交、补充输入与确切结束条目限定：工具调用前后的助手条目都算这一轮，
+    // 终态与实时流、重开历史用同一份投影，所以片段身份与顺序一致。
+    const original = active.submissionId ? await entry.harness.submission(active.submissionId, CTX) : null;
+    const originalStatus = original ? await original.status(CTX) : null;
+    const lowerBound = originalStatus?.entry ?? settled.entry;
+    const view = lowerBound === undefined ? null : await entry.root.context(CTX);
+    const turnEntries = view ? view.entries.filter((item) => item.id > lowerBound
+      && (settled.answer === undefined || item.id <= settled.answer)) : [];
     if (active.stopped || settled.reason === 'aborted') {
       // Official abort converts its committed partial into an assistant entry.
-      // Scope strictly after this submission's own user entry, never prior turns.
-      const original = active.submissionId ? await entry.harness.submission(active.submissionId, CTX) : null;
-      const originalStatus = original ? await original.status(CTX) : null;
-      const lowerBound = originalStatus?.entry ?? settled.entry;
-      if (lowerBound !== undefined) {
-        const view = await entry.root.context(CTX);
-        const partial = view.entries.filter((item) => item.id > lowerBound).flatMap((item) => item.model || [])
-          .filter((message) => message.role === 'assistant' && message.stopReason === 'aborted').at(-1);
-        if (partial) assistant = partial;
-      }
+      const partial = turnEntries.flatMap((item) => item.model || [])
+        .filter((message) => message.role === 'assistant' && message.stopReason === 'aborted').at(-1);
+      if (partial) assistant = partial;
     }
     const preparationError = entry.generation.pendingInputError || entry.generation.skillContextFailure;
     const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
     const planView = entry.turn.plan || active.plan || null;
-    // 已收到的可读思考随终态一起留下：重开历史与实时流同形，没有思考就不写空字段。
-    const reasoning = durableReasoningSegments(assistant);
-    return { ...publicDurableTurn(active), ...completion, ...(reasoning.length ? { reasoning } : {}),
+    // 思考是权威值：即使为空也要写进终态和历史，界面才能区分「没有思考」与「字段缺失」并清掉旧内容。
+    const reasoning = durableReasoningSegments(turnEntries);
+    return { ...publicDurableTurn(active), ...completion, reasoning,
       toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],
       ...(planView ? { plan: planView } : {}),
       status: settled.status, sessionId: entry.sessionId };

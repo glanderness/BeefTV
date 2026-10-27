@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { durableLifecycleState, durableRetryReason, durableStreamEvents } from './durable-session-owner.mjs';
-import { createDurableTurnProjection, durableReasoningSegments } from './durable-turn-projection.mjs';
+import { createDurableTurnProjection, durableReasoningSegments, publicThinkingText } from './durable-turn-projection.mjs';
 
 const SECRET = 'sk-synthetic-upstream-secret';
+/** 明确凭据格式的文本在展示出口被清掉；这里断言的是替换后的样子。 */
+const REDACTED = '[REDACTED]';
 /** 供应商给的签名与不透明载荷：可以留在官方记录里，但绝不能进展示投影。 */
 const SIGNATURE = 'sig-9f2b-opaque-thinking-signature';
 
@@ -84,7 +86,7 @@ describe('Durable visible text projection', () => {
     projection.accept({ type: 'snapshot', afterEntry: 10, entries: [entry(8, 'previous turn')], tools: [] });
     expect(projection.accept({ type: 'message_start', message: assistant('开头') })).toEqual([
       { type: 'text_snapshot', text: '开头' },
-      { type: 'reasoning_snapshot', segments: [{ id: 'live-1:0', text: SECRET, status: 'done' }] },
+      { type: 'reasoning_snapshot', segments: [{ id: 'live-1:0', text: REDACTED, status: 'done' }] },
     ]);
     projection.accept({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 1, delta: '中段' }] });
     expect(projection.text).toBe('开头中段');
@@ -95,7 +97,7 @@ describe('Durable visible text projection', () => {
     projection.accept({ type: 'message_update', changes: [{ type: 'message', message: assistant('完整替换') }] });
     expect(projection.accept({ type: 'message_end', entry: entry(12, '完整替换和尾部') })).toEqual([
       { type: 'text_snapshot', text: '完整替换和尾部' },
-      { type: 'reasoning_snapshot', segments: [{ id: '12:0', text: SECRET, status: 'done' }] },
+      { type: 'reasoning_snapshot', segments: [{ id: '12:0', text: REDACTED, status: 'done' }] },
     ]);
     expect(projection.accept({ type: 'message_end', entry: entry(12, '完整替换和尾部') })).toEqual([]);
     // 思考正文有自己的通道：正文投影永远不把它当回复。
@@ -217,12 +219,118 @@ describe('Durable readable reasoning projection', () => {
     expect(serialized).not.toContain('canvas_node_configure');
   });
 
-  test('终态与历史用同一形状的思考片段，没有可读思考就不写这个字段', () => {
-    expect(durableReasoningSegments(assistant([thinking('先看画布。', { thinkingSignature: SIGNATURE }), text('开始做。')])))
-      .toEqual([{ id: 'reasoning:0', text: '先看画布。', status: 'done' }]);
-    expect(durableReasoningSegments(assistant([thinking('', { redacted: true }), text('只回答正文。')]))).toEqual([]);
+  test('终态与历史用同一形状的思考片段：本轮每个助手条目都算，片段身份带 entry 与内容下标', () => {
+    // 工具调用前后的两段思考都属于这一轮，不能只留最后一条消息的思考。
+    expect(durableReasoningSegments([
+      entry(11, [thinking('先看画布。', { thinkingSignature: SIGNATURE }), { type: 'toolCall', id: 't1', name: 'canvas_get', arguments: {} }]),
+      entry(12, [thinking('再确认素材。'), text('开始做。')]),
+    ])).toEqual([
+      { id: '11:0', text: '先看画布。', status: 'done' },
+      { id: '12:0', text: '再确认素材。', status: 'done' },
+    ]);
+    expect(durableReasoningSegments([entry(12, [thinking('', { redacted: true }), text('只回答正文。')])])).toEqual([]);
+    expect(durableReasoningSegments([entry(13, [text('这一轮没有思考。')])])).toEqual([]);
     expect(durableReasoningSegments(undefined)).toEqual([]);
-    expect(durableReasoningSegments({ role: 'user', content: [text('用户输入')] })).toEqual([]);
+    expect(durableReasoningSegments([{ id: 14, model: [{ role: 'user', content: [text('用户输入')] }] }])).toEqual([]);
+  });
+});
+
+describe('公开思考出口的凭据清理', () => {
+  const HOST_TOKEN = 'synthetic-lifecycle-host';
+  const MODEL_KEY = 'sk-review-only-123456';
+  const thinking = (body, extra = {}) => ({ type: 'thinking', thinking: body, ...extra });
+  const text = (value) => ({ type: 'text', text: value });
+  const assistant = (content) => ({ role: 'assistant', content });
+  const entry = (id, content) => ({ id, model: [assistant(content)] });
+  const segments = (payloads) => payloads.find((payload) => payload.type === 'reasoning_snapshot')?.segments;
+
+  test('已知宿主 token、模型 Key 与明确凭据格式都不进实时、终态与历史', () => {
+    const secrets = [HOST_TOKEN];
+    const projection = createDurableTurnProjection({ secrets });
+    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [], tools: [] });
+    const payloads = projection.accept({ type: 'message_end', entry: entry(12, [
+      thinking(`先看画布：host_token="${HOST_TOKEN}"，api_key="${MODEL_KEY}"，Authorization: Bearer ${MODEL_KEY}。`),
+      text('完成'),
+    ]) });
+    expect(segments(payloads)).toEqual([{ id: '12:0',
+      text: '先看画布：host_token="[REDACTED]"，api_key="[REDACTED]"，Authorization: Bearer [REDACTED]。', status: 'done' }]);
+    expect(JSON.stringify(payloads)).not.toContain(HOST_TOKEN);
+    expect(JSON.stringify(payloads)).not.toContain(MODEL_KEY);
+    // 终态与历史走同一份清理，普通文本不受影响。
+    expect(durableReasoningSegments([entry(12, [thinking(`host_token=${HOST_TOKEN}`)])], secrets))
+      .toEqual([{ id: '12:0', text: 'host_token=[REDACTED]', status: 'done' }]);
+    expect(publicThinkingText('先看画布上的两个节点，再确认顺序。', secrets)).toBe('先看画布上的两个节点，再确认顺序。');
+  });
+
+  test('已知秘密的未完整前缀先扣住，分片到齐后再替换', () => {
+    const projection = createDurableTurnProjection({ secrets: [HOST_TOKEN] });
+    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [], tools: [] });
+    projection.accept({ type: 'message_start', message: assistant([]) });
+    const shown = [];
+    const feed = (delta) => {
+      for (const payload of projection.accept({ type: 'message_update', changes: [{ type: 'thinking_delta', contentIndex: 0, delta }] })) {
+        if (payload.type === 'reasoning_snapshot') shown.push(payload.segments.map((segment) => segment.text).join(''));
+      }
+    };
+    feed('先读画布，host_token="synth');
+    feed('etic-lifecycle-host" 之后再决定。');
+    expect(shown).toEqual(['先读画布，host_token="', '先读画布，host_token="[REDACTED]" 之后再决定。']);
+    expect(shown.join('')).not.toContain('synth');
+    expect(shown.join('')).not.toContain(HOST_TOKEN);
+  });
+
+  test('只在秘密可能从一个值或词的开头出现时扣住，普通英文词尾不被截断', () => {
+    const secrets = ['synthetic-only'];
+    expect(publicThinkingText('先看画布上的 nodes', secrets)).toBe('先看画布上的 nodes');
+    expect(publicThinkingText('先看画布，host_token="syn', secrets)).toBe('先看画布，host_token="');
+  });
+});
+
+describe('思考被替换为空或 redacted 时发清空事件', () => {
+  const thinking = (body, extra = {}) => ({ type: 'thinking', thinking: body, ...extra });
+  const text = (value) => ({ type: 'text', text: value });
+  const assistant = (content) => ({ role: 'assistant', content });
+  const entry = (id, content) => ({ id, model: [assistant(content)] });
+  const segments = (payloads) => payloads.find((payload) => payload.type === 'reasoning_snapshot')?.segments;
+  // 已经显示过一段可读思考的进行中回合：之后任何清空都必须通知界面。
+  const shown = () => {
+    const projection = createDurableTurnProjection();
+    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [], tools: [] });
+    projection.accept({ type: 'message_start', message: assistant([]) });
+    projection.accept({ type: 'message_update', changes: [{ type: 'thinking_start', contentIndex: 0, block: thinking('将被替换的旧内容') }] });
+    expect(projection.reasoning).toEqual([{ id: 'live-1:0', text: '将被替换的旧内容', status: 'streaming' }]);
+    return projection;
+  };
+
+  test('整块被替换成空 thinking 或 redacted：宿主清空并推送完整空数组', () => {
+    for (const replacement of [thinking(''), thinking('不透明占位', { redacted: true })]) {
+      const projection = shown();
+      expect(segments(projection.accept({ type: 'message_update', changes: [{ type: 'block', contentIndex: 0, block: replacement }] }))).toEqual([]);
+      expect(projection.reasoning).toEqual([]);
+      // 已经清空后重复同一替换不再重复推送。
+      expect(projection.accept({ type: 'message_update', changes: [{ type: 'block', contentIndex: 0, block: replacement }] })).toEqual([]);
+    }
+  });
+
+  test('整条消息替换为空、snapshot 替换为空：同样清空', () => {
+    const replacedMessage = shown();
+    expect(segments(replacedMessage.accept({ type: 'message_update', changes: [{ type: 'message', message: assistant([thinking('新的可读内容')]) }] })))
+      .toEqual([{ id: 'live-2:0', text: '新的可读内容', status: 'streaming' }]);
+    expect(segments(replacedMessage.accept({ type: 'message_update', changes: [{ type: 'message', message: assistant([thinking('', { redacted: true })]) }] }))).toEqual([]);
+    expect(replacedMessage.reasoning).toEqual([]);
+
+    const replacedSnapshot = shown();
+    expect(segments(replacedSnapshot.accept({ type: 'snapshot', entries: [], generation: {} }))).toEqual([]);
+    expect(replacedSnapshot.reasoning).toEqual([]);
+  });
+
+  test('从来没有可读思考时不发空事件，界面不生成空抽屉', () => {
+    const projection = createDurableTurnProjection();
+    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [], tools: [] });
+    projection.accept({ type: 'message_start', message: assistant([]) });
+    expect(projection.accept({ type: 'message_update', changes: [{ type: 'block', contentIndex: 0, block: thinking('', { redacted: true }) }] })).toEqual([]);
+    expect(projection.accept({ type: 'message_end', entry: entry(12, [thinking('', { redacted: true }), text('只回答正文。')]) }))
+      .toEqual([{ type: 'text_snapshot', text: '只回答正文。' }]);
   });
 });
 
