@@ -1,0 +1,7 @@
+# 保留本次验收的六份原始日志。
+!/dependencies.log
+!/desktop-build-first.log
+!/desktop-build.log
+!/frontend-build.log
+!/plugins-build.log
+!/verification.log

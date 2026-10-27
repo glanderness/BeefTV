@@ -1,0 +1,5 @@
+本日志仅替换机器路径，其余内容保留。
+# github.com/wailsapp/wails/v2/internal/frontend/desktop/darwin
+WailsContext.m:182:18: warning: 'setShowsBaselineSeparator:' is deprecated: first deprecated in macOS 15.0 - No longer supported [-Wdeprecated-declarations]
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSToolbar.h:299:16: note: property 'showsBaselineSeparator' is declared deprecated here
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSToolbar.h:299:16: note: 'setShowsBaselineSeparator:' has been explicitly marked deprecated here
