@@ -184,11 +184,12 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		result["production"] = map[string]any{"targets": targets}
 	}
 	// 费用估算：整片制作按全部计划目标，单次生成按点名的节点。算不出的项标为暂无价格。
+	canvas := costDependencyGraph(doc)
 	estimateTargets := proposedTargets
 	if len(estimateTargets) == 0 {
-		estimateTargets = costTargets(ctx.Domain, doc, nodeIDs, false, &costResolution{Kind: args.Kind, Model: resolved})
+		estimateTargets = costTargets(ctx.Domain, canvas, nodeIDs, false, &costResolution{Kind: args.Kind, Model: resolved})
 	}
-	if estimate := costTargetSummary(ctx, estimateTargets); estimate != nil {
+	if estimate := costTargetSummary(ctx, canvas, estimateTargets); estimate != nil {
 		result["estimate"] = estimate
 	}
 	if strings.TrimSpace(ctx.TurnID) != "" {

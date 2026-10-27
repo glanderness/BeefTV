@@ -23,6 +23,7 @@ import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-asse
 import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
 import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
 import { generationErrorMessage } from "@/lib/generation-error";
+import { costConfirmText } from "@/lib/generation-cost";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { estimateGenerationCost } from "@/services/api/operations";
 import type { Skill } from "@/services/api/skills";
@@ -83,10 +84,32 @@ export function useCanvasStoryboard({
     }, [projectId]);
 
     // 提交前把后端算好的目录单价合计摆给用户看。文本任务没有目录单价，照实说。
-    const confirmGenerationSubmission = useCallback(async (count: number, model: string, taskLabel: string, kind: "image" | "video" | "audio" | "", items?: Array<{ parameters?: Record<string, string> }>) => {
+    /**
+     * 确认框里的逐项费用：按每一行真实的生成参数和参考节点估算——分镜每一行用的参考图、
+     * 参考视频和镜头时长都不一样，只报一个任务数会少算。参考节点由调用方给出，
+     * 与建立节点时的取材保持一致。
+     */
+    const storyboardCostItems = useCallback((rows: StoryboardRow[], mode: "image" | "video", references: (row: StoryboardRow) => string[]) => {
+        const config = buildGenerationConfig(effectiveConfig, undefined, mode);
+        return rows.map((row) => {
+            const parameters: Record<string, string> = mode === "image"
+                ? { size: config.size, quality: config.quality, count: config.count }
+                : { seconds: String(row.durationSeconds), vquality: config.vquality, count: config.count };
+            return { parameters, referenceNodeIds: references(row) };
+        });
+    }, [effectiveConfig]);
+
+    /** 分镜行实际用到的参考节点：和建立节点时用的是同一个取材函数。 */
+    const storyboardRowReferences = useCallback((scriptNode: CanvasNodeData | undefined, mode: "image" | "video", includeFirstFrame = false) => (row: StoryboardRow) => (
+        scriptNode
+            ? storyboardRowReferenceNodeIds(scriptNode, row, nodesRef.current, connectionsRef.current, includeFirstFrame, mode === "image" ? row.imageNodeId : row.videoNodeId)
+            : []
+    ), [connectionsRef, nodesRef]);
+
+    const confirmGenerationSubmission = useCallback(async (count: number, model: string, taskLabel: string, kind: "image" | "video" | "audio" | "", items?: Array<{ parameters?: Record<string, string>; referenceNodeIds?: string[] }>) => {
         if (!count) return false;
         const estimate = kind ? await estimateGenerationCost({ canvasId: projectId, batch: { kind, model, count, items } }) : null;
-        const priceText = estimate?.text || (kind ? "目录单价暂时读不到，按所选渠道实际标准计费。" : "文本任务按所选渠道实际标准计费。");
+        const priceText = costConfirmText(estimate, kind ? "目录单价暂时读不到，按所选渠道实际标准计费。" : "文本任务按所选渠道实际标准计费。");
         return new Promise<boolean>((resolve) => modal.confirm({
             title: `确认提交 ${count} 个${taskLabel}任务`,
             content: `任务数：${count}；模型：${modelDisplayName(effectiveConfig, model)}。${priceText}${localMode ? "确认后将提交到本地任务队列。" : ""}`,
@@ -347,10 +370,10 @@ export function useCanvasStoryboard({
             return !imageNode?.metadata?.content && (!imageNode || !activeNodeIds.has(imageNode.id));
         });
         if (!targetRows.length) return message.info("所选分镜图已生成或正在生成");
-        if (!await confirmGenerationSubmission(targetRows.length, imageModel, "图片生成", "image")) return;
+        if (!await confirmGenerationSubmission(targetRows.length, imageModel, "图片生成", "image", storyboardCostItems(targetRows, "image", storyboardRowReferences(scriptNode, "image")))) return;
         const targets = ensureScriptImageNodes(nodeId, targetRows.map((row) => row.id));
         if (enqueueGenerationBatch(nodeId, "storyboard_image", targets.map((target) => ({ rowId: target.row.id, nodeId: target.node.id })))) message.success("分镜图已加入生成队列");
-    }, [effectiveConfig, enqueueGenerationBatch, ensureScriptImageNodes, confirmGenerationSubmission, isAiConfigReady, message, nodesRef]);
+    }, [effectiveConfig, enqueueGenerationBatch, ensureScriptImageNodes, confirmGenerationSubmission, isAiConfigReady, message, nodesRef, storyboardCostItems, storyboardRowReferences]);
 
     const createScriptVideoNodes = useCallback((nodeId: string, silent = false, rowIds?: string[]) => {
         const scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
@@ -424,7 +447,7 @@ export function useCanvasStoryboard({
             else message.warning("请先补充镜头画面描述");
             return;
         }
-        if (!await confirmGenerationSubmission(targetRows.length, videoModel, "视频生成", "video", targetRows.map((row) => ({ parameters: { seconds: String(row.durationSeconds) } })))) return;
+        if (!await confirmGenerationSubmission(targetRows.length, videoModel, "视频生成", "video", storyboardCostItems(targetRows, "video", storyboardRowReferences(scriptNode, "video")))) return;
         createScriptVideoNodes(nodeId, true, targetRows.map((row) => row.id));
         scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
         const targetRowIds = new Set(targetRows.map((row) => row.id));
@@ -449,7 +472,7 @@ export function useCanvasStoryboard({
         setConnections(nextConnections);
         setSelectedNodeIds(new Set(targets.map((target) => target.videoNode.id)));
         if (enqueueGenerationBatch(nodeId, "storyboard_video", targets.map((target) => ({ rowId: target.row.id, nodeId: target.videoNode.id })))) message.success("镜头视频已加入生成队列");
-    }, [connectionsRef, confirmGenerationSubmission, createScriptVideoNodes, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes, setSelectedNodeIds]);
+    }, [connectionsRef, confirmGenerationSubmission, createScriptVideoNodes, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes, setSelectedNodeIds, storyboardCostItems, storyboardRowReferences]);
 
     const createScriptActionBoards = useCallback(async (nodeId: string) => {
         const scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
@@ -465,7 +488,8 @@ export function useCanvasStoryboard({
             message.info("动作拆分板已存在");
             return;
         }
-        if (!await confirmGenerationSubmission(actionBoardRows.length, imageModel, "动作板生成", "image")) return;
+        // 动作板只把剧本行的剧情写进提示词，不引用素材，所以没有参考节点。
+        if (!await confirmGenerationSubmission(actionBoardRows.length, imageModel, "动作板生成", "image", storyboardCostItems(actionBoardRows, "image", () => []))) return;
         const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const startX = scriptNode.position.x + scriptNode.width + 120;
         const nextNodes = [...nodesRef.current];
@@ -496,7 +520,7 @@ export function useCanvasStoryboard({
         setNodes(nextNodes);
         setConnections(nextConnections);
         if (enqueueGenerationBatch(nodeId, "action_board", targets.map((target) => ({ rowId: target.row.id, nodeId: target.node.id })))) message.success("动作拆分板已加入生成队列");
-    }, [connectionsRef, confirmGenerationSubmission, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes]);
+    }, [connectionsRef, confirmGenerationSubmission, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes, storyboardCostItems]);
 
     const generateScriptVideos = useCallback(async (nodeId: string, rowIds: string[]) => {
         let scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
@@ -516,7 +540,7 @@ export function useCanvasStoryboard({
             return !videoNode?.metadata?.content && (!videoNode || !activeNodeIds.has(videoNode.id));
         });
         if (!targetRows.length) return message.info("所选镜头视频已生成或正在生成");
-        if (!await confirmGenerationSubmission(targetRows.length, videoModel, "视频生成", "video", targetRows.map((row) => ({ parameters: { seconds: String(row.durationSeconds) } })))) return;
+        if (!await confirmGenerationSubmission(targetRows.length, videoModel, "视频生成", "video", storyboardCostItems(targetRows, "video", storyboardRowReferences(scriptNode, "video", true)))) return;
         createScriptVideoNodes(nodeId, true, targetRows.map((row) => row.id));
         scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);
         if (!scriptNode) return;
@@ -551,7 +575,7 @@ export function useCanvasStoryboard({
         setNodes(nextNodes);
         setConnections(nextConnections);
         if (enqueueGenerationBatch(nodeId, "storyboard_video", targets.map((target) => ({ rowId: target.row.id, nodeId: target.node.id })))) message.success("镜头视频已加入生成队列");
-    }, [connectionsRef, confirmGenerationSubmission, createScriptVideoNodes, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes]);
+    }, [connectionsRef, confirmGenerationSubmission, createScriptVideoNodes, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes, storyboardCostItems, storyboardRowReferences]);
 
     return {
         addScriptRow,

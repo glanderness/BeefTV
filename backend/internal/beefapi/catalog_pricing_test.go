@@ -66,6 +66,34 @@ func TestNormalizeCatalogPricingKeepsOnlyBillableFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeCatalogPricingTurnsReferenceVideoNoteIntoFlag(t *testing.T) {
+	// wan3.0-video 的计费语义只写在说明里，归一成结构化标记后估算才知道参考秒数要一起算。
+	_, combined, ok := NormalizeCatalogPricing(json.RawMessage(`{"model_name":"wan3.0-video","display_kind":"video","mode":"per_request",
+		"per_second_cny":{"1080p":1.62,"480p":0.405,"720p":0.81},"pricing_note":"按生成与参考视频合计秒数计费"}`))
+	if !ok || combined["reference_video_billed_as_output"] != true {
+		t.Fatalf("合计秒数计费的说明要归一成结构化标记: %#v", combined)
+	}
+	for _, value := range combined {
+		if text, isText := value.(string); isText && strings.Contains(text, "参考视频") {
+			t.Fatalf("目录说明原文进入了客户端价格: %q", text)
+		}
+	}
+
+	// 价格手册里的另一种说法同样归一。
+	_, pricebook, ok := NormalizeCatalogPricing(json.RawMessage(`{"model_name":"kling-video-v3","display_kind":"video","mode":"per_request",
+		"per_second_cny":{"720p":0.9},"pricing_note":"带参考视频时，输出与参考视频合计时长按带视频单价计费"}`))
+	if !ok || pricebook["reference_video_billed_as_output"] != true {
+		t.Fatalf("价格手册的合计时长说明也要归一: %#v", pricebook)
+	}
+
+	// 与参考视频无关的说明不产生标记。
+	_, unrelated, ok := NormalizeCatalogPricing(json.RawMessage(`{"model_name":"gpt-image-2","display_kind":"image","mode":"per_request",
+		"per_request_cny":0.35,"pricing_note":"按质量和分辨率计费，参考图费用另列。"}`))
+	if !ok || unrelated["reference_video_billed_as_output"] != nil {
+		t.Fatalf("无关说明不该产生标记: %#v", unrelated)
+	}
+}
+
 func flattenKeys(value map[string]any) []string {
 	keys := make([]string, 0, len(value))
 	for key, raw := range value {

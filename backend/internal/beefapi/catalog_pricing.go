@@ -31,9 +31,9 @@ type catalogImagePriceTable struct {
 }
 
 type catalogVideoOfficialRate struct {
-	Resolution         string  `json:"resolution"`
-	InputPerSecondCNY  float64 `json:"input_per_second_cny"`
-	OutputPerSecondCNY float64 `json:"output_per_second_cny"`
+	Resolution         string   `json:"resolution"`
+	InputPerSecondCNY  *float64 `json:"input_per_second_cny"`
+	OutputPerSecondCNY float64  `json:"output_per_second_cny"`
 }
 
 // catalogPricingRow 只声明算价要用的字段；目录里的说明文字不进入客户端。
@@ -50,6 +50,15 @@ type catalogPricingRow struct {
 	OutputCNY           *float64                   `json:"output_cny"`
 	VideoOfficial       []catalogVideoOfficialRate `json:"video_official"`
 	ImagePriceTable     *catalogImagePriceTable    `json:"image_price_table"`
+	PricingNote         string                     `json:"pricing_note"`
+}
+
+// referenceVideoBillingNotes 是目录里表示「参考视频与输出合计秒数、按同一个单价计费」的
+// 说明原文。这种计费语义只在说明里出现，归一成结构化标记客户端才知道该怎么算；
+// 说明文字本身不进客户端，改词也只是退回「算不出来」。
+var referenceVideoBillingNotes = map[string]bool{
+	"按生成与参考视频合计秒数计费":             true,
+	"带参考视频时，输出与参考视频合计时长按带视频单价计费": true,
 }
 
 // ParseEnterpriseCatalog 把价格目录按 model_name 索引。目录整体不可读时返回 nil；
@@ -113,6 +122,9 @@ func NormalizeCatalogPricing(raw json.RawMessage) (string, map[string]any, bool)
 	if table := pricingImageTable(row.ImagePriceTable); table != nil {
 		pricing["image_price_table"] = table
 	}
+	if referenceVideoBillingNotes[strings.TrimSpace(row.PricingNote)] {
+		pricing["reference_video_billed_as_output"] = true
+	}
 	if len(pricing) <= 2 {
 		// 只剩 currency/kind，说明这一行没有任何可用的计费字段。
 		return "", nil, false
@@ -166,14 +178,15 @@ func pricingOfficialRates(rows []catalogVideoOfficialRate) []any {
 	rates := make([]any, 0, len(rows))
 	for _, row := range rows {
 		resolution := strings.ToLower(strings.TrimSpace(row.Resolution))
-		if resolution == "" || !finiteNonNegative(row.OutputPerSecondCNY) || !finiteNonNegative(row.InputPerSecondCNY) {
+		if resolution == "" || !finiteNonNegative(row.OutputPerSecondCNY) {
 			continue
 		}
-		rates = append(rates, map[string]any{
-			"resolution":            resolution,
-			"input_per_second_cny":  row.InputPerSecondCNY,
-			"output_per_second_cny": row.OutputPerSecondCNY,
-		})
+		rate := map[string]any{"resolution": resolution, "output_per_second_cny": row.OutputPerSecondCNY}
+		// 目录没给参考视频的每秒单价时不补 0：估算要靠「没有这个字段」说明算不出来。
+		if input, ok := pricingNumber(row.InputPerSecondCNY); ok {
+			rate["input_per_second_cny"] = input
+		}
+		rates = append(rates, rate)
 	}
 	return rates
 }

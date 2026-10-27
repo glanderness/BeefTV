@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { ModelPicker } from "../src/components/model-picker";
-import { costLineForNode, costLineText, modelPriceLines, sanitizeCostEstimate, sanitizeModelPricing } from "../src/lib/generation-cost";
+import { costEstimateLines, costLineForNode, costLineText, modelPriceLines, sanitizeCostEstimate, sanitizeModelPricing } from "../src/lib/generation-cost";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 
@@ -89,6 +89,32 @@ test("后端费用估算形状不对时宁可不显示金额", () => {
     // 算不出的项只说原因，不显示 0 元。
     expect(costLineText(costLineForNode(estimate, "tts-1")!)).toBe("缺少台词文本");
     expect(costLineForNode(estimate, "missing")).toBeNull();
+});
+
+test("确认框明细逐项列出金额与依据，同价项合并计数", () => {
+    const estimate = sanitizeCostEstimate({
+        currency: "CNY", total: 1.15, known: true, unknownCount: 0,
+        items: [
+            { kind: "image", amount: 0.65, basis: "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张" },
+            { kind: "image", amount: 0.5, basis: "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 1 张" },
+            { kind: "image", amount: 0.65, basis: "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张" },
+        ],
+        text: "预计费用 ¥1.8",
+    });
+    expect(costEstimateLines(estimate)).toEqual([
+        "预计费用 ¥1.8",
+        "¥0.65（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张） × 2 项",
+        "¥0.5（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 1 张）",
+    ]);
+
+    // 单个节点也要有自己的一行：算不出的项逐项说明原因，不是只给一句通用提示。
+    const single = sanitizeCostEstimate({
+        currency: "CNY", total: 0, known: false, unknownCount: 1,
+        items: [{ nodeId: "v1", title: "镜头1 · 视频", kind: "video", amount: null, basis: "分辨率没有对应报价" }],
+        text: "暂无可用价格，按所选渠道实际标准计费",
+    });
+    expect(costEstimateLines(single)).toEqual(["暂无可用价格，按所选渠道实际标准计费", "镜头1 · 视频 · 分辨率没有对应报价"]);
+    expect(costEstimateLines(null)).toEqual([]);
 });
 
 test("模型选择器对图片和视频模型显示目录单价，文本模型不显示", () => {

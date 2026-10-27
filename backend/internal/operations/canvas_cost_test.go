@@ -39,6 +39,18 @@ func costCanvas(nodes ...map[string]any) json.RawMessage {
 	return raw
 }
 
+func costCanvasWith(nodes []map[string]any, connections [][2]string) json.RawMessage {
+	edges := make([]any, 0, len(connections))
+	for _, connection := range connections {
+		edges = append(edges, map[string]any{"id": connection[0] + "->" + connection[1], "fromNodeId": connection[0], "toNodeId": connection[1]})
+	}
+	raw, err := json.Marshal(map[string]any{"id": "c1", "revision": 7, "nodes": nodes, "connections": edges})
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
+
 func costNode(id, kind, model string, metadata map[string]any) map[string]any {
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -203,6 +215,75 @@ func TestOpCanvasCostEstimateBatchCountsOneOffTargets(t *testing.T) {
 	summary = result.(map[string]any)["estimate"].(*modelcatalog.CostSummary)
 	if len(summary.Items) != 2 || summary.Total != 1.05 {
 		t.Fatalf("batch items summary = %#v", summary)
+	}
+}
+
+func TestOpCanvasCostEstimateBatchCountsReferencesPerItem(t *testing.T) {
+	// 换装一行两张参考图、另一行一张：参考图费用要按每行实际张数算，不能只看行数。
+	probe := &costProbe{
+		doc: costCanvas(
+			costNode("r1", "image", "", map[string]any{"content": "a.png"}),
+			costNode("r2", "image", "", map[string]any{"content": "b.png"}),
+		),
+		pricing: map[string]map[string]any{"beefapi::gpt-image-2": imagePricingTable()},
+	}
+	result, err := opCanvasCostEstimate(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"canvasId":"c1","batch":{"kind":"image","model":"beefapi::gpt-image-2","items":[
+		{"parameters":{"size":"1K","quality":"low"},"referenceNodeIds":["r1","r2"]},
+		{"parameters":{"size":"1K","quality":"low"},"referenceNodeIds":["r1"]}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := result.(map[string]any)["estimate"].(*modelcatalog.CostSummary)
+	if len(summary.Items) != 2 || summary.Total != 1.15 {
+		t.Fatalf("batch summary = %#v", summary)
+	}
+	if summary.Items[0].Basis != "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张" {
+		t.Fatalf("两张参考图的行 = %#v", summary.Items[0])
+	}
+	if summary.Items[1].Basis != "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 1 张" {
+		t.Fatalf("一张参考图的行 = %#v", summary.Items[1])
+	}
+}
+
+func TestOpCanvasCostEstimateCountsReferenceVideoSeconds(t *testing.T) {
+	wan := map[string]any{
+		"currency": "CNY", "kind": "video", "mode": "per_request",
+		"per_second_cny": map[string]any{"720p": 0.81}, "reference_video_billed_as_output": true,
+	}
+	probe := &costProbe{
+		doc: costCanvasWith([]map[string]any{
+			costNode("ref", "video", "", map[string]any{"content": "https://example.test/ref.mp4", "durationMs": 10000}),
+			costNode("n1", "video", "beefapi::wan3.0-video", map[string]any{"vquality": "720", "seconds": 5}),
+		}, [][2]string{{"ref", "n1"}}),
+		pricing: map[string]map[string]any{"beefapi::wan3.0-video": wan},
+	}
+	result, err := opCanvasCostEstimate(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"canvasId":"c1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := result.(map[string]any)["estimate"].(*modelcatalog.CostSummary)
+	if len(summary.Items) != 1 || summary.Total != 12.15 || !summary.Known {
+		t.Fatalf("带参考视频的估算 = %#v", summary)
+	}
+	if summary.Items[0].Basis != "720p ¥0.81/秒 × 15秒（输出 5 秒 + 参考视频 10 秒）" {
+		t.Fatalf("参考视频秒数要计入 = %#v", summary.Items[0])
+	}
+
+	// 参考视频没有时长记录时如实说算不出来，不能只算输出费用还说算全了。
+	unknown := &costProbe{
+		doc: costCanvasWith([]map[string]any{
+			costNode("ref", "video", "", map[string]any{"content": "https://example.test/ref.mp4"}),
+			costNode("n1", "video", "beefapi::wan3.0-video", map[string]any{"vquality": "720", "seconds": 5}),
+		}, [][2]string{{"ref", "n1"}}),
+		pricing: map[string]map[string]any{"beefapi::wan3.0-video": wan},
+	}
+	result, err = opCanvasCostEstimate(&Context{UserID: "owner", Domain: unknown}, json.RawMessage(`{"canvasId":"c1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary = result.(map[string]any)["estimate"].(*modelcatalog.CostSummary)
+	if summary.Items[0].Amount != nil || summary.Items[0].Basis != "参考视频时长读不到，无法估算" || summary.Known {
+		t.Fatalf("参考视频时长读不到 = %#v", summary.Items[0])
 	}
 }
 

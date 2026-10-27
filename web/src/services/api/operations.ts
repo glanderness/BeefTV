@@ -56,7 +56,8 @@ export type CanvasCostEstimateRequest = {
         kind: "image" | "video" | "audio";
         model: string;
         count?: number;
-        items?: Array<{ parameters?: Record<string, string>; text?: string }>;
+        /** 每项的真实生成参数和参考节点：参考图按张、参考视频按秒计入。 */
+        items?: Array<{ parameters?: Record<string, string>; text?: string; referenceNodeIds?: string[] }>;
     };
 };
 

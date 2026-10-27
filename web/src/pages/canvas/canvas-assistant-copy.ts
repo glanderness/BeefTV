@@ -2,7 +2,7 @@
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
 import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantSkillSelection, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
-import { costLineForNode, costLineText, sanitizeCostEstimate } from "@/lib/generation-cost";
+import { costEstimateLines, costLineForNode, costLineText, sanitizeCostEstimate } from "@/lib/generation-cost";
 import type { CanvasNodeData } from "@/types/canvas";
 
 export type AssistantStatusAction = "model-settings" | "retry";
@@ -157,11 +157,8 @@ export function assistantProposalText(
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
     const title = `为 ${count} 个节点生成${target} · ${seedancePortraitLabel(proposal.model) || proposal.model}`;
     if (!awaitingConfirmation) return title;
-    // 一次生成多个节点时逐项列出各自费用；只有一个节点时合计就是那一项。
-    const price = estimate
-        ? [estimate.text, ...(estimate.items.length > 1 ? estimate.items.map((item) => `${item.title ? `${item.title} · ` : ""}${costLineText(item)}`) : [])]
-        : [];
-    return [title, ...price, "确认后开始，按所选渠道计费。"].join("\n");
+    // 每一项都要有自己的金额和依据：只有一项时合计就是那一项，算不出的项也要说明原因。
+    return [title, ...costEstimateLines(estimate), "确认后开始，按所选渠道计费。"].join("\n");
 }
 
 /** Match the submitted proposal, including fan-out images; old results on the source node are not receipts. */

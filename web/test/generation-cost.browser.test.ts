@@ -70,6 +70,23 @@ for (const dark of [false, true]) {
         if (evidenceDir) await mkdir(evidenceDir, { recursive: true });
         if (evidenceDir) await page.getByTestId("proposal-card").screenshot({ path: shot("assistant-cost-card") });
 
+        // 一次生成多个节点：每一项都有自己的金额和依据（含参考图）。
+        const multi = await page.getByTestId("proposal-card-multi").textContent();
+        expect(multi).toContain("预计费用 ¥1.8");
+        expect(multi).toContain("换装 · 1 · ¥0.65（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张）");
+        expect(multi).toContain("换装 · 3 · ¥0.5（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 1 张）");
+        if (evidenceDir) await page.getByTestId("proposal-card-multi").screenshot({ path: shot("assistant-cost-card-multi") });
+
+        // 批量确认框：合计在前，逐项金额与依据在后（和批量表格、分镜两处确认框同源）。
+        await page.getByTestId("batch-confirm").click();
+        const dialog = page.locator(".ant-modal-confirm").first();
+        await dialog.waitFor();
+        const dialogText = await dialog.textContent();
+        expect(dialogText).toContain("确认提交 3 个批量图片任务");
+        expect(dialogText).toContain("预计费用 ¥1.8；换装 · 1 · ¥0.65（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张）；换装 · 2 · ¥0.65（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张）；换装 · 3 · ¥0.5（1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 1 张）");
+        if (evidenceDir) await dialog.screenshot({ path: shot("batch-confirm-cost") });
+        await page.locator(".ant-modal-confirm .ant-btn").first().click();
+
         await page.getByRole("button", { name: "参考单价" }).click();
         const popover = page.locator(".ant-popover:not(.ant-popover-hidden)").first();
         await popover.waitFor();

@@ -13,7 +13,7 @@ export type ModelPricing = {
     free_reference_images?: number;
     input_cny?: number;
     output_cny?: number;
-    video_official?: Array<{ resolution: string; input_per_second_cny: number; output_per_second_cny: number }>;
+    video_official?: Array<{ resolution: string; input_per_second_cny?: number; output_per_second_cny: number }>;
     image_price_table?: {
         output?: Record<string, Record<string, number>>;
         reference?: number;
@@ -82,7 +82,9 @@ function priceOfficial(value: unknown): ModelPricing["video_official"] {
         const resolution = priceString(row.resolution);
         const output = priceNumber(row.output_per_second_cny);
         if (!resolution || output === undefined) return [];
-        return [{ resolution, input_per_second_cny: priceNumber(row.input_per_second_cny) ?? 0, output_per_second_cny: output }];
+        const input = priceNumber(row.input_per_second_cny);
+        // 目录没给参考视频单价时不补 0：有没有这个字段是两种不同的口径。
+        return [{ resolution, ...(input === undefined ? {} : { input_per_second_cny: input }), output_per_second_cny: output }];
     });
     return rates.length ? rates : undefined;
 }
@@ -234,6 +236,39 @@ export function sanitizeCostEstimate(value: unknown): CostEstimate | null {
 /** 单项费用：金额算得出就带上依据，算不出就只说原因。 */
 export function costLineText(line: CostEstimateLine): string {
     return line.amount === null ? line.basis : `预计费用 ¥${money(line.amount)}（${line.basis}）`;
+}
+
+/** 明细里的单项：金额在前、依据在后，和合计放在一起时不重复「预计费用」。 */
+function costLineDetail(line: CostEstimateLine): string {
+    return line.amount === null ? line.basis : `¥${money(line.amount)}（${line.basis}）`;
+}
+
+/** 明细最多列几组不同单价：批量确认框可能一次几百项，同价项合并计数。 */
+const COST_DETAIL_LIMIT = 8;
+
+/**
+ * 确认框和卡片里的费用明细：先合计，再逐项列出金额与依据，同一依据合并计数。
+ * 单项（含算不出的项）也要有自己的一行，不能只给一句通用提示。
+ * 读不到估算时返回空数组，调用方回退到「按所选渠道实际标准计费」。
+ */
+export function costEstimateLines(estimate: CostEstimate | null | undefined): string[] {
+    if (!estimate) return [];
+    const groups = new Map<string, number>();
+    for (const item of estimate.items) {
+        const line = `${item.title ? `${item.title} · ` : ""}${costLineDetail(item)}`;
+        groups.set(line, (groups.get(line) ?? 0) + 1);
+    }
+    const lines = [...groups.entries()].slice(0, COST_DETAIL_LIMIT).map(([line, count]) => count > 1 ? `${line} × ${count} 项` : line);
+    if (groups.size > lines.length) lines.push(`…另有 ${groups.size - lines.length} 种单价项`);
+    return [estimate.text, ...lines];
+}
+
+/**
+ * 确认框里的一句话费用说明：合计在前、逐项明细在后。读不到估算时用调用方给的兜底
+ * 说明，不编价格。批量确认框（批量表格、分镜）共用同一段文案。
+ */
+export function costConfirmText(estimate: CostEstimate | null | undefined, fallback: string): string {
+    return costEstimateLines(estimate).join("；") || fallback;
 }
 
 /** 按节点找它这一项的费用；提议卡逐条列出目标和费用时用。 */

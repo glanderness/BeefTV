@@ -67,7 +67,7 @@
   },
   {
     "id": "canvas.cost.estimate",
-    "summary": "按画布当前参数估算生成费用（图片、视频、配音的目录单价单项与合计；只读、不联网、不建任务；算不出的项标为暂无价格，超分按先扣金额另行结算、不计入合计）",
+    "summary": "按画布当前参数估算生成费用（图片、视频、配音的目录单价单项与合计，含参考图和参考视频；只读、不联网、不建任务；算不出的项标为暂无价格，超分按先扣金额另行结算、不计入合计）",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -118,6 +118,14 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "referenceNodeIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 24,
+                    "description": "这一项用到的参考节点；参考图和参考视频按目录单价一并计入"
                   }
                 }
               }

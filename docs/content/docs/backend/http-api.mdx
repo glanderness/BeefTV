@@ -44,9 +44,9 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 若缺少可用传输方式，提交返回 HTTP 400、`reason=reference_media_requires_url`，不创建任务。`msg` 包含受影响素材的类型和序号；`details.requiredReferences` 提供 `{ kind, index, mask? }`，`kind` 为 `image/video/audio`，`index` 从 0 开始，遮罩为 `mask: true`。客户端仅替换这些素材，补齐后可再次提交；其他网络或上游错误不适用此规则。执行阶段上传失败保留原任务的失败记录，不调用模型。声音、水印等开关接受布尔值及其字符串形式，已有任务的同类参数也按相同规则读取。
 
-`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。提议还返回 `estimate`：按当前参数与模型档案里保存的目录单价算出逐项费用和合计（`total`、`known`、`unknownCount`、`items[].amount`、`items[].basis`、`text`）；算不出的项 `amount` 为 `null` 并在 `basis` 说明原因，不能当成 0 元。
+`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。提议还返回 `estimate`：按当前参数与模型档案里保存的目录单价算出逐项费用和合计（`total`、`known`、`unknownCount`、`items[].amount`、`items[].basis`、`text`），参考图与参考视频的单价一并计入；算不出的项 `amount` 为 `null` 并在 `basis` 说明原因，不能当成 0 元。
 
-`canvas.cost.estimate` 用同一套算法单独估算费用，同样只读、不联网、不建任务、不扣费。传 `canvasId` 估算画布上已选模型、还没有成品的生成节点，可用 `nodeIds` 只估算点名节点；也可传 `batch:{kind,model,count|items}` 估算还没建节点的一次性批量（例如分镜或批量表格）。没有可用目录单价时返回 `estimate:null` 与 `unavailable`，界面照实说「暂无价格」。超分模型的先扣金额单独结算，不计入合计。
+`canvas.cost.estimate` 用同一套算法单独估算费用，同样只读、不联网、不建任务、不扣费。传 `canvasId` 估算画布上已选模型、还没有成品的生成节点，可用 `nodeIds` 只估算点名节点；也可传 `batch:{kind,model,count|items}` 估算还没建节点的一次性批量（例如分镜或批量表格），`items[]` 可带每项自己的 `parameters`、`text` 与 `referenceNodeIds`。参考图按目录的参考图单价计费，参考视频按目录的参考秒单价计费，或按目录说明的「输出与参考视频合计秒数」同一单价计费；参考视频时长读不到、目录也没说怎么计费时，该项 `amount` 为 `null` 并在 `basis` 说明，不会只算输出费用还标成已知。视频分辨率按画布保存的档位匹配目录键（`720`/`1080`/`480`，`2160`/`1440` 对到 `4k`/`2k`）。没有可用目录单价时返回 `estimate:null` 与 `unavailable`，界面照实说「暂无价格」。超分模型的先扣金额单独结算，不计入合计。
 
 外部读写客户端的提议还返回 `nextAction`：由外部宿主审批后调用 `canvas.generation.submit`，提交 `canvasId`、1 至 8 个 `nodeIds`、`expectedRevision`、`expectedModelConfigRevision` 和稳定 `operationId`。两个版本分别来自提议的 `source.canvasRevision` 与 `source.modelConfigRevision`。此路径不依赖内置助手回合或确认卡，返回已受理的 `taskIds`、`nodeIds` 与画布新 `revision`；同键同参数回读原回执，过期版本、未就绪参考和已关联任务的目标拒绝。当前复用单节点单产物的制作准入；已有任务通过 `task.get` 和原任务恢复入口处理，不换键重复购买。历史只读凭据不能提交或回放写回执。
 

@@ -167,14 +167,24 @@ describe("付费生成确认", () => {
         expect(text).not.toContain("预计费用");
     });
 
-    test("卡片直接显示后端算出的合计，前端不自己算价", () => {
+    test("卡片直接显示后端算出的合计和这一项的金额依据，前端不自己算价", () => {
         const text = assistantProposalText({
             proposalId: "p3", kind: "image", nodeIds: ["a", "b"], model: "gpt-image-2", modelKey: "beefapi::gpt-image-2",
             estimate: { currency: "CNY", total: 0.7, known: true, unknownCount: 0,
                 items: [{ nodeId: "a", kind: "image", model: "gpt-image-2", amount: 0.35, basis: "1K 每张 ¥0.35" }],
                 text: "预计费用 ¥0.7" },
         });
-        expect(text).toBe("为 2 个节点生成图片 · gpt-image-2\n预计费用 ¥0.7\n确认后开始，按所选渠道计费。");
+        expect(text).toBe("为 2 个节点生成图片 · gpt-image-2\n预计费用 ¥0.7\n¥0.35（1K 每张 ¥0.35）\n确认后开始，按所选渠道计费。");
+    });
+
+    test("单个节点算不出价格时逐项说明原因，不是只给一句通用提示", () => {
+        const text = assistantProposalText({
+            proposalId: "p3b", kind: "video", nodeIds: ["a"], model: "minimax-h3-max", modelKey: "beefapi::minimax-h3-max",
+            estimate: { currency: "CNY", total: 0, known: false, unknownCount: 1,
+                items: [{ nodeId: "a", title: "镜头1", kind: "video", model: "minimax-h3-max", amount: null, basis: "分辨率没有对应报价" }],
+                text: "暂无可用价格，按所选渠道实际标准计费" },
+        });
+        expect(text).toBe("为 1 个节点生成视频 · minimax-h3-max\n暂无可用价格，按所选渠道实际标准计费\n镜头1 · 分辨率没有对应报价\n确认后开始，按所选渠道计费。");
     });
 
     test("多个节点一次生成时逐项列出费用，合计在前", () => {
@@ -191,8 +201,8 @@ describe("付费生成确认", () => {
         expect(text).toBe([
             "为 2 个节点生成图片 · gpt-image-2",
             "预计费用 ¥0.7（已知部分），另有 1 项暂无价格",
-            "分镜1 · 预计费用 ¥0.35（1K 高质量 ¥0.35 × 1 张）",
-            "分镜2 · 预计费用 ¥0.35（1K 高质量 ¥0.35 × 1 张）",
+            "分镜1 · ¥0.35（1K 高质量 ¥0.35 × 1 张）",
+            "分镜2 · ¥0.35（1K 高质量 ¥0.35 × 1 张）",
             "旁白 · 缺少台词文本",
             "确认后开始，按所选渠道计费。",
         ].join("\n"));

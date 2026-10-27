@@ -6,6 +6,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { batchInputColumns, batchPromptForRow, batchReferenceColumns, batchReferenceHandleId, createBatchRowsFromColumns, createInheritedBatchRow, moveBatchReferenceCell, removeLastBatchReferenceColumn, reorderBatchReferenceColumns } from "@/lib/canvas/canvas-batch-table";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { buildGenerationConfig, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { costConfirmText } from "@/lib/generation-cost";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { estimateGenerationCost } from "@/services/api/operations";
 import { modelDisplayName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -139,11 +140,25 @@ export function useCanvasBatchTable({ projectId, nodesRef, connectionsRef, setNo
             return !output?.metadata?.content;
         });
         if (!rows.length) return message.info("没有可提交的未完成任务，请检查参考图和提示词");
-        // 提交前把后端算好的目录单价合计摆给用户看；读不到价格就照实说，不拦生成。
-        const estimate = await estimateGenerationCost({ canvasId: projectId, batch: { kind: "image", model: imageModel, count: rows.length } });
+        // 提交前把后端算好的目录单价摆给用户看：按每一行真实的生成参数和参考图算。
+        // 读不到价格就照实说，不拦生成。
+        const imageConfig = buildGenerationConfig(effectiveConfig, undefined, "image");
+        const estimate = await estimateGenerationCost({
+            canvasId: projectId,
+            batch: {
+                kind: "image",
+                model: imageModel,
+                count: rows.length,
+                items: rows.map((row) => ({
+                    parameters: { size: imageConfig.size, quality: imageConfig.quality, count: imageConfig.count },
+                    referenceNodeIds: row.inputNodeIds.filter(Boolean),
+                })),
+            },
+        });
+        const price = costConfirmText(estimate, "目录单价暂时读不到，按所选渠道实际标准计费。");
         const confirmed = await new Promise<boolean>((resolve) => modal.confirm({
             title: `确认提交 ${rows.length} 个批量图片任务`,
-            content: `模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}。${estimate?.text || "目录单价暂时读不到，按所选渠道实际标准计费。"}`,
+            content: `模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}。${price}`,
             okText: "确认生成",
             cancelText: "取消",
             centered: true,

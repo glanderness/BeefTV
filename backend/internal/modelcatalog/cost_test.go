@@ -111,6 +111,101 @@ func TestEstimateVideoCostTokenModelUsesOfficialPerSecond(t *testing.T) {
 	}
 }
 
+func TestEstimateVideoCostMatchesCanvasResolutionFormat(t *testing.T) {
+	// 画布存的是不带 p 的分辨率（480/720/1080），目录键带 p；2160/1440 对到 4k/2k。
+	rates := pricing(t, `{"currency":"CNY","kind":"video","mode":"per_request",
+		"per_second_cny":{"480p":0.405,"720p":0.81,"1080p":1.62,"2k":3.24,"4k":6.48}}`)
+	for value, want := range map[string]float64{
+		"480": 0.405, "480p": 0.405, "720": 0.81, "1080": 1.62, "1080p": 1.62,
+		"1440": 3.24, "1440p": 3.24, "2160": 6.48, "2160p": 6.48,
+	} {
+		line := EstimateCost(CostRequest{Kind: "video", Model: "minimax-h3", Pricing: rates,
+			Parameters: map[string]string{"vquality": value, "seconds": "1"}})
+		if line.Amount == nil || *line.Amount != want {
+			t.Fatalf("vquality %q amount = %v, want %v (%s)", value, line.Amount, want, line.Basis)
+		}
+	}
+
+	// 明确指定了目录里没有的档位时不能退回别的档位报一个错价。
+	missing := EstimateCost(CostRequest{Kind: "video", Model: "minimax-h3", Pricing: rates,
+		Parameters: map[string]string{"vquality": "540", "seconds": "1"}})
+	if missing.Amount != nil || missing.Basis != "分辨率没有对应报价" {
+		t.Fatalf("missing resolution line = %+v", missing)
+	}
+}
+
+func TestEstimateVideoCostCountsReferenceVideoSeconds(t *testing.T) {
+	// wan3.0-video：目录说明归一成「输出与参考视频合计秒数按同一单价计费」。
+	combined := pricing(t, `{"currency":"CNY","kind":"video","mode":"per_request",
+		"per_second_cny":{"480p":0.405,"720p":0.81,"1080p":1.62},"reference_video_billed_as_output":true}`)
+	line := EstimateCost(CostRequest{Kind: "video", Model: "wan3.0-video", Pricing: combined,
+		Parameters: map[string]string{"vquality": "720", "seconds": "5"}, ReferenceVideoCount: 1, ReferenceVideoSeconds: 10})
+	if line.Amount == nil || *line.Amount != 12.15 {
+		t.Fatalf("amount = %v, want 12.15 (%s)", line.Amount, line.Basis)
+	}
+	if line.Basis != "720p ¥0.81/秒 × 15秒（输出 5 秒 + 参考视频 10 秒）" {
+		t.Fatalf("basis = %q", line.Basis)
+	}
+
+	// 参考视频按秒另计时用目录给的参考单价。
+	perSecond := pricing(t, `{"currency":"CNY","kind":"video","mode":"per_request",
+		"per_second_cny":{"720p":0.81},"video_input_per_second_cny":{"720p":0.4}}`)
+	extra := EstimateCost(CostRequest{Kind: "video", Model: "kling-video-v3", Pricing: perSecond,
+		Parameters: map[string]string{"vquality": "720p", "seconds": "5"}, ReferenceVideoCount: 1, ReferenceVideoSeconds: 10})
+	if extra.Amount == nil || *extra.Amount != 8.05 {
+		t.Fatalf("extra amount = %v, want 8.05 (%s)", extra.Amount, extra.Basis)
+	}
+	if extra.Basis != "720p ¥0.81/秒 × 5秒 + 参考视频 ¥0.4/秒 × 10秒" {
+		t.Fatalf("extra basis = %q", extra.Basis)
+	}
+
+	// 目录写明 0 表示参考视频不另计费，仍然算得出金额。
+	free := pricing(t, `{"currency":"CNY","kind":"video","mode":"per_request",
+		"per_second_cny":{"720p":0.81},"video_input_per_second_cny":{"720p":0}}`)
+	noCharge := EstimateCost(CostRequest{Kind: "video", Model: "minimax-h3-max", Pricing: free,
+		Parameters: map[string]string{"vquality": "720p", "seconds": "5"}, ReferenceVideoCount: 1, ReferenceVideoSeconds: 10})
+	if noCharge.Amount == nil || *noCharge.Amount != 4.05 || noCharge.Basis != "720p ¥0.81/秒 × 5秒（参考视频不另计费）" {
+		t.Fatalf("free reference video line = %+v", noCharge)
+	}
+
+	// 目录没说参考视频怎么计费时不能猜，也不能只报输出费用却当成算全了。
+	outputOnly := pricing(t, `{"currency":"CNY","kind":"video","mode":"per_request","per_second_cny":{"720p":0.81}}`)
+	unknown := EstimateCost(CostRequest{Kind: "video", Model: "kling-video-v3", Pricing: outputOnly,
+		Parameters: map[string]string{"vquality": "720p", "seconds": "5"}, ReferenceVideoCount: 1, ReferenceVideoSeconds: 10})
+	if unknown.Amount != nil || unknown.Basis != "目录没说明参考视频怎么计费，暂无法估算" {
+		t.Fatalf("unknown reference video line = %+v", unknown)
+	}
+
+	// 参考视频时长读不到时不能当 0 秒算。
+	noDuration := EstimateCost(CostRequest{Kind: "video", Model: "wan3.0-video", Pricing: combined,
+		Parameters: map[string]string{"vquality": "720", "seconds": "5"}, ReferenceVideoCount: 1})
+	if noDuration.Amount != nil || noDuration.Basis != "参考视频时长读不到，无法估算" {
+		t.Fatalf("missing reference duration line = %+v", noDuration)
+	}
+}
+
+func TestEstimateVideoCostReferenceVideoOnTokenModel(t *testing.T) {
+	seedance := pricing(t, `{"currency":"CNY","kind":"video","mode":"video_tokens",
+		"video_official":[{"resolution":"720p","input_per_second_cny":0.6048,"output_per_second_cny":0.9936}]}`)
+	line := EstimateCost(CostRequest{Kind: "video", Model: "seedance-2.0", Pricing: seedance,
+		Parameters: map[string]string{"vquality": "720", "seconds": "5"}, ReferenceVideoCount: 1, ReferenceVideoSeconds: 4})
+	if line.Amount == nil || *line.Amount != 7.3872 {
+		t.Fatalf("amount = %v, want 7.3872 (%s)", line.Amount, line.Basis)
+	}
+	if line.Basis != "720p 约 ¥0.9936/秒 × 5秒 + 参考视频 ¥0.6048/秒 × 4秒（按 Token 折算）" {
+		t.Fatalf("basis = %q", line.Basis)
+	}
+
+	// 官方折算里没有参考视频单价时，带参考视频的项按算不出来处理。
+	outputOnly := pricing(t, `{"currency":"CNY","kind":"video","mode":"video_tokens",
+		"video_official":[{"resolution":"720p","output_per_second_cny":0.9936}]}`)
+	unknown := EstimateCost(CostRequest{Kind: "video", Model: "seedance-2.0", Pricing: outputOnly,
+		Parameters: map[string]string{"vquality": "720", "seconds": "5"}, ReferenceVideoCount: 1, ReferenceVideoSeconds: 4})
+	if unknown.Amount != nil || unknown.Basis != "目录没说明参考视频怎么计费，暂无法估算" {
+		t.Fatalf("official without input rate = %+v", unknown)
+	}
+}
+
 func TestEstimateCostReportsUnknownInsteadOfZero(t *testing.T) {
 	portrait := pricing(t, `{"currency":"CNY","kind":"video","mode":"video_tokens",
 		"video_token_rates":[{"resolution":"720p","input_cny":54.115572,"output_cny":88.022572}]}`)

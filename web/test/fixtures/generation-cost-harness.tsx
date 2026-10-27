@@ -6,6 +6,7 @@ import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { ModelPicker } from "@/components/model-picker";
 import { CanvasAssistantTurnView } from "@/pages/canvas/canvas-assistant-turn";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
+import { costConfirmText } from "@/lib/generation-cost";
 import type { AssistantTurn } from "@/services/api/agent-assistant";
 import "@/pages/canvas/canvas-assistant-sidebar.css";
 
@@ -73,6 +74,41 @@ const turn: AssistantTurn = {
 const dark = new URLSearchParams(location.search).get("theme") === "dark";
 applySkinTheme(DEFAULT_CLASSIC_SKIN, dark ? "dark" : "light");
 
+// 一次生成多个节点（没有整片制作计划）时的提议卡：逐项金额和依据都要露出来。
+const multiTurn: AssistantTurn = {
+    ...turn,
+    turnId: "cost-turn-multi",
+    proposals: [{
+        proposalId: "gp-cost-multi",
+        kind: "image",
+        nodeIds: ["row-1", "row-2", "row-3"],
+        model: "gpt-image-2",
+        modelKey: "beefapi::gpt-image-2",
+        estimate: {
+            currency: "CNY", total: 1.8, known: true, unknownCount: 0,
+            items: [
+                { nodeId: "row-1", title: "换装 · 1", kind: "image", model: "gpt-image-2", amount: 0.65, basis: "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张" },
+                { nodeId: "row-2", title: "换装 · 2", kind: "image", model: "gpt-image-2", amount: 0.65, basis: "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 2 张" },
+                { nodeId: "row-3", title: "换装 · 3", kind: "image", model: "gpt-image-2", amount: 0.5, basis: "1K 低质量 ¥0.35 × 1 张 + 参考图 ¥0.15 × 1 张" },
+            ],
+            text: "预计费用 ¥1.8",
+        },
+        source: { canvasId: "c1", canvasRevision: 1, modelConfigRevision: 1 },
+    }],
+};
+
+// 批量表格的确认框：文案由 costConfirmText 组装，和批量表格、分镜两处确认框同源。
+const batchEstimate = multiTurn.proposals[0].estimate;
+
+function BatchConfirmButton() {
+    const { modal } = App.useApp();
+    return <button data-testid="batch-confirm" type="button" onClick={() => modal.confirm({
+        title: "确认提交 3 个批量图片任务",
+        content: `模型：GPT Image 2；并发上限：10。${costConfirmText(batchEstimate, "目录单价暂时读不到，按所选渠道实际标准计费。")}`,
+        okText: "确认生成", cancelText: "取消", centered: true,
+    })}>提交批量任务</button>;
+}
+
 createRoot(document.getElementById("root")!).render(
     <ConfigProvider theme={getAntThemeConfig(dark, DEFAULT_CLASSIC_SKIN)}><App>
         <main style={{ padding: 20, maxWidth: 520, background: dark ? "#141414" : "#fff", minHeight: "100vh" }}>
@@ -82,6 +118,13 @@ createRoot(document.getElementById("root")!).render(
             <section data-testid="proposal-card">
                 <CanvasAssistantTurnView turn={turn} handledProposals={new Set()} nodes={[]}
                     onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} />
+            </section>
+            <section data-testid="proposal-card-multi">
+                <CanvasAssistantTurnView turn={multiTurn} handledProposals={new Set()} nodes={[]}
+                    onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} />
+            </section>
+            <section data-testid="batch-confirm-entry">
+                <BatchConfirmButton />
             </section>
         </main>
     </App></ConfigProvider>,

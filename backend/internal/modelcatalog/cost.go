@@ -33,13 +33,17 @@ type CostSummary struct {
 
 // CostRequest 是一次费用估算的输入。Pricing 是模型档案里保存的目录单价，
 // Parameters 是节点当前的生成参数，Text 是配音按字数计费时的台词。
+// ReferenceCount 是参考图张数；ReferenceVideoCount/ReferenceVideoSeconds 是参考视频的
+// 数量和时长——目录按参考秒数计费的模型要它们才能算全。
 type CostRequest struct {
-	Kind           string
-	Model          string
-	Pricing        map[string]any
-	Parameters     map[string]string
-	ReferenceCount int
-	Text           string
+	Kind                  string
+	Model                 string
+	Pricing               map[string]any
+	Parameters            map[string]string
+	ReferenceCount        int
+	ReferenceVideoCount   int
+	ReferenceVideoSeconds float64
+	Text                  string
 }
 
 // upscaleModelPrefixes 是超分模型：目录里的 per_request_cny 是超分的先扣参考价，
@@ -115,11 +119,17 @@ func estimateVideoCost(line CostLine, request CostRequest) CostLine {
 			line.Basis = fmt.Sprintf("%s ¥%s/秒，缺少时长", resolution, formatMoney(rate))
 			return line
 		}
-		amount := rate * seconds * float64(count)
-		basis := fmt.Sprintf("%s ¥%s/秒 × %s秒", resolution, formatMoney(rate), formatSeconds(seconds))
+		billing := videoReferenceCharge(request, videoInputRate(request.Pricing, resolution), videoReferenceSharesOutputRate(request.Pricing))
+		if billing.reason != "" {
+			line.Basis = billing.reason
+			return line
+		}
+		amount := rate*(seconds+billing.sameRateSeconds)*float64(count) + billing.extra
+		basis := fmt.Sprintf("%s ¥%s/秒 × %s", resolution, formatMoney(rate), videoSecondsText(seconds, billing.sameRateSeconds))
 		if count > 1 {
 			basis += fmt.Sprintf(" × %d 个", count)
 		}
+		basis += billing.text
 		if reference, ok := floatOf(request.Pricing["reference_image_cny"]); ok && reference > 0 {
 			paid := request.ReferenceCount - intOf(request.Pricing["free_reference_images"])
 			if paid > 0 {
@@ -136,17 +146,81 @@ func estimateVideoCost(line CostLine, request CostRequest) CostLine {
 			line.Basis = fmt.Sprintf("%s 约 ¥%s/秒，缺少时长", official.resolution, formatMoney(official.output))
 			return line
 		}
-		amount := official.output * seconds * float64(count)
-		basis := fmt.Sprintf("%s 约 ¥%s/秒 × %s秒（按 Token 折算）", official.resolution, formatMoney(official.output), formatSeconds(seconds))
+		billing := videoReferenceCharge(request, official.input, false)
+		if billing.reason != "" {
+			line.Basis = billing.reason
+			return line
+		}
+		amount := official.output*(seconds+billing.sameRateSeconds)*float64(count) + billing.extra
+		basis := fmt.Sprintf("%s 约 ¥%s/秒 × %s", official.resolution, formatMoney(official.output), videoSecondsText(seconds, billing.sameRateSeconds))
 		if count > 1 {
 			basis += fmt.Sprintf(" × %d 个", count)
 		}
+		basis += billing.text + "（按 Token 折算）"
 		line.Amount = money(amount)
 		line.Basis = basis
 		return line
 	}
 	line.Basis = "按视频 Token 计费，暂无法折算成每次价格"
 	return line
+}
+
+// videoReferenceCharge 是参考视频对这一次估算的影响：sameRateSeconds 要按输出单价一起
+// 计费（目录说明「输出与参考视频合计秒数计费」），extra 是按参考秒单价另计的金额。
+// reason 非空表示目录说不清参考视频怎么计费，这时整项都不能给数字。
+type videoReferenceBilling struct {
+	sameRateSeconds float64
+	extra           float64
+	text            string
+	reason          string
+}
+
+func videoReferenceCharge(request CostRequest, inputRate *float64, sameRate bool) videoReferenceBilling {
+	if request.ReferenceVideoCount <= 0 {
+		return videoReferenceBilling{}
+	}
+	if request.ReferenceVideoSeconds <= 0 {
+		// 不知道参考视频多长就不能猜一个秒数出来。
+		return videoReferenceBilling{reason: "参考视频时长读不到，无法估算"}
+	}
+	if sameRate {
+		// 秒数文案里已经写明「输出 + 参考视频」，不再重复一句。
+		return videoReferenceBilling{sameRateSeconds: request.ReferenceVideoSeconds}
+	}
+	if inputRate != nil {
+		if *inputRate <= 0 {
+			return videoReferenceBilling{text: "（参考视频不另计费）"}
+		}
+		return videoReferenceBilling{
+			extra: *inputRate * request.ReferenceVideoSeconds,
+			text:  fmt.Sprintf(" + 参考视频 ¥%s/秒 × %s秒", formatMoney(*inputRate), formatSeconds(request.ReferenceVideoSeconds)),
+		}
+	}
+	// 目录既没给参考秒单价、也没说明按合计秒数计费时不能猜，也不假装只算输出就算全了。
+	return videoReferenceBilling{reason: "目录没说明参考视频怎么计费，暂无法估算"}
+}
+
+// videoInputRate 是目录里参考视频的每秒单价；目录没给这个字段时返回 nil，估算据此
+// 说明算不出来，而不是当成免费。
+func videoInputRate(pricing map[string]any, resolution string) *float64 {
+	rate, ok := floatOf(mapOf(pricing["video_input_per_second_cny"])[resolution])
+	if !ok {
+		return nil
+	}
+	return &rate
+}
+
+// videoReferenceSharesOutputRate 读目录说明归一成的标记：输出与参考视频合计秒数按
+// 同一个单价计费，这时参考秒数直接加到输出秒数上，不再看参考秒单价。
+func videoReferenceSharesOutputRate(pricing map[string]any) bool {
+	return pricing["reference_video_billed_as_output"] == true
+}
+
+func videoSecondsText(seconds float64, referenceSeconds float64) string {
+	if referenceSeconds <= 0 {
+		return formatSeconds(seconds) + "秒"
+	}
+	return fmt.Sprintf("%s秒（输出 %s 秒 + 参考视频 %s 秒）", formatSeconds(seconds+referenceSeconds), formatSeconds(seconds), formatSeconds(referenceSeconds))
 }
 
 func estimateAudioCost(line CostLine, request CostRequest) CostLine {
@@ -273,14 +347,14 @@ var imageQualityLabels = map[string]string{
 // videoPriceResolution 把节点上的分辨率参数对到目录的键；参数为空（自动）时按
 // 目录里最常用的档位取一个参考价，与已有的视频单价显示保持一致。
 func videoPriceResolution(value string, rates map[string]any) string {
-	key := strings.ToLower(strings.TrimSpace(value))
-	if alias, ok := videoResolutionAliases[key]; ok {
-		key = alias
-	}
-	if key != "" {
-		if _, ok := rates[key]; ok {
-			return key
+	candidates := videoResolutionCandidates(value)
+	for _, candidate := range candidates {
+		if _, ok := rates[candidate]; ok {
+			return candidate
 		}
+	}
+	if len(candidates) > 0 {
+		// 用户明确指定了分辨率，目录里没有对应档位时不能退回别的档位报一个错价。
 		return ""
 	}
 	for _, candidate := range []string{"720p", "1080p"} {
@@ -299,11 +373,31 @@ func videoPriceResolution(value string, rates map[string]any) string {
 	return ""
 }
 
-var videoResolutionAliases = map[string]string{"2160p": "4k", "1440p": "2k"}
+// videoResolutionCandidates 按优先级列出目录可能使用的分辨率键。画布存的是不带 p 的
+// 数字（720/1080/2160），目录键用 720p/1080p/2k/4k，两边写法都要认。
+func videoResolutionCandidates(value string) []string {
+	key := strings.ToLower(strings.TrimSpace(value))
+	if key == "" {
+		return nil
+	}
+	if alias, ok := videoResolutionAliases[key]; ok {
+		return []string{alias}
+	}
+	if strings.HasSuffix(key, "p") {
+		return []string{key, strings.TrimSuffix(key, "p")}
+	}
+	return []string{key + "p", key}
+}
+
+var videoResolutionAliases = map[string]string{
+	"2160": "4k", "2160p": "4k", "4k": "4k",
+	"1440": "2k", "1440p": "2k", "2k": "2k",
+}
 
 type videoOfficialQuote struct {
 	resolution string
 	output     float64
+	input      *float64
 }
 
 func videoOfficialRate(pricing map[string]any, value string) *videoOfficialQuote {
@@ -311,7 +405,7 @@ func videoOfficialRate(pricing map[string]any, value string) *videoOfficialQuote
 	if len(rows) == 0 {
 		return nil
 	}
-	byResolution := map[string]float64{}
+	byResolution := map[string]videoOfficialQuote{}
 	for _, row := range rows {
 		item := mapOf(row)
 		resolution := strings.ToLower(strings.TrimSpace(stringOf(item["resolution"])))
@@ -319,18 +413,22 @@ func videoOfficialRate(pricing map[string]any, value string) *videoOfficialQuote
 		if resolution == "" || !ok {
 			continue
 		}
-		byResolution[resolution] = output
+		quote := videoOfficialQuote{resolution: resolution, output: output}
+		if input, ok := floatOf(item["input_per_second_cny"]); ok {
+			quote.input = &input
+		}
+		byResolution[resolution] = quote
 	}
 	rates := map[string]any{}
-	for resolution, output := range byResolution {
-		rates[resolution] = output
+	for resolution := range byResolution {
+		rates[resolution] = 1
 	}
 	resolution := videoPriceResolution(value, rates)
-	output, ok := byResolution[resolution]
+	quote, ok := byResolution[resolution]
 	if resolution == "" || !ok {
 		return nil
 	}
-	return &videoOfficialQuote{resolution: resolution, output: output}
+	return &quote
 }
 
 func isUpscaleModel(model string) bool {
