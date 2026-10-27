@@ -48,7 +48,8 @@ function Harness() {
         setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop,
         setDialogNodeId: noop, setToolbarNodeId: noop,
     });
-    Object.assign(window, { viewportProbe: () => ({ viewport, virtualizationViewport, live: viewportRef.current, nodeRenders }) });
+    // Canvas load restores the saved camera through setViewport, not the controller.
+    Object.assign(window, { viewportProbe: () => ({ viewport, virtualizationViewport, live: viewportRef.current, nodeRenders }), restoreViewport: (next: ViewportTransform) => { viewportRef.current = next; setViewport(next); } });
     return <InfiniteCanvas containerRef={containerRef} viewport={viewport} onViewportChange={controller.handleViewportChange} onViewportPreviewChange={controller.handleViewportPreviewChange}>
         <Node scale={viewport.k} />
     </InfiniteCanvas>;

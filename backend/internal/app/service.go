@@ -103,6 +103,8 @@ type Service struct {
 	tasksOnce                sync.Once
 	workspaceOps             *operations.Registry
 	workspaceOpsMu           sync.Mutex
+	imageRecoveryActive      atomic.Bool
+	imageRecoveryAfterID     string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -164,7 +166,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	if repo == nil {
 		pluginRuntimeErr = fmt.Errorf("插件状态存储未初始化")
 	} else {
-		pluginRuntime, pluginRuntimeErr = newPluginRuntimeWithStore(dataDir, plugins.NewRepositoryStore(repo))
+		pluginRuntime, pluginRuntimeErr = newPluginRuntimeWithReferences(dataDir, plugins.NewRepositoryStore(repo), newPluginReferences(dataDir, repo))
 	}
 	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute}
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)

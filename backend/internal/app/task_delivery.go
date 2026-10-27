@@ -69,7 +69,9 @@ func (s *Service) attachTaskDelivery(task *model.Task) {
 		return
 	}
 	stored, loadErr := s.generationDeliverer().LoadedOutputs(task.ID)
-	proj := taskdelivery.Project(*task, stored, loadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
+	facts := s.taskOutcomeFacts([]model.Task{*task})
+	proj := taskdelivery.ProjectWithFacts(*task, stored, loadErr, persistedFailureBlocksRetry(task.Error, task.Stage), facts[task.ID])
+	task.Outcome = &proj.Outcome
 	task.Outputs = modelTaskOutputs(proj.Outputs)
 	task.ResultState = proj.ResultState
 	task.Stage = proj.Stage
@@ -88,6 +90,7 @@ func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []Ta
 		taskByID[task.ID] = task
 	}
 	byTask, decodeErrs, loadErr := s.generationDeliverer().LoadedOutputsForTasks(ids)
+	facts := s.taskOutcomeFacts(tasks)
 	for index := range summaries {
 		task, ok := taskByID[summaries[index].ID]
 		if !ok {
@@ -97,7 +100,8 @@ func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []Ta
 		if taskLoadErr == nil {
 			taskLoadErr = decodeErrs[task.ID]
 		}
-		proj := taskdelivery.Project(task, byTask[task.ID], taskLoadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
+		proj := taskdelivery.ProjectWithFacts(task, byTask[task.ID], taskLoadErr, persistedFailureBlocksRetry(task.Error, task.Stage), facts[task.ID])
+		summaries[index].Outcome = &proj.Outcome
 		summaries[index].Outputs = proj.Outputs
 		summaries[index].ResultState = proj.ResultState
 		summaries[index].Stage = proj.Stage
@@ -124,6 +128,7 @@ func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 			if ctx.Err() != nil || s.IsDraining() {
 				return
 			}
+			s.startImageRecoveryPass(ctx)
 			if err := s.RecoverIncompleteGenerationDeliveries(0); err != nil {
 				log.Printf("generation delivery recovery paused: worker_id=%s error=%v", s.workerID, err)
 			}

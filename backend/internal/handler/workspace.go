@@ -138,7 +138,8 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, svc *app.Service) {
 
 func redactModelConfig(c *gin.Context, svc *app.Service, config map[string]any) map[string]any {
 	if _, external := externalBusiness(c); external {
-		config = redactExternalConfig(config)
+		// 标记要在清空密钥之前算出来，否则前端只能看到一对空字符串。
+		config = markExternalCredentialState(redactExternalConfig(config), config)
 	}
 	managed := false
 	if connection, err := requestBeefAPI(c, svc); err == nil && connection != nil {

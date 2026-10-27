@@ -8,6 +8,7 @@ import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, modelCatalogRequestURL, serviceConnectionError, serviceModelProfile, servicePresetFor, type ModelServicePresetId } from "@/lib/model-service-presets";
+import { serviceCredentialGuide } from "@/lib/service-credentials";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
@@ -37,6 +38,9 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const [editingCapabilities, setEditingCapabilities] = useState(false);
     const alive = useRef(true);
     const receipts = useModelConnectionTests((state) => state.receipts);
+    // 凭证字段名跟着模型实际使用的协议走：AK/SK 签名和 Agent Plan 专属 Key
+    // 都不能沿用「API Key」这一个名字。
+    const credential = serviceCredentialGuide(draft, protocols);
 
     useEffect(() => {
         alive.current = true;
@@ -50,6 +54,10 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             .finally(() => { if (alive.current) setProtocolLoading(false); });
         return () => { alive.current = false; catalogRequest.current?.abort(); };
     }, []);
+    // 需要两个密钥时，把已有的高级设置展开，否则用户只填了 AK 就点了保存。
+    useEffect(() => {
+        if (credential.secretKeyRequired) setAdvanced(true);
+    }, [credential.secretKeyRequired]);
 
     const patch = (value: Partial<ModelChannel>) => {
         setDraft((current) => ({ ...current, ...value }));
@@ -66,8 +74,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setError("");
         setNotice("");
     };
-    const validateConnection = (requireCredential = true) => {
-        const problem = serviceConnectionError(draft, { protocols, requireCredential }) || validateChannelHeaders(draft.headers);
+    const validateConnection = (requireCredential = true, channel: ModelChannel = draft) => {
+        const problem = serviceConnectionError(channel, { protocols, requireCredential }) || validateChannelHeaders(channel.headers);
         if (problem) setError(problem);
         return !problem;
     };
@@ -86,7 +94,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         }) }));
         setCatalog(next);
         setCatalogRead(true);
-        setNotice(result.models.length ? `已读取 ${result.models.length} 个模型，勾选你要使用的模型。` : "服务未返回模型，可以手动添加模型 ID。");
+        setNotice(result.models.length ? `已读取 ${result.models.length} 个模型，勾选你要使用的模型；列表里没有的模型可以在下面直接填 ID 添加。` : "服务没有返回模型，在下面填写模型 ID 再点「添加」。");
         setStep(1);
     };
     const fetchModels = async () => {
@@ -104,7 +112,10 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         } catch (failure) {
             if (alive.current && !request.signal.aborted) {
                 setError(getTransportFailureKind(failure) === "timeout" ? "读取模型目录超时，请检查地址和网络后重试" : failure instanceof Error ? failure.message : "读取模型失败");
-                setNotice("部分服务不提供模型目录，你仍可手动添加模型 ID。");
+                // 第二步没有「手动添加模型」按钮，只有下方的模型 ID 输入框；提示要跟着当前步骤走。
+                setNotice(servicePresetFor(draft) === "ark"
+                    ? `火山方舟不提供 OpenAI 格式的模型目录，${step === 0 ? "点「手动添加模型」" : "在下面填写模型 ID"}手动填写。`
+                    : `读不到模型目录时仍可手动添加模型 ID，${step === 0 ? "点「手动添加模型」" : "在下面填写"}继续；生成仍需要正确的服务地址、凭证和请求协议。`);
             }
         } finally { if (alive.current) setBusy(false); }
     };
@@ -138,11 +149,14 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         const profiles = isTopazUpscaleChannel(draft) ? draft.modelProfiles || [] : draft.models.map((id) => serviceModelProfile(draft, catalog.find((item) => item.id === id) || { id }, protocols));
         const missing = profiles.find((profile) => !profile.protocol);
         if (missing) { setError(`${missing.model} 还需要选择请求协议，请打开高级模型设置`); setEditingCapabilities(true); return; }
+        // 没单独配置协议的模型会在上面补成预设协议，所以凭证要按真正提交的 profiles 再查一次，
+        // 否则「旧连接里的文本模型 + Agent Plan 视频模型」这种混用会被漏过去。
+        if (!validateConnection(true, { ...draft, modelProfiles: profiles })) { setStep(0); return; }
         setBusy(true);
         setSaving(true);
         setError("");
         try {
-            await onSave({ ...draft, name: draft.name.trim() || "我的模型服务", baseUrl: draft.baseUrl.trim().replace(/\/+$/, ""), apiKey: draft.apiKey.trim(), modelProfiles: profiles });
+            await onSave({ ...draft, name: draft.name.trim() || "我的模型服务", baseUrl: draft.baseUrl.trim().replace(/\/+$/, ""), apiKey: draft.apiKey.trim(), secretKey: draft.secretKey?.trim(), modelProfiles: profiles });
             onClose();
         } catch (failure) { setError(failure instanceof Error ? failure.message : "保存失败，请重试"); }
         finally { if (alive.current) { setBusy(false); setSaving(false); } }
@@ -186,14 +200,14 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                 <Form layout="vertical" requiredMark={false} className="model-service-fields" disabled={busy} onFinish={() => void fetchModels()}>
                     <div className="model-service-form-title"><ModelLogo icon={selectedPreset.icon} size={28} /><div><h3>{selectedPreset.name}</h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}</div></div>
                     <Form.Item label="连接名称"><Input aria-label="连接名称" placeholder="例如：我的创作账号" value={draft.name} onChange={(event) => patch({ name: event.target.value })} /></Form.Item>
-                    <Form.Item label="API Key" help="选择无鉴权协议（例如 Ollama）后可以留空。读取模型目录仍需要密钥。"><Input.Password prefix={<KeyRound size={15} />} aria-label="API Key" autoComplete="new-password" placeholder="粘贴你的 API Key" value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
+                    <Form.Item label={credential.apiKeyLabel} help={credential.apiKeyHelp}><Input.Password prefix={<KeyRound size={15} />} aria-label={credential.apiKeyLabel} autoComplete="new-password" placeholder={credential.apiKeyPlaceholder} value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
                     <Form.Item label="服务地址"><Input aria-label="服务地址" inputMode="url" placeholder="https://api.example.com/v1" value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} /></Form.Item>
                     {modelCatalogRequestURL(draft) && <div className="model-service-url"><span>模型目录地址</span><code>{modelCatalogRequestURL(draft).split("/").map((part, index) => <Fragment key={index}>{index > 0 && <>/<wbr /></>}{part}</Fragment>)}</code></div>}
                     <button type="button" className="model-service-advanced" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><Settings2 size={15} />高级设置<ChevronDown size={14} /></button>
                     {advanced && <div className="model-service-advanced-fields">
                         <Form.Item label="素材服务地址（可选）" help="公网素材域名使用 HTTPS。本机、局域网或 CGNAT 可填写 HTTP，并可带端口。留空时只接受与 API 同主机的素材。"><Input aria-label="素材服务地址" inputMode="url" placeholder="https://assets.example.com" value={draft.referenceAssetOrigin || ""} onChange={(event) => patch({ referenceAssetOrigin: event.target.value })} /></Form.Item>
                         <Form.Item label="目录接口格式"><Select aria-label="目录接口格式" value={draft.apiFormat} options={[{ value: "openai", label: "OpenAI 兼容" }, { value: "gemini", label: "Gemini 原生" }]} onChange={(apiFormat) => patch({ apiFormat })} /></Form.Item>
-                        <Form.Item label="Secret Key（按需填写）"><Input.Password aria-label="Secret Key" autoComplete="new-password" value={draft.secretKey} onChange={(event) => patch({ secretKey: event.target.value })} /></Form.Item>
+                        <Form.Item label={credential.secretKeyRequired ? `${credential.secretKeyLabel} · 必填` : "Secret Key（按需填写）"} help={credential.secretKeyHelp}><Input.Password aria-label={credential.secretKeyLabel} autoComplete="new-password" placeholder={credential.secretKeyRequired ? "粘贴 Secret Key" : ""} value={draft.secretKey} onChange={(event) => patch({ secretKey: event.target.value })} /></Form.Item>
                         <ChannelHeadersEditor value={draft.headers} onChange={(headers) => patch({ headers })} />
                     </div>}
                 </Form>
@@ -212,8 +226,13 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                 <div className="model-service-manual"><Input aria-label="模型 ID" placeholder="手动输入模型 ID" value={manualName} disabled={busy} onChange={(event) => setManualName(event.target.value)} onPressEnter={addManual} /><Select aria-label="模型类型" value={manualCapability} disabled={busy} onChange={setManualCapability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} /><Button disabled={busy || protocolLoading || !manualName.trim()} onClick={addManual}>添加</Button></div>
                 {draft.models.length > 0 && <><button type="button" className="model-service-advanced" aria-expanded={editingCapabilities} onClick={() => setEditingCapabilities(!editingCapabilities)}><Settings2 size={15} />高级模型设置与测试<ChevronDown size={14} /></button>{editingCapabilities && <ChannelModelSettings draft channel={draft} onChange={(modelProfiles) => setDraft((current) => ({ ...current, modelProfiles }))} />}</>}
             </div>}
-            {(error || notice) && <div className="model-service-feedback">{error && <Alert type="error" showIcon title={error} />}{notice && <Alert type="info" showIcon title={notice} />}</div>}
         </div>
+        {/* 提示放在滚动区外面：表单长的时候，滚到底部才看到的错误等于没提示。 */}
+        {(error || notice || credential.conflict) && <div className="model-service-feedback">
+            {/* 凭证混用不等到点按钮才说：选完模型就应该看到要拆连接。 */}
+            {(error || credential.conflict) && <Alert type="error" showIcon title={error || credential.conflict} />}
+            {notice && <Alert type="info" showIcon title={notice} />}
+        </div>}
         <div className="model-service-footer">{step === 1 && <span>保存后，可在创作页选择这些模型</span>}<div>
             {step === 0 ? <><Button disabled={busy} onClick={() => { if (validateConnection(false)) { setNotice(""); setStep(1); } }}>手动添加模型</Button><Button type="primary" loading={busy} disabled={protocolLoading} onClick={() => void fetchModels()}>读取模型</Button></> : <><Button disabled={busy} icon={<ArrowLeft size={15} />} onClick={() => { setStep(0); setError(""); }}>连接信息</Button><Button type="primary" loading={busy} disabled={!draft.models.length || protocolLoading} icon={<Check size={15} />} onClick={() => void save()}>保存并使用</Button></>}
         </div></div>
