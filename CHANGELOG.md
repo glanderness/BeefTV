@@ -4,20 +4,21 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
-- 手动添加模型时不再默认按「文本」保存：类型一栏留空，选好类型才能添加。目录读不到的方舟连接里手填 `doubao-seedance-2.5` 这类视频模型，不会等到能生成时才发现它被存成了文本。
-- 内置助手在 BeefAPI 连接授权成功后默认使用 DeepSeek V4.1 Flash。默认值只在还没选过助手模型时写入，已经保存过选择的用户保持不变：目录刷新、重新授权和换账号都不会改写；GPT-6 Astra 仍可在托管目录中继续选用。
-- 即梦官方视频：接口返回 `code=10000` 视为成功，完成的任务不再被误判失败；时长改用官方 `frames` 表达（5 秒=121、10 秒=241），画幅改用 `aspect_ratio`，`req_json` 归到查询请求，不再混在创建正文里。
-- 模型服务的密钥栏按所选请求协议写明要填哪一种凭证：方舟原生接口用普通方舟 Key，Agent Plan 接口用 Agent Plan 专属 Key，即梦用 Access Key + Secret Key；一个连接里混用两种凭证会先被拦下，并提示拆成两个连接。
-- 读不到模型目录时写清可以手填模型 ID 继续，并保留服务商返回的真实错误原因。
-- 修复海外视频模型「生成成功却取不到视频」：Runway 按官方字段发送 `promptText` / `promptImage` / `ratio` 并补上 `X-Runway-Version` 请求头，成片从 `output[]` 取回；Luma 从 `assets.video` 取回，时长按官方 `5s` 字符串、首尾帧写入 `keyframes`；xAI 用创建返回的 `request_id` 查询并从 `video.url` 取回。
-- 参考素材按官方要求收紧：Luma 的首尾帧只发送在线图片地址，本地图片先上传到对象存储，拿不到在线地址时在提交前报错；Runway 只拦官方明确限制为单帧的模型（`gen4.5`、`gen4_turbo`、`gemini_omni_flash`、`grok_imagine_1_5` 等），`veo3.1`、`kling2.5_turbo_pro`、`seedance2_5`、`h3_max` 等支持尾帧的模型照常发送。
-- `runway-video` 插件包随包分发 LiteLLM 派生素材的完整 MIT 声明（插件目录内的 `LICENSE`），独立下载的包不再缺少版权与许可。
-- 官方视频服务状态更新：OpenAI 已于 2026-09-24 关闭 Sora 2 与 Videos API，Gemini API 的 Veo 预览模型已于 2026-10-22 关闭；OpenAI 与 Gemini 服务预设不再声称可直接生成视频，`openai-videos`（Sora）与 `google-gemini-veo` 协议照旧保留给仍转发同名接口的第三方中转。
-- Built-in BeefAPI can be connected from the desktop app without pasting a key.
-- Prepared the first audited public source snapshot.
-- Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
-- Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
-- 版本升级不再删除仍被使用的官方协议插件：启动时先盘点本地连接、渠道模型和还没取回结果的任务，仍有引用就保留执行能力，并在接口里带上已撤下标记。这次只提供保留能力和标记；前端目前还不读这个标记，新建时把它过滤掉要等以后前端接入。
+## v2.0.5
+
+- 内置助手支持查看模型返回的可读思考，默认折叠，与工具进度和回复正文分开；复制回复仍只复制正文。正文继续随模型返回逐段显示。
+- 新用户首次连接后，内置助手默认使用 DeepSeek V4.1 Flash；已经选过模型的用户保持原选择，刷新目录、重新授权和换账号都不会自动改掉。
+- 改善 Mac 画布平移与缩放的流畅度，减少手势期间的模糊效果、连线装饰、整页重绘和节点反复挂载；修复恢复保存视角后平移时部分节点漏画的问题。
+- 剪辑时间线的首个片段可以拖动并让同轨片段让位；单个素材载入失败时点名提示，其他片段继续预览。
+- Seedream 图片尺寸按具体型号校验，修正国内 Pro、Flash 型号识别；不支持的尺寸会在生成前给出可操作的提示。
+- 部分失败图片任务可在后台继续取回已有结果并保存回画布。本次改动限于图片恢复，不包含完整的视频、超分自动恢复流程。
+- 手动添加模型时，需要明确选择图片、视频或文本等类型，不再默认选中文本；添加下一个模型时重新选择，避免沿用错误类型。
+- Topaz 超分说明改为本次先扣费用上限、账单核对完成后按实际用量结算，不再把预扣总额显示成单价。
+- 模型服务设置按协议写清所需凭证，混用不同凭证时提示拆成独立连接；读不到模型列表时，可以手填模型 ID 继续配置。
+- 修正即梦官方视频的成功判断与请求参数，以及 Runway、Luma、Grok 视频结果的取回；参考素材按所选模型的能力检查。
+- 更新已停止提供视频服务的官方连接预设；仍被现有连接或未完成任务使用的协议定义会保留。
+
+注意：部分影音理解、字幕和助手成片排版仍需结合原素材人工核对。模型没有返回可读思考时，不会凭空显示思考内容；流式显示速度仍取决于模型返回速度。
 
 ## v2.0.4
 
