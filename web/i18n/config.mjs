@@ -1,5 +1,5 @@
 // 阶段：1 = JSX 文本 / 白名单属性 / message 调用；2 = 再加对象上的 label/title 等属性
-export const STAGE = Number(process.env.BEEFTV_I18N_STAGE || 1);
+export const STAGE = Number(process.env.BEEFTV_I18N_STAGE || 2);
 
 // 任何阶段都不处理的文件
 const EXCLUDE_ALL = [/^src\/i18n\//, /\.test\.(t|j)sx?$/, /fixture/i];
