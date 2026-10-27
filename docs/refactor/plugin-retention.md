@@ -43,6 +43,7 @@
 实现：替换前比较已提交记录与新包，只有在**定义确实变化**且**仍有未取回结果的任务**引用该协议时，这一轮保留旧记录（清单、包哈希、启用状态都不动），新包下一次启动再采用。因此：
 
 - 已保存连接本身**不会**冻结升级——只有未完成任务才会，否则每个在用的插件都会永远停在旧版本；
+- **只推迟已有安装记录的升级**：发行包里全新、尚未安装的插件没有旧定义可保留，盘点失败时照常安装；否则一次配置读取失败就会让本次发行新增的插件静默缺席；
 - **盘点失败也会推迟升级**：“盘点失败”和“没有接入盘点”是两回事。前者说明这台机器确实有待取回任务的可能，只是读不出来，因此保留已安装定义；后者（只用自己的 registry 的独立运行时）保持原行为。代价要写明：配置长期损坏时，同名插件会一直停在旧版本，直到盘点恢复正常——宁可晚升级，也不拿旧任务的取回方式去赌；
 - 是否“算一次升级”只比较清单（执行定义）。重新打包但定义没变时（例如只刷新了包路径/哈希）不算，避免把同版本的重新打包误报成推迟；
 - 推迟期间插件仍随包发行，所以照常可选，只是 `retention.reasons` 会说明“升级已推迟”；
@@ -67,6 +68,11 @@
 - 前端 `plugin-catalog.ts` 把这些标记带进 `ModelProtocolDefinition`。撤下的协议仍留在协议列表里，所以老模型照常显示自己保存的协议名称和请求信息；`ModelProtocolBrowser` 只是把它的选项置为不可选中。
 - 光把选项禁用还不够：默认协议由 `defaultProtocolForCapability()` 决定，它原先只看 `enabled`。新增 `selectableProtocol()`（`enabled` 且未撤下）用于默认选择、协议分组和设置页的兜底选择，而按值查名称/请求信息的路径不变，所以旧配置保存的协议不会被改写。
 - **兜底也必须遵守撤下限制**：目录里有这个能力、但可选协议全是撤下的，函数返回 `undefined`，新模型保持“待配置”，由设置页让用户自己选；绝不退回内置协议表（`FALLBACK_PROTOCOLS`）。只有目录完全为空（宿主没有撤下信息）时才用内置表，避免目录不可用时把新建连接堵死。受此影响，`defaultProtocolForCapability`/`defaultProtocolForModel`/`beefApiVideoProtocol` 的返回类型都放宽为可空，调用方按“未配置”处理。
+- **“待配置”要能被下游认出来**：只让函数返回 `undefined` 不够——模型列表编辑（`ensureModelProfilesWithUiDefaults`，调用时不带目录）和提交请求（`resolveModelRequestConfig`，只读本地配置）都会再调一次默认选择，把 `openai-image` 补回去。所以撤下的能力会被记成 profile 上的 `protocolPending: true`：
+  - 它和“缺 `protocol` 字段”是不同状态——后者是老配置的写法，语义仍是“用文档里的默认值”（`explicit capability is kept when protocol is missing` 这个既有用例依赖它，不能改）；
+  - `ensureModelProfilesWithUiDefaults` 见到它就原样保留，不再重新推导；
+  - `resolveModelRequestConfig` 见到它就不补默认协议，请求保持未配置；
+  - 用户之后自己选了协议，这个标记随新 profile 一起消失。
 
 插件中心里针对撤下插件的文案标签属于下一步（`P1-B 精简默认目录`），本步不加界面元素。
 
@@ -92,12 +98,14 @@
 | 只有已保存连接时不冻结升级 | `TestSavedConnectionAloneNeverFreezesAnUpgrade` |
 | 盘点失败时升级同名包 → 保留已安装定义 | `TestFailedAuditDefersUpgradeOfShippedPlugin` |
 | 盘点失败但包没变 → 照常采用，不误报推迟 | `TestFailedAuditStillAdoptsAnUnchangedPackage` |
+| 盘点失败但插件尚未安装 → 照常安装 | `TestFailedAuditStillInstallsNewShippedPlugin` |
 | 安装 / 启停 / 卸载后撤下标记仍在 | `TestRetentionSurvivesUnrelatedPluginChanges` |
 | 仅剩备份时仍能盘点；两个文件都没有才是空 | `TestSavedProtocolReferencesReadsRecoverableBackup`、`TestSavedProtocolReferencesWithoutBothFilesIsEmpty` |
 | 任务协议取自 `config.interfaceType`（真实入参形状） | `TestTaskProviderReferencesResolvesTheDispatchedProtocol`、`TestTaskProtocolsReadsTheDispatchedProtocol`、`TestInputProtocolIgnoresCredentials` |
 | 前端：撤下协议可解析、不可新选 | `web/test/plugin-catalog-retired.test.tsx` |
 | 前端：新模型不会默认选中撤下协议 | 同上，`a retired protocol never becomes the default of a new model` |
 | 前端：没有可选协议时保持待配置，不退回内置表 | 同上，`with no selectable protocol a new model stays unconfigured` |
+| 前端：待配置状态经模型列表编辑与提交请求后仍保留 | 同上，`the unconfigured state survives saving the model list and submitting a task` |
 
 ## 证据限度
 

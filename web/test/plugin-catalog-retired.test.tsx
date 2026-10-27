@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
-import { defaultProtocolForCapability, defaultProtocolForModel, ensureModelProfilesWithUiDefaults, modelProtocolLabel, selectableProtocol } from "@/lib/model-protocols";
+import { defaultProtocolForCapability, defaultProtocolForModel, ensureModelProfilesWithUiDefaults, modelProtocolLabel, protocolPending, selectableProtocol } from "@/lib/model-protocols";
+import { createModelChannel, defaultConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { providerCatalogDefinition } from "@/services/api/plugin-catalog";
 
 const catalog = [
@@ -67,6 +68,7 @@ describe("retired protocol plugins", () => {
         expect(defaultProtocolForModel("gpt-image-3", onlyRetiredImage)).toBeUndefined();
         const profiles = ensureModelProfilesWithUiDefaults(["gpt-image-3"], undefined, onlyRetiredImage);
         expect(profiles[0]?.protocol).toBeUndefined();
+        expect(protocolPending(profiles[0])).toBe(true);
         // "disabled" is not the same as "retired": an unavailable protocol was
         // already excluded before this change and must behave the same way.
         const onlyDisabledImage = [{ ...onlyRetiredImage[0], retired: false, enabled: false }];
@@ -75,5 +77,34 @@ describe("retired protocol plugins", () => {
         // With no catalog at all the host has nothing to say about retirement, so
         // the built-in default still applies and setup is not blocked.
         expect(defaultProtocolForCapability("image", [])).toBe("openai-image");
+    });
+
+    test("the unconfigured state survives saving the model list and submitting a task", () => {
+        const retiredImage = { value: "openai-image", label: "OpenAI Images", capability: "image" as const, create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", enabled: true, retired: true };
+        const unconfigured = ensureModelProfilesWithUiDefaults(["gpt-image-3"], undefined, [retiredImage]);
+        expect(unconfigured[0]?.protocol).toBeUndefined();
+        expect(protocolPending(unconfigured[0])).toBe(true);
+
+        // Editing the model list re-derives profiles with no catalog at hand (the
+        // settings pane passes an empty list); the decision must not be replaced.
+        const edited = ensureModelProfilesWithUiDefaults(["gpt-image-3"], unconfigured, []);
+        expect(edited[0]?.protocol).toBeUndefined();
+        expect(protocolPending(edited[0])).toBe(true);
+
+        // Submitting resolves the request from saved configuration only, so it must
+        // not invent the default either.
+        const channel = createModelChannel({
+            id: "manual", name: "QA", baseUrl: "https://qa.example/v1", apiKey: "fakekey",
+            models: ["gpt-image-3"], modelProfiles: unconfigured,
+        });
+        const config = { ...defaultConfig, channels: [channel], model: "manual::gpt-image-3", imageModel: "manual::gpt-image-3" };
+        expect(resolveModelRequestConfig(config, "manual::gpt-image-3").interfaceType).toBeUndefined();
+
+        // A model the user configured keeps working, and a legacy profile that is
+        // merely missing the field still gets the documented default.
+        const configured = ensureModelProfilesWithUiDefaults(["gpt-image-3"], [{ model: "gpt-image-3", capability: "image", protocol: "gemini-image" }], []);
+        expect(configured[0]?.protocol).toBe("gemini-image");
+        const legacy = [{ model: "gpt-image-3", capability: "image" as const }];
+        expect(ensureModelProfilesWithUiDefaults(["gpt-image-3"], legacy, [])[0]?.protocol).toBe("openai-image");
     });
 });

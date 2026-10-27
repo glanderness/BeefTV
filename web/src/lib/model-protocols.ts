@@ -146,6 +146,15 @@ export function selectableProtocol(item: ModelProtocolDefinition) {
     return item.enabled !== false && !item.retired;
 }
 
+// A profile marked protocolPending was deliberately left without a protocol: every
+// protocol of its capability was retired, so the user must choose one. It is a
+// distinct state from a missing protocol field, which older configurations use to
+// mean "apply the documented UI default", so downstream code must keep it rather
+// than filling in a default.
+export function protocolPending(profile: { protocolPending?: boolean } | undefined) {
+    return profile?.protocolPending === true;
+}
+
 // Returns undefined when the catalog lists protocols for this capability but none
 // of them is selectable: a new model then stays unconfigured and the settings UI
 // asks the user to choose, instead of silently assigning a retired protocol.
@@ -180,7 +189,16 @@ export function ensureModelProfilesWithUiDefaults(
         const current = byModel.get(model);
         if (current?.protocol && current.capability) return { ...current, capability: current.capability, protocol: current.protocol };
         const capability = current?.capability || modelProtocolCapability(current?.protocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
-        const protocol = current?.protocol || (capability !== "video" && usesOpenAICompatibleProtocolDefault(apiFormat) ? defaultProtocolForCapability(capability, availableProtocols) : undefined);
+        // Keep a model that was deliberately left without a protocol: re-deriving a
+        // default here (the model list is edited with no catalog at hand) would put
+        // the retired protocol straight back into the saved configuration.
+        if (protocolPending(current)) return { ...current, model, capability, protocol: undefined, protocolPending: true };
+        const derived = capability !== "video" && usesOpenAICompatibleProtocolDefault(apiFormat) ? defaultProtocolForCapability(capability, availableProtocols) : undefined;
+        const protocol = current?.protocol || derived;
+        // A catalog that lists this capability but nothing selectable means the
+        // capability has no usable protocol left; record that decision so a later
+        // default cannot silently undo it.
+        if (!protocol && !current?.protocol && availableProtocols.length && capability !== "video") return { ...current, model, capability, protocol: undefined, protocolPending: true };
         return { ...current, model, capability, protocol };
     });
 }

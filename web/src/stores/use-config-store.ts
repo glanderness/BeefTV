@@ -377,6 +377,10 @@ export type ModelChannel = {
         icon?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
+        // Set when every protocol of the capability was retired, so the host left
+        // this model without one on purpose. Different from a missing protocol,
+        // which older configurations use to mean "apply the documented default".
+        protocolPending?: boolean;
         referenceMediaTransport?: ReferenceMediaTransport;
         authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
@@ -1103,7 +1107,11 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);
     const modelProtocol = normalizeModelProtocol(modelProfile?.protocol);
     const capability = modelProfile?.capability || inferProtocolCapabilityFromModel(model);
-    const interfaceType = modelProtocol
+    // A model deliberately left unconfigured keeps that state; inventing the
+    // documented default here would put a retired protocol back into the request.
+    const interfaceType = modelProfile?.protocolPending
+        ? undefined
+        : modelProtocol
         || normalizeModelProtocol(channel.interfaceType)
         || (capability === "video" || channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
             ? undefined

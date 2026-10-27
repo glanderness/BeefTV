@@ -495,3 +495,29 @@ func TestFailedAuditStillAdoptsAnUnchangedPackage(t *testing.T) {
 		t.Fatalf("unchanged package reported a deferral: %#v", item.Retention)
 	}
 }
+
+// TestFailedAuditStillInstallsNewShippedPlugin keeps the deferral to upgrades: a
+// plugin this release ships but that is not installed yet has no old definition
+// to preserve, so an unreadable inventory must not make it silently absent.
+func TestFailedAuditStillInstallsNewShippedPlugin(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	shipPackage(t, release, retentionManifest("brand-new-official", "brand-new-official", "1.0.0"))
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(), failingReferences{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "brand-new-official")
+	if !ok {
+		t.Fatal("a newly shipped plugin was skipped because the inventory was unreadable")
+	}
+	if item.Manifest.Version != "1.0.0" || item.Status != StatusEnabled {
+		t.Fatalf("new plugin = version %q status %q", item.Manifest.Version, item.Status)
+	}
+	if item.Retention != nil {
+		t.Fatalf("a fresh install reported a deferral: %#v", item.Retention)
+	}
+	if _, resolvable := runtime.Registry().Resolve("brand-new-official"); !resolvable {
+		t.Fatal("new plugin is not executable")
+	}
+}

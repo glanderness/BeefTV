@@ -129,6 +129,13 @@ func (c *Runtime) retentionDecisions(missing []RegistryRecord, snapshot referenc
 // a plugin at an old version. An unreadable inventory also defers, because
 // "cannot tell" must not be treated like "nothing pending".
 func deferralFor(stored, next RegistryRecord, snapshot referenceSnapshot) *RetentionView {
+	// A plugin this release ships but that is not installed yet has no old
+	// definition to preserve. Deferring it would make a new plugin silently absent
+	// for as long as the inventory stays unreadable, so only an existing record can
+	// be deferred.
+	if strings.TrimSpace(stored.ID) == "" || len(stored.Raw) == 0 {
+		return nil
+	}
 	// Only the manifest describes how a task is queried and parsed; blob
 	// bookkeeping (package path, hash) can change without changing execution.
 	// Comparing it keeps a re-packaged identical definition from being reported as
