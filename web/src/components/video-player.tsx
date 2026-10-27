@@ -3,6 +3,7 @@ import type { ComponentProps } from "react";
 import { isVideoProvider, MediaPlayer, MediaProvider, type MediaPlayerInstance, type VideoMimeType } from "@vidstack/react";
 import { DefaultVideoLayout, defaultLayoutIcons, type DefaultLayoutTranslations } from "@vidstack/react/player/layouts/default";
 import { detectVideoAudioTrack, detectVideoAudioTrackFromUrl } from "@/lib/video-poster";
+import { currentLocale } from "@/i18n/runtime";
 import "@vidstack/react/player/styles/base.css";
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
@@ -244,7 +245,7 @@ export function VideoPlayer({
             <MediaProvider />
             <DefaultVideoLayout
                 icons={layoutIcons}
-                translations={zhCNTranslations}
+                translations={currentLocale === "en-US" ? undefined : zhCNTranslations}
                 // Canvas controls use one stable DOM arrangement regardless
                 // of the node's aspect ratio. Without this override Vidstack
                 // swaps between its small and large layouts as the node is
