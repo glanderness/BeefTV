@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func registerCanvasNodeConfigureOps(r *Registry) {
@@ -75,6 +76,13 @@ func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 只改尺寸这类参数时 patch 里没有 model，用节点当前模型补上再校验，
+	// 否则同一份规则只在换模型时才生效。
+	if _, hasModel := patch["model"]; !hasModel {
+		if err := validateModelGenerationParameters(args.Kind, nodeSelectedModel(node), stringParameters(patch)); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := ctx.Domain.UpdateUserCanvasNodeFields(ctx.UserID, args.CanvasID, args.NodeID, patch, args.ExpectedRevision); err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -121,8 +129,41 @@ func resolveGenerationDraft(ctx *Context, kind string, raw map[string]json.RawMe
 			return nil, PreconditionFailed("generation_model_unavailable", "所选模型当前不可用", nil)
 		}
 		patch["model"] = choice.ModelKey
+		if err := validateModelGenerationParameters(kind, choice.ModelKey, stringParameters(patch)); err != nil {
+			return nil, err
+		}
 	}
 	return patch, nil
+}
+
+// validateModelGenerationParameters 用与真实请求同一份型号族规则，在写草稿、
+// 准备分镜和提交整片之前拦住模型不接受的尺寸；等上游拒绝时请求已经发出去了。
+func validateModelGenerationParameters(kind, modelKey string, params map[string]string) error {
+	if kind != "image" {
+		return nil
+	}
+	modelName := strings.TrimSpace(modelKey)
+	if i := strings.LastIndex(modelName, "::"); i >= 0 {
+		modelName = strings.TrimSpace(modelName[i+2:])
+	}
+	family := providerpreset.SeedreamFamily(modelName)
+	if family == "" {
+		return nil
+	}
+	if _, err := providerpreset.ResolveSeedreamSize(family, params["size"], params["seedreamMode"] == "layers"); err != nil {
+		return InvalidArg("invalid_parameter", err.Error())
+	}
+	return nil
+}
+
+func stringParameters(values map[string]any) map[string]string {
+	params := map[string]string{}
+	for key, value := range values {
+		if text, ok := value.(string); ok {
+			params[key] = text
+		}
+	}
+	return params
 }
 
 func validateDraftValue(name, value string) error {
