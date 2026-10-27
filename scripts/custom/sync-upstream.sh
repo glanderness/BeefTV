@@ -32,7 +32,7 @@ bun install --frozen-lockfile
 bun i18n/cli.mjs extract
 bun run build
 
-if [ -n "$(git status --porcelain src/i18n/locales/en.json)" ]; then
+if [ -n "$(git status --porcelain src/i18n/locales/)" ]; then
     echo
     echo "词典有新增词条，翻译后提交：git commit -am \"feat(i18n): 双语 - 同步上游新增词条\""
 fi

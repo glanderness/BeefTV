@@ -447,17 +447,24 @@ import { currentLocale } from "@/i18n/runtime";
 3. 打开 `i18n/report.json` 的 `unsafe` 列表：这些中文因为参与了比较，所以不会被翻译，界面上会保持中文，这是预期行为。
 4. 如果某处翻译导致功能异常（按钮点了没反应、筛选失效等），把对应中文原文加进 `config.mjs` 的 `IGNORE_KEYS`；整个文件都有问题时加进 `EXCLUDE_OBJECT_PROPS`。**不要改上游源码。**
 
-### 阶段 3（可选）：后端错误提示
+### 阶段 3：已由阶段 4 取代，不再修改 `request.ts`
 
-- 在 `web/src/services/api/request.ts` 的 `ApiError` 构造函数里，把传给 `super` 的 `message` 改成 `__t(message)`，并 `import { __t } from "@/i18n/runtime";`。
-- 后端常见错误文案手工补进 `en.json`（key 为后端返回的中文 msg 原文）。后端 Go 代码不改。
+### 阶段 4：显示时翻译（当前默认）
+
+源码仍然不改，只在"显示到屏幕前的最后一刻"再查一次词典：
+
+- 插件把 JSX 子节点、白名单属性、`message.*` 等提示调用里的变量包成 `__tv(x)`；提示调用写成 `__tv(x, 1)`，整句查不到时按标点拆开逐段翻译。
+- `__tv` 只翻译"是中文且词典里有"的字符串，其余原样返回；中文界面下直接返回。带 `{0}` 的词条会编成正则，用来认出已经拼好变量的整句。
+- 这些位置只做显示，所以 JSX 里的字面量不再受 `unsafe` 限制；`unsafe` 词条也进词典，代码里的比较仍用中文原值。
+- 词典来源：前端显示位置的文案 + "可能被显示"的字面量（`.tsx` 文件、`new XxxError(...)`、名字像 label/message/title 的函数/属性/变量）进 `en.json`；后端报错构造调用里的中文（`%s` 等换成 `{0}`）进 `en.backend.json`。后端 Go 代码不改。
+- `bun i18n/cli.mjs merge` 会拒绝占位符和原文不一致的译文。
+- 关闭阶段 4：`BEEFTV_I18N_STAGE=2`。
 
 ## 4. 已知限制（不要试图修）
 
 - `<span>共 {n} 项</span>` 会拆成"共"和"项"两条分别翻译，必要时把两条的译文填得能拼成一句。
-- 普通变量里的中文（如 `const EMPTY = "暂无数据"` 在别处渲染）阶段 1、2 都不覆盖，界面上会保持中文。
-- 用户已保存的数据（节点名、项目名）不会被翻译。
-- 后端返回的业务文案、模型返回的内容不翻译。
+- 用户自己输入的内容（节点名、项目名）只有和词典条目完全相同时才会被翻译（如默认名"未命名项目"）。
+- 模型返回的内容不翻译。
 
 ## 5. 同步上游的日常流程
 
@@ -466,7 +473,7 @@ git remote add upstream https://github.com/glanderness/BeefTV.git   # 只需一�
 git fetch upstream
 git merge upstream/main
 cd web && bun i18n/cli.mjs extract    # 更新词典，查看 missing
-# 有 missing 时按阶段 1 第 5 步补翻译
+# 有 missing（含 backendMissing）时按阶段 1 第 5 步补翻译
 bun run build
 ```
 

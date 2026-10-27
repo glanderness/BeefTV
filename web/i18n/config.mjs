@@ -1,5 +1,6 @@
-// 阶段：1 = JSX 文本 / 白名单属性 / message 调用；2 = 再加对象上的 label/title 等属性
-export const STAGE = Number(process.env.BEEFTV_I18N_STAGE || 2);
+// 阶段：1 = JSX 文本 / 白名单属性 / message 调用；2 = 再加对象上的 label/title 等属性；
+// 4 = 显示时翻译：JSX 和提示调用里的变量在显示前再查一次词典（__tv）
+export const STAGE = Number(process.env.BEEFTV_I18N_STAGE || 4);
 
 // 任何阶段都不处理的文件
 const EXCLUDE_ALL = [/^src\/i18n\//, /\.test\.(t|j)sx?$/, /fixture/i];
@@ -18,3 +19,4 @@ export const IGNORE_KEYS = new Set([]);
 
 export const isExcluded = (rel) => EXCLUDE_ALL.some((re) => re.test(rel));
 export const allowObjectProps = (rel) => STAGE >= 2 && !EXCLUDE_OBJECT_PROPS.some((re) => re.test(rel));
+export const displayTranslate = () => STAGE >= 4;
