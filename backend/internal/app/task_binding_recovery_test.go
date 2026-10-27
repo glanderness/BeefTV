@@ -170,12 +170,13 @@ func TestCanvasBindRecoveryUsesFailureSnapshot(t *testing.T) {
 
 	err := &operations.Error{Reason: "node_task_mismatch", Details: map[string]any{
 		"canvasBinding": map[string]any{
-			"nodePresent": true, "nodeTaskId": "other-task", "nodeType": "text",
-			"nodeClientOperationId": "", "nodeStatus": "", "nodeHasMedia": false,
+			"nodePresent": true, "nodeTaskId": "other-task", "nodeTopLevelTaskId": "",
+			"nodeType": "text", "nodeClientOperationId": "", "nodeStatus": "",
+			"nodeHasBindingOccupancy": true,
 		},
 	}}
 	marker, ok := canvasBindRecoveryTarget(canvasBindTarget{nodeID: "node-race", outputIndex: 0}, err)
-	if !ok || marker.NodeTaskID != "other-task" || marker.NodePresent != true {
+	if !ok || marker.NodeTaskID != "other-task" || marker.NodePresent != true || !marker.NodeHasBindingOccupancy {
 		t.Fatalf("marker did not preserve failed transaction state: ok=%v marker=%+v", ok, marker)
 	}
 }
@@ -189,7 +190,7 @@ func TestCanvasBindRecoveryTracksPendingVideoIdentity(t *testing.T) {
 	})
 	marker := localtask.CanvasBindRecoveryTarget{
 		NodeID: "node-video", Reason: "node_task_mismatch", NodePresent: true,
-		NodeType: "video", NodeClientOperationID: "operation-old", NodeHasMedia: false,
+		NodeType: "video", NodeClientOperationID: "operation-old", NodeHasBindingOccupancy: false,
 	}
 	// The task id stays empty, but restoring the pending client operation id
 	// changes whether canBindPendingVideoNode can accept the node.
@@ -203,6 +204,73 @@ func TestCanvasBindRecoveryTracksPendingVideoIdentity(t *testing.T) {
 	unchanged, err = svc.canvasBindTargetUnchanged(model.Task{UserID: "local", ProjectID: canvasID}, marker)
 	if err != nil || unchanged {
 		t.Fatalf("pending-video identity recovery was not detected: unchanged=%v err=%v", unchanged, err)
+	}
+}
+
+func TestCanvasBindRecoveryBindsAfterVideoContentCleared(t *testing.T) {
+	svc, canvasID, revision := newAssistantTurnService(t)
+	now := time.Now()
+	operationID := "operation-video"
+	resource := model.Resource{ID: "res-recovery-video", UserID: "local", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 128, CreatedAt: now, UpdatedAt: now}
+	asset := model.Asset{ID: "asset-recovery-video", UserID: "local", PayloadJSON: `{"data":{"storageKey":"resource:res-recovery-video"}}`, CreatedAt: now, UpdatedAt: now}
+	task := model.Task{
+		ID: "bind-video-content", UserID: "local", ProjectID: canvasID, Type: "canvas_video", Status: model.TaskStatusSucceeded,
+		ClientOperationID: &operationID, InputJSON: `{"metadata":{"source":"canvas","nodeId":"node-video-content"}}`,
+		ResultJSON: `{"mode":"video","video":{"resourceId":"res-recovery-video","storageKey":"resource:res-recovery-video"}}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	output := localtask.CanonicalOutput{OutputIndex: 0, MediaType: "video", MaterializedAssetID: asset.ID, ResourceID: resource.ID, ProviderArtifactRef: "resource:" + resource.ID}
+	payload, err := localtask.EncodeOutputPayload(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := model.Result{ID: "result-recovery-video", UserID: "local", TaskID: task.ID, Kind: "generation_output", Payload: payload, CreatedAt: now}
+	for _, item := range []any{&resource, &asset, &task, &result} {
+		if err := svc.Database().Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	canvasDoc, err := json.Marshal(map[string]any{
+		"id": canvasID, "title": "视频恢复", "revision": revision,
+		"nodes": []any{map[string]any{
+			"id": "node-video-content", "type": "video",
+			"metadata": map[string]any{"taskClientOperationId": operationID, "content": "existing-result"},
+		}}, "connections": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpsertUserCanvasProject("local", canvasDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.recoverCanvasTaskBindings(task); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, ok := localtask.DecodeCanvasBindRecovery(stored.RecoveryOutcome)
+	if !ok || len(marker.Targets) != 1 || !marker.Targets[0].NodeHasBindingOccupancy {
+		t.Fatalf("occupied video marker = %#v, raw=%v", marker, stored.RecoveryOutcome)
+	}
+
+	setCanvasBindTestNodeMetadata(t, svc, canvasID, "node-video-content", map[string]any{
+		"taskClientOperationId": operationID, "content": "",
+	})
+	if err := svc.recoverCanvasTaskBindings(*stored); err != nil {
+		t.Fatal(err)
+	}
+	final, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.RecoveryOutcome != nil {
+		t.Fatalf("cleared video occupancy kept recovery marker: %q", *final.RecoveryOutcome)
+	}
+	meta := canvasBindTestNodeMetadata(t, svc, canvasID, "node-video-content")
+	if meta["taskId"] != task.ID || meta["content"] != "/api/resources/"+resource.ID+"/file" {
+		t.Fatalf("cleared video occupancy did not bind: %#v", meta)
 	}
 }
 

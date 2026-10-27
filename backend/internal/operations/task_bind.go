@@ -55,11 +55,14 @@ func canvasBindConflictEvidence(ctx *Context, canvasID, nodeID string, outputInd
 	metadata, _ := node["metadata"].(map[string]any)
 	text := func(fields map[string]any, key string) string { value, _ := fields[key].(string); return value }
 	hasMedia := canvas.NodeHasMedia(node)
+	hasBindingOccupancy := canvas.NodeHasBindingOccupancy(node)
 	return map[string]any{"canvasBinding": map[string]any{
 		"source": "server", "nodeId": nodeID, "nodePresent": node != nil, "nodeType": text(node, "type"),
-		"nodeTaskId": text(metadata, "taskId"), "nodeClientOperationId": text(metadata, "taskClientOperationId"),
-		"nodeStatus": text(metadata, "status"), "nodeHasMedia": hasMedia,
-		"revision": canvasRevision(doc), "outputIndex": outputIndex,
+		"nodeTaskId": text(metadata, "taskId"), "nodeTopLevelTaskId": text(node, "taskId"),
+		"nodeClientOperationId": text(metadata, "taskClientOperationId"),
+		"nodeStatus":            text(metadata, "status"), "nodeHasMedia": hasMedia,
+		"nodeHasBindingOccupancy": hasBindingOccupancy,
+		"revision":                canvasRevision(doc), "outputIndex": outputIndex,
 	}}
 }
 
