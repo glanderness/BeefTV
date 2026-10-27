@@ -34,6 +34,10 @@ type SeedreamSizeRule struct {
 	Tiers     []string
 	MinPixels int64
 	MaxPixels int64
+	// MinExampleSize / MaxExampleSize 是官方区间两端的示例尺寸，用来把限制讲成
+	// 用户能直接照着填的说法，不要求用户理解像素数区间。
+	MinExampleSize string
+	MaxExampleSize string
 }
 
 const (
@@ -45,14 +49,14 @@ const (
 
 var seedreamSizeRules = map[string]SeedreamSizeRule{
 	// 5.0 pro / flash：1K、1.5K、2K；自定义总像素 [1280x720, 2048x2048x1.1025]。
-	"pro":   {Tiers: []string{"1K", "1.5K", "2K"}, MinPixels: 921600, MaxPixels: 4624220},
-	"flash": {Tiers: []string{"1K", "1.5K", "2K"}, MinPixels: 921600, MaxPixels: 4624220},
+	"pro":   {Tiers: []string{"1K", "1.5K", "2K"}, MinPixels: 921600, MaxPixels: 4624220, MinExampleSize: "1280x720", MaxExampleSize: "2048x2048"},
+	"flash": {Tiers: []string{"1K", "1.5K", "2K"}, MinPixels: 921600, MaxPixels: 4624220, MinExampleSize: "1280x720", MaxExampleSize: "2048x2048"},
 	// 5.0 lite：2K、3K、4K；自定义总像素 [2560x1440, 4096x4096]。
-	"lite": {Tiers: []string{"2K", "3K", "4K"}, MinPixels: 3686400, MaxPixels: 16777216},
+	"lite": {Tiers: []string{"2K", "3K", "4K"}, MinPixels: 3686400, MaxPixels: 16777216, MinExampleSize: "2560x1440", MaxExampleSize: "4096x4096"},
 	// 4.5：2K、4K；自定义总像素 [2560x1440, 4096x4096]。
-	"4.5": {Tiers: []string{"2K", "4K"}, MinPixels: 3686400, MaxPixels: 16777216},
+	"4.5": {Tiers: []string{"2K", "4K"}, MinPixels: 3686400, MaxPixels: 16777216, MinExampleSize: "2560x1440", MaxExampleSize: "4096x4096"},
 	// 4.0：1K、2K、4K；自定义总像素 [1280x720, 4096x4096]。
-	"4.0": {Tiers: []string{"1K", "2K", "4K"}, MinPixels: 921600, MaxPixels: 16777216},
+	"4.0": {Tiers: []string{"1K", "2K", "4K"}, MinPixels: 921600, MaxPixels: 16777216, MinExampleSize: "1280x720", MaxExampleSize: "4096x4096"},
 }
 
 // seedreamRatioSizes 把画布比例映射成官方 2K 档位的参考像素。2K 是每个型号族都
@@ -100,8 +104,8 @@ func ResolveSeedreamSize(family, raw string, layers bool) (string, error) {
 		// 比例映射出来的像素仍按型号族规则复核，避免映射表改动后送出无效尺寸。
 		if rule, known := SeedreamSizeRuleFor(family); known {
 			width, height, _ := parseSeedreamPixelSize(pixels)
-			if err := rule.validatePixels(width, height); err != nil {
-				return "", fmt.Errorf("画布比例 %s 换算成 %s 后仍超出现有 Seedream %s 的限制：%s", size, pixels, SeedreamFamilyLabel(family), err.Error())
+			if err := rule.validatePixels(SeedreamFamilyLabel(family), width, height); err != nil {
+				return "", err
 			}
 		}
 		return pixels, nil
@@ -114,6 +118,7 @@ func ResolveSeedreamSize(family, raw string, layers bool) (string, error) {
 		// 没识别出型号族（含自定义网关）不套用官方限制。
 		return size, nil
 	}
+	label := SeedreamFamilyLabel(family)
 	tier := strings.ToUpper(size)
 	for _, allowed := range rule.Tiers {
 		if tier == allowed {
@@ -121,31 +126,42 @@ func ResolveSeedreamSize(family, raw string, layers bool) (string, error) {
 		}
 	}
 	if isSeedreamTierName(tier) {
-		return "", fmt.Errorf("图片尺寸 %s 不被 Seedream %s 支持；可选档位 %s，或总像素 %d～%d、宽高比 %s～%s 的宽x高", size, SeedreamFamilyLabel(family), strings.Join(rule.Tiers, "、"), rule.MinPixels, rule.MaxPixels, ratioText(seedreamMinRatio), ratioText(seedreamMaxRatio))
+		return "", fmt.Errorf("Seedream %s 没有 %s 档位，请改选 %s，或直接填宽x高像素（例如 %s）", label, size, strings.Join(rule.Tiers, "、"), rule.MinExampleSize)
 	}
 	width, height, ok := parseSeedreamPixelSize(size)
 	if !ok {
-		return "", fmt.Errorf("图片尺寸 %s 不是 Seedream %s 支持的写法；请填档位（%s）、画布比例（16:9、9:16 等）或宽x高", size, SeedreamFamilyLabel(family), strings.Join(rule.Tiers, "、"))
+		return "", fmt.Errorf("Seedream %s 看不懂尺寸 %s，请填 %s 档位、16:9 这类画布比例，或宽x高像素（例如 %s）", label, size, strings.Join(rule.Tiers, "、"), rule.MinExampleSize)
 	}
-	if err := rule.validatePixels(width, height); err != nil {
-		return "", fmt.Errorf("图片尺寸 %s 不被 Seedream %s 支持：%s", size, SeedreamFamilyLabel(family), err.Error())
+	if err := rule.validatePixels(label, width, height); err != nil {
+		return "", err
 	}
 	return fmt.Sprintf("%dx%d", width, height), nil
 }
 
-func (r SeedreamSizeRule) validatePixels(width, height int) error {
+// validatePixels 的报错会原样显示在画布上，所以用「至少/最多多大多小」这类直白说法，
+// 不抛像素区间、宽高比小数这些内部口径。
+func (r SeedreamSizeRule) validatePixels(label string, width, height int) error {
 	if width <= 0 || height <= 0 {
-		return fmt.Errorf("宽和高必须是正整数")
+		return fmt.Errorf("Seedream %s 的宽和高要填正整数像素，例如 %s", label, r.MinExampleSize)
 	}
 	ratio := float64(width) / float64(height)
+	// 16:1 与 1:16 对应 seedreamMaxRatio 与 seedreamMinRatio。
 	if ratio < seedreamMinRatio || ratio > seedreamMaxRatio {
-		return fmt.Errorf("宽高比 %s 超出 %s～%s", strconv.FormatFloat(ratio, 'f', 3, 64), ratioText(seedreamMinRatio), ratioText(seedreamMaxRatio))
+		return fmt.Errorf("Seedream %s 支持最宽 16:1、最窄 1:16 的图片，%dx%d 超出这个范围", label, width, height)
 	}
 	pixels := int64(width) * int64(height)
-	if pixels < r.MinPixels || pixels > r.MaxPixels {
-		return fmt.Errorf("总像素 %d 超出 %d～%d", pixels, r.MinPixels, r.MaxPixels)
+	if pixels < r.MinPixels {
+		return fmt.Errorf("Seedream %s 的图片至少要 %s（%s），%dx%d 只有 %s", label, r.MinExampleSize, megapixels(r.MinPixels), width, height, megapixels(pixels))
+	}
+	if pixels > r.MaxPixels {
+		return fmt.Errorf("Seedream %s 的图片最多 %s（%s），%dx%d 有 %s", label, r.MaxExampleSize, megapixels(r.MaxPixels), width, height, megapixels(pixels))
 	}
 	return nil
+}
+
+// megapixels 把像素总数讲成「多少万像素」，避免让用户心算六位数。
+func megapixels(pixels int64) string {
+	return strconv.FormatFloat(float64(pixels)/10000, 'f', 0, 64) + " 万像素"
 }
 
 func isSeedreamTierName(value string) bool {
@@ -168,11 +184,4 @@ func parseSeedreamPixelSize(raw string) (int, int, bool) {
 		return 0, 0, false
 	}
 	return width, height, true
-}
-
-func ratioText(value float64) string {
-	if value < 1 {
-		return "1/" + strconv.FormatFloat(1/value, 'f', -1, 64)
-	}
-	return strconv.FormatFloat(value, 'f', -1, 64)
 }

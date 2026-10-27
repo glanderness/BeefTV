@@ -2,8 +2,53 @@ package generation
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"infinite-canvas/backend/internal/protocol"
 )
+
+// 评审 #265 问题 1：Ark 渠道改走通用插件后，图层拆分、图片格式、水印和提示词优化会静默丢失。
+// 本 PR 不带那处改动，国内 Pro 型号仍走 Seedream 专用请求体。这里加载仓库真实 Ark 插件
+// manifest，钉住即使插件已安装、能被解析，Seedream 型号也不会被它接走。
+func TestSeedreamDomesticProIgnoresInstalledArkPlugin(t *testing.T) {
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "..", "plugin-packages", "volcengine-ark-seedream", "manifest.json"))
+	if err != nil {
+		t.Fatalf("read ark plugin manifest: %v", err)
+	}
+	adapter, err := protocol.LoadManifest(manifest)
+	if err != nil {
+		t.Fatalf("load ark plugin manifest: %v", err)
+	}
+	registry, err := protocol.NewRegistry(adapter)
+	if err != nil {
+		t.Fatalf("build protocol registry: %v", err)
+	}
+	if _, ok := registry.Resolve("volcengine-ark-image"); !ok {
+		t.Fatal("ark plugin must resolve in this registry")
+	}
+	port := &captureImagePort{}
+	input := Input{Mode: "image", Prompt: "split the layers", Config: Config{
+		Model: "doubao-seedream-5-0-pro-260628", BaseURL: "https://beeftv.app", APIKey: "synthetic",
+		InterfaceType: "volcengine-ark-image", Size: "16:9", SeedreamMode: "layers",
+		SeedreamOutputFormat: "jpeg", SeedreamOptimize: "fast", SeedreamWatermark: "true",
+	}, ReferenceImages: []Media{{URL: "https://example.test/source.png"}}}
+	ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+	if _, err := RunImageTask(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	// Ark 插件走 /api/v3/images/generations；Seedream 专用请求体走 /v1/images/generations。
+	if port.path != "/v1/images/generations" {
+		t.Fatalf("path=%q, want the seedream request body path", port.path)
+	}
+	if port.body["layer_decomposition"] != true || port.body["output_format"] != "jpeg" || port.body["watermark"] != true {
+		t.Fatalf("seedream options lost: body=%#v", port.body)
+	}
+	if optimize, ok := port.body["optimize_prompt_options"].(map[string]interface{}); !ok || optimize["mode"] != "fast" {
+		t.Fatalf("optimize option lost: body=%#v", port.body)
+	}
+}
 
 func TestSeedreamManagedReferencesUseOneJSONGeneration(t *testing.T) {
 	port := &captureImagePort{}
@@ -98,6 +143,27 @@ func TestSeedreamDomesticProKeepsConfiguredOptionsOnArkChannel(t *testing.T) {
 	// 图层拆分只能按档位出图，比例由上游按原图保持。
 	if port.body["size"] != "2K" {
 		t.Fatalf("size=%#v", port.body["size"])
+	}
+}
+
+// Agent Plan 图片协议是独立端点（/api/plan/v3/images/generations），只有声明式插件
+// 知道那个地址；国内 Seedream 型号名不能把 Agent Plan 渠道拐到官方 Ark 路径上。
+func TestSeedreamAgentPlanChannelKeepsItsOwnProtocol(t *testing.T) {
+	for _, item := range []struct {
+		name          string
+		model         string
+		interfaceType string
+		want          bool
+	}{
+		{name: "agent plan", model: "doubao-seedream-5-0-pro-260628", interfaceType: "volcengine-ark-agent-plan-image", want: false},
+		{name: "official ark", model: "doubao-seedream-5-0-pro-260628", interfaceType: "volcengine-ark-image", want: true},
+		{name: "custom gateway", model: "seedream-4-5-251128", interfaceType: "openai-image", want: true},
+		{name: "other model", model: "gpt-image-2", interfaceType: "volcengine-ark-agent-plan-image", want: false},
+	} {
+		input := Input{Config: Config{Model: item.model, InterfaceType: item.interfaceType}}
+		if got := usesSeedreamRequestBody(input); got != item.want {
+			t.Fatalf("%s: usesSeedreamRequestBody(%s, %s) = %v, want %v", item.name, item.model, item.interfaceType, got, item.want)
+		}
 	}
 }
 

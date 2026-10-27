@@ -3,6 +3,7 @@ package operations
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/canvas"
@@ -108,15 +109,17 @@ func TestSeedreamSizePrecheckCoversConfigurePrepareAndPropose(t *testing.T) {
 	for _, item := range []struct {
 		model, size string
 		ok          bool
+		// wantCopy 是画布上会原样显示的那句话，用来钉住用户能直接照做的说法。
+		wantCopy string
 	}{
-		{"doubao-seedream-4-0-250828", "1600x600", true},
-		{"seedream-4-5-251128", "5504x3040", true},
-		{"doubao-seedream-5-0-pro-260628", "1.5K", true},
-		{"doubao-seedream-5-0-260128", "16:9", true},
-		{"seedream-4-5-251128", "1500x1500", false},
-		{"seedream-4-5-251128", "1K", false},
-		{"dola-seedream-5-0-pro-260628", "4K", false},
-		{"doubao-seedream-5-0-pro-260628", "4K", false},
+		{"doubao-seedream-4-0-250828", "1600x600", true, ""},
+		{"seedream-4-5-251128", "5504x3040", true, ""},
+		{"doubao-seedream-5-0-pro-260628", "1.5K", true, ""},
+		{"doubao-seedream-5-0-260128", "16:9", true, ""},
+		{"seedream-4-5-251128", "1500x1500", false, "Seedream 4.5 的图片至少要 2560x1440（369 万像素），1500x1500 只有 225 万像素"},
+		{"seedream-4-5-251128", "1K", false, "Seedream 4.5 没有 1K 档位，请改选 2K、4K，或直接填宽x高像素（例如 2560x1440）"},
+		{"dola-seedream-5-0-pro-260628", "4K", false, "Seedream 5.0 Pro 没有 4K 档位，请改选 1K、1.5K、2K，或直接填宽x高像素（例如 1280x720）"},
+		{"doubao-seedream-5-0-pro-260628", "4K", false, "Seedream 5.0 Pro 没有 4K 档位，请改选 1K、1.5K、2K，或直接填宽x高像素（例如 1280x720）"},
 	} {
 		modelKey := "beefapi::" + item.model
 		resolve := func(string, string) (AssistantGenerationModel, error) {
@@ -135,6 +138,13 @@ func TestSeedreamSizePrecheckCoversConfigurePrepareAndPropose(t *testing.T) {
 			}
 			if reason := AsError(err).Reason; reason != "invalid_parameter" {
 				t.Fatalf("%s reason for %s = %q, want invalid_parameter", stage, item.size, reason)
+			}
+			message := AsError(err).Message
+			if !strings.Contains(message, "Seedream") || strings.Contains(message, "总像素") {
+				t.Fatalf("%s message for %s = %q, want user-facing Seedream copy", stage, item.size, message)
+			}
+			if item.wantCopy != "" && !strings.Contains(message, item.wantCopy) {
+				t.Fatalf("%s message for %s = %q, want %q", stage, item.size, message, item.wantCopy)
 			}
 		}
 

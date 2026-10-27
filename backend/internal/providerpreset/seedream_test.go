@@ -62,13 +62,58 @@ func TestResolveSeedreamSizeFollowsOfficialPerModelLimits(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s %q should be rejected, got %q", item.family, item.size, got)
 			}
-			if !strings.Contains(err.Error(), "Seedream") || !strings.Contains(err.Error(), "图片尺寸") {
-				t.Fatalf("%s %q error copy is not user actionable: %v", item.family, item.size, err)
+			if !strings.Contains(err.Error(), "Seedream") {
+				t.Fatalf("%s %q error copy should name the model: %v", item.family, item.size, err)
+			}
+			// 这句话会原样显示在画布上，不能带像素区间、宽高比小数这类内部口径。
+			for _, jargon := range []string{"总像素", "宽高比 0.", "区间"} {
+				if strings.Contains(err.Error(), jargon) {
+					t.Fatalf("%s %q error copy leaks %q: %v", item.family, item.size, jargon, err)
+				}
 			}
 			continue
 		}
 		if err != nil || got != item.want {
 			t.Fatalf("%s %q = %q, %v; want %q", item.family, item.size, got, err, item.want)
+		}
+	}
+}
+
+func TestResolveSeedreamSizeErrorsReadLikeUserCopy(t *testing.T) {
+	// 画布上的报错就是这些话，改文案要连这里一起改，避免又退回内部口径。
+	for _, item := range []struct {
+		family string
+		size   string
+		want   string
+	}{
+		{
+			family: "4.5", size: "1K",
+			want: "Seedream 4.5 没有 1K 档位，请改选 2K、4K，或直接填宽x高像素（例如 2560x1440）",
+		},
+		{
+			family: "pro", size: "4K",
+			want: "Seedream 5.0 Pro 没有 4K 档位，请改选 1K、1.5K、2K，或直接填宽x高像素（例如 1280x720）",
+		},
+		{
+			family: "4.5", size: "1500x1500",
+			want: "Seedream 4.5 的图片至少要 2560x1440（369 万像素），1500x1500 只有 225 万像素",
+		},
+		{
+			family: "pro", size: "512x512",
+			want: "Seedream 5.0 Pro 的图片至少要 1280x720（92 万像素），512x512 只有 26 万像素",
+		},
+		{
+			family: "4.0", size: "4096x200",
+			want: "Seedream 4.0 支持最宽 16:1、最窄 1:16 的图片，4096x200 超出这个范围",
+		},
+		{
+			family: "pro", size: "1080p",
+			want: "Seedream 5.0 Pro 看不懂尺寸 1080p，请填 1K、1.5K、2K 档位、16:9 这类画布比例，或宽x高像素（例如 1280x720）",
+		},
+	} {
+		_, err := ResolveSeedreamSize(item.family, item.size, false)
+		if err == nil || err.Error() != item.want {
+			t.Fatalf("%s %q error copy = %v, want %q", item.family, item.size, err, item.want)
 		}
 	}
 }
