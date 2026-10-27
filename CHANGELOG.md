@@ -6,6 +6,8 @@ All notable public changes to BeefTV are documented in this file.
 
 - 内置助手在 BeefAPI 连接授权成功后默认使用 DeepSeek V4.1 Flash。默认值只在还没选过助手模型时写入，已经保存过选择的用户保持不变：目录刷新、重新授权和换账号都不会改写；GPT-6 Astra 仍可在托管目录中继续选用。
 - 即梦官方视频：接口返回 `code=10000` 视为成功，完成的任务不再被误判失败；时长改用官方 `frames` 表达（5 秒=121、10 秒=241），画幅改用 `aspect_ratio`，`req_json` 归到查询请求，不再混在创建正文里。
+- 模型服务的密钥栏按所选请求协议写明要填哪一种凭证：方舟原生接口用普通方舟 Key，Agent Plan 接口用 Agent Plan 专属 Key，即梦用 Access Key + Secret Key；一个连接里混用两种凭证会先被拦下，并提示拆成两个连接。
+- 读不到模型目录时写清可以手填模型 ID 继续，并保留服务商返回的真实错误原因。
 - 修复海外视频模型「生成成功却取不到视频」：Runway 按官方字段发送 `promptText` / `promptImage` / `ratio` 并补上 `X-Runway-Version` 请求头，成片从 `output[]` 取回；Luma 从 `assets.video` 取回，时长按官方 `5s` 字符串、首尾帧写入 `keyframes`；xAI 用创建返回的 `request_id` 查询并从 `video.url` 取回。
 - 参考素材按官方要求收紧：Luma 的首尾帧只发送在线图片地址，本地图片先上传到对象存储，拿不到在线地址时在提交前报错；Runway 只拦官方明确限制为单帧的模型（`gen4.5`、`gen4_turbo`、`gemini_omni_flash`、`grok_imagine_1_5` 等），`veo3.1`、`kling2.5_turbo_pro`、`seedance2_5`、`h3_max` 等支持尾帧的模型照常发送。
 - `runway-video` 插件包随包分发 LiteLLM 派生素材的完整 MIT 声明（插件目录内的 `LICENSE`），独立下载的包不再缺少版权与许可。
