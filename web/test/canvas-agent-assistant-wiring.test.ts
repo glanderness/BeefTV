@@ -48,11 +48,9 @@ describe("助手前端接线", () => {
         const userFacing = files.flatMap(source_string_literals).filter((text) => /[一-鿿]/.test(text));
         expect(userFacing.length).toBeGreaterThan(10);
         for (const text of userFacing) {
-            // BeefAPI 是用户自己的账户名称，属于产品名，不是实现细节；
-            // 先摘掉它再检查术语，避免把品牌名误判成 "API"。
-            const scrubbed = text.replaceAll("BeefAPI", "");
-            for (const term of ["agent-host", "宿主", "Node", "幂等", "MCP", "revision", "API", "token", "session"]) {
-                expect(scrubbed).not.toContain(term);
+            // 面向使用者的文案统一用 BeefTV 品牌：不出现旧品牌名 BeefAPI，也不出现实现者术语。
+            for (const term of ["BeefAPI", "agent-host", "宿主", "Node", "幂等", "MCP", "revision", "API", "token", "session"]) {
+                expect(text).not.toContain(term);
             }
         }
     });

@@ -5,7 +5,7 @@ All notable public changes to BeefTV are documented in this file.
 ## Unreleased
 
 - 手动添加模型时不再默认按「文本」保存：类型一栏留空，选好类型才能添加。目录读不到的方舟连接里手填 `doubao-seedance-2.5` 这类视频模型，不会等到能生成时才发现它被存成了文本。
-- 内置助手在 BeefAPI 连接授权成功后默认使用 DeepSeek V4.1 Flash。默认值只在还没选过助手模型时写入，已经保存过选择的用户保持不变：目录刷新、重新授权和换账号都不会改写；GPT-6 Astra 仍可在托管目录中继续选用。
+- 内置助手在 BeefTV 连接授权成功后默认使用 DeepSeek V4.1 Flash。默认值只在还没选过助手模型时写入，已经保存过选择的用户保持不变：目录刷新、重新授权和换账号都不会改写；GPT-6 Astra 仍可在托管目录中继续选用。
 - 即梦官方视频：接口返回 `code=10000` 视为成功，完成的任务不再被误判失败；时长改用官方 `frames` 表达（5 秒=121、10 秒=241），画幅改用 `aspect_ratio`，`req_json` 归到查询请求，不再混在创建正文里。
 - 模型服务的密钥栏按所选请求协议写明要填哪一种凭证：方舟原生接口用普通方舟 Key，Agent Plan 接口用 Agent Plan 专属 Key，即梦用 Access Key + Secret Key；一个连接里混用两种凭证会先被拦下，并提示拆成两个连接。
 - 读不到模型目录时写清可以手填模型 ID 继续，并保留服务商返回的真实错误原因。
@@ -13,7 +13,7 @@ All notable public changes to BeefTV are documented in this file.
 - 参考素材按官方要求收紧：Luma 的首尾帧只发送在线图片地址，本地图片先上传到对象存储，拿不到在线地址时在提交前报错；Runway 只拦官方明确限制为单帧的模型（`gen4.5`、`gen4_turbo`、`gemini_omni_flash`、`grok_imagine_1_5` 等），`veo3.1`、`kling2.5_turbo_pro`、`seedance2_5`、`h3_max` 等支持尾帧的模型照常发送。
 - `runway-video` 插件包随包分发 LiteLLM 派生素材的完整 MIT 声明（插件目录内的 `LICENSE`），独立下载的包不再缺少版权与许可。
 - 官方视频服务状态更新：OpenAI 已于 2026-09-24 关闭 Sora 2 与 Videos API，Gemini API 的 Veo 预览模型已于 2026-10-22 关闭；OpenAI 与 Gemini 服务预设不再声称可直接生成视频，`openai-videos`（Sora）与 `google-gemini-veo` 协议照旧保留给仍转发同名接口的第三方中转。
-- Built-in BeefAPI can be connected from the desktop app without pasting a key.
+- Built-in BeefTV can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
@@ -122,7 +122,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## v1.7.22
 
-- 所有视频渠道统一优先取回上游结果；下载中断或链接失效时刷新原任务链接，内置 BeefAPI 还可切换备用文件，无需重新生成。
+- 所有视频渠道统一优先取回上游结果；下载中断或链接失效时刷新原任务链接，内置 BeefTV 还可切换备用文件，无需重新生成。
 - 修复工作流多个结果在链接更新后取错素材的问题，并按实际文件识别视频、图片和音频。
 - H3 Max、Max Turbo 的时长输入支持小数秒，H3 Max 支持中间帧与参考顺序设置；修复高级设置菜单被弹层遮挡的问题。
 
@@ -157,8 +157,8 @@ All notable public changes to BeefTV are documented in this file.
 - 结果下载完成后才放回画布，并且只更新相关节点，不会覆盖其他编辑。
 - 结果长时间无法写入画布时会结束等待并提示继续取回，不再一直转圈；已生成结果的后台下载支持停止与继续。
 - 批量出图时，排队等待不再消耗自动重试次数，只有真正发出的请求才计数。
-- 修复 BeefAPI 视频模型被当作文本模型调用而报错的问题；模型很多时设置页和下拉不再卡顿。
-- 修复部分 BeefAPI 图片模型因旧协议配置从出图列表消失的问题。
+- 修复 BeefTV 视频模型被当作文本模型调用而报错的问题；模型很多时设置页和下拉不再卡顿。
+- 修复部分 BeefTV 图片模型因旧协议配置从出图列表消失的问题。
 - 诊断包补齐漏掉的任务记录，并附带脱敏的模型配置摘要，便于排查默认模型和渠道删除问题。
 - 画布列表、编辑器和文件夹中的删除操作都会先确认。
 - 首页新增新手引导，创作入口增加「3D 导演台」和「Beef Agent」。
@@ -293,7 +293,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 ## v1.7.1
 
 - Choose the canvas assistant model directly beside the message input.
-- Start with GPT 6 Astra after connecting BeefAPI, and keep your chosen model when refreshing the catalog.
+- Start with GPT 6 Astra after connecting BeefTV, and keep your chosen model when refreshing the catalog.
 - Offer Astra, Opus 5.5, DeepSeek V4.1 Flash, and GLM 5.3 when available on the connected account.
 - Save model changes before starting the next assistant request.
 
@@ -337,7 +337,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 
 ## v1.6.17
 
-- Restore the audio toggle for BeefAPI Seedance models so silent video requests explicitly disable audio.
+- Restore the audio toggle for BeefTV Seedance models so silent video requests explicitly disable audio.
 - Repair missing task diagnostics columns when upgrading from preview databases that reused migration numbers, preserving existing projects and tasks.
 - Distinguish local task storage failures from model parameter errors and explain when generation has not been submitted.
 - Require two complete rounds of real generation acceptance across six image and video paths before publishing desktop updates.
@@ -382,7 +382,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 
 ## v1.6.11
 
-- Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefAPI.
+- Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefTV.
 - Share verified enterprise video contracts across the model catalog, reference validation, and request preparation; preserve explicit protocols for other models.
 - Reject unsupported reference types and counts before submission, and retain actionable media guidance in task history.
 - Honor installed protocol media declarations and include the shared contracts in container builds.
@@ -395,7 +395,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 
 ## v1.6.9
 
-- Fix built-in BeefAPI Seedance profiles selecting a package name instead of the installed video provider ID, which caused false "interface not installed" failures before submission.
+- Fix built-in BeefTV Seedance profiles selecting a package name instead of the installed video provider ID, which caused false "interface not installed" failures before submission.
 - Repair existing enterprise profiles automatically and accept previously saved OpenAI Videos protocol aliases without bypassing disabled plugins.
 - Verify imported and restored Seedance profiles against the shipped provider catalog and test legacy aliases through the installed plugin runtime.
 
@@ -422,13 +422,13 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 
 ## v1.6.4
 
-- Restore Seedance image, video and audio references for built-in BeefAPI models after catalog import and configuration reload.
+- Restore Seedance image, video and audio references for built-in BeefTV models after catalog import and configuration reload.
 - Migrate the old built-in zero-reference profile while preserving unrelated custom limits, and align Seedance submission with the Videos API.
 - Recognize Seedance capabilities for OpenAI Videos model profiles in both frontend and backend validation.
 
 ## v1.6.3
 
-- Preserve explicit first/last-frame roles and adaptive aspect ratios for Seedance 2.5, including official model aliases and BeefAPI Enterprise requests.
+- Preserve explicit first/last-frame roles and adaptive aspect ratios for Seedance 2.5, including official model aliases and built-in channel requests.
 - Keep reference generation distinct from frame, edit and extension constraints; retain explicitly selected reference and extension modes.
 - Add a supported-mode selector to the professional video canvas and explain when output parameters follow input media.
 - Explain nested TaskTypeConstraint failures with actionable guidance and retain the same message and diagnostic IDs after task reload.
@@ -438,7 +438,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 - Retire the unfinished built-in Agent product surface: the canvas dock, creation entry, home capability card, Agent query parameters, Agent settings and the `/agent/*` API are no longer reachable, so partially working Agent flows can no longer be entered by mistake.
 - Enforce the retirement at the product boundary: generic task creation, task retry and the task worker refuse `cloud_agent`, `cloud_agent_step` and `agent_memory_compact` work instead of executing it as an ordinary paid text generation, and the periodic Agent memory compaction no longer runs in the background.
 - Keep historical Agent runs, profiles, memories and tasks in place with no destructive migration.
-- Manual creation and generation keep their existing authorization, quoting, approval, idempotency and cancellation behaviour on the canvas and in the creation workspace; canvas editing and connections, projects, assets, local storage, model channels, the built-in BeefAPI connection and the v1.6.0 depth workflow are unchanged. The retired Agent approval and memory endpoints are removed together with the rest of `/agent/*`.
+- Manual creation and generation keep their existing authorization, quoting, approval, idempotency and cancellation behaviour on the canvas and in the creation workspace; canvas editing and connections, projects, assets, local storage, model channels, the built-in BeefTV connection and the v1.6.0 depth workflow are unchanged. The retired Agent approval and memory endpoints are removed together with the rest of `/agent/*`.
 - Remove the unused local `AgentPort` wiring, the test-only `generation.Engine`/`Deps` wrapper that had no production caller, and the unreferenced experimental `cmd/mcp` stdio entry.
 - Simplify the core CI gates to the checks that guard the local product surface.
 ## v1.6.1
@@ -459,7 +459,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 
 - Validate reference image dimensions, aspect ratios, file sizes and audio/video duration using each model's configured capabilities before submitting.
 - Preserve supported reference counts, resolutions and durations instead of silently dropping media or downgrading requested settings.
-- Support local and inline reference audio for BeefAPI and native Ark channels, while retaining provider-specific audio-only rules.
+- Support local and inline reference audio for BeefTV and native Ark channels, while retaining provider-specific audio-only rules.
 - Show actionable reference conversion and request-size errors in both canvas nodes and task history, with safe diagnostics and no unsafe unchanged retries.
 
 ## v1.5.8
@@ -492,7 +492,7 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 - Distinguish content moderation, account quota, provider billing, invalid parameters, rate limits, uncertain submissions and failed result downloads without guessing refunds or the offending input.
 - Preserve safe error codes and request identifiers for support, including business errors returned with HTTP 200 and JSON errors inside media downloads.
 - Prevent unsafe unchanged batch retries; edited prompts and reference media can be submitted as new attempts after moderation failures.
-- Cover all 42 currently declared BeefAPI error codes with a shared frontend and backend regression contract.
+- Cover all 42 currently declared BeefTV error codes with a shared frontend and backend regression contract.
 - Improved the shared model picker with a viewport-safe, internally scrollable layout and consistent single-line model options.
 - Removed redundant model icons, secondary descriptions, and stale option backgrounds from model selection UI.
 - Restored native right-click paste behavior in canvas prompt editors and added regression coverage.
@@ -517,4 +517,4 @@ Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关
 
 - Initial public BeefTV snapshot.
 - Local-first AI video workspace with image, video, audio, text, asset, canvas, and model-channel workflows.
-- BeefAPI remains a built-in local channel while its model catalog is discovered dynamically.
+- BeefTV remains a built-in local channel while its model catalog is discovered dynamically.

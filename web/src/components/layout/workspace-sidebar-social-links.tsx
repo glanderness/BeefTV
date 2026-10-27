@@ -39,7 +39,7 @@ export function WorkspaceSidebarSocialLinks() {
                     <div className="app-workspace-donation-content">
                         <p>
                             如果觉得好用的话，欢迎捐赠支持我们！<br />
-                            你的支持是我们不断优化迭代BeefTV的最大动力
+                            你的支持是我们不断优化迭代 BeefTV 的最大动力
                         </p>
                         <img src="/beeftv-donation-qr.png" width={294} height={286} alt="博文斯科技官方收款二维码" />
                     </div>
