@@ -6,6 +6,7 @@ import { serviceModelProfile } from "@/lib/model-service-presets";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { loadProtocolCatalog } from "@/services/api/plugin-catalog";
+import { applyFetchedChannelModelCatalog } from "@/pages/settings/channel-settings-pane";
 import { apiClient } from "@/services/api/request";
 
 const definition = (value: string, capability: ProtocolCapability, retired = false): ModelProtocolDefinition => ({ value, label: value, capability, create: "POST /x", contentType: "application/json", media: "测试", enabled: true, retired });
@@ -122,22 +123,71 @@ describe("callers that rewrite profiles keep the saved decision", () => {
         expect(resolveModelRequestConfig({ ...defaultConfig, channels: [channel] }, "svc::gpt-image-3").interfaceType).toBeUndefined();
     });
 
-    test("BeefAPI normalization does not fill a pending or retired protocol back in", () => {
+    test("BeefAPI normalization does not fill a pending model back in", () => {
         recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-audio", "audio", true)] });
-        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: ["minimax-speech-2.8-hd", "minimax-music-v3.0"], modelProfiles: [{ model: "minimax-speech-2.8-hd", capability: "audio", protocolPending: true }] });
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: ["minimax-speech-2.8-hd"], modelProfiles: [{ model: "minimax-speech-2.8-hd", capability: "audio", protocolPending: true }] });
+        const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
+        expect(config.channels.find((item) => item.id === "beefapi")?.modelProfiles?.[0]).toMatchObject({ protocol: undefined, protocolPending: true });
+        expect(resolveModelRequestConfig(config, "beefapi::minimax-speech-2.8-hd").interfaceType).toBeUndefined();
+    });
+
+    test("BeefAPI normalization keeps saved models running after their protocol is retired", () => {
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-audio", "audio", true), definition("newapi", "video", true)] });
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: ["seedance-2.0", "custom-voice-speech", "minimax-music-v3.0"], modelProfiles: [
+            { model: "seedance-2.0", capability: "video", protocol: "newapi" },
+            // A legacy profile without the field has always run with openai-audio.
+            { model: "custom-voice-speech", capability: "audio" },
+        ] });
         const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
         const beef = config.channels.find((item) => item.id === "beefapi");
-        // The pending model stays pending; the model with no profile is not given the retired template.
-        for (const model of ["minimax-speech-2.8-hd", "minimax-music-v3.0"]) {
-            expect(beef?.modelProfiles?.find((item) => item.model === model)).toMatchObject({ protocol: undefined, protocolPending: true });
-            expect(resolveModelRequestConfig(config, `beefapi::${model}`).interfaceType).toBeUndefined();
-        }
+        expect(beef?.modelProfiles?.find((item) => item.model === "seedance-2.0")).toMatchObject({ protocol: "newapi" });
+        expect(beef?.modelProfiles?.some((item) => item.protocolPending)).toBe(false);
+        expect(resolveModelRequestConfig(config, "beefapi::seedance-2.0").interfaceType).toBe("newapi");
+        // Listed with or without a profile, both already run with the legacy default.
+        expect(resolveModelRequestConfig(config, "beefapi::custom-voice-speech").interfaceType).toBe("openai-audio");
+        expect(resolveModelRequestConfig(config, "beefapi::minimax-music-v3.0").interfaceType).toBe("openai-audio");
     });
 
     test("BeefAPI normalization still repairs saved profiles when nothing is retired", () => {
         const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: ["minimax-speech-2.8-hd"], modelProfiles: [{ model: "minimax-speech-2.8-hd", capability: "text", protocol: "chat-completion" }] });
         const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
         expect(resolveModelRequestConfig(config, "beefapi::minimax-speech-2.8-hd").interfaceType).toBe("openai-audio");
+    });
+
+    test("the wizard keeps a channel protocol a saved model inherits", () => {
+        // The model name says text, the channel says video: the saved decision wins.
+        const channel = createModelChannel({ id: "svc", baseUrl: "https://video.example.com/v1", apiKey: "fakekey", interfaceType: "video-generations-json", models: ["model-123"] });
+        const loaded = { status: "loaded" as const, protocols: [definition("video-generations-json", "video"), definition("chat-completion", "text")] };
+        expect(serviceModelProfile(channel, { id: "model-123" }, loaded)).toMatchObject({ protocol: "video-generations-json", capability: "video" });
+        // A failed catalog request proves nothing against the saved protocol.
+        const claude = createModelChannel({ id: "svc", baseUrl: "https://api.example.com/v1", apiKey: "fakekey", apiFormat: "claude", interfaceType: "claude-api", models: ["claude-x"], modelProfiles: [{ model: "claude-x", capability: "text" }] });
+        expect(serviceModelProfile(claude, { id: "claude-x" }, { status: "unavailable", protocols: [] })).toMatchObject({ protocol: "claude-api" });
+    });
+
+    test("a catalog refresh keeps a pending model pending and never refills a retired protocol", () => {
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-audio", "audio", true)] });
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", apiKey: "", models: [] });
+        const catalogItems = [{ id: "speech-x", modelType: "audio" }];
+        // Refresh through the settings pane, normalize, refresh again, normalize again.
+        let current = channel;
+        for (let round = 0; round < 2; round += 1) {
+            current = applyFetchedChannelModelCatalog(current, { models: ["speech-x"], catalog: catalogItems });
+            const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [current] } }).config;
+            current = config.channels.find((item) => item.id === "beefapi")!;
+            expect(current.modelProfiles?.find((item) => item.model === "speech-x")).toMatchObject({ protocol: undefined, protocolPending: true });
+            expect(resolveModelRequestConfig(config, "beefapi::speech-x").interfaceType).toBeUndefined();
+        }
+        // Once the host offers the protocol again, the provider's declared one is adopted.
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-audio", "audio")] });
+        const adopted = mergeFetchedChannelModelProfiles(current, catalogItems).find((item) => item.model === "speech-x");
+        expect(adopted?.protocol).toBe("openai-audio");
+        expect(adopted?.protocolPending).toBeUndefined();
+    });
+
+    test("a declared protocol is not auto-assigned when the catalog request failed", () => {
+        recordProtocolCatalog({ status: "unavailable", protocols: [] });
+        const channel = createModelChannel({ id: "relay", baseUrl: "https://relay.example/v1", apiKey: "fakekey", models: [] });
+        expect(mergeFetchedChannelModelProfiles(channel, [{ id: "speech-x", modelType: "audio" }])).toEqual([expect.objectContaining({ protocol: undefined, protocolPending: true })]);
     });
 
     test("a newly fetched model does not inherit a retired channel protocol", () => {

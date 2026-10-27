@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
-import { inferProtocolCapabilityFromModel, knownRetiredProtocol, modelProtocolCapability, newModelProtocol, normalizeModelProtocol, protocolPending, savedModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
+import { inferProtocolCapabilityFromModel, knownRetiredProtocol, legacyDefaultProtocol, modelProtocolCapability, newModelProtocol, normalizeModelProtocol, protocolPending, savedModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, upgradeGPTImageCapability, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
@@ -818,16 +818,16 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
 
 type BeefApiProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
 
-// The protocol a BeefAPI media profile is normalized to. A model left
-// unconfigured on purpose never reaches here (callers skip protocolPending).
-// A shared contract names the official route and wins unless the host is known
-// to have retired it; a valid saved protocol is kept; otherwise the template is
-// only a candidate for the shared new-model decision, so a retired one is never
-// filled back in.
-function beefApiProtocol(capability: ModelCapability, contract: ModelProtocol | undefined, current: ModelProtocol | undefined, template: ModelProtocol): ModelProtocol | undefined {
+// The protocol a BeefAPI media profile is normalized to. Every model here is
+// already listed on the channel, so it keeps what it runs with: a shared
+// contract repairs the route unless the host retired that contract's protocol;
+// otherwise a saved protocol is kept, and a profile without one keeps the legacy
+// default it has always used (savedModelProtocol), even if that protocol has
+// since been retired. A model left unconfigured on purpose never reaches here
+// (callers skip protocolPending).
+function beefApiProtocol(capability: ModelCapability, contract: ModelProtocol | undefined, current: ModelProtocol | undefined): ModelProtocol | undefined {
     if (contract && !knownRetiredProtocol(contract)) return contract;
-    if (current) return current;
-    return newModelProtocol(capability, undefined, [contract ? undefined : template]).protocol;
+    return current || legacyDefaultProtocol(capability);
 }
 
 function beefApiPendingProfile(current: BeefApiProfile | undefined, model: string, capability: ModelCapability): BeefApiProfile {
@@ -836,8 +836,9 @@ function beefApiPendingProfile(current: BeefApiProfile | undefined, model: strin
 
 function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol | undefined {
     const contract = beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined;
+    // A retired contract no longer repairs the route, but a saved video protocol
+    // keeps running with what it has.
     if (contract && !knownRetiredProtocol(contract)) return contract;
-    if (contract) return undefined;
     // A video profile must not keep a protocol that runs a different
     // capability. BeefAPI often tags video models with a chat/text endpoint;
     // that stale protocol would make the backend reject the task outright
@@ -926,7 +927,7 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
         // saved a text protocol. Do not rewrite arbitrary custom model routes.
         const contract = beefAPIImageContract(model);
         const staleTextProtocol = (/^(gpt-image(?:-|$)|dall-e(?:-|$))/i.test(model) || Boolean(contract)) && modelProtocolCapability(current?.protocol) === "text";
-        const protocol = beefApiProtocol("image", contract?.protocol, staleTextProtocol ? undefined : current?.protocol, "openai-image");
+        const protocol = beefApiProtocol("image", contract?.protocol, staleTextProtocol ? undefined : current?.protocol);
         if (!protocol) { existing.set(model, beefApiPendingProfile(current, model, "image")); continue; }
         const capabilityConfig = contract ? defaultModelCapabilityConfig(contract.protocol, model) : current?.capabilityConfig || defaultModelCapabilityConfig(protocol, model);
         existing.set(model, {
@@ -942,14 +943,14 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
         if (current?.capability && current.capability !== "text") continue;
         if (current?.protocol && modelProtocolCapability(current.protocol) !== "text") continue;
         if (protocolPending(current)) continue;
-        const protocol = beefApiProtocol("text", undefined, current?.protocol, "chat-completion");
+        const protocol = beefApiProtocol("text", undefined, current?.protocol);
         existing.set(model, protocol ? { ...(current || {}), model, capability: "text", protocol } : beefApiPendingProfile(current, model, "text"));
     }
     for (const model of models.filter(isAudioModelName)) {
         const current = existing.get(model);
         if (current?.capability && current.capability !== "audio" && current.capability !== "text") continue;
         if (protocolPending(current)) continue;
-        const protocol = beefApiProtocol("audio", undefined, current?.capability === "audio" ? current.protocol : undefined, "openai-audio");
+        const protocol = beefApiProtocol("audio", undefined, current?.capability === "audio" ? current.protocol : undefined);
         existing.set(model, protocol ? { ...(current || {}), model, capability: "audio", protocol } : beefApiPendingProfile(current, model, "audio"));
     }
     for (const model of models.filter(isTranscriptionModelName)) {

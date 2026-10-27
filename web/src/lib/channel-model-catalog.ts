@@ -1,5 +1,5 @@
 import { defaultModelCapabilityConfig, sanitizeServerVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { knownRetiredProtocol, modelProtocolCapability, newModelProtocol, protocolForModelCatalog, protocolForBeefAPICatalog, type ModelProtocol } from "@/lib/model-protocols";
+import { declaredProtocolForNewModel, knownRetiredProtocol, modelProtocolCapability, newModelProtocol, protocolPending, protocolForModelCatalog, protocolForBeefAPICatalog, type ModelProtocol } from "@/lib/model-protocols";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
@@ -153,7 +153,12 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             continue;
         }
         if (existing) {
-            const protocol = inferredProtocol || existing.protocol;
+            // A refresh may update a saved protocol from the provider's contract,
+            // but never to one the host retired, and a model left unconfigured on
+            // purpose only gets a protocol the new-model decision accepts.
+            const pending = protocolPending(existing);
+            const refreshed = inferredProtocol ? (pending ? declaredProtocolForNewModel(inferredProtocol).protocol : knownRetiredProtocol(inferredProtocol) ? undefined : inferredProtocol) : undefined;
+            const protocol = refreshed || existing.protocol;
             const capability = inferredCapability || existing.capability;
             const capabilityChanged = capability !== existing.capability;
             const sourcedVideo = capability === "video" ? catalogVideo : null;
@@ -168,8 +173,9 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
                     : capabilityChanged
                       ? undefined
                       : existing.capabilityConfig;
+            const { protocolPending: _pendingMark, ...rest } = existing;
             next.push({
-                ...existing,
+                ...(pending && !protocol ? existing : rest),
                 ...(item.videoPricing !== undefined || existing.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
                 ...(item.displayName ? { displayName: item.displayName } : {}),
                 capability,
@@ -182,11 +188,10 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
 
         const capability = inferredCapability || modelProtocolCapability(channel.interfaceType);
         if (!capability) continue;
-        // A protocol the provider's contract declares is trusted unless the host
-        // is known to have retired it; a template guess goes through the shared
-        // new-model decision.
+        // A protocol the provider's contract declares and a template guess both
+        // go through the shared new-model decision.
         const decided = inferredProtocol
-            ? (knownRetiredProtocol(inferredProtocol) ? { protocol: undefined } : { protocol: inferredProtocol })
+            ? declaredProtocolForNewModel(inferredProtocol)
             : protocolForNewCatalogModel(capability, channel.interfaceType);
         const protocol = decided.protocol;
         if (!protocol) {

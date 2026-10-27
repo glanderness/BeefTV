@@ -41,16 +41,22 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     // protocol is decided anew below.
     if (!explicitCapability && existing && protocolPending(existing)) return existing;
     const saved = !explicitCapability && (existing || channel.models.includes(item.id)) ? savedModelProtocol(channel, existing, item.id) : undefined;
-    // A protocol inherited from the channel is only kept when the host offers it
-    // for this capability; a mismatched or missing channel contract still asks the
-    // user, as before. Explicit and legacy-default protocols are always kept.
-    const inheritedFromChannel = Boolean(saved && !existing?.protocol && saved === channel.interfaceType);
-    const inheritedDefinition = inheritedFromChannel ? protocols.find((protocol) => protocol.value === saved && protocol.enabled !== false) : undefined;
-    const inheritedCapability = existing?.capability || item.modelType || inferProtocolCapabilityFromModel(item.id);
-    if (saved && (!inheritedFromChannel || inheritedDefinition?.capability === inheritedCapability)) {
+    // What savedModelProtocol returns is what the request runs with, so the
+    // model name never overrules it and a failed catalog request proves nothing
+    // against it. An explicit profile protocol is always kept. A protocol the
+    // model only inherits (channel protocol or legacy default) is not kept when
+    // it could never have run: the profile states a different capability, or a
+    // loaded catalog shows the host does not install or enable it. Then the user
+    // is asked, as before. A retired protocol is still installed and stays.
+    const savedCapability = saved ? modelProtocolCapability(saved, protocols) : undefined;
+    const savedInherited = Boolean(saved && !existing?.protocol);
+    const mismatched = savedInherited && Boolean(existing?.capability && savedCapability && savedCapability !== existing!.capability);
+    const loadedCatalog = Array.isArray(catalog) ? catalog.length > 0 : catalog.status === "loaded";
+    const notInstalled = savedInherited && loadedCatalog && !protocols.some((protocol) => protocol.value === saved && protocol.enabled !== false);
+    if (saved && !mismatched && !notInstalled) {
         const current: ServiceModelProfile = existing
             ? { ...existing, protocol: saved }
-            : { model: item.id, capability: modelProtocolCapability(saved, protocols) || inferProtocolCapabilityFromModel(item.id), protocol: saved };
+            : { model: item.id, capability: savedCapability || inferProtocolCapabilityFromModel(item.id), protocol: saved };
         const definition = protocols.find((protocol) => protocol.value === saved && protocol.enabled !== false);
         return definition && definition.authType !== current.authType ? { ...current, authType: definition.authType } : current;
     }

@@ -31,9 +31,9 @@
 | `defaultProtocolForCapability` / `defaultProtocolForModel` | 各自带 `STANDARD_PROTOCOLS`、`FALLBACK_PROTOCOLS` 兜底 | 只是 `newModelProtocol()` 的薄包装，两张常量表已删除 |
 | `fetchPluginProviderCatalog` 与写死的 `BUILTIN_OPENAI_PROTOCOLS` | 请求失败时把写死清单当成正常目录返回 | 改为 `loadProtocolCatalog()`，返回带状态的目录：失败时标 `unavailable`，并去掉已知撤下的协议；按能力过滤的请求不覆盖会话记录 |
 | 设置页 `channel-model-settings.tsx` | 列表显示、首次建 profile 各自推算；切换能力时直接取默认 | 显示和首次建 profile 用 `savedModelProtocol()`（和请求一致）；切换能力走 `newModelProtocol()`，推不出就记 `protocolPending`；用户选了协议就清掉这个标记 |
-| 模型服务向导 `serviceModelProfile`（`model-service-presets.ts`） | 只过滤 `enabled`，会把撤下协议分给新模型；缺字段的老 profile 会被预设改选 | 渠道里已有的模型先走 `savedModelProtocol()`：显式协议、老默认、`protocolPending` 原样保留（从渠道继承的协议仍要求宿主提供同能力的定义）；只有新模型走 `newModelProtocol()`，并把 `pending` 结果写成 `protocolPending` |
-| 拉取模型目录 `mergeFetchedChannelModelProfiles` | 新模型直接套渠道协议或模板协议 | 渠道协议和模板都只是 `newModelProtocol()` 的候选，已撤下的渠道协议不再自动给新模型；厂商合约声明的协议若已知撤下则不用；推不出时保留模型、标记待配置，不再丢掉 |
-| BeefAPI 归一化 `enrichBeefApiMediaChannel`（图片/文本/音频/视频） | 各分支写死 `openai-image`、`chat-completion`、`openai-audio` 和视频默认 | 带 `protocolPending` 的模型跳过；合约协议已知撤下时不用；已保存的有效协议保留；其余只把模板交给 `newModelProtocol()`，推不出就标记待配置 |
+| 模型服务向导 `serviceModelProfile`（`model-service-presets.ts`） | 只过滤 `enabled`，会把撤下协议分给新模型；缺字段的老 profile 会被预设改选 | 渠道里已有的模型先走 `savedModelProtocol()`：显式协议、老默认、渠道协议、`protocolPending` 都原样保留，模型名和请求失败的目录都不能推翻它。只有两种情况改为让用户选：profile 自己写的能力和继承来的协议对不上；目录已加载，并且证明宿主根本没装或没启用这个继承来的协议（已撤下但仍装着的照样保留）。新模型走 `newModelProtocol()`，并把 `pending` 写成 `protocolPending` |
+| 拉取模型目录 `mergeFetchedChannelModelProfiles` | 新模型直接套渠道协议或模板协议；刷新时目录声明的协议直接覆盖已有 profile | 新模型：渠道协议和模板是 `newModelProtocol()` 的候选；厂商合约声明的协议走 `declaredProtocolForNewModel()`（已知撤下或目录请求失败时不分配）；推不出时保留模型、标记待配置。已有 profile：刷新不会换成已撤下的协议；待配置的 profile 只在新模型判断接受时才拿到协议，同时清掉标记 |
+| BeefAPI 归一化 `enrichBeefApiMediaChannel`（图片/文本/音频/视频） | 各分支写死 `openai-image`、`chat-completion`、`openai-audio` 和视频默认 | 这里的模型都已在渠道里，按已有模型处理：带 `protocolPending` 的跳过；合约协议没被撤下时照常用来修正路由；否则保留已保存的协议，缺字段的按老默认（与 `savedModelProtocol()` 一致），协议撤下了也不清空 |
 | `ProtocolCardPicker` | 列出全部启用协议 | 撤下的协议只对已经在用它的模型显示 |
 | 后端盘点 `SavedProtocolReferences`（`workspace/provider_config.go`） | 只数显式写出的 `protocol` | 每个 profile 和没有 profile 的已列模型都按 `SavedModelProtocol()` 计数，缺字段的老配置记在它实际使用的默认协议下 |
 | 插件升级 `deferralFor`（`plugins/retention.go`） | 只看未完成任务 | 另外检查：新版本删掉或改名的 provider ID 如果还被已保存配置使用，也推迟升级（架构师意见 2）；ID 保留的升级照常进行 |
@@ -62,8 +62,10 @@
 | 新模型，调用方手上没有目录 | 用会话最后一次记下的目录 | `protocol-decision.test.ts` 「callers without a catalog use the one recorded this session」 |
 | 首次运行，从没加载过目录 | 用老默认，不堵新建连接 | `protocol-decision.test.ts` 「with no catalog at all …」；`manual-channel-protocol.test.ts` 默认值用例 |
 | 模型服务向导 / 拉取模型目录 | 不分配撤下协议；推不出时保留模型并标记待配置 | `protocol-decision.test.ts` 「the model-service editor …」「a fetched catalog model …」「a newly fetched model does not inherit a retired channel protocol」；`model-service-presets.test.ts`、`channel-model-catalog.test.ts` 原有用例 |
-| 向导处理已有配置 | 缺字段的老 profile 保留老默认，`protocolPending` 保留；向导新建时被目录拒绝的 profile 一直待配置到请求 | `protocol-decision.test.ts` 「the model-service wizard keeps a legacy profile's default and a pending mark」「a wizard profile refused by the catalog stays pending …」 |
-| BeefAPI 配置归一化 | 不给待配置模型补协议，不填回已撤下模板；没撤下时照常修正旧协议 | `protocol-decision.test.ts` 「BeefAPI normalization does not fill …」「… still repairs saved profiles …」；`channel-model-catalog.test.ts` 原有 BeefAPI 用例 |
+| 向导处理已有配置 | 缺字段的老 profile 保留老默认，`protocolPending` 保留，继承来的渠道协议不被模型名或失败的目录推翻；向导新建时被目录拒绝的 profile 一直待配置到请求 | `protocol-decision.test.ts` 「the model-service wizard keeps a legacy profile's default and a pending mark」「the wizard keeps a channel protocol a saved model inherits」「a wizard profile refused by the catalog stays pending …」；`model-service-presets.test.ts` 「saving a model inherits an enabled channel protocol …」 |
+| BeefAPI 配置归一化 | 不给待配置模型补协议；协议撤下后已保存的显式协议和老默认照常可用；没撤下时照常修正旧协议 | `protocol-decision.test.ts` 「BeefAPI normalization does not fill a pending model back in」「… keeps saved models running after their protocol is retired」「… still repairs saved profiles …」；`channel-model-catalog.test.ts` 原有 BeefAPI 用例 |
+| 目录重复刷新 | 撤下后两次刷新都保持待配置，请求不用撤下协议；协议恢复后照常采用 | `protocol-decision.test.ts` 「a catalog refresh keeps a pending model pending and never refills a retired protocol」 |
+| 目录请求失败时拉到新模型 | 厂商声明的协议也不自动分配 | `protocol-decision.test.ts` 「a declared protocol is not auto-assigned when the catalog request failed」 |
 | 同名升级，有未完成任务 | 推迟 | `plugins` `TestDeferredUpgradeKeepsTheOldQueryDefinition`、`TestUpgradeAdoptsNewDefinitionOnceWorkIsDone` |
 | 同名升级，删掉或改名了已保存配置在用的 ID | 推迟；没人再用后照常升级 | `plugins` `TestUpgradeThatDropsASavedProviderIDIsDeferred`（临时去掉这项检查后会失败） |
 | 同上，但插件 ID 与旧 provider ID 同名 | 推迟：只按新版实际能解析的 provider ID 和别名判断，插件 ID 不算 | `plugins` `TestUpgradeRenamingAProviderNamedLikeItsPluginIsDeferred`（按旧逻辑会失败）；别名仍能解析时照常升级：`TestUpgradeKeepingALegacyAliasIsAdopted` |
@@ -85,10 +87,12 @@
 | `go test ./internal/repository/`（含 CGO/sqlite） | ok | ok |
 | `go test ./internal/app/ -run 'TestPluginReferences\|TestImageSubmission\|TestImageRejection\|TestImagePreparation'` | 26 pass | 26 pass |
 | `bun run typecheck` / `bun run lint` | 通过 | 通过 |
-| 前端 17 个协议相关用例文件 | 194 pass / 0 fail | 16 个文件 168 pass / 0 fail（基线没有 `protocol-decision.test.ts`） |
+| 前端 17 个协议相关用例文件 | 198 pass / 0 fail | 16 个文件 168 pass / 0 fail（基线没有 `protocol-decision.test.ts`） |
 | `docker build --target web-build .` | 通过（镜像已含 `protocol_defaults.json`） | 未跑 |
 
 评审第二轮新增 7 条用例（后端 2 条、前端 5 条）。其中 5 条先在旧实现上确认会失败，再在新实现上通过；另外 2 条是对照用例，防止改过头：`TestUpgradeKeepingALegacyAliasIsAdopted`（别名仍能解析时照常升级）和「BeefAPI normalization still repairs saved profiles when nothing is retired」，新旧实现都通过。
+
+评审第三轮新增 4 条前端用例（BeefAPI 撤下后老配置照常可用、向导保留继承的渠道协议、目录两次刷新、目录失败时不分配声明协议），都先在上一版实现上确认会失败，再在新实现上通过；第二轮那条 BeefAPI 用例曾把「已列出但没有 profile 的模型」也当成待配置，这与意见 1 冲突，已改为只检查带 `protocolPending` 的模型，另一半由「keeps saved models running …」覆盖。
 
 `TestSavedProtocolReferencesCountsChannelsAndProfiles` 改了预期：它的合成配置里有一个缺 `protocol` 的 profile 和一个没有 profile 的已列模型，旧预期认为它们不引用任何协议；按架构师意见 1，它们实际用 `chat-completion`，盘点必须算上，否则撤下 `chat-completion` 时会把它们正在用的插件删掉。
 

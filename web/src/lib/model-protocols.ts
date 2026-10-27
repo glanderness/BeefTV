@@ -165,6 +165,16 @@ export function protocolSelectableForNewModel(value: ModelProtocol | undefined, 
     return catalog.protocols.some((item) => item.value === value && (!capability || item.capability === capability) && selectableProtocol(item));
 }
 
+// A protocol a provider contract or endpoint declares for a model being added.
+// It is trusted as the provider's own choice (it may be an alias the catalog
+// does not list), but it is still a new assignment: not when the host is known
+// to have retired it, and not when the catalog request failed, because then
+// nothing proves it is still offered.
+export function declaredProtocolForNewModel(value: ModelProtocol): NewProtocolDecision {
+    if (catalogState(undefined).status === "unavailable" || knownRetired.has(value)) return { protocol: undefined, pending: true };
+    return { protocol: value };
+}
+
 export type NewProtocolDecision = { protocol: ModelProtocol; pending?: undefined } | { protocol: undefined; pending: boolean };
 
 // The protocol a model being added is given. `proposed` are the candidates a
@@ -200,6 +210,12 @@ export function savedModelProtocol(
     if (channelProtocol) return channelProtocol;
     if (channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)) return undefined;
     return PROTOCOL_DEFAULTS.legacy[profile?.capability || inferProtocolCapabilityFromModel(model)];
+}
+
+// The protocol a saved profile of this capability without a protocol field has
+// always executed with (video has none).
+export function legacyDefaultProtocol(capability: ProtocolCapability): ModelProtocol | undefined {
+    return PROTOCOL_DEFAULTS.legacy[capability];
 }
 
 // Thin views over newModelProtocol for callers that only need the value.
