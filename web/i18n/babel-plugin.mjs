@@ -1,6 +1,6 @@
 export const CJK = /[一-鿿]/;
 
-const JSX_ATTRS = new Set(["title", "placeholder", "label", "alt", "aria-label", "tooltip", "okText", "cancelText", "description", "extra", "emptyText", "detail", "helperText", "subTitle", "subtitle", "content"]);
+const JSX_ATTRS = new Set(["title", "placeholder", "label", "alt", "aria-label", "tooltip", "okText", "cancelText", "description", "extra", "emptyText", "detail", "helperText", "help", "subTitle", "subtitle", "content"]);
 const OBJECT_PROPS = new Set(["label", "title", "description", "placeholder", "tooltip", "okText", "cancelText", "emptyText", "hint", "detail", "helperText", "subtitle", "caption"]);
 const MESSAGE_CALLEE = /^(message|messageApi|notification|notificationApi|modal|modalApi|toast)$/;
 const MESSAGE_METHODS = new Set(["success", "error", "warning", "warn", "info", "loading", "open", "confirm"]);
@@ -9,7 +9,7 @@ const COMPARE_METHODS = new Set(["includes", "startsWith", "endsWith", "indexOf"
 const COMPARE_OPS = new Set(["===", "!==", "==", "!=", "in"]);
 
 // 阶段 4 收集"可能被显示"的字面量：源码不改写，只进词典，显示时由 __tv 查到
-const DISPLAY_NAME = /(label|message|text|title|hint|desc|description|error|reason|summary|tip|status|caption|name|notice|warning)$/i;
+const DISPLAY_NAME = /(label|message|text|title|hint|help|desc|description|error|reason|summary|tip|status|caption|name|notice|warning)$/i;
 
 export const normalizeJsxText = (raw) => raw.replace(/\s*\n\s*/g, " ").trim();
 export const templateKey = (quasis) => quasis.map((q, i) => (q.value.cooked ?? q.value.raw) + (i < quasis.length - 1 ? `{${i}}` : "")).join("");

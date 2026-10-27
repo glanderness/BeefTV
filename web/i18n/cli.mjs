@@ -53,9 +53,10 @@ if (cmd === "extract") {
             console.warn(`skip（占位符不一致）: ${k} => ${v}`);
             continue;
         }
+        // 上游把文案从前端挪到后端时，前端旧词条要等 --prune 才删，两边都写才不会丢
+        if (!(k in dict) && !(k in backendDict)) continue;
         if (k in dict) dict[k] = v;
-        else if (k in backendDict) backendDict[k] = v;
-        else continue;
+        if (k in backendDict) backendDict[k] = v;
         n++;
     }
     write(dictPath, sorted(dict));
