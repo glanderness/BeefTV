@@ -30,7 +30,7 @@ jobs:
       - name: Extract i18n keys
         run: |
           bun i18n/cli.mjs extract
-          if ! git diff --quiet src/i18n/locales/en.json; then
+          if ! git diff --quiet src/i18n/locales/; then
             echo "::warning::上游带来了新的中文文案，合并后请补翻译（英文界面暂时显示中文，不影响功能）。"
           fi
       - run: bun run build
