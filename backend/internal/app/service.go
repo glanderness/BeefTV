@@ -105,6 +105,8 @@ type Service struct {
 	workspaceOpsMu           sync.Mutex
 	imageRecoveryActive      atomic.Bool
 	imageRecoveryAfterID     string
+	videoRecoveryActive      atomic.Bool
+	videoRecoveryAfterID     string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -295,8 +297,20 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		return s.taskDomain().Retry(userID, id)
 	}
 	if task, err := s.repo.TaskForUser(userID, id); err == nil {
-		if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
-			return s.resumeGenerationDownload(*task)
+		if task.Status == model.TaskStatusSucceeded {
+			if deliveryPaused(task.Stage) {
+				return s.resumeGenerationDownload(*task)
+			}
+			stored, loadErr := s.generationDeliverer().LoadedOutputs(task.ID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			if !localtask.DeliveryComplete(task.ResultJSON, stored, task.Type) {
+				if err := s.DeliverSucceededTask(*task); err != nil {
+					return nil, err
+				}
+				return s.repo.TaskForUser(userID, id)
+			}
 		}
 		if restored, handled, err := s.recoverAcceptedImage(*task); handled {
 			return restored, err

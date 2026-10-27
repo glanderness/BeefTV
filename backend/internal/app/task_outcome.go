@@ -1,6 +1,9 @@
 package app
 
 import (
+	"errors"
+	"strings"
+
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -14,6 +17,10 @@ func (s *Service) taskOutcomeFacts(tasks []model.Task) map[string]localtask.Outc
 		}
 	}
 	evidence, err := s.repo.ImageRecoveryEvidence(ids)
+	billing, billingErr := s.repo.TaskProviderBillingEvidence(ids)
+	if billingErr != nil {
+		err = errors.Join(err, billingErr)
+	}
 	facts := make(map[string]localtask.OutcomeFacts, len(tasks))
 	for _, task := range tasks {
 		f := localtask.OutcomeFacts{Unreadable: err != nil}
@@ -27,7 +34,24 @@ func (s *Service) taskOutcomeFacts(tasks []model.Task) map[string]localtask.Outc
 				}
 			}
 		}
+		if b, ok := billing[task.ID]; ok && (b.UsageStatePresent || b.BillingStatePresent || b.UsageState != "" || b.BillingState != "") {
+			f.ConfirmedUncharged = billingEvidenceConfirmsNoCharge(b.UsageState, b.BillingState)
+		}
 		facts[task.ID] = f
 	}
 	return facts
+}
+
+func billingEvidenceConfirmsNoCharge(usageState, billingState string) bool {
+	for _, state := range []string{usageState, billingState} {
+		switch normalizeBillingState(state) {
+		case "not_charged", "uncharged", "no_charge", "refunded", "refund_completed":
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeBillingState(state string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(state), "-", "_"))
 }

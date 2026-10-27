@@ -343,6 +343,15 @@ func (s *Service) mergeVideoAPICallLog(log model.ApiCallLog) (bool, error) {
 	if log.ProviderStatus != "" {
 		root.ProviderStatus = log.ProviderStatus
 	}
+	if log.UsageState != "" {
+		root.UsageState = log.UsageState
+	}
+	if log.BillingState != "" {
+		root.BillingState = log.BillingState
+	}
+	if log.ImageJobID != "" {
+		root.ImageJobID = log.ImageJobID
+	}
 	startedAt := root.StartedAt
 	if startedAt.IsZero() {
 		startedAt = root.CreatedAt.Add(-time.Duration(root.DurationMs) * time.Millisecond)

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -133,6 +134,64 @@ func TestSpecializedRoutesBindLocalExecutorRequests(t *testing.T) {
 	}
 	if capture.render.Timeline.Clips[0].DirectMedia == nil {
 		t.Fatal("render timeline was not bound")
+	}
+}
+
+func TestRecoverRouteDoesNotSubmitGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	png, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gets, posts int
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		gets++
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png)
+	}))
+	defer media.Close()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "recover-route.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	svc := app.NewLocal(repository.New(db), t.TempDir())
+	t.Cleanup(func() { _ = svc.Close() })
+	owner, err := svc.LocalWorkspaceOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "recover-route-task", UserID: owner.ID, Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"images":[{"url":"` + media.URL + `/result.png"}]}`,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.Use(WorkspaceMiddleware(workspace.Context{ID: owner.ID, DataDir: t.TempDir()}))
+	RegisterTaskRoutes(router.Group("/api"), svc)
+	request := httptest.NewRequest(http.MethodPost, "/api/tasks/"+task.ID+"/recover", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("recover status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if gets != 1 || posts != 0 {
+		t.Fatalf("recover methods: GET=%d POST=%d", gets, posts)
 	}
 }
 

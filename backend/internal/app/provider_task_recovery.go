@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -103,6 +104,21 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
+	if automaticGetOnlyRecovery(ctx) {
+		if upscale || workflowVideo {
+			return nil, BadAuthRequest("自动查询只允许 GET 状态接口")
+		}
+		if declarative {
+			request := generation.ProtocolRequestFromInput(input)
+			spec, pollErr := adapter.BuildPoll(ctx, protocol.PollContext{BaseURL: config.BaseURL, Model: request.Model, Request: request, TaskID: providerRequestID})
+			if pollErr != nil {
+				return nil, pollErr
+			}
+			if !strings.EqualFold(strings.TrimSpace(spec.Method), "GET") {
+				return nil, BadAuthRequest("自动查询只允许 GET 状态接口")
+			}
+		}
+	}
 	task.InputJSON = decryptedInput
 	task.ProviderRequestID = providerRequestID
 	if err := s.repo.UpdateTaskProviderState(task.ID, providerRequestID, task.PollStage, task.NextPollAt); err != nil {
@@ -126,7 +142,13 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	// 上游已成功后的完整媒体下载和本地入库可能持续数十秒。浏览器关闭抽屉、
 	// 页面刷新或代理断开都不应中断这项运维恢复，否则任务会再次停在
 	// failed/refunded。保留请求值用于审计，但把执行生命周期交给恢复租约控制。
-	recoveryCtx, cancelRecovery := providerTaskRecoveryContext(ctx)
+	var recoveryCtx context.Context
+	var cancelRecovery context.CancelFunc
+	if automaticGetOnlyRecovery(ctx) {
+		recoveryCtx, cancelRecovery = automaticProviderTaskRecoveryContext(ctx)
+	} else {
+		recoveryCtx, cancelRecovery = providerTaskRecoveryContext(ctx)
+	}
 	defer cancelRecovery()
 	queryCtx := withProviderAnalytics(recoveryCtx, s, *task)
 	var result map[string]interface{}
@@ -147,6 +169,12 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		return nil, err
 	}
 	if result == nil {
+		nextPollAt := time.Now().Add(30 * time.Second)
+		if err := s.repo.UpdateTaskProviderState(task.ID, providerRequestID, strings.ToLower(providerStatus), &nextPollAt); err != nil {
+			return nil, err
+		}
+		task.PollStage = strings.ToLower(providerStatus)
+		task.NextPollAt = &nextPollAt
 		_ = s.log(task.UserID, task.ID, "info", "人工查询完成，上游任务仍在处理", providerStatus)
 		return &ProviderTaskQueryResult{Task: taskForOutput(*task), ProviderStatus: providerStatus, Recovered: false}, nil
 	}
@@ -207,4 +235,8 @@ func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, i
 
 func providerTaskRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), providerTaskRecoveryLeaseDuration)
+}
+
+func automaticProviderTaskRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, providerTaskRecoveryLeaseDuration)
 }
