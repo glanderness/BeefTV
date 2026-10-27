@@ -386,17 +386,24 @@ func canBindEmptyRenderNode(node map[string]any, patch TaskOutputBind) bool {
 	if !patch.AllowEmptyVideo || patch.MediaType != "video" || nodeString(node, "type") != "video" {
 		return false
 	}
+	return !NodeHasBindingOccupancy(node)
+}
+
+// NodeHasBindingOccupancy mirrors the empty-render guard used before a video
+// bind. It includes both node-level and metadata-level fields because either
+// location can keep a node occupied and block recovery.
+func NodeHasBindingOccupancy(node map[string]any) bool {
 	metadata := nodeMetadata(node)
 	for _, fields := range []map[string]any{node, metadata} {
 		for _, key := range []string{"taskId", "content", "storageKey", "assetId", "resourceId", "url", "dataUrl"} {
 			if value, exists := fields[key]; exists && value != nil {
 				if text, ok := value.(string); !ok || text != "" {
-					return false
+					return true
 				}
 			}
 		}
 	}
-	return true
+	return false
 }
 
 func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {

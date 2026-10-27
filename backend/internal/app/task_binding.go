@@ -157,12 +157,13 @@ func (s *Service) recoverPendingCanvasBindings(limit int) error {
 }
 
 type canvasBindTargetState struct {
-	present           bool
-	taskID            string
-	nodeType          string
-	clientOperationID string
-	status            string
-	hasMedia          bool
+	present             bool
+	taskID              string
+	topLevelTaskID      string
+	nodeType            string
+	clientOperationID   string
+	status              string
+	hasBindingOccupancy bool
 }
 
 func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.CanvasBindRecoveryTarget) (bool, error) {
@@ -175,10 +176,11 @@ func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.Ca
 	}
 	return current.present == marker.NodePresent &&
 		current.taskID == strings.TrimSpace(marker.NodeTaskID) &&
+		current.topLevelTaskID == strings.TrimSpace(marker.NodeTopLevelTaskID) &&
 		current.nodeType == strings.TrimSpace(marker.NodeType) &&
 		current.clientOperationID == strings.TrimSpace(marker.NodeClientOperationID) &&
 		current.status == strings.TrimSpace(marker.NodeStatus) &&
-		current.hasMedia == marker.NodeHasMedia, nil
+		current.hasBindingOccupancy == marker.NodeHasBindingOccupancy, nil
 }
 
 func (s *Service) canvasBindTargetState(userID, canvasID, nodeID string) (canvasBindTargetState, error) {
@@ -198,12 +200,13 @@ func (s *Service) canvasBindTargetState(userID, canvasID, nodeID string) (canvas
 		}
 		metadata, _ := node["metadata"].(map[string]any)
 		return canvasBindTargetState{
-			present:           true,
-			taskID:            canvasBindStateString(metadata, "taskId"),
-			nodeType:          canvasBindStateString(node, "type"),
-			clientOperationID: canvasBindStateString(metadata, "taskClientOperationId"),
-			status:            canvasBindStateString(metadata, "status"),
-			hasMedia:          canvas.NodeHasMedia(node),
+			present:             true,
+			taskID:              canvasBindStateString(metadata, "taskId"),
+			topLevelTaskID:      canvasBindStateString(node, "taskId"),
+			nodeType:            canvasBindStateString(node, "type"),
+			clientOperationID:   canvasBindStateString(metadata, "taskClientOperationId"),
+			status:              canvasBindStateString(metadata, "status"),
+			hasBindingOccupancy: canvas.NodeHasBindingOccupancy(node),
 		}, nil
 	}
 	return canvasBindTargetState{}, nil
@@ -236,10 +239,11 @@ func canvasBindRecoveryTarget(target canvasBindTarget, err error) (localtask.Can
 		}
 		marker.NodePresent = state.present
 		marker.NodeTaskID = state.taskID
+		marker.NodeTopLevelTaskID = state.topLevelTaskID
 		marker.NodeType = state.nodeType
 		marker.NodeClientOperationID = state.clientOperationID
 		marker.NodeStatus = state.status
-		marker.NodeHasMedia = state.hasMedia
+		marker.NodeHasBindingOccupancy = state.hasBindingOccupancy
 		return marker, true
 	default:
 		return marker, true
@@ -260,12 +264,13 @@ func canvasBindFailureState(err error) (canvasBindTargetState, bool) {
 		return canvasBindTargetState{}, false
 	}
 	return canvasBindTargetState{
-		present:           present,
-		taskID:            canvasBindStateString(binding, "nodeTaskId"),
-		nodeType:          canvasBindStateString(binding, "nodeType"),
-		clientOperationID: canvasBindStateString(binding, "nodeClientOperationId"),
-		status:            canvasBindStateString(binding, "nodeStatus"),
-		hasMedia:          canvasBindBool(binding, "nodeHasMedia"),
+		present:             present,
+		taskID:              canvasBindStateString(binding, "nodeTaskId"),
+		topLevelTaskID:      canvasBindStateString(binding, "nodeTopLevelTaskId"),
+		nodeType:            canvasBindStateString(binding, "nodeType"),
+		clientOperationID:   canvasBindStateString(binding, "nodeClientOperationId"),
+		status:              canvasBindStateString(binding, "nodeStatus"),
+		hasBindingOccupancy: canvasBindBool(binding, "nodeHasBindingOccupancy"),
 	}, true
 }
 
