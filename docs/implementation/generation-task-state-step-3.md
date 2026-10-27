@@ -96,7 +96,7 @@ go test ./internal/app -run '^TestVideoProtocolUpgradeRecoversOriginalTasks$' -c
 go test ./internal/app -count=1 -timeout=20m                         通过（722.649 秒）
 ```
 
-`TestVideoProtocolUpgradeRecoversOriginalTasks` 曾在默认 10 分钟的整包运行中尚未轮到结束，因此第一次整包结果是 timeout；当时用 `-skip '^TestVideoProtocolUpgradeRecoversOriginalTasks$'` 只是定位用，不能作为最终全包结论。随后长用例单独通过，app 包完整运行也通过；本次 backend 全套复跑中 `internal/app` 同样通过（882.560 秒）。app 包最终摘要日志保留在 `app-package-final.log`，专项测试原始日志保留在 `special-tests-rerun.txt`。
+`TestVideoProtocolUpgradeRecoversOriginalTasks` 曾在默认 10 分钟的整包运行中尚未轮到结束，因此第一次整包结果是 timeout；当时用 `-skip '^TestVideoProtocolUpgradeRecoversOriginalTasks$'` 只是定位用，不能作为最终全包结论。随后长用例单独通过，app 包完整运行也通过；本次 backend 全套复跑中 `internal/app` 同样通过（882.560 秒）。app 包最终摘要日志保留在 `app-package-final.txt`，专项测试原始日志保留在 `special-tests-rerun.txt`。
 
 handler 7 组真实 host 集成复跑：
 
