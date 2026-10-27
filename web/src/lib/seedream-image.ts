@@ -1,9 +1,11 @@
 import type { ImageCapabilityConfig } from "./model-capabilities";
 
+// 与后端 providerpreset.SeedreamFamily 保持同一套识别规则：国内官方型号带
+// doubao- 前缀，去掉前缀后再分族，Pro / Flash 必须排在通用 5.0 之前。
 export function seedreamFamily(model = "") {
-    const name = model.split("::").pop() || "";
-    if (/^dola-seedream-5-0-pro-/.test(name)) return "pro";
-    if (/^dola-seedream-5-0-flash-/.test(name)) return "flash";
+    const name = (model.split("::").pop() || "").trim().toLowerCase().replace(/^doubao-/, "");
+    if (/^dola-seedream-5-0-pro-/.test(name) || /^seedream-5-0-pro-/.test(name)) return "pro";
+    if (/^dola-seedream-5-0-flash-/.test(name) || /^seedream-5-0-flash-/.test(name)) return "flash";
     if (/^seedream-5-0-/.test(name)) return "lite";
     if (/^seedream-4-5-/.test(name)) return "4.5";
     if (/^seedream-4-0-/.test(name)) return "4.0";

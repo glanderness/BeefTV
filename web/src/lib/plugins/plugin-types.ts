@@ -79,6 +79,8 @@ export type PluginProviderContribution = {
         resultPaths?: string[];
         resultKind?: "image" | "video" | "audio";
         resultEphemeral?: boolean;
+        /** 业务成功码；只有声明它的协议生效，命中的 errorPaths 值不算失败。 */
+        successCodes?: Array<string | number>;
     };
 };
 export type PluginWorkflowContribution = {

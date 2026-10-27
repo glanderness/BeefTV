@@ -381,10 +381,10 @@
         ".github/workflows/release-desktop.yml",
         "docs/release-evidence/v2.0.4-review.md"
       ],
-      "status": "pending_release_workflow",
+      "status": "passed",
       "method": "local-script",
       "beforeDraft": true,
-      "detail": "本地门禁已在候选源码上运行，正式工作流在创建 draft 前再次执行"
+      "detail": "本地门禁已在候选源码上运行；正式工作流的 preflight（Validate and open draft，2026-10-26 14:10:23-14:13:36 success）在创建 draft 之前再次执行并通过，本机复跑 node scripts/verify-real-generation-release.mjs 同样通过"
     }
   },
   "upgrade": {
