@@ -36,18 +36,21 @@
 - 没有接入盘点来源的运行时（例如只用文件 registry 的独立测试壳）保持原来的删除行为，避免把“未知”误当成“有人引用”。
 - 主配置缺失时**读备份**：正常读取路径会用 `.bak` 恢复，所以“主文件不存在”不等于“没有配置”。只剩有效备份时盘点照常计数；两个文件都没有才是真正首次启动；备份也读不出来按失败处理（保留全部）。
 
-## 升级同名包时先看未取回结果的任务
+## 正常更新与删除被引用协议分别处理
 
-撤下一个包只是撤下的情形之一；同名包升级同样会替换执行定义（查询路径、结果解析）。任务没有绑定插件版本，取回结果时用的是当前 registry，所以升级会改变旧任务的取回方式。方案 7.3 第 3 条要求：这类包在任务活跃期间不替换执行定义。
+正常维护更新通过现有启动流程更新同一份 registry，即使仍有未取回任务也安装。旧任务需要新版修复才能取回时，“有任务就保留旧定义”会形成循环。#78 已复现这一问题，修复和可重跑证据见 [video-protocol-upgrade-verification.md](./video-protocol-upgrade-verification.md)。
 
-实现：替换前比较已提交记录与新包，只有在**定义确实变化**且**仍有未取回结果的任务**引用该协议时，这一轮保留旧记录（清单、包哈希、启用状态都不动），新包下一次启动再采用。因此：
+`deferralFor` 比较新旧清单真正可解析的 provider ID 与别名，继续复用 `protocol.ResolvableIDs`，包名不能冒充协议 ID：
 
-- 已保存连接本身**不会**冻结保留了协议 ID 的升级，否则每个在用的插件都会永远停在旧版本；但新版本**删掉或改名**了已保存配置仍在使用的 provider ID 时，同样推迟（`TestUpgradeThatDropsASavedProviderIDIsDeferred`），见 [protocol-decision.md](./protocol-decision.md)；
-- **只推迟已有安装记录的升级**：发行包里全新、尚未安装的插件没有旧定义可保留，盘点失败时照常安装；否则一次配置读取失败就会让本次发行新增的插件静默缺席；
-- **盘点失败也会推迟升级**：“盘点失败”和“没有接入盘点”是两回事。前者说明这台机器确实有待取回任务的可能，只是读不出来，因此保留已安装定义；后者（只用自己的 registry 的独立运行时）保持原行为。代价要写明：配置长期损坏时，同名插件会一直停在旧版本，直到盘点恢复正常——宁可晚升级，也不拿旧任务的取回方式去赌；
-- 是否“算一次升级”只比较清单（执行定义）。重新打包但定义没变时（例如只刷新了包路径/哈希）不算，避免把同版本的重新打包误报成推迟；
-- 推迟期间插件仍随包发行，所以照常可选，只是 `retention.reasons` 会说明“升级已推迟”；
-- 副作用要说清楚：一个长期挂着的失败任务（保留上游 ID、等人工取回）会持续推迟该插件的升级，直到用户重试或处理掉这个任务。这是按方案 7.3.3“没有版本关联就暂不升级”做的取舍，方向是宁可晚升级，也不让旧任务被新定义取回。
+- 新版本保留所有原 ID：照常更新，任务继续使用原 ID、原上游任务编号和原凭据。盘点失败也不阻止这种更新。
+- 新版本删除或改名某个 ID / 旧别名：只有该 ID 仍被保存配置或未取回任务使用时才推迟。任务上游 ID 仅在日志中、运行中、取消未确认也受保护。其他仍保留的 provider 的任务不阻止更新。
+- 删除 ID 且盘点失败：无法判断旧引用，保留原记录；整包撤下的保守保留规则不变。
+- 新插件尚未安装：没有旧记录可保留，盘点失败仍安装。定义未变化的重新打包不误报推迟。
+- 推迟期间仍随包发行的插件保持可选，只在 `retention.reasons` 说明原因；启停状态、包缓存和 registry 提交继续走原机制。
+
+**ID 相同不证明请求兼容。** 维护者必须验证旧任务回执、原 ID 查询、新建请求以及必要请求头和地址拼接。真正不兼容的协议应使用新 ID，同时提供旧 ID 的实现；不增加厂商白名单、更新开关或另一份运行注册表。
+
+本次没有数据迁移，也不通过删除任务、清空上游 ID 或重新生成来解除冻结。回退发行包会重新安装其旧清单，并可能重新带回解析缺陷；不能保证回退后仍可取回。
 
 ## 与现有机制的关系
 
@@ -93,10 +96,15 @@
 | 只用旧别名 `openai-video` 的配置或任务 → 保留 | `TestRetainsOfficialPluginReferencedOnlyByLegacyAlias` |
 | 只用旧别名的配置：新版本仍解析该别名 → 升级；不再解析 → 推迟 | `TestUpgradeDroppingAnAliasOnlyReferenceIsDeferred` |
 | 失败任务的上游 ID 只在请求日志里 → 计入且不回写 | `TestTaskProviderReferencesCountsFailedTaskRecoverableFromRequestLog` |
-| 升级改查询路径时有未取回任务 → 保留旧定义 | `TestDeferredUpgradeKeepsTheOldQueryDefinition` |
-| 任务结束后下一次启动采用新版本 | `TestUpgradeAdoptsNewDefinitionOnceWorkIsDone` |
+| 有未取回任务的正常更新 → 采用并持久化查询修复 | `TestUpgradeAdoptsQueryFixWithPendingTask` |
+| 任务仍在时重复启动 → 保持新版、registry 不反复改写 | `TestUpgradeStaysInstalledWhileWorkIsPending` |
 | 只有已保存连接时不冻结升级 | `TestSavedConnectionAloneNeverFreezesAnUpgrade` |
-| 盘点失败时升级同名包 → 保留已安装定义 | `TestFailedAuditDefersUpgradeOfShippedPlugin` |
+| 盘点失败且升级删除 ID → 保留已安装定义 | `TestFailedAuditDefersUpgradeOfShippedPlugin` |
+| 盘点失败且保留原 ID → 更新，用户停用状态不变 | `TestFailedAuditAllowsUpgradeKeepingProviderIDs` |
+| 仅任务引用 ID / 旧别名 → 保留时更新、删除时推迟 | `TestUpgradeReferenceRemoval` |
+| 多 provider 包 → 只检查被删除 ID 的引用 | `TestUpgradeMultiProviderOnlyChecksRemovedReferences` |
+| SQLite 旧 registry、失败任务行/日志 ID、运行中任务 → 正常启动后取回 | `backend/internal/app/video_protocol_upgrade_test.go` |
+| SQLite 只有任务引用被删除 ID；回退旧请求、重新升级取回 | `backend/internal/app/video_protocol_retention_test.go` |
 | 盘点失败但包没变 → 照常采用，不误报推迟 | `TestFailedAuditStillAdoptsAnUnchangedPackage` |
 | 盘点失败但插件尚未安装 → 照常安装 | `TestFailedAuditStillInstallsNewShippedPlugin` |
 | 安装 / 启停 / 卸载后撤下标记仍在 | `TestRetentionSurvivesUnrelatedPluginChanges` |
@@ -105,7 +113,7 @@
 
 ## 证据限度
 
-- 全部用本地合成配置和测试数据验证，没有读取任何真实用户凭证，没有发起任何生成请求，也没有连接任何厂商接口。
+- 全部用本地合成配置和测试数据验证，没有读取真实用户凭证或连接厂商接口；新建路径只向本地假上游发 POST，原任务取回为零 POST。
 - 数据库相关用例需要 CGO（`go-sqlite3`），已在 Mac 工作区跑过，见 [plugin-retention-verification.md](./plugin-retention-verification.md)。
 - 本步不评估厂商是否停服，也不判断某个协议是否还有真实可用性；它只回答“这份配置和这些任务还需不需要这个插件”。
 - 只防将来：旧版本已经删掉的官方插件记录不会因为这次改动回来——它们的清单已不在 registry 里，无法凭空重建执行定义。这类用户的配置会显示协议未知，需要另行判断是否重新安装包含该包的版本。

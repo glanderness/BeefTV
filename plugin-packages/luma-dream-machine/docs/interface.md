@@ -12,6 +12,7 @@
 - 路径拼接：官方路径本身已带 `/dream-machine/v1`，两个操作都按根路径替换（`originPath`），宿主不再补 `/v1` 前缀；否则会请求到 `/v1/dream-machine/...`。也正因如此，服务地址应填主机根地址（默认 `https://api.lumalabs.ai`）；中转若挂在子路径下，需要它能直接响应 `/dream-machine/v1/generations`。
 - 状态：官方 `state` 取 `queued` / `dreaming` / `completed` / `failed`，其中 `dreaming` 映射为处理中。
 - 结果：官方 `assets.video`。
+- 旧回执兼容：继续读取 `video_url`、`videoUrl`、`result_url`、`url`、`data.video_url`、`output.url`；错误信息保留 `fail_reason`。
 
 ## 配置字段
 
@@ -80,7 +81,7 @@
   "apiVersion": "beeftv.plugin/v2",
   "id": "luma-dream-machine",
   "name": "Luma Dream Machine",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "BeefTV Contributors",
   "description": "Luma Dream Machine 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -512,6 +513,9 @@
               },
               {
                 "$ref": "response.message"
+              },
+              {
+                "$ref": "response.fail_reason"
               }
             ]
           },
