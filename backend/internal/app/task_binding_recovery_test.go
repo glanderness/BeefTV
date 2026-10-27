@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/operations"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
@@ -162,6 +163,49 @@ func canvasBindTraceCount(t *testing.T, svc *Service) int {
 	return count
 }
 
+func TestCanvasBindRecoveryUsesFailureSnapshot(t *testing.T) {
+	svc, canvasID, revision := newAssistantTurnService(t)
+	task := seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-race", "node-race", "other-task")
+	setCanvasBindTestNodeTaskID(t, svc, canvasID, "node-race", task.ID)
+
+	err := &operations.Error{Reason: "node_task_mismatch", Details: map[string]any{
+		"canvasBinding": map[string]any{
+			"nodePresent": true, "nodeTaskId": "other-task", "nodeType": "text",
+			"nodeClientOperationId": "", "nodeStatus": "", "nodeHasMedia": false,
+		},
+	}}
+	marker, ok := canvasBindRecoveryTarget(canvasBindTarget{nodeID: "node-race", outputIndex: 0}, err)
+	if !ok || marker.NodeTaskID != "other-task" || marker.NodePresent != true {
+		t.Fatalf("marker did not preserve failed transaction state: ok=%v marker=%+v", ok, marker)
+	}
+}
+
+func TestCanvasBindRecoveryTracksPendingVideoIdentity(t *testing.T) {
+	svc, canvasID, revision := newAssistantTurnService(t)
+	_ = seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-video", "node-video", "")
+	setCanvasBindTestNodeType(t, svc, canvasID, "node-video", "video")
+	setCanvasBindTestNodeMetadata(t, svc, canvasID, "node-video", map[string]any{
+		"taskId": "", "taskClientOperationId": "operation-old", "status": "",
+	})
+	marker := localtask.CanvasBindRecoveryTarget{
+		NodeID: "node-video", Reason: "node_task_mismatch", NodePresent: true,
+		NodeType: "video", NodeClientOperationID: "operation-old", NodeHasMedia: false,
+	}
+	// The task id stays empty, but restoring the pending client operation id
+	// changes whether canBindPendingVideoNode can accept the node.
+	unchanged, err := svc.canvasBindTargetUnchanged(model.Task{UserID: "local", ProjectID: canvasID}, marker)
+	if err != nil || !unchanged {
+		t.Fatalf("initial pending-video state changed: unchanged=%v err=%v", unchanged, err)
+	}
+	setCanvasBindTestNodeMetadata(t, svc, canvasID, "node-video", map[string]any{
+		"taskId": "", "taskClientOperationId": "operation-new", "status": "",
+	})
+	unchanged, err = svc.canvasBindTargetUnchanged(model.Task{UserID: "local", ProjectID: canvasID}, marker)
+	if err != nil || unchanged {
+		t.Fatalf("pending-video identity recovery was not detected: unchanged=%v err=%v", unchanged, err)
+	}
+}
+
 func seedCanvasBindRecoveryTask(t *testing.T, svc *Service, canvasID string, revision int64, taskID, nodeID, nodeTaskID string) model.Task {
 	t.Helper()
 	now := time.Now()
@@ -234,6 +278,30 @@ func setCanvasBindTestNodeTaskID(t *testing.T, svc *Service, canvasID, nodeID, t
 		node := rawNode.(map[string]any)
 		if node["id"] == nodeID {
 			node["metadata"].(map[string]any)["taskId"] = taskID
+		}
+	}
+	saveCanvasBindTestDocument(t, svc, doc)
+}
+
+func setCanvasBindTestNodeType(t *testing.T, svc *Service, canvasID, nodeID, nodeType string) {
+	t.Helper()
+	doc := canvasBindTestDocument(t, svc, canvasID)
+	for _, rawNode := range doc["nodes"].([]any) {
+		node := rawNode.(map[string]any)
+		if node["id"] == nodeID {
+			node["type"] = nodeType
+		}
+	}
+	saveCanvasBindTestDocument(t, svc, doc)
+}
+
+func setCanvasBindTestNodeMetadata(t *testing.T, svc *Service, canvasID, nodeID string, metadata map[string]any) {
+	t.Helper()
+	doc := canvasBindTestDocument(t, svc, canvasID)
+	for _, rawNode := range doc["nodes"].([]any) {
+		node := rawNode.(map[string]any)
+		if node["id"] == nodeID {
+			node["metadata"] = metadata
 		}
 	}
 	saveCanvasBindTestDocument(t, svc, doc)

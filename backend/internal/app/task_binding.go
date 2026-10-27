@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	localtask "infinite-canvas/backend/internal/task"
@@ -60,7 +61,7 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 			}
 			if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
 				if terminalCanvasBindError(err) {
-					if marker, ok := s.canvasBindRecoveryTarget(task, target, err); ok {
+					if marker, ok := canvasBindRecoveryTarget(target, err); ok {
 						bindRecovery.Upsert(marker)
 						bindRecoveryDirty = true
 					}
@@ -156,8 +157,12 @@ func (s *Service) recoverPendingCanvasBindings(limit int) error {
 }
 
 type canvasBindTargetState struct {
-	present bool
-	taskID  string
+	present           bool
+	taskID            string
+	nodeType          string
+	clientOperationID string
+	status            string
+	hasMedia          bool
 }
 
 func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.CanvasBindRecoveryTarget) (bool, error) {
@@ -168,7 +173,12 @@ func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.Ca
 	if err != nil {
 		return false, err
 	}
-	return current.present == marker.NodePresent && current.taskID == strings.TrimSpace(marker.NodeTaskID), nil
+	return current.present == marker.NodePresent &&
+		current.taskID == strings.TrimSpace(marker.NodeTaskID) &&
+		current.nodeType == strings.TrimSpace(marker.NodeType) &&
+		current.clientOperationID == strings.TrimSpace(marker.NodeClientOperationID) &&
+		current.status == strings.TrimSpace(marker.NodeStatus) &&
+		current.hasMedia == marker.NodeHasMedia, nil
 }
 
 func (s *Service) canvasBindTargetState(userID, canvasID, nodeID string) (canvasBindTargetState, error) {
@@ -177,40 +187,91 @@ func (s *Service) canvasBindTargetState(userID, canvasID, nodeID string) (canvas
 		return canvasBindTargetState{}, err
 	}
 	var doc struct {
-		Nodes []struct {
-			ID       string         `json:"id"`
-			Metadata map[string]any `json:"metadata"`
-		} `json:"nodes"`
+		Nodes []map[string]any `json:"nodes"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return canvasBindTargetState{}, err
 	}
 	for _, node := range doc.Nodes {
-		if strings.TrimSpace(node.ID) != strings.TrimSpace(nodeID) {
+		if strings.TrimSpace(canvasBindStateString(node, "id")) != strings.TrimSpace(nodeID) {
 			continue
 		}
-		taskID, _ := node.Metadata["taskId"].(string)
-		return canvasBindTargetState{present: true, taskID: strings.TrimSpace(taskID)}, nil
+		metadata, _ := node["metadata"].(map[string]any)
+		return canvasBindTargetState{
+			present:           true,
+			taskID:            canvasBindStateString(metadata, "taskId"),
+			nodeType:          canvasBindStateString(node, "type"),
+			clientOperationID: canvasBindStateString(metadata, "taskClientOperationId"),
+			status:            canvasBindStateString(metadata, "status"),
+			hasMedia:          canvas.NodeHasMedia(node),
+		}, nil
 	}
 	return canvasBindTargetState{}, nil
 }
 
-func (s *Service) canvasBindRecoveryTarget(task model.Task, target canvasBindTarget, err error) (localtask.CanvasBindRecoveryTarget, bool) {
+func canvasBindStateString(fields map[string]any, key string) string {
+	if fields == nil {
+		return ""
+	}
+	value, _ := fields[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func canvasBindRecoveryTarget(target canvasBindTarget, err error) (localtask.CanvasBindRecoveryTarget, bool) {
 	reason := canvasBindErrorReason(err)
 	if reason == "" || !terminalCanvasBindError(err) {
 		return localtask.CanvasBindRecoveryTarget{}, false
 	}
 	marker := localtask.CanvasBindRecoveryTarget{NodeID: target.nodeID, OutputIndex: target.outputIndex, Reason: reason}
-	if reason != "node_deleted" && reason != "node_task_mismatch" {
+	switch reason {
+	case "node_deleted":
+		// The failed bind transaction observed no node. Do not read the canvas
+		// again here: a concurrent recreation must make the marker stale.
+		marker.NodePresent = false
+		return marker, true
+	case "node_task_mismatch":
+		state, ok := canvasBindFailureState(err)
+		if !ok {
+			return localtask.CanvasBindRecoveryTarget{}, false
+		}
+		marker.NodePresent = state.present
+		marker.NodeTaskID = state.taskID
+		marker.NodeType = state.nodeType
+		marker.NodeClientOperationID = state.clientOperationID
+		marker.NodeStatus = state.status
+		marker.NodeHasMedia = state.hasMedia
+		return marker, true
+	default:
 		return marker, true
 	}
-	state, stateErr := s.canvasBindTargetState(task.UserID, task.ProjectID, target.nodeID)
-	if stateErr != nil {
-		return localtask.CanvasBindRecoveryTarget{}, false
+}
+
+func canvasBindFailureState(err error) (canvasBindTargetState, bool) {
+	var opErr *operations.Error
+	if !errors.As(err, &opErr) || opErr.Details == nil {
+		return canvasBindTargetState{}, false
 	}
-	marker.NodePresent = state.present
-	marker.NodeTaskID = state.taskID
-	return marker, true
+	binding, ok := opErr.Details["canvasBinding"].(map[string]any)
+	if !ok {
+		return canvasBindTargetState{}, false
+	}
+	present, ok := binding["nodePresent"].(bool)
+	if !ok {
+		return canvasBindTargetState{}, false
+	}
+	return canvasBindTargetState{
+		present:           present,
+		taskID:            canvasBindStateString(binding, "nodeTaskId"),
+		nodeType:          canvasBindStateString(binding, "nodeType"),
+		clientOperationID: canvasBindStateString(binding, "nodeClientOperationId"),
+		status:            canvasBindStateString(binding, "nodeStatus"),
+		hasMedia:          canvasBindBool(binding, "nodeHasMedia"),
+	}, true
+}
+
+func canvasBindBool(fields map[string]any, key string) bool {
+	value, _ := fields[key].(bool)
+	return value
 }
 
 func terminalCanvasBindError(err error) bool {
