@@ -51,7 +51,18 @@ func TestResolveSeedreamSizeFollowsOfficialPerModelLimits(t *testing.T) {
 		{family: "lite", size: "9:16", want: "1440x2560"},
 		{family: "pro", size: "", want: SeedreamDefaultTier},
 		{family: "pro", size: "1:1", want: SeedreamDefaultTier},
-		{family: "pro", size: "auto", want: "auto"},
+		// 普通生图没有 auto：官方取值只有档位和宽x高，auto 按默认档位发出。
+		{family: "pro", size: "auto", want: SeedreamDefaultTier},
+		{family: "flash", size: "auto", want: SeedreamDefaultTier},
+		{family: "4.5", size: "auto", want: SeedreamDefaultTier},
+		{family: "4.0", size: "auto", want: SeedreamDefaultTier},
+		// 图层拆分反过来：auto 合法，显式像素尺寸不合法，档位照旧。
+		{family: "pro", size: "auto", layers: true, want: "auto"},
+		{family: "flash", size: "auto", layers: true, want: "auto"},
+		{family: "pro", size: "1.5K", layers: true, want: "1.5K"},
+		{family: "pro", size: "2048x2048", layers: true, wantErr: true},
+		{family: "flash", size: "1280x720", layers: true, wantErr: true},
+		{family: "pro", size: "2048x2048", want: "2048x2048"},
 		{family: "pro", size: "1080p", wantErr: true},
 		{family: "pro", size: "512x512", wantErr: true},
 		{family: "4.0", size: "800x800", wantErr: true},
@@ -84,6 +95,7 @@ func TestResolveSeedreamSizeErrorsReadLikeUserCopy(t *testing.T) {
 	for _, item := range []struct {
 		family string
 		size   string
+		layers bool
 		want   string
 	}{
 		{
@@ -110,10 +122,18 @@ func TestResolveSeedreamSizeErrorsReadLikeUserCopy(t *testing.T) {
 			family: "pro", size: "1080p",
 			want: "Seedream 5.0 Pro 看不懂尺寸 1080p，请填 1K、1.5K、2K 档位、16:9 这类画布比例，或宽x高像素（例如 1280x720）",
 		},
+		{
+			family: "pro", size: "2048x2048", layers: true,
+			want: "Seedream 5.0 Pro 的图层拆分不支持 2048x2048，请改选 1K、1.5K、2K 档位，或选「跟随原图」",
+		},
+		{
+			family: "pro", size: "4K", layers: true,
+			want: "Seedream 5.0 Pro 的图层拆分不支持 4K，请改选 1K、1.5K、2K 档位，或选「跟随原图」",
+		},
 	} {
-		_, err := ResolveSeedreamSize(item.family, item.size, false)
+		_, err := ResolveSeedreamSize(item.family, item.size, item.layers)
 		if err == nil || err.Error() != item.want {
-			t.Fatalf("%s %q error copy = %v, want %q", item.family, item.size, err, item.want)
+			t.Fatalf("%s %q layers=%v error copy = %v, want %q", item.family, item.size, item.layers, err, item.want)
 		}
 	}
 }

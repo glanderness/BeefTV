@@ -43,7 +43,7 @@ type SeedreamSizeRule struct {
 const (
 	seedreamMinRatio = 1.0 / 16
 	seedreamMaxRatio = 16.0
-	// SeedreamDefaultTier 是没填 size 或填 1:1 时使用、也是图层拆分唯一能用的档位。
+	// SeedreamDefaultTier 是没填 size、填 1:1 或普通生图填 auto 时使用的默认档位。
 	SeedreamDefaultTier = "2K"
 )
 
@@ -90,7 +90,7 @@ func SeedreamFamilyLabel(family string) string {
 
 // ResolveSeedreamSize 把画布上的尺寸（比例、档位、宽x高或 auto）解析成发给上游的
 // size，并拒绝该型号族不接受的取值。请求体与提交前的预检都用这一个函数，避免两边
-// 判断不一致。
+// 判断不一致。layers 表示这次是图层拆分：官方只接受档位和 auto，不接受显式像素尺寸。
 func ResolveSeedreamSize(family, raw string, layers bool) (string, error) {
 	size := strings.TrimSpace(raw)
 	if size == "" || size == "1:1" {
@@ -111,6 +111,11 @@ func ResolveSeedreamSize(family, raw string, layers bool) (string, error) {
 		return pixels, nil
 	}
 	if strings.EqualFold(size, "auto") {
+		// auto（跟随原图）是 Pro / Flash 图层拆分的专用档位。普通生图的官方取值只有
+		// 档位和宽x高，按默认档位发出，和通用插件把 auto 映射成 2k 的做法一致。
+		if _, known := SeedreamSizeRuleFor(family); known && !layers {
+			return SeedreamDefaultTier, nil
+		}
 		return "auto", nil
 	}
 	rule, ok := SeedreamSizeRuleFor(family)
@@ -124,6 +129,10 @@ func ResolveSeedreamSize(family, raw string, layers bool) (string, error) {
 		if tier == allowed {
 			return tier, nil
 		}
+	}
+	if layers {
+		// 图层拆分只接受档位和 auto，官方不支持显式像素尺寸。
+		return "", fmt.Errorf("Seedream %s 的图层拆分不支持 %s，请改选 %s 档位，或选「跟随原图」", label, size, strings.Join(rule.Tiers, "、"))
 	}
 	if isSeedreamTierName(tier) {
 		return "", fmt.Errorf("Seedream %s 没有 %s 档位，请改选 %s，或直接填宽x高像素（例如 %s）", label, size, strings.Join(rule.Tiers, "、"), rule.MinExampleSize)

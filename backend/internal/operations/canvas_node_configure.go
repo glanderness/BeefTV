@@ -72,14 +72,16 @@ func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 	if node["type"] != args.Kind {
 		return nil, InvalidArg("node_kind_mismatch", "参数类型与目标节点不一致")
 	}
-	patch, err := resolveGenerationDraft(ctx, args.Kind, args.Patch)
+	// 节点上已有的草稿参数先铺底、patch 再覆盖：只改 size 时也要能看出节点是不是正在拆图层。
+	base := stringParameters(dependencyMetadata(node))
+	patch, err := resolveGenerationDraft(ctx, args.Kind, args.Patch, base)
 	if err != nil {
 		return nil, err
 	}
-	// 只改尺寸这类参数时 patch 里没有 model，用节点当前模型补上再校验，
-	// 否则同一份规则只在换模型时才生效。
 	if _, hasModel := patch["model"]; !hasModel {
-		if err := validateModelGenerationParameters(args.Kind, nodeSelectedModel(node), stringParameters(patch)); err != nil {
+		// 只改尺寸这类参数时 patch 里没有 model，用节点当前模型补上再校验，
+		// 否则同一份规则只在换模型时才生效。
+		if err := validateModelGenerationParameters(args.Kind, nodeSelectedModel(node), mergeParameters(base, stringParameters(patch))); err != nil {
 			return nil, err
 		}
 	}
@@ -92,7 +94,8 @@ func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 }
 
 // Single draft validator for a node edit and storyboard production preparation.
-func resolveGenerationDraft(ctx *Context, kind string, raw map[string]json.RawMessage) (map[string]any, error) {
+// base 是节点上已有的草稿参数（新建节点时为空），校验要看它和 patch 合并后的结果。
+func resolveGenerationDraft(ctx *Context, kind string, raw map[string]json.RawMessage, base map[string]string) (map[string]any, error) {
 	descriptor, _ := capability.BuiltinRegistry().Resolve(kind)
 	patch := map[string]any{}
 	for name, value := range raw {
@@ -129,7 +132,7 @@ func resolveGenerationDraft(ctx *Context, kind string, raw map[string]json.RawMe
 			return nil, PreconditionFailed("generation_model_unavailable", "所选模型当前不可用", nil)
 		}
 		patch["model"] = choice.ModelKey
-		if err := validateModelGenerationParameters(kind, choice.ModelKey, stringParameters(patch)); err != nil {
+		if err := validateModelGenerationParameters(kind, choice.ModelKey, mergeParameters(base, stringParameters(patch))); err != nil {
 			return nil, err
 		}
 	}
@@ -164,6 +167,19 @@ func stringParameters(values map[string]any) map[string]string {
 		}
 	}
 	return params
+}
+
+// mergeParameters 把节点现状和本次 patch 合并，patch 覆盖节点。只传 patch 会漏掉
+// 「节点正在拆图层、这次只改尺寸」这类组合。
+func mergeParameters(base, patch map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(patch))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range patch {
+		merged[key] = value
+	}
+	return merged
 }
 
 func validateDraftValue(name, value string) error {

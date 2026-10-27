@@ -177,3 +177,62 @@ func TestSeedreamSizePrecheckCoversConfigurePrepareAndPropose(t *testing.T) {
 		expect("propose", err)
 	}
 }
+
+// 图层拆分和普通生图共用 size 字段，但官方规则不同。只改 size 时 patch 里没有
+// seedreamMode，预检必须用节点现状判断这次是不是在拆图层，否则图层节点会放过官方
+// 不支持的显式像素尺寸，普通生图的 auto 也说不清该按哪个场景解释。
+func TestSeedreamSizePrecheckReadsNodeLayerModeWhenPatchOmitsIt(t *testing.T) {
+	const modelKey = "beefapi::doubao-seedream-5-0-pro-260628"
+	for _, item := range []struct {
+		name      string
+		nodeMode  string
+		patch     map[string]any
+		withModel bool
+		ok        bool
+		wantCopy  string
+	}{
+		{name: "图层节点只改尺寸为像素", nodeMode: "layers", patch: map[string]any{"size": "2048x2048"},
+			wantCopy: "Seedream 5.0 Pro 的图层拆分不支持 2048x2048，请改选 1K、1.5K、2K 档位，或选「跟随原图」"},
+		{name: "图层节点换模型并改像素", nodeMode: "layers", patch: map[string]any{"model": "doubao-seedream-5-0-pro-260628", "size": "2048x2048"}, withModel: true,
+			wantCopy: "Seedream 5.0 Pro 的图层拆分不支持 2048x2048，请改选 1K、1.5K、2K 档位，或选「跟随原图」"},
+		{name: "图层节点改跟随原图", nodeMode: "layers", patch: map[string]any{"size": "auto"}, ok: true},
+		{name: "图层节点改档位", nodeMode: "layers", patch: map[string]any{"size": "1.5K"}, ok: true},
+		{name: "普通生图节点用像素", nodeMode: "image", patch: map[string]any{"size": "2048x2048"}, ok: true},
+		{name: "普通生图节点用 auto", nodeMode: "image", patch: map[string]any{"size": "auto"}, ok: true},
+		{name: "普通生图节点像素过小", nodeMode: "image", patch: map[string]any{"size": "512x512"},
+			wantCopy: "Seedream 5.0 Pro 的图片至少要 1280x720（92 万像素），512x512 只有 26 万像素"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			p := &configureProbe{proposeProbe: proposeProbe{doc: proposeCanvas(t, []map[string]any{{"id": "n", "type": "image", "title": "n",
+				"metadata": map[string]any{"model": modelKey, "seedreamMode": item.nodeMode, "size": "2K", "prompt": "p"}}})}}
+			if item.withModel {
+				p.resolve = func(string, string) (AssistantGenerationModel, error) {
+					return AssistantGenerationModel{Display: "doubao-seedream-5-0-pro-260628", ModelKey: modelKey, Revision: 1}, nil
+				}
+			}
+			raw, _ := json.Marshal(map[string]any{"canvasId": "c1", "nodeId": "n", "kind": "image", "expectedRevision": 4, "patch": item.patch})
+			_, err := opCanvasNodeConfigure(&Context{UserID: "owner", Domain: p}, raw)
+			if item.ok {
+				if err != nil {
+					t.Fatalf("rejected %+v: %v", item.patch, err)
+				}
+				if p.writes != 1 {
+					t.Fatalf("writes=%d, want 1", p.writes)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("accepted %+v", item.patch)
+			}
+			if reason := AsError(err).Reason; reason != "invalid_parameter" {
+				t.Fatalf("reason=%q, want invalid_parameter", reason)
+			}
+			if message := AsError(err).Message; message != item.wantCopy {
+				t.Fatalf("message=%q, want %q", message, item.wantCopy)
+			}
+			if p.writes != 0 {
+				t.Fatalf("writes=%d, want 0", p.writes)
+			}
+		})
+	}
+}

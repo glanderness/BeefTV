@@ -219,3 +219,81 @@ func TestSeedreamRejectsUnsupportedSizeBeforeSending(t *testing.T) {
 		t.Fatalf("calls=%d, want 0", port.calls)
 	}
 }
+
+// 复查 #45 问题 1：尺寸规则要按生成场景分开。普通生图的官方取值只有档位和宽x高，
+// auto 要按默认档位发出（国内型号在通用插件下本来就是 2k）；图层拆分只接受档位和
+// auto，显式像素尺寸必须在发出付费请求之前就被拦下。
+func TestSeedreamSizeFollowsGenerationSceneBeforeSending(t *testing.T) {
+	for _, item := range []struct {
+		name, model, size, mode string
+		refs                    int
+		wantSize                string
+		reject                  bool
+	}{
+		{name: "国内 Pro 普通生图 auto", model: "doubao-seedream-5-0-pro-260628", size: "auto", wantSize: "2K"},
+		{name: "国内 Flash 普通生图 auto", model: "doubao-seedream-5-0-flash-260915", size: "auto", wantSize: "2K"},
+		{name: "国际 Pro 普通生图 auto", model: "dola-seedream-5-0-pro-260628", size: "auto", wantSize: "2K"},
+		{name: "4.5 普通生图 auto", model: "seedream-4-5-251128", size: "auto", wantSize: "2K"},
+		{name: "普通生图宽x高", model: "doubao-seedream-5-0-pro-260628", size: "2048x2048", wantSize: "2048x2048"},
+		{name: "图层拆分跟随原图", model: "doubao-seedream-5-0-pro-260628", size: "auto", mode: "layers", refs: 1, wantSize: "auto"},
+		{name: "图层拆分档位", model: "doubao-seedream-5-0-pro-260628", size: "1.5K", mode: "layers", refs: 1, wantSize: "1.5K"},
+		{name: "国内 Pro 图层拆分像素", model: "doubao-seedream-5-0-pro-260628", size: "2048x2048", mode: "layers", refs: 1, reject: true},
+		{name: "国际 Pro 图层拆分像素", model: "dola-seedream-5-0-pro-260628", size: "2048x2048", mode: "layers", refs: 1, reject: true},
+		{name: "国内 Flash 图层拆分像素", model: "doubao-seedream-5-0-flash-260915", size: "2048x2048", mode: "layers", refs: 1, reject: true},
+		{name: "图层拆分像素过小", model: "doubao-seedream-5-0-pro-260628", size: "1280x720", mode: "layers", refs: 1, reject: true},
+	} {
+		port := &captureImagePort{}
+		input := Input{Mode: "image", Prompt: "x", Config: Config{Model: item.model, BaseURL: "https://beeftv.app", APIKey: "synthetic", InterfaceType: "openai-image", Size: item.size, SeedreamMode: item.mode}}
+		for i := 0; i < item.refs; i++ {
+			input.ReferenceImages = append(input.ReferenceImages, Media{URL: "https://example.test/source.png"})
+		}
+		if _, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input); err != nil {
+			if !item.reject {
+				t.Fatalf("%s: %v", item.name, err)
+			}
+			if port.calls != 0 {
+				t.Fatalf("%s: calls=%d, want 0", item.name, port.calls)
+			}
+			continue
+		}
+		if item.reject {
+			t.Fatalf("%s: request was sent with size=%#v", item.name, port.body["size"])
+		}
+		if port.calls != 1 || port.body["size"] != item.wantSize {
+			t.Fatalf("%s: calls=%d size=%#v, want 1 and %q", item.name, port.calls, port.body["size"], item.wantSize)
+		}
+	}
+}
+
+// Agent Plan 图片协议走 /api/plan/v3/images/generations，只有声明式插件知道那个端点。
+// 这里加载仓库真实 Agent Plan manifest，确认国内 Seedream 型号不会被按型号名拐到
+// 官方 Ark 的 /v1/images/generations 或 /api/v3 上。
+func TestSeedreamAgentPlanChannelSendsToPluginEndpoint(t *testing.T) {
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "..", "plugin-packages", "volcengine-ark-agent-plan-seedream", "manifest.json"))
+	if err != nil {
+		t.Fatalf("read agent plan plugin manifest: %v", err)
+	}
+	adapter, err := protocol.LoadManifest(manifest)
+	if err != nil {
+		t.Fatalf("load agent plan plugin manifest: %v", err)
+	}
+	registry, err := protocol.NewRegistry(adapter)
+	if err != nil {
+		t.Fatalf("build protocol registry: %v", err)
+	}
+	port := &captureImagePort{}
+	input := Input{Mode: "image", Prompt: "a cup", Config: Config{
+		Model: "doubao-seedream-5-0-pro-260628", BaseURL: "https://ark.cn-beijing.volces.com",
+		APIKey: "synthetic", InterfaceType: "volcengine-ark-agent-plan-image", Size: "2K",
+	}}
+	ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+	if _, err := RunImageTask(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	if port.calls != 1 || port.path != "/api/plan/v3/images/generations" {
+		t.Fatalf("calls=%d path=%q, want one request to the agent plan endpoint", port.calls, port.path)
+	}
+	if port.body["size"] != "2K" {
+		t.Fatalf("size=%#v, want the configured tier", port.body["size"])
+	}
+}
