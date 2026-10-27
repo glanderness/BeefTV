@@ -23,7 +23,7 @@
 | 调用方 | 以前 | 现在 |
 | --- | --- | --- |
 | 本地配置盘点 `SavedProtocolReferences`（`workspace/provider_config.go`） | 只数显式写出的 `protocol` | 每个 profile 和没有 profile 的已列模型都按 `SavedModelProtocol()` 计数，缺字段的老配置记在它实际使用的默认协议下；`protocolPending` 不计 |
-| 插件升级 `deferralFor`（`plugins/retention.go`） | 只看未完成任务 | 另外检查：新版本删掉或改名的 provider ID 如果还被已保存配置使用，也推迟升级（架构师意见 2）；只按新版实际能解析的 provider ID 和别名判断（`resolvableProviderIDs`），插件 ID 本身不算；ID 保留的升级照常进行 |
+| 插件升级 `deferralFor`（`plugins/retention.go`） | 任意未取回任务都推迟整包更新 | 只在新版删除或改名的 provider ID / 别名仍被配置或任务使用时推迟；新旧两侧均按 `resolvableProviderIDs` 比较，插件 ID 本身不算；保留原 ID 的维护更新继续，兼容性由回归验证，见 [升级验收](./video-protocol-upgrade-verification.md) |
 
 已经提交的任务不归这个函数管：任务的协议取自任务输入里冻结的 `config.interfaceType`。图片提交恢复（`backend/internal/app/image_submission.go` 的 `sendImageSubmissionWith`）用冻结的请求和原幂等键重发同一个 POST，这一单没有改动（架构师意见 3）。
 
@@ -51,11 +51,12 @@
 | --- | --- | --- |
 | 显式协议、老音频/图片 profile、`protocolPending`、渠道协议、视频无默认、系统/Gemini 渠道 | 见用例文件 | `providerpreset` `TestSavedModelProtocolMatchesSharedCases`（11 条）、`TestInferModelCapability` |
 | 缺字段的老配置，后端盘点 | 计入它实际用的默认协议；`protocolPending` 不计 | `workspace` `TestSavedProtocolReferencesCountsChannelsAndProfiles`、`TestSavedProtocolReferencesCountsLegacyDefaultsAndSkipsPending` |
-| 同名升级，有未完成任务 | 推迟 | `plugins` `TestDeferredUpgradeKeepsTheOldQueryDefinition`、`TestUpgradeAdoptsNewDefinitionOnceWorkIsDone` |
+| 同名维护更新，有未完成任务但原 ID 保留 | 照常更新，重复启动保持新版 | `plugins` `TestUpgradeAdoptsQueryFixWithPendingTask`、`TestUpgradeStaysInstalledWhileWorkIsPending` |
 | 同名升级，删掉或改名了已保存配置在用的 ID | 推迟；没人再用后照常升级 | `plugins` `TestUpgradeThatDropsASavedProviderIDIsDeferred` |
+| 同名升级，删掉或改名了只有任务在用的 ID / 旧别名 | 推迟 | `plugins` `TestUpgradeReferenceRemoval`、`app` `TestVideoProtocolUpgradeRetainsRemovedTaskIDs` |
 | 同上，但插件 ID 与旧 provider ID 同名 | 推迟 | `plugins` `TestUpgradeRenamingAProviderNamedLikeItsPluginIsDeferred`；别名仍能解析时照常升级：`TestUpgradeKeepingALegacyAliasIsAdopted` |
 | 同名升级，ID 保留，只有已保存连接 | 照常升级 | `plugins` `TestSavedConnectionAloneNeverFreezesAnUpgrade` |
-| 盘点失败 | 保留已安装定义；新插件照常安装 | `plugins` `TestFailedAudit*` 三条、`TestRetainsOfficialPluginWhenAuditFails` |
+| 盘点失败 | 撤下/删 ID 保留；全保留 ID 的更新、新插件照常安装 | `plugins` `TestFailedAudit*`、`TestRetainsOfficialPluginWhenAuditFails` |
 | 撤下且无人引用 | 删除 | `plugins` `TestDropsOfficialPluginNobodyReferences` |
 | 图片恢复按原身份重放 | 保留，不新建生成、不换渠道 | `app` `TestImageSubmission*`、`TestImageAutoRecovery*`、`TestImageRecovery*` |
 
@@ -64,4 +65,4 @@
 ## 没有做的
 
 - 前端读取 `retired` / `protocolPending`、新模型不默认选撤下协议：留到「精简默认列表」那一步，按上面的约定接入。
-- 任务记住提交时的插件版本（definition digest）：按 #39 报告第 5 节第六步另开一单。
+- 任务记住提交时的插件版本（definition digest）：原 #39 的长期备选，#78/#80 未采用，也不是本次正常更新的前置条件。

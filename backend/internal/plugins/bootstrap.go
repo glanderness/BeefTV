@@ -109,10 +109,8 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		if !registryRecordContentChanged(record, next) {
 			next.UpdatedAt = record.UpdatedAt
 		}
-		// An upgrade replaces the query path and result mapping too. Keep the
-		// installed definition while a task that has not retrieved its result
-		// would otherwise be polled with the new one; the package is adopted on a
-		// later startup once that work is done.
+		// Keep the installed definition if the release removes a referenced ID.
+		// Compatible fixes must also reach tasks that still need their results.
 		if note := deferralFor(record, next, snapshot); note != nil {
 			retained[id] = note
 			continue

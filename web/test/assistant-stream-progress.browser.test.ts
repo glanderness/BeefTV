@@ -6,12 +6,13 @@ import { chromium, type Browser } from "playwright";
  * 助手回复和思考都必须在终态之前分多段出现在面板里。
  *
  * 慢速替身按固定间隔分片：正文用例分四次发 text_snapshot，中间夹一次工具进度；
- * 思考用例先发两段思考、中间夹工具、再发正文，最后才发 turn_end。
+ * 思考用例先等界面展开并观察首段，再发后续思考、工具和正文，最后才发 turn_end。
  * 只要有任何一层把内容攒到最后，面板在终态前就只会看到一段或零段。
  */
 
 let browser: Browser, server: ReturnType<typeof Bun.serve>;
 let chatRequests = 0;
+let continueThinking: (() => void) | undefined;
 
 const CHUNKS = ["第一段内容。", "第二段内容。", "第三段内容。", "第四段内容。"];
 const CHUNK_GAP_MS = 750;
@@ -54,9 +55,12 @@ const THINKING_DONE = [
 
 async function slowThinkingTurn(line: Line) {
     const gap = () => new Promise((resolve) => setTimeout(resolve, THINKING_GAP_MS));
+    const firstObserved = new Promise<void>((resolve) => { continueThinking = resolve; });
     await gap();
     line({ type: "reasoning_snapshot", segments: [{ id: "live-1:0", text: "先读画布上的两个节点。", status: "streaming" }] });
-    await gap();
+    // 默认折叠时正文不在 DOM 中；等测试实际展开并观察首段后再发下一段。
+    // 否则点击耗时超过 600ms 就会漏采首段，误判为产品把增量攒到最后。
+    await firstObserved;
     line({ type: "reasoning_snapshot", segments: [THINKING_DONE[0], { id: "live-2:1", text: "再看时间线。", status: "streaming" }] });
     await gap();
     // 工具夹在两段思考之间：工具进度仍是单独一行，不并入思考。
@@ -114,6 +118,11 @@ beforeAll(async () => {
         port: 0,
         async fetch(req) {
             const pathname = new URL(req.url).pathname;
+            if (pathname === "/test/continue-thinking" && req.method === "POST") {
+                continueThinking?.();
+                continueThinking = undefined;
+                return ok({});
+            }
             if (pathname === "/harness.js") return new Response(js, { headers: { "content-type": "application/javascript" } });
             if (pathname.endsWith("/assistant/ui-session")) return ok({ token: "synthetic-only", expiresAt: new Date(Date.now() + 1_800_000).toISOString() });
             if (pathname.endsWith("/assistant/status")) return ok({ available: true });
@@ -198,8 +207,14 @@ test("思考默认折叠，展开能看到增量，正文与思考分开", async
         expect(await page.getByText("先读画布上的两个节点").count()).toBe(0);
         expect(await drawer.getByRole("button").getAttribute("aria-expanded")).toBe("false");
 
+        // 即使展开操作晚于原来的固定发包间隔，也必须观察到两次独立渲染。
+        await page.waitForTimeout(THINKING_GAP_MS * 2);
         await drawer.getByRole("button").click();
         await page.getByText("先读画布上的两个节点").first().waitFor({ timeout: 10_000 });
+        expect(await drawer.innerText()).not.toContain("再看时间线。");
+        expect(await page.getByTestId("streaming").innerText()).toBe("true");
+        await page.waitForFunction(() => (window as unknown as { reasoningSamples: string[] }).reasoningSamples.some(text => text.includes("先读画布")), undefined, { timeout: 10_000 });
+        await page.evaluate(() => fetch("/test/continue-thinking", { method: "POST" }));
         // 第二段思考到达：展开区里能看到增量，而不是一次到位。
         await page.getByText("再看时间线。").first().waitFor({ timeout: 10_000 });
         // 正文开始显示时，用户展开的思考区不自动折回。

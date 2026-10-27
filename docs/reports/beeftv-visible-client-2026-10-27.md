@@ -134,3 +134,33 @@
 1. `docs/content/docs/` 与官网中的旧品牌名由并行的文档任务处理，本任务未动。
 2. `docs/release-evidence/*` 等冻结证据里的 `BeefAPI` 是历史记录，保留原样。
 3. 建议：给内置渠道的展示名补一条后端单测（断言空名兜底为 `BeefTV`），避免以后回退；本次未加，以免超出「不加额外护栏」的约定，交由 review 决定。
+
+## 八、PR #287 发布说明冲突接续
+
+本节记录 2026-10-28 的本地修订与验证，前文测试及截图属于原任务证据，不代表本轮重新执行。
+
+### 输入与分支关系
+
+- 已读取原任务 #81（`7JMVgIs-SzTZ0TU1bn-C6`），GitHub PR #287 为 OPEN，源分支仍为 `tds/conv-01a17e09-0c9c-796d-bab6-d07c3f35d6d8`。
+- `gh pr view 287 --repo glanderness/BeefTV` 实读源提交：`87b56e0689f4842f0dc86992743533d5001c9699`；GitHub 当时返回 `CONFLICTING` / `DIRTY`。
+- `gh api repos/glanderness/BeefTV/commits/main` 实读主分支：`6a155448096d2425aa07e81cc6016410091ad0be`，与本任务起点一致，并非根据旧的 origin/main 推断。
+- 两边共同祖先：`c99cba49b6518673b078991cf9d995ba14be2921`。
+- 本任务分支 `tds/conv-01a17ebf-ff53-7fcf-94ff-414c7c5bbf8e` 从上述主分支开始，通过 `git merge --squash` 带入精确源提交的成果；本轮由平台提交，因此保留成果内容，不声称原提交是新分支的祖先。未切换分支、未新建工作树、未更新原 PR 分支。
+
+### 冲突原因与处理
+
+`git merge-tree --write-tree` 确认只有 `CHANGELOG.md` 冲突。主分支已将旧 Unreleased 的内容重新整理为 v2.0.5 发布说明；源提交则修改了旧 Unreleased 中两处品牌名称。直接恢复旧段会把已整理的内容重新列为未发布，并覆盖真实版本记录。
+
+处理后，文件开头至 v2.0.4 标题之前逐字节保留主分支内容（包含空 Unreleased、完整 v2.0.5 正文及限制说明）；v2.0.4 及以下逐字节保留源提交内容。因此两条已被主分支整理替代的旧 Unreleased 表述不重新加入，原 PR 的历史版本品牌修正完整保留。其余文件采用 Git 无冲突的三方合并结果，没有新增业务逻辑或文案修改。
+
+### 本轮验证
+
+- Python 字节比对通过：23 个非冲突文件与 Git 三方合并树一致（报告追加本节前检查）；其中五张 PNG 与已审查源提交逐字节一致。
+- `CHANGELOG.md` 的 v2.0.5 及前文与主分支一致；v2.0.4 及后文与源提交一致。
+- `git ls-files -u` 为空，`git diff --cached --check` 通过。
+- `bun test web/test/desktop-update-ui.test.ts web/test/canvas-agent-assistant-wiring.test.ts`：14 pass / 0 fail，包含当前版本发布说明检查。
+- 本轮未重新拍图、启动客户端、调用付费模型或执行完整构建；只有发布说明冲突处理，不需要重做已通过的界面验收。
+
+### 待办与外部状态
+
+本任务的本地冲突已解决，等待独立复核；未发现第二处文件冲突。GitHub 原 PR 仍指向旧提交，不能称远端冲突已消除。复核通过后，需将本任务修订回写现有 PR #287 的源分支，重新读取 GitHub 合并状态及检查结果，再同步既有飞书 PR/需求记录。保留此前 Lucas 通知，不新建重复 PR，不合并 main、不发版、不部署。

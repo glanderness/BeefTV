@@ -1,0 +1,141 @@
+{
+  "conclusion": "success",
+  "databaseId": 40544546660,
+  "headSha": "30cba74daa153a44ade9dac56403a8e0bc238969",
+  "jobs": [
+    {
+      "completedAt": "2026-10-27T16:54:22Z",
+      "conclusion": "success",
+      "databaseId": 122331500332,
+      "name": "linux",
+      "startedAt": "2026-10-27T16:48:41Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-27T16:48:44Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-27T16:48:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:48:57Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "startedAt": "2026-10-27T16:48:44Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:49:15Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-go@v5",
+          "number": 3,
+          "startedAt": "2026-10-27T16:48:57Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:49:17Z",
+          "conclusion": "success",
+          "name": "Run oven-sh/setup-bun@v2",
+          "number": 4,
+          "startedAt": "2026-10-27T16:49:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:49:29Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@v4",
+          "number": 5,
+          "startedAt": "2026-10-27T16:49:17Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:50:47Z",
+          "conclusion": "success",
+          "name": "Install native desktop and media dependencies",
+          "number": 6,
+          "startedAt": "2026-10-27T16:49:29Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:51:01Z",
+          "conclusion": "success",
+          "name": "Verify updater and bundled agent on Linux",
+          "number": 7,
+          "startedAt": "2026-10-27T16:50:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:02Z",
+          "conclusion": "success",
+          "name": "Build native Linux package without publishing",
+          "number": 8,
+          "startedAt": "2026-10-27T16:51:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:11Z",
+          "conclusion": "success",
+          "name": "Verify shipped CLI and native desktop window",
+          "number": 9,
+          "startedAt": "2026-10-27T16:54:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:18Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 10,
+          "startedAt": "2026-10-27T16:54:11Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:18Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@v4",
+          "number": 17,
+          "startedAt": "2026-10-27T16:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:18Z",
+          "conclusion": "success",
+          "name": "Post Run oven-sh/setup-bun@v2",
+          "number": 18,
+          "startedAt": "2026-10-27T16:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:18Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-go@v5",
+          "number": 19,
+          "startedAt": "2026-10-27T16:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:18Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 20,
+          "startedAt": "2026-10-27T16:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-27T16:54:18Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 21,
+          "startedAt": "2026-10-27T16:54:18Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40544546660/job/122331500332"
+    }
+  ],
+  "status": "completed",
+  "updatedAt": "2026-10-27T16:54:23Z",
+  "url": "https://github.com/glanderness/BeefTV/actions/runs/40544546660"
+}

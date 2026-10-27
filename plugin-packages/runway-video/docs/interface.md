@@ -13,6 +13,8 @@
 
 ## 配置字段
 
+旧回执兼容：继续读取 `video_url`、`videoUrl`、`result_url`、`url`、`data.video_url` 和 `output.url`，然后读取官方 `output[]`。只有状态信息的 `output` 对象不能遮挡其他字段中的视频地址；这些字段均无地址时，不产生媒体结果。
+
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
 | `apiKey` | secret | 是 | API Key |
@@ -82,7 +84,7 @@
   "apiVersion": "beeftv.plugin/v2",
   "id": "runway-video",
   "name": "Runway Video",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "BeefTV Contributors",
   "description": "Runway Video 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -508,9 +510,6 @@
           "videos": {
             "$coalesce": [
               {
-                "$ref": "response.output"
-              },
-              {
                 "$ref": "response.video_url"
               },
               {
@@ -527,6 +526,9 @@
               },
               {
                 "$ref": "response.output.url"
+              },
+              {
+                "$ref": "response.output"
               }
             ]
           },

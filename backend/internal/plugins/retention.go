@@ -58,8 +58,8 @@ func cloneRetention(note *RetentionView) *RetentionView {
 // decision so a single reconcile never audits the same state twice.
 type referenceSnapshot struct {
 	usage map[string]ReferenceUsage
-	// unavailable means the inventory could not be read at all. Every decision
-	// then falls back to keeping the installed definition.
+	// unavailable means the inventory could not be read at all. Removal decisions
+	// then keep the installed definition; updates preserving all IDs still apply.
 	unavailable bool
 }
 
@@ -76,9 +76,6 @@ func (c *Runtime) snapshotReferences() referenceSnapshot {
 	}
 	return referenceSnapshot{usage: usage}
 }
-
-// present reports whether the inventory can answer questions at all.
-func (s referenceSnapshot) present() bool { return s.usage != nil }
 
 // total counts the saved state that still needs this record's protocol IDs.
 func (s referenceSnapshot) total(record RegistryRecord) (configured, pending int64) {
@@ -118,17 +115,11 @@ func (c *Runtime) retentionDecisions(missing []RegistryRecord, snapshot referenc
 	return decisions
 }
 
-// deferralFor reports that this release must not overwrite an installed
-// definition yet, because a task that has not retrieved its result would then
-// be polled with a new query path or result mapping.
-//
-// This is the release-side half of "protect old work": the stored manifest, its
-// package hash and the enabled state stay untouched for this startup, and the
-// shipped package is adopted on a later startup once the work is done.
-// Unfinished work defers an upgrade, and so does saved configuration that uses a
-// provider ID the new version drops; a saved connection whose ID survives the
-// upgrade never freezes a plugin at an old version. An unreadable inventory also
-// defers, because "cannot tell" must not be treated like "nothing pending".
+// deferralFor protects referenced IDs that a release removes. Existing tasks
+// must receive compatible fixes too: their presence alone cannot pin a broken
+// parser forever. Keeping an ID is a compatibility promise by the package
+// maintainer, not proof of request/response compatibility; package regressions
+// must cover old receipts and queries using the original upstream task ID.
 func deferralFor(stored, next RegistryRecord, snapshot referenceSnapshot) *RetentionView {
 	// A plugin this release ships but that is not installed yet has no old
 	// definition to preserve. Deferring it would make a new plugin silently absent
@@ -144,55 +135,30 @@ func deferralFor(stored, next RegistryRecord, snapshot referenceSnapshot) *Reten
 	if string(stored.Raw) == string(next.Raw) {
 		return nil
 	}
-	// A failed inventory is not the same as no inventory: the runtime does have an
-	// audit, it just could not read it, so we cannot rule out a task that still
-	// needs the installed definition. Keep it rather than let a new query path
-	// poll unfinished work.
-	if snapshot.unavailable {
-		return &RetentionView{
-			Reasons: []string{"插件引用盘点失败，无法确认是否仍有任务需要当前版本，升级已推迟"},
+	// Compare resolvable provider IDs and aliases on both sides. A package name
+	// alone neither serves a saved protocol nor proves that it survived a rename.
+	kept := resolvableProviderIDs(next.Raw)
+	var configured, pending int64
+	for id := range resolvableProviderIDs(stored.Raw) {
+		if _, ok := kept[id]; !ok {
+			if snapshot.unavailable {
+				return &RetentionView{Reasons: []string{"插件引用盘点失败，无法确认新版本移除的协议是否仍被使用，升级已推迟"}}
+			}
+			configured += snapshot.usage[id].Configured
+			pending += snapshot.usage[id].PendingTasks
 		}
 	}
-	// No audit attached at all (a runtime that owns its registry outright) keeps
-	// the historical behavior of adopting the shipped package.
-	if !snapshot.present() {
-		return nil
-	}
 	var reasons []string
-	if _, pending := snapshot.total(stored); pending > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d 个未完成或待取回结果的任务仍在使用该协议的当前版本，升级已推迟到这些任务结束", pending))
-	}
-	// A saved connection alone does not freeze an upgrade that keeps its protocol
-	// ID: the new definition still serves it. An upgrade that removes or renames a
-	// provider ID saved configuration still runs with would leave that
-	// configuration with no definition at all, so it waits like unfinished work.
-	if configured := snapshot.configuredOnlyIn(stored, next); configured > 0 {
+	if configured > 0 {
 		reasons = append(reasons, fmt.Sprintf("新版本删除或改名了 %d 个已保存的连接或模型配置仍在使用的协议，升级已推迟", configured))
+	}
+	if pending > 0 {
+		reasons = append(reasons, fmt.Sprintf("新版本删除或改名了 %d 个未完成或待取回结果的任务仍在使用的协议，升级已推迟", pending))
 	}
 	if len(reasons) == 0 {
 		return nil
 	}
 	return &RetentionView{Reasons: reasons}
-}
-
-// configuredOnlyIn counts saved configuration that uses an ID the stored record
-// answers to but the next one no longer resolves.
-//
-// The next side counts only what the registry would actually resolve: each
-// contributed provider ID and its legacy aliases. The plugin ID is deliberately
-// not proof that a protocol survives, because a plugin named like its old
-// provider (`xai-video`) can rename that provider (`xai-video-v2`) while keeping
-// its own name. An unloadable next manifest resolves nothing, so every saved
-// reference defers it.
-func (s referenceSnapshot) configuredOnlyIn(stored, next RegistryRecord) int64 {
-	kept := resolvableProviderIDs(next.Raw)
-	var configured int64
-	for _, id := range recordProviderIDs(stored.Raw) {
-		if _, ok := kept[id]; !ok {
-			configured += s.usage[id].Configured
-		}
-	}
-	return configured
 }
 
 // resolvableProviderIDs lists the IDs the registry resolves to this manifest's

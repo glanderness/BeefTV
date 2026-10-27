@@ -1,0 +1,40 @@
+{
+  "checkedAt": "2026-10-27T17:24:46.502883+00:00",
+  "note": "发布前读取，不代表 v2.0.5 已发布；这里只检查公开返回，不替代验签。",
+  "responses": [
+    {
+      "name": "r2-before-release",
+      "url": "https://updates.beefapi.com/beeftv/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 5106,
+      "sha256": "d8d178886131e513f9449848eb917d12f651937c07e9050f8c33a06fc5dd9554",
+      "keys": [
+        "payload",
+        "signature"
+      ]
+    },
+    {
+      "name": "cos-before-release",
+      "url": "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 5106,
+      "sha256": "d8d178886131e513f9449848eb917d12f651937c07e9050f8c33a06fc5dd9554",
+      "keys": [
+        "payload",
+        "signature"
+      ]
+    },
+    {
+      "name": "website-before-release",
+      "url": "https://beeftv.app/data/releases.json",
+      "httpStatus": 200,
+      "bytes": 75627,
+      "sha256": "e074f084aed0a42a8c6d12327466a209b31a7940ae800474560c7a2a0916fbfc",
+      "keys": [
+        "live",
+        "releases",
+        "mirrors"
+      ]
+    }
+  ]
+}

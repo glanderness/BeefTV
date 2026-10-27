@@ -1,0 +1,20 @@
+{
+  "baseCommit": "c99cba49b6518673b078991cf9d995ba14be2921",
+  "description": "本轮验证工作区文件的SHA-256，不是最终发布sourceDigest；提交后需重新计算发布摘要。",
+  "files": {
+    ".github/workflows/quality.yml": "6e2fd4d71533826b45d22b861685435b69b58cb4870d78f8308c2a9899ab5451",
+    "CHANGELOG.md": "b5e99b6c3ce85bed5665ce990999f9a3626fc96433d1a1f36b3bde5bcd902b0c",
+    "VERSION": "347fbde86e5c5eb5cecc8f341c24aa180298103960afc03f02231b8b9760750b",
+    "backend/internal/app/image_auto_recovery_probe_test.go": "0b6bd259c9d1f289dab6e2d0e86218ae5e351540b1bc6118bf5efa59eeb099c1",
+    "docs/real-generation-release.md": "3b8904eddd0e55903363e07d17278782059dffa2b1e3e7b6568984a68d8dc93d",
+    "docs/release-evidence/v2.0.5-owner-authorization.json": "74e286a761a880d19faaa57fd5c9c554b3bfa67d6801214c9ae2cb6ba516fdde",
+    "scripts/v205-release-contract.mjs": "01d8bc0e48c2ccd7a989dcc1940d0b5bb5b0300f93ffbfbc559f49926117b09a",
+    "scripts/v205-release-contract.test.mjs": "78a03e9a219b179f318cf52ac4076bc50eff0742143a9ec34cb651d3c91c9cfb",
+    "scripts/verify-real-generation-release.mjs": "f0ec0d3963c36ef2bc86431f8afdec593037acb6274a1148c676e5288ab8ece3",
+    "web/src/components/layout/app-changelog.zh.ts": "ea40e36674f016f42f8902840237a6f1257a3c2b051a93365861e1c35c752d5c",
+    "web/test/assistant-stream-progress.browser.test.ts": "65b77ecf748cbce6e2e2674d919e93cafa2bb6fa8a488ad2ac9df9367cb4c98d",
+    "web/test/fixtures/canvas-image-recovery-probe.css": "af96c54e4771cc7e371943c2dee8858170249e5a6ae6ce58b0c751204a63f45e",
+    "web/test/fixtures/canvas-image-recovery-probe.html": "9da75656e11724338b1215b48bc677538b5199bf75b2fe3dcb5aa4d24a91ec09",
+    "web/test/fixtures/canvas-image-recovery-probe.tsx": "c0678eceef899b385443aea46dd7761ae9b0886c773b152c5e37ede141f10aac"
+  }
+}

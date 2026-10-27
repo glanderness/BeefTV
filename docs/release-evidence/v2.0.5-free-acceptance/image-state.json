@@ -1,0 +1,139 @@
+{
+  "before": {
+    "connections": [],
+    "createdAt": "2026-10-27T23:24:50.105099+08:00",
+    "folderId": "",
+    "id": "canvas-1",
+    "nodes": [
+      {
+        "height": 200,
+        "id": "n1",
+        "metadata": {
+          "error": "context deadline exceeded",
+          "generationSubmissionState": "unknown",
+          "status": "error",
+          "taskId": "historical-image-probe"
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "title": "历史图片",
+        "type": "image",
+        "width": 320
+      }
+    ],
+    "projectId": "",
+    "revision": 2,
+    "title": "历史图片自动恢复验收",
+    "updatedAt": "2026-10-27T15:24:50.107365Z",
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "k": 1
+    }
+  },
+  "canvas": {
+    "connections": [],
+    "createdAt": "2026-10-27T23:24:50.105099+08:00",
+    "folderId": "",
+    "id": "canvas-1",
+    "nodes": [
+      {
+        "height": 200,
+        "id": "n1",
+        "metadata": {
+          "assetId": "generation_06fef8712dfe34fecb9303f0c787f72934efb8d9f9c65f7ee82204164e85b4fe",
+          "bytes": 810,
+          "content": "/api/resources/218e405e27c3c19d4d8c7b512306c043/file",
+          "error": "context deadline exceeded",
+          "errorDetails": null,
+          "failedInputFingerprint": null,
+          "failedPromptFingerprint": null,
+          "generationEffectKeys": [
+            "attach-node:historical-image-probe:n1:0"
+          ],
+          "generationErrorCode": null,
+          "generationSubmissionState": "unknown",
+          "mimeType": "image/png",
+          "naturalHeight": 200,
+          "naturalWidth": 320,
+          "nodeRole": "result",
+          "resourceReloadAvailable": null,
+          "resultOrigin": "generated",
+          "status": "success",
+          "storageKey": "resource:218e405e27c3c19d4d8c7b512306c043",
+          "taskId": "historical-image-probe",
+          "taskProgress": 100,
+          "taskStage": null,
+          "taskStatus": "succeeded",
+          "taskType": "canvas_image"
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "title": "历史图片",
+        "type": "image",
+        "width": 320
+      }
+    ],
+    "projectId": "",
+    "revision": 3,
+    "title": "历史图片自动恢复验收",
+    "updatedAt": "2026-10-27T15:26:14.076885Z",
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "k": 1
+    }
+  },
+  "resourceGets": 1,
+  "routeAttempts": 0,
+  "routeRun": 3,
+  "started": true,
+  "task": {
+    "id": "historical-image-probe",
+    "userId": "local",
+    "projectId": "canvas-1",
+    "type": "canvas_image",
+    "status": "succeeded",
+    "stage": "任务完成",
+    "progress": 100,
+    "prompt": "",
+    "operation": "",
+    "provider": "",
+    "model": "",
+    "inputJson": "{\"metadata\":{\"nodeId\":\"n1\",\"source\":\"canvas\"},\"mode\":\"image\"}",
+    "resultJson": "{\"images\":[{\"url\":\"http://127.0.0.1:65489/original.png\"}],\"mode\":\"image\"}",
+    "error": "",
+    "outcome": {
+      "phase": "ready",
+      "regenerate": "allowed",
+      "reason": "result_ready"
+    },
+    "resultState": "READY",
+    "outputs": [
+      {
+        "outputIndex": 0,
+        "mediaType": "image",
+        "providerArtifactRef": "resource:218e405e27c3c19d4d8c7b512306c043",
+        "materializedAssetId": "generation_06fef8712dfe34fecb9303f0c787f72934efb8d9f9c65f7ee82204164e85b4fe",
+        "resourceId": "218e405e27c3c19d4d8c7b512306c043",
+        "effectKey": "materialize:historical-image-probe:0",
+        "targetBinding": {
+          "nodeId": "n1",
+          "source": "canvas"
+        }
+      }
+    ],
+    "attempts": 0,
+    "startedAt": null,
+    "completedAt": "2026-10-27T23:26:08.860964+08:00",
+    "createdAt": "2026-10-27T23:24:50.108077+08:00",
+    "updatedAt": "2026-10-27T23:26:08.8639+08:00"
+  },
+  "taskCount": 1,
+  "upstreamGets": 1,
+  "upstreamPosts": 0
+}

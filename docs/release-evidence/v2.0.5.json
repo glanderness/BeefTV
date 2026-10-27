@@ -1,0 +1,458 @@
+{
+  "version": "v2.0.5",
+  "contractVersion": 3,
+  "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+  "baseRelease": "v2.0.4",
+  "baseCommit": "542124baadcdbe5ce34ba9029ef7f1d192b49d16",
+  "includedMain": "c99cba49b6518673b078991cf9d995ba14be2921",
+  "includedPullRequests": [
+    268,
+    269,
+    270,
+    273,
+    274,
+    275,
+    276,
+    280,
+    282,
+    283
+  ],
+  "releasePreparationPullRequest": 286,
+  "ownerException": {
+    "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+    "evidence": [
+      "docs/release-evidence/v2.0.5-owner-authorization.json",
+      "docs/release-evidence/v2.0.5-release.md"
+    ],
+    "approvedBy": "Ender",
+    "scope": "v2.0.5-targeted-no-paid-20261027",
+    "instruction": "本版采用免费专项验收（推荐）",
+    "authorizationSHA256": "74e286a761a880d19faaa57fd5c9c554b3bfa67d6801214c9ae2cb6ba516fdde"
+  },
+  "liveMatrixStatus": "not_run_owner_waived",
+  "agentAcceptanceStatus": "not_run_targeted_release",
+  "acceptanceComplete": false,
+  "releasePublished": false,
+  "releaseComplete": false,
+  "cases": [],
+  "deferredAcceptance": {
+    "status": "not_run_owner_waived",
+    "caseKeys": [
+      "1/text-image",
+      "1/image-image",
+      "1/image-video",
+      "1/text-video",
+      "1/video-video",
+      "1/multi-video",
+      "2/text-image",
+      "2/image-image",
+      "2/image-video",
+      "2/text-video",
+      "2/video-video",
+      "2/multi-video"
+    ],
+    "agentCheckIds": [
+      "canvas_read",
+      "asset_reference",
+      "canvas_mutation",
+      "multi_turn",
+      "proposal_decline",
+      "proposal_stale",
+      "proposal_idempotency",
+      "session_history",
+      "session_restart",
+      "cancel",
+      "conflict_undo",
+      "host_recovery",
+      "scope_isolation",
+      "budget",
+      "cli_mcp",
+      "durable_resume",
+      "native_video",
+      "native_audio",
+      "skill_version",
+      "skill_files",
+      "permission_modes",
+      "external_business",
+      "media_film_review"
+    ]
+  },
+  "agentChecks": {
+    "canvas_read": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "asset_reference": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "canvas_mutation": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "multi_turn": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "proposal_decline": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "proposal_stale": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "proposal_idempotency": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "session_history": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "session_restart": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "cancel": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "conflict_undo": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "host_recovery": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "scope_isolation": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "budget": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "cli_mcp": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "durable_resume": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "native_video": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "native_audio": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "skill_version": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "skill_files": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "permission_modes": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "external_business": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "media_film_review": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    }
+  },
+  "newPaidBudgetCNY": 0,
+  "newPaidSubmissions": 0,
+  "newSpentCNY": 0,
+  "newPendingCNY": 0,
+  "billingAttempts": [],
+  "budgetCNY": null,
+  "spentCNY": null,
+  "pendingCNY": null,
+  "priorFinancialUncertainty": {
+    "status": "unresolved",
+    "carriedFromVersion": "v2.0.4",
+    "pendingCNY": null,
+    "evidence": [
+      "docs/release-evidence/v2.0.4.json"
+    ]
+  },
+  "priorReceiptSHA256": "fbb5fb2fa747d64f6388893266d9ad4883c5440b87e87d295460d33af7656b38",
+  "knownLimitations": {
+    "carriedFromVersion": "v2.0.4",
+    "inheritedFailedCheckIds": [
+      "native_video",
+      "native_audio",
+      "media_film_review"
+    ],
+    "evidence": [
+      "docs/release-evidence/v2.0.4.json",
+      "docs/release-evidence/v2.0.5-release.md"
+    ]
+  },
+  "review": {
+    "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+    "evidence": [
+      "docs/release-evidence/v2.0.5-release.md",
+      "docs/release-evidence/v2.0.5-final-checks/integration-provenance.json"
+    ],
+    "result": "approved",
+    "independent": true,
+    "reviewer": "Codex / gpt-6.1-sol（复用 #79、#80 的独立复查）",
+    "reviewedHead": "30cba74daa153a44ade9dac56403a8e0bc238969",
+    "method": "依 #85 授权复用原两项独立结论；两份代码逐文件原字节整合，没有新增实质代码。组合核对属于发布人自查，不称新独立审查。"
+  },
+  "verification": {
+    "canvasPerformance": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "画布渲染、视口和性能专项，177 项前端联合执行通过"
+    },
+    "assistantStreaming": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "前端流式专项及宿主 21 项，均通过；保留折叠思考测试竞争修正"
+    },
+    "modelConfiguration": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "模型选择、渠道、凭据、手工协议配置专项通过"
+    },
+    "timeline": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "时间线放置及浏览器预览播放通过"
+    },
+    "seedream": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "Seedream 图片协议专项通过"
+    },
+    "imageRecovery": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "真实 app 恢复路径 13 个顶层测试及 generation 专项通过"
+    },
+    "imageRecoveryUI": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md"
+      ],
+      "status": "passed",
+      "detail": "隔离真实 Go app + 本机假上游 + Ego 晨曦档案，CanvasNodeContent 明暗实际显示；本轮原始附件缺失，只保留观察摘要",
+      "rawAttachmentStatus": "missing_after_interruption"
+    },
+    "videoProtocols": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "插件/协议/仓库/workspace 四包及 SQLite 原任务升级/回退矩阵通过"
+    },
+    "pluginRetention": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "保留旧 ID 的兼容更新允许；删除被引用 ID、撤下与盘点失败保护均通过"
+    },
+    "publisher": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log"
+      ],
+      "status": "passed",
+      "detail": "31 项合同、44 项发布器和 4 项镜像测试通过；CI 另有完整日志"
+    },
+    "ci": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-release.md",
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/quality-ci.log",
+        "docs/release-evidence/v2.0.5-final-checks/linux-ci.json",
+        "docs/release-evidence/v2.0.5-final-checks/director-ci.json"
+      ],
+      "status": "passed",
+      "detail": "三条 GitHub workflow 均 success，head 为 30cba74daa153a44ade9dac56403a8e0bc238969"
+    },
+    "localReleaseGate": {
+      "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+      "evidence": [
+        "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+        ".github/workflows/release-desktop.yml"
+      ],
+      "status": "passed",
+      "method": "local-script",
+      "beforeDraft": true,
+      "detail": "此前已实际通过，本地原始日志缺失；正式工作流仍在 draft 前执行同一门禁"
+    }
+  },
+  "evidenceIntegrity": {
+    "localRawLogs": "missing_after_interruption",
+    "localResults": "observed_execution_summary_only",
+    "ciLogs": "downloaded_from_github",
+    "prior79Attachments": "retained_with_original_source",
+    "evidence": [
+      "docs/release-evidence/v2.0.5-release.md",
+      "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md"
+    ]
+  },
+  "upgrade": {
+    "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+    "evidence": [
+      ".github/workflows/release-desktop.yml",
+      "docs/release-evidence/v2.0.5-release.md"
+    ],
+    "status": "pending_release_workflow",
+    "preservedData": null,
+    "requiredBeforePublish": true
+  },
+  "packages": {
+    "platforms": [
+      "darwin-arm64",
+      "darwin-amd64",
+      "windows-amd64",
+      "linux-amd64"
+    ],
+    "status": "pending_release_workflow",
+    "archives": null,
+    "workflowEvidence": [
+      ".github/workflows/release-desktop.yml",
+      "docs/release-evidence/v2.0.5-release.md"
+    ],
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "finalArchiveSmokeBeforeUpload": true,
+    "linuxNativeWindowBeforeUpload": true,
+    "signedManifestBeforePublish": true,
+    "publicReadbackAfterPublish": true
+  }
+}

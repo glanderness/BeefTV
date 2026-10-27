@@ -1,0 +1,359 @@
+{
+  "base": "c99cba49b6518673b078991cf9d995ba14be2921",
+  "candidate": "30cba74daa153a44ade9dac56403a8e0bc238969",
+  "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+  "note": "文件来源核对属于发布人自查；独立复查沿用 #79、#80 已批准结论，无新的产品或发布脚本修改。",
+  "files": [
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": ".github/workflows/quality.yml",
+      "sourceSHA256": "6e2fd4d71533826b45d22b861685435b69b58cb4870d78f8308c2a9899ab5451",
+      "candidateSHA256": "6e2fd4d71533826b45d22b861685435b69b58cb4870d78f8308c2a9899ab5451",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "CHANGELOG.md",
+      "sourceSHA256": "b5e99b6c3ce85bed5665ce990999f9a3626fc96433d1a1f36b3bde5bcd902b0c",
+      "candidateSHA256": "157dd5b8b1718b9bfed7f7910511ba37f1c6ab09d86bf340d9377a3828d1b182",
+      "identical": false,
+      "note": "只新增 #80 协议更新修复的用户说明"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "VERSION",
+      "sourceSHA256": "347fbde86e5c5eb5cecc8f341c24aa180298103960afc03f02231b8b9760750b",
+      "candidateSHA256": "347fbde86e5c5eb5cecc8f341c24aa180298103960afc03f02231b8b9760750b",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "backend/internal/app/image_auto_recovery_probe_test.go",
+      "sourceSHA256": "0b6bd259c9d1f289dab6e2d0e86218ae5e351540b1bc6118bf5efa59eeb099c1",
+      "candidateSHA256": "0b6bd259c9d1f289dab6e2d0e86218ae5e351540b1bc6118bf5efa59eeb099c1",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/real-generation-release.md",
+      "sourceSHA256": "3b8904eddd0e55903363e07d17278782059dffa2b1e3e7b6568984a68d8dc93d",
+      "candidateSHA256": "3b8904eddd0e55903363e07d17278782059dffa2b1e3e7b6568984a68d8dc93d",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-free-acceptance/image-after-dark.png",
+      "sourceSHA256": "a321f57e6b45e2f1c51185cbbf6cbd08ced9c9ea26f4b78dce786b65cb755b85",
+      "candidateSHA256": "a321f57e6b45e2f1c51185cbbf6cbd08ced9c9ea26f4b78dce786b65cb755b85",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-free-acceptance/image-after-light.png",
+      "sourceSHA256": "79ae38c3da7d7f16c3216f92ffc2190c6f5085fbac66677eac6af8676aa70dde",
+      "candidateSHA256": "79ae38c3da7d7f16c3216f92ffc2190c6f5085fbac66677eac6af8676aa70dde",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-free-acceptance/image-before.png",
+      "sourceSHA256": "daf03ede9f000899000747301a117f442c968a7e1f2d51680b255a8c4c856cda",
+      "candidateSHA256": "daf03ede9f000899000747301a117f442c968a7e1f2d51680b255a8c4c856cda",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-free-acceptance/image-state.json",
+      "sourceSHA256": "1d7234bc5bed142147cd376cb60fe159e5bca420b4eb3bfb7c65edcc9e0e6878",
+      "candidateSHA256": "1d7234bc5bed142147cd376cb60fe159e5bca420b4eb3bfb7c65edcc9e0e6878",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-free-acceptance/source-sha256.json",
+      "sourceSHA256": "8d735a47bc337b0cf6c4958eb3f9c5f0e3eadf590b95fe6342494b77180a7ef1",
+      "candidateSHA256": "8d735a47bc337b0cf6c4958eb3f9c5f0e3eadf590b95fe6342494b77180a7ef1",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-free-acceptance/verification.txt",
+      "sourceSHA256": "b5c2f645b9535699c230e5add285a2988ce222806bc76b64555a4c2844d8626a",
+      "candidateSHA256": "b5c2f645b9535699c230e5add285a2988ce222806bc76b64555a4c2844d8626a",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-owner-authorization.json",
+      "sourceSHA256": "74e286a761a880d19faaa57fd5c9c554b3bfa67d6801214c9ae2cb6ba516fdde",
+      "candidateSHA256": "74e286a761a880d19faaa57fd5c9c554b3bfa67d6801214c9ae2cb6ba516fdde",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "docs/release-evidence/v2.0.5-preflight.md",
+      "sourceSHA256": "747744b10c7944b4c8cb9b7edd2f70e8310f2c52876cf29a31bb5cdecd73ec0f",
+      "candidateSHA256": "747744b10c7944b4c8cb9b7edd2f70e8310f2c52876cf29a31bb5cdecd73ec0f",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "scripts/v205-release-contract.mjs",
+      "sourceSHA256": "01d8bc0e48c2ccd7a989dcc1940d0b5bb5b0300f93ffbfbc559f49926117b09a",
+      "candidateSHA256": "01d8bc0e48c2ccd7a989dcc1940d0b5bb5b0300f93ffbfbc559f49926117b09a",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "scripts/v205-release-contract.test.mjs",
+      "sourceSHA256": "78a03e9a219b179f318cf52ac4076bc50eff0742143a9ec34cb651d3c91c9cfb",
+      "candidateSHA256": "78a03e9a219b179f318cf52ac4076bc50eff0742143a9ec34cb651d3c91c9cfb",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "scripts/verify-real-generation-release.mjs",
+      "sourceSHA256": "f0ec0d3963c36ef2bc86431f8afdec593037acb6274a1148c676e5288ab8ece3",
+      "candidateSHA256": "f0ec0d3963c36ef2bc86431f8afdec593037acb6274a1148c676e5288ab8ece3",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "web/src/components/layout/app-changelog.zh.ts",
+      "sourceSHA256": "ea40e36674f016f42f8902840237a6f1257a3c2b051a93365861e1c35c752d5c",
+      "candidateSHA256": "ea40e36674f016f42f8902840237a6f1257a3c2b051a93365861e1c35c752d5c",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "web/test/assistant-stream-progress.browser.test.ts",
+      "sourceSHA256": "65b77ecf748cbce6e2e2674d919e93cafa2bb6fa8a488ad2ac9df9367cb4c98d",
+      "candidateSHA256": "65b77ecf748cbce6e2e2674d919e93cafa2bb6fa8a488ad2ac9df9367cb4c98d",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "web/test/fixtures/canvas-image-recovery-probe.css",
+      "sourceSHA256": "af96c54e4771cc7e371943c2dee8858170249e5a6ae6ce58b0c751204a63f45e",
+      "candidateSHA256": "af96c54e4771cc7e371943c2dee8858170249e5a6ae6ce58b0c751204a63f45e",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "web/test/fixtures/canvas-image-recovery-probe.html",
+      "sourceSHA256": "9da75656e11724338b1215b48bc677538b5199bf75b2fe3dcb5aa4d24a91ec09",
+      "candidateSHA256": "9da75656e11724338b1215b48bc677538b5199bf75b2fe3dcb5aa4d24a91ec09",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "79",
+      "sourceCommit": "60f07ac283f999375f8c4990097132f7a04ba7f8",
+      "path": "web/test/fixtures/canvas-image-recovery-probe.tsx",
+      "sourceSHA256": "c0678eceef899b385443aea46dd7761ae9b0886c773b152c5e37ede141f10aac",
+      "candidateSHA256": "c0678eceef899b385443aea46dd7761ae9b0886c773b152c5e37ede141f10aac",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/app/testdata/video-protocol-v2.0.4/README.md",
+      "sourceSHA256": "aec8b429de27a0f70948d898f7924bf0eee7b5031973c4c8cda9b365867c7623",
+      "candidateSHA256": "aec8b429de27a0f70948d898f7924bf0eee7b5031973c4c8cda9b365867c7623",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/app/testdata/video-protocol-v2.0.4/luma-dream-machine.json",
+      "sourceSHA256": "8d4e8ce220f5604f0081d9098492ff3621fa80fc41b4dcc727e4737da11e66a4",
+      "candidateSHA256": "8d4e8ce220f5604f0081d9098492ff3621fa80fc41b4dcc727e4737da11e66a4",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/app/testdata/video-protocol-v2.0.4/runway-video.json",
+      "sourceSHA256": "facbeb81f9372f36d02ab946c6f037c60fd033fb2e44f33813caad1ec36fa55e",
+      "candidateSHA256": "facbeb81f9372f36d02ab946c6f037c60fd033fb2e44f33813caad1ec36fa55e",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/app/video_protocol_retention_test.go",
+      "sourceSHA256": "6c577698a1df44c308906968892dd842b511a1fe9437294be995eef175929396",
+      "candidateSHA256": "6c577698a1df44c308906968892dd842b511a1fe9437294be995eef175929396",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/app/video_protocol_upgrade_test.go",
+      "sourceSHA256": "6bca34dc3ecedf46c94fc65a4ba7413df575bd17bfe7639a8f987c4a4831c52b",
+      "candidateSHA256": "6bca34dc3ecedf46c94fc65a4ba7413df575bd17bfe7639a8f987c4a4831c52b",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/plugins/bootstrap.go",
+      "sourceSHA256": "314f65e82ae29edb3ec00f05b013220035564dea0a7a0f4970a721b3068b328e",
+      "candidateSHA256": "314f65e82ae29edb3ec00f05b013220035564dea0a7a0f4970a721b3068b328e",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/plugins/retention.go",
+      "sourceSHA256": "e1cc6e3bf33948fe9c2f94ad15e12b5916aefa57ad0cfdaeb1d2e2522d8c6faa",
+      "candidateSHA256": "e1cc6e3bf33948fe9c2f94ad15e12b5916aefa57ad0cfdaeb1d2e2522d8c6faa",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/plugins/retention_test.go",
+      "sourceSHA256": "09431a57dda3ea3897fe8f6389e47d432d3257061bcd17026af7ffd231e8bd49",
+      "candidateSHA256": "09431a57dda3ea3897fe8f6389e47d432d3257061bcd17026af7ffd231e8bd49",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/plugins/upgrade_references_test.go",
+      "sourceSHA256": "94ea406401822c514554d1bd0af564f5d6b9cfe964c7ced6e861e8ba82f06933",
+      "candidateSHA256": "94ea406401822c514554d1bd0af564f5d6b9cfe964c7ced6e861e8ba82f06933",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "backend/internal/protocol/video_upgrade_compatibility_test.go",
+      "sourceSHA256": "5e8c5844f413452f37170aacbbc002710c6ec27c2ec33e0b99d529c9aab9ca37",
+      "candidateSHA256": "5e8c5844f413452f37170aacbbc002710c6ec27c2ec33e0b99d529c9aab9ca37",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "docs/refactor/plugin-retention.md",
+      "sourceSHA256": "ef3d8b0411e30caa8131172884d62729ddd87416e3b4423caaf7f132a92bed4c",
+      "candidateSHA256": "ef3d8b0411e30caa8131172884d62729ddd87416e3b4423caaf7f132a92bed4c",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "docs/refactor/protocol-decision.md",
+      "sourceSHA256": "6c3a7b53c397ace9be462c7fa2b49445e52d15c93c35d76530fb9dc8b959c9a2",
+      "candidateSHA256": "6c3a7b53c397ace9be462c7fa2b49445e52d15c93c35d76530fb9dc8b959c9a2",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "docs/refactor/video-protocol-upgrade-verification.md",
+      "sourceSHA256": "0c5771004b1431f0cb3ac010930a6ab009bba5302e29efbb3cda32fc9de1e8fd",
+      "candidateSHA256": "0c5771004b1431f0cb3ac010930a6ab009bba5302e29efbb3cda32fc9de1e8fd",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "docs/research/protocol-retirement-patterns.md",
+      "sourceSHA256": "c31cfb78bebfb7a0cb53de2335a6843956f060af6ed564536f4e33f0c5c0ffa5",
+      "candidateSHA256": "c31cfb78bebfb7a0cb53de2335a6843956f060af6ed564536f4e33f0c5c0ffa5",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "plugin-packages/luma-dream-machine/docs/interface.md",
+      "sourceSHA256": "4f74a35a2dd8c7d3b1cf0603726c492b09d7a3371a52507574f3ebc7577bc995",
+      "candidateSHA256": "4f74a35a2dd8c7d3b1cf0603726c492b09d7a3371a52507574f3ebc7577bc995",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "plugin-packages/luma-dream-machine/manifest.json",
+      "sourceSHA256": "95d21788e248159e9ac21c87a89038153fc38901444efada4ca22bd3238b631e",
+      "candidateSHA256": "95d21788e248159e9ac21c87a89038153fc38901444efada4ca22bd3238b631e",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "plugin-packages/runway-video/docs/interface.md",
+      "sourceSHA256": "c1828a2a196f7908e22653508b1e01bf7b8d2b76c3d0577669b987c157886700",
+      "candidateSHA256": "c1828a2a196f7908e22653508b1e01bf7b8d2b76c3d0577669b987c157886700",
+      "identical": true,
+      "note": "原文件一致"
+    },
+    {
+      "task": "80",
+      "sourceCommit": "f282d622848042eeed5b5f9295fb827b5ab6f9a7",
+      "path": "plugin-packages/runway-video/manifest.json",
+      "sourceSHA256": "6aa6d7e57d55e8b6b500192946f874238865cde6dc366b40c24ae91ad1f9d87d",
+      "candidateSHA256": "6aa6d7e57d55e8b6b500192946f874238865cde6dc366b40c24ae91ad1f9d87d",
+      "identical": true,
+      "note": "原文件一致"
+    }
+  ]
+}

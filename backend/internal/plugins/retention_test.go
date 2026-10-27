@@ -297,11 +297,8 @@ func TestRuntimeWithoutAuditStillDropsRemovedOfficialPlugin(t *testing.T) {
 	}
 }
 
-// TestDeferredUpgradeKeepsTheOldQueryDefinition covers an upgrade that changes the
-// query path while a task has not retrieved its result yet. Tasks are not bound to
-// a plugin version, so adopting the new definition would change how that task is
-// polled; the installed definition must survive this startup.
-func TestDeferredUpgradeKeepsTheOldQueryDefinition(t *testing.T) {
+// 待取回任务也要用到新版查询修复；保留 ID 的更新不再冻结整个包。
+func TestUpgradeAdoptsQueryFixWithPendingTask(t *testing.T) {
 	release := t.TempDir()
 	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
 	oldManifest := retentionManifestWithPoll("upgraded-query", "upgraded-query", "1.0.0", "/v1/videos/{{taskId}}")
@@ -315,41 +312,44 @@ func TestDeferredUpgradeKeepsTheOldQueryDefinition(t *testing.T) {
 	}
 	item, ok := ByID(runtime.List(), "upgraded-query")
 	if !ok {
-		t.Fatal("plugin disappeared during a deferred upgrade")
+		t.Fatal("plugin disappeared during upgrade")
 	}
-	if item.Manifest.Version != "1.0.0" {
-		t.Fatalf("adopted the new definition while a task still needs the old one: version %q", item.Manifest.Version)
+	if item.Manifest.Version != "2.0.0" || item.Retention != nil {
+		t.Fatalf("pending task blocked the query fix: version=%q retention=%+v", item.Manifest.Version, item.Retention)
 	}
-	if item.Retention == nil || item.Retention.Retired {
-		t.Fatalf("deferred upgrade must stay selectable: %#v", item.Retention)
+	adapter, resolvable := runtime.Registry().Resolve("upgraded-query")
+	if !resolvable {
+		t.Fatal("upgraded provider no longer resolves")
 	}
-	if !strings.Contains(strings.Join(item.Retention.Reasons, ""), "升级已推迟") {
-		t.Fatalf("retention reasons = %v", item.Retention.Reasons)
+	if !strings.Contains(adapter.Metadata().Poll, "/v1/video/generations/") {
+		t.Fatalf("query fix was not installed: %q", adapter.Metadata().Poll)
 	}
-	// The old poll path is still what the registry executes with.
-	if adapter, resolvable := runtime.Registry().Resolve("upgraded-query"); !resolvable || !strings.Contains(adapter.Metadata().Poll, "/v1/videos/") {
-		t.Fatalf("execution definition changed under an unfinished task: %#v", adapter.Metadata().Poll)
-	}
-	// A deferred plugin is still shipped, so it stays offered for new selections.
+	// 更新后的插件仍随包发行，继续可用于新任务。
 	catalog := New(runtime, nil).ProviderCatalog("user.custom-channel", "video", false)
 	if len(catalog) != 1 || catalog[0].Retired {
-		t.Fatalf("deferred plugin was retired from the catalog: %#v", catalog)
+		t.Fatalf("upgraded plugin was retired from the catalog: %#v", catalog)
 	}
-	// The stored registry keeps the old manifest, so the next startup re-decides.
+	// 升级必须提交到原 registry，不只替换内存中的解析器。
 	persisted, _, err := store.LoadPluginRegistry()
 	if err != nil {
 		t.Fatal(err)
 	}
+	found := false
 	for _, record := range persisted {
-		if record.ID == "upgraded-query" && !strings.Contains(string(record.Raw), `"1.0.0"`) {
-			t.Fatalf("deferred upgrade was persisted: %s", record.Raw)
+		if record.ID == "upgraded-query" {
+			found = true
+			if !strings.Contains(string(record.Raw), `"2.0.0"`) || !record.InstalledAt.Equal(stored.InstalledAt) {
+				t.Fatalf("query fix was not persisted with the original install time: %s", record.Raw)
+			}
 		}
+	}
+	if !found {
+		t.Fatal("upgraded registry record was not persisted")
 	}
 }
 
-// TestUpgradeAdoptsNewDefinitionOnceWorkIsDone proves the deferral is temporary:
-// the same stored record follows the shipped package on the next startup.
-func TestUpgradeAdoptsNewDefinitionOnceWorkIsDone(t *testing.T) {
+// 重启时即使旧任务仍在，也不恢复冻结或重复写入同一份定义。
+func TestUpgradeStaysInstalledWhileWorkIsPending(t *testing.T) {
 	release := t.TempDir()
 	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
 	oldManifest := retentionManifestWithPoll("late-upgrade", "late-upgrade", "1.0.0", "/v1/videos/{{taskId}}")
@@ -361,17 +361,29 @@ func TestUpgradeAdoptsNewDefinitionOnceWorkIsDone(t *testing.T) {
 	if _, err := NewRuntimeWithReferences(t.TempDir(), store, pending); err != nil {
 		t.Fatal(err)
 	}
-	finished := staticReferences{"late-upgrade": {Configured: 1}}
-	second, err := NewRuntimeWithReferences(t.TempDir(), store, finished)
+	before, _, err := store.LoadPluginRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewRuntimeWithReferences(t.TempDir(), store, pending)
 	if err != nil {
 		t.Fatal(err)
 	}
 	item, ok := ByID(second.List(), "late-upgrade")
 	if !ok || item.Manifest.Version != "2.0.0" {
-		t.Fatalf("upgrade did not resume after the task finished: %#v", item.Manifest.Version)
+		t.Fatalf("repeat startup lost the upgrade while the task was pending: %#v", item.Manifest.Version)
 	}
 	if item.Retention != nil {
 		t.Fatalf("retention survived the completed upgrade: %#v", item.Retention)
+	}
+	after, _, err := store.LoadPluginRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON, _ := json.Marshal(before)
+	afterJSON, _ := json.Marshal(after)
+	if string(beforeJSON) != string(afterJSON) {
+		t.Fatal("repeat startup changed the committed registry")
 	}
 }
 
@@ -441,15 +453,12 @@ func retentionManifestWithPoll(pluginID, providerID, version, pollPath string) [
 	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas","user.custom-channel"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"}},"poll":{"method":"GET","path":%q},"response":{"statusPaths":["status"]}}]}}`, pluginID, version, pluginID, pluginID, providerID, providerID, pollPath))
 }
 
-// TestFailedAuditDefersUpgradeOfShippedPlugin covers "cannot tell" being treated
-// like "nothing pending": a broken configuration file makes the inventory
-// unreadable while tasks may still need the installed definition, so the shipped
-// package must not overwrite it.
+// 删除旧 ID 且盘点失败时仍保留；正常维护更新由另一个用例覆盖。
 func TestFailedAuditDefersUpgradeOfShippedPlugin(t *testing.T) {
 	release := t.TempDir()
 	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
 	oldManifest := retentionManifestWithPoll("audit-failed-upgrade", "audit-failed-upgrade", "1.0.0", "/v1/videos/{{taskId}}")
-	newManifest := retentionManifestWithPoll("audit-failed-upgrade", "audit-failed-upgrade", "2.0.0", "/v1/video/generations/{{taskId}}")
+	newManifest := retentionManifestWithPoll("audit-failed-upgrade", "audit-failed-upgrade-v2", "2.0.0", "/v1/video/generations/{{taskId}}")
 	shipPackage(t, release, newManifest)
 	stored := storedOfficialRecord(t, oldManifest, true)
 	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), failingReferences{})

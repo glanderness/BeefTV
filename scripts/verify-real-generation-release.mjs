@@ -10,6 +10,7 @@ import { validateV201Release } from './v201-release-contract.mjs';
 import { validateV202Release } from './v202-release-contract.mjs';
 import { validateV203Release } from './v203-release-contract.mjs';
 import { validateV204Release } from './v204-release-contract.mjs';
+import { validateV205Release } from './v205-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -39,6 +40,17 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v2.0.5') {
+  const reviewedTree = execFileSync('git', ['ls-tree', '-r', receipt.review?.reviewedHead, '--', ...sourcePaths], { encoding: 'utf8' });
+  execFileSync('git', ['merge-base', '--is-ancestor', 'c99cba49b6518673b078991cf9d995ba14be2921', 'HEAD']);
+  validateV205Release(receipt, sourceDigest, {
+    authorizationBytes: readFileSync('docs/release-evidence/v2.0.5-owner-authorization.json'),
+    priorReceiptBytes: readFileSync('docs/release-evidence/v2.0.4.json'),
+    reviewedSourceDigest: createHash('sha256').update(reviewedTree).digest('hex'),
+  });
+  console.log('v2.0.5 targeted release: complete paid matrix and assistant suite not rerun by owner waiver. Current-source independent review, free image recovery UI and all four final-package checks remain mandatory.');
+  process.exit(0);
+}
 if (version === 'v2.0.4') {
   // The owner assigned this version's review to the primary agent, so the
   // reviewed source is the frozen candidate tree itself unless a commit is named.
