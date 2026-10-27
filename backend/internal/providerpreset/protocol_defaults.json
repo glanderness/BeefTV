@@ -1,0 +1,18 @@
+{
+  "legacy": {
+    "text": "chat-completion",
+    "image": "openai-image",
+    "audio": "openai-audio"
+  },
+  "preferred": {
+    "text": ["chat-completion", "openai-response"],
+    "image": ["openai-image"],
+    "video": ["newapi-channel-2", "newapi"],
+    "audio": ["openai-audio"]
+  },
+  "capabilityKeywords": [
+    {"capability": "audio", "keywords": ["audio", "tts", "voice", "speech", "sound", "music"]},
+    {"capability": "image", "keywords": ["seedream", "gpt-image", "image", "dall-e", "dalle", "flux", "imagen", "banana", "midjourney", "sdxl", "stable-diffusion"]},
+    {"capability": "video", "keywords": ["video", "sora", "veo", "kling", "seedance", "minimax-video", "hailuo", "pika", "runway", "omni", "cogvideo", "wan"]}
+  ]
+}

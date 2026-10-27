@@ -19,6 +19,9 @@ export function ModelProtocolBrowser({
         .filter((protocol) => (!capability || protocol.capability === capability) && protocol.enabled !== false)
         .map((protocol) => ({
             value: protocol.value,
+            // A protocol this release no longer ships stays visible for the model
+            // that already saved it, but cannot be newly selected.
+            disabled: Boolean(protocol.retired),
             label: protocol.label,
             subtitle: protocol.create,
             vendor: protocol.vendor,

@@ -10,8 +10,8 @@ import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
-import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
+import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, savedModelProtocol, selectableProtocol, type ModelProtocol, type ProtocolCatalog } from "@/lib/model-protocols";
+import { loadProtocolCatalog } from "@/services/api/plugin-catalog";
 import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 
@@ -24,13 +24,15 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     const [protocolLoading, setProtocolLoading] = useState(true);
     const [protocolError, setProtocolError] = useState("");
     const [activeModel, setActiveModel] = useState<string | null>(null);
-    const [availableProtocols, setAvailableProtocols] = useState<ModelProtocolDefinition[]>([]);
+    // Until the catalog arrives the decisions use the one this session last loaded.
+    const [protocolCatalog, setProtocolCatalog] = useState<ProtocolCatalog | undefined>(undefined);
+    const availableProtocols = protocolCatalog?.protocols || [];
     const { receipts, record } = useModelConnectionTests();
     const testResult = activeModel ? currentModelConnectionReceipt(receipts, channel, activeModel) : undefined;
 
     useEffect(() => {
         let active = true;
-        void fetchPluginProviderCatalog("user.custom-channel").then((items) => { if (active) setAvailableProtocols(items); })
+        void loadProtocolCatalog("user.custom-channel").then((catalog) => { if (active) setProtocolCatalog(catalog); })
             .catch((error) => { if (active) setProtocolError(error instanceof Error ? error.message : "协议目录读取失败"); })
             .finally(() => { if (active) setProtocolLoading(false); });
         return () => { active = false; };
@@ -46,7 +48,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     );
 
     const updateProfile = (model: string, patch: Partial<ModelProfile>) => {
-        const defaultProtocol = inferProtocolCapabilityFromModel(model) === "video" ? channel.interfaceType : defaultProtocolForModel(model, availableProtocols);
+        const defaultProtocol = inferProtocolCapabilityFromModel(model) === "video" ? channel.interfaceType : defaultProtocolForModel(model, protocolCatalog);
         const defaultCap = modelProtocolCapability(defaultProtocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
         const current = channel.modelProfiles?.find((item) => item.model === model) || {
             model,
@@ -55,6 +57,8 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
             capabilityConfig: defaultModelCapabilityConfig(defaultProtocol, model),
         };
         const nextProfile = { ...current, ...patch, model };
+        // A protocol the user picks ends the "left unconfigured" state.
+        if (patch.protocol) delete nextProfile.protocolPending;
         if ("protocol" in patch) nextProfile.authType = modelProtocolDefinition(nextProfile.protocol, availableProtocols)?.authType;
         const next = [...(channel.modelProfiles || []).filter((item) => item.model !== model), nextProfile];
         onChange(next.filter((item) => channel.models.includes(item.model)));
@@ -76,8 +80,8 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     };
 
     const activeModelProfile = activeModel ? channel.modelProfiles?.find((item) => item.model === activeModel) : undefined;
-    const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, availableProtocols)) : "";
-    const activeProtocol = activeModelProfile ? activeModelProfile.protocol || channel.interfaceType || "" : inferredProtocol;
+    const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, protocolCatalog) || "") : "";
+    const activeProtocol = activeModelProfile ? savedModelProtocol(channel, activeModelProfile, activeModelProfile.model) || "" : inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
 
     return (
@@ -93,7 +97,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                 {channel.models.map((rawModel) => {
                     const model = modelOptionName(rawModel);
                     const profile = channel.modelProfiles?.find((item) => item.model === model);
-                    const protocol = profile ? profile.protocol || channel.interfaceType || "" : (inferProtocolCapabilityFromModel(model) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(model, availableProtocols));
+                    const protocol = profile ? savedModelProtocol(channel, profile, model) || "" : (inferProtocolCapabilityFromModel(model) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(model, protocolCatalog) || "");
                     const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
                     const displayName = seedancePortraitLabel(model) || profile?.displayName?.trim() || model;
                     return (
@@ -158,7 +162,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                     options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]}
                                     value={activeCapability}
                                     onChange={(nextCapability) => {
-                                        const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && item.enabled !== false)?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, availableProtocols));
+                                        const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && selectableProtocol(item))?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, protocolCatalog));
                                         updateProfile(activeModel, {
                                             protocol: nextProtocol,
                                             capability: nextCapability,

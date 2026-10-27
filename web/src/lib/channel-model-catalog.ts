@@ -1,5 +1,5 @@
 import { defaultModelCapabilityConfig, sanitizeServerVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { modelProtocolCapability, protocolForModelCatalog, protocolForBeefAPICatalog, type ModelProtocol } from "@/lib/model-protocols";
+import { knownRetiredProtocol, modelProtocolCapability, newModelProtocol, protocolForModelCatalog, protocolForBeefAPICatalog, type ModelProtocol } from "@/lib/model-protocols";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
@@ -181,8 +181,20 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         }
 
         const capability = inferredCapability || modelProtocolCapability(channel.interfaceType);
-        const protocol = inferredProtocol || protocolTemplateForNewCatalogModel(capability, channel.interfaceType);
-        if (!protocol || !capability) continue;
+        if (!capability) continue;
+        // A protocol the provider's contract declares is trusted unless the host
+        // is known to have retired it; a template guess goes through the shared
+        // new-model decision.
+        const decided = inferredProtocol
+            ? (knownRetiredProtocol(inferredProtocol) ? { protocol: undefined } : { protocol: inferredProtocol })
+            : protocolForNewCatalogModel(capability, channel.interfaceType);
+        const protocol = decided.protocol;
+        if (!protocol) {
+            // Nothing selectable could be proven for this model: keep it, left
+            // unconfigured, so the user picks its protocol instead of losing it.
+            next.push({ model: item.id, ...(item.displayName ? { displayName: item.displayName } : {}), capability, protocol: undefined, protocolPending: true });
+            continue;
+        }
         const sourcedVideo = capability === "video" ? catalogVideo : null;
         const capabilityConfig = sourcedVideo
             ? { version: 1, video: sourcedVideo }
@@ -202,12 +214,15 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
     return next;
 }
 
-function protocolTemplateForNewCatalogModel(capability: ChannelModelProfile["capability"] | undefined, channelProtocol: ModelProtocol | undefined): ModelProtocol | undefined {
-    if (!capability) return channelProtocol;
-    if (modelProtocolCapability(channelProtocol) === capability) return channelProtocol;
-    const templates: Record<ChannelModelProfile["capability"], ModelProtocol> = { text: "chat-completion", image: "openai-image", video: "newapi", audio: "openai-audio" };
-    return templates[capability];
+// A model the channel already declares a protocol for inherits it, exactly as a
+// model listed without a profile runs with it. Otherwise the shared new-model
+// decision applies, so a retired protocol is never assigned to a fresh entry.
+function protocolForNewCatalogModel(capability: ChannelModelProfile["capability"], channelProtocol: ModelProtocol | undefined) {
+    if (channelProtocol && modelProtocolCapability(channelProtocol) === capability) return { protocol: channelProtocol };
+    return newModelProtocol(capability, undefined, [CATALOG_TEMPLATES[capability]]);
 }
+
+const CATALOG_TEMPLATES: Record<ChannelModelProfile["capability"], ModelProtocol> = { text: "chat-completion", image: "openai-image", video: "newapi", audio: "openai-audio" };
 
 function hasCatalogCapabilityConfig(item: ChannelModelCatalogItem) {
     return Boolean(item.defaultParameters || item.options || item.supportsImages !== undefined || item.minImages !== undefined || item.maxImages !== undefined);

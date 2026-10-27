@@ -1,7 +1,7 @@
 import type { ModelChannel, ModelCapability } from "@/stores/use-config-store";
 import { buildApiUrl } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { inferProtocolCapabilityFromModel, type ModelProtocolDefinition } from "@/lib/model-protocols";
+import { inferProtocolCapabilityFromModel, newModelProtocol, protocolSelectableForNewModel, type ModelProtocolDefinition, type ProtocolCatalog } from "@/lib/model-protocols";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 
 export const MODEL_SERVICE_PRESETS = [
@@ -28,7 +28,10 @@ export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
 }
 
 // Endpoint metadata is a hint, only resolve to protocols the host actually offers.
-export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCatalogItem, protocols: ModelProtocolDefinition[], explicitCapability?: ModelCapability): NonNullable<ModelChannel["modelProfiles"]>[number] {
+// The protocol of a model being added is decided by newModelProtocol, so a
+// retired protocol or an unproven fallback list is never assigned automatically.
+export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCatalogItem, catalog: ProtocolCatalog | ModelProtocolDefinition[], explicitCapability?: ModelCapability): NonNullable<ModelChannel["modelProfiles"]>[number] {
+    const protocols = Array.isArray(catalog) ? catalog : catalog.protocols;
     const existing = channel.modelProfiles?.find((profile) => profile.model === item.id);
     if (existing?.protocol && !explicitCapability) {
         const definition = protocols.find((protocol) => protocol.value === existing.protocol && protocol.enabled !== false);
@@ -45,14 +48,14 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
         ark: { text: "chat-completion", image: "volcengine-ark-image", video: "volcengine-ark-video" },
     };
     const endpoints: Record<string, string> = { "responses": "openai-response", "openai-responses": "openai-response", "chat.completions": "chat-completion", "chat-completions": "chat-completion", "images.generations": "openai-image", "image-generation": "openai-image", "audio.speech": "openai-audio", "openai-video": "newapi", "openai-videos": "newapi", "video-generations-json": "video-generations-json", "volcengine-ark-video": "volcengine-ark-video" };
-    const endpoint = item.supportedEndpointTypes?.map((value) => endpoints[value.trim().toLowerCase()]).find((id) => protocols.some((p) => p.value === id && p.capability === capability && p.enabled !== false));
-    const inherited = protocols.find((p) => p.value === channel.interfaceType && p.capability === capability && p.enabled !== false)?.value;
+    const endpoint = item.supportedEndpointTypes?.map((value) => endpoints[value.trim().toLowerCase()]).find((id) => protocolSelectableForNewModel(id, capability, catalog));
+    const inherited = protocolSelectableForNewModel(channel.interfaceType, capability, catalog) ? channel.interfaceType : undefined;
     let proposed = inherited || endpoint || candidates[preset][capability];
     // Model names identify a family, not a provider's wire protocol. Ask the
     // user to select its contract unless the catalog explicitly declares it.
     if (fullvideoFull && capability === "video" && !inherited) proposed = item.supportedEndpointTypes?.includes("full-video") ? "full-video" : undefined;
-    const definition = protocols.find((p) => p.value === proposed && p.capability === capability && p.enabled !== false);
-    const protocol = definition?.value;
+    const protocol = newModelProtocol(capability, catalog, [proposed]).protocol;
+    const definition = protocols.find((p) => p.value === protocol);
     return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, authType: definition ? definition.authType : existing?.authType, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id) : undefined };
 }
 

@@ -70,7 +70,8 @@ export function ProtocolCardPicker({
     density?: PickerDensity;
     protocols?: ModelProtocolDefinition[];
 }) {
-    const availableProtocols = protocols.filter((item) => item.capability === capability && item.enabled !== false);
+    // A retired protocol is shown only to the model that already uses it.
+    const availableProtocols = protocols.filter((item) => item.capability === capability && item.enabled !== false && (!item.retired || item.value === value));
     return (
         <div className={cn("grid grid-cols-1 gap-2 sm:grid-cols-2", density === "compact" && "gap-1.5 xl:grid-cols-3")} role="radiogroup" aria-label="模型请求协议">
             {availableProtocols.map((protocol) => {

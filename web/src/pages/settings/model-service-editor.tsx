@@ -5,10 +5,10 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { ModelLogo } from "@/components/model-logo";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image-models";
-import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
+import { loadProtocolCatalog } from "@/services/api/plugin-catalog";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, modelCatalogRequestURL, serviceConnectionError, serviceModelProfile, servicePresetFor, type ModelServicePresetId } from "@/lib/model-service-presets";
-import type { ModelProtocolDefinition } from "@/lib/model-protocols";
+import type { ProtocolCatalog } from "@/lib/model-protocols";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
@@ -23,7 +23,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const [advanced, setAdvanced] = useState(false);
     const [catalog, setCatalog] = useState<ChannelModelCatalogItem[]>(() => (initial?.models || []).map((id) => ({ id })));
     const [catalogRead, setCatalogRead] = useState(false);
-    const [protocols, setProtocols] = useState<ModelProtocolDefinition[]>([]);
+    const [protocols, setProtocols] = useState<ProtocolCatalog>({ status: "unavailable", protocols: [] });
     const [protocolLoading, setProtocolLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -44,7 +44,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             setProtocolLoading(false);
             return () => { alive.current = false; };
         }
-        void fetchPluginProviderCatalog("user.custom-channel")
+        void loadProtocolCatalog("user.custom-channel")
             .then((items) => { if (alive.current) setProtocols(items); })
             .catch(() => { if (alive.current) setError("无法读取模型能力，请关闭后重试"); })
             .finally(() => { if (alive.current) setProtocolLoading(false); });
@@ -67,7 +67,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setNotice("");
     };
     const validateConnection = (requireCredential = true) => {
-        const problem = serviceConnectionError(draft, { protocols, requireCredential }) || validateChannelHeaders(draft.headers);
+        const problem = serviceConnectionError(draft, { protocols: protocols.protocols, requireCredential }) || validateChannelHeaders(draft.headers);
         if (problem) setError(problem);
         return !problem;
     };

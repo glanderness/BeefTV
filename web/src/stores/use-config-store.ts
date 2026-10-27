@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
-import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
+import { inferProtocolCapabilityFromModel, modelProtocolCapability, newModelProtocol, normalizeModelProtocol, savedModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, upgradeGPTImageCapability, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
@@ -377,6 +377,10 @@ export type ModelChannel = {
         icon?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
+        // Set when every protocol of the capability was retired, so the host left
+        // this model without one on purpose. Different from a missing protocol,
+        // which older configurations use to mean "apply the documented default".
+        protocolPending?: boolean;
         referenceMediaTransport?: ReferenceMediaTransport;
         authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
@@ -812,7 +816,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     };
 }
 
-function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol {
+function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol | undefined {
     const contract = beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined;
     if (contract) return contract;
     // A video profile must not keep a protocol that runs a different
@@ -820,7 +824,8 @@ function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProt
     // that stale protocol would make the backend reject the task outright
     // ("接口类型 chat-completion 不支持video生成"). Unknown/custom protocols
     // stay untouched.
-    return current && protocolAllowsCapability(current, "video") ? current : defaultProtocolForCapability("video");
+    if (current && protocolAllowsCapability(current, "video")) return current;
+    return newModelProtocol("video").protocol;
 }
 
 function protocolAllowsCapability(protocol: ModelProtocol | undefined, capability: ModelCapability): boolean {
@@ -948,7 +953,9 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
             model,
             capability: "video",
             protocol,
-            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined),
+            // No selectable protocol means the model stays unconfigured; keep its
+            // capability metadata instead of deriving it from a retired protocol.
+            capabilityConfig: protocol ? beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined) : current?.capabilityConfig,
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };
@@ -1099,13 +1106,12 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
     const model = modelOptionName(value || config.model);
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);
-    const modelProtocol = normalizeModelProtocol(modelProfile?.protocol);
     const capability = modelProfile?.capability || inferProtocolCapabilityFromModel(model);
-    const interfaceType = modelProtocol
-        || normalizeModelProtocol(channel.interfaceType)
-        || (capability === "video" || channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
-            ? undefined
-            : (modelProfile?.capability ? defaultProtocolForCapability(modelProfile.capability) : defaultProtocolForModel(model)));
+    // The protocol comes from saved configuration only (see savedModelProtocol):
+    // the catalog plays no part, so a retired protocol a model already uses keeps
+    // executing, and a model left unconfigured is never given one here. Video has
+    // no legacy default and must name its protocol.
+    const interfaceType = savedModelProtocol(channel, { ...modelProfile, capability }, model);
     return {
         ...config,
         model,
