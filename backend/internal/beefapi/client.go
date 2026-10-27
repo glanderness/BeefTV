@@ -261,6 +261,23 @@ func (s *Service) revokeRemote(apiKey string) error {
 	return nil
 }
 
+// fetchCatalogWithPricing 读取模型列表并补上企业价格目录里的单价。价格目录读不到
+// 只影响价格字段，不影响模型列表本身。
+func (s *Service) fetchCatalogWithPricing(apiKey string) ([]CatalogModel, error) {
+	models, err := s.fetchModels(apiKey)
+	if err != nil {
+		return nil, err
+	}
+	prices := s.fetchEnterprisePricing()
+	if len(prices) == 0 {
+		return models, nil
+	}
+	for index := range models {
+		models[index].Pricing = prices[models[index].ID]
+	}
+	return models, nil
+}
+
 func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
 	if s.fetchCatalog != nil {
 		return s.fetchCatalog(apiKey, ProviderBaseURL(s.Origin()))

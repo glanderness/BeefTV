@@ -3,7 +3,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasAssistantTurnView } from "@/pages/canvas/canvas-assistant-turn";
 import { assistantProposalProgress, assistantProposalText } from "@/pages/canvas/canvas-assistant-copy";
 import type { AssistantGenerationProposal, AssistantTurn } from "@/services/api/agent-assistant";
-import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
+import type { CostEstimate } from "@/lib/generation-cost";
+
+// 费用由后端 canvas.generation.propose 的 estimate 给出，前端只把它摆到卡片上。
+const filmEstimate: CostEstimate = {
+    currency: "CNY",
+    total: 0.35,
+    known: false,
+    unknownCount: 1,
+    items: [
+        { nodeId: "frame", title: "首帧", kind: "image", model: "gpt-image-2", amount: 0.35, basis: "1K 每张 ¥0.35" },
+        { nodeId: "speech", title: "中文旁白", kind: "audio", amount: null, basis: "按台词字数计费，暂无法折算成每次价格" },
+    ],
+    text: "预计费用 ¥0.35（已知部分），另有 1 项暂无价格",
+};
 
 const proposal: AssistantGenerationProposal = {
     proposalId:"gp-film",kind:"image",nodeIds:["frame"],model:"image",modelKey:"custom::image",
@@ -11,37 +24,31 @@ const proposal: AssistantGenerationProposal = {
         {nodeId:"frame",title:"首帧",kind:"image",modelKey:"custom::image",prompt:"晨光洒进花店",parameters:{size:"9:16",count:"1"},referenceNodeIds:[]},
         {nodeId:"speech",title:"中文旁白",kind:"audio",modelKey:"custom::speech",prompt:"把春天带回家。",parameters:{audioVoice:"female-tianmei",audioSpeed:"1",audioFormat:"mp3"},referenceNodeIds:[]},
     ]},source:{canvasId:"canvas",canvasRevision:1,modelConfigRevision:1},
+    estimate: filmEstimate,
 };
 test("confirmation shows the paid text, voice, aspect ratio and quantity",()=>{
     const text=assistantProposalText(proposal);
     for(const expected of ["晨光洒进花店","把春天带回家。","female-tianmei","9:16","1 个","预计费用","重新计费"]) expect(text).toContain(expected);
+    expect(text).toContain("预计费用 ¥0.35（已知部分），另有 1 项暂无价格");
+    expect(text).toContain("预计费用 ¥0.35（1K 每张 ¥0.35）");
+    expect(text).toContain("按台词字数计费，暂无法折算成每次价格");
     const progress=assistantProposalProgress(proposal,[]);
     expect(progress.ready).toBe(false);
     expect(progress.text).toContain("0/2");
 });
-test("production confirmation estimates per-shot and total video price from catalog quotes",()=>{
-    const config: AiConfig = {
-        ...defaultConfig,
-        channels: [{
-            id: "beefapi",
-            name: "BeefAPI",
-            apiFormat: "openai",
-            baseUrl: "https://beefapi.com",
-            apiKey: "",
-            models: ["minimax-h3-max-turbo", "gpt-image-1.5", "speech-2.8-hd"],
-            modelProfiles: [{
-                model: "minimax-h3-max-turbo",
-                capability: "video",
-                protocol: "newapi",
-                videoPricing: {
-                    currency: "CNY",
-                    mode: "seconds",
-                    rates: { "1080p": { output: 0.43, reference_video: 0 } },
-                    reference_image: 0.215,
-                    free_reference_images: 5,
-                },
-            }],
-        }],
+test("production confirmation shows the backend per-shot and total price",()=>{
+    const fullEstimate: CostEstimate = {
+        currency: "CNY",
+        total: 5.08,
+        known: false,
+        unknownCount: 1,
+        items: [
+            { nodeId: "img-1", title: "分镜1-首帧图", kind: "image", model: "gpt-image-1.5", amount: 0.35, basis: "1024x1024 每张 ¥0.35" },
+            { nodeId: "vid-1", title: "分镜1-6s视频", kind: "video", model: "minimax-h3-max-turbo", amount: 2.58, basis: "1080p ¥0.43/秒 × 6秒" },
+            { nodeId: "vid-2", title: "分镜2-5s视频", kind: "video", model: "minimax-h3-max-turbo", amount: 2.15, basis: "1080p ¥0.43/秒 × 5秒" },
+            { nodeId: "tts-1", title: "旁白1", kind: "audio", model: "speech-2.8-hd", amount: null, basis: "按台词字数计费，暂无法折算成每次价格" },
+        ],
+        text: "预计费用 ¥5.08（已知部分），另有 1 项暂无价格",
     };
     const fullProposal: AssistantGenerationProposal = {
         proposalId: "gp-h3",
@@ -58,11 +65,21 @@ test("production confirmation estimates per-shot and total video price from cata
             ],
         },
         source: { canvasId: "canvas", canvasRevision: 1, modelConfigRevision: 1 },
+        estimate: fullEstimate,
     };
-    const text = assistantProposalText(fullProposal, [], true, config);
-    expect(text).toContain("预计费用：视频 2 段（共 11 秒）约 ¥4.73；1 张图片、1 段配音按所选渠道单价结算");
-    expect(text).toContain("预计费用：¥2.58（1080p ¥0.43/秒 × 6秒）");
-    expect(text).toContain("预计费用：¥2.15（1080p ¥0.43/秒 × 5秒）");
+    const text = assistantProposalText(fullProposal);
+    expect(text).toContain("预计费用 ¥5.08（已知部分），另有 1 项暂无价格");
+    expect(text).toContain("预计费用 ¥0.35（1024x1024 每张 ¥0.35）");
+    expect(text).toContain("预计费用 ¥2.58（1080p ¥0.43/秒 × 6秒）");
+    expect(text).toContain("预计费用 ¥2.15（1080p ¥0.43/秒 × 5秒）");
+    expect(text).toContain("按台词字数计费，暂无法折算成每次价格");
+});
+test("proposal without a backend estimate falls back to the channel's own rates",()=>{
+    const { estimate, ...withoutEstimate } = proposal;
+    const text = assistantProposalText(withoutEstimate);
+    expect(estimate).toBeDefined();
+    expect(text).not.toContain("预计费用");
+    expect(text).toContain("素材按所选渠道计费");
 });
 test("proposal card reflects started progress when Pi confirms and admits tasks on canvas nodes",()=>{
     const turn: AssistantTurn = {

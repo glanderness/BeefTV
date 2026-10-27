@@ -165,12 +165,7 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		if strings.TrimSpace(prompt) == "" {
 			return nil, InvalidArg("missing_prompt", "制作素材缺少提示词或旁白文本")
 		}
-		parameters := map[string]string{}
-		for _, key := range []string{"size", "quality", "count", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "videoStartFrameNodeId", "videoEndFrameNodeId", "videoMiddleFrameNodeId"} {
-			if v, ok := meta[key]; ok && v != nil {
-				parameters[key] = fmt.Sprint(v)
-			}
-		}
+		parameters := generationTargetParameters(meta)
 		if kind == "image" {
 			model := choice.ModelKey
 			if i := strings.LastIndex(model, "::"); i >= 0 {
@@ -209,6 +204,18 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		targets = append(targets, GenerationTarget{NodeID: id, Title: dependencyString(n, "title"), Kind: kind, ModelKey: choice.ModelKey, Prompt: prompt, Parameters: parameters, Metadata: metadata, ReferenceNodeIDs: refs})
 	}
 	return targets, nil
+}
+
+// generationTargetParameters 抽取一次生成的计费与提交参数：提议、提交与费用估算
+// 共用同一份键表，避免三处各写一份。
+func generationTargetParameters(meta map[string]any) map[string]string {
+	parameters := map[string]string{}
+	for _, key := range []string{"size", "quality", "count", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "videoStartFrameNodeId", "videoEndFrameNodeId", "videoMiddleFrameNodeId"} {
+		if v, ok := meta[key]; ok && v != nil {
+			parameters[key] = fmt.Sprint(v)
+		}
+	}
+	return parameters
 }
 
 func uniqueTargetIDs(ids []string) []string {

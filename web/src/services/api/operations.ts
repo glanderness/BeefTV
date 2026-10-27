@@ -1,4 +1,5 @@
 import type { CapturedUserScope } from "@/lib/user-scope-guard";
+import { sanitizeCostEstimate, type CostEstimate } from "@/lib/generation-cost";
 import { http } from "@/services/api/request";
 import { taskDiagnosticHeaders } from "@/services/diagnostics/client-diagnostics";
 
@@ -45,6 +46,31 @@ export async function commitCanvasDocument(input: {
             document: input.document,
         },
     }, undefined, input.expectedScope);
+}
+
+export type CanvasCostEstimateRequest = {
+    canvasId: string;
+    nodeIds?: string[];
+    /** 还没建节点的一次性批量（分镜、批量表格）：按同一模型估算这些项。 */
+    batch?: {
+        kind: "image" | "video" | "audio";
+        model: string;
+        count?: number;
+        items?: Array<{ parameters?: Record<string, string>; text?: string }>;
+    };
+};
+
+/**
+ * 生成前的费用估算：只读、不联网、不建任务。估算失败只影响这一行提示，
+ * 不能拦住用户已经确认的生成，所以这里把失败收敛成 null。
+ */
+export async function estimateGenerationCost(params: CanvasCostEstimateRequest): Promise<CostEstimate | null> {
+    try {
+        const response = await executeWorkspaceOperation<{ estimate?: unknown }>("canvas.cost.estimate", { params });
+        return sanitizeCostEstimate(response.result?.estimate);
+    } catch {
+        return null;
+    }
 }
 
 export type CanvasTaskBindReceipt = {

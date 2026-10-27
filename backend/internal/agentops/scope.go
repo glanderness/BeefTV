@@ -102,6 +102,12 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("只能修改当前画布")
+	case "canvas.cost.estimate":
+		// 只读估算，但只估当前画布：别的画布的参数和模型不属于本轮上下文。
+		if args.CanvasID == s.CanvasID {
+			return nil
+		}
+		return denied("只能估算当前画布的费用")
 	case "asset.get":
 		if s.AssetIDs[strings.TrimSpace(args.AssetID)] || s.projectReferenceAllowed("asset", args.AssetID) {
 			return nil

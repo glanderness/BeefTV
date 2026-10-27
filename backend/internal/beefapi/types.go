@@ -66,6 +66,8 @@ type CatalogModel struct {
 	VideoCapabilities        json.RawMessage `json:"videoCapabilities,omitempty"`
 	VideoCapabilitiesVersion string          `json:"videoCapabilitiesVersion,omitempty"`
 	VideoPricing             json.RawMessage `json:"videoPricing,omitempty"`
+	// Pricing 来自企业价格目录的同一模型行，是画布费用估算用的参考单价。
+	Pricing map[string]any `json:"pricing,omitempty"`
 }
 
 type persistedDevice struct {

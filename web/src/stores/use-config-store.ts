@@ -12,6 +12,7 @@ import { defaultModelCapabilityConfig, upgradeGPTImageCapability, workflowFieldR
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
 import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+import type { ModelPricing } from "@/lib/generation-cost";
 
 export type ApiCallFormat = "openai" | "gemini" | "claude";
 export type ChannelInterfaceType = ModelProtocol;
@@ -382,6 +383,8 @@ export type ModelChannel = {
         capabilityConfig?: ModelCapabilityConfig;
         videoCapabilitiesVersion?: string;
         videoPricing?: VideoPriceQuote | null;
+        /** 企业目录的参考单价（图片、视频、配音），只用于费用估算展示。 */
+        pricing?: ModelPricing | null;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];

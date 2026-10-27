@@ -161,18 +161,53 @@ describe("付费生成确认", () => {
         expect(text).toContain("为 1 个节点生成视频");
     });
     test("已提交或已结束的卡片不再提示确认生成和计费", () => {
-        const text = assistantProposalText({ proposalId: "p2", kind: "video", nodeIds: ["a"], model: "image", modelKey: "ch::image" }, ["报价"], false);
+        const text = assistantProposalText({ proposalId: "p2", kind: "video", nodeIds: ["a"], model: "image", modelKey: "ch::image" }, false);
         expect(text).not.toContain("确认后开始");
         expect(text).not.toContain("计费");
-        expect(text).not.toContain("报价");
+        expect(text).not.toContain("预计费用");
+    });
+
+    test("卡片直接显示后端算出的合计，前端不自己算价", () => {
+        const text = assistantProposalText({
+            proposalId: "p3", kind: "image", nodeIds: ["a", "b"], model: "gpt-image-2", modelKey: "beefapi::gpt-image-2",
+            estimate: { currency: "CNY", total: 0.7, known: true, unknownCount: 0,
+                items: [{ nodeId: "a", kind: "image", model: "gpt-image-2", amount: 0.35, basis: "1K 每张 ¥0.35" }],
+                text: "预计费用 ¥0.7" },
+        });
+        expect(text).toBe("为 2 个节点生成图片 · gpt-image-2\n预计费用 ¥0.7\n确认后开始，按所选渠道计费。");
+    });
+
+    test("多个节点一次生成时逐项列出费用，合计在前", () => {
+        const text = assistantProposalText({
+            proposalId: "p4", kind: "image", nodeIds: ["a", "b"], model: "gpt-image-2", modelKey: "beefapi::gpt-image-2",
+            estimate: { currency: "CNY", total: 0.7, known: true, unknownCount: 1,
+                items: [
+                    { nodeId: "a", title: "分镜1", kind: "image", model: "gpt-image-2", amount: 0.35, basis: "1K 高质量 ¥0.35 × 1 张" },
+                    { nodeId: "b", title: "分镜2", kind: "image", model: "gpt-image-2", amount: 0.35, basis: "1K 高质量 ¥0.35 × 1 张" },
+                    { nodeId: "c", title: "旁白", kind: "audio", model: "speech-2.8-hd", amount: null, basis: "缺少台词文本" },
+                ],
+                text: "预计费用 ¥0.7（已知部分），另有 1 项暂无价格" },
+        });
+        expect(text).toBe([
+            "为 2 个节点生成图片 · gpt-image-2",
+            "预计费用 ¥0.7（已知部分），另有 1 项暂无价格",
+            "分镜1 · 预计费用 ¥0.35（1K 高质量 ¥0.35 × 1 张）",
+            "分镜2 · 预计费用 ¥0.35（1K 高质量 ¥0.35 × 1 张）",
+            "旁白 · 缺少台词文本",
+            "确认后开始，按所选渠道计费。",
+        ].join("\n"));
     });
 
     test("旧真人模型提议显示统一名称与当前渠道报价", () => {
-        const text = assistantProposalText({ proposalId: "portrait", kind: "video", nodeIds: ["a"], model: "seedance-2.0-portrait", modelKey: "byok::seedance-2.0-portrait" }, ["720p：无视频输入 ¥69，含视频输入 ¥42 / 百万视频 Token"]);
+        const text = assistantProposalText({
+            proposalId: "portrait", kind: "video", nodeIds: ["a"], model: "seedance-2.0-portrait", modelKey: "byok::seedance-2.0-portrait",
+            estimate: { currency: "CNY", total: 0, known: false, unknownCount: 1,
+                items: [{ nodeId: "a", kind: "video", model: "seedance-2.0-portrait", amount: null, basis: "按视频 Token 计费，暂无法折算成每次价格" }],
+                text: "预计费用：按视频 Token 计费，暂无法折算成每次价格" },
+        });
         expect(text).toContain("Seedance 2.0");
         expect(text).not.toContain("Seedance 2.0-真人");
-        expect(text).toContain("¥69");
-        expect(text).toContain("¥42");
+        expect(text).toContain("按视频 Token 计费");
         expect(text).not.toContain("byok::");
     });
 });

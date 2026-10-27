@@ -136,6 +136,7 @@ export function collectTurnEffects(turn, opID, result, operationId) {
           nodeIds: asStringList(result.nodeIds), model: String(result.model || ''),
           modelKey: String(result.modelKey || ''), note: String(result.note || ''),
           ...(result.production ? { production: result.production } : {}),
+          ...(result.estimate ? { estimate: result.estimate } : {}),
           ...(result.source ? { source: { canvasId: result.source.canvasId,
             canvasRevision: result.source.canvasRevision, modelConfigRevision: result.source.modelConfigRevision } } : {}) });
       }

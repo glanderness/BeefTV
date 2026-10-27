@@ -1,8 +1,8 @@
 // 助手面板里所有用户可见文案的唯一来源：机器可读原因、操作名和改动摘要都在这里
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
 import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantSkillSelection, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
-import { estimateVideoTargetPrice, seedancePortraitLabel, type VideoTargetPriceEstimate } from "@/lib/seedance-portrait";
-import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
+import { seedancePortraitLabel } from "@/lib/seedance-portrait";
+import { costLineForNode, costLineText, sanitizeCostEstimate } from "@/lib/generation-cost";
 import type { CanvasNodeData } from "@/types/canvas";
 
 export type AssistantStatusAction = "model-settings" | "retry";
@@ -124,60 +124,24 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
     }
 }
 
-function resolveModelVideoPricing(config: AiConfig | undefined, modelKey: string) {
-    if (!config || !modelKey) return undefined;
-    const channel = resolveModelChannel(config, modelKey);
-    return channel.modelProfiles?.find((item) => item.model === modelOptionName(modelKey))?.videoPricing;
-}
-
-function formatProductionPriceSummary(
-    images: number,
-    videos: number,
-    audio: number,
-    estimates: Array<VideoTargetPriceEstimate | null>,
-): string {
-    const pricedVideos = estimates.filter((item): item is VideoTargetPriceEstimate & { amount: number } => item !== null && item.amount !== null);
-    const quotedVideos = estimates.filter((item): item is VideoTargetPriceEstimate => item !== null);
-    if (pricedVideos.length > 0) {
-        const totalAmount = Number(pricedVideos.reduce((sum, item) => sum + item.amount, 0).toFixed(4));
-        const totalSeconds = Number(pricedVideos.reduce((sum, item) => sum + item.seconds, 0).toFixed(2));
-        const unpricedVideos = videos - pricedVideos.length;
-        const otherParts = [
-            ...(unpricedVideos > 0 ? [`${unpricedVideos} 段视频`] : []),
-            ...(images > 0 ? [`${images} 张图片`] : []),
-            ...(audio > 0 ? [`${audio} 段配音`] : []),
-        ];
-        const videoPart = `视频 ${pricedVideos.length} 段${totalSeconds > 0 ? `（共 ${totalSeconds} 秒）` : ""}约 ¥${totalAmount}`;
-        return otherParts.length
-            ? `预计费用：${videoPart}；${otherParts.join("、")}按所选渠道单价结算`
-            : `预计费用：${videoPart}`;
-    }
-    if (quotedVideos.length > 0) {
-        return "预计费用：视频按所选模型单价或账单结算（详见各镜头说明），其余素材按所选渠道单价结算";
-    }
-    return "预计费用：当前渠道未返回目录单价，按所选渠道实际标准计费";
-}
-
-/** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
+/**
+ * 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。
+ * 费用由后端按目录单价算出（proposal.estimate），前端只负责把它摆到卡片上。
+ */
 export function assistantProposalText(
     proposal: AssistantGenerationProposal,
-    priceLines: string[] = [],
     awaitingConfirmation = true,
-    config?: AiConfig,
 ): string {
     const count = proposal.nodeIds?.length ?? 0;
+    const estimate = sanitizeCostEstimate(proposal.estimate);
     if (proposal.production) {
         const targets = proposal.production.targets;
         const images = targets.filter(t => t.kind === "image").length;
-        const videos = targets.filter(t => t.kind === "video");
-        const audio = targets.filter(t => t.kind === "audio");
+        const videos = targets.filter(t => t.kind === "video").length;
+        const audio = targets.filter(t => t.kind === "audio").length;
         const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印",seedreamOutputFormat:"图片格式",seedreamOptimize:"提示词优化",seedreamWatermark:"图片水印"};
-        const videoEstimates = targets.map(t => t.kind === "video"
-            ? estimateVideoTargetPrice(resolveModelVideoPricing(config, t.modelKey), t.parameters, t.referenceNodeIds.length)
-            : null);
-        const priceSummary = formatProductionPriceSummary(images, videos.length, audio.length, videoEstimates);
-        const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${awaitingConfirmation ? `\n${priceSummary}` : ""}`;
-        const lines = [header, ...targets.map((t, index) => {
+        const header = `整片制作方案：${images} 张图片、${videos} 段视频、${audio} 段配音${awaitingConfirmation && estimate ? `\n${estimate.text}` : ""}`;
+        const lines = [header, ...targets.map((t) => {
             const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => {
                 const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
                     : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
@@ -185,14 +149,19 @@ export function assistantProposalText(
                 return `${labels[key]}：${display}`;
             }).join(" · ");
             const refs = t.referenceNodeIds.map(id => targets.find(item => item.nodeId === id)?.title || "已有参考素材");
-            const estimate = awaitingConfirmation ? videoEstimates[index] : null;
-            return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}${estimate ? `\n${estimate.text}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
+            const line = awaitingConfirmation ? costLineForNode(estimate, t.nodeId) : null;
+            return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}${line ? `\n${costLineText(line)}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
         })];
         return lines.join("\n\n") + (awaitingConfirmation ? "\n\n确认后按此方案生成素材，并自动完成声音、字幕和剪辑（可点击下方按钮或直接发送「确认」开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "");
     }
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
     const title = `为 ${count} 个节点生成${target} · ${seedancePortraitLabel(proposal.model) || proposal.model}`;
-    return awaitingConfirmation ? `${title}\n${priceLines.length ? priceLines.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。` : title;
+    if (!awaitingConfirmation) return title;
+    // 一次生成多个节点时逐项列出各自费用；只有一个节点时合计就是那一项。
+    const price = estimate
+        ? [estimate.text, ...(estimate.items.length > 1 ? estimate.items.map((item) => `${item.title ? `${item.title} · ` : ""}${costLineText(item)}`) : [])]
+        : [];
+    return [title, ...price, "确认后开始，按所选渠道计费。"].join("\n");
 }
 
 /** Match the submitted proposal, including fan-out images; old results on the source node are not receipts. */

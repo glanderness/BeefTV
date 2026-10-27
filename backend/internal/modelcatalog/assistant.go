@@ -31,6 +31,8 @@ type AssistantModelProfile struct {
 	Model      string `json:"model"`
 	Capability string `json:"capability"`
 	Protocol   string `json:"protocol"`
+	// Pricing 是模型档案里保存的目录单价，助手据此回答「这次要花多少钱」。
+	Pricing map[string]any `json:"pricing,omitempty"`
 }
 
 type AssistantChannel struct {

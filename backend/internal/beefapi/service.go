@@ -699,7 +699,7 @@ func (s *Service) finalizeSavedCredential(ctx context.Context, previousAccountID
 		s.setError(StateStoreError, "保存连接失败，请重试")
 		return errStore
 	}
-	models, err := s.fetchModels(apiKey)
+	models, err := s.fetchCatalogWithPricing(apiKey)
 	if s.lifecycle.Err() != nil {
 		return s.lifecycle.Err()
 	}

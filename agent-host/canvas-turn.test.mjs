@@ -151,6 +151,21 @@ describe("付费生成提议", () => {
             model: "wan3.0-video", modelKey: "beefapi::wan3.0-video", note: "两段镜头" }]);
     });
 
+    test("费用估算随提议透传，前端卡片才能显示单项和合计", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
+        const estimate = { currency: "CNY", total: 2.58, known: true, unknownCount: 0,
+            items: [{ nodeId: "n1", kind: "video", model: "wan3.0-video", amount: 2.58, basis: "1080p ¥0.43/秒 × 6秒" }],
+            text: "预计费用 ¥2.58" };
+
+        collectTurnEffects(turn, "canvas.generation.propose", {
+            proposalId: "gp-cost", kind: "video", nodeIds: ["n1"], model: "wan3.0-video", modelKey: "beefapi::wan3.0-video",
+            estimate,
+        });
+
+        expect(turn.proposals[0].estimate).toEqual(estimate);
+        expect(turnChange(turn)).toBeNull();
+    });
+
     test("系统提示词必须禁止宣称已生成，并指向提议工具", () => {
         expect(SYSTEM_PROMPT).toContain("canvas_generation_propose");
         expect(SYSTEM_PROMPT).toContain("只有用户实际确认过的制作方案才能付费生成");

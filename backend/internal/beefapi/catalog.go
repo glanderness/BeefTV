@@ -40,6 +40,11 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 		if pricing, ok := NormalizeCatalogVideoPricing(model.VideoPricing); ok {
 			profile["videoPricing"] = pricing
 		}
+		// 目录单价同样只由刷新写入：没有价格就清空旧值，界面显示「暂无价格」。
+		profile["pricing"] = nil
+		if len(model.Pricing) > 0 {
+			profile["pricing"] = model.Pricing
+		}
 		if model.DisplayName != "" {
 			profile["displayName"] = model.DisplayName
 		}

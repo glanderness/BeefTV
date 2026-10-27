@@ -66,6 +66,81 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.cost.estimate",
+    "summary": "按画布当前参数估算生成费用（图片、视频、配音的目录单价单项与合计；只读、不联网、不建任务；算不出的项标为暂无价格，超分按先扣金额另行结算、不计入合计）",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "nodeIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 24,
+          "description": "只估算这些节点；省略则估算画布上全部已配好模型、还没有成品的生成节点"
+        },
+        "batch": {
+          "type": "object",
+          "description": "还没建节点的一次性批量（例如分镜批量生成）：按同一模型估算 items 项，items 省略时按 count 项默认参数估算",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio"
+              ]
+            },
+            "model": {
+              "type": "string"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "items": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "parameters": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "model"
+          ]
+        }
+      },
+      "required": [
+        "canvasId"
+      ]
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.document.commit",
     "summary": "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）",
     "readOnly": false,

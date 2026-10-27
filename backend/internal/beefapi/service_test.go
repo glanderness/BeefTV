@@ -30,7 +30,9 @@ type fakeEnterprise struct {
 	mode         string
 	completeMode string
 	catalogFail  bool
+	pricingFail  bool
 	models       []map[string]any
+	pricing      []map[string]any
 	opened       []string
 }
 
@@ -123,6 +125,25 @@ func newEnterpriseServer(t *testing.T, fake *fakeEnterprise) *httptest.Server {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": models})
+	})
+	mux.HandleFunc("/api/enterprise/catalog", func(w http.ResponseWriter, r *http.Request) {
+		fake.mu.Lock()
+		fail := fake.pricingFail
+		rows := fake.pricing
+		fake.mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if rows == nil {
+			rows = []map[string]any{
+				{"model_name": "gpt-image-2", "display_kind": "image", "mode": "per_request", "per_request_cny": 0.35,
+					"image_price_table": map[string]any{"currency": "CNY", "output": map[string]any{"low": map[string]any{"1K": 0.35, "2K": 0.7}}, "reference": 0.15, "default_quality": "low", "default_size": "1K"}},
+				{"model_name": "seedance-test", "display_kind": "video", "mode": "per_request", "per_second_cny": map[string]any{"720p": 0.81}},
+				{"model_name": "text-only-model", "display_kind": "text", "mode": "tokens", "input_cny": 1},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"currency": "CNY", "models": rows}})
 	})
 	mux.HandleFunc("/desktop-auth", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok")

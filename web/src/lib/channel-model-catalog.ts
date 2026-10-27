@@ -4,6 +4,7 @@ import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { sanitizeVideoPriceQuote, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+import { sanitizeModelPricing, type ModelPricing } from "@/lib/generation-cost";
 
 export type ChannelModelCatalogOption = { value: string; label?: string };
 
@@ -28,6 +29,8 @@ export type ChannelModelCatalogItem = {
     videoCapabilities?: VideoCapabilityConfig;
     videoCapabilitiesVersion?: string;
     videoPricing?: VideoPriceQuote | null;
+    /** 企业目录的参考单价（图片、视频、配音），只用于费用估算展示。 */
+    pricing?: ModelPricing | null;
 };
 
 type ChannelModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
@@ -58,6 +61,7 @@ export function sanitizeChannelModelCatalogItem(value: unknown): ChannelModelCat
         id,
         displayName: stringValue(record.displayName),
         ...(record.videoPricing !== undefined || seedancePortraitModel(id) ? { videoPricing: sanitizeVideoPriceQuote(record.videoPricing) } : {}),
+        ...(record.pricing !== undefined ? { pricing: sanitizeModelPricing(record.pricing) } : {}),
         modelType: ["text", "image", "video", "audio"].includes(modelType) ? (modelType as ChannelModelCatalogItem["modelType"]) : undefined,
         supportedEndpointTypes: stringArray(record.supportedEndpointTypes),
         defaultParameters: normalizedDefaults,
@@ -171,6 +175,8 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             next.push({
                 ...existing,
                 ...(item.videoPricing !== undefined || existing.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
+                // 目录刷新是价格的唯一来源：这一行不再有价格就清空，界面显示「暂无价格」。
+                ...(item.pricing !== undefined || existing.pricing !== undefined ? { pricing: sanitizeModelPricing(item.pricing) } : {}),
                 ...(item.displayName ? { displayName: item.displayName } : {}),
                 capability,
                 ...(protocol ? { protocol } : {}),
@@ -192,6 +198,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         next.push({
             model: item.id,
             ...(item.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
+            ...(item.pricing !== undefined ? { pricing: sanitizeModelPricing(item.pricing) } : {}),
             ...(item.displayName ? { displayName: item.displayName } : {}),
             capability,
             protocol,
@@ -279,6 +286,7 @@ function compactCatalogItem(item: ChannelModelCatalogItem): ChannelModelCatalogI
     return {
         id: item.id,
         ...(item.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
+        ...(item.pricing !== undefined ? { pricing: sanitizeModelPricing(item.pricing) } : {}),
         ...(item.displayName ? { displayName: item.displayName } : {}),
         ...(item.modelType ? { modelType: item.modelType } : {}),
         ...(item.supportedEndpointTypes?.length ? { supportedEndpointTypes: item.supportedEndpointTypes } : {}),

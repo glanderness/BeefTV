@@ -44,7 +44,9 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 若缺少可用传输方式，提交返回 HTTP 400、`reason=reference_media_requires_url`，不创建任务。`msg` 包含受影响素材的类型和序号；`details.requiredReferences` 提供 `{ kind, index, mask? }`，`kind` 为 `image/video/audio`，`index` 从 0 开始，遮罩为 `mask: true`。客户端仅替换这些素材，补齐后可再次提交；其他网络或上游错误不适用此规则。执行阶段上传失败保留原任务的失败记录，不调用模型。声音、水印等开关接受布尔值及其字符串形式，已有任务的同类参数也按相同规则读取。
 
-`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
+`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。提议还返回 `estimate`：按当前参数与模型档案里保存的目录单价算出逐项费用和合计（`total`、`known`、`unknownCount`、`items[].amount`、`items[].basis`、`text`）；算不出的项 `amount` 为 `null` 并在 `basis` 说明原因，不能当成 0 元。
+
+`canvas.cost.estimate` 用同一套算法单独估算费用，同样只读、不联网、不建任务、不扣费。传 `canvasId` 估算画布上已选模型、还没有成品的生成节点，可用 `nodeIds` 只估算点名节点；也可传 `batch:{kind,model,count|items}` 估算还没建节点的一次性批量（例如分镜或批量表格）。没有可用目录单价时返回 `estimate:null` 与 `unavailable`，界面照实说「暂无价格」。超分模型的先扣金额单独结算，不计入合计。
 
 外部读写客户端的提议还返回 `nextAction`：由外部宿主审批后调用 `canvas.generation.submit`，提交 `canvasId`、1 至 8 个 `nodeIds`、`expectedRevision`、`expectedModelConfigRevision` 和稳定 `operationId`。两个版本分别来自提议的 `source.canvasRevision` 与 `source.modelConfigRevision`。此路径不依赖内置助手回合或确认卡，返回已受理的 `taskIds`、`nodeIds` 与画布新 `revision`；同键同参数回读原回执，过期版本、未就绪参考和已关联任务的目标拒绝。当前复用单节点单产物的制作准入；已有任务通过 `task.get` 和原任务恢复入口处理，不换键重复购买。历史只读凭据不能提交或回放写回执。
 
@@ -54,7 +56,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 共享操作 `model.catalog` 可传 `capabilities:["image","video","audio"]` 一次读取所需类型，与单个 `capability` 二选一。`canvas.script.prepare` 的 `script:{title,rows}` 可直接创建新分镜和配置好的媒体草稿，与已有 `nodeId/rowIds` 二选一，最多 8 行，整批一次保存。`canvas.generation.submit` 可省略 `kind`，在同一已确认计划内提交独立的混合素材批次；同批不能依赖尚未产出的素材。内置宿主也等待免费 `canvas.timeline.render` 的原任务与资源保存，查询失败返回原任务号和 pending，不重新渲染；停止仍中断等待。
 
-`model.catalog` 可用 `capability`（`text`、`image`、`video`、`audio`）只查询所需类型。桌面视频模型的 `videoPricing` 只投影已保存、通过格式校验的渠道目录报价，不包含连接地址或凭据；缺失表示价格未知。这不是实时计费保证，也不会自动执行预算上限。
+`model.catalog` 可用 `capability`（`text`、`image`、`video`、`audio`）只查询所需类型。桌面视频模型的 `videoPricing` 只投影已保存、通过格式校验的渠道目录报价，不包含连接地址或凭据；缺失表示价格未知。这不是实时计费保证，也不会自动执行预算上限。模型的 `pricing` 是刷新企业目录时保存的参考单价（图片、视频、配音），只用于估算展示；同样缺失即价格未知。
 
 MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方中文男女音色建议、默认音色及语速范围，仍允许用户的有效自定义音色 ID。当前路径未接入自由朗读指令，`instructionsSupported=false`；旁白 prompt 只放台词，不能用编造的音色名或指令承诺情绪效果。
 

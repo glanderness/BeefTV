@@ -9,6 +9,7 @@ import { modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, sele
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { ModelLogo } from "@/components/model-logo";
 import { portraitPriceLines, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
+import { modelPriceLines } from "@/lib/generation-cost";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -72,8 +73,15 @@ export function ModelPicker({
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
     const current = options.includes(resolvedCurrent) ? resolvedCurrent : "";
     const portrait = seedancePortraitModel(current || storedCurrent);
-    const portraitQuote = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
-    const priceLines = portraitPriceLines(portraitQuote);
+    const currentProfile = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current)) : undefined;
+    // 真人模型的报价比企业目录细（含参考生成预留），有它就先用它；其余模型用目录单价。
+    const portraitLines = portraitPriceLines(currentProfile?.videoPricing);
+    const priceLines = portraitLines.length ? portraitLines : modelPriceLines(currentProfile?.pricing);
+    const priceQuoted = priceLines.length > 0;
+    // 有报价就显示价格入口；只有生成类模型在目录里被清空价格时显示「价格暂不可用」，
+    // 自带 Key 的渠道和文本模型不显示这个入口。
+    const priceApplies = priceQuoted || (currentProfile?.pricing !== undefined
+        && (currentProfile.capability === "image" || currentProfile.capability === "video" || currentProfile.capability === "audio"));
     const creationVariant = variant === "creation";
     const triggerLabel = current
         ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName))
@@ -274,13 +282,13 @@ export function ModelPicker({
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
             </Popover>
-            {portrait || priceLines.length > 0 ? <Popover trigger="click" placement="topLeft" content={
+            {priceApplies ? <Popover trigger="click" placement="topLeft" content={
                 <div className="max-w-[min(26rem,calc(100vw-3rem))] text-xs leading-relaxed" role="note">
-                    {priceLines.length ? <><p>视频参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
+                    {priceQuoted ? <><p>参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
                 </div>
             }>
-                <button type="button" className="shrink-0 rounded px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ color: theme.node.muted }} aria-label="视频参考单价" title={priceLines.join("\n") || "价格暂不可用，请刷新模型列表后再生成。"}>
-                    {priceLines.length ? "价格" : "价格暂不可用"}
+                <button type="button" className="shrink-0 rounded px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ color: theme.node.muted }} aria-label="参考单价" title={priceLines.join("\n") || "价格暂不可用，请刷新模型列表后再生成。"}>
+                    {priceQuoted ? "价格" : "价格暂不可用"}
                 </button>
             </Popover> : null}
         </div>

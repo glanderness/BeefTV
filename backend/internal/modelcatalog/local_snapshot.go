@@ -18,6 +18,7 @@ type LocalChannelModel struct {
 	CapabilityConfig         any
 	VideoCapabilitiesVersion *string
 	VideoPricing             json.RawMessage
+	Pricing                  map[string]any
 }
 
 func ParseLocalChannelModels(body []byte) []LocalChannelModel {
@@ -38,6 +39,7 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 				CapabilityConfig         json.RawMessage `json:"capabilityConfig"`
 				VideoCapabilitiesVersion *string         `json:"videoCapabilitiesVersion"`
 				VideoPricing             json.RawMessage `json:"videoPricing"`
+				Pricing                  json.RawMessage `json:"pricing"`
 			} `json:"modelProfiles"`
 		} `json:"channels"`
 	}
@@ -63,6 +65,12 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 				var value any
 				if json.Unmarshal(profile.CapabilityConfig, &value) == nil {
 					item.CapabilityConfig = value
+				}
+			}
+			if len(profile.Pricing) > 0 {
+				var value map[string]any
+				if json.Unmarshal(profile.Pricing, &value) == nil {
+					item.Pricing = value
 				}
 			}
 			profiles[profile.Model] = item

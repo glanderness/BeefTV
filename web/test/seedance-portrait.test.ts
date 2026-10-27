@@ -112,8 +112,8 @@ test("selected portrait option offers account-sourced prices before generation",
     const html = renderToStaticMarkup(createElement(ModelPicker, { config, value: config.models[1], capability: "video", onChange() {} }));
     expect(html).toContain("Seedance 2.0");
     expect(html).not.toContain("Seedance 2.0-Pro");
-    expect(html).toContain("视频参考单价");
-    expect(html).toContain('aria-label="视频参考单价"');
+    expect(html).toContain("参考单价");
+    expect(html).toContain('aria-label="参考单价"');
     expect(html).toContain("¥69");
     expect(html).toContain("¥42");
     expect(html).not.toContain("必过");

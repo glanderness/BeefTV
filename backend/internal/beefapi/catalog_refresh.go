@@ -32,7 +32,7 @@ func (s *Service) RefreshCatalog(ctx context.Context) ([]CatalogModel, error) {
 	if err != nil {
 		return nil, errStore
 	}
-	models, err := s.fetchModels(apiKey)
+	models, err := s.fetchCatalogWithPricing(apiKey)
 	if err != nil {
 		if errors.Is(err, errRevoked) {
 			return nil, errRevoked

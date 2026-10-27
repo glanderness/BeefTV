@@ -151,6 +151,7 @@ export function useCanvasGenerationOrchestration({
         syncRowsFromConnections,
         updateRow: updateBatchRow,
     } = useCanvasBatchTable({
+        projectId,
         nodesRef,
         connectionsRef,
         setNodes,

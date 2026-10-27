@@ -218,8 +218,10 @@ type PublicChannelModel struct {
 	Protocol         model.ChannelInterfaceType `json:"protocol"`
 	CapabilityConfig map[string]any             `json:"capabilityConfig,omitempty"`
 	VideoPricing     map[string]any             `json:"videoPricing,omitempty"`
-	AudioOptions     *AudioGenerationOptions    `json:"audioOptions,omitempty"`
-	Available        bool                       `json:"available"`
+	// Pricing 是模型档案里保存的目录单价（图片、视频、配音），只用于费用估算展示。
+	Pricing      map[string]any          `json:"pricing,omitempty"`
+	AudioOptions *AudioGenerationOptions `json:"audioOptions,omitempty"`
+	Available    bool                    `json:"available"`
 }
 
 type ChannelModelRequest struct {

@@ -2,6 +2,7 @@
 // 三个端点的真实路径都在 /api/assistant/* 下；写错路径会让面板永远拿不到回复。
 import { ApiError, apiBaseURL, http } from "./request";
 import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
+import type { CostEstimate } from "@/lib/generation-cost";
 
 /** 后端给出的不可用原因（穷举，见契约 A1）；未知值一律走兜底文案。 */
 export type AssistantUnavailableReason =
@@ -91,6 +92,8 @@ export type AssistantGenerationProposal = {
     modelKey: string;
     note?: string;
     production?: { targets: { nodeId: string; title: string; kind: "image" | "video" | "audio"; modelKey: string; prompt: string; parameters: Record<string,string>; metadata?: Record<string, unknown>; referenceNodeIds: string[] }[] };
+    /** 后端按目录单价算出的费用估算；老记录没有这个字段，卡片回退到「按所选渠道计费」。 */
+    estimate?: CostEstimate | null;
     source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
 };
 

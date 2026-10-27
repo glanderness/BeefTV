@@ -76,6 +76,8 @@ func (s *operationSession) AgentModelCatalog() (*modelcatalog.CatalogResponse, e
 			// Only the saved, validated quote is public; never forward arbitrary profile fields.
 			public.VideoPricing, _ = beefapi.NormalizeCatalogVideoPricing(item.VideoPricing)
 		}
+		// 目录单价是公开价目，用于助手和界面估算费用；未保存价格的模型保持为空。
+		public.Pricing = item.Pricing
 		index, exists := indexes[item.ChannelID]
 		if !exists {
 			index = len(channels)
