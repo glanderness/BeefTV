@@ -94,9 +94,27 @@
 | `node plugin-packages/embed-documentation.mjs autodl-comfyui` | 重新生成插件文档，diff 仅目标行 |
 | `python3 -c "json.load(open('backend/internal/skills/seed/skills.json'))"` | JSON 合法，33 条 |
 
-未做：`bun run build`（完整打包）、真实客户端实机截图。本次只改文案，界面结构未动，已用现有浏览器/单元测试与类型检查覆盖；实机截图可在开正式 PR 时按既有规范补。
+未跑完整打包 `bun run build`（`tsc --noEmit` 已单独通过）。
 
-## 六、遗漏与后续
+## 六、界面截图与检查结果
+
+用真实组件预览 + 免费的模拟数据渲染，不连真实后端、不触发任何生成或扣费，也不碰用户正在运行的客户端。
+
+可复现入口：`web/preview/visible-client-brand.html`，由 `bun web/preview/start-preview.mjs` 启动（Vite 开发服务器 + 一个只回放超分能力的模拟 API，`/api` 其余请求返回空数据）。截图用 ego-browser 打开该页、真实交互后保存。
+
+| 截图 | 覆盖的改动 | 页面实测文本 |
+| --- | --- | --- |
+| [`changelog-v1.7.22.png`](beeftv-visible-client-2026-10-27-shots/changelog-v1.7.22.png) | 应用内更新日志 v1.7.22 | 「内置 BeefTV 还可切换备用文件，无需重新生成。」（同条目无 `BeefAPI`） |
+| [`changelog-v1.7.17.png`](beeftv-visible-client-2026-10-27-shots/changelog-v1.7.17.png) | 应用内更新日志 v1.7.17 | 「修复 BeefTV 视频模型调用错误，以及部分图片模型从出图列表消失的问题。」 |
+| [`upscale-model-option.png`](beeftv-visible-client-2026-10-27-shots/upscale-model-option.png) | 超分节点「超分模型」选项 | 下拉选项实测为「BeefTV 超分模型」 |
+| [`sidebar-donation.png`](beeftv-visible-client-2026-10-27-shots/sidebar-donation.png) | 侧栏捐赠气泡 | 「你的支持是我们不断优化迭代 BeefTV 的最大动力」 |
+| [`welcome-credits.png`](beeftv-visible-client-2026-10-27-shots/welcome-credits.png) | 首页演示素材署名页 | 返回链接「返回 BeefTV」；正文「…不是 BeefTV 生成的案例…」 |
+
+检查方式：ego-browser 打开预览页后，先用页面内实测文本（`page.evaluate`）核对上表文案，再截图；更新日志条目、超分下拉、捐赠气泡都由真实交互（点击按钮/下拉、悬停按钮）展开，不是静态拼字。预览页加载与产品同一套样式（`globals.css` 含 Tailwind 与设计 token，另加共享产品样式与侧栏样式），Tailwind 由 Vite 的 PostCSS 编译，渲染结果与真实界面一致。
+
+未做实机截图：本次只改文案、未改界面结构，上面的真实组件预览已覆盖全部改动文案。如需实机留证，可按既有规范在隔离客户端补。
+
+## 七、遗漏与后续
 
 1. `docs/content/docs/` 与官网中的旧品牌名由并行的文档任务处理，本任务未动。
 2. `docs/release-evidence/*` 等冻结证据里的 `BeefAPI` 是历史记录，保留原样。
