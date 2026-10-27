@@ -51,13 +51,10 @@ func seedreamImageBody(input Input) (map[string]any, error) {
 	if layers && (!modern || len(refs) != 1) {
 		return nil, errors.New("图层拆分需要 Pro 或 Flash，并连接一张图片")
 	}
-	size := input.Config.Size
-	if size == "" || size == "1:1" {
-		size = "2K"
-	}
-	size = strings.ReplaceAll(strings.ToUpper(size), "X", "x")
-	if size == "AUTO" {
-		size = "auto"
+	// 比例、档位、宽x高都用同一份型号族规则解析，和提交前的预检保持一致。
+	size, err := providerpreset.ResolveSeedreamSize(family, input.Config.Size, layers)
+	if err != nil {
+		return nil, err
 	}
 	body := map[string]any{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "size": size, "response_format": "b64_json", "watermark": input.Config.SeedreamWatermark == "true"}
 	if len(refs) == 1 {
