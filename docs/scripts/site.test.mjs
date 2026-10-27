@@ -78,6 +78,47 @@ test('每页都导出 Markdown 原文和社交卡片', () => {
   expect(existsSync(join(out, 'og/docs/image.png'))).toBe(true);
 });
 
+/** 导出的地址要能落回产物文件：/docs/x → out/docs/x.html，/content-assets/x.png → out/content-assets/x.png */
+function outputPathFor(url) {
+  let pathname = url.replace('https://docs.beeftv.app', '').split('#')[0].split('?')[0];
+  try {
+    pathname = decodeURIComponent(pathname);
+  } catch {
+    // 保留原样，下面按文件不存在报错
+  }
+  const clean = pathname.replace(/\/$/, '').replace(/^\//, '');
+  if (!clean) return join(out, 'index.html');
+  return /\.\w+$/.test(clean) ? join(out, clean) : join(out, `${clean}.html`);
+}
+
+test('导出的 Markdown 里站内链接和素材都指向真实产物', () => {
+  const exported = [
+    ...walk(join(out, 'llms.mdx')).filter((file) => file.endsWith('content.md')),
+    join(out, 'llms-full.txt'),
+  ];
+  expect(exported.length).toBeGreaterThanOrEqual(23);
+
+  const targets = new Set();
+  for (const file of exported) {
+    const text = readFileSync(file, 'utf8');
+    // 源码里的相对链接（./backend/x.mdx、裸 y.mdx、../backend/z）必须已经被解析掉
+    expect(text, `${file} 还留着源码相对链接`).not.toMatch(/\]\((?!https?:|mailto:|\/|#)[^)\s]+\.mdx?\)/);
+
+    for (const [, href] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+      if (href.startsWith('https://docs.beeftv.app/')) {
+        expect(existsSync(outputPathFor(href)), `${file}: ${href} 没有对应产物`).toBe(true);
+        targets.add(href.split('#')[0]);
+      } else if (!/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('#')) {
+        throw new Error(`${file}: 站内引用没有转成绝对地址 ${href}`);
+      }
+    }
+  }
+
+  // 页面链接和素材都要覆盖到，避免只转了一半
+  expect([...targets].some((url) => url.includes('/docs/'))).toBe(true);
+  expect([...targets].some((url) => url.includes('/content-assets/'))).toBe(true);
+});
+
 test('导出的搜索索引支持中文检索', async () => {
   const raw = readFileSync(join(out, 'api/search'), 'utf8');
   const originalFetch = globalThis.fetch;

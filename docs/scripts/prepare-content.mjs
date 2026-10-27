@@ -35,6 +35,12 @@ const pageLinkPattern = /\]\((\/docs[^)\s]*)\)/g;
 // 站内图片，例如 /images/canvas-version-history.png
 const siteImagePattern = /\]\((\/images\/[^)\s]+)\)/g;
 
+/**
+ * 这些截图里仍带着内部渠道标识（模型选择器显示内部品牌），不能出现在公开页面上。
+ * 原来用于案例页工作流小节，已改用正文表格说明；谁再把它们写回 mdx，构建直接失败。
+ */
+const blockedAssets = new Set(['beeftv-character-workflow-editor.png']);
+
 const errors = [];
 
 function walk(dir) {
@@ -111,6 +117,11 @@ function main() {
 
       if (!existsSync(source)) {
         errors.push(`${relativeFile}: 引用的素材不存在 ${href}`);
+        continue;
+      }
+
+      if (blockedAssets.has(name)) {
+        errors.push(`${relativeFile}: ${name} 含内部标识，不能用在公开页面上`);
         continue;
       }
 

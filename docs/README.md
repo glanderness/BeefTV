@@ -39,7 +39,8 @@
 
 - `lib/remark-drop-leading-h1.mjs`：内容源里的 mdx 正文开头有一行 `# 标题`（方便在 GitHub 上直接读），文档站页面标题由 frontmatter 渲染，编译时摘掉重复的那行。
 - `lib/content-assets.ts` + `components/mdx.tsx`：把正文里的 `../../../../assets/readme/x.png` 改指向 `/content-assets/x.png`，并把相对的 `.mdx` / 目录链接解析成站内页面地址。
-- `scripts/prepare-content.mjs`：复制被引用的仓库素材，并校验 frontmatter、`meta.json`、站内链接与站内图片。
+- `lib/source.ts` 的导出解析：导出的每页 Markdown 和 `llms-full.txt` 同样要把源码链接换成 `https://docs.beeftv.app/docs/...` 绝对地址（见下方「导出内容」）。
+- `scripts/prepare-content.mjs`：复制被引用的仓库素材，并校验 frontmatter、`meta.json`、站内链接与站内图片；含内部渠道标识的截图在 `blockedAssets` 里拉黑，谁写回正文都会构建失败。
 - `scripts/content.test.mjs`、`scripts/site.test.mjs`：内容与产物校验（见下）。
 
 ## 本地命令
@@ -54,7 +55,21 @@ bun run types:check    # next typegen && tsc --noEmit
 bun run test           # bun test scripts（含产物断言，需先 build）
 ```
 
-`bun run test` 分两部分：`content.test.mjs` 只看内容源（不需要构建），`site.test.mjs` 断言 `out/` 的产物（页面数量、每页一个 h1、没有内部品牌、404 文案、sitemap 与 llms 域名、每页 Markdown 与社交卡片、中文搜索命中）。
+`bun run test` 分两部分：`content.test.mjs` 只看内容源（不需要构建），`site.test.mjs` 断言 `out/` 的产物（页面数量、每页一个 h1、没有内部品牌、404 文案、sitemap 与 llms 域名、每页 Markdown 与社交卡片、导出 Markdown 里每个站内地址都有对应产物、中文搜索命中）。
+
+## 导出内容
+
+每页的 Markdown 原文（`/llms.mdx/docs/<slug>/content.md`，「复制 Markdown」按钮拿的就是它）和 `llms-full.txt` 直接来自内容源的原文，所以源码里那几种写法都要在导出时统一解析：
+
+| 源码里写的样子 | 导出后 |
+| --- | --- |
+| 相对路径 `./backend/beeftv-cli.mdx`、裸文件名 `beeftv-cli.mdx`、`../backend/environment-check` | `https://docs.beeftv.app/docs/backend/beeftv-cli` 等绝对地址 |
+| 站点根路径 `/docs/backend/http-api#任务诊断` | 补域名并保留锚点 |
+| 仓库截图 `../../../../assets/readme/a.png` | `https://docs.beeftv.app/content-assets/a.png` |
+| 站内图片 `/images/a.png` | `https://docs.beeftv.app/images/a.png` |
+| 外链、`mailto:`、页内 `#锚点` | 原样保留 |
+
+解析按来源页面做相对拼接（`lib/source.ts` 的 `resolveDocLink`），找不到对应页面时保持原样并由 `site.test.mjs` 报错，不会悄悄发出去。
 
 ## 产物结构
 
@@ -64,10 +79,10 @@ bun run test           # bun test scripts（含产物断言，需先 build）
 | --- | --- |
 | `index.html` | 站点首页 |
 | `docs.html`、`docs/**/*.html` | 文档页（`/docs` 与 `/docs/<分类>/<页面>`） |
-| `api/search` | 静态搜索索引（2.7 MB，构建时算好） |
+| `api/search` | 静态搜索索引（3.1 MB，构建时算好） |
 | `llms.txt`、`llms-full.txt`、`llms.mdx/**` | 给模型的目录、全文与每页 Markdown |
 | `og/docs/**/image.png` | 每页社交卡片（23 张，1.1 MB） |
-| `content-assets/` | 从 `assets/readme/` 复制的正文截图（约 3.3 MB） |
+| `content-assets/` | 从 `assets/readme/` 复制的正文截图（约 3.7 MB） |
 | `_next/` | JS/CSS 等静态资源 |
 | `404.html` | 未知路径的兜底页 |
 | `_headers`、`_redirects` | Workers 静态托管的响应头与重定向 |
@@ -78,7 +93,7 @@ bun run test           # bun test scripts（含产物断言，需先 build）
 
 1. 构建并本地核对：`cd docs && bun run build && bun run test`，`bun run preview` 点一遍首页、文档页、搜索和 404。
 2. 登录 Cloudflare：`cd docs && bunx wrangler login`（或在 CI 里用 `CLOUDFLARE_API_TOKEN`）。
-3. 首次部署：`cd docs && bunx wrangler deploy`。`wrangler.jsonc` 里 `assets.directory` 指向 `./out`，`not_found_handling` 为 `404-page`，所以未知路径用 `404.html` 兜底。
+3. 首次部署：`cd docs && bunx wrangler deploy`。`wrangler.jsonc` 里 `assets.directory` 指向 `./out`，`not_found_handling` 为 `404-page`，所以未知路径用 `404.html` 兜底。`compatibility_date` 固定写 `2026-09-07`：锁定的 Wrangler 4.129.0 自带运行时最高支持 `2026-09-10`，写更新会让 `wrangler dev --local` 直接起不来；升级 Wrangler 后再一起往前改。本地可用 `bunx wrangler dev --local` 先按 Workers 的路由规则验一遍（默认 `http://127.0.0.1:8787`）。
 4. 接域名：`wrangler.jsonc` 已经声明 `routes: [{ pattern: "docs.beeftv.app", custom_domain: true }]`，部署时 Cloudflare 会为这个子域自动建 DNS 记录并签证书，不需要在官网仓库或服务器上改任何东西。若先不接域名，把 `routes` 整段删掉，用 `workers_dev` 给的 `*.workers.dev` 地址先看效果。
 5. 上线后核对：`/`、`/docs`、一个具体页面、`/llms.txt`、`/sitemap.xml`、`/api/search`、一个不存在的路径（应返回 404 页面）。
 6. 官网只需在 `Beeftv-website` 加一个指向 `https://docs.beeftv.app` 的链接；不需要子路径反代，也不需要改官网构建。
