@@ -3096,7 +3096,7 @@ function InfiniteCanvasPage() {
                             </div>
                         ) : null}
 
-                        {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving ? (
+                        {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving && !nodes.some(node => selectedNodeIds.has(node.id) && (node.metadata?.workflowSlot || node.metadata?.reusableWorkflow)) ? (
                             <CanvasProjectSelectionToolbar
                                 anchorRef={selectionBoundsElementRef}
                                 containerRef={containerRef}

@@ -292,7 +292,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     </>
                 )}
             </CometCard>
-            {!readOnly && !collapsed && isSelected && !data.metadata?.locked ? (
+            {!readOnly && !workflow && !collapsed && isSelected && !data.metadata?.locked ? (
                 <>
                     <ResizeHandle corner="top-left" scale={scale} theme={theme} onMouseDown={startResize} />
                     <ResizeHandle corner="top-right" scale={scale} theme={theme} onMouseDown={startResize} />

@@ -4,6 +4,16 @@
     aspect-ratio: auto;
 }
 
+/* Workflow cards have a fixed narrow width. Give seeking its own full-width
+   row so timestamps and buttons cannot squeeze the interaction target. */
+.canvas-video-player[data-player-variant="compact"].workflow-video-player:not([data-fullscreen]) .vds-video-layout[data-sm] .vds-controls-group:has(.vds-time-slider) {
+    left: 12px;
+    right: 12px;
+    bottom: 52px;
+    height: 20px;
+    min-height: 20px;
+}
+
 .canvas-video-player {
     position: relative;
     isolation: isolate;

@@ -195,17 +195,23 @@ export function useCanvasSelectionController({
         }
 
         const clickedNode = currentNodes.find((node) => node.id === nodeId);
-        if (clickedNode?.metadata?.locked) {
+        if (clickedNode?.metadata?.locked || clickedNode?.metadata?.reusableWorkflow || (clickedNode?.metadata?.workflowSlot && !canExportWorkflowResult(clickedNode, currentNodes))) {
             dragRef.current = { ...EMPTY_DRAG_STATE };
             onNodeClick(clickedNode);
             return;
         }
 
-        const draggedNodeIds = currentNodes.filter((node) => nextSelected.has(node.id) && !node.metadata?.locked && !(node.parentId && nextSelected.has(node.parentId))).map((node) => node.id);
-        const dragIds = new Set(nextSelected);
+        const exportedResult = clickedNode && canExportWorkflowResult(clickedNode, currentNodes);
+        const draggedNodeIds = currentNodes.filter((node) => {
+            if (node.metadata?.locked) return false;
+            if (exportedResult) return node.id === nodeId;
+            return nextSelected.has(node.id) && !node.metadata?.workflowSlot && !node.metadata?.reusableWorkflow
+                && !(node.parentId && nextSelected.has(node.parentId));
+        }).map((node) => node.id);
+        const dragIds = new Set(draggedNodeIds);
         currentNodes.forEach((node) => {
-            if (nextSelected.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
-            if (nextSelected.has(node.id) && isFrameNode(node)) getFrameChildIds(node.id, currentNodes).forEach((childId) => dragIds.add(childId));
+            if (dragIds.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
+            if (dragIds.has(node.id) && isFrameNode(node)) getFrameChildIds(node.id, currentNodes).forEach((childId) => dragIds.add(childId));
         });
         currentNodes.forEach((node) => {
             if (dragIds.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));

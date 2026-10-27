@@ -14,7 +14,7 @@ describe("canvas node title interaction", () => {
         expect(liveViewportSource).toContain('else delete container.dataset.canvasNodeDragging');
     });
     test("exposes a drag handle without bypassing read-only or locked nodes", () => {
-        expect(nodeSource).toContain('onDragStart={readOnly ? undefined : (event) => onMouseDown(event, data.id)}');
+        expect(nodeSource).toContain('onDragStart={readOnly || data.metadata?.workflowSlot?.role === "input" || data.metadata?.workflowSlot?.role === "constant" ? undefined : (event) => onMouseDown(event, data.id)}');
         expect(nodeSource).toContain('disabled={!onDragStart || Boolean(node.metadata?.locked)}');
         expect(nodeSource).toContain('onDragStart?.(event)');
         expect(nodeSource).toContain('event.currentTarget.setPointerCapture(event.pointerId)');

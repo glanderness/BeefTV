@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
+import { isWorkflowGeometryFixed } from "@/lib/canvas/canvas-node-size";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_COLLAPSED_HEIGHT, FRAME_COLLAPSED_WIDTH, getFrameChildIds, isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
@@ -58,7 +59,7 @@ export function useCanvasNodeEditor({
         setNodes((current) => {
             let changed = false;
             const next = current.map((node) => {
-                if (node.id !== nodeId || node.metadata?.locked) return node;
+                if (node.id !== nodeId || node.metadata?.locked || isWorkflowGeometryFixed(node)) return node;
                 const nextPosition = position || node.position;
                 if (node.width === width && node.height === height && node.position.x === nextPosition.x && node.position.y === nextPosition.y) return node;
                 changed = true;
@@ -95,7 +96,7 @@ export function useCanvasNodeEditor({
     }, [nodesRef, setDialogNodeId, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId]);
 
     const handleNodeTitleChange = useCallback((nodeId: string, title: string) => {
-        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, title } : node)));
+        setNodes((current) => current.map((node) => (node.id === nodeId && !node.metadata?.workflowSlot ? { ...node, title } : node)));
     }, [setNodes]);
 
     const handleFolderStyleChange = useCallback((nodeId: string, style: CanvasFolderStyle) => {

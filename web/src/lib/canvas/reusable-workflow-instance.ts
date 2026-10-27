@@ -35,20 +35,26 @@ function workflowLevels(definition: WorkflowDefinition) {
     return level;
 }
 
+function workflowLayout(definition: WorkflowDefinition, origin: Position) {
+    const level = workflowLevels(definition), rows = new Map<number, number>(), positions = new Map<string, Position>();
+    for (const source of definition.nodes) {
+        const column = level(source.id), row = rows.get(column) || 0;
+        rows.set(column, row + 1);
+        positions.set(source.id, { x: origin.x + 40 + column * 380, y: origin.y + 340 + row * 330 });
+    }
+    return { positions, width: Math.max(720, (Math.max(...definition.nodes.map(node => level(node.id)), 0) + 1) * 380 + 40), height: 390 + Math.max(...rows.values(), 1) * 330 };
+}
+
 export function createWorkflowInstance(workflow: CanvasWorkflow, origin: Position) {
     const instanceId = `workflow-${nanoid()}`;
     const frameId = `workflow-group-${nanoid()}`;
     const ids = new Map(workflow.definition.nodes.map(node => [node.id, `workflow-slot-${nanoid()}`]));
-    const level = workflowLevels(workflow.definition);
-    const rows = new Map<number, number>();
+    const layout = workflowLayout(workflow.definition, origin);
     const slots = workflow.definition.nodes.map(source => {
-        const column = level(source.id);
-        const row = rows.get(column) || 0;
-        rows.set(column, row + 1);
         const fixed = source.role === "constant";
         return {
             id: ids.get(source.id)!, type: source.mediaType as CanvasNodeType, title: workflowSlotTitle(source, workflow.definition), parentId: frameId,
-            position: { x: origin.x + 40 + column * 380, y: origin.y + 320 + row * 330 }, width: 300, height: 260,
+            position: layout.positions.get(source.id)!, width: 300, height: 260,
             metadata: {
                 nodeRole: "result" as const, status: "idle" as const,
                 ...((fixed || source.useDefault) && source.resourceId ? { storageKey: `resource:${source.resourceId}` } : {}),
@@ -57,12 +63,11 @@ export function createWorkflowInstance(workflow: CanvasWorkflow, origin: Positio
             },
         } satisfies CanvasNodeData;
     });
-    const width = Math.max(720, (Math.max(...workflow.definition.nodes.map(node => level(node.id)), 0) + 1) * 380 + 40);
-    const height = 370 + Math.max(...rows.values(), 1) * 330;
+    const { width, height } = layout;
     const frame: CanvasNodeData = { id: frameId, type: CanvasNodeType.Workflow, title: workflow.name, position: origin, width, height };
     const control: CanvasNodeData = {
         id: instanceId, type: CanvasNodeType.WorkflowControl, title: workflow.name, parentId: frameId,
-        position: { x: origin.x + 40, y: origin.y + 80 }, width: width - 80, height: 180,
+        position: { x: origin.x + 40, y: origin.y + 40 }, width: width - 80, height: 200,
         metadata: { reusableWorkflow: { layoutVersion: 1, templateId: workflow.id, templateRevision: workflow.revision || 1, definition: structuredClone(workflow.definition) } },
     };
     const connections: CanvasConnection[] = workflow.definition.edges.map(edge => ({ id: nanoid(), fromNodeId: ids.get(edge.fromNodeId)!, toNodeId: ids.get(edge.toNodeId)! }));
@@ -76,38 +81,25 @@ export function normalizeWorkflowContainers(nodes: CanvasNodeData[]): CanvasNode
         const parent = nodes.find(node => node.id === control.parentId && (node.type === CanvasNodeType.Frame || node.type === CanvasNodeType.Workflow));
         if (control.type !== CanvasNodeType.WorkflowControl) patches.set(control.id, { ...control, type: CanvasNodeType.WorkflowControl });
         if (!parent) continue;
-        const legacy = parent.type === CanvasNodeType.Frame || control.type !== CanvasNodeType.WorkflowControl;
         const collapsed = parent.metadata?.frame?.collapsed;
-        const width = collapsed ? parent.metadata?.frame?.expandedWidth || parent.width : parent.width;
-        let height = collapsed ? parent.metadata?.frame?.expandedHeight || parent.height : parent.height;
         const children = nodes.filter(node => node.parentId === parent.id && node.metadata?.workflowSlot);
         const state = control.metadata!.reusableWorkflow!;
-        const repairLayout = state.layoutVersion !== 1;
-        if (repairLayout) {
-            const level = workflowLevels(state.definition);
-            const rows = new Map<number, number>();
-            for (const source of state.definition.nodes) {
-                const column = level(source.id);
-                const row = rows.get(column) || 0;
-                rows.set(column, row + 1);
-                const child = children.find(node => node.metadata?.workflowSlot?.nodeId === source.id);
-                if (child) patches.set(child.id, { ...child, width: 300, height: 260,
-                    position: { x: parent.position.x + 40 + column * 380, y: parent.position.y + 320 + row * 330 } });
+        const { width, height, positions } = workflowLayout(state.definition, parent.position);
+        for (const source of state.definition.nodes) {
+            const child = children.find(node => node.metadata?.workflowSlot?.nodeId === source.id);
+            const position = positions.get(source.id)!, title = workflowSlotTitle(source, state.definition);
+            if (child && (child.width !== 300 || child.height !== 260 || child.position.x !== position.x || child.position.y !== position.y || child.title !== title)) {
+                patches.set(child.id, { ...child, title, width: 300, height: 260, position });
             }
         }
-
-        const dy = !repairLayout && legacy && children.length ? Math.max(0, parent.position.y + 320 - Math.min(...children.map(node => node.position.y))) : 0;
-        if (dy) {
-            children.forEach(node => patches.set(node.id, { ...node, position: { ...node.position, y: node.position.y + dy } }));
-            height += dy;
+        const sizeChanged = collapsed ? parent.metadata?.frame?.expandedWidth !== width || parent.metadata?.frame?.expandedHeight !== height : parent.width !== width || parent.height !== height;
+        if (parent.type !== CanvasNodeType.Workflow || sizeChanged) patches.set(parent.id, { ...parent, type: CanvasNodeType.Workflow,
+            ...(!collapsed ? { width, height } : {}), metadata: { ...parent.metadata, frame: { collapsed: Boolean(collapsed), expandedWidth: width, expandedHeight: height } } });
+        const position = { x: parent.position.x + 40, y: parent.position.y + 40 };
+        if (control.type !== CanvasNodeType.WorkflowControl || control.width !== width - 80 || control.height !== 200 || control.position.x !== position.x || control.position.y !== position.y) {
+            patches.set(control.id, { ...control, type: CanvasNodeType.WorkflowControl, width: width - 80, height: 200, position });
         }
-        if (parent.type !== CanvasNodeType.Workflow || dy) patches.set(parent.id, { ...parent, type: CanvasNodeType.Workflow,
-            ...(!collapsed ? { height } : {}), metadata: { ...parent.metadata, frame: { collapsed: Boolean(collapsed), expandedWidth: width, expandedHeight: height } } });
-        const position = { x: parent.position.x + 40, y: parent.position.y + 80 };
-        if (control.type !== CanvasNodeType.WorkflowControl || control.width !== width - 80 || control.height !== 180 || control.position.x !== position.x || control.position.y !== position.y) {
-            patches.set(control.id, { ...control, type: CanvasNodeType.WorkflowControl, width: width - 80, height: 180, position });
-        }
-        if (repairLayout) {
+        if (state.layoutVersion!==1) {
             const next = patches.get(control.id) || control;
             patches.set(control.id, { ...next, metadata: { ...next.metadata, reusableWorkflow: { ...state, layoutVersion: 1 } } });
         }
