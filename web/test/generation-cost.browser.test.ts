@@ -96,6 +96,8 @@ for (const dark of [false, true]) {
         expect(price).toContain("实际费用见生成账单");
 
         if (evidenceDir) {
+            // 价格弹层有进场动画，刚可见时盒子可能还是 0 宽，等它量出尺寸再截图。
+            await page.waitForFunction(() => (document.querySelector(".ant-popover:not(.ant-popover-hidden)")?.getBoundingClientRect().width ?? 0) > 0);
             await popover.screenshot({ path: shot("model-picker-price-popover") });
             await page.getByTestId("model-picker").screenshot({ path: shot("model-picker-price") });
         }
