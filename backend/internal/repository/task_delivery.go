@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -77,6 +79,19 @@ func (r *Repository) SucceededTasksForDelivery(afterID string, limit int) ([]mod
 	var tasks []model.Task
 	err := query.Order("id asc").Limit(limit).Find(&tasks).Error
 	return tasks, err
+}
+
+// UpdateTaskRecoveryOutcome stores the private scanner marker on a successful
+// task. It deliberately does not change task status, result, or retry state.
+func (r *Repository) UpdateTaskRecoveryOutcome(userID, taskID string, outcome *string) error {
+	if r == nil || r.db == nil {
+		return gorm.ErrInvalidDB
+	}
+	updates := map[string]any{"recovery_outcome": outcome, "updated_at": time.Now()}
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND user_id = ? AND status = ?", taskID, userID, model.TaskStatusSucceeded).
+		Updates(updates)
+	return result.Error
 }
 
 func insertOwnedAsset(tx *gorm.DB, asset *model.Asset) error {
