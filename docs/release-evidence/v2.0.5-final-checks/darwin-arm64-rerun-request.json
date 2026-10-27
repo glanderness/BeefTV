@@ -1,0 +1,17 @@
+{
+  "requestedAt": "2026-10-27T18:44:18.344694+00:00",
+  "command": [
+    "gh",
+    "run",
+    "rerun",
+    "40559746752",
+    "--repo",
+    "glanderness/BeefTV",
+    "--job",
+    "122387469563"
+  ],
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "job 122387469563 cannot be rerun\n",
+  "note": "仅请求重试失败的 darwin-arm64 作业及其后续依赖；没有取消健康平台或发起新 dispatch。"
+}

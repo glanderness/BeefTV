@@ -1,0 +1,1202 @@
+{
+  "checkedAt": "2026-10-27T18:46:15.291765+00:00",
+  "run": {
+    "attempt": 1,
+    "conclusion": "",
+    "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+    "jobs": [
+      {
+        "completedAt": "2026-10-27T18:28:58Z",
+        "conclusion": "success",
+        "databaseId": 122385265951,
+        "name": "Validate and open draft",
+        "startedAt": "2026-10-27T18:24:57Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-27T18:25:00Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-27T18:24:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:25:00Z",
+            "conclusion": "success",
+            "name": "Require official main",
+            "number": 2,
+            "startedAt": "2026-10-27T18:25:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:25:55Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-10-27T18:25:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:06Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 4,
+            "startedAt": "2026-10-27T18:25:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:07Z",
+            "conclusion": "success",
+            "name": "Run oven-sh/setup-bun@v2",
+            "number": 5,
+            "startedAt": "2026-10-27T18:26:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:09Z",
+            "conclusion": "success",
+            "name": "Require two rounds of real client generation",
+            "number": 6,
+            "startedAt": "2026-10-27T18:26:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:25Z",
+            "conclusion": "success",
+            "name": "Require updater keys",
+            "number": 7,
+            "startedAt": "2026-10-27T18:26:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:28Z",
+            "conclusion": "success",
+            "name": "Check legacy COS feed bridge",
+            "number": 8,
+            "startedAt": "2026-10-27T18:26:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:42Z",
+            "conclusion": "success",
+            "name": "Validate version, changelog, keys, and uniqueness",
+            "number": 9,
+            "startedAt": "2026-10-27T18:26:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:26:55Z",
+            "conclusion": "success",
+            "name": "Prepare release gate dependencies",
+            "number": 10,
+            "startedAt": "2026-10-27T18:26:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:25Z",
+            "conclusion": "success",
+            "name": "Local release contract gate",
+            "number": 11,
+            "startedAt": "2026-10-27T18:26:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:51Z",
+            "conclusion": "success",
+            "name": "Package corresponding WASM source",
+            "number": 12,
+            "startedAt": "2026-10-27T18:28:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:54Z",
+            "conclusion": "success",
+            "name": "Run actions/upload-artifact@v4",
+            "number": 13,
+            "startedAt": "2026-10-27T18:28:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:54Z",
+            "conclusion": "success",
+            "name": "Create draft GitHub release",
+            "number": 14,
+            "startedAt": "2026-10-27T18:28:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:55Z",
+            "conclusion": "success",
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "number": 26,
+            "startedAt": "2026-10-27T18:28:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:55Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 27,
+            "startedAt": "2026-10-27T18:28:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:55Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 28,
+            "startedAt": "2026-10-27T18:28:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:28:55Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 29,
+            "startedAt": "2026-10-27T18:28:55Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/glanderness/BeefTV/actions/runs/40559746752/job/122385265951"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 122387469521,
+        "name": "Build darwin-amd64",
+        "startedAt": "2026-10-27T18:29:03Z",
+        "status": "in_progress",
+        "steps": [
+          {
+            "completedAt": "2026-10-27T18:29:06Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-27T18:29:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:15Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-27T18:29:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:24Z",
+            "conclusion": "success",
+            "name": "Run actions/download-artifact@v4",
+            "number": 3,
+            "startedAt": "2026-10-27T18:29:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:02Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 4,
+            "startedAt": "2026-10-27T18:29:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:05Z",
+            "conclusion": "success",
+            "name": "Run oven-sh/setup-bun@v2",
+            "number": 5,
+            "startedAt": "2026-10-27T18:30:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:19Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 6,
+            "startedAt": "2026-10-27T18:30:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:20Z",
+            "conclusion": "success",
+            "name": "Select bundled Node runtime",
+            "number": 7,
+            "startedAt": "2026-10-27T18:30:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:31:20Z",
+            "conclusion": "success",
+            "name": "Verify agent host packaging contract",
+            "number": 8,
+            "startedAt": "2026-10-27T18:30:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:31:20Z",
+            "conclusion": "skipped",
+            "name": "Install Linux desktop dependencies",
+            "number": 9,
+            "startedAt": "2026-10-27T18:31:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:31:20Z",
+            "conclusion": "skipped",
+            "name": "Install MSYS2 UCRT64 GCC",
+            "number": 10,
+            "startedAt": "2026-10-27T18:31:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:31:20Z",
+            "conclusion": "skipped",
+            "name": "Assert DWARF 5 CGO compiler",
+            "number": 11,
+            "startedAt": "2026-10-27T18:31:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:31:27Z",
+            "conclusion": "success",
+            "name": "Build official plugin packages",
+            "number": 12,
+            "startedAt": "2026-10-27T18:31:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:43:20Z",
+            "conclusion": "success",
+            "name": "Build macOS or Linux desktop",
+            "number": 13,
+            "startedAt": "2026-10-27T18:31:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:43:20Z",
+            "conclusion": "skipped",
+            "name": "Build Windows desktop",
+            "number": 14,
+            "startedAt": "2026-10-27T18:43:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:43:20Z",
+            "conclusion": "skipped",
+            "name": "Verify Windows video disconnect recovery",
+            "number": 15,
+            "startedAt": "2026-10-27T18:43:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:43:34Z",
+            "conclusion": "success",
+            "name": "Package updater zip",
+            "number": 16,
+            "startedAt": "2026-10-27T18:43:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:43:35Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-python@v5",
+            "number": 17,
+            "startedAt": "2026-10-27T18:43:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:43:35Z",
+            "conclusion": "skipped",
+            "name": "Install NSIS",
+            "number": 18,
+            "startedAt": "2026-10-27T18:43:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Package native installer",
+            "number": 19,
+            "startedAt": "2026-10-27T18:43:35Z",
+            "status": "in_progress"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify native installer lifecycle",
+            "number": 20,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify MCP from final packaged CLI",
+            "number": 21,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify upgrades from released Windows clients",
+            "number": 22,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify Linux desktop window from final archive",
+            "number": 23,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Preserve Windows upgrade acceptance",
+            "number": 24,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Store platform zip for publication",
+            "number": 25,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/setup-python@v5",
+            "number": 46,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 47,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "number": 48,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 49,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/checkout@v4",
+            "number": 50,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          }
+        ],
+        "url": "https://github.com/glanderness/BeefTV/actions/runs/40559746752/job/122387469521"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 122387469534,
+        "name": "Build windows-amd64",
+        "startedAt": "2026-10-27T18:29:02Z",
+        "status": "in_progress",
+        "steps": [
+          {
+            "completedAt": "2026-10-27T18:29:06Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-27T18:29:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:16Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-27T18:29:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:20Z",
+            "conclusion": "success",
+            "name": "Run actions/download-artifact@v4",
+            "number": 3,
+            "startedAt": "2026-10-27T18:29:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:08Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 4,
+            "startedAt": "2026-10-27T18:29:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:10Z",
+            "conclusion": "success",
+            "name": "Run oven-sh/setup-bun@v2",
+            "number": 5,
+            "startedAt": "2026-10-27T18:30:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:16Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 6,
+            "startedAt": "2026-10-27T18:30:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:16Z",
+            "conclusion": "success",
+            "name": "Select bundled Node runtime",
+            "number": 7,
+            "startedAt": "2026-10-27T18:30:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:26Z",
+            "conclusion": "success",
+            "name": "Verify agent host packaging contract",
+            "number": 8,
+            "startedAt": "2026-10-27T18:30:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:26Z",
+            "conclusion": "skipped",
+            "name": "Install Linux desktop dependencies",
+            "number": 9,
+            "startedAt": "2026-10-27T18:32:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:55Z",
+            "conclusion": "success",
+            "name": "Install MSYS2 UCRT64 GCC",
+            "number": 10,
+            "startedAt": "2026-10-27T18:32:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:33:00Z",
+            "conclusion": "success",
+            "name": "Assert DWARF 5 CGO compiler",
+            "number": 11,
+            "startedAt": "2026-10-27T18:32:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:33:00Z",
+            "conclusion": "skipped",
+            "name": "Build official plugin packages",
+            "number": 12,
+            "startedAt": "2026-10-27T18:33:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:33:00Z",
+            "conclusion": "skipped",
+            "name": "Build macOS or Linux desktop",
+            "number": 13,
+            "startedAt": "2026-10-27T18:33:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:41:38Z",
+            "conclusion": "success",
+            "name": "Build Windows desktop",
+            "number": 14,
+            "startedAt": "2026-10-27T18:33:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:41:49Z",
+            "conclusion": "success",
+            "name": "Verify Windows video disconnect recovery",
+            "number": 15,
+            "startedAt": "2026-10-27T18:41:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:42:08Z",
+            "conclusion": "success",
+            "name": "Package updater zip",
+            "number": 16,
+            "startedAt": "2026-10-27T18:41:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:42:08Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-python@v5",
+            "number": 17,
+            "startedAt": "2026-10-27T18:42:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:42:09Z",
+            "conclusion": "success",
+            "name": "Install NSIS",
+            "number": 18,
+            "startedAt": "2026-10-27T18:42:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Package native installer",
+            "number": 19,
+            "startedAt": "2026-10-27T18:42:09Z",
+            "status": "in_progress"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify native installer lifecycle",
+            "number": 20,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify MCP from final packaged CLI",
+            "number": 21,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify upgrades from released Windows clients",
+            "number": 22,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Verify Linux desktop window from final archive",
+            "number": 23,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Preserve Windows upgrade acceptance",
+            "number": 24,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Store platform zip for publication",
+            "number": 25,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/setup-python@v5",
+            "number": 46,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 47,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "number": 48,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 49,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/checkout@v4",
+            "number": 50,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          }
+        ],
+        "url": "https://github.com/glanderness/BeefTV/actions/runs/40559746752/job/122387469534"
+      },
+      {
+        "completedAt": "2026-10-27T18:38:29Z",
+        "conclusion": "failure",
+        "databaseId": 122387469563,
+        "name": "Build darwin-arm64",
+        "startedAt": "2026-10-27T18:29:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-27T18:29:06Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-27T18:29:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:13Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-27T18:29:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:18Z",
+            "conclusion": "success",
+            "name": "Run actions/download-artifact@v4",
+            "number": 3,
+            "startedAt": "2026-10-27T18:29:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:38Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 4,
+            "startedAt": "2026-10-27T18:29:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:39Z",
+            "conclusion": "success",
+            "name": "Run oven-sh/setup-bun@v2",
+            "number": 5,
+            "startedAt": "2026-10-27T18:29:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:40Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 6,
+            "startedAt": "2026-10-27T18:29:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:40Z",
+            "conclusion": "success",
+            "name": "Select bundled Node runtime",
+            "number": 7,
+            "startedAt": "2026-10-27T18:29:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:15Z",
+            "conclusion": "success",
+            "name": "Verify agent host packaging contract",
+            "number": 8,
+            "startedAt": "2026-10-27T18:29:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:15Z",
+            "conclusion": "skipped",
+            "name": "Install Linux desktop dependencies",
+            "number": 9,
+            "startedAt": "2026-10-27T18:30:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:15Z",
+            "conclusion": "skipped",
+            "name": "Install MSYS2 UCRT64 GCC",
+            "number": 10,
+            "startedAt": "2026-10-27T18:30:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:15Z",
+            "conclusion": "skipped",
+            "name": "Assert DWARF 5 CGO compiler",
+            "number": 11,
+            "startedAt": "2026-10-27T18:30:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:30:17Z",
+            "conclusion": "success",
+            "name": "Build official plugin packages",
+            "number": 12,
+            "startedAt": "2026-10-27T18:30:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:01Z",
+            "conclusion": "success",
+            "name": "Build macOS or Linux desktop",
+            "number": 13,
+            "startedAt": "2026-10-27T18:30:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:01Z",
+            "conclusion": "skipped",
+            "name": "Build Windows desktop",
+            "number": 14,
+            "startedAt": "2026-10-27T18:37:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:01Z",
+            "conclusion": "skipped",
+            "name": "Verify Windows video disconnect recovery",
+            "number": 15,
+            "startedAt": "2026-10-27T18:37:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:12Z",
+            "conclusion": "success",
+            "name": "Package updater zip",
+            "number": 16,
+            "startedAt": "2026-10-27T18:37:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:13Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-python@v5",
+            "number": 17,
+            "startedAt": "2026-10-27T18:37:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:13Z",
+            "conclusion": "skipped",
+            "name": "Install NSIS",
+            "number": 18,
+            "startedAt": "2026-10-27T18:37:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "failure",
+            "name": "Package native installer",
+            "number": 19,
+            "startedAt": "2026-10-27T18:37:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Verify native installer lifecycle",
+            "number": 20,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Verify MCP from final packaged CLI",
+            "number": 21,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Verify upgrades from released Windows clients",
+            "number": 22,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Verify Linux desktop window from final archive",
+            "number": 23,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Preserve Windows upgrade acceptance",
+            "number": 24,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Store platform zip for publication",
+            "number": 25,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Post Run actions/setup-python@v5",
+            "number": 46,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 47,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "number": 48,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:21Z",
+            "conclusion": "skipped",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 49,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:22Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 50,
+            "startedAt": "2026-10-27T18:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:26Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 51,
+            "startedAt": "2026-10-27T18:38:22Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/glanderness/BeefTV/actions/runs/40559746752/job/122387469563"
+      },
+      {
+        "completedAt": "2026-10-27T18:38:51Z",
+        "conclusion": "success",
+        "databaseId": 122387469598,
+        "name": "Build linux-amd64",
+        "startedAt": "2026-10-27T18:29:01Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-27T18:29:05Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-27T18:29:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:16Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-27T18:29:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:18Z",
+            "conclusion": "success",
+            "name": "Run actions/download-artifact@v4",
+            "number": 3,
+            "startedAt": "2026-10-27T18:29:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:35Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 4,
+            "startedAt": "2026-10-27T18:29:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:37Z",
+            "conclusion": "success",
+            "name": "Run oven-sh/setup-bun@v2",
+            "number": 5,
+            "startedAt": "2026-10-27T18:29:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:38Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 6,
+            "startedAt": "2026-10-27T18:29:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:38Z",
+            "conclusion": "success",
+            "name": "Select bundled Node runtime",
+            "number": 7,
+            "startedAt": "2026-10-27T18:29:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:29:49Z",
+            "conclusion": "success",
+            "name": "Verify agent host packaging contract",
+            "number": 8,
+            "startedAt": "2026-10-27T18:29:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:58Z",
+            "conclusion": "success",
+            "name": "Install Linux desktop dependencies",
+            "number": 9,
+            "startedAt": "2026-10-27T18:29:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:58Z",
+            "conclusion": "skipped",
+            "name": "Install MSYS2 UCRT64 GCC",
+            "number": 10,
+            "startedAt": "2026-10-27T18:32:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:58Z",
+            "conclusion": "skipped",
+            "name": "Assert DWARF 5 CGO compiler",
+            "number": 11,
+            "startedAt": "2026-10-27T18:32:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:32:59Z",
+            "conclusion": "success",
+            "name": "Build official plugin packages",
+            "number": 12,
+            "startedAt": "2026-10-27T18:32:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:36:05Z",
+            "conclusion": "success",
+            "name": "Build macOS or Linux desktop",
+            "number": 13,
+            "startedAt": "2026-10-27T18:32:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:36:05Z",
+            "conclusion": "skipped",
+            "name": "Build Windows desktop",
+            "number": 14,
+            "startedAt": "2026-10-27T18:36:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:36:05Z",
+            "conclusion": "skipped",
+            "name": "Verify Windows video disconnect recovery",
+            "number": 15,
+            "startedAt": "2026-10-27T18:36:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:36:16Z",
+            "conclusion": "success",
+            "name": "Package updater zip",
+            "number": 16,
+            "startedAt": "2026-10-27T18:36:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:36:16Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-python@v5",
+            "number": 17,
+            "startedAt": "2026-10-27T18:36:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:36:16Z",
+            "conclusion": "skipped",
+            "name": "Install NSIS",
+            "number": 18,
+            "startedAt": "2026-10-27T18:36:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:37:26Z",
+            "conclusion": "success",
+            "name": "Package native installer",
+            "number": 19,
+            "startedAt": "2026-10-27T18:36:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:27Z",
+            "conclusion": "success",
+            "name": "Verify native installer lifecycle",
+            "number": 20,
+            "startedAt": "2026-10-27T18:37:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:28Z",
+            "conclusion": "success",
+            "name": "Verify MCP from final packaged CLI",
+            "number": 21,
+            "startedAt": "2026-10-27T18:38:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:28Z",
+            "conclusion": "skipped",
+            "name": "Verify upgrades from released Windows clients",
+            "number": 22,
+            "startedAt": "2026-10-27T18:38:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:37Z",
+            "conclusion": "success",
+            "name": "Verify Linux desktop window from final archive",
+            "number": 23,
+            "startedAt": "2026-10-27T18:38:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:37Z",
+            "conclusion": "skipped",
+            "name": "Preserve Windows upgrade acceptance",
+            "number": 24,
+            "startedAt": "2026-10-27T18:38:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:47Z",
+            "conclusion": "success",
+            "name": "Store platform zip for publication",
+            "number": 25,
+            "startedAt": "2026-10-27T18:38:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:47Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-python@v5",
+            "number": 46,
+            "startedAt": "2026-10-27T18:38:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:47Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 47,
+            "startedAt": "2026-10-27T18:38:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:47Z",
+            "conclusion": "success",
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "number": 48,
+            "startedAt": "2026-10-27T18:38:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:47Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 49,
+            "startedAt": "2026-10-27T18:38:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:47Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 50,
+            "startedAt": "2026-10-27T18:38:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-27T18:38:48Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 51,
+            "startedAt": "2026-10-27T18:38:47Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/glanderness/BeefTV/actions/runs/40559746752/job/122387469598"
+      }
+    ],
+    "status": "in_progress",
+    "url": "https://github.com/glanderness/BeefTV/actions/runs/40559746752"
+  },
+  "release": {
+    "assets": [],
+    "isDraft": true,
+    "publishedAt": null,
+    "url": "https://github.com/glanderness/BeefTV/releases/tag/untagged-42d66c892ead062b9bb9"
+  },
+  "nextCheckBeijing": "2026-10-28 02:55",
+  "note": "失败作业单独重试请求返回 cannot be rerun；保持现有运行，未启动第二次 dispatch。",
+  "failureLog": {
+    "file": "darwin-arm64-attempt1-job.txt",
+    "source": "https://api.github.com/repos/glanderness/BeefTV/actions/jobs/122387469563/logs",
+    "bytes": 64072,
+    "sha256": "01d162eee1a37abe81327609cd72c8f02615eed6e88dc833726a5606f17d7928",
+    "format": "原始 GitHub job 日志，包含原始终端控制字符"
+  }
+}

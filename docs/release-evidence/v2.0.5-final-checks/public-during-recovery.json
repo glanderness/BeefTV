@@ -1,0 +1,37 @@
+{
+  "checkedAt": "2026-10-27T18:44:51.625555+00:00",
+  "note": "按发布器公开读取的请求标识核对当前入口；未验签，不是 v2.0.5 发布完成证据。",
+  "responses": [
+    {
+      "name": "r2",
+      "url": "https://updates.beefapi.com/beeftv/desktop-update.json",
+      "userAgent": "BeefTV-Desktop-Updater/v2.0.5",
+      "httpStatus": 200,
+      "bytes": 5106,
+      "sha256": "d8d178886131e513f9449848eb917d12f651937c07e9050f8c33a06fc5dd9554",
+      "version": "v2.0.4"
+    },
+    {
+      "name": "cos",
+      "url": "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv/desktop-update.json",
+      "userAgent": "BeefTV-Desktop-Updater/v2.0.5",
+      "httpStatus": 200,
+      "bytes": 5106,
+      "sha256": "d8d178886131e513f9449848eb917d12f651937c07e9050f8c33a06fc5dd9554",
+      "version": "v2.0.4"
+    },
+    {
+      "name": "website",
+      "url": "https://beeftv.app/data/releases.json",
+      "userAgent": "BeefTV-Desktop-Updater/v2.0.5",
+      "httpStatus": 200,
+      "bytes": 75627,
+      "sha256": "e074f084aed0a42a8c6d12327466a209b31a7940ae800474560c7a2a0916fbfc",
+      "version": "v2.0.4",
+      "mirrorVersions": [
+        "v2.0.4",
+        "v2.0.3"
+      ]
+    }
+  ]
+}
