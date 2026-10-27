@@ -117,7 +117,10 @@ export function UpscaleNodeContent({ node, theme }: { node: CanvasNodeData; them
             <div className="flex items-center justify-between gap-3"><span>超分倍率</span><InputNumber aria-label="超分倍率" min={1} max={4} step={1} precision={0} value={settings.scale} onChange={value => patch({ scale: value || 2 })} /></div>
             {imageCount > 0 || !videoCount ? renderMediaSettings("image") : null}
             {videoCount > 0 ? renderMediaSettings("video") : null}
-            {inputs.length > 0 ? <div style={{ color: theme.node.muted }}>{estimating ? <span className="inline-flex items-center gap-1"><LoaderCircle className="size-3 animate-spin" />估价中</span> : quotedCount ? `预计预留 ¥${reservation.toFixed(2)}${quotedCount < inputs.length ? "（部分素材）" : ""}` : "提交前获取费用"}</div> : null}
+            {inputs.length > 0 ? <div className="space-y-0.5" style={{ color: theme.node.muted }}>{estimating ? <span className="inline-flex items-center gap-1"><LoaderCircle className="size-3 animate-spin" />估价中</span> : quotedCount ? <>
+                <div>{`先扣 ¥${reservation.toFixed(2)}${quotedCount < inputs.length ? "（部分素材）" : ""}`}</div>
+                <div>完成后按实际费用结算，多扣的退回</div>
+            </> : "提交前获取费用"}</div> : null}
             {Object.keys(estimates).length ? <details><summary className="cursor-pointer" style={{ color: theme.node.muted }}>超分后的分辨率</summary><div className="mt-2 space-y-1">{inputs.map(input => { const estimate = estimates[input.id]; return estimate ? <div key={input.id} className="flex gap-2"><span className="min-w-0 flex-1 truncate">{input.title}</span><span className="shrink-0 tabular-nums">{estimate.output.width} × {estimate.output.height}</span></div> : null; })}</div></details> : null}
             <div className="space-y-3">
                 <Select getPopupContainer={trigger => trigger.parentElement || document.body} className="w-full" aria-label="超分模型" placeholder="暂无可用超分模型" disabled={!officialConnected} value={channelId || undefined} options={officialConnected ? [{ label: "BeefTV超分模型", value: "beefapi" }] : []} onChange={channelId => patch({ channelId })} />
