@@ -20,10 +20,10 @@ if (typeof document !== "undefined") document.documentElement.lang = currentLoca
 
 const fill = (template: string, args: readonly unknown[]) => template.replace(/\{(\d+)\}/g, (match, index) => (Number(index) < args.length ? String(args[Number(index)]) : match));
 
-/** 构建期插件注入的翻译函数；key 为中文原文，模板变量为 {0}{1}… */
+/** 构建期插件注入的翻译函数；key 为中文原文，模板变量为 {0}{1}…；变量只用于显示，同样走 __tv */
 export function __t(key: string, args?: unknown[]): string {
     const template = dict[key] || key;
-    return args ? fill(template, args) : template;
+    return args ? fill(template, args.map((arg) => __tv(arg))) : template;
 }
 
 const CJK = /[一-鿿]/;
