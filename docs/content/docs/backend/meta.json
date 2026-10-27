@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "local-development",
+    "beeftv-cli",
     "http-api",
     "storyboard-operations",
     "code-map",

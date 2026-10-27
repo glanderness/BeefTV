@@ -153,6 +153,10 @@ func (s *ProviderConfig) SaveLocalModelConfigRevision(body []byte, expectedRevis
 
 // SaveCatalogWithAssistantDefault records initialization with the config atomically.
 // Connection-state retries and frontend snapshots cannot reset a later user choice.
+// A fresh authorization only fills the gap when nothing was saved yet: reconnecting
+// or switching accounts never moves a user off the assistant model they picked, not
+// even when that model is missing from the new catalog (the app then asks them to
+// choose again instead of silently switching them to a different model).
 func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizationID, model string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -165,7 +169,9 @@ func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizat
 		return err
 	}
 	if authorizationID != "" && document.AssistantDefaultAuthorization != authorizationID {
-		if model != "" {
+		if saved := savedAssistantSelection(document.Config); saved != "" {
+			incoming["assistantModel"] = saved
+		} else if model != "" {
 			incoming["assistantModel"] = model
 		}
 		document.AssistantDefaultAuthorization = authorizationID
@@ -183,6 +189,14 @@ func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizat
 	}
 	_, err = s.saveLocalModelConfig(body, document)
 	return err
+}
+
+func savedAssistantSelection(config map[string]any) string {
+	if config == nil {
+		return ""
+	}
+	value, _ := config["assistantModel"].(string)
+	return strings.TrimSpace(value)
 }
 
 func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument ProviderStateDocument) (int64, error) {

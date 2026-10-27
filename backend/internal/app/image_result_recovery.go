@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -20,6 +21,32 @@ func (s *Service) recoverAcceptedImage(task model.Task) (*model.Task, bool, erro
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
 	}
+	result, handled, err := imageResultFromReceipt(receipt)
+	if !handled || err != nil {
+		return nil, handled, err
+	}
+	owner := "manual-recovery:" + newID()
+	if err := s.repo.ClaimFailedTaskProviderRecovery(task.ID, task.UserID, owner, providerTaskRecoveryLeaseDuration); err != nil {
+		return nil, true, err
+	}
+	task.LeaseOwner = owner
+	defer s.repo.ReleaseTaskProviderRecovery(task.ID, owner)
+	task.Error = ""
+	task.FailureDiagnostics = nil
+	if err := s.saveTaskCompletionWithinStorageQuota(&task, result, nil, false); err != nil {
+		return nil, true, err
+	}
+	_ = s.log(task.UserID, task.ID, "info", "已从原始成功响应恢复图片，等待取回结果", receipt.ID)
+	s.attachTaskDelivery(&task)
+	return taskForOutput(task), true, nil
+}
+
+// 人工 /retry 与自动扫描共用相同的回执有效性检查。
+func imageResultFromReceipt(receipt *model.ApiCallLog) ([]byte, bool, error) {
+	return imageResultFromReceiptContext(context.Background(), receipt)
+}
+
+func imageResultFromReceiptContext(ctx context.Context, receipt *model.ApiCallLog) ([]byte, bool, error) {
 	if receipt != nil && (receipt.StatusCode < 200 || (receipt.StatusCode >= 200 && receipt.StatusCode < 300 && (receipt.StatusCode != 200 || receipt.Status != model.ApiCallStatusSucceeded || receipt.APIFormat != "openai" || (!strings.HasSuffix(receipt.Path, "/images/generations") && !strings.HasSuffix(receipt.Path, "/images/edits"))))) {
 		return nil, true, imageRecoveryError{errors.New("创建请求结果未知")}
 	}
@@ -44,7 +71,7 @@ func (s *Service) recoverAcceptedImage(task model.Task) (*model.Task, bool, erro
 	}
 	images := make([]map[string]any, 0, len(body.Data))
 	for _, image := range body.Data {
-		if _, err := outbound.ValidateOutboundURL(image.URL); err != nil {
+		if _, err := outbound.ValidateOutboundURLContext(ctx, image.URL); err != nil {
 			return nil, true, err
 		}
 		images = append(images, map[string]any{"url": image.URL})
@@ -53,18 +80,5 @@ func (s *Service) recoverAcceptedImage(task model.Task) (*model.Task, bool, erro
 	if err != nil {
 		return nil, true, err
 	}
-	owner := "manual-recovery:" + newID()
-	if err := s.repo.ClaimFailedTaskProviderRecovery(task.ID, task.UserID, owner, providerTaskRecoveryLeaseDuration); err != nil {
-		return nil, true, err
-	}
-	task.LeaseOwner = owner
-	defer s.repo.ReleaseTaskProviderRecovery(task.ID, owner)
-	task.Error = ""
-	task.FailureDiagnostics = nil
-	if err := s.saveTaskCompletionWithinStorageQuota(&task, result, nil, false); err != nil {
-		return nil, true, err
-	}
-	_ = s.log(task.UserID, task.ID, "info", "已从原始成功响应恢复图片，等待取回结果", receipt.ID)
-	s.attachTaskDelivery(&task)
-	return taskForOutput(task), true, nil
+	return result, true, nil
 }

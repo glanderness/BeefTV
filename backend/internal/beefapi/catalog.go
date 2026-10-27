@@ -9,7 +9,10 @@ import (
 	"infinite-canvas/backend/internal/workspace"
 )
 
-const DefaultManagedAssistantModel = "gpt-6-astra"
+// DefaultManagedAssistantModel 是 BeefAPI 连接授权后写入的助手模型：按 10-26
+// 会议结论改用成本最低的 DeepSeek Flash，跑通助手的基础流程。它只用于初始化，
+// 已经保存过助手模型的用户不会被改写（见 SaveCatalogWithAssistantDefault）。
+const DefaultManagedAssistantModel = "deepseek-v4.1-flash"
 
 func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string) error {
 	if store == nil {

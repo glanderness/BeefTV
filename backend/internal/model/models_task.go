@@ -42,6 +42,8 @@ type Task struct {
 	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
 	Error                     string                  `json:"error"`
 	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"-"`
+	RecoveryOutcome           *string                 `json:"-" gorm:"type:text"`
+	Outcome                   *TaskOutcome            `json:"outcome,omitempty" gorm:"-"`
 	ResultState               string                  `json:"resultState,omitempty" gorm:"-"`
 	Outputs                   []TaskOutput            `json:"outputs,omitempty" gorm:"-"`
 	Delivery                  *TaskDeliveryProgress   `json:"delivery,omitempty" gorm:"-"`
@@ -167,6 +169,13 @@ type TaskOutput struct {
 	ResourceID               string            `json:"resourceId,omitempty"`
 	EffectKey                string            `json:"effectKey,omitempty"`
 	TargetBinding            *TaskOutputTarget `json:"targetBinding,omitempty"`
+}
+
+// TaskOutcome 只由任务读投影计算，不是数据库列。
+type TaskOutcome struct {
+	Phase      string `json:"phase"`
+	Regenerate string `json:"regenerate"`
+	Reason     string `json:"reason"`
 }
 
 type TaskOutputTarget struct {

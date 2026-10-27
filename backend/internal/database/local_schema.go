@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 25
+const CurrentSchemaVersion int64 = 26
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -121,6 +121,9 @@ func canonicalLocalMigrations() []localMigration {
 				return err
 			}
 			return migrateAssistantContinuationIntentFence(tx)
+		}},
+		{version: 26, name: "task-recovery-outcome", apply: func(tx *gorm.DB) error {
+			return ensureSQLiteColumn(tx, "tasks", "recovery_outcome", "TEXT")
 		}},
 	}
 }
@@ -433,6 +436,11 @@ func RequireLocalSchema(db *gorm.DB) error {
 	}
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
+	}
+	if has, err := sqliteHasColumn(db, "tasks", "recovery_outcome"); err != nil {
+		return err
+	} else if !has {
+		return fmt.Errorf("本地任务结构缺失列 recovery_outcome")
 	}
 	if err := requireAssistantContinuations(db); err != nil {
 		return err

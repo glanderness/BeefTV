@@ -11,6 +11,7 @@ import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
+import { signatureCredentialHint } from "@/lib/service-credentials";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
@@ -79,6 +80,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, availableProtocols)) : "";
     const activeProtocol = activeModelProfile ? activeModelProfile.protocol || channel.interfaceType || "" : inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
+    const signatureHint = signatureCredentialHint(modelProtocolDefinition(activeProtocol, availableProtocols)?.authType);
 
     return (
         <div className="mt-4">
@@ -181,6 +183,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                         capabilityConfig: activeCapability === "image" || activeCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
                                     })}
                                 />
+                                {signatureHint && <p className="text-xs leading-5 text-foreground/58">{signatureHint}</p>}
                             </section>
                         </div>,
                     },
