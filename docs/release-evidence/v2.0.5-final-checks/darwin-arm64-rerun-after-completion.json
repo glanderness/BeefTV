@@ -1,0 +1,18 @@
+{
+  "requestedAt": "2026-10-27T19:11:26.259503+00:00",
+  "command": [
+    "gh",
+    "run",
+    "rerun",
+    "40559746752",
+    "--repo",
+    "glanderness/BeefTV",
+    "--job",
+    "122387469563"
+  ],
+  "exitCode": 0,
+  "stdout": "",
+  "stderr": "",
+  "precondition": "attempt 1 已 completed/failure，另外三个平台成功；Release 仍为 draft、无资产。",
+  "note": "只重试失败 Apple 芯片 Mac 作业及其后续依赖，不新建 dispatch，不修改源码或脚本。"
+}

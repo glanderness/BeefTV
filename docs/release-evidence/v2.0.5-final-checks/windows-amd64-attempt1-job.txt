@@ -1,0 +1,1123 @@
+﻿2026-10-27T18:29:03.7523789Z Current runner version: '2.338.0'
+2026-10-27T18:29:03.7548471Z ##[group]Runner Image Provisioner
+2026-10-27T18:29:03.7549244Z Hosted Compute Agent
+2026-10-27T18:29:03.7549823Z Version: 20261021.618
+2026-10-27T18:29:03.7550408Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T18:29:03.7551117Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T18:29:03.7551790Z Worker ID: {cb683efd-e1b7-43fd-bda9-67737be43892}
+2026-10-27T18:29:03.7552475Z Region: westus
+2026-10-27T18:29:03.7552975Z Cloud: Azure
+2026-10-27T18:29:03.7553445Z ##[endgroup]
+2026-10-27T18:29:03.7554710Z ##[group]Operating System
+2026-10-27T18:29:03.7555338Z Microsoft Windows Server 2022
+2026-10-27T18:29:03.7555908Z 10.0.20348
+2026-10-27T18:29:03.7556392Z Datacenter
+2026-10-27T18:29:03.7556861Z ##[endgroup]
+2026-10-27T18:29:03.7557340Z ##[group]Runner Image
+2026-10-27T18:29:03.7557919Z Image: windows-2022
+2026-10-27T18:29:03.7558431Z Version: 20261022.344.1
+2026-10-27T18:29:03.7559805Z Included Software: https://github.com/actions/runner-images/blob/win22/20261022.344/images/windows/Windows2022-Readme.md
+2026-10-27T18:29:03.7561381Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261022.344
+2026-10-27T18:29:03.7562306Z ##[endgroup]
+2026-10-27T18:29:03.7563296Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T18:29:03.7565047Z Contents: read
+2026-10-27T18:29:03.7565588Z Metadata: read
+2026-10-27T18:29:03.7566092Z ##[endgroup]
+2026-10-27T18:29:03.7567994Z Secret source: Actions
+2026-10-27T18:29:03.7568867Z Cache mode: write
+2026-10-27T18:29:03.7569545Z Prepare workflow directory
+2026-10-27T18:29:03.8135857Z Prepare all required actions
+2026-10-27T18:29:03.8186291Z Getting action download info
+2026-10-27T18:29:04.2982487Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-27T18:29:04.4164467Z Download action repository 'actions/download-artifact@v4' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+2026-10-27T18:29:04.8535178Z Download action repository 'actions/setup-go@v5' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+2026-10-27T18:29:05.3005407Z Download action repository 'oven-sh/setup-bun@v2' (SHA:0c5077e51419868618aeaa5fe8019c62421857d6)
+2026-10-27T18:29:05.6342885Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-10-27T18:29:05.7863458Z Download action repository 'msys2/setup-msys2@v2' (SHA:ec48f7c5447b3140e2b088413ae3a55687bccb6e)
+2026-10-27T18:29:06.0807471Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-10-27T18:29:06.2048470Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-10-27T18:29:06.5752625Z Complete job name: Build windows-amd64
+2026-10-27T18:29:06.7193122Z ##[group]Run actions/checkout@v4
+2026-10-27T18:29:06.7193973Z with:
+2026-10-27T18:29:06.7194290Z   repository: glanderness/BeefTV
+2026-10-27T18:29:06.7196970Z   token: ***
+2026-10-27T18:29:06.7197285Z   ssh-strict: true
+2026-10-27T18:29:06.7197581Z   ssh-user: git
+2026-10-27T18:29:06.7197876Z   persist-credentials: true
+2026-10-27T18:29:06.7198192Z   clean: true
+2026-10-27T18:29:06.7198502Z   sparse-checkout-cone-mode: true
+2026-10-27T18:29:06.7198859Z   fetch-depth: 1
+2026-10-27T18:29:06.7199148Z   fetch-tags: false
+2026-10-27T18:29:06.7199443Z   show-progress: true
+2026-10-27T18:29:06.7199730Z   lfs: false
+2026-10-27T18:29:06.7199996Z   submodules: false
+2026-10-27T18:29:06.7200290Z   set-safe-directory: true
+2026-10-27T18:29:06.7200633Z   allow-unsafe-pr-checkout: false
+2026-10-27T18:29:06.7201179Z env:
+2026-10-27T18:29:06.7201448Z   GOTOOLCHAIN: local
+2026-10-27T18:29:06.7201965Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:29:06.7202579Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:29:06.7203190Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:29:06.7206085Z   RELEASE_REGION: auto
+2026-10-27T18:29:06.7206413Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:29:06.7206866Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:29:06.7207338Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:29:06.7207727Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:29:06.7208113Z ##[endgroup]
+2026-10-27T18:29:06.8750934Z Syncing repository: glanderness/BeefTV
+2026-10-27T18:29:06.8753812Z ##[group]Getting Git version info
+2026-10-27T18:29:06.8755023Z Working directory is 'D:\a\BeefTV\BeefTV'
+2026-10-27T18:29:06.9811179Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-27T18:29:07.3550457Z git version 2.56.0.windows.3
+2026-10-27T18:29:07.3591909Z ##[endgroup]
+2026-10-27T18:29:07.3610153Z Temporarily overriding HOME='D:\a\_temp\3ae8f2e5-c627-4fd2-9761-8ae2864bdb92' before making global git config changes
+2026-10-27T18:29:07.3611433Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T18:29:07.3620935Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\BeefTV\BeefTV
+2026-10-27T18:29:07.4316340Z Deleting the contents of 'D:\a\BeefTV\BeefTV'
+2026-10-27T18:29:07.4322944Z ##[group]Initializing the repository
+2026-10-27T18:29:07.4332192Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\BeefTV\BeefTV
+2026-10-27T18:29:07.5202118Z Initialized empty Git repository in D:/a/BeefTV/BeefTV/.git/
+2026-10-27T18:29:07.5240747Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/glanderness/BeefTV
+2026-10-27T18:29:07.5933525Z ##[endgroup]
+2026-10-27T18:29:07.5934335Z ##[group]Disabling automatic garbage collection
+2026-10-27T18:29:07.5942523Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2026-10-27T18:29:07.6226037Z ##[endgroup]
+2026-10-27T18:29:07.6226731Z ##[group]Setting up auth
+2026-10-27T18:29:07.6238082Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T18:29:07.6528311Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-27T18:29:09.2474434Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T18:29:09.2759133Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-27T18:29:09.7441880Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T18:29:09.7790497Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-27T18:29:10.2598967Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2026-10-27T18:29:10.2888737Z ##[endgroup]
+2026-10-27T18:29:10.2889408Z ##[group]Fetching the repository
+2026-10-27T18:29:10.2901367Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6a155448096d2425aa07e81cc6016410091ad0be:refs/remotes/origin/main
+2026-10-27T18:29:15.0832031Z From https://github.com/glanderness/BeefTV
+2026-10-27T18:29:15.0832663Z  * [new ref]         6a155448096d2425aa07e81cc6016410091ad0be -> origin/main
+2026-10-27T18:29:15.0862083Z ##[endgroup]
+2026-10-27T18:29:15.0862639Z ##[group]Determining the checkout info
+2026-10-27T18:29:15.0865199Z ##[endgroup]
+2026-10-27T18:29:15.0874752Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2026-10-27T18:29:15.1317792Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2026-10-27T18:29:15.1599408Z ##[group]Checking out the ref
+2026-10-27T18:29:15.1607944Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force -B main refs/remotes/origin/main
+2026-10-27T18:29:16.2018524Z Updating files:  72% (3094/4290)
+2026-10-27T18:29:16.2103255Z Updating files:  73% (3132/4290)
+2026-10-27T18:29:16.2193182Z Updating files:  74% (3175/4290)
+2026-10-27T18:29:16.2284285Z Updating files:  75% (3218/4290)
+2026-10-27T18:29:16.2375970Z Updating files:  76% (3261/4290)
+2026-10-27T18:29:16.2492881Z Updating files:  77% (3304/4290)
+2026-10-27T18:29:16.2601322Z Updating files:  78% (3347/4290)
+2026-10-27T18:29:16.2694090Z Updating files:  79% (3390/4290)
+2026-10-27T18:29:16.2784437Z Updating files:  80% (3432/4290)
+2026-10-27T18:29:16.2863453Z Updating files:  81% (3475/4290)
+2026-10-27T18:29:16.2950823Z Updating files:  82% (3518/4290)
+2026-10-27T18:29:16.3064732Z Updating files:  83% (3561/4290)
+2026-10-27T18:29:16.3150635Z Updating files:  84% (3604/4290)
+2026-10-27T18:29:16.3238136Z Updating files:  85% (3647/4290)
+2026-10-27T18:29:16.3328061Z Updating files:  86% (3690/4290)
+2026-10-27T18:29:16.3413466Z Updating files:  87% (3733/4290)
+2026-10-27T18:29:16.3489291Z Updating files:  88% (3776/4290)
+2026-10-27T18:29:16.3566410Z Updating files:  89% (3819/4290)
+2026-10-27T18:29:16.3646826Z Updating files:  90% (3861/4290)
+2026-10-27T18:29:16.3735796Z Updating files:  91% (3904/4290)
+2026-10-27T18:29:16.3819018Z Updating files:  92% (3947/4290)
+2026-10-27T18:29:16.3898643Z Updating files:  93% (3990/4290)
+2026-10-27T18:29:16.3980855Z Updating files:  94% (4033/4290)
+2026-10-27T18:29:16.4060351Z Updating files:  95% (4076/4290)
+2026-10-27T18:29:16.4141952Z Updating files:  96% (4119/4290)
+2026-10-27T18:29:16.4215439Z Updating files:  97% (4162/4290)
+2026-10-27T18:29:16.4299765Z Updating files:  98% (4205/4290)
+2026-10-27T18:29:16.4374442Z Updating files:  99% (4248/4290)
+2026-10-27T18:29:16.4375320Z Updating files: 100% (4290/4290)
+2026-10-27T18:29:16.4376076Z Updating files: 100% (4290/4290), done.
+2026-10-27T18:29:16.4530119Z Switched to a new branch 'main'
+2026-10-27T18:29:16.4608531Z branch 'main' set up to track 'origin/main'.
+2026-10-27T18:29:16.4759513Z ##[endgroup]
+2026-10-27T18:29:16.5218074Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+2026-10-27T18:29:16.5477367Z 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T18:29:16.5872232Z ##[group]Run actions/download-artifact@v4
+2026-10-27T18:29:16.5872579Z with:
+2026-10-27T18:29:16.5872771Z   name: media-wasm-source
+2026-10-27T18:29:16.5872993Z   path: dist
+2026-10-27T18:29:16.5873185Z   merge-multiple: false
+2026-10-27T18:29:16.5873409Z   repository: glanderness/BeefTV
+2026-10-27T18:29:16.5873634Z   run-id: 40559746752
+2026-10-27T18:29:16.5873821Z env:
+2026-10-27T18:29:16.5873989Z   GOTOOLCHAIN: local
+2026-10-27T18:29:16.5874363Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:29:16.5874859Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:29:16.5875399Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:29:16.5875836Z   RELEASE_REGION: auto
+2026-10-27T18:29:16.5876048Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:29:16.5876356Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:29:16.5876721Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:29:16.5876989Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:29:16.5877259Z ##[endgroup]
+2026-10-27T18:29:16.7552412Z Downloading single artifact
+2026-10-27T18:29:16.7769232Z (node:6452) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:29:16.7770001Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:29:17.0533297Z Preparing to download the following artifacts:
+2026-10-27T18:29:17.0534381Z - media-wasm-source (ID: 12759346572, Size: 107316097, Expected Digest: sha256:acc2940fda3c45ececfdf315e05ac5031cdef6e7923e35e0fbb5bfdc05dce8c0)
+2026-10-27T18:29:17.3228044Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/90d404b8-485f-40f4-a621-767f24f9d947/workflow-job-run-93f0ac35-ff38-5508-ab55-9e8e2d074198/artifacts/b27b7a0bb8c652b033a3b78b452d8b74ba42c9e0d524f63ff99f31d3ee2d70ab.zip
+2026-10-27T18:29:17.3229937Z Starting download of artifact to: D:\a\BeefTV\BeefTV\dist
+2026-10-27T18:29:17.6245568Z (node:6452) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-10-27T18:29:20.0392667Z SHA256 digest of downloaded artifact is acc2940fda3c45ececfdf315e05ac5031cdef6e7923e35e0fbb5bfdc05dce8c0
+2026-10-27T18:29:20.0393561Z Artifact download completed successfully.
+2026-10-27T18:29:20.0393862Z Total of 1 artifact(s) downloaded
+2026-10-27T18:29:20.0404679Z Download artifact has finished successfully
+2026-10-27T18:29:20.0701636Z ##[group]Run actions/setup-go@v5
+2026-10-27T18:29:20.0701980Z with:
+2026-10-27T18:29:20.0702190Z   go-version-file: backend/go.mod
+2026-10-27T18:29:20.0702437Z   cache: true
+2026-10-27T18:29:20.0702643Z   cache-dependency-path: backend/go.sum
+2026-10-27T18:29:20.0702917Z   check-latest: false
+2026-10-27T18:29:20.0705497Z   token: ***
+2026-10-27T18:29:20.0705686Z env:
+2026-10-27T18:29:20.0705862Z   GOTOOLCHAIN: local
+2026-10-27T18:29:20.0706233Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:29:20.0706727Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:29:20.0707250Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:29:20.0707695Z   RELEASE_REGION: auto
+2026-10-27T18:29:20.0707915Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:29:20.0708244Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:29:20.0708652Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:29:20.0708938Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:29:20.0709228Z ##[endgroup]
+2026-10-27T18:29:20.2225159Z Setup go version spec 1.25.0
+2026-10-27T18:29:20.2238484Z Attempting to download 1.25.0...
+2026-10-27T18:29:20.2406294Z (node:2356) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:29:20.2407085Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:29:21.3077257Z matching 1.25.0...
+2026-10-27T18:29:21.3130861Z Acquiring 1.25.0 from https://github.com/actions/go-versions/releases/download/1.25.0-16925932082/go-1.25.0-win32-x64.zip
+2026-10-27T18:29:21.9447023Z Extracting Go...
+2026-10-27T18:29:22.0544778Z [command]"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "$ErrorActionPreference = 'Stop' ; try { Add-Type -AssemblyName System.IO.Compression.ZipFile } catch { } ; try { [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\a\_temp\go-1.25.0-win32-x64.zip', 'D:\a\_temp\5a0188d5-3cf8-48e3-99f3-c0a8674a9610', $true) } catch { if (($_.Exception.GetType().FullName -eq 'System.Management.Automation.MethodException') -or ($_.Exception.GetType().FullName -eq 'System.Management.Automation.RuntimeException') ){ Expand-Archive -LiteralPath 'D:\a\_temp\go-1.25.0-win32-x64.zip' -DestinationPath 'D:\a\_temp\5a0188d5-3cf8-48e3-99f3-c0a8674a9610' -Force } else { throw $_ } } ;"
+2026-10-27T18:29:25.5567857Z Successfully extracted go to D:\a\_temp\5a0188d5-3cf8-48e3-99f3-c0a8674a9610
+2026-10-27T18:29:25.5568548Z Adding to the cache ...
+2026-10-27T18:29:35.6929527Z Created link C:\hostedtoolcache\windows\go\1.25.0\x64 => D:\hostedtoolcache\windows\go\1.25.0\x64
+2026-10-27T18:29:35.6934846Z Created link C:\hostedtoolcache\windows\go\1.25.0\x64.complete => D:\hostedtoolcache\windows\go\1.25.0\x64.complete
+2026-10-27T18:29:35.6936456Z Successfully cached go to C:\hostedtoolcache\windows\go\1.25.0\x64
+2026-10-27T18:29:35.6941877Z Added go to the path
+2026-10-27T18:29:35.6945034Z Successfully set up Go version 1.25.0
+2026-10-27T18:29:36.0830435Z [command]C:\hostedtoolcache\windows\go\1.25.0\x64\bin\go.exe env GOMODCACHE
+2026-10-27T18:29:36.0871183Z [command]C:\hostedtoolcache\windows\go\1.25.0\x64\bin\go.exe env GOCACHE
+2026-10-27T18:29:36.1153492Z C:\Users\runneradmin\go\pkg\mod
+2026-10-27T18:29:36.1194154Z C:\Users\runneradmin\AppData\Local\go-build
+2026-10-27T18:29:36.5357720Z Cache hit for: setup-go-Windows-x64-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e
+2026-10-27T18:29:36.5488284Z (node:2356) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T18:29:37.8539532Z Received 37748736 of 208371946 (18.1%), 35.6 MBs/sec
+2026-10-27T18:29:38.8767915Z Received 159383552 of 208371946 (76.5%), 75.1 MBs/sec
+2026-10-27T18:29:39.4074462Z Received 208371946 of 208371946 (100.0%), 77.5 MBs/sec
+2026-10-27T18:29:39.4078027Z Cache Size: ~199 MB (208371946 B)
+2026-10-27T18:29:39.4218992Z [command]"C:\Program Files\Git\usr\bin\tar.exe" -xf D:/a/_temp/09087413-d32f-499b-b71b-8f323b69f474/cache.tzst -P -C D:/a/BeefTV/BeefTV --force-local --use-compress-program "zstd -d"
+2026-10-27T18:30:04.3288742Z Cache restored successfully
+2026-10-27T18:30:04.3404954Z Cache restored from key: setup-go-Windows-x64-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e
+2026-10-27T18:30:04.3426928Z go version go1.25.0 windows/amd64
+2026-10-27T18:30:04.3427304Z 
+2026-10-27T18:30:04.3427779Z ##[group]go env
+2026-10-27T18:30:08.2740560Z set AR=ar
+2026-10-27T18:30:08.2740959Z set CC=gcc
+2026-10-27T18:30:08.2741340Z set CGO_CFLAGS=-O2 -g
+2026-10-27T18:30:08.2741748Z set CGO_CPPFLAGS=
+2026-10-27T18:30:08.2742248Z set CGO_CXXFLAGS=-O2 -g
+2026-10-27T18:30:08.2742756Z set CGO_ENABLED=1
+2026-10-27T18:30:08.2743166Z set CGO_FFLAGS=-O2 -g
+2026-10-27T18:30:08.2743526Z set CGO_LDFLAGS=-O2 -g
+2026-10-27T18:30:08.2743893Z set CXX=g++
+2026-10-27T18:30:08.2744252Z set GCCGO=gccgo
+2026-10-27T18:30:08.2744573Z set GO111MODULE=
+2026-10-27T18:30:08.2744894Z set GOAMD64=v1
+2026-10-27T18:30:08.2745321Z set GOARCH=amd64
+2026-10-27T18:30:08.2745686Z set GOAUTH=netrc
+2026-10-27T18:30:08.2746034Z set GOBIN=
+2026-10-27T18:30:08.2746500Z set GOCACHE=C:\Users\runneradmin\AppData\Local\go-build
+2026-10-27T18:30:08.2747040Z set GOCACHEPROG=
+2026-10-27T18:30:08.2747298Z set GODEBUG=
+2026-10-27T18:30:08.2747644Z set GOENV=C:\Users\runneradmin\AppData\Roaming\go\env
+2026-10-27T18:30:08.2748048Z set GOEXE=.exe
+2026-10-27T18:30:08.2748314Z set GOEXPERIMENT=
+2026-10-27T18:30:08.2748578Z set GOFIPS140=off
+2026-10-27T18:30:08.2748834Z set GOFLAGS=
+2026-10-27T18:30:08.2749850Z set GOGCCFLAGS=-m64 -mthreads -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=C:\Users\RUNNER~1\AppData\Local\Temp\go-build4054377794=/tmp/go-build -gno-record-gcc-switches
+2026-10-27T18:30:08.2750893Z set GOHOSTARCH=amd64
+2026-10-27T18:30:08.2751232Z set GOHOSTOS=windows
+2026-10-27T18:30:08.2751497Z set GOINSECURE=
+2026-10-27T18:30:08.2751745Z set GOMOD=NUL
+2026-10-27T18:30:08.2752051Z set GOMODCACHE=C:\Users\runneradmin\go\pkg\mod
+2026-10-27T18:30:08.2752429Z set GONOPROXY=
+2026-10-27T18:30:08.2752673Z set GONOSUMDB=
+2026-10-27T18:30:08.2752882Z set GOOS=windows
+2026-10-27T18:30:08.2753110Z set GOPATH=C:\Users\runneradmin\go
+2026-10-27T18:30:08.2753439Z set GOPRIVATE=
+2026-10-27T18:30:08.2753769Z set GOPROXY=https://proxy.golang.org,direct
+2026-10-27T18:30:08.2754156Z set GOROOT=C:\hostedtoolcache\windows\go\1.25.0\x64
+2026-10-27T18:30:08.2754507Z set GOSUMDB=sum.golang.org
+2026-10-27T18:30:08.2754758Z set GOTELEMETRY=local
+2026-10-27T18:30:08.2755111Z set GOTELEMETRYDIR=C:\Users\runneradmin\AppData\Roaming\go\telemetry
+2026-10-27T18:30:08.2755497Z set GOTMPDIR=
+2026-10-27T18:30:08.2756693Z set GOTOOLCHAIN=local
+2026-10-27T18:30:08.2757098Z set GOTOOLDIR=C:\hostedtoolcache\windows\go\1.25.0\x64\pkg\tool\windows_amd64
+2026-10-27T18:30:08.2757526Z set GOVCS=
+2026-10-27T18:30:08.2757728Z set GOVERSION=go1.25.0
+2026-10-27T18:30:08.2757953Z set GOWORK=
+2026-10-27T18:30:08.2758164Z set PKG_CONFIG=pkg-config
+2026-10-27T18:30:08.2758325Z 
+2026-10-27T18:30:08.2758676Z ##[endgroup]
+2026-10-27T18:30:08.3041849Z ##[group]Run oven-sh/setup-bun@v2
+2026-10-27T18:30:08.3042269Z with:
+2026-10-27T18:30:08.3042496Z   bun-version: 1.4.2
+2026-10-27T18:30:08.3042750Z   no-cache: false
+2026-10-27T18:30:08.3045529Z   token: ***
+2026-10-27T18:30:08.3045735Z env:
+2026-10-27T18:30:08.3045943Z   GOTOOLCHAIN: local
+2026-10-27T18:30:08.3046363Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:08.3046932Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:08.3047498Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:08.3048007Z   RELEASE_REGION: auto
+2026-10-27T18:30:08.3048263Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:08.3048629Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:08.3049028Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:08.3049349Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:08.3049717Z ##[endgroup]
+2026-10-27T18:30:08.8805201Z Downloading a new version of Bun: https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-windows-x64.zip
+2026-10-27T18:30:09.4349377Z [command]"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "$ErrorActionPreference = 'Stop' ; try { Add-Type -AssemblyName System.IO.Compression.ZipFile } catch { } ; try { [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\a\_temp\f5b9bb4d-3ea7-47fd-b02e-ec3ffdf1facd.zip', 'D:\a\_temp\820bae77-da40-4252-ae88-3b1ff30cc6db', $true) } catch { if (($_.Exception.GetType().FullName -eq 'System.Management.Automation.MethodException') -or ($_.Exception.GetType().FullName -eq 'System.Management.Automation.RuntimeException') ){ Expand-Archive -LiteralPath 'D:\a\_temp\f5b9bb4d-3ea7-47fd-b02e-ec3ffdf1facd.zip' -DestinationPath 'D:\a\_temp\820bae77-da40-4252-ae88-3b1ff30cc6db' -Force } else { throw $_ } } ;"
+2026-10-27T18:30:10.0098025Z [command]C:\Users\runneradmin\.bun\bin\bun.exe --revision
+2026-10-27T18:30:10.6639095Z 1.4.2+744846f84
+2026-10-27T18:30:10.6917261Z ##[group]Run actions/setup-node@v4
+2026-10-27T18:30:10.6917635Z with:
+2026-10-27T18:30:10.6917857Z   node-version: 24.22.1
+2026-10-27T18:30:10.6918109Z   always-auth: false
+2026-10-27T18:30:10.6918358Z   check-latest: false
+2026-10-27T18:30:10.6921109Z   token: ***
+2026-10-27T18:30:10.6921322Z env:
+2026-10-27T18:30:10.6921525Z   GOTOOLCHAIN: local
+2026-10-27T18:30:10.6921947Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:10.6922510Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:10.6923106Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:10.6923600Z   RELEASE_REGION: auto
+2026-10-27T18:30:10.6923852Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:10.6924232Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:10.6924628Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:10.6924994Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:10.6925321Z ##[endgroup]
+2026-10-27T18:30:10.8623368Z Found in cache @ C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:30:10.8630614Z (node:6696) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:30:10.8631792Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:30:10.8633993Z ##[group]Environment details
+2026-10-27T18:30:16.2896520Z node: v24.22.1
+2026-10-27T18:30:16.2897394Z npm: 11.19.1
+2026-10-27T18:30:16.2897767Z yarn: 1.22.22
+2026-10-27T18:30:16.2898534Z ##[endgroup]
+2026-10-27T18:30:16.3164063Z ##[group]Run node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
+2026-10-27T18:30:16.3166302Z [36;1mnode -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'[0m
+2026-10-27T18:30:16.3187062Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:30:16.3187577Z env:
+2026-10-27T18:30:16.3187798Z   GOTOOLCHAIN: local
+2026-10-27T18:30:16.3188253Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:16.3188872Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:16.3189507Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:16.3190077Z   RELEASE_REGION: auto
+2026-10-27T18:30:16.3190344Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:16.3190745Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:16.3191167Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:16.3191510Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:16.3191868Z ##[endgroup]
+2026-10-27T18:30:16.5740641Z ##[group]Run bun test scripts/package-agent-host.test.mjs
+2026-10-27T18:30:16.5741301Z [36;1mbun test scripts/package-agent-host.test.mjs[0m
+2026-10-27T18:30:16.5757160Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:30:16.5757688Z env:
+2026-10-27T18:30:16.5757915Z   GOTOOLCHAIN: local
+2026-10-27T18:30:16.5758406Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:16.5759040Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:16.5759688Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:16.5760217Z   RELEASE_REGION: auto
+2026-10-27T18:30:16.5760476Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:16.5760867Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:16.5761275Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:16.5761648Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:16.5762106Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:30:16.5762520Z ##[endgroup]
+2026-10-27T18:30:16.6228525Z bun test v1.4.2 (744846f84)
+2026-10-27T18:30:16.6449495Z 
+2026-10-27T18:30:16.6450773Z ##[group]scripts\package-agent-host.test.mjs:
+2026-10-27T18:30:16.6758586Z (pass) release rejects missing runtime and unsupported target [0.47ms]
+2026-10-27T18:31:22.8975251Z Packaged agent-host with Node 24.22.1 for windows/amd64: C:\Users\RUNNER~1\AppData\Local\Temp\beeftv package test 4fOJpN\release with spaces\agent-host
+2026-10-27T18:31:34.2112056Z (pass) bundled runtime, locked dependencies, and paths with spaces [77535.31ms]
+2026-10-27T18:32:15.5637051Z Packaged agent-host with Node 24.22.1 for windows/amd64: C:\Users\RUNNER~1\AppData\Local\Temp\beeftv packaged server jkVhwp\release with spaces\agent-host
+2026-10-27T18:32:26.7487130Z (pass) packaged server starts with local imports and makes zero model requests [52537.39ms]
+2026-10-27T18:32:26.7487994Z 
+2026-10-27T18:32:26.7488573Z ##[endgroup]
+2026-10-27T18:32:26.7488788Z 
+2026-10-27T18:32:26.7490809Z  3 pass
+2026-10-27T18:32:26.7491464Z  0 fail
+2026-10-27T18:32:26.7491826Z  26 expect() calls
+2026-10-27T18:32:26.7492288Z Ran 3 tests across 1 file. [130.13s]
+2026-10-27T18:32:26.7756033Z ##[group]Run msys2/setup-msys2@v2
+2026-10-27T18:32:26.7756370Z with:
+2026-10-27T18:32:26.7756570Z   msystem: UCRT64
+2026-10-27T18:32:26.7756790Z   update: false
+2026-10-27T18:32:26.7756988Z   release: true
+2026-10-27T18:32:26.7757839Z   path-type: inherit
+2026-10-27T18:32:26.7758164Z   install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils
+2026-10-27T18:32:26.7758550Z   platform-check-severity: fatal
+2026-10-27T18:32:26.7758809Z   cache: true
+2026-10-27T18:32:26.7758995Z env:
+2026-10-27T18:32:26.7759173Z   GOTOOLCHAIN: local
+2026-10-27T18:32:26.7759563Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:32:26.7760082Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:32:26.7760607Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:32:26.7761077Z   RELEASE_REGION: auto
+2026-10-27T18:32:26.7761305Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:32:26.7761676Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:32:26.7762062Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:32:26.7762377Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:32:26.7762813Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:32:26.7763193Z ##[endgroup]
+2026-10-27T18:32:26.9217339Z ##[group]Downloading MSYS2...
+2026-10-27T18:32:27.6430876Z ##[endgroup]
+2026-10-27T18:32:27.6431609Z ##[group]Extracting MSYS2...
+2026-10-27T18:32:27.6449791Z [command]C:\hostedtoolcache\windows\msys2-installer\0.0.20260927\x64\base.exe -y
+2026-10-27T18:32:27.8202500Z 
+2026-10-27T18:32:27.8204497Z 7-Zip SFX 26.02 ZS v1.5.7 R1 (x64) : Copyright (c) 1999- Igor Pavlov, 2016- Tino Reichardt, 2022- Sergey G. Brester : 2026-06-27
+2026-10-27T18:32:27.8207069Z 
+2026-10-27T18:32:27.8208669Z Extracting archive: C:\hostedtoolcache\windows\msys2-installer\0.0.20260927\x64\base.exe
+2026-10-27T18:32:27.8210394Z --
+2026-10-27T18:32:27.8211488Z Path = C:\hostedtoolcache\windows\msys2-installer\0.0.20260927\x64\base.exe
+2026-10-27T18:32:27.8212167Z Type = 7z
+2026-10-27T18:32:27.8212336Z 
+2026-10-27T18:32:28.0166781Z   0%
+2026-10-27T18:32:28.0167271Z     
+2026-10-27T18:32:28.2196447Z   1% 1184 - msys64\usr\lib\terminfo\61\att513
+2026-10-27T18:32:28.2197706Z                                              
+2026-10-27T18:32:28.4230245Z   1% 2231 - msys64\usr\lib\terminfo\6d\modgraph
+2026-10-27T18:32:28.4231299Z                                                
+2026-10-27T18:32:28.6259392Z   2% 3275 - msys64\usr\lib\terminfo\76\vt420f
+2026-10-27T18:32:28.6260725Z                                              
+2026-10-27T18:32:28.8295432Z   3% 4285 - msys64\usr\share\bash-completio . tions-core\mozilla-firefox.bash
+2026-10-27T18:32:28.8296613Z                                                                              
+2026-10-27T18:32:29.0326658Z   6% 5225 - msys64\usr\share\doc\xz\COPYING.0BSD
+2026-10-27T18:32:29.0327472Z                                                 
+2026-10-27T18:32:29.2327942Z  17% 5749 - msys64\usr\share\locale\gl\LC_MESSAGES\pacman.mo
+2026-10-27T18:32:29.2329115Z                                                             
+2026-10-27T18:32:29.4396964Z  34% 6279 - msys64\usr\share\locale\zh_CN\LC_MESSAGES\gnutls.mo
+2026-10-27T18:32:29.4398588Z                                                                
+2026-10-27T18:32:29.6434508Z  36% 7266 - msys64\usr\share\man\man3\CURLOPT_DNS_LOCAL_IP4.3.gz
+2026-10-27T18:32:29.6435441Z                                                                 
+2026-10-27T18:32:29.8463200Z  37% 8314 - msys64\usr\share\man\man3\mvwaddchstr.3x.gz
+2026-10-27T18:32:29.8464382Z                                                        
+2026-10-27T18:32:30.0496127Z  44% 9247 - msys64\usr\share\terminfo\61\amiga-h
+2026-10-27T18:32:30.0497389Z                                                 
+2026-10-27T18:32:30.2527479Z  45% 10299 - msys64\usr\share\terminfo\6b\kermit-am
+2026-10-27T18:32:30.2532720Z                                                    
+2026-10-27T18:32:30.4558753Z  45% 11326 - msys64\usr\share\terminfo\74\tvi955
+2026-10-27T18:32:30.4559891Z                                                 
+2026-10-27T18:32:30.6601402Z  46% 12304 - msys64\usr\share\zoneinfo\Atlantic\Canary
+2026-10-27T18:32:30.6602718Z                                                       
+2026-10-27T18:32:30.8630939Z  46% 13310 - msys64\usr\share\zoneinfo\right\America\Monterrey
+2026-10-27T18:32:30.8632340Z                                                               
+2026-10-27T18:32:31.0687142Z  49% 14100
+2026-10-27T18:32:31.0687570Z           
+2026-10-27T18:32:31.2811809Z  63% 14326 - msys64\usr\bin\msys-panelw6.dll
+2026-10-27T18:32:31.2813094Z                                             
+2026-10-27T18:32:31.2813656Z Everything is Ok
+2026-10-27T18:32:31.2835963Z ##[endgroup]
+2026-10-27T18:32:31.2837124Z ##[group]Disable Key Refresh...
+2026-10-27T18:32:31.2857025Z ##[endgroup]
+2026-10-27T18:32:31.2873694Z ##[group]Restoring package cache...
+2026-10-27T18:32:31.6191158Z Cache hit for restore-key: msys2-pkgs-upd:false-conf:9054cc6e-files:696580d3795260ed7fbe07f34ed04fe1db1e00aa514342fec7169e9173a943e6
+2026-10-27T18:32:32.9170796Z Received 33554432 of 72283964 (46.4%), 31.7 MBs/sec
+2026-10-27T18:32:33.2703736Z Received 72283964 of 72283964 (100.0%), 50.6 MBs/sec
+2026-10-27T18:32:33.2708288Z Cache Size: ~69 MB (72283964 B)
+2026-10-27T18:32:33.2829115Z [command]"C:\Program Files\Git\usr\bin\tar.exe" -xf D:/a/_temp/40696b9c-23c3-4198-ac64-c426de703f7a/cache.tzst -P -C D:/a/BeefTV/BeefTV --force-local --use-compress-program "zstd -d"
+2026-10-27T18:32:33.4440425Z Cache restored successfully
+2026-10-27T18:32:33.4508449Z Cache restore for msys2-pkgs-upd:false-conf:c287153c, got msys2-pkgs-upd:false-conf:9054cc6e-files:696580d3795260ed7fbe07f34ed04fe1db1e00aa514342fec7169e9173a943e6
+2026-10-27T18:32:33.4511740Z Cache restore for msys2-pkgs-upd:false-conf:c287153c, got msys2-pkgs-upd:false-conf:9054cc6e-files:696580d3795260ed7fbe07f34ed04fe1db1e00aa514342fec7169e9173a943e6
+2026-10-27T18:32:33.4513973Z ##[endgroup]
+2026-10-27T18:32:33.4514842Z ##[group]Starting MSYS2 for the first time...
+2026-10-27T18:32:33.5547606Z [command]C:\Windows\system32\cmd.exe /D /S /C D:\a\_temp\setup-msys2\msys2.cmd -c "'uname' '-a'"
+2026-10-27T18:32:33.5939690Z [1;32mMSYS2 is starting for the first time. Executing the initial setup.[1;0m
+2026-10-27T18:32:33.6987807Z Copying skeleton files.
+2026-10-27T18:32:33.6989206Z These files are for the users to personalise their msys2 experience.
+2026-10-27T18:32:33.6989798Z 
+2026-10-27T18:32:33.6990239Z They will never be overwritten nor automatically updated.
+2026-10-27T18:32:33.6990711Z 
+2026-10-27T18:32:33.7524054Z './.bashrc' -> '/home/runneradmin/.bashrc'
+2026-10-27T18:32:33.7700583Z './.bash_profile' -> '/home/runneradmin/.bash_profile'
+2026-10-27T18:32:33.7877961Z './.profile' -> '/home/runneradmin/.profile'
+2026-10-27T18:32:33.8566870Z 'C:\Windows\system32\drivers\etc\hosts' -> '/etc/hosts'
+2026-10-27T18:32:33.9182954Z 'C:\Windows\system32\drivers\etc\protocol' -> '/etc/protocols'
+2026-10-27T18:32:33.9912441Z 'C:\Windows\system32\drivers\etc\services' -> '/etc/services'
+2026-10-27T18:32:34.0457258Z 'C:\Windows\system32\drivers\etc\networks' -> '/etc/networks'
+2026-10-27T18:32:34.2523816Z gpg: /etc/pacman.d/gnupg/trustdb.gpg: trustdb created
+2026-10-27T18:32:34.2601020Z gpg: no ultimately trusted keys found
+2026-10-27T18:32:34.5768506Z gpg: starting migration from earlier GnuPG versions
+2026-10-27T18:32:34.6414962Z gpg: porting secret keys from '/etc/pacman.d/gnupg/secring.gpg' to gpg-agent
+2026-10-27T18:32:34.6418234Z gpg: migration succeeded
+2026-10-27T18:32:34.6653089Z ==> Generating pacman master key. This may take some time.
+2026-10-27T18:32:34.6865770Z gpg: Generating pacman keyring master key...
+2026-10-27T18:32:36.3452183Z gpg: directory '/etc/pacman.d/gnupg/openpgp-revocs.d' created
+2026-10-27T18:32:36.3705743Z gpg: revocation certificate stored as '/etc/pacman.d/gnupg/openpgp-revocs.d/B237B406633DEACC8F374FD40BC1BBA41D0334B4.rev'
+2026-10-27T18:32:36.3706515Z gpg: Done
+2026-10-27T18:32:36.3901807Z ==> Updating trust database...
+2026-10-27T18:32:36.4288367Z gpg: marginals needed: 3  completes needed: 1  trust model: pgp
+2026-10-27T18:32:36.4290705Z gpg: depth: 0  valid:   1  signed:   0  trust: 0-, 0q, 0n, 0m, 0f, 1u
+2026-10-27T18:32:36.5565529Z ==> Appending keys from msys2.gpg...
+2026-10-27T18:32:37.1408626Z ==> Locally signing trusted keys in keyring...
+2026-10-27T18:32:37.7397135Z   -> Locally signed 5 keys.
+2026-10-27T18:32:37.7556175Z ==> Importing owner trust values...
+2026-10-27T18:32:37.7760198Z gpg: setting ownertrust to 4
+2026-10-27T18:32:37.7760829Z gpg: setting ownertrust to 4
+2026-10-27T18:32:37.7761325Z gpg: setting ownertrust to 4
+2026-10-27T18:32:37.7761786Z gpg: setting ownertrust to 4
+2026-10-27T18:32:37.7762227Z gpg: setting ownertrust to 4
+2026-10-27T18:32:37.8045303Z ==> Disabling revoked keys in keyring...
+2026-10-27T18:32:38.0675048Z   -> Disabled 4 keys.
+2026-10-27T18:32:38.0838018Z ==> Updating trust database...
+2026-10-27T18:32:38.1232310Z gpg: marginals needed: 3  completes needed: 1  trust model: pgp
+2026-10-27T18:32:38.1258902Z gpg: depth: 0  valid:   1  signed:   5  trust: 0-, 0q, 0n, 0m, 0f, 1u
+2026-10-27T18:32:38.1294763Z gpg: depth: 1  valid:   5  signed:   7  trust: 0-, 0q, 0n, 5m, 0f, 0u
+2026-10-27T18:32:38.1308628Z gpg: depth: 2  valid:   4  signed:   2  trust: 4-, 0q, 0n, 0m, 0f, 0u
+2026-10-27T18:32:38.1312182Z gpg: next trustdb check due at 2027-02-10
+2026-10-27T18:32:38.1728274Z pacman-key (pacman) 6.1.0
+2026-10-27T18:32:38.1729504Z Copyright (c) 2010-2024 Pacman Development Team <pacman-dev@lists.archlinux.org>.
+2026-10-27T18:32:38.1730311Z 
+2026-10-27T18:32:38.1906759Z This is free software; see the source for copying conditions.
+2026-10-27T18:32:38.1908823Z There is NO WARRANTY, to the extent permitted by law.
+2026-10-27T18:32:38.4269420Z [1;32mInitial setup complete. MSYS2 is now ready to use.[1;0m
+2026-10-27T18:32:38.4466770Z MINGW64_NT-10.0-20348 runnervma5ucf 3.6.10-c770e1b9.x86_64 2026-09-26 06:38 UTC x86_64 Msys
+2026-10-27T18:32:38.4520233Z ##[endgroup]
+2026-10-27T18:32:38.4520921Z ##[group]Disable CheckSpace...
+2026-10-27T18:32:38.5424710Z [command]C:\Windows\system32\cmd.exe /D /S /C D:\a\_temp\setup-msys2\msys2.cmd -c "'sed' '-i' 's/^CheckSpace/#CheckSpace/g' '/etc/pacman.conf'"
+2026-10-27T18:32:38.7277884Z ##[endgroup]
+2026-10-27T18:32:38.7278564Z ##[group]Installing additional packages through pacman...
+2026-10-27T18:32:38.8174602Z [command]C:\Windows\system32\cmd.exe /D /S /C D:\a\_temp\setup-msys2\msys2.cmd -c "'pacman' '--noconfirm' '-S' '--needed' '--overwrite' '*' 'mingw-w64-ucrt-x86_64-gcc' 'mingw-w64-ucrt-x86_64-binutils'"
+2026-10-27T18:32:39.6797874Z resolving dependencies...
+2026-10-27T18:32:39.6897137Z looking for conflicting packages...
+2026-10-27T18:32:39.6924905Z 
+2026-10-27T18:32:39.6933179Z Packages (21) mingw-w64-ucrt-x86_64-cc-libs-16.2.0-4  mingw-w64-ucrt-x86_64-crt-14.0.0.r426.g4564ee4b5-1  mingw-w64-ucrt-x86_64-gettext-runtime-1.0-1  mingw-w64-ucrt-x86_64-gmp-6.3.0-2  mingw-w64-ucrt-x86_64-headers-14.0.0.r426.g4564ee4b5-1  mingw-w64-ucrt-x86_64-isl-0.28-1  mingw-w64-ucrt-x86_64-libatomic-16.2.0-4  mingw-w64-ucrt-x86_64-libgcc-16.2.0-4  mingw-w64-ucrt-x86_64-libiconv-1.19-1  mingw-w64-ucrt-x86_64-libquadmath-16.2.0-4  mingw-w64-ucrt-x86_64-libstdc++-16.2.0-4  mingw-w64-ucrt-x86_64-libwinpthread-14.0.0.r426.g4564ee4b5-1  mingw-w64-ucrt-x86_64-mpc-1.4.1-1  mingw-w64-ucrt-x86_64-mpfr-4.2.2-3  mingw-w64-ucrt-x86_64-tzdata-2026d-1  mingw-w64-ucrt-x86_64-windows-default-manifest-20260815-1  mingw-w64-ucrt-x86_64-winpthreads-14.0.0.r426.g4564ee4b5-1  mingw-w64-ucrt-x86_64-zlib-1.3.2-2  mingw-w64-ucrt-x86_64-zstd-1.5.7-2  mingw-w64-ucrt-x86_64-binutils-2.47-3  mingw-w64-ucrt-x86_64-gcc-16.2.0-4
+2026-10-27T18:32:39.6939286Z 
+2026-10-27T18:32:39.6939583Z Total Installed Size:  471.99 MiB
+2026-10-27T18:32:39.6939921Z 
+2026-10-27T18:32:39.6962172Z :: Proceed with installation? [Y/n] 
+2026-10-27T18:32:39.6962814Z checking keyring...
+2026-10-27T18:32:39.7512217Z checking package integrity...
+2026-10-27T18:32:43.8274676Z loading package files...
+2026-10-27T18:32:43.8867718Z checking for file conflicts...
+2026-10-27T18:32:44.2175696Z :: Processing package changes...
+2026-10-27T18:32:44.2176534Z installing mingw-w64-ucrt-x86_64-libwinpthread...
+2026-10-27T18:32:44.2229207Z installing mingw-w64-ucrt-x86_64-libatomic...
+2026-10-27T18:32:44.2288995Z installing mingw-w64-ucrt-x86_64-libgcc...
+2026-10-27T18:32:44.2341735Z installing mingw-w64-ucrt-x86_64-tzdata...
+2026-10-27T18:32:45.9375766Z installing mingw-w64-ucrt-x86_64-libstdc++...
+2026-10-27T18:32:45.9496222Z installing mingw-w64-ucrt-x86_64-libquadmath...
+2026-10-27T18:32:45.9566159Z installing mingw-w64-ucrt-x86_64-cc-libs...
+2026-10-27T18:32:45.9592770Z installing mingw-w64-ucrt-x86_64-libiconv...
+2026-10-27T18:32:45.9866885Z installing mingw-w64-ucrt-x86_64-gettext-runtime...
+2026-10-27T18:32:46.1189956Z installing mingw-w64-ucrt-x86_64-zlib...
+2026-10-27T18:32:46.1278548Z installing mingw-w64-ucrt-x86_64-zstd...
+2026-10-27T18:32:46.1494844Z installing mingw-w64-ucrt-x86_64-binutils...
+2026-10-27T18:32:46.3889340Z installing mingw-w64-ucrt-x86_64-headers...
+2026-10-27T18:32:47.6876701Z installing mingw-w64-ucrt-x86_64-crt...
+2026-10-27T18:32:48.3612351Z installing mingw-w64-ucrt-x86_64-gmp...
+2026-10-27T18:32:48.3769971Z installing mingw-w64-ucrt-x86_64-isl...
+2026-10-27T18:32:48.4698674Z installing mingw-w64-ucrt-x86_64-mpfr...
+2026-10-27T18:32:48.4932089Z installing mingw-w64-ucrt-x86_64-mpc...
+2026-10-27T18:32:48.5008651Z installing mingw-w64-ucrt-x86_64-windows-default-manifest...
+2026-10-27T18:32:48.5038488Z installing mingw-w64-ucrt-x86_64-winpthreads...
+2026-10-27T18:32:48.5143107Z installing mingw-w64-ucrt-x86_64-gcc...
+2026-10-27T18:32:49.8300734Z Optional dependencies for mingw-w64-ucrt-x86_64-gcc
+2026-10-27T18:32:49.8301678Z     mingw-w64-ucrt-x86_64-libatomic [installed]
+2026-10-27T18:32:49.8302427Z     mingw-w64-ucrt-x86_64-libgomp: OpenMP
+2026-10-27T18:32:49.8303279Z     mingw-w64-ucrt-x86_64-libquadmath: Quad Math [installed]
+2026-10-27T18:32:49.8639559Z ##[endgroup]
+2026-10-27T18:32:49.8640129Z ##[group]Saving package cache...
+2026-10-27T18:32:49.9554176Z [command]C:\Windows\system32\cmd.exe /D /S /C D:\a\_temp\setup-msys2\msys2.cmd -c "'paccache' '-r' '-f' '-u' '-k0'"
+2026-10-27T18:32:50.9567137Z ==> no candidate packages found for pruning
+2026-10-27T18:32:51.0537128Z [command]C:\Windows\system32\cmd.exe /D /S /C D:\a\_temp\setup-msys2\msys2.cmd -c "'paccache' '-r' '-f' '-k1'"
+2026-10-27T18:32:51.3716089Z ==> no candidate packages found for pruning
+2026-10-27T18:32:51.6879448Z [command]"C:\Program Files\Git\usr\bin\tar.exe" --posix -cf cache.tzst --exclude cache.tzst -P -C D:/a/BeefTV/BeefTV --files-from manifest.txt --force-local --use-compress-program "zstd -T0"
+2026-10-27T18:32:53.1886620Z Sent 11796480 of 72283781 (16.3%), 11.2 MBs/sec
+2026-10-27T18:32:54.1910849Z Sent 72283781 of 72283781 (100.0%), 34.3 MBs/sec
+2026-10-27T18:32:54.9579407Z Cache saved as ID 9599971807 using key msys2-pkgs-upd:false-conf:c287153c-files:696580d3795260ed7fbe07f34ed04fe1db1e00aa514342fec7169e9173a943e6
+2026-10-27T18:32:55.0524267Z [command]C:\Windows\system32\cmd.exe /D /S /C D:\a\_temp\setup-msys2\msys2.cmd -c "'pacman' '--noconfirm' '-Scc'"
+2026-10-27T18:32:55.9193142Z 
+2026-10-27T18:32:55.9193887Z Cache directory: /var/cache/pacman/pkg/
+2026-10-27T18:32:55.9281180Z :: Do you want to remove ALL files from cache? [Y/n] 
+2026-10-27T18:32:55.9281861Z removing all files from cache...
+2026-10-27T18:32:55.9282151Z 
+2026-10-27T18:32:55.9282417Z Database directory: /var/lib/pacman/
+2026-10-27T18:32:55.9300169Z :: Do you want to remove unused repositories? [Y/n] 
+2026-10-27T18:32:55.9300848Z removing unused sync repositories...
+2026-10-27T18:32:55.9348234Z ##[endgroup]
+2026-10-27T18:32:55.9639939Z ##[group]Run powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-windows-dwarf5-cgo.ps1
+2026-10-27T18:32:55.9641060Z [36;1mpowershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-windows-dwarf5-cgo.ps1[0m
+2026-10-27T18:32:55.9687720Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T18:32:55.9688349Z env:
+2026-10-27T18:32:55.9688554Z   GOTOOLCHAIN: local
+2026-10-27T18:32:55.9688989Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:32:55.9689570Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:32:55.9690145Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:32:55.9690646Z   RELEASE_REGION: auto
+2026-10-27T18:32:55.9690901Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:32:55.9691278Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:32:55.9691714Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:32:55.9692037Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:32:55.9692491Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:32:55.9692889Z   MSYSTEM: UCRT64
+2026-10-27T18:32:55.9693139Z   MSYSTEM_PREFIX: D:\a\_temp\msys64\ucrt64
+2026-10-27T18:32:55.9693468Z ##[endgroup]
+2026-10-27T18:33:00.7832357Z Using DWARF 5 CGO compiler D:\a\_temp\msys64\ucrt64\bin\gcc.exe (gcc 16.2.0, GNU ld (GNU Binutils) 2.47.20260726)
+2026-10-27T18:33:00.9403013Z ##[group]Run powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1
+2026-10-27T18:33:00.9404283Z [36;1mpowershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1[0m
+2026-10-27T18:33:00.9450304Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T18:33:00.9450762Z env:
+2026-10-27T18:33:00.9450993Z   GOTOOLCHAIN: local
+2026-10-27T18:33:00.9451461Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:33:00.9452081Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:33:00.9452705Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:33:00.9453245Z   RELEASE_REGION: auto
+2026-10-27T18:33:00.9453525Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:33:00.9453957Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:33:00.9454418Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:33:00.9454772Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:33:00.9455258Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:33:00.9455719Z   MSYSTEM: UCRT64
+2026-10-27T18:33:00.9455985Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:33:00.9456321Z   CGO_ENABLED: 1
+2026-10-27T18:33:00.9456727Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T18:33:00.9457754Z   BEEFTV_EXTRA_LDFLAGS: -X infinite-canvas/backend/internal/app.depthWindowsManifestPublicKeyBase64=Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T18:33:00.9458603Z ##[endgroup]
+2026-10-27T18:33:01.9220503Z Using go1.25.0 at C:\hostedtoolcache\windows\go\1.25.0\x64\bin\go.exe
+2026-10-27T18:33:01.9233424Z Using CGO compiler D:\a\_temp\msys64\ucrt64\bin\gcc.exe (CGO_ENABLED=1)
+2026-10-27T18:33:01.9826772Z No plugin-packages/*.beeftv-plugin artifacts found; building them
+2026-10-27T18:33:03.0671424Z Embedding plugin documentation with C:\Users\runneradmin\.bun\bin\bun.exe
+2026-10-27T18:33:03.2085598Z zip/bash/node not all available; packaging official plugins with PowerShell ZipArchive (forward-slash entries)
+2026-10-27T18:33:04.7524606Z Injecting desktop updater FeedURL and PublicKey ldflags
+2026-10-27T18:33:06.2856258Z Building BeefTV v2.0.5 (6a15544) for windows/amd64
+2026-10-27T18:33:06.7223513Z go: downloading github.com/flytam/filenamify v1.2.0
+2026-10-27T18:33:06.7224661Z go: downloading github.com/jaypipes/ghw v0.21.3
+2026-10-27T18:33:06.7518318Z go: downloading github.com/labstack/gommon v0.4.2
+2026-10-27T18:33:06.7519881Z go: downloading github.com/leaanthony/clir v1.3.0
+2026-10-27T18:33:06.7813840Z go: downloading github.com/leaanthony/debme v1.2.1
+2026-10-27T18:33:06.8203533Z go: downloading github.com/leaanthony/gosod v1.0.4
+2026-10-27T18:33:06.8968295Z go: downloading github.com/pterm/pterm v0.12.80
+2026-10-27T18:33:06.9417521Z go: downloading github.com/tidwall/sjson v1.2.5
+2026-10-27T18:33:06.9915811Z go: downloading github.com/mattn/go-colorable v0.1.13
+2026-10-27T18:33:06.9973203Z go: downloading github.com/mattn/go-isatty v0.0.20
+2026-10-27T18:33:07.0693030Z go: downloading github.com/samber/lo v1.49.1
+2026-10-27T18:33:07.0738950Z go: downloading github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
+2026-10-27T18:33:07.1253528Z go: downloading github.com/fsnotify/fsnotify v1.9.0
+2026-10-27T18:33:07.1573715Z go: downloading github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+2026-10-27T18:33:07.2229540Z go: downloading github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+2026-10-27T18:33:07.2326131Z go: downloading golang.org/x/mod v0.37.0
+2026-10-27T18:33:07.2876272Z go: downloading github.com/wzshiming/ctc v1.2.3
+2026-10-27T18:33:07.3157242Z go: downloading github.com/Masterminds/semver v1.5.0
+2026-10-27T18:33:07.3363908Z go: downloading github.com/charmbracelet/glamour v0.8.0
+2026-10-27T18:33:07.4729710Z go: downloading github.com/jackmordaunt/icns v1.0.0
+2026-10-27T18:33:07.4926706Z go: downloading github.com/leaanthony/winicon v1.0.0
+2026-10-27T18:33:08.5161428Z go: downloading github.com/tc-hib/winres v0.3.1
+2026-10-27T18:33:08.6000921Z go: downloading github.com/go-git/go-git/v5 v5.19.2
+2026-10-27T18:33:08.7608057Z go: downloading github.com/tidwall/gjson v1.14.2
+2026-10-27T18:33:08.7630388Z go: downloading github.com/yusufpapurcu/wmi v1.2.4
+2026-10-27T18:33:08.7959128Z go: downloading github.com/jaypipes/pcidb v1.1.1
+2026-10-27T18:33:08.8037969Z go: downloading gopkg.in/yaml.v3 v3.0.1
+2026-10-27T18:33:08.8620224Z go: downloading golang.org/x/text v0.39.0
+2026-10-27T18:33:09.1297515Z go: downloading golang.org/x/sys v0.46.0
+2026-10-27T18:33:09.1417900Z go: downloading github.com/wzshiming/winseq v0.0.0-20200112104235-db357dc107ae
+2026-10-27T18:33:09.1711991Z go: downloading atomicgo.dev/cursor v0.2.0
+2026-10-27T18:33:09.2218964Z go: downloading atomicgo.dev/keyboard v0.2.9
+2026-10-27T18:33:09.2890956Z go: downloading atomicgo.dev/schedule v0.1.0
+2026-10-27T18:33:09.3348275Z go: downloading github.com/gookit/color v1.5.4
+2026-10-27T18:33:09.4029362Z go: downloading github.com/lithammer/fuzzysearch v1.1.8
+2026-10-27T18:33:09.4621504Z go: downloading github.com/mattn/go-runewidth v0.0.16
+2026-10-27T18:33:09.5163343Z go: downloading golang.org/x/term v0.44.0
+2026-10-27T18:33:09.7604611Z go: downloading github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
+2026-10-27T18:33:09.8014709Z go: downloading golang.org/x/tools v0.47.0
+2026-10-27T18:33:09.8016060Z go: downloading github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a
+2026-10-27T18:33:09.8043437Z go: downloading github.com/yuin/goldmark v1.7.4
+2026-10-27T18:33:09.8197297Z go: downloading github.com/yuin/goldmark-emoji v1.0.3
+2026-10-27T18:33:09.9584346Z go: downloading github.com/tidwall/match v1.1.1
+2026-10-27T18:33:09.9589267Z go: downloading github.com/tidwall/pretty v1.2.0
+2026-10-27T18:33:09.9590743Z go: downloading github.com/go-ole/go-ole v1.3.0
+2026-10-27T18:33:10.0148774Z go: downloading dario.cat/mergo v1.0.0
+2026-10-27T18:33:10.0950228Z go: downloading github.com/ProtonMail/go-crypto v1.1.6
+2026-10-27T18:33:10.1037832Z go: downloading github.com/go-git/go-billy/v5 v5.9.0
+2026-10-27T18:33:10.2981290Z go: downloading github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
+2026-10-27T18:33:10.3278327Z go: downloading github.com/containerd/console v1.0.3
+2026-10-27T18:33:10.3279504Z go: downloading github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e
+2026-10-27T18:33:10.4390529Z go: downloading github.com/alecthomas/chroma/v2 v2.14.0
+2026-10-27T18:33:11.3187477Z go: downloading github.com/charmbracelet/lipgloss v0.12.1
+2026-10-27T18:33:11.3188168Z go: downloading github.com/charmbracelet/x/ansi v0.1.4
+2026-10-27T18:33:11.3984727Z go: downloading github.com/microcosm-cc/bluemonday v1.0.27
+2026-10-27T18:33:11.4020356Z go: downloading github.com/muesli/reflow v0.3.0
+2026-10-27T18:33:11.4649108Z go: downloading github.com/aymanbagabas/go-osc52/v2 v2.0.1
+2026-10-27T18:33:11.4661595Z go: downloading github.com/lucasb-eyer/go-colorful v1.2.0
+2026-10-27T18:33:11.4680289Z go: downloading github.com/pjbgf/sha1cd v0.6.0
+2026-10-27T18:33:11.5170394Z go: downloading github.com/cyphar/filepath-securejoin v0.6.1
+2026-10-27T18:33:11.6190611Z go: downloading github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376
+2026-10-27T18:33:11.6548536Z go: downloading github.com/emirpasic/gods v1.18.1
+2026-10-27T18:33:11.7053708Z go: downloading github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99
+2026-10-27T18:33:15.1091175Z go: downloading golang.org/x/crypto v0.53.0
+2026-10-27T18:33:15.4254386Z go: downloading github.com/dlclark/regexp2 v1.11.0
+2026-10-27T18:33:15.5469060Z go: downloading github.com/aymerick/douceur v0.2.0
+2026-10-27T18:33:15.6003291Z go: downloading golang.org/x/net v0.56.0
+2026-10-27T18:33:15.8158146Z go: downloading gopkg.in/warnings.v0 v0.1.2
+2026-10-27T18:33:15.8189044Z go: downloading github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8
+2026-10-27T18:33:15.8447537Z go: downloading github.com/kevinburke/ssh_config v1.2.0
+2026-10-27T18:33:15.8793999Z go: downloading github.com/skeema/knownhosts v1.3.1
+2026-10-27T18:33:15.9226197Z go: downloading github.com/xanzy/ssh-agent v0.3.3
+2026-10-27T18:33:15.9702599Z go: downloading golang.org/x/sync v0.21.0
+2026-10-27T18:33:16.0211813Z go: downloading github.com/cloudflare/circl v1.6.3
+2026-10-27T18:33:17.4465449Z go: downloading github.com/klauspost/cpuid/v2 v2.3.0
+2026-10-27T18:33:17.4469293Z go: downloading github.com/gorilla/css v1.0.1
+2026-10-27T18:33:17.4470390Z go: downloading github.com/Microsoft/go-winio v0.6.2
+2026-10-27T18:38:33.2816529Z go: downloading git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
+2026-10-27T18:38:33.2818298Z go: downloading github.com/bep/debounce v1.2.1
+2026-10-27T18:38:33.2888674Z go: downloading github.com/wailsapp/mimetype v1.4.1
+2026-10-27T18:41:22.0573606Z Packaged FFmpeg n8.1.3-18-g46d899d7a0-20261019 (164751872 bytes)
+2026-10-27T18:41:32.6859465Z === RUN   TestBundledWindowsHEVCWithoutSystemFFmpeg
+2026-10-27T18:41:33.1431201Z     bundled_windows_test.go:54: no-PATH HEVC → H.264 succeeded using C:\Users\runneradmin\AppData\Local\Temp\beeftv-media-中文 fixture-efacd140fc9c46d6a832362f8243237b\agent-host\media-runtime\ffmpeg.exe
+2026-10-27T18:41:33.1439354Z --- PASS: TestBundledWindowsHEVCWithoutSystemFFmpeg (0.46s)
+2026-10-27T18:41:33.1440421Z PASS
+2026-10-27T18:41:33.4976851Z === RUN   TestBundledMediaMetadataWithoutSystemFFprobe
+2026-10-27T18:41:33.9249855Z 
+2026-10-27T18:41:33.9252712Z 2026/10/27 18:41:33 [31;1mD:/a/BeefTV/BeefTV/backend/internal/repository/upload_reservation.go:84 [35;1mrecord not found
+2026-10-27T18:41:33.9255355Z [0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "owner" AND identity = "2ed104c0f5382380cad81daf67ddeca2" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+2026-10-27T18:41:33.9507125Z --- PASS: TestBundledMediaMetadataWithoutSystemFFprobe (0.45s)
+2026-10-27T18:41:33.9508472Z PASS
+2026-10-27T18:41:34.0795564Z === RUN   TestProbeLocalDoesNotFetchPlaylistURLs
+2026-10-27T18:41:34.1245190Z --- PASS: TestProbeLocalDoesNotFetchPlaylistURLs (0.04s)
+2026-10-27T18:41:34.1246231Z PASS
+2026-10-27T18:41:38.7364839Z Release executable: D:\a\BeefTV\BeefTV\backend\cmd\desktop\build\bin\BeefTV.exe
+2026-10-27T18:41:38.7373309Z Bundled agent CLI: D:\a\BeefTV\BeefTV\backend\cmd\desktop\build\bin\cli\beeftv.exe
+2026-10-27T18:41:38.7388459Z Official plugins: D:\a\BeefTV\BeefTV\backend\cmd\desktop\build\bin\plugin-packages (86 packages)
+2026-10-27T18:41:38.7396609Z Launch data directory (unless CANVAS_DESKTOP_DATA_DIR is set): %AppData%\BeefTV
+2026-10-27T18:41:38.7404723Z Official plugins are loaded from the executable directory, not from the process working directory.
+2026-10-27T18:41:38.7413617Z WebView2 is required at runtime; Windows 11 usually already has it. Missing runtimes use Wails -webview2 download. See https://wails.io/docs/guides/windows
+2026-10-27T18:41:38.7421657Z This machine still has to launch BeefTV.exe before the Windows build is accepted. NSIS installer output is not produced.
+2026-10-27T18:41:38.8804645Z ##[group]Run go test ./internal/app -run 'TestWindowsVideoConnectionResetRecovery|TestVideoRecoverySocketResetNeverResubmits|TestVideoRecoveryLostReceiptNeverResubmits|TestVideoRecoveryBeefAPIQueryUsesOnlyGet' -count=1 -timeout=120s
+2026-10-27T18:41:38.8807232Z [36;1mgo test ./internal/app -run 'TestWindowsVideoConnectionResetRecovery|TestVideoRecoverySocketResetNeverResubmits|TestVideoRecoveryLostReceiptNeverResubmits|TestVideoRecoveryBeefAPIQueryUsesOnlyGet' -count=1 -timeout=120s[0m
+2026-10-27T18:41:38.8808686Z [36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }[0m
+2026-10-27T18:41:38.8860473Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T18:41:38.8861003Z env:
+2026-10-27T18:41:38.8861290Z   GOTOOLCHAIN: local
+2026-10-27T18:41:38.8861811Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:41:38.8862479Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:41:38.8863215Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:41:38.8863811Z   RELEASE_REGION: auto
+2026-10-27T18:41:38.8864128Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:41:38.8864586Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:41:38.8865064Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:41:38.8865455Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:41:38.8865982Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:41:38.8866448Z   MSYSTEM: UCRT64
+2026-10-27T18:41:38.8866746Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:41:38.8867129Z   CGO_ENABLED: 1
+2026-10-27T18:41:38.8867442Z ##[endgroup]
+2026-10-27T18:41:48.8031629Z ok  	infinite-canvas/backend/internal/app	0.224s
+2026-10-27T18:41:49.0815755Z ##[group]Run set -euo pipefail
+2026-10-27T18:41:49.0816283Z [36;1mset -euo pipefail[0m
+2026-10-27T18:41:49.0816651Z [36;1mmkdir -p ../dist[0m
+2026-10-27T18:41:49.0816983Z [36;1minput="cmd/desktop/build/bin"[0m
+2026-10-27T18:41:49.0817393Z [36;1mif [[ "$PLATFORM" == darwin-* ]]; then[0m
+2026-10-27T18:41:49.0817817Z [36;1m  input="$input/BeefTV.app"[0m
+2026-10-27T18:41:49.0818209Z [36;1melif [[ "$PLATFORM" == linux-amd64 ]]; then[0m
+2026-10-27T18:41:49.0818634Z [36;1m  input="$input/BeefTV-linux"[0m
+2026-10-27T18:41:49.0819004Z [36;1mfi[0m
+2026-10-27T18:41:49.0819306Z [36;1mgo run ./cmd/update-release package \[0m
+2026-10-27T18:41:49.0819729Z [36;1m  --platform "$PLATFORM" \[0m
+2026-10-27T18:41:49.0820108Z [36;1m  --input "$input" \[0m
+2026-10-27T18:41:49.0820504Z [36;1m  --output "../dist/BeefTV-${VERSION}-${PLATFORM}.zip"[0m
+2026-10-27T18:41:49.0837001Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:41:49.0837596Z env:
+2026-10-27T18:41:49.0837860Z   GOTOOLCHAIN: local
+2026-10-27T18:41:49.0838348Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:41:49.0838958Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:41:49.0839541Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:41:49.0840084Z   RELEASE_REGION: auto
+2026-10-27T18:41:49.0840402Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:41:49.0840821Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:41:49.0841251Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:41:49.0841635Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:41:49.0842119Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:41:49.0842529Z   MSYSTEM: UCRT64
+2026-10-27T18:41:49.0842999Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:41:49.0843353Z   CGO_ENABLED: 1
+2026-10-27T18:41:49.0843615Z   VERSION: v2.0.5
+2026-10-27T18:41:49.0843905Z   PLATFORM: windows-amd64
+2026-10-27T18:41:49.0844198Z ##[endgroup]
+2026-10-27T18:42:08.5324284Z path=../dist/BeefTV-v2.0.5-windows-amd64.zip
+2026-10-27T18:42:08.5325786Z sha256=bb0fc13489b71cc9900f3927df336c79bc96757ee63c6b47a40be9ad2aaa8a57
+2026-10-27T18:42:08.5326935Z size=280075097
+2026-10-27T18:42:08.5632141Z ##[group]Run actions/setup-python@v5
+2026-10-27T18:42:08.5632604Z with:
+2026-10-27T18:42:08.5632873Z   python-version: 3.12
+2026-10-27T18:42:08.5633204Z   check-latest: false
+2026-10-27T18:42:08.5635740Z   token: ***
+2026-10-27T18:42:08.5636057Z   update-environment: true
+2026-10-27T18:42:08.5636365Z   allow-prereleases: false
+2026-10-27T18:42:08.5636691Z   freethreaded: false
+2026-10-27T18:42:08.5637001Z env:
+2026-10-27T18:42:08.5637244Z   GOTOOLCHAIN: local
+2026-10-27T18:42:08.5637705Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:42:08.5638320Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:42:08.5638907Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:42:08.5639433Z   RELEASE_REGION: auto
+2026-10-27T18:42:08.5639745Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:42:08.5640298Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:42:08.5640712Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:42:08.5641096Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:42:08.5641576Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:42:08.5641982Z   MSYSTEM: UCRT64
+2026-10-27T18:42:08.5642277Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:42:08.5642633Z   CGO_ENABLED: 1
+2026-10-27T18:42:08.5642881Z ##[endgroup]
+2026-10-27T18:42:08.7156269Z ##[group]Installed versions
+2026-10-27T18:42:08.7420397Z (node:6636) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:42:08.7422191Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:42:08.7423384Z Successfully set up CPython (3.12.10)
+2026-10-27T18:42:08.7430129Z ##[endgroup]
+2026-10-27T18:42:08.7720398Z ##[group]Run if (!(Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --no-progress -y; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+2026-10-27T18:42:08.7721676Z [36;1mif (!(Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --no-progress -y; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }[0m
+2026-10-27T18:42:08.7766944Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T18:42:08.7767325Z env:
+2026-10-27T18:42:08.7767530Z   GOTOOLCHAIN: local
+2026-10-27T18:42:08.7767937Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:42:08.7768496Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:42:08.7769088Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:42:08.7769582Z   RELEASE_REGION: auto
+2026-10-27T18:42:08.7769824Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:42:08.7770237Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:42:08.7770644Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:42:08.7770980Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:42:08.7771425Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:42:08.7771816Z   MSYSTEM: UCRT64
+2026-10-27T18:42:08.7772063Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:42:08.7772368Z   CGO_ENABLED: 1
+2026-10-27T18:42:08.7772691Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:08.7773231Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T18:42:08.7773947Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:08.7774433Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:08.7774911Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:08.7775295Z ##[endgroup]
+2026-10-27T18:42:09.1234180Z ##[group]Run python scripts/package-desktop-installer.py --platform 'windows-amd64'
+2026-10-27T18:42:09.1234978Z [36;1mpython scripts/package-desktop-installer.py --platform 'windows-amd64'[0m
+2026-10-27T18:42:09.1254389Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:42:09.1254825Z env:
+2026-10-27T18:42:09.1255031Z   GOTOOLCHAIN: local
+2026-10-27T18:42:09.1255432Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:42:09.1255982Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:42:09.1256543Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:42:09.1257028Z   RELEASE_REGION: auto
+2026-10-27T18:42:09.1257274Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:42:09.1257634Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:42:09.1258006Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:42:09.1258346Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:42:09.1258761Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:42:09.1259130Z   MSYSTEM: UCRT64
+2026-10-27T18:42:09.1259364Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:42:09.1259647Z   CGO_ENABLED: 1
+2026-10-27T18:42:09.1259954Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:09.1260459Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T18:42:09.1260959Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:09.1261404Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:09.1261865Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:42:09.1262221Z ##[endgroup]
+2026-10-27T18:42:10.3387546Z Command line defined: "PAYLOAD=D:\a\BeefTV\BeefTV\backend\cmd\desktop\build\bin"
+2026-10-27T18:42:10.3389016Z Command line defined: "OUTPUT=D:\a\BeefTV\BeefTV\dist\BeefTV-v2.0.5-windows-amd64-setup.exe"
+2026-10-27T18:42:10.3390459Z Command line defined: "ROOTFILES=C:\Users\RUNNER~1\AppData\Local\Temp\beeftv-nsis-3xjbojh2\installed-root-files.txt"
+2026-10-27T18:42:10.3391445Z Command line defined: "VERSION=2.0.5"
+2026-10-27T18:42:10.3432224Z Processing config: C:\Program Files (x86)\NSIS\nsisconf.nsh
+2026-10-27T18:42:10.4510666Z Processing script file: "D:\a\BeefTV\BeefTV\scripts\installers\windows.nsi" (UTF8)
+2026-10-27T18:42:14.2911572Z 
+2026-10-27T18:42:14.2912276Z Processed 1 file, writing output (x86-unicode):
+2026-10-27T18:42:14.3329405Z 
+2026-10-27T18:42:14.3330079Z Output: "D:\a\BeefTV\BeefTV\dist\BeefTV-v2.0.5-windows-amd64-setup.exe"
+2026-10-27T18:42:14.3378916Z Install: 3 pages (192 bytes), 1 section (1 required) (2072 bytes), 17820 instructions (498960 bytes), 9586 strings (495222 bytes), 2 language tables (652 bytes).
+2026-10-27T18:42:14.3380492Z Uninstall: 2 pages (192 bytes), 1 section (2072 bytes), 275 instructions (7700 bytes), 208 strings (5768 bytes), 2 language tables (524 bytes).
+2026-10-27T18:42:14.3381382Z Datablock optimizer saved 2490 KiB (~0.3%).
+2026-10-27T18:42:14.3381660Z 
+2026-10-27T18:42:14.3381866Z Using lzma (compress whole) compression.
+2026-10-27T18:42:14.3382127Z 
+2026-10-27T18:42:14.3382362Z EXE header size:               53760 / 38912 bytes
+2026-10-27T18:42:14.3382889Z Install code:                          (997562 bytes)
+2026-10-27T18:42:14.3383419Z Install data:                          (704133687 bytes)
+2026-10-27T18:42:14.3383942Z Uninstall code+data:                   (50084 bytes)
+2026-10-27T18:47:13.2473550Z Compressed data:           195298074 / 705181333 bytes
+2026-10-27T18:47:13.7752567Z CRC (0x119E31B3):                  4 / 4 bytes
+2026-10-27T18:47:13.7753166Z 
+2026-10-27T18:47:13.7753742Z Total size:                195351838 / 705220249 bytes (27.7%)
+2026-10-27T18:47:13.8557132Z D:\a\BeefTV\BeefTV\dist\BeefTV-v2.0.5-windows-amd64-setup.exe
+2026-10-27T18:47:13.8909833Z ##[group]Run set -euo pipefail
+2026-10-27T18:47:13.8910402Z [36;1mset -euo pipefail[0m
+2026-10-27T18:47:13.8910844Z [36;1mpayload='backend/cmd/desktop/build/bin'[0m
+2026-10-27T18:47:13.8911295Z [36;1msuffix='-setup.exe'[0m
+2026-10-27T18:47:13.8912308Z [36;1mif [[ "$PLATFORM" == darwin-* ]]; then payload="$payload/BeefTV.app"; suffix='.dmg'; fi[0m
+2026-10-27T18:47:13.8913405Z [36;1mif [[ "$PLATFORM" == linux-* ]]; then payload="$payload/BeefTV-linux"; suffix='.deb'; fi[0m
+2026-10-27T18:47:13.8914660Z [36;1mcommand=(python scripts/smoke-desktop-installer.py --platform "$PLATFORM" --installer "dist/BeefTV-${VERSION}-${PLATFORM}${suffix}" --payload "$payload")[0m
+2026-10-27T18:47:13.8916042Z [36;1mif [[ "$PLATFORM" == linux-* ]]; then xvfb-run -a dbus-run-session -- "${command[@]}"; else "${command[@]}"; fi[0m
+2026-10-27T18:47:13.8939049Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:47:13.8939577Z env:
+2026-10-27T18:47:13.8939927Z   GOTOOLCHAIN: local
+2026-10-27T18:47:13.8940404Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:47:13.8941028Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:47:13.8941774Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:47:13.8942340Z   RELEASE_REGION: auto
+2026-10-27T18:47:13.8942643Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:47:13.8962874Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:47:13.8963691Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:47:13.8964408Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:47:13.8965420Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:47:13.8966239Z   MSYSTEM: UCRT64
+2026-10-27T18:47:13.8966738Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:47:13.8967361Z   CGO_ENABLED: 1
+2026-10-27T18:47:13.8967978Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:47:13.8969026Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T18:47:13.8970227Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:47:13.8971376Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:47:13.8972462Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:47:13.8973364Z   VERSION: v2.0.5
+2026-10-27T18:47:13.8973916Z   PLATFORM: windows-amd64
+2026-10-27T18:47:13.8974525Z ##[endgroup]
+2026-10-27T18:52:40.8715332Z PASS actual Windows WebView IndexedDB: write
+2026-10-27T18:54:26.9694135Z PASS actual Windows WebView IndexedDB: read
+2026-10-27T18:54:59.2781736Z PASS actual Windows WebView IndexedDB: read
+2026-10-27T18:55:51.5959432Z PASS actual Windows WebView IndexedDB: read
+2026-10-27T18:55:59.6706418Z PASS: chosen install folder, upgrade reuse, portable upgrade, foreign-folder refusal and custom uninstall
+2026-10-27T18:55:59.6708641Z PASS: portable migration, native installed startup, full payload, overwrite, uninstall and reinstall preserve project rows, settings, files and draft sentinels; no paid generation
+2026-10-27T18:55:59.7326802Z ##[group]Run python scripts/smoke-packaged-cli_test.py
+2026-10-27T18:55:59.7327516Z [36;1mpython scripts/smoke-packaged-cli_test.py[0m
+2026-10-27T18:55:59.7328371Z [36;1mpython scripts/smoke-packaged-cli.py --archive "dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"[0m
+2026-10-27T18:55:59.7349303Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:55:59.7349940Z env:
+2026-10-27T18:55:59.7350253Z   GOTOOLCHAIN: local
+2026-10-27T18:55:59.7351419Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:55:59.7352048Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:55:59.7352682Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:55:59.7353241Z   RELEASE_REGION: auto
+2026-10-27T18:55:59.7353545Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:55:59.7354066Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:55:59.7354500Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:55:59.7354895Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:55:59.7355406Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:55:59.7356079Z   MSYSTEM: UCRT64
+2026-10-27T18:55:59.7356411Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:55:59.7356788Z   CGO_ENABLED: 1
+2026-10-27T18:55:59.7357157Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:55:59.7357765Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T18:55:59.7358366Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:55:59.7359052Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:55:59.7359721Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:55:59.7360178Z   VERSION: v2.0.5
+2026-10-27T18:55:59.7360504Z   PLATFORM: windows-amd64
+2026-10-27T18:55:59.7360866Z ##[endgroup]
+2026-10-27T18:56:00.0835581Z .s
+2026-10-27T18:56:00.0836247Z ----------------------------------------------------------------------
+2026-10-27T18:56:00.0838046Z Ran 2 tests in 0.016s
+2026-10-27T18:56:00.0838384Z 
+2026-10-27T18:56:00.0838564Z OK (skipped=1)
+2026-10-27T18:56:01.1971983Z PASS windows-amd64: extracted shipped CLI initialize + tools/list; authenticated mock only
+2026-10-27T18:56:01.2309868Z ##[group]Run python scripts/test-windows-published-upgrade.py --archive "dist/BeefTV-v2.0.5-windows-amd64.zip" --version "v2.0.5" --output dist/windows-upgrade-evidence.json
+2026-10-27T18:56:01.2311515Z [36;1mpython scripts/test-windows-published-upgrade.py --archive "dist/BeefTV-v2.0.5-windows-amd64.zip" --version "v2.0.5" --output dist/windows-upgrade-evidence.json[0m
+2026-10-27T18:56:01.2356639Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T18:56:01.2357061Z env:
+2026-10-27T18:56:01.2357339Z   GOTOOLCHAIN: local
+2026-10-27T18:56:01.2357856Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:56:01.2358464Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:56:01.2359115Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:56:01.2359665Z   RELEASE_REGION: auto
+2026-10-27T18:56:01.2359987Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:56:01.2360482Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:56:01.2360921Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:56:01.2361307Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:56:01.2361806Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T18:56:01.2362226Z   MSYSTEM: UCRT64
+2026-10-27T18:56:01.2362541Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T18:56:01.2362909Z   CGO_ENABLED: 1
+2026-10-27T18:56:01.2363271Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:56:01.2363864Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T18:56:01.2364442Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:56:01.2364977Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:56:01.2365479Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T18:56:01.2365926Z ##[endgroup]
+2026-10-27T18:58:38.1693292Z PASS v1.6.23 -> v2.0.5: full replacement, product rows, new backend and healthy rollback
+2026-10-27T19:00:55.3455121Z PASS v1.7.1 -> v2.0.5: full replacement, product rows, new backend and healthy rollback
+2026-10-27T19:03:17.3678758Z PASS v1.7.2 -> v2.0.5: full replacement, product rows, new backend and healthy rollback
+2026-10-27T19:04:14.9365734Z ##[group]Run actions/upload-artifact@v4
+2026-10-27T19:04:14.9366245Z with:
+2026-10-27T19:04:14.9366609Z   name: windows-upgrade-evidence
+2026-10-27T19:04:14.9367082Z   path: dist/windows-upgrade-evidence.json
+2026-10-27T19:04:14.9367534Z   if-no-files-found: warn
+2026-10-27T19:04:14.9367944Z   compression-level: 6
+2026-10-27T19:04:14.9368288Z   overwrite: false
+2026-10-27T19:04:14.9368663Z   include-hidden-files: false
+2026-10-27T19:04:14.9369061Z env:
+2026-10-27T19:04:14.9369366Z   GOTOOLCHAIN: local
+2026-10-27T19:04:14.9369969Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:04:14.9370715Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:04:14.9371525Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:04:14.9372126Z   RELEASE_REGION: auto
+2026-10-27T19:04:14.9372458Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:04:14.9373046Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:04:14.9373555Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:04:14.9374021Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:04:14.9374585Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T19:04:14.9375073Z   MSYSTEM: UCRT64
+2026-10-27T19:04:14.9375391Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T19:04:14.9375812Z   CGO_ENABLED: 1
+2026-10-27T19:04:14.9376258Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:14.9376994Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T19:04:14.9377724Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:14.9378409Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:14.9379054Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:14.9379538Z ##[endgroup]
+2026-10-27T19:04:15.6590750Z (node:4236) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:04:15.6592030Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:04:15.6666622Z With the provided path, there will be 1 file uploaded
+2026-10-27T19:04:15.6672318Z Artifact name is valid!
+2026-10-27T19:04:15.6675087Z Root directory input is valid!
+2026-10-27T19:04:16.1159785Z Beginning upload of artifact content to blob storage
+2026-10-27T19:04:16.1442334Z (node:4236) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T19:04:16.4180576Z Uploaded bytes 434
+2026-10-27T19:04:16.4948308Z Finished uploading artifact content to blob storage!
+2026-10-27T19:04:16.4950938Z SHA256 digest of uploaded artifact zip is d804efdee3b26a32cebfd9487ea2f8792767936c843352f6feb929ccfdf252c7
+2026-10-27T19:04:16.4952711Z Finalizing artifact upload
+2026-10-27T19:04:16.9724582Z Artifact windows-upgrade-evidence.zip successfully finalized. Artifact ID 12763600284
+2026-10-27T19:04:16.9726794Z Artifact windows-upgrade-evidence has been successfully uploaded! Final size is 434 bytes. Artifact ID is 12763600284
+2026-10-27T19:04:16.9739402Z Artifact download URL: https://github.com/glanderness/BeefTV/actions/runs/40559746752/artifacts/12763600284
+2026-10-27T19:04:17.0078836Z ##[group]Run actions/upload-artifact@v4
+2026-10-27T19:04:17.0079383Z with:
+2026-10-27T19:04:17.0079726Z   name: desktop-windows-amd64
+2026-10-27T19:04:17.0080456Z   path: dist/BeefTV-v2.0.5-windows-amd64*
+dist/BeefTV-v2.0.5-ffprobe-windows-amd64-sources.tar.gz
+
+2026-10-27T19:04:17.0081817Z   retention-days: 7
+2026-10-27T19:04:17.0082175Z   if-no-files-found: error
+2026-10-27T19:04:17.0082561Z   compression-level: 6
+2026-10-27T19:04:17.0082893Z   overwrite: false
+2026-10-27T19:04:17.0083236Z   include-hidden-files: false
+2026-10-27T19:04:17.0083615Z env:
+2026-10-27T19:04:17.0083928Z   GOTOOLCHAIN: local
+2026-10-27T19:04:17.0084490Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T19:04:17.0085177Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T19:04:17.0085905Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T19:04:17.0086564Z   RELEASE_REGION: auto
+2026-10-27T19:04:17.0087019Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T19:04:17.0087513Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T19:04:17.0088052Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T19:04:17.0088502Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T19:04:17.0089091Z   BEEFTV_NODE_RUNTIME: C:\hostedtoolcache\windows\node\24.22.1\x64
+2026-10-27T19:04:17.0090100Z   MSYSTEM: UCRT64
+2026-10-27T19:04:17.0090455Z   CC: D:\a\_temp\msys64\ucrt64\bin\gcc.exe
+2026-10-27T19:04:17.0090971Z   CGO_ENABLED: 1
+2026-10-27T19:04:17.0091550Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:17.0092273Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T19:04:17.0092966Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:17.0093597Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:17.0094202Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T19:04:17.0094726Z ##[endgroup]
+2026-10-27T19:04:17.2135420Z (node:3632) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:04:17.2136714Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:04:17.2219755Z With the provided path, there will be 2 files uploaded
+2026-10-27T19:04:17.2226125Z Artifact name is valid!
+2026-10-27T19:04:17.2228790Z Root directory input is valid!
+2026-10-27T19:04:17.6438892Z Beginning upload of artifact content to blob storage
+2026-10-27T19:04:17.9462958Z (node:3632) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T19:04:19.3341842Z Uploaded bytes 8388608
+2026-10-27T19:04:19.5478774Z Uploaded bytes 16777216
+2026-10-27T19:04:19.6081822Z Uploaded bytes 25165824
+2026-10-27T19:04:19.6575240Z Uploaded bytes 33554432
+2026-10-27T19:04:19.8125203Z Uploaded bytes 41943040
+2026-10-27T19:04:19.9122539Z Uploaded bytes 50331648
+2026-10-27T19:04:20.0062693Z Uploaded bytes 58720256
+2026-10-27T19:04:20.0412223Z Uploaded bytes 67108864
+2026-10-27T19:04:20.3605730Z Uploaded bytes 75497472
+2026-10-27T19:04:20.6125380Z Uploaded bytes 83886080
+2026-10-27T19:04:20.9241629Z Uploaded bytes 92274688
+2026-10-27T19:04:21.3374693Z Uploaded bytes 100663296
+2026-10-27T19:04:21.4115881Z Uploaded bytes 109051904
+2026-10-27T19:04:21.9170558Z Uploaded bytes 117440512
+2026-10-27T19:04:22.0039039Z Uploaded bytes 125829120
+2026-10-27T19:04:22.1571477Z Uploaded bytes 134217728
+2026-10-27T19:04:22.4083999Z Uploaded bytes 142606336
+2026-10-27T19:04:22.6619447Z Uploaded bytes 150994944
+2026-10-27T19:04:22.9600887Z Uploaded bytes 159383552
+2026-10-27T19:04:23.1859613Z Uploaded bytes 167772160
+2026-10-27T19:04:23.4834933Z Uploaded bytes 176160768
+2026-10-27T19:04:23.7427671Z Uploaded bytes 184549376
+2026-10-27T19:04:23.9647474Z Uploaded bytes 192937984
+2026-10-27T19:04:24.2773556Z Uploaded bytes 201326592
+2026-10-27T19:04:24.5215036Z Uploaded bytes 209715200
+2026-10-27T19:04:24.7930629Z Uploaded bytes 218103808
+2026-10-27T19:04:25.1550037Z Uploaded bytes 226492416
+2026-10-27T19:04:25.5941842Z Uploaded bytes 234881024
+2026-10-27T19:04:25.6802836Z Uploaded bytes 243269632
+2026-10-27T19:04:26.1848800Z Uploaded bytes 251658240
+2026-10-27T19:04:26.2794963Z Uploaded bytes 260046848
+2026-10-27T19:04:26.4142381Z Uploaded bytes 268435456
+2026-10-27T19:04:26.6643797Z Uploaded bytes 276824064
+2026-10-27T19:04:26.9120583Z Uploaded bytes 285212672
+2026-10-27T19:04:27.2376691Z Uploaded bytes 293601280
+2026-10-27T19:04:27.5289814Z Uploaded bytes 301989888
+2026-10-27T19:04:27.8478495Z Uploaded bytes 310378496
+2026-10-27T19:04:28.3284337Z Uploaded bytes 318767104
+2026-10-27T19:04:28.5050064Z Uploaded bytes 327155712
+2026-10-27T19:04:28.6433247Z Uploaded bytes 335544320
+2026-10-27T19:04:29.2034234Z Uploaded bytes 343932928
+2026-10-27T19:04:29.3135060Z Uploaded bytes 352321536
+2026-10-27T19:04:29.4686098Z Uploaded bytes 360710144
+2026-10-27T19:04:29.9161456Z Uploaded bytes 369098752
+2026-10-27T19:04:30.1530810Z Uploaded bytes 377487360
+2026-10-27T19:04:30.2581807Z Uploaded bytes 385875968
+2026-10-27T19:04:30.4196342Z Uploaded bytes 394264576
+2026-10-27T19:04:30.7520605Z Uploaded bytes 402653184
+2026-10-27T19:04:30.9765799Z Uploaded bytes 411041792
+2026-10-27T19:04:31.2387583Z Uploaded bytes 419430400
+2026-10-27T19:04:31.5176772Z Uploaded bytes 427819008
+2026-10-27T19:04:31.9171239Z Uploaded bytes 436207616
+2026-10-27T19:04:32.3347277Z Uploaded bytes 444596224
+2026-10-27T19:04:32.6130180Z Uploaded bytes 452984832
+2026-10-27T19:04:32.8288087Z Uploaded bytes 461373440
+2026-10-27T19:04:32.8530026Z Uploaded bytes 469762048
+2026-10-27T19:04:32.9722309Z Uploaded bytes 471324951
+2026-10-27T19:04:33.0510044Z Finished uploading artifact content to blob storage!
+2026-10-27T19:04:33.0519784Z SHA256 digest of uploaded artifact zip is c93b2f366606693c7eceda8b48d537f7a2c1d1b667451bded675d64590505cc1
+2026-10-27T19:04:33.0522147Z Finalizing artifact upload
+2026-10-27T19:04:33.7197248Z Artifact desktop-windows-amd64.zip successfully finalized. Artifact ID 12763006782
+2026-10-27T19:04:33.7201317Z Artifact desktop-windows-amd64 has been successfully uploaded! Final size is 471324951 bytes. Artifact ID is 12763006782
+2026-10-27T19:04:33.7218841Z Artifact download URL: https://github.com/glanderness/BeefTV/actions/runs/40559746752/artifacts/12763006782
+2026-10-27T19:04:33.7794716Z Post job cleanup.
+2026-10-27T19:04:33.9354510Z (node:4488) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:04:33.9356038Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:04:33.9658622Z Post job cleanup.
+2026-10-27T19:04:34.1317422Z (node:408) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:04:34.1318459Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:04:34.1649193Z Post job cleanup.
+2026-10-27T19:04:34.5185075Z [command]"C:\Program Files\Git\usr\bin\tar.exe" --posix -cf cache.tzst --exclude cache.tzst -P -C D:/a/BeefTV/BeefTV --files-from manifest.txt --force-local --use-compress-program "zstd -T0"
+2026-10-27T19:04:37.8573033Z Sent 6160384 of 38980903 (15.8%), 5.8 MBs/sec
+2026-10-27T19:04:38.7896980Z Sent 38980903 of 38980903 (100.0%), 19.1 MBs/sec
+2026-10-27T19:04:39.1326877Z Post job cleanup.
+2026-10-27T19:04:39.2924865Z (node:5144) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T19:04:39.2926590Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T19:04:39.4033897Z [command]C:\hostedtoolcache\windows\go\1.25.0\x64\bin\go.exe env GOMODCACHE
+2026-10-27T19:04:39.4157541Z [command]C:\hostedtoolcache\windows\go\1.25.0\x64\bin\go.exe env GOCACHE
+2026-10-27T19:04:39.5354017Z C:\Users\runneradmin\AppData\Local\go-build
+2026-10-27T19:04:39.5359291Z C:\Users\runneradmin\go\pkg\mod
+2026-10-27T19:04:39.5392184Z Cache hit occurred on the primary key setup-go-Windows-x64-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e, not saving cache.
+2026-10-27T19:04:39.5724011Z Post job cleanup.
+2026-10-27T19:04:39.7868356Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-27T19:04:39.8609305Z git version 2.56.0.windows.3
+2026-10-27T19:04:39.8682587Z Temporarily overriding HOME='D:\a\_temp\4ff72cbe-5f50-41c8-ba6a-efa24fcd786a' before making global git config changes
+2026-10-27T19:04:39.8685299Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T19:04:39.8696026Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\BeefTV\BeefTV
+2026-10-27T19:04:39.9067911Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T19:04:39.9433675Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-27T19:04:40.5476030Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T19:04:40.5772845Z http.https://github.com/.extraheader
+2026-10-27T19:04:40.5819968Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+2026-10-27T19:04:40.6181070Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-27T19:04:41.1506236Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T19:04:41.1830639Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-27T19:04:41.7516222Z Cleaning up orphan processes
+2026-10-27T19:04:41.8508069Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-go@v5, actions/setup-node@v4, actions/setup-python@v5, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

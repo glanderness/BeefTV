@@ -1,0 +1,20 @@
+[
+  {
+    "file": "darwin-amd64-attempt1-job.txt",
+    "jobId": "122387469521",
+    "bytes": 103702,
+    "sha256": "09136ea544a35cca991957801343ae94bbf687cc446ef29089f2598e40185304"
+  },
+  {
+    "file": "windows-amd64-attempt1-job.txt",
+    "jobId": "122387469534",
+    "bytes": 92617,
+    "sha256": "245da3d4175e3d9f87f1834069e9bc7ff7a666aa41342edce5fb22c44b14dac0"
+  },
+  {
+    "file": "linux-amd64-attempt1-job.txt",
+    "jobId": "122387469598",
+    "bytes": 242089,
+    "sha256": "725fec2c30aede6bf2328f9da2630738dc02e13c77f6882fefb948984598435e"
+  }
+]

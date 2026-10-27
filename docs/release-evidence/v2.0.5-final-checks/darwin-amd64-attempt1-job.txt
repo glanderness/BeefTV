@@ -1,0 +1,1249 @@
+﻿2026-10-27T18:29:03.2283440Z Current runner version: '2.338.0'
+2026-10-27T18:29:03.2313560Z ##[group]Runner Image Provisioner
+2026-10-27T18:29:03.2314780Z Hosted Compute Agent
+2026-10-27T18:29:03.2315570Z Version: 20260819.586
+2026-10-27T18:29:03.2316420Z Commit: 3cc4a88dfa507ef76119ad1bb3eccc6378bb2b76
+2026-10-27T18:29:03.2317450Z Build Date: 2026-08-18T23:20:18Z
+2026-10-27T18:29:03.2318410Z Worker ID: {da7122d7-c67d-4a4a-a630-8bec8829aa9a}
+2026-10-27T18:29:03.2319440Z Azure Region: westus
+2026-10-27T18:29:03.2320220Z ##[endgroup]
+2026-10-27T18:29:03.2322600Z ##[group]Operating System
+2026-10-27T18:29:03.2323440Z macOS
+2026-10-27T18:29:03.2324110Z 15.7.9
+2026-10-27T18:29:03.2324930Z 24G830
+2026-10-27T18:29:03.2325630Z ##[endgroup]
+2026-10-27T18:29:03.2326360Z ##[group]Runner Image
+2026-10-27T18:29:03.2327150Z Image: macos-15
+2026-10-27T18:29:03.2327880Z Version: 20260824.0482.1
+2026-10-27T18:29:03.2329710Z Included Software: https://github.com/actions/runner-images/blob/macos-15/20260824.0482/images/macos/macos-15-Readme.md
+2026-10-27T18:29:03.2332120Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-15%2F20260824.0482
+2026-10-27T18:29:03.2333630Z ##[endgroup]
+2026-10-27T18:29:03.2335240Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T18:29:03.2337910Z Contents: read
+2026-10-27T18:29:03.2338680Z Metadata: read
+2026-10-27T18:29:03.2339410Z ##[endgroup]
+2026-10-27T18:29:03.2342400Z Secret source: Actions
+2026-10-27T18:29:03.2343680Z Cache mode: write
+2026-10-27T18:29:03.2344620Z Prepare workflow directory
+2026-10-27T18:29:03.3189380Z Prepare all required actions
+2026-10-27T18:29:03.3260480Z Getting action download info
+2026-10-27T18:29:03.9429990Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-27T18:29:04.1430590Z Download action repository 'actions/download-artifact@v4' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+2026-10-27T18:29:04.6316580Z Download action repository 'actions/setup-go@v5' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+2026-10-27T18:29:05.1045270Z Download action repository 'oven-sh/setup-bun@v2' (SHA:0c5077e51419868618aeaa5fe8019c62421857d6)
+2026-10-27T18:29:05.4376610Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-10-27T18:29:05.5859200Z Download action repository 'msys2/setup-msys2@v2' (SHA:ec48f7c5447b3140e2b088413ae3a55687bccb6e)
+2026-10-27T18:29:05.9031090Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-10-27T18:29:06.0470020Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-10-27T18:29:06.4429270Z Complete job name: Build darwin-amd64
+2026-10-27T18:29:06.6468610Z ##[group]Run actions/checkout@v4
+2026-10-27T18:29:06.6470810Z with:
+2026-10-27T18:29:06.6472230Z   repository: glanderness/BeefTV
+2026-10-27T18:29:06.6479480Z   token: ***
+2026-10-27T18:29:06.6480880Z   ssh-strict: true
+2026-10-27T18:29:06.6482270Z   ssh-user: git
+2026-10-27T18:29:06.6483710Z   persist-credentials: true
+2026-10-27T18:29:06.6485370Z   clean: true
+2026-10-27T18:29:06.6486810Z   sparse-checkout-cone-mode: true
+2026-10-27T18:29:06.6488390Z   fetch-depth: 1
+2026-10-27T18:29:06.6489770Z   fetch-tags: false
+2026-10-27T18:29:06.6491170Z   show-progress: true
+2026-10-27T18:29:06.6492580Z   lfs: false
+2026-10-27T18:29:06.6493930Z   submodules: false
+2026-10-27T18:29:06.6495360Z   set-safe-directory: true
+2026-10-27T18:29:06.6496940Z   allow-unsafe-pr-checkout: false
+2026-10-27T18:29:06.6499610Z env:
+2026-10-27T18:29:06.6500960Z   GOTOOLCHAIN: local
+2026-10-27T18:29:06.6502880Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:29:06.6505290Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:29:06.6507640Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:29:06.6509780Z   RELEASE_REGION: auto
+2026-10-27T18:29:06.6511300Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:29:06.6513160Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:29:06.6516390Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:29:06.6518040Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:29:06.6519730Z ##[endgroup]
+2026-10-27T18:29:07.1838770Z Syncing repository: glanderness/BeefTV
+2026-10-27T18:29:07.1842810Z ##[group]Getting Git version info
+2026-10-27T18:29:07.1844650Z Working directory is '/Users/runner/work/BeefTV/BeefTV'
+2026-10-27T18:29:07.1847590Z [command]/usr/local/bin/git version
+2026-10-27T18:29:07.1859190Z git version 2.55.0
+2026-10-27T18:29:07.1931000Z ##[endgroup]
+2026-10-27T18:29:07.2000350Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/1e855784-5cf9-4f2e-b4ee-d850fc4844fc/.gitconfig'
+2026-10-27T18:29:07.2004330Z Temporarily overriding HOME='/Users/runner/work/_temp/1e855784-5cf9-4f2e-b4ee-d850fc4844fc' before making global git config changes
+2026-10-27T18:29:07.2026440Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T18:29:07.2029660Z [command]/usr/local/bin/git config --global --add safe.directory /Users/runner/work/BeefTV/BeefTV
+2026-10-27T18:29:07.2123050Z Deleting the contents of '/Users/runner/work/BeefTV/BeefTV'
+2026-10-27T18:29:07.2137050Z ##[group]Initializing the repository
+2026-10-27T18:29:07.2172420Z [command]/usr/local/bin/git init /Users/runner/work/BeefTV/BeefTV
+2026-10-27T18:29:07.2504030Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-27T18:29:07.2514460Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-27T18:29:07.2537920Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-27T18:29:07.2582680Z hint: call:
+2026-10-27T18:29:07.2608530Z hint:
+2026-10-27T18:29:07.2630440Z hint: 	git config --global init.defaultBranch <name>
+2026-10-27T18:29:07.2952200Z hint:
+2026-10-27T18:29:07.3344680Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-27T18:29:07.3942450Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-27T18:29:07.3980790Z hint:
+2026-10-27T18:29:07.4015650Z hint: 	git branch -m <name>
+2026-10-27T18:29:07.4045130Z hint:
+2026-10-27T18:29:07.4089340Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-27T18:29:07.4121020Z Initialized empty Git repository in /Users/runner/work/BeefTV/BeefTV/.git/
+2026-10-27T18:29:07.4242560Z [command]/usr/local/bin/git remote add origin https://github.com/glanderness/BeefTV
+2026-10-27T18:29:07.4336900Z ##[endgroup]
+2026-10-27T18:29:07.4377570Z ##[group]Disabling automatic garbage collection
+2026-10-27T18:29:07.4425390Z [command]/usr/local/bin/git config --local gc.auto 0
+2026-10-27T18:29:07.4556920Z ##[endgroup]
+2026-10-27T18:29:07.4608890Z ##[group]Setting up auth
+2026-10-27T18:29:07.4629720Z [command]/usr/local/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T18:29:07.4715290Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T18:29:07.5277370Z [command]/usr/local/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T18:29:07.5395070Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T18:29:07.7995870Z [command]/usr/local/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T18:29:07.8073530Z [command]/usr/local/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T18:29:08.0473490Z [command]/usr/local/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-27T18:29:08.0499280Z ##[endgroup]
+2026-10-27T18:29:08.0506140Z ##[group]Fetching the repository
+2026-10-27T18:29:08.0513290Z [command]/usr/local/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6a155448096d2425aa07e81cc6016410091ad0be:refs/remotes/origin/main
+2026-10-27T18:29:12.3688130Z From https://github.com/glanderness/BeefTV
+2026-10-27T18:29:12.4692450Z  * [new ref]         6a155448096d2425aa07e81cc6016410091ad0be -> origin/main
+2026-10-27T18:29:12.5112140Z ##[endgroup]
+2026-10-27T18:29:12.5114360Z ##[group]Determining the checkout info
+2026-10-27T18:29:12.5115530Z ##[endgroup]
+2026-10-27T18:29:12.5116220Z [command]/usr/local/bin/git sparse-checkout disable
+2026-10-27T18:29:12.5118770Z [command]/usr/local/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-27T18:29:12.5120910Z ##[group]Checking out the ref
+2026-10-27T18:29:12.5122190Z [command]/usr/local/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-10-27T18:29:13.3748950Z Updating files:  39% (1702/4290)
+2026-10-27T18:29:13.3891750Z Updating files:  40% (1716/4290)
+2026-10-27T18:29:13.5074570Z Updating files:  41% (1759/4290)
+2026-10-27T18:29:13.5204930Z Updating files:  42% (1802/4290)
+2026-10-27T18:29:13.5344100Z Updating files:  43% (1845/4290)
+2026-10-27T18:29:13.5562150Z Updating files:  44% (1888/4290)
+2026-10-27T18:29:13.5708360Z Updating files:  45% (1931/4290)
+2026-10-27T18:29:13.5860630Z Updating files:  46% (1974/4290)
+2026-10-27T18:29:13.5992750Z Updating files:  47% (2017/4290)
+2026-10-27T18:29:13.6149410Z Updating files:  48% (2060/4290)
+2026-10-27T18:29:13.6345120Z Updating files:  49% (2103/4290)
+2026-10-27T18:29:13.6537100Z Updating files:  50% (2145/4290)
+2026-10-27T18:29:13.6686620Z Updating files:  51% (2188/4290)
+2026-10-27T18:29:13.6828280Z Updating files:  52% (2231/4290)
+2026-10-27T18:29:13.7014540Z Updating files:  53% (2274/4290)
+2026-10-27T18:29:13.7167450Z Updating files:  54% (2317/4290)
+2026-10-27T18:29:13.7320330Z Updating files:  55% (2360/4290)
+2026-10-27T18:29:13.7478260Z Updating files:  56% (2403/4290)
+2026-10-27T18:29:13.7651160Z Updating files:  57% (2446/4290)
+2026-10-27T18:29:13.7820610Z Updating files:  58% (2489/4290)
+2026-10-27T18:29:13.8942350Z Updating files:  59% (2532/4290)
+2026-10-27T18:29:14.0912020Z Updating files:  60% (2574/4290)
+2026-10-27T18:29:14.1237330Z Updating files:  61% (2617/4290)
+2026-10-27T18:29:14.1685450Z Updating files:  62% (2660/4290)
+2026-10-27T18:29:14.2689970Z Updating files:  63% (2703/4290)
+2026-10-27T18:29:14.3161640Z Updating files:  64% (2746/4290)
+2026-10-27T18:29:14.3236210Z Updating files:  65% (2789/4290)
+2026-10-27T18:29:14.3264280Z Updating files:  66% (2832/4290)
+2026-10-27T18:29:14.3273850Z Updating files:  67% (2875/4290)
+2026-10-27T18:29:14.3285640Z Updating files:  68% (2918/4290)
+2026-10-27T18:29:14.3308420Z Updating files:  69% (2961/4290)
+2026-10-27T18:29:14.3325830Z Updating files:  70% (3003/4290)
+2026-10-27T18:29:14.3363890Z Updating files:  71% (3046/4290)
+2026-10-27T18:29:14.3412540Z Updating files:  72% (3089/4290)
+2026-10-27T18:29:14.3432060Z Updating files:  72% (3126/4290)
+2026-10-27T18:29:14.3724370Z Updating files:  73% (3132/4290)
+2026-10-27T18:29:14.4030930Z Updating files:  74% (3175/4290)
+2026-10-27T18:29:14.4227400Z Updating files:  75% (3218/4290)
+2026-10-27T18:29:14.4391150Z Updating files:  76% (3261/4290)
+2026-10-27T18:29:14.4586410Z Updating files:  77% (3304/4290)
+2026-10-27T18:29:14.4777480Z Updating files:  78% (3347/4290)
+2026-10-27T18:29:14.5087460Z Updating files:  79% (3390/4290)
+2026-10-27T18:29:14.5162840Z Updating files:  80% (3432/4290)
+2026-10-27T18:29:14.5305060Z Updating files:  81% (3475/4290)
+2026-10-27T18:29:14.6648090Z Updating files:  82% (3518/4290)
+2026-10-27T18:29:14.6851800Z Updating files:  83% (3561/4290)
+2026-10-27T18:29:14.7031650Z Updating files:  84% (3604/4290)
+2026-10-27T18:29:14.7221080Z Updating files:  85% (3647/4290)
+2026-10-27T18:29:14.8666620Z Updating files:  86% (3690/4290)
+2026-10-27T18:29:14.9045650Z Updating files:  87% (3733/4290)
+2026-10-27T18:29:14.9050590Z Updating files:  88% (3776/4290)
+2026-10-27T18:29:14.9208780Z Updating files:  89% (3819/4290)
+2026-10-27T18:29:14.9373900Z Updating files:  90% (3861/4290)
+2026-10-27T18:29:14.9537960Z Updating files:  91% (3904/4290)
+2026-10-27T18:29:14.9713410Z Updating files:  92% (3947/4290)
+2026-10-27T18:29:14.9881170Z Updating files:  93% (3990/4290)
+2026-10-27T18:29:15.0052290Z Updating files:  94% (4033/4290)
+2026-10-27T18:29:15.0219610Z Updating files:  95% (4076/4290)
+2026-10-27T18:29:15.0380220Z Updating files:  96% (4119/4290)
+2026-10-27T18:29:15.0550130Z Updating files:  97% (4162/4290)
+2026-10-27T18:29:15.0680230Z Updating files:  98% (4205/4290)
+2026-10-27T18:29:15.0837760Z Updating files:  99% (4248/4290)
+2026-10-27T18:29:15.0839220Z Updating files: 100% (4290/4290)
+2026-10-27T18:29:15.0840100Z Updating files: 100% (4290/4290), done.
+2026-10-27T18:29:15.0983920Z Switched to a new branch 'main'
+2026-10-27T18:29:15.0993500Z branch 'main' set up to track 'origin/main'.
+2026-10-27T18:29:15.1043470Z ##[endgroup]
+2026-10-27T18:29:15.1221960Z [command]/usr/local/bin/git log -1 --format=%H
+2026-10-27T18:29:15.1378850Z 6a155448096d2425aa07e81cc6016410091ad0be
+2026-10-27T18:29:15.1818730Z ##[group]Run actions/download-artifact@v4
+2026-10-27T18:29:15.1819380Z with:
+2026-10-27T18:29:15.1819750Z   name: media-wasm-source
+2026-10-27T18:29:15.1820210Z   path: dist
+2026-10-27T18:29:15.1820590Z   merge-multiple: false
+2026-10-27T18:29:15.1821080Z   repository: glanderness/BeefTV
+2026-10-27T18:29:15.1821600Z   run-id: 40559746752
+2026-10-27T18:29:15.1821990Z env:
+2026-10-27T18:29:15.1822340Z   GOTOOLCHAIN: local
+2026-10-27T18:29:15.1823180Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:29:15.1824310Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:29:15.1825450Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:29:15.1826450Z   RELEASE_REGION: auto
+2026-10-27T18:29:15.1826920Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:29:15.1827650Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:29:15.1828460Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:29:15.1829080Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:29:15.1829700Z ##[endgroup]
+2026-10-27T18:29:15.5934930Z (node:2884) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:29:15.5937190Z Downloading single artifact
+2026-10-27T18:29:15.6725490Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:29:15.8809860Z Preparing to download the following artifacts:
+2026-10-27T18:29:15.8887400Z - media-wasm-source (ID: 12759346572, Size: 107316097, Expected Digest: sha256:acc2940fda3c45ececfdf315e05ac5031cdef6e7923e35e0fbb5bfdc05dce8c0)
+2026-10-27T18:29:16.1687440Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/90d404b8-485f-40f4-a621-767f24f9d947/workflow-job-run-93f0ac35-ff38-5508-ab55-9e8e2d074198/artifacts/b27b7a0bb8c652b033a3b78b452d8b74ba42c9e0d524f63ff99f31d3ee2d70ab.zip
+2026-10-27T18:29:16.1691180Z Starting download of artifact to: /Users/runner/work/BeefTV/BeefTV/dist
+2026-10-27T18:29:16.4854130Z (node:2884) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-10-27T18:29:24.2651780Z SHA256 digest of downloaded artifact is acc2940fda3c45ececfdf315e05ac5031cdef6e7923e35e0fbb5bfdc05dce8c0
+2026-10-27T18:29:24.2653130Z Artifact download completed successfully.
+2026-10-27T18:29:24.2653830Z Total of 1 artifact(s) downloaded
+2026-10-27T18:29:24.2670760Z Download artifact has finished successfully
+2026-10-27T18:29:24.2961520Z ##[group]Run actions/setup-go@v5
+2026-10-27T18:29:24.2962170Z with:
+2026-10-27T18:29:24.2962620Z   go-version-file: backend/go.mod
+2026-10-27T18:29:24.2963200Z   cache: true
+2026-10-27T18:29:24.2963700Z   cache-dependency-path: backend/go.sum
+2026-10-27T18:29:24.2965240Z   check-latest: false
+2026-10-27T18:29:24.2970470Z   token: ***
+2026-10-27T18:29:24.2970950Z env:
+2026-10-27T18:29:24.2971380Z   GOTOOLCHAIN: local
+2026-10-27T18:29:24.2972240Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:29:24.2973430Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:29:24.2974650Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:29:24.2975690Z   RELEASE_REGION: auto
+2026-10-27T18:29:24.2976530Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:29:24.2977930Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:29:24.2979600Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:29:24.2980760Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:29:24.2981960Z ##[endgroup]
+2026-10-27T18:29:24.5595030Z Setup go version spec 1.25.0
+2026-10-27T18:29:24.5617200Z Attempting to download 1.25.0...
+2026-10-27T18:29:24.5806010Z (node:2995) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:29:24.5809790Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:29:25.2492440Z matching 1.25.0...
+2026-10-27T18:29:25.2692840Z Acquiring 1.25.0 from https://github.com/actions/go-versions/releases/download/1.25.0-16925932082/go-1.25.0-darwin-x64.tar.gz
+2026-10-27T18:29:26.5017540Z Extracting Go...
+2026-10-27T18:29:26.5298660Z [command]/usr/bin/tar xz -C /Users/runner/work/_temp/2d2deb51-a0c6-421c-b330-d520500cebfd -f /Users/runner/work/_temp/fd82d594-3cd0-454b-9dd5-422aa8cf982f
+2026-10-27T18:29:35.1114750Z Successfully extracted go to /Users/runner/work/_temp/2d2deb51-a0c6-421c-b330-d520500cebfd
+2026-10-27T18:29:35.1166020Z Adding to the cache ...
+2026-10-27T18:29:58.1581770Z Successfully cached go to /Users/runner/hostedtoolcache/go/1.25.0/x64
+2026-10-27T18:29:58.1629650Z Added go to the path
+2026-10-27T18:29:58.1659000Z Successfully set up Go version 1.25.0
+2026-10-27T18:29:58.2756480Z [command]/Users/runner/hostedtoolcache/go/1.25.0/x64/bin/go env GOMODCACHE
+2026-10-27T18:29:58.2801290Z [command]/Users/runner/hostedtoolcache/go/1.25.0/x64/bin/go env GOCACHE
+2026-10-27T18:29:58.2997200Z /Users/runner/go/pkg/mod
+2026-10-27T18:29:58.3021440Z /Users/runner/Library/Caches/go-build
+2026-10-27T18:29:58.6335900Z Cache is not found
+2026-10-27T18:29:58.6410350Z go version go1.25.0 darwin/amd64
+2026-10-27T18:29:58.6471340Z 
+2026-10-27T18:29:58.6522460Z ##[group]go env
+2026-10-27T18:30:02.5296530Z AR='ar'
+2026-10-27T18:30:02.5312340Z CC='clang'
+2026-10-27T18:30:02.5334530Z CGO_CFLAGS='-O2 -g'
+2026-10-27T18:30:02.5357050Z CGO_CPPFLAGS=''
+2026-10-27T18:30:02.5373590Z CGO_CXXFLAGS='-O2 -g'
+2026-10-27T18:30:02.5393150Z CGO_ENABLED='1'
+2026-10-27T18:30:02.5412680Z CGO_FFLAGS='-O2 -g'
+2026-10-27T18:30:02.5429470Z CGO_LDFLAGS='-O2 -g'
+2026-10-27T18:30:02.5445130Z CXX='clang++'
+2026-10-27T18:30:02.5459550Z GCCGO='gccgo'
+2026-10-27T18:30:02.5478150Z GO111MODULE=''
+2026-10-27T18:30:02.5509980Z GOAMD64='v1'
+2026-10-27T18:30:02.5526630Z GOARCH='amd64'
+2026-10-27T18:30:02.5536590Z GOAUTH='netrc'
+2026-10-27T18:30:02.5540810Z GOBIN=''
+2026-10-27T18:30:02.5544660Z GOCACHE='/Users/runner/Library/Caches/go-build'
+2026-10-27T18:30:02.5555020Z GOCACHEPROG=''
+2026-10-27T18:30:02.5564890Z GODEBUG=''
+2026-10-27T18:30:02.5569200Z GOENV='/Users/runner/Library/Application Support/go/env'
+2026-10-27T18:30:02.5572910Z GOEXE=''
+2026-10-27T18:30:02.5582980Z GOEXPERIMENT=''
+2026-10-27T18:30:02.5593030Z GOFIPS140='off'
+2026-10-27T18:30:02.5602120Z GOFLAGS=''
+2026-10-27T18:30:02.5611250Z GOGCCFLAGS='-fPIC -arch x86_64 -m64 -pthread -fno-caret-diagnostics -Qunused-arguments -fmessage-length=0 -ffile-prefix-map=/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/go-build760928068=/tmp/go-build -gno-record-gcc-switches -fno-common'
+2026-10-27T18:30:02.5638880Z GOHOSTARCH='amd64'
+2026-10-27T18:30:02.5641190Z GOHOSTOS='darwin'
+2026-10-27T18:30:02.5649970Z GOINSECURE=''
+2026-10-27T18:30:02.5677840Z GOMOD='/dev/null'
+2026-10-27T18:30:02.5695800Z GOMODCACHE='/Users/runner/go/pkg/mod'
+2026-10-27T18:30:02.5704330Z GONOPROXY=''
+2026-10-27T18:30:02.5706480Z GONOSUMDB=''
+2026-10-27T18:30:02.5724050Z GOOS='darwin'
+2026-10-27T18:30:02.5737680Z GOPATH='/Users/runner/go'
+2026-10-27T18:30:02.5750410Z GOPRIVATE=''
+2026-10-27T18:30:02.5754740Z GOPROXY='https://proxy.golang.org,direct'
+2026-10-27T18:30:02.5769930Z GOROOT='/Users/runner/hostedtoolcache/go/1.25.0/x64'
+2026-10-27T18:30:02.5773620Z GOSUMDB='sum.golang.org'
+2026-10-27T18:30:02.5780070Z GOTELEMETRY='local'
+2026-10-27T18:30:02.5783390Z GOTELEMETRYDIR='/Users/runner/Library/Application Support/go/telemetry'
+2026-10-27T18:30:02.5802480Z GOTMPDIR=''
+2026-10-27T18:30:02.5807260Z GOTOOLCHAIN='local'
+2026-10-27T18:30:02.5811510Z GOTOOLDIR='/Users/runner/hostedtoolcache/go/1.25.0/x64/pkg/tool/darwin_amd64'
+2026-10-27T18:30:02.5831340Z GOVCS=''
+2026-10-27T18:30:02.5836040Z GOVERSION='go1.25.0'
+2026-10-27T18:30:02.5838150Z GOWORK=''
+2026-10-27T18:30:02.5843840Z PKG_CONFIG='pkg-config'
+2026-10-27T18:30:02.5861580Z 
+2026-10-27T18:30:02.5869380Z ##[endgroup]
+2026-10-27T18:30:02.6065880Z ##[group]Run oven-sh/setup-bun@v2
+2026-10-27T18:30:02.6066660Z with:
+2026-10-27T18:30:02.6067110Z   bun-version: 1.4.2
+2026-10-27T18:30:02.6067690Z   no-cache: false
+2026-10-27T18:30:02.6073540Z   token: ***
+2026-10-27T18:30:02.6074170Z env:
+2026-10-27T18:30:02.6074720Z   GOTOOLCHAIN: local
+2026-10-27T18:30:02.6075920Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:02.6077270Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:02.6078600Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:02.6079740Z   RELEASE_REGION: auto
+2026-10-27T18:30:02.6080260Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:02.6080980Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:02.6081900Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:02.6082580Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:02.6083310Z ##[endgroup]
+2026-10-27T18:30:03.4887000Z Downloading a new version of Bun: https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-x64.zip
+2026-10-27T18:30:04.2419300Z [command]/usr/bin/unzip -o -q /Users/runner/work/_temp/c019e780-7c4d-4b52-babd-a5646ba8d6cc.zip
+2026-10-27T18:30:05.1724340Z [command]/Users/runner/.bun/bin/bun --revision
+2026-10-27T18:30:05.2312700Z 1.4.2+744846f84
+2026-10-27T18:30:05.3374920Z ##[group]Run actions/setup-node@v4
+2026-10-27T18:30:05.3375950Z with:
+2026-10-27T18:30:05.3376670Z   node-version: 24.22.1
+2026-10-27T18:30:05.3377470Z   always-auth: false
+2026-10-27T18:30:05.3378240Z   check-latest: false
+2026-10-27T18:30:05.3386160Z   token: ***
+2026-10-27T18:30:05.3386840Z env:
+2026-10-27T18:30:05.3387490Z   GOTOOLCHAIN: local
+2026-10-27T18:30:05.3388800Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:05.3390670Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:05.3392590Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:05.3394180Z   RELEASE_REGION: auto
+2026-10-27T18:30:05.3395010Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:05.3396230Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:05.3397490Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:05.3399220Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:05.3400390Z ##[endgroup]
+2026-10-27T18:30:05.7324610Z (node:3466) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:30:05.7351880Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:30:05.7355820Z Attempting to download 24.22.1...
+2026-10-27T18:30:06.5071020Z Acquiring 24.22.1 - x64 from https://github.com/actions/node-versions/releases/download/24.22.1-39619001896/node-24.22.1-darwin-x64.tar.gz
+2026-10-27T18:30:07.2926920Z Extracting ...
+2026-10-27T18:30:07.3851410Z [command]/usr/bin/tar xz --strip 1 -C /Users/runner/work/_temp/3b1be9dc-69fa-4f19-8cc0-ae9ff41a717c -f /Users/runner/work/_temp/aca08561-6a15-4fd9-b9dc-8d26976d16eb
+2026-10-27T18:30:10.9506040Z Adding to the cache ...
+2026-10-27T18:30:19.1697120Z ##[group]Environment details
+2026-10-27T18:30:19.7813610Z node: v24.22.1
+2026-10-27T18:30:19.8283970Z npm: 11.19.1
+2026-10-27T18:30:19.8287210Z yarn: 1.22.22
+2026-10-27T18:30:19.8291430Z ##[endgroup]
+2026-10-27T18:30:19.8487190Z ##[group]Run node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
+2026-10-27T18:30:19.8492780Z [36;1mnode -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'[0m
+2026-10-27T18:30:19.8616400Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:30:19.8617190Z env:
+2026-10-27T18:30:19.8617640Z   GOTOOLCHAIN: local
+2026-10-27T18:30:19.8618550Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:19.8620710Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:19.8622020Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:19.8623400Z   RELEASE_REGION: auto
+2026-10-27T18:30:19.8624040Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:19.8624970Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:19.8625840Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:19.8626530Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:19.8627290Z ##[endgroup]
+2026-10-27T18:30:20.0271330Z ##[group]Run bun test scripts/package-agent-host.test.mjs
+2026-10-27T18:30:20.0273650Z [36;1mbun test scripts/package-agent-host.test.mjs[0m
+2026-10-27T18:30:20.0401160Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:30:20.0402320Z env:
+2026-10-27T18:30:20.0402950Z   GOTOOLCHAIN: local
+2026-10-27T18:30:20.0404260Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:30:20.0406020Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:30:20.0407910Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:30:20.0409630Z   RELEASE_REGION: auto
+2026-10-27T18:30:20.0410420Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:30:20.0411550Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:30:20.0412820Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:30:20.0413810Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:30:20.0415500Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:30:20.0416770Z ##[endgroup]
+2026-10-27T18:30:20.0996050Z bun test v1.4.2 (744846f84)
+2026-10-27T18:30:20.1518830Z 
+2026-10-27T18:30:20.1521630Z ##[group]scripts/package-agent-host.test.mjs:
+2026-10-27T18:30:20.2030980Z (pass) release rejects missing runtime and unsupported target [0.82ms]
+2026-10-27T18:30:44.9134750Z Packaged agent-host with Node 24.22.1 for darwin/amd64: /var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv package test YKyozz/release with spaces/agent-host
+2026-10-27T18:30:51.4830210Z (pass) bundled runtime, locked dependencies, and paths with spaces [31274.53ms]
+2026-10-27T18:31:14.6669670Z Packaged agent-host with Node 24.22.1 for darwin/amd64: /var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv packaged server i3iEuQ/release with spaces/agent-host
+2026-10-27T18:31:20.6410620Z (pass) packaged server starts with local imports and makes zero model requests [29158.69ms]
+2026-10-27T18:31:20.6441690Z 
+2026-10-27T18:31:20.6491640Z ##[endgroup]
+2026-10-27T18:31:20.6518320Z 
+2026-10-27T18:31:20.6540160Z  3 pass
+2026-10-27T18:31:20.6583450Z  0 fail
+2026-10-27T18:31:20.6603130Z  26 expect() calls
+2026-10-27T18:31:20.6624680Z Ran 3 tests across 1 file. [60.54s]
+2026-10-27T18:31:20.6815240Z ##[group]Run sh plugin-packages/build-packages.sh
+2026-10-27T18:31:20.6816140Z [36;1msh plugin-packages/build-packages.sh[0m
+2026-10-27T18:31:20.6890450Z shell: /bin/bash -e {0}
+2026-10-27T18:31:20.6891170Z env:
+2026-10-27T18:31:20.6891640Z   GOTOOLCHAIN: local
+2026-10-27T18:31:20.6892510Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:31:20.6893710Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:31:20.6894920Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:31:20.6896140Z   RELEASE_REGION: auto
+2026-10-27T18:31:20.6897720Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:31:20.6898530Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:31:20.6899960Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:31:20.6901420Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:31:20.6902890Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:31:20.6904120Z ##[endgroup]
+2026-10-27T18:31:23.6226500Z embedded complete documentation into 86 protocol packages
+2026-10-27T18:31:27.5099940Z ##[group]Run ./scripts/build-beeftv-release.sh
+2026-10-27T18:31:27.5100910Z [36;1m./scripts/build-beeftv-release.sh[0m
+2026-10-27T18:31:27.5189860Z shell: /bin/bash -e {0}
+2026-10-27T18:31:27.5190620Z env:
+2026-10-27T18:31:27.5191060Z   GOTOOLCHAIN: local
+2026-10-27T18:31:27.5192060Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:31:27.5193320Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:31:27.5194680Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:31:27.5196050Z   RELEASE_REGION: auto
+2026-10-27T18:31:27.5196600Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:31:27.5197370Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:31:27.5198280Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:31:27.5198940Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:31:27.5200310Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:31:27.5201200Z   BEEFTV_SKIP_LOCAL_VERIFY: 1
+2026-10-27T18:31:27.5201970Z   BEEFTV_WAILS_PLATFORM: darwin/amd64
+2026-10-27T18:31:27.5203080Z   BEEFTV_UPDATER_PUBLIC_KEY: Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T18:31:27.5204490Z ##[endgroup]
+2026-10-27T18:31:27.9951480Z go: downloading golang.org/x/net v0.57.0
+2026-10-27T18:31:28.0002610Z go: downloading golang.org/x/sys v0.47.0
+2026-10-27T18:31:29.9607300Z go: downloading golang.org/x/text v0.40.0
+2026-10-27T18:31:53.7345480Z Building BeefTV v2.0.5 (6a15544)
+2026-10-27T18:31:53.9370420Z   % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+2026-10-27T18:31:53.9374870Z                                  Dload  Upload  Total   Spent   Left   Speed
+2026-10-27T18:31:53.9376150Z 
+2026-10-27T18:31:54.9765790Z   0      0   0      0   0      0      0      0                              0
+2026-10-27T18:31:55.9929160Z 100  5.75M   0  5.75M   0      0  5.05M      0           00:01          5.55M
+2026-10-27T18:31:56.3321660Z 100 13.09M   0 13.09M   0      0  6.07M      0           00:02          6.37M
+2026-10-27T18:31:56.3378440Z 100 15.64M   0 15.64M   0      0  6.26M      0           00:02          6.37M
+2026-10-27T18:31:56.3384270Z 100 15.64M   0 15.64M   0      0  6.26M      0           00:02          6.37M
+2026-10-27T18:31:56.3418310Z 100 15.64M   0 15.64M   0      0  6.26M      0           00:02          6.37M
+2026-10-27T18:34:00.7109860Z ffprobe version 8.0.1 Copyright (c) 2007-2025 the FFmpeg developers
+2026-10-27T18:34:02.0693750Z Packaged local ffprobe for darwin/amd64: /var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T//beeftv-release-media.wen7aF/media-runtime
+2026-10-27T18:34:04.6901180Z go: downloading github.com/wailsapp/wails/v2 v2.16.0
+2026-10-27T18:34:06.5365400Z go: downloading github.com/jaypipes/ghw v0.21.3
+2026-10-27T18:34:06.5391050Z go: downloading github.com/flytam/filenamify v1.2.0
+2026-10-27T18:34:06.5407780Z go: downloading github.com/labstack/gommon v0.4.2
+2026-10-27T18:34:06.5415820Z go: downloading github.com/leaanthony/clir v1.3.0
+2026-10-27T18:34:06.6129990Z go: downloading github.com/leaanthony/debme v1.2.1
+2026-10-27T18:34:06.7090420Z go: downloading github.com/leaanthony/gosod v1.0.4
+2026-10-27T18:34:06.7133020Z go: downloading github.com/leaanthony/slicer v1.6.0
+2026-10-27T18:34:06.7725810Z go: downloading github.com/pkg/errors v0.9.1
+2026-10-27T18:34:06.8319180Z go: downloading github.com/pterm/pterm v0.12.80
+2026-10-27T18:34:06.8964990Z go: downloading github.com/tidwall/sjson v1.2.5
+2026-10-27T18:34:06.9932660Z go: downloading github.com/mattn/go-colorable v0.1.13
+2026-10-27T18:34:07.0491630Z go: downloading github.com/mattn/go-isatty v0.0.20
+2026-10-27T18:34:07.1493480Z go: downloading github.com/samber/lo v1.49.1
+2026-10-27T18:34:07.2496930Z go: downloading github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
+2026-10-27T18:34:07.2964810Z go: downloading github.com/fsnotify/fsnotify v1.9.0
+2026-10-27T18:34:07.2968450Z go: downloading github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+2026-10-27T18:34:07.2994780Z go: downloading github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
+2026-10-27T18:34:07.3013280Z go: downloading github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+2026-10-27T18:34:07.3026620Z go: downloading golang.org/x/mod v0.37.0
+2026-10-27T18:34:07.3060240Z go: downloading golang.org/x/sys v0.46.0
+2026-10-27T18:34:07.4322440Z go: downloading github.com/wzshiming/ctc v1.2.3
+2026-10-27T18:34:07.5327550Z go: downloading github.com/Masterminds/semver v1.5.0
+2026-10-27T18:34:07.6331520Z go: downloading github.com/charmbracelet/glamour v0.8.0
+2026-10-27T18:34:07.7338560Z go: downloading github.com/jackmordaunt/icns v1.0.0
+2026-10-27T18:34:07.7727260Z go: downloading github.com/leaanthony/winicon v1.0.0
+2026-10-27T18:34:07.7913250Z go: downloading github.com/tc-hib/winres v0.3.1
+2026-10-27T18:34:07.9508800Z go: downloading github.com/go-git/go-git/v5 v5.19.2
+2026-10-27T18:34:08.0994090Z go: downloading github.com/tidwall/gjson v1.14.2
+2026-10-27T18:34:08.1999410Z go: downloading howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
+2026-10-27T18:34:08.2916000Z go: downloading gopkg.in/yaml.v3 v3.0.1
+2026-10-27T18:34:08.3468560Z go: downloading github.com/jaypipes/pcidb v1.1.1
+2026-10-27T18:34:08.4470930Z go: downloading golang.org/x/text v0.39.0
+2026-10-27T18:34:08.5238950Z go: downloading atomicgo.dev/cursor v0.2.0
+2026-10-27T18:34:08.5397310Z go: downloading atomicgo.dev/keyboard v0.2.9
+2026-10-27T18:34:08.6079770Z go: downloading atomicgo.dev/schedule v0.1.0
+2026-10-27T18:34:08.6168730Z go: downloading github.com/gookit/color v1.5.4
+2026-10-27T18:34:08.7207280Z go: downloading github.com/lithammer/fuzzysearch v1.1.8
+2026-10-27T18:34:08.7624020Z go: downloading github.com/mattn/go-runewidth v0.0.16
+2026-10-27T18:34:08.7725650Z go: downloading golang.org/x/term v0.44.0
+2026-10-27T18:34:08.7972810Z go: downloading github.com/wzshiming/winseq v0.0.0-20200112104235-db357dc107ae
+2026-10-27T18:34:08.8458340Z go: downloading github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
+2026-10-27T18:34:08.8548620Z go: downloading golang.org/x/image v0.41.0
+2026-10-27T18:34:09.4970270Z go: downloading golang.org/x/tools v0.47.0
+2026-10-27T18:34:09.5354300Z go: downloading github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a
+2026-10-27T18:34:09.5368450Z go: downloading github.com/yuin/goldmark v1.7.4
+2026-10-27T18:34:09.5424140Z go: downloading github.com/yuin/goldmark-emoji v1.0.3
+2026-10-27T18:34:09.7125090Z go: downloading github.com/tidwall/match v1.1.1
+2026-10-27T18:34:09.7155620Z go: downloading github.com/tidwall/pretty v1.2.0
+2026-10-27T18:34:09.7191360Z go: downloading dario.cat/mergo v1.0.0
+2026-10-27T18:34:09.8154970Z go: downloading github.com/ProtonMail/go-crypto v1.1.6
+2026-10-27T18:34:09.8369960Z go: downloading github.com/go-git/go-billy/v5 v5.9.0
+2026-10-27T18:34:09.9375120Z go: downloading github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
+2026-10-27T18:34:10.0961910Z go: downloading github.com/containerd/console v1.0.3
+2026-10-27T18:34:10.1965230Z go: downloading github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e
+2026-10-27T18:34:10.2208850Z go: downloading github.com/rivo/uniseg v0.4.7
+2026-10-27T18:34:10.2244030Z go: downloading github.com/alecthomas/chroma/v2 v2.14.0
+2026-10-27T18:34:11.1270370Z go: downloading github.com/charmbracelet/lipgloss v0.12.1
+2026-10-27T18:34:11.1998680Z go: downloading github.com/charmbracelet/x/ansi v0.1.4
+2026-10-27T18:34:11.2881680Z go: downloading github.com/microcosm-cc/bluemonday v1.0.27
+2026-10-27T18:34:11.3272180Z go: downloading github.com/muesli/reflow v0.3.0
+2026-10-27T18:34:11.3302860Z go: downloading github.com/aymanbagabas/go-osc52/v2 v2.0.1
+2026-10-27T18:34:11.3399910Z go: downloading github.com/lucasb-eyer/go-colorful v1.2.0
+2026-10-27T18:34:11.3562300Z go: downloading github.com/pjbgf/sha1cd v0.6.0
+2026-10-27T18:34:11.4672990Z go: downloading github.com/cyphar/filepath-securejoin v0.6.1
+2026-10-27T18:34:11.5561590Z go: downloading github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376
+2026-10-27T18:34:11.6373560Z go: downloading github.com/emirpasic/gods v1.18.1
+2026-10-27T18:34:11.7381760Z go: downloading github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99
+2026-10-27T18:34:11.7384390Z go: downloading golang.org/x/crypto v0.53.0
+2026-10-27T18:34:11.9753380Z go: downloading github.com/dlclark/regexp2 v1.11.0
+2026-10-27T18:34:12.0254090Z go: downloading github.com/aymerick/douceur v0.2.0
+2026-10-27T18:34:12.0822370Z go: downloading golang.org/x/net v0.56.0
+2026-10-27T18:34:12.4234290Z go: downloading golang.org/x/sync v0.21.0
+2026-10-27T18:34:12.5238470Z go: downloading gopkg.in/warnings.v0 v0.1.2
+2026-10-27T18:34:12.6243060Z go: downloading github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8
+2026-10-27T18:34:12.7085840Z go: downloading github.com/kevinburke/ssh_config v1.2.0
+2026-10-27T18:34:12.7875700Z go: downloading github.com/skeema/knownhosts v1.3.1
+2026-10-27T18:34:12.7883980Z go: downloading github.com/xanzy/ssh-agent v0.3.3
+2026-10-27T18:34:12.9379050Z go: downloading github.com/cloudflare/circl v1.6.3
+2026-10-27T18:34:15.6035800Z go: downloading github.com/klauspost/cpuid/v2 v2.3.0
+2026-10-27T18:34:15.6785910Z go: downloading github.com/gorilla/css v1.0.1
+2026-10-27T18:34:51.9765240Z [0;92mWails CLI[0m [0;31mv2.16.0[0m
+2026-10-27T18:34:51.9766040Z 
+2026-10-27T18:34:51.9766050Z 
+2026-10-27T18:34:51.9766920Z # [1;33m[1;33mBuild Options[0m
+2026-10-27T18:34:51.9768070Z [1;33m[0m[0m
+2026-10-27T18:34:51.9804710Z Platform(s)       [90m[90m | [0m[0mdarwin/amd64                                                                                                                                                                                                                                                                                                                                                                                                                    
+2026-10-27T18:34:51.9813330Z Compiler          [90m[90m | [0m[0m/Users/runner/hostedtoolcache/go/1.25.0/x64/bin/go                                                                                                                                                                                                                                                                                                                                                                              
+2026-10-27T18:34:51.9824140Z Skip Bindings     [90m[90m | [0m[0mfalse                                                                                                                                                                                                                                                                                                                                                                                                                           
+2026-10-27T18:34:51.9833920Z Build Mode        [90m[90m | [0m[0mproduction                                                                                                                                                                                                                                                                                                                                                                                                                      
+2026-10-27T18:34:51.9842470Z Devtools          [90m[90m | [0m[0mfalse                                                                                                                                                                                                                                                                                                                                                                                                                           
+2026-10-27T18:34:51.9854850Z Frontend Directory[90m[90m | [0m[0m/Users/runner/work/BeefTV/BeefTV/web                                                                                                                                                                                                                                                                                                                                                                                            
+2026-10-27T18:34:51.9863380Z Obfuscated        [90m[90m | [0m[0mfalse                                                                                                                                                                                                                                                                                                                                                                                                                           
+2026-10-27T18:34:51.9870830Z Install Scope     [90m[90m | [0m[0mmachine                                                                                                                                                                                                                                                                                                                                                                                                                         
+2026-10-27T18:34:51.9878750Z Skip Frontend     [90m[90m | [0m[0mfalse                                                                                                                                                                                                                                                                                                                                                                                                                           
+2026-10-27T18:34:51.9959470Z Compress          [90m[90m | [0m[0mfalse                                                                                                                                                                                                                                                                                                                                                                                                                           
+2026-10-27T18:34:51.9966850Z Package           [90m[90m | [0m[0mtrue                                                                                                                                                                                                                                                                                                                                                                                                                            
+2026-10-27T18:34:51.9975300Z Clean Bin Dir     [90m[90m | [0m[0mtrue                                                                                                                                                                                                                                                                                                                                                                                                                            
+2026-10-27T18:34:51.9986130Z LDFlags           [90m[90m | [0m[0m-X infinite-canvas/backend/internal/buildinfo.Version=v2.0.5 -X infinite-canvas/backend/internal/buildinfo.Commit=6a15544 -X infinite-canvas/backend/internal/buildinfo.BuildTime=2026-10-27T18:31:27Z -X infinite-canvas/backend/internal/desktopupdate.FeedURL=https://updates.beefapi.com/beeftv/desktop-update.json -X infinite-canvas/backend/internal/desktopupdate.PublicKey=Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q=
+2026-10-27T18:34:51.9995710Z Tags              [90m[90m | [0m[0m[]                                                                                                                                                                                                                                                                                                                                                                                                                              
+2026-10-27T18:34:52.0001800Z Race Detector     [90m[90m | [0m[0mfalse                                                                                                                                                                                                                                                                                                                                                                                                                           
+2026-10-27T18:34:52.0004040Z 
+2026-10-27T18:34:52.0004060Z 
+2026-10-27T18:34:52.0004850Z # [1;33m[1;33mBuilding target: darwin/amd64[0m
+2026-10-27T18:34:52.0006120Z [1;33m[0m[0m
+2026-10-27T18:37:21.0198040Z   [90m[90m•[0m[0m [39m[39mGenerating bindings: [0m[0mDone.
+2026-10-27T18:38:39.4243700Z   [90m[90m•[0m[0m [39m[39mInstalling frontend dependencies: [0m[0mDone.
+2026-10-27T18:39:23.4567170Z   [90m[90m•[0m[0m [39m[39mCompiling frontend: [0m[0mDone.
+2026-10-27T18:42:18.3265880Z   [90m[90m•[0m[0m [39m[39mCompiling application: [0m[0mDone.
+2026-10-27T18:42:18.4462750Z   [90m[90m•[0m[0m [39m[39mPackaging application: [0m[0mDone.
+2026-10-27T18:42:19.7380170Z   [90m[90m•[0m[0m [39m[39mSelf-signing application: [0m[0mDone.
+2026-10-27T18:42:19.9358220Z Built '/Users/runner/work/BeefTV/BeefTV/backend/cmd/desktop/build/bin/BeefTV.app/Contents/MacOS/BeefTV' in 7m27.826s.
+2026-10-27T18:42:19.9360210Z 
+2026-10-27T18:42:19.9368460Z [31;107m[31;107m ♥  [0m[0m [92m[92mIf Wails is useful to you or your company, please consider sponsoring the project:[0m[0m
+2026-10-27T18:42:19.9370620Z https://github.com/sponsors/leaanthony
+2026-10-27T18:42:49.6636080Z Packaged agent-host with Node 24.22.1 for darwin/amd64: /Users/runner/work/BeefTV/BeefTV/backend/cmd/desktop/build/bin/BeefTV.app/Contents/Resources/agent-host
+2026-10-27T18:43:06.5865880Z === RUN   TestBundledMediaMetadataWithoutSystemFFprobe
+2026-10-27T18:43:06.6671090Z 
+2026-10-27T18:43:06.6677440Z 2026/10/27 18:43:06 [31;1m/Users/runner/work/BeefTV/BeefTV/backend/internal/repository/upload_reservation.go:84 [35;1mrecord not found
+2026-10-27T18:43:06.6688660Z [0m[33m[0.101ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "owner" AND identity = "74dbce6c0c85f9d06321c7e0685f5b78" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+2026-10-27T18:43:06.6706600Z --- PASS: TestBundledMediaMetadataWithoutSystemFFprobe (0.08s)
+2026-10-27T18:43:06.6708210Z PASS
+2026-10-27T18:43:06.7079230Z === RUN   TestBundledMediaMetadataWithoutSystemFFprobe
+2026-10-27T18:43:06.7810910Z 
+2026-10-27T18:43:06.7815720Z 2026/10/27 18:43:06 [31;1m/Users/runner/work/BeefTV/BeefTV/backend/internal/repository/upload_reservation.go:84 [35;1mrecord not found
+2026-10-27T18:43:06.7830630Z [0m[33m[0.113ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "owner" AND identity = "2e9e99ca58472677789ebf03e6da6482" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+2026-10-27T18:43:06.7850020Z --- PASS: TestBundledMediaMetadataWithoutSystemFFprobe (0.08s)
+2026-10-27T18:43:06.7852490Z PASS
+2026-10-27T18:43:06.8041260Z === RUN   TestProbeLocalDoesNotFetchPlaylistURLs
+2026-10-27T18:43:06.8166790Z --- PASS: TestProbeLocalDoesNotFetchPlaylistURLs (0.01s)
+2026-10-27T18:43:06.8168260Z PASS
+2026-10-27T18:43:12.6604200Z /Users/runner/work/BeefTV/BeefTV/backend/cmd/desktop/build/bin/BeefTV.app: replacing existing signature
+2026-10-27T18:43:20.1770030Z Release bundle: /Users/runner/work/BeefTV/BeefTV/backend/cmd/desktop/build/bin/BeefTV.app
+2026-10-27T18:43:20.2592000Z ##[group]Run set -euo pipefail
+2026-10-27T18:43:20.2593150Z [36;1mset -euo pipefail[0m
+2026-10-27T18:43:20.2593910Z [36;1mmkdir -p ../dist[0m
+2026-10-27T18:43:20.2594780Z [36;1minput="cmd/desktop/build/bin"[0m
+2026-10-27T18:43:20.2595990Z [36;1mif [[ "$PLATFORM" == darwin-* ]]; then[0m
+2026-10-27T18:43:20.2597060Z [36;1m  input="$input/BeefTV.app"[0m
+2026-10-27T18:43:20.2598670Z [36;1melif [[ "$PLATFORM" == linux-amd64 ]]; then[0m
+2026-10-27T18:43:20.2600230Z [36;1m  input="$input/BeefTV-linux"[0m
+2026-10-27T18:43:20.2601020Z [36;1mfi[0m
+2026-10-27T18:43:20.2601520Z [36;1mgo run ./cmd/update-release package \[0m
+2026-10-27T18:43:20.2602870Z [36;1m  --platform "$PLATFORM" \[0m
+2026-10-27T18:43:20.2603670Z [36;1m  --input "$input" \[0m
+2026-10-27T18:43:20.2605280Z [36;1m  --output "../dist/BeefTV-${VERSION}-${PLATFORM}.zip"[0m
+2026-10-27T18:43:20.5149890Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:43:20.5150810Z env:
+2026-10-27T18:43:20.5151430Z   GOTOOLCHAIN: local
+2026-10-27T18:43:20.5152230Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:43:20.5153450Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:43:20.5155000Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:43:20.5156000Z   RELEASE_REGION: auto
+2026-10-27T18:43:20.5156650Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:43:20.5157790Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:43:20.5158570Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:43:20.5159180Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:43:20.5160040Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:43:20.5160830Z   VERSION: v2.0.5
+2026-10-27T18:43:20.5161340Z   PLATFORM: darwin-amd64
+2026-10-27T18:43:20.5162310Z ##[endgroup]
+2026-10-27T18:43:34.4397790Z path=../dist/BeefTV-v2.0.5-darwin-amd64.zip
+2026-10-27T18:43:34.4440460Z sha256=eab65b61b7198b1ce304287db034dc7eb94d5217905c666a4a59ee8d62272681
+2026-10-27T18:43:34.4483660Z size=158265536
+2026-10-27T18:43:34.4828390Z ##[group]Run actions/setup-python@v5
+2026-10-27T18:43:34.4829410Z with:
+2026-10-27T18:43:34.4830100Z   python-version: 3.12
+2026-10-27T18:43:34.4830970Z   check-latest: false
+2026-10-27T18:43:34.4838460Z   token: ***
+2026-10-27T18:43:34.4839220Z   update-environment: true
+2026-10-27T18:43:34.4840030Z   allow-prereleases: false
+2026-10-27T18:43:34.4844210Z   freethreaded: false
+2026-10-27T18:43:34.4844920Z env:
+2026-10-27T18:43:34.4845600Z   GOTOOLCHAIN: local
+2026-10-27T18:43:34.4878230Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:43:34.4880190Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:43:34.4881880Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:43:34.4883390Z   RELEASE_REGION: auto
+2026-10-27T18:43:34.4884170Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:43:34.4885290Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:43:34.4887920Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:43:34.4888970Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:43:34.4890320Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:43:34.4891650Z ##[endgroup]
+2026-10-27T18:43:35.1948310Z ##[group]Installed versions
+2026-10-27T18:43:35.2205610Z (node:21199) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:43:35.2208610Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:43:35.2210520Z Successfully set up CPython (3.12.10)
+2026-10-27T18:43:35.2212010Z ##[endgroup]
+2026-10-27T18:43:35.2483870Z ##[group]Run python scripts/package-desktop-installer.py --platform 'darwin-amd64'
+2026-10-27T18:43:35.2486290Z [36;1mpython scripts/package-desktop-installer.py --platform 'darwin-amd64'[0m
+2026-10-27T18:43:35.2640790Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:43:35.2642110Z env:
+2026-10-27T18:43:35.2642800Z   GOTOOLCHAIN: local
+2026-10-27T18:43:35.2644050Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:43:35.2645920Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:43:35.2647660Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:43:35.2649330Z   RELEASE_REGION: auto
+2026-10-27T18:43:35.2650170Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:43:35.2651370Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:43:35.2652540Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:43:35.2653670Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:43:35.2655040Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:43:35.2656600Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:43:35.2658360Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/x64/lib/pkgconfig
+2026-10-27T18:43:35.2660060Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:43:35.2661880Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:43:35.2663360Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:43:35.2664510Z ##[endgroup]
+2026-10-27T18:43:53.3290240Z 2026-10-27 18:43:53.328 diskimages-helper[21355:60947] *useEffectiveIDs**** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:53.3293860Z 2026-10-27 18:43:53.328 diskimages-helper[21355:60947] *useRealIDs******** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:53.3314560Z Initializing…
+2026-10-27T18:43:53.3316540Z 2026-10-27 18:43:53.331 diskimages-helper[21355:60947] *useEffectiveIDs**** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:53.3518280Z 2026-10-27 18:43:53.350 copy-helper[21356:60950] estimating /private/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv-dmg-2pp0kqo2/image
+2026-10-27T18:43:55.0996500Z 2026-10-27 18:43:55.099 diskimages-helper[21355:60947] *useRealIDs******** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:55.0998860Z Creating…
+2026-10-27T18:43:55.1041030Z DIDiskImageCreatorProbe: interface  2, score    -1000, CSparseBundleDiskImage
+2026-10-27T18:43:55.1050520Z DIDiskImageCreatorProbe: interface  3, score    -1000, CSparseDiskImage
+2026-10-27T18:43:55.1059170Z DIDiskImageCreatorProbe: interface  4, score    -1000, CRawDiskImage
+2026-10-27T18:43:55.1063700Z DIDiskImageCreatorProbe: interface  5, score     1000, CWOUDIFDiskImage
+2026-10-27T18:43:55.1066590Z DIDiskImageCreateWithCFURL: CWOUDIFDiskImage
+2026-10-27T18:43:55.1094070Z DIFileEncodingCreatorProbe: interface  0, score    -1000, CEncryptedEncoding
+2026-10-27T18:43:55.1098280Z DIBackingStoreCreatorProbe: interface  0, score      300, CBSDBackingStore
+2026-10-27T18:43:55.1102070Z DIBackingStoreCreatorProbe: interface  1, score    -1000, CBundleBackingStore
+2026-10-27T18:43:55.1106190Z DIBackingStoreCreatorProbe: interface  2, score        0, CRAMBackingStore
+2026-10-27T18:43:55.1116160Z DIBackingStoreCreatorProbe: interface  4, score     -100, CCURLBackingStore
+2026-10-27T18:43:55.1123750Z DIBackingStoreCreateWithCFURL: CBSDBackingStore
+2026-10-27T18:43:55.1131750Z DIBackingStoreCreateWithCFURL: creator returned 0
+2026-10-27T18:43:55.1133630Z CUDIFFileAccess::createWithCFURL: kUDIFFileWithFooter
+2026-10-27T18:43:55.1157790Z warning: no checksum present
+2026-10-27T18:43:55.1164770Z CUDIFFileAccess::newWithCFURL: checking for header
+2026-10-27T18:43:55.1167730Z CUDIFFileAccess::newWithCFURL: logEOFS64 is 0000000000000C70 (3184)
+2026-10-27T18:43:55.1172010Z CUDIFFileAccess::newWithCFURL: header (at end of file) is recognized
+2026-10-27T18:43:55.1174850Z DIDiskImageCreateWithCFURL: creator returned 0
+2026-10-27T18:43:55.1275130Z DI_kextWaitQuiet: about to call IOServiceWaitQuiet...
+2026-10-27T18:43:55.1280890Z DI_kextWaitQuiet: IOServiceWaitQuiet took 0.000007 seconds
+2026-10-27T18:43:55.8926970Z DI_kextWaitQuiet: about to call IOServiceWaitQuiet...
+2026-10-27T18:43:55.9398940Z DI_kextWaitQuiet: IOServiceWaitQuiet took 0.000006 seconds
+2026-10-27T18:43:55.9492870Z 2026-10-27 18:43:55.871 diskimages-helper[21355:61180] DIHelperHDID serveImage: attaching drive
+2026-10-27T18:43:55.9534420Z {
+2026-10-27T18:43:55.9848040Z     autodiskmount = 0;
+2026-10-27T18:43:55.9979340Z     "hdiagent-drive-identifier" = "0D23DC41-19BE-4B8C-B979-E55331B54073";
+2026-10-27T18:43:56.0171580Z     "skip-auto-fsck-for-system-images" = 1;
+2026-10-27T18:43:56.0196210Z     "system-image" = 1;
+2026-10-27T18:43:56.0199300Z     "unmount-timeout" = 0;
+2026-10-27T18:43:56.0239130Z }
+2026-10-27T18:43:56.0272340Z 2026-10-27 18:43:55.873 diskimages-helper[21355:61180] DIHelperHDID serveImage: connecting to myDrive 0x4B0B
+2026-10-27T18:43:56.0399500Z 2026-10-27 18:43:55.873 diskimages-helper[21355:61180] DIHelperHDID serveImage: register _readBuffer 0x7fcd0db00000
+2026-10-27T18:43:56.2029330Z 2026-10-27 18:43:55.873 diskimages-helper[21355:61180] DIHelperHDID serveImage: activating drive port 18699
+2026-10-27T18:43:56.3084130Z 2026-10-27 18:43:55.873 diskimages-helper[21355:61180] DIHelperHDID serveImage: set cache enabled=TRUE returned FAILURE.
+2026-10-27T18:43:56.3095730Z Copying…
+2026-10-27T18:43:56.5115810Z 2026-10-27 18:43:55.877 diskimages-helper[21355:61180] DIHelperHDID serveImage: set on IO thread=TRUE returned SUCCESS.
+2026-10-27T18:43:56.5740040Z 2026-10-27 18:43:55.877 diskimages-helper[21355:61180] -processKernelRequest: will sleep received
+2026-10-27T18:43:56.5774710Z 2026-10-27 18:43:56.207 diskimages-helper[21355:60947] _mountDevEntries: disk2s1 aborting mountpoint postflight because disk image has no band size specified.
+2026-10-27T18:43:56.5827850Z 2026-10-27 18:43:56.223 diskimages-helper[21355:60947] *useEffectiveIDs**** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:56.6001350Z 2026-10-27 18:43:56.263 diskimages-helper[21355:60947] *useRealIDs******** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:56.6005590Z 2026-10-27 18:43:56.264 diskimages-helper[21355:60947] *useEffectiveIDs**** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:43:56.6058960Z 2026-10-27 18:43:56.273 diskimages-helper[21355:60945] _postflightMountPointsAfterDAMount: disk2s1 aborting because disk image has no band size specified.
+2026-10-27T18:43:56.6107880Z 2026-10-27 18:43:56.281 diskimages-helper[21355:60945] _postflightMountPointsAfterDAMount: disk2 aborting because no mount point found.
+2026-10-27T18:43:56.6447460Z 2026-10-27 18:43:56.288 copy-helper[21478:61264] copying /private/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv-dmg-2pp0kqo2/image to /Volumes/BeefTV
+2026-10-27T18:43:56.6872590Z 2026-10-27 18:43:56.288 copy-helper[21478:61264] About to copy "/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv-dmg-2pp0kqo2/image".
+2026-10-27T18:44:22.0779280Z 2026-10-27 18:44:22.077 diskimages-helper[21355:61180] -processKernelRequest: flush received
+2026-10-27T18:44:22.1150300Z 2026-10-27 18:44:22.114 diskimages-helper[21355:61180] -processKernelRequest: flush received
+2026-10-27T18:44:30.8512480Z 2026-10-27 18:44:30.850 copy-helper[21478:61264] Copy finished.
+2026-10-27T18:49:39.6355520Z 2026-10-27 18:49:39.633 diskimages-helper[21355:61180] -processKernelRequest: flush received
+2026-10-27T18:49:39.7085770Z 2026-10-27 18:49:39.690 diskimages-helper[21355:60947] *useRealIDs******** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:49:45.2273760Z _finalizeImage: freespace 78 at 294
+2026-10-27T18:49:45.2275020Z _finalizeImage: freespace 62 at 3439668
+2026-10-27T18:49:45.2279110Z _finalizeImage: freespace 2 at 3440509
+2026-10-27T18:49:45.2289220Z _finalizeImage: freespace 25616 at 83424567
+2026-10-27T18:49:45.2291020Z _finalizeImage: freespace 44 at 83450544
+2026-10-27T18:49:45.2292270Z _finalizeImage: freespace 127 at 85758073
+2026-10-27T18:49:45.2293490Z _finalizeImage: freespace 106 at 85763024
+2026-10-27T18:49:45.2294760Z _finalizeImage: freespace 116 at 85767201
+2026-10-27T18:49:45.2296240Z _finalizeImage: freespace 3 at 85767796
+2026-10-27T18:49:45.2298560Z _finalizeImage: freespace 22372 at 85768502
+2026-10-27T18:49:45.2300020Z _finalizeImage: freespace 10 at 86327256
+2026-10-27T18:49:45.2301210Z _finalizeImage: freespace 106 at 86328434
+2026-10-27T18:49:45.2303060Z _finalizeImage: freespace 25197 at 86539307
+2026-10-27T18:49:45.2304310Z _finalizeImage: freespace 266 at 87378624
+2026-10-27T18:49:45.2308340Z _finalizeImage: freespace 44402 at 87379617
+2026-10-27T18:49:45.2310690Z _finalizeImage: freespace 32787 at 87425127
+2026-10-27T18:49:45.2313160Z _finalizeImage: freespace 18 at 87860355
+2026-10-27T18:49:45.2314360Z _finalizeImage: freespace 1 at 87861685
+2026-10-27T18:49:45.2315580Z _finalizeImage: freespace 24083 at 87862886
+2026-10-27T18:49:45.2316760Z _finalizeImage: freespace 272 at 87904726
+2026-10-27T18:49:45.2317940Z _finalizeImage: freespace 39 at 87908512
+2026-10-27T18:49:45.2319140Z _finalizeImage: freespace 36873 at 87908583
+2026-10-27T18:49:45.2320350Z _finalizeImage: freespace 65549 at 88113600
+2026-10-27T18:49:45.2321600Z _finalizeImage: freespace 40960 at 88340636
+2026-10-27T18:49:45.2322790Z _finalizeImage: freespace 13 at 88455805
+2026-10-27T18:49:45.2323980Z _finalizeImage: freespace 20641 at 88456760
+2026-10-27T18:49:45.2325210Z _finalizeImage: freespace 16543 at 88656422
+2026-10-27T18:49:45.2326190Z _finalizeImage: freespace 39276 at 89405890
+2026-10-27T18:49:45.2327210Z _finalizeImage: freespace 8201 at 90515391
+2026-10-27T18:49:45.2328300Z _finalizeImage: freespace 20449 at 90524385
+2026-10-27T18:49:45.2329280Z _finalizeImage: freespace 94 at 90794620
+2026-10-27T18:49:45.2330580Z _finalizeImage: freespace 23345 at 90796750
+2026-10-27T18:49:45.2331790Z _finalizeImage: freespace 38 at 91016993
+2026-10-27T18:49:45.2332940Z _finalizeImage: freespace 230 at 91021416
+2026-10-27T18:49:45.2334050Z _finalizeImage: freespace 24647 at 91023429
+2026-10-27T18:49:45.2335170Z _finalizeImage: freespace 265 at 91235751
+2026-10-27T18:49:45.2336290Z _finalizeImage: freespace 244 at 91238112
+2026-10-27T18:49:45.2337430Z _finalizeImage: freespace 8466 at 91239051
+2026-10-27T18:49:45.2339300Z _finalizeImage: freespace 287 at 91255422
+2026-10-27T18:49:45.2340500Z _finalizeImage: freespace 7 at 91815071
+2026-10-27T18:49:45.2342840Z _finalizeImage: freespace 247 at 91822598
+2026-10-27T18:49:45.2345830Z _finalizeImage: freespace 9485 at 91828344
+2026-10-27T18:49:45.2347890Z _finalizeImage: freespace 71 at 91974453
+2026-10-27T18:49:45.2348980Z _finalizeImage: freespace 29 at 91979596
+2026-10-27T18:49:45.2349810Z _finalizeImage: freespace 55 at 91980961
+2026-10-27T18:49:45.2351470Z _finalizeImage: freespace 166 at 91986721
+2026-10-27T18:49:45.2352340Z _finalizeImage: freespace 205 at 91991426
+2026-10-27T18:49:45.2353180Z _finalizeImage: freespace 10959 at 91992960
+2026-10-27T18:49:45.2354130Z _finalizeImage: freespace 103 at 92011283
+2026-10-27T18:49:45.2355090Z _finalizeImage: freespace 16392 at 92013839
+2026-10-27T18:49:45.2356020Z _finalizeImage: freespace 21 at 92034306
+2026-10-27T18:49:45.2357120Z _finalizeImage: freespace 5 at 93669516
+2026-10-27T18:49:45.2375580Z _finalizeImage: freespace 16712 at 93671621
+2026-10-27T18:49:45.2377020Z _finalizeImage: freespace 23 at 93689073
+2026-10-27T18:49:45.2378210Z _finalizeImage: freespace 52 at 93916059
+2026-10-27T18:49:45.2379400Z _finalizeImage: freespace 173 at 93920379
+2026-10-27T18:49:45.2380590Z _finalizeImage: freespace 196 at 93926250
+2026-10-27T18:49:45.2382000Z _finalizeImage: freespace 219 at 93931022
+2026-10-27T18:49:45.2383210Z _finalizeImage: freespace 263 at 93939901
+2026-10-27T18:49:45.2384400Z _finalizeImage: freespace 8404 at 93976294
+2026-10-27T18:49:45.2385580Z _finalizeImage: freespace 25 at 93985265
+2026-10-27T18:49:45.2387630Z _finalizeImage: freespace 243 at 93989547
+2026-10-27T18:49:45.2389070Z _finalizeImage: freespace 92 at 93995916
+2026-10-27T18:49:45.2390300Z _finalizeImage: freespace 121 at 94004079
+2026-10-27T18:49:45.2391460Z _finalizeImage: freespace 94 at 94008993
+2026-10-27T18:49:45.2392950Z _finalizeImage: freespace 212 at 94012971
+2026-10-27T18:49:45.2394170Z _finalizeImage: freespace 134 at 94064125
+2026-10-27T18:49:45.2395340Z _finalizeImage: freespace 212 at 94074463
+2026-10-27T18:49:45.2396730Z _finalizeImage: freespace 305 at 94079413
+2026-10-27T18:49:45.2397900Z _finalizeImage: freespace 257 at 94080183
+2026-10-27T18:49:45.2399320Z _finalizeImage: freespace 95 at 94161127
+2026-10-27T18:49:45.2401210Z _finalizeImage: freespace 185 at 94171317
+2026-10-27T18:49:45.2402610Z _finalizeImage: freespace 58 at 94177358
+2026-10-27T18:49:45.2403930Z _finalizeImage: freespace 151 at 94177867
+2026-10-27T18:49:45.2405130Z _finalizeImage: freespace 38 at 94251375
+2026-10-27T18:49:45.2406320Z _finalizeImage: freespace 8207 at 94254340
+2026-10-27T18:49:45.2407430Z _finalizeImage: freespace 276 at 94266367
+2026-10-27T18:49:45.2408490Z _finalizeImage: freespace 151 at 94274562
+2026-10-27T18:49:45.2409560Z _finalizeImage: freespace 8197 at 94275468
+2026-10-27T18:49:45.2410650Z _finalizeImage: freespace 61 at 94403167
+2026-10-27T18:49:45.2411740Z _finalizeImage: freespace 45 at 94409255
+2026-10-27T18:49:45.2413080Z _finalizeImage: freespace 62 at 94413896
+2026-10-27T18:49:45.2414210Z _finalizeImage: freespace 8 at 94418733
+2026-10-27T18:49:45.2415710Z _finalizeImage: freespace 12430 at 94420212
+2026-10-27T18:49:45.2417170Z _finalizeImage: freespace 12511 at 94654430
+2026-10-27T18:49:45.2419420Z _finalizeImage: freespace 17 at 94671098
+2026-10-27T18:49:45.2421290Z _finalizeImage: freespace 8230 at 94671729
+2026-10-27T18:49:45.2422850Z _finalizeImage: freespace 8192 at 95097168
+2026-10-27T18:49:45.2433190Z _finalizeImage: freespace 190 at 95109289
+2026-10-27T18:49:45.2434680Z _finalizeImage: freespace 7596 at 95110669
+2026-10-27T18:49:45.2436070Z _finalizeImage: freespace 40 at 95126417
+2026-10-27T18:49:45.2437310Z _finalizeImage: freespace 56 at 95368697
+2026-10-27T18:49:45.2438550Z _finalizeImage: freespace 7 at 95372288
+2026-10-27T18:49:45.2439800Z _finalizeImage: freespace 8224 at 95374810
+2026-10-27T18:49:45.2461980Z _finalizeImage: freespace 8192 at 95383554
+2026-10-27T18:49:45.2463570Z _finalizeImage: freespace 153 at 95457844
+2026-10-27T18:49:45.2465340Z _finalizeImage: freespace 63202 at 95460763
+2026-10-27T18:49:45.2466930Z _finalizeImage: freespace 32768 at 95561213
+2026-10-27T18:49:45.2468230Z _finalizeImage: freespace 1 at 95602172
+2026-10-27T18:49:45.2469220Z _finalizeImage: freespace 80 at 95606189
+2026-10-27T18:49:45.2470070Z _finalizeImage: freespace 20480 at 95857739
+2026-10-27T18:49:45.2471070Z _finalizeImage: freespace 11385 at 95879122
+2026-10-27T18:49:45.2472000Z _finalizeImage: freespace 19 at 96009641
+2026-10-27T18:49:45.2472900Z _finalizeImage: freespace 60 at 96010481
+2026-10-27T18:49:45.2474030Z _finalizeImage: freespace 120 at 96071566
+2026-10-27T18:49:45.2474870Z _finalizeImage: freespace 49 at 96075733
+2026-10-27T18:49:45.2475680Z _finalizeImage: freespace 33 at 96190147
+2026-10-27T18:49:45.2476490Z _finalizeImage: freespace 7 at 96190771
+2026-10-27T18:49:45.2477300Z _finalizeImage: freespace 2 at 96194688
+2026-10-27T18:49:45.2479450Z _finalizeImage: freespace 12369 at 96198082
+2026-10-27T18:49:45.2480530Z _finalizeImage: freespace 168 at 96462731
+2026-10-27T18:49:45.2482000Z _finalizeImage: freespace 18 at 96470451
+2026-10-27T18:49:45.2483190Z _finalizeImage: freespace 314 at 96478347
+2026-10-27T18:49:45.2484910Z _finalizeImage: freespace 288 at 97105455
+2026-10-27T18:49:45.2486010Z _finalizeImage: freespace 151 at 97111539
+2026-10-27T18:49:45.2487330Z _finalizeImage: freespace 133 at 97119015
+2026-10-27T18:49:45.2488500Z _finalizeImage: freespace 11904 at 97119532
+2026-10-27T18:49:45.2489370Z _finalizeImage: freespace 136 at 97568596
+2026-10-27T18:49:45.2490210Z _finalizeImage: freespace 24792 at 97571709
+2026-10-27T18:49:45.2491730Z _finalizeImage: freespace 12410 at 98048941
+2026-10-27T18:49:45.2492610Z _finalizeImage: freespace 12291 at 98062782
+2026-10-27T18:49:45.2493440Z _finalizeImage: freespace 10 at 98083255
+2026-10-27T18:49:45.2494350Z _finalizeImage: freespace 10139 at 98085414
+2026-10-27T18:49:45.2495190Z _finalizeImage: freespace 183 at 98103562
+2026-10-27T18:49:45.2496040Z _finalizeImage: freespace 43209 at 98395341
+2026-10-27T18:49:45.2497160Z _finalizeImage: freespace 5 at 99214595
+2026-10-27T18:49:45.2498250Z _finalizeImage: freespace 261 at 99220164
+2026-10-27T18:49:45.2499090Z _finalizeImage: freespace 16430 at 99222005
+2026-10-27T18:49:45.2499980Z _finalizeImage: freespace 276 at 101908199
+2026-10-27T18:49:45.2500820Z _finalizeImage: freespace 115 at 101909590
+2026-10-27T18:49:45.2501640Z _finalizeImage: freespace 127 at 101915061
+2026-10-27T18:49:45.2502550Z _finalizeImage: freespace 19984 at 101917182
+2026-10-27T18:49:45.2503420Z _finalizeImage: freespace 12339 at 102262623
+2026-10-27T18:49:45.2504270Z _finalizeImage: freespace 76 at 102539629
+2026-10-27T18:49:45.2505170Z _finalizeImage: freespace 12313 at 102542165
+2026-10-27T18:49:45.2506270Z _finalizeImage: freespace 86 at 104431430
+2026-10-27T18:49:45.2507100Z _finalizeImage: freespace 3 at 104435951
+2026-10-27T18:49:45.2507910Z _finalizeImage: freespace 5 at 104436131
+2026-10-27T18:49:45.2508760Z _finalizeImage: freespace 8211 at 105485792
+2026-10-27T18:49:45.2509580Z _finalizeImage: freespace 5 at 105494699
+2026-10-27T18:49:45.2510410Z _finalizeImage: freespace 286 at 105735657
+2026-10-27T18:49:45.2511240Z _finalizeImage: freespace 22 at 105736349
+2026-10-27T18:49:45.2512060Z _finalizeImage: freespace 59 at 105743080
+2026-10-27T18:49:45.2512880Z _finalizeImage: freespace 81 at 105745400
+2026-10-27T18:49:45.2513720Z _finalizeImage: freespace 16402 at 105980901
+2026-10-27T18:49:45.2514560Z _finalizeImage: freespace 86 at 106427665
+2026-10-27T18:49:45.2515400Z _finalizeImage: freespace 32769 at 106428544
+2026-10-27T18:49:45.2516240Z _finalizeImage: freespace 2 at 106469503
+2026-10-27T18:49:45.2517050Z _finalizeImage: freespace 1 at 107332083
+2026-10-27T18:49:45.2517880Z _finalizeImage: freespace 8193 at 107332691
+2026-10-27T18:49:45.2518720Z _finalizeImage: freespace 112 at 107606878
+2026-10-27T18:49:45.2520050Z _finalizeImage: freespace 89 at 107611714
+2026-10-27T18:49:45.2521370Z _finalizeImage: freespace 1 at 107616277
+2026-10-27T18:49:45.2522830Z _finalizeImage: freespace 12297 at 107617553
+2026-10-27T18:49:45.2524080Z _finalizeImage: freespace 8305 at 108143559
+2026-10-27T18:49:45.2525030Z _finalizeImage: freespace 81 at 108157696
+2026-10-27T18:49:45.2525870Z _finalizeImage: freespace 278 at 108161942
+2026-10-27T18:49:45.2526700Z _finalizeImage: freespace 8407 at 108165037
+2026-10-27T18:49:45.2527560Z _finalizeImage: freespace 248 at 108652557
+2026-10-27T18:49:45.2528380Z _finalizeImage: freespace 1 at 108657456
+2026-10-27T18:49:45.2529190Z _finalizeImage: freespace 42 at 108662351
+2026-10-27T18:49:45.2530220Z _finalizeImage: freespace 8282 at 108664703
+2026-10-27T18:49:45.2531060Z _finalizeImage: freespace 8 at 108673454
+2026-10-27T18:49:45.2531890Z _finalizeImage: freespace 103 at 108962688
+2026-10-27T18:49:45.2532720Z _finalizeImage: freespace 120 at 108968227
+2026-10-27T18:49:45.2533570Z _finalizeImage: freespace 20501 at 108969437
+2026-10-27T18:49:45.2534820Z _finalizeImage: freespace 30 at 108994004
+2026-10-27T18:49:45.2535660Z _finalizeImage: freespace 8192 at 109215317
+2026-10-27T18:49:45.2536490Z _finalizeImage: freespace 179 at 109224778
+2026-10-27T18:49:45.2537320Z _finalizeImage: freespace 279 at 109230113
+2026-10-27T18:49:45.2538160Z _finalizeImage: freespace 8463 at 109233827
+2026-10-27T18:49:45.2539000Z _finalizeImage: freespace 296 at 109994522
+2026-10-27T18:49:45.2539830Z _finalizeImage: freespace 34 at 109999951
+2026-10-27T18:49:45.2540650Z _finalizeImage: freespace 22 at 110006563
+2026-10-27T18:49:45.2541500Z _finalizeImage: freespace 36957 at 110010588
+2026-10-27T18:49:45.2542350Z _finalizeImage: freespace 225 at 110246708
+2026-10-27T18:49:45.2543650Z _finalizeImage: freespace 20501 at 110248433
+2026-10-27T18:49:45.2544570Z _finalizeImage: freespace 1043833 at 112528883
+2026-10-27T18:49:45.2545430Z _finalizeImage: freespace 29 at 113850909
+2026-10-27T18:49:45.2546270Z _finalizeImage: freespace 20940 at 113854850
+2026-10-27T18:49:45.2547110Z _finalizeImage: freespace 35 at 114067616
+2026-10-27T18:49:45.2547940Z _finalizeImage: freespace 14 at 114071980
+2026-10-27T18:49:45.2548760Z _finalizeImage: freespace 159 at 114077534
+2026-10-27T18:49:45.2549600Z _finalizeImage: freespace 91 at 114084910
+2026-10-27T18:49:45.2550420Z _finalizeImage: freespace 14 at 114093179
+2026-10-27T18:49:45.2551250Z _finalizeImage: freespace 26 at 114315562
+2026-10-27T18:49:45.2552170Z _finalizeImage: freespace 229 at 114317966
+2026-10-27T18:49:45.2553310Z _finalizeImage: freespace 34 at 114322962
+2026-10-27T18:49:45.2554130Z _finalizeImage: freespace 5 at 114330741
+2026-10-27T18:49:45.2554950Z _finalizeImage: freespace 7 at 114331489
+2026-10-27T18:49:45.2555790Z _finalizeImage: freespace 8358 at 114503137
+2026-10-27T18:49:45.2556620Z _finalizeImage: freespace 5 at 114518494
+2026-10-27T18:49:45.2557440Z _finalizeImage: freespace 36 at 114525684
+2026-10-27T18:49:45.2558320Z _finalizeImage: freespace 8248 at 114530464
+2026-10-27T18:49:45.2559170Z _finalizeImage: freespace 166 at 114698311
+2026-10-27T18:49:45.2560020Z _finalizeImage: freespace 8509 at 114703490
+2026-10-27T18:49:45.2560880Z _finalizeImage: freespace 12301 at 114712701
+2026-10-27T18:49:45.2561730Z _finalizeImage: freespace 8237 at 114894249
+2026-10-27T18:49:45.2562600Z _finalizeImage: freespace 820328 at 114905895
+2026-10-27T18:49:45.2563480Z _finalizeImage: freespace 23344 at 115727455
+2026-10-27T18:49:45.2564350Z _finalizeImage: freespace 252359 at 115752392
+2026-10-27T18:49:45.2565220Z _finalizeImage: freespace 26385 at 116007038
+2026-10-27T18:49:45.2566560Z _finalizeImage: freespace 68424 at 116034631
+2026-10-27T18:49:45.2567480Z _finalizeImage: freespace 19042 at 116104493
+2026-10-27T18:49:45.2568360Z _finalizeImage: freespace 76132 at 116125227
+2026-10-27T18:49:45.2569400Z _finalizeImage: freespace 30102 at 116204025
+2026-10-27T18:49:45.2570270Z _finalizeImage: freespace 41330 at 116237853
+2026-10-27T18:49:45.2571140Z _finalizeImage: freespace 61866 at 116286949
+2026-10-27T18:49:45.2572030Z _finalizeImage: freespace 187 at 116356820
+2026-10-27T18:49:45.2572890Z _finalizeImage: freespace 37282 at 116360685
+2026-10-27T18:49:45.2573770Z _finalizeImage: freespace 14398 at 116399953
+2026-10-27T18:49:45.2574640Z _finalizeImage: freespace 17733 at 116417098
+2026-10-27T18:49:45.2575490Z _finalizeImage: freespace 67405 at 116437058
+2026-10-27T18:49:45.2576360Z _finalizeImage: freespace 16453 at 116508490
+2026-10-27T18:49:45.2577230Z _finalizeImage: freespace 252673 at 116526222
+2026-10-27T18:49:45.2578120Z _finalizeImage: freespace 101905 at 116779390
+2026-10-27T18:49:45.2578990Z _finalizeImage: freespace 34286 at 116883873
+2026-10-27T18:49:45.2579850Z _finalizeImage: freespace 27585 at 116919246
+2026-10-27T18:49:45.2580730Z _finalizeImage: freespace 166865 at 116947902
+2026-10-27T18:49:45.2581610Z _finalizeImage: freespace 28276 at 117115163
+2026-10-27T18:49:45.2582470Z _finalizeImage: freespace 17601 at 117146318
+2026-10-27T18:49:45.2583320Z _finalizeImage: freespace 9939 at 117166268
+2026-10-27T18:49:45.2584280Z _finalizeImage: freespace 47991 at 117177368
+2026-10-27T18:49:45.2586120Z _finalizeImage: freespace 28927 at 117229200
+2026-10-27T18:49:45.2586980Z _finalizeImage: freespace 21912 at 117260791
+2026-10-27T18:49:45.2587850Z _finalizeImage: freespace 22949 at 117333482
+2026-10-27T18:49:45.2588690Z _finalizeImage: freespace 191 at 117364432
+2026-10-27T18:49:45.2589550Z _finalizeImage: freespace 144203 at 117367876
+2026-10-27T18:49:45.2590430Z _finalizeImage: freespace 100232 at 117514247
+2026-10-27T18:49:45.2591310Z _finalizeImage: freespace 59605 at 117616314
+2026-10-27T18:49:45.2592180Z _finalizeImage: freespace 221557 at 117679642
+2026-10-27T18:49:45.2593540Z _finalizeImage: freespace 113444 at 117902443
+2026-10-27T18:49:45.2594450Z _finalizeImage: freespace 26778 at 118017781
+2026-10-27T18:49:45.2595310Z _finalizeImage: freespace 42313 at 118047302
+2026-10-27T18:49:45.2596170Z _finalizeImage: freespace 19074 at 118091021
+2026-10-27T18:49:45.2597020Z _finalizeImage: freespace 137 at 118114054
+2026-10-27T18:49:45.2597870Z _finalizeImage: freespace 18054 at 118116617
+2026-10-27T18:49:45.2598710Z _finalizeImage: freespace 15 at 118142848
+2026-10-27T18:49:45.2599540Z _finalizeImage: freespace 76 at 118146883
+2026-10-27T18:49:45.2600380Z _finalizeImage: freespace 44088 at 118147927
+2026-10-27T18:49:45.2601340Z _finalizeImage: freespace 28735 at 118196048
+2026-10-27T18:49:45.2602210Z _finalizeImage: freespace 19808 at 118225455
+2026-10-27T18:49:45.2603060Z _finalizeImage: freespace 169 at 118249190
+2026-10-27T18:49:45.2603920Z _finalizeImage: freespace 30429 at 118251698
+2026-10-27T18:49:45.2604760Z _finalizeImage: freespace 131 at 118290188
+2026-10-27T18:49:45.2605590Z _finalizeImage: freespace 6 at 118429656
+2026-10-27T18:49:45.2606430Z _finalizeImage: freespace 118 at 118595733
+2026-10-27T18:49:45.2607280Z _finalizeImage: freespace 32768 at 118792522
+2026-10-27T18:49:45.2608120Z _finalizeImage: freespace 49 at 118978682
+2026-10-27T18:49:45.2608970Z _finalizeImage: freespace 45130 at 119178861
+2026-10-27T18:49:45.2609830Z _finalizeImage: freespace 20480 at 119424667
+2026-10-27T18:49:45.2610690Z _finalizeImage: freespace 267 at 119453072
+2026-10-27T18:49:45.2611530Z _finalizeImage: freespace 297 at 119659168
+2026-10-27T18:49:45.2612380Z _finalizeImage: freespace 32768 at 119720897
+2026-10-27T18:49:45.2613240Z _finalizeImage: freespace 8462 at 119988257
+2026-10-27T18:49:45.2614080Z _finalizeImage: freespace 8192 at 120307045
+2026-10-27T18:49:45.2614930Z _finalizeImage: freespace 12497 at 120319124
+2026-10-27T18:49:45.2615800Z _finalizeImage: freespace 24576 at 120433191
+2026-10-27T18:49:45.2616660Z _finalizeImage: freespace 20480 at 120603608
+2026-10-27T18:49:45.2617510Z _finalizeImage: freespace 8279 at 120628097
+2026-10-27T18:49:45.2618360Z _finalizeImage: freespace 8192 at 120826018
+2026-10-27T18:49:45.2619220Z _finalizeImage: freespace 279 at 120838027
+2026-10-27T18:49:45.2620070Z _finalizeImage: freespace 16384 at 120997196
+2026-10-27T18:49:45.2620920Z _finalizeImage: freespace 92 at 121140110
+2026-10-27T18:49:45.2621790Z _finalizeImage: freespace 12615 at 121143971
+2026-10-27T18:49:45.2622640Z _finalizeImage: freespace 137 at 121288351
+2026-10-27T18:49:45.2623700Z _finalizeImage: freespace 14 at 121292570
+2026-10-27T18:49:45.2624590Z _finalizeImage: freespace 22826 at 121410549
+2026-10-27T18:49:45.2625420Z _finalizeImage: freespace 3 at 121441564
+2026-10-27T18:49:45.2626240Z _finalizeImage: freespace 38 at 121449721
+2026-10-27T18:49:45.2627090Z _finalizeImage: freespace 24576 at 121540333
+2026-10-27T18:49:45.2627950Z _finalizeImage: freespace 13449 at 121741773
+2026-10-27T18:49:45.2628800Z _finalizeImage: freespace 15910 at 121755696
+2026-10-27T18:49:45.2629670Z _finalizeImage: freespace 11431 at 121874296
+2026-10-27T18:49:45.2630520Z _finalizeImage: freespace 115 at 121893804
+2026-10-27T18:49:45.2631360Z _finalizeImage: freespace 16384 at 122099999
+2026-10-27T18:49:45.2632220Z _finalizeImage: freespace 11730 at 122116941
+2026-10-27T18:49:45.2633080Z _finalizeImage: freespace 11692 at 122129267
+2026-10-27T18:49:45.2633920Z _finalizeImage: freespace 189 at 122148962
+2026-10-27T18:49:45.2635110Z _finalizeImage: freespace 24576 at 122247447
+2026-10-27T18:49:45.2635960Z _finalizeImage: freespace 49 at 122276070
+2026-10-27T18:49:45.2636800Z _finalizeImage: freespace 3088 at 122510528
+2026-10-27T18:49:45.2637640Z _finalizeImage: freespace 261 at 122517451
+2026-10-27T18:49:45.2638490Z _finalizeImage: freespace 17987 at 122988996
+2026-10-27T18:49:45.2639340Z _finalizeImage: freespace 8192 at 168169076
+2026-10-27T18:49:45.2640200Z _finalizeImage: freespace 15726 at 168293482
+2026-10-27T18:49:45.2641060Z _finalizeImage: freespace 18918 at 169638837
+2026-10-27T18:49:45.2641920Z _finalizeImage: freespace 69161 at 169658226
+2026-10-27T18:49:45.2643180Z _finalizeImage: freespace 32808 at 169731443
+2026-10-27T18:49:45.2644080Z _finalizeImage: freespace 30081 at 169766938
+2026-10-27T18:49:45.2644930Z _finalizeImage: freespace 146 at 169800969
+2026-10-27T18:49:45.2645780Z _finalizeImage: freespace 39880 at 169802195
+2026-10-27T18:49:45.2646870Z _finalizeImage: freespace 25854 at 169844893
+2026-10-27T18:49:45.2647750Z _finalizeImage: freespace 67042 at 169873337
+2026-10-27T18:49:45.2648600Z _finalizeImage: freespace 27807 at 169941244
+2026-10-27T18:49:45.2649480Z _finalizeImage: freespace 113787 at 169969952
+2026-10-27T18:49:45.2650330Z _finalizeImage: freespace 99 at 170087736
+2026-10-27T18:49:45.2651190Z _finalizeImage: freespace 125912 at 170088899
+2026-10-27T18:49:45.2652450Z _finalizeImage: freespace 30656 at 170216923
+2026-10-27T18:49:45.2653320Z _finalizeImage: freespace 31495 at 170248852
+2026-10-27T18:49:45.2654180Z _finalizeImage: freespace 23406 at 170281517
+2026-10-27T18:49:45.2655050Z _finalizeImage: freespace 26293 at 170307302
+2026-10-27T18:49:45.2655900Z _finalizeImage: freespace 68 at 170337623
+2026-10-27T18:49:45.2656760Z _finalizeImage: freespace 102671 at 170341516
+2026-10-27T18:49:45.2657640Z _finalizeImage: freespace 31770 at 170445185
+2026-10-27T18:49:45.2658500Z _finalizeImage: freespace 8708 at 170480535
+2026-10-27T18:49:45.2659340Z _finalizeImage: freespace 45 at 170493294
+2026-10-27T18:49:45.2660190Z _finalizeImage: freespace 97257 at 170494386
+2026-10-27T18:49:45.2661060Z _finalizeImage: freespace 12745 at 170595282
+2026-10-27T18:49:45.2661910Z _finalizeImage: freespace 198 at 170611925
+2026-10-27T18:49:45.2662760Z _finalizeImage: freespace 76528 at 170613419
+2026-10-27T18:49:45.2663630Z _finalizeImage: freespace 72669 at 170691006
+2026-10-27T18:49:45.2664460Z _finalizeImage: freespace 1 at 170767770
+2026-10-27T18:49:45.2665300Z _finalizeImage: freespace 19291 at 170768960
+2026-10-27T18:49:45.2666150Z _finalizeImage: freespace 2 at 170796441
+2026-10-27T18:49:45.2666970Z _finalizeImage: freespace 250 at 170804385
+2026-10-27T18:49:45.2667830Z _finalizeImage: freespace 156143 at 170808236
+2026-10-27T18:49:45.2668770Z _finalizeImage: total wasted space: 7155582 bytes
+2026-10-27T18:49:45.2669810Z _finalizeImage 1676 writes to compressed chunks logged
+2026-10-27T18:49:45.2671760Z 2026-10-27 18:49:45.240 diskimages-helper[21355:60947] *useEffectiveIDs**** euid/egid changed to 501,20 (uid/gid is 501,20)
+2026-10-27T18:49:45.2673900Z Finishing…
+2026-10-27T18:49:46.3277350Z hdiutil: create: returning 0
+2026-10-27T18:49:46.3279090Z created: /Users/runner/work/BeefTV/BeefTV/dist/BeefTV-v2.0.5-darwin-amd64.dmg
+2026-10-27T18:49:49.0820310Z /Users/runner/work/BeefTV/BeefTV/dist/BeefTV-v2.0.5-darwin-amd64.dmg
+2026-10-27T18:49:49.1087940Z ##[group]Run set -euo pipefail
+2026-10-27T18:49:49.1088920Z [36;1mset -euo pipefail[0m
+2026-10-27T18:49:49.1089800Z [36;1mpayload='backend/cmd/desktop/build/bin'[0m
+2026-10-27T18:49:49.1090790Z [36;1msuffix='-setup.exe'[0m
+2026-10-27T18:49:49.1092100Z [36;1mif [[ "$PLATFORM" == darwin-* ]]; then payload="$payload/BeefTV.app"; suffix='.dmg'; fi[0m
+2026-10-27T18:49:49.1094110Z [36;1mif [[ "$PLATFORM" == linux-* ]]; then payload="$payload/BeefTV-linux"; suffix='.deb'; fi[0m
+2026-10-27T18:49:49.1097130Z [36;1mcommand=(python scripts/smoke-desktop-installer.py --platform "$PLATFORM" --installer "dist/BeefTV-${VERSION}-${PLATFORM}${suffix}" --payload "$payload")[0m
+2026-10-27T18:49:49.1100920Z [36;1mif [[ "$PLATFORM" == linux-* ]]; then xvfb-run -a dbus-run-session -- "${command[@]}"; else "${command[@]}"; fi[0m
+2026-10-27T18:49:49.1224520Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:49:49.1225420Z env:
+2026-10-27T18:49:49.1226020Z   GOTOOLCHAIN: local
+2026-10-27T18:49:49.1227160Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:49:49.1228710Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:49:49.1231070Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:49:49.1232550Z   RELEASE_REGION: auto
+2026-10-27T18:49:49.1233260Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:49:49.1234310Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:49:49.1235550Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:49:49.1236550Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:49:49.1237870Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:49:49.1239380Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:49:49.1240910Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/x64/lib/pkgconfig
+2026-10-27T18:49:49.1242500Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:49:49.1244000Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:49:49.1245510Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:49:49.1246700Z   VERSION: v2.0.5
+2026-10-27T18:49:49.1247390Z   PLATFORM: darwin-amd64
+2026-10-27T18:49:49.1248100Z ##[endgroup]
+2026-10-27T18:50:14.8081370Z Checksumming Protective Master Boot Record (MBR : 0)…
+2026-10-27T18:50:14.8128390Z Protective Master Boot Record (MBR :: verified   CRC32 $0DF763BA
+2026-10-27T18:50:14.8131670Z Checksumming GPT Header (Primary GPT Header : 1)…
+2026-10-27T18:50:14.8169980Z  GPT Header (Primary GPT Header : 1): verified   CRC32 $D590F2C7
+2026-10-27T18:50:14.8172570Z Checksumming GPT Partition Data (Primary GPT Table : 2)…
+2026-10-27T18:50:14.8212760Z GPT Partition Data (Primary GPT Tabl: verified   CRC32 $FA416A78
+2026-10-27T18:50:14.8214820Z Checksumming  (Apple_Free : 3)…
+2026-10-27T18:50:14.8225350Z                     (Apple_Free : 3): verified   CRC32 $00000000
+2026-10-27T18:50:14.8227020Z Checksumming disk image (Apple_HFS : 4)…
+2026-10-27T18:50:16.5699990Z           disk image (Apple_HFS : 4): verified   CRC32 $3F7E2640
+2026-10-27T18:50:16.5701960Z Checksumming  (Apple_Free : 5)…
+2026-10-27T18:50:17.0216960Z                     (Apple_Free : 5): verified   CRC32 $00000000
+2026-10-27T18:50:17.0268450Z Checksumming GPT Partition Data (Backup GPT Table : 6)…
+2026-10-27T18:50:17.0315650Z GPT Partition Data (Backup GPT Table: verified   CRC32 $FA416A78
+2026-10-27T18:50:17.0338700Z Checksumming GPT Header (Backup GPT Header : 7)…
+2026-10-27T18:50:17.0365060Z   GPT Header (Backup GPT Header : 7): verified   CRC32 $F8C93355
+2026-10-27T18:50:17.0384470Z verified   CRC32 $B2F9FF8F
+2026-10-27T18:50:17.9496780Z /dev/disk2          	GUID_partition_scheme          	
+2026-10-27T18:50:17.9562740Z /dev/disk2s1        	Apple_HFS                      	/private/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv-installer-4w7xmugn/mounted
+2026-10-27T18:50:45.4488570Z "disk2" ejected.
+2026-10-27T18:50:59.0534920Z expected   CRC32 $B2F9FF8F
+2026-10-27T18:50:59.7268440Z /dev/disk2          	GUID_partition_scheme          	
+2026-10-27T18:50:59.7353410Z /dev/disk2s1        	Apple_HFS                      	/private/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv-installer-4w7xmugn/mounted
+2026-10-27T18:51:27.0915800Z "disk2" ejected.
+2026-10-27T18:51:40.2387210Z expected   CRC32 $B2F9FF8F
+2026-10-27T18:51:40.9334710Z /dev/disk2          	GUID_partition_scheme          	
+2026-10-27T18:51:40.9347020Z /dev/disk2s1        	Apple_HFS                      	/private/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/beeftv-installer-4w7xmugn/mounted
+2026-10-27T18:52:09.2818670Z "disk2" ejected.
+2026-10-27T18:52:13.7615420Z PASS: portable migration, native installed startup, full payload, overwrite, uninstall and reinstall preserve project rows, settings, files and draft sentinels; no paid generation
+2026-10-27T18:52:13.7988730Z ##[group]Run python scripts/smoke-packaged-cli_test.py
+2026-10-27T18:52:13.7991070Z [36;1mpython scripts/smoke-packaged-cli_test.py[0m
+2026-10-27T18:52:13.7993270Z [36;1mpython scripts/smoke-packaged-cli.py --archive "dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"[0m
+2026-10-27T18:52:13.8108370Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-27T18:52:13.8109210Z env:
+2026-10-27T18:52:13.8109710Z   GOTOOLCHAIN: local
+2026-10-27T18:52:13.8110670Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:52:13.8112070Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:52:13.8113430Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:52:13.8114600Z   RELEASE_REGION: auto
+2026-10-27T18:52:13.8115220Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:52:13.8116130Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:52:13.8117190Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:52:13.8117960Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:52:13.8119030Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:52:13.8120260Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:52:13.8121650Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/x64/lib/pkgconfig
+2026-10-27T18:52:13.8122960Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:52:13.8124130Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:52:13.8125560Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:52:13.8126570Z   VERSION: v2.0.5
+2026-10-27T18:52:13.8127110Z   PLATFORM: darwin-amd64
+2026-10-27T18:52:13.8127680Z ##[endgroup]
+2026-10-27T18:52:49.6648210Z ..
+2026-10-27T18:52:49.6731680Z ----------------------------------------------------------------------
+2026-10-27T18:52:49.6767970Z Ran 2 tests in 35.550s
+2026-10-27T18:52:49.6830870Z 
+2026-10-27T18:52:49.6874900Z OK
+2026-10-27T18:53:25.8996210Z PASS darwin-amd64: extracted shipped CLI initialize + tools/list; authenticated mock only
+2026-10-27T18:53:25.9265570Z ##[group]Run actions/upload-artifact@v4
+2026-10-27T18:53:25.9266430Z with:
+2026-10-27T18:53:25.9266960Z   name: desktop-darwin-amd64
+2026-10-27T18:53:25.9268170Z   path: dist/BeefTV-v2.0.5-darwin-amd64*
+dist/BeefTV-v2.0.5-ffprobe-darwin-amd64-sources.tar.gz
+
+2026-10-27T18:53:25.9269670Z   retention-days: 7
+2026-10-27T18:53:25.9270310Z   if-no-files-found: error
+2026-10-27T18:53:25.9270960Z   compression-level: 6
+2026-10-27T18:53:25.9271550Z   overwrite: false
+2026-10-27T18:53:25.9272220Z   include-hidden-files: false
+2026-10-27T18:53:25.9273030Z env:
+2026-10-27T18:53:25.9273630Z   GOTOOLCHAIN: local
+2026-10-27T18:53:25.9274700Z   BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+2026-10-27T18:53:25.9415050Z   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+2026-10-27T18:53:25.9416520Z   RELEASE_ENDPOINT: https://ae2e9fc7cd28528a178c6fb4ce9debb9.r2.cloudflarestorage.com
+2026-10-27T18:53:25.9417810Z   RELEASE_REGION: auto
+2026-10-27T18:53:25.9418610Z   RELEASE_BUCKET: beeftv-releases
+2026-10-27T18:53:25.9419930Z   LEGACY_COS_ENDPOINT: https://cos.ap-guangzhou.myqcloud.com
+2026-10-27T18:53:25.9421190Z   LEGACY_COS_REGION: ap-guangzhou
+2026-10-27T18:53:25.9422260Z   LEGACY_COS_BUCKET: beeftv-components-1481187348
+2026-10-27T18:53:25.9423410Z   BEEFTV_NODE_RUNTIME: /Users/runner/hostedtoolcache/node/24.22.1/x64
+2026-10-27T18:53:25.9424660Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:53:25.9426540Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/x64/lib/pkgconfig
+2026-10-27T18:53:25.9429300Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:53:25.9431030Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:53:25.9432720Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/x64
+2026-10-27T18:53:25.9433770Z ##[endgroup]
+2026-10-27T18:53:26.3373640Z (node:28949) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:53:26.3406690Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:53:26.3438560Z With the provided path, there will be 3 files uploaded
+2026-10-27T18:53:26.3442990Z Artifact name is valid!
+2026-10-27T18:53:26.3446170Z Root directory input is valid!
+2026-10-27T18:53:26.8647100Z Beginning upload of artifact content to blob storage
+2026-10-27T18:53:27.3972860Z (node:28949) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T18:53:28.4254550Z Uploaded bytes 8388608
+2026-10-27T18:53:29.0020930Z Uploaded bytes 16777216
+2026-10-27T18:53:29.1688000Z Uploaded bytes 25165824
+2026-10-27T18:53:30.0677070Z Uploaded bytes 33554432
+2026-10-27T18:53:30.2523620Z Uploaded bytes 41943040
+2026-10-27T18:53:30.7787490Z Uploaded bytes 50331648
+2026-10-27T18:53:31.4290520Z Uploaded bytes 58720256
+2026-10-27T18:53:31.9614080Z Uploaded bytes 67108864
+2026-10-27T18:53:32.4871990Z Uploaded bytes 75497472
+2026-10-27T18:53:33.0836960Z Uploaded bytes 83886080
+2026-10-27T18:53:33.6878490Z Uploaded bytes 92274688
+2026-10-27T18:53:34.3011490Z Uploaded bytes 100663296
+2026-10-27T18:53:34.9039750Z Uploaded bytes 109051904
+2026-10-27T18:53:35.6038860Z Uploaded bytes 117440512
+2026-10-27T18:53:36.2325930Z Uploaded bytes 125829120
+2026-10-27T18:53:36.8851180Z Uploaded bytes 134217728
+2026-10-27T18:53:37.4490700Z Uploaded bytes 142606336
+2026-10-27T18:53:38.0127550Z Uploaded bytes 150994944
+2026-10-27T18:53:38.6130150Z Uploaded bytes 159383552
+2026-10-27T18:53:39.1362730Z Uploaded bytes 167772160
+2026-10-27T18:53:39.6154370Z Uploaded bytes 176160768
+2026-10-27T18:53:40.1446790Z Uploaded bytes 184549376
+2026-10-27T18:53:40.6482220Z Uploaded bytes 192937984
+2026-10-27T18:53:41.1831680Z Uploaded bytes 201326592
+2026-10-27T18:53:41.6214660Z Uploaded bytes 209715200
+2026-10-27T18:53:42.1538050Z Uploaded bytes 218103808
+2026-10-27T18:53:42.5961380Z Uploaded bytes 226492416
+2026-10-27T18:53:43.1414110Z Uploaded bytes 234881024
+2026-10-27T18:53:43.5797050Z Uploaded bytes 243269632
+2026-10-27T18:53:44.0938730Z Uploaded bytes 251658240
+2026-10-27T18:53:45.1076090Z Uploaded bytes 260046848
+2026-10-27T18:53:45.2654840Z Uploaded bytes 268435456
+2026-10-27T18:53:45.5724110Z Uploaded bytes 276824064
+2026-10-27T18:53:46.2117990Z Uploaded bytes 285212672
+2026-10-27T18:53:46.8142520Z Uploaded bytes 293601280
+2026-10-27T18:53:47.3816640Z Uploaded bytes 301989888
+2026-10-27T18:53:47.8952830Z Uploaded bytes 310378496
+2026-10-27T18:53:48.4210830Z Uploaded bytes 318767104
+2026-10-27T18:53:48.9037560Z Uploaded bytes 327155712
+2026-10-27T18:53:50.1515110Z Uploaded bytes 334548137
+2026-10-27T18:53:50.2550200Z Finished uploading artifact content to blob storage!
+2026-10-27T18:53:50.2804180Z SHA256 digest of uploaded artifact zip is bdd4a713d42b83431d2faab567249633b9e1beb758656a4afdb3f7d8527288db
+2026-10-27T18:53:50.2937330Z Finalizing artifact upload
+2026-10-27T18:53:50.8916150Z Artifact desktop-darwin-amd64.zip successfully finalized. Artifact ID 12762630917
+2026-10-27T18:53:50.8934000Z Artifact desktop-darwin-amd64 has been successfully uploaded! Final size is 334548137 bytes. Artifact ID is 12762630917
+2026-10-27T18:53:50.8943580Z Artifact download URL: https://github.com/glanderness/BeefTV/actions/runs/40559746752/artifacts/12762630917
+2026-10-27T18:53:50.9560460Z Post job cleanup.
+2026-10-27T18:53:51.2070880Z (node:29263) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:53:51.2073110Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:53:51.2395680Z Post job cleanup.
+2026-10-27T18:53:51.5116080Z (node:29264) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:53:51.5159010Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:53:51.5566980Z Post job cleanup.
+2026-10-27T18:53:51.9650050Z [command]/usr/local/bin/gtar --posix -cf cache.tzst --exclude cache.tzst -P -C /Users/runner/work/BeefTV/BeefTV --files-from manifest.txt --delay-directory-restore --use-compress-program zstdmt
+2026-10-27T18:53:55.5293750Z Sent 18153472 of 26784395 (67.8%), 17.3 MBs/sec
+2026-10-27T18:53:55.8546810Z Sent 26784395 of 26784395 (100.0%), 19.3 MBs/sec
+2026-10-27T18:53:56.1867550Z Post job cleanup.
+2026-10-27T18:53:56.5291480Z (node:29282) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T18:53:56.5294810Z [command]/Users/runner/hostedtoolcache/go/1.25.0/x64/bin/go env GOMODCACHE
+2026-10-27T18:53:56.6121210Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T18:53:56.6123610Z [command]/Users/runner/hostedtoolcache/go/1.25.0/x64/bin/go env GOCACHE
+2026-10-27T18:53:56.6198060Z /Users/runner/go/pkg/mod
+2026-10-27T18:53:56.6203980Z /Users/runner/Library/Caches/go-build
+2026-10-27T18:53:56.7344260Z [command]/usr/local/bin/gtar --posix -cf cache.tzst --exclude cache.tzst -P -C /Users/runner/work/BeefTV/BeefTV --files-from manifest.txt --delay-directory-restore --use-compress-program zstdmt
+2026-10-27T18:54:30.4373260Z (node:29282) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T18:54:31.4754630Z Sent 0 of 627807490 (0.0%), 0.0 MBs/sec
+2026-10-27T18:54:32.4554970Z Sent 0 of 627807490 (0.0%), 0.0 MBs/sec
+2026-10-27T18:54:33.4817120Z Sent 0 of 627807490 (0.0%), 0.0 MBs/sec
+2026-10-27T18:54:34.4561100Z Sent 0 of 627807490 (0.0%), 0.0 MBs/sec
+2026-10-27T18:54:35.5209700Z Sent 0 of 627807490 (0.0%), 0.0 MBs/sec
+2026-10-27T18:54:36.4881220Z Sent 134217728 of 627807490 (21.4%), 21.1 MBs/sec
+2026-10-27T18:54:37.4730670Z Sent 536870912 of 627807490 (85.5%), 72.5 MBs/sec
+2026-10-27T18:54:38.4733390Z Sent 560698626 of 627807490 (89.3%), 66.3 MBs/sec
+2026-10-27T18:54:39.4754150Z Sent 560698626 of 627807490 (89.3%), 59.0 MBs/sec
+2026-10-27T18:54:40.4742740Z Sent 627807490 of 627807490 (100.0%), 59.5 MBs/sec
+2026-10-27T18:54:40.8655820Z Cache saved with the key: setup-go-macOS-x64-go-1.25.0-9d64a4271a82030ff487fb4738c7b57df526841a4e163b74ad1c35d33ceabd6e
+2026-10-27T18:54:40.9093020Z Post job cleanup.
+2026-10-27T18:54:41.1198500Z [command]/usr/local/bin/git version
+2026-10-27T18:54:41.1591760Z git version 2.55.0
+2026-10-27T18:54:41.1644220Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/922950d3-a3a1-441f-8f98-bfd857cab6cf/.gitconfig'
+2026-10-27T18:54:41.1669480Z Temporarily overriding HOME='/Users/runner/work/_temp/922950d3-a3a1-441f-8f98-bfd857cab6cf' before making global git config changes
+2026-10-27T18:54:41.1672380Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T18:54:41.1683060Z [command]/usr/local/bin/git config --global --add safe.directory /Users/runner/work/BeefTV/BeefTV
+2026-10-27T18:54:41.1825770Z [command]/usr/local/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T18:54:41.1960570Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T18:54:41.4811400Z [command]/usr/local/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T18:54:41.4994650Z http.https://github.com/.extraheader
+2026-10-27T18:54:41.5149640Z [command]/usr/local/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-27T18:54:41.5282970Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T18:54:41.8004900Z [command]/usr/local/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T18:54:41.8165030Z [command]/usr/local/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T18:54:42.0776740Z Cleaning up orphan processes
+2026-10-27T18:54:43.3208690Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-go@v5, actions/setup-node@v4, actions/setup-python@v5, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
