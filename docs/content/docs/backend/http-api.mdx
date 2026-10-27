@@ -97,6 +97,22 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 `POST /depth-captures` 接收待处理视频素材编号，创建本机深度动作捕捉任务。只接受当前用户已上传完成的视频。可选 `nodeId` 指定结果节点，此时必须提供 `projectId`；任务保存目标节点并在完成后使用既有画布任务绑定操作回填。节点必须仍引用该任务，已删除或已改用其他任务的节点不会被恢复或覆盖。
 
+### 任务读取与后台图片恢复
+
+任务详情、列表与按 `clientOperationId` 查回任务的接口新增只读字段：
+
+```json
+{"outcome":{"phase":"retrievable","regenerate":"blocked","reason":"image_recovery_pending"}}
+```
+
+`phase` 为 `running`（排队或执行中）、`fetching`（结果正在入库）、`ready`（已保存）、`retrievable`（等待自动取回）或 `failed`。`regenerate` 为 `allowed`、`confirm` 或 `blocked`，分别表达可再次生成、可能重复付费需确认、不能原样重跑。`reason` 是机器原因，如 `task_running`、`result_ready`、`result_fetching`、`delivery_pending`、`image_recovery_pending`、`provider_result_pending`、`result_unrecoverable`、`no_result`、`input_rejected`、`evidence_unavailable`、`task_failed`。
+
+这些字段由已持久化的任务、派发、提交与交付事实计算，不解析错误文案；读证据失败不会当成没有结果。`running` 任务在进程重启、租约过期后仍显示 `running`，不改成 `cancelled`。任务的 `status`、`stage`、`resultState`、`outputs` 与旧客户端消费字段继续返回。图片订阅使用现有任务读取轮询，不新增独立推送协议；文本 SSE 的事件格式不变。
+
+后台可以自动按原成功回执恢复失败图片，包括没有路由记录的历史任务，然后走原下载与画布绑定流程。提交未确认且拥有已声明幂等协议的冻结图片请求时，只使用原请求字节、端点、Header（含原凭据身份）和原 `Idempotency-Key` 重发，不用当前输入重建请求，不创建新路由或生成任务。原 route attempt 的渠道必须仍可用；停用、删除、换源或换 token 时停止自动 POST，不借同模型的其他渠道重发，投影为 `failed + confirm`。当前渠道配置只用于发送前核对，不替换原请求。没有可验证的恢复证据、回执不完整或过期时，投影明确表示无法取回；没有结果不代表没有计费。
+
+本阶段仅增加读投影与后台图片恢复：`outcome.regenerate` 不是新授权凭据，费用预览、用户同意、统一付费守门和新 `/recover` 接口尚未接入。原 `/retry` 的历史回执恢复与下载恢复行为不变，调用方不能把新增字段当成接口行为已拆分的证明。
+
 ### Topaz 图片与视频超分
 
 `GET /media-upscale/capabilities` 返回图片和视频支持的模式、模型、倍率和格式。`POST /media-upscale/estimate` 接收 `resourceId,channelId,mode,model,scale,outputFormat?,enhancementStrength?`，通过官方算力返回源与输出规格及人民币预留费用 `reservation,currency=CNY,generationSubmitted=false`。估价不提交生成；未取得有效报价时禁止提交。
@@ -205,7 +221,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 | --- | --- |
 | `GET /assistant/status` | 免身份的宿主状态查询（不含任何凭据）；未就绪时返回明确原因而不是空回复 |
 | `POST /assistant/ui-session` | 签发短期限 UI 会话凭据；需本机同源，并且能出示 owner 凭据（或显式本地引导开关） |
-| `POST /assistant/chat` | NDJSON 流式对话：先用 `session` 行返回实际 `sessionId`，再发 `text_snapshot`（`text` 替换本轮已显示文字）、`plan`（`plan` 为最新制作计划，`null` 表示清空）与 `turn_end` 结算；断流或 `observer_error` 不表示结算。旧 JSONL 会话交接后重复请求复用其 Durable 接续会话，界面应立即保存 `sessionId` 用于恢复。可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
+| `POST /assistant/chat` | NDJSON 流式对话：先用 `session` 行返回实际 `sessionId`，再发 `text_snapshot`（`text` 替换本轮已显示文字）、`reasoning_snapshot`（`segments: [{id,text,status}]` 整段替换本轮已收到的可读思考，`status` 为 `streaming` 或 `done`；从没有可读思考时不发这一行，已经显示过又变空时发空数组让页面撤掉旧内容）、`plan`（`plan` 为最新制作计划，`null` 表示清空）与 `turn_end` 结算；断流或 `observer_error` 不表示结算。`turn_end`、历史回合与进行中的回合（宿主取得初始投影后）总是带同形 `reasoning`，没有可读思考时是空数组，旧记录可能没有这个字段。思考只含模型已返回的普通文本、块身份与阶段，不含签名、redacted 载荷、工具参数与上游原文。旧 JSONL 会话交接后重复请求复用其 Durable 接续会话，界面应立即保存 `sessionId` 用于恢复。可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
 | `POST /assistant/cancel` | 取消指定画布正在进行的回合 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
 

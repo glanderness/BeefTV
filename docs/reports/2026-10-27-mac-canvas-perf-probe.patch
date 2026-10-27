@@ -1,0 +1,281 @@
+diff --git a/web/src/components/canvas/canvas-node.tsx b/web/src/components/canvas/canvas-node.tsx
+index 03e3ae1..6c7f26c 100644
+--- a/web/src/components/canvas/canvas-node.tsx
++++ b/web/src/components/canvas/canvas-node.tsx
+@@ -143,6 +143,7 @@ export const CanvasNode = React.memo(function CanvasNode({
+     onConfirmVideoCrop,
+     onContextMenu,
+ }: CanvasNodeProps) {
++    { const w = window as any; if (w.__perfCounters) w.__perfCounters.node++; }
+     const theme = canvasThemes[useActiveTheme()];
+     const [hovered, setHovered] = useState(false);
+     const [isEditingContent, setIsEditingContent] = useState(false);
+diff --git a/web/src/main.tsx b/web/src/main.tsx
+index 83a345b..329bbd8 100644
+--- a/web/src/main.tsx
++++ b/web/src/main.tsx
+@@ -1,3 +1,4 @@
++import "./perf-probe";
+ import "@fontsource-variable/inter";
+ import "@fontsource-variable/jetbrains-mono";
+ import { startCheckedWorkspace } from "@/services/diagnostics/startup-preflight";
+diff --git a/web/src/pages/canvas/project.tsx b/web/src/pages/canvas/project.tsx
+index f41659b..edb757a 100644
+--- a/web/src/pages/canvas/project.tsx
++++ b/web/src/pages/canvas/project.tsx
+@@ -187,6 +187,7 @@ export default function CanvasPage() {
+ }
+ 
+ function InfiniteCanvasPage() {
++    { const w = window as any; if (w.__perfCounters) w.__perfCounters.page++; }
+     // 命令式确认必须走 App.useApp().modal；静态 Modal.confirm 拿不到主题和 App 上下文。
+     const { message, modal } = App.useApp();
+     const params = useParams<{ id: string }>();
+diff --git a/web/src/perf-probe.ts b/web/src/perf-probe.ts
+new file mode 100644
+index 0000000..e27d8fb
+--- /dev/null
++++ b/web/src/perf-probe.ts
+@@ -0,0 +1,242 @@
++// 仅用于本地诊断构建：逐帧记录 rAF 间隔，并用合成滚轮/拖动事件复现固定手势。
++// 结果写进页面右下角的文本，便于外部用无障碍树读取。
++(window as any).__perfCounters = { page: 0, node: 0 };
++type Sample = { at: number; dt: number };
++const samples: Sample[] = [];
++let last = performance.now();
++let recording = false;
++let label = "idle";
++const longTasks: number[] = [];
++try {
++    new PerformanceObserver((list) => { if (recording) for (const e of list.getEntries()) longTasks.push(e.duration); }).observe({ type: "longtask", buffered: false });
++} catch { /* WebKit 不支持 longtask */ }
++
++let mutationsThisFrame = 0;
++const mutationFrames: number[] = [];
++new MutationObserver((records) => { if (recording) mutationsThisFrame += records.length; }).observe(document.documentElement, { subtree: true, childList: true });
++function loop(now: number) {
++    if (recording) { samples.push({ at: now, dt: now - last }); mutationFrames.push(mutationsThisFrame); }
++    mutationsThisFrame = 0;
++    last = now;
++    requestAnimationFrame(loop);
++}
++requestAnimationFrame(loop);
++
++function stats() {
++    const d = samples.map((s) => s.dt).sort((a, b) => a - b);
++    const q = (p: number) => d.length ? d[Math.min(d.length - 1, Math.floor(d.length * p))].toFixed(1) : "-";
++    const span = samples.length ? samples[samples.length - 1].at - samples[0].at + samples[0].dt : 0;
++    const container = document.querySelector<HTMLElement>("[data-canvas-viewport]");
++    const videos = [...document.querySelectorAll("video")];
++    return [
++        `场景=${label}`,
++        `帧=${d.length}`,
++        `fps=${span ? (d.length / span * 1000).toFixed(1) : "-"}`,
++        `p50=${q(0.5)}`,
++        `p95=${q(0.95)}`,
++        `p99=${q(0.99)}`,
++        `max=${d.length ? d[d.length - 1].toFixed(1) : "-"}`,
++        `>33ms=${d.filter((v) => v > 33.4).length}`,
++        `>50ms=${d.filter((v) => v > 50).length}`,
++        `>100ms=${d.filter((v) => v > 100).length}`,
++        `longtask=${longTasks.length ? longTasks.length + "/" + Math.max(...longTasks).toFixed(0) : "na"}`,
++        `dom节点=${container?.querySelectorAll("[data-node-id]").length ?? 0}`,
++        `video=${videos.length}/播放${videos.filter((v) => !v.paused).length}`,
++        `img=${container?.querySelectorAll("img").length ?? 0}`,
++        `lodCanvas=${container?.querySelectorAll("canvas").length ?? 0}`,
++        `dom总数=${document.getElementsByTagName("*").length}`,
++        `慢帧含DOM增删=${samples.filter((x, i) => x.dt > 50 && mutationFrames[i] > 0).length}/${samples.filter((x) => x.dt > 50).length}`,
++        `页面渲染=${(window as any).__perfCounters.page} 节点渲染=${(window as any).__perfCounters.node}`,
++        `开关=${[...toggles].join(",") || "无"}`,
++    ].join(" ");
++}
++
++const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
++const frame = () => new Promise((r) => requestAnimationFrame(r));
++
++async function run(name: string, gesture: () => Promise<void>) {
++    Object.assign((window as any).__perfCounters, { page: 0, node: 0 });
++    samples.length = 0; mutationFrames.length = 0; longTasks.length = 0; label = name; recording = true;
++    out.textContent = `运行中 ${name}`;
++    out.setAttribute("aria-label", "perfres running");
++    await gesture();
++    recording = false;
++    out.textContent = stats();
++    out.setAttribute("aria-label", "perfres " + out.textContent);
++    (window as any).__perfLast = out.textContent;
++}
++
++function wheel(container: HTMLElement, init: WheelEventInit) {
++    const rect = container.getBoundingClientRect();
++    container.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, deltaMode: 0, ...init }));
++}
++
++// 触控板式平移：每帧一次小步长，来回 4 秒。
++async function pan() {
++    const c = document.querySelector<HTMLElement>("[data-canvas-viewport]");
++    if (!c) return;
++    for (let i = 0; i < 240; i++) {
++        const dir = Math.floor(i / 60) % 2 ? -1 : 1;
++        wheel(c, { deltaX: 14 * dir, deltaY: 6 * dir });
++        await frame();
++    }
++    await sleep(300);
++}
++
++// 捏合缩放：缩小再放大，跨过 LOD 阈值。
++async function zoom() {
++    const c = document.querySelector<HTMLElement>("[data-canvas-viewport]");
++    if (!c) return;
++    for (let i = 0; i < 240; i++) {
++        const dir = Math.floor(i / 60) % 2 ? -1 : 1;
++        wheel(c, { deltaY: 4 * dir, ctrlKey: true });
++        await frame();
++    }
++    await sleep(300);
++}
++
++// 拖动第一个可见普通节点 3 秒，再放回原处（合成鼠标事件，走产品同一条拖动路径）。
++async function drag() {
++    const el = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].find((e) => {
++        const r = e.getBoundingClientRect();
++        return r.width > 40 && r.top > 80 && r.left > 80 && r.bottom < innerHeight - 80 && r.right < innerWidth - 80;
++    });
++    if (!el) return;
++    const r = el.getBoundingClientRect();
++    const sx = r.left + Math.min(40, r.width / 2), sy = r.top + Math.min(30, r.height / 2);
++    const opts = (x: number, y: number, buttons = 1) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, pointerId: 1, pointerType: "mouse", isPrimary: true });
++    el.dispatchEvent(new PointerEvent("pointerdown", opts(sx, sy)));
++    el.dispatchEvent(new MouseEvent("mousedown", opts(sx, sy)));
++    for (let i = 0; i <= 180; i++) {
++        const t = i / 180;
++        const x = sx + Math.sin(t * Math.PI * 2) * 160, y = sy + Math.sin(t * Math.PI) * 80;
++        window.dispatchEvent(new PointerEvent("pointermove", opts(x, y)));
++        window.dispatchEvent(new MouseEvent("mousemove", opts(x, y)));
++        await frame();
++    }
++    window.dispatchEvent(new PointerEvent("pointerup", opts(sx, sy, 0)));
++    window.dispatchEvent(new MouseEvent("mouseup", opts(sx, sy, 0)));
++    await sleep(400);
++}
++
++async function idle() { await sleep(4000); }
++
++const box = document.createElement("div");
++box.setAttribute("data-canvas-no-zoom", "");
++box.style.cssText = "position:fixed;right:8px;bottom:8px;z-index:2147483647;max-width:560px;font:11px/1.4 monospace;background:#000c;color:#0f0;padding:6px;border-radius:6px;pointer-events:auto";
++const out = document.createElement("button");
++out.setAttribute("data-perf-out", "");
++out.setAttribute("aria-label", "perfres ready");
++out.textContent = "perf probe ready";
++box.append(out);
++for (const [name, fn] of [["idle", idle], ["pan", pan], ["zoom", zoom], ["drag", drag]] as const) {
++    const b = document.createElement("button");
++    b.textContent = `perf-${name}`;
++    b.setAttribute("aria-label", `perf-${name}`);
++    b.style.cssText = "margin:4px 4px 0 0;padding:2px 6px;background:#222;color:#0f0;border:1px solid #0f0";
++    b.onclick = (e) => { e.stopPropagation(); void run(name, fn); };
++    box.append(b);
++}
++{
++    const b = document.createElement("button");
++    b.textContent = "force-play";
++    b.setAttribute("aria-label", "force-play");
++    b.onclick = (e) => {
++        e.stopPropagation();
++        const v = [...document.querySelectorAll("video")];
++        v.forEach((x) => { x.muted = true; x.loop = true; void x.play().catch(() => undefined); });
++        setTimeout(() => out.setAttribute("aria-label", `perfres forceplay video=${v.length} playing=${v.filter((x) => !x.paused).length} t=${v.map((x) => x.currentTime.toFixed(1)).join("/")}`), 2000);
++    };
++    box.append(b);
++}
++for (const id of ["1WeOxRBwocBU2m0QtJ0fi", "Dxzhizn0yd6SNrcp0SakP", "v8DkdNpqOkSztrBDMafip", "perf300"]) {
++    const b = document.createElement("button");
++    b.textContent = `open-${id}`;
++    b.setAttribute("aria-label", `open-${id}`);
++    b.style.cssText = "margin:4px 4px 0 0;padding:2px 6px;background:#222;color:#ff0;border:1px solid #ff0";
++    b.onclick = (e) => { e.stopPropagation(); location.hash = `#/canvas/${id}`; };
++    box.append(b);
++}
++const toggles = new Set<string>();
++const toggleCss: Record<string, string> = {
++    blur: "*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}",
++    edges: "[data-canvas-world-layer] svg{display:none!important}",
++    media: "[data-canvas-world-layer] img,[data-canvas-world-layer] video{visibility:hidden!important}",
++    shadow: "[data-canvas-world-layer] *{box-shadow:none!important;filter:none!important}",
++};
++for (const name of Object.keys(toggleCss)) {
++    const style = document.createElement("style");
++    const b = document.createElement("button");
++    b.textContent = `tog-${name}`;
++    b.setAttribute("aria-label", `tog-${name}`);
++    b.style.cssText = "margin:4px 4px 0 0;padding:2px 6px;background:#222;color:#0ff;border:1px solid #0ff";
++    b.onclick = (e) => { e.stopPropagation(); if (toggles.has(name)) { toggles.delete(name); style.remove(); } else { toggles.add(name); style.textContent = toggleCss[name]; document.head.append(style); } out.setAttribute("aria-label", "perfres toggles " + [...toggles].join(",")); };
++    box.append(b);
++}
++{
++    const b = document.createElement("button");
++    b.textContent = "play-video";
++    b.setAttribute("aria-label", "play-video");
++    b.style.cssText = "margin:4px 4px 0 0;padding:2px 6px;background:#222;color:#f0f;border:1px solid #f0f";
++    b.onclick = (e) => {
++        e.stopPropagation();
++        const play = [...document.querySelectorAll<HTMLButtonElement>("[data-canvas-world-layer] button[aria-label^='播放 ']")].find((el) => { const r = el.getBoundingClientRect(); return r.top > 60 && r.bottom < innerHeight - 160 && r.left > 0 && r.right < innerWidth; });
++        if (!play) {
++            // 先把画面对准第一个视频节点并放大到 LOD 阈值以上，再找播放按钮。
++            const c = document.querySelector<HTMLElement>("[data-canvas-viewport]")!;
++            const target = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].find((el) => el.dataset.canvasNodeType === "video");
++            void (async () => {
++                for (let i = 0; i < 80; i++) {
++                    const r = (target || c).getBoundingClientRect();
++                    const cr = c.getBoundingClientRect();
++                    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
++                    c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: cr.left + cr.width / 2, clientY: cr.top + cr.height / 2, deltaX: (cx - cr.left - cr.width / 2) * 0.3, deltaY: (cy - cr.top - cr.height / 2) * 0.3, deltaMode: 0 }));
++                    await frame();
++                    if (r.width < 380) c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: cx, clientY: cy, deltaY: -6, ctrlKey: true, deltaMode: 0 }));
++                    await frame();
++                }
++                out.setAttribute("aria-label", `perfres focused video target=${Boolean(target)}`);
++            })();
++            return;
++        }
++        play.click();
++        setTimeout(() => { const v = [...document.querySelectorAll("video")]; out.setAttribute("aria-label", `perfres play clicked=${Boolean(play)} video=${v.length} playing=${v.filter((x) => !x.paused).length} t=${v.map((x) => x.currentTime.toFixed(1)).join("/")}`); }, 3000);
++    };
++    box.append(b);
++}
++// 批量：每种开关配置跑 3 轮 pan+zoom，汇总中位数。
++const batchLog: string[] = [];
++function setToggle(name: string, on: boolean) {
++    const btn = [...box.querySelectorAll("button")].find((b) => b.textContent === `tog-${name}`);
++    if (on !== toggles.has(name)) btn?.click();
++}
++function num(text: string, key: string) { const m = text.match(new RegExp(`${key}=([0-9.]+)`)); return m ? Number(m[1]) : NaN; }
++async function batch(configs: string[][], gestures: [string, () => Promise<void>][], rounds = 3) {
++    batchLog.length = 0;
++    for (const cfg of configs) {
++        for (const t of Object.keys(toggleCss)) setToggle(t, cfg.includes(t));
++        await sleep(400);
++        for (const [gname, g] of gestures) {
++            const fps: number[] = [], p95: number[] = [], slow: number[] = [];
++            for (let i = 0; i < rounds; i++) { await run(gname, g); const t = out.textContent || ""; fps.push(num(t, "fps")); p95.push(num(t, "p95")); slow.push(num(t, ">50ms")); }
++            const med = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
++            batchLog.push(`${cfg.join("+") || "base"}/${gname}: fps=${med(fps)} p95=${med(p95)} >50ms=${med(slow)} [${fps.join(",")}] ${(out.textContent || "").match(/页面渲染=\d+ 节点渲染=\d+/)?.[0]} ${(out.textContent || "").match(/慢帧含DOM增删=[^ ]+/)?.[0]}`);
++        }
++    }
++    for (const t of Object.keys(toggleCss)) setToggle(t, false);
++    out.setAttribute("aria-label", "perfres BATCH " + batchLog.join(" | "));
++}
++{
++    const b = document.createElement("button");
++    b.textContent = "batch-ablate";
++    b.setAttribute("aria-label", "batch-ablate");
++    b.onclick = (e) => { e.stopPropagation(); void batch([[], ["blur"], ["edges"], ["media"], ["shadow"], ["blur", "edges", "media", "shadow"]], [["pan", pan], ["zoom", zoom]]); };
++    box.append(b);
++    const d = document.createElement("button");
++    d.textContent = "batch-drag";
++    d.setAttribute("aria-label", "batch-drag");
++    d.onclick = (e) => { e.stopPropagation(); void batch([[]], [["drag", drag], ["idle", idle]]); };
++    box.append(d);
++}
++const attach = () => document.body ? document.body.append(box) : setTimeout(attach, 50);
++attach();

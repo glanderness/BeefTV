@@ -22,6 +22,9 @@ type View struct {
 	Status      string         `json:"status"`
 	Error       string         `json:"error,omitempty"`
 	Management  ManagementView `json:"management"`
+	// Retention is set only for a plugin this release no longer ships but that
+	// saved configuration or unfinished tasks still need.
+	Retention *RetentionView `json:"retention,omitempty"`
 }
 
 type ManifestView struct {
@@ -79,6 +82,8 @@ type Record struct {
 	UpdatedAt     time.Time
 	Status        string
 	Error         string
+	// Retention is derived on startup and deliberately not persisted.
+	Retention *RetentionView
 }
 
 // RegistryRecord is the committed plugin registry row. Production stores it
@@ -119,6 +124,7 @@ func viewFromRecord(item Record) View {
 		UpdatedAt:   item.UpdatedAt,
 		Status:      item.Status,
 		Error:       item.Error,
+		Retention:   cloneRetention(item.Retention),
 	}
 }
 
@@ -132,6 +138,7 @@ func clonePluginView(view View) View {
 		return sanitizedPluginView(view)
 	}
 	view.Manifest = manifest
+	view.Retention = cloneRetention(view.Retention)
 	return view
 }
 

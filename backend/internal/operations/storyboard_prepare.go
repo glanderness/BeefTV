@@ -86,7 +86,7 @@ func opStoryboardPrepare(ctx *Context, raw json.RawMessage) (any, error) {
 				return nil, InvalidArg("invalid_parameter", "请根据作品需要明确选择是否生成声音")
 			}
 		}
-		patch, err := resolveGenerationDraft(ctx, item.kind, item.raw)
+		patch, err := resolveGenerationDraft(ctx, item.kind, item.raw, nil)
 		if err != nil {
 			return nil, err
 		}

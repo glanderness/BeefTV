@@ -27,10 +27,17 @@ func imageSubmissionFixture(t *testing.T, multipartBody bool) (*Service, *gorm.D
 	t.Helper()
 	s, db, _, _ := creationTestService(t)
 	s.workerID = newID()
+	key, err := s.encryptSettingSecret("private-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ModelChannel{}).Where("id = ?", "channel").Updates(map[string]any{"base_url": "https://enterprise.beefapi.com", "api_key": key}).Error; err != nil {
+		t.Fatal(err)
+	}
 	task := model.Task{ID: "image-task", UserID: "user", Type: "canvas_image", Status: model.TaskStatusRunning, LeaseOwner: "owner", InputJSON: `{"mode":"image"}`}
 	expires := time.Now().Add(time.Hour)
 	task.LeaseExpiresAt = &expires
-	attempt := &model.RouteAttempt{ID: "image-attempt", TaskID: task.ID, Status: "dispatching", DispatchState: "submission_unknown", StartedAt: time.Now()}
+	attempt := &model.RouteAttempt{ID: "image-attempt", TaskID: task.ID, ChannelID: "channel", Status: "dispatching", DispatchState: "submission_unknown", StartedAt: time.Now()}
 	for _, row := range []any{&task, attempt} {
 		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)
