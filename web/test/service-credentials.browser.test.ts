@@ -48,7 +48,7 @@ beforeAll(async () => {
 }, 180000);
 afterAll(async () => { server?.stop(true); await browser?.close(); }, 60000);
 
-const savedOf = (page: Page) => page.evaluate(() => (globalThis as unknown as { __saved: Array<{ apiKey: string; secretKey?: string }> }).__saved);
+const savedOf = (page: Page) => page.evaluate(() => (globalThis as unknown as { __saved: Array<{ apiKey: string; secretKey?: string; models: string[]; profiles: Array<{ model: string; capability: string }> }> }).__saved);
 
 /** bun 的 expect 没有 poll：自己等保存结果落下来，避免用固定 sleep 猜。 */
 async function waitForSaved(page: Page, count: number, label: string) {
@@ -101,7 +101,7 @@ test("an Ark connection without a protocol names both key kinds instead of one g
     } finally { await page.close(); }
 }, 60000);
 
-test("an unreadable catalog still leads to a manual model id and actually adds it", async () => {
+test("a manually added model keeps the type the user picked, and adding without one is refused", async () => {
     const page = await openConnectionStep("ark-none");
     try {
         await page.locator('input[aria-label="API Key"]').fill("synthetic-key");
@@ -112,15 +112,34 @@ test("an unreadable catalog still leads to a manual model id and actually adds i
         await shot(page, "02-ark-catalog-unavailable");
         await page.getByRole("button", { name: "手动添加模型", exact: true }).click();
         await page.getByText("选择你要使用的模型", { exact: true }).waitFor();
+        // 类型不再替用户默认成「文本」：目录读不到时，seedance 这类视频模型曾被存成文本。
+        expect((await page.locator(".model-service-manual .ant-select").textContent())?.trim()).toBe("选择类型");
         await page.locator('input[aria-label="模型 ID"]').fill("doubao-seedance-2.5");
         // antd 会在两个汉字的按钮文案里插入空格，按文案匹配取不到，直接点这一行的按钮。
         await page.locator(".model-service-manual button").click();
+        await page.getByText("请先选择模型类型，再点「添加」").waitFor();
+        expect(await page.locator(".model-service-model").count()).toBe(0);
+        expect(await page.getByText("已选 0 个").count()).toBe(1);
+        await shot(page, "03-manual-type-required");
+        // 筛选区也有「视频」两个字，只有下拉弹层里的选项才算选类型。
+        await page.locator(".model-service-manual .ant-select").click();
+        await page.locator(".ant-select-dropdown .ant-select-item-option").filter({ hasText: "视频" }).click();
+        await page.locator(".model-service-manual button").click();
+        // 选完类型下拉仍在展开：截图前先收起来，避免挡住底部按钮。
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(300);
         // 断言必须落在这一行模型上：页面里常驻的「视频」筛选项会让全局查找假通过。
         const row = page.locator(".model-service-model").filter({ hasText: "doubao-seedance-2.5" });
         await row.waitFor();
-        expect(await row.locator(".model-service-kind").textContent()).toBe("文本");
+        expect(await row.locator(".model-service-kind").textContent()).toBe("视频");
         expect(await page.getByText("已选 1 个").count()).toBe(1);
-        await shot(page, "03-manual-model-added");
+        // 加完一个模型，类型回到未选：下一个模型要重新选，不会被上一次的视频带走。
+        expect((await page.locator(".model-service-manual .ant-select").textContent())?.trim()).toBe("选择类型");
+        await shot(page, "03b-manual-model-added");
+        // 界面文字正确不等于存对了：再看真正提交给保存的能力。
+        await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+        await waitForSaved(page, 1, "手动添加视频模型");
+        expect((await savedOf(page))[0].profiles).toEqual([{ model: "doubao-seedance-2.5", capability: "video" }]);
     } finally { await page.close(); }
 }, 60000);
 

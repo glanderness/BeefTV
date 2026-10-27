@@ -49,9 +49,12 @@
 .model-service-empty { display:grid; justify-items:center; text-align:center; padding:32px 12px; gap:8px; color:var(--muted-foreground); }
 .model-service-empty strong { font-size:13px; font-weight:500; color:var(--foreground); }
 .model-service-empty p { font-size:12px; margin:0; line-height:1.8; }
-.model-service-manual { display:grid; grid-template-columns:minmax(0,1fr) 90px auto; gap:8px; margin-top:18px; }
+.model-service-manual { display:grid; grid-template-columns:minmax(0,1fr) 104px auto; gap:8px; margin-top:18px; }
 @media(max-width:640px) {
  .model-service-modal .ant-modal-container { max-height:calc(100dvh - 24px); }
+ /* 手机上一行放不下：模型 ID 会被类型下拉挤到只剩半截，拆成两行。 */
+ .model-service-manual { grid-template-columns:120px auto 1fr; }
+ .model-service-manual > :first-child { grid-column:1/-1; }
  .model-service-header,.model-service-fields,.model-service-models { padding:20px; }
  .model-service-header h2 { font-size:21px; }
  .model-service-connection { grid-template-columns:minmax(0,1fr); }

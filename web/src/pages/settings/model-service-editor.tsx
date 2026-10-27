@@ -34,7 +34,11 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const [query, setQuery] = useState("");
     const [filter, setFilter] = useState("all");
     const [manualName, setManualName] = useState("");
-    const [manualCapability, setManualCapability] = useState<ModelCapability>("text");
+    // 目录读不到时只能手填模型 ID，类型由用户自己选：默认选「文本」会让
+    // doubao-seedance-2.5 这类视频模型按文本存下来，而模型名猜类型被评审否掉了
+    // （qwen3-omni-flash 就是文本模型）。每加一个模型都重新选一次，避免上一次的
+    // 视频类型被悄悄带到下一个文本模型上。
+    const [manualCapability, setManualCapability] = useState<ModelCapability>();
     const [editingCapabilities, setEditingCapabilities] = useState(false);
     const alive = useRef(true);
     const receipts = useModelConnectionTests((state) => state.receipts);
@@ -132,6 +136,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const addManual = () => {
         const id = manualName.trim();
         if (!id) return;
+        if (!manualCapability) { setError("请先选择模型类型，再点「添加」"); return; }
         if (draft.models.includes(id)) { setError("这个模型已在列表中"); return; }
         const profile = serviceModelProfile(draft, { id }, protocols, manualCapability);
         if (!profile.protocol) {
@@ -141,6 +146,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setCatalog((current) => current.some((item) => item.id === id) ? current : [...current, { id, modelType: manualCapability }]);
         setDraft((current) => ({ ...current, models: [...current.models, id], modelProfiles: [...(current.modelProfiles || []).filter((p) => p.model !== id), profile] }));
         setManualName("");
+        setManualCapability(undefined);
         setError("");
     };
     const save = async () => {
@@ -223,7 +229,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                         return <label key={item.id} className="model-service-model"><Checkbox disabled={busy} checked={draft.models.includes(item.id)} onChange={(event) => toggleModel(item.id, event.target.checked)} /><span><strong>{displayName}</strong>{displayName !== item.id && <small>{item.id}</small>}</span><span className="model-service-kind">{CAPABILITY_LABELS[profile.capability]}</span><small title={receipt?.detail}>{receipt ? receipt.success ? "测试通过" : "测试失败" : "未测试"}</small></label>;
                     }) : <div className="model-service-empty"><Search size={23} /><strong>{query ? "没有找到匹配的模型" : "添加你的第一个模型"}</strong><p>{query ? "换个关键词，或在下方手动添加。" : "读取服务商的模型目录，或填写准确的模型 ID。"}</p></div>}
                 </div>
-                <div className="model-service-manual"><Input aria-label="模型 ID" placeholder="手动输入模型 ID" value={manualName} disabled={busy} onChange={(event) => setManualName(event.target.value)} onPressEnter={addManual} /><Select aria-label="模型类型" value={manualCapability} disabled={busy} onChange={setManualCapability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} /><Button disabled={busy || protocolLoading || !manualName.trim()} onClick={addManual}>添加</Button></div>
+                <div className="model-service-manual"><Input aria-label="模型 ID" placeholder="手动输入模型 ID" value={manualName} disabled={busy} onChange={(event) => setManualName(event.target.value)} onPressEnter={addManual} /><Select aria-label="模型类型" placeholder="选择类型" value={manualCapability} disabled={busy} onChange={setManualCapability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} /><Button disabled={busy || protocolLoading || !manualName.trim()} onClick={addManual}>添加</Button></div>
                 {draft.models.length > 0 && <><button type="button" className="model-service-advanced" aria-expanded={editingCapabilities} onClick={() => setEditingCapabilities(!editingCapabilities)}><Settings2 size={15} />高级模型设置与测试<ChevronDown size={14} /></button>{editingCapabilities && <ChannelModelSettings draft channel={draft} onChange={(modelProfiles) => setDraft((current) => ({ ...current, modelProfiles }))} />}</>}
             </div>}
         </div>

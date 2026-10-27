@@ -9,9 +9,14 @@
   "assistantStreamingRequired": true,
   "observedMain": "c99cba49b6518673b078991cf9d995ba14be2921",
   "lucasReviewClaimed": false,
-  "acceptanceDecision": "pending",
-  "waiveCompleteGenerationMatrix": null,
+  "acceptanceDecision": "targeted_no_paid",
+  "acceptanceInstruction": "本版采用免费专项验收（推荐）",
+  "acceptanceOption": "仅本版豁免完整付费矩阵和整套助手验收，保留未执行记录；补齐图片取回界面验收、独立 review、CI、四平台安装升级与签名读回，全部通过再发布。",
+  "waiveCompleteGenerationMatrix": true,
+  "targetedAcceptance": true,
+  "newPaidBudgetCNY": 0,
   "paidGenerationAuthorized": false,
-  "scopeNote": "合并与发版已授权；本记录未授予本版付费测试或付费矩阵豁免。旧版本例外不沿用，必要检查失败不得跳过。",
+  "permissionReply": "你现在有了",
+  "scopeNote": "用户在本任务反馈中明确选择本版免费专项验收；仅 v2.0.5 豁免完整付费矩阵和整套助手验收，不新增付费生成。必要专项、独立审查、CI、四平台安装升级与签名读回不得跳过。",
   "evidence": "docs/release-evidence/v2.0.5-preflight.md"
 }

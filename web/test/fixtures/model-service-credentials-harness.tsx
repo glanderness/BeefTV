@@ -84,13 +84,13 @@ if (scenario.startsWith("jimeng-saved") || scenario === "jimeng-switched") {
     useConfigStore.setState({ config: { ...current, channels: [channel] } });
 }
 // 保存结果回写给测试：没有这一步，浏览器用例只能证明文字出现，证明不了行为。
-const saved: Array<{ apiKey: string; secretKey?: string; models: string[] }> = [];
+const saved: Array<{ apiKey: string; secretKey?: string; models: string[]; profiles: Array<{ model: string; capability: string }> }> = [];
 (globalThis as unknown as { __saved: typeof saved }).__saved = saved;
 
 createRoot(document.getElementById("root")!).render(
     <ConfigProvider theme={getAntThemeConfig(dark)}>
         <App>
-            <ModelServiceEditor initial={channel} onClose={() => {}} onSave={async (savedChannel) => { saved.push({ apiKey: savedChannel.apiKey, secretKey: savedChannel.secretKey, models: savedChannel.models }); }} />
+            <ModelServiceEditor initial={channel} onClose={() => {}} onSave={async (savedChannel) => { saved.push({ apiKey: savedChannel.apiKey, secretKey: savedChannel.secretKey, models: savedChannel.models, profiles: (savedChannel.modelProfiles || []).map((profile) => ({ model: profile.model, capability: profile.capability })) }); }} />
         </App>
     </ConfigProvider>,
 );

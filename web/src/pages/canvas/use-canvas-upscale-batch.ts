@@ -58,7 +58,7 @@ export function useCanvasUpscaleBatch({ projectId, nodesRef, connectionsRef, set
             const reservation = waiting.reduce((sum, item) => sum + (item.reservation || 0), 0);
             if (!waiting.every(item => Number.isFinite(item.reservation) && item.reservation! > 0)) throw new Error("超分费用尚未确认，请重新获取");
             const accepted = await new Promise<boolean>(resolve => modal.confirm({
-                title: "确认开始超分？", content: `共 ${waiting.length} 个素材，预计预留 ¥${reservation.toFixed(2)}。完成后按实际费用结算。`,
+                title: "确认开始超分？", content: `共 ${waiting.length} 个素材，先扣 ¥${reservation.toFixed(2)}。账单核对完成后按实际费用结算，多扣的退回。`,
                 okText: "确认超分", cancelText: "取消", onOk: () => resolve(true), onCancel: () => resolve(false),
             }));
             assertCurrent();
