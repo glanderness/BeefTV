@@ -107,6 +107,17 @@ func (s *Service) compileCanvasWorkflow(user string, d cw.Definition, existing .
 			}
 			continue
 		}
+		if n.OperationID == cw.CharacterReplacementOperation {
+			recipe := workflowRecipe{Request: CreateTaskRequest{Type: "canvas_video", Input: map[string]any{"mode": "video", "config": map[string]any{}}}}
+			if _, err := s.selectWorkflowModel(n, &recipe); err != nil {
+				return nil, nil, err
+			}
+			if recipe.Request.Model != "seedance-2.0-fast" {
+				return nil, nil, workflowBad("人物替换仅支持Seedance 2.0 Fast")
+			}
+			recipes[n.ID] = recipe
+			continue
+		}
 		if n.Role != "generation" && !strings.HasPrefix(n.OperationID, "generate.") {
 			if n.OperationID == "image.describe" {
 				if _, err := s.workflowDescribeRequest(n, "", ""); err != nil {

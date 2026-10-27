@@ -12,11 +12,22 @@ import (
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 )
+
+func validateCanvasFrameRateOutput(fps float64, width, height int, durationMs int64, facts mediatools.MediaMetadata) error {
+	if !facts.HasVideo || facts.FPS <= 0 || math.IsNaN(facts.FPS) || math.IsInf(facts.FPS, 0) || math.Abs(facts.FPS-fps) > 1e-6 || facts.Width != width || facts.Height != height {
+		return fmt.Errorf("帧率适配结果与目标帧率或原始尺寸不符，未保存输出")
+	}
+	if facts.DurationMs <= 0 || durationMs > 0 && math.Abs(float64(facts.DurationMs-durationMs)) > 1000/fps+1 {
+		return fmt.Errorf("帧率适配结果改变了视频时长，未保存输出")
+	}
+	return nil
+}
 
 func canvasMediaDemuxer(mime string) string {
 	switch mime {
@@ -39,6 +50,9 @@ func (w *taskWorkerCoordinator) processCanvasMedia(task *model.Task, ctx context
 	var input localtask.CanvasMediaInput
 	if json.Unmarshal([]byte(task.InputJSON), &input) != nil || !cw.IsMediaOperation(input.Node.OperationID) {
 		return w.failTimelineTask(task, "处理失败", "媒体处理参数无效")
+	}
+	if cw.IsReplacementLocalOperation(input.Node.OperationID) {
+		return w.processReplacementMedia(task, ctx, input)
 	}
 	var clean func()
 	var artifact *os.File
@@ -119,6 +133,12 @@ func (w *taskWorkerCoordinator) processCanvasMedia(task *model.Task, ctx context
 			}
 			if input.Node.MediaType == "video" && !facts.HasVideo || input.Node.MediaType == "audio" && !facts.HasAudio {
 				return localasset.RecoveredArtifact{}, fmt.Errorf("处理结果缺少所需媒体轨道")
+			}
+			if input.Node.OperationID == "video.frame-rate" {
+				fps, _ := input.Node.Config["fps"].(float64)
+				if err := validateCanvasFrameRateOutput(fps, source.Width, source.Height, source.DurationMs, facts); err != nil {
+					return localasset.RecoveredArtifact{}, err
+				}
 			}
 		}
 		info, err := artifact.Stat()

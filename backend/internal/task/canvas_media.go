@@ -38,6 +38,20 @@ func (s *Service) CreateCanvasMediaTask(user string, node cw.Node, resourceID, o
 	if _, _, _, err = cw.MediaCommand(node, resource.Width, resource.Height); err != nil {
 		return nil, kernel.BadAuthRequest(err.Error())
 	}
+	if node.OperationID == cw.ReplacementFinishOperation {
+		plan, err := cw.ReplacementManifest(node)
+		if err != nil || plan.SourceResourceID != resourceID {
+			return nil, kernel.BadAuthRequest("人物替换原视频与记录不匹配")
+		}
+		for _, segment := range plan.Segments {
+			for _, id := range []string{segment.ResourceID, segment.OutputResourceID} {
+				ref, e := s.deps.OwnedMedia.Resource(user, id)
+				if e != nil || ref == nil || ref.Status != model.ResourceStatusReady || localasset.NormalizeKind(ref.Kind, ref.MimeType) != "video" {
+					return nil, kernel.BadAuthRequest("人物替换片段不存在、类型不符或不属于当前用户")
+				}
+			}
+		}
+	}
 	input, err := marshalLocalExecutorInput(CanvasMediaInput{Node: node, ResourceID: resourceID})
 	if err != nil {
 		return nil, err

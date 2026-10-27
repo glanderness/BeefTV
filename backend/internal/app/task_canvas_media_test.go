@@ -15,6 +15,26 @@ import (
 	"testing"
 )
 
+func TestCanvasFrameRateOutputRejectsMismatchedResult(t *testing.T) {
+	valid := mediatools.MediaMetadata{HasVideo: true, Width: 720, Height: 1280, DurationMs: 7042, FPS: 24}
+	if err := validateCanvasFrameRateOutput(24, 720, 1280, 7042, valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*mediatools.MediaMetadata){
+		func(f *mediatools.MediaMetadata) { f.FPS = 20.167 },
+		func(f *mediatools.MediaMetadata) { f.FPS = 0 },
+		func(f *mediatools.MediaMetadata) { f.Width = 1280 },
+		func(f *mediatools.MediaMetadata) { f.DurationMs = 6000 },
+		func(f *mediatools.MediaMetadata) { f.HasVideo = false },
+	} {
+		invalid := valid
+		mutate(&invalid)
+		if err := validateCanvasFrameRateOutput(24, 720, 1280, 7042, invalid); err == nil {
+			t.Fatalf("invalid output accepted: %+v", invalid)
+		}
+	}
+}
+
 func TestCanvasMediaNativeCropAndRecovery(t *testing.T) {
 	if _, err := mediatools.ResolveFFmpeg(); err != nil {
 		t.Skip("native ffmpeg unavailable")

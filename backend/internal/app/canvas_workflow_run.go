@@ -260,7 +260,13 @@ func (s *Service) advanceCanvasWorkflow(row *model.CanvasWorkflowRun) {
 		if !ready {
 			continue
 		}
+		for _, edge := range d.Edges {
+			if edge.To == n.ID && steps[edge.From].ReviewRequired {
+				step.ReviewRequired = true
+			}
+		}
 		if n.OperationID == "image.select" {
+			step.Stage = "等待选择图片"
 			step.Candidates = workflowImageCandidates(n, d, steps)
 			if len(step.Candidates) == 1 {
 				step.ResourceID, step.Status = step.Candidates[0].ResourceID, "succeeded"
@@ -271,6 +277,21 @@ func (s *Service) advanceCanvasWorkflow(row *model.CanvasWorkflowRun) {
 			}
 			if s.saveCanvasWorkflowRun(row, run) != nil {
 				return
+			}
+			continue
+		}
+		if n.OperationID == cw.CharacterReplacementOperation {
+			if err := s.advanceReplacement(row, n, d, steps, step, recipes[n.ID]); err != nil {
+				step.Status = "failed"
+				step.Error = safePersistedFailureMessage(err.Error(), "")
+				run.Status = "failed"
+				run.Error = step.Error
+			}
+			if s.saveCanvasWorkflowRun(row, run) != nil {
+				return
+			}
+			if run.Status == "failed" {
+				break
 			}
 			continue
 		}
@@ -361,6 +382,8 @@ func (s *Service) advanceCanvasWorkflow(row *model.CanvasWorkflowRun) {
 		}
 		step.TaskID = task.ID
 		step.Status = "running"
+		step.Progress = max(0, min(99, task.Progress))
+		step.Stage = safePersistedFailureMessage(task.Stage, "")
 		switch task.Status {
 		case model.TaskStatusFailed, model.TaskStatusCancelled:
 			step.Status = "failed"
@@ -440,6 +463,10 @@ func (s *Service) advanceCanvasWorkflow(row *model.CanvasWorkflowRun) {
 				run.Error = step.Error
 			}
 		}
+		if step.Status == "succeeded" {
+			step.Progress = 100
+			step.Stage = "处理完成"
+		}
 		// Persist each admitted task before scheduling a dependent step. The stable
 		// operation ID reconciles a crash between admission and this checkpoint.
 		if s.saveCanvasWorkflowRun(row, run) != nil {
@@ -461,10 +488,10 @@ func (s *Service) advanceCanvasWorkflow(row *model.CanvasWorkflowRun) {
 		if step != nil && step.Status == "succeeded" {
 			if step.ResourceID == "" && len(step.Candidates) > 1 {
 				for _, value := range step.Candidates {
-					run.Outputs = append(run.Outputs, cw.Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: value.ResourceID})
+					run.Outputs = append(run.Outputs, cw.Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: value.ResourceID, ReviewRequired: step.ReviewRequired})
 				}
 			} else {
-				run.Outputs = append(run.Outputs, cw.Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: step.ResourceID, Text: step.Text})
+				run.Outputs = append(run.Outputs, cw.Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: step.ResourceID, Text: step.Text, ReviewRequired: step.ReviewRequired})
 			}
 		}
 	}
@@ -538,7 +565,7 @@ func (s *Service) RetryCanvasWorkflow(user, id string) (cw.Run, error) {
 			if e != nil {
 				return cw.Run{}, e
 			}
-			if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning {
+			if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning && task.Status != model.TaskStatusSucceeded {
 				if generation.UpscaleMediaType(task.Model) != "" {
 					task, e = s.RecoverMediaUpscale(context.Background(), user, step.TaskID)
 					if e != nil {
@@ -563,6 +590,8 @@ func (s *Service) RetryCanvasWorkflow(user, id string) (cw.Run, error) {
 		}
 		step.Status = "pending"
 		step.Error = ""
+		step.Progress = 0
+		step.Stage = ""
 	}
 	run.Status = "queued"
 	run.Error = ""
@@ -591,7 +620,16 @@ func (s *Service) CancelCanvasWorkflow(ctx context.Context, user, id string) (cw
 		step := &run.Steps[i]
 		if step.Status == "pending" || step.Status == "running" || step.Status == "waiting_selection" {
 			if step.TaskID == "" {
-				task, lookupErr := s.repo.TaskByClientOperation(user, workflowOperation(row.ID, step.NodeID))
+				op := workflowOperation(row.ID, step.NodeID)
+				var definition cw.Definition
+				if json.Unmarshal([]byte(row.DefinitionJSON), &definition) == nil {
+					for _, node := range definition.Nodes {
+						if node.ID == step.NodeID && node.OperationID == cw.CharacterReplacementOperation {
+							op = replacementNextOperation(op, step.Replacement)
+						}
+					}
+				}
+				task, lookupErr := s.repo.TaskByClientOperation(user, op)
 				if lookupErr != nil {
 					return cw.Run{}, lookupErr
 				}

@@ -39,7 +39,7 @@ export type CanvasWorkflow = {
     updatedAt: string;
     revision?: number;
 };
-export type WorkflowOutput = WorkflowValue & { nodeId: string; mediaType: WorkflowMediaType };
+export type WorkflowOutput = WorkflowValue & { nodeId: string; mediaType: WorkflowMediaType; reviewRequired?: boolean };
 export type WorkflowRun = {
     id: string;
     templateId: string;
@@ -47,7 +47,7 @@ export type WorkflowRun = {
     templateRevision?: number;
     status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
     error?: string;
-    steps: Array<WorkflowValue & { nodeId: string; title: string; status: "pending" | "running" | "waiting_selection" | "succeeded" | "failed" | "cancelled"; taskId?: string; error?: string; candidates?: WorkflowValue[] }>;
+    steps: Array<WorkflowValue & { nodeId: string; title: string; status: "pending" | "running" | "waiting_selection" | "succeeded" | "failed" | "cancelled"; progress?: number; stage?: string; taskId?: string; error?: string; candidates?: WorkflowValue[]; reviewRequired?: boolean }>;
     outputs: WorkflowOutput[];
     createdAt: string;
     updatedAt: string;

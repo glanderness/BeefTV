@@ -33,7 +33,7 @@ export function abstractWorkflowDefinition(definition: WorkflowDefinition, opera
     return { ...definition, presentationVersion: 1, nodes: definition.nodes.map(node => ({ ...node, title: genericWorkflowNodeTitle(node, operations), ...(node.role === "input" && node.mediaType !== "text" ? { useDefault: false } : {}) })) };
 }
 export const workflowEditableFields = (node: WorkflowNode, operation?: WorkflowOperation) => (operation?.fields || []).filter(field => !operation?.id.startsWith("generate.") || ["prompt", "modelOption", "size"].includes(field.key) || operation.id === "generate.video" && ["vquality", "videoSeconds"].includes(field.key) || Object.hasOwn(node.config || {}, field.key));
-export const workflowOperationDefaults = (operation: WorkflowOperation) => Object.fromEntries(operation.fields.filter(f => f.type === "number" || f.type === "select" && f.options?.length).map(f => [f.key, f.type === "select" ? f.options![0].value : f.key === "longEdge" ? 2048 : ["endSeconds", "width", "height"].includes(f.key) ? 1 : f.min || 0]));
+export const workflowOperationDefaults = (operation: WorkflowOperation) => Object.fromEntries(operation.fields.filter(f => f.type === "number" || f.type === "select" && f.options?.length).map(f => [f.key, f.type === "select" ? f.options![0].value : operation.id === "video.replace-character" && f.key === "maxSegments" ? 12 : f.key === "longEdge" ? 2048 : ["endSeconds", "width", "height"].includes(f.key) ? 1 : f.min || 0]));
 
 export function switchWorkflowOperation(definition: WorkflowDefinition, id: string, operation: WorkflowOperation): WorkflowDefinition {
     if (operation.unavailableReason) throw new Error(operation.unavailableReason);

@@ -30,6 +30,9 @@ func (s *Service) canvasWorkflowProviderConfig() (map[string]any, error) {
 // uncertain submissions and successful deliveries keep their original receipt
 // and credential identity so the ordinary recovery path can reconcile them.
 func (s *Service) prepareCanvasWorkflowRetryCredentials(run model.CanvasWorkflowRun, nodeID string, task *model.Task) (string, error) {
+	if task != nil && task.Type == model.TaskTypeCanvasMediaTransform {
+		return "", nil
+	}
 	if !s.IsLocalMode() || task == nil || (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) || task.ProviderRequestID != "" || task.PollStage != "" || task.NextPollAt != nil || task.Stage == "submission_unknown" {
 		return "", nil
 	}

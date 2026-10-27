@@ -9,14 +9,16 @@ import (
 
 // Media operations have a closed, typed parameter surface: never raw ffmpeg arguments.
 func MediaOperations() []Operation {
+	minFPS, maxFPS := 24.0, 60.0
 	crop := []Field{{Key: "x", Label: "左侧比例", Type: "number"}, {Key: "y", Label: "顶部比例", Type: "number"}, {Key: "width", Label: "宽度比例", Type: "number"}, {Key: "height", Label: "高度比例", Type: "number"}}
-	return []Operation{
+	return append(replacementLocalOperations(), []Operation{
+		{ID: "video.frame-rate", Version: 1, Name: "视频帧率适配", OutputType: "video", Inputs: []InputPort{{"video", "视频", "video", true, false}}, Fields: []Field{{Key: "fps", Label: "目标帧率（24–60）", Type: "number", Min: &minFPS, Max: &maxFPS}}},
 		{ID: "image.crop", Version: 1, Name: "裁切", OutputType: "image", Inputs: []InputPort{{"image", "图片", "image", true, false}}, Fields: crop},
 		{ID: "image.resize", Version: 1, Name: "调整尺寸", OutputType: "image", Inputs: []InputPort{{"image", "图片", "image", true, false}}, Fields: []Field{{Key: "longEdge", Label: "长边像素", Type: "number"}, {Key: "algorithm", Label: "插值算法", Type: "select", Options: []FieldOption{{Label: "高质量", Value: "high"}, {Label: "双线性", Value: "bilinear"}, {Label: "最近邻", Value: "nearest"}}}}},
 		{ID: "video.crop", Version: 1, Name: "画面裁切", OutputType: "video", Inputs: []InputPort{{"video", "视频", "video", true, false}}, Fields: crop},
 		{ID: "video.frame", Version: 1, Name: "关键帧截取", OutputType: "image", Inputs: []InputPort{{"video", "视频", "video", true, false}}, Fields: []Field{{Key: "seconds", Label: "截帧秒数", Type: "number"}}},
 		{ID: "video.audio", Version: 1, Name: "音视频分离", OutputType: "audio", Inputs: []InputPort{{"video", "视频", "video", true, false}}, Fields: []Field{}},
-	}
+	}...)
 }
 
 func IsMediaOperation(id string) bool {
@@ -30,6 +32,19 @@ func IsMediaOperation(id string) bool {
 
 func ValidateMediaConfig(n Node) error {
 	switch n.OperationID {
+	case ReplacementPrepareOperation:
+		v := operationNumber(n.Config["maxSegments"])
+		if v < 1 || v > 100 || math.Trunc(v) != v {
+			return fmt.Errorf("最多生成片段数需为1到100的整数")
+		}
+	case ReplacementFinishOperation:
+		_, err := ReplacementManifest(n)
+		return err
+	case "video.frame-rate":
+		fps := operationNumber(n.Config["fps"])
+		if fps < 24 || fps > 60 || math.Trunc(fps) != fps {
+			return fmt.Errorf("目标帧率需为 24 到 60 的整数")
+		}
 	case "image.crop", "video.crop":
 		x, y, w, h := operationNumber(n.Config["x"]), operationNumber(n.Config["y"]), operationNumber(n.Config["width"]), operationNumber(n.Config["height"])
 		if x < 0 || y < 0 || w <= 0 || h <= 0 || x+w > 1.000001 || y+h > 1.000001 {
@@ -61,6 +76,17 @@ func MediaCommand(n Node, width, height int) (args []string, extension, mime str
 	}
 	extension, mime = ".png", "image/png"
 	switch n.OperationID {
+	case ReplacementPrepareOperation, ReplacementFinishOperation:
+		return nil, ".json", "application/json", nil
+	case "video.frame-rate":
+		if width <= 0 || height <= 0 || width%2 != 0 || height%2 != 0 {
+			err = fmt.Errorf("帧率适配需要有效的偶数视频宽高，请先调整素材尺寸")
+			return
+		}
+		// Resample timestamps rather than reinterpret the input frame rate: both
+		// reference branches must retain their original speed and time origin.
+		args = []string{"-vf", "fps=" + strconv.FormatFloat(operationNumber(n.Config["fps"]), 'f', 0, 64), "-crf", "18"}
+		extension, mime = ".mp4", "video/mp4"
 	case "image.crop", "video.crop":
 		if width <= 0 || height <= 0 {
 			err = fmt.Errorf("素材缺少有效尺寸")

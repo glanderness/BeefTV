@@ -22,3 +22,13 @@ test("workflow processing labels match canvas action names", () => {
         expect(entry.operation!.name).toBe(entry.name);
     }
 });
+
+test("frame-rate adaptation is available as an executable video step", () => {
+    const operation: WorkflowOperation = { id: "video.frame-rate", name: "视频帧率适配", version: 1, outputType: "video", inputs: [], fields: [] };
+    expect(listCanvasWorkflowCapabilities([operation])[0]).toMatchObject({ name: "视频帧率适配", mode: "direct", group: "视频处理", operation });
+});
+
+test("character replacement is executable while its internal media phases stay hidden", () => {
+    const operations = ["video.replace-character", "video.replacement-prepare", "video.replacement-finish"].map(id => ({ id, name: "单人物替换", version: 1, outputType: "video" as const, inputs: [], fields: [] }));
+    expect(listCanvasWorkflowCapabilities(operations).map(item => item.operation?.id)).toEqual(["video.replace-character"]);
+});

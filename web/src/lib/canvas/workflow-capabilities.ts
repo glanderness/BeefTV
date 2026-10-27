@@ -13,7 +13,7 @@ export type WorkflowCapability = {
 
 /** Only advertise first-release operations with backend execution adapters. */
 export function listCanvasWorkflowCapabilities(operations: WorkflowOperation[]): WorkflowCapability[] {
-    const firstRelease = new Set(["image.select", "image.describe", "image.ai-upscale", "video.ai-upscale", "image.crop", "image.resize", "video.frame", "video.audio", "video.trim", "video.merge", "video.crop", "video.depth"]);
+    const firstRelease = new Set(["image.select", "image.describe", "image.ai-upscale", "video.ai-upscale", "image.crop", "image.resize", "video.frame", "video.audio", "video.trim", "video.merge", "video.crop", "video.depth", "video.frame-rate", "video.replace-character"]);
     const sample: CanvasNodeData = {id:"workflow-menu",type:"image",title:"",position:{x:0,y:0},width:300,height:240};
     const imageTools = listImageWorkflowTools(sample);
     const names = new Map(imageTools.filter(tool => tool.workflow.operationId).map(tool => [tool.workflow.operationId!, tool.label]));

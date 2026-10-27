@@ -36,6 +36,7 @@ describe("workflow editor", () => {
         expect(changed.edges).toEqual(definition.edges);
         expect(definition.nodes[1].operationId).toBe("video.trim");
         expect(workflowOperationDefaults({ ...next, fields: [{ key: "longEdge", label: "长边", type: "number" }] })).toEqual({ longEdge: 2048 });
+        expect(workflowOperationDefaults({ ...next, id: "video.replace-character", fields: [{ key: "maxSegments", label: "片段上限", type: "number", min: 1, max: 100 }] })).toEqual({ maxSegments: 12 });
     });
     test("reconnecting a multi-input graph uses an unoccupied port position", () => {
         const merge: WorkflowOperation = { ...operations[0], id: "video.merge", inputs: [{ id: "videos", label: "视频", mediaType: "video", required: true, multiple: true }] };
