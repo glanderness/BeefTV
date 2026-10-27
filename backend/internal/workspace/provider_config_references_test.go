@@ -37,7 +37,12 @@ func TestSavedProtocolReferencesCountsChannelsAndProfiles(t *testing.T) {
 	if counts["video-generations-json"] != 2 {
 		t.Fatalf("relay references = %d want 2", counts["video-generations-json"])
 	}
-	if len(counts) != 2 {
+	// A profile without a protocol field and a listed model without a profile
+	// both run with the legacy text default, so the audit must keep it.
+	if counts["chat-completion"] != 2 {
+		t.Fatalf("legacy default references = %d want 2 (profile c + model plain)", counts["chat-completion"])
+	}
+	if len(counts) != 3 {
 		t.Fatalf("unexpected protocol references: %#v", counts)
 	}
 	for _, value := range counts {
@@ -150,5 +155,34 @@ func TestSavedProtocolReferencesWithoutBothFilesIsEmpty(t *testing.T) {
 	}
 	if len(counts) != 0 {
 		t.Fatalf("references = %#v", counts)
+	}
+}
+
+// TestSavedProtocolReferencesCountsLegacyDefaultsAndSkipsPending covers the two
+// states a profile without a protocol can be in: a legacy profile still runs with
+// its capability's default (audio → openai-audio), while a profile the host left
+// unconfigured on purpose (protocolPending) runs with nothing.
+func TestSavedProtocolReferencesCountsLegacyDefaultsAndSkipsPending(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"schemaVersion":1,"revision":1,"config":{"channels":[
+        {"id":"voice","apiKey":"placeholder","models":["custom-voice","gpt-image-3"],"modelProfiles":[
+            {"model":"custom-voice","capability":"audio"},
+            {"model":"gpt-image-3","capability":"image","protocolPending":true}
+        ]},
+        {"id":"gemini","apiKey":"placeholder","apiFormat":"gemini","models":["reasoner"],"modelProfiles":[{"model":"reasoner","capability":"text"}]}
+    ]}}`
+	if err := os.WriteFile(filepath.Join(dir, LocalProviderConfigFile), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := store.SavedProtocolReferences()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["openai-audio"] != 1 || len(counts) != 1 {
+		t.Fatalf("references = %#v want only openai-audio:1", counts)
 	}
 }

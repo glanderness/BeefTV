@@ -40,6 +40,7 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [插件系统](content/docs/plugins/plugin-system.mdx)
 - [插件界面扩展](content/docs/plugins/plugin-surfaces.mdx)
 - [撤下官方协议插件时的旧配置与任务保护](refactor/plugin-retention.md)
+- [「用哪个协议」的统一决策点](refactor/protocol-decision.md)
 - [AI 审美批改插件](content/docs/plugins/ai-art-critique.mdx)
 - [剪辑导出调用方与规划分叉](refactor/editing.md)
 - [生成结果第一段入库](refactor/media-ingest.md)

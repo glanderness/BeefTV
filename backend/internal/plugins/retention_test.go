@@ -521,3 +521,37 @@ func TestFailedAuditStillInstallsNewShippedPlugin(t *testing.T) {
 		t.Fatal("new plugin is not executable")
 	}
 }
+
+// TestUpgradeThatDropsASavedProviderIDIsDeferred covers an upgrade with no
+// unfinished task that removes or renames a provider ID saved configuration
+// still runs with. Adopting it would leave that configuration with no definition,
+// so the installed one must survive; an upgrade that keeps the ID still goes
+// through (TestSavedConnectionAloneNeverFreezesAnUpgrade).
+func TestUpgradeThatDropsASavedProviderIDIsDeferred(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	shipPackage(t, release, retentionManifest("renamed-provider", "renamed-v2", "2.0.0"))
+	stored := storedOfficialRecord(t, retentionManifest("renamed-provider", "renamed-v1", "1.0.0"), true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), staticReferences{"renamed-v1": {Configured: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "renamed-provider")
+	if !ok || item.Manifest.Version != "1.0.0" {
+		t.Fatalf("an upgrade dropping a saved provider ID was adopted: %#v", item.Manifest.Version)
+	}
+	if item.Retention == nil || !strings.Contains(strings.Join(item.Retention.Reasons, ""), "删除或改名") {
+		t.Fatalf("retention = %#v", item.Retention)
+	}
+	if _, resolvable := runtime.Registry().Resolve("renamed-v1"); !resolvable {
+		t.Fatal("saved configuration lost the provider ID it runs with")
+	}
+	// Once nothing saved uses the old ID, the next startup adopts the new version.
+	second, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), staticReferences{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item, ok := ByID(second.List(), "renamed-provider"); !ok || item.Manifest.Version != "2.0.0" {
+		t.Fatalf("upgrade did not resume once the old ID was unused: %#v", item.Manifest.Version)
+	}
+}

@@ -5,6 +5,8 @@ import { ensureModelProfilesWithUiDefaults, newModelProtocol, recordProtocolCata
 import { serviceModelProfile } from "@/lib/model-service-presets";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { createModelChannel, defaultConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
+import { loadProtocolCatalog } from "@/services/api/plugin-catalog";
+import { apiClient } from "@/services/api/request";
 
 const definition = (value: string, capability: ProtocolCapability, retired = false): ModelProtocolDefinition => ({ value, label: value, capability, create: "POST /x", contentType: "application/json", media: "测试", enabled: true, retired });
 
@@ -69,5 +71,33 @@ describe("one protocol decision for new models", () => {
         const channel = createModelChannel({ id: "relay", baseUrl: "https://relay.example/v1", apiKey: "fakekey", models: [] });
         const profiles = mergeFetchedChannelModelProfiles(channel, [{ id: "speech-x", modelType: "audio" }]);
         expect(profiles).toEqual([expect.objectContaining({ model: "speech-x", capability: "audio", protocol: undefined, protocolPending: true })]);
+    });
+});
+
+describe("the catalog loader feeds the same decision", () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    afterEach(() => { apiClient.defaults.adapter = originalAdapter; });
+
+    test("a loaded catalog is recorded with its retired protocols", async () => {
+        apiClient.defaults.adapter = async (config) => ({ data: { code: 0, msg: "ok", data: { providers: [
+            { id: "openai-image", version: "2.0.0", name: "OpenAI Images", vendor: "OpenAI", categories: ["image"], scopes: ["user.custom-channel"], create: "POST /v1/images/generations", enabled: true, retired: true },
+            { id: "gemini-image", version: "1.0.0", name: "Gemini Images", vendor: "Google", categories: ["image"], scopes: ["user.custom-channel"], create: "POST /v1/images", enabled: true },
+        ] } }, status: 200, statusText: "OK", headers: {}, config });
+        const catalog = await loadProtocolCatalog("user.custom-channel");
+        expect(catalog.status).toBe("loaded");
+        expect(newModelProtocol("image").protocol).toBe("gemini-image");
+    });
+
+    test("a failed request yields an unavailable fallback that never assigns a protocol", async () => {
+        recordProtocolCatalog({ status: "loaded", protocols: [definition("openai-image", "image", true)] });
+        apiClient.defaults.adapter = async () => { throw new Error("offline"); };
+        const catalog = await loadProtocolCatalog("user.custom-channel");
+        expect(catalog.status).toBe("unavailable");
+        // The hard-coded fallback list keeps manual setup possible, minus what is
+        // already known to be retired, but proves nothing for automatic choices.
+        expect(catalog.protocols.map((item) => item.value)).not.toContain("openai-image");
+        expect(catalog.protocols.map((item) => item.value)).toContain("chat-completion");
+        expect(newModelProtocol("text").protocol).toBeUndefined();
+        expect(ensureModelProfilesWithUiDefaults(["gpt-4.1-mini"], undefined, [])[0]).toMatchObject({ protocol: undefined, protocolPending: true });
     });
 });

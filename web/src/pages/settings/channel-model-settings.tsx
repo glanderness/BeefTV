@@ -10,7 +10,7 @@ import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, savedModelProtocol, selectableProtocol, type ModelProtocol, type ProtocolCatalog } from "@/lib/model-protocols";
+import { inferProtocolCapabilityFromModel, newModelProtocol, modelProtocolCapability, modelProtocolDefinition, savedModelProtocol, selectableProtocol, type ModelProtocol, type ProtocolCatalog } from "@/lib/model-protocols";
 import { loadProtocolCatalog } from "@/services/api/plugin-catalog";
 import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
@@ -48,7 +48,9 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     );
 
     const updateProfile = (model: string, patch: Partial<ModelProfile>) => {
-        const defaultProtocol = inferProtocolCapabilityFromModel(model) === "video" ? channel.interfaceType : defaultProtocolForModel(model, protocolCatalog);
+        // A listed model without a profile already runs with savedModelProtocol; its
+        // first profile records that instead of deriving something different.
+        const defaultProtocol = savedModelProtocol(channel, undefined, model);
         const defaultCap = modelProtocolCapability(defaultProtocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
         const current = channel.modelProfiles?.find((item) => item.model === model) || {
             model,
@@ -80,7 +82,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     };
 
     const activeModelProfile = activeModel ? channel.modelProfiles?.find((item) => item.model === activeModel) : undefined;
-    const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, protocolCatalog) || "") : "";
+    const inferredProtocol = activeModel ? savedModelProtocol(channel, undefined, activeModel) || "" : "";
     const activeProtocol = activeModelProfile ? savedModelProtocol(channel, activeModelProfile, activeModelProfile.model) || "" : inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
 
@@ -97,7 +99,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                 {channel.models.map((rawModel) => {
                     const model = modelOptionName(rawModel);
                     const profile = channel.modelProfiles?.find((item) => item.model === model);
-                    const protocol = profile ? savedModelProtocol(channel, profile, model) || "" : (inferProtocolCapabilityFromModel(model) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(model, protocolCatalog) || "");
+                    const protocol = profile ? savedModelProtocol(channel, profile, model) || "" : (savedModelProtocol(channel, undefined, model) || "");
                     const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
                     const displayName = seedancePortraitLabel(model) || profile?.displayName?.trim() || model;
                     return (
@@ -162,9 +164,15 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                     options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]}
                                     value={activeCapability}
                                     onChange={(nextCapability) => {
-                                        const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && selectableProtocol(item))?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, protocolCatalog));
+                                        // Changing capability decides the protocol anew: keep the current
+                                        // one only if it is still selectable, otherwise ask the shared
+                                        // new-model decision; nothing provable leaves it pending.
+                                        const kept = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && selectableProtocol(item))?.value;
+                                        const decision = kept ? { protocol: kept, pending: undefined } : nextCapability === "video" ? { protocol: undefined, pending: false } : newModelProtocol(nextCapability, protocolCatalog);
+                                        const nextProtocol = decision.protocol;
                                         updateProfile(activeModel, {
                                             protocol: nextProtocol,
+                                            protocolPending: decision.pending || undefined,
                                             capability: nextCapability,
                                             capabilityConfig: nextCapability === "image" || nextCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
                                         });
