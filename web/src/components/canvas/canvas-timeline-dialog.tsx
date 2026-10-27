@@ -233,11 +233,15 @@ export function CanvasTimelineDialog({
             clips: snapshot,
         });
         if (!placement) return;
+        // 每帧都从快照重建整条轨道：只更新本帧涉及的片段，会把上一帧推开的片段留在它当时的位置，
+        // 连续拖动（同一手势里先拖到 1s 再拖到 8s）就会让两个片段叠在一起。
+        const snapshotStarts = new Map(snapshot.map((item) => [item.id, item.startMs]));
         applyDraft((current) => ({
             ...current,
             clips: current.clips.map((item) => {
-                const startMs = placement.get(item.id);
-                return startMs === undefined ? item : { ...item, startMs };
+                const baselineStartMs = snapshotStarts.get(item.id);
+                if (baselineStartMs === undefined) return item;
+                return { ...item, startMs: placement.get(item.id) ?? baselineStartMs };
             }),
         }));
     };

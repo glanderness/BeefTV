@@ -254,6 +254,45 @@ test("a muted track failing after playback starts does not stop other media", as
     } finally { releaseFailure?.(); await page.close(); }
 }, 45_000);
 
+test("a muted video track failing still reports the skipped picture", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.route("**/video.mp4", route => route.fulfill({ status: 404, body: "fixture missing muted video" }));
+        await page.goto(server.url.href);
+        await page.waitForFunction(() => Boolean((window as any).timelinePlaybackFixture));
+        await page.evaluate(() => (window as any).timelinePlaybackFixture.muteVideo(true));
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.getByRole("alert").waitFor();
+        // 静音只关掉声音；画面被跳过仍必须提示，音频与时钟继续。
+        expect(await page.getByRole("alert").innerText()).toContain("视频");
+        await page.waitForFunction(() => (window as any).timelinePlaybackFixture.snapshot().playhead > 1400);
+        const state = await snapshot(page);
+        expect(state.playing).toBe(true);
+        expect(state.audio[0].paused).toBe(false);
+    } finally { await page.close(); }
+}, 45_000);
+
+test("a failed clip is reported again on the next play", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.route("**/voice.wav", route => route.fulfill({ status: 404, body: "fixture missing audio" }));
+        await page.goto(server.url.href);
+        await page.waitForFunction(() => Boolean((window as any).timelinePlaybackFixture));
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.getByRole("alert").waitFor();
+        expect(await page.getByRole("alert").innerText()).toContain("voice");
+        await page.getByRole("button", { name: "Pause", exact: true }).click();
+        await page.getByRole("alert").waitFor({ state: "detached" });
+        expect((await snapshot(page)).error).toBe("");
+        // 再次播放仍要说明这个片段被跳过，不能在没有任何提示的情况下静默跳过。
+        await page.evaluate(() => (window as any).timelinePlaybackFixture.seek(1000));
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.getByRole("alert").waitFor();
+        expect(await page.getByRole("alert").innerText()).toContain("voice");
+        expect((await snapshot(page)).playing).toBe(true);
+    } finally { await page.close(); }
+}, 45_000);
+
 test("portrait output uses the real export caption PNG with one bottom line, even for a landscape source", async () => {
     const page = await open("?preview");
     try {

@@ -82,6 +82,9 @@ class TimelinePreviewPlayback {
                 if (this.position >= this.duration()) { this.position = 0; externalSeek = true; this.publish(); }
                 this.running = this.duration() > 0;
                 this.lastTick = null;
+                // 每次（重新）起播都重新报告仍然失败的片段：预览按钮会先清空提示，
+                // 不重置这里，第二次播放就会在没有提示的情况下继续静默跳过失败片段。
+                this.reportedClips.clear();
                 if (this.running && this.frame === null) this.frame = requestAnimationFrame(this.tick);
             } else this.pause();
         }
@@ -164,7 +167,9 @@ class TimelinePreviewPlayback {
      */
     private reportClipFailure(clip: TimelineClip) {
         if (this.reportedClips.has(clip.id)) return;
-        if (!this.running || this.disposed || !this.active(clip) || this.track(clip)?.muted) return;
+        if (!this.running || this.disposed || !this.active(clip)) return;
+        // 静音抑制只针对音频：视频轨静音只是关掉声音，画面被跳过时仍必须明确告知。
+        if (clip.kind === "audio" && this.track(clip)?.muted) return;
         this.reportedClips.add(clip.id);
         const title = clip.title || "未命名片段";
         this.options.onPlaybackError(clip.kind === "audio"
@@ -182,6 +187,8 @@ class TimelinePreviewPlayback {
             const previous = this.audios.get(clip.id);
             if (previous?.identity === identity) { previous.clip = clip; continue; }
             if (previous) this.release(previous);
+            // 换了素材地址就允许重新报告：新地址可能同样载入失败。
+            this.reportedClips.delete(clip.id);
             const element = new Audio();
             element.preload = "auto";
             const record: AudioRecord = { clip, element, identity, disposed: false, error: false, loaded: () => this.syncAudio(record, true), failed: () => { record.error = true; } };
@@ -204,7 +211,7 @@ class TimelinePreviewPlayback {
         // 素材没载入：只跳过这个片段本身，让视频与其它音轨继续走同一个时钟。
         if (this.failed(clip, record)) {
             element.pause();
-            if (!muted) this.reportClipFailure(clip);
+            this.reportClipFailure(clip);
             return;
         }
         const shouldPlay = active && (clip.kind === "video" || !muted) && this.running && this.prepared();
@@ -241,14 +248,18 @@ class TimelinePreviewPlayback {
         const video = this.options.videoRef.current;
         const clip = this.options.clips.find(clip => clip.id === this.options.activeVideoClipId && clip.kind === "video");
         if (!video) return;
-        // 视频素材失败同样只跳过画面；换到新地址后浏览器会清空 error，这里顺带恢复就绪门槛。
+        // 视频素材失败同样只跳过画面；静音只关声音，画面被跳过必须提示。
         if (clip && video.error) {
             this.failedVideoClips.add(clip.id);
-            if (this.track(clip)?.muted !== true) this.reportClipFailure(clip);
+            this.reportClipFailure(clip);
             video.pause();
             return;
         }
-        if (clip) this.failedVideoClips.delete(clip.id);
+        if (clip) {
+            // 换到新地址后浏览器会清空 error：恢复就绪门槛，并允许新地址再次失败时重新提示。
+            this.failedVideoClips.delete(clip.id);
+            this.reportedClips.delete(clip.id);
+        }
         if (clip) this.apply(video, clip, forceSeek);
         else video.pause();
     };
