@@ -18,6 +18,7 @@ import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, p
 import { buildStudioDigest, describeChangesSince, withCurrentStudio } from './studio-digest.mjs';
 import { normalizeModelTransportError } from './model-transport-error.mjs';
 import { businessLifecycle } from './business-progress.mjs';
+import { durableReasoningSegments } from './durable-turn-projection.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
@@ -52,9 +53,12 @@ export function durableToolReplay(tool) {
 export function publicDurableTurn(active, running = false) {
   if (!active) return null;
   // Go canonicalizes continuationId from a claimed receipt before forwarding.
+  // `reasoning` is the curated thinking projection (id/text/status only), not a raw
+  // provider block; history and turn_end must both carry it or the panel would show
+  // thinking while streaming and lose it on reload.
   const keys = ['permissionMode','turnId', 'requestId', 'submissionId', 'continuationId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
     'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'plan',
-    'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
+    'reasoning', 'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
   const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));
   // Keep provider detail in the internal record; streams and old history share
   // the same public projection so an upstream body cannot become UI copy.
@@ -1108,7 +1112,9 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     const preparationError = entry.generation.pendingInputError || entry.generation.skillContextFailure;
     const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
     const planView = entry.turn.plan || active.plan || null;
-    return { ...publicDurableTurn(active), ...completion,
+    // 已收到的可读思考随终态一起留下：重开历史与实时流同形，没有思考就不写空字段。
+    const reasoning = durableReasoningSegments(assistant);
+    return { ...publicDurableTurn(active), ...completion, ...(reasoning.length ? { reasoning } : {}),
       toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],
       ...(planView ? { plan: planView } : {}),
       status: settled.status, sessionId: entry.sessionId };

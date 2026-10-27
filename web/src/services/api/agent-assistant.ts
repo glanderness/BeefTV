@@ -32,6 +32,18 @@ export type AgentHostStatus = {
     health?: { raw?: string };
 };
 
+/**
+ * 模型思考过程的一个可读片段。
+ *
+ * 宿主只投影可读纯文本：签名、加密占位、工具参数和上游原始报文都不在这里。
+ * 一个回合的思考会被模型拆成多段（中间夹工具调用），`status` 表示这一段是否还在生成。
+ */
+export type AssistantReasoningSegment = {
+    id: string;
+    text: string;
+    status: "streaming" | "done";
+};
+
 export type AgentToolCall = {
     toolCallId?: string;
     tool: string;
@@ -108,6 +120,8 @@ export type AgentTurnEnd = {
     permissionMode?: AssistantPermissionMode;
     reply: string;
     toolCalls: AgentToolCall[];
+    /** 本回合模型返回的思考片段；模型没有可读思考时宿主不写这个字段。 */
+    reasoning?: AssistantReasoningSegment[];
     change?: AssistantTurnChange | null;
     proposals?: AssistantGenerationProposal[];
     outputs?: AssistantTurnOutput[];
@@ -132,6 +146,8 @@ export type AssistantTurn = {
     selectedNodeIds: string[];
     reply: string;
     toolCalls: AgentToolCall[];
+    /** 与 AgentTurnEnd.reasoning 同形；旧记录和没有思考的回合没有这个字段。 */
+    reasoning?: AssistantReasoningSegment[];
     change: AssistantTurnChange | null;
     proposals: AssistantGenerationProposal[];
     outputs?: AssistantTurnOutput[];
@@ -169,7 +185,9 @@ export type AssistantHistory = {
     active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
         /** 正在进行的回合此刻的进度（例如模型重试），只用于展示，结束后不再返回。 */
-        lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null; streamed?: string } | null;
+        lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null; streamed?: string;
+        /** 正在进行回合的思考片段，与流式推送的 reasoning_snapshot 同形。 */
+        reasoning?: AssistantReasoningSegment[] } | null;
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
@@ -381,6 +399,8 @@ export type StreamHandlers = {
     onSession?: (sessionId: string) => void;
     onDelta?: (delta: string) => void;
     onText?: (text: string) => void;
+    /** 整段替换本回合的思考片段；宿主每次给的都是当前完整状态。 */
+    onReasoning?: (segments: AssistantReasoningSegment[]) => void;
     onPlan?: (plan: AssistantPlan | null) => void;
     onTurnEnd?: (end: AgentTurnEnd) => void;
     onLifecycle?: (event: AgentLifecycleEvent) => void;
@@ -555,6 +575,10 @@ async function readAgentTurnStream(
         }
         if (payload.type === "text_snapshot" && typeof payload.text === "string") {
             handlers.onText?.(payload.text);
+            return;
+        }
+        if (payload.type === "reasoning_snapshot" && Array.isArray(payload.segments)) {
+            handlers.onReasoning?.(payload.segments as AssistantReasoningSegment[]);
             return;
         }
         if (payload.type === "plan") {

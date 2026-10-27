@@ -9,7 +9,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId, publicDurableTurn } from './durable-session-owner.mjs';
-import { createDurableTextProjection } from './durable-stream-text.mjs';
+import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
@@ -253,17 +253,17 @@ function emitDurable(entry, event) {
   const events = durableStreamEvents(event, entry.lifecycle);
   entry.lifecycle = durableLifecycleState(entry.lifecycle, event);
   if (event.type === 'plan') entry.livePlan = event.plan;
-  const text = entry.textProjection.accept(event);
-  for (const payload of [...(text ? [text] : []), ...events]) for (const listener of entry.listeners || []) listener(payload);
+  const projected = entry.turnProjection.accept(event);
+  for (const payload of [...projected, ...events]) for (const listener of entry.listeners || []) listener(payload);
 }
 function followDurable(entry, submission) {
   if (!entry.running) {
     entry.listeners = new Set();
     entry.lifecycle = null;
-    entry.textProjection = createDurableTextProjection();
+    entry.turnProjection = createDurableTurnProjection();
     entry.livePlan = entry.turn.plan ?? null;
     const ready = Promise.withResolvers();
-    entry.textProjectionReady = ready.promise;
+    entry.turnProjectionReady = ready.promise;
     entry.running = durable.wait(entry, submission, {onEvent:event=>{
       emitDurable(entry,event);
       if (event.type === 'snapshot') ready.resolve();
@@ -276,12 +276,12 @@ function followDurable(entry, submission) {
 }
 
 async function waitForDurableProjection(entry) {
-  if (entry.textProjection?.initialized || !entry.textProjectionReady) return;
+  if (entry.turnProjection?.initialized || !entry.turnProjectionReady) return;
   // Only wait for the initial official snapshot, never the model's completion.
   // On storage delay/failure omit streamed instead of publishing a false empty value.
   let timer;
   try {
-    await Promise.race([entry.textProjectionReady, new Promise(resolve => {
+    await Promise.race([entry.turnProjectionReady, new Promise(resolve => {
       timer = setTimeout(resolve, 1000);
     })]);
   } finally { clearTimeout(timer); }
@@ -477,7 +477,9 @@ const server = http.createServer(async (req, res) => {
         await waitForDurableProjection(entry);
         const value = await durable.history(canvasId,sessionId);
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
-        if (value.active && entry.textProjection?.initialized) value.active.streamed = entry.textProjection.text;
+        if (value.active && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
+        // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
+        if (value.active && entry.turnProjection?.reasoning.length) value.active.reasoning = entry.turnProjection.reasoning;
         respond(res,200,value); return;
       }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
@@ -603,7 +605,8 @@ const server = http.createServer(async (req, res) => {
       const listener = payload=>{ if (!res.destroyed) sendLine(res,payload); };
       entry.listeners.add(listener);
       // A repeated request re-attaches to a running turn: show its current progress first.
-      if (entry.textProjection.initialized) listener({ type: 'text_snapshot', text: entry.textProjection.text });
+      if (entry.turnProjection.initialized) listener({ type: 'text_snapshot', text: entry.turnProjection.text });
+      if (entry.turnProjection.reasoning.length) listener({ type: 'reasoning_snapshot', segments: entry.turnProjection.reasoning });
       listener({ type: 'plan', plan: entry.livePlan });
       if (entry.lifecycle) listener(entry.lifecycle);
       try {
