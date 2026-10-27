@@ -293,10 +293,41 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
+	return s.retryTask(userID, id, "")
+}
+
+// RetryTaskWithOperation keeps the paid retry admission and its durable
+// operation receipt in the same task-store transaction. Free recovery paths
+// are resolved before this method reaches the retry admission.
+func (s *Service) RetryTaskWithOperation(userID, id, operationID string) (*model.Task, error) {
+	return s.retryTask(userID, id, strings.TrimSpace(operationID))
+}
+
+func (s *Service) retryTask(userID, id, operationID string) (*model.Task, error) {
+	payloadHash := ""
+	if operationID != "" {
+		payloadHash = operations.PayloadHash("task.retry", []byte(strings.TrimSpace(id)))
+		_, found, err := s.repo.RetryOperationResult(userID, operationID, payloadHash)
+		if err != nil {
+			if errors.Is(err, repository.ErrRetryOperationConflict) {
+				return nil, kernel.NewAppError(kernel.CodeConflict, "同一操作 ID 已用于不同的重试任务")
+			}
+			if errors.Is(err, repository.ErrRetryOperationInProgress) {
+				return nil, kernel.NewAppError(kernel.CodeConflict, "同一重试操作正在执行，请稍后重试")
+			}
+			return nil, err
+		}
+		if found {
+			return s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
+		}
+	}
 	if s.IsDraining() {
+		if operationID != "" {
+			return nil, BadAuthRequest("服务正在排空，请稍后重试")
+		}
 		return s.taskDomain().Retry(userID, id)
 	}
-	if task, err := s.repo.TaskForUser(userID, id); err == nil {
+	if task, err := s.repo.TaskForUser(userID, id); err == nil && task != nil {
 		if task.Status == model.TaskStatusSucceeded {
 			if deliveryPaused(task.Stage) {
 				return s.resumeGenerationDownload(*task)
@@ -312,11 +343,24 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 				return s.repo.TaskForUser(userID, id)
 			}
 		}
+		if isRecoverableVideoTask(*task) && task.Status == model.TaskStatusFailed && task.Stage != "submission_unknown" {
+			s.hydrateTaskProviderRequestID(task)
+			if strings.TrimSpace(task.ProviderRequestID) != "" {
+				provider, queryErr := s.QueryFailedVideoTask(context.Background(), userID, id)
+				if queryErr != nil {
+					return nil, queryErr
+				}
+				return provider.Task, nil
+			}
+		}
 		if restored, handled, err := s.recoverAcceptedImage(*task); handled {
 			return restored, err
 		}
 	}
-	return s.taskDomain().Retry(userID, id)
+	if operationID == "" {
+		return s.taskDomain().Retry(userID, id)
+	}
+	return s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
 }
 
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {

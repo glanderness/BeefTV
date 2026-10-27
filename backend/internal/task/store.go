@@ -66,6 +66,20 @@ func (s repoStore) RetryWithExpectedInput(userID string, prepared *model.Task, l
 	return s.repo.RetryTaskWithExpectedInput(userID, prepared, limit, expectedInputJSON)
 }
 
+func (s repoStore) RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error) {
+	if err := s.require(); err != nil {
+		return nil, err
+	}
+	return s.repo.RetryTaskWithOperation(userID, prepared, limit, operationID, payloadHash)
+}
+
+func (s repoStore) RetryOperationResult(userID, operationID, payloadHash string) (*model.Task, bool, error) {
+	if err := s.require(); err != nil {
+		return nil, false, err
+	}
+	return s.repo.RetryOperationResult(userID, operationID, payloadHash)
+}
+
 func (s repoStore) CancelIfStatus(userID, id string, expected model.TaskStatus, now time.Time) (bool, error) {
 	if err := s.require(); err != nil {
 		return false, err

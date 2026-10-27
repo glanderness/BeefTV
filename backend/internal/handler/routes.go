@@ -3,9 +3,11 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 
 	"github.com/gin-gonic/gin"
@@ -219,7 +221,21 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 			failService(c, err)
 			return
 		}
-		task, err := svc.RetryTask(user.ID, c.Param("id"))
+		var req struct {
+			ClientOperationID string `json:"clientOperationId"`
+		}
+		if c.Request.ContentLength != 0 || strings.Contains(strings.ToLower(c.GetHeader("Content-Type")), "application/json") {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				fail(c, http.StatusBadRequest, err)
+				return
+			}
+		}
+		var task *model.Task
+		if req.ClientOperationID != "" {
+			task, err = svc.RetryTaskWithOperation(user.ID, c.Param("id"), req.ClientOperationID)
+		} else {
+			task, err = svc.RetryTask(user.ID, c.Param("id"))
+		}
 		if err != nil {
 			var appErr *app.AppError
 			if errors.As(err, &appErr) {

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -19,6 +20,25 @@ type ImageRecoveryEvidence struct {
 	Attempt    *model.RouteAttempt
 	Submission *ImageSubmissionEvidence
 	HasReceipt bool
+}
+
+// LatestBeefAPIImageJobIDForTask returns only the formal gateway's asynchronous
+// image identity. Third-party logs must never make an image retry look safely
+// retrievable through the managed-channel endpoint.
+func (r *Repository) LatestBeefAPIImageJobIDForTask(taskID, userID string) (string, error) {
+	var row struct {
+		ImageJobID string
+	}
+	query := r.db.Model(&model.ApiCallLog{}).
+		Select("image_job_id").
+		Where("task_id = ? AND user_id = ? AND source = ? AND capability = ? AND request_kind = ? AND method = ? AND image_job_id <> ?", taskID, userID, "beefapi", "image", "create", "POST", "")
+	if err := query.Order("created_at DESC, id DESC").First(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return row.ImageJobID, nil
 }
 
 // 固定次数批量读取，不为列表中的每个任务逐一查库。

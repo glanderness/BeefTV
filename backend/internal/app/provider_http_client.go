@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 
@@ -183,6 +184,28 @@ func mediaBytes(media providerMedia) ([]byte, string, error) {
 	return generation.MediaBytes(media)
 }
 
+func imageJobIDFromHeaders(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(headers.Get("X-Image-Job-Id")); id != "" {
+		return id
+	}
+	location := strings.TrimSpace(headers.Get("Location"))
+	if location == "" {
+		return ""
+	}
+	parsed, err := url.Parse(location)
+	if err != nil || !strings.Contains(parsed.Path, "/images/jobs/") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimRight(parsed.Path, "/"), "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
+}
+
 func recordProviderRequest(service *Service, req *http.Request, startedAt time.Time, statusCode int, responseHeaders http.Header, responseBody []byte, requestErr error) {
 	if req == nil || service == nil {
 		return
@@ -224,7 +247,7 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 		APIFormat:   apiFormat, Method: req.Method, Path: req.URL.Path, Model: call.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
 		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: call.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
-		ProviderRequestID: call.ProviderRequestID, ImageJobID: responseHeaders.Get("X-Image-Job-Id"), RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
+		ProviderRequestID: call.ProviderRequestID, ImageJobID: imageJobIDFromHeaders(responseHeaders), RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
 	}
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {
 		callLog.ErrorCode = code

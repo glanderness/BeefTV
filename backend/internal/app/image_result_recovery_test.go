@@ -11,6 +11,22 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestImageJobDataAcceptsGatewayResultShapes(t *testing.T) {
+	for name, payload := range map[string]map[string]any{
+		"data-list":   {"data": []any{map[string]any{"url": "https://beefapi.com/image.png"}}},
+		"output-map":  {"output": map[string]any{"url": "https://beefapi.com/image.png"}},
+		"result-list": {"result": []any{map[string]any{"b64_json": "encoded"}}},
+		"output-url":  {"output": "https://beefapi.com/image.png"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := imageJobData(payload)
+			if len(got) != 1 {
+				t.Fatalf("image data = %#v", got)
+			}
+		})
+	}
+}
+
 func TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	s, db, _, _ := creationTestService(t)

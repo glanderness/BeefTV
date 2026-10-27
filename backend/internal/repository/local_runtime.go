@@ -331,17 +331,79 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 	})
 }
 
+var (
+	ErrRetryOperationConflict   = errors.New("retry operation id reused with a different payload")
+	ErrRetryOperationInProgress = errors.New("retry operation is already in progress")
+)
+
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
-	return r.retryTask(userID, prepared, limit, nil)
+	return r.retryTaskWithOperation(userID, prepared, limit, nil, "", "")
 }
 
 func (r *Repository) RetryTaskWithExpectedInput(userID string, prepared *model.Task, limit int, expectedInputJSON string) (*model.Task, error) {
-	return r.retryTask(userID, prepared, limit, &expectedInputJSON)
+	return r.retryTaskWithOperation(userID, prepared, limit, &expectedInputJSON, "", "")
 }
 
-func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, expectedInputJSON *string) (*model.Task, error) {
+func (r *Repository) RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error) {
+	return r.retryTaskWithOperation(userID, prepared, limit, nil, operationID, payloadHash)
+}
+
+func (r *Repository) RetryOperationResult(userID, operationID, payloadHash string) (*model.Task, bool, error) {
+	var record model.AgentOpRecord
+	err := r.db.Where("user_id = ? AND op_id = ?", userID, operationID).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if record.Op != "task.retry" || record.PayloadHash != payloadHash {
+		return nil, false, ErrRetryOperationConflict
+	}
+	if record.Status != "succeeded" {
+		return nil, false, ErrRetryOperationInProgress
+	}
+	var task model.Task
+	if err := json.Unmarshal([]byte(record.ResultJSON), &task); err != nil {
+		return nil, false, err
+	}
+	return &task, true, nil
+}
+
+func (r *Repository) retryTaskWithOperation(userID string, prepared *model.Task, limit int, expectedInputJSON *string, operationID, payloadHash string) (*model.Task, error) {
+	if operationID != "" {
+		replayed, found, err := r.RetryOperationResult(userID, operationID, payloadHash)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return replayed, nil
+		}
+	}
 	var task model.Task
 	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
+		if operationID != "" {
+			var record model.AgentOpRecord
+			recordErr := tx.Where("user_id = ? AND op_id = ?", userID, operationID).First(&record).Error
+			if recordErr == nil {
+				if record.Op != "task.retry" || record.PayloadHash != payloadHash {
+					return ErrRetryOperationConflict
+				}
+				if record.Status != "succeeded" {
+					return ErrRetryOperationInProgress
+				}
+				return json.Unmarshal([]byte(record.ResultJSON), &task)
+			}
+			if !errors.Is(recordErr, gorm.ErrRecordNotFound) {
+				return recordErr
+			}
+			if err := tx.Create(&model.AgentOpRecord{UserID: userID, OpID: operationID, Op: "task.retry", PayloadHash: payloadHash, Status: "running", CreatedAt: time.Now(), UpdatedAt: time.Now()}).Error; err != nil {
+				if isUniqueConstraint(err) {
+					return ErrRetryOperationInProgress
+				}
+				return err
+			}
+		}
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
 			return err
 		}
@@ -376,7 +438,21 @@ func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, e
 		if err := tx.Delete(&model.TaskTextDelta{}, "user_id = ? AND task_id = ?", userID, prepared.ID).Error; err != nil {
 			return err
 		}
-		return tx.First(&task, "id = ? AND user_id = ?", prepared.ID, userID).Error
+		if err := tx.First(&task, "id = ? AND user_id = ?", prepared.ID, userID).Error; err != nil {
+			return err
+		}
+		if operationID != "" {
+			resultJSON, err := json.Marshal(task)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&model.AgentOpRecord{}).
+				Where("user_id = ? AND op_id = ?", userID, operationID).
+				Updates(map[string]any{"status": "succeeded", "result_json": string(resultJSON), "updated_at": time.Now()}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return &task, err
 }

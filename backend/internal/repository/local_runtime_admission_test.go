@@ -150,6 +150,53 @@ func TestCreateTaskWithActiveLimitIgnoresPromptEmbeddedResourceSyntax(t *testing
 	}
 }
 
+func TestRetryTaskWithOperationReplaysConflictsAndRollsBack(t *testing.T) {
+	repo, db := newAdmissionRepo(t)
+	failed := &model.Task{ID: "task-retry-operation", UserID: "user-1", Status: model.TaskStatusFailed, InputJSON: `{"prompt":"ok"}`}
+	if err := db.Create(failed).Error; err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.RetryTaskWithOperation("user-1", failed, 8, "retry-operation", "hash-1")
+	if err != nil || first.Status != model.TaskStatusQueued {
+		t.Fatalf("first retry = %#v err=%v", first, err)
+	}
+	var afterFirst []model.AgentOpRecord
+	if err := db.Find(&afterFirst).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(afterFirst) != 1 || afterFirst[0].Status != "succeeded" || afterFirst[0].ResultJSON == "" {
+		t.Fatalf("operation record missing after first retry: %+v", afterFirst)
+	}
+	if replay, found, err := repo.RetryOperationResult("user-1", "retry-operation", "hash-1"); err != nil || !found || replay == nil || replay.ID != first.ID || replay.Status != first.Status {
+		t.Fatalf("operation lookup after first retry: replay=%#v found=%v err=%v first=%#v", replay, found, err, first)
+	}
+	second, err := repo.RetryTaskWithOperation("user-1", &model.Task{ID: failed.ID, UserID: failed.UserID, Status: model.TaskStatusFailed, InputJSON: failed.InputJSON}, 8, "retry-operation", "hash-1")
+	if err != nil || second.ID != first.ID || second.Status != first.Status {
+		t.Fatalf("replay = %#v err=%v first=%#v", second, err, first)
+	}
+	if _, err := repo.RetryTaskWithOperation("user-1", failed, 8, "retry-operation", "hash-2"); !errors.Is(err, ErrRetryOperationConflict) {
+		t.Fatalf("conflict error = %v", err)
+	}
+	blocked := &model.Task{ID: "task-retry-operation-rollback", UserID: "user-1", Status: model.TaskStatusFailed, InputJSON: `{"prompt":"ok"}`}
+	if err := db.Create(blocked).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RetryTaskWithOperation("user-1", blocked, 0, "retry-operation-rollback", "hash"); !errors.Is(err, ErrActiveTaskLimit) {
+		t.Fatalf("limit error = %v", err)
+	}
+	var record model.AgentOpRecord
+	if err := db.Where("user_id = ? AND op_id = ?", "user-1", "retry-operation-rollback").First(&record).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("failed retry left operation record: record=%+v err=%v", record, err)
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", blocked.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.TaskStatusFailed {
+		t.Fatalf("failed retry changed task status: %s", stored.Status)
+	}
+}
+
 func TestRetryTaskRejectsInvalidJSON(t *testing.T) {
 	repo, db := newAdmissionRepo(t)
 	failed := &model.Task{ID: "task-retry-bad-json", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"prompt":"ok"}`}

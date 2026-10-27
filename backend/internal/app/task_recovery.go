@@ -50,7 +50,7 @@ func (s *Service) RecoverTask(ctx context.Context, userID, taskID string) (*Task
 	}
 
 	if generation.UpscaleMediaType(task.Model) == "" && task.Type == "canvas_image" {
-		restored, handled, err := s.recoverAcceptedImage(*task)
+		restored, handled, err := s.recoverAcceptedImageContext(ctx, *task)
 		if err != nil {
 			return nil, err
 		}
