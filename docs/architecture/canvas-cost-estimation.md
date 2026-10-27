@@ -8,10 +8,10 @@ coverage: 图片、视频、音频、超分的计价来源、合计规则、只�
 not_complete_for: 扣费结算修复、自动限额执行、历史账本、真实付费验收和发布
 verification_level: docs-only
 real_smoke_status: not_required
-review_status: not_reviewed
-reviewer: none
+review_status: reviewed_with_findings
+reviewer: 本任务评审代理
 review_command: 核对源码、上游仓库、官方产品说明和公开价格接口；文档检查，不执行生成
-review_notes: 四项方向已获用户认可；新增跨项目接口与完整验收条款仍是建议，未获实施批准
+review_notes: 已按评审补充分镜动作、确认费用持久化及报价复用，修正报告引用；本次修订仅自检，接口与验收条款仍待实施确认
 review_owner: 项目负责人
 review_due: 实施前复核价格接口、提交校验与结算恢复状态
 execution_backend: docs-only
@@ -55,13 +55,15 @@ acceptance_memory_id: none
 | 超分 | 后端返回 `reservation`，前端把当前输入逐项相加；不是最终费用 | 作为先扣金额接入，实际费用保持未知。[B5] |
 | 超分“估价”副作用 | `EstimateUpscale → PrepareUpscale → PrepareBeefAPIVideoReferences` 会读取、准备并上传素材；HTTP estimate 还要求受信任桌面写身份 | **不能把现有 estimate 原样挂成 MCP 只读工具，不能在画布自动刷新时反复调用。** 新费用读取必须走无上传路径。[B5] [B6] |
 | 已有制作计划 | `GenerationTargets` 固定节点、模型、参数和参考关系；目前仅支持图片／视频／音频，至多 24 项，并会拒绝部分组图和缺参数节点 | 复用解析规则，不直接用它当整画布扫描器；超分、未物化分镜和大画布需补只读解析。[B7] |
+| 已有制作授权 | `GenerationAuthorization` 只保存来源轮次、方案和目标；`ConfirmAssistantProduction` 不接收报价，授权存于 `generation_authorization_json` | 当前没有“确认过多少钱”的持久记录。第 7.1 节是本任务必须增加的设计，不能把另一份任务状态方案当作已实现能力。[B7] [B12] |
 | [#56 的修改](https://github.com/glanderness/BeefTV/commit/1a3c57c)，分支 `1a3c57c` | 已读取分支与对话；超分文案改为“先扣…账单核对完成后…” | 本工作树仍有旧文案；实施时沿用 #56 的修订，不恢复无条件退款说法。不能从工作树判断该任务是否已交付。 |
 | 上游价格源码 `e49bfcf325a1e5aa020b450828e04a6d066b1a36` | 企业目录包含图片价表、音频价格、视频价格；#666 已为 Topaz 输出 `invoice_billing` 和 `display_kind=upscale` | 已有数据应复用，但展示价表不能代替按本次输入报价。[P1] |
-| [计费核查 #15][P2] | 报告记录 7 单已成功生成、先扣费用，却未完成账单结算；回执只有 `billing_status=pending` | **结算尚未恢复是已知风险。** 不把生成成功写成已结算，也不依赖退款已恢复；本任务不修密钥或退款。用户转达的总管答复确认仍须按此风险设计。 |
+| 上游已有只读报价 | `POST /api/online/image/quote`、`POST /api/online/video/quote` 已复用计价函数；路由使用 `UserAuth`，均检查在线体验资格，图片接口明确拒绝企业站点 | 优先复用其计算与测试。现有 HTTP 接口不能直接作为桌面 API Key 的企业报价；第 4.1 节只补所需适配，不重写算法。[P5] [P6] [P7] |
+| [计费核查 #15][P2]，报告提交 `daf2dc76fdf368015a1dda7daad9fd5fe0a20a08` | 已从该固定提交读到报告；记录 7 单已成功生成、先扣费用，却未完成账单结算，回执只有 `billing_status=pending`。价格源码的 `e49bfcf` 不含此报告 | **结算尚未恢复是已知风险。** 不把生成成功写成已结算，也不依赖退款已恢复；本任务不修密钥或退款。用户转达的总管答复确认仍须按此风险设计。 |
 
 ### 2.2 图片与音频确实有可用数字，但还缺明确单位合同
 
-本轮于 **2026-10-27 10:48 UTC** 无登录读取 [公开企业模型价格接口][P3]，HTTP 200，共 52 条，币种 CNY。以下仅为取样证据，**不复制成客户端内置价格、不承诺长期有效、不证明模型实际可调用**。
+初稿核查于 **2026-10-27 10:48 UTC** 无登录读取 [公开企业模型价格接口][P3]，HTTP 200，共 52 条，币种 CNY。以下仅为取样证据，**不复制成客户端内置价格、不承诺长期有效、不证明模型实际可调用**。
 
 | 取样 | 在线字段／数值 | 可以和不能推导的事 |
 | --- | --- | --- |
@@ -103,7 +105,9 @@ acceptance_memory_id: none
 
 一条 line 表示一次有明确输入的制作目标，必须携带 `requestCount`、`outputCount` 及实际计价需要的用量。示例：一个图片节点生成 4 张，可能是 1 次请求出 4 张，也可能发 4 次请求；同一参考图的费用可能按请求只收一次，必须跟实际提交展开方式一致。
 
-复用提交前的参数解析和任务展开，先抽出不写数据的“生成输入描述”；估价和执行各自消费它。分镜行使用稳定的 `scriptNodeId + rowId + kind`，已绑定子节点则解析成同一个目标，只计一次。未生成的行按现有批量动作的参数展开，不能为了估价调用 `PrepareUserCanvasStoryboard` 创建节点。[B8]
+复用提交前的参数解析和任务展开，先抽出不写数据的“生成输入描述”；估价和执行消费同一份规范化输入。分镜目标使用 `scriptNodeId + rowId + action`，不能只用媒体类型区分图片和动作板；已绑定子节点需匹配同一来源行与动作后只计一次，不能仅凭 `shotIndex` 猜测归属。未生成的行按第 6.1 节指定动作构造内存草稿，不能为了估价调用 `PrepareUserCanvasStoryboard` 创建节点。[B4] [B8]
+
+`remaining` 只展开已保存的制作动作；一行剧本本身不等于同时购买图片、视频和动作板。已有制作意图却没有指定动作的行保留为 `unresolved`，原因 `missing_action`，不替用户选动作。
 
 共享参考图本身只在生成一次时计费；被引用产生的附加费按计费规则计入各请求。视频内含声音不能再算一次配音；只有独立音频生成目标才另计。循环依赖、未知输出数量、缺失媒体尺寸都单列原因，不静默截到 8／24 个目标。若超过实现容量，明确返回范围过大且不给伪完整总数。
 
@@ -121,13 +125,17 @@ acceptance_memory_id: none
 
 ### 4.1 跨项目接口建议（待定）
 
-建议在计费方提供一个**不创建任务、不扣费、不上传素材**的批量读取接口，暂名 `POST /v1/media/estimate`。POST 只是承载参数，不表示支付；不能仅靠 HTTP 动词推导工具读写权限。
+**先复用已有图片、视频报价的计价函数，再补桌面所需的认证与返回字段。** 上游已有 `/api/online/image/quote`、`/api/online/video/quote`，不是从零设计报价：图片使用 `quoteOnlineExperienceImageTask`、`OnlineExperienceImageReservationEstimate`，视频使用 `prepareOnlineVideoQuote`，底层连接实际计价逻辑。已有测试覆盖报价不建任务、不扣费和币种转换。[P5] [P6] [P7] [P8]
+
+不能直接搬用这两个 HTTP 入口：它们使用网页登录身份与在线体验资格，图片还拒绝企业站点；参考图按已存在的 artifact 校验，图片 `precharge` 只表示先扣，视频近似值还带画幅／帧率等假设。不能切换站点或套用其他账户的价格来绕过限制，也不能把 `estimated_amount` 一律当最终费用。上述是源码核查，未验证这些路由的线上可用性。
+
+建议在计费方补一个**不创建任务、不扣费、不上传素材**的窄入口，暂名 `POST /v1/media/estimate`，沿用实际生成使用的 API Key 身份及企业售价。**第一步只支持单项图片；四类复用同一合同，服务端批量报价不是第一步的前置。** 本地可做有限并发聚合；跨项不能取得共同价格快照时逐项记录版本，禁止伪称原子锁价。POST 只是承载参数，不表示支付；不能仅靠 HTTP 动词推导工具读写权限。
 
 请求携带 `clientItemId`、模型、生成操作类型、规范化参数、请求／输出数量及 `mediaFacts`（宽高、时长、参考数量、需要时的计费文本长度）。不上传源文件，不传素材 URL、完整提示词或用户标识；认证由原有服务连接提供。字符数先按双方约定规则计算；规则不明确时返回未知，不能用 JS 字符串长度冒充真实计费用量。
 
-返回每项的 `expected`、`debitOnSubmit`、`finalChargeLimit`、`priceVersion`、`observedAt`、`expiresAt`、计价单位与未知原因，金额均为十进制字符串；建议原子读取同一份价表快照，批量报价失败可按项说明。`priceVersion` 应是本次售价规则和计费单位的版本摘要，不能只用 `pricebook_id=enterprise_cny_v1` 或某类任务的固定 `pricing_version=1` 充当所有价格变更版本。
+返回该项的 `expected`、`debitOnSubmit`、`finalChargeLimit`、`priceVersion`、`observedAt`、`expiresAt`、计价单位与未知原因，金额均为十进制字符串。`priceVersion` 应是本次售价规则和计费单位的版本摘要，不能只用 `pricebook_id=enterprise_cny_v1` 或某类任务的固定 `pricing_version=1` 充当所有价格变更版本。
 
-四类实现复用同一处实际计费代码：图片沿用档位、参考图和多输出规则；视频沿用秒数／Token 预估／参考素材规则；配音沿用计费字符规则，音乐按本模型规则；超分沿用当前预扣配置，但把“纯计算预扣金额”从需要 URL 校验、上传准备的链条中分离。**不是再造一份只给估价用的价格算法。**
+四类实现复用同一处实际计费代码：图片沿用档位、参考图和多输出规则；视频沿用秒数／Token 预估／参考素材规则；配音沿用计费字符规则，音乐按本模型规则；超分沿用当前预扣配置，但把“纯计算预扣金额”从需要 URL 校验、上传准备的链条中分离。已有在线图片报价会使用提示词估算 Token，不能照抄该请求后声称只传元数据；首步仅接入无需全文即可计价的档位，其他模式返回缺用量或仅先扣估算。**不是再造一份只给估价用的价格算法。**
 
 目录 `/v1/models` 继续做发现；企业价格页继续做展示。它们可以由同一价格源投影，客户端不并行信任三个不同来源。在新接口到位前，适配器可返回经验证的目录参考价，标 `catalog_reference`；缺单位、过期或 Topaz 旧固定价则未知。此过渡态能开发和演示，不是官方四类报价已完成。
 
@@ -135,7 +143,7 @@ acceptance_memory_id: none
 
 | 待定合同 | 本文建议 | 实施前需确认的证据 |
 | --- | --- | --- |
-| 接口路径与鉴权 | 上述批量接口，沿用现有账号认证和售卖范围；内部限流，不开放任意上游 URL | 计费方负责人给出样例，确认不会生成、上传或收费 |
+| 接口路径与鉴权 | 上述单项入口，复用现有计算，使用生成侧 API Key 身份与真实售卖范围；内部限流，不开放任意上游 URL | 计费方负责人给出企业账号样例，确认不会生成、上传或收费；批量扩展以后再定 |
 | 用量单位 | 显式 `image`／`request`／`second`／`character`／`token`／`invoice`，可包含多种计费项 | 对照实际计费函数，至少图片、配音、音乐、视频、超分各一例 |
 | 版本与时效 | 报价带不可变版本；建议最长 60 秒供显示复用；实际有效期由计费方给出 | 改价测试；若服务未承诺有效期，`expiresAt=null` 且 `advisory=true`，本地缓存时长不是锁价 |
 | 提交一致性 | 真正执行前使用相同有效输入重新核价；不一致时更新现有确认 | 两侧验证并发改价。若上游没有承诺按该报价计费，保持 `advisory=true`，不能显示硬上限 |
@@ -196,7 +204,35 @@ flowchart LR
 }
 ```
 
-`scope=selection` 加 `nodeIds` 或现有分镜行选择；`scope=proposal` 加 `proposalId`，由服务端读已保存目标，不能相信助手上传的价格。三种选择互斥，不默认将其并集。HTTP 外层沿用 `{ "params": ... }`；成功仍为 `{code:0,data:...,msg:...}`。CLI 和 MCP 输出解包后的同一 data。
+`scope=selection` 必须使用以下两种互斥选择：现有节点为 `selection={"type":"nodes","nodeIds":[...]}`，从节点保存的制作操作解析输入；分镜行采用 `selection.type=storyboard_rows`，必须显式提供 `action`，缺失时返回入参错误 `missing_action`。`scope=proposal` 加 `proposalId`，由服务端读已保存目标，不能相信助手上传的价格。三种范围互斥，不默认将其并集。HTTP 外层沿用 `{ "params": ... }`；成功仍为 `{code:0,data:...,msg:...}`。CLI 和 MCP 输出解包后的同一 data。
+
+未创建目标节点时的分镜报价请求示例：
+
+```json
+{
+  "canvasId": "canvas_demo",
+  "scope": "selection",
+  "expectedRevision": 42,
+  "expectedModelConfigRevision": 7,
+  "selection": {
+    "type": "storyboard_rows",
+    "scriptNodeId": "script_1",
+    "rowIds": ["row_3", "row_4"],
+    "action": "storyboard_video_first_frame"
+  }
+}
+```
+
+| `action` | 对应现有入口 | 节点尚不存在时的输入来源 |
+| --- | --- | --- |
+| `storyboard_image` | `generateScriptImages` | 行的 `imageGenerationPrompt` 或剧情描述、该行角色等参考关系，按图片模式取有效配置 |
+| `storyboard_video_text` | `createAndGenerateScriptVideos` | 行的视频提示词、`durationSeconds` 和视频配置，明确 `text_to_video`，不继承首帧 |
+| `storyboard_video_first_frame` | `generateScriptVideos` | 同行视频输入，明确 `image_to_video`；以绑定图片为首帧，未完成则标依赖未就绪 |
+| `action_board` | `createScriptActionBoards` | 沿用该入口的动作板提示词、角色信息及图片配置；12 宫格是一张板图，不能当 12 次生成，输出数仍以有效配置为准 |
+
+服务端从指定版本的画布行、引用关系和已保存模型配置生成“虚拟目标”，再按 `buildGenerationConfig` 的实际模型选择、节点覆盖、能力规范化和数量展开规则解析；若本动作复用已有节点，也要应用该入口实际保留或覆盖的字段。[B4] [B13] 这要求将有关输入解析收至服务端，并用现有前端用例校验一致性，执行端消费其结果；不是 Go 直接调用 TypeScript，也不长期维护两套默认规则。前端尚未保存的模型设置必须先保存，版本不一致返回冲突。
+
+返回 line 增加 `action`、`sourceRow`、规范化 `resolvedInput` 与 `inputFingerprint`。后续建节点与入队必须使用这份输入；仅补新 `nodeId` 不改变稳定目标身份。当前队列会再次读取 `effectiveConfig`，实施时须改为消费确认快照，并在提交端核对新建节点仍匹配；不能报价后又悄悄换默认模型。[B14] `resolvedInput` 不携带密钥；第 7.1 节负责费用确认的保存与重核。
 
 以下为**合成示例，不是线上报价**；为压缩示例，只列每类一项，其他明细字段遵循后表：
 
@@ -204,6 +240,7 @@ flowchart LR
 {
   "schemaVersion": 1,
   "estimateId": "estimate_demo",
+  "costFingerprint": "sha256:cost_demo",
   "scope": {"kind": "remaining", "canvasId": "canvas_demo"},
   "source": {"canvasRevision": 42, "modelConfigRevision": 7, "inputFingerprint": "sha256:demo"},
   "observedAt": "2026-10-27T10:00:00Z",
@@ -230,11 +267,11 @@ flowchart LR
 }
 ```
 
-实际 DTO 每项还要返回 `modelDisplayName`、有效用量、`assumptions`、`priceSource`（`service_quote`／`catalog_reference`／`unavailable`）、`priceVersion`、`expiresAt`、`finalChargeLimit` 和准备状态。区间以 `{min,max}` 代替金额字符串，null 表示未知；必须在 Schema 中明确三种类型。合成例假定已获得前三项先扣规则，不能据此给现有模型默认补这个字段。
+实际 DTO 每项还要返回 `modelDisplayName`、有效用量、`assumptions`、`priceSource`（`service_quote`／`catalog_reference`／`unavailable`）、`priceVersion`、`expiresAt`、`finalChargeLimit`、准备状态及该项的 `costFingerprint`，分镜目标还包含前述动作和输入。区间以 `{min,max}` 代替金额字符串，null 表示未知；必须在 Schema 中明确三种类型。合成例假定已获得前三项先扣规则，不能据此给现有模型默认补这个字段。
 
 未知币种的 line 不塞进 CNY 汇总，`unresolved` 增加，整体不能宣称完整。缺模型／输入是 `unresolved`，缺价格是有目标但金额未知，两者都保留；用户无读取权限、画布不存在或版本不一致按真实业务错误返回，不转换成空画布／零元。
 
-建议原因码：`price_unavailable`、`unit_unsupported`、`missing_input`、`dependency_unresolved`、`invoice_required`、`price_stale`、`provider_unavailable`。短说明应能告诉用户缺的是什么，不输出内部渠道 ID、密钥、URL 或供应商原始错误。
+建议原因码：`price_unavailable`、`unit_unsupported`、`missing_action`、`missing_input`、`dependency_unresolved`、`invoice_required`、`price_stale`、`provider_unavailable`。短说明应能告诉用户缺的是什么，不输出内部渠道 ID、密钥、URL 或供应商原始错误。
 
 CLI 使用现有调用方式，实施后示例为：
 
@@ -259,14 +296,37 @@ MCP 工具名保持 `canvas.cost.estimate`。现有 CLI 的 MCP 包装把 JSON �
 ## 7. 刷新、确认和运行状态
 
 1. **保存成功后估算。** 复用 `saveCanvasForAssistant` 的画布保存检查；未保存完成时摘要显示“正在保存，费用稍后更新”，旧报价不得冒充当前画布。外部工具带版本，冲突返回 `revision_conflict`。[B10]
-2. **只在影响费用的输入变化时失效。** 模型、有效参数、输出数量、参考关系与媒体尺寸／时长、计费台词、付款来源、价表版本会失效；单纯拖动节点不重取价格。缓存只放内存，以用户范围、付款来源、有效输入和价格版本隔离；切账号／画布取消请求，旧响应不得覆盖新结果。
-3. **整画布用快照，逐项失败保留。** 解析后固定目标和模型配置版本；发现配置中途改变就拒绝返回混合版本。请求按服务批量发出、取消可传递、短时缓存；建议本地缓存响应 100ms 内，远程报价给 5 秒总期限，超时项返回未知，不阻塞画布。数值是首版验收目标，待真实服务量测，不是现有性能事实。
-4. **报价不等于授权。** `estimateId` 是定位一份估算的标识，不是付款令牌，也不是新的任务状态。现有 `proposalId`／目标快照、原操作 ID 和付费许可仍负责授权。原有任务状态与付费防重方案继续适用。[B11]
-5. **开始生成前核对。** 现有确认框／方案卡展示对应选择的费用；按同一有效输入刷新报价。模型、数量、费用或未知范围变化导致旧确认失效；返回新费用供原入口确认，不在后台悄悄重提。仅缓存到期但内容完全相同，不重复询问。查询超时不能把曾经已知的价格偷偷降为未知后继续执行。
+2. **只在影响费用的输入变化时失效。** 模型、有效参数、输出数量、参考关系与媒体尺寸／时长、计费台词、付款来源、价表版本会使展示缓存失效；单纯拖动节点不重取价格。展示缓存只放内存，以用户范围、付款来源、有效输入和价格版本隔离；切账号／画布取消请求，旧响应不得覆盖新结果。已确认费用按第 7.1 节持久保存，不受展示缓存淘汰影响。
+3. **整画布用快照，逐项失败保留。** 解析后固定目标和模型配置版本；发现配置中途改变就拒绝返回混合版本。请求按服务有限并发，支持时才批量发出；取消可传递、短时缓存。建议本地缓存响应 100ms 内，远程报价给 5 秒总期限，超时项返回未知，不阻塞画布。数值是首版验收目标，待真实服务量测，不是现有性能事实。
+4. **报价不等于授权。** `estimateId` 只定位读取结果，`costFingerprint` 只校验内容；两者都不是付款令牌或新的任务状态。原有付费许可和操作防重继续负责授权；本任务须扩展现有授权记录保存费用，不能假定已有。任务状态设计 [B11] 仍是建议稿，实际接纳行为以 [B12] 为准。
+5. **开始生成前核对已确认快照。** 现有确认框／方案卡展示本次选择的费用；可信确认入口保存服务端核验的费用快照。每批新任务接纳前，按第 7.1 节与该快照逐目标比较；输入、费用或未知范围不一致返回 `cost_confirmation_required`，回原入口展示新报价，不在后台悄悄重提。仅缓存到期、时间戳更新且费用事实相同，不重复询问。查询超时不能把曾经已知的价格降为未知后继续执行。
 6. **本次估算不实现硬限额。** 首版显示 `advisory=true`，所有执行仍需原有许可。只有计费方能在提交和最终结算强制兑现上限，未来才可实现“最多花 ¥100 自动做完”；本文没有授权该功能。
 7. **交付与结算分开。** 有结果但 `billing_status=pending`，仍写“待账单核对”；既不把先扣额记作实际费用，也不减掉预计退款。首版不建项目实扣总账，不轮询生产账单修复；历史账务查原有回执。
 
 读操作必须证明没有素材外传、资源创建、任务创建、钱包写入或提案登记。缺媒体元数据时返回缺失，不能通过 `EnsureResourceMediaMetadata` 或上传链条悄悄补齐。已有非纯读的超分提交预检可以继续服务用户明确发起的动作，但不纳入自动预算刷新。
+
+### 7.1 确认费用的持久记录与提交校验（拟增加，步骤 C 必做）
+
+**在现有 `GenerationAuthorization` 中增加 `costSnapshot`，随 `generation_authorization_json` 一起持久保存。** 它属于这次用户已确认的有限制作计划，不另建报价表、钱包账本或授权系统。现有 `Targets` 继续保存制作输入；费用快照按稳定目标身份关联这些输入，并保存以下服务端生成的事实：
+
+| 快照内容 | 用途 |
+| --- | --- |
+| `schemaVersion`、`estimateId`、`costFingerprint`、`confirmedAt`、画布／模型配置版本 | 标识用户确认的那一份内容；重启后仍可读回 |
+| 每目标的 `action`、`inputFingerprint`、请求／输出数、付款来源与币种 | 防止同一节点换模型、数量或购买路径后沿用原确认 |
+| 每目标的三种金额、区间、计价依据、假设、未知原因、覆盖状态；按币种合计 | 保留用户当时看到的已知部分和未计入部分，不能只存一个总数 |
+| 各项 `priceSource`、`priceVersion`、`observedAt`、`expiresAt`、`advisory` | 记录依据与时效；报价无锁价保证时仍是参考估算 |
+
+`costFingerprint` 对规范化目标、有效输入、付款来源、金额、计价依据、假设、`advisory` 及未知范围计算摘要；排除读取时间、`estimateId` 和显示格式。分镜使用来源行与动作标识，建节点后由服务端验证映射，不能仅因新增 `nodeId` 就使指纹变化。价格版本变化必须重取报价，但只有版本号或时间变化、费用事实完全相同，不要求用户重复确认。输入指纹与费用指纹分开，十进制金额先规范化再比较，不能拿界面舍入字符串比较。
+
+**首次确认：** `ConfirmAssistantProduction` 新增必填 `expectedCostFingerprint`，值来自卡片实际显示的 `proposal` 报价。服务端重新读取已保存目标并报价，摘要不符就返回新报价且不接纳任务；相符后把服务端生成的完整 `costSnapshot` 连同 `SourceTurnID`、`ProposalID`、`Targets` 写入同一授权 JSON，再原子接纳首批。客户端不上传可信金额，也不能通过查询写入授权；尚未确认的展示结果不必持久化，重启后重新展示即可。首次确认旧请求没有该字段时，回原卡片重新报价，不能默认为同意未知费用。[B12]
+
+**后续批次与重启：** `SubmitAuthorizedGeneration → admitProductionTargets` 对每个尚未接纳的目标读取原授权的 `costSnapshot`，重新报价后比较对应 line；不能将剩余批次小计与原整单总额比较。恢复轮次沿用现有 `GenerationAuthorizationJSON` 复制机制，必须完整携带费用快照，仍以来源轮次记录为准。[B15] 先按原操作 ID 查已接纳任务并返回原回执；已接纳项不因价格变化重新购买。对尚未接纳项，模型、数量、金额、假设、付款来源或未知范围变化时阻止整个本次新批次；保留旧快照，给剩余目标生成新方案确认，不覆盖原确认。旧授权缺快照时，已接纳任务继续恢复，新任务必须重新确认。
+
+远程核价在数据库事务外完成；进入原接纳事务后重新核对目标／配置版本、来源授权和本轮核价是否仍新鲜，再保存确认记录与任务。现有 `operationSession` 在事务内，因此需要在其调用方增加核价预检，并只将服务端核价结果传入事务；不能把网络请求塞进持锁事务。无上游锁价承诺时，核价与实际扣费之间仍可能变价，这正是保留 `advisory=true`、不承诺最高费用的原因。
+
+**手动分镜与外部提交也要携带确认依据：** 手动批量入口把显示的服务端费用快照及规范化目标随现有 `generationBatches` 保存成功后才开始排队；它只是费用比较依据，不能产生新的付费权限。各目标实际提交携带该项 `expectedCostFingerprint`，不从实时默认配置重算已确认输入。`SubmitExternalGeneration`、`CreateCreationRun` 和普通 `CreateTask` 的画布媒体新任务接纳分支复用同一费用比较器；超分在 `CreateMediaUpscale` 的素材准备前核对，防止另一入口绕过。服务端重算核验后，将该次核价事实随原操作回执／任务输入保存，不能相信客户端自报金额。[B5] [B14] [B16] [B17] [B18] 没有保存快照的历史批次只恢复已接纳项，尚未提交项回原确认框；不从当前价格补造“以前已确认”的金额。
+
+这一补充由步骤 C 在本任务内完成，不依赖另一个任务将 [B11] 变成实现。它要求扩展授权 JSON、批次元数据及提交入参；不新增数据库表，但必须同步 API、任务输入和数据库文档中的字段含义。未完成持久记录与提交端比较前，只能交付读取和展示，不能宣称已实现“费用变化使旧确认失效”。
 
 ## 8. 展示位置：不加新的操作入口
 
@@ -282,19 +342,19 @@ MCP 工具名保持 `canvas.cost.estimate`。现有 CLI 的 MCP 包装把 JSON �
 
 | 步骤 | 大致规模 | 可交付结果与完成证据 |
 | --- | --- | --- |
-| A：先贯通一个真实读取链 | 2—3 人日，中 | 确认上游待定合同，复用图片计价函数提供只读报价；本地服务、操作、CLI／助手和现有确认框显示同一图片金额。其他三类保留目标并明确未知。使用真实只读目录／报价读回和无付费 fixture；这是可评审的第一步，**还不是本任务 MVP**。 |
-| B：覆盖四类与整画布 | 3—5 人日，中到大 | 接入视频、配音、音乐、超分无上传报价；处理多输出、分镜去重、依赖未就绪、未知价、币种和先扣；画布摘要与所有原确认入口统一。四类混合例返回一致金额，零上传／零创建断言通过。 |
-| C：失效与交付检查 | 1—2 人日，中 | 保存／版本／缓存／账号隔离、提交前重核价，替换旧前端计算；实际 UI 检查摘要、原确认框和助手，CLI／MCP 读回一致；更新 API 和 CLI 开发文档。 |
+| A：先贯通一个真实读取链 | 2—3 人日，中 | 先核对已有图片／视频 quote 的计算和测试，只为一个已有图片节点、一个可纯元数据计价档位补生成侧认证适配；不先做服务端批量或新计价算法。本地操作、CLI／助手和原确认位置显示同一读取结果。其他三类保留目标并明确未知；真实只读报价读回加无付费 fixture。这一步不承诺新费用确认保护，**还不是本任务 MVP**。 |
+| B：覆盖四类与整画布 | 3—5 人日，中到大 | 接入视频、配音、音乐、超分无上传报价；完成分镜动作、虚拟目标和执行共用输入解析，处理多输出、去重、依赖未就绪、未知价、币种和先扣；画布摘要与所有原确认入口统一。四类混合例及同一行不同动作返回正确清单，零上传／零创建断言通过。 |
+| C：保存确认费用并验证接纳 | 3—5 人日，中到大 | 按第 7.1 节扩展授权 JSON、批次快照、确认入参和各新任务入口；事务外核价、事务内核验并保存，覆盖重启、助手后续批次和旧授权。另做保存／版本／缓存／账号隔离，替换旧前端计算，检查 UI 与 CLI／MCP 一致；同步 API、CLI、任务输入和数据库文档。不能只做前端刷新。 |
 
-**A+B+C 合计约 6—10 人日，完成后才称最小可用版。** 四类都进入清单不等于四类最终实费都能事先确定；账单计费保持未知是正确结果。如果上游只读报价接口无法交付，可先交 A 的部分查询，但必须叫阶段交付，不能把未知全填上就称完整估价完成。
+**A+B+C 合计约 8—13 人日，完成后才称最小可用版。** 相比初稿增加的 2—3 人日用于保存确认费用及接纳校验，不依赖另一份方案已实施。A 的上游认证与售价合同仍待确认；C 的前置是 B 已有稳定目标及统一输入解析。四类都进入清单不等于四类最终实费都能事先确定；账单计费保持未知是正确结果。如果上游只读报价接口无法交付，可先交 A 的部分查询，但必须叫阶段交付，不能把未知全填上就称完整估价完成。
 
 后续按需求再做“计划估算与实际结算对比”，约 2—4 人日，前提是上游结算恢复且回执能对应每次执行；不在本次 MVP。自动预算上限、免确认执行、自动选最便宜模型和本地手填价均不安排，避免把费用展示扩成资金管理产品。
 
-迁移无需修改历史任务或重算旧账：新 DTO 是读取投影。完整切换前保留原提交链路，使用同一组参数对照新旧显示；对照只读取，不能双提交。启用后只保留一个预算权威；失败时降为“当前无法估算”并沿用既有明确确认，不恢复硬编码旧价格。若核价发生在已展示确认之后，失败就取消本次接纳并回到原确认处。回退只撤展示／新读取入口，不影响已接纳任务恢复，不删除历史授权记录。
+迁移不改历史任务金额、不重算旧账；新确认必须写费用快照，旧授权及旧批次没有快照时按第 7.1 节处理。完整切换前保留原提交链路做参数对照，只读取、不能双提交。启用后只保留一个预算权威；失败显示“当前无法估算”，已知变未知必须回原入口重新确认，不能沿用原金额自动接纳。回退展示／读取接口时仍保留已启用的费用确认检查与快照；无法核价就暂停新接纳，已接纳任务照常恢复。不允许回退成忽略 `costSnapshot` 却继续自动提交的旧版本，也不删除历史授权记录。
 
 ## 10. 验收矩阵
 
-下列是实施验收要求，当前状态全部为**未执行**；本轮仅完成源码、文档和公开接口核查，不把该核查写成产品已通过测试。
+下列是实施验收要求，当前状态全部为**未执行**；初稿完成源码、文档和公开接口核查，此次评审修订仅复核源码与文档，不把这些核查写成产品已通过测试。
 
 | 标准 | 证据级别／证明位置 | 状态 |
 | --- | --- | --- |
@@ -303,10 +363,13 @@ MCP 工具名保持 `canvas.cost.estimate`。现有 CLI 的 MCP 包装把 JSON �
 | 音频 1,000 个计费字符按 ¥200／百万得 ¥0.20；不是 1,000 个 Token | fixture：汉字、英文、emoji、换行和计费字符规则；混合音乐按次例 | 未执行 |
 | Token 视频、未知依赖、缺价 BYOK、过期／离线都不变 ¥0 | fixture：单项原因、覆盖数、计价类型与摘要断言 | 未执行 |
 | 已有图片／共享依赖只计一次，分镜行和已绑定子节点不重复 | fixture：解析实际画布结构，覆盖未物化行、组图、超分多输入 | 未执行 |
+| 同一分镜行的图片、文生视频、首帧视频、动作板分别报价；目标节点尚不存在也可查询 | fixture：四种 action 与真实提交规范化输入逐项对照，查询不建节点；动作板不是 12 次请求；缺 action 不猜测，建节点后指纹不漂移 | 未执行 |
 | 大于 24 个待制作目标不被悄悄截断；运行中／取回不列为新购买 | fixture：大小画布、任务状态与明确再生成选择 | 未执行 |
 | 自动刷新与 MCP 只读查询不会上传、生成、创建资源或改钱包 | local：实际 handler→服务→适配器；拦截上传和创建端点，断言调用次数为 0；只读身份可查费用且不能生成 | 未执行 |
 | CNY／USD／不同发行方积分不混加；同币种不同账户不能共用余额 | fixture：分组总数与 fundingGroups；null 币种不落入 CNY | 未执行 |
 | 保存失败、改参数、改价、切账号、旧响应晚到不展示为当前价格 | local：版本冲突与前端生命周期用例；涨价后原确认不派发 | 未执行 |
+| 已确认费用重启后可读回，助手第二批和手动等待项仍核对原快照 | local：确认首批后重启并改价；经真实确认／提交入口断言新任务接纳和上游创建均为 0，原快照不被覆盖；金额未变仅时间更新可继续 | 未执行 |
+| 旧授权缺快照、已知变未知、修改付款来源不能沿用旧确认；原任务恢复不受影响 | local：来源轮次及批次持久记录读回；各画布媒体提交入口缺快照／摘要不符拒绝新接纳，原操作 ID 重放仍返回同一任务 | 未执行 |
 | 相同快照在 UI、内置助手、MCP、CLI 返回一致费用和未知项 | local：经真实 operations 返回，比较 DTO；助手不得靠 model.catalog 自算 | 未执行 |
 | 超分 pending 不能显示已结算／已退款；先扣不是最终上限 | fixture + UI：模拟账单待结算与无上限；沿用 #56 条件文案 | 未执行 |
 | 摘要／原有确认框可读，无新增按钮设置，文案无内部供应商和渠道 ID | local：明暗主题、窄窗、长模型名、金额小数、加载及失败；浏览器截图只查看，不点收费确认 | 未执行 |
@@ -318,7 +381,7 @@ MCP 工具名保持 `canvas.cost.estimate`。现有 CLI 的 MCP 包装把 JSON �
 
 本文是规范建议，不是已批准实施合同；用户已认可的四项方向见第 1 节。总管已收到跨项目协调消息，用户随后转达“现无价格接口约定，由架构师提出并标待定”。不把这条答复写成两侧接口已经开发或承诺上线。
 
-后续实施先读本文，再复核当时源码和上游报价样例；尤其检查现有超分估价的素材上传、音频计费单位与报价时效。已有任务恢复和付费确认设计仍以 [generation-task-state.md](generation-task-state.md) 及其当次实施证据为准。本文件不恢复其他任务已推迟的功能。
+后续实施先读本文，再复核当时源码和上游报价样例；尤其检查已有图片／视频报价的适用账号、现有超分估价的素材上传、音频单位及确认快照。已有任务恢复读当前代码；[generation-task-state.md](generation-task-state.md) 只作设计背景，不能代替持久费用确认的实施证据。本文件不恢复其他任务已推迟的功能。
 
 记忆仅保存发现入口和避免误算的事实；全文仍是准稿。完整验收合同被用户批准后再更新为 `owner-confirmed` 并保存对应合同记忆。本轮不生成 `/goal`，因为还没有实现授权。
 
@@ -335,10 +398,21 @@ MCP 工具名保持 `canvas.cost.estimate`。现有 CLI 的 MCP 包装把 JSON �
 [B9]: ../../backend/cmd/beeftv/main.go
 [B10]: ../../web/src/services/assistant-canvas-save.ts
 [B11]: generation-task-state.md
+[B12]: ../../backend/internal/app/assistant_production.go
+[B13]: ../../web/src/lib/canvas/canvas-generation-config.ts
+[B14]: ../../web/src/pages/canvas/use-canvas-generation-batches.ts
+[B15]: ../../backend/internal/assistantturns/continuation.go
+[B16]: ../../backend/internal/app/external_generation.go
+[B17]: ../../backend/internal/app/creation.go
+[B18]: ../../backend/internal/app/task_creation.go
 [P1]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/controller/enterprise_prices.go
-[P2]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/docs/investigations/topaz-upscale-billing-2026-10-27.md
+[P2]: https://github.com/Sunnyender-org/beefapi/blob/daf2dc76fdf368015a1dda7daad9fd5fe0a20a08/docs/investigations/topaz-upscale-billing-2026-10-27.md
 [P3]: https://beeftv.app/api/enterprise/catalog
 [P4]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/relay/channel/tencent/tokenhub_media.go#L258
+[P5]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/router/api-router.go#L606
+[P6]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/controller/online_media.go
+[P7]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/controller/online_video.go
+[P8]: https://github.com/Sunnyender-org/beefapi/blob/e49bfcf325a1e5aa020b450828e04a6d066b1a36/router/online_media_route_test.go
 [U1]: https://github.com/basketikun/infinite-canvas/blob/9cd3deacbcc598361807afc16c059a80dd18b6f9/web/src/stores/use-config-store.ts
 [U2]: https://github.com/basketikun/infinite-canvas/blob/9cd3deacbcc598361807afc16c059a80dd18b6f9/web/src/components/agent/agent-chat-message.tsx
 [U3]: https://help.weavy.ai/en/articles/12267166-figma-weave-credit-system
