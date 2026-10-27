@@ -1,0 +1,325 @@
+{
+  "kind": "dry-run",
+  "generated_at": "2026-10-27",
+  "repo": "glanderness/BeefTV",
+  "source": "gh issue list/view（账号 enderzcx，2026-10-27 只读读取）",
+  "target": {
+    "base_token": "OcHnbZCXjaMwwrsx4laciEvRnHo",
+    "table_id": "tblvTTmtzdPF6qxx",
+    "table_name": "需求表（BeefTV 项目跟进）",
+    "read_at_rev": 276,
+    "row_count": 130,
+    "fields": {
+      "需求内容": "fldsisKbk9 (text)",
+      "报错日志": "fldijvUPne (text)",
+      "进度说明": "fld75zOrkE (text)",
+      "目前状况": "fldGSVHgeh (select: 已解决 / 正在处理)",
+      "负责人": "fldSIkfdZE (select: lucas / sunny)",
+      "对应截图": "fldzeoKcZ8 (attachment)"
+    }
+  },
+  "writes_performed": 0,
+  "note": "本文件是试跑产物，不是执行记录：没有任何一条请求发往飞书。所有 record_id 来自 2026-10-27 的只读导出，写入前必须重新读取表以核对 record_id 仍然存在。",
+  "actions": [
+    {
+      "issue": 19,
+      "title": "[Feature] 如果能增加本地ComfyUI支持就更好了",
+      "author": "aije",
+      "created": "2026-09-27",
+      "updated": "2026-10-10",
+      "labels": ["enhancement"],
+      "comments": 2,
+      "decision": "merge",
+      "confidence": "high",
+      "target_record_id": "reczz28RaeeLOBPt",
+      "target_需求内容": "支持接入 ComfyUI 与 RunningHub 工作流生态",
+      "payload": {
+        "报错日志": "3. GitHub Issue #19（https://github.com/glanderness/BeefTV/issues/19，@aije，2026-09-27 提出，enhancement，2 条评论）：希望在 BeefTV 内直接接入 ComfyUI——用户上传工作流 API，前端用下拉选项选择生图或视频工作流。维护者 2026-10-10 回复：已有实现候选 PR #39，暂保留跟踪；该 PR 同时包含 ComfyUI 与一键成片/SRT，建议先拆分范围，再验证工作流提交、精确取消和结果取回，目前不能视为已经可用。",
+        "进度说明": "\n\n2026-10-27 同步 GitHub Issue #19（并入本行，与 reczz28PgeY93sla / reczz28PgeY93K2T / reczz28PgeY91g6r 同组）：仓库侧状态未变，仍是「有实现候选 PR #39，待拆分范围与验收」；ComfyUI 工作流接入 PR #173 / #198 仍未合入 main。"
+      }
+    },
+    {
+      "issue": 21,
+      "title": "[Feature] 鼠标滑动的时候画布放大有问题",
+      "author": "zc159237-design",
+      "created": "2026-09-27",
+      "updated": "2026-10-10",
+      "labels": ["enhancement"],
+      "comments": 1,
+      "decision": "merge-or-new",
+      "confidence": "low",
+      "needs_human_decision": true,
+      "target_record_id": "reczz28Qtop6iOwJ",
+      "target_需求内容": "画布在多节点的状态下不那么卡顿、移动起来更丝滑",
+      "alternative": "新建一行（需求内容：画布缩放/放大动画卡帧，流畅度优化）",
+      "payload": {
+        "报错日志": "3. GitHub Issue #21（https://github.com/glanderness/BeefTV/issues/21，@zc159237-design，2026-09-27，enhancement）：鼠标滑动时画布放大动画卡帧，放大比例不流畅，希望优化缩放组件的流畅度与比例。维护者 2026-10-10 回复：本轮已检查缩放更新路径并运行滚轮单元/浏览器回归，未复现节点位置或尺寸跳动；这些测试不代表已解决现场卡顿，请补充版本、系统、鼠标或触控板、画布节点数量及可复现录屏，暂保留。",
+        "进度说明": "\n\n2026-10-27 同步 GitHub Issue #21（并入本行，待人工确认归属）：诉求同为画布缩放/平移的流畅度与性能，本行验收口径已覆盖「节点变多即卡顿」；issue 侧仍缺版本、输入设备、节点数量与录屏，未复现。"
+      }
+    },
+    {
+      "issue": 98,
+      "title": "[Feature] 能否增加删除助手的聊天记录",
+      "author": "yb3rd",
+      "created": "2026-10-08",
+      "updated": "2026-10-10",
+      "labels": ["enhancement"],
+      "comments": 1,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "删除内置助手的聊天记录",
+        "报错日志": "来源：GitHub Issue #98（https://github.com/glanderness/BeefTV/issues/98，@yb3rd，2026-10-08，enhancement）：能否增加删除助手的聊天记录，后期多余的会很多很乱；建议增加一个删除当前对话记录的功能。维护者 2026-10-10 回复：已记录为功能需求，保留；需要分别明确画布助手与独立创作会话的删除范围，并处理历史记录和正在进行的任务；本轮 bug 修复不夹带该功能。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #98）：仓库侧已记为功能需求、保留未做。待定范围：①画布助手会话；②独立创作会话；需覆盖历史记录与进行中任务的处理。表中无对应行，按新行跟进。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 103,
+      "title": "[Bug] Panic detected, error: runtime error: invalid memory address or nil pointer dereference",
+      "author": "fanme",
+      "created": "2026-10-09",
+      "updated": "2026-10-10",
+      "labels": ["bug"],
+      "comments": 2,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "图片二次处理时客户端 Panic（待补堆栈复现）",
+        "报错日志": "来源：GitHub Issue #103（https://github.com/glanderness/BeefTV/issues/103，@fanme，2026-10-09，V1.7.14，Windows）：对图片进行二次处理、修改人物表情时出现 runtime error: invalid memory address or nil pointer dereference（panic）。维护者 2026-10-10 回复：缺少 panic 堆栈，无法可靠定位到具体代码，保留为待复现；再次发生请补充 BeefTV 版本、模型及渠道协议、具体编辑步骤与该次诊断日志中的完整 panic 堆栈。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #103）：待复现类缺陷，缺 panic 堆栈，本轮不认定已修复。表内「图片生成报错」「图片生成失败」两行已解决的是协议错配与 HTTP 400 误判，不是本 panic。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 112,
+      "title": "[Bug] 选中技能正文超过 64KB 时请求被 agent-host 以 413 拒绝，前端误报「未能确认完成」并进入无法恢复的卡死状态",
+      "author": "aking5879-byte",
+      "created": "2026-10-10",
+      "updated": "2026-10-12",
+      "labels": [],
+      "comments": 3,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "技能正文超 64KB 被 agent-host 413 拒绝后前端卡死",
+        "报错日志": "来源：GitHub Issue #112（https://github.com/glanderness/BeefTV/issues/112，@aking5879-byte，2026-10-10，v1.7.14 Windows 打包版，v1.7.15 与 main 同样存在）：在画布创作助手中选中技能「一图成片-电影广告全能导演」（正文 73,641 字节）后发送任意消息，弹出「这一轮未能确认完成，可能已有改动」，点「重新读取」无反应，此后无法发送新消息，只能重启或新建会话。维护者 2026-10-10~10-12 回复：已在 PR #115 修复（8c015a5）——发送前技能校验/轮次快照失败会明确拒绝并允许继续发送，宿主明确的 body_too_large 拒绝不再残留恢复锁，技能正文限制统一为单份 256 KiB / 总计 512 KiB；修复随 v1.7.16 发布，请更新后复测再关闭。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #112）：修复已随 v1.7.16 发布，issue 保留待现场确认（维护者口径）。待现场在 ≥ v1.7.16 复测大技能发送；确认正常后关闭 issue，再按「已核对并发布」口径流转本行。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 118,
+      "title": "[Bug]（正文：15 张图片批量生成大量失败，提示结果尚未确认，API 侧已扣费）",
+      "author": "xlc212",
+      "created": "2026-10-10",
+      "updated": "2026-10-11",
+      "labels": ["bug"],
+      "comments": 3,
+      "attachments": [
+        "https://github.com/user-attachments/assets/9b6daa78-38ad-43f9-afb0-a6b641ba6b2f",
+        "https://github.com/user-attachments/assets/8d77f0c2-f42d-49de-852e-b6e186848863"
+      ],
+      "decision": "create",
+      "confidence": "medium",
+      "target_record_id": null,
+      "alternative": "若按「错误信号归类」，可并入 reczz28RZUXaynMg（submission_uncertain 误判族）；本条按独立根因候选处理",
+      "payload": {
+        "需求内容": "批量生成 15 张图片时结果丢失（API 侧已扣费）",
+        "报错日志": "来源：GitHub Issue #118（https://github.com/glanderness/BeefTV/issues/118，@xlc212，2026-10-10，v1.1.75，自配 API，附 2 张截图）：image2 图片生成数量手动填到最大 15 张后大量失败，提示「后台任务处理失败：图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果」，但 API 控制台显示调用成功并已扣费。维护者 2026-10-11 回复：15 张会拆成 15 个独立的单图任务（不是一次请求返回 15 张）；「结果尚未确认」表示客户端不能确认这次请求的结果，需补充失败任务的脱敏诊断（版本、协议、渠道域名、任务 ID、requestId/httpStatus/receivedBytes/outcome）来区分响应中断、解析失败与落盘失败；断线、空响应、重启恢复与避免重复扣费的 5 项专项回归已通过，但不能证明本次失败原因已修复；另已修删除确认（PR #120）与恢复次数计算问题。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #118）：待客户补充失败任务的脱敏诊断后定位。与 reczz28RZUXaynMg（submission_uncertain 误判锁定）、reczz28PgeY94LNy（上游失败下游卡死）属同一错误信号族但根因候选不同，暂按独立行跟进，行内交叉引用这三行。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 122,
+      "title": "[Bug] 添加一个新的模型服务器后，就无法删除此模型服务器，以及无法设置默认文本模型、生图模型、视频模型",
+      "author": "shen-joe",
+      "created": "2026-10-11",
+      "updated": "2026-10-11",
+      "labels": ["bug"],
+      "comments": 0,
+      "decision": "merge",
+      "confidence": "high",
+      "target_record_id": "reczz28PgeY94YkK",
+      "target_需求内容": "模型渠道无法正常删除",
+      "payload": {
+        "报错日志": "来源：GitHub Issue #122（https://github.com/glanderness/BeefTV/issues/122，@shen-joe，2026-10-11，v1.7.15 / Windows 10 x64）：添加一个新的模型服务器后无法删除该服务器，且无法设置默认文本模型、生图模型、视频模型；期望模型服务器可正常增删改查、默认模型可自由选择。issue 至今 open，无维护者回复。",
+        "进度说明": "\n\n2026-10-27 同步 GitHub Issue #122（并入本行）：报告版本 v1.7.15 早于本行修复版本（PR #127 63ccdb63，v1.7.17 上线；PR #188 28cdde3c，v1.7.26 上线）。待现场在 ≥ v1.7.17 复验「删除模型服务器」与「设置默认文本/生图/视频模型」两项；确认后回复并关闭 issue，本行状态维持已解决。"
+      }
+    },
+    {
+      "issue": 148,
+      "title": "Agent: ByteString conversion fails for any LLM provider when GUI text is Chinese",
+      "author": "Treyang",
+      "created": "2026-10-14",
+      "updated": "2026-10-14",
+      "labels": [],
+      "comments": 0,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "macOS 中文界面下 Agent 调用任何模型均失败（ByteString 编码）",
+        "报错日志": "来源：GitHub Issue #148（https://github.com/glanderness/BeefTV/issues/148，@Treyang，2026-10-14，macOS 中文界面）：画布 Agent 调用任何 LLM 模型（任何上游、任何协议）都会在同一点失败，前端显示「模型没有完成回复」，durable session 中记录 stopReason: error，错误为 Cannot convert argument to a ByteString because the character at index 31 has a value of 31896。issue 至今 open，无回复。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #148）：影响面为 macOS 中文界面下 Agent 全上游失败，建议优先级高。表内「优化Agent的UI交互和逻辑」行覆盖助手 UI 与交付链路，不含该编码缺陷，按新行跟进。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 152,
+      "title": "[Bug] 能不能允许使用本地模型和内网模型",
+      "author": "shen-joe",
+      "created": "2026-10-15",
+      "updated": "2026-10-20",
+      "labels": ["bug"],
+      "comments": 2,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "允许使用本地/内网模型服务（私有上游）",
+        "报错日志": "来源：GitHub Issue #152（https://github.com/glanderness/BeefTV/issues/152，@shen-joe，2026-10-15，v1.7.17）：希望允许使用本地模型，最低允许内网模型；原文质疑「既然开源了，限制这个的意义是什么」。评论：exrock 给出 CANVAS_ALLOW_PRIVATE_UPSTREAMS=true 与 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=0.0.0.0 的配置方式；报告人 2026-10-20 回复「ok，关闭吧」，但 issue 至今仍为 open。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #152）：本地/局域网上游限制已由 PR #171（63c648d0，merged 2026-10-16）与 PR #177（merged 2026-10-16）放开并发布，报告人已确认环境变量可用并要求关闭。建议：先由维护者回复并关闭 issue，本行按「已核对并发布」记为已解决；若用户认为「开箱可用」才是已解决，则本行改为正在处理并注明当前需手工配置环境变量。",
+        "目前状况": "已解决",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 180,
+      "title": "[Bug] 后门病毒",
+      "author": "z505644252",
+      "created": "2026-10-16",
+      "updated": "2026-10-16",
+      "labels": ["bug"],
+      "comments": 0,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "Windows 安装包被杀软报 Win64.Backdoor.Brockendoor（1.7.24）",
+        "报错日志": "来源：GitHub Issue #180（https://github.com/glanderness/BeefTV/issues/180，@z505644252，2026-10-16，1.7.24）：Win64.Backdoor.Brockendoor.Psmw（后门程序）。无复现步骤、无截图、无维护者回复。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #180）：安全类反馈，待核实是杀软误报还是发布产物异常；需要对照 v1.7.24 发布产物的签名与哈希，必要时向杀软厂商提交误报申诉。表内「苹果和微软的应用签名问题」行记录签名与公证未完成，与本行相关但不含杀软报毒处置。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 181,
+      "title": "[Bug] Agnes视频插件 requiresPublicMediaUrls 默认 true，本地参考图被拦截，且每次发版重置",
+      "author": "snai9",
+      "created": "2026-10-17",
+      "updated": "2026-10-17",
+      "labels": [],
+      "comments": 0,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "Agnes 视频插件 requiresPublicMediaUrls 默认 true 拦截本地参考素材",
+        "报错日志": "来源：GitHub Issue #181（https://github.com/glanderness/BeefTV/issues/181，@snai9，2026-10-17，v1.7.24）：视频节点选 agnes-video-2.5-flash 或 agnes-video-2.5，在参考素材里挂本地参考图/视频/音频后点击生成，本地素材被拦截并提示需要公网 URL；期望与 Agnes 图片插件一致支持本地参考素材；并指出该默认值每次发版都会被重置。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #181）：待核对插件 manifest 中 requiresPublicMediaUrls 的默认值来源与「每次发版重置」的原因（插件包生成脚本还是宿主默认覆盖），再决定改默认值或改本地素材上传策略。表内无对应行。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 210,
+      "title": "[Bug] xai-video / minimax-hailuo-video-v2 / runway-video 三个协议插件与官方接口字段不一致",
+      "author": "50kg",
+      "created": "2026-10-20",
+      "updated": "2026-10-20",
+      "labels": ["bug"],
+      "comments": 0,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "xai-video / minimax-hailuo-video-v2 / runway-video 三个协议插件字段与官方不一致",
+        "报错日志": "来源：GitHub Issue #210（https://github.com/glanderness/BeefTV/issues/210，@50kg，2026-10-20，BeefTV v1.7.27 main@bcc277f，插件版本均为 2.0.0，桌面版 v1.7.24 同样复现）：报告方为 API 服务商，指出 xai-video、minimax-hailuo-video-v2、runway-video 三个协议插件的请求字段与各厂商官方格式不一致；issue 正文含逐字段对照。无维护者回复。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #210）：需按官方文档逐字段核对三个插件并修正 manifest 或协议实现。与「接第三方的api 这方面模块能不能好好优化下」属同一领域的不同具体项，暂按独立行跟进并交叉引用。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 213,
+      "title": "[Bug] @素材后，在输入框输入文字时软件黑屏卡死 Ubuntu22.04",
+      "author": "IgnorAnsel",
+      "created": "2026-10-21",
+      "updated": "2026-10-21",
+      "labels": ["bug"],
+      "comments": 0,
+      "decision": "create",
+      "confidence": "high",
+      "target_record_id": null,
+      "payload": {
+        "需求内容": "Ubuntu 22.04 @素材后输入文字黑屏卡死",
+        "报错日志": "来源：GitHub Issue #213（https://github.com/glanderness/BeefTV/issues/213，@IgnorAnsel，2026-10-21，v0.12，Ubuntu 22.04）：@素材后，在输入框输入文字时软件黑屏卡死。无截图、无维护者回复。",
+        "进度说明": "2026-10-27 登记（来源：GitHub Issue #213）：Linux 桌面端卡死类缺陷，待复现（需 Ubuntu 22.04 环境与该次诊断包）。表内无 Linux 平台对应行。",
+        "目前状况": "正在处理",
+        "负责人": ""
+      }
+    },
+    {
+      "issue": 235,
+      "title": "[Bug]（正文：生图失败后不让点击重新生图了）",
+      "author": "smw474981603-ctrl",
+      "created": "2026-10-22",
+      "updated": "2026-10-22",
+      "labels": ["bug"],
+      "comments": 0,
+      "attachments": ["https://github.com/user-attachments/assets/0b01514a-2785-4553-a25a-4b46d9332977"],
+      "decision": "merge",
+      "confidence": "high",
+      "target_record_id": "reczz28QXamcO9oW",
+      "target_需求内容": "画布节点生成失败后支持直接在原节点点击「重新生成」（无需删除重建节点）",
+      "payload": {
+        "报错日志": "来源：GitHub Issue #235（https://github.com/glanderness/BeefTV/issues/235，@smw474981603-ctrl，2026-10-22，v2.0.1，附 1 张截图）：生图失败后节点不允许再点击重新生图；期望可以取消任务并允许重新生图。issue 至今 open，无维护者回复。",
+        "进度说明": "\n\n2026-10-27 同步 GitHub Issue #235（并入本行）：报告版本 v2.0.1 早于本行修复版本（随 v2.0.2 发布，PR #255 收紧 submission_uncertain 假阳性锁定）。待现场在 ≥ v2.0.2 复验后回复并关闭 issue，本行状态维持已解决。\n\n2026-10-27 核对提示（本轮只读发现）：本行原引用的「PR #226 失败节点重试」与仓库实际内容不符——PR #226 是「助手宽表格支持侧栏内横向滚动」（merged 2026-10-22）。失败节点原地重新生成的能力在 web/src/pages/canvas/use-canvas-generation-retry.ts 中，至少可追到 2026-10-17 的 ceb3173 与 PR #217（6450d4c）。建议修正本行证据链后再据此关闭 issue #235。"
+      }
+    },
+    {
+      "issue": 244,
+      "title": "[Bug] 图片局部重绘功能报错",
+      "author": "ssrshz",
+      "created": "2026-10-23",
+      "updated": "2026-10-23",
+      "labels": ["bug"],
+      "comments": 0,
+      "decision": "merge",
+      "confidence": "high",
+      "target_record_id": "reczz28RvpAjRHSO",
+      "target_需求内容": "seedream渠道的局部重绘的功能用不了",
+      "payload": {
+        "报错日志": "来源：GitHub Issue #244（https://github.com/glanderness/BeefTV/issues/244，@ssrshz，2026-10-23，v2.0.2 构建 2715bf2）：选择图片 → 局部重绘，点击即报错；诊断信息为画布 TmSC2yyw1yvtZp-uOz-Ji、节点 KbhK0mlEl3-3YYq-R7Cb2，原因「模型不接受当前参数」，下一步「请检查模型、尺寸、时长、格式或数量后重试」。无维护者回复。",
+        "进度说明": "\n\n2026-10-27 同步 GitHub Issue #244（并入本行）：客户在 v2.0.2 用 seedream 渠道做图片局部重绘，点击即报错，诊断归因「模型不接受当前参数」，与企微侧「seedream 渠道局部重绘用不了」是同一诉求。待补充所用模型、尺寸与渠道协议后定位；本行目前无进度说明。"
+      }
+    },
+    {
+      "issue": 248,
+      "title": "[Bug] httpStatus 400 被误判为 submission_uncertain：stage=submission_unknown 无条件覆盖错误分类，异步协议全部受影响",
+      "author": "mufanmu",
+      "created": "2026-10-24",
+      "updated": "2026-10-24",
+      "labels": [],
+      "comments": 0,
+      "decision": "merge",
+      "confidence": "high",
+      "target_record_id": "reczz28RZUXaynMg",
+      "target_需求内容": "上游返回内容安全/参数拒绝或桌面超时时误判为 submission_uncertain，锁死当前画布节点重试",
+      "payload": {
+        "报错日志": "3. GitHub Issue #248（https://github.com/glanderness/BeefTV/issues/248，@mufanmu，2026-10-24，v2.0.2，macOS arm64，自建 OpenAI 兼容渠道 APIMart，模型 gpt-image-2.5-ext / 操作 image_edit）：当任务 stage=submission_unknown 时错误分类被无条件覆盖为 submission_uncertain，即使上游在 1.4 秒内完整返回 httpStatus 400 与可读错误体（「/v1/images/edits only supports Grok image models.」），用户仍被告知「提交结果不确定，请勿重复提交，联系支持」。原文给出代码定位（错误分类函数优先判断 stage，丢弃 httpStatus/outcome）与影响面（官方插件包 88 个 provider 中 43 个声明 poll、属异步协议，均会命中该分支），建议仅在无响应体、连接中断、读响应失败时才归为 submission_uncertain。",
+        "进度说明": "\n\n2026-10-27 同步 GitHub Issue #248（并入本行）：与本行已合入的 PR #255（4e832b7e，HTTP 400/422 拒绝不再锁为 submission_uncertain）为同一处缺陷，issue 额外提供了影响面证据（88 个 provider 中 43 个异步协议）与代码定位。issue 仍 open，待含 PR #255 的正式版本（v2.0.4）发布后按本行口径复验再流转。"
+      }
+    }
+  ]
+}
