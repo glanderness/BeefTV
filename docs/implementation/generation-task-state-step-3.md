@@ -1,6 +1,6 @@
 # 生成任务状态重构：第 3 步实施说明
 
-状态：本轮实现和本机回归已完成；改动仍停在独立分支，未合入主线、未发布，也没有调用真实付费生成。
+状态：第 3 步实现已完成；已按仓库 CI 流程补齐锁定的 agent-host 测试依赖，并完成专项、app、handler 与 backend 全套复核。改动仍停在独立分支，未合入主线、未发布，也没有调用真实付费生成。
 
 依据：`docs/architecture/generation-task-state.md` 第 3.1–3.7 节及本任务已确认范围。本文只记录本分支实际完成的后台能力，不把第 4–7 步的报价、用户确认、MCP/CLI 付费守门或前端改动写成已实现。
 
@@ -68,28 +68,55 @@ sh plugin-packages/build-packages.sh
 
 该命令只生成本机被 `.gitignore` 忽略的官方协议包，供完整 app 测试加载；没有修改提交内容。
 
-通过的专项和包测试：
+专项和基础包测试：
 
 ```text
 go test ./internal/database -count=1                         通过
 go test ./internal/repository -count=1                       通过
 go test ./internal/task -count=1                             通过
-go test ./internal/task -run '^TestComputeOutcome$'            通过
-go test ./internal/app -run '^TestImageJobResultQueriesCurrentRouteWithoutCreating$' 通过
+go test ./internal/task -run '^TestComputeOutcome$'          通过
+go test ./internal/app -run '^TestImageJobResultQueriesCurrentRouteWithoutCreating$' -count=1 通过
 go test ./internal/app -run 'TestProviderBillingStates|TestImageJobIDFromHeaders|TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating|TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes' -count=1 通过
 go test ./internal/repository -run '^TestRetryOperationReceiptIsIdempotentAndAbortable$' -count=1 通过
 ```
 
-最终 app 包回归：
+补齐测试依赖：
+
+```text
+cd agent-host && bun install --frozen-lockfile 通过
+bun 1.4.2；121 个包已安装；未修改 agent-host/package.json 或 bun.lock
+```
+
+实际安装日志：`docs/implementation/evidence/generation-task-state-step-3/agent-host-bun-install.txt`。
+
+app 包专项与最终全套中的结果：
 
 ```text
 go test ./internal/app -run '^TestVideoProtocolUpgradeRecoversOriginalTasks$' -count=1 -timeout=15m 通过（约 6 分钟）
-go test ./internal/app -count=1 -timeout=20m                         通过（约 12 分钟）
+go test ./internal/app -count=1 -timeout=20m                         通过（722.649 秒）
 ```
 
-`TestVideoProtocolUpgradeRecoversOriginalTasks` 曾在默认 10 分钟的整包运行中尚未轮到结束，因此第一次整包结果是 timeout；为定位曾先用 `-skip '^TestVideoProtocolUpgradeRecoversOriginalTasks$'` 跑其余 app 用例并通过。随后该用例单独通过，最后整包在 `-timeout=20m` 下也通过。跳过不是功能失败，也不再是最终验证缺口。
+`TestVideoProtocolUpgradeRecoversOriginalTasks` 曾在默认 10 分钟的整包运行中尚未轮到结束，因此第一次整包结果是 timeout；当时用 `-skip '^TestVideoProtocolUpgradeRecoversOriginalTasks$'` 只是定位用，不能作为最终全包结论。随后长用例单独通过，app 包完整运行也通过；本次 backend 全套复跑中 `internal/app` 同样通过（882.560 秒）。app 包最终摘要日志保留在 `app-package-final.log`，专项测试原始日志保留在 `special-tests-rerun.txt`。
 
-额外执行 `go test ./... -count=1 -timeout=25m` 时，除 app 外的 Go 包基本通过，但 `internal/handler` 的 7 组真实 agent-host 集成场景失败，全部是测试启动的 Node 进程找不到本机依赖 `@earendil-works/pi-coding-agent`；错误发生在 `agent-host/server.mjs` 或对应 probe 的模块加载阶段，不涉及本步改动。按范围没有安装或改动该依赖。排除这些真实 host 场景后，`go test ./internal/handler` 通过；因此不能把 `go test ./...` 写成全量通过，真实 host 集成仍保留为环境阻塞。
+handler 7 组真实 host 集成复跑：
+
+```text
+go test ./internal/handler -run '^(TestDurableActualHostRestartsAgainstRealGoTurnAndUndo|TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure|TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure|TestDefaultDurableHostDispatchesActualNativeMediaBytes|TestFullAccessActualDurableCrossCanvasMoveCrashReplayAndGroupUndo|TestSelectedSkillsActualHostBusinessFlows|TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines)$' -count=1 -timeout=20m -v
+通过，7 组全部通过，59.601 秒
+```
+
+实际复跑日志：`docs/implementation/evidence/generation-task-state-step-3/handler-real-host-rerun.txt`。日志中的 host 仅使用本机依赖和测试夹具，没有真实上游生成。
+
+backend 全套复跑：
+
+```text
+go test ./... -count=1 -timeout=25m
+通过，2026-10-27T22:06:00Z–2026-10-27T22:20:46Z，14 分 46 秒
+```
+
+实际全套日志：`docs/implementation/evidence/generation-task-state-step-3/backend-go-test-all-rerun.txt`。
+
+第一次补依赖后的全套运行曾因 `TestDesktopColdOpenBudgetAndNoIdleOutbound` 在一次机器抖动中达到 5.208 秒而失败；没有改动该测试或放宽预算，立即单独复跑为 1.064 秒并通过，随后第二次 `go test ./...` 全套通过。第一次失败原始日志保留在 `backend-go-test-all.txt`，单测复跑日志保留在 `bootstrap-cold-open-rerun.txt`，均在同一证据目录中。
 
 第三方视频恢复问题现状：**已解决**。原任务查询、Gemini Veo query-only fallback、禁止 POST/创建、结果下载及显式缺失插件 fail-closed 断言均通过。
 
@@ -97,13 +124,13 @@ go test ./internal/app -count=1 -timeout=20m                         通过（�
 
 视频扣费现状：**已实现后台事实采集和 Outcome 投影**。视频 provider 响应中的 `usage_state` 会按当前 `RouteRun` 记录；失败、待结算、已扣费分别得到 `allowed`、`blocked`、`confirm` 的投影。第三方渠道没有可核实扣费字段时保持 `confirm`。本步没有实现前端按钮、费用报价或外部调用方确认协议。
 
-## 5. 未实现与交接边界
+## 5. 未测项、未实现与交接边界
 
-- 未改 `web/`，未做真实桌面客户端或前端绘制验收；新增的是后台和服务端测试。
+- 本轮未做真实 BeefTV、真实第三方或真实付费生成；全部任务恢复和计费断言使用本机假上游、隔离数据和临时 SQLite。
+- 未做真实桌面客户端或前端绘制验收；新增的是后台和服务端测试。Windows、web 前端及发布流水线由本轮 `backend/go test ./...` 之外的 CI job 负责，未在本机声称通过。
 - 未新增 `/tasks/:id/recover`，未改 MCP/CLI 工具合同，未实现 `paid_confirmation_required`、报价、`quoteId`、用户同意记录、外部付费开关。
 - 未新增计费状态转移或渠道退款规则表；BeefAPI 原值是证据，第三方仍交由用户确认。
-- 未调用真实 BeefAPI、真实第三方或任何付费生成；未发布、未开 PR、未合入主线。
-- v2.0.5 已公开且发布流程成功，本分支只作为独立后续实现交付，不回写发布流程，也不扩大到第 4–7 步。
+- 未发布、未开 PR、未合入主线；本分支只作为独立后续实现交付，不回写发布流程，也不扩大到第 4–7 步。
 
 ## 6. 回退与风险
 
