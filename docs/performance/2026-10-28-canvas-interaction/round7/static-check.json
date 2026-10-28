@@ -1,0 +1,248 @@
+{
+  "scope": "只读固定提交、补丁与已入库逐帧导出；未启动客户端/Go/网络。",
+  "patches": {
+    "before": {
+      "round6": {
+        "ok": true,
+        "readbackHashMatch": true,
+        "mismatched": {}
+      },
+      "round7": {
+        "ok": true,
+        "requiredTokens": {
+          "__perfLogConnectStart": true,
+          "perfConnectStartRecord": true,
+          "perfDropTargetRecord": true,
+          "containerRect": true,
+          "viewportK": true,
+          "targetNodeId": true,
+          "targetHandleId": true,
+          "entry:": true
+        },
+        "allRequiredTokens": true,
+        "probeHash": "fb10d7e0b86aff8c1164d0b2cd49337c8ec90a0a43f66348b20dc9469c436d89",
+        "probeHashMatch": true
+      }
+    },
+    "after": {
+      "round6": {
+        "ok": true,
+        "readbackHashMatch": true,
+        "mismatched": {}
+      },
+      "round7": {
+        "ok": true,
+        "requiredTokens": {
+          "__perfLogConnectStart": true,
+          "perfConnectStartRecord": true,
+          "perfDropTargetRecord": true,
+          "containerRect": true,
+          "viewportK": true,
+          "targetNodeId": true,
+          "targetHandleId": true,
+          "entry:": true
+        },
+        "allRequiredTokens": true,
+        "probeHash": "fb10d7e0b86aff8c1164d0b2cd49337c8ec90a0a43f66348b20dc9469c436d89",
+        "probeHashMatch": true
+      }
+    }
+  },
+  "probe": {
+    "hooks": {
+      "__perfLogDropTarget": true,
+      "__perfLogConnectStart": true
+    },
+    "perPointerIdGestures": true,
+    "threeIntervals": true,
+    "hoverAggregate": true
+  },
+  "runs": [
+    {
+      "side": "before",
+      "runId": "run-1-1793173561266",
+      "startSeq": 1,
+      "stats": {
+        "帧": 969,
+        "fps": 60.0,
+        "p50": 17,
+        "p95": 18,
+        "p99": 22,
+        "max": 31,
+        "gt33": 0
+      },
+      "arrayLengths": {
+        "frames": 969,
+        "frameTimestamps": 969,
+        "frameMonotonic": 969,
+        "frameDropTargets": 969,
+        "frameIndexBuilds": 969
+      },
+      "recordingSpanMs": 16138,
+      "targetSequence": [
+        {
+          "nodeId": "perf-node-19",
+          "calls": 9,
+          "firstAt": 1793173566746,
+          "lastAt": 1793173566933
+        },
+        {
+          "nodeId": "",
+          "calls": 22,
+          "firstAt": 1793173566949,
+          "lastAt": 1793173567481
+        }
+      ],
+      "finalDropTarget": {
+        "t": 1793173567481,
+        "nodeId": "",
+        "handleId": "",
+        "ms": 0
+      },
+      "dropCallCount": 31,
+      "intervals": {
+        "整窗帧": 969,
+        "完整downup区间内rAF": 47,
+        "计数标记帧": 31,
+        "手势数": 1,
+        "connectStarts": 0
+      },
+      "missingFieldsVsRound7": [
+        "connectStarts",
+        "gestures"
+      ]
+    },
+    {
+      "side": "after",
+      "runId": "run-2-1793172707334",
+      "startSeq": 2,
+      "stats": {
+        "帧": 0,
+        "fps": "-",
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0,
+        "gt33": 0
+      },
+      "arrayLengths": {
+        "frames": 0,
+        "frameTimestamps": 0,
+        "frameMonotonic": 0,
+        "frameDropTargets": 0,
+        "frameIndexBuilds": 0
+      },
+      "recordingSpanMs": 225363,
+      "targetSequence": [],
+      "finalDropTarget": null,
+      "dropCallCount": 0,
+      "intervals": {
+        "整窗帧": 0,
+        "完整downup区间内rAF": 0,
+        "计数标记帧": 0,
+        "手势数": 0,
+        "connectStarts": 0
+      },
+      "missingFieldsVsRound7": [
+        "connectStarts",
+        "gestures"
+      ]
+    },
+    {
+      "side": "after",
+      "runId": "run-3-1793173037606",
+      "startSeq": 3,
+      "stats": {
+        "帧": 853,
+        "fps": 60.0,
+        "p50": 17,
+        "p95": 18,
+        "p99": 18,
+        "max": 25,
+        "gt33": 0
+      },
+      "arrayLengths": {
+        "frames": 853,
+        "frameTimestamps": 853,
+        "frameMonotonic": 853,
+        "frameDropTargets": 853,
+        "frameIndexBuilds": 853
+      },
+      "recordingSpanMs": 14214,
+      "targetSequence": [],
+      "finalDropTarget": null,
+      "dropCallCount": 0,
+      "intervals": {
+        "整窗帧": 853,
+        "完整downup区间内rAF": 0,
+        "计数标记帧": 0,
+        "手势数": 0,
+        "connectStarts": 0
+      },
+      "missingFieldsVsRound7": [
+        "connectStarts",
+        "gestures"
+      ]
+    },
+    {
+      "side": "after",
+      "runId": "run-4-1793173140296",
+      "startSeq": 4,
+      "stats": {
+        "帧": 1284,
+        "fps": 60.0,
+        "p50": 17,
+        "p95": 18,
+        "p99": 18,
+        "max": 42,
+        "gt33": 1
+      },
+      "arrayLengths": {
+        "frames": 1284,
+        "frameTimestamps": 1284,
+        "frameMonotonic": 1284,
+        "frameDropTargets": 1284,
+        "frameIndexBuilds": 1284
+      },
+      "recordingSpanMs": 21405,
+      "targetSequence": [
+        {
+          "nodeId": "",
+          "calls": 10,
+          "firstAt": 1793173149255,
+          "lastAt": 1793173149470
+        },
+        {
+          "nodeId": "perf-node-20",
+          "calls": 21,
+          "firstAt": 1793173149487,
+          "lastAt": 1793173150000
+        }
+      ],
+      "finalDropTarget": {
+        "t": 1793173150000,
+        "nodeId": "perf-node-20",
+        "handleId": "",
+        "ms": 0
+      },
+      "dropCallCount": 31,
+      "intervals": {
+        "整窗帧": 1284,
+        "完整downup区间内rAF": 47,
+        "计数标记帧": 31,
+        "手势数": 1,
+        "connectStarts": 0
+      },
+      "missingFieldsVsRound7": [
+        "connectStarts",
+        "gestures"
+      ]
+    }
+  ],
+  "compare": {
+    "independentRound6": {
+      "runsCompared": 4,
+      "mismatches": []
+    }
+  }
+}

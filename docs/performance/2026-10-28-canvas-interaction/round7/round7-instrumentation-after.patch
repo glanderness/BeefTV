@@ -1,0 +1,747 @@
+diff --git a/web/src/components/canvas/canvas-node.tsx b/web/src/components/canvas/canvas-node.tsx
+--- a/web/src/components/canvas/canvas-node.tsx
++++ b/web/src/components/canvas/canvas-node.tsx
+@@ -143,6 +143,7 @@
+     onConfirmVideoCrop,
+     onContextMenu,
+ }: CanvasNodeProps) {
++    { const perf = (globalThis as any).__perf; if (perf) perf.node += 1; }
+     const theme = canvasThemes[useActiveTheme()];
+     const [hovered, setHovered] = useState(false);
+     const [isEditingContent, setIsEditingContent] = useState(false);
+diff --git a/web/src/lib/canvas/canvas-connection-target.ts b/web/src/lib/canvas/canvas-connection-target.ts
+--- a/web/src/lib/canvas/canvas-connection-target.ts
++++ b/web/src/lib/canvas/canvas-connection-target.ts
+@@ -49,8 +49,14 @@
+ function nodeIndexFor(nodes: CanvasNodeData[]) {
+     let index = nodeIndexCache.get(nodes);
+     if (!index) {
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         index = buildCanvasSpatialIndex(nodes.map((node) => ({ id: node.id, bounds: snapBounds(node), value: node })));
+         nodeIndexCache.set(nodes, index);
++        if (perf) {
++            perf.indexBuilds += 1;
++            perf.indexBuildMs += performance.now() - begin;
++        }
+     }
+     return index;
+ }
+@@ -81,7 +87,17 @@
+     { nodes, connections, config, world, handleRadius, current, scriptScrollTopById }: DropTargetOptions,
+     isEligible: (node: CanvasNodeData) => boolean,
+ ): CanvasConnectionDropTarget {
+-    const candidates = nodeIndexFor(nodes).query(queryBounds(world, handleRadius));
++    const perf = (globalThis as any).__perf;
++    // 索引建立成本在 nodeIndexFor 内单独计时；这里只量 query，避免和「索引建立耗时」
++    // 把同一段时间重复相加。
++    const index = nodeIndexFor(nodes);
++    const queryBegin = perf ? performance.now() : 0;
++    const candidates = index.query(queryBounds(world, handleRadius));
++    if (perf) {
++        perf.indexQueries += 1;
++        perf.indexQueryMs += performance.now() - queryBegin;
++        perf.indexCandidates += candidates.length;
++    }
+     let isNearNode = false;
+     let bestNodeId: string | null = null;
+     let bestHandleId: string | undefined;
+diff --git a/web/src/lib/operation-progress.ts b/web/src/lib/operation-progress.ts
+--- a/web/src/lib/operation-progress.ts
++++ b/web/src/lib/operation-progress.ts
+@@ -18,11 +18,15 @@
+ };
+ 
+ export function canvasNodeOperation(entries: Record<string, OperationProgress>, projectId: string | undefined, nodeId: string, taskId?: string) {
+-    return Object.values(entries).reverse().find(item => {
++    const perf = (globalThis as any).__perf;
++    const begin = perf ? performance.now() : 0;
++    const result = Object.values(entries).reverse().find(item => {
+         if (!item.target || item.phase === "done" || item.phase === "error") return false;
+         if (item.target.projectId !== projectId) return false;
+         return item.target.taskId ? item.target.taskId === taskId && item.target.nodeId === nodeId : item.target.projectId === projectId && item.target.nodeId === nodeId;
+     });
++    if (perf) { perf.progressLookups += 1; perf.progressMs += performance.now() - begin; }
++    return result;
+ }
+ 
+ const finite = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value >= 0;
+diff --git a/web/src/main.tsx b/web/src/main.tsx
+--- a/web/src/main.tsx
++++ b/web/src/main.tsx
+@@ -1,3 +1,4 @@
++import "./perf-probe";
+ import "@fontsource-variable/inter";
+ import "@fontsource-variable/jetbrains-mono";
+ import { startCheckedWorkspace } from "@/services/diagnostics/startup-preflight";
+diff --git a/web/src/pages/canvas/project.tsx b/web/src/pages/canvas/project.tsx
+--- a/web/src/pages/canvas/project.tsx
++++ b/web/src/pages/canvas/project.tsx
+@@ -187,6 +187,7 @@
+ }
+ 
+ function InfiniteCanvasPage() {
++    { const perf = (globalThis as any).__perf; if (perf) perf.page += 1; }
+     // 命令式确认必须走 App.useApp().modal；静态 Modal.confirm 拿不到主题和 App 上下文。
+     const { message, modal } = App.useApp();
+     const params = useParams<{ id: string }>();
+diff --git a/web/src/pages/canvas/use-canvas-connection-controller.ts b/web/src/pages/canvas/use-canvas-connection-controller.ts
+--- a/web/src/pages/canvas/use-canvas-connection-controller.ts
++++ b/web/src/pages/canvas/use-canvas-connection-controller.ts
+@@ -50,6 +50,61 @@
+ // reference canvas. Use the same generous 112px screen-space diameter here,
+ // while retaining a circular boundary around the corresponding side anchor.
+ const CONNECTION_SNAP_RADIUS = 56;
++
++// 仅用于本地测量：把一次落点调用的输入、变换、完整返回值与当前文档指纹打成一条记录。
++// 不在产品逻辑里使用；探针没装时调用点不会走到这里。undefined 显式转成 null，
++// 让 JSON 保留键的存在性（第六轮把 handleId=undefined 丢成了 ""，无法区分 null 与 undefined）。
++function perfTargetSnapshot(target: unknown): Record<string, unknown> | null {
++    if (!target || typeof target !== "object") return null;
++    const snapshot: Record<string, unknown> = {};
++    for (const [key, value] of Object.entries(target as Record<string, unknown>)) snapshot[key] = value === undefined ? null : value;
++    return snapshot;
++}
++
++function perfDropTargetRecord(entry: string, clientX: number, clientY: number, world: Position | null, viewport: ViewportTransform, target: unknown, projectId: string, nodeCount: number, connectionCount: number) {
++    const editor = typeof document !== "undefined" ? document.querySelector("[data-canvas-editor]") : null;
++    const rect = editor ? editor.getBoundingClientRect() : null;
++    return {
++        entry,
++        clientX: Math.round(clientX),
++        clientY: Math.round(clientY),
++        worldX: world ? Math.round(world.x * 100) / 100 : null,
++        worldY: world ? Math.round(world.y * 100) / 100 : null,
++        viewportX: viewport.x,
++        viewportY: viewport.y,
++        viewportK: viewport.k,
++        containerRect: rect ? { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : null,
++        target: perfTargetSnapshot(target),
++        targetNodeId: String((target as { nodeId?: string | null } | null)?.nodeId ?? ""),
++        targetHandleId: String((target as { handleId?: string | null } | null)?.handleId ?? ""),
++        projectId,
++        nodeCount,
++        connectionCount,
++    };
++}
++
++// 仅用于本地测量：真实开始入口（拖连线/批量连线起手）记一条。第六轮的输入记录只能给
++// DOM 祖先节点，拿不到控制器认定的源与实际 rail（#101 第六轮复核第 1 节）。
++function perfConnectStartRecord(entry: string, event: ReactPointerEvent, nodeId: string, handleType: string, handleId: string | undefined, anchorRatio: number | undefined, projectId: string, nodeCount: number, connectionCount: number) {
++    const railElement = (event.target as Element | null)?.closest?.("[data-canvas-connection-rail]") as HTMLElement | null;
++    const railRect = railElement?.getBoundingClientRect();
++    return {
++        entry,
++        pointerId: event.pointerId,
++        nodeId,
++        handleType,
++        handleId: handleId ?? "",
++        anchorRatio: anchorRatio ?? null,
++        rail: railElement?.dataset?.canvasConnectionRail ?? null,
++        railRect: railRect ? { left: Math.round(railRect.left), top: Math.round(railRect.top), width: Math.round(railRect.width), height: Math.round(railRect.height) } : null,
++        clientX: Math.round(event.clientX),
++        clientY: Math.round(event.clientY),
++        projectId,
++        nodeCount,
++        connectionCount,
++    };
++}
++
+ const NODE_STATUS_IDLE = "idle" as const;
+ 
+ /**
+@@ -446,9 +501,13 @@
+     }, [config, connectionsRef, nodesRef, runtimeStatuses]);
+ 
+     const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): CanvasConnectionDropTarget => {
++        // 与基线侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、索引查询、候选判定与连线策略判断。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+-        return resolveConnectionDropTarget({
++        const target = resolveConnectionDropTarget({
+             nodes: nodesRef.current,
+             connections: connectionsRef.current,
+             config,
+@@ -457,12 +516,28 @@
+             current,
+             scriptScrollTopById,
+         });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++            // 第七轮：整条记录（client / world / viewport / 容器矩形 / 完整返回值 / 文档指纹）。
++            // 计时口径未改：ms 仍是回调体开始到算出 target 的整段耗时；对象构造与
++            // getBoundingClientRect 发生在它之后，由探针的 recordMs 单独计量。
++            (globalThis as any).__perfLogDropTarget?.({
++                ...perfDropTargetRecord("ordinary", clientX, clientY, world, viewportRef.current, target, projectId, nodesRef.current.length, connectionsRef.current.length),
++                ms: performance.now() - begin,
++            });
++        }
++        return target;
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): CanvasConnectionDropTarget => {
++        // 与基线侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、索引查询、候选判定与连线策略判断。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+-        return resolveBatchConnectionDropTarget({
++        const target = resolveBatchConnectionDropTarget({
+             nodes: nodesRef.current,
+             connections: connectionsRef.current,
+             config,
+@@ -471,6 +546,18 @@
+             sourceNodeIds,
+             scriptScrollTopById,
+         });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++            // 第七轮：整条记录（client / world / viewport / 容器矩形 / 完整返回值 / 文档指纹）。
++            // 计时口径未改：ms 仍是回调体开始到算出 target 的整段耗时；对象构造与
++            // getBoundingClientRect 发生在它之后，由探针的 recordMs 单独计量。
++            (globalThis as any).__perfLogDropTarget?.({
++                ...perfDropTargetRecord("batch", clientX, clientY, world, viewportRef.current, target, projectId, nodesRef.current.length, connectionsRef.current.length),
++                ms: performance.now() - begin,
++            });
++        }
++        return target;
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const startBatchConnection = useCallback((event: ReactPointerEvent, sourceNodeIds: string[]) => {
+@@ -484,6 +571,10 @@
+         }
+         event.preventDefault();
+         event.stopPropagation();
++        if ((globalThis as any).__perf) {
++            // 第七轮新增：批量连线的真实开始入口（源是一个选区，没有单一 rail）。
++            (globalThis as any).__perfLogConnectStart?.(perfConnectStartRecord("batch", event, eligible.join(","), "source", undefined, undefined, projectId, nodesRef.current.length, connectionsRef.current.length));
++        }
+         batchConnectionPointerIdRef.current = event.pointerId;
+         batchConnectionPointerStartRef.current = { x: event.clientX, y: event.clientY };
+         setSelectedConnectionId(null);
+@@ -642,6 +733,10 @@
+         }
+         if (activeConnection) setConnecting(null);
+         if (batchConnectionPreviewRef.current) clearBatchConnection();
++        if ((globalThis as any).__perf) {
++            // 第七轮新增：真实开始入口。current 就是 setConnecting 收到的那个对象。
++            (globalThis as any).__perfLogConnectStart?.(perfConnectStartRecord("ordinary", event, nodeId, handleType, handleId, anchorRatio, projectId, nodesRef.current.length, connectionsRef.current.length));
++        }
+         connectingPointerIdRef.current = event.pointerId;
+         connectingPointerStartRef.current = { x: event.clientX, y: event.clientY };
+         setMouseWorld(screenToCanvas(event.clientX, event.clientY));
+diff --git a/web/src/perf-probe.ts b/web/src/perf-probe.ts
+new file mode 100644
+--- /dev/null
++++ b/web/src/perf-probe.ts
+@@ -0,0 +1,504 @@
++// 仅用于本地测量构建的探针（第七轮），不参与产品逻辑。整份复制为 web/src/perf-probe.ts；
++// 两侧逐字节相同（第六轮版本见 ../perf-probe-round6.ts，第五轮版本见 ../native-probe.patch）。
++//
++// 第七轮相对第六轮只补 #101 第六轮复核第 7 节点名缺失的记录字段，不改第六轮已有口径：
++//   1. 真实开始入口（handleConnectStart / startBatchConnection）新增一条 connectStart：
++//      记 current 的 nodeId/handleType/handleId/anchorRatio、pointerId、pointerdown 落到的
++//      实际 rail（data-canvas-connection-rail 的值与矩形）、client 坐标与 projectId。
++//      第六轮的输入记录只按 DOM 祖先 [data-node-id] 记节点，拿不到「控制器认定的源」。
++//   2. 每次落点调用改成整条对象：client / world / viewport(x,y,k) / 容器矩形 /
++//      resolver 的完整返回值（全部可枚举字段）/ 当前文档指纹（projectId + 节点数 + 连线数）/
++//      入口（ordinary | batch | batch-no-source）/ 耗时。第六轮只记了 nodeId/handleId/耗时。
++//   3. pointermove 按每个 pointerId 手势单独成组：一次手势只留 first/last 两条与 moveCount；
++//      没有 pointerdown 的移动单独记 hoverMoves 汇总。第六轮用一个全局计数器 + 取模采样，
++//      无法把移动归属到某一次手势，也不能给出「每手势首末」。
++//   4. 汇总行同时给出三类区间：整窗（frames）、完整 down/up 区间内实际发生的 rAF 回调、
++//      以及计数有增量的标记帧。三者不再混用（第六轮把标记帧当活动区间，被复核指出）。
++//
++// 计时口径未改：dropTargetMs 仍是从回调体开始到算出 target 的整段耗时，所以两侧仍可直接
++// 比较。第七轮新增的记录（对象构造、getBoundingClientRect）发生在 dropTargetMs 累计**之后**，
++// 属于新增开销，单独用 dropTargetRecordMs 计量，不与落点耗时混算。
++type PerfCounters = {
++    page: number;
++    node: number;
++    indexBuilds: number;
++    indexBuildMs: number;
++    indexQueries: number;
++    indexQueryMs: number;
++    indexCandidates: number;
++    dropTargetCalls: number;
++    dropTargetMs: number;
++    progressLookups: number;
++    progressMs: number;
++};
++
++// 每次落点调用的完整记录。字段由调用点原样传入，探针只补 t 与 recordMs，不做推断：
++//   entry / clientX / clientY / worldX / worldY / viewportX / viewportY / viewportK /
++//   containerRect / target（resolver 返回值的完整浅拷贝）/ targetNodeId / targetHandleId /
++//   projectId / nodeCount / connectionCount / ms
++type DropTargetRecord = { t: number; recordMs: number } & Record<string, unknown>;
++
++// 真实开始入口的记录：控制器认定的源、指针 id、实际 rail。
++type ConnectStartRecord = {
++    t: number;
++    entry: string;
++    pointerId: number;
++    nodeId: string;
++    handleType: string;
++    handleId: string;
++    anchorRatio: number | null;
++    rail: string | null;
++    railRect: { left: number; top: number; width: number; height: number } | null;
++    clientX: number;
++    clientY: number;
++    projectId: string | null;
++    nodeCount: number;
++    connectionCount: number;
++};
++
++type InputRecord = { t: number; type: string; x: number; y: number; nodeId: string; pointerId: number; buttons: number; key?: string; button?: number };
++
++// 一次按下手势：first/last 移动各一条，moveCount 是这次手势里的 pointermove 总数。
++type GestureRecord = {
++    pointerId: number;
++    downT: number;
++    endT: number;
++    endType: string;
++    down: { x: number; y: number; nodeId: string };
++    end: { x: number; y: number; nodeId: string } | null;
++    moveCount: number;
++    firstMove: { t: number; x: number; y: number; nodeId: string } | null;
++    lastMove: { t: number; x: number; y: number; nodeId: string } | null;
++};
++
++const perf: PerfCounters = {
++    page: 0,
++    node: 0,
++    indexBuilds: 0,
++    indexBuildMs: 0,
++    indexQueries: 0,
++    indexQueryMs: 0,
++    indexCandidates: 0,
++    dropTargetCalls: 0,
++    dropTargetMs: 0,
++    progressLookups: 0,
++    progressMs: 0,
++};
++
++(window as any).__perf = perf;
++
++// 结果回传：WKWebView 里写不了文件，无障碍树也读不回一长串数字，所以同时用回环端口的
++// 接收脚本落盘（docs/performance/2026-10-28-canvas-interaction/perf-sink.py）。
++const SINK = "http://127.0.0.1:8799/perf";
++const epochNow = () => performance.timeOrigin + performance.now();
++
++function report(kind: string, text: string) {
++    document.title = `perf-${kind} ${text}`;
++    try {
++        void fetch(`${SINK}?kind=${encodeURIComponent(kind)}&d=${encodeURIComponent(text)}`, { mode: "no-cors", keepalive: true });
++    } catch {
++        /* 接收端没起也不影响测量 */
++    }
++}
++
++// 完整导出走 POST：逐帧数组几千项，query string 放不下。text/plain 是 no-cors 下的
++// 简单请求，不触发预检；接收端不看 Content-Type，只解析 body。
++function reportDump(payload: unknown) {
++    try {
++        void fetch(SINK, {
++            method: "POST",
++            mode: "no-cors",
++            headers: { "Content-Type": "text/plain" },
++            body: JSON.stringify(payload),
++        });
++    } catch {
++        /* 接收端没起也不影响测量 */
++    }
++}
++
++const MAX_SAMPLES = 200000;
++const frameIntervals: number[] = [];
++const frameTimestamps: number[] = [];
++const frameMonotonic: number[] = [];
++const frameDropTargets: number[] = [];
++const frameIndexBuilds: number[] = [];
++const dropTargetLog: DropTargetRecord[] = [];
++const connectStartLog: ConnectStartRecord[] = [];
++const inputLog: InputRecord[] = [];
++const gestureLog: GestureRecord[] = [];
++const activeGestures = new Map<number, GestureRecord>();
++let hoverMoveCount = 0;
++let hoverMoveFirstAt = 0;
++let hoverMoveLastAt = 0;
++// 每次 start 单独留痕：接收端只看到请求，重复请求既可能是重传也可能是真的又点了一次，
++// 只有页面自己知道处理函数跑了几次。startLog 是判断「窗口是否被重启」的第一手证据。
++const startLog: Array<{ runId: string; startSeq: number; epoch: number; monotonic: number; restartedWhileRecording: boolean }> = [];
++let recording = false;
++let label = "idle";
++let runId = "";
++let startSeq = 0;
++let startedAt = 0;
++let stoppedAt = 0;
++let startedMonotonic = 0;
++let stoppedMonotonic = 0;
++let last = performance.now();
++// 帧边界上的上一次总量快照。早先这里是两个「本帧计数」变量，只在初始化和清零时赋值、
++// 从不随计数增加，干跑里总调用 22/67/68 而「含落点帧」一直为 0（#101 第二轮复核）。
++let previousDropTargetCalls = 0;
++let previousIndexBuilds = 0;
++let framesWithDropTarget = 0;
++let framesWithRebuild = 0;
++
++// 第六轮签名是 (target, ms)；第七轮改成整条对象，调用点同步改（见 round7-prep.md 第 3 节）。
++// 落点调用的完整记录：调用点把 client/world/viewport/容器矩形/完整返回值/文档指纹一起传进来，
++// 探针不做任何推断，也不访问产品状态，只补时间戳与本次记录自身的耗时。
++(window as any).__perfLogDropTarget = (record: Record<string, unknown>) => {
++    if (!recording || dropTargetLog.length >= MAX_SAMPLES) return;
++    const begin = performance.now();
++    dropTargetLog.push({
++        t: Math.round(epochNow() * 10) / 10,
++        ...record,
++        recordMs: Math.round((performance.now() - begin) * 1000) / 1000,
++    });
++};
++
++// 真实开始入口的记录。第六轮的输入记录只能给 DOM 祖先节点，给不出控制器认定的源。
++(window as any).__perfLogConnectStart = (record: Omit<ConnectStartRecord, "t">) => {
++    if (!recording || connectStartLog.length >= MAX_SAMPLES) return;
++    connectStartLog.push({ t: Math.round(epochNow() * 10) / 10, ...record });
++};
++
++function nodeIdOf(element: Element | null): string {
++    const host = element?.closest?.("[data-node-id]") as HTMLElement | null;
++    return host?.dataset?.nodeId ?? "";
++}
++
++function pointOf(event: Event) {
++    const pointer = event as PointerEvent;
++    const isPointer = typeof pointer.clientX === "number";
++    return { x: isPointer ? Math.round(pointer.clientX) : -1, y: isPointer ? Math.round(pointer.clientY) : -1, pointerId: isPointer ? pointer.pointerId : -1, buttons: isPointer ? pointer.buttons : -1 };
++}
++
++// 真实输入的起止：真实鼠标由 cua-driver 投递，探针只能在页面上听事件。
++// pointermove 不再进 inputLog：属于某次按下手势的移动只留 first/last（gestureLog），
++// 没有按下手势的移动记进 hoverMoves 汇总。第六轮用全局计数器 + 取模采样，既不能按手势
++// 归属，也保证不了「首末两条」（#101 第六轮复核）。
++function recordInput(type: string, event: Event) {
++    if (!recording || inputLog.length >= MAX_SAMPLES) return;
++    const key = event as KeyboardEvent;
++    const point = pointOf(event);
++    inputLog.push({
++        t: Math.round(epochNow() * 10) / 10,
++        type,
++        x: point.x,
++        y: point.y,
++        nodeId: nodeIdOf(event.target as Element | null),
++        pointerId: point.pointerId,
++        buttons: point.buttons,
++        key: type.startsWith("key") ? key.key : undefined,
++        button: typeof (event as PointerEvent).button === "number" ? (event as PointerEvent).button : undefined,
++    });
++}
++
++function onPointerDown(event: PointerEvent) {
++    if (!recording) return;
++    activeGestures.set(event.pointerId, {
++        pointerId: event.pointerId,
++        downT: Math.round(epochNow() * 10) / 10,
++        endT: 0,
++        endType: "",
++        down: { x: Math.round(event.clientX), y: Math.round(event.clientY), nodeId: nodeIdOf(event.target as Element | null) },
++        end: null,
++        moveCount: 0,
++        firstMove: null,
++        lastMove: null,
++    });
++    recordInput("pointerdown", event);
++}
++
++function onPointerMove(event: PointerEvent) {
++    if (!recording) return;
++    const move = { t: Math.round(epochNow() * 10) / 10, x: Math.round(event.clientX), y: Math.round(event.clientY), nodeId: nodeIdOf(event.target as Element | null) };
++    const gesture = activeGestures.get(event.pointerId);
++    if (!gesture) {
++        hoverMoveCount += 1;
++        if (!hoverMoveFirstAt) hoverMoveFirstAt = move.t;
++        hoverMoveLastAt = move.t;
++        return;
++    }
++    gesture.moveCount += 1;
++    if (!gesture.firstMove) gesture.firstMove = move;
++    gesture.lastMove = move;
++}
++
++function endGesture(type: string, event: PointerEvent) {
++    if (!recording) return;
++    const gesture = activeGestures.get(event.pointerId);
++    if (gesture) {
++        gesture.endT = Math.round(epochNow() * 10) / 10;
++        gesture.endType = type;
++        gesture.end = { x: Math.round(event.clientX), y: Math.round(event.clientY), nodeId: nodeIdOf(event.target as Element | null) };
++        if (gestureLog.length < MAX_SAMPLES) gestureLog.push(gesture);
++        activeGestures.delete(event.pointerId);
++    }
++    recordInput(type, event);
++}
++
++window.addEventListener("pointerdown", (event) => onPointerDown(event), { capture: true, passive: true });
++window.addEventListener("pointermove", (event) => onPointerMove(event), { capture: true, passive: true });
++window.addEventListener("pointerup", (event) => endGesture("pointerup", event), { capture: true, passive: true });
++window.addEventListener("pointercancel", (event) => endGesture("pointercancel", event), { capture: true, passive: true });
++for (const type of ["wheel", "keydown", "keyup"]) {
++    window.addEventListener(type, (event) => recordInput(type, event), { capture: true, passive: true });
++}
++
++function loop(now: number) {
++    if (recording) {
++        frameIntervals.push(now - last);
++        frameTimestamps.push(Math.round(epochNow() * 10) / 10);
++        frameMonotonic.push(Math.round(now * 10) / 10);
++        const dropTargetDelta = perf.dropTargetCalls - previousDropTargetCalls;
++        const indexBuildDelta = perf.indexBuilds - previousIndexBuilds;
++        frameDropTargets.push(dropTargetDelta);
++        frameIndexBuilds.push(indexBuildDelta);
++        if (dropTargetDelta > 0) framesWithDropTarget += 1;
++        if (indexBuildDelta > 0) framesWithRebuild += 1;
++    }
++    previousDropTargetCalls = perf.dropTargetCalls;
++    previousIndexBuilds = perf.indexBuilds;
++    last = now;
++    requestAnimationFrame(loop);
++}
++requestAnimationFrame(loop);
++
++function quantile(sorted: number[], p: number) {
++    return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : 0;
++}
++
++// 完整 down/up 区间内实际发生的 rAF 回调数：用每次手势的 down/end 时间与逐帧时间戳求交。
++// 它和「计数有增量的标记帧」不是一回事：一次落点调用发生在两次探针帧之间，计数会落在
++// 手势结束后的第一帧上（#101 第六轮复核：两侧各 47 次 rAF 在手势内，标记帧只有 31 个）。
++function frameCallbacksWithinGestures() {
++    let inside = 0;
++    for (const gesture of gestureLog) {
++        if (!gesture.end) continue;
++        for (const stamp of frameTimestamps) {
++            if (stamp >= gesture.downT && stamp <= gesture.endT) inside += 1;
++        }
++    }
++    return inside;
++}
++
++function stats() {
++    const sorted = [...frameIntervals].sort((left, right) => left - right);
++    const span = frameIntervals.reduce((sum, value) => sum + value, 0);
++    const round = (value: number) => Number(value.toFixed(3));
++    return [
++        `场景=${label}`,
++        `帧=${frameIntervals.length}`,
++        `fps=${span ? ((frameIntervals.length / span) * 1000).toFixed(1) : "-"}`,
++        `p50=${round(quantile(sorted, 0.5))}`,
++        `p95=${round(quantile(sorted, 0.95))}`,
++        `p99=${round(quantile(sorted, 0.99))}`,
++        `max=${round(sorted.length ? sorted[sorted.length - 1] : 0)}`,
++        `gt33=${sorted.filter((value) => value > 33.4).length}`,
++        `gt50=${sorted.filter((value) => value > 50).length}`,
++        `gt100=${sorted.filter((value) => value > 100).length}`,
++        `含落点帧=${framesWithDropTarget}`,
++        `含重建帧=${framesWithRebuild}`,
++        `落点调用=${perf.dropTargetCalls}`,
++        `落点总耗时=${round(perf.dropTargetMs)}`,
++        `索引建立=${perf.indexBuilds}`,
++        `索引建立耗时=${round(perf.indexBuildMs)}`,
++        `索引查询=${perf.indexQueries}`,
++        // 查询耗时只含 query；索引建立成本在 nodeIndexFor 内单独计时，合计在这里给出，
++        // 不要把「建立耗时 + 查询耗时」当同一段时间重复相加。
++        `索引查询耗时=${round(perf.indexQueryMs)}`,
++        `索引合计耗时=${round(perf.indexBuildMs + perf.indexQueryMs)}`,
++        `候选数=${perf.indexCandidates}`,
++        `进度查询=${perf.progressLookups}`,
++        `进度耗时=${round(perf.progressMs)}`,
++        `页面渲染=${perf.page}`,
++        `节点渲染=${perf.node}`,
++        `开始入口=${connectStartLog.length}`,
++        `手势=${gestureLog.length}`,
++        `手势内rAF=${frameCallbacksWithinGestures()}`,
++        `悬停移动=${hoverMoveCount}`,
++        `挂载卡=${document.querySelectorAll("[data-node-id]").length}`,
++    ].join(" ");
++}
++
++function reset() {
++    frameIntervals.length = 0;
++    frameTimestamps.length = 0;
++    frameMonotonic.length = 0;
++    frameDropTargets.length = 0;
++    frameIndexBuilds.length = 0;
++    dropTargetLog.length = 0;
++    connectStartLog.length = 0;
++    inputLog.length = 0;
++    gestureLog.length = 0;
++    activeGestures.clear();
++    hoverMoveCount = 0;
++    hoverMoveFirstAt = 0;
++    hoverMoveLastAt = 0;
++    framesWithDropTarget = 0;
++    framesWithRebuild = 0;
++    previousDropTargetCalls = 0;
++    previousIndexBuilds = 0;
++    for (const key of Object.keys(perf) as Array<keyof PerfCounters>) perf[key] = 0;
++}
++
++const box = document.createElement("div");
++box.setAttribute("data-canvas-no-zoom", "");
++box.style.cssText = "position:fixed;right:8px;bottom:8px;z-index:2147483647;max-width:600px;font:11px/1.4 monospace;background:#000d;color:#0f0;padding:6px;border-radius:6px;pointer-events:auto";
++const out = document.createElement("div");
++out.setAttribute("data-perf-out", "");
++out.setAttribute("aria-label", "perf idle");
++out.textContent = "perf probe ready";
++box.append(out);
++
++function button(name: string, color: string, onClick: () => void) {
++    const element = document.createElement("button");
++    element.textContent = name;
++    element.setAttribute("aria-label", name);
++    element.style.cssText = `margin:4px 4px 0 0;padding:2px 6px;background:#222;color:${color};border:1px solid ${color}`;
++    element.onclick = (event) => {
++        event.stopPropagation();
++        onClick();
++    };
++    box.append(element);
++    return element;
++}
++
++button("perf-rec-start", "#0f0", () => {
++    const restarted = recording;
++    reset();
++    label = "gesture";
++    recording = true;
++    startSeq += 1;
++    startedAt = Math.round(epochNow() * 10) / 10;
++    startedMonotonic = Math.round(performance.now() * 10) / 10;
++    runId = `run-${startSeq}-${Math.round(startedAt)}`;
++    startLog.push({ runId, startSeq, epoch: startedAt, monotonic: startedMonotonic, restartedWhileRecording: restarted });
++    out.textContent = "记录中";
++    out.setAttribute("aria-label", "perf recording");
++    // 每条 start 都带 runId / startSeq / 单调时间，并且明确写出这一次是否打断了上一段
++    // 录制。重复请求在接收端分不开，只有这里能区分「真的又点了一次」和「只是重发」。
++    report("start", `recording runId=${runId} startSeq=${startSeq} restartedWhileRecording=${restarted} startedAt=${startedAt} monotonic=${startedMonotonic}`);
++});
++
++button("perf-rec-stop", "#f80", () => {
++    recording = false;
++    stoppedAt = Math.round(epochNow() * 10) / 10;
++    stoppedMonotonic = Math.round(performance.now() * 10) / 10;
++    const text = stats();
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfres ${text}`);
++    (window as any).__perfLast = text;
++    report("stop", `${text} runId=${runId} startSeq=${startSeq} startedAt=${startedAt} stoppedAt=${stoppedAt} monotonic=${stoppedMonotonic}`);
++    // 完整导出：逐帧原始数组 + 每次落点调用 + 每次开始入口 + 每次手势的首末移动。
++    // 有这一份才能事后复算 FPS/p95，把整窗、完整 down/up 区间与计数标记分开，
++    // 并把每次落点调用和真实输入对上（第六轮的汇总行做不到，见 #101 复核）。
++    reportDump({
++        kind: "recording",
++        probeVersion: 7,
++        runId,
++        startSeq,
++        startLog,
++        label,
++        timeOrigin: performance.timeOrigin,
++        startedAt,
++        stoppedAt,
++        startedMonotonic,
++        stoppedMonotonic,
++        sinkReceivedAt: Math.round(Date.now()),
++        frames: frameIntervals,
++        frameTimestamps,
++        frameMonotonic,
++        frameDropTargets,
++        frameIndexBuilds,
++        dropTargets: dropTargetLog,
++        connectStarts: connectStartLog,
++        inputs: inputLog,
++        gestures: gestureLog,
++        hoverMoves: { count: hoverMoveCount, firstAt: hoverMoveFirstAt, lastAt: hoverMoveLastAt },
++        counters: { ...perf },
++        mountedCards: document.querySelectorAll("[data-node-id]").length,
++        summary: text,
++    });
++    (window as any).__perfLastDump = {
++        runId,
++        frames: frameIntervals.length,
++        dropTargets: dropTargetLog.length,
++        connectStarts: connectStartLog.length,
++        gestures: gestureLog.length,
++    };
++});
++
++button("perf-ports", "#ff0", () => {
++    // 真实鼠标要在窗口坐标里点/拖，所以把可见节点的两侧连接点中心报出来（CSS px）。
++    const nodes = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].filter((element) => {
++        const rect = element.getBoundingClientRect();
++        return rect.width > 60 && rect.height > 60 && rect.top > 60 && rect.left > 60 && rect.bottom < window.innerHeight - 60 && rect.right < window.innerWidth - 60;
++    });
++    const rails = (element: HTMLElement, side: string) => {
++        const rail = element.querySelector<HTMLElement>(`[data-canvas-connection-rail="${side}"]`);
++        if (!rail) return null;
++        const rect = rail.getBoundingClientRect();
++        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
++    };
++    const first = nodes[0];
++    const second = nodes.find((element) => element !== first && element.dataset.canvasNodeType === first?.dataset.canvasNodeType) || nodes[1];
++    const text = [
++        `视口=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`,
++        `out=${first ? JSON.stringify(rails(first, "right")) : "null"}`,
++        `in=${second ? JSON.stringify(rails(second, "left")) : "null"}`,
++        `nodeA=${first?.dataset.nodeId ?? "null"} nodeB=${second?.dataset.nodeId ?? "null"}`,
++        `卡片数=${nodes.length}`,
++    ].join(" ");
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfports ${text}`);
++    report("ports", text);
++});
++
++// 采样环境身份：显示器/窗口/焦点/可见性。第六轮只有 native-builds-round6.json 里的
++// 文案，没有现场记录（#101 第六轮复核第 6 节）。这里把它做成页面自己报的一条，
++// 与逐帧数据同一份导出，事后无法只用注释冒充。
++button("perf-env", "#f0f", () => {
++    const editor = document.querySelector<HTMLElement>("[data-canvas-editor]");
++    const rect = editor?.getBoundingClientRect();
++    const text = [
++        `screen=${window.screen.width}x${window.screen.height}`,
++        `avail=${window.screen.availWidth}x${window.screen.availHeight} availLeft=${window.screen.availLeft ?? "?"} availTop=${window.screen.availTop ?? "?"}`,
++        `screenXY=${window.screenX},${window.screenY}`,
++        `outer=${window.outerWidth}x${window.outerHeight}`,
++        `inner=${window.innerWidth}x${window.innerHeight}`,
++        `dpr=${window.devicePixelRatio}`,
++        `visibility=${document.visibilityState}`,
++        `hasFocus=${document.hasFocus()}`,
++        `canvasRect=${rect ? `${Math.round(rect.left)},${Math.round(rect.top)},${Math.round(rect.width)}x${Math.round(rect.height)}` : "null"}`,
++    ].join(" ");
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfenv ${text}`);
++    report("env", text);
++});
++
++button("perf-open", "#0ff", () => {
++    location.hash = `#/canvas/${(window as any).__perfCanvasId}`;
++});
++
++button("perf-hover", "#0ff", () => {
++    // 悬停用真实鼠标，这里只报出若干可见卡片中心，方便逐个移过去。
++    const centers = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].map((element) => {
++        const rect = element.getBoundingClientRect();
++        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), id: element.dataset.nodeId };
++    }).filter((center) => center.x > 80 && center.y > 80 && center.x < window.innerWidth - 80 && center.y < window.innerHeight - 80);
++    const text = `卡片中心=${centers.slice(0, 8).map((center) => `${center.x},${center.y}`).join(" ")}`;
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfcenters ${text}`);
++    report("centers", text);
++});
++
++const attach = () => (document.body ? document.body.append(box) : setTimeout(attach, 50));
++attach();

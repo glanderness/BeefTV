@@ -1,0 +1,11 @@
+{"at": "2026-10-28T15:31:42", "kind": "probe", "data": "alive2"}
+{"at": "2026-10-28T15:31:47", "kind": "start", "data": "recording runId=run-2-1793172707334 startSeq=2 restartedWhileRecording=true startedAt=1793172707334 monotonic=64856"}
+{"at": "2026-10-28T15:32:00", "kind": "ports", "data": "视口=1440x960 dpr=1 out={\"x\":930,\"y\":450} in=null nodeA=perf-node-19 nodeB=null 卡片数=1"}
+{"at": "2026-10-28T15:34:06", "kind": "ports", "data": "视口=1440x960 dpr=1 out={\"x\":930,\"y\":450} in=null nodeA=perf-node-19 nodeB=null 卡片数=1"}
+{"at": "2026-10-28T15:34:20", "kind": "ports", "data": "视口=1440x960 dpr=1 out={\"x\":930,\"y\":450} in=null nodeA=perf-node-19 nodeB=null 卡片数=1"}
+{"at": "2026-10-28T15:35:32", "kind": "stop", "data": "场景=gesture 帧=0 fps=- p50=0 p95=0 p99=0 max=0 gt33=0 gt50=0 gt100=0 含落点帧=0 含重建帧=0 落点调用=0 落点总耗时=0 索引建立=0 索引建立耗时=0 索引查询=0 索引查询耗时=0 索引合计耗时=0 候选数=0 进度查询=18 进度耗时=1 页面渲染=32 节点渲染=9 挂载卡=12 runId=run-2-1793172707334 startSeq=2 startedAt=1793172707334 stoppedAt=1793172932697 monotonic=290216"}
+{"at": "2026-10-28T15:37:17", "kind": "start", "data": "recording runId=run-3-1793173037606 startSeq=3 restartedWhileRecording=false startedAt=1793173037606 monotonic=395124"}
+{"at": "2026-10-28T15:37:31", "kind": "stop", "data": "场景=gesture 帧=853 fps=60.0 p50=17 p95=18 p99=18 max=25 gt33=0 gt50=0 gt100=0 含落点帧=0 含重建帧=0 落点调用=0 落点总耗时=0 索引建立=0 索引建立耗时=0 索引查询=0 索引查询耗时=0 索引合计耗时=0 候选数=0 进度查询=0 进度耗时=0 页面渲染=4 节点渲染=0 挂载卡=12 runId=run-3-1793173037606 startSeq=3 startedAt=1793173037606 stoppedAt=1793173051820 monotonic=409338"}
+{"at": "2026-10-28T15:38:43", "kind": "ports", "data": "视口=1440x960 dpr=1 out={\"x\":600,\"y\":450} in={\"x\":620,\"y\":450} nodeA=perf-node-18 nodeB=perf-node-19 卡片数=2"}
+{"at": "2026-10-28T15:39:00", "kind": "start", "data": "recording runId=run-4-1793173140296 startSeq=4 restartedWhileRecording=false startedAt=1793173140296 monotonic=497813"}
+{"at": "2026-10-28T15:39:21", "kind": "stop", "data": "场景=gesture 帧=1284 fps=60.0 p50=17 p95=18 p99=18 max=42 gt33=1 gt50=0 gt100=0 含落点帧=31 含重建帧=1 落点调用=31 落点总耗时=2 索引建立=1 索引建立耗时=1 索引查询=31 索引查询耗时=0 索引合计耗时=1 候选数=36 进度查询=16 进度耗时=0 页面渲染=44 节点渲染=8 挂载卡=12 runId=run-4-1793173140296 startSeq=4 startedAt=1793173140296 stoppedAt=1793173161701 monotonic=519217"}

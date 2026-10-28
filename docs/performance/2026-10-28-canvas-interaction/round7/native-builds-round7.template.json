@@ -1,0 +1,60 @@
+{
+  "purpose": "第七轮（2026-10-28 之后）实机采样所用的两侧构建身份。第七轮要求 runId 能反查到完整源码/二进制/进程，所以这里与第六轮的 native-builds-round6.json 不同：哈希写**完整** 64 位，不写前缀；并新增 PID、进程启动时刻、探针版本、补丁哈希。采样时逐项填实，不许留空或写前缀。",
+  "status": "template-not-yet-sampled",
+  "generatedAt": null,
+  "probe": {
+    "file": "docs/performance/2026-10-28-canvas-interaction/round7/perf-probe-round7.ts",
+    "installedAs": "web/src/perf-probe.ts",
+    "sha256": "fb10d7e0b86aff8c1164d0b2cd49337c8ec90a0a43f66348b20dc9469c436d89",
+    "probeVersion": 7,
+    "note": "两侧逐字节相同；哈希与 round7/instrumentation-hashes.json 的 sides.*.round7['web/src/perf-probe.ts'] 一致。"
+  },
+  "patches": {
+    "before": "docs/performance/2026-10-28-canvas-interaction/round7/round7-instrumentation-before.patch",
+    "after": "docs/performance/2026-10-28-canvas-interaction/round7/round7-instrumentation-after.patch",
+    "applyTo": {
+      "before": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "after": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7"
+    }
+  },
+  "sides": {
+    "before": {
+      "role": "基线（无空间索引，逐节点线性扫描）",
+      "sourceCommit": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "worktree": null,
+      "instrumentedFileSha256": null,
+      "appPath": null,
+      "bundleId": null,
+      "binarySha256": null,
+      "binaryPath": null,
+      "processPid": null,
+      "processStartedAt": null,
+      "dataDir": null,
+      "webkitStore": null
+    },
+    "after": {
+      "role": "候选（画布空间索引 + 相切修复）",
+      "sourceCommit": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "worktree": null,
+      "instrumentedFileSha256": null,
+      "appPath": null,
+      "bundleId": null,
+      "binarySha256": null,
+      "binaryPath": null,
+      "processPid": null,
+      "processStartedAt": null,
+      "dataDir": null,
+      "webkitStore": null
+    }
+  },
+  "samplingEnvironment": {
+    "display": null,
+    "displayIsVirtualScreen": null,
+    "windowFrame": null,
+    "contentSize": null,
+    "dpr": null,
+    "focusVisibility": null,
+    "note": "必须是用户约定的 Yomado 虚拟屏；逐次采样前用探针的 perf-env 记录显示器/窗口/焦点/可见性。"
+  },
+  "runs": []
+}

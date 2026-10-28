@@ -1,0 +1,59 @@
+{
+  "beforeCommit": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "afterCommit": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "sides": {
+    "before": {
+      "fixedProduct": {
+        "web/src/components/canvas/canvas-node.tsx": "843ecd365eaac0f1a74da213e7533d32b4068dcb20d98edc1dfbf2488f4dc497",
+        "web/src/lib/operation-progress.ts": "257c22d3c0ac7e0e7195635b9197899ef527598d4bb3557163f7e47e06eb8ea5",
+        "web/src/main.tsx": "b4e3ec0f3b2c472281783543e078ada8939643e3c8f161bc973d86407f169d64",
+        "web/src/pages/canvas/project.tsx": "7fd5790e8060ac7815c19668076f42846aa7d155a6bec40e709343d079ff3e77",
+        "web/src/pages/canvas/use-canvas-connection-controller.ts": "0c6c19e90bb3d82ef3e9393755f2b5d441d23772b41ea25cc4a0bfe6e084d83e"
+      },
+      "round6Readback": {
+        "web/src/components/canvas/canvas-node.tsx": "128f01432223d0c041c671ab2665ece9c088a05afae7a2126358f61d78221d1c",
+        "web/src/lib/operation-progress.ts": "b81af9319e2649616a3132cf0ad8be79fe6af0dd1ae10d4f71cd07689e36742a",
+        "web/src/main.tsx": "2e7a741892f6b1d0df455cb7a7cf29d63996d8157c272029924a97d599024cb2",
+        "web/src/pages/canvas/project.tsx": "7033780235f095157bda29cd1924c7468a70140c6a41b15fded73bd08dd67ae8",
+        "web/src/pages/canvas/use-canvas-connection-controller.ts": "ee187f716e1cc689017cc27b3fbf7c444c8e8a9a5192ff47a3549005c80fc390",
+        "web/src/perf-probe.ts": "461e99e6bf882c79801cbe60fe79a65a1e4fc26aa56cadbf4bbba7604f5cea83"
+      },
+      "round7": {
+        "web/src/components/canvas/canvas-node.tsx": "128f01432223d0c041c671ab2665ece9c088a05afae7a2126358f61d78221d1c",
+        "web/src/lib/operation-progress.ts": "b81af9319e2649616a3132cf0ad8be79fe6af0dd1ae10d4f71cd07689e36742a",
+        "web/src/main.tsx": "2e7a741892f6b1d0df455cb7a7cf29d63996d8157c272029924a97d599024cb2",
+        "web/src/pages/canvas/project.tsx": "7033780235f095157bda29cd1924c7468a70140c6a41b15fded73bd08dd67ae8",
+        "web/src/pages/canvas/use-canvas-connection-controller.ts": "d4f0a238472b47dc234ede4b5dd3850294de2eb97a8a018fa455c8051a237b89",
+        "web/src/perf-probe.ts": "fb10d7e0b86aff8c1164d0b2cd49337c8ec90a0a43f66348b20dc9469c436d89"
+      }
+    },
+    "after": {
+      "fixedProduct": {
+        "web/src/components/canvas/canvas-node.tsx": "843ecd365eaac0f1a74da213e7533d32b4068dcb20d98edc1dfbf2488f4dc497",
+        "web/src/lib/canvas/canvas-connection-target.ts": "a0dc587c728a4b20f0ef3c21e39bb73474a15e9cb653db6f1963dc492adca270",
+        "web/src/lib/operation-progress.ts": "257c22d3c0ac7e0e7195635b9197899ef527598d4bb3557163f7e47e06eb8ea5",
+        "web/src/main.tsx": "b4e3ec0f3b2c472281783543e078ada8939643e3c8f161bc973d86407f169d64",
+        "web/src/pages/canvas/project.tsx": "7fd5790e8060ac7815c19668076f42846aa7d155a6bec40e709343d079ff3e77",
+        "web/src/pages/canvas/use-canvas-connection-controller.ts": "b8f89ae7bfb91973a43e5d43216540a84a0770f4077a081e2707dfe6ada29496"
+      },
+      "round6Readback": {
+        "web/src/components/canvas/canvas-node.tsx": "128f01432223d0c041c671ab2665ece9c088a05afae7a2126358f61d78221d1c",
+        "web/src/lib/canvas/canvas-connection-target.ts": "ee86873af33f009bfdeefef5bd672121fcea570a2e421cb26a4e01b22f096bcb",
+        "web/src/lib/operation-progress.ts": "b81af9319e2649616a3132cf0ad8be79fe6af0dd1ae10d4f71cd07689e36742a",
+        "web/src/main.tsx": "2e7a741892f6b1d0df455cb7a7cf29d63996d8157c272029924a97d599024cb2",
+        "web/src/pages/canvas/project.tsx": "7033780235f095157bda29cd1924c7468a70140c6a41b15fded73bd08dd67ae8",
+        "web/src/pages/canvas/use-canvas-connection-controller.ts": "a951d59a0609f2ed2a76b443f55e0fc07dad122f49dea2068e86b5df989268c2",
+        "web/src/perf-probe.ts": "461e99e6bf882c79801cbe60fe79a65a1e4fc26aa56cadbf4bbba7604f5cea83"
+      },
+      "round7": {
+        "web/src/components/canvas/canvas-node.tsx": "128f01432223d0c041c671ab2665ece9c088a05afae7a2126358f61d78221d1c",
+        "web/src/lib/canvas/canvas-connection-target.ts": "ee86873af33f009bfdeefef5bd672121fcea570a2e421cb26a4e01b22f096bcb",
+        "web/src/lib/operation-progress.ts": "b81af9319e2649616a3132cf0ad8be79fe6af0dd1ae10d4f71cd07689e36742a",
+        "web/src/main.tsx": "2e7a741892f6b1d0df455cb7a7cf29d63996d8157c272029924a97d599024cb2",
+        "web/src/pages/canvas/project.tsx": "7033780235f095157bda29cd1924c7468a70140c6a41b15fded73bd08dd67ae8",
+        "web/src/pages/canvas/use-canvas-connection-controller.ts": "737401d06c0391d9bc950d47553857da9f8974443c92c6bb140665c765f12969",
+        "web/src/perf-probe.ts": "fb10d7e0b86aff8c1164d0b2cd49337c8ec90a0a43f66348b20dc9469c436d89"
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{"at": "2026-10-28T14:40:15", "kind": "ports", "data": "视口=1440x928 dpr=2 out={\"x\":1200,\"y\":447} in=null nodeA=perf-child-65 nodeB=null 卡片数=1"}
+{"at": "2026-10-28T14:40:28", "kind": "start", "data": "recording"}
+{"at": "2026-10-28T14:40:38", "kind": "stop", "data": "场景=gesture 帧=318 fps=32.4 p50=17 p95=106 p99=363 max=451 gt33=48 gt50=37 gt100=17 含落点帧=0 含重建帧=0 落点调用=0 落点总耗时=0 索引建立=0 索引建立耗时=0 索引查询=0 索引查询耗时=0 索引合计耗时=0 候选数=0 进度查询=1002 进度耗时=0 页面渲染=46 节点渲染=501 挂载卡=2"}
+{"at": "2026-10-28T14:40:39", "kind": "ports", "data": "视口=1440x928 dpr=2 out=null in=null nodeA=null nodeB=null 卡片数=0"}

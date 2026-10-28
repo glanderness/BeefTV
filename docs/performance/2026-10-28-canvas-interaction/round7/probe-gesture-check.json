@@ -1,0 +1,110 @@
+{
+  "probe": "perf-probe-round7.ts",
+  "gestures": [
+    {
+      "pointerId": 7,
+      "moveCount": 3,
+      "firstMove": {
+        "t": 1700000001016,
+        "x": 1100,
+        "y": 447,
+        "nodeId": "perf-node-19"
+      },
+      "lastMove": {
+        "t": 1700000001032,
+        "x": 1170,
+        "y": 447,
+        "nodeId": "perf-node-20"
+      },
+      "endType": "pointerup"
+    },
+    {
+      "pointerId": 9,
+      "moveCount": 1,
+      "firstMove": {
+        "t": 1700000001064,
+        "x": 505,
+        "y": 500,
+        "nodeId": "perf-node-01"
+      },
+      "lastMove": {
+        "t": 1700000001064,
+        "x": 505,
+        "y": 500,
+        "nodeId": "perf-node-01"
+      },
+      "endType": "pointerup"
+    }
+  ],
+  "hoverMoves": {
+    "count": 1,
+    "firstAt": 1700000001064,
+    "lastAt": 1700000001064
+  },
+  "inputs": [
+    "pointerdown",
+    "pointerup",
+    "pointerdown",
+    "pointerup"
+  ],
+  "connectStarts": [
+    {
+      "t": 1700000001000,
+      "entry": "ordinary",
+      "pointerId": 7,
+      "nodeId": "perf-node-19",
+      "handleType": "source",
+      "handleId": "",
+      "anchorRatio": null,
+      "rail": "right",
+      "railRect": {
+        "left": 500,
+        "top": 300,
+        "width": 8,
+        "height": 8
+      },
+      "clientX": 1098,
+      "clientY": 447,
+      "projectId": "perf300",
+      "nodeCount": 300,
+      "connectionCount": 150
+    }
+  ],
+  "dropTargetSample": {
+    "t": 1700000001064,
+    "entry": "ordinary",
+    "clientX": 1170,
+    "clientY": 447,
+    "worldX": 980,
+    "worldY": 450,
+    "viewportX": 0,
+    "viewportY": 0,
+    "viewportK": 1,
+    "containerRect": {
+      "left": 100,
+      "top": 200,
+      "width": 300,
+      "height": 200
+    },
+    "target": {
+      "nodeId": "perf-node-20",
+      "handleId": null,
+      "anchorRatio": null,
+      "isNearNode": true
+    },
+    "targetNodeId": "perf-node-20",
+    "targetHandleId": "",
+    "projectId": "perf300",
+    "nodeCount": 300,
+    "connectionCount": 150,
+    "ms": 0.4,
+    "recordMs": 0
+  },
+  "intervals": {
+    "整窗帧": 4,
+    "手势内rAF": 4,
+    "计数标记帧": 1
+  },
+  "problems": [],
+  "ok": true
+}

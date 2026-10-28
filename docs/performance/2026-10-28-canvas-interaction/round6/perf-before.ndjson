@@ -1,0 +1,3 @@
+{"at": "2026-10-28T15:45:51", "kind": "ports", "data": "视口=1440x960 dpr=1 out={\"x\":930,\"y\":450} in=null nodeA=perf-node-19 nodeB=null 卡片数=1"}
+{"at": "2026-10-28T15:46:01", "kind": "start", "data": "recording runId=run-1-1793173561266 startSeq=1 restartedWhileRecording=false startedAt=1793173561266 monotonic=66564"}
+{"at": "2026-10-28T15:46:17", "kind": "stop", "data": "场景=gesture 帧=969 fps=60.0 p50=17 p95=18 p99=22 max=31 gt33=0 gt50=0 gt100=0 含落点帧=31 含重建帧=0 落点调用=31 落点总耗时=18 索引建立=0 索引建立耗时=0 索引查询=0 索引查询耗时=0 索引合计耗时=0 候选数=0 进度查询=186 进度耗时=1 页面渲染=58 节点渲染=93 挂载卡=12 runId=run-1-1793173561266 startSeq=1 startedAt=1793173561266 stoppedAt=1793173577404 monotonic=82702"}

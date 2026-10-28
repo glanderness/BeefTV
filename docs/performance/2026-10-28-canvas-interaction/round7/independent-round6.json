@@ -1,0 +1,431 @@
+{
+  "authorCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+  "runs": [
+    {
+      "side": "before",
+      "line": 1,
+      "runId": "run-1-1793173561266",
+      "stats": {
+        "帧": 969,
+        "fps": "60.0",
+        "p50": 17,
+        "p95": 18,
+        "p99": 22,
+        "max": 31,
+        "gt33": 0,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "arrayLengths": {
+        "frames": 969,
+        "frameTimestamps": 969,
+        "frameMonotonic": 969,
+        "frameDropTargets": 969,
+        "frameIndexBuilds": 969
+      },
+      "frameSpanMs": 16150,
+      "recordingSpanMs": 16138,
+      "startRecord": {
+        "runId": "run-1-1793173561266",
+        "startSeq": 1,
+        "epoch": 1793173561266,
+        "monotonic": 66564,
+        "restartedWhileRecording": false
+      },
+      "inputs": [
+        {
+          "t": 1793173566694,
+          "type": "pointerdown",
+          "x": 930,
+          "y": 450,
+          "nodeId": "perf-node-20",
+          "button": 0
+        },
+        {
+          "t": 1793173566731,
+          "type": "pointermove",
+          "x": 932,
+          "y": 450,
+          "nodeId": "perf-node-19",
+          "button": -1
+        },
+        {
+          "t": 1793173567481,
+          "type": "pointerup",
+          "x": 980,
+          "y": 450,
+          "nodeId": "perf-node-20",
+          "button": 0
+        }
+      ],
+      "pointerDurationMs": 787,
+      "targetSequence": [
+        {
+          "nodeId": "perf-node-19",
+          "calls": 9,
+          "firstAt": 1793173566746,
+          "lastAt": 1793173566933
+        },
+        {
+          "nodeId": "",
+          "calls": 22,
+          "firstAt": 1793173566949,
+          "lastAt": 1793173567481
+        }
+      ],
+      "finalDropTarget": {
+        "t": 1793173567481,
+        "nodeId": "",
+        "handleId": "",
+        "ms": 0
+      },
+      "dropCallCount": 31,
+      "dropCounterMs": 18.000000000014552,
+      "dropLogMs": 18,
+      "markedFrameStats": {
+        "帧": 31,
+        "p50": 16,
+        "p95": 30,
+        "p99": 31,
+        "max": 31,
+        "gt33": 0,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "markedFrameCount": 31,
+      "frameCallbacksWithinPointerDownUp": 47,
+      "markedFramesOutsidePointerDownUp": [
+        {
+          "index": 373,
+          "msAfterPointerUp": 15,
+          "frameIntervalMs": 31
+        }
+      ],
+      "markedFramePercent": 3.199174406604747,
+      "missingInputFields": [
+        "pointerId",
+        "buttons",
+        "handleType",
+        "current",
+        "world",
+        "viewport",
+        "containerRect",
+        "screen/display identity"
+      ]
+    },
+    {
+      "side": "after",
+      "line": 1,
+      "runId": "run-2-1793172707334",
+      "stats": {
+        "帧": 0,
+        "fps": "-",
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "gt33": 0,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "arrayLengths": {
+        "frames": 0,
+        "frameTimestamps": 0,
+        "frameMonotonic": 0,
+        "frameDropTargets": 0,
+        "frameIndexBuilds": 0
+      },
+      "frameSpanMs": 0,
+      "recordingSpanMs": 225363,
+      "startRecord": {
+        "runId": "run-2-1793172707334",
+        "startSeq": 2,
+        "epoch": 1793172707334,
+        "monotonic": 64856,
+        "restartedWhileRecording": true
+      },
+      "inputs": [],
+      "pointerDurationMs": null,
+      "targetSequence": [],
+      "finalDropTarget": null,
+      "dropCallCount": 0,
+      "dropCounterMs": 0,
+      "dropLogMs": 0,
+      "markedFrameStats": {
+        "帧": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "gt33": 0,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "markedFrameCount": 0,
+      "frameCallbacksWithinPointerDownUp": 0,
+      "markedFramesOutsidePointerDownUp": [],
+      "markedFramePercent": null,
+      "missingInputFields": [
+        "pointerId",
+        "buttons",
+        "handleType",
+        "current",
+        "world",
+        "viewport",
+        "containerRect",
+        "screen/display identity"
+      ]
+    },
+    {
+      "side": "after",
+      "line": 2,
+      "runId": "run-3-1793173037606",
+      "stats": {
+        "帧": 853,
+        "fps": "60.0",
+        "p50": 17,
+        "p95": 18,
+        "p99": 18,
+        "max": 25,
+        "gt33": 0,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "arrayLengths": {
+        "frames": 853,
+        "frameTimestamps": 853,
+        "frameMonotonic": 853,
+        "frameDropTargets": 853,
+        "frameIndexBuilds": 853
+      },
+      "frameSpanMs": 14217,
+      "recordingSpanMs": 14214,
+      "startRecord": {
+        "runId": "run-3-1793173037606",
+        "startSeq": 3,
+        "epoch": 1793173037606,
+        "monotonic": 395124,
+        "restartedWhileRecording": false
+      },
+      "inputs": [
+        {
+          "t": 1793173045723,
+          "type": "pointermove",
+          "x": 1415,
+          "y": 784,
+          "nodeId": "",
+          "button": -1
+        }
+      ],
+      "pointerDurationMs": null,
+      "targetSequence": [],
+      "finalDropTarget": null,
+      "dropCallCount": 0,
+      "dropCounterMs": 0,
+      "dropLogMs": 0,
+      "markedFrameStats": {
+        "帧": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "gt33": 0,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "markedFrameCount": 0,
+      "frameCallbacksWithinPointerDownUp": 0,
+      "markedFramesOutsidePointerDownUp": [],
+      "markedFramePercent": 0.0,
+      "missingInputFields": [
+        "pointerId",
+        "buttons",
+        "handleType",
+        "current",
+        "world",
+        "viewport",
+        "containerRect",
+        "screen/display identity"
+      ]
+    },
+    {
+      "side": "after",
+      "line": 3,
+      "runId": "run-4-1793173140296",
+      "stats": {
+        "帧": 1284,
+        "fps": "60.0",
+        "p50": 17,
+        "p95": 18,
+        "p99": 18,
+        "max": 42,
+        "gt33": 1,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "arrayLengths": {
+        "frames": 1284,
+        "frameTimestamps": 1284,
+        "frameMonotonic": 1284,
+        "frameDropTargets": 1284,
+        "frameIndexBuilds": 1284
+      },
+      "frameSpanMs": 21400,
+      "recordingSpanMs": 21405,
+      "startRecord": {
+        "runId": "run-4-1793173140296",
+        "startSeq": 4,
+        "epoch": 1793173140296,
+        "monotonic": 497813,
+        "restartedWhileRecording": false
+      },
+      "inputs": [
+        {
+          "t": 1793173149221,
+          "type": "pointerdown",
+          "x": 1098,
+          "y": 447,
+          "nodeId": "perf-node-19",
+          "button": 0
+        },
+        {
+          "t": 1793173149252,
+          "type": "pointermove",
+          "x": 1100,
+          "y": 447,
+          "nodeId": "perf-node-19",
+          "button": -1
+        },
+        {
+          "t": 1793173150000,
+          "type": "pointerup",
+          "x": 1170,
+          "y": 447,
+          "nodeId": "perf-node-20",
+          "button": 0
+        }
+      ],
+      "pointerDurationMs": 779,
+      "targetSequence": [
+        {
+          "nodeId": "",
+          "calls": 10,
+          "firstAt": 1793173149255,
+          "lastAt": 1793173149470
+        },
+        {
+          "nodeId": "perf-node-20",
+          "calls": 21,
+          "firstAt": 1793173149487,
+          "lastAt": 1793173150000
+        }
+      ],
+      "finalDropTarget": {
+        "t": 1793173150000,
+        "nodeId": "perf-node-20",
+        "handleId": "",
+        "ms": 0
+      },
+      "dropCallCount": 31,
+      "dropCounterMs": 2.0000000000582077,
+      "dropLogMs": 2,
+      "markedFrameStats": {
+        "帧": 31,
+        "p50": 17,
+        "p95": 18,
+        "p99": 42,
+        "max": 42,
+        "gt33": 1,
+        "gt50": 0,
+        "gt100": 0
+      },
+      "markedFrameCount": 31,
+      "frameCallbacksWithinPointerDownUp": 47,
+      "markedFramesOutsidePointerDownUp": [
+        {
+          "index": 582,
+          "msAfterPointerUp": 26,
+          "frameIntervalMs": 42
+        }
+      ],
+      "markedFramePercent": 2.4143302180685358,
+      "missingInputFields": [
+        "pointerId",
+        "buttons",
+        "handleType",
+        "current",
+        "world",
+        "viewport",
+        "containerRect",
+        "screen/display identity"
+      ]
+    }
+  ],
+  "commits": {
+    "before": [
+      {
+        "line": 329,
+        "text": "127.0.0.1 - [2026-10-28T15:42:17+08:00] \"POST /api/ops/canvas.document.commit\" 200 42.63325ms "
+      },
+      {
+        "line": 789,
+        "text": "127.0.0.1 - [2026-10-28T15:45:43+08:00] \"POST /api/ops/canvas.document.commit\" 200 33.529375ms "
+      }
+    ],
+    "after": [
+      {
+        "line": 621,
+        "text": "127.0.0.1 - [2026-10-28T15:31:08+08:00] \"POST /api/ops/canvas.document.commit\" 200 42.446959ms "
+      },
+      {
+        "line": 914,
+        "text": "127.0.0.1 - [2026-10-28T15:39:10+08:00] \"POST /api/ops/canvas.document.commit\" 200 47.270542ms "
+      }
+    ]
+  },
+  "recoveredRound5Log": {
+    "sha256": "214ecb117d240e6f803a686eff2c0827d1b2c969015bac88ccf66ac593127a27",
+    "firstAccessAt": "2026-10-28T14:48:48+08:00",
+    "lastAccessAt": "2026-10-28T14:58:14+08:00",
+    "commits": [
+      {
+        "line": 325,
+        "text": "127.0.0.1 - [2026-10-28T14:49:20+08:00] \"POST /api/ops/canvas.document.commit\" 400 206.546417ms "
+      },
+      {
+        "line": 554,
+        "text": "127.0.0.1 - [2026-10-28T14:52:23+08:00] \"POST /api/ops/canvas.document.commit\" 400 193.519375ms "
+      },
+      {
+        "line": 717,
+        "text": "127.0.0.1 - [2026-10-28T14:55:35+08:00] \"POST /api/ops/canvas.document.commit\" 400 184.126042ms "
+      },
+      {
+        "line": 777,
+        "text": "127.0.0.1 - [2026-10-28T14:56:15+08:00] \"POST /api/ops/canvas.document.commit\" 400 194.234709ms "
+      },
+      {
+        "line": 825,
+        "text": "127.0.0.1 - [2026-10-28T14:56:47+08:00] \"POST /api/ops/canvas.document.commit\" 400 192.628125ms "
+      },
+      {
+        "line": 893,
+        "text": "127.0.0.1 - [2026-10-28T14:57:43+08:00] \"POST /api/ops/canvas.document.commit\" 400 180.796125ms "
+      }
+    ],
+    "sameRecordingWindow": [
+      {
+        "commitAt": "14:56:47",
+        "recording": "remote-revision 第3段 14:56:33–14:56:53"
+      },
+      {
+        "commitAt": "14:57:43",
+        "recording": "remote-revision 第4段 14:57:31–14:57:51"
+      }
+    ],
+    "limitation": "仅秒级同窗关系，未证明具体失败分支、主线程因果或早期连接窗口请求。"
+  },
+  "verifiedFixedOriginals": 17,
+  "verifiedSourceReadbacks": 13,
+  "scope": "独立重算数组与核对原件；标记帧仅指计数有增量的帧，不自动等于完整手势活动区间或屏幕呈现帧。"
+}

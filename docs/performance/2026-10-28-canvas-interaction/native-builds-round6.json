@@ -1,0 +1,85 @@
+{
+  "purpose": "第六轮（2026-10-28）原生 Mac 客户端补测所用的两侧构建来源与产物身份。与 native-builds.json（第五轮）并列保留；任何一条第六轮 ndjson 都能用本文件反查到具体源码、插桩和二进制。",
+  "generatedAt": "2026-10-28T08:00:00Z",
+  "round": 6,
+  "probe": {
+    "file": "perf-probe-round6.ts",
+    "installedAs": "web/src/perf-probe.ts",
+    "sha256": "461e99e6bf882c79801cbe60fe79a65a1e4fc26aa56cadbf4bbba7604f5cea83",
+    "note": "两侧逐字节相同。相对第五轮只加导出：逐帧原始数组、每次落点调用的实际目标、每次真实输入起止、每次 start 的 runId/startSeq/单调时间。第五轮已有的计数口径（含 dropTargetMs 的计时范围）未改。"
+  },
+  "callSitePatch": {
+    "note": "两侧的落点调用点结构不同：候选有 `const target = resolveConnectionDropTarget(...)`，基线把结果内联构造成 { nodeId: bestNodeId, handleId: bestHandleId, ... }。所以 `__perfLogDropTarget(target, ms)` 不能照抄——基线侧必须显式传对象。第一次按候选写法插桩的基线构建在运行时抛 ReferenceError，落点目标一条都没记到（见“失败与修正”）。",
+    "before": "web/src/pages/canvas/use-canvas-connection-controller.ts:507（普通出口）、:568（批量正常出口）、:525（批量无合格源出口）三处显式传 { nodeId: bestNodeId, handleId: bestHandleId } / { nodeId: null, handleId: undefined }",
+    "after": "同文件两处，直接传已有的 `target`"
+  },
+  "sides": [
+    {
+      "side": "before",
+      "role": "基线（无空间索引，逐节点线性扫描）",
+      "sourceCommit": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "worktree": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before",
+      "worktreeStatusShort": [
+        "M web/src/components/canvas/canvas-node.tsx",
+        "M web/src/lib/operation-progress.ts",
+        "M web/src/main.tsx",
+        "M web/src/pages/canvas/project.tsx",
+        "M web/src/pages/canvas/use-canvas-connection-controller.ts",
+        "?? web/src/perf-probe.ts"
+      ],
+      "appPath": "/private/tmp/beef-perf/apps/BeefTV2-before.app",
+      "bundleId": "com.wails.beeftv.perfcanvas2-before",
+      "binarySha256Prefix": "e1d40190c2736c2c",
+      "binarySha256PrefixRebuilt": "d03acebd2e437592",
+      "dataDir": "/private/tmp/beef-perf/data/before",
+      "webkitStore": "~/Library/WebKit/com.wails.beeftv.perfcanvas2-before",
+      "rebuiltAfter": "第一次构建（插桩写法错，运行时 ReferenceError）已被第二次构建覆盖；本轮采样用的是第二次构建。"
+    },
+    {
+      "side": "after",
+      "role": "候选（画布空间索引 + 相切修复）",
+      "sourceCommit": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "worktree": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after",
+      "worktreeStatusShort": [
+        "M web/src/components/canvas/canvas-node.tsx",
+        "M web/src/lib/canvas/canvas-connection-target.ts",
+        "M web/src/lib/operation-progress.ts",
+        "M web/src/main.tsx",
+        "M web/src/pages/canvas/project.tsx",
+        "M web/src/pages/canvas/use-canvas-connection-controller.ts",
+        "?? web/src/perf-probe.ts"
+      ],
+      "appPath": "/private/tmp/beef-perf/apps/BeefTV2-after.app",
+      "bundleId": "com.wails.beeftv.perfcanvas2-after",
+      "binarySha256Prefix": "82ff330bc0042b6b",
+      "binarySha256PrefixIsolatedApp": "8739699d1c0c842f",
+      "dataDir": "/private/tmp/beef-perf/data/after",
+      "webkitStore": "~/Library/WebKit/com.wails.beeftv.perfcanvas2-after"
+    }
+  ],
+  "build": {
+    "prerequisite": "两侧 plugin-packages/ 已有 86 个 .beeftv-plugin（第五轮生成），本轮未重跑 build-packages.sh",
+    "command": "BEEFTV_SKIP_LOCAL_VERIFY=1 BEEFTV_NODE_RUNTIME=/Applications/BeefTV.app/Contents/Resources/agent-host/runtime BEEFTV_MEDIA_RUNTIME=/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime bash scripts/build-beeftv-release.sh",
+    "cwd": "<对应 worktree 根>",
+    "output": "<worktree>/backend/cmd/desktop/build/bin/BeefTV.app",
+    "duration": "after 37.3 秒；before 约 40 秒（wails 自报 37.301s）",
+    "correction": "第五轮 native-builds.json 记的 BEEFTV_MEDIA_RUNTIME=/Applications/BeefTV.app/Contents/Resources/media-runtime 是错的：build-beeftv-release.sh:156 把它放到 Contents/Resources/agent-host/media-runtime。按错路径传会直接在读 manifest.json 时 ENOENT 失败（本轮第一次构建就是这么失败的）。",
+    "verifiedInBinary": "strings 命中 perf-rec-start；after 二进制命中 __perfLogDropTarget 2 处，before 3 处"
+  },
+  "clientPrep": {
+    "script": "prepare-native-app.sh",
+    "note": "独立 bundle id + --data-dir + ad-hoc 重签；本轮把第五轮的隔离客户端移到 /private/tmp/beef-perf/apps-archive/BeefTV2-{before,after}-r5.app 留档，新客户端仍在原路径同名。"
+  },
+  "samplingEnvironment": {
+    "window": "1440x992（内容区 1440x960 CSS px，dpr=1），窗口坐标 = CSS 坐标 + 标题栏 32px",
+    "display": "G22A 1920x1080（主显示器）",
+    "loadBefore": "10.34 8.63 7.41（15:30）",
+    "loadDuring": "6.21 6.59 6.63（15:47）",
+    "note": "负载比第五轮采样时低（第五轮 9.98–12.07），本轮没有 rsync 迁移工作树，没有 mds_stores 争用。"
+  },
+  "newFindings": [
+    "客户端窗口必须处于前台/活动状态，否则 WKWebView 的 requestAnimationFrame 不跑：run-2 在窗口被遮挡时录到 0 帧；一次拖拽后窗口失焦再恢复，录到 123 秒的单帧间隔。第五轮的采样窗口是否也受此影响，现有材料无法判定（它没有逐帧数组）。",
+    "两侧落点调用点的变量结构不同，插桩不能照抄（见 callSitePatch）。",
+    "resource 形态种子让保存不再 400：本轮 POST /api/ops/canvas.document.commit 全部 200。"
+  ]
+}
