@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-10-28T08:27:34.687686+00:00",
+  "suite_finished": "2026-10-28T08:26:17.971147+00:00",
+  "suite_exit": 1,
+  "driver_finished": "2026-10-28T08:26:18.216264+00:00",
+  "driver_exit": 1,
+  "matched_processes": [],
+  "recorded_pids_still_alive": [],
+  "method": "按ps原始字节匹配本任务路径/进程组/PID，避免其他进程参数中的非UTF8字符影响核查；不打印其他任务参数",
+  "first_check": "首次ps UTF8解码失败，未得出核查结果；此记录为实际完成的字节核查"
+}

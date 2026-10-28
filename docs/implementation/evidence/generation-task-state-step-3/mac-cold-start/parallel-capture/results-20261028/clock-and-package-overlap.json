@@ -1,0 +1,16 @@
+{
+  "sync_raw_line": "M=-1 P=-1 G=-1 Sync Time=53966422922240 N=1 Trace=53966422960256 Mono=53966422960250 Wall=2026-10-28T16:08:52.570116+08:00",
+  "region_start_wall_approx": "2026-10-28T16:13:29.749080+08:00",
+  "region_end_wall_approx": "2026-10-28T16:13:34.838219+08:00",
+  "clock_note": "由trace Sync映射到墙钟，datetime仅微秒精度；Go JSON事件也有管道/转换开销，不作为OS实际执行调度证明",
+  "test_package_windows_overlap_cold_open": [
+    "infinite-canvas/backend/internal/app",
+    "infinite-canvas/backend/internal/bootstrap",
+    "infinite-canvas/backend/internal/handler",
+    "infinite-canvas/backend/internal/operations",
+    "infinite-canvas/backend/internal/plugins"
+  ],
+  "old_effective_p": "未知，不从新bootstrap指标反推旧-p",
+  "trace_start_gomaxprocs_metric": 10,
+  "trace_start_gomaxprocs_raw_line": "M=6121926656 P=9 G=1 Metric Time=53966422967552 Name=\"/sched/gomaxprocs:threads\" Value=Value{Uint64(10)}"
+}

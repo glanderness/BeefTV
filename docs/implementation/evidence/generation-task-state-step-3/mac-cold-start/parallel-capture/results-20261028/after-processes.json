@@ -1,0 +1,13 @@
+{
+  "command": [
+    "ps",
+    "-Ao",
+    "pid,ppid,pcpu,pmem,comm"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend",
+  "started": "2026-10-28T08:26:18.001495+00:00",
+  "pid": 94317,
+  "exit": 0,
+  "finished": "2026-10-28T08:26:18.028998+00:00",
+  "sha256": "c1eb0db0997043a23115f7fcbc6dda614cf3598da9c9b905353b44ddbfd3e1bf"
+}

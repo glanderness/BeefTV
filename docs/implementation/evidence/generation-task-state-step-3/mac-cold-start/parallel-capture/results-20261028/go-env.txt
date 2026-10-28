@@ -1,0 +1,9 @@
+{
+	"GOARCH": "arm64",
+	"GOCACHE": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/go-build-cache",
+	"GOFLAGS": "",
+	"GOMODCACHE": "/Volumes/ExternalWork/BuildCache/go-mod",
+	"GOOS": "darwin",
+	"GOTOOLCHAIN": "local",
+	"GOVERSION": "go1.26.3"
+}

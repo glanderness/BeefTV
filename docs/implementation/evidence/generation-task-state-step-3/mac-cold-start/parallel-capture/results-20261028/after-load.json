@@ -1,0 +1,11 @@
+{
+  "command": [
+    "uptime"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend",
+  "started": "2026-10-28T08:26:17.995178+00:00",
+  "pid": 94316,
+  "exit": 0,
+  "finished": "2026-10-28T08:26:18.001235+00:00",
+  "sha256": "12595f9ce1d9ab266daacb66779d2241e2eb92f5470f6d6c45f321f1eb6e93e4"
+}

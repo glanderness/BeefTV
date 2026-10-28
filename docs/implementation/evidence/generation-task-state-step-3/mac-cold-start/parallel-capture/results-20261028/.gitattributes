@@ -1,0 +1,3 @@
+*.txt -text -eol
+*.jsonl -text -eol
+*.gz binary

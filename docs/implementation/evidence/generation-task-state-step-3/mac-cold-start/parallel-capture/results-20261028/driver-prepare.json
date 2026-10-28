@@ -1,0 +1,22 @@
+{
+  "command": [
+    "/Users/sunny/.local/bin/python3",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/docs/implementation/evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/capture_once.py",
+    "prepare",
+    "--repo",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+    "--workdir",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once",
+    "--plugins",
+    "/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/plugin-packages",
+    "--host-deps",
+    "/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/agent-host/node_modules",
+    "--gomodcache",
+    "/Volumes/ExternalWork/BuildCache/go-mod"
+  ],
+  "started": "2026-10-28T08:06:23.903467+00:00",
+  "finished": "2026-10-28T08:06:24.184857+00:00",
+  "exit": 0,
+  "sha256": "d9eff09a159457f6fffc1aa10b4f7403f01940a483f9b1fed1fd4545b792a469",
+  "material_commit": "65a38475c8a904f6c507e9d6706dd3b54fffb612"
+}

@@ -1,0 +1,11 @@
+{
+  "command": [
+    "vm_stat"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend",
+  "started": "2026-10-28T08:06:58.982641+00:00",
+  "pid": 25287,
+  "exit": 0,
+  "finished": "2026-10-28T08:06:58.986377+00:00",
+  "sha256": "6cefd38402d19648f51d64f37fb053505abfc4cfb7da811ce34a39bbb1e3b4d2"
+}

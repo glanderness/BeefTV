@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/opt/homebrew/Cellar/go/1.26.3/libexec/bin/go",
+    "run",
+    "./cmd/step3-fixture",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/v27.db"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/fixture-v27/backend",
+  "started": "2026-10-28T08:06:56.997026+00:00",
+  "pid": 25252,
+  "exit": 0,
+  "finished": "2026-10-28T08:06:58.919463+00:00",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

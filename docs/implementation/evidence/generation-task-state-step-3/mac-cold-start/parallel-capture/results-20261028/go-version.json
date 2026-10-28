@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/opt/homebrew/Cellar/go/1.26.3/libexec/bin/go",
+    "version"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend",
+  "started": "2026-10-28T08:06:58.920275+00:00",
+  "pid": 25283,
+  "exit": 0,
+  "finished": "2026-10-28T08:06:58.930742+00:00",
+  "sha256": "b2fdffd04ae5a836eca9bfdd1d3d10c524b2920dcd5aca393f80258a93a3f0f4"
+}

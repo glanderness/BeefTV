@@ -1,0 +1,12 @@
+package main
+import (
+ "os"
+ "gorm.io/driver/sqlite"
+ "gorm.io/gorm"
+ "infinite-canvas/backend/internal/database"
+)
+func main(){
+ db,err:=gorm.Open(sqlite.Open(os.Args[1]),&gorm.Config{});if err!=nil{panic(err)}
+ if err:=database.MigrateLocalSchema(db);err!=nil{panic(err)}
+ pool,err:=db.DB();if err!=nil{panic(err)};if err:=pool.Close();err!=nil{panic(err)}
+}

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "/opt/homebrew/Cellar/go/1.26.3/libexec/bin/go",
+    "env",
+    "-json",
+    "GOOS",
+    "GOARCH",
+    "GOVERSION",
+    "GOFLAGS",
+    "GOTOOLCHAIN",
+    "GOMODCACHE",
+    "GOCACHE"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend",
+  "started": "2026-10-28T08:06:58.931080+00:00",
+  "pid": 25284,
+  "exit": 0,
+  "finished": "2026-10-28T08:06:58.940817+00:00",
+  "sha256": "25cdb81d095526bc503a1fa00882844b31f761c736d8e5d3c62ef6190266fcbe"
+}

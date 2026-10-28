@@ -1,0 +1,14 @@
+{
+  "command": [
+    "iostat",
+    "-d",
+    "-c",
+    "1"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend",
+  "started": "2026-10-28T08:26:18.033485+00:00",
+  "pid": 94319,
+  "exit": 0,
+  "finished": "2026-10-28T08:26:18.038769+00:00",
+  "sha256": "aa8da4feeadde0a1037aa767fc708ab489652c7911673817d5ae6aa7007775c2"
+}

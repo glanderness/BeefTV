@@ -1,0 +1,815 @@
+[
+  {
+    "package": "infinite-canvas/backend/cmd/beeftv",
+    "test": "TestCLIAndMCPAgainstIsolatedIntegratedRuntime",
+    "time": "2026-10-28T16:08:03.966425+08:00",
+    "output_tail": [
+      "STEP3_COLD_PHASE composition_and_routes 38452750\n",
+      "\r\n",
+      "2026/10/28 16:07:43 \u001b[31;1m/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/source/backend/internal/repository/repository.go:1082 \u001b[35;1mrecord not found\n",
+      "\u001b[0m\u001b[33m[0.036ms] \u001b[34;1m[rows:0]\u001b[0m SELECT * FROM `canvas_projects` WHERE id = \"integrated-cli-canvas\" AND user_id = \"bf3aa5961ec6eb1d2a1ec165b53b0d1c\" ORDER BY `canvas_projects`.`id` LIMIT 1\n",
+      "2026/10/28 16:07:43 canvas_save request_id=\"req-f512ca25f0e35bf86234f709\" trace_id=\"444679b5f13852d78bfa896447247a10\" actor=\"bf3aa5961ec6eb1d2a1ec165b53b0d1c\" canvas=\"integrated-cli-canvas\" base_revision=0 revision=1 nodes_before=0 nodes_after=0 connections=0 status=200\n",
+      "127.0.0.1 - [2026-10-28T16:07:43+08:00] \"PUT /api/canvas-projects/integrated-cli-canvas\" 200 11.235875ms \n",
+      "    integrated_runtime_test.go:84: CLI [canvas get --canvas integrated-cli-canvas --json]: signal: killed \n",
+      "--- FAIL: TestCLIAndMCPAgainstIsolatedIntegratedRuntime (30.31s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/assistantruntime",
+    "test": "TestAgentHostReapsExitAndRestartsWithSpacedPath",
+    "time": "2026-10-28T16:08:17.915618+08:00",
+    "output_tail": [
+      "=== RUN   TestAgentHostReapsExitAndRestartsWithSpacedPath\n",
+      "    host_test.go:180: 宿主未在时限内就绪\n",
+      "--- FAIL: TestAgentHostReapsExitAndRestartsWithSpacedPath (8.04s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/desktopnet",
+    "test": "TestHTTPSChildProxyPreservesRedirectBypassAndExplicitDirect",
+    "time": "2026-10-28T16:09:19.476332+08:00",
+    "output_tail": [
+      "=== RUN   TestHTTPSChildProxyPreservesRedirectBypassAndExplicitDirect\n",
+      "    proxy_test.go:28: explicit direct configuration fell back to a different proxy\n",
+      "--- FAIL: TestHTTPSChildProxyPreservesRedirectBypassAndExplicitDirect (0.01s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/desktopupdate",
+    "test": "TestRelaunchPreservesDataDirectoryAsOneArgument",
+    "time": "2026-10-28T16:09:34.679846+08:00",
+    "output_tail": [
+      "=== RUN   TestRelaunchPreservesDataDirectoryAsOneArgument\n",
+      "    relaunch_data_test.go:40: restart fixture did not run\n",
+      "--- FAIL: TestRelaunchPreservesDataDirectoryAsOneArgument (3.02s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/generation",
+    "test": "TestSeedanceUploadDNSValidationHonorsDeadline/redirect",
+    "time": "2026-10-28T16:10:01.135083+08:00",
+    "output_tail": [
+      "=== RUN   TestSeedanceUploadDNSValidationHonorsDeadline/redirect\n",
+      "    seedance_single_upload_test.go:212: DNS failure evidence: [{Request:0x17cc3a6c3900 StartedAt:2026-10-28 16:10:01.102475 +0800 CST m=+24.463835251 StatusCode:0 Body:[] Err:Post \"http://127.0.0.1:59121\": context deadline exceeded ResponseLimitBytes:67108864 Dispatched:false TransportPhase: TransportRoute:direct HTTPStatus:0 DeclaredResponseBytes:0 ReceivedBytes:0 RequestID: ResponseHeaders:map[] Outcome:}]\n",
+      "--- FAIL: TestSeedanceUploadDNSValidationHonorsDeadline/redirect (0.02s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/generation",
+    "test": "TestSeedanceUploadDNSValidationHonorsDeadline",
+    "time": "2026-10-28T16:10:01.156578+08:00",
+    "output_tail": [
+      "=== RUN   TestSeedanceUploadDNSValidationHonorsDeadline\n",
+      "--- FAIL: TestSeedanceUploadDNSValidationHonorsDeadline (0.08s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAgnesImageSendsOnlyDocumentedFields",
+    "time": "2026-10-28T16:11:25.165432+08:00",
+    "output_tail": [
+      "=== RUN   TestAgnesImageSendsOnlyDocumentedFields\n",
+      "    agnes_image_test.go:13: open ../../../plugin-packages/agnes-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAgnesImageSendsOnlyDocumentedFields (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAgnesImagePutsReferencesInExtraBody",
+    "time": "2026-10-28T16:11:25.165509+08:00",
+    "output_tail": [
+      "=== RUN   TestAgnesImagePutsReferencesInExtraBody\n",
+      "    agnes_image_test.go:62: open ../../../plugin-packages/agnes-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAgnesImagePutsReferencesInExtraBody (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAgnesImageSizeFollowsPixelOrTier",
+    "time": "2026-10-28T16:11:25.165573+08:00",
+    "output_tail": [
+      "=== RUN   TestAgnesImageSizeFollowsPixelOrTier\n",
+      "    agnes_image_test.go:96: open ../../../plugin-packages/agnes-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAgnesImageSizeFollowsPixelOrTier (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAgnesImageRejectsUnsupportedRatio",
+    "time": "2026-10-28T16:11:25.165633+08:00",
+    "output_tail": [
+      "=== RUN   TestAgnesImageRejectsUnsupportedRatio\n",
+      "    agnes_image_test.go:136: open ../../../plugin-packages/agnes-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAgnesImageRejectsUnsupportedRatio (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAgnesImageReadsUrlAndBase64Output",
+    "time": "2026-10-28T16:11:25.165684+08:00",
+    "output_tail": [
+      "=== RUN   TestAgnesImageReadsUrlAndBase64Output\n",
+      "    agnes_image_test.go:146: open ../../../plugin-packages/agnes-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAgnesImageReadsUrlAndBase64Output (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAutoDLPluginArtifact",
+    "time": "2026-10-28T16:11:25.170896+08:00",
+    "output_tail": [
+      "=== RUN   TestAutoDLPluginArtifact\n",
+      "    autodl_plugin_artifact_test.go:14: open ../../../plugin-packages/autodl-comfyui.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAutoDLPluginArtifact (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestImageResponseKeepsBase64AsDataURL",
+    "time": "2026-10-28T16:11:25.233695+08:00",
+    "output_tail": [
+      "=== RUN   TestImageResponseKeepsBase64AsDataURL\n",
+      "    builtin_test.go:518: open ../../../plugin-packages/openai-images.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestImageResponseKeepsBase64AsDataURL (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOpenAIImagesEditUsesMultipartInlineImageReferences",
+    "time": "2026-10-28T16:11:25.233775+08:00",
+    "output_tail": [
+      "=== RUN   TestOpenAIImagesEditUsesMultipartInlineImageReferences\n",
+      "    builtin_test.go:529: open ../../../plugin-packages/openai-images.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOpenAIImagesEditUsesMultipartInlineImageReferences (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAsyncMediaPollKeepsResultKind/volcengine-jimeng-image",
+    "time": "2026-10-28T16:11:25.233848+08:00",
+    "output_tail": [
+      "=== RUN   TestAsyncMediaPollKeepsResultKind/volcengine-jimeng-image\n",
+      "    builtin_test.go:575: open ../../../plugin-packages/volcengine-jimeng-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAsyncMediaPollKeepsResultKind/volcengine-jimeng-image (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAsyncMediaPollKeepsResultKind/async-audio",
+    "time": "2026-10-28T16:11:25.233897+08:00",
+    "output_tail": [
+      "=== RUN   TestAsyncMediaPollKeepsResultKind/async-audio\n",
+      "    builtin_test.go:575: open ../../../plugin-packages/async-audio.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestAsyncMediaPollKeepsResultKind/async-audio (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestAsyncMediaPollKeepsResultKind",
+    "time": "2026-10-28T16:11:25.23875+08:00",
+    "output_tail": [
+      "=== RUN   TestAsyncMediaPollKeepsResultKind\n",
+      "--- FAIL: TestAsyncMediaPollKeepsResultKind (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestDashscopeQwenImageUsesMultimodalEndpoint",
+    "time": "2026-10-28T16:11:25.254552+08:00",
+    "output_tail": [
+      "=== RUN   TestDashscopeQwenImageUsesMultimodalEndpoint\n",
+      "    dashscope_qwen_image_test.go:12: open ../../../plugin-packages/dashscope-qwen-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestDashscopeQwenImageUsesMultimodalEndpoint (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestDashscopeQwenImagePutsReferencesInMessageContent",
+    "time": "2026-10-28T16:11:25.254617+08:00",
+    "output_tail": [
+      "=== RUN   TestDashscopeQwenImagePutsReferencesInMessageContent\n",
+      "    dashscope_qwen_image_test.go:57: open ../../../plugin-packages/dashscope-qwen-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestDashscopeQwenImagePutsReferencesInMessageContent (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestDashscopeQwenImageOmitsUnregisteredSize",
+    "time": "2026-10-28T16:11:25.25464+08:00",
+    "output_tail": [
+      "=== RUN   TestDashscopeQwenImageOmitsUnregisteredSize\n",
+      "    dashscope_qwen_image_test.go:97: open ../../../plugin-packages/dashscope-qwen-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestDashscopeQwenImageOmitsUnregisteredSize (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestDashscopeQwenImageLifecycleReadsMultimodalChoices",
+    "time": "2026-10-28T16:11:25.254717+08:00",
+    "output_tail": [
+      "=== RUN   TestDashscopeQwenImageLifecycleReadsMultimodalChoices\n",
+      "    dashscope_qwen_image_test.go:111: open ../../../plugin-packages/dashscope-qwen-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestDashscopeQwenImageLifecycleReadsMultimodalChoices (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestDashscopeQwenImageSurfacesFailureMessage",
+    "time": "2026-10-28T16:11:25.254817+08:00",
+    "output_tail": [
+      "=== RUN   TestDashscopeQwenImageSurfacesFailureMessage\n",
+      "    dashscope_qwen_image_test.go:148: open ../../../plugin-packages/dashscope-qwen-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestDashscopeQwenImageSurfacesFailureMessage (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestFullVideoFullVideoWireContract",
+    "time": "2026-10-28T16:11:25.254883+08:00",
+    "output_tail": [
+      "=== RUN   TestFullVideoFullVideoWireContract\n",
+      "    fullvideo_test.go:9: open ../../../plugin-packages/full-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestFullVideoFullVideoWireContract (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins",
+    "time": "2026-10-28T16:11:25.254926+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins\n",
+      "    official_catalog_test.go:26: official protocol packages = 0, want at least 70\n",
+      "--- FAIL: TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialAtlasCloudChatProfile",
+    "time": "2026-10-28T16:11:25.254938+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialAtlasCloudChatProfile\n",
+      "    official_catalog_test.go:91: open ../../../plugin-packages/atlascloud-chat.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialAtlasCloudChatProfile (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-chat",
+    "time": "2026-10-28T16:11:25.260365+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-chat\n",
+      "    official_catalog_test.go:184: open ../../../plugin-packages/openai-chat-completions.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-chat (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-responses",
+    "time": "2026-10-28T16:11:25.265543+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-responses\n",
+      "    official_catalog_test.go:184: open ../../../plugin-packages/openai-responses.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-responses (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/anthropic",
+    "time": "2026-10-28T16:11:25.265585+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialAgentProfilesMapToolRequestsAndResponses/anthropic\n",
+      "    official_catalog_test.go:184: open ../../../plugin-packages/anthropic-messages.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialAgentProfilesMapToolRequestsAndResponses/anthropic (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/gemini",
+    "time": "2026-10-28T16:11:25.265634+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialAgentProfilesMapToolRequestsAndResponses/gemini\n",
+      "    official_catalog_test.go:184: open ../../../plugin-packages/google-gemini-generate-content.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialAgentProfilesMapToolRequestsAndResponses/gemini (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses",
+    "time": "2026-10-28T16:11:25.265649+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialAgentProfilesMapToolRequestsAndResponses\n",
+      "--- FAIL: TestOfficialAgentProfilesMapToolRequestsAndResponses (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/minimax-video",
+    "time": "2026-10-28T16:11:25.276108+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialVideoProfilesPreserveExplicitMediaRoles/minimax-video\n",
+      "    official_catalog_test.go:288: open ../../../plugin-packages/minimax-hailuo-video-v2.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialVideoProfilesPreserveExplicitMediaRoles/minimax-video (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/newapi-channel-1",
+    "time": "2026-10-28T16:11:25.276231+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialVideoProfilesPreserveExplicitMediaRoles/newapi-channel-1\n",
+      "    official_catalog_test.go:288: open ../../../plugin-packages/newapi-media-task-v1.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialVideoProfilesPreserveExplicitMediaRoles/newapi-channel-1 (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/agnes-video",
+    "time": "2026-10-28T16:11:25.276277+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialVideoProfilesPreserveExplicitMediaRoles/agnes-video\n",
+      "    official_catalog_test.go:288: open ../../../plugin-packages/agnes-video-25.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialVideoProfilesPreserveExplicitMediaRoles/agnes-video (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/dashscope-wan-video",
+    "time": "2026-10-28T16:11:25.276311+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialVideoProfilesPreserveExplicitMediaRoles/dashscope-wan-video\n",
+      "    official_catalog_test.go:288: open ../../../plugin-packages/dashscope-wan-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialVideoProfilesPreserveExplicitMediaRoles/dashscope-wan-video (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles",
+    "time": "2026-10-28T16:11:25.276317+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialVideoProfilesPreserveExplicitMediaRoles\n",
+      "--- FAIL: TestOfficialVideoProfilesPreserveExplicitMediaRoles (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestNewAPIChannel1AddsSeedanceContentAliasAndParsesDataURL",
+    "time": "2026-10-28T16:11:25.276331+08:00",
+    "output_tail": [
+      "=== RUN   TestNewAPIChannel1AddsSeedanceContentAliasAndParsesDataURL\n",
+      "    official_catalog_test.go:305: open ../../../plugin-packages/newapi-media-task-v1.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestNewAPIChannel1AddsSeedanceContentAliasAndParsesDataURL (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialWanProfilesUseMutuallyExclusiveReferenceFields",
+    "time": "2026-10-28T16:11:25.276343+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialWanProfilesUseMutuallyExclusiveReferenceFields\n",
+      "    official_catalog_test.go:340: open ../../../plugin-packages/dashscope-wan-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialWanProfilesUseMutuallyExclusiveReferenceFields (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialRollDekWanVideoUsesVideosLifecycle",
+    "time": "2026-10-28T16:11:25.276356+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialRollDekWanVideoUsesVideosLifecycle\n",
+      "    official_catalog_test.go:387: open ../../../plugin-packages/rolldek-wan-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialRollDekWanVideoUsesVideosLifecycle (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestNewAPIVideoGenerationsParsesNestedTaskIDs",
+    "time": "2026-10-28T16:11:25.276369+08:00",
+    "output_tail": [
+      "=== RUN   TestNewAPIVideoGenerationsParsesNestedTaskIDs\n",
+      "    official_catalog_test.go:450: open ../../../plugin-packages/newapi-video-generations-v1.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestNewAPIVideoGenerationsParsesNestedTaskIDs (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestNewAPIVideoGenerationsParsesNestedVideoResults",
+    "time": "2026-10-28T16:11:25.27638+08:00",
+    "output_tail": [
+      "=== RUN   TestNewAPIVideoGenerationsParsesNestedVideoResults\n",
+      "    official_catalog_test.go:474: open ../../../plugin-packages/newapi-video-generations-v1.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestNewAPIVideoGenerationsParsesNestedVideoResults (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialOpenAIVideosDeclaresAuthenticatedResultDownload",
+    "time": "2026-10-28T16:11:25.276394+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialOpenAIVideosDeclaresAuthenticatedResultDownload\n",
+      "    official_catalog_test.go:499: open ../../../plugin-packages/openai-videos.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialOpenAIVideosDeclaresAuthenticatedResultDownload (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions/openai-chat",
+    "time": "2026-10-28T16:11:25.276416+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions/openai-chat\n",
+      "    official_catalog_test.go:533: open ../../../plugin-packages/openai-chat-completions.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions/openai-chat (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions/deepseek",
+    "time": "2026-10-28T16:11:25.281363+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions/deepseek\n",
+      "    official_catalog_test.go:533: open ../../../plugin-packages/deepseek-chat.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions/deepseek (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions/atlascloud",
+    "time": "2026-10-28T16:11:25.29178+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions/atlascloud\n",
+      "    official_catalog_test.go:533: open ../../../plugin-packages/atlascloud-chat.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions/atlascloud (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions/openai-responses",
+    "time": "2026-10-28T16:11:25.29686+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions/openai-responses\n",
+      "    official_catalog_test.go:533: open ../../../plugin-packages/openai-responses.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions/openai-responses (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions/anthropic",
+    "time": "2026-10-28T16:11:25.307124+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions/anthropic\n",
+      "    official_catalog_test.go:533: open ../../../plugin-packages/anthropic-messages.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions/anthropic (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions/gemini",
+    "time": "2026-10-28T16:11:25.307156+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions/gemini\n",
+      "    official_catalog_test.go:533: open ../../../plugin-packages/google-gemini-generate-content.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions/gemini (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialTextProtocolsDeliverInstructions",
+    "time": "2026-10-28T16:11:25.30717+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialTextProtocolsDeliverInstructions\n",
+      "--- FAIL: TestOfficialTextProtocolsDeliverInstructions (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialArkSeedreamMapsAspectRatioToPixelSize",
+    "time": "2026-10-28T16:11:25.307233+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialArkSeedreamMapsAspectRatioToPixelSize\n",
+      "    official_catalog_test.go:603: open ../../../plugin-packages/volcengine-ark-seedream.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialArkSeedreamMapsAspectRatioToPixelSize (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialArkAgentPlanPluginsUsePlanPaths",
+    "time": "2026-10-28T16:11:25.307284+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialArkAgentPlanPluginsUsePlanPaths\n",
+      "    official_catalog_test.go:637: open ../../../plugin-packages/volcengine-ark-agent-plan-seedream.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialArkAgentPlanPluginsUsePlanPaths (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialGeminiImageMapsQualityToImageSize",
+    "time": "2026-10-28T16:11:25.307365+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialGeminiImageMapsQualityToImageSize\n",
+      "    official_catalog_test.go:667: open ../../../plugin-packages/google-gemini-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialGeminiImageMapsQualityToImageSize (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialGeminiImagePrefersQualityOverVideoResolution",
+    "time": "2026-10-28T16:11:25.307453+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialGeminiImagePrefersQualityOverVideoResolution\n",
+      "    official_catalog_test.go:713: open ../../../plugin-packages/google-gemini-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialGeminiImagePrefersQualityOverVideoResolution (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialGrokImageMapsAspectAndResolution",
+    "time": "2026-10-28T16:11:25.307491+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialGrokImageMapsAspectAndResolution\n",
+      "    official_catalog_test.go:747: open ../../../plugin-packages/xai-grok-images.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialGrokImageMapsAspectAndResolution (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialJimengImageSplitsPixelSize",
+    "time": "2026-10-28T16:11:25.307527+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialJimengImageSplitsPixelSize\n",
+      "    official_catalog_test.go:767: open ../../../plugin-packages/volcengine-jimeng-image.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialJimengImageSplitsPixelSize (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialJimengVideoUsesOfficialFramesAspectAndQueryConfig",
+    "time": "2026-10-28T16:11:25.312272+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialJimengVideoUsesOfficialFramesAspectAndQueryConfig\n",
+      "    official_catalog_test.go:786: open ../../../plugin-packages/volcengine-jimeng-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialJimengVideoUsesOfficialFramesAspectAndQueryConfig (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialJimengVideoSendsReqJSONOnQueryOnly",
+    "time": "2026-10-28T16:11:25.317483+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialJimengVideoSendsReqJSONOnQueryOnly\n",
+      "    official_catalog_test.go:823: open ../../../plugin-packages/volcengine-jimeng-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialJimengVideoSendsReqJSONOnQueryOnly (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialJimengVideoTreatsCode10000AsSuccess",
+    "time": "2026-10-28T16:11:25.317596+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialJimengVideoTreatsCode10000AsSuccess\n",
+      "    official_catalog_test.go:858: open ../../../plugin-packages/volcengine-jimeng-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialJimengVideoTreatsCode10000AsSuccess (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialOpenAIAudioUsesBinaryPayload",
+    "time": "2026-10-28T16:11:25.328209+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialOpenAIAudioUsesBinaryPayload\n",
+      "    official_catalog_test.go:910: open ../../../plugin-packages/openai-audio.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialOpenAIAudioUsesBinaryPayload (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialOpenAIAudioSpeedDefaultsInvalidAndZeroValues",
+    "time": "2026-10-28T16:11:25.328223+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialOpenAIAudioSpeedDefaultsInvalidAndZeroValues\n",
+      "    official_catalog_test.go:921: open ../../../plugin-packages/openai-audio.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialOpenAIAudioSpeedDefaultsInvalidAndZeroValues (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-image",
+    "time": "2026-10-28T16:11:25.328246+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-image\n",
+      "    official_catalog_test.go:954: open ../../../plugin-packages/volcengine-ark-seedream.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-image (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-agent-plan-image",
+    "time": "2026-10-28T16:11:25.332902+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-agent-plan-image\n",
+      "    official_catalog_test.go:954: open ../../../plugin-packages/volcengine-ark-agent-plan-seedream.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-agent-plan-image (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialArkSeedreamParsesB64JSONAsDataURL",
+    "time": "2026-10-28T16:11:25.332909+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialArkSeedreamParsesB64JSONAsDataURL\n",
+      "--- FAIL: TestOfficialArkSeedreamParsesB64JSONAsDataURL (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialRunwayVideoUsesOfficialFieldsAndReadsTaskOutput",
+    "time": "2026-10-28T16:11:25.338009+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialRunwayVideoUsesOfficialFieldsAndReadsTaskOutput\n",
+      "    official_video_profiles_test.go:14: open ../../../plugin-packages/runway-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialRunwayVideoUsesOfficialFieldsAndReadsTaskOutput (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialRunwayVideoRejectsUnsentMediaRoles",
+    "time": "2026-10-28T16:11:25.348876+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialRunwayVideoRejectsUnsentMediaRoles\n",
+      "    official_video_profiles_test.go:87: open ../../../plugin-packages/runway-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialRunwayVideoRejectsUnsentMediaRoles (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialRunwayVideoKeepsFirstFrameForFirstOnlyModels",
+    "time": "2026-10-28T16:11:25.348896+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialRunwayVideoKeepsFirstFrameForFirstOnlyModels\n",
+      "    official_video_profiles_test.go:107: open ../../../plugin-packages/runway-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialRunwayVideoKeepsFirstFrameForFirstOnlyModels (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialRunwayVideoKeepsLastFrameForModelsThatSupportIt",
+    "time": "2026-10-28T16:11:25.348909+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialRunwayVideoKeepsLastFrameForModelsThatSupportIt\n",
+      "    official_video_profiles_test.go:130: open ../../../plugin-packages/runway-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialRunwayVideoKeepsLastFrameForModelsThatSupportIt (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialRunwayVideoRejectsLastFrameForFirstOnlyModels",
+    "time": "2026-10-28T16:11:25.348935+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialRunwayVideoRejectsLastFrameForFirstOnlyModels\n",
+      "    official_video_profiles_test.go:161: open ../../../plugin-packages/runway-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialRunwayVideoRejectsLastFrameForFirstOnlyModels (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialLumaReadsGenerationAssetsAndOfficialFields",
+    "time": "2026-10-28T16:11:25.348953+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialLumaReadsGenerationAssetsAndOfficialFields\n",
+      "    official_video_profiles_test.go:179: open ../../../plugin-packages/luma-dream-machine.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialLumaReadsGenerationAssetsAndOfficialFields (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialXAIVideoReadsRequestIDAndVideoURL",
+    "time": "2026-10-28T16:11:25.349016+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialXAIVideoReadsRequestIDAndVideoURL\n",
+      "    official_video_profiles_test.go:236: open ../../../plugin-packages/xai-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialXAIVideoReadsRequestIDAndVideoURL (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOfficialResponsesCollectsStandardOutputAndPreservesTools",
+    "time": "2026-10-28T16:11:25.355164+08:00",
+    "output_tail": [
+      "=== RUN   TestOfficialResponsesCollectsStandardOutputAndPreservesTools\n",
+      "    responses_output_test.go:9: open ../../../plugin-packages/openai-responses.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOfficialResponsesCollectsStandardOutputAndPreservesTools (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestSeedanceInstalledPluginsSendAdaptive",
+    "time": "2026-10-28T16:11:25.355238+08:00",
+    "output_tail": [
+      "=== RUN   TestSeedanceInstalledPluginsSendAdaptive\n",
+      "    seedance_constraints_test.go:14: open ../../../plugin-packages/volcengine-ark-seedance.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestSeedanceInstalledPluginsSendAdaptive (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestInstalledSeedancePluginsPreserveExplicitTaskType",
+    "time": "2026-10-28T16:11:25.378947+08:00",
+    "output_tail": [
+      "=== RUN   TestInstalledSeedancePluginsPreserveExplicitTaskType\n",
+      "    seedance_constraints_test.go:56: open ../../../plugin-packages/volcengine-ark-seedance.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestInstalledSeedancePluginsPreserveExplicitTaskType (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestVideoGenerationsJSONPreservesMediaAndOptions",
+    "time": "2026-10-28T16:11:25.37896+08:00",
+    "output_tail": [
+      "=== RUN   TestVideoGenerationsJSONPreservesMediaAndOptions\n",
+      "    video_json_test.go:11: open ../../../plugin-packages/video-generations-json.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestVideoGenerationsJSONPreservesMediaAndOptions (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestOpenAIVideosRejectsMediaItCannotSend",
+    "time": "2026-10-28T16:11:25.379023+08:00",
+    "output_tail": [
+      "=== RUN   TestOpenAIVideosRejectsMediaItCannotSend\n",
+      "    video_json_test.go:69: open ../../../plugin-packages/openai-videos.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestOpenAIVideosRejectsMediaItCannotSend (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestVideoUpgradeReadsLegacyReceipts/luma-dream-machine",
+    "time": "2026-10-28T16:11:25.379089+08:00",
+    "output_tail": [
+      "=== RUN   TestVideoUpgradeReadsLegacyReceipts/luma-dream-machine\n",
+      "    video_upgrade_compatibility_test.go:13: open ../../../plugin-packages/luma-dream-machine.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestVideoUpgradeReadsLegacyReceipts/luma-dream-machine (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestVideoUpgradeReadsLegacyReceipts/runway-video",
+    "time": "2026-10-28T16:11:25.379103+08:00",
+    "output_tail": [
+      "=== RUN   TestVideoUpgradeReadsLegacyReceipts/runway-video\n",
+      "    video_upgrade_compatibility_test.go:13: open ../../../plugin-packages/runway-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestVideoUpgradeReadsLegacyReceipts/runway-video (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/protocol",
+    "test": "TestVideoUpgradeReadsLegacyReceipts",
+    "time": "2026-10-28T16:11:25.379107+08:00",
+    "output_tail": [
+      "=== RUN   TestVideoUpgradeReadsLegacyReceipts\n",
+      "--- FAIL: TestVideoUpgradeReadsLegacyReceipts (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/bootstrap",
+    "test": "TestDesktopColdOpenBudgetAndNoIdleOutbound",
+    "time": "2026-10-28T16:13:35.282499+08:00",
+    "output_tail": [
+      "[GIN-debug] POST   /api/projects/:id/asset-candidates --> infinite-canvas/backend/internal/handler.RegisterProjectRoutes.func49 (9 handlers)\n",
+      "[GIN-debug] GET    /api/projects/:id/asset-candidates --> infinite-canvas/backend/internal/handler.RegisterProjectRoutes.func50 (9 handlers)\n",
+      "[GIN-debug] POST   /api/projects/:id/asset-candidates/:candidateId/confirm --> infinite-canvas/backend/internal/handler.RegisterProjectRoutes.func51 (9 handlers)\n",
+      "[GIN-debug] GET    /api/projects/:id/chapter-apply-receipts --> infinite-canvas/backend/internal/handler.RegisterProjectRoutes.func52 (9 handlers)\n",
+      "[GIN-debug] GET    /api/business/tools       --> infinite-canvas/backend/internal/handler.RegisterBusinessDiscovery.func1 (8 handlers)\n",
+      "STEP3_COLD_PHASE composition_and_routes 42513666\n",
+      "    local_runtime_budget_test.go:41: fresh local Open took 5.089262542s, budget is 5s\n",
+      "--- FAIL: TestDesktopColdOpenBudgetAndNoIdleOutbound (5.53s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/app",
+    "test": "TestPluginViewIncludesDocumentationForEveryOfficialProtocol",
+    "time": "2026-10-28T16:15:31.287016+08:00",
+    "output_tail": [
+      "=== RUN   TestPluginViewIncludesDocumentationForEveryOfficialProtocol\n",
+      "    protocol_runtime_test.go:59: plugin views = 87, unique local packages plus bundled plugins = 1\n",
+      "--- FAIL: TestPluginViewIncludesDocumentationForEveryOfficialProtocol (1.43s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/app",
+    "test": "TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation",
+    "time": "2026-10-28T16:15:31.287059+08:00",
+    "output_tail": [
+      "=== RUN   TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation\n",
+      "    protocol_runtime_test.go:96: open ../../../plugin-packages/openai-images.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation (0.00s)\n"
+    ]
+  },
+  {
+    "package": "infinite-canvas/backend/internal/app",
+    "test": "TestPluginRuntimeUpgradesInstalledWanMediaTransport",
+    "time": "2026-10-28T16:15:31.287081+08:00",
+    "output_tail": [
+      "=== RUN   TestPluginRuntimeUpgradesInstalledWanMediaTransport\n",
+      "    protocol_runtime_test.go:147: open ../../../plugin-packages/dashscope-wan-video.beeftv-plugin: no such file or directory\n",
+      "--- FAIL: TestPluginRuntimeUpgradesInstalledWanMediaTransport (0.00s)\n"
+    ]
+  }
+]

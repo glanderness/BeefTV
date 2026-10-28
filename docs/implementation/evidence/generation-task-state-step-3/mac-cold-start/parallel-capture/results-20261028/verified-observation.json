@@ -1,0 +1,62 @@
+{
+  "method": "逐阶段以RegionBegin时Running重新积分，与全局状态区间裁剪结果独立对照；没有重跑测试",
+  "phase_integrations": [
+    {
+      "phase": "database_and_schema",
+      "state_ns": {
+        "Running": 26525908,
+        "Syscall": 434442987,
+        "Runnable": 190273,
+        "Waiting": 24640
+      },
+      "matches_global_interval_method": true
+    },
+    {
+      "phase": "service_and_plugins",
+      "state_ns": {
+        "Running": 2796995270,
+        "Syscall": 887989819,
+        "Runnable": 1117823,
+        "Waiting": 59136
+      },
+      "matches_global_interval_method": true
+    },
+    {
+      "phase": "builtin_initializers",
+      "state_ns": {
+        "Running": 25511872,
+        "Syscall": 873523840,
+        "Runnable": 222720
+      },
+      "matches_global_interval_method": true
+    },
+    {
+      "phase": "composition_and_routes",
+      "state_ns": {
+        "Running": 30929408,
+        "Syscall": 11576512,
+        "Runnable": 8512
+      },
+      "matches_global_interval_method": true
+    }
+  ],
+  "cold_test_runs": 1,
+  "cold_test_failures": 1,
+  "cold_test_skips": 0,
+  "elapsed_open_ns": 5089262542,
+  "elapsed_phase_ns": {
+    "database_and_schema": 461182292,
+    "service_and_plugins": 3686161083,
+    "builtin_initializers": 899256792,
+    "composition_and_routes": 42513666
+  },
+  "phase_sum_ns": 5089113833,
+  "total_minus_phase_sum_ns": 148709,
+  "idle_outbound_assertion": "原测试在5秒预算断言前已执行外发0检查；本次到达预算失败而非外发失败，未单独打印计数",
+  "backend_files_verified": 1673,
+  "only_one_source_delta": true,
+  "trace_decode_exit": 0,
+  "original_5_second_budget_unchanged": true,
+  "state_mismatches": [],
+  "new_N1_runs": []
+}

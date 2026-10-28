@@ -1,0 +1,27 @@
+{
+  "raw_copies": 137,
+  "compression": [
+    {
+      "file": "bootstrap.trace.gz",
+      "original_bytes": 56322005,
+      "original_sha256": "32fe5232b7261e8827761d25f2e23bdf0ee5d15f8ce1ce7ceac12ca437b1bf45",
+      "stored_bytes": 11084902,
+      "stored_sha256": "665edd064cda4210f41acb05bb1dee0ad59392985ce479cba689f0e20703cee2",
+      "lossless_verified": true
+    },
+    {
+      "file": "cold-selected-events.txt.gz",
+      "original_bytes": 327330179,
+      "original_sha256": "0ce48b1c7963ff90926e30d7075a024cb214f5ac3121c70a3a1088e2efc595bc",
+      "stored_bytes": 4806105,
+      "stored_sha256": "ea1f4b9757daa789bb0ce47fa44ce2cfa2695c993a61439e7ede57602b4f424d",
+      "lossless_verified": true
+    }
+  ],
+  "trace_decode_full_stdout": {
+    "saved_to_git": false,
+    "reason": "9.9GB展开文本是56MB原始trace的派生物；保留原始trace、解码命令/版本/退出与完整输出哈希，以及目标事件原字节子集，可复算；不把子集冒充全量展开输出",
+    "temporary_gzip_bytes": 351324667,
+    "cleanup_after": "原始trace固定Git树逐字节复核通过后清理派生全量展开文件"
+  }
+}

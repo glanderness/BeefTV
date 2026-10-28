@@ -1,0 +1,9 @@
+{
+  "finished": "2026-10-28T08:26:18.112689+00:00",
+  "suite_exit": 1,
+  "capture_invocations": 1,
+  "trace_bytes": 56322005,
+  "trace_sha256": "32fe5232b7261e8827761d25f2e23bdf0ee5d15f8ce1ce7ceac12ca437b1bf45",
+  "interpretation": "须逐名核冷启动及Open regions；单次通过或无trace均不能解释旧失败，不自动追加测试",
+  "diagnostic_is_acceptance": false
+}

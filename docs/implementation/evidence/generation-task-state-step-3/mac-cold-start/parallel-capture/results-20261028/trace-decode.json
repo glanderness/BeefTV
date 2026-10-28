@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/opt/homebrew/Cellar/go/1.26.3/libexec/bin/go",
+    "tool",
+    "trace",
+    "-d=parsed",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/results/bootstrap.trace"
+  ],
+  "started": "2026-10-28T08:28:21.758356+00:00",
+  "trace_sha256": "32fe5232b7261e8827761d25f2e23bdf0ee5d15f8ce1ce7ceac12ca437b1bf45",
+  "trace_bytes": 56322005,
+  "pid": 2420,
+  "exit": 0,
+  "finished": "2026-10-28T08:29:36.275692+00:00",
+  "decoded_bytes": 9917566511,
+  "decoded_sha256": "6745a740c2fd0406ef8708b1eed546e03abd7f8c3c919978be702042d31ef894",
+  "compressed_bytes": 351324667,
+  "compressed_sha256": "a0b1262c5a997948f8a2e82d2b82bec7dadf0199e22b1d2109a446b6fbb4646a"
+}

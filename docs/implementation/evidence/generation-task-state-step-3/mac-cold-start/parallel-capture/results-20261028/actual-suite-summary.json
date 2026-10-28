@@ -1,0 +1,623 @@
+{
+  "packages": {
+    "infinite-canvas/backend/internal/assets": "pass",
+    "infinite-canvas/backend/cmd/server": "pass",
+    "infinite-canvas/backend/internal/appearance": "pass",
+    "infinite-canvas/backend/cmd/update-release": "pass",
+    "infinite-canvas/backend/internal/assistant": "pass",
+    "infinite-canvas/backend/internal/assistantdiagnostics": "pass",
+    "infinite-canvas/backend/cmd/beeftv": "fail",
+    "infinite-canvas/backend/internal/asset": "pass",
+    "infinite-canvas/backend/internal/assistantruntime": "fail",
+    "infinite-canvas/backend/internal/beefapi": "pass",
+    "infinite-canvas/backend/internal/buildinfo": "pass",
+    "infinite-canvas/backend/internal/canvas/capability": "pass",
+    "infinite-canvas/backend/internal/canvasworkflow": "pass",
+    "infinite-canvas/backend/internal/conversation": "pass",
+    "infinite-canvas/backend/internal/creation": "pass",
+    "infinite-canvas/backend/cmd/desktop": "pass",
+    "infinite-canvas/backend/internal/depthcapture": "pass",
+    "infinite-canvas/backend/internal/assistantturns": "pass",
+    "infinite-canvas/backend/internal/desktopnet": "fail",
+    "infinite-canvas/backend/internal/desktopstorage": "pass",
+    "infinite-canvas/backend/internal/eagle": "pass",
+    "infinite-canvas/backend/internal/depthruntime": "pass",
+    "infinite-canvas/backend/internal/environment": "pass",
+    "infinite-canvas/backend/internal/desktopupdate": "fail",
+    "infinite-canvas/backend/internal/agentops": "pass",
+    "infinite-canvas/backend/internal/diagnostics": "pass",
+    "infinite-canvas/backend/internal/kernel": "pass",
+    "infinite-canvas/backend/internal/localcrypto": "skip",
+    "infinite-canvas/backend/internal/legacyimport": "pass",
+    "infinite-canvas/backend/internal/localapp": "pass",
+    "infinite-canvas/backend/internal/database": "pass",
+    "infinite-canvas/backend/internal/mediatools": "pass",
+    "infinite-canvas/backend/internal/model": "pass",
+    "infinite-canvas/backend/internal/modelcatalog": "pass",
+    "infinite-canvas/backend/internal/generation": "fail",
+    "infinite-canvas/backend/internal/platform": "pass",
+    "infinite-canvas/backend/internal/privatefile": "skip",
+    "infinite-canvas/backend/internal/editing": "pass",
+    "infinite-canvas/backend/internal/playback": "pass",
+    "infinite-canvas/backend/internal/outbound": "pass",
+    "infinite-canvas/backend/internal/prompts": "pass",
+    "infinite-canvas/backend/internal/provider/bailian": "skip",
+    "infinite-canvas/backend/internal/project": "pass",
+    "infinite-canvas/backend/internal/protocol": "fail",
+    "infinite-canvas/backend/internal/provider": "pass",
+    "infinite-canvas/backend/internal/provider/workflow": "pass",
+    "infinite-canvas/backend/internal/providerpreset": "pass",
+    "infinite-canvas/backend/internal/referencestorage": "pass",
+    "infinite-canvas/backend/internal/runtimeinfo": "pass",
+    "infinite-canvas/backend/internal/skillhub": "pass",
+    "infinite-canvas/backend/internal/skillhubcli": "pass",
+    "infinite-canvas/backend/internal/repository": "pass",
+    "infinite-canvas/backend/internal/taskbinding": "pass",
+    "infinite-canvas/backend/internal/canvas": "pass",
+    "infinite-canvas/backend/internal/task": "pass",
+    "infinite-canvas/backend/internal/supporttrace": "pass",
+    "infinite-canvas/backend/internal/skills": "pass",
+    "infinite-canvas/backend/internal/taskruntime": "pass",
+    "infinite-canvas/backend/internal/taskdelivery": "pass",
+    "infinite-canvas/backend/internal/topaz": "pass",
+    "infinite-canvas/backend/internal/textreplay": "pass",
+    "infinite-canvas/backend/internal/transcription": "pass",
+    "infinite-canvas/backend/internal/transport/http": "pass",
+    "infinite-canvas/backend/internal/workspace": "pass",
+    "infinite-canvas/backend/internal/plugins": "pass",
+    "infinite-canvas/backend/internal/bootstrap": "fail",
+    "infinite-canvas/backend/internal/operations": "pass",
+    "infinite-canvas/backend/internal/handler": "pass",
+    "infinite-canvas/backend/internal/app": "fail"
+  },
+  "package_starts": {
+    "infinite-canvas/backend/cmd/beeftv": "2026-10-28T16:07:32.961181+08:00",
+    "infinite-canvas/backend/cmd/desktop": "2026-10-28T16:07:32.961342+08:00",
+    "infinite-canvas/backend/cmd/server": "2026-10-28T16:07:32.961456+08:00",
+    "infinite-canvas/backend/cmd/update-release": "2026-10-28T16:07:32.961495+08:00",
+    "infinite-canvas/backend/internal/agentops": "2026-10-28T16:07:32.961599+08:00",
+    "infinite-canvas/backend/internal/app": "2026-10-28T16:07:32.961651+08:00",
+    "infinite-canvas/backend/internal/appearance": "2026-10-28T16:07:32.961792+08:00",
+    "infinite-canvas/backend/internal/asset": "2026-10-28T16:07:32.961884+08:00",
+    "infinite-canvas/backend/internal/assets": "2026-10-28T16:07:32.961971+08:00",
+    "infinite-canvas/backend/internal/assistant": "2026-10-28T16:07:32.989954+08:00",
+    "infinite-canvas/backend/internal/assistantdiagnostics": "2026-10-28T16:07:39.441527+08:00",
+    "infinite-canvas/backend/internal/assistantruntime": "2026-10-28T16:07:43.39146+08:00",
+    "infinite-canvas/backend/internal/assistantturns": "2026-10-28T16:07:48.719352+08:00",
+    "infinite-canvas/backend/internal/beefapi": "2026-10-28T16:07:58.353133+08:00",
+    "infinite-canvas/backend/internal/bootstrap": "2026-10-28T16:07:58.896941+08:00",
+    "infinite-canvas/backend/internal/buildinfo": "2026-10-28T16:08:05.197899+08:00",
+    "infinite-canvas/backend/internal/canvas": "2026-10-28T16:08:09.23693+08:00",
+    "infinite-canvas/backend/internal/canvas/capability": "2026-10-28T16:08:16.700154+08:00",
+    "infinite-canvas/backend/internal/canvasworkflow": "2026-10-28T16:08:19.156305+08:00",
+    "infinite-canvas/backend/internal/conversation": "2026-10-28T16:08:37.566566+08:00",
+    "infinite-canvas/backend/internal/creation": "2026-10-28T16:08:53.907923+08:00",
+    "infinite-canvas/backend/internal/database": "2026-10-28T16:08:59.170243+08:00",
+    "infinite-canvas/backend/internal/depthcapture": "2026-10-28T16:09:00.412351+08:00",
+    "infinite-canvas/backend/internal/depthruntime": "2026-10-28T16:09:08.609631+08:00",
+    "infinite-canvas/backend/internal/desktopnet": "2026-10-28T16:09:12.087637+08:00",
+    "infinite-canvas/backend/internal/desktopstorage": "2026-10-28T16:09:15.558208+08:00",
+    "infinite-canvas/backend/internal/desktopupdate": "2026-10-28T16:09:15.930239+08:00",
+    "infinite-canvas/backend/internal/diagnostics": "2026-10-28T16:09:17.303669+08:00",
+    "infinite-canvas/backend/internal/eagle": "2026-10-28T16:09:19.496807+08:00",
+    "infinite-canvas/backend/internal/editing": "2026-10-28T16:09:21.448201+08:00",
+    "infinite-canvas/backend/internal/environment": "2026-10-28T16:09:29.454223+08:00",
+    "infinite-canvas/backend/internal/generation": "2026-10-28T16:09:31.161499+08:00",
+    "infinite-canvas/backend/internal/handler": "2026-10-28T16:09:33.159452+08:00",
+    "infinite-canvas/backend/internal/kernel": "2026-10-28T16:09:39.089548+08:00",
+    "infinite-canvas/backend/internal/legacyimport": "2026-10-28T16:09:49.429247+08:00",
+    "infinite-canvas/backend/internal/localapp": "2026-10-28T16:09:50.942148+08:00",
+    "infinite-canvas/backend/internal/localcrypto": "2026-10-28T16:09:54.878804+08:00",
+    "infinite-canvas/backend/internal/mediatools": "2026-10-28T16:09:54.878891+08:00",
+    "infinite-canvas/backend/internal/model": "2026-10-28T16:10:02.214669+08:00",
+    "infinite-canvas/backend/internal/modelcatalog": "2026-10-28T16:10:17.2292+08:00",
+    "infinite-canvas/backend/internal/operations": "2026-10-28T16:10:18.84267+08:00",
+    "infinite-canvas/backend/internal/outbound": "2026-10-28T16:10:24.484603+08:00",
+    "infinite-canvas/backend/internal/platform": "2026-10-28T16:10:26.728182+08:00",
+    "infinite-canvas/backend/internal/playback": "2026-10-28T16:10:31.733254+08:00",
+    "infinite-canvas/backend/internal/plugins": "2026-10-28T16:10:35.302773+08:00",
+    "infinite-canvas/backend/internal/privatefile": "2026-10-28T16:11:03.532714+08:00",
+    "infinite-canvas/backend/internal/project": "2026-10-28T16:11:03.532786+08:00",
+    "infinite-canvas/backend/internal/prompts": "2026-10-28T16:11:04.68787+08:00",
+    "infinite-canvas/backend/internal/protocol": "2026-10-28T16:11:08.545732+08:00",
+    "infinite-canvas/backend/internal/provider": "2026-10-28T16:11:13.685918+08:00",
+    "infinite-canvas/backend/internal/provider/bailian": "2026-10-28T16:11:23.282836+08:00",
+    "infinite-canvas/backend/internal/provider/workflow": "2026-10-28T16:11:23.282872+08:00",
+    "infinite-canvas/backend/internal/providerpreset": "2026-10-28T16:11:23.912771+08:00",
+    "infinite-canvas/backend/internal/referencestorage": "2026-10-28T16:11:25.412953+08:00",
+    "infinite-canvas/backend/internal/repository": "2026-10-28T16:11:27.656073+08:00",
+    "infinite-canvas/backend/internal/runtimeinfo": "2026-10-28T16:11:29.925361+08:00",
+    "infinite-canvas/backend/internal/skillhub": "2026-10-28T16:11:31.162494+08:00",
+    "infinite-canvas/backend/internal/skillhubcli": "2026-10-28T16:11:34.206784+08:00",
+    "infinite-canvas/backend/internal/skills": "2026-10-28T16:11:38.828957+08:00",
+    "infinite-canvas/backend/internal/supporttrace": "2026-10-28T16:11:41.509873+08:00",
+    "infinite-canvas/backend/internal/task": "2026-10-28T16:11:44.809453+08:00",
+    "infinite-canvas/backend/internal/taskbinding": "2026-10-28T16:11:50.530485+08:00",
+    "infinite-canvas/backend/internal/taskdelivery": "2026-10-28T16:11:58.674816+08:00",
+    "infinite-canvas/backend/internal/taskruntime": "2026-10-28T16:11:59.155904+08:00",
+    "infinite-canvas/backend/internal/textreplay": "2026-10-28T16:11:59.379322+08:00",
+    "infinite-canvas/backend/internal/topaz": "2026-10-28T16:12:00.68454+08:00",
+    "infinite-canvas/backend/internal/transcription": "2026-10-28T16:12:04.112616+08:00",
+    "infinite-canvas/backend/internal/transport/http": "2026-10-28T16:12:08.869298+08:00",
+    "infinite-canvas/backend/internal/workspace": "2026-10-28T16:12:13.762133+08:00"
+  },
+  "package_ends": {
+    "infinite-canvas/backend/internal/assets": "2026-10-28T16:07:39.440305+08:00",
+    "infinite-canvas/backend/cmd/server": "2026-10-28T16:07:43.390439+08:00",
+    "infinite-canvas/backend/internal/appearance": "2026-10-28T16:07:48.716434+08:00",
+    "infinite-canvas/backend/cmd/update-release": "2026-10-28T16:07:58.352089+08:00",
+    "infinite-canvas/backend/internal/assistant": "2026-10-28T16:07:58.890303+08:00",
+    "infinite-canvas/backend/internal/assistantdiagnostics": "2026-10-28T16:08:05.166509+08:00",
+    "infinite-canvas/backend/cmd/beeftv": "2026-10-28T16:08:09.209047+08:00",
+    "infinite-canvas/backend/internal/asset": "2026-10-28T16:08:16.669068+08:00",
+    "infinite-canvas/backend/internal/assistantruntime": "2026-10-28T16:08:19.12179+08:00",
+    "infinite-canvas/backend/internal/beefapi": "2026-10-28T16:08:37.536177+08:00",
+    "infinite-canvas/backend/internal/buildinfo": "2026-10-28T16:08:53.86243+08:00",
+    "infinite-canvas/backend/internal/canvas/capability": "2026-10-28T16:08:59.163694+08:00",
+    "infinite-canvas/backend/internal/canvasworkflow": "2026-10-28T16:09:00.37441+08:00",
+    "infinite-canvas/backend/internal/conversation": "2026-10-28T16:09:08.582155+08:00",
+    "infinite-canvas/backend/internal/creation": "2026-10-28T16:09:12.056166+08:00",
+    "infinite-canvas/backend/cmd/desktop": "2026-10-28T16:09:15.532598+08:00",
+    "infinite-canvas/backend/internal/depthcapture": "2026-10-28T16:09:15.903635+08:00",
+    "infinite-canvas/backend/internal/assistantturns": "2026-10-28T16:09:17.295943+08:00",
+    "infinite-canvas/backend/internal/desktopnet": "2026-10-28T16:09:19.49161+08:00",
+    "infinite-canvas/backend/internal/desktopstorage": "2026-10-28T16:09:21.441975+08:00",
+    "infinite-canvas/backend/internal/eagle": "2026-10-28T16:09:29.448423+08:00",
+    "infinite-canvas/backend/internal/depthruntime": "2026-10-28T16:09:31.160271+08:00",
+    "infinite-canvas/backend/internal/environment": "2026-10-28T16:09:33.153048+08:00",
+    "infinite-canvas/backend/internal/desktopupdate": "2026-10-28T16:09:39.081397+08:00",
+    "infinite-canvas/backend/internal/agentops": "2026-10-28T16:09:49.410226+08:00",
+    "infinite-canvas/backend/internal/diagnostics": "2026-10-28T16:09:50.939515+08:00",
+    "infinite-canvas/backend/internal/kernel": "2026-10-28T16:09:54.870378+08:00",
+    "infinite-canvas/backend/internal/localcrypto": "2026-10-28T16:09:54.878873+08:00",
+    "infinite-canvas/backend/internal/legacyimport": "2026-10-28T16:10:02.213902+08:00",
+    "infinite-canvas/backend/internal/localapp": "2026-10-28T16:10:17.191004+08:00",
+    "infinite-canvas/backend/internal/database": "2026-10-28T16:10:18.814792+08:00",
+    "infinite-canvas/backend/internal/mediatools": "2026-10-28T16:10:24.474702+08:00",
+    "infinite-canvas/backend/internal/model": "2026-10-28T16:10:26.702988+08:00",
+    "infinite-canvas/backend/internal/modelcatalog": "2026-10-28T16:10:31.709936+08:00",
+    "infinite-canvas/backend/internal/generation": "2026-10-28T16:10:35.275397+08:00",
+    "infinite-canvas/backend/internal/platform": "2026-10-28T16:11:03.499324+08:00",
+    "infinite-canvas/backend/internal/privatefile": "2026-10-28T16:11:03.532766+08:00",
+    "infinite-canvas/backend/internal/editing": "2026-10-28T16:11:04.651516+08:00",
+    "infinite-canvas/backend/internal/playback": "2026-10-28T16:11:08.505719+08:00",
+    "infinite-canvas/backend/internal/outbound": "2026-10-28T16:11:13.665222+08:00",
+    "infinite-canvas/backend/internal/prompts": "2026-10-28T16:11:23.269013+08:00",
+    "infinite-canvas/backend/internal/provider/bailian": "2026-10-28T16:11:23.282862+08:00",
+    "infinite-canvas/backend/internal/project": "2026-10-28T16:11:23.869982+08:00",
+    "infinite-canvas/backend/internal/protocol": "2026-10-28T16:11:25.379208+08:00",
+    "infinite-canvas/backend/internal/provider": "2026-10-28T16:11:27.641668+08:00",
+    "infinite-canvas/backend/internal/provider/workflow": "2026-10-28T16:11:29.88905+08:00",
+    "infinite-canvas/backend/internal/providerpreset": "2026-10-28T16:11:31.15368+08:00",
+    "infinite-canvas/backend/internal/referencestorage": "2026-10-28T16:11:34.150796+08:00",
+    "infinite-canvas/backend/internal/runtimeinfo": "2026-10-28T16:11:38.791143+08:00",
+    "infinite-canvas/backend/internal/skillhub": "2026-10-28T16:11:41.49317+08:00",
+    "infinite-canvas/backend/internal/skillhubcli": "2026-10-28T16:11:44.79621+08:00",
+    "infinite-canvas/backend/internal/repository": "2026-10-28T16:11:50.522298+08:00",
+    "infinite-canvas/backend/internal/taskbinding": "2026-10-28T16:11:58.625857+08:00",
+    "infinite-canvas/backend/internal/canvas": "2026-10-28T16:11:59.108818+08:00",
+    "infinite-canvas/backend/internal/task": "2026-10-28T16:11:59.358322+08:00",
+    "infinite-canvas/backend/internal/supporttrace": "2026-10-28T16:12:00.677279+08:00",
+    "infinite-canvas/backend/internal/skills": "2026-10-28T16:12:04.097352+08:00",
+    "infinite-canvas/backend/internal/taskruntime": "2026-10-28T16:12:08.853475+08:00",
+    "infinite-canvas/backend/internal/taskdelivery": "2026-10-28T16:12:13.720476+08:00",
+    "infinite-canvas/backend/internal/topaz": "2026-10-28T16:12:15.735292+08:00",
+    "infinite-canvas/backend/internal/textreplay": "2026-10-28T16:12:18.988726+08:00",
+    "infinite-canvas/backend/internal/transcription": "2026-10-28T16:12:21.180871+08:00",
+    "infinite-canvas/backend/internal/transport/http": "2026-10-28T16:12:24.112501+08:00",
+    "infinite-canvas/backend/internal/workspace": "2026-10-28T16:12:32.958169+08:00",
+    "infinite-canvas/backend/internal/plugins": "2026-10-28T16:14:22.424445+08:00",
+    "infinite-canvas/backend/internal/bootstrap": "2026-10-28T16:14:25.923046+08:00",
+    "infinite-canvas/backend/internal/operations": "2026-10-28T16:14:53.220885+08:00",
+    "infinite-canvas/backend/internal/handler": "2026-10-28T16:16:48.667702+08:00",
+    "infinite-canvas/backend/internal/app": "2026-10-28T16:26:17.712206+08:00"
+  },
+  "fail_test_events": [
+    {
+      "package": "infinite-canvas/backend/cmd/beeftv",
+      "test": "TestCLIAndMCPAgainstIsolatedIntegratedRuntime",
+      "time": "2026-10-28T16:08:03.966425+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/assistantruntime",
+      "test": "TestAgentHostReapsExitAndRestartsWithSpacedPath",
+      "time": "2026-10-28T16:08:17.915618+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/desktopnet",
+      "test": "TestHTTPSChildProxyPreservesRedirectBypassAndExplicitDirect",
+      "time": "2026-10-28T16:09:19.476332+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/desktopupdate",
+      "test": "TestRelaunchPreservesDataDirectoryAsOneArgument",
+      "time": "2026-10-28T16:09:34.679846+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/generation",
+      "test": "TestSeedanceUploadDNSValidationHonorsDeadline/redirect",
+      "time": "2026-10-28T16:10:01.135083+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/generation",
+      "test": "TestSeedanceUploadDNSValidationHonorsDeadline",
+      "time": "2026-10-28T16:10:01.156578+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAgnesImageSendsOnlyDocumentedFields",
+      "time": "2026-10-28T16:11:25.165432+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAgnesImagePutsReferencesInExtraBody",
+      "time": "2026-10-28T16:11:25.165509+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAgnesImageSizeFollowsPixelOrTier",
+      "time": "2026-10-28T16:11:25.165573+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAgnesImageRejectsUnsupportedRatio",
+      "time": "2026-10-28T16:11:25.165633+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAgnesImageReadsUrlAndBase64Output",
+      "time": "2026-10-28T16:11:25.165684+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAutoDLPluginArtifact",
+      "time": "2026-10-28T16:11:25.170896+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestImageResponseKeepsBase64AsDataURL",
+      "time": "2026-10-28T16:11:25.233695+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOpenAIImagesEditUsesMultipartInlineImageReferences",
+      "time": "2026-10-28T16:11:25.233775+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAsyncMediaPollKeepsResultKind/volcengine-jimeng-image",
+      "time": "2026-10-28T16:11:25.233848+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAsyncMediaPollKeepsResultKind/async-audio",
+      "time": "2026-10-28T16:11:25.233897+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestAsyncMediaPollKeepsResultKind",
+      "time": "2026-10-28T16:11:25.23875+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestDashscopeQwenImageUsesMultimodalEndpoint",
+      "time": "2026-10-28T16:11:25.254552+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestDashscopeQwenImagePutsReferencesInMessageContent",
+      "time": "2026-10-28T16:11:25.254617+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestDashscopeQwenImageOmitsUnregisteredSize",
+      "time": "2026-10-28T16:11:25.25464+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestDashscopeQwenImageLifecycleReadsMultimodalChoices",
+      "time": "2026-10-28T16:11:25.254717+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestDashscopeQwenImageSurfacesFailureMessage",
+      "time": "2026-10-28T16:11:25.254817+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestFullVideoFullVideoWireContract",
+      "time": "2026-10-28T16:11:25.254883+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins",
+      "time": "2026-10-28T16:11:25.254926+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialAtlasCloudChatProfile",
+      "time": "2026-10-28T16:11:25.254938+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-chat",
+      "time": "2026-10-28T16:11:25.260365+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/openai-responses",
+      "time": "2026-10-28T16:11:25.265543+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/anthropic",
+      "time": "2026-10-28T16:11:25.265585+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses/gemini",
+      "time": "2026-10-28T16:11:25.265634+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialAgentProfilesMapToolRequestsAndResponses",
+      "time": "2026-10-28T16:11:25.265649+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/minimax-video",
+      "time": "2026-10-28T16:11:25.276108+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/newapi-channel-1",
+      "time": "2026-10-28T16:11:25.276231+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/agnes-video",
+      "time": "2026-10-28T16:11:25.276277+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles/dashscope-wan-video",
+      "time": "2026-10-28T16:11:25.276311+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialVideoProfilesPreserveExplicitMediaRoles",
+      "time": "2026-10-28T16:11:25.276317+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestNewAPIChannel1AddsSeedanceContentAliasAndParsesDataURL",
+      "time": "2026-10-28T16:11:25.276331+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialWanProfilesUseMutuallyExclusiveReferenceFields",
+      "time": "2026-10-28T16:11:25.276343+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialRollDekWanVideoUsesVideosLifecycle",
+      "time": "2026-10-28T16:11:25.276356+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestNewAPIVideoGenerationsParsesNestedTaskIDs",
+      "time": "2026-10-28T16:11:25.276369+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestNewAPIVideoGenerationsParsesNestedVideoResults",
+      "time": "2026-10-28T16:11:25.27638+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialOpenAIVideosDeclaresAuthenticatedResultDownload",
+      "time": "2026-10-28T16:11:25.276394+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions/openai-chat",
+      "time": "2026-10-28T16:11:25.276416+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions/deepseek",
+      "time": "2026-10-28T16:11:25.281363+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions/atlascloud",
+      "time": "2026-10-28T16:11:25.29178+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions/openai-responses",
+      "time": "2026-10-28T16:11:25.29686+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions/anthropic",
+      "time": "2026-10-28T16:11:25.307124+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions/gemini",
+      "time": "2026-10-28T16:11:25.307156+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialTextProtocolsDeliverInstructions",
+      "time": "2026-10-28T16:11:25.30717+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialArkSeedreamMapsAspectRatioToPixelSize",
+      "time": "2026-10-28T16:11:25.307233+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialArkAgentPlanPluginsUsePlanPaths",
+      "time": "2026-10-28T16:11:25.307284+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialGeminiImageMapsQualityToImageSize",
+      "time": "2026-10-28T16:11:25.307365+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialGeminiImagePrefersQualityOverVideoResolution",
+      "time": "2026-10-28T16:11:25.307453+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialGrokImageMapsAspectAndResolution",
+      "time": "2026-10-28T16:11:25.307491+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialJimengImageSplitsPixelSize",
+      "time": "2026-10-28T16:11:25.307527+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialJimengVideoUsesOfficialFramesAspectAndQueryConfig",
+      "time": "2026-10-28T16:11:25.312272+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialJimengVideoSendsReqJSONOnQueryOnly",
+      "time": "2026-10-28T16:11:25.317483+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialJimengVideoTreatsCode10000AsSuccess",
+      "time": "2026-10-28T16:11:25.317596+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialOpenAIAudioUsesBinaryPayload",
+      "time": "2026-10-28T16:11:25.328209+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialOpenAIAudioSpeedDefaultsInvalidAndZeroValues",
+      "time": "2026-10-28T16:11:25.328223+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-image",
+      "time": "2026-10-28T16:11:25.328246+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialArkSeedreamParsesB64JSONAsDataURL/volcengine-ark-agent-plan-image",
+      "time": "2026-10-28T16:11:25.332902+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialArkSeedreamParsesB64JSONAsDataURL",
+      "time": "2026-10-28T16:11:25.332909+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialRunwayVideoUsesOfficialFieldsAndReadsTaskOutput",
+      "time": "2026-10-28T16:11:25.338009+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialRunwayVideoRejectsUnsentMediaRoles",
+      "time": "2026-10-28T16:11:25.348876+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialRunwayVideoKeepsFirstFrameForFirstOnlyModels",
+      "time": "2026-10-28T16:11:25.348896+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialRunwayVideoKeepsLastFrameForModelsThatSupportIt",
+      "time": "2026-10-28T16:11:25.348909+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialRunwayVideoRejectsLastFrameForFirstOnlyModels",
+      "time": "2026-10-28T16:11:25.348935+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialLumaReadsGenerationAssetsAndOfficialFields",
+      "time": "2026-10-28T16:11:25.348953+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialXAIVideoReadsRequestIDAndVideoURL",
+      "time": "2026-10-28T16:11:25.349016+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOfficialResponsesCollectsStandardOutputAndPreservesTools",
+      "time": "2026-10-28T16:11:25.355164+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestSeedanceInstalledPluginsSendAdaptive",
+      "time": "2026-10-28T16:11:25.355238+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestInstalledSeedancePluginsPreserveExplicitTaskType",
+      "time": "2026-10-28T16:11:25.378947+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestVideoGenerationsJSONPreservesMediaAndOptions",
+      "time": "2026-10-28T16:11:25.37896+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestOpenAIVideosRejectsMediaItCannotSend",
+      "time": "2026-10-28T16:11:25.379023+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestVideoUpgradeReadsLegacyReceipts/luma-dream-machine",
+      "time": "2026-10-28T16:11:25.379089+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestVideoUpgradeReadsLegacyReceipts/runway-video",
+      "time": "2026-10-28T16:11:25.379103+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/protocol",
+      "test": "TestVideoUpgradeReadsLegacyReceipts",
+      "time": "2026-10-28T16:11:25.379107+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/bootstrap",
+      "test": "TestDesktopColdOpenBudgetAndNoIdleOutbound",
+      "time": "2026-10-28T16:13:35.282499+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/app",
+      "test": "TestPluginViewIncludesDocumentationForEveryOfficialProtocol",
+      "time": "2026-10-28T16:15:31.287016+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/app",
+      "test": "TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation",
+      "time": "2026-10-28T16:15:31.287059+08:00"
+    },
+    {
+      "package": "infinite-canvas/backend/internal/app",
+      "test": "TestPluginRuntimeUpgradesInstalledWanMediaTransport",
+      "time": "2026-10-28T16:15:31.287081+08:00"
+    }
+  ],
+  "new_N1_run_events": []
+}

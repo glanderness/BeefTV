@@ -1,6 +1,6 @@
 # 生成任务状态重构：第 3 步实施说明
 
-状态：产品候选保持 `30ed8d92`，Linux N1、13 项相邻回归及跨轮次探针通过；第 11 节的 Mac 四次编译、八次单项也已通过，旧并行全套 5.588 秒失败仍未解释。本轮只准备一次并行条件下的四阶段与调度 trace 捕获，**没有运行 Go 或客户端**。已收到 #95 于 15:50 结束的协调通知，但通知明确保持本轮先准备限定，待 Chief 读回材料后再接续一次捕获。上一准备回合经原始事件确认因 `server_overloaded` 中断，本轮已接续补齐材料。第 1–10 节保留历史状态，第 11 节为已完成对照，第 12 节为当前准备状态。未合入、未发布、零真实付费。
+状态：产品候选保持 `30ed8d92`；既有 Linux 专项及第 11 节八次 Mac 单项通过记录保留。Chief 读回 `65a38475` 后明确撤销先准备限制，本轮已完成唯一一次并行捕获：suite/execute 退出 1，冷启动 Open 5.089262542 秒超过原 5 秒。trace 唯一定位的主 goroutine Runnable 等待仅约 1.539 毫秒，不能作为本次超时的主要解释；Running 与 Syscall 的具体原因仍未确定。材料漏放源码目录物化包也导致旁支失败，不能称旧 850 现场完整复演或全套验收通过。第 1–12 节保留历史状态，最新实际结果见第 13 节。未改产品、未重跑、未合入、未发布、零真实付费。
 
 依据：`docs/architecture/generation-task-state.md` 第 3.1–3.7 节及本任务已确认范围。本文只记录本分支实际完成的后台能力，不把第 4–7 步的报价、用户确认、MCP/CLI 付费守门或前端改动写成已实现。
 
@@ -463,3 +463,52 @@ trace 若显示目标阶段存在明显 Runnable 等待，可以量化 Go 调度
 实际准备输出及子进程审计见 [prepare-check.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/prepare-check.json)：Python AST、固定源码锚点、原测试/模块逐字节一致、宿主锁定输入一致均通过，准备的所有子进程都是 Git 只读操作。现存 Go 仅按文件路径与哈希记录，没有执行 `go version`、格式解析、编译、测试或 trace 读取；新诊断源码的编译与真实行为仍待窗口释放后验证。
 
 交付前保留 `a184a716` 的所有产品、测试和原始证据字节，仅更新本说明并新增本节材料。清单见 [parallel-capture/delivery-manifest.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/delivery-manifest.json)，推送后从固定提交树核文件、字节、哈希和原件保留情况，再清理本轮临时准备副本。没有本轮执行结果，没有启动或遗留 Go、客户端或无人监控作业；准备完成即交回 Chief，不在工具中等待后续接续通知。
+
+## 13. 单次并行捕获的实际结果
+
+### 13.1 执行范围与结束通知
+
+收到本轮 Chief 明确执行通知后，从完整准备提交 `65a38475c8a904f6c507e9d6706dd3b54fffb612` 接续，在已挂载 ExternalWork 的新任务目录准备并调用一次 execute。准备与执行的原始驱动记录、通知原文和输入指纹均见 [results-20261028](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/results-20261028/README.md)。没有重查模型中断，没有改变模型、共享程序或权限。
+
+实际先生成两份原历史库，均退出 0；随后只运行一次已批准的 `go test ./... -count=1 -timeout=25m -mod=readonly -json -exec=...`。未手设 `-p/-parallel`，没有另跑冷启动、N1 或专项。原包集合 69 个包均开始并结束：58 pass、8 fail、3 无测试。新增两个 N1 顶层用例的 skip 出现在 app 实际 argv 中，输出没有这两项 RUN；N1 源码和产品未改。
+
+Go 1.26.3 darwin/arm64；并行命令北京时间 16:06:58.994 开始、16:26:17.971 结束，墙钟约 19 分 19 秒，退出 1。execute 驱动于 16:26:18.216 退出 1。不是全套通过，也不是第二次尝试。
+
+结束后核查进程时，首次 ps 文本含非 UTF-8 字符导致解码失败；首条通知中“已核无残留”说早了。16:27:34 改为按 ps 原始字节匹配任务路径、原进程组和全部记录 PID，实际确认 Go、测试、exec 回调和 Node 均无残留，并立即向 Chief 更正、报告窗口已释放。原始核查记录为 `processes-after-verification.json`。之后只作离线解码与文件核验，没有继续测试或启动客户端。
+
+### 13.2 本次确实触发原 5 秒断言
+
+原 `TestDesktopColdOpenBudgetAndNoIdleOutbound` 恰好一条 RUN、一条 FAIL，无跳过。失败为 `fresh local Open took 5.089262542s, budget is 5s`；原测试逐字节不变，空闲外发检查在预算检查之前，已通过外发 0 断言才到达本次预算失败。原代码只在通过时打印 `local_open_ms`，因此不能要求失败输出也包含该行，或把缺行当成未跑测试。
+
+| 阶段 | 原计时（毫秒） | trace region（毫秒） | 主 goroutine Runnable（毫秒） | Syscall（毫秒） | Running（毫秒） |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 数据库与迁移 | 461.182 | 461.184 | 0.190 | 434.443 | 26.526 |
+| NewLocal 与插件 | 3686.161 | 3686.162 | 1.118 | 887.990 | 2796.995 |
+| 内置资源初始化 | 899.257 | 899.258 | 0.223 | 873.524 | 25.512 |
+| 组合与路由 | 42.514 | 42.514 | 0.009 | 11.577 | 30.929 |
+
+四段原计时合计 5.089113833 秒，总 Open 比它多 0.148709 毫秒；该差值含 `t.TempDir()`、trace/日志等未计入四段的开销，不能全算作某一项。trace region 合计 5.089118720 秒，另有数据库/插件两段共 0.083776 毫秒 Waiting，完整纳秒值见 `cold-state-analysis.json` 和 `verified-observation.json`。
+
+### 13.3 trace 可以确认什么
+
+原始 trace 解码退出 0，按 data_dir 唯一识别到 `STEP3_OPEN` task 48、goroutine 15956，四段 region 和阶段 Log 全部齐全，与原输出的四段数值一致。按全局状态区间裁剪，以及每段从 Running 状态独立重新积分，两种方法逐段完全一致，没有状态时间缺口或不一致。可复算脚本为 [analyze_capture.py](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/analyze_capture.py)。
+
+四段中该主 goroutine 合计：Runnable 1.539328 毫秒、Syscall 2207.533158 毫秒、Running 2879.962458 毫秒、Waiting 0.083776 毫秒。可确证的 Go 运行队列等待约占 0.030%，不足以作为本次 5.089 秒的主要解释。NewLocal/插件仍为本次主要阶段，但其中 Running 墙钟约 2.797 秒不等于实际 CPU 消耗；Syscall 也不等于已证实的磁盘争用。缺少操作系统线程调度、CPU 或具体系统调用归因证据，不能继续推断是“计算量增加”或“机器抖动”。
+
+trace 起始 Sync 与 Go JSON 包时间窗交叉显示，冷启动约发生于 16:13:29.749–16:13:34.838；当时窗口覆盖 app、bootstrap、handler、operations、plugins 五包。JSON 时间有管道观测开销，这不是 OS 执行时间线；更不能据此倒推旧 850 同时运行哪些包。trace 起始 GOMAXPROCS 指标为 10，只描述新进程，不证明旧有效 `-p=10`。
+
+### 13.4 实际材料缺口与其他失败
+
+本次发现准备脚本遗漏：只把现有 86 个物化协议包冻结到环境指定目录，源码副本 `plugin-packages/` 实际为 0 个归档。protocol 单测及 app 的三项协议包测试直接读取相对源码目录，出现 `no such file or directory` 或本地包数量与运行时数量不符。它们是已复现的测试材料问题，不是已证明的产品回归；提前失败改变了部分并行背景。本轮没有在运行中补档，也没有修正后重跑。`capture_once.py` 保留固定 65a 的实际执行字节，不能原样宣称是完整旧现场复演模板。
+
+另外五个非冷启动失败包为 cmd/beeftv（CLI 子进程被终止）、assistantruntime（宿主未按时就绪）、desktopnet（显式直连代理断言）、desktopupdate（重启夹具未运行）、generation（DNS 截止时间断言）。逐项原始输出保存在 `failure-evidence.json` 和完整 suite 输出中，本轮不扩展定位或修改产品，也不把它们一概归因于负载。
+
+输入核对确认实际 1,673 个后台文件只在临时 `runtime.go` 增加四段/trace；原测试、模块与当前产品保持固定 30ed。86 个冻结包的哈希与前一轮单项相同，隔离 HOME、ExternalWork 临时盘、禁用个人 GOENV 和依赖下载等差异继续保留。旧有效 `-p`、工具链、物化归档和临时盘等本就无法恢复；再加上本次材料遗漏和 trace/JSON/exec 开销，**不能将这次 5.089 秒认作旧 5.588 秒的同因复现**，也不能宣布当前候选通过全套验收。
+
+本次结论停在：一次捕获中预算确实超时，NewLocal/插件最慢，主 goroutine 的 Go 排队等待不是主要成本；剩余 Running/Syscall 的原因与旧失败原因仍未定。如后续需要继续区分，先修复单测物化包路径，再由 Chief 决定是否补 CPU/OS 调度证据，本轮不追加实验。
+
+### 13.5 证据与清理
+
+完整 suite 原输出、bootstrap 原字节、实际 argv/PID/起止/退出、包和测试事件、Go 环境及前后/持续监控负载均在新结果目录。原始二进制 trace 及选定事件文本用 gzip 无损保存，保存前核解压字节数和 SHA-256；选定事件明确是子集，不冒充全部解码输出。全量展开约 9.9 GB，只是原始 56 MB trace 的派生物，不纳入 Git；保留其解码命令、退出和完整输出哈希，可从原始 trace 复算。
+
+固定提交前后的文件清单和原字节保留情况见新结果目录的 `delivery-manifest.json`。推送后从固定 Git 树复核原始日志及解压 trace 的字节、SHA 和实际退出信息，再清理本任务临时源码、缓存、数据及全量派生文本。旧所有原始证据保留，不改共享依赖、正式客户端或其他任务，不合入、不发布、不自行派评审。

@@ -1,0 +1,14 @@
+fixture-v26 PID=23872
+fixture-v27 PID=25252
+go-version PID=25283
+go-env PID=25284
+before-load PID=25285
+before-processes PID=25286
+before-memory PID=25287
+before-disk PID=25288
+parallel-suite PID=25289
+after-load PID=94316
+after-processes PID=94317
+after-memory PID=94318
+after-disk PID=94319
+一次并行命令已结束；立即向Chief报告实际退出与进程情况，不再追加尝试。

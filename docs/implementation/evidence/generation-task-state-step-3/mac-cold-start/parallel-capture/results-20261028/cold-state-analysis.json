@@ -1,0 +1,79 @@
+{
+  "target": {
+    "task": 48,
+    "goroutine": 15956,
+    "data_dir": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-once/go-tmp/TestDesktopColdOpenBudgetAndNoIdleOutbound3129146847/001",
+    "data_log_time_ns": 54243601923264
+  },
+  "matching_open_count": 1,
+  "phases": [
+    {
+      "phase": "database_and_schema",
+      "start_ns": 54243601924032,
+      "end_ns": 54244063107840,
+      "region_wall_ns": 461183808,
+      "main_goroutine_state_ns": {
+        "Running": 26525908,
+        "Syscall": 434442987,
+        "Runnable": 190273,
+        "Waiting": 24640
+      }
+    },
+    {
+      "phase": "service_and_plugins",
+      "start_ns": 54244063114688,
+      "end_ns": 54247749276736,
+      "region_wall_ns": 3686162048,
+      "main_goroutine_state_ns": {
+        "Running": 2796995270,
+        "Syscall": 887989819,
+        "Runnable": 1117823,
+        "Waiting": 59136
+      }
+    },
+    {
+      "phase": "builtin_initializers",
+      "start_ns": 54247749284480,
+      "end_ns": 54248648542912,
+      "region_wall_ns": 899258432,
+      "main_goroutine_state_ns": {
+        "Running": 25511872,
+        "Syscall": 873523840,
+        "Runnable": 222720
+      }
+    },
+    {
+      "phase": "composition_and_routes",
+      "start_ns": 54248648549120,
+      "end_ns": 54248691063552,
+      "region_wall_ns": 42514432,
+      "main_goroutine_state_ns": {
+        "Running": 30929408,
+        "Syscall": 11576512,
+        "Runnable": 8512
+      }
+    }
+  ],
+  "phase_timing_logs": [
+    {
+      "time_ns": 54244063114496,
+      "message": "database_and_schema 461182292"
+    },
+    {
+      "time_ns": 54247749284288,
+      "message": "service_and_plugins 3686161083"
+    },
+    {
+      "time_ns": 54248648548672,
+      "message": "builtin_initializers 899256792"
+    },
+    {
+      "time_ns": 54248691065984,
+      "message": "composition_and_routes 42513666"
+    }
+  ],
+  "state_transition_count": 87219,
+  "state_mismatches": [],
+  "scope": "只计Open主goroutine的region墙钟；Runnable是Go调度等待，Running不是精确CPU时间，Syscall也不是已知磁盘原因",
+  "selected_events": "cold-selected-events.txt是完整解码输出的原字节子集，原始二进制trace另行保留"
+}
