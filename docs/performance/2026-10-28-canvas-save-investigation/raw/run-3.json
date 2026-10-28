@@ -1,0 +1,595 @@
+{
+  "scope": "生产比较/序列化函数的 CPU 测量 + 由代码调用点推算的每分钟开销模型；不是浏览器帧率、不是桌面客户端实测、不含 IndexedDB/HTTP 真实 IO 时间",
+  "runtime": "bun 1.4.2",
+  "platform": "darwin/arm64",
+  "cpuCount": 10,
+  "loadAverage": [
+    11.18,
+    12.2,
+    12.22
+  ],
+  "measuredAt": "2026-10-28T03:08:51.544Z",
+  "samples": 51,
+  "warmup": 3,
+  "fixture": {
+    "generatingNodeId": "node-generating",
+    "nodeCounts": [
+      25,
+      100,
+      300,
+      1000
+    ]
+  },
+  "results": [
+    {
+      "nodeCount": 26,
+      "serializedBytes": 41467,
+      "renderedBytes": 41325,
+      "snapshotBytes": 41232,
+      "rows": [
+        {
+          "operation": "sameCanvasContent(current, ticked)",
+          "note": "store.updateProject 守卫：一个节点进度变化（生产：use-canvas-store.ts:850）",
+          "medianMs": 0.196,
+          "p95Ms": 0.9841
+        },
+        {
+          "operation": "sameCanvasContent(current, current)",
+          "note": "同一引用早退（left === right）",
+          "medianMs": 0.0001,
+          "p95Ms": 0.0003
+        },
+        {
+          "operation": "sameCanvasContent(current, viewportOnly)",
+          "note": "纯视口更新：nodes 同引用",
+          "medianMs": 0.0011,
+          "p95Ms": 0.0024
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(observed, renderSnapshot)",
+          "note": "编辑器 autosave effect 的比较（use-canvas-project-lifecycle.ts:545）",
+          "medianMs": 0.0012,
+          "p95Ms": 0.0022
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(current, { nodes: ticked })",
+          "note": "候选守卫：按元素引用比较，只有变化元素才 JSON.stringify",
+          "medianMs": 0.0018,
+          "p95Ms": 0.0054
+        },
+        {
+          "operation": "mergeCanvasRefreshPatch(base, incoming, live)",
+          "note": "编辑器 autosave effect 的合并路径（use-canvas-project-lifecycle.ts:556 → 138）",
+          "medianMs": 0.0135,
+          "p95Ms": 0.0422
+        },
+        {
+          "operation": "sameCanvasDocument(confirmed, live)",
+          "note": "hasUnconfirmedCanvasEdits 与后端入队守卫（local-workspace-repository.ts:182、609）",
+          "medianMs": 0.1807,
+          "p95Ms": 0.9617
+        },
+        {
+          "operation": "canvasContentSnapshot(project)",
+          "note": "快照对象分配（canvas-content.ts:5）",
+          "medianMs": 0.0002,
+          "p95Ms": 0.0007
+        },
+        {
+          "operation": "JSON.stringify(project)",
+          "note": "HTTP 请求体序列化",
+          "medianMs": 0.0168,
+          "p95Ms": 0.0378
+        },
+        {
+          "operation": "structuredClone(project)",
+          "note": "后端提交 payload 深拷贝（local-workspace-repository.ts:620）",
+          "medianMs": 0.0665,
+          "p95Ms": 0.1937
+        },
+        {
+          "operation": "parse + rebase + serialize",
+          "note": "IndexedDB 落盘（400ms 自动保存 flush，use-canvas-store.ts:405-412）",
+          "medianMs": 0.0799,
+          "p95Ms": 0.1602
+        },
+        {
+          "operation": "tickGenerationProgress(project)",
+          "note": "夹具自身的节点重建成本（基线，用于说明测量净开销）",
+          "medianMs": 0.0009,
+          "p95Ms": 0.0015
+        }
+      ],
+      "guardResult": {
+        "tickedDiffers": true,
+        "viewportOnlyDiffers": false,
+        "editorFieldsDiffer": true,
+        "editorFieldsDifferAfterTick": true
+      }
+    },
+    {
+      "nodeCount": 101,
+      "serializedBytes": 135263,
+      "renderedBytes": 135121,
+      "snapshotBytes": 135028,
+      "rows": [
+        {
+          "operation": "sameCanvasContent(current, ticked)",
+          "note": "store.updateProject 守卫：一个节点进度变化（生产：use-canvas-store.ts:850）",
+          "medianMs": 1.1844,
+          "p95Ms": 3.224
+        },
+        {
+          "operation": "sameCanvasContent(current, current)",
+          "note": "同一引用早退（left === right）",
+          "medianMs": 0,
+          "p95Ms": 0.0001
+        },
+        {
+          "operation": "sameCanvasContent(current, viewportOnly)",
+          "note": "纯视口更新：nodes 同引用",
+          "medianMs": 0.001,
+          "p95Ms": 0.0015
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(observed, renderSnapshot)",
+          "note": "编辑器 autosave effect 的比较（use-canvas-project-lifecycle.ts:545）",
+          "medianMs": 0.0005,
+          "p95Ms": 0.0013
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(current, { nodes: ticked })",
+          "note": "候选守卫：按元素引用比较，只有变化元素才 JSON.stringify",
+          "medianMs": 0.0013,
+          "p95Ms": 0.0025
+        },
+        {
+          "operation": "mergeCanvasRefreshPatch(base, incoming, live)",
+          "note": "编辑器 autosave effect 的合并路径（use-canvas-project-lifecycle.ts:556 → 138）",
+          "medianMs": 0.026,
+          "p95Ms": 0.1069
+        },
+        {
+          "operation": "sameCanvasDocument(confirmed, live)",
+          "note": "hasUnconfirmedCanvasEdits 与后端入队守卫（local-workspace-repository.ts:182、609）",
+          "medianMs": 1.1363,
+          "p95Ms": 4.3166
+        },
+        {
+          "operation": "canvasContentSnapshot(project)",
+          "note": "快照对象分配（canvas-content.ts:5）",
+          "medianMs": 0.0005,
+          "p95Ms": 0.0014
+        },
+        {
+          "operation": "JSON.stringify(project)",
+          "note": "HTTP 请求体序列化",
+          "medianMs": 0.0511,
+          "p95Ms": 0.1463
+        },
+        {
+          "operation": "structuredClone(project)",
+          "note": "后端提交 payload 深拷贝（local-workspace-repository.ts:620）",
+          "medianMs": 0.2537,
+          "p95Ms": 0.6704
+        },
+        {
+          "operation": "parse + rebase + serialize",
+          "note": "IndexedDB 落盘（400ms 自动保存 flush，use-canvas-store.ts:405-412）",
+          "medianMs": 0.191,
+          "p95Ms": 1.3532
+        },
+        {
+          "operation": "tickGenerationProgress(project)",
+          "note": "夹具自身的节点重建成本（基线，用于说明测量净开销）",
+          "medianMs": 0.001,
+          "p95Ms": 0.0014
+        }
+      ],
+      "guardResult": {
+        "tickedDiffers": true,
+        "viewportOnlyDiffers": false,
+        "editorFieldsDiffer": true,
+        "editorFieldsDifferAfterTick": true
+      }
+    },
+    {
+      "nodeCount": 301,
+      "serializedBytes": 384619,
+      "renderedBytes": 384477,
+      "snapshotBytes": 384384,
+      "rows": [
+        {
+          "operation": "sameCanvasContent(current, ticked)",
+          "note": "store.updateProject 守卫：一个节点进度变化（生产：use-canvas-store.ts:850）",
+          "medianMs": 3.6361,
+          "p95Ms": 9.0254
+        },
+        {
+          "operation": "sameCanvasContent(current, current)",
+          "note": "同一引用早退（left === right）",
+          "medianMs": 0,
+          "p95Ms": 0.0004
+        },
+        {
+          "operation": "sameCanvasContent(current, viewportOnly)",
+          "note": "纯视口更新：nodes 同引用",
+          "medianMs": 0.001,
+          "p95Ms": 0.0019
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(observed, renderSnapshot)",
+          "note": "编辑器 autosave effect 的比较（use-canvas-project-lifecycle.ts:545）",
+          "medianMs": 0.0005,
+          "p95Ms": 0.0009
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(current, { nodes: ticked })",
+          "note": "候选守卫：按元素引用比较，只有变化元素才 JSON.stringify",
+          "medianMs": 0.0021,
+          "p95Ms": 0.0043
+        },
+        {
+          "operation": "mergeCanvasRefreshPatch(base, incoming, live)",
+          "note": "编辑器 autosave effect 的合并路径（use-canvas-project-lifecycle.ts:556 → 138）",
+          "medianMs": 0.061,
+          "p95Ms": 0.3566
+        },
+        {
+          "operation": "sameCanvasDocument(confirmed, live)",
+          "note": "hasUnconfirmedCanvasEdits 与后端入队守卫（local-workspace-repository.ts:182、609）",
+          "medianMs": 3.0847,
+          "p95Ms": 9.284
+        },
+        {
+          "operation": "canvasContentSnapshot(project)",
+          "note": "快照对象分配（canvas-content.ts:5）",
+          "medianMs": 0.0005,
+          "p95Ms": 0.0014
+        },
+        {
+          "operation": "JSON.stringify(project)",
+          "note": "HTTP 请求体序列化",
+          "medianMs": 0.1474,
+          "p95Ms": 0.4164
+        },
+        {
+          "operation": "structuredClone(project)",
+          "note": "后端提交 payload 深拷贝（local-workspace-repository.ts:620）",
+          "medianMs": 0.6974,
+          "p95Ms": 1.7292
+        },
+        {
+          "operation": "parse + rebase + serialize",
+          "note": "IndexedDB 落盘（400ms 自动保存 flush，use-canvas-store.ts:405-412）",
+          "medianMs": 0.4908,
+          "p95Ms": 1.4966
+        },
+        {
+          "operation": "tickGenerationProgress(project)",
+          "note": "夹具自身的节点重建成本（基线，用于说明测量净开销）",
+          "medianMs": 0.0025,
+          "p95Ms": 0.0192
+        }
+      ],
+      "guardResult": {
+        "tickedDiffers": true,
+        "viewportOnlyDiffers": false,
+        "editorFieldsDiffer": true,
+        "editorFieldsDifferAfterTick": true
+      }
+    },
+    {
+      "nodeCount": 1001,
+      "serializedBytes": 1257584,
+      "renderedBytes": 1257442,
+      "snapshotBytes": 1257349,
+      "rows": [
+        {
+          "operation": "sameCanvasContent(current, ticked)",
+          "note": "store.updateProject 守卫：一个节点进度变化（生产：use-canvas-store.ts:850）",
+          "medianMs": 15.0564,
+          "p95Ms": 33.5842
+        },
+        {
+          "operation": "sameCanvasContent(current, current)",
+          "note": "同一引用早退（left === right）",
+          "medianMs": 0,
+          "p95Ms": 0.0001
+        },
+        {
+          "operation": "sameCanvasContent(current, viewportOnly)",
+          "note": "纯视口更新：nodes 同引用",
+          "medianMs": 0.0015,
+          "p95Ms": 0.0037
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(observed, renderSnapshot)",
+          "note": "编辑器 autosave effect 的比较（use-canvas-project-lifecycle.ts:545）",
+          "medianMs": 0.0004,
+          "p95Ms": 0.0158
+        },
+        {
+          "operation": "canvasDocumentMatchesFields(current, { nodes: ticked })",
+          "note": "候选守卫：按元素引用比较，只有变化元素才 JSON.stringify",
+          "medianMs": 0.003,
+          "p95Ms": 0.0071
+        },
+        {
+          "operation": "mergeCanvasRefreshPatch(base, incoming, live)",
+          "note": "编辑器 autosave effect 的合并路径（use-canvas-project-lifecycle.ts:556 → 138）",
+          "medianMs": 0.3747,
+          "p95Ms": 1.6793
+        },
+        {
+          "operation": "sameCanvasDocument(confirmed, live)",
+          "note": "hasUnconfirmedCanvasEdits 与后端入队守卫（local-workspace-repository.ts:182、609）",
+          "medianMs": 18.3438,
+          "p95Ms": 39.2648
+        },
+        {
+          "operation": "canvasContentSnapshot(project)",
+          "note": "快照对象分配（canvas-content.ts:5）",
+          "medianMs": 0.0002,
+          "p95Ms": 0.0006
+        },
+        {
+          "operation": "JSON.stringify(project)",
+          "note": "HTTP 请求体序列化",
+          "medianMs": 1.0594,
+          "p95Ms": 1.6258
+        },
+        {
+          "operation": "structuredClone(project)",
+          "note": "后端提交 payload 深拷贝（local-workspace-repository.ts:620）",
+          "medianMs": 3.7197,
+          "p95Ms": 5.0556
+        },
+        {
+          "operation": "parse + rebase + serialize",
+          "note": "IndexedDB 落盘（400ms 自动保存 flush，use-canvas-store.ts:405-412）",
+          "medianMs": 3.3391,
+          "p95Ms": 11.155
+        },
+        {
+          "operation": "tickGenerationProgress(project)",
+          "note": "夹具自身的节点重建成本（基线，用于说明测量净开销）",
+          "medianMs": 0.0058,
+          "p95Ms": 0.0111
+        }
+      ],
+      "guardResult": {
+        "tickedDiffers": true,
+        "viewportOnlyDiffers": false,
+        "editorFieldsDiffer": true,
+        "editorFieldsDifferAfterTick": true
+      }
+    }
+  ],
+  "models": [
+    {
+      "nodeCount": 26,
+      "pollMs": 2000,
+      "ticksPerMinute": 30,
+      "indexedDbFlushes": 30,
+      "backendSaves": 30,
+      "perTick": {
+        "storeGuardMs": 0.2223,
+        "cheapGuardMs": 0.0008,
+        "editorCompareMs": 0.0007,
+        "editorMergeMs": 0.0055,
+        "unconfirmedGuardMs": 0.4114,
+        "indexedDbFlushMs": 0.152,
+        "backendSaveMs": 0.5351,
+        "totalMs": 1.3277
+      },
+      "layers": {
+        "L1_storeGuardMs": 6.67,
+        "L2_editorCompareMs": 0.04,
+        "L3_editorMergeMs": 0.16,
+        "L4_unconfirmedGuardMs": 12.34,
+        "L5_indexedDbFlushMs": 4.56,
+        "L6_backendSaveMs": 16.05
+      },
+      "scenarioA_currentMsPerMinute": 39.83,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 33.19,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.07
+    },
+    {
+      "nodeCount": 26,
+      "pollMs": 500,
+      "ticksPerMinute": 120,
+      "indexedDbFlushes": 120,
+      "backendSaves": 120,
+      "perTick": {
+        "storeGuardMs": 0.3957,
+        "cheapGuardMs": 0.0019,
+        "editorCompareMs": 0.0007,
+        "editorMergeMs": 0.0105,
+        "unconfirmedGuardMs": 0.2808,
+        "indexedDbFlushMs": 0.1334,
+        "backendSaveMs": 0.4698,
+        "totalMs": 1.2916
+      },
+      "layers": {
+        "L1_storeGuardMs": 47.48,
+        "L2_editorCompareMs": 0.17,
+        "L3_editorMergeMs": 1.26,
+        "L4_unconfirmedGuardMs": 33.7,
+        "L5_indexedDbFlushMs": 16.01,
+        "L6_backendSaveMs": 56.38
+      },
+      "scenarioA_currentMsPerMinute": 154.99,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 107.74,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.4
+    },
+    {
+      "nodeCount": 101,
+      "pollMs": 2000,
+      "ticksPerMinute": 30,
+      "indexedDbFlushes": 30,
+      "backendSaves": 30,
+      "perTick": {
+        "storeGuardMs": 1.7898,
+        "cheapGuardMs": 0.0013,
+        "editorCompareMs": 0.0007,
+        "editorMergeMs": 0.0166,
+        "unconfirmedGuardMs": 0.9903,
+        "indexedDbFlushMs": 0.3281,
+        "backendSaveMs": 1.3281,
+        "totalMs": 4.4543
+      },
+      "layers": {
+        "L1_storeGuardMs": 53.69,
+        "L2_editorCompareMs": 0.04,
+        "L3_editorMergeMs": 0.5,
+        "L4_unconfirmedGuardMs": 29.71,
+        "L5_indexedDbFlushMs": 9.84,
+        "L6_backendSaveMs": 39.84
+      },
+      "scenarioA_currentMsPerMinute": 133.63,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 79.97,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.08
+    },
+    {
+      "nodeCount": 101,
+      "pollMs": 500,
+      "ticksPerMinute": 120,
+      "indexedDbFlushes": 120,
+      "backendSaves": 120,
+      "perTick": {
+        "storeGuardMs": 0.79,
+        "cheapGuardMs": 0.001,
+        "editorCompareMs": 0.0003,
+        "editorMergeMs": 0.0162,
+        "unconfirmedGuardMs": 0.8108,
+        "indexedDbFlushMs": 0.19,
+        "backendSaveMs": 1.0882,
+        "totalMs": 2.8958
+      },
+      "layers": {
+        "L1_storeGuardMs": 94.8,
+        "L2_editorCompareMs": 0.07,
+        "L3_editorMergeMs": 1.94,
+        "L4_unconfirmedGuardMs": 97.3,
+        "L5_indexedDbFlushMs": 22.8,
+        "L6_backendSaveMs": 130.58
+      },
+      "scenarioA_currentMsPerMinute": 347.5,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 252.82,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.19
+    },
+    {
+      "nodeCount": 301,
+      "pollMs": 2000,
+      "ticksPerMinute": 30,
+      "indexedDbFlushes": 30,
+      "backendSaves": 30,
+      "perTick": {
+        "storeGuardMs": 4.5324,
+        "cheapGuardMs": 0.0014,
+        "editorCompareMs": 0.0003,
+        "editorMergeMs": 0.0516,
+        "unconfirmedGuardMs": 3.0602,
+        "indexedDbFlushMs": 0.4968,
+        "backendSaveMs": 3.9087,
+        "totalMs": 12.0503
+      },
+      "layers": {
+        "L1_storeGuardMs": 135.97,
+        "L2_editorCompareMs": 0.02,
+        "L3_editorMergeMs": 1.55,
+        "L4_unconfirmedGuardMs": 91.81,
+        "L5_indexedDbFlushMs": 14.9,
+        "L6_backendSaveMs": 117.26
+      },
+      "scenarioA_currentMsPerMinute": 361.51,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 225.58,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.06
+    },
+    {
+      "nodeCount": 301,
+      "pollMs": 500,
+      "ticksPerMinute": 120,
+      "indexedDbFlushes": 120,
+      "backendSaves": 120,
+      "perTick": {
+        "storeGuardMs": 3.4792,
+        "cheapGuardMs": 0.0015,
+        "editorCompareMs": 0.0003,
+        "editorMergeMs": 0.0562,
+        "unconfirmedGuardMs": 3.2583,
+        "indexedDbFlushMs": 0.5256,
+        "backendSaveMs": 4.1234,
+        "totalMs": 11.4433
+      },
+      "layers": {
+        "L1_storeGuardMs": 417.5,
+        "L2_editorCompareMs": 0.07,
+        "L3_editorMergeMs": 6.74,
+        "L4_unconfirmedGuardMs": 391,
+        "L5_indexedDbFlushMs": 63.07,
+        "L6_backendSaveMs": 494.81
+      },
+      "scenarioA_currentMsPerMinute": 1373.2,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 955.87,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.25
+    },
+    {
+      "nodeCount": 1001,
+      "pollMs": 2000,
+      "ticksPerMinute": 30,
+      "indexedDbFlushes": 30,
+      "backendSaves": 30,
+      "perTick": {
+        "storeGuardMs": 11.6106,
+        "cheapGuardMs": 0.0032,
+        "editorCompareMs": 0.0003,
+        "editorMergeMs": 0.1399,
+        "unconfirmedGuardMs": 9.3925,
+        "indexedDbFlushMs": 1.698,
+        "backendSaveMs": 12.4038,
+        "totalMs": 35.2454
+      },
+      "layers": {
+        "L1_storeGuardMs": 348.32,
+        "L2_editorCompareMs": 0.02,
+        "L3_editorMergeMs": 4.2,
+        "L4_unconfirmedGuardMs": 281.77,
+        "L5_indexedDbFlushMs": 50.94,
+        "L6_backendSaveMs": 372.11
+      },
+      "scenarioA_currentMsPerMinute": 1057.36,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 709.14,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 0.11
+    },
+    {
+      "nodeCount": 1001,
+      "pollMs": 500,
+      "ticksPerMinute": 120,
+      "indexedDbFlushes": 120,
+      "backendSaves": 120,
+      "perTick": {
+        "storeGuardMs": 12.4332,
+        "cheapGuardMs": 0.0238,
+        "editorCompareMs": 0.0007,
+        "editorMergeMs": 0.1347,
+        "unconfirmedGuardMs": 13.465,
+        "indexedDbFlushMs": 1.627,
+        "backendSaveMs": 16.6624,
+        "totalMs": 44.3237
+      },
+      "layers": {
+        "L1_storeGuardMs": 1491.98,
+        "L2_editorCompareMs": 0.17,
+        "L3_editorMergeMs": 16.16,
+        "L4_unconfirmedGuardMs": 1615.8,
+        "L5_indexedDbFlushMs": 195.24,
+        "L6_backendSaveMs": 1999.49
+      },
+      "scenarioA_currentMsPerMinute": 5318.84,
+      "scenarioB_cheapGuardOnlyMsPerMinute": 3829.72,
+      "scenarioC_cheapGuardAndNoDocumentWriteMsPerMinute": 3.02
+    }
+  ]
+}
