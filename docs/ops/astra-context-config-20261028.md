@@ -1,110 +1,95 @@
-# Astra 上下文窗口与压缩阈值配置（2026-10-28）
+# Astra 上下文窗口与压缩阈值（GPT-6-Astra 70 万 / 50 万）
+
+状态：**已落地并读回**（2026-10-28）。范围：本机 Todos 的 Codex 运行时（`$HOME/.tds/codex-home`），不涉及 BeefTV 产品代码。
+
+配套文档：#94「Codex 按模型上下文窗口与压缩阈值（GPT-6.1-Sol 100 万 / 60 万）」——
+`docs/ops/codex-per-model-context-config-20261028.md`（机制、Sol 的落地与隔离实测在那一份，本文只记 Astra）。
 
 ## 结论
 
-- 目标：让 `gpt-6-astra` 的上下文窗口为 700000 token，自动压缩阈值 500000 token。
-- 现状：**未配置**。Astra 目录默认 `context_window = 272000`，实际生效窗口 258400（见下）。
-- Codex CLI 0.160.1 **只提供全局**（每个 `CODEX_HOME` 一份）的 `model_context_window` / `model_auto_compact_token_limit`，**没有按模型覆盖的配置**。
-- 因此写入本机 agent 的 Codex 配置 `~/.tds/codex-home/config.toml` 会同时作用于该 home 里的**所有**模型。本机该 home 近两天实际跑过 `gpt-6-astra` 与 `gpt-6.1-sol`。
-- 已隔离实测：`model_context_window = 700000` 时 Codex 记录的有效窗口是 **665000**（= 700000 × 95%）。
-- **当前状态：等用户选择适用范围后再落地**（见文末「待决定」）。
+- GPT-6-Astra 已按模型级生效：**有效上下文窗口 700,000**、**自动压缩阈值 500,000**。
+- 落地方式与 #94 相同：改 `model_catalog_json` 指向的**模型目录副本**（`OVERRIDES` + 刷新脚本），
+  **不写顶层** `model_context_window` / `model_auto_compact_token_limit`。
+- 同 home 其他模型数值不变：`gpt-6.1-sol` 保持 1,000,000 / 600,000，其余 8 个模型仍为目录原值。
+- 已读回：真实 agent home 会话在改动后的第一个回合把 `model_context_window` 从 258400 变为 **700000**（见 §4）。
 
-## 1. 生效入口（本机实际读取方式）
+## 1. 为什么不按「全局设置」落地
 
-- tds CLI v0.1.68 每个回合以 `codex app-server --listen stdio://` 启动 Codex，并把环境变量 `CODEX_HOME` 固定为 `~/.tds/codex-home`（`spawnAppServer`，`env: { ...process.env, ...opts.env, CODEX_HOME: opts.codexHome }`）。命令行里没有任何 `-c` / `--profile` 覆盖。
-- 模型按回合由平台下发（`turnModel(provider, step.agent.modelId)`），tds 只从个人 `~/.codex/config.toml` 继承 `model` / `model_provider` / `openai_base_url` / `model_providers`（`providerOverride`）；个人配置的其余键不进 agent 回合。
-- 结论：agent 的 Codex 配置面就是 `~/.tds/codex-home/config.toml`，它是**每台机器一份**、本机所有走 Codex 运行时的 agent 共用。
+用户在适用范围卡片里选了「全局设置」。该选项**被搁置**，因为执行期间环境发生了变化，且全局写法会破坏同 home 的既有设置：
 
-## 2. 官方文档口径（OpenAI Docs）
+1. 卡片发出时本机还没有按模型的入口，所以「全局」是当时唯一能生效的做法；随后 #94 已把按模型的目录覆盖机制落地
+   （`config.toml` 的 `model_catalog_json` + `model-catalog.json` + `refresh-model-catalog.sh`），
+   `refresh-model-catalog.sh` 里还留了本任务（#93）的 Astra 占位注释。用户那次选择解决的是**适用范围许可**；
+   现在两种模型可以各留各的值，不必用一个全局值把两者拉平。
+2. 顶层键会**覆盖目录**：隔离实测「目录（Astra 272000 / eff 95%）+ 顶层 `model_context_window = 700000`」时，
+   Astra 记录 **665000**（= min(700000, 872000) × 95%），而不是目录里的 258400。也就是说全局写法会把
+   `gpt-6.1-sol` 从 1,000,000 拉回 700000（= min(700000, 1000000) × 100%），回退掉 #94 已批准的设置。
 
-来源：<https://developers.openai.com/codex/config-reference>（`.md` 版）、<https://developers.openai.com/codex/config-advanced>。
+因此按用户本意（Astra 700k / 500k、不动其他模型）落到目录覆盖，位置正是脚本预留的占位处。
 
-- `model_context_window`（number）：*Context window tokens available to the active model.* 顶层键。
-- `model_auto_compact_token_limit`（number）：*Token threshold that triggers automatic history compaction (unset uses model defaults).*
-- `model_auto_compact_token_limit_scope`（`total` | `body_after_prefix`，默认 `total`）：阈值按整段上下文计，还是只按携带前缀之后的增量计。
-- 顶层键里**没有**按模型设置上下文或压缩阈值的表；`[models.*]` 只存在 `models.new_thread`（新会话默认模型 / 思考档 / 服务档）。
-- 配置档：只有传 `--profile <name>` 时才会叠加 `$CODEX_HOME/<name>.config.toml`；tds 不传 `--profile`，所以 profile 文件不会被选中。
-- `model_catalog_json`：指向**整份**模型目录 JSON（启动时加载）。实测是**整体替换而非合并**：只放 1 个模型时 `codex debug models` 只返回 1 个模型（见 §5）。
-- `model_providers.<id>.*` 的字段里没有上下文窗口，只有 `base_url` / `model_catalog_url` / `wire_api` / 鉴权与传输等。
+## 2. 改动位置与前后值
 
-## 3. 修改前的值
+改动文件（本机，不在仓库）：
 
-| 项 | gpt-6-astra | gpt-6.1-sol |
+- `$HOME/.tds/codex-home/refresh-model-catalog.sh`：`OVERRIDES` 新增 `gpt-6-astra` 一项（原来是注释示例）。
+- `$HOME/.tds/codex-home/model-catalog.json`：跑一次刷新脚本重新生成。
+- `$HOME/.tds/codex-home/config.toml`：只补了一行说明注释（把 Astra 值写进头部说明），
+  `model_catalog_json` 行是 #94 加的，未改。
+
+| 模型 | 字段 | 改动前 | 改动后 |
+| --- | --- | --- | --- |
+| gpt-6-astra | context_window / max_context_window | 272000 / 872000 | **700000 / 700000** |
+| gpt-6-astra | effective_context_window_percent | 95 | **100** |
+| gpt-6-astra | auto_compact_token_limit | 未设（模型默认） | **500000** |
+| gpt-6-astra | **实际生效窗口** | 258400 | **700000** |
+| gpt-6.1-sol | 全部字段 | 1000000 / 1000000 / 100 / 600000 | 未改动 |
+| 其余 8 个模型 | 全部字段 | 目录原值 | 未改动 |
+
+原始窗口与有效窗口：Codex 对外使用的有效窗口 = `min(窗口, max_context_window) × effective_context_window_percent`。
+Astra 这次把两者都设为 700000、百分比设 100，所以**原始窗口 = 有效窗口 = 700000**（改前是 272000 × 95% = 258400）。
+注意 Astra 的模型文档总窗口是 872000，本次按 700000 记账，等于自留约 17 万 token 余量。
+
+## 3. 生效时机
+
+tds 每个回合都新起 `codex app-server`，`config.toml` 与 `model_catalog.json` 在启动时读取，
+所以**文件已改 → 下一回合生效**；不需要重启 Todos / tds，也不影响正在跑的回合（它启动时已经读过旧配置）。
+**本轮已生效**以该回合 rollout 的 `model_context_window` 为准。
+
+## 4. 读回证据
+
+| 检查 | 方式 | 结果 |
 | --- | --- | --- |
-| 目录 `context_window` | 272000 | 500000 |
-| 目录 `max_context_window` | 872000 | 872000 |
-| 目录 `effective_context_window_percent` | 95 | 95 |
-| 实际生效窗口（rollout 记录） | **258400** | **475000** |
-| `model_auto_compact_token_limit` | 未配置（用模型默认） | 未配置（用模型默认） |
+| 配置解析 | `CODEX_HOME=$HOME/.tds/codex-home codex debug models` | 目录仍是完整 **10 个模型**；Astra = 700000 / 700000 / 100 / 500000，Sol = 1000000 / 1000000 / 100 / 600000 |
+| 隔离实测（真实回合） | 独立临时 home，只设 `model_catalog_json` 指向重新生成的目录，各跑一次极小回合 | Astra rollout `"model_context_window":700000`；Sol rollout `"model_context_window":1000000` |
+| **真实 agent home 读回** | `$HOME/.tds/codex-home/sessions/**/rollout-2026-10-28T10-03-23-01a1803f-*.jsonl` | 该会话 10:03–10:28 的 token 事件为 258400，**10:29:52 起为 700000**（改动后第一个回合） |
 
-- 目录来源：`~/.tds/codex-home/models_cache.json`（与 `codex debug models` 同源）。
-- 生效窗口来源：`~/.tds/codex-home/sessions/**/*.jsonl` 里每回合的 `"model_context_window"`；Astra 最近一回合 2026-10-28 10:13 记录 258400，sol 最近一回合 2026-10-27 21:43 记录 475000。
-- 当前 `~/.tds/codex-home/config.toml`（sha256 `fc121ea10f7e710445fb29637fb048b5a33db8383ff4bd66d7a8870a4e5578df`）只有：
+## 5. 未测项与限制（不要当成已验）
 
-  ```toml
-  # Written by tds. The agent's Codex home: only auth.json and your model provider are shared with your own ~/.codex.
-  [features]
-  apps = false
+- **没有真正跑到 500,000 才压缩**：只证明目录里的 `auto_compact_token_limit` 被读取（§4 的读回值），
+  未触达 50 万。压缩阈值能否真的触发，由 #94 用极小阈值（5000）的对照实验证明过——那是机制验证，不是 50 万处的验证。
+- **没有验证上游接受 700,000 token 输入**：只证明 Codex 侧按 70 万记账。账号实时目录给 Astra 的
+  `max_context_window` 是 872000，70 万在其内，风险较低，但未实测。
+- **目录副本的长期代价**：`model_catalog_json` 是整份替换，新模型不会自己出现、已有模型的系统提示
+  （`model_messages`）停在生成当天。刷新方式见 §6。
 
-  [apps._default]
-  enabled = false
-  ```
+## 6. 维护与回滚
 
-  两个目标键都不存在。
+刷新（Codex 更新、目录变化后执行，会一并重放所有 `OVERRIDES`）：
 
-## 4. 实测：700000 的语义（隔离环境）
-
-在独立的临时 `CODEX_HOME`（`/tmp/codex-astra-verify`，只链接同一份 `auth.json`，不影响 agent home）写入：
-
-```toml
-model_context_window = 700000
-model_auto_compact_token_limit = 500000
+```sh
+$HOME/.tds/codex-home/refresh-model-catalog.sh
 ```
 
-跑一次极小调用 `codex exec -m gpt-6-astra "Reply with exactly: OK"`，其 rollout 记录：
+回滚 Astra 一项：删掉 `refresh-model-catalog.sh` 里 `OVERRIDES` 的 `"gpt-6-astra"` 条目，再跑一次刷新脚本，
+并同步删掉 `config.toml` 头部那行说明注释。
 
-```json
-"model_context_window": 665000
-```
+注意：`config.toml` 由 tds 在**文件缺失时**重写为默认内容，手工加的 `model_catalog_json` 行会随之丢失，
+删过该文件就要重新加回（#94 亦已记录）。现有备份 `config.toml.bak-20261028-sol1m` 未改动。
 
-即 `model_context_window` 设置的是**原始窗口**，Codex 对外使用/上报的**有效窗口 = 原始 × 95%**（`effective_context_window_percent`）。所以用户口径的 700000 对应有效 665000。
+## 7. 变更记录
 
-## 5. 为什么不能只改 Astra
-
-- 全局键（§2）：一改就是整个 `CODEX_HOME`，无法按模型区分。
-- 配置档（§2）：只有 `--profile` 才会加载，tds 不传，改了也不生效；除非改启动器，属于需长期维护的补丁。
-- 目录覆盖（§2）：`model_catalog_json` 整体替换目录。实测把目录里只留 `gpt-6-astra` 一项时，`codex debug models` 只返回 1 个模型。要只改 Astra，必须冻结**整份**目录副本——代价是新模型不会出现、每个模型的系统提示（`model_messages`）停在冻结当天，需要长期重新生成。
-- 环境变量：`codex` 二进制里的 `CODEX_*` 环境变量没有上下文窗口或配置覆盖入口，所以也无法靠「只给某些 agent 注入密钥」来按 agent 区分。
-
-## 6. 影响范围（若采用全局）
-
-- `~/.tds/codex-home` 是本机所有 Codex 运行时 agent 共用的 home。
-- 近两天该 home 的 rollout 里，`gpt-6-astra` 出现 1138 次、`gpt-6.1-sol` 出现 227 次（按文件内 `"model"` 字段去重统计）；sol 最后一次使用是 2026-10-27 21:43。
-- 目录里所有模型的 `max_context_window` 都是 872000，700000 未超过任何模型的硬上限。
-- 采用全局后：Astra 有效窗口 258400 → 665000、压缩点 500000；sol 有效窗口 475000 → 665000、压缩点从默认变为 500000。由于压缩阈值就是 500000（等于 sol 的标称窗口），sol 的实际上下文不会超过 500000，风险有限，但这是用户未点名模型的行为变化。
-
-## 7. 生效时机
-
-- Codex app-server 每次启动（即每个回合）重新读取 `config.toml`；**不需要重启机器、不需要重启 tds**。
-- 正在执行的回合不受影响（它已经读过配置），**下一回合起生效**。
-- 已有会话的上下文不重建；新阈值在后续回合的 token 计数与压缩判断上生效。
-- 三种状态要分清：文件已改（本文件记录的是否落地）→ 下一回合生效（配置层面）→ 本轮已生效（rollout 里 `model_context_window` 已变化才算证据）。
-
-## 8. 验证方法（非破坏性）
-
-1. 读回配置：`CODEX_HOME=~/.tds/codex-home /Users/sunny/.local/bin/codex doctor`，或直接读 `~/.tds/codex-home/config.toml`。
-2. 目录与模型：`CODEX_HOME=~/.tds/codex-home /Users/sunny/.local/bin/codex debug models`（确认模型目录仍是完整的，没有被 `model_catalog_json` 替换）。
-3. 生效证据：新回合结束后读该回合 rollout 的 `"model_context_window"`，Astra 应为 665000（此前 258400）。
-4. 以上都不触碰正在运行的会话；不停止任务、不重启 tds。
-
-## 9. 待决定（阻塞项）
-
-| 方案 | 做法 | 代价 |
-| --- | --- | --- |
-| A（推荐） | 在 `~/.tds/codex-home/config.toml` 追加 `model_context_window = 700000` 与 `model_auto_compact_token_limit = 500000` | 本机 Codex 的 sol 回合也一起变（§6）；零维护，删两行即恢复 |
-| B | `model_catalog_json` 指向冻结的整份目录副本，只改 Astra | 目录被冻结：新模型不出现、模型系统提示停在冻结日；需长期重新生成 |
-| C | 不改 | 维持现状（Astra 有效窗口 258400、压缩用默认） |
-
-## 10. 变更记录
-
-- 2026-10-28：完成调研、官方文档核对、修改前值取证与隔离实测（700000 → 有效 665000）；因只能全局生效，适用范围交用户决定，未落地任何修改。
+- 2026-10-28 10:16：调研官方配置面、修改前值取证、隔离实测顶层 `model_context_window = 700000` → 有效 665000；
+  当时只有全局入口，故把适用范围交用户决定。
+- 2026-10-28 10:28：接 #94 的按模型机制，`OVERRIDES` 增加 `gpt-6-astra`（700000 / 700000 / 100 / 500000），
+  重跑刷新脚本；隔离实测 Astra = 700000、Sol = 1000000 不变。
+- 2026-10-28 10:29–10:30：真实 agent home 会话读回 Astra `model_context_window = 700000`。
