@@ -1,0 +1,52 @@
+=== RUN   TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays
+2026/10/28 11:34:02 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    review_opus_step3_handler_test.go:51: first: status=500 body={"code":500,"data":null,"msg":"任务服务不可用","reason":"internal"}
+    review_opus_step3_handler_test.go:53: after first: status=failed routeRun=0
+    review_opus_step3_handler_test.go:56: receipts after first: 0
+    review_opus_step3_handler_test.go:58: paid retry with clientOperationId did not requeue (legacy body {} does)
+2026/10/28 11:34:02 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    review_opus_step3_handler_test.go:63: second: status=500 body={"code":500,"data":null,"msg":"任务服务不可用","reason":"internal"}
+--- FAIL: TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays (0.05s)
+FAIL
+FAIL	infinite-canvas/backend/internal/handler	1.200s
+=== RUN   TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable
+    review_opus_step3_app_test.go:47: upgraded api_call_logs missing column route_run
+    review_opus_step3_app_test.go:47: upgraded api_call_logs missing column usage_state
+    review_opus_step3_app_test.go:47: upgraded api_call_logs missing column billing_state
+    review_opus_step3_app_test.go:47: upgraded api_call_logs missing column usage_state_present
+    review_opus_step3_app_test.go:47: upgraded api_call_logs missing column billing_state_present
+    review_opus_step3_app_test.go:47: upgraded api_call_logs missing column image_job_id
+    review_opus_step3_app_test.go:62: LogAPICall on upgraded database: table api_call_logs has no column named route_run
+    review_opus_step3_app_test.go:66: outcome facts unreadable on upgraded database (every failed task projection degrades)
+--- FAIL: TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable (0.01s)
+=== RUN   TestReviewFreeRecoveryRunningReceiptAfterCrash
+
+2026/10/28 11:34:01 [31;1m/tmp/s3rev-opus/cand/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:34:01 [31;1m/tmp/s3rev-opus/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+    review_opus_step3_app_test.go:88: after restart, same op: err=retry operation is already in progress
+    review_opus_step3_app_test.go:90: same operation id stays blocked after process exit: retry operation is already in progress
+    review_opus_step3_app_test.go:94: receipt status=running
+--- FAIL: TestReviewFreeRecoveryRunningReceiptAfterCrash (0.04s)
+=== RUN   TestReviewFreeRecoveryReceiptRecordsRouteRuns
+
+2026/10/28 11:34:01 [31;1m/tmp/s3rev-opus/cand/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:34:01 [31;1m/tmp/s3rev-opus/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:34:01 [31;1m/tmp/s3rev-opus/cand/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+    review_opus_step3_app_test.go:115: first status=succeeded stage=正在取回结果 receipt={"task":{"id":"paused-free-2","userId":"local","projectId":"","type":"canvas_image","status":"succeeded","stage":"正在取回结果","progress":0,"prompt":"","operation":"","provider":"","model":"","inputJson":"{}","resultJson":"{\"images\":[]}","error":"","outcome":{"phase":"ready","regenerate":"allowed","reason":"result_ready"},"resultState":"READY","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T11:34:01.708598+08:00","updatedAt":"2026-10-28T11:34:01.708598+08:00"},"action":"free_recovery","originalRouteRun":0,"acceptedRouteRun":3}
+    review_opus_step3_app_test.go:123: free receipt route runs original=0 accepted=3, want 3/3
+    review_opus_step3_app_test.go:126: replay: status=true stage=正在取回结果 outcome=&{Phase:ready Regenerate:allowed Reason:result_ready} err=<nil>
+
+2026/10/28 11:34:01 [31;1m/tmp/s3rev-opus/cand/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- FAIL: TestReviewFreeRecoveryReceiptRecordsRouteRuns (0.04s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.635s
+FAIL

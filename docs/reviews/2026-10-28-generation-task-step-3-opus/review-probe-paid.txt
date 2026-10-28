@@ -1,0 +1,10 @@
+=== RUN   TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays
+    review_opus_step3_handler_test.go:51: first: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"9a8b3ed29c9edd4c9742ec375db6e0ff","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T11:35:03.857085+08:00","updatedAt":"2026-10-28T11:35:03.859508+08:00"},"msg":"ok"}
+    review_opus_step3_handler_test.go:53: after first: status=queued routeRun=1
+    review_opus_step3_handler_test.go:56: receipts after first: 1
+    review_opus_step3_handler_test.go:63: second: status=400 body={"code":400,"data":null,"msg":"retry operation id reused with a different payload","reason":"invalid_argument"}
+    review_opus_step3_handler_test.go:69: same clientOperationId after success was not replayed: 400
+--- FAIL: TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays (0.06s)
+FAIL
+FAIL	infinite-canvas/backend/internal/handler	0.671s
+FAIL
