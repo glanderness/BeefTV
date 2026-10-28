@@ -2,11 +2,11 @@
 
 把 `glanderness/BeefTV` 的新增 issue、以及有新评论的 issue 同步进飞书 Base「BeefTV 项目跟进」需求表 `tblvTTmtzdPF6qxx`（base `OcHnbZCXjaMwwrsx4laciEvRnHo`）。
 
-- 定时：每天 **10:30（Asia/Shanghai）**，排在「每天 9:30 企微反馈收集」（todo #12）之后。规则挂在 todo #53 上，由左侧边栏的**定时**页管理；每次到点触发一次全新构建，按本文件执行，不经规划直接进入执行中。
-- 运行机器：必须装有并已授权 `gh`（账号 `enderzcx`）与 `lark-cli`（`--as user`）的机器，当前是 `sunnydeMac-mini-2`；定时规则建议固定到这台机器，否则落到没授权的机器上会直接失败。
+- 定时：每天 **10:30（Asia/Shanghai）**，排在「每天 9:30 企微反馈收集」（todo #12）之后。规则挂在 todo #53 上（rule id `_qucbwjoyP57uH3pYy3ml`），由左侧边栏的**定时**页管理；每次到点触发一次全新构建，按本文件执行，不经规划直接进入执行中。
+- 运行机器：规则已固定到 `sunnydeMac-mini-2.local`（machineId `HLEChuCr6TAOD_3IkAc8A`），Agent 跟随任务（主力）。这台机器是必须的——`gh`（账号 `enderzcx`）与 `lark-cli`（`--as user`）的用户授权只在这里，换机器会直接失败，改规则时不要把机器改回「自动」。
 - 边界（用户口径，未变更前一直有效）：**只写需求表**——不在 GitHub 上评论、打标签或关闭 issue；不发群；issue 关闭不自动跟改表内状态。
 
-首轮只读盘点、试跑与 2026-10-27 的 16 条正式写入记录在 todo #43 的分支 `tds/conv-01a17aee-cb0a-7266-b1d9-17d7053345c7` 的 `docs/research/github-issue-sync-to-requirement-table.md`；本文件是落进 `main` 的操作手册版本，字段映射、去重规则与 issue → record_id 对照表都在这里。
+首轮只读盘点、试跑与 2026-10-27 的 16 条正式写入记录在 todo #43 的分支 `tds/conv-01a17aee-cb0a-7266-b1d9-17d7053345c7` 的 `docs/research/github-issue-sync-to-requirement-table.md`；本文件是落进 `main` 的操作手册版本（分支合并后即为权威版），字段映射、去重规则与 issue → record_id 对照表都在这里。
 
 ## 一、每天怎么做
 
