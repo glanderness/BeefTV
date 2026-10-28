@@ -21,6 +21,7 @@ function Harness() {
         <button onClick={() => assistant.retryLast()}>重试</button>
         <output data-testid="can-retry">{String(assistant.canRetry)}</output>
         <button onClick={() => void assistant.reloadHistory()}>重新读取</button>
+        <button onClick={() => assistant.dismissError()}>知道了</button>
         <output data-testid="pending">{assistant.pendingUserText || ""}</output>
         <output data-testid="streamed">{assistant.streamed}</output>
         <output data-testid="error">{assistant.error || ""}</output>

@@ -124,8 +124,11 @@ const ASSISTANT_STOPPED_UNPROCESSED_TEXT = "已停下，这条消息没有被处
  */
 export const ASSISTANT_LIVE_TURN_KEY = "live";
 
-/** 消息还没发出、或助手还没开始处理就停下：不会执行，不留待发送内容；「重试」仍可原样再发。 */
-function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_SEND_TEXT) {
+/**
+ * 收回这条消息的全部本地等待状态：不再替它等回执，也不留待发送内容。
+ * 「停止」和「知道了」都走这里，避免两种收尾各自漏掉一半状态（例如只清待发送文本、留着等待回执）。
+ */
+function clearPendingSend(run: CanvasRun) {
     run.pendingUserText = null;
     run.pendingContinuationId = null;
     run.pendingSelectedNodeIds = [];
@@ -137,6 +140,11 @@ function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_S
     delete run.reasoningOpen[ASSISTANT_LIVE_TURN_KEY];
     run.lifecycleNotice = null;
     run.recovery = null;
+}
+
+/** 消息还没发出、或助手还没开始处理就停下：不会执行，不留待发送内容；「重试」仍可原样再发。 */
+function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_SEND_TEXT) {
+    clearPendingSend(run);
     run.error = text;
 }
 
@@ -282,6 +290,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         return () => { cancelled = true; clearInterval(timer); };
     }, [open, starting, expectedScope]);
 
+    /**
+     * 读取一条对话的历史。`sessionId` 决定读哪条：不点名时读画布当前指针指向的那条。
+     * 等这一轮回执的调用方必须点名「面板正在显示的这条对话」：回执只会落在发出去的那条对话里，
+     * 画布指针被别处切走（会话交接、别处切换）后仍按当前指针读，就永远读不到回执，
+     * 面板会停在「正在读取这次处理的最终结果」，输入框一直被锁住。
+     */
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
         if (!userScopeMatches(expectedScope)) return false;
         const run = runFor(targetCanvas);
@@ -369,7 +383,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             const run = runFor(canvasId);
             if (reading || run.controller || (!run.backgroundActive && !run.recovery)) return;
             reading = true;
-            void loadHistory(canvasId).finally(() => { reading = false; });
+            void loadHistory(canvasId, run.sessionId ?? undefined).finally(() => { reading = false; });
         }, 2000);
         return () => clearInterval(timer);
     }, [canvasId, loadHistory, open, runFor]);
@@ -566,7 +580,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 // 只是观察断开，这一轮仍在宿主上：保留已显示内容，改为读取结果，轮询接着读进度或最终回执。
                 current.error = null;
                 onCanvasChangedRef.current?.(targetCanvas, []);
-                void loadHistory(targetCanvas);
+                void loadHistory(targetCanvas, current.sessionId ?? undefined);
                 rerenderIfActive(targetCanvas);
                 return;
             }
@@ -581,7 +595,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 : streamError instanceof Error ? streamError.message : String(streamError);
             if (current.dispatched) {
                 onCanvasChangedRef.current?.(targetCanvas, []);
-                void loadHistory(targetCanvas);
+                void loadHistory(targetCanvas, current.sessionId ?? undefined);
             }
             rerenderIfActive(targetCanvas);
         } finally {
@@ -616,7 +630,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             const target = run.sessionId && run.requestId ? { sessionId: run.sessionId, requestId: run.requestId } : undefined;
             const state = await cancelAgentChat(targetCanvas, target);
             if (!userScopeMatches(expectedScope)) return;
-            await loadHistory(targetCanvas);
+            await loadHistory(targetCanvas, run.sessionId ?? undefined);
             if (!userScopeMatches(expectedScope)) return;
             const current = runFor(targetCanvas);
             // The assistant had not started on it and history holds no receipt for it:
@@ -641,12 +655,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
 
     const dismissError = useCallback(() => {
         const run = runFor(activeCanvasRef.current);
+        // 「知道了」是对这次发送的收尾：等待回执也要一起收回。只清错误和待发送文本的话，
+        // awaitingReceipt 仍为真，输入框继续禁用、每 2 秒继续轮询一个永远不会认领的回执。
+        clearPendingSend(run);
         run.error = null;
-        run.pendingUserText = null;
-        run.pendingContinuationId = null;
-        run.pendingSelectedNodeIds = [];
         rerenderIfActive(activeCanvasRef.current);
-    }, [rerenderIfActive, runFor, expectedScope]);
+    }, [rerenderIfActive, runFor]);
 
     /**
      * 展开或收起某个回合的思考区域。
