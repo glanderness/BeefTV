@@ -154,6 +154,11 @@ describe("canvas generation failure consumers", () => {
         expect(canvasGenerationRetryBlocked({ generationErrorCode: "throttled", errorDetails: "opaque" })).toBe(false);
         expect(canvasGenerationRetryBlocked({ generationErrorCode: "invalid_params", errorDetails: "opaque" }, { prompt: "draw" })).toBe(false);
         expect(canvasGenerationRetryBlocked({ generationErrorCode: "auth", errorDetails: "opaque" }, { prompt: "draw" })).toBe(false);
+        for (const generationErrorCode of ["timeout", "results_missing", "partial_success", "async_failed"]) {
+            const message = explainGenerationError({ code: generationErrorCode }).message;
+            expect(explainGenerationError(message).uncertain).toBe(false);
+            expect(canvasGenerationRetryBlocked({ generationErrorCode, errorDetails: message }, { prompt: "draw" })).toBe(false);
+        }
         expect(canvasGenerationRetryBlocked({ generationErrorCode: "submission_uncertain", errorDetails: "opaque" }, { prompt: "changed" })).toBe(true);
     });
 
