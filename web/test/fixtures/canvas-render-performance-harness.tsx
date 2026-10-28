@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
@@ -15,6 +15,8 @@ const selected = new Set<string>();
 const emptyMap = new Map();
 const emptyArray: never[] = [];
 const count = Math.max(50, Math.min(1000, Number(new URLSearchParams(location.search).get("nodes")) || 500));
+// 25% is the overview (LOD) regime; 60%+ mounts real DOM cards.
+const initialScale = Math.max(0.05, Number(new URLSearchParams(location.search).get("scale")) || 0.25);
 const image = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#284b63"/><circle cx="160" cy="90" r="50" fill="#79b8b0"/></svg>');
 const fixtureNodes = (start: number, length: number): CanvasNodeData[] => Array.from({ length }, (_, offset) => {
     const index = start + offset;
@@ -23,19 +25,23 @@ const fixtureNodes = (start: number, length: number): CanvasNodeData[] => Array.
         metadata: { content: type === CanvasNodeType.Text ? `分镜描述 ${index}` : type === CanvasNodeType.Image ? image : "", previewContent: type === CanvasNodeType.Video ? image : undefined, naturalWidth: 320, naturalHeight: 180, prompt: "固定场景的分镜描述。".repeat(120), manualSize: true } };
 });
 
-const perf = (window as any).__canvasPerf = { ready: false, nodeRenders: {} as Record<string, number>, state: {}, run: async (_kind: string, _iterations: number) => ({}) };
+const perf = (window as any).__canvasPerf = { ready: false, nodeRenders: {} as Record<string, number>, state: {}, hoveredId: null as string | null, hoveredIds: new Set<string>(), run: async (_kind: string, _iterations: number) => ({}) };
 
 function Harness() {
     const [nodes, setNodes] = useState(() => fixtureNodes(0, count));
-    const [viewport, setViewport] = useState<ViewportTransform>({ x: 90, y: 80, k: 0.25 });
+    const [viewport, setViewport] = useState<ViewportTransform>({ x: 90, y: 80, k: initialScale });
+    // Mirrors the page: hover is page-level state that feeds the LOD pin set,
+    // so a hover change walks the same render-model path as the product.
+    const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+    const lodPinnedNodeIds = useMemo(() => new Set([hoveredNodeId].filter((nodeId): nodeId is string => Boolean(nodeId))), [hoveredNodeId]);
     const containerRef = useRef<HTMLDivElement>(null);
     const connections = useRef(Array.from({ length: count - 1 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` }))).current;
     const start = performance.now();
-    const model = useCanvasRenderModel({ nodes, connections, assets: emptyArray, viewport, viewportSize: { width: 1440, height: 820 }, mediaPerformanceMode: "auto", selectedNodeIds: selected, hoveredNodeId: null, dragPreview: null, collapsingBatchIds: selected, addedSkills: emptyArray,
-        infoNodeId: null, maskEditNodeId: null, annotationNodeId: null, splitNodeId: null, upscaleNodeId: null, angleNodeId: null, lightingNodeId: null, emotionNodeId: null, previewNodeId: null, contextMenu: null, versionCompareRootId: null, directorNodeId: null, scriptEditorNodeId: null, dialogNodeId: null });
+    const model = useCanvasRenderModel({ nodes, connections, assets: emptyArray, viewport, viewportSize: { width: 1440, height: 820 }, mediaPerformanceMode: "auto", selectedNodeIds: selected, hoveredNodeId, dragPreview: null, collapsingBatchIds: selected, addedSkills: emptyArray,
+        infoNodeId: null, maskEditNodeId: null, annotationNodeId: null, splitNodeId: null, upscaleNodeId: null, angleNodeId: null, lightingNodeId: null, emotionNodeId: null, previewNodeId: null, contextMenu: null, versionCompareRootId: null, directorNodeId: null, scriptEditorNodeId: null, dialogNodeId: null, lodPinnedNodeIds });
     const modelMs = performance.now() - start;
     const latest = useRef({ nodes, model, modelMs });
-    useLayoutEffect(() => { latest.current = { nodes, model, modelMs }; perf.state = { nodes: nodes.length, visible: model.visibleNodes.length, connections: model.displayConnections.length }; perf.ready = true; });
+    useLayoutEffect(() => { latest.current = { nodes, model, modelMs }; perf.state = { nodes: nodes.length, visible: model.visibleNodes.length, connections: model.displayConnections.length, lod: model.lodActive, hovered: hoveredNodeId }; perf.ready = true; });
     const rename = useCallback((id: string, title: string) => setNodes(current => current.map(node => node.id === id ? { ...node, title } : node)), []);
     (perf as any).replaceNodes = (next: CanvasNodeData[]) => flushSync(() => setNodes(next));
     (perf as any).inspect = () => ({ visible: latest.current.model.visibleNodes.map(node => node.id), connections: latest.current.model.displayConnections.map(({ connection, from, to }) => ({ id: connection.id, from: from.id, to: to.id, title: from.title, x: from.position.x, width: from.width })) });
@@ -49,6 +55,7 @@ function Harness() {
     perf.run = async (kind: string, iterations = 25) => {
         const durations: number[] = [], models: number[] = [];
         perf.nodeRenders = {};
+        perf.hoveredIds = new Set<string>();
         (perf as any).spatialBuilds = 0;
         for (let i = 0; i < iterations; i++) {
             const begin = performance.now();
@@ -56,13 +63,26 @@ function Harness() {
                 if (kind === "append") setNodes(current => [...current, ...fixtureNodes(current.length, 8)]);
                 else if (kind === "move") setNodes(current => current.map(node => node.id === "n0" ? { ...node, position: { ...node.position, x: node.position.x + 1 } } : node));
                 else if (kind === "pan") setViewport(current => ({ ...current, x: current.x + (i % 2 ? -8 : 8) }));
+                else if (kind === "hover") {
+                    // Only ever hover cards the camera actually shows: the product
+                    // sets hover from a real pointer over a visible node.
+                    const left = -viewport.x / viewport.k, top = -viewport.y / viewport.k;
+                    const onScreen = latest.current.nodes.filter(node => node.position.x + node.width > left && node.position.x < left + 1440 / viewport.k && node.position.y + node.height > top && node.position.y < top + 820 / viewport.k);
+                    const target = onScreen[i % Math.max(1, onScreen.length)]?.id || "n0";
+                    perf.hoveredId = target;
+                    perf.hoveredIds.add(target);
+                    setHoveredNodeId(target);
+                }
+                else if (kind === "hover-leave") { perf.hoveredId = null; setHoveredNodeId(null); }
                 else setNodes(current => current.map(node => node.id === "n0" ? { ...node, title: `更新 ${kind} ${i}` } : node));
             });
             durations.push(performance.now() - begin);
             models.push(latest.current.modelMs);
         }
         const stats = (values: number[]) => { values.sort((a, b) => a - b); return { medianMs: values[Math.floor(values.length / 2)], p95Ms: values[Math.ceil(values.length * .95) - 1] }; };
-        return { kind, iterations, ...perf.state, update: stats(durations), renderModel: stats(models), spatialBuilds: (perf as any).spatialBuilds, changedNodeRenders: perf.nodeRenders.n0 || 0, otherNodeRenders: Object.entries(perf.nodeRenders).filter(([id]) => id !== "n0").reduce((sum, [, n]) => sum + n, 0), scope: "production React synchronous update commits, real canvas components and synthetic local media; not paint/FPS, backend or native-host timing" };
+        return { kind, iterations, ...perf.state, update: stats(durations), renderModel: stats(models), spatialBuilds: (perf as any).spatialBuilds, changedNodeRenders: perf.nodeRenders.n0 || 0,
+        hoveredRenders: [...perf.hoveredIds].reduce((sum: number, id: string) => sum + (perf.nodeRenders[id] || 0), 0),
+        otherNodeRenders: Object.entries(perf.nodeRenders).filter(([id]) => !perf.hoveredIds.has(id) && id !== "n0").reduce((sum, [, n]) => sum + (n as number), 0), scope: "production React synchronous update commits, real canvas components and synthetic local media; not paint/FPS, backend or native-host timing" };
     };
     return <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
         <header style={{ height: 48, padding: 12, color: "#d0d7de", background: "#18212a" }}>BeefTV 画布性能回放 · 测试数据 · {nodes.length} 节点</header>

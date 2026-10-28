@@ -1,0 +1,97 @@
+{
+  "scope": "真实画布组件的浏览器内同步提交耗时与卡片重渲染次数；不含绘制/合成、原生宿主和真实鼠标事件分发",
+  "nodes": 300,
+  "iterations": 40,
+  "scale": 0.6,
+  "variant": "after",
+  "results": {
+    "hover": {
+      "kind": "hover",
+      "iterations": 40,
+      "nodes": 300,
+      "visible": 49,
+      "connections": 110,
+      "lod": false,
+      "hovered": "n129",
+      "update": {
+        "medianMs": 0.3999999985098839,
+        "p95Ms": 1.5
+      },
+      "renderModel": {
+        "medianMs": 0.10000000149011612,
+        "p95Ms": 0.30000000447034836
+      },
+      "spatialBuilds": 0,
+      "changedNodeRenders": 4,
+      "hoveredRenders": 98,
+      "otherNodeRenders": 0,
+      "scope": "production React synchronous update commits, real canvas components and synthetic local media; not paint/FPS, backend or native-host timing"
+    },
+    "hover-leave": {
+      "kind": "hover-leave",
+      "iterations": 40,
+      "nodes": 300,
+      "visible": 49,
+      "connections": 110,
+      "lod": false,
+      "hovered": null,
+      "update": {
+        "medianMs": 0,
+        "p95Ms": 0
+      },
+      "renderModel": {
+        "medianMs": 0.10000000149011612,
+        "p95Ms": 0.10000000149011612
+      },
+      "spatialBuilds": 0,
+      "changedNodeRenders": 1,
+      "hoveredRenders": 0,
+      "otherNodeRenders": 31,
+      "scope": "production React synchronous update commits, real canvas components and synthetic local media; not paint/FPS, backend or native-host timing"
+    },
+    "title": {
+      "kind": "title",
+      "iterations": 40,
+      "nodes": 300,
+      "visible": 49,
+      "connections": 110,
+      "lod": false,
+      "hovered": null,
+      "update": {
+        "medianMs": 0.30000000447034836,
+        "p95Ms": 0.9000000059604645
+      },
+      "renderModel": {
+        "medianMs": 0.19999999552965164,
+        "p95Ms": 0.3999999985098839
+      },
+      "spatialBuilds": 0,
+      "changedNodeRenders": 40,
+      "hoveredRenders": 0,
+      "otherNodeRenders": 40,
+      "scope": "production React synchronous update commits, real canvas components and synthetic local media; not paint/FPS, backend or native-host timing"
+    },
+    "pan": {
+      "kind": "pan",
+      "iterations": 40,
+      "nodes": 300,
+      "visible": 49,
+      "connections": 110,
+      "lod": false,
+      "hovered": null,
+      "update": {
+        "medianMs": 0.20000000298023224,
+        "p95Ms": 0.3999999985098839
+      },
+      "renderModel": {
+        "medianMs": 0,
+        "p95Ms": 0.10000000149011612
+      },
+      "spatialBuilds": 0,
+      "changedNodeRenders": 0,
+      "hoveredRenders": 0,
+      "otherNodeRenders": 0,
+      "scope": "production React synchronous update commits, real canvas components and synthetic local media; not paint/FPS, backend or native-host timing"
+    }
+  }
+}

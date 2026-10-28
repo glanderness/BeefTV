@@ -11,6 +11,10 @@ dist/
 artifacts/
 test-evidence/
 *.log
+# 画布交互性能专项的原生客户端访问日志是测量证据（不是运行日志），按原字节入库；
+# 第五轮它命中上面的 *.log 规则没有进仓库，报告引用因此指不到文件。
+!docs/performance/2026-10-28-canvas-interaction/**/*.log
+!docs/performance/2026-10-28-canvas-interaction/*.log
 *.tsbuildinfo
 *.db
 *.db-*
