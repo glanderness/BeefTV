@@ -18,10 +18,17 @@ OUT = None
 
 
 class Handler(BaseHTTPRequestHandler):
+    # 探针用 fetch(..., {keepalive: true}) 回传。BaseHTTPRequestHandler 默认回 HTTP/1.0
+    # 并关连接，WKWebView 会把这种响应当成失败并重发同一个请求：一次 perf-rec-start
+    # 曾落成三条 start 记录，后两条正好在拖拽中途把计数器清零（2026-10-28 实测
+    # perf-after-grouped1000-r1）。这里回 HTTP/1.1 并显式带 Content-Length。
+    protocol_version = "HTTP/1.1"
+
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path != "/perf":
             self.send_response(404)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
         query = parse_qs(parsed.query)
@@ -34,6 +41,7 @@ class Handler(BaseHTTPRequestHandler):
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def log_message(self, *_args):
