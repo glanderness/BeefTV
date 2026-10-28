@@ -1,0 +1,309 @@
+{
+  "reviewed_commit": "caf2c1cefbf76eb2afcbca7cdf0dae1ea4a2b05c",
+  "product_changes_since_e54": [],
+  "sides": {
+    "before": {
+      "ref": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "checks": {
+        "native-probe-baseline.patch": {
+          "exitCode": 0,
+          "output": ""
+        },
+        "native-probe.patch": {
+          "exitCode": 1,
+          "output": "error: <固定快照>/web/src/lib/canvas/canvas-connection-target.ts: No such file or directory\nerror: patch failed: <固定快照>/web/src/pages/canvas/use-canvas-connection-controller.ts:446\nerror: <固定快照>/web/src/pages/canvas/use-canvas-connection-controller.ts: patch does not apply\n"
+        }
+      },
+      "patch_sha256": "884acaecfe1dcab10ac4c1de14a594d078d3e49eededf54021a58efbad84cf1a",
+      "patched_controller_sha256": "c72112a24d147be8b3bf76a92efdbecf0d468c3555ee003886cda75ca3241f05",
+      "probe_sha256": "8a83496d395191c2dc42b2e5690e9355be954252dbae3deaecf3d3e986d2dc00",
+      "index_module_present": false,
+      "call_counter_sites": 3,
+      "actual_callbacks": {
+        "scope": "从实际插桩文件逐字提取回调并调用；真实几何/策略/索引，假坐标成本7、建立3、query1毫秒；非实机耗时",
+        "side": "before",
+        "cases": [
+          {
+            "kind": "ordinary",
+            "phase": "cold",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "accumulated": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "incorrectDropPlusBuild": 7
+          },
+          {
+            "kind": "ordinary",
+            "phase": "hot",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "accumulated": {
+              "dropTargetCalls": 2,
+              "dropTargetMs": 14,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "incorrectDropPlusBuild": 7
+          },
+          {
+            "kind": "batch",
+            "phase": "cold",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "accumulated": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "incorrectDropPlusBuild": 7
+          },
+          {
+            "kind": "batch",
+            "phase": "hot",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "accumulated": {
+              "dropTargetCalls": 2,
+              "dropTargetMs": 14,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            },
+            "incorrectDropPlusBuild": 7
+          },
+          {
+            "kind": "batch",
+            "phase": "no-source",
+            "result": {
+              "nodeId": null,
+              "isNearNode": false
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 0,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            }
+          }
+        ]
+      }
+    },
+    "after": {
+      "ref": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "checks": {
+        "native-probe-baseline.patch": {
+          "exitCode": 1,
+          "output": "error: patch failed: <固定快照>/web/src/pages/canvas/use-canvas-connection-controller.ts:456\nerror: <固定快照>/web/src/pages/canvas/use-canvas-connection-controller.ts: patch does not apply\n"
+        },
+        "native-probe.patch": {
+          "exitCode": 0,
+          "output": ""
+        }
+      },
+      "patch_sha256": "095ca14af7270af26f18bd0caf3e60b29f70471a993037f05d6c44c52b4f23ee",
+      "patched_controller_sha256": "7a042a5d7fa05f99dfcc483890a3a32a492813518345e4ad3ae18ba3890b3db8",
+      "probe_sha256": "8a83496d395191c2dc42b2e5690e9355be954252dbae3deaecf3d3e986d2dc00",
+      "index_module_present": true,
+      "call_counter_sites": 2,
+      "actual_callbacks": {
+        "scope": "从实际插桩文件逐字提取回调并调用；真实几何/策略/索引，假坐标成本7、建立3、query1毫秒；非实机耗时",
+        "side": "after",
+        "cases": [
+          {
+            "kind": "ordinary",
+            "phase": "cold",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 11,
+              "indexBuilds": 1,
+              "indexBuildMs": 3,
+              "indexQueries": 1,
+              "indexQueryMs": 1,
+              "indexCandidates": 1
+            },
+            "accumulated": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 11,
+              "indexBuilds": 1,
+              "indexBuildMs": 3,
+              "indexQueries": 1,
+              "indexQueryMs": 1,
+              "indexCandidates": 1
+            },
+            "incorrectDropPlusBuild": 14
+          },
+          {
+            "kind": "ordinary",
+            "phase": "hot",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 8,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 1,
+              "indexQueryMs": 1,
+              "indexCandidates": 1
+            },
+            "accumulated": {
+              "dropTargetCalls": 2,
+              "dropTargetMs": 19,
+              "indexBuilds": 1,
+              "indexBuildMs": 3,
+              "indexQueries": 2,
+              "indexQueryMs": 2,
+              "indexCandidates": 2
+            },
+            "incorrectDropPlusBuild": 8
+          },
+          {
+            "kind": "batch",
+            "phase": "cold",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 11,
+              "indexBuilds": 1,
+              "indexBuildMs": 3,
+              "indexQueries": 1,
+              "indexQueryMs": 1,
+              "indexCandidates": 1
+            },
+            "accumulated": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 11,
+              "indexBuilds": 1,
+              "indexBuildMs": 3,
+              "indexQueries": 1,
+              "indexQueryMs": 1,
+              "indexCandidates": 1
+            },
+            "incorrectDropPlusBuild": 14
+          },
+          {
+            "kind": "batch",
+            "phase": "hot",
+            "result": {
+              "nodeId": "target",
+              "isNearNode": true
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 8,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 1,
+              "indexQueryMs": 1,
+              "indexCandidates": 1
+            },
+            "accumulated": {
+              "dropTargetCalls": 2,
+              "dropTargetMs": 19,
+              "indexBuilds": 1,
+              "indexBuildMs": 3,
+              "indexQueries": 2,
+              "indexQueryMs": 2,
+              "indexCandidates": 2
+            },
+            "incorrectDropPlusBuild": 8
+          },
+          {
+            "kind": "batch",
+            "phase": "no-source",
+            "result": {
+              "nodeId": null,
+              "isNearNode": false
+            },
+            "delta": {
+              "dropTargetCalls": 1,
+              "dropTargetMs": 7,
+              "indexBuilds": 0,
+              "indexBuildMs": 0,
+              "indexQueries": 0,
+              "indexQueryMs": 0,
+              "indexCandidates": 0
+            }
+          }
+        ]
+      }
+    }
+  },
+  "formula": {
+    "correct": "before.dropTargetMs 对比 after.dropTargetMs",
+    "index_breakdown": "after.indexBuildMs + after.indexQueryMs 是dropTargetMs内部子项，不再加到dropTargetMs",
+    "rebuild_required_for_formula_correction": false
+  }
+}

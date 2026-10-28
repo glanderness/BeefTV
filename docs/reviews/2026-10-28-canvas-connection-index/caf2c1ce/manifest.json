@@ -1,0 +1,14 @@
+{
+  "reviewed_materials": "caf2c1cefbf76eb2afcbca7cdf0dae1ea4a2b05c",
+  "before": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "after": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "previous_review": "2b30657405489c9440ea646fc4abf4a0e0ac0fc1",
+  "files": {
+    "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/after-callbacks.txt": "30b7c5475343a4045b9f5918c28a03835618d62b5e767e4263aa32df2a4aaf9e",
+    "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/author-check-receipt.json": "1e1007cc0fb5189af4e6b834661677b4824fdee6af43d488e18d6912b40d34ce",
+    "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/before-callbacks.txt": "888294d03e5697f1a5031a12a4f64198bfb8c3a0605b2e91caffb3a62aa7267a",
+    "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/independent-baseline.json": "456cf9f606880adbc945ee0e9a8ebcf7de4fa1ab8e172bbfe90c2f6d38cc2007",
+    "docs/reviews/2026-10-28-canvas-connection-index.md": "26571f7d5e9d720c65a50e88f61b6737e51f0b2151920aaf84fd3f05c9b664e2",
+    "docs/reviews/2026-10-28-canvas-connection-index/audit-baseline.py": "a15e36bebe2ee80b7d5defea89d284798db7c0ab2ebb9e714f0f395c785e9fb5"
+  }
+}
