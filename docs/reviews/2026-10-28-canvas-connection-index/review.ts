@@ -69,6 +69,21 @@ function differential() {
     compare("移动后新位置", options(after, { x: 5000, y: 90 }));
     compare("新数组重排", options([src, target, lower].reverse()));
     compare("零尺寸", options([src, { ...target, width: 0, height: 0 }], { x: 1000, y: 0 }));
+    const originalSamples = checked;
+    if (process.env.REVIEW_EXPECT_PARITY === "1") {
+        // 修正版新增了矩形归一和查询外扩：补网格共边、负坐标、大坐标和反向/零尺寸。
+        for (const x of [-1024, 0, 1024, 100_000_000]) for (const width of [-320, 0, 320]) for (const height of [-180, 0, 180]) {
+            const target = node("target", T.Image, x, -900, { width, height });
+            for (const handleType of ["source", "target"] as const) for (const scale of [.05, .6, 1, 2.5]) {
+                const current = { nodeId: "source", handleType };
+                const anchor = getConnectionTargetAnchor(target, current);
+                const radius = 56 / scale;
+                for (const offset of [-radius - .5, -radius, 0, radius, radius + .5]) {
+                    compare(`修正版几何-${x}-${width}-${height}-${handleType}-${scale}-${offset}`, options([src, target], { x: anchor.x + offset, y: anchor.y }, scale, { current }));
+                }
+            }
+        }
+    }
 
     // 通过实际更新 helper 验证：标题/进度改变数组身份，查询因此重新读全体几何。
     let geometryReads = 0;
@@ -89,9 +104,12 @@ function differential() {
     assert.notEqual(measured, changed);
     assert.equal(hotReads, 0);
     assert(progressRebuildReads >= 299 * 4);
-    assert(mismatches.some(m => m.name === "左侧精确相切-1" && m.kind === "ordinary"));
-    assert(mismatches.every(m => m.name.includes("精确相切")), "出现预期之外的行为差异，请逐项检查");
-    save("differential", { checked, mismatchCount: mismatches.length, mismatches, lifecycle: { nodeCount: 300, hotReads, progressRebuildReads, immutableUpdateReturnsNewArray: changed !== measured }, scope: "纯函数差分，旧回调自动提取；不证明桌面事件与渲染" });
+    if (process.env.REVIEW_EXPECT_PARITY === "1") assert.equal(mismatches.length, 0, JSON.stringify(mismatches.slice(0, 3)));
+    else {
+        assert(mismatches.some(m => m.name === "左侧精确相切-1" && m.kind === "ordinary"));
+        assert(mismatches.every(m => m.name.includes("精确相切")), "出现预期之外的行为差异，请逐项检查");
+    }
+    save("differential", { checked, originalSamples, revisionAdditionalSamples: checked - originalSamples, mismatchCount: mismatches.length, mismatches, lifecycle: { nodeCount: 300, hotReads, progressRebuildReads, immutableUpdateReturnsNewArray: changed !== measured }, scope: "纯函数差分，旧回调自动提取；不证明桌面事件与渲染" });
     console.log(`已比较 ${checked} 次，发现 ${mismatches.length} 个精确相切差异；进度更新后几何读取 ${progressRebuildReads} 次。`);
 }
 

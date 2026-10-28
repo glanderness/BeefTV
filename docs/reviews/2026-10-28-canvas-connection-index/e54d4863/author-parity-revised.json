@@ -1,0 +1,50 @@
+{
+  "scope": "纯 JS 逻辑耗时（performance.now 包裹的单次调用），不含渲染、绘制、网络与原生宿主；同机负载会影响绝对值，改前改后在同一次运行内交替测量",
+  "repeats": 120,
+  "nodeCounts": [
+    300
+  ],
+  "entryCounts": [
+    1,
+    10,
+    60,
+    200
+  ],
+  "connectionDropTarget": {},
+  "indexCost": {},
+  "nodeOperationLookup": {},
+  "parity": {
+    "samples": 5400,
+    "mismatches": 0,
+    "examples": []
+  },
+  "reviewCoverage": {
+    "mixed": {
+      "positions": 1440,
+      "ordinaryHit": 0,
+      "ordinaryNear": 960,
+      "batchHit": 0,
+      "batchNear": 0,
+      "types": {
+        "image": 936,
+        "video": 288,
+        "text": 216
+      }
+    },
+    "group-late": {
+      "positions": 1440,
+      "ordinaryHit": 0,
+      "ordinaryNear": 0,
+      "batchHit": 0,
+      "batchNear": 0,
+      "types": {
+        "image": 1440
+      }
+    }
+  },
+  "boundaryParity": {
+    "samples": 2880,
+    "mismatches": 0,
+    "examples": []
+  }
+}

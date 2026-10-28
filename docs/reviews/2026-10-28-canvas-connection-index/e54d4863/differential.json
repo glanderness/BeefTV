@@ -1,0 +1,14 @@
+{
+  "checked": 5620,
+  "originalSamples": 2740,
+  "revisionAdditionalSamples": 2880,
+  "mismatchCount": 0,
+  "mismatches": [],
+  "lifecycle": {
+    "nodeCount": 300,
+    "hotReads": 0,
+    "progressRebuildReads": 1196,
+    "immutableUpdateReturnsNewArray": true
+  },
+  "scope": "纯函数差分，旧回调自动提取；不证明桌面事件与渲染"
+}

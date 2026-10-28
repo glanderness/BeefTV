@@ -1,0 +1,51 @@
+$ bun test test/canvas-connection-target.test.ts test/canvas-batch-connection.test.ts test/canvas-spatial-index.test.ts
+bun test v1.4.2 (744846f84)
+
+test/canvas-spatial-index.test.ts:
+(pass) canvas spatial index > queries intersecting entries across buckets in source order [0.37ms]
+(pass) canvas spatial index > does not return edge-touching or invalid entries [0.02ms]
+(pass) canvas spatial index > builds bounds from canvas node geometry [0.02ms]
+(pass) canvas spatial index > keeps very large entries out of the bucket build loop [0.02ms]
+(pass) canvas spatial index > supports a bounded query for dense buckets [0.10ms]
+(pass) canvas spatial index > keeps the target 50k canvas mix query-bounded [11.54ms]
+
+test/canvas-batch-connection.test.ts:
+(pass) planBatchConnections > only accepts image inputs for the batch creation table [0.44ms]
+(pass) planBatchConnections > plans all legal source nodes and preserves the target handle [0.70ms]
+(pass) planBatchConnections > skips duplicate connections without creating another edge [0.23ms]
+(pass) planBatchConnections > reports sources that cannot be used by the aggregate connector [0.11ms]
+(pass) planBatchConnections > keeps every legal graph edge when a newly created node exceeds provider reference capacity [0.12ms]
+(pass) planBatchConnections > connects every selected image to a newly created batch table [0.03ms]
+(pass) planBatchConnections > preserves a batch table reference-column target handle [0.01ms]
+(pass) canvas connection anchors > keeps idle wire visuals available in the node world layer [0.01ms]
+(pass) canvas connection anchors > keeps ordinary node edges centered even when legacy ratios exist [0.08ms]
+(pass) canvas connection anchors > keeps storyboard row handles positioned independently from the node center [0.05ms]
+(pass) buildBatchConnectionCreateRequest > keeps unique eligible sources and uses the first one for the pending connection [0.04ms]
+(pass) buildBatchConnectionCreateRequest > returns null when no selected node can be used as a batch source [0.01ms]
+(pass) hasBatchConnectionCandidate > accepts a target when another selected source is legal even if the target itself is selected first [0.02ms]
+
+test/canvas-connection-target.test.ts:
+(pass) 画布连线落点 > 只在输入端锚点的吸附圆内命中，节点本体和留白都不算 [0.28ms]
+(pass) 画布连线落点 > 重叠时取文档顺序最靠后的节点 [0.04ms]
+(pass) 画布连线落点 > 折叠批次里的子节点和折叠背板里的子节点都不是落点 [0.08ms]
+(pass) 画布连线落点 > 背板本身不是落点 [0.01ms]
+(pass) 画布连线落点 > 分镜脚本按行返回端口，表头空白处不命中 [0.09ms]
+(pass) 画布连线落点 > 批量创作表按参考列返回端口 [0.08ms]
+(pass) 画布连线落点 > 落在吸附圆内但连线不合法时仍然算「靠近」，不会误开快速创建菜单 [0.03ms]
+(pass) 画布连线落点 > 源节点自身不是落点，但仍算「靠近」（与原实现一致） [0.01ms]
+(pass) 画布连线落点 > 零尺寸卡片也能被吸附圆命中 [0.03ms]
+(pass) 画布连线落点 > 节点数组换新后索引跟着换，不保留上一份几何 [0.09ms]
+(pass) 画布连线落点 > 命中判定只读指针附近的节点，不随节点总数线性增长 [1.65ms]
+(pass) 画布连线落点 > 缩放越大，世界坐标里的吸附半径越小 [0.04ms]
+(pass) 画布连线落点 > 吸附圆相切位置与旧实现一致：边界算命中，边界外一点不算 [0.10ms]
+(pass) 画布连线落点 > 相切位置上的非候选节点仍算「靠近」，不会误开创建菜单 [0.02ms]
+(pass) 画布连线落点 > 指针在吸附圆外的节点不会被相切容差带进来 [0.01ms]
+(pass) 画布连线落点 > 相切位置松手后普通与批量都走连线，不会误开创建菜单 [0.19ms]
+(pass) 批量连线落点 > 没有可用连接源时直接返回空 [0.01ms]
+(pass) 批量连线落点 > 命中合法目标节点 [0.02ms]
+(pass) 批量连线落点 > 目标节点已是连接源之一时不算候选 [0.01ms]
+
+ 38 pass
+ 0 fail
+ 95 expect() calls
+Ran 38 tests across 3 files. [93.00ms]

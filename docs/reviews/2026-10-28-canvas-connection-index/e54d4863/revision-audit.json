@@ -1,0 +1,401 @@
+{
+  "candidate": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "previous_candidate": "f7b82b710e593e959573d6594aeada6048b6d3a9",
+  "author_script_sha256": "428bd62a08f586380b89f86ce249644db7637d5743ed537576bcaa4f87e3909b",
+  "extraction": "原函数与差分循环未改，只省略计时循环并计数实际命中",
+  "revised": {
+    "random": {
+      "samples": 5400,
+      "mismatches": 0,
+      "examples": []
+    },
+    "boundary": {
+      "samples": 2880,
+      "mismatches": 0,
+      "examples": []
+    },
+    "coverage": {
+      "mixed": {
+        "positions": 1440,
+        "ordinaryHit": 0,
+        "ordinaryNear": 960,
+        "batchHit": 0,
+        "batchNear": 0,
+        "types": {
+          "image": 936,
+          "video": 288,
+          "text": 216
+        }
+      },
+      "group-late": {
+        "positions": 1440,
+        "ordinaryHit": 0,
+        "ordinaryNear": 0,
+        "batchHit": 0,
+        "batchNear": 0,
+        "types": {
+          "image": 1440
+        }
+      }
+    },
+    "unmodified_full_boundary": {
+      "samples": 2880,
+      "mismatches": 0,
+      "examples": []
+    }
+  },
+  "original-index": {
+    "random": {
+      "samples": 5400,
+      "mismatches": 0,
+      "examples": []
+    },
+    "boundary": {
+      "samples": 2880,
+      "mismatches": 62,
+      "examples": [
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": -856,
+            "y": -710
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": -822.4,
+            "y": -710
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": -56,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 0.3,
+          "world": {
+            "x": -186.66666666666669,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": -22.4,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": 304,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": 337.6,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": 664,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": 697.6,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": 1024,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        }
+      ]
+    },
+    "coverage": {
+      "mixed": {
+        "positions": 1440,
+        "ordinaryHit": 0,
+        "ordinaryNear": 960,
+        "batchHit": 0,
+        "batchNear": 0,
+        "types": {
+          "image": 936,
+          "video": 288,
+          "text": 216
+        }
+      },
+      "group-late": {
+        "positions": 1440,
+        "ordinaryHit": 0,
+        "ordinaryNear": 0,
+        "batchHit": 0,
+        "batchNear": 0,
+        "types": {
+          "image": 1440
+        }
+      }
+    },
+    "unmodified_full_boundary": {
+      "samples": 2880,
+      "mismatches": 62,
+      "examples": [
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": -856,
+            "y": -710
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": -822.4,
+            "y": -710
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": -56,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 0.3,
+          "world": {
+            "x": -186.66666666666669,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": -22.4,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": 304,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": 337.6,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": 664,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 2.5,
+          "world": {
+            "x": 697.6,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        },
+        {
+          "fixture": "mixed",
+          "resolver": "ordinary",
+          "nodes": 100,
+          "scale": 1,
+          "world": {
+            "x": 1024,
+            "y": 90
+          },
+          "legacy": null,
+          "legacyNear": true,
+          "current": null,
+          "currentNear": false
+        }
+      ]
+    }
+  },
+  "new_tests_on_old_index_exit_code": 1,
+  "seed": [
+    {
+      "grouped": false,
+      "nodes": 300,
+      "connections": 150,
+      "invalidEndpoints": 0,
+      "example": []
+    },
+    {
+      "grouped": true,
+      "nodes": 301,
+      "connections": 150,
+      "invalidEndpoints": 150,
+      "example": [
+        {
+          "id": "perf-edge-1",
+          "fromNodeId": "perf-node-0",
+          "toNodeId": "perf-node-1"
+        }
+      ]
+    }
+  ],
+  "native_patch_check": {
+    "exitCode": 0,
+    "output": ""
+  },
+  "probe_frame_counter_replay": {
+    "scope": "隔离JS探针，一帧内发生一次落点和一次建立；未启动客户端",
+    "output": "场景=gesture 帧=1 fps=60.0 p50=16.67 p95=16.67 p99=16.67 max=16.67 gt33=0 gt50=0 gt100=0 含落点帧=0 含重建帧=0 落点调用=1 落点总耗时=0 索引建立=1 索引建立耗时=0 索引查询=0 索引查询耗时=0 候选数=0 进度查询=0 进度耗时=0 页面渲染=0 节点渲染=0 挂载卡=0"
+  }
+}

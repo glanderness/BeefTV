@@ -1,0 +1,84 @@
+$ bun test test/canvas-connection-target.test.ts
+bun test v1.4.2 (744846f84)
+
+test/canvas-connection-target.test.ts:
+(pass) 画布连线落点 > 只在输入端锚点的吸附圆内命中，节点本体和留白都不算 [0.52ms]
+(pass) 画布连线落点 > 重叠时取文档顺序最靠后的节点 [0.07ms]
+(pass) 画布连线落点 > 折叠批次里的子节点和折叠背板里的子节点都不是落点 [0.09ms]
+(pass) 画布连线落点 > 背板本身不是落点 [0.02ms]
+(pass) 画布连线落点 > 分镜脚本按行返回端口，表头空白处不命中 [0.11ms]
+(pass) 画布连线落点 > 批量创作表按参考列返回端口 [0.08ms]
+(pass) 画布连线落点 > 落在吸附圆内但连线不合法时仍然算「靠近」，不会误开快速创建菜单 [0.04ms]
+(pass) 画布连线落点 > 源节点自身不是落点，但仍算「靠近」（与原实现一致） [0.01ms]
+(pass) 画布连线落点 > 零尺寸卡片也能被吸附圆命中 [0.03ms]
+(pass) 画布连线落点 > 节点数组换新后索引跟着换，不保留上一份几何 [0.05ms]
+(pass) 画布连线落点 > 命中判定只读指针附近的节点，不随节点总数线性增长 [1.49ms]
+(pass) 画布连线落点 > 缩放越大，世界坐标里的吸附半径越小 [0.07ms]
+151 |         const target = node("target", CanvasNodeType.Image, 1000, 0);
+152 |         const nodes = [sourceNode, target];
+153 |         const radius = SNAP_RADIUS;
+154 |         // 左右相切：锚点在节点左边缘 (1000, 90)。这里用 100% 缩放，半径与锚点都是精确值，
+155 |         // 相切位置的浮点误差为 0，才能断言「边界算命中」。
+156 |         expect(resolve(nodes, { x: 1000 - radius, y: 90 })).toEqual({ nodeId: "target", handleId: undefined, anchorRatio: undefined, isNearNode: true });
+                                                                  ^
+error: expect(received).toEqual(expected)
+
+  {
+    "anchorRatio": undefined,
+    "handleId": undefined,
+-   "isNearNode": true,
+-   "nodeId": "target",
++   "isNearNode": false,
++   "nodeId": null,
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/Volumes/ExternalWork/todos/workspaces/01a1808b-530d-7e0d-b393-eb5c742324a0/.local/canvas-index-revision/tmpz2_80o2z/web/test/canvas-connection-target.test.ts:156:61)
+(fail) 画布连线落点 > 吸附圆相切位置与旧实现一致：边界算命中，边界外一点不算 [0.20ms]
+170 |     });
+171 | 
+172 |     it("相切位置上的非候选节点仍算「靠近」，不会误开创建菜单", () => {
+173 |         const audio = node("audio", CanvasNodeType.Audio, 1000, 0);
+174 |         const radius = SNAP_RADIUS;
+175 |         expect(resolve([sourceNode, audio], { x: 1000 - radius, y: 90 })).toEqual({ nodeId: null, handleId: undefined, anchorRatio: undefined, isNearNode: true });
+                                                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+    "anchorRatio": undefined,
+    "handleId": undefined,
+-   "isNearNode": true,
++   "isNearNode": false,
+    "nodeId": null,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Volumes/ExternalWork/todos/workspaces/01a1808b-530d-7e0d-b393-eb5c742324a0/.local/canvas-index-revision/tmpz2_80o2z/web/test/canvas-connection-target.test.ts:175:75)
+(fail) 画布连线落点 > 相切位置上的非候选节点仍算「靠近」，不会误开创建菜单 [0.06ms]
+(pass) 画布连线落点 > 指针在吸附圆外的节点不会被相切容差带进来 [0.02ms]
+191 |         const target = node("target", CanvasNodeType.Image, 1000, 0);
+192 |         const nodes = [sourceNode, target];
+193 |         const radius = SNAP_RADIUS;
+194 |         const batchOptions = { nodes, connections: [] as CanvasConnection[], config: defaultConfig, handleRadius: radius, scriptScrollTopById: {} };
+195 |         for (const world of [{ x: 1000 - radius, y: 90 }, { x: 1000 + radius, y: 90 }, { x: 1000, y: 90 - radius }, { x: 1000, y: 90 + radius }]) {
+196 |             expect(finalAction(resolve(nodes, world))).toBe("connect");
+                                                             ^
+error: expect(received).toBe(expected)
+
+Expected: "connect"
+Received: "create-menu"
+
+      at <anonymous> (/Volumes/ExternalWork/todos/workspaces/01a1808b-530d-7e0d-b393-eb5c742324a0/.local/canvas-index-revision/tmpz2_80o2z/web/test/canvas-connection-target.test.ts:196:56)
+(fail) 画布连线落点 > 相切位置松手后普通与批量都走连线，不会误开创建菜单 [0.12ms]
+(pass) 批量连线落点 > 没有可用连接源时直接返回空 [0.03ms]
+(pass) 批量连线落点 > 命中合法目标节点 [0.08ms]
+(pass) 批量连线落点 > 目标节点已是连接源之一时不算候选 [0.02ms]
+
+ 16 pass
+ 3 fail
+ 37 expect() calls
+Ran 19 tests across 1 file. [81.00ms]

@@ -22,7 +22,7 @@ def git(*args):
     return subprocess.check_output(["git", *args], cwd=REPO)
 
 
-def baseline_module():
+def baseline_module(candidate=HEAD):
     """直接提取旧回调，只把 ref 解引用和坐标换算改成参数。"""
     source = git("show", BASE + ":web/src/pages/canvas/use-canvas-connection-controller.ts").decode()
     ordinary = source.split("    const getConnectionDropTarget = useCallback(", 1)[1]
@@ -43,7 +43,7 @@ import { FRAME_HEADER_HEIGHT } from "@/lib/canvas/canvas-frame";
     for name, body, extra in [("baselineConnection", ordinary, "current"), ("baselineBatch", batch, "sourceNodeIds")]:
         body = body.replace("nodesRef.current", "nodes").replace("connectionsRef.current", "connections")
         prelude += f"export function {name}({{ nodes, connections, config, world, handleRadius, scriptScrollTopById, {extra} }}: any) {{\n{body}}}\n"
-    operations = git("show", HEAD + ":web/src/pages/canvas/use-canvas-node-operations.ts").decode()
+    operations = git("show", candidate + ":web/src/pages/canvas/use-canvas-node-operations.ts").decode()
     body = operations.split("    const createStoryboardGroup = useCallback(() => {\n", 1)[1].split("    }, [", 1)[0]
     prelude += '''export function reachableStoryboardGroup(nodes: CanvasNodeData[]) {
     let result = nodes;
@@ -61,6 +61,8 @@ def main():
     parser.add_argument("--dependencies", required=True, type=Path, help="已有 web/node_modules，只读复用")
     parser.add_argument("--mode", choices=["all", "differential", "bench", "tests", "browser", "author"], default="all")
     parser.add_argument("--output", type=Path, default=HERE)
+    parser.add_argument("--candidate", default=HEAD, help="固定完整提交；默认保留首轮复放")
+    parser.add_argument("--expect-parity", action="store_true", help="修正版应与原基线一致，而非复现首轮失败")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -71,16 +73,16 @@ def main():
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fixed-", dir=scratch) as directory:
         root = Path(directory)
-        data = git("archive", HEAD, "web/src", "web/test", "web/scripts", "web/tsconfig.json", "web/package.json", "backend/internal/providerpreset")
+        data = git("archive", args.candidate, "web/src", "web/test", "web/scripts", "web/tsconfig.json", "web/package.json", "backend/internal/providerpreset")
         with tarfile.open(fileobj=io.BytesIO(data)) as archive:
             archive.extractall(root, filter="data")
         web = root / "web"
         (web / "node_modules").symlink_to(dependencies, target_is_directory=True)
-        (web / "scripts/review-baseline.ts").write_text(baseline_module())
+        (web / "scripts/review-baseline.ts").write_text(baseline_module(args.candidate))
         (web / "src/pages/canvas/review-baseline-controller.ts").write_bytes(git("show", BASE + ":web/src/pages/canvas/use-canvas-connection-controller.ts"))
         shutil.copyfile(HERE / "review.ts", web / "scripts/review.ts")
-        env = dict(os.environ, REVIEW_OUTPUT=str(output))
-        metadata = {"base": BASE, "candidate": HEAD, "candidate_tree": git("rev-parse", HEAD + "^{tree}").decode().strip(), "bun": subprocess.check_output(["bun", "--version"]).decode().strip(), "platform": subprocess.check_output(["uname", "-sm"]).decode().strip(), "started_at": datetime.now(timezone.utc).isoformat(), "load_average": os.getloadavg(), "cpu_count": os.cpu_count(), "source_sha256": {}}
+        env = dict(os.environ, REVIEW_OUTPUT=str(output), REVIEW_EXPECT_PARITY="1" if args.expect_parity else "0")
+        metadata = {"base": BASE, "candidate": args.candidate, "candidate_tree": git("rev-parse", args.candidate + "^{tree}").decode().strip(), "bun": subprocess.check_output(["bun", "--version"]).decode().strip(), "platform": subprocess.check_output(["uname", "-sm"]).decode().strip(), "started_at": datetime.now(timezone.utc).isoformat(), "load_average": os.getloadavg(), "cpu_count": os.cpu_count(), "source_sha256": {}}
         for name in ["web/src/lib/canvas/canvas-connection-target.ts", "web/src/pages/canvas/use-canvas-connection-controller.ts"]:
             metadata["source_sha256"][name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
         (output / ("environment-" + args.mode + ".json")).write_text(json.dumps(metadata, indent=2) + "\n")

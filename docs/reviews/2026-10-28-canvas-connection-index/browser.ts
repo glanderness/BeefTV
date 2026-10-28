@@ -42,14 +42,21 @@ try {
         const finish = await page.evaluate(() => (window as any).reviewHook.state());
         results.push({ baseline, batch, scale, distanceScreenPx: distance, hover, finish });
         if (scale === 1 && distance === 56) {
-            assert.equal(finish.edges.length, baseline ? 1 : 0, JSON.stringify(results.at(-1)));
-            assert.equal(finish.pending, !baseline);
+            assert.equal(finish.edges.length, baseline || process.env.REVIEW_EXPECT_PARITY === "1" ? 1 : 0, JSON.stringify(results.at(-1)));
+            assert.equal(finish.pending, !baseline && process.env.REVIEW_EXPECT_PARITY !== "1");
+        }
+    }
+    if (process.env.REVIEW_EXPECT_PARITY === "1") {
+        for (const result of results.filter(r => !r.baseline)) {
+            const old = results.find(r => r.baseline && r.batch === result.batch && r.scale === result.scale && r.distanceScreenPx === result.distanceScreenPx);
+            assert.deepEqual(result.hover, old.hover);
+            assert.deepEqual(result.finish, old.finish);
         }
     }
     assert.equal(unexpectedRequests.length, 0);
     assert.equal(pageErrors.length, 0);
     writeFileSync(`${process.env.REVIEW_OUTPUT}/hook-browser.json`, JSON.stringify({ browser: browser.version(), scope: "真实前后 hook + 程序分发 PointerEvent + rAF；无画布渲染、原生鼠标或 FPS；AntD message 与插件持久化被替身隔离", results, unexpectedRequests, pageErrors }, null, 2) + "\n");
-    console.log(`已复放 ${results.length} 条 hook 事件路径；100%精确边缘时，旧版连成线，候选打开创建菜单。`);
+    console.log(`已复放 ${results.length} 条 hook 事件路径；${process.env.REVIEW_EXPECT_PARITY === "1" ? "修正版与原基线的悬停和最终动作一致" : "100%精确边缘时，旧版连成线，候选打开创建菜单"}。`);
 } finally {
     await browser.close();
 }
