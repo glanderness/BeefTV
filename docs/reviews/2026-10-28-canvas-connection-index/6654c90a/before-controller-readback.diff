@@ -1,0 +1,65 @@
+--- 6a155448096d2425aa07e81cc6016410091ad0be/web/src/pages/canvas/use-canvas-connection-controller.ts
++++ readback/before/web/src/pages/canvas/use-canvas-connection-controller.ts
+@@ -456,6 +456,11 @@
+     }, [config, connectionsRef, nodesRef, runtimeStatuses]);
+ 
+     const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): ConnectionDropTarget => {
++        // 与候选侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、线性扫描与连线策略判断。基线没有索引，
++        // 索引* 计数结构性为 0。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+         const handleRadius = CONNECTION_SNAP_RADIUS / scale;
+@@ -493,14 +498,34 @@
+                     bestPriority = 1;
+                 }
+             });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++            // 第六轮新增：与候选侧同口径，把这次调用的实际目标与耗时单独留一条。
++            // 基线这两条出口没有 `target` 变量（结果由 bestNodeId/bestHandleId 内联构造），
++            // 所以这里必须显式传对象；照抄候选侧的 `target` 会在运行时抛 ReferenceError。
++            (globalThis as any).__perfLogDropTarget?.({ nodeId: bestNodeId, handleId: bestHandleId }, performance.now() - begin);
++        }
+         return { nodeId: bestNodeId, handleId: bestHandleId, anchorRatio: bestAnchorRatio, isNearNode };
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): BatchConnectionDropTarget => {
++        // 与候选侧同口径：整个回调体都计入「落点总耗时」；批量路径的源资格解析在候选里
++        // 位于落点模块内部（也在计时区内），所以基线把起点放在源解析之前，两条出口都计数。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         const source = sourceNodeIds
+             .map((id) => nodesRef.current.find((node) => node.id === id))
+             .find((node): node is CanvasNodeData => Boolean(node && !batchSourceRestriction(node)));
+-        if (!source) return { nodeId: null, isNearNode: false };
++        if (!source) {
++            if (perf) {
++                perf.dropTargetCalls += 1;
++                perf.dropTargetMs += performance.now() - begin;
++                // 第六轮新增：与候选侧同口径，把这次调用的实际目标与耗时单独留一条。
++                (globalThis as any).__perfLogDropTarget?.({ nodeId: null, handleId: undefined }, performance.now() - begin);
++            }
++            return { nodeId: null, isNearNode: false };
++        }
+ 
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+@@ -534,6 +559,14 @@
+                     bestPriority = 1;
+                 }
+             });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++            // 第六轮新增：与候选侧同口径，把这次调用的实际目标与耗时单独留一条。
++            // 基线这两条出口没有 `target` 变量（结果由 bestNodeId/bestHandleId 内联构造），
++            // 所以这里必须显式传对象；照抄候选侧的 `target` 会在运行时抛 ReferenceError。
++            (globalThis as any).__perfLogDropTarget?.({ nodeId: bestNodeId, handleId: bestHandleId }, performance.now() - begin);
++        }
+         return { nodeId: bestNodeId, handleId: bestHandleId, anchorRatio: bestAnchorRatio, isNearNode };
+     }, [nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 

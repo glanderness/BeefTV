@@ -1,0 +1,46 @@
+--- 6a155448/web/src/components/canvas/canvas-node.tsx
++++ readback/before/web/src/components/canvas/canvas-node.tsx
+@@ -143,6 +143,7 @@
+     onConfirmVideoCrop,
+     onContextMenu,
+ }: CanvasNodeProps) {
++    { const perf = (globalThis as any).__perf; if (perf) perf.node += 1; }
+     const theme = canvasThemes[useActiveTheme()];
+     const [hovered, setHovered] = useState(false);
+     const [isEditingContent, setIsEditingContent] = useState(false);
+--- 6a155448/web/src/lib/operation-progress.ts
++++ readback/before/web/src/lib/operation-progress.ts
+@@ -18,11 +18,15 @@
+ };
+ 
+ export function canvasNodeOperation(entries: Record<string, OperationProgress>, projectId: string | undefined, nodeId: string, taskId?: string) {
+-    return Object.values(entries).reverse().find(item => {
++    const perf = (globalThis as any).__perf;
++    const begin = perf ? performance.now() : 0;
++    const result = Object.values(entries).reverse().find(item => {
+         if (!item.target || item.phase === "done" || item.phase === "error") return false;
+         if (item.target.projectId !== projectId) return false;
+         return item.target.taskId ? item.target.taskId === taskId && item.target.nodeId === nodeId : item.target.projectId === projectId && item.target.nodeId === nodeId;
+     });
++    if (perf) { perf.progressLookups += 1; perf.progressMs += performance.now() - begin; }
++    return result;
+ }
+ 
+ const finite = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value >= 0;
+--- 6a155448/web/src/main.tsx
++++ readback/before/web/src/main.tsx
+@@ -1,3 +1,4 @@
++import "./perf-probe";
+ import "@fontsource-variable/inter";
+ import "@fontsource-variable/jetbrains-mono";
+ import { startCheckedWorkspace } from "@/services/diagnostics/startup-preflight";
+--- 6a155448/web/src/pages/canvas/project.tsx
++++ readback/before/web/src/pages/canvas/project.tsx
+@@ -187,6 +187,7 @@
+ }
+ 
+ function InfiniteCanvasPage() {
++    { const perf = (globalThis as any).__perf; if (perf) perf.page += 1; }
+     // 命令式确认必须走 App.useApp().modal；静态 Modal.confirm 拿不到主题和 App 上下文。
+     const { message, modal } = App.useApp();
+     const params = useParams<{ id: string }>();

@@ -1,0 +1,58 @@
+--- e54d4863d52244c5b024464c70e6a1e9e7a4e0c7/web/src/pages/canvas/use-canvas-connection-controller.ts
++++ readback/after/web/src/pages/canvas/use-canvas-connection-controller.ts
+@@ -446,9 +446,13 @@
+     }, [config, connectionsRef, nodesRef, runtimeStatuses]);
+ 
+     const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): CanvasConnectionDropTarget => {
++        // 与基线侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、索引查询、候选判定与连线策略判断。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+-        return resolveConnectionDropTarget({
++        const target = resolveConnectionDropTarget({
+             nodes: nodesRef.current,
+             connections: connectionsRef.current,
+             config,
+@@ -457,12 +461,24 @@
+             current,
+             scriptScrollTopById,
+         });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++            // 第六轮新增：把这次调用的实际目标（nodeId / handleId）与耗时单独留一条，
++            // 事后才能把每次落点调用和真实输入对上。探针没装时该函数不存在。
++            (globalThis as any).__perfLogDropTarget?.(target, performance.now() - begin);
++        }
++        return target;
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): CanvasConnectionDropTarget => {
++        // 与基线侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、索引查询、候选判定与连线策略判断。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+-        return resolveBatchConnectionDropTarget({
++        const target = resolveBatchConnectionDropTarget({
+             nodes: nodesRef.current,
+             connections: connectionsRef.current,
+             config,
+@@ -471,6 +487,14 @@
+             sourceNodeIds,
+             scriptScrollTopById,
+         });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++            // 第六轮新增：把这次调用的实际目标（nodeId / handleId）与耗时单独留一条，
++            // 事后才能把每次落点调用和真实输入对上。探针没装时该函数不存在。
++            (globalThis as any).__perfLogDropTarget?.(target, performance.now() - begin);
++        }
++        return target;
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const startBatchConnection = useCallback((event: ReactPointerEvent, sourceNodeIds: string[]) => {

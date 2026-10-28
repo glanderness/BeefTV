@@ -1,0 +1,205 @@
+[
+  {
+    "side": "before",
+    "kind": "本轮只读当前留存库，不是采样前后历史快照",
+    "readAt": "2026-10-28T08:04:00.881145+00:00",
+    "canvasId": "perf300",
+    "revision": 16,
+    "payloadBytes": 147158,
+    "payloadSha256": "233b64e906f51dd4d93d405d7903b6b8058bff58610cf84b4ee5bd2c586c6ee9",
+    "nodesCount": 300,
+    "connectionsCount": 150,
+    "inlineMediaCount": 0,
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "k": 1
+    },
+    "nodes18to20": [
+      {
+        "id": "perf-node-18",
+        "type": "image",
+        "title": "节点 18",
+        "position": {
+          "x": -50,
+          "y": 331.875
+        },
+        "width": 420,
+        "height": 236.25,
+        "createdAt": "2026-10-28T07:44:51.000Z",
+        "updatedAt": "2026-10-28T07:44:51.000Z",
+        "metadata": {
+          "content": "/api/resources/perf-res-perf300/file",
+          "storageKey": "resource:perf-res-perf300",
+          "assetId": "perf-asset-perf300",
+          "mimeType": "image/svg+xml",
+          "width": 320,
+          "height": 180,
+          "status": "success",
+          "nodeRole": "result",
+          "resultOrigin": "library",
+          "naturalWidth": 416,
+          "naturalHeight": 234
+        }
+      },
+      {
+        "id": "perf-node-19",
+        "type": "image",
+        "title": "节点 19",
+        "position": {
+          "x": 470,
+          "y": 331.875
+        },
+        "width": 420,
+        "height": 236.25,
+        "createdAt": "2026-10-28T07:44:51.000Z",
+        "updatedAt": "2026-10-28T07:44:51.000Z",
+        "metadata": {
+          "content": "/api/resources/perf-res-perf300/file",
+          "storageKey": "resource:perf-res-perf300",
+          "assetId": "perf-asset-perf300",
+          "mimeType": "image/svg+xml",
+          "width": 320,
+          "height": 180,
+          "status": "success",
+          "nodeRole": "result",
+          "resultOrigin": "library",
+          "naturalWidth": 416,
+          "naturalHeight": 234
+        }
+      },
+      {
+        "id": "perf-node-20",
+        "type": "image",
+        "title": "节点 20",
+        "position": {
+          "x": 990,
+          "y": 331.875
+        },
+        "width": 420,
+        "height": 236.25,
+        "createdAt": "2026-10-28T07:44:51.000Z",
+        "updatedAt": "2026-10-28T07:44:51.000Z",
+        "metadata": {
+          "content": "/api/resources/perf-res-perf300/file",
+          "storageKey": "resource:perf-res-perf300",
+          "assetId": "perf-asset-perf300",
+          "mimeType": "image/svg+xml",
+          "width": 320,
+          "height": 180,
+          "status": "success",
+          "nodeRole": "result",
+          "resultOrigin": "library",
+          "naturalWidth": 416,
+          "naturalHeight": 234
+        }
+      }
+    ],
+    "edge19to20": []
+  },
+  {
+    "side": "after",
+    "kind": "本轮只读当前留存库，不是采样前后历史快照",
+    "readAt": "2026-10-28T08:04:00.881145+00:00",
+    "canvasId": "perf300",
+    "revision": 9,
+    "payloadBytes": 147262,
+    "payloadSha256": "093e9f12dd99b5e3cb8344f68338e29a67b76744f4238f2bfb2b7b3e9e88eb16",
+    "nodesCount": 300,
+    "connectionsCount": 151,
+    "inlineMediaCount": 0,
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "k": 1
+    },
+    "nodes18to20": [
+      {
+        "id": "perf-node-18",
+        "type": "image",
+        "title": "节点 18",
+        "position": {
+          "x": -50,
+          "y": 331.875
+        },
+        "width": 420,
+        "height": 236.25,
+        "createdAt": "2026-10-28T07:30:01.000Z",
+        "updatedAt": "2026-10-28T07:30:01.000Z",
+        "metadata": {
+          "content": "/api/resources/perf-res-perf300/file",
+          "storageKey": "resource:perf-res-perf300",
+          "assetId": "perf-asset-perf300",
+          "mimeType": "image/svg+xml",
+          "width": 320,
+          "height": 180,
+          "status": "success",
+          "nodeRole": "result",
+          "resultOrigin": "library",
+          "naturalWidth": 416,
+          "naturalHeight": 234
+        }
+      },
+      {
+        "id": "perf-node-19",
+        "type": "image",
+        "title": "节点 19",
+        "position": {
+          "x": 470,
+          "y": 331.875
+        },
+        "width": 420,
+        "height": 236.25,
+        "createdAt": "2026-10-28T07:30:01.000Z",
+        "updatedAt": "2026-10-28T07:30:01.000Z",
+        "metadata": {
+          "content": "/api/resources/perf-res-perf300/file",
+          "storageKey": "resource:perf-res-perf300",
+          "assetId": "perf-asset-perf300",
+          "mimeType": "image/svg+xml",
+          "width": 320,
+          "height": 180,
+          "status": "success",
+          "nodeRole": "result",
+          "resultOrigin": "library",
+          "naturalWidth": 416,
+          "naturalHeight": 234
+        }
+      },
+      {
+        "id": "perf-node-20",
+        "type": "image",
+        "title": "节点 20",
+        "position": {
+          "x": 990,
+          "y": 331.875
+        },
+        "width": 420,
+        "height": 236.25,
+        "createdAt": "2026-10-28T07:30:01.000Z",
+        "updatedAt": "2026-10-28T07:30:01.000Z",
+        "metadata": {
+          "content": "/api/resources/perf-res-perf300/file",
+          "storageKey": "resource:perf-res-perf300",
+          "assetId": "perf-asset-perf300",
+          "mimeType": "image/svg+xml",
+          "width": 320,
+          "height": 180,
+          "status": "success",
+          "nodeRole": "result",
+          "resultOrigin": "library",
+          "naturalWidth": 416,
+          "naturalHeight": 234
+        }
+      }
+    ],
+    "edge19to20": [
+      {
+        "id": "conn-1793173150002",
+        "fromNodeId": "perf-node-19",
+        "toNodeId": "perf-node-20",
+        "fromAnchorRatio": 0.5
+      }
+    ]
+  }
+]

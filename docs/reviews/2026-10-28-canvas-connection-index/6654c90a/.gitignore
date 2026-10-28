@@ -1,0 +1,2 @@
+# Keep the fixed source logs inside this evidence directory.
+!*.log

@@ -1,0 +1,8 @@
+readAt=2026-10-28T08:04:00.881145+00:00
+HEAD=6a155448096d2425aa07e81cc6016410091ad0be
+ M web/src/components/canvas/canvas-node.tsx
+ M web/src/lib/operation-progress.ts
+ M web/src/main.tsx
+ M web/src/pages/canvas/project.tsx
+ M web/src/pages/canvas/use-canvas-connection-controller.ts
+?? web/src/perf-probe.ts

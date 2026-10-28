@@ -1,0 +1,264 @@
+{
+  "authorCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+  "priorReviewCommit": "ad9ff9cbf38f19508fd2a256a2c71b07013e5b79",
+  "priorReportBytes": 63955,
+  "priorReportSha256": "43bd3d2d29022ddd481f15d5eedf459e702ba250a18bf7a729ac6b29f393a010",
+  "originals": [
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction.md",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction.md",
+      "bytes": 69139,
+      "sha256": "927265f5aa4fb21ff24e8f34a2c24664863c1318d0a65e509514c7cc2120dbcc",
+      "gitBlob": "2066b88bf05fb345c790ce5cf83d414686aaf41f"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/native-builds-round6.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/native-builds-round6.json",
+      "bytes": 6009,
+      "sha256": "4a19f76f4f811db4d8148cef1b8c4600f0c54eff4c4c3827d6fc043e78044c24",
+      "gitBlob": "76648e19a24bc9e9f54d9b194c52a7bf4011abef"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/perf-probe-round6.ts",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/perf-probe-round6.ts",
+      "bytes": 16135,
+      "sha256": "461e99e6bf882c79801cbe60fe79a65a1e4fc26aa56cadbf4bbba7604f5cea83",
+      "gitBlob": "38ac3b1ade3664d3aa146b2a0614a33dcd422c2b"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/perf-sink.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/perf-sink.py",
+      "bytes": 5042,
+      "sha256": "e7241beab8f89aa8942a4bd97d2cb4d6ca0d24178a304ef426aa4be96ef6b77a",
+      "gitBlob": "cdc726b93c6a3ae5cae5310223660b538373b55f"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/isolated-client-access.log",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round5/isolated-client-access.log",
+      "bytes": 108115,
+      "sha256": "214ecb117d240e6f803a686eff2c0827d1b2c969015bac88ccf66ac593127a27",
+      "gitBlob": "b858ee8a9ea075fcdc71282f09e26a58296f4cd6"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6-prep.md",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6-prep.md",
+      "bytes": 19223,
+      "sha256": "c586da5459f2816135f88bd41f4d775741b9e246c1cc7772549203b9a3aa384a",
+      "gitBlob": "4a0e71fff3a61ee8b70686a598127eba9d8bfaa1"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6.sh",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6.sh",
+      "bytes": 3189,
+      "sha256": "93d27bb33bdf646fbd9be6ccd04080d326074249c5c1a77622358ae25a37b259",
+      "gitBlob": "c0fdcdcc458abe96fe1ac282f3752797e7b5416b"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6/app-after.log",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6/app-after.log",
+      "bytes": 121152,
+      "sha256": "d21647dbb973d8a2064fd55351987dfe8a46f01f0c6a515edcaedee64092b9c2",
+      "gitBlob": "20e1ef37e7be92bc93f7fae555bc675060f8aaf2"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6/app-before.log",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6/app-before.log",
+      "bytes": 108074,
+      "sha256": "bb6623180fadb4e6c08207c511013185d2f6baf56989b4e4bd8060657f184db2",
+      "gitBlob": "ce2f668287422e8e1883c1f28cb75f494de58abe"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6/perf-after.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6/perf-after.ndjson",
+      "bytes": 2686,
+      "sha256": "57604da5b41acd966f30760399b69ba1d6b31bb3c5eea7a9fba800625888d3b2",
+      "gitBlob": "70ee1d020e5ff742d29b805934f95eb80944ff3b"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6/perf-after.ndjson.dump.jsonl",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6/perf-after.ndjson.dump.jsonl",
+      "bytes": 77390,
+      "sha256": "47191658b8d8d8e3e06832a86c74bbe5822836e70d98b7c5e160270ae1d7751c",
+      "gitBlob": "c5199ad37cbd3279605246e811ba0a8ba7eba9d5"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6/perf-before.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6/perf-before.ndjson",
+      "bytes": 819,
+      "sha256": "b5eb01991d987f85360924ff675ebde28c0bed3bf51fd45c08d6769f147adf0c",
+      "gitBlob": "4b75f0d2756b3b9f95b1b9f33124a7a41b8c7e6f"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round6/perf-before.ndjson.dump.jsonl",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/round6/perf-before.ndjson.dump.jsonl",
+      "bytes": 34517,
+      "sha256": "0b734d9e1dde3aaee4a8f243f7c1392fe7f6573895649f5ae7030b617669bda8",
+      "gitBlob": "d4c52db7a407ffc6cdfbb0b5d376940a822ecede"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/seed-canvas.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/seed-canvas.py",
+      "bytes": 15726,
+      "sha256": "5781894a9e4bda410903cbc317b14d8cd8a28ec4fda7192b83d03ac1f7c3502d",
+      "gitBlob": "4ebe8d07578828bb02d1d01db2d669175bdad56a"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/seed-recovery-task.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/seed-recovery-task.py",
+      "bytes": 8355,
+      "sha256": "d96afba2e0675c59137353765e8a12efdd465d9691432060a597e3509c4a291f",
+      "gitBlob": "328245a7efc2c532ea7324e7f58969247a8d97af"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/upstream.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/upstream.py",
+      "bytes": 5342,
+      "sha256": "c9b7ff0bb3bcc737732c0fa6842b561e5dcdedf5dcf227c71dc50890ea0428e2",
+      "gitBlob": "78bf55400cbbee1ef2d2f83103652079b1d5313a"
+    },
+    {
+      "sourceCommit": "6654c90afa98534f8d3fc155d53d5b3e91494bae",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/verify-tools.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/source/docs/performance/2026-10-28-canvas-interaction/verify-tools.json",
+      "bytes": 14204,
+      "sha256": "17e01decd87cba232ef9d0f399a86ea35b2029fd77433044a38a036461c1ee33",
+      "gitBlob": "7066e05d42be618ed1fe55da54fd2902ec4ff5d5"
+    }
+  ],
+  "worktreeSourceReadbacks": [
+    {
+      "side": "before",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before/web/src/components/canvas/canvas-node.tsx",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/before/web/src/components/canvas/canvas-node.tsx",
+      "bytes": 57096,
+      "sha256": "128f01432223d0c041c671ab2665ece9c088a05afae7a2126358f61d78221d1c"
+    },
+    {
+      "side": "before",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before/web/src/lib/operation-progress.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/before/web/src/lib/operation-progress.ts",
+      "bytes": 4421,
+      "sha256": "b81af9319e2649616a3132cf0ad8be79fe6af0dd1ae10d4f71cd07689e36742a"
+    },
+    {
+      "side": "before",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before/web/src/main.tsx",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/before/web/src/main.tsx",
+      "bytes": 300,
+      "sha256": "2e7a741892f6b1d0df455cb7a7cf29d63996d8157c272029924a97d599024cb2"
+    },
+    {
+      "side": "before",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before/web/src/pages/canvas/project.tsx",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/before/web/src/pages/canvas/project.tsx",
+      "bytes": 198997,
+      "sha256": "7033780235f095157bda29cd1924c7468a70140c6a41b15fded73bd08dd67ae8"
+    },
+    {
+      "side": "before",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before/web/src/pages/canvas/use-canvas-connection-controller.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/before/web/src/pages/canvas/use-canvas-connection-controller.ts",
+      "bytes": 55876,
+      "sha256": "ee187f716e1cc689017cc27b3fbf7c444c8e8a9a5192ff47a3549005c80fc390"
+    },
+    {
+      "side": "before",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before/web/src/perf-probe.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/before/web/src/perf-probe.ts",
+      "bytes": 16135,
+      "sha256": "461e99e6bf882c79801cbe60fe79a65a1e4fc26aa56cadbf4bbba7604f5cea83"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/components/canvas/canvas-node.tsx",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/components/canvas/canvas-node.tsx",
+      "bytes": 57096,
+      "sha256": "128f01432223d0c041c671ab2665ece9c088a05afae7a2126358f61d78221d1c"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/lib/operation-progress.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/lib/operation-progress.ts",
+      "bytes": 4421,
+      "sha256": "b81af9319e2649616a3132cf0ad8be79fe6af0dd1ae10d4f71cd07689e36742a"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/main.tsx",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/main.tsx",
+      "bytes": 300,
+      "sha256": "2e7a741892f6b1d0df455cb7a7cf29d63996d8157c272029924a97d599024cb2"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/pages/canvas/project.tsx",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/pages/canvas/project.tsx",
+      "bytes": 198997,
+      "sha256": "7033780235f095157bda29cd1924c7468a70140c6a41b15fded73bd08dd67ae8"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/pages/canvas/use-canvas-connection-controller.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/pages/canvas/use-canvas-connection-controller.ts",
+      "bytes": 50835,
+      "sha256": "a951d59a0609f2ed2a76b443f55e0fc07dad122f49dea2068e86b5df989268c2"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/perf-probe.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/perf-probe.ts",
+      "bytes": 16135,
+      "sha256": "461e99e6bf882c79801cbe60fe79a65a1e4fc26aa56cadbf4bbba7604f5cea83"
+    },
+    {
+      "side": "after",
+      "kind": "本轮只读工作区源文件，不是6654已提交文件或历史运行时证明",
+      "sourcePath": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after/web/src/lib/canvas/canvas-connection-target.ts",
+      "readAt": "2026-10-28T08:04:00.881145+00:00",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/6654c90a/readback/after/web/src/lib/canvas/canvas-connection-target.ts",
+      "bytes": 7683,
+      "sha256": "ee86873af33f009bfdeefef5bd672121fcea570a2e421cb26a4e01b22f096bcb"
+    }
+  ],
+  "scope": "固定原件与本轮只读留存材料分别归档；未重造历史运行时证据；未启动客户端或Go。"
+}
