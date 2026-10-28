@@ -12,9 +12,9 @@
     },
     {
       "path": "docs/implementation/evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/README.md",
-      "bytes": 11282,
-      "sha256": "e984c5db24b43b7c1226354074bcad3419c030b408122e4780463127922de295",
-      "git_blob": "59f6830929f896ed8e64f4990789c3d664e1066d"
+      "bytes": 11572,
+      "sha256": "10cc7753cfb09ffe43399f7487c0a0f5f310dd70af71603a35f9b359c78d0aa1",
+      "git_blob": "188c9bdc5349d5f4a927e555fda8fd3d482fe311"
     },
     {
       "path": "docs/implementation/evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/capture_once.py",
@@ -78,9 +78,9 @@
     },
     {
       "path": "docs/implementation/generation-task-state-step-3.md",
-      "bytes": 61556,
-      "sha256": "9d16994cc67baea584245ff6a1353fa9bd59a38625229fd13d16c1dad41885b4",
-      "git_blob": "b1ef80a81b85b3483785ddfe6d02310fe4d06983"
+      "bytes": 62037,
+      "sha256": "9f0aad962fde62d5eb875e1d3ade0c965679989defa46bba47d473dc0ad533c4",
+      "git_blob": "e9a47f25ef8b52cf12621a770b505ab367625065"
     }
   ],
   "preserved_previous_files": [
@@ -1881,5 +1881,6 @@
   ],
   "only_changed_previous_file": "docs/implementation/generation-task-state-step-3.md",
   "verification_rule": "清单不含自身；推送后按固定提交的ls-tree/cat-file核字节、SHA与Git blob，不能只核工作区",
-  "go_or_client_run_this_turn": false
+  "go_or_client_run_this_turn": false,
+  "latest_coordination": "#95于15:50结束的通知已收到；本轮仍先准备、不启动Go，待Chief读回材料后接续捕获"
 }

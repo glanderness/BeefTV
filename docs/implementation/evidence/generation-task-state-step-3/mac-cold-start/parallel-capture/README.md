@@ -1,6 +1,6 @@
 # 单次并行冷启动诊断准备
 
-状态：**只准备，未运行 Go、客户端或实际捕获**。#95 仍占用采样窗口；只有 Chief 明确通知本轮补采样结束后，才能另行调用 `execute`。本轮准备完成即提交返回，不在工具中等待，不自行换模型或配置。
+状态：**只准备，未运行 Go、客户端或实际捕获**。最新协调通知确认 #95 已于 15:50 交付，两侧测试 App、假上游和 sink 均报告停止，#101 仅只读核验且不会重开采样，原先等待的时段条件已经满足。但同一通知明确要求本轮仍先准备、不启动 Go；待 Chief 读回材料并接续一次捕获后，才另行调用 `execute`。本轮准备完成即提交返回，不在工具中等待，不自行换模型或配置。
 
 ## 本回合中断的直接证据
 
@@ -57,12 +57,12 @@ python3 docs/implementation/evidence/generation-task-state-step-3/mac-cold-start
   --gomodcache /Volumes/ExternalWork/BuildCache/go-mod
 ```
 
-**下面的 execute 本轮不运行。示例中的窗口说明不是已经收到通知。** 实际执行只填 Chief 释放本轮采样窗口的真实通知，按一次前台任务运行，不与 prepare 自动串联：
+**下面的 execute 本轮不运行。15:50 采样结束通知没有撤销本轮先准备的限定。** 后续实际执行时，参数中填写 Chief 确认时段可用并接续本次捕获的真实通知，按一次前台任务运行，不与 prepare 自动串联：
 
 ```sh
 python3 docs/implementation/evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/capture_once.py execute \
   --workdir "$STEP3_PARALLEL_WORK" \
-  --window-released "Chief释放本轮窗口的实际通知原文或时间"
+  --window-released "Chief确认窗口可用并接续本次捕获的实际通知原文或时间"
 ```
 
 执行时先生成两个历史库，再发出唯一的并行命令，不预编译全部测试来改变原来的编译/执行重叠：
