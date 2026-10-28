@@ -91,21 +91,25 @@ index f41659b..776177b 100644
      const { message, modal } = App.useApp();
      const params = useParams<{ id: string }>();
 diff --git a/web/src/pages/canvas/use-canvas-connection-controller.ts b/web/src/pages/canvas/use-canvas-connection-controller.ts
-index 792ca30..c4ebef7 100644
+index 792ca30..0a7975a 100644
 --- a/web/src/pages/canvas/use-canvas-connection-controller.ts
 +++ b/web/src/pages/canvas/use-canvas-connection-controller.ts
-@@ -448,7 +448,9 @@ export function useCanvasConnectionController({
+@@ -446,9 +446,13 @@ export function useCanvasConnectionController({
+     }, [config, connectionsRef, nodesRef, runtimeStatuses]);
+ 
      const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): CanvasConnectionDropTarget => {
++        // 与基线侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、索引查询、候选判定与连线策略判断。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
          const world = screenToCanvas(clientX, clientY);
          const scale = Math.max(viewportRef.current.k, 0.05);
 -        return resolveConnectionDropTarget({
-+        const perf = (globalThis as any).__perf;
-+        const begin = perf ? performance.now() : 0;
 +        const target = resolveConnectionDropTarget({
              nodes: nodesRef.current,
              connections: connectionsRef.current,
              config,
-@@ -457,12 +459,19 @@ export function useCanvasConnectionController({
+@@ -457,12 +461,21 @@ export function useCanvasConnectionController({
              current,
              scriptScrollTopById,
          });
@@ -117,16 +121,18 @@ index 792ca30..c4ebef7 100644
      }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
  
      const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): CanvasConnectionDropTarget => {
++        // 与基线侧同口径：整个回调体都计入「落点总耗时」，含坐标换算（内部会读一次
++        // 视口矩形）、吸附半径换算、索引查询、候选判定与连线策略判断。
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
          const world = screenToCanvas(clientX, clientY);
          const scale = Math.max(viewportRef.current.k, 0.05);
 -        return resolveBatchConnectionDropTarget({
-+        const perf = (globalThis as any).__perf;
-+        const begin = perf ? performance.now() : 0;
 +        const target = resolveBatchConnectionDropTarget({
              nodes: nodesRef.current,
              connections: connectionsRef.current,
              config,
-@@ -471,6 +480,11 @@ export function useCanvasConnectionController({
+@@ -471,6 +484,11 @@ export function useCanvasConnectionController({
              sourceNodeIds,
              scriptScrollTopById,
          });

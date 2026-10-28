@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""复放第三轮的测量材料修正：种子端点、探针帧标记与计时口径、边界取样覆盖与旧索引敏感性。
+"""复放测量材料：种子端点、探针帧标记与计时口径、边界取样覆盖、旧索引敏感性，以及
+两个固定源码各自的同口径插桩材料（双侧钉选、交叉归属、完整应用、类型检查、探针复放）。
 
 只用已有前端依赖，不安装、不联网、不启动开发服务器、不启动原生客户端、不接触数据库或
 正式数据。所有临时副本都在 `.local/` 忽略目录里，用完清理。
@@ -13,10 +14,9 @@ import argparse
 import hashlib
 import io
 import json
-import os
+import re
 import shutil
 import subprocess
-import sys
 import tarfile
 import tempfile
 import types
@@ -29,6 +29,14 @@ FIRST_INDEX = "f7b82b710e593e959573d6594aeada6048b6d3a9"
 CANDIDATE = "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7"
 TARGET = "web/src/lib/canvas/canvas-connection-target.ts"
 TARGET_IN_WEB = "src/lib/canvas/canvas-connection-target.ts"
+CONTROLLER = "web/src/pages/canvas/use-canvas-connection-controller.ts"
+PROBE = "web/src/perf-probe.ts"
+
+# 两个固定源码各配一份探针补丁：共享探针模块逐字节相同，只有落点回调的插桩按各自实现写。
+SIDES = {
+    "before": {"ref": BASELINE, "patch": "native-probe-baseline.patch"},
+    "after": {"ref": CANDIDATE, "patch": "native-probe.patch"},
+}
 
 PROBE_RUNNER = r'''import vm from "node:vm";
 import { readFileSync } from "node:fs";
@@ -50,6 +58,8 @@ click("perf-rec-stop");
 console.log(JSON.stringify({ scope: "隔离 JS 探针：一帧内一次落点、一次建立；未启动客户端", output: window.__perfLast }));
 '''
 
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
 
 def git(*args: str) -> bytes:
     return subprocess.check_output(["git", *args], cwd=REPO)
@@ -57,10 +67,23 @@ def git(*args: str) -> bytes:
 
 def probe_source(patch_text: str) -> str:
     """从补丁里取回探针源码，不依赖任何硬编码的行数。"""
-    marker = "diff --git a/web/src/perf-probe.ts b/web/src/perf-probe.ts"
+    marker = f"diff --git a/{PROBE} b/{PROBE}"
     body = patch_text.split(marker, 1)[1].splitlines()
     start = next(index for index, line in enumerate(body) if line.startswith("@@"))
     return "\n".join(line[1:] for line in body[start + 1:] if line.startswith("+")) + "\n"
+
+
+def patch_files(patch_text: str) -> list[str]:
+    return re.findall(r"^diff --git a/(\S+) b/\S+$", patch_text, re.M)
+
+
+def declared_counters(probe_text: str) -> set[str]:
+    block = probe_text.split("type PerfCounters = {", 1)[1].split("};", 1)[0]
+    return set(re.findall(r"^\s{4}(\w+): number;", block, re.M))
+
+
+def referenced_counters(source: str) -> set[str]:
+    return set(re.findall(r"perf\.(\w+)\s*\+=", source))
 
 
 def copy_worktree_web(root: Path) -> Path:
@@ -77,8 +100,106 @@ def copy_worktree_web(root: Path) -> Path:
     return web
 
 
+def extract_snapshot(ref: str, root: Path) -> None:
+    """按固定提交取一份完整前端快照（含 vite.config.ts 与它依赖的仓库脚本），用于插桩与类型检查。"""
+    root.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(git("archive", ref, "web", "scripts", "backend/internal/providerpreset"))) as archive:
+        archive.extractall(root, filter="data")
+
+
 def run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+
+
+def apply_patch(patch_path: Path, target: Path, check: bool, cwd: Path) -> dict:
+    """`git apply --directory` 只在仓库根目录作为 cwd 时才真的按目标路径检查：在仓库子目录里
+    执行会对任何补丁都返回 0 且不做任何事（空跑）。所以 cwd 固定为仓库根，且调用方必须断言
+    输出内容，不能只看退出码。"""
+    command = ["git", "apply", "--unsafe-paths", f"--directory={target}"]
+    if check:
+        command.insert(2, "--check")
+    result = subprocess.run([*command, str(patch_path)], cwd=cwd, capture_output=True, text=True)
+    return {"exitCode": result.returncode, "output": (result.stdout + result.stderr).strip()}
+
+
+def probe_material(root: Path, dependencies: Path, summary: dict) -> None:
+    """两侧插桩材料：钉选两个固定源码，交叉验证补丁归属，完整应用、类型检查并复放探针。"""
+    side_root = root / "sides"
+    sides: dict = {}
+    for name, spec in SIDES.items():
+        snapshot = side_root / name
+        extract_snapshot(spec["ref"], snapshot)
+        (snapshot / "web/node_modules").symlink_to(dependencies, target_is_directory=True)
+        patch_path = HERE / spec["patch"]
+        patch_text = patch_path.read_text()
+        record = {
+            "ref": spec["ref"],
+            "patch": spec["patch"],
+            "patchSha256": hashlib.sha256(patch_text.encode()).hexdigest(),
+            "patchFiles": patch_files(patch_text),
+            "applies": {},
+        }
+        for other_name, other in SIDES.items():
+            record["applies"][other["patch"]] = apply_patch(HERE / other["patch"], snapshot, True, REPO) | {"side": other_name}
+        own = apply_patch(patch_path, snapshot, False, REPO)
+        if own["exitCode"]:
+            raise SystemExit(f"{spec['patch']} 不能在 {spec['ref']} 上完整应用: {own['output']}")
+        record["ownApply"] = own
+
+        controller = (snapshot / CONTROLLER).read_text()
+        probe_text = (snapshot / PROBE).read_text()
+        referenced: set[str] = set()
+        index_sites = 0
+        for relative in record["patchFiles"]:
+            path = snapshot / relative
+            if path.suffix not in {".ts", ".tsx"} or relative == PROBE:
+                continue
+            source = path.read_text()
+            referenced |= referenced_counters(source)
+            # 探针模块自己也会读这些字段，所以索引计数只统计产品侧的写入点。
+            index_sites += source.count("perf.index")
+        declared = declared_counters(probe_text)
+        record["instrumentation"] = {
+            "beginSites": controller.count("const begin = perf ? performance.now() : 0;"),
+            "dropTargetCallSites": controller.count("perf.dropTargetCalls += 1"),
+            "dropTargetMsSites": controller.count("perf.dropTargetMs += performance.now() - begin"),
+            "indexCounterSites": index_sites,
+            "targetModulePresent": (snapshot / TARGET).exists(),
+            "declaredCounters": sorted(declared),
+            "referencedCounters": sorted(referenced),
+            "undeclaredCounters": sorted(referenced - declared),
+        }
+        check = run(["bun", "x", "tsc", "--noEmit"], snapshot / "web")
+        record["typecheck"] = {"command": "bun x tsc --noEmit", "exitCode": check.returncode, "tail": ANSI.sub("", check.stdout + check.stderr).strip().splitlines()[-4:]}
+        summary["commands"].append(f"[{name}] bun x tsc --noEmit")
+
+        runner = snapshot / "web/scripts/verify-probe-runner.ts"
+        runner.write_text(PROBE_RUNNER)
+        probe_file = snapshot / "web/scripts/verify-probe-source.ts"
+        probe_file.write_text(probe_source(patch_text))
+        result = run(["bun", "run", "scripts/verify-probe-runner.ts", str(probe_file)], snapshot / "web")
+        summary["commands"].append(f"[{name}] bun run scripts/verify-probe-runner.ts <该侧补丁的 perf-probe.ts>")
+        if result.returncode:
+            raise SystemExit(result.stderr)
+        record["probeReplay"] = json.loads(result.stdout)
+        sides[name] = record
+
+    summary["probe_material"] = sides
+    summary["probe_material_apply_invocation"] = "git apply --check --unsafe-paths --directory=<固定快照> <补丁>（cwd=仓库根）"
+    summary["probe_material_shared_probe_sha256"] = hashlib.sha256((side_root / "before" / PROBE).read_bytes()).hexdigest()
+    summary["probe_material_shared_probe_identical"] = (side_root / "before" / PROBE).read_bytes() == (side_root / "after" / PROBE).read_bytes()
+
+    # 归档脚本用临时目录当 cwd，那种调用对任何补丁都返回 0（空跑）。把两种 cwd 都记下来，
+    # 证明「退出码 0」在那种调用下不构成检查。
+    command = ["git", "apply", "--check", "--unsafe-paths", f"--directory={side_root / 'before'}", str(HERE / SIDES["after"]["patch"])]
+    vacuous = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    strict = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+    summary["probe_material_cwd_hazard"] = {
+        "note": "同一份候选补丁对基线快照：cwd=临时目录时空跑并返回 0，cwd=仓库根时返回 1。归档 verify-tools.py 用的是前者。",
+        "command": " ".join(command[:3]) + " <补丁>",
+        "cwd_temp_dir": {"exitCode": vacuous.returncode, "output": (vacuous.stdout + vacuous.stderr).strip()},
+        "cwd_repo_root": {"exitCode": strict.returncode, "output": (strict.stdout + strict.stderr).strip()},
+    }
 
 
 def main() -> int:
@@ -112,6 +233,7 @@ def main() -> int:
 
     patch = (HERE / "native-probe.patch").read_text()
     summary["native_probe_patch_sha256"] = hashlib.sha256(patch.encode()).hexdigest()
+    summary["native_probe_baseline_patch_sha256"] = hashlib.sha256((HERE / "native-probe-baseline.patch").read_bytes()).hexdigest()
 
     scratch = REPO / ".local" / "canvas-tools-verify"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -123,15 +245,8 @@ def main() -> int:
         for name in [TARGET, "web/scripts/canvas-interaction-bench.ts", "web/test/canvas-connection-drop.browser.test.ts", "docs/performance/2026-10-28-canvas-interaction/seed-canvas.py"]:
             summary["source_sha256"][name] = hashlib.sha256((REPO / name).read_bytes()).hexdigest()
 
-        # 2) 补丁能在候选快照上干净应用（基线控制器不参与，这里只查候选侧）。
-        candidate_root = root / "candidate"
-        candidate_root.mkdir()
-        with tarfile.open(fileobj=io.BytesIO(git("archive", CANDIDATE, "web/src", "web/test", "web/scripts", "web/package.json", "web/tsconfig.json", "backend/internal/providerpreset"))) as archive:
-            archive.extractall(candidate_root, filter="data")
-        patch_path = root / "native-probe.patch"
-        patch_path.write_text(patch)
-        check = subprocess.run(["git", "apply", "--check", "--unsafe-paths", f"--directory={candidate_root}", str(patch_path)], cwd=root, capture_output=True, text=True)
-        summary["native_patch_applies_on_candidate"] = {"exitCode": check.returncode, "output": (check.stdout + check.stderr).strip()}
+        # 2) 两侧插桩材料：before/after 各自钉选固定源码，交叉与完整应用，再类型检查与探针复放。
+        probe_material(root, dependencies, summary)
 
         # 3) 探针：帧级标记要随计数增加，查询耗时不能把建立算进去。
         (web / "scripts/verify-probe-runner.ts").write_text(PROBE_RUNNER)
@@ -182,13 +297,47 @@ def main() -> int:
     assert all(item["invalidEndpoints"] == 0 for item in summary["seed"]), summary["seed"]
     assert "含落点帧=1" in summary["probe"]["output"] and "含重建帧=1" in summary["probe"]["output"], summary["probe"]
     assert "索引建立耗时=3" in summary["probe"]["output"] and "索引查询耗时=1" in summary["probe"]["output"] and "索引合计耗时=4" in summary["probe"]["output"], summary["probe"]
-    assert summary["native_patch_applies_on_candidate"]["exitCode"] == 0, summary["native_patch_applies_on_candidate"]
     assert summary["boundary_current"]["mismatches"] == 0, summary["boundary_current"]
     assert summary["boundary_first_index"]["mismatches"] > 0, summary["boundary_first_index"]
     assert all(item["ordinaryHit"] > 0 and item["batchHit"] > 0 for item in summary["boundary_current"]["coverage"].values()), summary["boundary_current"]["coverage"]
     assert summary["parity"]["mismatches"] == 0 and summary["parity"]["samples"] == 5400 and summary["parity"]["timingSkipped"], summary["parity"]
     assert summary["browser_current"]["exitCode"] == 0, summary["browser_current"]
     assert summary["browser_first_index"]["exitCode"] != 0, summary["browser_first_index"]
+
+    # 两侧插桩材料：交叉归属必须互斥，各自能完整应用、通过类型检查，并且共用计数与计时口径一致。
+    material = summary["probe_material"]
+    before, after = material["before"], material["after"]
+    assert before["ref"] == BASELINE and after["ref"] == CANDIDATE, material
+    assert before["applies"]["native-probe-baseline.patch"]["exitCode"] == 0, before["applies"]
+    assert after["applies"]["native-probe.patch"]["exitCode"] == 0, after["applies"]
+    cross_before = before["applies"]["native-probe.patch"]
+    cross_after = after["applies"]["native-probe-baseline.patch"]
+    assert cross_before["exitCode"] != 0, cross_before
+    assert "canvas-connection-target.ts: No such file or directory" in cross_before["output"], cross_before
+    assert "use-canvas-connection-controller.ts" in cross_before["output"], cross_before
+    assert cross_after["exitCode"] != 0, cross_after
+    assert "use-canvas-connection-controller.ts" in cross_after["output"], cross_after
+    # 同一个命令换成临时目录当 cwd 就变成空跑：这条差异正是归档脚本「通过」的原因。
+    hazard = summary["probe_material_cwd_hazard"]
+    assert hazard["cwd_temp_dir"]["exitCode"] == 0, hazard
+    assert hazard["cwd_temp_dir"]["output"] == "", hazard
+    assert hazard["cwd_repo_root"]["exitCode"] != 0, hazard
+    assert TARGET in after["patchFiles"] and TARGET not in before["patchFiles"], material
+    assert summary["probe_material_shared_probe_identical"], summary["probe_material_shared_probe_sha256"]
+    assert before["typecheck"]["exitCode"] == 0, before["typecheck"]
+    assert after["typecheck"]["exitCode"] == 0, after["typecheck"]
+    for name, side in material.items():
+        assert side["instrumentation"]["beginSites"] == 2, (name, side["instrumentation"])
+        assert side["instrumentation"]["dropTargetMsSites"] == side["instrumentation"]["dropTargetCallSites"], (name, side["instrumentation"])
+        assert not side["instrumentation"]["undeclaredCounters"], (name, side["instrumentation"])
+        assert "含落点帧=1" in side["probeReplay"]["output"] and "索引合计耗时=4" in side["probeReplay"]["output"], (name, side["probeReplay"])
+    # 基线侧两条出口都要计数（普通 1 + 批量 2），且不得引入索引计数；候选侧只在落点模块里记索引。
+    assert before["instrumentation"]["dropTargetCallSites"] == 3, before["instrumentation"]
+    assert before["instrumentation"]["indexCounterSites"] == 0, before["instrumentation"]
+    assert before["instrumentation"]["targetModulePresent"] is False, before["instrumentation"]
+    assert after["instrumentation"]["dropTargetCallSites"] == 2, after["instrumentation"]
+    assert after["instrumentation"]["indexCounterSites"] == 5, after["instrumentation"]
+    assert after["instrumentation"]["targetModulePresent"] is True, after["instrumentation"]
 
     args.output.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     print(f"测量材料复放通过；结果写入 {args.output}")
