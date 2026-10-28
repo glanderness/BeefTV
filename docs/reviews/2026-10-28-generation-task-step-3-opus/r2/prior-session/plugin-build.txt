@@ -1,0 +1,1 @@
+embedded complete documentation into 86 protocol packages

@@ -1,0 +1,5 @@
+ok  	infinite-canvas/backend/cmd/beeftv	7.599s
+ok  	infinite-canvas/backend/cmd/desktop	10.687s
+ok  	infinite-canvas/backend/cmd/server	0.616s
+ok  	infinite-canvas/backend/cmd/update-release	0.047s
+ok  	infinite-canvas/backend/internal/agentops	20.013s

@@ -1,0 +1,8 @@
+=== RUN   TestReviewUpgradedDatabaseLegacyImageRetry
+    review_opus_step3_upgrade_retry_test.go:54: recoverAcceptedImage handled=true err=图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果
+    review_opus_step3_upgrade_retry_test.go:56: legacy RetryTask: task=false err=图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果
+    review_opus_step3_upgrade_retry_test.go:58: failed image without receipt is captured by job lookup error on upgraded database: 图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果
+--- FAIL: TestReviewUpgradedDatabaseLegacyImageRetry (0.01s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.569s
+FAIL

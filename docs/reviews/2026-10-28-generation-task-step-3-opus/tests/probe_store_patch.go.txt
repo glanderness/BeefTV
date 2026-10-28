@@ -1,0 +1,10 @@
+
+// REVIEW PROBE ONLY (not a proposed fix): expose the methods lifecycle.go
+// type-asserts so the next layer of the paid operation path can be observed.
+func (s repoStore) RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error) {
+	return s.repo.RetryTaskWithOperation(userID, prepared, limit, operationID, payloadHash)
+}
+
+func (s repoStore) RetryOperationResult(userID, operationID, payloadHash string) (*model.Task, bool, error) {
+	return s.repo.RetryOperationResult(userID, operationID, payloadHash)
+}

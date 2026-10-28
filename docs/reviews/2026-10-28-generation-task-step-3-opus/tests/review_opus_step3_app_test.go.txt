@@ -1,0 +1,131 @@
+package app
+
+// Independent review probes for generation-task step 3 (candidate 6d4d1373).
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/operations"
+	"infinite-canvas/backend/internal/repository"
+)
+
+// P2: a v26 workspace database created by the baseline program, upgraded by
+// the candidate. New ApiCallLog columns must exist and outcome facts must
+// stay readable.
+func TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable(t *testing.T) {
+	source := os.Getenv("REVIEW_V26_DB")
+	if source == "" {
+		t.Skip("REVIEW_V26_DB not set")
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "upgraded.db")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateLocalSchema(db); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	for _, column := range []string{"route_run", "usage_state", "billing_state", "usage_state_present", "billing_state_present", "image_job_id"} {
+		if !db.Migrator().HasColumn(&model.ApiCallLog{}, column) {
+			t.Errorf("upgraded api_call_logs missing column %s", column)
+		}
+	}
+	svc := NewLocal(repository.New(db), t.TempDir())
+	defer svc.Close()
+	owner, err := svc.LocalWorkspaceOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	task := model.Task{ID: "upgraded-task", UserID: owner.ID, Type: "canvas_video", Status: model.TaskStatusFailed, InputJSON: `{}`, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.LogAPICall(model.ApiCallLog{UserID: owner.ID, TaskID: task.ID, Source: "beefapi", Capability: "video", RequestKind: "create", Method: "POST", UsageState: "failed", UsageStatePresent: true}); err != nil {
+		t.Errorf("LogAPICall on upgraded database: %v", err)
+	}
+	facts := svc.taskOutcomeFacts([]model.Task{task})
+	if facts[task.ID].Unreadable {
+		t.Errorf("outcome facts unreadable on upgraded database (every failed task projection degrades)")
+	}
+}
+
+// P3: free recovery operation receipt left "running" (process exit between
+// BeginRetryOperation and Complete/Abort) blocks that operation id forever.
+func TestReviewFreeRecoveryRunningReceiptAfterCrash(t *testing.T) {
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	now := time.Now()
+	task := model.Task{ID: "paused-free", UserID: "local", Type: "canvas_image", Status: model.TaskStatusSucceeded, Stage: "delivery_paused", RouteRun: 2, ResultJSON: `{"images":[]}`, InputJSON: `{}`, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"taskId": task.ID, "routeRun": task.RouteRun, "action": "retry"})
+	hash := operations.PayloadHash("task.retry", operations.CanonicalJSON(payload))
+	// Simulate: previous process claimed the operation, then exited.
+	if err := svc.repo.BeginRetryOperation(task.UserID, "op-crash", hash); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewLocal(svc.repo, svc.dataDir)
+	_, err := restarted.RetryTaskWithOperation(task.UserID, task.ID, "op-crash")
+	t.Logf("after restart, same op: err=%v", err)
+	if err != nil {
+		t.Errorf("same operation id stays blocked after process exit: %v", err)
+	}
+	var record model.AgentOpRecord
+	db.Where("op_id = ?", "op-crash").First(&record)
+	t.Logf("receipt status=%s", record.Status)
+}
+
+// P4: free recovery receipt identity. Contract 3.11 asks for originalRouteRun
+// and acceptedRouteRun; check what the free branch persists.
+func TestReviewFreeRecoveryReceiptRecordsRouteRuns(t *testing.T) {
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	now := time.Now()
+	task := model.Task{ID: "paused-free-2", UserID: "local", Type: "canvas_image", Status: model.TaskStatusSucceeded, Stage: "delivery_paused", RouteRun: 3, ResultJSON: `{"images":[]}`, InputJSON: `{}`, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.RetryTaskWithOperation(task.UserID, task.ID, "op-free")
+	if err != nil {
+		t.Fatalf("free resume: %v", err)
+	}
+	var record model.AgentOpRecord
+	if err := db.Where("op_id = ?", "op-free").First(&record).Error; err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	t.Logf("first status=%s stage=%s receipt=%s", first.Status, first.Stage, record.ResultJSON)
+	var receipt struct {
+		Action           string `json:"action"`
+		OriginalRouteRun int    `json:"originalRouteRun"`
+		AcceptedRouteRun int    `json:"acceptedRouteRun"`
+	}
+	_ = json.Unmarshal([]byte(record.ResultJSON), &receipt)
+	if receipt.OriginalRouteRun != 3 || receipt.AcceptedRouteRun != 3 {
+		t.Errorf("free receipt route runs original=%d accepted=%d, want 3/3", receipt.OriginalRouteRun, receipt.AcceptedRouteRun)
+	}
+	replayed, err := svc.RetryTaskWithOperation(task.UserID, task.ID, "op-free")
+	t.Logf("replay: status=%v stage=%v outcome=%+v err=%v", replayed != nil && replayed.Status != "", func() string { if replayed != nil { return replayed.Stage }; return "" }(), func() any { if replayed != nil { return replayed.Outcome }; return nil }(), err)
+	current, _ := svc.Task(task.UserID, task.ID)
+	if replayed != nil && current != nil && replayed.Stage != current.Stage {
+		t.Errorf("replay returned stale snapshot stage=%q, current task stage=%q (contract 3.11: outcome is current projection)", replayed.Stage, current.Stage)
+	}
+}

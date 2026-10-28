@@ -1,0 +1,192 @@
+=== RUN   TestOpusR2ImageNoResultRetryCanRequeue
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.208ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.026ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.097ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.068ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:68: free recovery err=<nil> gets=1 nonGets=0
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:70: after free recovery: status=failed routeRun=4 outcome=phase=failed regenerate=allowed recovery=no_result
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.111ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "img-no-job" AND user_id = "local" AND route_run = 4 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/logical_models.go:266 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT * FROM `route_attempts` WHERE task_id = "img-no-job" ORDER BY route_run desc, attempt_number desc,`route_attempts`.`id` LIMIT 1
+    opus_r2_test.go:77: control legacy /retry: err=上游失败 status=<nil>
+    opus_r2_test.go:79: control image without job was not requeued: err=上游失败
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.142ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.249ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:86: legacy /retry: err=<nil> returned=failed stored status=failed routeRun=4 extraGets=1
+    opus_r2_test.go:88: legacy /retry on no_result+refunded image did not requeue (status=failed routeRun=4); upstream re-queried 1 times
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.184ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.075ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.116ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:98: /retry regen-2: err=<nil> returned=failed stored status=failed routeRun=4 receipt={"taskId":"img-job-failed","action":"free_recovery","originalRouteRun":4,"acceptedRouteRun":4} extraGets=1
+    opus_r2_test.go:100: new operation id on no_result+refunded image was admitted as "{\"taskId\":\"img-job-failed\",\"action\":\"free_recovery\",\"originalRouteRun\":4,\"acceptedRouteRun\":4}" instead of a paid retry
+--- FAIL: TestOpusR2ImageNoResultRetryCanRequeue (0.24s)
+=== RUN   TestOpusR2ConcurrentSameOperationRequeuesOnce
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.141ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.080ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.102ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.185ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.185ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.210ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.221ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.362ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.370ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.719ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[3.412ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[3.500ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[4.199ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.148ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "same-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.080ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "concurrent-paid" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:146: ok=12/12 routeRun=3 receipts=1
+--- PASS: TestOpusR2ConcurrentSameOperationRequeuesOnce (0.19s)
+=== RUN   TestOpusR2FreeReceiptReplayAfterNewRunAndReopen
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.096ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "free-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.037ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "free-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.142ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-then-paid" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:173: free admission: stage=正在取回结果 op=&{TaskID:paused-then-paid Action:free_recovery OriginalRouteRun:6 AcceptedRouteRun:6}
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "paid-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "paid-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+    opus_r2_test.go:188: replay free-op: status=queued routeRun=7 op=&{TaskID:paused-then-paid Action:free_recovery OriginalRouteRun:6 AcceptedRouteRun:6} outcome=phase=running regenerate=blocked
+    opus_r2_test.go:197: same id on other task: err=此操作编号已用于其他重试，请使用新的操作编号
+
+2026/10/28 05:22:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.435ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "other-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestOpusR2FreeReceiptReplayAfterNewRunAndReopen (0.18s)
+=== RUN   TestOpusR2UpgradeFromCandidateV27
+    opus_r2_test.go:245: schema version after upgrade=28
+    opus_r2_test.go:260: legacy receipt replay: err=<nil> returned=failed op=&{TaskID:v27-paid Action: OriginalRouteRun:0 AcceptedRouteRun:0} stored status=failed run=5
+    opus_r2_test.go:269: legacy image /retry after upgrade: err=<nil> status=queued
+--- PASS: TestOpusR2UpgradeFromCandidateV27 (0.04s)
+=== RUN   TestOpusR1UpgradedV26DatabaseKeepsLogsAndOutcomeReadable
+--- PASS: TestOpusR1UpgradedV26DatabaseKeepsLogsAndOutcomeReadable (0.06s)
+=== RUN   TestOpusR1FreeRecoveryRunningReceiptAfterCrash
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.157ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.100ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.090ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    r1_review_opus_step3_app_test.go:89: after restart, same op: err=<nil>
+    r1_review_opus_step3_app_test.go:95: receipt status=succeeded
+--- PASS: TestOpusR1FreeRecoveryRunningReceiptAfterCrash (0.19s)
+=== RUN   TestOpusR1FreeRecoveryReceiptRecordsRouteRuns
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.114ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.275ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.118ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    r1_review_opus_step3_app_test.go:116: first status=succeeded stage=正在取回结果 receipt={"taskId":"paused-free-2","action":"free_recovery","originalRouteRun":3,"acceptedRouteRun":3}
+    r1_review_opus_step3_app_test.go:127: replay: status=true stage=正在取回结果 outcome=&{Phase:ready Regenerate:allowed Reason:result_ready} err=<nil>
+
+2026/10/28 05:22:20 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.095ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestOpusR1FreeRecoveryReceiptRecordsRouteRuns (0.18s)
+=== RUN   TestOpusR1UpgradedDatabaseLegacyImageRetry
+    r1_review_opus_step3_upgrade_retry_test.go:54: recoverAcceptedImage handled=false err=<nil>
+    r1_review_opus_step3_upgrade_retry_test.go:56: legacy RetryTask: task=true err=<nil>
+--- PASS: TestOpusR1UpgradedDatabaseLegacyImageRetry (0.05s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	1.152s
+=== RUN   TestOpusR1PaidRetryWithOperationIDRequeuesOnceAndReplays
+    r1_review_opus_step3_handler_test.go:51: first: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"d31232f140c9fd73b76cd03aff8d6f84","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","retryOperation":{"taskId":"review-paid-1","action":"retry","originalRouteRun":0,"acceptedRouteRun":1},"outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T05:22:21.320413158Z","updatedAt":"2026-10-28T05:22:21.327078787Z"},"msg":"ok"}
+    r1_review_opus_step3_handler_test.go:53: after first: status=queued routeRun=1
+    r1_review_opus_step3_handler_test.go:56: receipts after first: 1
+    r1_review_opus_step3_handler_test.go:63: second: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"d31232f140c9fd73b76cd03aff8d6f84","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","retryOperation":{"taskId":"review-paid-1","action":"retry","originalRouteRun":0,"acceptedRouteRun":1},"outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T05:22:21.320413158Z","updatedAt":"2026-10-28T05:22:21.327078787Z"},"msg":"ok"}
+--- PASS: TestOpusR1PaidRetryWithOperationIDRequeuesOnceAndReplays (0.21s)
+PASS
+ok  	infinite-canvas/backend/internal/handler	0.239s
+FAIL

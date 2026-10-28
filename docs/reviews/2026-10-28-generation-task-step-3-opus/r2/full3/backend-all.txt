@@ -1,0 +1,459 @@
+ok  	infinite-canvas/backend/cmd/beeftv	7.540s
+ok  	infinite-canvas/backend/cmd/desktop	10.068s
+ok  	infinite-canvas/backend/cmd/server	0.620s
+ok  	infinite-canvas/backend/cmd/update-release	0.044s
+ok  	infinite-canvas/backend/internal/agentops	19.647s
+ok  	infinite-canvas/backend/internal/app	594.824s
+ok  	infinite-canvas/backend/internal/appearance	0.010s
+ok  	infinite-canvas/backend/internal/asset	4.637s
+ok  	infinite-canvas/backend/internal/assets	0.004s
+ok  	infinite-canvas/backend/internal/assistant	0.004s
+ok  	infinite-canvas/backend/internal/assistantdiagnostics	0.015s
+ok  	infinite-canvas/backend/internal/assistantruntime	1.583s
+ok  	infinite-canvas/backend/internal/assistantturns	11.788s
+ok  	infinite-canvas/backend/internal/beefapi	2.435s
+ok  	infinite-canvas/backend/internal/bootstrap	38.458s
+ok  	infinite-canvas/backend/internal/buildinfo	0.005s
+ok  	infinite-canvas/backend/internal/canvas	4.163s
+ok  	infinite-canvas/backend/internal/canvas/capability	0.004s
+ok  	infinite-canvas/backend/internal/canvasworkflow	0.005s
+ok  	infinite-canvas/backend/internal/conversation	3.232s
+ok  	infinite-canvas/backend/internal/creation	1.773s
+ok  	infinite-canvas/backend/internal/database	12.532s
+ok  	infinite-canvas/backend/internal/depthcapture	0.146s
+ok  	infinite-canvas/backend/internal/depthruntime	12.213s
+ok  	infinite-canvas/backend/internal/desktopnet	0.005s
+ok  	infinite-canvas/backend/internal/desktopstorage	0.024s
+ok  	infinite-canvas/backend/internal/desktopupdate	4.853s
+ok  	infinite-canvas/backend/internal/diagnostics	1.305s
+ok  	infinite-canvas/backend/internal/eagle	0.011s
+ok  	infinite-canvas/backend/internal/editing	12.554s
+ok  	infinite-canvas/backend/internal/environment	0.005s
+ok  	infinite-canvas/backend/internal/generation	46.764s
+owned-listener http://127.0.0.1:40509
+owned-listener http://127.0.0.1:37629
+owned-listener http://127.0.0.1:43821
+owned-listener http://127.0.0.1:34111
+owned-listener http://127.0.0.1:45547
+
+2026/10/28 05:40:34 [31;1m/tmp/s3r/cand/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.093ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:40:34 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.047ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+2026/10/28 05:40:36 handler request failed: method=POST route=/api/assistant/chat status=500 error_type=sqlite3.Error
+2026/10/28 05:40:47 handler request failed: method=POST route=/api/assistant/chat status=500 error_type=*errors.errorString
+
+2026/10/28 05:40:57 [31;1m/tmp/s3r/cand/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.087ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:40:57 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.057ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:40:58 [31;1m/tmp/s3r/cand/backend/internal/repository/creation_conversation.go:29 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT * FROM `creation_conversations` WHERE user_id = "7e019663ca049c02f5efd053d2a9312d" AND conversation_id = "conversation-1" ORDER BY `creation_conversations`.`user_id` LIMIT 1
+
+2026/10/28 05:40:58 [31;1m/tmp/s3r/cand/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.209ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:40:58 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.058ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:40:58 [31;1m/tmp/s3r/cand/backend/internal/repository/creation_conversation.go:29 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT * FROM `creation_conversations` WHERE user_id = "7a87480ec994a1ef058b91148c6a1a7a" AND conversation_id = "conversation-dead" ORDER BY `creation_conversations`.`user_id` LIMIT 1
+
+2026/10/28 05:40:58 [31;1m/tmp/s3r/cand/backend/internal/repository/creation_conversation.go:46 [35;1mrecord not found
+[0m[33m[0.055ms] [34;1m[rows:0][0m SELECT * FROM `creation_conversations` WHERE user_id = "7a87480ec994a1ef058b91148c6a1a7a" AND import_operation_id = "creation-conversations-v1:conversation-dead" ORDER BY `creation_conversations`.`user_id` LIMIT 1
+2026/10/28 05:40:58 handler request failed: method=GET route=/api/creation-conversations status=503 error_type=*kernel.AppError
+--- FAIL: TestDurableActualHostRestartsAgainstRealGoTurnAndUndo (0.56s)
+    durable_host_integration_test.go:37: real Durable host/Go probe failed: exit status 1
+        file:///tmp/s3r/cand/agent-host/test-support/durable-go-host-probe.mjs:39
+          while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                          ^
+        
+        Error: host exited: node:internal/modules/package_json_reader:331
+          throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                ^
+        
+        Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+            at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+            at packageResolve (node:internal/modules/esm/resolve:784:25)
+            at moduleResolve (node:internal/modules/esm/resolve:873:18)
+            at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+            at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+            at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+            at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+            at #resolve (node:internal/modules/esm/loader:687:17)
+            at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+            at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+          code: 'ERR_MODULE_NOT_FOUND'
+        }
+        
+        Node.js v24.21.0
+        
+            at until (file:///tmp/s3r/cand/agent-host/test-support/durable-go-host-probe.mjs:39:131)
+            at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+            at async start (file:///tmp/s3r/cand/agent-host/test-support/durable-go-host-probe.mjs:58:5)
+            at async file:///tmp/s3r/cand/agent-host/test-support/durable-go-host-probe.mjs:60:3
+        
+        Node.js v24.21.0
+--- FAIL: TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure (6.35s)
+    native_history_host_integration_test.go:146: actual default Durable native dispatch: exit status 1
+        file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:100
+          while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                          ^
+        
+        Error: host exited: node:internal/modules/package_json_reader:331
+          throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                ^
+        
+        Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+            at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+            at packageResolve (node:internal/modules/esm/resolve:784:25)
+            at moduleResolve (node:internal/modules/esm/resolve:873:18)
+            at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+            at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+            at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+            at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+            at #resolve (node:internal/modules/esm/loader:687:17)
+            at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+            at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+          code: 'ERR_MODULE_NOT_FOUND'
+        }
+        
+        Node.js v24.21.0
+        
+            at until (file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:100:131)
+            at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+            at async start (file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:134:5)
+            at async file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:136:3
+        
+        Node.js v24.21.0
+--- FAIL: TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure (5.95s)
+    native_history_host_integration_test.go:146: actual default Durable native dispatch: exit status 1
+        file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:100
+          while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                          ^
+        
+        Error: host exited: node:internal/modules/package_json_reader:331
+          throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                ^
+        
+        Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+            at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+            at packageResolve (node:internal/modules/esm/resolve:784:25)
+            at moduleResolve (node:internal/modules/esm/resolve:873:18)
+            at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+            at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+            at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+            at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+            at #resolve (node:internal/modules/esm/loader:687:17)
+            at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+            at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+          code: 'ERR_MODULE_NOT_FOUND'
+        }
+        
+        Node.js v24.21.0
+        
+            at until (file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:100:131)
+            at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+            at async start (file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:134:5)
+            at async file:///tmp/s3r/cand/agent-host/test-support/native-history-go-host-probe.mjs:136:3
+        
+        Node.js v24.21.0
+--- FAIL: TestDefaultDurableHostDispatchesActualNativeMediaBytes (6.18s)
+    native_media_host_integration_test.go:115: actual default Durable native dispatch: exit status 1
+        file:///tmp/s3r/cand/agent-host/test-support/native-media-go-host-probe.mjs:87
+          while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                          ^
+        
+        Error: host exited: node:internal/modules/package_json_reader:331
+          throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                ^
+        
+        Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+            at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+            at packageResolve (node:internal/modules/esm/resolve:784:25)
+            at moduleResolve (node:internal/modules/esm/resolve:873:18)
+            at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+            at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+            at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+            at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+            at #resolve (node:internal/modules/esm/loader:687:17)
+            at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+            at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+          code: 'ERR_MODULE_NOT_FOUND'
+        }
+        
+        Node.js v24.21.0
+        
+            at until (file:///tmp/s3r/cand/agent-host/test-support/native-media-go-host-probe.mjs:87:131)
+            at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+            at async start (file:///tmp/s3r/cand/agent-host/test-support/native-media-go-host-probe.mjs:121:5)
+            at async file:///tmp/s3r/cand/agent-host/test-support/native-media-go-host-probe.mjs:123:3
+        
+        Node.js v24.21.0
+--- FAIL: TestFullAccessActualDurableCrossCanvasMoveCrashReplayAndGroupUndo (18.50s)
+    permission_host_integration_test.go:51: actual host: exit status 1
+        file:///tmp/s3r/cand/agent-host/test-support/permission-go-host-probe.mjs:15
+        const until=async predicate=>{const end=Date.now()+18000;while(Date.now()<end){if(await predicate())return;await delay(40)}throw Error(log)};
+                                                                                                                                         ^
+        
+        Error: node:internal/modules/package_json_reader:331
+          throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                ^
+        
+        Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+            at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+            at packageResolve (node:internal/modules/esm/resolve:784:25)
+            at moduleResolve (node:internal/modules/esm/resolve:873:18)
+            at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+            at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+            at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+            at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+            at #resolve (node:internal/modules/esm/loader:687:17)
+            at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+            at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+          code: 'ERR_MODULE_NOT_FOUND'
+        }
+        
+        Node.js v24.21.0
+        
+            at until (file:///tmp/s3r/cand/agent-host/test-support/permission-go-host-probe.mjs:15:130)
+            at async start (file:///tmp/s3r/cand/agent-host/test-support/permission-go-host-probe.mjs:34:229)
+            at async file:///tmp/s3r/cand/agent-host/test-support/permission-go-host-probe.mjs:35:2
+        
+        Node.js v24.21.0
+2026/10/28 05:41:38 handler request failed: method=GET route=<unmatched> status=500 error_type=*errors.errorString
+2026/10/28 05:41:38 handler request failed: method=GET route=<unmatched> status=503 error_type=*errors.errorString
+--- FAIL: TestSelectedSkillsActualHostBusinessFlows (1.74s)
+    --- FAIL: TestSelectedSkillsActualHostBusinessFlows/coffee (0.57s)
+        skill_host_integration_test.go:90: real Durable host/Go probe failed: exit status 1
+            file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:62
+              while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                              ^
+            
+            Error: host exited: node:internal/modules/package_json_reader:331
+              throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                    ^
+            
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+                at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+                at packageResolve (node:internal/modules/esm/resolve:784:25)
+                at moduleResolve (node:internal/modules/esm/resolve:873:18)
+                at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+                at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+                at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+                at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+                at #resolve (node:internal/modules/esm/loader:687:17)
+                at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+                at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+              code: 'ERR_MODULE_NOT_FOUND'
+            }
+            
+            Node.js v24.21.0
+            
+                at until (file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:62:131)
+                at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+                at async start (file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:81:5)
+                at async file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:83:3
+            
+            Node.js v24.21.0
+    --- FAIL: TestSelectedSkillsActualHostBusinessFlows/interview (0.60s)
+        skill_host_integration_test.go:90: real Durable host/Go probe failed: exit status 1
+            file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:62
+              while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                              ^
+            
+            Error: host exited: node:internal/modules/package_json_reader:331
+              throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                    ^
+            
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+                at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+                at packageResolve (node:internal/modules/esm/resolve:784:25)
+                at moduleResolve (node:internal/modules/esm/resolve:873:18)
+                at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+                at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+                at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+                at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+                at #resolve (node:internal/modules/esm/loader:687:17)
+                at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+                at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+              code: 'ERR_MODULE_NOT_FOUND'
+            }
+            
+            Node.js v24.21.0
+            
+                at until (file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:62:131)
+                at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+                at async start (file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:81:5)
+                at async file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:83:3
+            
+            Node.js v24.21.0
+    --- FAIL: TestSelectedSkillsActualHostBusinessFlows/audio (0.57s)
+        skill_host_integration_test.go:90: real Durable host/Go probe failed: exit status 1
+            file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:62
+              while (Date.now() < deadline) { if (await check()) return; if (child?.exitCode !== null && child?.exitCode !== undefined) throw new Error('host exited: ' + log); await delay(50); }
+                                                                                                                                              ^
+            
+            Error: host exited: node:internal/modules/package_json_reader:331
+              throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                    ^
+            
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/server.mjs
+                at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+                at packageResolve (node:internal/modules/esm/resolve:784:25)
+                at moduleResolve (node:internal/modules/esm/resolve:873:18)
+                at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+                at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+                at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+                at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+                at #resolve (node:internal/modules/esm/loader:687:17)
+                at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+                at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+              code: 'ERR_MODULE_NOT_FOUND'
+            }
+            
+            Node.js v24.21.0
+            
+                at until (file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:62:131)
+                at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+                at async start (file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:81:5)
+                at async file:///tmp/s3r/cand/agent-host/test-support/skill-business-probe.mjs:83:3
+            
+            Node.js v24.21.0
+2026/10/28 05:41:44 handler request failed: method=POST route=/api/tasks/:id/retry status=503 error_type=*kernel.AppError
+2026/10/28 05:41:44 handler request failed: method=POST route=/api/tasks/:id/retry status=503 error_type=*kernel.AppError
+2026/10/28 05:41:45 handler request failed: method=POST route=/api/tasks status=500 error_type=sqlite3.Error
+
+2026/10/28 05:41:45 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mno such table: system_settings
+[0m[33m[0.216ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:41:45 [31;1m/tmp/s3r/cand/backend/internal/repository/repository.go:794 [35;1mno such table: user_upload_reservations
+[0m[33m[0.188ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations`
+2026/10/28 05:41:45 upload reservation recovery failed: no such table: user_upload_reservations
+--- FAIL: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines (61.97s)
+    --- FAIL: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/normal (0.64s)
+        timeline_delivery_integration_test.go:169: real delivery: exit status 1
+            node:internal/modules/package_json_reader:331
+              throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                    ^
+            
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/test-support/durable-model-switch-probe.mjs
+                at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+                at packageResolve (node:internal/modules/esm/resolve:784:25)
+                at moduleResolve (node:internal/modules/esm/resolve:873:18)
+                at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+                at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+                at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+                at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+                at #resolve (node:internal/modules/esm/loader:687:17)
+                at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+                at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+              code: 'ERR_MODULE_NOT_FOUND'
+            }
+            
+            Node.js v24.21.0
+    --- FAIL: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/host_crash_after_render_admission (60.58s)
+        timeline_delivery_integration_test.go:156: render not admitted before restart: node:internal/modules/package_json_reader:331
+              throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                    ^
+            
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/test-support/durable-model-switch-probe.mjs
+                at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+                at packageResolve (node:internal/modules/esm/resolve:784:25)
+                at moduleResolve (node:internal/modules/esm/resolve:873:18)
+                at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+                at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+                at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+                at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+                at #resolve (node:internal/modules/esm/loader:687:17)
+                at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+                at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+              code: 'ERR_MODULE_NOT_FOUND'
+            }
+            
+            Node.js v24.21.0
+    --- FAIL: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/refresh_saved_timeline (0.75s)
+        timeline_delivery_integration_test.go:169: real delivery: exit status 1
+            node:internal/modules/package_json_reader:331
+              throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+                    ^
+            
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-coding-agent' imported from /tmp/s3r/cand/agent-host/test-support/durable-model-switch-probe.mjs
+                at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+                at packageResolve (node:internal/modules/esm/resolve:784:25)
+                at moduleResolve (node:internal/modules/esm/resolve:873:18)
+                at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+                at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+                at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+                at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+                at #resolve (node:internal/modules/esm/loader:687:17)
+                at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+                at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33) {
+              code: 'ERR_MODULE_NOT_FOUND'
+            }
+            
+            Node.js v24.21.0
+
+2026/10/28 05:42:49 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.047ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:42:49 [31;1m/tmp/s3r/cand/backend/internal/repository/provider_references.go:27 [35;1mno such table: channel_models
+[0m[33m[0.309ms] [34;1m[rows:-][0m SELECT protocol AS provider, COUNT(*) AS total FROM `channel_models` WHERE (protocol IS NOT NULL AND protocol <> '') AND `channel_models`.`deleted_at` IS NULL GROUP BY `protocol`
+
+2026/10/28 05:42:49 [31;1m/tmp/s3r/cand/backend/internal/repository/repository.go:794 [35;1mno such table: user_upload_reservations
+[0m[33m[0.266ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations`
+2026/10/28 05:42:49 upload reservation recovery failed: no such table: user_upload_reservations
+
+2026/10/28 05:42:49 [31;1m/tmp/s3r/cand/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.255ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:42:49 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.036ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 05:42:49 [31;1m/tmp/s3r/cand/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.132ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 05:42:50 [31;1m/tmp/s3r/cand/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.067ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+FAIL
+FAIL	infinite-canvas/backend/internal/handler	142.945s
+ok  	infinite-canvas/backend/internal/kernel	0.003s
+ok  	infinite-canvas/backend/internal/legacyimport	0.003s
+ok  	infinite-canvas/backend/internal/localapp	0.007s
+?   	infinite-canvas/backend/internal/localcrypto	[no test files]
+ok  	infinite-canvas/backend/internal/mediatools	0.403s
+ok  	infinite-canvas/backend/internal/model	0.004s
+ok  	infinite-canvas/backend/internal/modelcatalog	0.123s
+ok  	infinite-canvas/backend/internal/operations	36.621s
+ok  	infinite-canvas/backend/internal/outbound	13.382s
+ok  	infinite-canvas/backend/internal/platform	0.143s
+ok  	infinite-canvas/backend/internal/playback	0.558s
+ok  	infinite-canvas/backend/internal/plugins	35.375s
+?   	infinite-canvas/backend/internal/privatefile	[no test files]
+ok  	infinite-canvas/backend/internal/project	2.792s
+ok  	infinite-canvas/backend/internal/prompts	0.010s
+ok  	infinite-canvas/backend/internal/protocol	0.412s
+ok  	infinite-canvas/backend/internal/provider	0.004s
+?   	infinite-canvas/backend/internal/provider/bailian	[no test files]
+ok  	infinite-canvas/backend/internal/provider/workflow	0.194s
+ok  	infinite-canvas/backend/internal/providerpreset	0.006s
+ok  	infinite-canvas/backend/internal/referencestorage	0.071s
+ok  	infinite-canvas/backend/internal/repository	1.349s
+ok  	infinite-canvas/backend/internal/runtimeinfo	0.005s
+ok  	infinite-canvas/backend/internal/skillhub	0.017s
+ok  	infinite-canvas/backend/internal/skillhubcli	0.061s
+ok  	infinite-canvas/backend/internal/skills	0.290s
+ok  	infinite-canvas/backend/internal/supporttrace	0.053s
+ok  	infinite-canvas/backend/internal/task	0.315s
+ok  	infinite-canvas/backend/internal/taskbinding	0.154s
+ok  	infinite-canvas/backend/internal/taskdelivery	0.417s
+ok  	infinite-canvas/backend/internal/taskruntime	0.227s
+ok  	infinite-canvas/backend/internal/textreplay	0.222s
+ok  	infinite-canvas/backend/internal/topaz	0.003s
+ok  	infinite-canvas/backend/internal/transcription	0.205s
+ok  	infinite-canvas/backend/internal/transport/http	0.005s
+ok  	infinite-canvas/backend/internal/workspace	0.025s
+FAIL
