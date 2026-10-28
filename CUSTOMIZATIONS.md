@@ -32,6 +32,9 @@
 | `web/src/components/layout/app-providers.tsx` | import `enUS`、`currentLocale`；`ConfigProvider locale` 跟随语言 | 双语 |
 | `web/src/components/video-player.tsx` | import `currentLocale`；英文时 `translations={undefined}` | 双语 |
 | `web/src/pages/settings/index.tsx` | import `LanguageSwitch`；在 `<main>` 第一个子元素前插入 `<LanguageSwitch />` | 双语 |
+| `web/src/pages/settings/channel-settings-pane.tsx` | import `ChannelExportButton`、`ChannelImportDialog`；顶部操作区 `div` 加 `min-w-0 max-w-full flex-wrap`，「添加模型服务」前插入「导入」按钮；渠道卡片「编辑」前插入 `<ChannelExportButton>`；文件末尾挂 `<ChannelImportDialog>`（`importOpen` 状态） | 渠道导入导出 |
+| `docs/content/docs/overview/features.mdx` | 文首新增「单个模型渠道分享」一节 | 渠道导入导出 |
+| `docs/local-model-config-persistence.md` | 文末新增「单个渠道导入与导出」一节 | 渠道导入导出 |
 
 ## 我们自己的目录（上游不会碰，不会冲突）
 
@@ -42,6 +45,8 @@
 | `docs/refactor/i18n-overlay-plan.md` | 双语改造方案 |
 | `scripts/custom/` | 同步上游脚本 |
 | `.github/workflows/custom-*.yml` | 自动同步和检查 |
+| `web/src/pages/settings/channel-share*.ts`、`channel-export-button.tsx`、`channel-import-dialog.tsx` | 渠道导入导出 |
+| `web/test/channel-share*.test.ts`、`web/test/fixtures/channel-share-harness.tsx` | 渠道导入导出测试 |
 | `CUSTOMIZATIONS.md` | 本文件 |
 
 ## 同步上游
