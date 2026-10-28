@@ -1,0 +1,26 @@
+{
+  "source": "本会话Codex rollout，仅保存脱敏结束事件，不复制聊天、环境或其他任务日志",
+  "source_session": "rollout-2026-10-28T15-15-12-01a1815c-eb4c-7460-a9f8-c4b450b1fc62.jsonl",
+  "source_prefix_through_line": 288,
+  "source_prefix_sha256": "43a68a7eb02ad2d656ca1ca6fe845f611f325617740af8cd819a175a98125429",
+  "task_started": {
+    "line": 258,
+    "timestamp_utc": "2026-10-28T07:33:52.943Z",
+    "type": "task_started"
+  },
+  "task_complete": {
+    "line": 288,
+    "timestamp_utc": "2026-10-28T07:36:34.820Z",
+    "type": "task_complete",
+    "error": {
+      "message": "Selected model is at capacity. Please try a different model.",
+      "codex_error_info": "server_overloaded"
+    }
+  },
+  "assistant_channels": [
+    null
+  ],
+  "final_message_present": false,
+  "conclusion": "本回合确由上游模型满载中断；不是已完成准备。平台漏报机制仅引用#39既有诊断，本轮未重跑模拟或更改共享程序。",
+  "actions_this_turn": "只读本次原始结束事件，接续准备；不升级、不重启、不切模型或配置"
+}

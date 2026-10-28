@@ -1,6 +1,6 @@
 # 生成任务状态重构：第 3 步实施说明
 
-状态：产品候选 `30ed8d92` 已经 Opus 在独立 Linux 编译和逐项核验，N1、13 项相邻回归及跨轮次退款探针通过，N1 可从未完成项移除。本轮不改产品，仅记入 R3 证据并准备 Mac 原用例/四段计时对照。**Mac Go 预编译、单项及诊断计时均未运行**，须等 Chief 明确通知 #95 采样结束；旧 Mac 并行全套退出 1 的原因仍未定。未合入、未发布、零真实付费。第 1–9 节保留此前交付时的历史状态，最新结论以第 10 节为准。
+状态：产品候选保持 `30ed8d92`，Linux N1、13 项相邻回归及跨轮次探针通过；第 11 节的 Mac 四次编译、八次单项也已通过，旧并行全套 5.588 秒失败仍未解释。本轮只准备一次并行条件下的四阶段与调度 trace 捕获，**没有运行 Go 或客户端**，实际执行等待 Chief 释放 #95 本轮采样窗口。上一准备回合经原始事件确认因 `server_overloaded` 中断，本轮已接续补齐材料。第 1–10 节保留历史状态，第 11 节为已完成对照，第 12 节为当前准备状态。未合入、未发布、零真实付费。
 
 依据：`docs/architecture/generation-task-state.md` 第 3.1–3.7 节及本任务已确认范围。本文只记录本分支实际完成的后台能力，不把第 4–7 步的报价、用户确认、MCP/CLI 付费守门或前端改动写成已实现。
 
@@ -426,3 +426,38 @@ R3 指出的 `replay_n1.py` 成功判断偏松如实保留。此次确认依据�
 execute 于 15:20:43 退出 0；检查本任务测试/编译 PID 和进程路径均已结束后，立即通过 `message_chief` 通知 Chief 释放 #95 的补测窗口，没有等文档整理结束。此后不再运行 Go。没有遗留本任务后台作业，没有启动正式客户端，没有付费、合入、发布或自行派评审。
 
 结果先逐字节复制到本轮分支；交付清单见 [results/delivery-manifest.json](evidence/generation-task-state-step-3/mac-cold-start/results/delivery-manifest.json)。清单列出提交前预期 Git blob、字节数和 SHA-256，用于提交后从固定 Git 树核对，不能单独冒称提交树已验证。临时原件保留至固定树复核成功再清理本任务源码、二进制、缓存、数据和冻结副本，不删除原协议包或其他任务目录。
+
+## 12. 单次并行诊断：只准备，未执行
+
+### 12.1 本回合中断核查
+
+先只读本人上一个回合的原始 Codex 结束事件，确认北京时间 15:36:34.820 的 `task_complete.error.codex_error_info=server_overloaded`；回合开始于 15:33:52.943，没有 final。脱敏事件、原始行号和截至该事件的日志前缀哈希见 [interruption-event.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/interruption-event.json)。这证明本次也是上游满载中断，不把另一任务的诊断直接套用到本次。
+
+本轮没有重做 #39 的九组模拟，没有升级或重启共享程序，没有切换模型、运行配置或权限。平台为何显示 review 的机制只引用 #39 既有诊断，没有新增平台请求证据。本轮保留原工作区并接续完成授权的材料准备，不将此前“会准备”的文字算作完成。
+
+### 12.2 旧条件与一次命令的实际范围
+
+详细材料和可执行命令见 [parallel-capture/README.md](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/README.md)，固定条件、差异和证据位置见 [source-conditions.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/source-conditions.json)。
+
+- 5.588 秒失败来自 `revision/accepted-check/backend-all.txt/json`，不是更早的 `final-check`；输出 SHA-256、失败行 5284–5285 和退出 1 均已核对。其 1,936 项测试输入指纹全部匹配 `850d89c1` 固定树。
+- 实际命令是 `go test ./... -count=1 -timeout=25m`，旧本机调用记录也确认使用 `replay.py --full`。实际结束输出为 69 个包，其中 66 个有测试、3 个无测试；完整包名和耗时列在 [original-packages.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/original-packages.json)。
+- 能恢复命令、包集合、源码、模块锁文件及原两份历史库的生成方式；不能恢复旧的精确同时运行包、有效 `-p`、`GOFLAGS/GOMAXPROCS`、工具链版本、物化协议归档字节、测试临时盘或机器缓存/负载。不因机器有 10 核就把旧 `-p` 写成 10，也不把源码在外置卷当成测试数据同盘的证明。
+- 为保留原命令的自然并行背景，拟执行一次 `./...`，会运行这些包中的既有回归；这不是新一批专项回归。原墙钟 15 分 25 秒，预计含夹具准备、编译及复制约 15–25 分钟，非承诺上限；原 25 分钟超时按测试二进制计算。正式执行前范围已在材料中明示，本轮未发出该命令。
+
+当前产品固定 `30ed8d92`，与旧 850 相比只多两处产品文件修正和一份 N1 测试文件。产品修正保留，N1 源码不动；唯一并行命令通过 app 的 skip 排除 30ed 新增的两个 N1 顶层用例及子项，不叠加独立 Opus 探针、不单独复跑 N1 或已通过回归。旧套件中的其他用例作为原命令背景运行，与“只跑 bootstrap”不同，不能隐藏其占机范围。
+
+### 12.3 已准备的诊断材料及其限制
+
+[capture_once.py](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/capture_once.py) 明确分为 prepare/execute。prepare 只读 Git 和现存文件；execute 需要 Chief 释放本轮采样窗口的真实通知，使用排他的一次执行记录，不自动追加尝试。本轮仅实际调用 prepare。
+
+诊断源码仅放在证据材料与临时副本中，四段位置沿用第 11 节，同时增加 trace task、四个 region 和 data_dir 注记，帮助从整个 bootstrap 进程中辨认冷启动那一次 Open。原冷启动测试逐字节未改，5 秒与外发 0 不变。原测试的总 Open 与四段之和分别记录，不把额外 trace/日志开销当作产品退化，也不把带 trace 的通过当作无插桩验收。
+
+未来唯一命令保留原包集合，不提前预编译全部二进制；附加 `-json/-exec` 记录新包时间线，只给 bootstrap 进程增加 trace，保存其原字节输出。原 replay 的两次历史库生成是输入准备，不是追加的测试。现有协议包冻结为上一轮同一批 86 个归档；宿主依赖复制到本任务副本，不安装、不改共享依赖。数据与缓存固定 ExternalWork，使用无真实凭据的隔离环境；这些条件与不可恢复的旧环境存在差异，不能称完整重演。
+
+trace 若显示目标阶段存在明显 Runnable 等待，可以量化 Go 调度等待的贡献；仅看到 Running 墙钟增加，不能证明计算工作增加，因为还缺操作系统线程调度或 CPU 证据。未复现、阶段/trace 缺项或不能唯一定位目标 Open 时，结论停在“原因未定/观测不足”，不自动重跑、不改产品或阈值。具体判读方法和正确的 Go 1.26.3 `-d=parsed` 命令已写入材料；本轮没有调用它。
+
+### 12.4 本轮实际验证与交付
+
+实际准备输出及子进程审计见 [prepare-check.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/prepare-check.json)：Python AST、固定源码锚点、原测试/模块逐字节一致、宿主锁定输入一致均通过，准备的所有子进程都是 Git 只读操作。现存 Go 仅按文件路径与哈希记录，没有执行 `go version`、格式解析、编译、测试或 trace 读取；新诊断源码的编译与真实行为仍待窗口释放后验证。
+
+交付前保留 `a184a716` 的所有产品、测试和原始证据字节，仅更新本说明并新增本节材料。清单见 [parallel-capture/delivery-manifest.json](evidence/generation-task-state-step-3/mac-cold-start/parallel-capture/delivery-manifest.json)，推送后从固定提交树核文件、字节、哈希和原件保留情况，再清理本轮临时准备副本。没有本轮执行结果，没有启动或遗留 Go、客户端或无人监控作业；准备完成即交回 Chief，不占用 #95 窗口等待通知。

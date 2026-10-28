@@ -1,0 +1,424 @@
+{
+  "source": "revision/accepted-check/backend-all.txt",
+  "source_sha256": "926088d8deb4035c38ecb946be78cb3b7c6f4bd608001e0376232f8c4f0f65eb",
+  "packages": [
+    {
+      "log_line": 1,
+      "package": "infinite-canvas/backend/cmd/beeftv",
+      "result": "ok",
+      "detail": "11.223s"
+    },
+    {
+      "log_line": 2,
+      "package": "infinite-canvas/backend/cmd/desktop",
+      "result": "ok",
+      "detail": "79.515s"
+    },
+    {
+      "log_line": 3,
+      "package": "infinite-canvas/backend/cmd/server",
+      "result": "ok",
+      "detail": "3.572s"
+    },
+    {
+      "log_line": 4,
+      "package": "infinite-canvas/backend/cmd/update-release",
+      "result": "ok",
+      "detail": "2.997s"
+    },
+    {
+      "log_line": 5,
+      "package": "infinite-canvas/backend/internal/agentops",
+      "result": "ok",
+      "detail": "146.805s"
+    },
+    {
+      "log_line": 6,
+      "package": "infinite-canvas/backend/internal/app",
+      "result": "ok",
+      "detail": "919.516s"
+    },
+    {
+      "log_line": 7,
+      "package": "infinite-canvas/backend/internal/appearance",
+      "result": "ok",
+      "detail": "2.904s"
+    },
+    {
+      "log_line": 8,
+      "package": "infinite-canvas/backend/internal/asset",
+      "result": "ok",
+      "detail": "36.205s"
+    },
+    {
+      "log_line": 9,
+      "package": "infinite-canvas/backend/internal/assets",
+      "result": "ok",
+      "detail": "3.681s"
+    },
+    {
+      "log_line": 10,
+      "package": "infinite-canvas/backend/internal/assistant",
+      "result": "ok",
+      "detail": "3.989s"
+    },
+    {
+      "log_line": 11,
+      "package": "infinite-canvas/backend/internal/assistantdiagnostics",
+      "result": "ok",
+      "detail": "2.617s"
+    },
+    {
+      "log_line": 12,
+      "package": "infinite-canvas/backend/internal/assistantruntime",
+      "result": "ok",
+      "detail": "6.207s"
+    },
+    {
+      "log_line": 13,
+      "package": "infinite-canvas/backend/internal/assistantturns",
+      "result": "ok",
+      "detail": "49.609s"
+    },
+    {
+      "log_line": 14,
+      "package": "infinite-canvas/backend/internal/beefapi",
+      "result": "ok",
+      "detail": "10.707s"
+    },
+    {
+      "log_line": 26853,
+      "package": "infinite-canvas/backend/internal/bootstrap",
+      "result": "FAIL",
+      "detail": "163.275s"
+    },
+    {
+      "log_line": 26854,
+      "package": "infinite-canvas/backend/internal/buildinfo",
+      "result": "ok",
+      "detail": "1.859s"
+    },
+    {
+      "log_line": 26855,
+      "package": "infinite-canvas/backend/internal/canvas",
+      "result": "ok",
+      "detail": "177.249s"
+    },
+    {
+      "log_line": 26856,
+      "package": "infinite-canvas/backend/internal/canvas/capability",
+      "result": "ok",
+      "detail": "0.416s"
+    },
+    {
+      "log_line": 26857,
+      "package": "infinite-canvas/backend/internal/canvasworkflow",
+      "result": "ok",
+      "detail": "0.385s"
+    },
+    {
+      "log_line": 26858,
+      "package": "infinite-canvas/backend/internal/conversation",
+      "result": "ok",
+      "detail": "15.658s"
+    },
+    {
+      "log_line": 26859,
+      "package": "infinite-canvas/backend/internal/creation",
+      "result": "ok",
+      "detail": "18.817s"
+    },
+    {
+      "log_line": 26860,
+      "package": "infinite-canvas/backend/internal/database",
+      "result": "ok",
+      "detail": "70.915s"
+    },
+    {
+      "log_line": 26861,
+      "package": "infinite-canvas/backend/internal/depthcapture",
+      "result": "ok",
+      "detail": "0.639s"
+    },
+    {
+      "log_line": 26862,
+      "package": "infinite-canvas/backend/internal/depthruntime",
+      "result": "ok",
+      "detail": "14.045s"
+    },
+    {
+      "log_line": 26863,
+      "package": "infinite-canvas/backend/internal/desktopnet",
+      "result": "ok",
+      "detail": "0.403s"
+    },
+    {
+      "log_line": 26864,
+      "package": "infinite-canvas/backend/internal/desktopstorage",
+      "result": "ok",
+      "detail": "1.515s"
+    },
+    {
+      "log_line": 26865,
+      "package": "infinite-canvas/backend/internal/desktopupdate",
+      "result": "ok",
+      "detail": "10.606s"
+    },
+    {
+      "log_line": 26866,
+      "package": "infinite-canvas/backend/internal/diagnostics",
+      "result": "ok",
+      "detail": "12.546s"
+    },
+    {
+      "log_line": 26867,
+      "package": "infinite-canvas/backend/internal/eagle",
+      "result": "ok",
+      "detail": "0.730s"
+    },
+    {
+      "log_line": 26868,
+      "package": "infinite-canvas/backend/internal/editing",
+      "result": "ok",
+      "detail": "5.920s"
+    },
+    {
+      "log_line": 26869,
+      "package": "infinite-canvas/backend/internal/environment",
+      "result": "ok",
+      "detail": "0.484s"
+    },
+    {
+      "log_line": 26870,
+      "package": "infinite-canvas/backend/internal/generation",
+      "result": "ok",
+      "detail": "53.139s"
+    },
+    {
+      "log_line": 26871,
+      "package": "infinite-canvas/backend/internal/handler",
+      "result": "ok",
+      "detail": "304.762s"
+    },
+    {
+      "log_line": 26872,
+      "package": "infinite-canvas/backend/internal/kernel",
+      "result": "ok",
+      "detail": "0.362s"
+    },
+    {
+      "log_line": 26873,
+      "package": "infinite-canvas/backend/internal/legacyimport",
+      "result": "ok",
+      "detail": "0.412s"
+    },
+    {
+      "log_line": 26874,
+      "package": "infinite-canvas/backend/internal/localapp",
+      "result": "ok",
+      "detail": "0.403s"
+    },
+    {
+      "log_line": 26875,
+      "package": "infinite-canvas/backend/internal/localcrypto",
+      "result": "?",
+      "detail": "[no test files]"
+    },
+    {
+      "log_line": 26876,
+      "package": "infinite-canvas/backend/internal/mediatools",
+      "result": "ok",
+      "detail": "0.674s"
+    },
+    {
+      "log_line": 26877,
+      "package": "infinite-canvas/backend/internal/model",
+      "result": "ok",
+      "detail": "0.417s"
+    },
+    {
+      "log_line": 26878,
+      "package": "infinite-canvas/backend/internal/modelcatalog",
+      "result": "ok",
+      "detail": "0.549s"
+    },
+    {
+      "log_line": 26879,
+      "package": "infinite-canvas/backend/internal/operations",
+      "result": "ok",
+      "detail": "190.511s"
+    },
+    {
+      "log_line": 26880,
+      "package": "infinite-canvas/backend/internal/outbound",
+      "result": "ok",
+      "detail": "16.351s"
+    },
+    {
+      "log_line": 26881,
+      "package": "infinite-canvas/backend/internal/platform",
+      "result": "ok",
+      "detail": "0.597s"
+    },
+    {
+      "log_line": 26882,
+      "package": "infinite-canvas/backend/internal/playback",
+      "result": "ok",
+      "detail": "2.333s"
+    },
+    {
+      "log_line": 26883,
+      "package": "infinite-canvas/backend/internal/plugins",
+      "result": "ok",
+      "detail": "148.418s"
+    },
+    {
+      "log_line": 26884,
+      "package": "infinite-canvas/backend/internal/privatefile",
+      "result": "?",
+      "detail": "[no test files]"
+    },
+    {
+      "log_line": 26885,
+      "package": "infinite-canvas/backend/internal/project",
+      "result": "ok",
+      "detail": "5.691s"
+    },
+    {
+      "log_line": 26886,
+      "package": "infinite-canvas/backend/internal/prompts",
+      "result": "ok",
+      "detail": "0.423s"
+    },
+    {
+      "log_line": 26887,
+      "package": "infinite-canvas/backend/internal/protocol",
+      "result": "ok",
+      "detail": "0.531s"
+    },
+    {
+      "log_line": 26888,
+      "package": "infinite-canvas/backend/internal/provider",
+      "result": "ok",
+      "detail": "0.449s"
+    },
+    {
+      "log_line": 26889,
+      "package": "infinite-canvas/backend/internal/provider/bailian",
+      "result": "?",
+      "detail": "[no test files]"
+    },
+    {
+      "log_line": 26890,
+      "package": "infinite-canvas/backend/internal/provider/workflow",
+      "result": "ok",
+      "detail": "0.647s"
+    },
+    {
+      "log_line": 26891,
+      "package": "infinite-canvas/backend/internal/providerpreset",
+      "result": "ok",
+      "detail": "0.739s"
+    },
+    {
+      "log_line": 26892,
+      "package": "infinite-canvas/backend/internal/referencestorage",
+      "result": "ok",
+      "detail": "1.004s"
+    },
+    {
+      "log_line": 26893,
+      "package": "infinite-canvas/backend/internal/repository",
+      "result": "ok",
+      "detail": "45.610s"
+    },
+    {
+      "log_line": 26894,
+      "package": "infinite-canvas/backend/internal/runtimeinfo",
+      "result": "ok",
+      "detail": "0.632s"
+    },
+    {
+      "log_line": 26895,
+      "package": "infinite-canvas/backend/internal/skillhub",
+      "result": "ok",
+      "detail": "0.420s"
+    },
+    {
+      "log_line": 26896,
+      "package": "infinite-canvas/backend/internal/skillhubcli",
+      "result": "ok",
+      "detail": "0.868s"
+    },
+    {
+      "log_line": 26897,
+      "package": "infinite-canvas/backend/internal/skills",
+      "result": "ok",
+      "detail": "17.878s"
+    },
+    {
+      "log_line": 26898,
+      "package": "infinite-canvas/backend/internal/supporttrace",
+      "result": "ok",
+      "detail": "10.257s"
+    },
+    {
+      "log_line": 26899,
+      "package": "infinite-canvas/backend/internal/task",
+      "result": "ok",
+      "detail": "5.252s"
+    },
+    {
+      "log_line": 26900,
+      "package": "infinite-canvas/backend/internal/taskbinding",
+      "result": "ok",
+      "detail": "0.459s"
+    },
+    {
+      "log_line": 26901,
+      "package": "infinite-canvas/backend/internal/taskdelivery",
+      "result": "ok",
+      "detail": "9.068s"
+    },
+    {
+      "log_line": 26902,
+      "package": "infinite-canvas/backend/internal/taskruntime",
+      "result": "ok",
+      "detail": "0.580s"
+    },
+    {
+      "log_line": 26903,
+      "package": "infinite-canvas/backend/internal/textreplay",
+      "result": "ok",
+      "detail": "5.874s"
+    },
+    {
+      "log_line": 26904,
+      "package": "infinite-canvas/backend/internal/topaz",
+      "result": "ok",
+      "detail": "0.405s"
+    },
+    {
+      "log_line": 26905,
+      "package": "infinite-canvas/backend/internal/transcription",
+      "result": "ok",
+      "detail": "0.692s"
+    },
+    {
+      "log_line": 26906,
+      "package": "infinite-canvas/backend/internal/transport/http",
+      "result": "ok",
+      "detail": "0.397s"
+    },
+    {
+      "log_line": 26907,
+      "package": "infinite-canvas/backend/internal/workspace",
+      "result": "ok",
+      "detail": "3.963s"
+    }
+  ],
+  "package_total": 69,
+  "packages_with_tests": 66,
+  "packages_without_tests": 3,
+  "note": "这是实际结束输出，不是精确并发时间线。不能据输出顺序恢复当时同时运行的包。"
+}

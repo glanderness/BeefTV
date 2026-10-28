@@ -1,0 +1,153 @@
+{
+  "started": "2026-10-28T07:51:25.819295+00:00",
+  "finished": "2026-10-28T07:51:26.088336+00:00",
+  "exit": 0,
+  "python_ast_valid": true,
+  "child_processes": [
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "850d89c109b7e94a356834ee51eedba6dba019fb:backend/internal/bootstrap/runtime.go"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend/internal/bootstrap/runtime.go"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "850d89c109b7e94a356834ee51eedba6dba019fb:backend/internal/bootstrap/local_runtime_budget_test.go"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend/internal/bootstrap/local_runtime_budget_test.go"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "850d89c109b7e94a356834ee51eedba6dba019fb:backend/go.mod"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend/go.mod"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "850d89c109b7e94a356834ee51eedba6dba019fb:backend/go.sum"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend/go.sum"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:agent-host/package.json"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:agent-host/bun.lock"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend/internal/bootstrap/runtime.go"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "850d89c109b7e94a356834ee51eedba6dba019fb:docs/implementation/evidence/generation-task-state-step-3/revision/replay.py"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "rev-parse",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend"
+      ]
+    },
+    {
+      "program": "git",
+      "arguments": [
+        "git",
+        "-C",
+        "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2",
+        "show",
+        "30ed8d92910fe928b84cf918d870b8d600923144:backend/internal/bootstrap/local_runtime_budget_test.go"
+      ]
+    }
+  ],
+  "all_children_are_git_reads": true,
+  "go_compilation_or_tests_run": false,
+  "client_started": false,
+  "go_format_or_compilation_validation": "未运行；等待释放窗口后的唯一执行",
+  "temporary_preparation_directory": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-parallel-prepare"
+}

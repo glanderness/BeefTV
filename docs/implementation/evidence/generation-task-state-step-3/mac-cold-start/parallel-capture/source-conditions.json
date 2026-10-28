@@ -1,0 +1,94 @@
+{
+  "status": "准备条件核查，不是执行结果",
+  "old_failure": {
+    "fixed_commit": "850d89c109b7e94a356834ee51eedba6dba019fb",
+    "metadata_path": "docs/implementation/evidence/generation-task-state-step-3/revision/accepted-check/backend-all.json",
+    "metadata_sha256": "9da2a22f2e751cac4e729d51aae76a86216f2b26215fc9dda79e33441ed03af4",
+    "raw_path": "docs/implementation/evidence/generation-task-state-step-3/revision/accepted-check/backend-all.txt",
+    "raw_sha256": "926088d8deb4035c38ecb946be78cb3b7c6f4bd608001e0376232f8c4f0f65eb",
+    "raw_bytes": 2429110,
+    "failure_lines": [
+      5284,
+      5285
+    ],
+    "open_ns": 5588227625,
+    "budget_ns": 5000000000,
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-count=1",
+      "-timeout=25m"
+    ],
+    "started": "2026-10-28T04:52:17.979177+00:00",
+    "finished": "2026-10-28T05:07:43.294630+00:00",
+    "exit": 1
+  },
+  "original_invocation": {
+    "source": "同任务旧Codex rollout，只读调用记录",
+    "line": 1318,
+    "source_prefix_sha256": "22568782fc704bee267fea5c8cf36324d2d17d48a03b6e8d7f702d7bea2380ec",
+    "redacted_command": "python3 revision/replay.py --repo . --output revision/accepted-check --full",
+    "explicit_p": null,
+    "explicit_parallel": null,
+    "inherited_go_flags_and_gomaxprocs": "未保存，不能推断有效值"
+  },
+  "source_verification": {
+    "manifest_path": "docs/implementation/evidence/generation-task-state-step-3/revision/accepted-check/tested-source-files.json",
+    "manifest_sha256": "f138bc536165646bc823adc6d6df4854ce7ab8a311dc00ffca345a6c10f00a32",
+    "entries": 1936,
+    "all_match_fixed_850_tree": true,
+    "same_old_and_candidate_files_sha256": {
+      "backend/go.mod": "6fd678ca2efa4f71567bc00cd7c7df1166fe9886ab3103c13153b13da0bf75ce",
+      "backend/go.sum": "0c9605ebd70a73d551b56698712070f49d4caa339b10f22341ba72a0af94c411",
+      "backend/internal/bootstrap/runtime.go": "d8d2d397fe7c1e906f23d3f743575e8fc9422e2b9b5ea02669e8130a0d3ee10b",
+      "backend/internal/bootstrap/local_runtime_budget_test.go": "f1186b14b555d5ff5ae00a2fa35379cbedbb1c5aaabf46d7b5f105d904a1b861"
+    },
+    "candidate": "30ed8d92910fe928b84cf918d870b8d600923144",
+    "changed_backend_paths": [
+      "M\tbackend/internal/app/image_submission.go",
+      "M\tbackend/internal/app/service.go",
+      "A\tbackend/internal/app/step3_image_retry_after_refund_test.go"
+    ]
+  },
+  "recoverable": {
+    "command_and_package_set": "已恢复：69包，其中66包有测试、3包无测试；见original-packages.json",
+    "old_fixture_generation": "已恢复：revision/replay.py的GENERATOR、6a155/6d4输入和两个REVIEW变量",
+    "source_worktree_volume": "已恢复：日志源码路径为ExternalWork上的前会话工作区"
+  },
+  "not_recoverable": {
+    "actual_overlapping_packages": "旧输出按包归集，没有精确开始时间",
+    "effective_p_and_parallel": "显式参数未设；继承环境和GOENV未保存",
+    "old_go_version": "旧输出、元数据与相关调用未记录有效go version",
+    "old_plugin_archive_bytes": "旧清单只给协议源码，没有当时物化归档哈希或目录环境",
+    "old_test_temp_data_volume": "只能确认源码盘，不能确认t.TempDir盘",
+    "machine_load_os_cache_and_process_order": "旧现场没有负载快照或调度trace"
+  },
+  "planned_differences": {
+    "product": "30ed候选而不是850；两个产品文件变化保留",
+    "new_N1": "源码不改，仅app执行时skip两个30ed新增测试；不叠加独立N1探针",
+    "package_scope": "一次./...仍会执行旧套件中的既有回归作为原命令背景，非专项重验",
+    "data_and_environment": "ExternalWork数据/缓存、隔离HOME和无凭据环境、GOENV=off、GOTOOLCHAIN=local、禁用依赖下载；不能冒充旧环境",
+    "diagnostics": "Go -json/-exec；仅bootstrap trace；Open四段及user task/region增加开销",
+    "plugin_hashes_match_previous_8_run_capture": true
+  },
+  "planning_estimate": {
+    "old_command_wall_seconds": 925.315,
+    "old_app_reported_seconds": 919.516,
+    "old_bootstrap_reported_seconds": 163.275,
+    "expected_occupation_minutes": [
+      15,
+      25
+    ],
+    "estimate_is_limit": false,
+    "package_timeout_minutes": 25,
+    "original_parallel_capture_commands": 1,
+    "prelude_fixture_go_run_commands": 2,
+    "separate_cold_or_N1_runs": 0
+  },
+  "interpretation_limits": [
+    "未复现则仍然原因未定，不追加尝试",
+    "Runnable等待可证明Go调度等待的贡献；Running墙钟增加不能单独证明计算工作增加",
+    "无法定位冷启动对应task/region、trace不完整或环境失败时保留证据，不能算根因或无插桩验收"
+  ]
+}
