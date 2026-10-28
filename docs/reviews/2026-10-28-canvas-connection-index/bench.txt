@@ -1,0 +1,2 @@
+$ bun run scripts/review.ts bench
+已测 128 组逻辑成本，完整样本统计写入 independent-bench.json。

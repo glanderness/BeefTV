@@ -1,0 +1,17 @@
+{
+  "候选": "f7b82b710e593e959573d6594aeada6048b6d3a9",
+  "基线": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "作者测量顺序": "每个场景先 legacy: measure(...) 全部完成，再 current: measure(...)；不是逐样本交替",
+  "作者差分节点规模": [
+    100,
+    300,
+    500
+  ],
+  "作者差分调用": "仅 legacyResolveConnectionDropTarget 与 resolveConnectionDropTarget，无批量 resolver",
+  "作者差分位置": "全平面伪随机，未定向覆盖精确圆边缘、端口锚点、滚动分镜、更新后的数组",
+  "作者差分次数": 5400,
+  "作者5000节点报告中parity规模": "与 --nodes 无关，仍是100/300/500",
+  "作者冷启动排除": "measure 每次先预热 min(20, REPEATS) 次，始终复用同一 nodes 数组",
+  "原入口": "useCanvasConnectionController 的 pointermove→rAF→getConnectionDropTarget→setState；松手另查一次并决定连接/取消/创建菜单",
+  "可达末尾背板": "createStoryboardGroup/createReferenceGroup 对已有图片/视频设置 parentId，frame 追加在数组末尾；project.tsx 已绑定 onCreateStoryboard/onCreateReferenceGroup"
+}

@@ -1,0 +1,2 @@
+$ python3 <固定快照>/verify-tools.py --dependencies <已有依赖> --output author-verify-tools.json
+测量材料复放通过；结果写入 /Volumes/ExternalWork/todos/workspaces/01a1808b-530d-7e0d-b393-eb5c742324a0/docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.json

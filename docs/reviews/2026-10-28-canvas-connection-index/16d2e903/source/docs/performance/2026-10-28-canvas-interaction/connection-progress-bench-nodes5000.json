@@ -1,0 +1,182 @@
+{
+  "scope": "纯 JS 逻辑耗时（performance.now 包裹的单次调用），不含渲染、绘制、网络与原生宿主；同机负载会影响绝对值，改前改后在同一次运行内交替测量",
+  "repeats": 60,
+  "nodeCounts": [
+    5000
+  ],
+  "entryCounts": [
+    1,
+    10,
+    60,
+    200
+  ],
+  "connectionDropTarget": {
+    "fixture=mixed|nodes=5000|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.1971,
+        "p95Ms": 0.2224
+      },
+      "current": {
+        "medianMs": 0.0024,
+        "p95Ms": 0.0049
+      }
+    },
+    "fixture=mixed|nodes=5000|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.2394,
+        "p95Ms": 0.2551
+      },
+      "current": {
+        "medianMs": 0.0398,
+        "p95Ms": 0.0435
+      }
+    },
+    "fixture=mixed|nodes=5000|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.2501,
+        "p95Ms": 0.3528
+      },
+      "current": {
+        "medianMs": 0.0214,
+        "p95Ms": 0.0261
+      }
+    },
+    "fixture=mixed|nodes=5000|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.2181,
+        "p95Ms": 0.2277
+      },
+      "current": {
+        "medianMs": 0.0398,
+        "p95Ms": 0.0451
+      }
+    },
+    "fixture=batch-heavy|nodes=5000|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.1137,
+        "p95Ms": 0.1295
+      },
+      "current": {
+        "medianMs": 0.0013,
+        "p95Ms": 0.002
+      }
+    },
+    "fixture=batch-heavy|nodes=5000|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.1487,
+        "p95Ms": 0.1721
+      },
+      "current": {
+        "medianMs": 0.0355,
+        "p95Ms": 0.0397
+      }
+    },
+    "fixture=batch-heavy|nodes=5000|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.1421,
+        "p95Ms": 0.1515
+      },
+      "current": {
+        "medianMs": 0.0214,
+        "p95Ms": 0.0257
+      }
+    },
+    "fixture=batch-heavy|nodes=5000|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.1567,
+        "p95Ms": 0.1621
+      },
+      "current": {
+        "medianMs": 0.0383,
+        "p95Ms": 0.0425
+      }
+    },
+    "fixture=root-late|nodes=5000|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 33.9951,
+        "p95Ms": 56.5836
+      },
+      "current": {
+        "medianMs": 0.0012,
+        "p95Ms": 0.0026
+      }
+    },
+    "fixture=root-late|nodes=5000|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 32.7385,
+        "p95Ms": 59.4364
+      },
+      "current": {
+        "medianMs": 0.0763,
+        "p95Ms": 0.0896
+      }
+    },
+    "fixture=root-late|nodes=5000|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 31.628,
+        "p95Ms": 57.712
+      },
+      "current": {
+        "medianMs": 0.0552,
+        "p95Ms": 0.0615
+      }
+    },
+    "fixture=root-late|nodes=5000|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 31.8041,
+        "p95Ms": 44.0737
+      },
+      "current": {
+        "medianMs": 0.0572,
+        "p95Ms": 0.0715
+      }
+    }
+  },
+  "nodeOperationLookup": {
+    "entries=1|lookups-per-frame=33": {
+      "legacy": {
+        "medianMs": 0.0046,
+        "p95Ms": 0.0092
+      },
+      "current": {
+        "medianMs": 0.0033,
+        "p95Ms": 0.0138
+      }
+    },
+    "entries=10|lookups-per-frame=33": {
+      "legacy": {
+        "medianMs": 0.0078,
+        "p95Ms": 0.0297
+      },
+      "current": {
+        "medianMs": 0.0065,
+        "p95Ms": 0.0079
+      }
+    },
+    "entries=60|lookups-per-frame=33": {
+      "legacy": {
+        "medianMs": 0.0223,
+        "p95Ms": 0.0269
+      },
+      "current": {
+        "medianMs": 0.0228,
+        "p95Ms": 0.037
+      }
+    },
+    "entries=200|lookups-per-frame=33": {
+      "legacy": {
+        "medianMs": 0.0698,
+        "p95Ms": 0.0876
+      },
+      "current": {
+        "medianMs": 0.0802,
+        "p95Ms": 0.1015
+      }
+    }
+  },
+  "parity": {
+    "samples": 5400,
+    "mismatches": 0,
+    "examples": []
+  }
+}

@@ -1,0 +1,2 @@
+$ bun run scripts/browser.ts
+已复放 36 条 hook 事件路径；100%精确边缘时，旧版连成线，候选打开创建菜单。

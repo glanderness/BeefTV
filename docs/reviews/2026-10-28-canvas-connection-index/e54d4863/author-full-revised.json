@@ -1,0 +1,448 @@
+{
+  "scope": "纯 JS 逻辑耗时（performance.now 包裹的单次调用），不含渲染、绘制、网络与原生宿主；同机负载会影响绝对值，改前改后在同一次运行内交替测量",
+  "repeats": 1,
+  "nodeCounts": [
+    100
+  ],
+  "entryCounts": [
+    1
+  ],
+  "connectionDropTarget": {
+    "fixture=mixed|nodes=100|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0665,
+        "p95Ms": 0.0665
+      },
+      "current": {
+        "medianMs": 0.0139,
+        "p95Ms": 0.0139
+      }
+    },
+    "fixture=mixed|nodes=100|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.0278,
+        "p95Ms": 0.0278
+      },
+      "current": {
+        "medianMs": 0.0118,
+        "p95Ms": 0.0118
+      }
+    },
+    "fixture=mixed|nodes=100|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.015,
+        "p95Ms": 0.015
+      },
+      "current": {
+        "medianMs": 0.0015,
+        "p95Ms": 0.0015
+      }
+    },
+    "fixture=mixed|nodes=100|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.028,
+        "p95Ms": 0.028
+      },
+      "current": {
+        "medianMs": 0.0152,
+        "p95Ms": 0.0152
+      }
+    },
+    "fixture=batch-heavy|nodes=100|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0509,
+        "p95Ms": 0.0509
+      },
+      "current": {
+        "medianMs": 0.0024,
+        "p95Ms": 0.0024
+      }
+    },
+    "fixture=batch-heavy|nodes=100|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.0217,
+        "p95Ms": 0.0217
+      },
+      "current": {
+        "medianMs": 0.0229,
+        "p95Ms": 0.0229
+      }
+    },
+    "fixture=batch-heavy|nodes=100|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0096,
+        "p95Ms": 0.0096
+      },
+      "current": {
+        "medianMs": 0.0018,
+        "p95Ms": 0.0018
+      }
+    },
+    "fixture=batch-heavy|nodes=100|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.0127,
+        "p95Ms": 0.0127
+      },
+      "current": {
+        "medianMs": 0.0095,
+        "p95Ms": 0.0095
+      }
+    },
+    "fixture=root-late|nodes=100|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0438,
+        "p95Ms": 0.0438
+      },
+      "current": {
+        "medianMs": 0.0236,
+        "p95Ms": 0.0236
+      }
+    },
+    "fixture=root-late|nodes=100|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.0665,
+        "p95Ms": 0.0665
+      },
+      "current": {
+        "medianMs": 0.0122,
+        "p95Ms": 0.0122
+      }
+    },
+    "fixture=root-late|nodes=100|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0359,
+        "p95Ms": 0.0359
+      },
+      "current": {
+        "medianMs": 0.0016,
+        "p95Ms": 0.0016
+      }
+    },
+    "fixture=root-late|nodes=100|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.0383,
+        "p95Ms": 0.0383
+      },
+      "current": {
+        "medianMs": 0.008,
+        "p95Ms": 0.008
+      }
+    },
+    "fixture=group-late-all-children|nodes=100|scale=1|pointer-on-child-edge": {
+      "legacy": {
+        "medianMs": 0.0827,
+        "p95Ms": 0.0827
+      },
+      "current": {
+        "medianMs": 0.0082,
+        "p95Ms": 0.0082
+      }
+    },
+    "fixture=group-late-all-children|nodes=100|scale=0.3|pointer-on-child-edge": {
+      "legacy": {
+        "medianMs": 0.0761,
+        "p95Ms": 0.0761
+      },
+      "current": {
+        "medianMs": 0.0058,
+        "p95Ms": 0.0058
+      }
+    },
+    "fixture=group-late-quarter-children|nodes=100|scale=1|pointer-on-child-edge": {
+      "legacy": {
+        "medianMs": 0.0219,
+        "p95Ms": 0.0219
+      },
+      "current": {
+        "medianMs": 0.0043,
+        "p95Ms": 0.0043
+      }
+    },
+    "fixture=group-late-quarter-children|nodes=100|scale=0.3|pointer-on-child-edge": {
+      "legacy": {
+        "medianMs": 0.0198,
+        "p95Ms": 0.0198
+      },
+      "current": {
+        "medianMs": 0.0042,
+        "p95Ms": 0.0042
+      }
+    }
+  },
+  "indexCost": {
+    "grid|nodes=300": {
+      "legacyFirstQueryMedianMs": 0.0192,
+      "coldBuildPlusQueryMedianMs": 0.0398,
+      "rebuildPlusQueryMedianMs": 0.0359,
+      "hotQueryMedianMs": 0.0005,
+      "coldSamplesMs": [
+        0.0571,
+        0.0494,
+        0.0443,
+        0.0505,
+        0.0696,
+        0.0562,
+        0.0451,
+        0.0384,
+        0.0348,
+        0.0341
+      ],
+      "hotSamplesMs": [
+        0.0625,
+        0.0011,
+        0.0006,
+        0.0005,
+        0.003,
+        0.0005,
+        0.0005,
+        0.0005,
+        0.0005,
+        0.0005
+      ],
+      "rebuildSamplesMs": [
+        0.0909,
+        0.051,
+        0.0476,
+        0.0519,
+        0.0493,
+        0.0481,
+        0.0498,
+        0.0535,
+        0.0388,
+        0.0422
+      ]
+    },
+    "grid|nodes=1000": {
+      "legacyFirstQueryMedianMs": 0.0418,
+      "coldBuildPlusQueryMedianMs": 0.0987,
+      "rebuildPlusQueryMedianMs": 0.0997,
+      "hotQueryMedianMs": 0.0003,
+      "coldSamplesMs": [
+        0.1167,
+        0.1016,
+        0.1073,
+        0.1047,
+        0.1027,
+        0.099,
+        0.0987,
+        0.1058,
+        0.0938,
+        0.0954
+      ],
+      "hotSamplesMs": [
+        0.1008,
+        0.0054,
+        0.0005,
+        0.0004,
+        0.0003,
+        0.0003,
+        0.0003,
+        0.0004,
+        0.0003,
+        0.0003
+      ],
+      "rebuildSamplesMs": [
+        0.1021,
+        0.0979,
+        0.0995,
+        0.1043,
+        0.1015,
+        0.7097,
+        0.1454,
+        0.1057,
+        0.0986,
+        0.0987
+      ]
+    },
+    "grid|nodes=5000": {
+      "legacyFirstQueryMedianMs": 0.1408,
+      "coldBuildPlusQueryMedianMs": 0.4808,
+      "rebuildPlusQueryMedianMs": 0.5212,
+      "hotQueryMedianMs": 0.0012,
+      "coldSamplesMs": [
+        0.5763,
+        0.561,
+        0.4992,
+        0.5051,
+        0.4808,
+        0.4753,
+        0.4776,
+        0.4982,
+        0.5026,
+        0.5492
+      ],
+      "hotSamplesMs": [
+        0.4513,
+        0.0089,
+        0.0018,
+        0.0012,
+        0.0011,
+        0.001,
+        0.0023,
+        0.0017,
+        0.0015,
+        0.0013
+      ],
+      "rebuildSamplesMs": [
+        1.2232,
+        0.4816,
+        0.5171,
+        0.5732,
+        0.5094,
+        0.4979,
+        0.5189,
+        0.5161,
+        0.5135,
+        0.5359
+      ]
+    },
+    "group-all-children|nodes=300": {
+      "legacyFirstQueryMedianMs": 0.4287,
+      "coldBuildPlusQueryMedianMs": 0.0274,
+      "rebuildPlusQueryMedianMs": 0.0278,
+      "hotQueryMedianMs": 0.0003,
+      "coldSamplesMs": [
+        0.0319,
+        0.0277,
+        0.0272,
+        0.0268,
+        0.0258,
+        0.0321,
+        0.0358,
+        0.1118,
+        0.03,
+        0.0305
+      ],
+      "hotSamplesMs": [
+        0.026,
+        0.0003,
+        0.0003,
+        0.0003,
+        0.0003,
+        0.0003,
+        0.0003,
+        0.0002,
+        0.0003,
+        0.0003
+      ],
+      "rebuildSamplesMs": [
+        0.0288,
+        0.028,
+        0.0267,
+        0.0288,
+        0.0267,
+        0.0283,
+        0.0278,
+        0.0273,
+        0.0292,
+        0.0281
+      ]
+    },
+    "group-all-children|nodes=1000": {
+      "legacyFirstQueryMedianMs": 4.8879,
+      "coldBuildPlusQueryMedianMs": 0.087,
+      "rebuildPlusQueryMedianMs": 0.0902,
+      "hotQueryMedianMs": 0.0003,
+      "coldSamplesMs": [
+        0.0962,
+        0.0896,
+        0.0896,
+        0.0903,
+        0.0865,
+        0.0863,
+        0.0866,
+        0.087,
+        0.0899,
+        0.0853
+      ],
+      "hotSamplesMs": [
+        0.0941,
+        0.0004,
+        0.0003,
+        0.0002,
+        0.0002,
+        0.0002,
+        0.0002,
+        0.0002,
+        0.0002,
+        0.0007
+      ],
+      "rebuildSamplesMs": [
+        0.0992,
+        0.0954,
+        0.1015,
+        0.1428,
+        0.1008,
+        0.0954,
+        0.0916,
+        0.095,
+        0.6683,
+        0.1051
+      ]
+    },
+    "group-all-children|nodes=5000": {
+      "legacyFirstQueryMedianMs": 127.4592,
+      "coldBuildPlusQueryMedianMs": 0.479,
+      "rebuildPlusQueryMedianMs": 0.4726,
+      "hotQueryMedianMs": 0.0328,
+      "coldSamplesMs": [
+        0.5716,
+        0.4964,
+        0.4778,
+        0.4593,
+        0.545,
+        0.5039,
+        0.492,
+        0.4985,
+        0.4683,
+        0.4792
+      ],
+      "hotSamplesMs": [
+        0.4915,
+        0.0373,
+        0.0363,
+        0.036,
+        0.0358,
+        0.0395,
+        0.0447,
+        0.0368,
+        0.0361,
+        0.0363
+      ],
+      "rebuildSamplesMs": [
+        1.2095,
+        0.5069,
+        0.4828,
+        0.4642,
+        0.4688,
+        0.4597,
+        0.4673,
+        0.5328,
+        0.4754,
+        0.4926
+      ]
+    }
+  },
+  "nodeOperationLookup": {
+    "entries=1|lookups-per-frame=33": {
+      "legacy": {
+        "medianMs": 0.0268,
+        "p95Ms": 0.0268
+      },
+      "current": {
+        "medianMs": 0.0105,
+        "p95Ms": 0.0105
+      }
+    }
+  },
+  "parity": {
+    "samples": 5400,
+    "mismatches": 0,
+    "examples": []
+  },
+  "boundaryParity": {
+    "samples": 2880,
+    "mismatches": 0,
+    "examples": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "reviewed_candidate": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "base": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "previous_review": "42ae97246ae7971722c6b4e8169f1c3d289c7548",
+  "files": {
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-original-index.json": "5af94c89e13aa1a7e4a4877d2e85859da8a25685cdef87b69bca3477181676a2",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-original-index.txt": "6f207f590936e654c075ee281ab1339140bd99c186781d9f97eb4a1c0a692bab",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-revised.json": "b592f1175900900989201973c66ae3b20c71df546319d5e270b9bfeada38acf5",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-revised.txt": "6f207f590936e654c075ee281ab1339140bd99c186781d9f97eb4a1c0a692bab",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-original-index.json": "065a635c4b08a140daa8c4ef265e7bee5ac4baee5a0458282c22114b780bf971",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-original-index.txt": "8bdc1fb23864a7765766f20009d4bd1e2ab659fa14a0022e9a8343e57cb2b13a",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-revised.json": "c22326342b5858605d947c50caa3fde8559b35f6837e599620fc05e709068f68",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-revised.txt": "8bdc1fb23864a7765766f20009d4bd1e2ab659fa14a0022e9a8343e57cb2b13a",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/browser.txt": "090152d5300549fdcfe2164fd62e4987a7c0118609c21a29e92207fade19a4ae",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/differential.json": "669b4679dffc6348ff811da92bccd5249c7673808b1603a31ad17bc2e6499b5f",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/differential.txt": "47a61b566e70ae2ae708ed093081edcfdbf5c876a3f54d3d40361f74b82e07ba",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-browser.json": "dcd3e4ab8a92af27d80c0fa0c4b6a51753d95c3a82b171ef4247ad12ad28c34e",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-differential.json": "4f5c2ebb34dc9feee17a2591659fe266cc78c6e158713e7d288d4d1e75c5e564",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-tests.json": "7eb4762a70fc8385b7bb089efeef1950c2c7f24d70970e76b746b711a19368b2",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment.json": "dcd3e4ab8a92af27d80c0fa0c4b6a51753d95c3a82b171ef4247ad12ad28c34e",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/hook-browser.json": "c652b1340f83637f8393cba8bcbc0c4b47832e914e5acc84b2a1e0992b8bfd94",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/revised-tests-on-original-index.txt": "bb0a9fb24e408f6250b61962751459a8b3c4832ab2cdb813050b7bcc9c8f53e6",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/revision-audit.json": "e202642a3676d26b23796450301cfe18d51bee00ea6371ff341f5107d6fc3a34",
+    "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/submitted-tests.txt": "4bee615b4d55f7653918b6ed70a22ed1b0f1aa4ed85bf1d42d13219b552aaf76",
+    "docs/reviews/2026-10-28-canvas-connection-index.md": "7f3fb575085eca254d2044e904e052c6cb256173b4d656728ce81c5d8fc14f7b",
+    "docs/reviews/2026-10-28-canvas-connection-index/replay.py": "cfdbc955745602761995a9d13a5b597e498c3e7362f4ec7fa6e0d3d83d275cb4",
+    "docs/reviews/2026-10-28-canvas-connection-index/review.ts": "26842b950fc44d98c0dc7325e5026efc70be5af756cdbee6901b01f80d370dc3",
+    "docs/reviews/2026-10-28-canvas-connection-index/browser.ts": "2c0f24ffcf9a4455880139cdf2bd5e14875ad2057a40d02f17a24666b11d7162",
+    "docs/reviews/2026-10-28-canvas-connection-index/hook-harness.tsx": "853c6b0a59ae82f4aa42d221c7588274fe2c48cc51df5b168eec792ad0805fbc",
+    "docs/reviews/2026-10-28-canvas-connection-index/audit-revision.py": "ab27f7a51dd70480676e3004a1cd5956a3e3d8b549229cb213b33af7e901e7fd"
+  }
+}

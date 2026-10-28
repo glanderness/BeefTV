@@ -1,0 +1,2 @@
+$ bun run scripts/review.ts differential
+已比较 5620 次，发现 0 个精确相切差异；进度更新后几何读取 1196 次。

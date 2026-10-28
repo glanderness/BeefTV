@@ -1,0 +1,268 @@
+{
+  "checked": 2740,
+  "mismatchCount": 15,
+  "mismatches": [
+    {
+      "name": "左侧精确相切-0.05",
+      "kind": "ordinary",
+      "world": {
+        "x": -120,
+        "y": 90
+      },
+      "radius": 1120,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-0.05",
+      "kind": "batch",
+      "world": {
+        "x": -120,
+        "y": 90
+      },
+      "radius": 1120,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "反向右侧精确相切-0.05",
+      "kind": "ordinary",
+      "world": {
+        "x": 2440,
+        "y": 90
+      },
+      "radius": 1120,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-0.25",
+      "kind": "ordinary",
+      "world": {
+        "x": 776,
+        "y": 90
+      },
+      "radius": 224,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-0.25",
+      "kind": "batch",
+      "world": {
+        "x": 776,
+        "y": 90
+      },
+      "radius": 224,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "反向右侧精确相切-0.25",
+      "kind": "ordinary",
+      "world": {
+        "x": 1544,
+        "y": 90
+      },
+      "radius": 224,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "反向右侧精确相切-0.6",
+      "kind": "ordinary",
+      "world": {
+        "x": 1413.3333333333333,
+        "y": 90
+      },
+      "radius": 93.33333333333334,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-1",
+      "kind": "ordinary",
+      "world": {
+        "x": 944,
+        "y": 90
+      },
+      "radius": 56,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-1",
+      "kind": "batch",
+      "world": {
+        "x": 944,
+        "y": 90
+      },
+      "radius": 56,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "反向右侧精确相切-1",
+      "kind": "ordinary",
+      "world": {
+        "x": 1376,
+        "y": 90
+      },
+      "radius": 56,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-2",
+      "kind": "ordinary",
+      "world": {
+        "x": 972,
+        "y": 90
+      },
+      "radius": 28,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-2",
+      "kind": "batch",
+      "world": {
+        "x": 972,
+        "y": 90
+      },
+      "radius": 28,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "反向右侧精确相切-2",
+      "kind": "ordinary",
+      "world": {
+        "x": 1348,
+        "y": 90
+      },
+      "radius": 28,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-3",
+      "kind": "ordinary",
+      "world": {
+        "x": 981.3333333333334,
+        "y": 90
+      },
+      "radius": 18.666666666666668,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    },
+    {
+      "name": "左侧精确相切-3",
+      "kind": "batch",
+      "world": {
+        "x": 981.3333333333334,
+        "y": 90
+      },
+      "radius": 18.666666666666668,
+      "oldResult": {
+        "nodeId": "target",
+        "isNearNode": true
+      },
+      "result": {
+        "nodeId": null,
+        "isNearNode": false
+      }
+    }
+  ],
+  "lifecycle": {
+    "nodeCount": 300,
+    "hotReads": 0,
+    "progressRebuildReads": 1196,
+    "immutableUpdateReturnsNewArray": true
+  },
+  "scope": "纯函数差分，旧回调自动提取；不证明桌面事件与渲染"
+}

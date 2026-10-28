@@ -1,0 +1,24 @@
+{
+  "reviewed_tools_commit": "a57664ed48ca07512b773d3bd637a9af2b068297",
+  "before": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "after": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "previous_review": "430680993297df0a06b08bcb26f60030f7577d4b",
+  "product_src_trees": {
+    "e54d4863": "a4174262c33bed1a381f6eac301d111b5c9b2197",
+    "a57664ed": "a4174262c33bed1a381f6eac301d111b5c9b2197"
+  },
+  "files": {
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.json": "0dfd974741cfec86daac2b8763239ea335038ca2b474a1742e86007ea112dc3d",
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.txt": "cf21d4a99101b253ddda5ac1bbad2d464bc24e134912e19b8965c67820b6fa9a",
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/browser.txt": "090152d5300549fdcfe2164fd62e4987a7c0118609c21a29e92207fade19a4ae",
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/environment-browser.json": "72ca318a51e2ec79554b223250be7c2a37f8588377becd70bcdd6f4b295760e1",
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/environment.json": "72ca318a51e2ec79554b223250be7c2a37f8588377becd70bcdd6f4b295760e1",
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/hook-browser.json": "c652b1340f83637f8393cba8bcbc0c4b47832e914e5acc84b2a1e0992b8bfd94",
+    "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/independent-tools.json": "392a1746d3ebda6e000ef91a60dace67b5261f1bf48487812ba18946b141073f",
+    "docs/reviews/2026-10-28-canvas-connection-index.md": "8c2f141436f1246dde0e23a03cd3fe0e9688ac21af00406dde8321b12bada4e3",
+    "docs/reviews/2026-10-28-canvas-connection-index/audit-tools.py": "68fa9d26a74924d7e5d186d02ba1f19913498bac7427b3e48543527cc8b48750",
+    "docs/reviews/2026-10-28-canvas-connection-index/replay.py": "cfdbc955745602761995a9d13a5b597e498c3e7362f4ec7fa6e0d3d83d275cb4",
+    "docs/reviews/2026-10-28-canvas-connection-index/browser.ts": "2c0f24ffcf9a4455880139cdf2bd5e14875ad2057a40d02f17a24666b11d7162",
+    "docs/reviews/2026-10-28-canvas-connection-index/hook-harness.tsx": "853c6b0a59ae82f4aa42d221c7588274fe2c48cc51df5b168eec792ad0805fbc"
+  }
+}

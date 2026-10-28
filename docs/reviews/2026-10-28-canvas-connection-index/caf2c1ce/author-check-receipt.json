@@ -1,0 +1,26 @@
+{
+  "source": "caf2c1cefbf76eb2afcbca7cdf0dae1ea4a2b05c",
+  "status": "仅读取作者已提交回执，本轮未独立重跑全项目TSC",
+  "sides": {
+    "before": {
+      "ref": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "patch": "native-probe-baseline.patch",
+      "patchSha256": "884acaecfe1dcab10ac4c1de14a594d078d3e49eededf54021a58efbad84cf1a",
+      "typecheck": {
+        "command": "bun x tsc --noEmit",
+        "exitCode": 0,
+        "tail": []
+      }
+    },
+    "after": {
+      "ref": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "patch": "native-probe.patch",
+      "patchSha256": "095ca14af7270af26f18bd0caf3e60b29f70471a993037f05d6c44c52b4f23ee",
+      "typecheck": {
+        "command": "bun x tsc --noEmit",
+        "exitCode": 0,
+        "tail": []
+      }
+    }
+  }
+}

@@ -1,0 +1,722 @@
+{
+  "browser": "156.0.8078.73",
+  "scope": "真实前后 hook + 程序分发 PointerEvent + rAF；无画布渲染、原生鼠标或 FPS；AntD message 与插件持久化被替身隔离",
+  "results": [
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 0.6,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 0.6,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 0.6,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 1,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 1,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 1,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 2,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 2,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": false,
+      "scale": 2,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 0.6,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 0.6,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 0.6,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 1,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 1,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 1,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 2,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 2,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": true,
+      "batch": true,
+      "scale": 2,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 0.6,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 0.6,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 0.6,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 1,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 1,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 1,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 2,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 2,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": false,
+      "scale": 2,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 0.6,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 0.6,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 0.6,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 1,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 1,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 1,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 2,
+      "distanceScreenPx": 55,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 2,
+      "distanceScreenPx": 56,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": "target"
+      },
+      "finish": {
+        "edges": [
+          {
+            "from": "source",
+            "to": "target"
+          }
+        ],
+        "pending": false,
+        "target": null
+      }
+    },
+    {
+      "baseline": false,
+      "batch": true,
+      "scale": 2,
+      "distanceScreenPx": 57,
+      "hover": {
+        "edges": [],
+        "pending": false,
+        "target": null,
+        "batchTarget": null
+      },
+      "finish": {
+        "edges": [],
+        "pending": true,
+        "target": null
+      }
+    }
+  ],
+  "unexpectedRequests": [],
+  "pageErrors": []
+}

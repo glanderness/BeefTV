@@ -1,0 +1,1 @@
+$ bun run scripts/canvas-interaction-bench.ts --nodes 300 --entries 60 --repeats 60

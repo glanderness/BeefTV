@@ -1,0 +1,2 @@
+$ bun run scripts/browser.ts
+已复放 36 条 hook 事件路径；修正版与原基线的悬停和最终动作一致。

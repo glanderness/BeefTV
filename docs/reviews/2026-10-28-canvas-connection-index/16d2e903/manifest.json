@@ -1,0 +1,896 @@
+{
+  "priorReviewCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+  "authorCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+  "sources": [
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.json",
+      "bytes": 5237,
+      "sha256": "0dfd974741cfec86daac2b8763239ea335038ca2b474a1742e86007ea112dc3d",
+      "gitBlob": "e73c2b9439efe833ef3aeadfa145a906fc657d79"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/author-verify-tools.txt",
+      "bytes": 303,
+      "sha256": "cf21d4a99101b253ddda5ac1bbad2d464bc24e134912e19b8965c67820b6fa9a",
+      "gitBlob": "e4a895f1ea76574cbcd35ff313a41276b88c1848"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/browser.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/browser.txt",
+      "bytes": 121,
+      "sha256": "090152d5300549fdcfe2164fd62e4987a7c0118609c21a29e92207fade19a4ae",
+      "gitBlob": "123ddaceaf631660e41b0571e2434d0dd5611d0e"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/environment-browser.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/environment-browser.json",
+      "bytes": 656,
+      "sha256": "72ca318a51e2ec79554b223250be7c2a37f8588377becd70bcdd6f4b295760e1",
+      "gitBlob": "d0a65da8b41a0d826e4bed56e7d4fb13f9c3d75d"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/environment.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/environment.json",
+      "bytes": 656,
+      "sha256": "72ca318a51e2ec79554b223250be7c2a37f8588377becd70bcdd6f4b295760e1",
+      "gitBlob": "d0a65da8b41a0d826e4bed56e7d4fb13f9c3d75d"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/hook-browser.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/hook-browser.json",
+      "bytes": 13809,
+      "sha256": "c652b1340f83637f8393cba8bcbc0c4b47832e914e5acc84b2a1e0992b8bfd94",
+      "gitBlob": "d0a05f2ad1af425ba0252699e52a1700aa2b41c1"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/independent-tools.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/independent-tools.json",
+      "bytes": 3063,
+      "sha256": "392a1746d3ebda6e000ef91a60dace67b5261f1bf48487812ba18946b141073f",
+      "gitBlob": "a0785935b95f120a2716e1c1cf2dff3396b4c1b3"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/manifest.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/a57664ed/manifest.json",
+      "bytes": 2155,
+      "sha256": "ab7d4bc7cc44c0f0214addd2b658a5c0b0dde56c44064d71aecd02cb42999316",
+      "gitBlob": "2272137266b6c79e43672c2e6440de44e5e3576d"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/audit-baseline.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/audit-baseline.py",
+      "bytes": 9285,
+      "sha256": "a15e36bebe2ee80b7d5defea89d284798db7c0ab2ebb9e714f0f395c785e9fb5",
+      "gitBlob": "b5d17a90d9c5b1b62198f47ad4eca7f12aea4283"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/audit-revision.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/audit-revision.py",
+      "bytes": 8753,
+      "sha256": "ab27f7a51dd70480676e3004a1cd5956a3e3d8b549229cb213b33af7e901e7fd",
+      "gitBlob": "3542486149303aee006c152303b640034d51bfc2"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/audit-tools.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/audit-tools.py",
+      "bytes": 9044,
+      "sha256": "68fa9d26a74924d7e5d186d02ba1f19913498bac7427b3e48543527cc8b48750",
+      "gitBlob": "8589391d2a5db5176b52981b61fc86de7f047d4a"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/author-evidence-audit.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/author-evidence-audit.json",
+      "bytes": 1146,
+      "sha256": "6ada780c5d304eda623332361d34d1e38d6cf1eb8d8b97fa531349fa66471379",
+      "gitBlob": "29d0174d9a4f55da89573217de0a30d0850808a2"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/author-replay.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/author-replay.json",
+      "bytes": 3399,
+      "sha256": "8f797f21efebea246ace454a96d34cca938d98f22a82d241c1dd486839089efa",
+      "gitBlob": "58dcc11dcacc4d1db2cc4d04e7da86c6e0dd82f4"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/author-replay.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/author-replay.txt",
+      "bytes": 84,
+      "sha256": "9b68911830413147551f8a2252cae0b96ea8fa8aa9cc37abcf08b6248dd82f5b",
+      "gitBlob": "d5347b8381efdb57d2033e55c9d895037c75511a"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/bench.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/bench.txt",
+      "bytes": 114,
+      "sha256": "0058781a6c7a82fd803c3b540daac3586386a5a181db67146929a639c5c41c02",
+      "gitBlob": "5d7eb3510d2b083d82d3cb393cc20ad892dc9379"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/browser.ts",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/browser.ts",
+      "bytes": 5082,
+      "sha256": "2c0f24ffcf9a4455880139cdf2bd5e14875ad2057a40d02f17a24666b11d7162",
+      "gitBlob": "1dacae311c9e2ec1e74519a8cc0bf01b880960df"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/browser.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/browser.txt",
+      "bytes": 134,
+      "sha256": "8937fdbb54328f884a7744657ce8ecdc78b07f52699d6325f4c6584cad92a06f",
+      "gitBlob": "1ad1b234fcaaa59c186ee2457ebfb578658060b6"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/after-callbacks.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/after-callbacks.txt",
+      "bytes": 1970,
+      "sha256": "30b7c5475343a4045b9f5918c28a03835618d62b5e767e4263aa32df2a4aaf9e",
+      "gitBlob": "4dce18275e921527979bdf72e1d687b51e3610cb"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/author-check-receipt.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/author-check-receipt.json",
+      "bytes": 802,
+      "sha256": "1e1007cc0fb5189af4e6b834661677b4824fdee6af43d488e18d6912b40d34ce",
+      "gitBlob": "14f2893101655feea3178b2db1ecef7b7cddee6a"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/before-callbacks.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/before-callbacks.txt",
+      "bytes": 1966,
+      "sha256": "888294d03e5697f1a5031a12a4f64198bfb8c3a0605b2e91caffb3a62aa7267a",
+      "gitBlob": "45408b2e9dd13c0080c7e626cb9b9322b21d9cfe"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/independent-baseline.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/independent-baseline.json",
+      "bytes": 9860,
+      "sha256": "456cf9f606880adbc945ee0e9a8ebcf7de4fa1ab8e172bbfe90c2f6d38cc2007",
+      "gitBlob": "c5b4ef86d5caffa1f4592dabdc81862568119673"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/manifest.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/caf2c1ce/manifest.json",
+      "bytes": 1152,
+      "sha256": "bfcbfa5b71ef18b43ac606983add6c8089a64f6e873ea10a2fa963d162804a9e",
+      "gitBlob": "4f791812050772982cf196039b962bcc29013941"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/differential.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/differential.json",
+      "bytes": 5234,
+      "sha256": "8b64f05b58e5948c1d859fce16647bb5c05b8973d1fe1ba3f4d4005f3b64b3af",
+      "gitBlob": "3ece282ad0e8e28680c811919b2bf2e8adfc0de3"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/differential.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/differential.txt",
+      "bytes": 136,
+      "sha256": "691a161757d112bbc586020a5e17ef46268abd2dce4229461eb2dc246e5759a0",
+      "gitBlob": "d996c000695c6d0e436b3c6b836d2ce9142373cc"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-original-index.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-original-index.json",
+      "bytes": 12153,
+      "sha256": "5af94c89e13aa1a7e4a4877d2e85859da8a25685cdef87b69bca3477181676a2",
+      "gitBlob": "84dbf6f1c8cda44c8d160b36f4a06d7361b060d3"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-original-index.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-original-index.txt",
+      "bytes": 87,
+      "sha256": "6f207f590936e654c075ee281ab1339140bd99c186781d9f97eb4a1c0a692bab",
+      "gitBlob": "f1efcd22fd002b64c279b992cc77cd8c52623156"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-revised.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-revised.json",
+      "bytes": 9173,
+      "sha256": "b592f1175900900989201973c66ae3b20c71df546319d5e270b9bfeada38acf5",
+      "gitBlob": "2f050b5c57fc7c9d849c4cd14055350334f06037"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-revised.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-full-revised.txt",
+      "bytes": 87,
+      "sha256": "6f207f590936e654c075ee281ab1339140bd99c186781d9f97eb4a1c0a692bab",
+      "gitBlob": "f1efcd22fd002b64c279b992cc77cd8c52623156"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-original-index.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-original-index.json",
+      "bytes": 3982,
+      "sha256": "065a635c4b08a140daa8c4ef265e7bee5ac4baee5a0458282c22114b780bf971",
+      "gitBlob": "2bb6631a70fc91aafa1aca96c7447065826d39c5"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-original-index.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-original-index.txt",
+      "bytes": 42,
+      "sha256": "8bdc1fb23864a7765766f20009d4bd1e2ab659fa14a0022e9a8343e57cb2b13a",
+      "gitBlob": "bc1f45383f5b1927abcc9bd9b7229a2e54ade515"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-revised.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-revised.json",
+      "bytes": 1006,
+      "sha256": "c22326342b5858605d947c50caa3fde8559b35f6837e599620fc05e709068f68",
+      "gitBlob": "a50e571c534c27f4cfec4a88de962d5f344624c3"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-revised.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/author-parity-revised.txt",
+      "bytes": 42,
+      "sha256": "8bdc1fb23864a7765766f20009d4bd1e2ab659fa14a0022e9a8343e57cb2b13a",
+      "gitBlob": "bc1f45383f5b1927abcc9bd9b7229a2e54ade515"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/browser.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/browser.txt",
+      "bytes": 121,
+      "sha256": "090152d5300549fdcfe2164fd62e4987a7c0118609c21a29e92207fade19a4ae",
+      "gitBlob": "123ddaceaf631660e41b0571e2434d0dd5611d0e"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/differential.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/differential.json",
+      "bytes": 355,
+      "sha256": "669b4679dffc6348ff811da92bccd5249c7673808b1603a31ad17bc2e6499b5f",
+      "gitBlob": "4213a055b9e2a69a816a2fc060f7ac6f9c6c0337"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/differential.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/differential.txt",
+      "bytes": 135,
+      "sha256": "47a61b566e70ae2ae708ed093081edcfdbf5c876a3f54d3d40361f74b82e07ba",
+      "gitBlob": "7b34efeb500fdf4bf49225ae29b350dc4a16613b"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-browser.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-browser.json",
+      "bytes": 657,
+      "sha256": "dcd3e4ab8a92af27d80c0fa0c4b6a51753d95c3a82b171ef4247ad12ad28c34e",
+      "gitBlob": "0fee53c05cfa92e8deee3f6f91e8171413d9c195"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-differential.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-differential.json",
+      "bytes": 657,
+      "sha256": "4f5c2ebb34dc9feee17a2591659fe266cc78c6e158713e7d288d4d1e75c5e564",
+      "gitBlob": "f950306b0381edc89fa5eb41b85d34cfe73458b2"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-tests.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment-tests.json",
+      "bytes": 658,
+      "sha256": "7eb4762a70fc8385b7bb089efeef1950c2c7f24d70970e76b746b711a19368b2",
+      "gitBlob": "a0efd1d36792ae864d0f0ad9b855b0d40a30c619"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/environment.json",
+      "bytes": 657,
+      "sha256": "dcd3e4ab8a92af27d80c0fa0c4b6a51753d95c3a82b171ef4247ad12ad28c34e",
+      "gitBlob": "0fee53c05cfa92e8deee3f6f91e8171413d9c195"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/hook-browser.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/hook-browser.json",
+      "bytes": 13809,
+      "sha256": "c652b1340f83637f8393cba8bcbc0c4b47832e914e5acc84b2a1e0992b8bfd94",
+      "gitBlob": "d0a05f2ad1af425ba0252699e52a1700aa2b41c1"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/manifest.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/manifest.json",
+      "bytes": 3990,
+      "sha256": "6f947ccac81afdcd3f474d70d592802bb779ecc32e78a3584c9b98682941509d",
+      "gitBlob": "3b21b9fda12ca763178a1e7ca31ec6e04adcf8f4"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/revised-tests-on-original-index.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/revised-tests-on-original-index.txt",
+      "bytes": 4842,
+      "sha256": "bb0a9fb24e408f6250b61962751459a8b3c4832ab2cdb813050b7bcc9c8f53e6",
+      "gitBlob": "c46d36e1314d264a3c2fbcdcb450198841721ed3"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/revision-audit.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/revision-audit.json",
+      "bytes": 9423,
+      "sha256": "e202642a3676d26b23796450301cfe18d51bee00ea6371ff341f5107d6fc3a34",
+      "gitBlob": "8ded899fc22c1d719377f3a17819dc67737e9576"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/submitted-tests.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/e54d4863/submitted-tests.txt",
+      "bytes": 4136,
+      "sha256": "4bee615b4d55f7653918b6ed70a22ed1b0f1aa4ed85bf1d42d13219b552aaf76",
+      "gitBlob": "9769c45a77ea1d256c48bc3e08c4bb39af8f4fd4"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/environment-author.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/environment-author.json",
+      "bytes": 659,
+      "sha256": "e224da366679fc6b1765438f40366111b130e2fabfc91ce11f3f3f98f0443ac2",
+      "gitBlob": "03db660a4b8da6f9ff7fd60d66aa0aa3c7c3ca8e"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/environment-differential.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/environment-differential.json",
+      "bytes": 659,
+      "sha256": "44b40e6f05dc53068a60c6c0298a1080f0ef33c77a5d9375560ab119f13b5bbc",
+      "gitBlob": "186c0df2ddab376c432faa9aa367f05f3e66b57f"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/environment.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/environment.json",
+      "bytes": 659,
+      "sha256": "daa666ed9f8031ab068a559fc5de70c9641aad918dcca4e934f4008fcf22fe13",
+      "gitBlob": "5f4e492b758ca42d660e6d305fbbf60b8239c3fb"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/hook-browser.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/hook-browser.json",
+      "bytes": 13429,
+      "sha256": "ac118409dbc891451f09de2ac88ae60208e1b766ae052f03c862bfa7cc5f745f",
+      "gitBlob": "42e3673ce3b84167849d48f7854042176214078b"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/hook-harness.tsx",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/hook-harness.tsx",
+      "bytes": 2754,
+      "sha256": "853c6b0a59ae82f4aa42d221c7588274fe2c48cc51df5b168eec792ad0805fbc",
+      "gitBlob": "c0b47ed1fb08a589287afc49a7b8ccd02ada6e5c"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/independent-bench.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/independent-bench.json",
+      "bytes": 50156,
+      "sha256": "ee28960773c3276c36e344be504ab8553e6e7da4bea694720dff921900e1d52c",
+      "gitBlob": "2b1356afcf6720dcc42e32858ff608b8ba80c6e0"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/measurement-load.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/measurement-load.json",
+      "bytes": 153,
+      "sha256": "20f6703f0327cb8cc195030b8217a867b1f534fdc3c8a51dc8d8c62c1f2e1337",
+      "gitBlob": "b4439ab4d72da12e0452f87b52a9994a44087c19"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/replay.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/replay.py",
+      "bytes": 8350,
+      "sha256": "cfdbc955745602761995a9d13a5b597e498c3e7362f4ec7fa6e0d3d83d275cb4",
+      "gitBlob": "fa6a24a052f17ae98c3c6edb40867dec57e52d62"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/review.ts",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/review.ts",
+      "bytes": 13631,
+      "sha256": "26842b950fc44d98c0dc7325e5026efc70be5af756cdbee6901b01f80d370dc3",
+      "gitBlob": "b7e13c46bc34733c72b886e7d39f9d7931cff248"
+    },
+    {
+      "kind": "前四轮原件",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index/submitted-tests.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/submitted-tests.txt",
+      "bytes": 3691,
+      "sha256": "9979f98325ef451cdd1e5cb1fd8972f02f721becbe306520a9a23b8e705d844a",
+      "gitBlob": "353a76a1c8081903050f33e2900690ff976b5cee"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/connection-progress-bench-nodes100-1000.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/connection-progress-bench-nodes100-1000.json",
+      "bytes": 12375,
+      "sha256": "d2334949756ed6f70ea75906cc6ce4eeaa0cf7d5d3b930dcbe29fa9dc7a6f63b",
+      "gitBlob": "45b3480fbbecc62bcd20cd72b72203100e21c5f4"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/connection-progress-bench-nodes5000.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/connection-progress-bench-nodes5000.json",
+      "bytes": 4066,
+      "sha256": "df65bde131590dcc3b388807c4d43cf6a2f20c7446d19d9e2d2e08385cf924f7",
+      "gitBlob": "dc5e185fb20515ad71c08a91c090093ee7a4993f"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-after-grouped1000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-after-grouped1000-r1.ndjson",
+      "bytes": 893,
+      "sha256": "4154e6f8a093aa72d694cbf4556914cdca508991b5bd46c3ebc2e89b6b040696",
+      "gitBlob": "76db17be3c27c97b23000d210a96b4f938a5842c"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-after.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-after.ndjson",
+      "bytes": 1270,
+      "sha256": "b4463c3b0457c6188eb5cb42f5dddb0162ad1d6968f21c81ab9f497d71bd5c12",
+      "gitBlob": "e55a676bbd9ba80b608174aaed81bcb5f032220e"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped-r1.ndjson",
+      "bytes": 2484,
+      "sha256": "bf680f04caf4f9893f97d783f2db3d3c9f9d7df5416d2f0880f91dbc67cc7872",
+      "gitBlob": "2455522efe9f74ebeb5814c978fbe69616db3751"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped-r2.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped-r2.ndjson",
+      "bytes": 702,
+      "sha256": "4f1c8a8aa14d8cdd056ad26c36fb3dd3f7567258a79e110ee6c108ae3ae004a8",
+      "gitBlob": "b0b9cdd531f881bb86cd09d82a645c612982ffd2"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped-r3.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped-r3.ndjson",
+      "bytes": 181,
+      "sha256": "57c376435ce3d769cf88de21548fede6eae6226d946593fd72ef85a0e8eaf413",
+      "gitBlob": "89a6ccd2411d307faaa04558b3fd827f786ac9c0"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped1000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before-grouped1000-r1.ndjson",
+      "bytes": 760,
+      "sha256": "9c9307f375d65f0649cc02ffea91535ddd12adde99da1aee92e72a3679b400b5",
+      "gitBlob": "9c626b25275d6cc5bbfb69d190fd45dcf0dfccb7"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/early-rounds-superseded/perf-before.ndjson",
+      "bytes": 1371,
+      "sha256": "7e0a20c7660cc61fc55877b7855af3e2deb56b7c57024b802dc69d4c21028ddd",
+      "gitBlob": "7123680332b10a09e39174a173fcaa16fc73dbda"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/environment.txt",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/environment.txt",
+      "bytes": 394,
+      "sha256": "371a8ccb022903c173ca402df439380d2fc263830d13ea8d6b448482beb99bc8",
+      "gitBlob": "9b6f7917939da612dc0c6810f8cbd6d5e4097415"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/hover-bench-nodes300-scale0.25.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/hover-bench-nodes300-scale0.25.json",
+      "bytes": 2837,
+      "sha256": "bbb6f071e5337686b77566da6b6af2b6b980be9185b59a78efecacc1ef81c769",
+      "gitBlob": "e11006458ced0a215c036bed0fcf1ff37799fdae"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/hover-bench-nodes300-scale0.6.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/hover-bench-nodes300-scale0.6.json",
+      "bytes": 2846,
+      "sha256": "6ab1f952f7d980266609e84415d1d0564d94d9bb3758d631f196c9bed59bb186",
+      "gitBlob": "9907065be2d77c5fa885e98edade14c032cd8bb5"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/hover-bench-nodes300-scale1.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/hover-bench-nodes300-scale1.json",
+      "bytes": 2855,
+      "sha256": "6e6b6548060db20f11ef611a25f7dc5979d68bd2601d34d7d993af73e90df260",
+      "gitBlob": "d5bed9276352add1a09bb4b251ea8a28039d0116"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/native-builds.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/native-builds.json",
+      "bytes": 5053,
+      "sha256": "f81d118455491ec87add61cd2f7d2bcb3e8866dd1f7238c8821b131744985d5b",
+      "gitBlob": "260352ad04b2acd1ba24704a1b89e89f3ede3373"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/native-probe-baseline.patch",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/native-probe-baseline.patch",
+      "bytes": 15400,
+      "sha256": "884acaecfe1dcab10ac4c1de14a594d078d3e49eededf54021a58efbad84cf1a",
+      "gitBlob": "fc58816f06e671194ba03d0c3eae260790f00102"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/native-probe.patch",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/native-probe.patch",
+      "bytes": 16966,
+      "sha256": "095ca14af7270af26f18bd0caf3e60b29f70471a993037f05d6c44c52b4f23ee",
+      "gitBlob": "43ae731df3e085ad3dc107832b5b446466033529"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/perf-native.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/perf-native.ndjson",
+      "bytes": 2707,
+      "sha256": "839951b8ba5afe9335a9aa9fb7dacdfe1ebcb56f3e5a1a15b334a9087a7e10c9",
+      "gitBlob": "2dc63bb0a0e92101b9ec1fb33ee7ec671907c7e1"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/perf-sink.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/perf-sink.py",
+      "bytes": 2485,
+      "sha256": "4610dace26034d31d5e5f533f4658abce11e0f7490bb391acd7a050b4e5f49c9",
+      "gitBlob": "63ba1d8ecdd4ddd9f04006f3245c6f8e207351a5"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/prepare-native-app.sh",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/prepare-native-app.sh",
+      "bytes": 1176,
+      "sha256": "47be239182f9e7848bed28dc629e49ca992b9d6d4cc298871d2203311ef4c078",
+      "gitBlob": "ec92e05f340c31fc274f250c57db4506527c26bd"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped-r1.ndjson",
+      "bytes": 751,
+      "sha256": "a014633511a470361b121803ec51aa12c78d8e4755746a1089f5d8db22ef80c0",
+      "gitBlob": "83da528ee5d2843a4af795e3630e4a38e4d9c823"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped1000-r2.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped1000-r2.ndjson",
+      "bytes": 1232,
+      "sha256": "572b5d3d238aba95cb72441e1e118e5e2ed4d16923605d46650fe54615e18fa3",
+      "gitBlob": "45272bb0c1444d32f780cf787f271832bd61d7b1"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped2000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped2000-r1.ndjson",
+      "bytes": 762,
+      "sha256": "a42913739ab3d623e121ccbe751c3f215f0db06da3c57939761938099756f5b0",
+      "gitBlob": "2991d843814a4cf4efc89ceaca84d6d0c7fc9cbc"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped4000-hoverpan.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped4000-hoverpan.ndjson",
+      "bytes": 758,
+      "sha256": "6043cab035db465511ca1146ec0f0afcb7a23e99e98dc09d1aa8b4ebb87f283e",
+      "gitBlob": "2498143a42a55addb8c4520bcfd4eb9714c34e68"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped4000-nav.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped4000-nav.ndjson",
+      "bytes": 748,
+      "sha256": "667255b6b729f2fb6deb5540572c2adc22c79fbd92543bda4a7fe6e05e7d3d24",
+      "gitBlob": "9727ddb756cdcac0880dd9be162fec98298964a2"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped4000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-after-grouped4000-r1.ndjson",
+      "bytes": 761,
+      "sha256": "855ba85235fff61990ef9fbf8c5d70a477af929877610ead9f32cf442ba8d9fb",
+      "gitBlob": "91b0c0d0829f8d0dbc57c5fe06a1abdcdbab7107"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped-r4.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped-r4.ndjson",
+      "bytes": 748,
+      "sha256": "6d498f9457fa40ea254355e58dec2bf5ad3a7edc255880789d452d5b7609ce3a",
+      "gitBlob": "4aa72c07c9da6a8cb077726fe56a3b44c10a41d1"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped1000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped1000-r1.ndjson",
+      "bytes": 760,
+      "sha256": "9c9307f375d65f0649cc02ffea91535ddd12adde99da1aee92e72a3679b400b5",
+      "gitBlob": "9c626b25275d6cc5bbfb69d190fd45dcf0dfccb7"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped2000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped2000-r1.ndjson",
+      "bytes": 758,
+      "sha256": "c90962c3f583141c176d042061e5720be16541c3c249a39a4b19ea99863e6c12",
+      "gitBlob": "cc88d8d13b21a54a592b26f2c38ba0dcff0a57ca"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-hoverpan.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-hoverpan.ndjson",
+      "bytes": 640,
+      "sha256": "2d75e185e8af960e875c838fce36bc576df4c9358ae22461a2f9f2d2c3cc68b8",
+      "gitBlob": "1656a84f3dc89181fbf2b329a3180874a4af8993"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-nav.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-nav.ndjson",
+      "bytes": 771,
+      "sha256": "8d2cec87d45f05a3d05b1dc559f2be9c051fd5ec181de9248095a9bb56d5eb3d",
+      "gitBlob": "a6cdfd265756222a3c0b391ed0dd3ffbf1a339e3"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-pan.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-pan.ndjson",
+      "bytes": 771,
+      "sha256": "defd76cc6774c09c6ca87bbe267595057d12e13e30b9f0d900315900124858a9",
+      "gitBlob": "de85c06aad238998317f4adc05c82d1eff10d412"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-r1.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-r1.ndjson",
+      "bytes": 762,
+      "sha256": "d697ef39fa7c2035745f66b2a1aa64b5c26521726ea8f2774288a2a45f2ff1c5",
+      "gitBlob": "6e1bd27f9c4f7668cdd1078c7a29656d824166e6"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-r2.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-grouped4000-r2.ndjson",
+      "bytes": 760,
+      "sha256": "dc1df85ceee89e6bc01de447cf39e2e2a477099f70ae0a6af52d32e0a461844a",
+      "gitBlob": "67f4a0bc17865390c87ffe7d50ebf10131acdae2"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-active-100.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-active-100.ndjson",
+      "bytes": 452,
+      "sha256": "98d40cf2aa8e44a9fcd86902060de82e51f447ca3301fb595c1ac5bbe802bc8b",
+      "gitBlob": "6c7127010e6b27dd5156ec3061c13fe828a91103"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-active.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-active.ndjson",
+      "bytes": 449,
+      "sha256": "7599c63ca9480c877efca923eb2a99852c23721845882c57f706b42e6ad2dc3d",
+      "gitBlob": "5e780e5da29c25df258f923c0ded0ea66019e3d9"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-idle-100.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-idle-100.ndjson",
+      "bytes": 449,
+      "sha256": "33de79132cfefc4017709ae74cbb05ae928b7ac34412a466bfa7693e355b0320",
+      "gitBlob": "e4c11384c00f76d90b961bacbeb0988be980a233"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-idle.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-overlay-idle.ndjson",
+      "bytes": 631,
+      "sha256": "a9decccbcf0ddb889c0e932d882f91fb702be87002c3e312b1daad9d33a41c69",
+      "gitBlob": "55c974bfd19e8abd088b318978f93a99ccd8aa6e"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/perf-before-remote-revision.ndjson",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/perf-before-remote-revision.ndjson",
+      "bytes": 1799,
+      "sha256": "8cb339c57e3c42014f4a587f24277bece7ccd040a2ad1a36d4fc32f0cf561bd6",
+      "gitBlob": "ba2f6b14fd1d20f41a5133e0888b59ec17d0705e"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/round5/round.sh",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/round5/round.sh",
+      "bytes": 1752,
+      "sha256": "95f68e031898d22663b5ebddf5966af8f89fd647d0218ee9af78857a461c18b4",
+      "gitBlob": "bbc3dd6c2eb250fc32e91a6204f4710caa8fd18f"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/seed-canvas.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/seed-canvas.py",
+      "bytes": 9289,
+      "sha256": "a460c42cd79fc4fea1beafcef6330b942825f53fbcbacb5809ddecaf4223981d",
+      "gitBlob": "6e3903ce80ab2c815b3d3c0176200efefa74e0d6"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/verify-tools.json",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/verify-tools.json",
+      "bytes": 14104,
+      "sha256": "245b7505babbdab4d4ae0b2c879bc4356a1e281d716f1ec2a8c32508ea3b974b",
+      "gitBlob": "23a8845e3222641a167cc49147500031331d7b40"
+    },
+    {
+      "kind": "第五轮作者固定原件",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction/verify-tools.py",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction/verify-tools.py",
+      "bytes": 20356,
+      "sha256": "bc294f31bfc97f3499036176ac83c32a5d381c05809e378cbaa5548b0717ee37",
+      "gitBlob": "573cda380fe1c62ca4e3c98cfdee28bb6dcfa08a"
+    },
+    {
+      "kind": "前四轮原报告",
+      "sourceCommit": "5c938e0860ad2d8416d9afaa83b729d21cb3c9a0",
+      "sourcePath": "docs/reviews/2026-10-28-canvas-connection-index.md",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index.md",
+      "bytes": 44921,
+      "sha256": "26571f7d5e9d720c65a50e88f61b6737e51f0b2151920aaf84fd3f05c9b664e2",
+      "gitBlob": "2a40e2f6c86506dc3776d8f32ccf73bdf34e41fa"
+    },
+    {
+      "kind": "第五轮作者原报告",
+      "sourceCommit": "16d2e903ebb54f057cf7842e9c605f28a1ae665a",
+      "sourcePath": "docs/performance/2026-10-28-canvas-interaction.md",
+      "archivePath": "docs/reviews/2026-10-28-canvas-connection-index/16d2e903/source/docs/performance/2026-10-28-canvas-interaction.md",
+      "bytes": 64166,
+      "sha256": "e0c94d7ca17abdccaea59145a9df2d8b8a5e3819d8f826b7d21b26bb7070cc20",
+      "gitBlob": "b6ceea68be08ddf91f7e829a6d7bf7a556b9a523"
+    }
+  ],
+  "missingOriginals": [
+    {
+      "path": "docs/performance/2026-10-28-canvas-interaction/round5/isolated-client-access.log",
+      "gitCatFileExitCode": 128,
+      "stderr": "fatal: path 'docs/performance/2026-10-28-canvas-interaction/round5/isolated-client-access.log' does not exist in '16d2e903ebb54f057cf7842e9c605f28a1ae665a'"
+    }
+  ],
+  "note": "source/ 为固定提交原字节；源码摘录与审计解析为本轮新生成。前四轮报告后续仅追加第五轮，不改原前缀。"
+}

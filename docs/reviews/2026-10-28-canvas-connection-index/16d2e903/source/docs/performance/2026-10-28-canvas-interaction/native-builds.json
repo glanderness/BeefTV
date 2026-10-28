@@ -1,0 +1,89 @@
+{
+  "purpose": "第五轮（2026-10-28）原生 Mac 客户端同条件对比所用的两侧构建来源与产物身份。任何一轮采样都能用本文件把 ndjson 证据反查到具体源码、补丁和二进制。",
+  "generatedAt": "2026-10-28T07:00:00Z",
+  "probe": {
+    "file": "web/src/perf-probe.ts",
+    "sha256": "8a83496d395191c2dc42b2e5690e9355be954252dbae3deaecf3d3e986d2dc00",
+    "note": "两侧逐字节相同；把 rAF 帧间隔、页面/节点渲染次数、连线落点调用与耗时、索引建立/查询、进度查询计数 fetch 到 127.0.0.1:8799。"
+  },
+  "sides": [
+    {
+      "side": "before",
+      "role": "基线（无空间索引，逐节点线性扫描）",
+      "sourceCommit": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "patch": {
+        "file": "native-probe-baseline.patch",
+        "sha256": "884acaecfe1dcab10ac4c1de14a594d078d3e49eededf54021a58efbad84cf1a"
+      },
+      "worktree": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/before",
+      "worktreeHead": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "worktreeStatusShort": [
+        "M web/src/components/canvas/canvas-node.tsx",
+        "M web/src/lib/operation-progress.ts",
+        "M web/src/main.tsx",
+        "M web/src/pages/canvas/project.tsx",
+        "M web/src/pages/canvas/use-canvas-connection-controller.ts",
+        "?? web/src/perf-probe.ts"
+      ],
+      "appPath": "/private/tmp/beef-perf/apps/BeefTV2-before.app",
+      "bundleId": "com.wails.beeftv.perfcanvas2-before",
+      "binaryPath": "/private/tmp/beef-perf/apps/BeefTV2-before.app/Contents/MacOS/BeefTV",
+      "binarySha256Prefix": "e1d40190c2736c2c",
+      "dataDir": "/private/tmp/beef-perf/data/before",
+      "webkitStore": "~/Library/WebKit/com.wails.beeftv.perfcanvas2-before"
+    },
+    {
+      "side": "after",
+      "role": "候选（画布空间索引 + 相切修复）",
+      "sourceCommit": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "patch": {
+        "file": "native-probe.patch",
+        "sha256": "095ca14af7270af26f18bd0caf3e60b29f70471a993037f05d6c44c52b4f23ee"
+      },
+      "worktree": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/after",
+      "worktreeHead": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "worktreeStatusShort": [
+        "M web/src/components/canvas/canvas-node.tsx",
+        "M web/src/lib/canvas/canvas-connection-target.ts",
+        "M web/src/lib/operation-progress.ts",
+        "M web/src/main.tsx",
+        "M web/src/pages/canvas/project.tsx",
+        "M web/src/pages/canvas/use-canvas-connection-controller.ts",
+        "?? web/src/perf-probe.ts"
+      ],
+      "appPath": "/private/tmp/beef-perf/apps/BeefTV2-after.app",
+      "bundleId": "com.wails.beeftv.perfcanvas2-after",
+      "binaryPath": "/private/tmp/beef-perf/apps/BeefTV2-after.app/Contents/MacOS/BeefTV",
+      "binarySha256Prefix": "73c254e14cc9dbbd",
+      "dataDir": "/private/tmp/beef-perf/data/after",
+      "webkitStore": "~/Library/WebKit/com.wails.beeftv.perfcanvas2-after"
+    }
+  ],
+  "sourceDelta": {
+    "range": "6a155448..e54d4863",
+    "commits": [
+      "e54d4863 perf(canvas): fix snap-circle tangent miss and correct index report"
+    ],
+    "note": "两侧只差这一个提交：画布空间索引与吸附圆相切漏判修复。除该提交外两侧源码相同，因此悬停、平移缩放、进度查询、保存/轮询路径的差异只能来自环境噪声。"
+  },
+  "build": {
+    "prerequisite": "sh plugin-packages/build-packages.sh（每侧生成 86 个 .beeftv-plugin；缺这一步 build-beeftv-release.sh 会在 cp plugin-packages/*.beeftv-plugin 处失败，CI 同样先跑它，见 .github/workflows/release-desktop.yml:179）",
+    "command": "BEEFTV_SKIP_LOCAL_VERIFY=1 BEEFTV_NODE_RUNTIME=/Applications/BeefTV.app/Contents/Resources/agent-host/runtime BEEFTV_MEDIA_RUNTIME=/Applications/BeefTV.app/Contents/Resources/media-runtime bash scripts/build-beeftv-release.sh",
+    "cwd": "<对应 worktree 根>",
+    "output": "<worktree>/backend/cmd/desktop/build/bin/BeefTV.app",
+    "duration": "热缓存约 17 秒/侧；首次失败前的插件打包耗时未单独计时",
+    "verifiedInBinary": "strings 命中 perf-rec-start，说明探针进包"
+  },
+  "worktreeMove": {
+    "from": "/private/tmp/beef-perf/{before,after}",
+    "to": "/Volumes/Workspaces/Worktrees/BeefTV/canvas-interaction-perf-20261028/{before,after}",
+    "method": "git worktree move 报 Cross-device link；改用 rsync -a + git worktree repair，核对 HEAD、未提交插桩与关键文件 sha256 一致后删除旧目录",
+    "sideEffect": "rsync 触发 Spotlight 索引，采样期间 mds_stores 持续占用 CPU（见报告第 5.7 节负载说明）"
+  },
+  "isolation": {
+    "bundleIdSeparate": true,
+    "dataDirSeparate": true,
+    "userAppUntouched": "~/Library/WebKit/com.wails.beeftv 与 /Applications/BeefTV.app 全程未读写",
+    "realCost": "0（种子画布用内联 data:image/svg+xml，无模型调用；假任务行直接写隔离库）"
+  }
+}

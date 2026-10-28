@@ -1,0 +1,1 @@
+$ bun run scripts/review-author-parity.ts
