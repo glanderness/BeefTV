@@ -399,6 +399,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	observation.StatusCode = resp.StatusCode
 	observation.DeclaredResponseBytes = resp.ContentLength
 	observation.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"), resp.Header.Get("X-Oneapi-Request-Id"))
+	observation.ResponseHeaders = resp.Header.Clone()
 	if resp.ContentLength > responseLimit {
 		observation.Outcome = "response_limit"
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))

@@ -1,0 +1,147 @@
+{
+  "runs": [
+    {
+      "variant": "base-original",
+      "position": 1,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 3253,
+      "phase_ns": {},
+      "raw_output": "original-1-base.txt"
+    },
+    {
+      "variant": "candidate-original",
+      "position": 2,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1303,
+      "phase_ns": {},
+      "raw_output": "original-2-candidate.txt"
+    },
+    {
+      "variant": "candidate-original",
+      "position": 3,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1296,
+      "phase_ns": {},
+      "raw_output": "original-3-candidate.txt"
+    },
+    {
+      "variant": "base-original",
+      "position": 4,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1212,
+      "phase_ns": {},
+      "raw_output": "original-4-base.txt"
+    },
+    {
+      "variant": "base-diagnostic",
+      "position": 1,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1284,
+      "phase_ns": {
+        "database_and_schema": 40360542,
+        "service_and_plugins": 1168711375,
+        "builtin_initializers": 56711417,
+        "composition_and_routes": 18065833
+      },
+      "raw_output": "diagnostic-1-base.txt"
+    },
+    {
+      "variant": "candidate-diagnostic",
+      "position": 2,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1441,
+      "phase_ns": {
+        "database_and_schema": 46076084,
+        "service_and_plugins": 1326683417,
+        "builtin_initializers": 52439750,
+        "composition_and_routes": 14934167
+      },
+      "raw_output": "diagnostic-2-candidate.txt"
+    },
+    {
+      "variant": "candidate-diagnostic",
+      "position": 3,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1197,
+      "phase_ns": {
+        "database_and_schema": 41024666,
+        "service_and_plugins": 1077735792,
+        "builtin_initializers": 57902625,
+        "composition_and_routes": 20659416
+      },
+      "raw_output": "diagnostic-3-candidate.txt"
+    },
+    {
+      "variant": "base-diagnostic",
+      "position": 4,
+      "exit": 0,
+      "valid_pass": true,
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "local_open_ms": 1288,
+      "phase_ns": {
+        "database_and_schema": 35501917,
+        "service_and_plugins": 1182264709,
+        "builtin_initializers": 55805625,
+        "composition_and_routes": 14397709
+      },
+      "raw_output": "diagnostic-4-base.txt"
+    }
+  ],
+  "inputs_unchanged": true,
+  "prior_parallel_failure_root_cause": "仍需根据数据判断，单项通过不消除原全套失败",
+  "diagnostic_is_acceptance": false
+}

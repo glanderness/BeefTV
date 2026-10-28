@@ -1,0 +1,13 @@
+运行 build-base-original，PID=14719
+运行 build-base-diagnostic，PID=24685
+运行 build-candidate-original，PID=27482
+运行 build-candidate-diagnostic，PID=27821
+运行 original-1-base，PID=29878
+运行 original-2-candidate，PID=33160
+运行 original-3-candidate，PID=37757
+运行 original-4-base，PID=37766
+运行 diagnostic-1-base，PID=39131
+运行 diagnostic-2-candidate，PID=41483
+运行 diagnostic-3-candidate，PID=43802
+运行 diagnostic-4-base，PID=45185
+八次单项均结束；诊断结果另列，不代表原并行全套问题已解决。

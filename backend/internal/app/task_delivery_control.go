@@ -89,6 +89,22 @@ func (s *Service) resumeGenerationDownload(task model.Task) (*model.Task, error)
 	return &task, nil
 }
 
+func (s *Service) admitFreeRetry(userID, operationID, payloadHash string, task model.Task) (*model.Task, bool, error) {
+	s.deliveryControlMu.Lock()
+	defer s.deliveryControlMu.Unlock()
+	if s.deliveryClosed || s.IsDraining() {
+		return nil, false, &kernel.AppError{Status: kernel.CodeUnavailable, Code: kernel.CodeUnavailable, Message: localtask.DrainRetryMessage, Retryable: true}
+	}
+	if task.Status == model.TaskStatusSucceeded {
+		for identity := range s.deliveryCancels {
+			if strings.HasPrefix(identity, task.ID+":") {
+				return nil, false, errors.New("正在停止取回，请稍后再试")
+			}
+		}
+	}
+	return s.repo.AdmitFreeRetry(userID, operationID, payloadHash, task)
+}
+
 func (s *Service) beginGenerationDownload(userID, identity string, timeout time.Duration) (context.Context, func(error), error) {
 	s.deliveryControlMu.Lock()
 	if s.deliveryClosed || s.IsDraining() {

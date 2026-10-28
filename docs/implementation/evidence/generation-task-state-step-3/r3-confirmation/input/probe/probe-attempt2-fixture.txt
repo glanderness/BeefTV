@@ -1,0 +1,115 @@
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound/accepted-no-conclusion
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.147ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.094ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.063ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.037ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.102ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.117ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.280ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "probe-image" AND user_id = "local" AND route_run = 5 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.128ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:89: round 5 retry op="" err=图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果 status=failed routeRun=5 outcome=&{Phase:retrievable Regenerate:blocked Reason:image_recovery_pending}
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.246ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-5" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.066ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-5" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.284ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "probe-image" AND user_id = "local" AND route_run = 5 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.108ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.119ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:89: round 5 retry op="new-5" err=<nil> status=failed routeRun=5 outcome=&{Phase:retrievable Regenerate:blocked Reason:image_recovery_pending}
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-unknown-billing
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.195ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.056ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.083ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:56 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.075ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.139ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "probe-image" AND user_id = "local" AND route_run = 5 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.058ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:89: round 5 retry op="" err=图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果 status=failed routeRun=5 outcome=&{Phase:failed Regenerate:confirm Reason:no_result}
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.097ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-5" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.124ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-5" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.156ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "probe-image" AND user_id = "local" AND route_run = 5 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.085ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:89: round 5 retry op="new-5" err=<nil> status=failed routeRun=5 outcome=&{Phase:failed Regenerate:confirm Reason:no_result}
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-stale-refund-evidence
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.082ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.076ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.069ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.058ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.063ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:57 [31;1m/tmp/s3r3-work/probe/backend/internal/app/opus_r3_probe_test.go:78 [35;1msql: converting argument $1 type: unsupported type model.TaskBillingEvidence, a struct
+[0m[33m[0.086ms] [34;1m[rows:0][0m UPDATE `tasks` SET `billing_evidence`="{4 job beefapi  false refunded true 0    2026-10-28 06:41:57.216173437 +0000 UTC}",`updated_at`="2026-10-28 06:41:57.238" WHERE id = "probe-image"
+    opus_r3_probe_test.go:79: sql: converting argument $1 type: unsupported type model.TaskBillingEvidence, a struct
+--- FAIL: TestOpusR3RefundBypassDoesNotLeakIntoNextRound (0.73s)
+    --- PASS: TestOpusR3RefundBypassDoesNotLeakIntoNextRound/accepted-no-conclusion (0.26s)
+    --- PASS: TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-unknown-billing (0.25s)
+    --- FAIL: TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-stale-refund-evidence (0.22s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.760s
+FAIL

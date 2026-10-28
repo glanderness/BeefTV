@@ -1,0 +1,39 @@
+--- a/backend/internal/bootstrap/runtime.go
++++ b/backend/internal/bootstrap/runtime.go
+@@ -57,6 +57,11 @@
+ }
+ 
+ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
++	step3PhaseStarted := time.Now()
++	step3MarkPhase := func(name string) {
++		fmt.Fprintf(os.Stderr, "STEP3_COLD_PHASE %s %d\n", name, time.Since(step3PhaseStarted).Nanoseconds())
++		step3PhaseStarted = time.Now()
++	}
+ 	cfg := raw.withDefaults()
+ 	if cfg.Profile != ProfileServer && cfg.Profile != ProfileDesktop {
+ 		return nil, fmt.Errorf("不支持的运行模式：%s", cfg.Profile)
+@@ -106,6 +111,7 @@
+ 		return nil, err
+ 	}
+ 
++	step3MarkPhase("database_and_schema")
+ 	repo := repository.New(db)
+ 	if cfg.Profile == ProfileDesktop {
+ 		if err := repo.PauseDepthCapturesAfterRestart(context.Background()); err != nil {
+@@ -114,6 +120,7 @@
+ 		}
+ 	}
+ 	svc := app.NewLocal(repo, cfg.DataDir)
++	step3MarkPhase("service_and_plugins")
+ 	cleanupService := func() {
+ 		_ = svc.Close()
+ 		cleanupDB()
+@@ -122,6 +129,8 @@
+ 		cleanupService()
+ 		return nil, err
+ 	}
++	step3MarkPhase("builtin_initializers")
++	defer step3MarkPhase("composition_and_routes")
+ 	providerConfig, configErr := workspace.NewProviderConfig(cfg.DataDir)
+ 	if configErr != nil {
+ 		cleanupService()

@@ -206,7 +206,13 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 			failService(c, err)
 			return
 		}
-		task, err := svc.RetryTask(user.ID, c.Param("id"))
+		var body struct {
+			ClientOperationID string `json:"clientOperationId"`
+		}
+		if c.Request.Body != nil {
+			_ = c.ShouldBindJSON(&body)
+		}
+		task, err := svc.RetryTaskWithOperation(user.ID, c.Param("id"), body.ClientOperationID)
 		if err != nil {
 			var appErr *app.AppError
 			if errors.As(err, &appErr) {

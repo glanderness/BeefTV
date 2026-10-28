@@ -1,0 +1,19 @@
+=== RUN   TestStep3ConcurrentRetryHTTPAndConflictingTask
+--- PASS: TestStep3ConcurrentRetryHTTPAndConflictingTask (0.09s)
+PASS
+ok  	infinite-canvas/backend/internal/handler	1.207s
+=== RUN   TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun
+
+2026/10/28 11:59:27 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:632 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:59:28 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:59:28 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "first-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+    step3_reopen_regression_test.go:17: 生成失败。请查看详情后再决定是否重试。
+--- FAIL: TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun (0.05s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	1.156s
+FAIL

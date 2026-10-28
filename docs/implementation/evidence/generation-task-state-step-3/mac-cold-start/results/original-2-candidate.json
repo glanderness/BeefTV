@@ -1,0 +1,110 @@
+{
+  "command": [
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-cold-start-mac/candidate-original.test",
+    "-test.run=^TestDesktopColdOpenBudgetAndNoIdleOutbound$",
+    "-test.count=1",
+    "-test.timeout=2m",
+    "-test.v"
+  ],
+  "cwd": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-cold-start-mac/candidate-original/backend",
+  "started": "2026-10-28T07:20:18.730382+00:00",
+  "load_before": [
+    {
+      "command": [
+        "uptime"
+      ],
+      "started": "2026-10-28T07:20:18.684779+00:00",
+      "finished": "2026-10-28T07:20:18.689875+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-before-uptime.txt",
+      "sha256": "73380185f8b77c7df54488b2a18447cdeb34e1b495ec917cd6c6d96ab54b2cac"
+    },
+    {
+      "command": [
+        "ps",
+        "-Ao",
+        "pid,ppid,pcpu,pmem,comm"
+      ],
+      "started": "2026-10-28T07:20:18.690014+00:00",
+      "finished": "2026-10-28T07:20:18.722891+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-before-processes.txt",
+      "sha256": "63cf3a87fa2f0d36fe4becaaf4ca9ef10f913cad5e8964a4fee8f379bfdbcf64"
+    },
+    {
+      "command": [
+        "vm_stat"
+      ],
+      "started": "2026-10-28T07:20:18.723260+00:00",
+      "finished": "2026-10-28T07:20:18.725646+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-before-memory.txt",
+      "sha256": "6c9df06ad5aedfef97c4412b3a35c86bc706280cca078748fb09e08fc58fa92b"
+    },
+    {
+      "command": [
+        "iostat",
+        "-d",
+        "-c",
+        "1"
+      ],
+      "started": "2026-10-28T07:20:18.725776+00:00",
+      "finished": "2026-10-28T07:20:18.730231+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-before-disk.txt",
+      "sha256": "61123d2ae7d0ac74eeae70f8ac932f2764d40d6c29e0eb2bcf0e15e589264351"
+    }
+  ],
+  "pid": 33160,
+  "exit": 0,
+  "finished": "2026-10-28T07:20:24.440465+00:00",
+  "sha256": "fac5d2f950ca9dd6ab5f1a177c6da49b9a96410092a3d9176a46dc6465b77660",
+  "elapsed_ns": 5710046334,
+  "load_after": [
+    {
+      "command": [
+        "uptime"
+      ],
+      "started": "2026-10-28T07:20:24.440515+00:00",
+      "finished": "2026-10-28T07:20:24.445786+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-after-uptime.txt",
+      "sha256": "14710444ecea5952c2d4f5abcb1bebb582b4b4834973dcbb33b4160b16ed56a2"
+    },
+    {
+      "command": [
+        "ps",
+        "-Ao",
+        "pid,ppid,pcpu,pmem,comm"
+      ],
+      "started": "2026-10-28T07:20:24.445927+00:00",
+      "finished": "2026-10-28T07:20:24.477768+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-after-processes.txt",
+      "sha256": "b7259ca634d391e642278f39aeb8a70fe662db35e3f01bf7e5357aacb8a40240"
+    },
+    {
+      "command": [
+        "vm_stat"
+      ],
+      "started": "2026-10-28T07:20:24.478161+00:00",
+      "finished": "2026-10-28T07:20:24.481192+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-after-memory.txt",
+      "sha256": "c7b306b32b78f67c9d5cf555e352393f19acd2ecc2e32479782fd6b4fcf939ad"
+    },
+    {
+      "command": [
+        "iostat",
+        "-d",
+        "-c",
+        "1"
+      ],
+      "started": "2026-10-28T07:20:24.481317+00:00",
+      "finished": "2026-10-28T07:20:24.485339+00:00",
+      "exit": 0,
+      "raw_output": "original-2-candidate-after-disk.txt",
+      "sha256": "ad02c301551dc68a899a9585ac2425b4d80c0dab1b342242493fdb93da786a94"
+    }
+  ]
+}

@@ -27,6 +27,13 @@ func (s *Service) taskOutcomeFacts(tasks []model.Task) map[string]localtask.Outc
 				}
 			}
 		}
+		if task.BillingEvidence != nil && task.BillingEvidence.RouteRun == task.RouteRun && task.BillingEvidence.RouteID == task.RouteID && task.BillingEvidence.ChannelModelID == task.ChannelModelID {
+			f.BillingSource = task.BillingEvidence.Source
+			f.UsageState = task.BillingEvidence.UsageState
+			f.UsageStatePresent = task.BillingEvidence.UsageStatePresent
+			f.BillingState = task.BillingEvidence.BillingState
+			f.BillingStatePresent = task.BillingEvidence.BillingStatePresent
+		}
 		facts[task.ID] = f
 	}
 	return facts

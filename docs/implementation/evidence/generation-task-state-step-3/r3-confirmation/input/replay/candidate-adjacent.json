@@ -1,0 +1,19 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "./internal/handler",
+    "-run",
+    "^(TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate|TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates|TestAutomaticImageRecoveryConclusions|TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse|TestImageSubmissionCountErrorCannotErasePriorAcceptance|TestStep3ImageJobTerminalConclusionAndResultJSON|TestStep3FreeReplayReadsCurrentTask|TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun|TestReviewFreeRecoveryRunningReceiptAfterCrash|TestReviewFreeRecoveryReceiptRecordsRouteRuns|TestStep3ConcurrentRetryHTTPAndConflictingTask|TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays|TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID)$",
+    "-count=1",
+    "-timeout=5m",
+    "-v"
+  ],
+  "expected_exit": 0,
+  "started": "2026-10-28T06:40:12.253355+00:00",
+  "pid": 546537,
+  "exit": 0,
+  "finished": "2026-10-28T06:40:19.419908+00:00",
+  "sha256": "b07033439a166ba8158881ee1c284768fa4ae526d7bce6df691e08d7e4307969"
+}

@@ -1,0 +1,13 @@
+=== RUN   TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable
+    step3_upgrade_regression_test.go:45: upgraded api_call_logs missing column route_run
+    step3_upgrade_regression_test.go:45: upgraded api_call_logs missing column usage_state
+    step3_upgrade_regression_test.go:45: upgraded api_call_logs missing column billing_state
+    step3_upgrade_regression_test.go:45: upgraded api_call_logs missing column usage_state_present
+    step3_upgrade_regression_test.go:45: upgraded api_call_logs missing column billing_state_present
+    step3_upgrade_regression_test.go:45: upgraded api_call_logs missing column image_job_id
+    step3_upgrade_regression_test.go:60: LogAPICall on upgraded database: table api_call_logs has no column named route_run
+    step3_upgrade_regression_test.go:64: outcome facts unreadable on upgraded database (every failed task projection degrades)
+--- FAIL: TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable (0.02s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.585s
+FAIL

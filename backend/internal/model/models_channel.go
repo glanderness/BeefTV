@@ -110,6 +110,12 @@ type ApiCallLog struct {
 	MediaPreviewKind    string        `json:"mediaPreviewKind,omitempty" gorm:"-"`
 	VideoSeconds        int           `json:"videoSeconds"`
 	ProviderRequestID   string        `json:"providerRequestId" gorm:"size:160"`
+	RouteRun            int           `json:"-" gorm:"index"`
+	UsageState          string        `json:"-" gorm:"size:32"`
+	BillingState        string        `json:"-" gorm:"size:32"`
+	UsageStatePresent   bool          `json:"-"`
+	BillingStatePresent bool          `json:"-"`
+	ImageJobID          string        `json:"-" gorm:"size:160"`
 	EstimatedCostMicros int64         `json:"estimatedCostMicros"`
 	CostAvailable       bool          `json:"costAvailable"`
 	Currency            string        `json:"currency" gorm:"size:12"`

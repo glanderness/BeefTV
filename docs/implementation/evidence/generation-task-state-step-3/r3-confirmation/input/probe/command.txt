@@ -1,0 +1,2 @@
+cd <git archive 30ed8d92910fe928b84cf918d870b8d600923144 backend>/backend   # 叠加 opus_r3_probe_test.go 到 internal/app/
+CGO_ENABLED=1 CANVAS_OFFICIAL_PLUGIN_DIR=/tmp/s3r/basefull/plugin-packages env -u TDS_TEAM_API_KEY -u WEBCAFE_TOKEN -u YUN go test ./internal/app -run '^TestOpusR3RefundBypassDoesNotLeakIntoNextRound$' -count=1 -timeout=4m -v

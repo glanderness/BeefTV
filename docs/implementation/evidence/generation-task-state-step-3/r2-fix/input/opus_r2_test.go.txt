@@ -1,0 +1,335 @@
+package app
+
+// Independent second-round review probes for generation-task step 3
+// (candidate 850d89c1). Free local fixtures only: temp SQLite, httptest
+// fake upstream, fake credentials.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"infinite-canvas/backend/internal/generation"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+)
+
+// N1: an image whose BeefAPI job is definitively failed and refunded gets
+// recovery_outcome=no_result and outcome.regenerate=allowed. Contract 3.11:
+// "持有上游 ID 也不等于永远只能取回：已有明确 no_result/unrecoverable 时按扣费事实处理".
+// The user's /retry must then be able to requeue a paid run, like a video
+// task with the same conclusion, and like an image with no job id.
+func TestOpusR2ImageNoResultRetryCanRequeue(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	var gets, nonGets atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			nonGets.Add(1)
+			w.WriteHeader(400)
+			return
+		}
+		gets.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job", "status": "failed", "billing_state": "refunded"})
+	}))
+	defer server.Close()
+	t.Setenv("BEEFTV_ENTERPRISE_TEST_ORIGIN", server.URL)
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	input, _ := json.Marshal(canvasGenerationInput{Mode: "image", Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "fake-key"}})
+	mk := func(id string, withJob bool) {
+		task := model.Task{ID: id, UserID: "local", Type: "canvas_image", Status: model.TaskStatusFailed, Stage: "任务失败", Error: "请求过于频繁", RouteRun: 4, InputJSON: string(input)}
+		if err := db.Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+		if withJob {
+			if err := db.Create(&model.ApiCallLog{ID: id + "-create", UserID: task.UserID, TaskID: task.ID, RouteRun: 4, Source: "beefapi", Capability: "image", RequestKind: "create", Method: "POST", ImageJobID: "job", CreatedAt: time.Now()}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk("img-job-failed", true)
+	mk("img-no-job", false)
+
+	// Step 1: free recovery establishes the definitive conclusion.
+	_, err := svc.RetryTaskWithOperation("local", "img-job-failed", "recover-1")
+	t.Logf("free recovery err=%v gets=%d nonGets=%d", err, gets.Load(), nonGets.Load())
+	got, _ := svc.Task("local", "img-job-failed")
+	t.Logf("after free recovery: status=%s routeRun=%d outcome=%v recovery=%v", got.Status, got.RouteRun, outcomeString(got), deref(got.RecoveryOutcome))
+	if got.RecoveryOutcome == nil || *got.RecoveryOutcome != "no_result" || got.Outcome == nil || got.Outcome.Regenerate != "allowed" {
+		t.Fatalf("precondition not reached: %+v", got)
+	}
+
+	// Control: identical image without a job id is requeued by legacy /retry.
+	control, err := svc.RetryTask("local", "img-no-job")
+	t.Logf("control legacy /retry: err=%v status=%v", err, statusOf(control))
+	if err != nil || control.Status != model.TaskStatusQueued {
+		t.Errorf("control image without job was not requeued: err=%v", err)
+	}
+
+	// Step 2: legacy /retry (no id) on the no_result image.
+	beforeGets := gets.Load()
+	legacy, err := svc.RetryTask("local", "img-job-failed")
+	stored, _ := svc.Task("local", "img-job-failed")
+	t.Logf("legacy /retry: err=%v returned=%v stored status=%s routeRun=%d extraGets=%d", err, statusOf(legacy), stored.Status, stored.RouteRun, gets.Load()-beforeGets)
+	if stored.Status != model.TaskStatusQueued || stored.RouteRun != 5 {
+		t.Errorf("legacy /retry on no_result+refunded image did not requeue (status=%s routeRun=%d); upstream re-queried %d times", stored.Status, stored.RouteRun, gets.Load()-beforeGets)
+	}
+
+	// Step 3: a fresh operation id must also be able to requeue.
+	if stored.Status != model.TaskStatusQueued {
+		beforeGets = gets.Load()
+		withOp, err := svc.RetryTaskWithOperation("local", "img-job-failed", "regen-2")
+		stored, _ = svc.Task("local", "img-job-failed")
+		var record model.AgentOpRecord
+		db.Where("op_id = ?", "regen-2").First(&record)
+		t.Logf("/retry regen-2: err=%v returned=%v stored status=%s routeRun=%d receipt=%s extraGets=%d", err, statusOf(withOp), stored.Status, stored.RouteRun, record.ResultJSON, gets.Load()-beforeGets)
+		if stored.Status != model.TaskStatusQueued {
+			t.Errorf("new operation id on no_result+refunded image was admitted as %q instead of a paid retry", record.ResultJSON)
+		}
+	}
+	if nonGets.Load() != 0 {
+		t.Errorf("free recovery sent %d non-GET requests", nonGets.Load())
+	}
+}
+
+// N2: concurrent identical paid operation ids requeue exactly once and every
+// caller receives the same admission identity.
+func TestOpusR2ConcurrentSameOperationRequeuesOnce(t *testing.T) {
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	task := model.Task{ID: "concurrent-paid", UserID: "local", Type: "canvas_text", Status: model.TaskStatusFailed, Stage: "任务失败", Error: "请求过于频繁", RouteRun: 2, InputJSON: `{"mode":"text"}`}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	const n = 12
+	var wg sync.WaitGroup
+	results := make([]*model.Task, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = svc.RetryTaskWithOperation("local", task.ID, "same-op")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	ok := 0
+	for i := range results {
+		if errs[i] != nil {
+			t.Logf("caller %d err=%v", i, errs[i])
+			continue
+		}
+		ok++
+		if results[i].RetryOperation == nil || results[i].RetryOperation.OriginalRouteRun != 2 || results[i].RetryOperation.AcceptedRouteRun != 3 {
+			t.Errorf("caller %d identity=%+v", i, results[i].RetryOperation)
+		}
+	}
+	stored, _ := svc.Task("local", task.ID)
+	var receipts int64
+	db.Model(&model.AgentOpRecord{}).Where("op_id = ?", "same-op").Count(&receipts)
+	t.Logf("ok=%d/%d routeRun=%d receipts=%d", ok, n, stored.RouteRun, receipts)
+	if stored.RouteRun != 3 || receipts != 1 {
+		t.Errorf("concurrent same op requeued routeRun=%d receipts=%d", stored.RouteRun, receipts)
+	}
+	if ok != n {
+		t.Errorf("%d of %d concurrent same-op callers got an error instead of the admission", n-ok, n)
+	}
+}
+
+// N3: a free-recovery receipt replayed after the task moved on to a later
+// paid run and after reopening the database returns the original identity
+// and the current projection, and admits nothing new. The same id used on
+// another task is a conflict.
+func TestOpusR2FreeReceiptReplayAfterNewRunAndReopen(t *testing.T) {
+	dir := t.TempDir()
+	svc, db := openDBRuntimeMatrix(t, dir)
+	task := model.Task{ID: "paused-then-paid", UserID: "local", Type: "canvas_text", Status: model.TaskStatusSucceeded, Stage: "delivery_paused", RouteRun: 6, ResultJSON: `{"images":[]}`, InputJSON: `{"mode":"text"}`}
+	other := model.Task{ID: "other-failed", UserID: "local", Type: "canvas_text", Status: model.TaskStatusFailed, Stage: "任务失败", Error: "请求过于频繁", RouteRun: 1, InputJSON: `{"mode":"text"}`}
+	for _, item := range []model.Task{task, other} {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := svc.RetryTaskWithOperation("local", task.ID, "free-op")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("free admission: stage=%s op=%+v", first.Stage, first.RetryOperation)
+	// The task later fails and the user buys a new run with a new id.
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{"status": "failed", "stage": "任务失败", "error": "请求过于频繁"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RetryTaskWithOperation("local", task.ID, "paid-op"); err != nil {
+		t.Fatal(err)
+	}
+	closeDBRuntimeMatrix(t, svc, db)
+	restarted, reopened := openDBRuntimeMatrix(t, dir)
+	defer closeDBRuntimeMatrix(t, restarted, reopened)
+	replayed, err := restarted.RetryTaskWithOperation("local", task.ID, "free-op")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("replay free-op: status=%s routeRun=%d op=%+v outcome=%v", replayed.Status, replayed.RouteRun, replayed.RetryOperation, outcomeString(replayed))
+	if replayed.RetryOperation == nil || replayed.RetryOperation.Action != "free_recovery" || replayed.RetryOperation.OriginalRouteRun != 6 || replayed.RetryOperation.AcceptedRouteRun != 6 {
+		t.Errorf("free identity lost: %+v", replayed.RetryOperation)
+	}
+	if replayed.RouteRun != 7 || replayed.Status != model.TaskStatusQueued {
+		t.Errorf("replay is not the current projection or admitted something: status=%s run=%d", replayed.Status, replayed.RouteRun)
+	}
+	_, err = restarted.RetryTaskWithOperation("local", other.ID, "free-op")
+	var appErr *kernel.AppError
+	t.Logf("same id on other task: err=%v", err)
+	if !errors.As(err, &appErr) || appErr.Status != kernel.CodeConflict {
+		t.Errorf("same id on another task should be a conflict, got %v", err)
+	}
+	stillOther, _ := restarted.Task("local", other.ID)
+	if stillOther.RouteRun != 1 {
+		t.Errorf("conflicting id requeued another task")
+	}
+}
+
+// N4: v27 database produced by the uncorrected candidate (with its snapshot
+// receipt) upgrades to v28; logs write, projections read, the old receipt
+// replays without requeueing, legacy image /retry still requeues.
+func TestOpusR2UpgradeFromCandidateV27(t *testing.T) {
+	source := os.Getenv("OPUS_R2_V27_DB")
+	if source == "" {
+		t.Skip("OPUS_R2_V27_DB not set")
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "upgraded.db")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Old candidate receipt: serialized task snapshot, written before upgrade.
+	now := time.Now()
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, type, status, stage, error, route_run, input_json, created_at, updated_at) SELECT 'v27-paid', id, 'canvas_text', 'queued', '等待队列调度', '', 5, '{"mode":"text"}', ?, ? FROM workspaces LIMIT 1`, now, now).Error; err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	var ownerID string
+	db.Raw(`SELECT user_id FROM tasks WHERE id = 'v27-paid'`).Scan(&ownerID)
+	snapshot := `{"id":"v27-paid","status":"queued","stage":"等待队列调度"}`
+	legacyReceipt := fmt.Sprintf(`{"task":%s}`, snapshot)
+	if err := db.Create(&model.AgentOpRecord{UserID: ownerID, Op: "task.retry", OpID: "v27-op", PayloadHash: "legacy-hash", Status: "succeeded", ResultJSON: legacyReceipt, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("seed legacy receipt: %v", err)
+	}
+	if err := database.MigrateLocalSchema(db); err != nil {
+		t.Fatalf("upgrade v27->v28: %v", err)
+	}
+	var version int64
+	db.Raw(`SELECT max(version) FROM local_schema_migrations`).Scan(&version)
+	t.Logf("schema version after upgrade=%d", version)
+	svc := NewLocal(repository.New(db), dir)
+	defer svc.Close()
+	if err := svc.LogAPICall(model.ApiCallLog{UserID: ownerID, TaskID: "v27-paid", RouteRun: 5, Source: "beefapi", Capability: "video", RequestKind: "create", Method: "POST", UsageState: "failed", UsageStatePresent: true}); err != nil {
+		t.Errorf("LogAPICall after v27 upgrade: %v", err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", "v27-paid").Updates(map[string]any{"status": "failed", "stage": "任务失败", "error": "请求过于频繁"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	facts := svc.taskOutcomeFacts([]model.Task{{ID: "v27-paid", UserID: ownerID, Type: "canvas_text", Status: model.TaskStatusFailed, RouteRun: 5}})
+	if facts["v27-paid"].Unreadable {
+		t.Errorf("outcome facts unreadable after v27 upgrade")
+	}
+	replayed, err := svc.RetryTaskWithOperation(ownerID, "v27-paid", "v27-op")
+	stored, _ := svc.Task(ownerID, "v27-paid")
+	t.Logf("legacy receipt replay: err=%v returned=%v op=%+v stored status=%s run=%d", err, statusOf(replayed), opOf(replayed), stored.Status, stored.RouteRun)
+	if err != nil || stored.RouteRun != 5 || stored.Status != model.TaskStatusFailed {
+		t.Errorf("legacy snapshot receipt did not replay without requeue")
+	}
+	image := model.Task{ID: "v27-image", UserID: ownerID, Type: "canvas_image", Status: model.TaskStatusFailed, Stage: "任务失败", Error: "请求过于频繁", InputJSON: `{"mode":"image","prompt":"p","config":{"channelId":"channel","model":"img"}}`, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&image).Error; err != nil {
+		t.Fatal(err)
+	}
+	retried, err := svc.RetryTask(ownerID, image.ID)
+	t.Logf("legacy image /retry after upgrade: err=%v status=%v", err, statusOf(retried))
+	if err != nil || retried.Status != model.TaskStatusQueued {
+		t.Errorf("legacy image /retry after v27 upgrade did not requeue: %v", err)
+	}
+}
+
+func outcomeString(task *model.Task) string {
+	if task == nil || task.Outcome == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("phase=%s regenerate=%s", task.Outcome.Phase, task.Outcome.Regenerate)
+}
+
+func statusOf(task *model.Task) string {
+	if task == nil {
+		return "<nil>"
+	}
+	return string(task.Status)
+}
+
+func opOf(task *model.Task) any {
+	if task == nil {
+		return nil
+	}
+	return task.RetryOperation
+}
+
+func deref(value *string) string {
+	if value == nil {
+		return "<nil>"
+	}
+	return *value
+}
+
+// N5: the BeefAPI video DTO carries reconcile_deadline inside the code/data
+// envelope (be8f7072 dto/task.go). Contract 3.11 asks to persist the original
+// reconcile_deadline value with the billing observation.
+func TestOpusR2VideoDTOReconcileDeadlinePersisted(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":"success","data":{"id":42,"task_id":"original","status":"IN_PROGRESS","usage_state":"pending","reconcile_deadline":1793160000}}`)
+	}))
+	defer server.Close()
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	input, _ := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "fake-key", InterfaceType: "newapi"}})
+	noResult := "no_result"
+	task := model.Task{ID: "dto-deadline", UserID: "local", Type: "canvas_video", Status: model.TaskStatusFailed, RouteRun: 2, RouteID: "route-a", ProviderRequestID: "original", RecoveryOutcome: &noResult, InputJSON: string(input)}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
+	_, qerr := svc.QueryFailedVideoTask(ctx, task.UserID, task.ID)
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("query err=%v evidence=%+v", qerr, stored.BillingEvidence)
+	if stored.BillingEvidence == nil || stored.BillingEvidence.UsageState != "pending" {
+		t.Fatalf("pending usage_state not stored: %+v", stored.BillingEvidence)
+	}
+	if stored.BillingEvidence.ReconcileDeadline != 1793160000 {
+		t.Errorf("reconcile_deadline from DTO envelope not persisted: got %d", stored.BillingEvidence.ReconcileDeadline)
+	}
+}

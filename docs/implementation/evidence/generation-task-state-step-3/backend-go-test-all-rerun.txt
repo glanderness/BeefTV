@@ -1,0 +1,73 @@
+command: cd backend && go test ./... -count=1 -timeout=25m
+started: 2026-10-27T22:06:00Z
+ok  	infinite-canvas/backend/cmd/beeftv	10.946s
+ok  	infinite-canvas/backend/cmd/desktop	74.897s
+ok  	infinite-canvas/backend/cmd/server	3.348s
+ok  	infinite-canvas/backend/cmd/update-release	2.988s
+ok  	infinite-canvas/backend/internal/agentops	135.717s
+ok  	infinite-canvas/backend/internal/app	882.560s
+ok  	infinite-canvas/backend/internal/appearance	3.336s
+ok  	infinite-canvas/backend/internal/asset	37.299s
+ok  	infinite-canvas/backend/internal/assets	3.843s
+ok  	infinite-canvas/backend/internal/assistant	3.886s
+ok  	infinite-canvas/backend/internal/assistantdiagnostics	2.672s
+ok  	infinite-canvas/backend/internal/assistantruntime	6.058s
+ok  	infinite-canvas/backend/internal/assistantturns	47.046s
+ok  	infinite-canvas/backend/internal/beefapi	10.659s
+ok  	infinite-canvas/backend/internal/bootstrap	154.087s
+ok  	infinite-canvas/backend/internal/buildinfo	1.811s
+ok  	infinite-canvas/backend/internal/canvas	159.625s
+ok  	infinite-canvas/backend/internal/canvas/capability	0.378s
+ok  	infinite-canvas/backend/internal/canvasworkflow	0.372s
+ok  	infinite-canvas/backend/internal/conversation	14.592s
+ok  	infinite-canvas/backend/internal/creation	18.802s
+ok  	infinite-canvas/backend/internal/database	66.300s
+ok  	infinite-canvas/backend/internal/depthcapture	0.777s
+ok  	infinite-canvas/backend/internal/depthruntime	13.422s
+ok  	infinite-canvas/backend/internal/desktopnet	0.393s
+ok  	infinite-canvas/backend/internal/desktopstorage	1.360s
+ok  	infinite-canvas/backend/internal/desktopupdate	10.496s
+ok  	infinite-canvas/backend/internal/diagnostics	10.688s
+ok  	infinite-canvas/backend/internal/eagle	0.573s
+ok  	infinite-canvas/backend/internal/editing	6.153s
+ok  	infinite-canvas/backend/internal/environment	0.570s
+ok  	infinite-canvas/backend/internal/generation	51.886s
+ok  	infinite-canvas/backend/internal/handler	290.592s
+ok  	infinite-canvas/backend/internal/kernel	0.434s
+ok  	infinite-canvas/backend/internal/legacyimport	0.415s
+ok  	infinite-canvas/backend/internal/localapp	0.408s
+?   	infinite-canvas/backend/internal/localcrypto	[no test files]
+ok  	infinite-canvas/backend/internal/mediatools	0.649s
+ok  	infinite-canvas/backend/internal/model	0.357s
+ok  	infinite-canvas/backend/internal/modelcatalog	0.553s
+ok  	infinite-canvas/backend/internal/operations	177.584s
+ok  	infinite-canvas/backend/internal/outbound	16.290s
+ok  	infinite-canvas/backend/internal/platform	0.619s
+ok  	infinite-canvas/backend/internal/playback	1.135s
+ok  	infinite-canvas/backend/internal/plugins	141.197s
+?   	infinite-canvas/backend/internal/privatefile	[no test files]
+ok  	infinite-canvas/backend/internal/project	5.996s
+ok  	infinite-canvas/backend/internal/prompts	0.417s
+ok  	infinite-canvas/backend/internal/protocol	0.538s
+ok  	infinite-canvas/backend/internal/provider	0.384s
+?   	infinite-canvas/backend/internal/provider/bailian	[no test files]
+ok  	infinite-canvas/backend/internal/provider/workflow	0.648s
+ok  	infinite-canvas/backend/internal/providerpreset	0.611s
+ok  	infinite-canvas/backend/internal/referencestorage	0.876s
+ok  	infinite-canvas/backend/internal/repository	39.197s
+ok  	infinite-canvas/backend/internal/runtimeinfo	0.841s
+ok  	infinite-canvas/backend/internal/skillhub	0.419s
+ok  	infinite-canvas/backend/internal/skillhubcli	1.037s
+ok  	infinite-canvas/backend/internal/skills	17.670s
+ok  	infinite-canvas/backend/internal/supporttrace	8.765s
+ok  	infinite-canvas/backend/internal/task	5.769s
+ok  	infinite-canvas/backend/internal/taskbinding	0.471s
+ok  	infinite-canvas/backend/internal/taskdelivery	7.713s
+ok  	infinite-canvas/backend/internal/taskruntime	0.582s
+ok  	infinite-canvas/backend/internal/textreplay	4.366s
+ok  	infinite-canvas/backend/internal/topaz	0.384s
+ok  	infinite-canvas/backend/internal/transcription	0.843s
+ok  	infinite-canvas/backend/internal/transport/http	0.626s
+ok  	infinite-canvas/backend/internal/workspace	3.051s
+finished: 2026-10-27T22:20:46Z
+exit: 0

@@ -1,0 +1,163 @@
+--- FAIL: TestContinuationMigrationPreservesHistoryAndChecksReceiptStructure (0.07s)
+    assistant_continuation_test.go:45: migration identity
+--- FAIL: TestContinuationIntentFenceMigrationPreservesV18History (0.06s)
+    assistant_continuation_test.go:107: migration identity
+--- FAIL: TestProductionAuthorizationMigrationPreservesV19HistoryAndRequiresColumn (0.06s)
+    assistant_production_test.go:58: migration identity changed
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.017ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.015ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.015ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.021ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.015ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.015ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_reconcile_test.go:98 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.016ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('duplicate','owner','unique')
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:192 [35;1minjected ledger failure
+[0m[33m[0.011ms] [34;1m[rows:0][0m INSERT INTO `local_schema_migrations` (`version`,`name`,`applied_at`) VALUES (8,"reconcile-product-agent-schema","2026-10-28 04:12:35.142")
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_ensure.go:60 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.011ms] [34;1m[rows:0][0m CREATE UNIQUE INDEX idx_tasks_user_client_op ON tasks(user_id, client_operation_id)
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.023ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_ensure.go:60 [35;1mno such table: main.creation_conversations
+[0m[33m[0.008ms] [34;1m[rows:0][0m CREATE INDEX idx_creation_conversations_user_updated ON creation_conversations(user_id, updated_at)
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_repair_test.go:112 [35;1mtable tasks has no column named failure_diagnostics
+[0m[33m[0.419ms] [34;1m[rows:0][0m INSERT INTO `tasks` (`creation_submission_id`,`id`,`user_id`,`trace_id`,`request_id`,`project_id`,`client_operation_id`,`client_operation_hash`,`type`,`status`,`stage`,`progress`,`prompt`,`operation`,`provider`,`model`,`logical_model_id`,`logical_model_revision_id`,`route_id`,`channel_model_id`,`route_run`,`provider_request_id`,`provider_cancel_status`,`provider_cancel_error`,`provider_cancel_attempts`,`provider_cancel_requested_at`,`provider_cancelled_at`,`provider_cancel_next_check_at`,`poll_stage`,`next_poll_at`,`lease_owner`,`lease_expires_at`,`input_json`,`result_json`,`text_draft`,`error`,`failure_diagnostics`,`attempts`,`started_at`,`completed_at`,`created_at`,`updated_at`,`workflow_source_cipher`) VALUES (NULL,"must-fail-before-repair","","","","",NULL,"","","","",0,"","","","","","","","",0,"","","",0,NULL,NULL,NULL,"",NULL,"",NULL,"","","","",NULL,0,NULL,NULL,"2026-10-28 12:12:35.591","2026-10-28 12:12:35.591","")
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:192 [35;1minjected v9 ledger failure
+[0m[33m[0.014ms] [34;1m[rows:0][0m INSERT INTO `local_schema_migrations` (`version`,`name`,`applied_at`) VALUES (9,"repair-product-agent-contracts","2026-10-28 04:12:35.854")
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_repair_test.go:230 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.017ms] [34;1m[rows:0][0m INSERT INTO tasks(id,user_id,client_operation_id) VALUES ('two','owner','same')
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_repair.go:105 [35;1mUNIQUE constraint failed: tasks.user_id, tasks.client_operation_id
+[0m[33m[0.012ms] [34;1m[rows:0][0m CREATE UNIQUE INDEX `idx_tasks_user_client_op` ON `tasks`(`user_id`,`client_operation_id`)
+
+2026/10/28 12:12:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.026ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+--- FAIL: TestV20MarketReleaseMigrationPreservesVersionsAndLedger (0.06s)
+    local_schema_skill_market_test.go:67: migration ledger changed: [{Version:1 Name:local-core-schema AppliedAt:2026-10-28 04:12:35.968323 +0000 UTC} {Version:2 Name:retire-hosted-schema AppliedAt:2026-10-28 04:12:35.97136 +0000 UTC} {Version:3 Name:task-failure-diagnostics AppliedAt:2026-10-28 04:12:35.971805 +0000 UTC} {Version:4 Name:task-client-operation AppliedAt:2026-10-28 04:12:35.972199 +0000 UTC} {Version:5 Name:task-client-operation-hash AppliedAt:2026-10-28 04:12:35.972529 +0000 UTC} {Version:6 Name:agent-operation-turn-attribution AppliedAt:2026-10-28 04:12:35.973022 +0000 UTC} {Version:8 Name:reconcile-product-agent-schema AppliedAt:2026-10-28 04:12:35.973882 +0000 UTC} {Version:9 Name:repair-product-agent-contracts AppliedAt:2026-10-28 04:12:35.975228 +0000 UTC} {Version:10 Name:assistant-business-turns AppliedAt:2026-10-28 04:12:35.976261 +0000 UTC} {Version:11 Name:creation-conversations AppliedAt:2026-10-28 04:12:35.977036 +0000 UTC} {Version:12 Name:canvas-library-drawings AppliedAt:2026-10-28 04:12:35.978213 +0000 UTC} {Version:13 Name:upload-reservation-witness AppliedAt:2026-10-28 04:12:35.978674 +0000 UTC} {Version:14 Name:assistant-skill-version-pins AppliedAt:2026-10-28 04:12:35.979057 +0000 UTC} {Version:15 Name:assistant-permission-and-canvas-snapshots AppliedAt:2026-10-28 04:12:35.979447 +0000 UTC} {Version:16 Name:assistant-durable-session-binding AppliedAt:2026-10-28 04:12:35.979906 +0000 UTC} {Version:17 Name:assistant-active-skill-context AppliedAt:2026-10-28 04:12:35.980872 +0000 UTC} {Version:18 Name:assistant-generation-continuations AppliedAt:2026-10-28 04:12:35.981762 +0000 UTC} {Version:19 Name:assistant-continuation-intent-fence AppliedAt:2026-10-28 04:12:35.982154 +0000 UTC} {Version:20 Name:assistant-production-authorization AppliedAt:2026-10-28 04:12:35.982524 +0000 UTC} {Version:21 Name:skill-market-release-metadata AppliedAt:2026-10-28 04:12:35.995716 +0000 UTC} {Version:22 Name:canvas-reusable-workflows AppliedAt:2026-10-28 04:12:35.996569 +0000 UTC} {Version:23 Name:canvas-workflow-source-snapshots AppliedAt:2026-10-28 04:12:35.99697 +0000 UTC} {Version:24 Name:canvas-workflow-immutable-revisions AppliedAt:2026-10-28 04:12:35.997833 +0000 UTC} {Version:25 Name:reconcile-preview-assistant-schema AppliedAt:2026-10-28 04:12:35.999296 +0000 UTC} {Version:26 Name:task-recovery-outcome AppliedAt:2026-10-28 04:12:35.999771 +0000 UTC} {Version:27 Name:task-billing-evidence AppliedAt:2026-10-28 04:12:36.000218 +0000 UTC} {Version:28 Name:provider-billing-log-columns AppliedAt:2026-10-28 04:12:36.000905 +0000 UTC}]
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:192 [35;1minjected
+[0m[33m[0.012ms] [34;1m[rows:0][0m INSERT INTO `local_schema_migrations` (`version`,`name`,`applied_at`) VALUES (26,"task-recovery-outcome","2026-10-28 04:12:36.151")
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.023ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+--- FAIL: TestAssistantTurnsMigrationFromPreviewV9 (0.03s)
+    local_schema_test.go:425: current identity: {Version:28 Name:provider-billing-log-columns AppliedAt:2026-10-28 04:12:36.653764 +0000 UTC}
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_upload_reservation.go:34 [35;1mrecord not found
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "4d5ceee99cdddf5aeb8c18cc1c7cd1f5b353ebb50b144230dba506d7fbac5fc3" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_upload_reservation.go:34 [35;1mrecord not found
+[0m[33m[0.009ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "today-pending" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_upload_reservation.go:34 [35;1mrecord not found
+[0m[33m[0.008ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "acc3089cd29c654a6a90071d74bc4d3e5854a7ad71f7227825c10283604b8023" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_upload_reservation.go:34 [35;1mrecord not found
+[0m[33m[0.141ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "retry-before-reserve" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:806 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "3497c3959781a5ab36e21db3c576571da5fd55facf6e02cc73f1fc5c4771d2f1" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_upload_reservation.go:34 [35;1mrecord not found
+[0m[33m[0.009ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "pending-a" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema_upload_reservation.go:34 [35;1mrecord not found
+[0m[33m[0.007ms] [34;1m[rows:0][0m SELECT * FROM `user_upload_reservations` WHERE user_id = "user-1" AND identity = "pending-b" ORDER BY `user_upload_reservations`.`id` LIMIT 1
+
+2026/10/28 12:12:37 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/operations/store.go:112 [35;1mUNIQUE constraint failed: agent_op_records.user_id, agent_op_records.op_id
+[0m[33m[0.026ms] [34;1m[rows:0][0m INSERT INTO `agent_op_records` (`user_id`,`op_id`,`op`,`payload_hash`,`status`,`result_json`,`turn_id`,`created_at`,`updated_at`) VALUES ("owner","operation-1","project.create","hash","running","","","2026-10-28 12:12:37.156","2026-10-28 12:12:37.156")
+FAIL
+FAIL	infinite-canvas/backend/internal/database	3.525s
+FAIL

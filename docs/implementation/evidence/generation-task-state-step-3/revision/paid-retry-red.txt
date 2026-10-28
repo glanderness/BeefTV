@@ -1,0 +1,12 @@
+=== RUN   TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays
+2026/10/28 11:44:54 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    step3_retry_regression_test.go:51: first: status=500 body={"code":500,"data":null,"msg":"任务服务不可用","reason":"internal"}
+    step3_retry_regression_test.go:53: after first: status=failed routeRun=0
+    step3_retry_regression_test.go:56: receipts after first: 0
+    step3_retry_regression_test.go:58: paid retry with clientOperationId did not requeue (legacy body {} does)
+2026/10/28 11:44:54 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    step3_retry_regression_test.go:63: second: status=500 body={"code":500,"data":null,"msg":"任务服务不可用","reason":"internal"}
+--- FAIL: TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays (0.05s)
+FAIL
+FAIL	infinite-canvas/backend/internal/handler	0.685s
+FAIL

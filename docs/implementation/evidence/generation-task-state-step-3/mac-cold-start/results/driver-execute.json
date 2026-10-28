@@ -1,0 +1,24 @@
+{
+  "command": [
+    "/Users/sunny/.local/bin/python3",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/docs/implementation/evidence/generation-task-state-step-3/mac-cold-start/prepare_and_run.py",
+    "execute",
+    "--workdir",
+    "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-cold-start-mac",
+    "--plugins",
+    "/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/plugin-packages"
+  ],
+  "started": "2026-10-28T07:18:56.490813+00:00",
+  "environment_overrides": {
+    "GOCACHE": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-cold-start-mac/go-build-cache",
+    "GOTMPDIR": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-cold-start-mac/go-tmp",
+    "GOPROXY": "off",
+    "GOSUMDB": "off"
+  },
+  "runner_sha256": "7427804de8e71df13d2da68f7148c63281c329b71754509dab63290cc00be278",
+  "pid": 14695,
+  "exit": 0,
+  "finished": "2026-10-28T07:20:43.222502+00:00",
+  "elapsed_ns": 106729597083,
+  "sha256": "970e2af041b29351a59227265c0ea87888d37a6648402d100f58f4cd77d0115c"
+}

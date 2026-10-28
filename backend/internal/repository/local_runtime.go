@@ -331,17 +331,79 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 	})
 }
 
+var (
+	ErrRetryOperationConflict   = errors.New("retry operation id reused with a different payload")
+	ErrRetryOperationInProgress = errors.New("retry operation is already in progress")
+	errRetryOperationReplayed   = errors.New("retry operation replayed")
+)
+
+type retryOperationReceipt struct {
+	model.TaskRetryOperation
+	// Read receipts written by the first step-3 candidate; new receipts only
+	// store admission identity, never a serialized task projection.
+	Task *model.Task `json:"task,omitempty"`
+}
+
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
-	return r.retryTask(userID, prepared, limit, nil)
+	return r.retryTaskWithOperation(userID, prepared, limit, nil, "", "")
 }
 
 func (r *Repository) RetryTaskWithExpectedInput(userID string, prepared *model.Task, limit int, expectedInputJSON string) (*model.Task, error) {
-	return r.retryTask(userID, prepared, limit, &expectedInputJSON)
+	return r.retryTaskWithOperation(userID, prepared, limit, &expectedInputJSON, "", "")
 }
 
-func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, expectedInputJSON *string) (*model.Task, error) {
+func (r *Repository) RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error) {
+	return r.retryTaskWithOperation(userID, prepared, limit, nil, operationID, payloadHash)
+}
+
+func (r *Repository) RetryOperationForTask(userID, operationID, taskID string) (*model.Task, bool, error) {
+	return retryOperationResult(r.db, userID, operationID, taskID)
+}
+
+func retryOperationResult(db *gorm.DB, userID, operationID, taskID string) (*model.Task, bool, error) {
+	var record model.AgentOpRecord
+	err := db.Where("user_id = ? AND op_id = ?", userID, operationID).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if record.Op != "task.retry" {
+		return nil, false, ErrRetryOperationConflict
+	}
+	if record.Status != "succeeded" {
+		return nil, false, ErrRetryOperationInProgress
+	}
+	var receipt retryOperationReceipt
+	if err := json.Unmarshal([]byte(record.ResultJSON), &receipt); err != nil {
+		return nil, false, err
+	}
+	if receipt.TaskID == "" && receipt.Task != nil {
+		receipt.TaskID = receipt.Task.ID
+	}
+	if receipt.TaskID == "" || (taskID != "" && receipt.TaskID != taskID) {
+		return nil, false, ErrRetryOperationConflict
+	}
+	var current model.Task
+	if err := db.First(&current, "id = ? AND user_id = ?", receipt.TaskID, userID).Error; err != nil {
+		return nil, false, err
+	}
+	current.RetryOperation = &receipt.TaskRetryOperation
+	return &current, true, nil
+}
+
+func (r *Repository) retryTaskWithOperation(userID string, prepared *model.Task, limit int, expectedInputJSON *string, operationID, payloadHash string) (*model.Task, error) {
 	var task model.Task
 	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
+		if operationID != "" {
+			if replayed, found, err := retryOperationResult(tx, userID, operationID, prepared.ID); err != nil {
+				return err
+			} else if found {
+				task = *replayed
+				return errRetryOperationReplayed
+			}
+		}
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
 			return err
 		}
@@ -356,13 +418,13 @@ func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, e
 			return err
 		}
 		updates := map[string]any{
-			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "recovery_outcome": nil, "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
+			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "recovery_outcome": nil, "billing_evidence": nil, "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "provider_cancel_status": "", "provider_cancel_error": "", "provider_cancel_attempts": 0,
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil, "route_run": gorm.Expr("route_run + ?", 1),
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID, "channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,
 			"model": prepared.Model, "provider": prepared.Provider, "lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
 		}
-		query := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND status IN ?", prepared.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
+		query := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND route_run = ? AND status IN ?", prepared.ID, userID, prepared.RouteRun, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
 		if expectedInputJSON != nil {
 			query = query.Where("input_json = ? AND provider_request_id = ? AND poll_stage = ? AND next_poll_at IS NULL", *expectedInputJSON, "", "")
 		}
@@ -376,8 +438,19 @@ func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, e
 		if err := tx.Delete(&model.TaskTextDelta{}, "user_id = ? AND task_id = ?", userID, prepared.ID).Error; err != nil {
 			return err
 		}
-		return tx.First(&task, "id = ? AND user_id = ?", prepared.ID, userID).Error
+		if err := tx.First(&task, "id = ? AND user_id = ?", prepared.ID, userID).Error; err != nil {
+			return err
+		}
+		if operationID != "" {
+			if err := saveRetryAdmission(tx, userID, operationID, payloadHash, "retry", prepared.RouteRun, &task); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+	if errors.Is(err, errRetryOperationReplayed) {
+		return &task, nil
+	}
 	return &task, err
 }
 

@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"infinite-canvas/backend/internal/generation"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -64,6 +67,10 @@ func (s *Service) AdminQueryFailedVideoTask(ctx context.Context, actor *model.Us
 }
 
 func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, claimUserID string) (*ProviderTaskQueryResult, error) {
+	return s.recoverProviderTask(ctx, task, claimUserID, false)
+}
+
+func (s *Service) recoverProviderTask(ctx context.Context, task *model.Task, claimUserID string, automatic bool) (*ProviderTaskQueryResult, error) {
 	ctx = withProtocolRegistry(ctx, s.protocolRegistry())
 	if task == nil || task.ID == "" {
 		return nil, BadAuthRequest("任务不存在")
@@ -76,6 +83,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		return nil, BadAuthRequest("该任务不是视频生成任务")
 	}
 
+	expected := *task
 	s.hydrateTaskProviderRequestID(task)
 	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
 	if providerRequestID == "" {
@@ -98,16 +106,21 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	beefVideo := isBeefAPIVideoConfig(ctx, config)
 	workflowVideo := workflow.IsProviderInterface(config.InterfaceType)
 	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
+	if officialVideo && !declarative && strings.TrimSpace(config.InterfaceType) == string(model.ChannelInterfaceGeminiVeo) {
+		if candidate, ok := protocol.Builtins().Resolve(strings.TrimSpace(config.InterfaceType)); ok {
+			// The shipped host adapter is a query-only compatibility fallback for
+			// old Gemini tasks when the declarative package is not present in this
+			// runtime. Recovery still calls BuildPoll only; it never authorizes
+			// BuildCreate.
+			adapter, declarative = withQueryOnlyProtocolFallback(config.InterfaceType, candidate), true
+		}
+	}
 	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
 	if !declarative && !beefVideo && !workflowVideo && !legacyVideo && !upscale {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
-	task.InputJSON = decryptedInput
 	task.ProviderRequestID = providerRequestID
-	if err := s.repo.UpdateTaskProviderState(task.ID, providerRequestID, task.PollStage, task.NextPollAt); err != nil {
-		return nil, err
-	}
 
 	owner := "manual-recovery:" + newID()
 	if err := s.repo.ClaimFailedTaskProviderRecovery(task.ID, claimUserID, owner, providerTaskRecoveryLeaseDuration); err != nil {
@@ -122,11 +135,27 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 			_ = s.log(task.UserID, task.ID, "error", "人工查询租约释放失败", releaseErr.Error())
 		}
 	}()
+	current, err := s.repo.TaskForUser(task.UserID, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if current.RouteRun != expected.RouteRun || current.RouteID != expected.RouteID || current.ChannelModelID != expected.ChannelModelID || current.InputJSON != expected.InputJSON || current.ProviderRequestID != expected.ProviderRequestID {
+		return nil, repository.ErrTaskStateConflict
+	}
+	if expected.ProviderRequestID == "" {
+		if err := s.repo.UpdateTaskProviderState(task.ID, providerRequestID, task.PollStage, task.NextPollAt); err != nil {
+			return nil, err
+		}
+	}
 
 	// 上游已成功后的完整媒体下载和本地入库可能持续数十秒。浏览器关闭抽屉、
 	// 页面刷新或代理断开都不应中断这项运维恢复，否则任务会再次停在
 	// failed/refunded。保留请求值用于审计，但把执行生命周期交给恢复租约控制。
-	recoveryCtx, cancelRecovery := providerTaskRecoveryContext(ctx)
+	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, providerTaskRecoveryLeaseDuration)
+	if !automatic {
+		cancelRecovery()
+		recoveryCtx, cancelRecovery = providerTaskRecoveryContext(ctx)
+	}
 	defer cancelRecovery()
 	queryCtx := withProviderAnalytics(recoveryCtx, s, *task)
 	var result map[string]interface{}
@@ -134,13 +163,36 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	if upscale {
 		result, providerStatus, err = generation.RecoverUpscaleResult(queryCtx, input, providerRequestID)
 	} else if beefVideo {
-		result, providerStatus, err = queryBeefAPIVideoResult(queryCtx, input, providerRequestID)
+		started := time.Now()
+		result, providerStatus, err = queryBeefAPIVideoResultWithObservation(queryCtx, input, providerRequestID, func(state map[string]any) error {
+			return s.observeTaskBilling(*task, config, providerRequestID, state, started)
+		}, task.RecoveryOutcome != nil && *task.RecoveryOutcome != "")
 	} else if workflowVideo {
 		result, providerStatus, err = s.workflowClient(nil).QueryVideo(queryCtx, workflowConfigFromProvider(config), workflow.RootURL(config.BaseURL), providerRequestID)
 	} else if !declarative && legacyVideo {
 		result, providerStatus, err = generation.QueryHandwrittenVideoTask(queryCtx, input, providerRequestID)
 	} else {
 		result, providerStatus, err = queryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
+	}
+	if result == nil {
+		conclusion := task.RecoveryOutcome
+		var terminal originalResultConclusion
+		if errors.As(err, &terminal) {
+			conclusion = &terminal.outcome
+		} else {
+			switch strings.ToLower(providerStatus) {
+			case "failed", "failure", "cancelled", "canceled":
+				value := "no_result"
+				conclusion = &value
+			case "expired":
+				value := "unrecoverable"
+				conclusion = &value
+			}
+		}
+		next := time.Now().Add(30 * time.Second)
+		if finishErr := s.repo.FinishFailedResultRecovery(*task, conclusion, &next); finishErr != nil {
+			return nil, finishErr
+		}
 	}
 	if err != nil {
 		_ = s.log(task.UserID, task.ID, "error", "人工查询上游视频任务失败", err.Error())
@@ -179,18 +231,45 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 // Query-only: never route recovery through create, even when the original
 // persisted channel metadata names the legacy generations protocol.
 func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, id string) (map[string]interface{}, string, error) {
+	return queryBeefAPIVideoResultWithObservation(ctx, input, id, nil, false)
+}
+
+func queryBeefAPIVideoResultWithObservation(ctx context.Context, input canvasGenerationInput, id string, observe func(map[string]any) error, billingOnly bool) (map[string]interface{}, string, error) {
 	var state map[string]interface{}
-	if err := getJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
+	if err := getJSON(withProviderRequestKind(ctx, "poll"), input.Config, "/video/generations/"+url.PathEscape(id), &state); err != nil {
 		return nil, "", err
+	}
+	if data, ok := state["data"].(map[string]any); ok && state["code"] == "success" {
+		if _, ok := data["task_id"]; ok {
+			// TaskDto.id is a numeric database row, not the provider task ID;
+			// TaskDto.data is provider payload, not another task envelope.
+			state = data
+			delete(state, "data")
+			if _, ok := state["id"].(float64); ok {
+				delete(state, "id")
+			}
+		}
 	}
 	var err error
 	state, err = generation.ValidateVideoTaskState(id, state)
 	if err != nil {
 		return nil, "", err
 	}
+	if observe != nil {
+		if err := observe(state); err != nil {
+			return nil, "", err
+		}
+	}
 	status, videoURL := seedancePollStatusAndURL(state)
+	if billingOnly {
+		return nil, status, nil
+	}
 	if status == "failed" || status == "cancelled" || status == "expired" {
-		return nil, status, errors.New(defaultString(seedanceErrorMessage(state), "视频生成失败"))
+		outcome := "no_result"
+		if status == "expired" {
+			outcome = "unrecoverable"
+		}
+		return nil, status, originalResultConclusion{outcome}
 	}
 	if !generation.VideoTaskSucceeded(status) {
 		return nil, status, nil
@@ -203,6 +282,29 @@ func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, i
 		return nil, status, err
 	}
 	return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}}, status, nil
+}
+
+type queryOnlyProtocolAdapter struct {
+	protocol.Adapter
+}
+
+func withQueryOnlyProtocolFallback(interfaceType string, adapter protocol.Adapter) protocol.Adapter {
+	if strings.TrimSpace(interfaceType) != string(model.ChannelInterfaceGeminiVeo) {
+		return adapter
+	}
+	return queryOnlyProtocolAdapter{Adapter: adapter}
+}
+
+func (a queryOnlyProtocolAdapter) BuildPoll(_ context.Context, c protocol.PollContext) (protocol.RequestSpec, error) {
+	return protocol.RequestSpec{
+		Method: http.MethodGet,
+		Path:   "/v1beta/" + strings.TrimPrefix(strings.TrimSpace(c.TaskID), "/"),
+		Auth:   a.MediaAuth(),
+	}, nil
+}
+
+func (queryOnlyProtocolAdapter) MediaAuth() protocol.ManifestAuth {
+	return protocol.ManifestAuth{Type: "google-api-key", Field: "apiKey", Header: "x-goog-api-key"}
 }
 
 func providerTaskRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {

@@ -1,0 +1,6 @@
+{
+  "runner_sha256": "7427804de8e71df13d2da68f7148c63281c329b71754509dab63290cc00be278",
+  "python": "3.13.13 (main, May  8 2026, 18:24:58) [Clang 22.1.3 ]",
+  "workdir": "/Volumes/ExternalWork/todos/workspaces/01a1815c-ccb7-787d-8f9f-76ce2e9b1ca2/.local/cache/step3-cold-start-mac",
+  "existing_plugin_source": "/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/plugin-packages"
+}

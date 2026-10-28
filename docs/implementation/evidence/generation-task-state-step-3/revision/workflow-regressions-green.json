@@ -1,0 +1,18 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "./internal/handler",
+    "-run",
+    "TestWorkflow|TestStep3ConcurrentRetry|TestReviewPaidRetry",
+    "-count=1",
+    "-timeout=5m",
+    "-v"
+  ],
+  "started": "2026-10-28T04:52:02.703246+00:00",
+  "pid": 90851,
+  "exit": 0,
+  "finished": "2026-10-28T04:52:10.498166+00:00",
+  "sha256": "13b505885b6321b4fbdfc02c78acca3645b943455977cc2604c1b2936e340a46"
+}

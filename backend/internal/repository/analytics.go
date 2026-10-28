@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -185,6 +186,53 @@ func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 }
 
 var ErrAmbiguousImageCreateReceipts = errors.New("图片包含多条已接受或结果未知的创建回执，不能重新生成")
+
+func (r *Repository) UpdateTaskBillingEvidence(expected model.Task, evidence *model.TaskBillingEvidence) error {
+	if evidence == nil {
+		return nil
+	}
+	return withImmediateTransaction(r.db, func(tx *gorm.DB) error {
+		var current model.Task
+		query := tx.Where("id = ? AND user_id = ? AND route_run = ? AND route_id = ? AND channel_model_id = ? AND provider_request_id = ? AND input_json = ?", expected.ID, expected.UserID, expected.RouteRun, expected.RouteID, expected.ChannelModelID, expected.ProviderRequestID, expected.InputJSON)
+		if err := query.First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTaskStateConflict
+			}
+			return err
+		}
+		if previous := current.BillingEvidence; previous != nil && previous.RouteRun == evidence.RouteRun && previous.RouteID == evidence.RouteID && previous.ChannelModelID == evidence.ChannelModelID && previous.ChannelID == evidence.ChannelID && previous.ProviderRequestID == evidence.ProviderRequestID {
+			if previous.ObservedAt.After(evidence.ObservedAt) {
+				return nil
+			}
+			if !evidence.UsageStatePresent {
+				evidence.UsageState, evidence.UsageStatePresent = previous.UsageState, previous.UsageStatePresent
+			}
+			if !evidence.BillingStatePresent {
+				evidence.BillingState, evidence.BillingStatePresent = previous.BillingState, previous.BillingStatePresent
+			}
+			if evidence.ReconcileDeadline == 0 {
+				evidence.ReconcileDeadline = previous.ReconcileDeadline
+			}
+		}
+		encoded, err := json.Marshal(evidence)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&model.Task{}).Where("id = ? AND user_id = ?", expected.ID, expected.UserID).Updates(map[string]any{"billing_evidence": string(encoded), "updated_at": time.Now()}).Error
+	})
+}
+
+// LatestBeefAPIImageJobIDForTask only reads the current route run. A job ID
+// from an earlier retry is not a valid recovery identity for the new run.
+func (r *Repository) LatestBeefAPIImageJobIDForTask(task model.Task) (string, error) {
+	var row model.ApiCallLog
+	err := r.db.Where("task_id = ? AND user_id = ? AND route_run = ? AND source = ? AND capability = ? AND request_kind = ? AND method = ? AND image_job_id <> ?", task.ID, task.UserID, task.RouteRun, "beefapi", "image", "create", "POST", "").
+		Order("created_at DESC, id DESC").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return strings.TrimSpace(row.ImageJobID), err
+}
 
 // Recovery requires one unambiguous create receipt. A later failed/unknown
 // create must never be hidden by selecting an earlier successful response.

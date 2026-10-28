@@ -1,0 +1,13 @@
+{
+  "product_commit": "6d4d13735569751a98126052055021a8a04549dd",
+  "test_sources": {
+    "backend/internal/app/step3_upgrade_regression_test.go": "a689b0424faff0a174d49d6626cc6586bbc400575f09a0ed59548e6e802f6c11",
+    "backend/internal/app/step3_upgrade_legacy_retry_test.go": "681151b8e432b87b8ce03eab5c453a88f1a12b8fc0914549f89af453319f2795",
+    "backend/internal/app/step3_free_admission_regression_test.go": "687b15f1974c8ab0dd4d50ed19e522745cc3aebec243d874bb3273e1a9e03ed3",
+    "backend/internal/app/step3_free_replay_regression_test.go": "73d047fbf95f302002daa92d79058187e25cfc41e457f9cfb29e8b54c712ba5d",
+    "backend/internal/app/step3_billing_regression_test.go": "a83681158a2b66f644df7114f933f037c8fd540c272a9abdb9563e9b868ba0b5",
+    "backend/internal/app/step3_background_recovery_test.go": "e6e723229dba94a99bbb014baee30964e8967e7789a53e9a5c4907ee85cf7639",
+    "backend/internal/app/step3_upscale_recovery_test.go": "5516f0371b45a332af23cb99ea575ae6ba075c0175cc0cfdda219fc918ce72ce",
+    "backend/internal/handler/step3_retry_regression_test.go": "113e6ff52ba7eb19680702216d7984f3bed488781f2cbeac7e208ab3b29b6943"
+  }
+}

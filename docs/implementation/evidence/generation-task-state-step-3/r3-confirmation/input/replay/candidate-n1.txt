@@ -1,0 +1,440 @@
+=== RUN   TestOpusR2ImageNoResultRetryCanRequeue
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.131ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.053ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.074ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_external_test.go:70: free recovery err=<nil> gets=1 nonGets=0
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.215ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_external_test.go:72: after free recovery: status=failed routeRun=4 outcome=phase=failed regenerate=allowed recovery=no_result
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "img-no-job" AND user_id = "local" AND route_run = 4 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/logical_models.go:266 [35;1mrecord not found
+[0m[33m[0.044ms] [34;1m[rows:0][0m SELECT * FROM `route_attempts` WHERE task_id = "img-no-job" ORDER BY route_run desc, attempt_number desc,`route_attempts`.`id` LIMIT 1
+    opus_r2_external_test.go:79: control legacy /retry: err=<nil> status=queued
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.073ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_external_test.go:88: legacy /retry: err=<nil> returned=queued stored status=queued routeRun=5 extraGets=0
+--- PASS: TestOpusR2ImageNoResultRetryCanRequeue (0.19s)
+=== RUN   TestOpusR2ImageUnrecoverableRetryCanRequeue
+=== RUN   TestOpusR2ImageUnrecoverableRetryCanRequeue/refunded
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.186ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.078ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.073ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.160ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.065ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.067ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_external_test.go:47: free recovery err=<nil> status=failed routeRun=4 outcome=phase=failed regenerate=allowed recovery=unrecoverable gets=1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.098ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_external_test.go:56: legacy /retry: regenerate=allowed err=<nil> returned=queued stored status=queued routeRun=5 extraGets=0
+=== RUN   TestOpusR2ImageUnrecoverableRetryCanRequeue/charged
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.089ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.073ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.090ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.120ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.092ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_external_test.go:47: free recovery err=<nil> status=failed routeRun=4 outcome=phase=failed regenerate=confirm recovery=unrecoverable gets=1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.077ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.105ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_external_test.go:56: legacy /retry: regenerate=confirm err=<nil> returned=failed stored status=failed routeRun=4 extraGets=1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.140ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.092ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_external_test.go:66: /retry regen-2: err=<nil> stored status=failed routeRun=4 receipt={"taskId":"img-expired","action":"free_recovery","originalRouteRun":4,"acceptedRouteRun":4} extraGets=1
+--- PASS: TestOpusR2ImageUnrecoverableRetryCanRequeue (0.42s)
+    --- PASS: TestOpusR2ImageUnrecoverableRetryCanRequeue/refunded (0.18s)
+    --- PASS: TestOpusR2ImageUnrecoverableRetryCanRequeue/charged (0.24s)
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion/failed/legacy
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.116ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.072ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.059ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:09 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.065ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion/failed/new_operation
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.107ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.066ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.081ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.142ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.179ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion/expired_accepted_request/legacy
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.158ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.047ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.048ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.101ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion/expired_accepted_request/new_operation
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.154ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.116ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion/gone_result/legacy
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.097ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.105ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.048ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.030ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.049ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.044ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageRefundRetryAfterResultConclusion/gone_result/new_operation
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.161ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.106ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.048ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.101ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.187ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "refunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.205ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "new-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+--- PASS: TestStep3ImageRefundRetryAfterResultConclusion (1.11s)
+    --- PASS: TestStep3ImageRefundRetryAfterResultConclusion/failed/legacy (0.20s)
+    --- PASS: TestStep3ImageRefundRetryAfterResultConclusion/failed/new_operation (0.17s)
+    --- PASS: TestStep3ImageRefundRetryAfterResultConclusion/expired_accepted_request/legacy (0.17s)
+    --- PASS: TestStep3ImageRefundRetryAfterResultConclusion/expired_accepted_request/new_operation (0.18s)
+    --- PASS: TestStep3ImageRefundRetryAfterResultConclusion/gone_result/legacy (0.18s)
+    --- PASS: TestStep3ImageRefundRetryAfterResultConclusion/gone_result/new_operation (0.21s)
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue/settled/legacy
+
+2026/10/28 06:40:10 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.188ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.137ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.078ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.149ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.166ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.113ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.146ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue/settled/new_operation
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.136ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.059ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.032ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.127ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.067ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.141ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "unconfirmed-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "unconfirmed-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.052ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.101ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.072ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue/pending/legacy
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.055ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.029ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.191ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue/pending/new_operation
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.104ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.075ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.076ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.071ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.084ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.204ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "unconfirmed-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "unconfirmed-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.075ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue/missing_billing/legacy
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.085ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.073ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.081ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.038ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.113ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.120ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.164ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:11 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageConclusionWithoutRefundDoesNotRequeue/missing_billing/new_operation
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.134ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.067ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.033ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "original-recovery" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.075ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.087ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.183ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "unconfirmed-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.054ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "unconfirmed-generation" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.154ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:12 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.069ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "unrefunded-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue (1.31s)
+    --- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue/settled/legacy (0.24s)
+    --- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue/settled/new_operation (0.21s)
+    --- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue/pending/legacy (0.16s)
+    --- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue/pending/new_operation (0.22s)
+    --- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue/missing_billing/legacy (0.23s)
+    --- PASS: TestStep3ImageConclusionWithoutRefundDoesNotRequeue/missing_billing/new_operation (0.24s)
+PASS
+ok  	infinite-canvas/backend/internal/app	3.051s

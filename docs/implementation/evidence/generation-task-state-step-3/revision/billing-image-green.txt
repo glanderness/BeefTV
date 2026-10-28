@@ -1,0 +1,210 @@
+=== RUN   TestImageJobResultQueriesCurrentRouteWithoutCreating
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+--- PASS: TestImageJobResultQueriesCurrentRouteWithoutCreating (0.05s)
+=== RUN   TestProviderBillingStatesReadsOnlyDocumentedEnvelope
+--- PASS: TestProviderBillingStatesReadsOnlyDocumentedEnvelope (0.00s)
+=== RUN   TestProviderBillingStatesTreatsNullAsPresent
+--- PASS: TestProviderBillingStatesTreatsNullAsPresent (0.00s)
+=== RUN   TestStep3VideoDTOBillingPersistsWithoutLogs
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.035ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.053ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "dto-billing" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3VideoDTOBillingPersistsWithoutLogs (0.05s)
+=== RUN   TestStep3BillingProjectionIgnoresDiagnosticLogRefund
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.032ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+--- PASS: TestStep3BillingProjectionIgnoresDiagnosticLogRefund (0.04s)
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/failed
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.033ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.008ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.274ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/expired
+
+2026/10/28 11:54:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.060ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.107ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.008ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/logical_models.go:266 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `route_attempts` WHERE task_id = "image-job-terminal" ORDER BY route_run desc, attempt_number desc,`route_attempts`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.033ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.022ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.008ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:54:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON (0.28s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/failed (0.05s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/expired (0.06s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired (0.07s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage (0.05s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON (0.05s)
+PASS
+ok  	infinite-canvas/backend/internal/app	1.542s
+=== RUN   TestComputeOutcome
+=== RUN   TestComputeOutcome/排队
+=== RUN   TestComputeOutcome/重启后过期租约仍在运行
+=== RUN   TestComputeOutcome/所有输出入库
+=== RUN   TestComputeOutcome/部分输出未入库
+=== RUN   TestComputeOutcome/下载暂时失败
+=== RUN   TestComputeOutcome/入库确定失败
+=== RUN   TestComputeOutcome/尚未派发
+=== RUN   TestComputeOutcome/本地准备失败
+=== RUN   TestComputeOutcome/明确没建任务
+=== RUN   TestComputeOutcome/明确失败不代表退款
+=== RUN   TestComputeOutcome/有明确退款声明
+=== RUN   TestComputeOutcome/BeefAPI_视频失败未扣费
+=== RUN   TestComputeOutcome/BeefAPI_视频仍在结算
+=== RUN   TestComputeOutcome/BeefAPI_视频已扣费
+=== RUN   TestComputeOutcome/BeefAPI_图片明确退款
+=== RUN   TestComputeOutcome/BeefAPI_图片空扣费结论仍待核对
+=== RUN   TestComputeOutcome/第三方取不回仍需确认
+=== RUN   TestComputeOutcome/旧回执没有路由
+=== RUN   TestComputeOutcome/已接受
+=== RUN   TestComputeOutcome/同键待重发
+=== RUN   TestComputeOutcome/旧提交未确认等待扫描
+=== RUN   TestComputeOutcome/确认取不回
+=== RUN   TestComputeOutcome/读证据失败不是没结果
+=== RUN   TestComputeOutcome/审核失败不能原样重跑
+=== RUN   TestComputeOutcome/深度本地不收费
+=== RUN   TestComputeOutcome/计费不明
+=== RUN   TestComputeOutcome/接受证据覆盖旧未发出阶段
+=== RUN   TestComputeOutcome/视频沿用原任务查询
+--- PASS: TestComputeOutcome (0.00s)
+    --- PASS: TestComputeOutcome/排队 (0.00s)
+    --- PASS: TestComputeOutcome/重启后过期租约仍在运行 (0.00s)
+    --- PASS: TestComputeOutcome/所有输出入库 (0.00s)
+    --- PASS: TestComputeOutcome/部分输出未入库 (0.00s)
+    --- PASS: TestComputeOutcome/下载暂时失败 (0.00s)
+    --- PASS: TestComputeOutcome/入库确定失败 (0.00s)
+    --- PASS: TestComputeOutcome/尚未派发 (0.00s)
+    --- PASS: TestComputeOutcome/本地准备失败 (0.00s)
+    --- PASS: TestComputeOutcome/明确没建任务 (0.00s)
+    --- PASS: TestComputeOutcome/明确失败不代表退款 (0.00s)
+    --- PASS: TestComputeOutcome/有明确退款声明 (0.00s)
+    --- PASS: TestComputeOutcome/BeefAPI_视频失败未扣费 (0.00s)
+    --- PASS: TestComputeOutcome/BeefAPI_视频仍在结算 (0.00s)
+    --- PASS: TestComputeOutcome/BeefAPI_视频已扣费 (0.00s)
+    --- PASS: TestComputeOutcome/BeefAPI_图片明确退款 (0.00s)
+    --- PASS: TestComputeOutcome/BeefAPI_图片空扣费结论仍待核对 (0.00s)
+    --- PASS: TestComputeOutcome/第三方取不回仍需确认 (0.00s)
+    --- PASS: TestComputeOutcome/旧回执没有路由 (0.00s)
+    --- PASS: TestComputeOutcome/已接受 (0.00s)
+    --- PASS: TestComputeOutcome/同键待重发 (0.00s)
+    --- PASS: TestComputeOutcome/旧提交未确认等待扫描 (0.00s)
+    --- PASS: TestComputeOutcome/确认取不回 (0.00s)
+    --- PASS: TestComputeOutcome/读证据失败不是没结果 (0.00s)
+    --- PASS: TestComputeOutcome/审核失败不能原样重跑 (0.00s)
+    --- PASS: TestComputeOutcome/深度本地不收费 (0.00s)
+    --- PASS: TestComputeOutcome/计费不明 (0.00s)
+    --- PASS: TestComputeOutcome/接受证据覆盖旧未发出阶段 (0.00s)
+    --- PASS: TestComputeOutcome/视频沿用原任务查询 (0.00s)
+PASS
+ok  	infinite-canvas/backend/internal/task	1.569s

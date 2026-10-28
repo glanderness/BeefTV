@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -105,6 +107,7 @@ type Service struct {
 	workspaceOpsMu           sync.Mutex
 	imageRecoveryActive      atomic.Bool
 	imageRecoveryAfterID     string
+	providerRecoveryAfterID  string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -291,18 +294,124 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
+	return s.retryTask(userID, id, "")
+}
+
+func (s *Service) RetryTaskWithOperation(userID, id, clientOperationID string) (*model.Task, error) {
+	return s.retryTask(userID, id, clientOperationID)
+}
+
+func (s *Service) retryTask(userID, id, clientOperationID string) (result *model.Task, err error) {
+	operationID := strings.TrimSpace(clientOperationID)
+	if s.repo == nil || (operationID == "" && s.IsDraining()) {
+		return s.taskDomain().Retry(userID, id)
+	}
+	defer func() {
+		// Another request may commit between the initial lookup and a domain
+		// eligibility read. Resolve that admission rather than returning a
+		// spurious "only failed tasks" error to the concurrent replay.
+		if err != nil && operationID != "" {
+			if replayed, found, lookupErr := s.repo.RetryOperationForTask(userID, operationID, id); lookupErr == nil && found {
+				s.attachTaskDelivery(replayed)
+				result = taskForOutput(*replayed)
+				err = nil
+				return
+			}
+		}
+		switch {
+		case errors.Is(err, repository.ErrRetryOperationConflict):
+			err = kernel.NewAppError(kernel.CodeConflict, "此操作编号已用于其他重试，请使用新的操作编号")
+		case errors.Is(err, repository.ErrRetryOperationInProgress), errors.Is(err, repository.ErrTaskStateConflict), errors.Is(err, repository.ErrTaskProviderRecoveryConflict):
+			err = kernel.NewAppError(kernel.CodeConflict, "任务正在处理中，请稍后重试")
+		}
+	}()
+	if operationID != "" {
+		replayed, found, lookupErr := s.repo.RetryOperationForTask(userID, operationID, id)
+		if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRetryOperationInProgress) {
+			return nil, lookupErr
+		}
+		if found {
+			s.attachTaskDelivery(replayed)
+			return taskForOutput(*replayed), nil
+		}
+	}
+	task, err := s.repo.TaskForUser(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]any{"taskId": id, "routeRun": task.RouteRun, "action": "retry"})
+	payloadHash := operations.PayloadHash("task.retry", operations.CanonicalJSON(payload))
 	if s.IsDraining() {
 		return s.taskDomain().Retry(userID, id)
 	}
-	if task, err := s.repo.TaskForUser(userID, id); err == nil {
-		if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
-			return s.resumeGenerationDownload(*task)
+	if s.freeRetryPath(*task) {
+		if operationID != "" {
+			// Pause removal and admission are one short transaction. Even an
+			// exit before the first GET leaves a task the existing worker resumes.
+			admitted, accepted, admitErr := s.admitFreeRetry(userID, operationID, payloadHash, *task)
+			if admitErr != nil {
+				return nil, admitErr
+			}
+			if accepted && task.Status == model.TaskStatusFailed {
+				_, _, _ = s.recoverOriginalTask(context.Background(), *task)
+			}
+			current, readErr := s.Task(userID, id)
+			if readErr != nil {
+				return nil, readErr
+			}
+			current.RetryOperation = admitted.RetryOperation
+			return current, nil
 		}
-		if restored, handled, err := s.recoverAcceptedImage(*task); handled {
-			return restored, err
+		if recovered, handled, recoverErr := s.recoverOriginalTask(context.Background(), *task); handled {
+			return recovered, recoverErr
 		}
 	}
+	if operationID != "" {
+		return s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
+	}
 	return s.taskDomain().Retry(userID, id)
+}
+
+func (s *Service) recoverOriginalTask(ctx context.Context, task model.Task) (*model.Task, bool, error) {
+	if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+		result, err := s.resumeGenerationDownload(task)
+		return result, true, err
+	}
+	if task.Status == model.TaskStatusFailed && task.ProviderRequestID != "" && (strings.HasPrefix(task.Type, "canvas_video") || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") {
+		result, err := s.queryFailedVideoTask(ctx, &task, task.UserID)
+		if err != nil {
+			return nil, true, err
+		}
+		return result.Task, true, nil
+	}
+	return s.recoverAcceptedImageContext(ctx, task)
+}
+
+func (s *Service) freeRetryPath(task model.Task) bool {
+	if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+		return true
+	}
+	if task.Status == model.TaskStatusFailed && task.Stage != "submission_unknown" && task.ProviderRequestID != "" && (task.RecoveryOutcome == nil || *task.RecoveryOutcome == "") && (strings.HasPrefix(task.Type, "canvas_video") || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") {
+		return true
+	}
+	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed {
+		return false
+	}
+	if s.imageRecoveryAllowsRetry(task) {
+		return false
+	}
+	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
+	if err != nil {
+		return true
+	}
+	if receipt != nil && receipt.StatusCode < 300 {
+		return true
+	}
+	// An accepted BeefAPI image may only expose an asynchronous job ID in its
+	// creation response. Presence of that ID is enough to keep /retry on the
+	// query-only recovery path; imageJobResult performs the actual GET later.
+	jobID, err := s.repo.LatestBeefAPIImageJobIDForTask(task)
+	return err == nil && strings.TrimSpace(jobID) != ""
 }
 
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {

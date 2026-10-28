@@ -1,0 +1,63 @@
+=== RUN   TestStep3BillingContract
+=== RUN   TestStep3BillingContract/video_failed
+=== RUN   TestStep3BillingContract/video_pending
+=== RUN   TestStep3BillingContract/image_empty
+=== RUN   TestStep3BillingContract/image_absent
+=== RUN   TestStep3BillingContract/refunded_unrecoverable
+=== RUN   TestStep3BillingContract/settled_unrecoverable
+--- PASS: TestStep3BillingContract (0.17s)
+    --- PASS: TestStep3BillingContract/video_failed (0.03s)
+    --- PASS: TestStep3BillingContract/video_pending (0.03s)
+    --- PASS: TestStep3BillingContract/image_empty (0.03s)
+    --- PASS: TestStep3BillingContract/image_absent (0.03s)
+    --- PASS: TestStep3BillingContract/refunded_unrecoverable (0.03s)
+    --- PASS: TestStep3BillingContract/settled_unrecoverable (0.03s)
+=== RUN   TestStep3OldBillingMustNotAuthorizeNewRun
+--- PASS: TestStep3OldBillingMustNotAuthorizeNewRun (0.03s)
+=== RUN   TestStep3FreeRetryReplayAfterDelivery
+    step3_research_regression_test.go:125: GET=1 create=0 tasks=1 routeRun=3 receipts=1 replayError=<nil>
+--- PASS: TestStep3FreeRetryReplayAfterDelivery (0.06s)
+=== RUN   TestStep3RecoverResumesBothPauseStages
+=== RUN   TestStep3RecoverResumesBothPauseStages/delivery_paused
+=== RUN   TestStep3RecoverResumesBothPauseStages/delivery_timed_out
+--- PASS: TestStep3RecoverResumesBothPauseStages (0.09s)
+    --- PASS: TestStep3RecoverResumesBothPauseStages/delivery_paused (0.05s)
+    --- PASS: TestStep3RecoverResumesBothPauseStages/delivery_timed_out (0.04s)
+=== RUN   TestStep3VideoBillingQueryPath
+--- PASS: TestStep3VideoBillingQueryPath (0.00s)
+=== RUN   TestStep3ScanMustNotStrandRecoverableTask
+--- PASS: TestStep3ScanMustNotStrandRecoverableTask (0.03s)
+=== RUN   TestStep3DownloadFailureMustNotConcludeMissingResult
+
+2026/10/28 11:59:51 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:632 [35;1mrecord not found
+[0m[33m[0.037ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:59:51 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:59:51 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.035ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "short-download" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:59:51 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.033ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "short-download" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:59:51 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.037ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "short-download" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:59:56 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.096ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "short-download" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 12:00:01 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.153ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "short-download" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_research_regression_test.go:262: queries=1 downloads=4 outcome= error=视频结果下载失败（任务 original）：unexpected EOF
+--- PASS: TestStep3DownloadFailureMustNotConcludeMissingResult (10.05s)
+PASS
+ok  	infinite-canvas/backend/internal/app	10.983s
+=== RUN   TestStep3PaidAdmissionConcurrentAndReopen
+=== RUN   TestStep3PaidAdmissionConcurrentAndReopen/single_admission_after_reopen
+=== RUN   TestStep3PaidAdmissionConcurrentAndReopen/receipt_preserves_run
+--- PASS: TestStep3PaidAdmissionConcurrentAndReopen (0.02s)
+    --- PASS: TestStep3PaidAdmissionConcurrentAndReopen/single_admission_after_reopen (0.00s)
+    --- PASS: TestStep3PaidAdmissionConcurrentAndReopen/receipt_preserves_run (0.00s)
+PASS
+ok  	infinite-canvas/backend/internal/repository	0.942s

@@ -1,0 +1,19 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./...",
+    "-count=1",
+    "-timeout=25m"
+  ],
+  "started": "2026-10-28T04:06:43.400309+00:00",
+  "fixtures": {
+    "v26": "6a155448096d2425aa07e81cc6016410091ad0be",
+    "v27": "6d4d13735569751a98126052055021a8a04549dd"
+  },
+  "source_manifest_sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+  "finished": "2026-10-28T04:12:30.313515+00:00",
+  "exit": -15,
+  "stop_reason": "历史缺表迁移用例已复现失败，主动停止旧实现的全套；此轮不是通过结论",
+  "source_manifest": "tested-source-attempt-1.json"
+}

@@ -1,0 +1,4 @@
+=== RUN   TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable
+--- PASS: TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable (0.02s)
+PASS
+ok  	infinite-canvas/backend/internal/app	0.547s

@@ -2,6 +2,28 @@ package model
 
 import "time"
 
+type TaskBillingEvidence struct {
+	RouteRun            int       `json:"routeRun"`
+	ProviderRequestID   string    `json:"providerRequestId,omitempty"`
+	Source              string    `json:"source,omitempty"`
+	UsageState          string    `json:"usageState,omitempty"`
+	UsageStatePresent   bool      `json:"usageStatePresent"`
+	BillingState        string    `json:"billingState,omitempty"`
+	BillingStatePresent bool      `json:"billingStatePresent"`
+	ReconcileDeadline   int64     `json:"reconcileDeadline,omitempty"`
+	RouteID             string    `json:"routeId,omitempty"`
+	ChannelModelID      string    `json:"channelModelId,omitempty"`
+	ChannelID           string    `json:"channelId,omitempty"`
+	ObservedAt          time.Time `json:"observedAt"`
+}
+
+type TaskRetryOperation struct {
+	TaskID           string `json:"taskId"`
+	Action           string `json:"action"`
+	OriginalRouteRun int    `json:"originalRouteRun"`
+	AcceptedRouteRun int    `json:"acceptedRouteRun"`
+}
+
 type Task struct {
 	CreationSubmissionID *string `json:"creationSubmissionId,omitempty" gorm:"size:36;uniqueIndex"`
 	ID                   string  `json:"id" gorm:"primaryKey;size:36"`
@@ -25,35 +47,40 @@ type Task struct {
 	RouteID                string     `json:"routeId,omitempty" gorm:"size:36;index"`
 	ChannelModelID         string     `json:"channelModelId,omitempty" gorm:"size:36;index"`
 	// RouteRun 只在用户主动重试时递增；worker 租约恢复不应创建新的路由选择世代。
-	RouteRun                  int                     `json:"-" gorm:"index"`
-	ProviderRequestID         string                  `json:"providerRequestId,omitempty" gorm:"index;size:160"`
-	ProviderCancelStatus      ProviderCancelStatus    `json:"providerCancelStatus,omitempty" gorm:"index;size:24;index:idx_tasks_provider_cancel,priority:2"`
-	ProviderCancelError       string                  `json:"providerCancelError,omitempty" gorm:"type:text"`
-	ProviderCancelAttempts    int                     `json:"providerCancelAttempts,omitempty"`
-	ProviderCancelRequestedAt *time.Time              `json:"providerCancelRequestedAt,omitempty"`
-	ProviderCancelledAt       *time.Time              `json:"providerCancelledAt,omitempty"`
-	ProviderCancelNextCheckAt *time.Time              `json:"providerCancelNextCheckAt,omitempty" gorm:"index:idx_tasks_provider_cancel,priority:3"`
-	PollStage                 string                  `json:"pollStage,omitempty" gorm:"size:32"`
-	NextPollAt                *time.Time              `json:"nextPollAt,omitempty" gorm:"index"`
-	LeaseOwner                string                  `json:"-" gorm:"index;size:120"`
-	LeaseExpiresAt            *time.Time              `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
-	InputJSON                 string                  `json:"inputJson" gorm:"type:text"`
-	ResultJSON                string                  `json:"resultJson" gorm:"type:text"`
-	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
-	Error                     string                  `json:"error"`
-	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"-"`
-	RecoveryOutcome           *string                 `json:"-" gorm:"type:text"`
-	Outcome                   *TaskOutcome            `json:"outcome,omitempty" gorm:"-"`
-	ResultState               string                  `json:"resultState,omitempty" gorm:"-"`
-	Outputs                   []TaskOutput            `json:"outputs,omitempty" gorm:"-"`
-	Delivery                  *TaskDeliveryProgress   `json:"delivery,omitempty" gorm:"-"`
-	ReferenceProgress         *TaskReferenceProgress  `json:"referenceProgress,omitempty" gorm:"-"`
-	FailureDiagnostics        *TaskFailureDiagnostics `json:"failureDiagnostics,omitempty" gorm:"serializer:json;type:text"`
-	Attempts                  int                     `json:"attempts"`
-	StartedAt                 *time.Time              `json:"startedAt"`
-	CompletedAt               *time.Time              `json:"completedAt"`
-	CreatedAt                 time.Time               `json:"createdAt" gorm:"index:idx_tasks_user_created,priority:2;index:idx_tasks_status_created,priority:2;index:idx_tasks_claim,priority:3;index:idx_tasks_user_project_created,priority:3"`
-	UpdatedAt                 time.Time               `json:"updatedAt"`
+	RouteRun                  int                  `json:"-" gorm:"index"`
+	ProviderRequestID         string               `json:"providerRequestId,omitempty" gorm:"index;size:160"`
+	ProviderCancelStatus      ProviderCancelStatus `json:"providerCancelStatus,omitempty" gorm:"index;size:24;index:idx_tasks_provider_cancel,priority:2"`
+	ProviderCancelError       string               `json:"providerCancelError,omitempty" gorm:"type:text"`
+	ProviderCancelAttempts    int                  `json:"providerCancelAttempts,omitempty"`
+	ProviderCancelRequestedAt *time.Time           `json:"providerCancelRequestedAt,omitempty"`
+	ProviderCancelledAt       *time.Time           `json:"providerCancelledAt,omitempty"`
+	ProviderCancelNextCheckAt *time.Time           `json:"providerCancelNextCheckAt,omitempty" gorm:"index:idx_tasks_provider_cancel,priority:3"`
+	PollStage                 string               `json:"pollStage,omitempty" gorm:"size:32"`
+	NextPollAt                *time.Time           `json:"nextPollAt,omitempty" gorm:"index"`
+	LeaseOwner                string               `json:"-" gorm:"index;size:120"`
+	LeaseExpiresAt            *time.Time           `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
+	InputJSON                 string               `json:"inputJson" gorm:"type:text"`
+	ResultJSON                string               `json:"resultJson" gorm:"type:text"`
+	TextDraft                 string               `json:"textDraft,omitempty" gorm:"type:text"`
+	Error                     string               `json:"error"`
+	ErrorCode                 string               `json:"errorCode,omitempty" gorm:"-"`
+	RecoveryOutcome           *string              `json:"-" gorm:"type:text"`
+	// BillingEvidence stores the raw, current-generation provider conclusion.
+	// It is intentionally separate from recovery_outcome: result availability
+	// and charge settlement are different facts.
+	BillingEvidence    *TaskBillingEvidence    `json:"-" gorm:"serializer:json;type:text"`
+	RetryOperation     *TaskRetryOperation     `json:"retryOperation,omitempty" gorm:"-"`
+	Outcome            *TaskOutcome            `json:"outcome,omitempty" gorm:"-"`
+	ResultState        string                  `json:"resultState,omitempty" gorm:"-"`
+	Outputs            []TaskOutput            `json:"outputs,omitempty" gorm:"-"`
+	Delivery           *TaskDeliveryProgress   `json:"delivery,omitempty" gorm:"-"`
+	ReferenceProgress  *TaskReferenceProgress  `json:"referenceProgress,omitempty" gorm:"-"`
+	FailureDiagnostics *TaskFailureDiagnostics `json:"failureDiagnostics,omitempty" gorm:"serializer:json;type:text"`
+	Attempts           int                     `json:"attempts"`
+	StartedAt          *time.Time              `json:"startedAt"`
+	CompletedAt        *time.Time              `json:"completedAt"`
+	CreatedAt          time.Time               `json:"createdAt" gorm:"index:idx_tasks_user_created,priority:2;index:idx_tasks_status_created,priority:2;index:idx_tasks_claim,priority:3;index:idx_tasks_user_project_created,priority:3"`
+	UpdatedAt          time.Time               `json:"updatedAt"`
 
 	// WorkflowSourceCipher retains the canonical successful command privately,
 	// before public completion projections remove media and provider settings.

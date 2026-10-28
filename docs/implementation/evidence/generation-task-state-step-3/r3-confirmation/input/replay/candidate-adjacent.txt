@@ -1,0 +1,263 @@
+=== RUN   TestAutomaticImageRecoveryConclusions
+=== RUN   TestAutomaticImageRecoveryConclusions/missing
+=== RUN   TestAutomaticImageRecoveryConclusions/incomplete
+=== RUN   TestAutomaticImageRecoveryConclusions/ambiguous
+=== RUN   TestAutomaticImageRecoveryConclusions/business-failed
+=== RUN   TestAutomaticImageRecoveryConclusions/rejected
+=== RUN   TestAutomaticImageRecoveryConclusions/read-failure
+=== RUN   TestAutomaticImageRecoveryConclusions/lease-conflict
+--- PASS: TestAutomaticImageRecoveryConclusions (0.74s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/missing (0.18s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/incomplete (0.12s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/ambiguous (0.07s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/business-failed (0.08s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/rejected (0.09s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/read-failure (0.10s)
+    --- PASS: TestAutomaticImageRecoveryConclusions/lease-conflict (0.11s)
+=== RUN   TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate
+--- PASS: TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate (0.10s)
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/failed
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/unknown-later
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/null-later
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/accepted-201
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/accepted-202
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/accepted-204
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/malformed
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/no-data
+=== RUN   TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/business-error
+--- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates (0.77s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/failed (0.08s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/unknown-later (0.09s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/null-later (0.08s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/accepted-201 (0.06s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/accepted-202 (0.07s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/accepted-204 (0.09s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/malformed (0.10s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/no-data (0.11s)
+    --- PASS: TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates/business-error (0.08s)
+=== RUN   TestImageSubmissionCountErrorCannotErasePriorAcceptance
+--- PASS: TestImageSubmissionCountErrorCannotErasePriorAcceptance (0.08s)
+=== RUN   TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse
+--- PASS: TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse (0.10s)
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/failed
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.224ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.052ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.048ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.058ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.037ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/expired
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.153ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.056ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.084ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.022ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.056ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.155ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.058ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.047ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.028ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.095ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.054ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.053ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.132ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.049ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.026ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/logical_models.go:266 [35;1mrecord not found
+[0m[33m[0.078ms] [34;1m[rows:0][0m SELECT * FROM `route_attempts` WHERE task_id = "image-job-terminal" ORDER BY route_run desc, attempt_number desc,`route_attempts`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.078ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.095ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.076ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON (0.73s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/failed (0.14s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/expired (0.17s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired (0.14s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage (0.13s)
+    --- PASS: TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON (0.14s)
+=== RUN   TestReviewFreeRecoveryRunningReceiptAfterCrash
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.104ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.188ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.063ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_free_admission_regression_test.go:29: after restart, same op: err=<nil>
+    step3_free_admission_regression_test.go:35: receipt status=succeeded
+--- PASS: TestReviewFreeRecoveryRunningReceiptAfterCrash (0.14s)
+=== RUN   TestReviewFreeRecoveryReceiptRecordsRouteRuns
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.283ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.097ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.069ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_free_admission_regression_test.go:56: first status=succeeded stage=正在取回结果 receipt={"taskId":"paused-free-2","action":"free_recovery","originalRouteRun":3,"acceptedRouteRun":3}
+    step3_free_admission_regression_test.go:67: replay: status=true stage=正在取回结果 outcome=&{Phase:ready Regenerate:allowed Reason:result_ready} err=<nil>
+
+2026/10/28 06:40:18 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.058ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestReviewFreeRecoveryReceiptRecordsRouteRuns (0.18s)
+=== RUN   TestStep3FreeReplayReadsCurrentTask
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.098ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.059ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-current" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.028ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-current" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.047ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "free-current" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3FreeReplayReadsCurrentTask (0.16s)
+=== RUN   TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.190ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.049ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "first-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.081ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "first-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "next-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.036ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "next-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+--- PASS: TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun (0.16s)
+=== RUN   TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/plugin_states.go:15 [35;1mrecord not found
+[0m[33m[0.067ms] [34;1m[rows:0][0m SELECT * FROM `plugin_platform_states` WHERE plugin_id = "runninghub-workflow-provider" ORDER BY `plugin_platform_states`.`plugin_id` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/repository.go:687 [35;1mrecord not found
+[0m[33m[0.112ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "runtime_policy" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/repository.go:687 [35;1mrecord not found
+[0m[33m[0.088ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "runtime_policy" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/repository.go:687 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "runtime_policy" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/repository.go:687 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "runtime_policy" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:40:19 [31;1m/tmp/step3-n1-ek43v5_n/candidate/backend/internal/repository/repository.go:687 [35;1mrecord not found
+[0m[33m[0.023ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "response_interception" ORDER BY `system_settings`.`key` LIMIT 1
+--- PASS: TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID (0.07s)
+PASS
+ok  	infinite-canvas/backend/internal/app	3.308s
+=== RUN   TestStep3ConcurrentRetryHTTPAndConflictingTask
+--- PASS: TestStep3ConcurrentRetryHTTPAndConflictingTask (0.18s)
+=== RUN   TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays
+    step3_retry_regression_test.go:88: first: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"7fabc39ab90de176b3f1fce89b62cdd3","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","retryOperation":{"taskId":"review-paid-1","action":"retry","originalRouteRun":0,"acceptedRouteRun":1},"outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T06:40:18.618912032Z","updatedAt":"2026-10-28T06:40:18.624856629Z"},"msg":"ok"}
+    step3_retry_regression_test.go:90: after first: status=queued routeRun=1
+    step3_retry_regression_test.go:93: receipts after first: 1
+    step3_retry_regression_test.go:100: second: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"7fabc39ab90de176b3f1fce89b62cdd3","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","retryOperation":{"taskId":"review-paid-1","action":"retry","originalRouteRun":0,"acceptedRouteRun":1},"outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T06:40:18.618912032Z","updatedAt":"2026-10-28T06:40:18.624856629Z"},"msg":"ok"}
+--- PASS: TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays (0.16s)
+PASS
+ok  	infinite-canvas/backend/internal/handler	0.351s

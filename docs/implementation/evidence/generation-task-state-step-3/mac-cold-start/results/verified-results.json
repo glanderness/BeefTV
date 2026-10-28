@@ -1,0 +1,224 @@
+{
+  "verified_at": "2026-10-28T07:23:18.078164+00:00",
+  "method": "独立逐名读取原始日志、命令、退出码和输入指纹；未重跑用例",
+  "builds": [
+    {
+      "variant": "base-original",
+      "exit": 0,
+      "binary_sha256": "9918ddacb60c46397e470f17773016208ea514bc2ccdf23cc930a7d77604682a",
+      "started": "2026-10-28T07:18:58.279072+00:00",
+      "finished": "2026-10-28T07:19:30.817472+00:00",
+      "elapsed_ns": 32538024458
+    },
+    {
+      "variant": "base-diagnostic",
+      "exit": 0,
+      "binary_sha256": "8174100412c0cbe2731bed6f56e1e070df79fbd4abdb5037ce9bc098096177b7",
+      "started": "2026-10-28T07:19:30.939645+00:00",
+      "finished": "2026-10-28T07:19:46.889528+00:00",
+      "elapsed_ns": 15949726334
+    },
+    {
+      "variant": "candidate-original",
+      "exit": 0,
+      "binary_sha256": "3adeffa120f77288fa2284bea481c209bee55808064d53832a8894c86f80214c",
+      "started": "2026-10-28T07:19:47.138339+00:00",
+      "finished": "2026-10-28T07:19:57.114207+00:00",
+      "elapsed_ns": 9975766417
+    },
+    {
+      "variant": "candidate-diagnostic",
+      "exit": 0,
+      "binary_sha256": "953a3d869a1728b8f63f092cdd17b55cd528064b2e68af8f9633506336f5c0cf",
+      "started": "2026-10-28T07:19:57.239667+00:00",
+      "finished": "2026-10-28T07:20:07.137243+00:00",
+      "elapsed_ns": 9897474667
+    }
+  ],
+  "runs": [
+    {
+      "name": "original-1-base",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "a405ddebeb38c26230a17f68ac40e482959badd203804d10447755a2873dc3d7",
+      "raw_bytes": 40548,
+      "local_open_ms": 3253,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:07.254863+00:00",
+      "finished": "2026-10-28T07:20:18.638067+00:00"
+    },
+    {
+      "name": "original-2-candidate",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "fac5d2f950ca9dd6ab5f1a177c6da49b9a96410092a3d9176a46dc6465b77660",
+      "raw_bytes": 40563,
+      "local_open_ms": 1303,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:18.730382+00:00",
+      "finished": "2026-10-28T07:20:24.440465+00:00"
+    },
+    {
+      "name": "original-3-candidate",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "fef075e399a8d817589b23446df95a37bc8ce3332394acbb75af4b60f1124c86",
+      "raw_bytes": 40563,
+      "local_open_ms": 1296,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:24.529775+00:00",
+      "finished": "2026-10-28T07:20:25.950320+00:00"
+    },
+    {
+      "name": "original-4-base",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "97285f374838a903c6c51c0170e66905fbbdd61386b0f18abe07fd45abe18657",
+      "raw_bytes": 40548,
+      "local_open_ms": 1212,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:26.040565+00:00",
+      "finished": "2026-10-28T07:20:27.400385+00:00"
+    },
+    {
+      "name": "diagnostic-1-base",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "c468752ce1089c1168988a77f00386f86c9fc930f8890a68cf6c6f414e8ad833",
+      "raw_bytes": 40744,
+      "local_open_ms": 1284,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:27.510360+00:00",
+      "finished": "2026-10-28T07:20:32.844206+00:00",
+      "phase_ns": {
+        "database_and_schema": 40360542,
+        "service_and_plugins": 1168711375,
+        "builtin_initializers": 56711417,
+        "composition_and_routes": 18065833
+      },
+      "phase_sum_ns": 1283849167,
+      "total_minus_phase_sum_ns_interval": {
+        "lower_inclusive": 150833,
+        "upper_exclusive": 1150833
+      },
+      "residual_note": "总Open只输出截断毫秒；残差包括t.TempDir、计时/日志等，不能单独估算插桩开销"
+    },
+    {
+      "name": "diagnostic-2-candidate",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "699c212ee8c9030f0a7c5da0c48abd7c4889e53303ba53e3f089f3db37e74923",
+      "raw_bytes": 40759,
+      "local_open_ms": 1441,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:32.958855+00:00",
+      "finished": "2026-10-28T07:20:38.506875+00:00",
+      "phase_ns": {
+        "database_and_schema": 46076084,
+        "service_and_plugins": 1326683417,
+        "builtin_initializers": 52439750,
+        "composition_and_routes": 14934167
+      },
+      "phase_sum_ns": 1440133418,
+      "total_minus_phase_sum_ns_interval": {
+        "lower_inclusive": 866582,
+        "upper_exclusive": 1866582
+      },
+      "residual_note": "总Open只输出截断毫秒；残差包括t.TempDir、计时/日志等，不能单独估算插桩开销"
+    },
+    {
+      "name": "diagnostic-3-candidate",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "1bb8d092ce3bf1e0f8c27f53bc317381b8e9789eaf9fbe3d867fc3553aad6e05",
+      "raw_bytes": 40759,
+      "local_open_ms": 1197,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:38.593120+00:00",
+      "finished": "2026-10-28T07:20:39.914308+00:00",
+      "phase_ns": {
+        "database_and_schema": 41024666,
+        "service_and_plugins": 1077735792,
+        "builtin_initializers": 57902625,
+        "composition_and_routes": 20659416
+      },
+      "phase_sum_ns": 1197322499,
+      "total_minus_phase_sum_ns_interval": {
+        "lower_inclusive": 0,
+        "upper_exclusive": 677501
+      },
+      "residual_note": "总Open只输出截断毫秒；残差包括t.TempDir、计时/日志等，不能单独估算插桩开销"
+    },
+    {
+      "name": "diagnostic-4-base",
+      "observed_tests": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "observed_passes": [
+        "TestDesktopColdOpenBudgetAndNoIdleOutbound"
+      ],
+      "exit": 0,
+      "raw_sha256": "385c9ae03e24eaed393c39f911246b4a186a7d1ceffff226c0deb8300b87515b",
+      "raw_bytes": 40744,
+      "local_open_ms": 1288,
+      "idle_outbound_requests": 0,
+      "started": "2026-10-28T07:20:39.998990+00:00",
+      "finished": "2026-10-28T07:20:41.407805+00:00",
+      "phase_ns": {
+        "database_and_schema": 35501917,
+        "service_and_plugins": 1182264709,
+        "builtin_initializers": 55805625,
+        "composition_and_routes": 14397709
+      },
+      "phase_sum_ns": 1287969960,
+      "total_minus_phase_sum_ns_interval": {
+        "lower_inclusive": 30040,
+        "upper_exclusive": 1030040
+      },
+      "residual_note": "总Open只输出截断毫秒；残差包括t.TempDir、计时/日志等，不能单独估算插桩开销"
+    }
+  ],
+  "all_load_snapshot_commands_exit_zero": true,
+  "plugin_count": 86,
+  "frozen_plugins_match_recorded_hashes": true,
+  "prepared_and_diagnostics_match": true,
+  "inputs_unchanged_at_runner_end": true,
+  "task_processes_remaining": [],
+  "diagnostic_is_acceptance": false,
+  "prior_parallel_failure_root_cause": "未定"
+}

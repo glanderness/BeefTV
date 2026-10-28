@@ -34,6 +34,9 @@ func (s *Service) startImageRecoveryPass(ctx context.Context) {
 			// 不记录原请求、响应或上游错误正文。
 			_ = s.log("", "", "warn", "图片自动取回暂缓，将稍后再试", "")
 		}
+		if err := s.recoverFailedProviderTasks(bounded, imageRecoveryBatch); err != nil {
+			_ = s.log("", "", "warn", "视频自动取回暂缓，将稍后再试", "")
+		}
 	})
 	if !started {
 		s.imageRecoveryActive.Store(false)
@@ -81,8 +84,15 @@ func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) 
 	if err != nil {
 		return err
 	}
-	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || (task.RecoveryOutcome != nil && *task.RecoveryOutcome != "") {
+	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || task.RouteRun != candidate.RouteRun || task.RouteID != candidate.RouteID {
 		return nil
+	}
+	if task.RecoveryOutcome != nil && *task.RecoveryOutcome != "" {
+		if _, _, err := s.imageJobResultWithMode(ctx, *task, true); err != nil {
+			return err
+		}
+		at := time.Now().Add(30 * time.Second)
+		return s.repo.FinishFailedResultRecovery(*task, task.RecoveryOutcome, &at)
 	}
 	result, outcome, recoveryErr := s.failedImageResult(ctx, *task)
 	if len(result) > 0 && recoveryErr == nil {
@@ -108,7 +118,7 @@ func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) 
 		at := time.Now().Add(delay)
 		next = &at
 	}
-	if err := s.repo.FinishFailedImageRecovery(*task, conclusion, next); err != nil {
+	if err := s.repo.FinishFailedResultRecovery(*task, conclusion, next); err != nil {
 		return err
 	}
 	return recoveryErr
@@ -149,6 +159,22 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 	}
 	if len(result) > 0 && receiptErr == nil {
 		return result, "", nil
+	}
+	jobResult, jobHandled, jobErr := s.imageJobResult(ctx, task)
+	if jobHandled {
+		if jobErr != nil {
+			var conclusion originalResultConclusion
+			if errors.As(jobErr, &conclusion) {
+				return nil, conclusion.outcome, nil
+			}
+			return nil, "", jobErr
+		}
+		if len(jobResult) > 0 {
+			return jobResult, "", nil
+		}
+		// The original gateway job is still pending; do not fall through to
+		// the frozen POST replay path.
+		return nil, "", nil
 	}
 
 	if attempt != nil && attempt.RouteRun == task.RouteRun && attempt.DispatchState == "rejected_no_job" && (submission == nil || !submission.ResponseAccepted) {

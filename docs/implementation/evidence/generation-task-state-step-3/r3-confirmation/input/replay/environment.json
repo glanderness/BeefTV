@@ -1,0 +1,8 @@
+{
+  "platform": "Linux-7.2.6-x86_64-with-glibc2.41",
+  "cpu_count": 8,
+  "go_version": "go version go1.27.3 linux/amd64",
+  "baseline": "850d89c109b7e94a356834ee51eedba6dba019fb",
+  "candidate": "30ed8d92910fe928b84cf918d870b8d600923144",
+  "plugins": "/tmp/s3r/basefull/plugin-packages"
+}

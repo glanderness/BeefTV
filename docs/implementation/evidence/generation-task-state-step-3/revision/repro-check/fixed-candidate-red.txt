@@ -1,0 +1,600 @@
+=== RUN   TestStep3WorkerRecoversFailedThirdPartyVideo
+
+2026/10/28 12:16:47 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[5.466ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:16:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.084ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+    step3_background_recovery_test.go:64: background worker did not query original video: polls=0 creates=0
+2026/10/28 12:16:57 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:16:57 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+--- FAIL: TestStep3WorkerRecoversFailedThirdPartyVideo (10.00s)
+=== RUN   TestStep3ClosedResultStillReconcilesPendingBilling
+
+2026/10/28 12:16:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[3.899ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:16:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:16:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:16:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:16:58 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:16:58 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:16:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:16:58.35")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:16:59 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.082ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:16:59 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:16:59 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:00 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:01 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:01 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+    step3_background_recovery_test.go:95: closed pending not reconciled: task=&{CreationSubmissionID:<nil> ID:pending-closed UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_video Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:3 ProviderRequestID:original ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage: NextPollAt:<nil> LeaseOwner: LeaseExpiresAt:<nil> InputJSON:{"metadata":null,"mode":"video","videoParameters":{"affectedChannel":false,"audioCount":0,"imageCount":0,"model":"","size":"","videoCount":0}} ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:0x3f5c2e3f6a20 BillingEvidence:0x3f5c2b8933b0 Outcome:0x3f5c2e3f2d28 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 12:17:02.070356 +0800 +0800 UpdatedAt:2026-10-28 12:17:02.070356 +0800 +0800 WorkflowSourceCipher:} err=<nil> polls=0
+
+2026/10/28 12:17:02 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.028ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:03 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:03 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:03 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.007ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:03 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:03 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:03 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:03.353")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+2026/10/28 12:17:03 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+--- FAIL: TestStep3ClosedResultStillReconcilesPendingBilling (6.17s)
+=== RUN   TestStep3VideoDTOBillingPersistsWithoutLogs
+
+2026/10/28 12:17:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[5.140ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.137ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+2026/10/28 12:17:05 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:05 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:06 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:07 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:07 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:08 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:08 resource deletion worker claim failed: sql: database is closed
+
+2026/10/28 12:17:08 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:08 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:08.35")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:08 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:08 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:08 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:08 [32m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/repository.go:358 [33mSLOW SQL >= 200ms
+[0m[31;1m[409.026ms] [33m[rows:1][35m UPDATE `tasks` SET `lease_expires_at`="2026-10-28 12:27:08.329",`lease_owner`="manual-recovery:5ccf08400c6481641f612cd63369f12e",`updated_at`="2026-10-28 12:17:08.329" WHERE (id = "dto-billing" AND status = "failed" AND (lease_owner = '' OR lease_owner NOT LIKE "manual-recovery:%" OR lease_expires_at IS NULL OR lease_expires_at <= "2026-10-28 12:17:08.329")) AND user_id = "local"[0m
+
+2026/10/28 12:17:08 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:290 [35;1mrecord not found
+[0m[33m[0.202ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "dto-billing" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:38: billing query path="/v1/videos/original"
+    step3_billing_regression_test.go:45: missing raw DTO evidence: <nil>
+    step3_billing_regression_test.go:52: projection after log removal=&{CreationSubmissionID:<nil> ID:dto-billing UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_video Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:2 ProviderRequestID:original ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage:poll NextPollAt:2026-10-28 12:17:38.739243 +0800 +0800 LeaseOwner: LeaseExpiresAt:<nil> InputJSON:{"metadata":null,"mode":"video","videoParameters":{"affectedChannel":false,"audioCount":0,"imageCount":0,"model":"","size":"","videoCount":0}} ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:0x3f5c2e289440 BillingEvidence:<nil> Outcome:0x3f5c2d16f728 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 12:17:08.265076 +0800 +0800 UpdatedAt:2026-10-28 12:17:08.745862 +0800 +0800 WorkflowSourceCipher:} err=<nil>
+--- FAIL: TestStep3VideoDTOBillingPersistsWithoutLogs (5.44s)
+=== RUN   TestStep3BillingProjectionIgnoresDiagnosticLogRefund
+
+2026/10/28 12:17:09 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:09 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:09 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.434ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:10 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.378ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:10 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:11 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:11 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:13 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:13 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:13 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:13 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.003ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:13 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:13 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:13 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:13.35")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:13 [32m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/step3_billing_regression_test.go:64 [33mSLOW SQL >= 200ms
+[0m[31;1m[436.404ms] [33m[rows:1][35m INSERT INTO `api_call_logs` (`id`,`user_id`,`trace_id`,`request_id`,`channel_id`,`task_id`,`source`,`capability`,`operation`,`request_kind`,`api_format`,`method`,`path`,`model`,`status`,`status_code`,`duration_ms`,`poll_count`,`provider_status`,`input_tokens`,`output_tokens`,`cached_tokens`,`usage_available`,`media_count`,`video_seconds`,`provider_request_id`,`route_run`,`usage_state`,`billing_state`,`usage_state_present`,`billing_state_present`,`image_job_id`,`estimated_cost_micros`,`cost_available`,`currency`,`error_code`,`error`,`concurrency_limit`,`upstream_url`,`request_content_type`,`request_body`,`response_body`,`started_at`,`created_at`) VALUES ("diagnostic-only","local","","","","log-only","beefapi","","","","","","","","",0,0,0,"",0,0,0,false,0,0,"",2,"failed","",true,false,"",0,false,"","","",0,"","","","","0000-00-00 00:00:00","2026-10-28 12:17:13.065")[0m
+    step3_billing_regression_test.go:69: diagnostic log changed billing decision: &{CreationSubmissionID:<nil> ID:log-only UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_video Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:2 ProviderRequestID:original ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage: NextPollAt:<nil> LeaseOwner: LeaseExpiresAt:<nil> InputJSON: ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:0x3f5c2d28c860 BillingEvidence:<nil> Outcome:0x3f5c2cedf1a8 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 12:17:13.01767 +0800 +0800 UpdatedAt:2026-10-28 12:17:13.01767 +0800 +0800 WorkflowSourceCipher:} err=<nil>
+--- FAIL: TestStep3BillingProjectionIgnoresDiagnosticLogRefund (4.74s)
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/failed
+
+2026/10/28 12:17:14 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.062ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:14 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.033ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:14 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:15 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:15 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:16 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:17 [32m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/step3_billing_regression_test.go:115 [33mSLOW SQL >= 200ms
+[0m[31;1m[285.217ms] [33m[rows:1][35m INSERT INTO `api_call_logs` (`id`,`user_id`,`trace_id`,`request_id`,`channel_id`,`task_id`,`source`,`capability`,`operation`,`request_kind`,`api_format`,`method`,`path`,`model`,`status`,`status_code`,`duration_ms`,`poll_count`,`provider_status`,`input_tokens`,`output_tokens`,`cached_tokens`,`usage_available`,`media_count`,`video_seconds`,`provider_request_id`,`route_run`,`usage_state`,`billing_state`,`usage_state_present`,`billing_state_present`,`image_job_id`,`estimated_cost_micros`,`cost_available`,`currency`,`error_code`,`error`,`concurrency_limit`,`upstream_url`,`request_content_type`,`request_body`,`response_body`,`started_at`,`created_at`) VALUES ("job-create","local","","","","image-job-terminal","beefapi","image","","create","","POST","","","",0,0,0,"",0,0,0,false,0,0,"",4,"","",false,false,"job",0,false,"","","",0,"","","","","0000-00-00 00:00:00","2026-10-28 12:17:16.955")[0m
+
+2026/10/28 12:17:17 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.032ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 12:17:17 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:129: terminal conclusion=<nil> want=no_result
+2026/10/28 12:17:17 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:17 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.031ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/expired
+
+2026/10/28 12:17:17 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[4.057ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:18 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:18 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:18 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.001ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:18 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:18 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:18.35")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+2026/10/28 12:17:18 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:18 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.097ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:19 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:19 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:20 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:21 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:21 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.031ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:21 [32m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/step3_billing_regression_test.go:115 [33mSLOW SQL >= 200ms
+[0m[31;1m[251.555ms] [33m[rows:1][35m INSERT INTO `api_call_logs` (`id`,`user_id`,`trace_id`,`request_id`,`channel_id`,`task_id`,`source`,`capability`,`operation`,`request_kind`,`api_format`,`method`,`path`,`model`,`status`,`status_code`,`duration_ms`,`poll_count`,`provider_status`,`input_tokens`,`output_tokens`,`cached_tokens`,`usage_available`,`media_count`,`video_seconds`,`provider_request_id`,`route_run`,`usage_state`,`billing_state`,`usage_state_present`,`billing_state_present`,`image_job_id`,`estimated_cost_micros`,`cost_available`,`currency`,`error_code`,`error`,`concurrency_limit`,`upstream_url`,`request_content_type`,`request_body`,`response_body`,`started_at`,`created_at`) VALUES ("job-create","local","","","","image-job-terminal","beefapi","image","","create","","POST","","","",0,0,0,"",0,0,0,false,0,0,"",4,"","",false,false,"job",0,false,"","","",0,"","","","","0000-00-00 00:00:00","2026-10-28 12:17:21.37")[0m
+
+2026/10/28 12:17:21 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.032ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 12:17:21 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:129: terminal conclusion=<nil> want=unrecoverable
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired
+
+2026/10/28 12:17:22 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.037ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:22 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[8.137ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+2026/10/28 12:17:23 resource deletion worker claim failed: sql: database is closed
+2026/10/28 12:17:23 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:23 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.006ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:23 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:23 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.001ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:23 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:23 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:23 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.009ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:23.349")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:23 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:24 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:25 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.023ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:25 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:26 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 12:17:26 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:129: terminal conclusion=<nil> want=unrecoverable
+    step3_billing_regression_test.go:135: result endpoint reads=0
+
+2026/10/28 12:17:26 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage
+
+2026/10/28 12:17:26 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.120ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+2026/10/28 12:17:27 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:27 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.029ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:27 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:28 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.028ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:28 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:28 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:28 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:28 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:28 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:28.349")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:29 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:29 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:30 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:31 [32m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/step3_billing_regression_test.go:115 [33mSLOW SQL >= 200ms
+[0m[31;1m[395.177ms] [33m[rows:1][35m INSERT INTO `api_call_logs` (`id`,`user_id`,`trace_id`,`request_id`,`channel_id`,`task_id`,`source`,`capability`,`operation`,`request_kind`,`api_format`,`method`,`path`,`model`,`status`,`status_code`,`duration_ms`,`poll_count`,`provider_status`,`input_tokens`,`output_tokens`,`cached_tokens`,`usage_available`,`media_count`,`video_seconds`,`provider_request_id`,`route_run`,`usage_state`,`billing_state`,`usage_state_present`,`billing_state_present`,`image_job_id`,`estimated_cost_micros`,`cost_available`,`currency`,`error_code`,`error`,`concurrency_limit`,`upstream_url`,`request_content_type`,`request_body`,`response_body`,`started_at`,`created_at`) VALUES ("job-create","local","","","","image-job-terminal","beefapi","image","","create","","POST","","","",0,0,0,"",0,0,0,false,0,0,"",4,"","",false,false,"job",0,false,"","","",0,"","","","","0000-00-00 00:00:00","2026-10-28 12:17:30.689")[0m
+
+2026/10/28 12:17:31 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.055ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 12:17:31 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.028ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:135: result endpoint reads=0
+2026/10/28 12:17:31 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:31 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON
+
+2026/10/28 12:17:31 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[5.803ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:32 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.029ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:32 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.094ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:33 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:33 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:33 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:33 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.001ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:33 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:33 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:33 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.009ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:33.349")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:34 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:35 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 12:17:35 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:125: result JSON not recovered: &{CreationSubmissionID:<nil> ID:image-job-terminal UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_image Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:4 ProviderRequestID: ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage: NextPollAt:<nil> LeaseOwner: LeaseExpiresAt:<nil> InputJSON:{"metadata":null,"mode":"image"} ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:<nil> BillingEvidence:<nil> Outcome:0x3f5c2c208228 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 12:17:35.755479 +0800 +0800 UpdatedAt:2026-10-28 12:17:35.755479 +0800 +0800 WorkflowSourceCipher:}
+    step3_billing_regression_test.go:135: result endpoint reads=0
+--- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON (22.45s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/failed (3.73s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/expired (4.42s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired (4.42s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage (5.00s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON (4.87s)
+=== RUN   TestReviewFreeRecoveryRunningReceiptAfterCrash
+
+2026/10/28 12:17:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.026ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:36 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[3.843ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:37 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.054ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+2026/10/28 12:17:37 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:37 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:38 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:38 resource deletion worker claim failed: sql: database is closed
+
+2026/10/28 12:17:38 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:38 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:38 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:38 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:38 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:38.349")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:39 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:39 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+    step3_free_admission_regression_test.go:29: after restart, same op: err=retry operation is already in progress
+    step3_free_admission_regression_test.go:31: same operation id stays blocked after process exit: retry operation is already in progress
+    step3_free_admission_regression_test.go:35: receipt status=running
+
+2026/10/28 12:17:40 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+--- FAIL: TestReviewFreeRecoveryRunningReceiptAfterCrash (4.66s)
+=== RUN   TestReviewFreeRecoveryReceiptRecordsRouteRuns
+
+2026/10/28 12:17:41 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:41 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:41 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[4.881ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:42 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:42 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.048ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:43 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:43 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:43 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:43.349")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:44 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:45 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.031ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+    step3_free_admission_regression_test.go:56: first status=succeeded stage=正在取回结果 receipt={"task":{"id":"paused-free-2","userId":"local","projectId":"","type":"canvas_image","status":"succeeded","stage":"正在取回结果","progress":0,"prompt":"","operation":"","provider":"","model":"","inputJson":"{}","resultJson":"{\"images\":[]}","error":"","outcome":{"phase":"ready","regenerate":"allowed","reason":"result_ready"},"resultState":"READY","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T12:17:45.007314+08:00","updatedAt":"2026-10-28T12:17:45.007314+08:00"},"action":"free_recovery","originalRouteRun":0,"acceptedRouteRun":3}
+    step3_free_admission_regression_test.go:64: free receipt route runs original=0 accepted=3, want 3/3
+    step3_free_admission_regression_test.go:67: replay: status=true stage=正在取回结果 outcome=&{Phase:ready Regenerate:allowed Reason:result_ready} err=<nil>
+
+2026/10/28 12:17:45 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.028ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+2026/10/28 12:17:45 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:45 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+--- FAIL: TestReviewFreeRecoveryReceiptRecordsRouteRuns (4.74s)
+=== RUN   TestStep3FreeReplayReadsCurrentTask
+
+2026/10/28 12:17:46 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.628ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:46 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:46 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+2026/10/28 12:17:47 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:47 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.035ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:48 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:48 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:48.349")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-current" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+2026/10/28 12:17:49 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+    step3_free_replay_regression_test.go:30: replay returned stale task: stage="正在取回结果" progress=0
+--- FAIL: TestStep3FreeReplayReadsCurrentTask (3.97s)
+=== RUN   TestReviewUpgradedDatabaseLegacyImageRetry
+
+2026/10/28 12:17:50 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:51 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:51 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.031ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:52 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+    step3_upgrade_legacy_retry_test.go:54: recoverAcceptedImage handled=true err=图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果
+    step3_upgrade_legacy_retry_test.go:56: legacy RetryTask: task=false err=图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果
+    step3_upgrade_legacy_retry_test.go:58: failed image without receipt is captured by job lookup error on upgraded database: 图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果
+--- FAIL: TestReviewUpgradedDatabaseLegacyImageRetry (3.06s)
+=== RUN   TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable
+    step3_upgrade_regression_test.go:53: upgraded api_call_logs missing column route_run
+    step3_upgrade_regression_test.go:53: upgraded api_call_logs missing column usage_state
+    step3_upgrade_regression_test.go:53: upgraded api_call_logs missing column billing_state
+    step3_upgrade_regression_test.go:53: upgraded api_call_logs missing column usage_state_present
+    step3_upgrade_regression_test.go:53: upgraded api_call_logs missing column billing_state_present
+    step3_upgrade_regression_test.go:53: upgraded api_call_logs missing column image_job_id
+2026/10/28 12:17:53 resource deletion worker claim failed: sql: database is closed
+2026/10/28 12:17:53 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.029ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:53.348")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+
+2026/10/28 12:17:53 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.005ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:53 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:53 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:54 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:55 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:55 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+    step3_upgrade_regression_test.go:68: LogAPICall on upgraded database: table api_call_logs has no column named route_run
+    step3_upgrade_regression_test.go:72: outcome facts unreadable on upgraded database (every failed task projection degrades)
+--- FAIL: TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable (3.50s)
+=== RUN   TestStep3AutomaticImageUpscaleUsesOriginalRecoveryPOST
+
+2026/10/28 12:17:56 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:17:56 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.167ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 12:17:56 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:57 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:57 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 12:17:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+
+2026/10/28 12:17:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/task_delivery.go:78 [35;1msql: database is closed
+[0m[33m[0.002ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE status = "succeeded" AND result_json <> '' ORDER BY id asc LIMIT 64
+2026/10/28 12:17:58 generation canvas bind recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+2026/10/28 12:17:58 generation delivery recovery paused: worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+
+2026/10/28 12:17:58 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/repository/image_recovery.go:100 [35;1msql: database is closed
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT * FROM `tasks` WHERE (tasks.id > "" AND tasks.type = "canvas_image" AND tasks.status = "failed") AND ((recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= "2026-10-28 12:17:58.348")) AND (stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')) ORDER BY tasks.id ASC LIMIT 8
+    step3_upscale_recovery_test.go:48: query POST omitted or used create: recover=0 query=0 create=0
+
+2026/10/28 12:17:59 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-ch5_40rz/v27/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.106ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+2026/10/28 12:17:59 task dispatch paused: stage=claim worker_id=95d0e84ff6cb60b1b42ae0609c474155 error=sql: database is closed
+--- FAIL: TestStep3AutomaticImageUpscaleUsesOriginalRecoveryPOST (3.28s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	72.638s
+=== RUN   TestStep3ConcurrentRetryHTTPAndConflictingTask
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+2026/10/28 12:16:53 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:67: same concurrent operation returned 500
+    step3_retry_regression_test.go:72: concurrent admission increased route more than once: 0
+--- FAIL: TestStep3ConcurrentRetryHTTPAndConflictingTask (6.29s)
+=== RUN   TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays
+2026/10/28 12:16:59 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    step3_retry_regression_test.go:88: first: status=500 body={"code":500,"data":null,"msg":"任务服务不可用","reason":"internal"}
+    step3_retry_regression_test.go:90: after first: status=failed routeRun=0
+    step3_retry_regression_test.go:93: receipts after first: 0
+    step3_retry_regression_test.go:95: paid retry with clientOperationId did not requeue (legacy body {} does)
+2026/10/28 12:16:59 handler request failed: method=POST route=/api/tasks/:id/retry status=500 error_type=*kernel.AppError
+    step3_retry_regression_test.go:100: second: status=500 body={"code":500,"data":null,"msg":"任务服务不可用","reason":"internal"}
+--- FAIL: TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays (5.79s)
+FAIL
+FAIL	infinite-canvas/backend/internal/handler	13.322s
+FAIL

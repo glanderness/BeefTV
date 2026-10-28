@@ -1,0 +1,105 @@
+=== RUN   TestStep3VideoDTOBillingPersistsWithoutLogs
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/analytics.go:290 [35;1mrecord not found
+[0m[33m[0.049ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "dto-billing" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:34: billing query path="/v1/videos/original"
+    step3_billing_regression_test.go:37: missing raw DTO evidence: <nil>
+    step3_billing_regression_test.go:40: projection after log removal=&{CreationSubmissionID:<nil> ID:dto-billing UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_video Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:2 ProviderRequestID:original ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage:poll NextPollAt:2026-10-28 11:53:18.772864 +0800 +0800 LeaseOwner: LeaseExpiresAt:<nil> InputJSON:{"metadata":null,"mode":"video","videoParameters":{"affectedChannel":false,"audioCount":0,"imageCount":0,"model":"","size":"","videoCount":0}} ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:0x4bb8aef6da30 BillingEvidence:<nil> Outcome:0x4bb8aecf79a8 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 11:52:48.770662 +0800 +0800 UpdatedAt:2026-10-28 11:52:48.773615 +0800 +0800 WorkflowSourceCipher:} err=<nil>
+--- FAIL: TestStep3VideoDTOBillingPersistsWithoutLogs (0.06s)
+=== RUN   TestStep3BillingProjectionIgnoresDiagnosticLogRefund
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.029ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+    step3_billing_regression_test.go:50: diagnostic log changed billing decision: &{CreationSubmissionID:<nil> ID:log-only UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_video Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:2 ProviderRequestID:original ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage: NextPollAt:<nil> LeaseOwner: LeaseExpiresAt:<nil> InputJSON: ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:0x4bb8aeaae420 BillingEvidence:<nil> Outcome:0x4bb8af0d31a8 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 11:52:48.813478 +0800 +0800 UpdatedAt:2026-10-28 11:52:48.813478 +0800 +0800 WorkflowSourceCipher:} err=<nil>
+--- FAIL: TestStep3BillingProjectionIgnoresDiagnosticLogRefund (0.04s)
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/failed
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.077ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.070ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:81: terminal conclusion=<nil> want=no_result
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/expired
+
+2026/10/28 11:52:48 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.032ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:81: terminal conclusion=<nil> want=unrecoverable
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.035ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:81: terminal conclusion=<nil> want=unrecoverable
+    step3_billing_regression_test.go:82: result endpoint reads=0
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.026ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:82: result endpoint reads=0
+=== RUN   TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-job" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:52:49 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.048ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "image-job-terminal" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_billing_regression_test.go:81: result JSON not recovered: &{CreationSubmissionID:<nil> ID:image-job-terminal UserID:local TraceID: RequestID: ProjectID: ClientOperationID:<nil> ClientOperationHash: Type:canvas_image Status:failed Stage: Progress:0 Prompt: Operation: Provider: Model: LogicalModelID: LogicalModelRevisionID: RouteID: ChannelModelID: RouteRun:4 ProviderRequestID: ProviderCancelStatus: ProviderCancelError: ProviderCancelAttempts:0 ProviderCancelRequestedAt:<nil> ProviderCancelledAt:<nil> ProviderCancelNextCheckAt:<nil> PollStage: NextPollAt:<nil> LeaseOwner: LeaseExpiresAt:<nil> InputJSON:{"metadata":null,"mode":"image"} ResultJSON: TextDraft: Error: ErrorCode: RecoveryOutcome:<nil> BillingEvidence:<nil> Outcome:0x4bb8af14e328 ResultState:FAILED_PERMANENT Outputs:[] Delivery:<nil> ReferenceProgress:<nil> FailureDiagnostics:<nil> Attempts:0 StartedAt:<nil> CompletedAt:<nil> CreatedAt:2026-10-28 11:52:49.151924 +0800 +0800 UpdatedAt:2026-10-28 11:52:49.151924 +0800 +0800 WorkflowSourceCipher:}
+    step3_billing_regression_test.go:82: result endpoint reads=0
+--- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON (0.35s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/failed (0.10s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/expired (0.09s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/result_expired (0.05s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/temporary_result_outage (0.05s)
+    --- FAIL: TestStep3ImageJobTerminalConclusionAndResultJSON/result_JSON (0.06s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.996s
+FAIL
