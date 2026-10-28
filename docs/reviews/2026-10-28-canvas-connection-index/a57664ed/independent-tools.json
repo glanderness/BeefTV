@@ -1,0 +1,71 @@
+{
+  "revision": "a57664ed48ca07512b773d3bd637a9af2b068297",
+  "before": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "after": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "product_changes_since_after": [],
+  "checks": {
+    "before_same_patch": {
+      "ref": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "exitCode": 1,
+      "output": "error: <固定快照>/web/src/lib/canvas/canvas-connection-target.ts: No such file or directory\nerror: patch failed: <固定快照>/web/src/pages/canvas/use-canvas-connection-controller.ts:448\nerror: <固定快照>/web/src/pages/canvas/use-canvas-connection-controller.ts: patch does not apply\n"
+    },
+    "after_same_patch": {
+      "ref": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+      "exitCode": 0,
+      "output": ""
+    },
+    "actual_instrumented_timing": {
+      "scope": "真实插桩落点模块，索引建立/查询用3/1毫秒假时钟；不是实机耗时",
+      "cold": {
+        "indexBuilds": 1,
+        "indexBuildMs": 3,
+        "indexQueries": 1,
+        "indexQueryMs": 1,
+        "indexCandidates": 0
+      },
+      "afterHotQuery": {
+        "indexBuilds": 1,
+        "indexBuildMs": 3,
+        "indexQueries": 2,
+        "indexQueryMs": 2,
+        "indexCandidates": 0
+      }
+    },
+    "independent_frame_counter_replay": {
+      "scope": "隔离探针三帧及重新开始；没有客户端或系统鼠标",
+      "first": "场景=gesture 帧=3 fps=60.0 p50=16.67 p95=16.67 p99=16.67 max=16.67 gt33=0 gt50=0 gt100=0 含落点帧=2 含重建帧=1 落点调用=3 落点总耗时=0 索引建立=1 索引建立耗时=0 索引查询=0 索引查询耗时=0 索引合计耗时=0 候选数=0 进度查询=0 进度耗时=0 页面渲染=0 节点渲染=0 挂载卡=0",
+      "reset": "场景=gesture 帧=1 fps=60.0 p50=16.67 p95=16.67 p99=16.67 max=16.67 gt33=0 gt50=0 gt100=0 含落点帧=0 含重建帧=0 落点调用=0 落点总耗时=0 索引建立=0 索引建立耗时=0 索引查询=0 索引查询耗时=0 索引合计耗时=0 候选数=0 进度查询=0 进度耗时=0 页面渲染=0 节点渲染=0 挂载卡=0"
+    },
+    "independent_seed": [
+      {
+        "grouped": false,
+        "nodes": 300,
+        "edges": 150,
+        "invalidEndpoints": 0,
+        "firstEdge": {
+          "id": "perf-edge-1",
+          "fromNodeId": "perf-node-0",
+          "toNodeId": "perf-node-1"
+        }
+      },
+      {
+        "grouped": true,
+        "nodes": 301,
+        "edges": 150,
+        "invalidEndpoints": 0,
+        "firstEdge": {
+          "id": "perf-edge-1",
+          "fromNodeId": "perf-child-0",
+          "toNodeId": "perf-child-1"
+        }
+      }
+    ]
+  },
+  "author_verify_exit_code": 0,
+  "patch_sha256": "697b44d819d824ef21112db2d23c71ea1c53845b276a3be1775e11a739a4d9ff",
+  "source_sha256": {
+    "verify-tools.py": "b11e19c159bfea0cb8c6353208f87caa0a4217bc03dd929453443b19856d73d6",
+    "native-probe.patch": "697b44d819d824ef21112db2d23c71ea1c53845b276a3be1775e11a739a4d9ff",
+    "seed-canvas.py": "f0bf173146fd99a6c95ee30e174990380e1c4d4d804648b7b08dbbab3273b677"
+  }
+}
