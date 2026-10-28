@@ -1,0 +1,37 @@
+command: cd backend && go test ./internal/handler -run 7-real-host-tests -count=1 -timeout=20m -v
+started: 2026-10-27T21:49:05Z
+=== RUN   TestDurableActualHostRestartsAgainstRealGoTurnAndUndo
+--- PASS: TestDurableActualHostRestartsAgainstRealGoTurnAndUndo (5.57s)
+=== RUN   TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure
+2026/10/28 05:49:17 handler request failed: method=POST route=/api/assistant/runtime/turns/:turnId/bind-session status=500 error_type=*taskbinding.Error
+    native_history_host_integration_test.go:155: Actual request byte hashes: {"modelCalls":7,"mainCalls":7,"continuationCalls":2,"audioSteer":true,"summarizations":[],"sessionId":"durable:548501f5-16a9-48d6-b580-15867b78c8bc","captured":[{"mime":"image/jpeg","wireType":"image_url","sha256":"9758688bc234701adfbb7214a05792eac30fa0803bab38f332f97580062b6b6c","bytes":14629},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"video/mp4","wireType":"image_url","sha256":"9b6e3a753c4edd0cf1c15ba164212a35a8c552ed30f4e64f2aacf235ed8b61a9","bytes":1037019},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"video/mp4","wireType":"image_url","sha256":"9b6e3a753c4edd0cf1c15ba164212a35a8c552ed30f4e64f2aacf235ed8b61a9","bytes":1037019},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"video/mp4","wireType":"image_url","sha256":"9b6e3a753c4edd0cf1c15ba164212a35a8c552ed30f4e64f2aacf235ed8b61a9","bytes":1037019}],"historyError":"历史音频已不可用，请在新对话重新添加这份素材后再试。","noFailureDispatch":true,"passed":true}
+--- PASS: TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure (7.80s)
+=== RUN   TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure
+2026/10/28 05:49:25 handler request failed: method=POST route=/api/assistant/runtime/turns/:turnId/bind-session status=500 error_type=*taskbinding.Error
+    native_history_host_integration_test.go:155: Actual request byte hashes: {"modelCalls":6,"mainCalls":6,"continuationCalls":2,"audioSteer":true,"summarizations":[],"sessionId":"durable:32bdff3e-da48-4fb0-b6f0-86729121ed95","captured":[{"mime":"image/jpeg","wireType":"image_url","sha256":"9758688bc234701adfbb7214a05792eac30fa0803bab38f332f97580062b6b6c","bytes":14629},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"video/mp4","wireType":"image_url","sha256":"9b6e3a753c4edd0cf1c15ba164212a35a8c552ed30f4e64f2aacf235ed8b61a9","bytes":1037019},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"video/mp4","wireType":"image_url","sha256":"9b6e3a753c4edd0cf1c15ba164212a35a8c552ed30f4e64f2aacf235ed8b61a9","bytes":1037019}],"historyError":"历史音频已不可用，请在新对话重新添加这份素材后再试。","noFailureDispatch":true,"passed":true}
+--- PASS: TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure (8.15s)
+=== RUN   TestDefaultDurableHostDispatchesActualNativeMediaBytes
+    native_media_host_integration_test.go:121: Actual request byte hashes: {"modelCalls":5,"mainCalls":5,"summarizations":[],"sessionId":"durable:e4bd0411-65b4-43ab-a97e-792060e78609","captured":[{"mime":"image/jpeg","wireType":"image_url","sha256":"e52dd9278cdf9c7bfb4591255a33e90e134cc1b62fb2211dd0a86685b2d652d9","bytes":506024},{"mime":"audio/wav","wireType":"input_audio","sha256":"d60094263c4fdea0aeff85ee60bc4f3689d5a05825f0db2a9d1974a712ee91c6","bytes":720078},{"mime":"video/mp4","wireType":"image_url","sha256":"9b6e3a753c4edd0cf1c15ba164212a35a8c552ed30f4e64f2aacf235ed8b61a9","bytes":1037019}],"passed":true}
+--- PASS: TestDefaultDurableHostDispatchesActualNativeMediaBytes (7.79s)
+=== RUN   TestFullAccessActualDurableCrossCanvasMoveCrashReplayAndGroupUndo
+--- PASS: TestFullAccessActualDurableCrossCanvasMoveCrashReplayAndGroupUndo (2.00s)
+=== RUN   TestSelectedSkillsActualHostBusinessFlows
+=== RUN   TestSelectedSkillsActualHostBusinessFlows/coffee
+=== RUN   TestSelectedSkillsActualHostBusinessFlows/interview
+=== RUN   TestSelectedSkillsActualHostBusinessFlows/audio
+--- PASS: TestSelectedSkillsActualHostBusinessFlows (15.35s)
+    --- PASS: TestSelectedSkillsActualHostBusinessFlows/coffee (5.11s)
+    --- PASS: TestSelectedSkillsActualHostBusinessFlows/interview (5.11s)
+    --- PASS: TestSelectedSkillsActualHostBusinessFlows/audio (5.13s)
+=== RUN   TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines
+=== RUN   TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/normal
+=== RUN   TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/host_crash_after_render_admission
+=== RUN   TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/refresh_saved_timeline
+--- PASS: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines (11.88s)
+    --- PASS: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/normal (3.87s)
+    --- PASS: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/host_crash_after_render_admission (4.24s)
+    --- PASS: TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines/refresh_saved_timeline (3.77s)
+PASS
+ok  	infinite-canvas/backend/internal/handler	59.601s
+finished: 2026-10-27T21:50:06Z
+exit: 0

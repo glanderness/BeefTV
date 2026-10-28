@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"infinite-canvas/backend/internal/generation"
+	"net/http"
 	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -98,6 +100,15 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	beefVideo := isBeefAPIVideoConfig(ctx, config)
 	workflowVideo := workflow.IsProviderInterface(config.InterfaceType)
 	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
+	if officialVideo && !declarative && strings.TrimSpace(config.InterfaceType) == string(model.ChannelInterfaceGeminiVeo) {
+		if candidate, ok := protocol.Builtins().Resolve(strings.TrimSpace(config.InterfaceType)); ok {
+			// The shipped host adapter is a query-only compatibility fallback for
+			// old Gemini tasks when the declarative package is not present in this
+			// runtime. Recovery still calls BuildPoll only; it never authorizes
+			// BuildCreate.
+			adapter, declarative = withQueryOnlyProtocolFallback(config.InterfaceType, candidate), true
+		}
+	}
 	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
 	if !declarative && !beefVideo && !workflowVideo && !legacyVideo && !upscale {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
@@ -135,6 +146,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		result, providerStatus, err = generation.RecoverUpscaleResult(queryCtx, input, providerRequestID)
 	} else if beefVideo {
 		result, providerStatus, err = queryBeefAPIVideoResult(queryCtx, input, providerRequestID)
+		s.captureTaskBillingEvidence(task)
 	} else if workflowVideo {
 		result, providerStatus, err = s.workflowClient(nil).QueryVideo(queryCtx, workflowConfigFromProvider(config), workflow.RootURL(config.BaseURL), providerRequestID)
 	} else if !declarative && legacyVideo {
@@ -203,6 +215,45 @@ func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, i
 		return nil, status, err
 	}
 	return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}}, status, nil
+}
+
+func (s *Service) captureTaskBillingEvidence(task *model.Task) {
+	if task == nil || s.repo == nil {
+		return
+	}
+	facts, err := s.repo.TaskProviderBillingEvidence([]string{task.ID})
+	if err != nil {
+		return
+	}
+	fact, ok := facts[task.ID]
+	if !ok {
+		return
+	}
+	task.BillingEvidence = &model.TaskBillingEvidence{RouteRun: fact.RouteRun, ProviderRequestID: fact.ProviderRequestID, Source: fact.Source, UsageState: fact.UsageState, UsageStatePresent: fact.UsageStatePresent, BillingState: fact.BillingState, BillingStatePresent: fact.BillingStatePresent}
+	_ = s.repo.UpdateTaskBillingEvidence(task.ID, task.UserID, task.BillingEvidence)
+}
+
+type queryOnlyProtocolAdapter struct {
+	protocol.Adapter
+}
+
+func withQueryOnlyProtocolFallback(interfaceType string, adapter protocol.Adapter) protocol.Adapter {
+	if strings.TrimSpace(interfaceType) != string(model.ChannelInterfaceGeminiVeo) {
+		return adapter
+	}
+	return queryOnlyProtocolAdapter{Adapter: adapter}
+}
+
+func (a queryOnlyProtocolAdapter) BuildPoll(_ context.Context, c protocol.PollContext) (protocol.RequestSpec, error) {
+	return protocol.RequestSpec{
+		Method: http.MethodGet,
+		Path:   "/v1beta/" + strings.TrimPrefix(strings.TrimSpace(c.TaskID), "/"),
+		Auth:   a.MediaAuth(),
+	}, nil
+}
+
+func (queryOnlyProtocolAdapter) MediaAuth() protocol.ManifestAuth {
+	return protocol.ManifestAuth{Type: "google-api-key", Field: "apiKey", Header: "x-goog-api-key"}
 }
 
 func providerTaskRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {

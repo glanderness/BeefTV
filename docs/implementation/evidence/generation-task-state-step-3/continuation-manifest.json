@@ -1,0 +1,424 @@
+{
+  "description": "第3步固定候选接续清单；推送后须从提交树逐文件读取核对，不以工作区替代",
+  "source_commit": "cf22847c0ae5fff8eba8256dd18347fc3eca3ed2",
+  "base_commit": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "fresh_remote_main_commit": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "source_branch": "tds/conv-01a17e9c-c7fd-7f9c-96a2-ae93f8e1ef81",
+  "target_branch": "tds/conv-01a18064-1402-7d75-9399-bb10bb3d06d2",
+  "verified_inputs": {
+    "plan_commit": "bffc87f54625406ccb7b778e088e01d1e5165f01",
+    "research_commit": "4b84a40d52e7f7da97397349adbb11a1bf7ff42b"
+  },
+  "counts": {
+    "source_files": 38,
+    "backend_files_identical": 30,
+    "original_logs_identical": 7,
+    "intentional_report_changes": 1
+  },
+  "source_log_table_matches_git_objects": true,
+  "checks_run_this_turn": [
+    "远端main、原候选及方案/研究固定提交读取",
+    "复制后38个文件与原候选逐字节相等",
+    "说明修订后30个后台文件与7份原日志仍逐字节相等",
+    "7份原日志的字节数和SHA-256与原说明表格相等",
+    "git diff --check",
+    "文件忽略规则检查"
+  ],
+  "tests_run_this_turn": [],
+  "original_backend_test_evidence": {
+    "path": "docs/implementation/evidence/generation-task-state-step-3/backend-go-test-all-rerun.txt",
+    "command": "cd backend && go test ./... -count=1 -timeout=25m",
+    "started": "2026-10-27T22:06:00Z",
+    "finished": "2026-10-27T22:20:46Z",
+    "exit": 0,
+    "scope": "原候选本机后台验证；不是本轮重跑、桌面或付费验证"
+  },
+  "scope": "仅接续固定候选、修订说明、补校验清单；独立复查待大总管安排，不合入不发布",
+  "intentional_report_delta": [
+    "接续状态与独立复查尚待执行",
+    "冷启动超过5秒的根因未定，撤回机器抖动归因",
+    "接续输入、来源文件及交接安排"
+  ],
+  "files": [
+    {
+      "path": "backend/internal/app/generation_runtime.go",
+      "source_blob": "a38ebd224529ca04ec2e58eac3856a1d1cd93c99",
+      "source_bytes": 14170,
+      "source_sha256": "a8670546d02c40c27108da8e88eaf97ab09cd4088d7c09ffe29687d90518cb4f",
+      "target_blob": "a38ebd224529ca04ec2e58eac3856a1d1cd93c99",
+      "target_bytes": 14170,
+      "target_sha256": "a8670546d02c40c27108da8e88eaf97ab09cd4088d7c09ffe29687d90518cb4f",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/image_auto_recovery.go",
+      "source_blob": "f66c68171dff161cd044b100b5eca8ab72225b80",
+      "source_bytes": 10653,
+      "source_sha256": "3fe91025b5d3a7548ea8490b3cdb0df176fddcf26aa3b5c9a569f45df0b0d9d2",
+      "target_blob": "f66c68171dff161cd044b100b5eca8ab72225b80",
+      "target_bytes": 10653,
+      "target_sha256": "3fe91025b5d3a7548ea8490b3cdb0df176fddcf26aa3b5c9a569f45df0b0d9d2",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/image_job_recovery_test.go",
+      "source_blob": "7346376f86d8ec46240247c8d49e61b31f23465c",
+      "source_bytes": 3161,
+      "source_sha256": "e64417f9143481e254b053e98d44aaa11b34afd7c3ae1d8f0442c17d530445af",
+      "target_blob": "7346376f86d8ec46240247c8d49e61b31f23465c",
+      "target_bytes": 3161,
+      "target_sha256": "e64417f9143481e254b053e98d44aaa11b34afd7c3ae1d8f0442c17d530445af",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/image_result_recovery.go",
+      "source_blob": "62d84f3b43884252a8626d3d5e698c52ef5397da",
+      "source_bytes": 7904,
+      "source_sha256": "7f6485f12ccea93e9e9a87b04e5f33ea5c5686be83aed5423a2aec75a465824f",
+      "target_blob": "62d84f3b43884252a8626d3d5e698c52ef5397da",
+      "target_bytes": 7904,
+      "target_sha256": "7f6485f12ccea93e9e9a87b04e5f33ea5c5686be83aed5423a2aec75a465824f",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/provider.go",
+      "source_blob": "684a021bcd7d1f09b7e3f2e8e0adb1a4b2acc37e",
+      "source_bytes": 23688,
+      "source_sha256": "b5238dca799d17472e32bc7d681cc921838dc7ffac06c4aaa433e303435da740",
+      "target_blob": "684a021bcd7d1f09b7e3f2e8e0adb1a4b2acc37e",
+      "target_bytes": 23688,
+      "target_sha256": "b5238dca799d17472e32bc7d681cc921838dc7ffac06c4aaa433e303435da740",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/provider_billing_test.go",
+      "source_blob": "46f45bbafa70d87e73fafb1a8e908d451f0c132d",
+      "source_bytes": 1476,
+      "source_sha256": "528a1023f5c523297f66a5ecf106edd24d91e8cb6db5011b827e54b6d58a3a46",
+      "target_blob": "46f45bbafa70d87e73fafb1a8e908d451f0c132d",
+      "target_bytes": 1476,
+      "target_sha256": "528a1023f5c523297f66a5ecf106edd24d91e8cb6db5011b827e54b6d58a3a46",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/provider_call_log.go",
+      "source_blob": "e2dc57afa12ceefac91d9da24f9190bc95328140",
+      "source_bytes": 7010,
+      "source_sha256": "cffecce26b85d6e53984259ca5bb534618d6916b16f4f78611b46e290dcaa215",
+      "target_blob": "e2dc57afa12ceefac91d9da24f9190bc95328140",
+      "target_bytes": 7010,
+      "target_sha256": "cffecce26b85d6e53984259ca5bb534618d6916b16f4f78611b46e290dcaa215",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/provider_http_client.go",
+      "source_blob": "06abb0600587e0c99e98d91f49508a2cdbf02d7f",
+      "source_bytes": 12095,
+      "source_sha256": "d28be14b392464d4777bc63ac3552730a18bca33319d9ecd2f7fee125105362a",
+      "target_blob": "06abb0600587e0c99e98d91f49508a2cdbf02d7f",
+      "target_bytes": 12095,
+      "target_sha256": "d28be14b392464d4777bc63ac3552730a18bca33319d9ecd2f7fee125105362a",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/provider_task_recovery.go",
+      "source_blob": "3c82df530e623f930bd4d22a34a2e9a740bef12b",
+      "source_bytes": 10945,
+      "source_sha256": "6e37c39bd9b263b24cfbcc17fb2e5e17d09f53df2f2cd2a804a8b48529d92a28",
+      "target_blob": "3c82df530e623f930bd4d22a34a2e9a740bef12b",
+      "target_bytes": 10945,
+      "target_sha256": "6e37c39bd9b263b24cfbcc17fb2e5e17d09f53df2f2cd2a804a8b48529d92a28",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/service.go",
+      "source_blob": "083980f6061d04e162b0884fc29b59590fca7df3",
+      "source_bytes": 18734,
+      "source_sha256": "49b1cf76d1c8832451325b591984d2b8b0fd9db24ac1d3e169e0a1213c55e116",
+      "target_blob": "083980f6061d04e162b0884fc29b59590fca7df3",
+      "target_bytes": 18734,
+      "target_sha256": "49b1cf76d1c8832451325b591984d2b8b0fd9db24ac1d3e169e0a1213c55e116",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/app/task_outcome.go",
+      "source_blob": "1e62e708a9e4689f4b645425a0621e94d35d0983",
+      "source_bytes": 2439,
+      "source_sha256": "34b46c55dee958258a83ec9c012d6c6cab6296cb9f56f27906deb3b7d2fa2cbd",
+      "target_blob": "1e62e708a9e4689f4b645425a0621e94d35d0983",
+      "target_bytes": 2439,
+      "target_sha256": "34b46c55dee958258a83ec9c012d6c6cab6296cb9f56f27906deb3b7d2fa2cbd",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/database/assistant_continuation_test.go",
+      "source_blob": "098fde866559bc9f0bf58c2ba27893b072ebaad9",
+      "source_bytes": 4417,
+      "source_sha256": "c1c9e90d63189be21c27305535e80f3a2a6adc72da630331b3ba74e998627bb5",
+      "target_blob": "098fde866559bc9f0bf58c2ba27893b072ebaad9",
+      "target_bytes": 4417,
+      "target_sha256": "c1c9e90d63189be21c27305535e80f3a2a6adc72da630331b3ba74e998627bb5",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/database/assistant_production_test.go",
+      "source_blob": "7de106bde49c786225af41c71a18e6f638735ccc",
+      "source_bytes": 2495,
+      "source_sha256": "9a8ff88da4927c4226f950fa477dbc749ab3616e68807d359b6582b926daa197",
+      "target_blob": "7de106bde49c786225af41c71a18e6f638735ccc",
+      "target_bytes": 2495,
+      "target_sha256": "9a8ff88da4927c4226f950fa477dbc749ab3616e68807d359b6582b926daa197",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/database/local_schema.go",
+      "source_blob": "64eb8fc683276b5ff72907d6f418381f24ce2883",
+      "source_bytes": 24697,
+      "source_sha256": "528662d5c2115c2847d8eba9a3fdb29b1177c3879c910664bd618817e2bd2d6a",
+      "target_blob": "64eb8fc683276b5ff72907d6f418381f24ce2883",
+      "target_bytes": 24697,
+      "target_sha256": "528662d5c2115c2847d8eba9a3fdb29b1177c3879c910664bd618817e2bd2d6a",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/database/local_schema_repair_test.go",
+      "source_blob": "13c14239da4cfa3b40ad7619bb8382564c6481cb",
+      "source_bytes": 11112,
+      "source_sha256": "56a9c31e3b69c93b67d3fb4fa9bfeecce5c4f6cef25ed7afe9080a4c81c509df",
+      "target_blob": "13c14239da4cfa3b40ad7619bb8382564c6481cb",
+      "target_bytes": 11112,
+      "target_sha256": "56a9c31e3b69c93b67d3fb4fa9bfeecce5c4f6cef25ed7afe9080a4c81c509df",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/database/local_schema_skill_market_test.go",
+      "source_blob": "b22b4dba5bf04974a4695faaaa75b0239f60dc63",
+      "source_bytes": 2736,
+      "source_sha256": "8acb84f16e6832818e6e240554059f15dd3dc2194b1c4cf62dcf9bdb746636eb",
+      "target_blob": "b22b4dba5bf04974a4695faaaa75b0239f60dc63",
+      "target_bytes": 2736,
+      "target_sha256": "8acb84f16e6832818e6e240554059f15dd3dc2194b1c4cf62dcf9bdb746636eb",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/database/local_schema_test.go",
+      "source_blob": "4bfe5645007c5df410a06b0062422ce73db25bbf",
+      "source_bytes": 19811,
+      "source_sha256": "b5a25cd62d6bc063251922f641b6f736421ac111dc05d8da7da903a6b3cfe7f8",
+      "target_blob": "4bfe5645007c5df410a06b0062422ce73db25bbf",
+      "target_bytes": 19811,
+      "target_sha256": "b5a25cd62d6bc063251922f641b6f736421ac111dc05d8da7da903a6b3cfe7f8",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/generation/http.go",
+      "source_blob": "d7f450f1712763f975e21bed158e97de06e59356",
+      "source_bytes": 19061,
+      "source_sha256": "4efc80acdac1133890381c96b7bb921994e37bbf2a256d9f0e8c5409c3ed885c",
+      "target_blob": "d7f450f1712763f975e21bed158e97de06e59356",
+      "target_bytes": 19061,
+      "target_sha256": "4efc80acdac1133890381c96b7bb921994e37bbf2a256d9f0e8c5409c3ed885c",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/generation/ports.go",
+      "source_blob": "6939831d5a7fe004d668c7df2590ca52d04645a8",
+      "source_bytes": 6327,
+      "source_sha256": "c47c43c1f0f0753bbf454b11fee0b5569f1916cd486a278415d82036b3d220d3",
+      "target_blob": "6939831d5a7fe004d668c7df2590ca52d04645a8",
+      "target_bytes": 6327,
+      "target_sha256": "c47c43c1f0f0753bbf454b11fee0b5569f1916cd486a278415d82036b3d220d3",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/handler/routes.go",
+      "source_blob": "63d35bd58797ed94f3ea41f49c0b178dbde7dc67",
+      "source_bytes": 7132,
+      "source_sha256": "b2096fefc25c9a720afac16b96ef133168b9bb45bb5a6d1d078da25a2ac1aade",
+      "target_blob": "63d35bd58797ed94f3ea41f49c0b178dbde7dc67",
+      "target_bytes": 7132,
+      "target_sha256": "b2096fefc25c9a720afac16b96ef133168b9bb45bb5a6d1d078da25a2ac1aade",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/model/models_channel.go",
+      "source_blob": "777f6031caba21addee1987c7a3aa1b727f9074a",
+      "source_bytes": 8284,
+      "source_sha256": "9330b533ef40c89ba9c34d43f323da7bdbd63c3d579c503e3ecc419216d61645",
+      "target_blob": "777f6031caba21addee1987c7a3aa1b727f9074a",
+      "target_bytes": 8284,
+      "target_sha256": "9330b533ef40c89ba9c34d43f323da7bdbd63c3d579c503e3ecc419216d61645",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/model/models_task.go",
+      "source_blob": "52993862f48a560315195da9d65c82f64cf56f0e",
+      "source_bytes": 13087,
+      "source_sha256": "48edc91a2478ae7b81318f96264ded2ea1362caa1477f105e2a9d8be819d8cbe",
+      "target_blob": "52993862f48a560315195da9d65c82f64cf56f0e",
+      "target_bytes": 13087,
+      "target_sha256": "48edc91a2478ae7b81318f96264ded2ea1362caa1477f105e2a9d8be819d8cbe",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/repository/analytics.go",
+      "source_blob": "effbdcbb5ace26986fed34fe7f938375c77ac1e9",
+      "source_bytes": 12418,
+      "source_sha256": "618b0e3b664ca83b147c596c495bcbf61bc4332ce485b14e4ec9c74b3925847c",
+      "target_blob": "effbdcbb5ace26986fed34fe7f938375c77ac1e9",
+      "target_bytes": 12418,
+      "target_sha256": "618b0e3b664ca83b147c596c495bcbf61bc4332ce485b14e4ec9c74b3925847c",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/repository/image_recovery.go",
+      "source_blob": "243aa7ec579351868dc3a5ba7d205bdf8d1cf494",
+      "source_bytes": 5834,
+      "source_sha256": "ba7029dc8842565547c3b9d0b1e20be995b1d8a22930bd5f0234f5d81d7cec1a",
+      "target_blob": "243aa7ec579351868dc3a5ba7d205bdf8d1cf494",
+      "target_bytes": 5834,
+      "target_sha256": "ba7029dc8842565547c3b9d0b1e20be995b1d8a22930bd5f0234f5d81d7cec1a",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/repository/local_runtime.go",
+      "source_blob": "c5eb1544c55d9606d7a929d4b9d7a44975e14cef",
+      "source_bytes": 19898,
+      "source_sha256": "a435e676874a0e4888a01553f8a4a484905d89a648d7b9f21f3daa1dd53f567b",
+      "target_blob": "c5eb1544c55d9606d7a929d4b9d7a44975e14cef",
+      "target_bytes": 19898,
+      "target_sha256": "a435e676874a0e4888a01553f8a4a484905d89a648d7b9f21f3daa1dd53f567b",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/repository/local_runtime_retry_operation_test.go",
+      "source_blob": "ff7262141f9dd039b0765d8ba85651299d72e65e",
+      "source_bytes": 1588,
+      "source_sha256": "17363666556e54c20c46afbe3649020d17413e4e6960333ed5913b820a07345f",
+      "target_blob": "ff7262141f9dd039b0765d8ba85651299d72e65e",
+      "target_bytes": 1588,
+      "target_sha256": "17363666556e54c20c46afbe3649020d17413e4e6960333ed5913b820a07345f",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/task/lifecycle.go",
+      "source_blob": "e8172575db9ba3581ac0ca0504ac2a4c74307274",
+      "source_bytes": 8353,
+      "source_sha256": "552f76e0cee774e96d6377d7b7a1d3e02232a1589f3ebbae54ddddaac49fb1e2",
+      "target_blob": "e8172575db9ba3581ac0ca0504ac2a4c74307274",
+      "target_bytes": 8353,
+      "target_sha256": "552f76e0cee774e96d6377d7b7a1d3e02232a1589f3ebbae54ddddaac49fb1e2",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/task/outcome.go",
+      "source_blob": "884dd6d6555d12a433eec29ab21dfdbd291919ca",
+      "source_bytes": 4099,
+      "source_sha256": "48eca1765edb4cdd85a345e30fe7bbc62c01c39b9afb3fb80b8b463d0a6abc7b",
+      "target_blob": "884dd6d6555d12a433eec29ab21dfdbd291919ca",
+      "target_bytes": 4099,
+      "target_sha256": "48eca1765edb4cdd85a345e30fe7bbc62c01c39b9afb3fb80b8b463d0a6abc7b",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/task/outcome_test.go",
+      "source_blob": "2b08a725890237be37e5ff6e62140bbb07298f5c",
+      "source_bytes": 6301,
+      "source_sha256": "0103aa4d59142b2e5119ecd60827a997f6f64e9cbf47fc50dba550fbefd023bf",
+      "target_blob": "2b08a725890237be37e5ff6e62140bbb07298f5c",
+      "target_bytes": 6301,
+      "target_sha256": "0103aa4d59142b2e5119ecd60827a997f6f64e9cbf47fc50dba550fbefd023bf",
+      "identical_to_source": true
+    },
+    {
+      "path": "backend/internal/task/store.go",
+      "source_blob": "dc550559fed1e71e801f91b1a47dfd69fcc50c81",
+      "source_bytes": 2871,
+      "source_sha256": "2845d2dd0efb5618d61e9f3bc3bbe21ff293773b96f32a1f843a5a1b4278fc6a",
+      "target_blob": "dc550559fed1e71e801f91b1a47dfd69fcc50c81",
+      "target_bytes": 2871,
+      "target_sha256": "2845d2dd0efb5618d61e9f3bc3bbe21ff293773b96f32a1f843a5a1b4278fc6a",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/agent-host-bun-install.txt",
+      "source_blob": "50ef692bb4cfaf1b79f38922a85ce8162152ac7e",
+      "source_bytes": 324,
+      "source_sha256": "a1b29287819c0a92999f469597cd948f1c1cea1d7fff15dd6cfc98a500d152d2",
+      "target_blob": "50ef692bb4cfaf1b79f38922a85ce8162152ac7e",
+      "target_bytes": 324,
+      "target_sha256": "a1b29287819c0a92999f469597cd948f1c1cea1d7fff15dd6cfc98a500d152d2",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/app-package-final.txt",
+      "source_blob": "c0efd1d76587e1adda270adb41940c855900388b",
+      "source_bytes": 51,
+      "source_sha256": "3b9779c5c6fc11ae125b8b088e4c1e6ed3bf17611d5ddf27113413e5dc1be062",
+      "target_blob": "c0efd1d76587e1adda270adb41940c855900388b",
+      "target_bytes": 51,
+      "target_sha256": "3b9779c5c6fc11ae125b8b088e4c1e6ed3bf17611d5ddf27113413e5dc1be062",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/backend-go-test-all-rerun.txt",
+      "source_blob": "f91384315742c69fb8d7e4136866b5cc01de6db8",
+      "source_bytes": 4020,
+      "source_sha256": "a3d8e67ef4dff0d209056f946feb0554a0d2986fd2a7874895c2c4363139b0f8",
+      "target_blob": "f91384315742c69fb8d7e4136866b5cc01de6db8",
+      "target_bytes": 4020,
+      "target_sha256": "a3d8e67ef4dff0d209056f946feb0554a0d2986fd2a7874895c2c4363139b0f8",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/backend-go-test-all.txt",
+      "source_blob": "dd07dedac8ead9534487b0a5f57dfe7d6f1f8a13",
+      "source_bytes": 1850015,
+      "source_sha256": "d69919a291f5538ee6c891ba964a20e2c9601a1aa4d08c476673b4f29077650c",
+      "target_blob": "dd07dedac8ead9534487b0a5f57dfe7d6f1f8a13",
+      "target_bytes": 1850015,
+      "target_sha256": "d69919a291f5538ee6c891ba964a20e2c9601a1aa4d08c476673b4f29077650c",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/bootstrap-cold-open-rerun.txt",
+      "source_blob": "1785a4ca06301778dd12e5393e5c0d5c0e068709",
+      "source_bytes": 40651,
+      "source_sha256": "031016e240bacdd0eae197d3c08cd0affa893f6968a32b87f4e1f73352f60a16",
+      "target_blob": "1785a4ca06301778dd12e5393e5c0d5c0e068709",
+      "target_bytes": 40651,
+      "target_sha256": "031016e240bacdd0eae197d3c08cd0affa893f6968a32b87f4e1f73352f60a16",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/handler-real-host-rerun.txt",
+      "source_blob": "82834a991c6d52d0ba673a542d058fe0c162917b",
+      "source_bytes": 5735,
+      "source_sha256": "ac38214e86d80c06127d34794953bab0c1ed8cfbea062cc874d7376d06da00a6",
+      "target_blob": "82834a991c6d52d0ba673a542d058fe0c162917b",
+      "target_bytes": 5735,
+      "target_sha256": "ac38214e86d80c06127d34794953bab0c1ed8cfbea062cc874d7376d06da00a6",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/special-tests-rerun.txt",
+      "source_blob": "421a7f4539209738ebe1f55279e1a21a42f903a3",
+      "source_bytes": 286,
+      "source_sha256": "6f1dfc7e932ed0e7c1c6143e1b5e946451436269dd3363d492d3cc5189d3eb62",
+      "target_blob": "421a7f4539209738ebe1f55279e1a21a42f903a3",
+      "target_bytes": 286,
+      "target_sha256": "6f1dfc7e932ed0e7c1c6143e1b5e946451436269dd3363d492d3cc5189d3eb62",
+      "identical_to_source": true
+    },
+    {
+      "path": "docs/implementation/generation-task-state-step-3.md",
+      "source_blob": "5729475194fcb7c4bc5874dfea65b3fd26fd3522",
+      "source_bytes": 14507,
+      "source_sha256": "45b988c4d638ad90105f77946a7c0eb60257f2c6d464ebe8d0f63d76e7ccd792",
+      "target_blob": "3f407c20fda24259ba028ff451110e301f318c32",
+      "target_bytes": 18541,
+      "target_sha256": "e01c615e65a7bebb6347d5c0a5f55ea3bfd101a9ef28176c5bb6117d29cce9c6",
+      "identical_to_source": false
+    }
+  ]
+}

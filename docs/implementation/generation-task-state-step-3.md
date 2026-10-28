@@ -1,0 +1,183 @@
+# 生成任务状态重构：第 3 步实施说明
+
+状态：原第 3 步候选已完整接续到新会话分支，等待大总管安排独立复查。原候选已按仓库 CI 流程补齐锁定的 agent-host 测试依赖，专项、app、handler 与 backend 全套测试已有通过日志；本轮没有重复这些测试。完整第 3 步是否满足修订方案的 3A–3C 及研究反例，仍须独立复查，不能只凭全套测试通过判定。改动未合入主线、未发布，也没有调用真实付费生成。
+
+依据：`docs/architecture/generation-task-state.md` 第 3.1–3.7 节及本任务已确认范围。本文只记录本分支实际完成的后台能力，不把第 4–7 步的报价、用户确认、MCP/CLI 付费守门或前端改动写成已实现。
+
+## 1. 本步边界
+
+本步统一后台已有的失败任务查询、图片免费取回、重新生成入口和扣费投影事实：
+
+- BeefAPI 直接读取响应中的 `usage_state` / `billing_state` 及字段是否存在；不按错误文案或派发状态推断是否收费。
+- 第三方渠道没有可核实的扣费结论时，投影为需要用户确认；只有明确未发出或上游已明确失败且有 BeefAPI 未扣费证据时才允许直接重新生成。
+- 图片异步任务只查询当前轮次保存的 job ID，下载结果；查询、下载和写回过程中不提交新的生成 POST。
+- `/tasks/:id/retry` 接受 `clientOperationId`，同一用户、同一操作 ID、同一任务轮次的重试可回放；不同 payload 或不同轮次不能复用。
+- 继续兼容已有 `/retry` 行为：成功但下载暂停、已有图片回执或当前轮次异步 job 可免费恢复时，仍先走免费恢复；这不是新计费状态机，也没有新增 `/recover` 接口。
+
+## 2. 实际改动
+
+| 位置 | 改动 |
+| --- | --- |
+| `backend/internal/model/models_channel.go`、`app/provider_http_client.go`、`app/provider_call_log.go`、`app/generation_runtime.go`、`generation/ports.go` | API 日志按 `RouteRun` 保存 provider 请求轮次、来源、原始 `usage_state` / `billing_state` 和字段存在性；读取响应头中的 `X-Image-Job-Id` 或 `/images/jobs/{id}` `Location`。字段只保存在后台记录，公共接口不暴露渠道内部字段。 |
+| `backend/internal/model/models_task.go`、`repository/analytics.go`、`app/task_outcome.go` | 增加私有 `TaskBillingEvidence`，只接收当前轮次、正式 BeefAPI 日志的证据；旧任务没有任务列时从当前轮次日志兼容读取。任务读投影优先使用持久证据，再按同一轮次回查日志。 |
+| `backend/internal/task/outcome.go` | `ComputeOutcome` 直接按 BeefAPI 原值计算 `regenerate`：失败/退款/明确未扣费为 `allowed`，空值或 `pending` 为 `blocked`，已结算/已扣费为 `confirm`；第三方缺少该证据保持 `confirm`。`RecoveryOutcome` 仍只回答结果是否可取回，不代替计费事实。 |
+| `backend/internal/app/image_result_recovery.go`、`image_auto_recovery.go`、`repository/analytics.go` | 图片创建回执没有结果时，若当前 `RouteRun` 有 BeefAPI job ID，就查询 `GET /v1/images/jobs/{id}`；处理中保持失败任务等待，不落入冻结 POST 重放；成功后下载并物化图片，失败则保留恢复错误。旧轮次 job ID 不会被使用。查询后把当前轮次的扣费证据写回任务。 |
+| `backend/internal/app/provider_task_recovery.go`、`repository/image_recovery.go` | 失败视频/超分按已有 provider request ID 查询，不创建新上游任务。Gemini Veo 在本地声明式包尚未物化时仅使用内置的 query-only `GET /v1beta/{operation}` 适配器；它不提供 `BuildCreate` 权限。缺失的 MiniMax、Ark 等显式官方插件仍 fail closed。 |
+| `backend/internal/app/service.go`、`backend/internal/task/lifecycle.go`、`task/store.go`、`repository/local_runtime.go`、`handler/routes.go` | `/retry` 的免费恢复与付费重跑分支统一接入 `AgentOpRecord`。操作回执保存任务轮次和结果；冲突 payload 返回冲突，执行中返回冲突，成功后重放原任务。免费恢复失败会删除临时 `running` 回执，避免瞬时错误永久阻塞同一操作。重试时清除上一轮 `BillingEvidence`。 |
+| `backend/internal/database/local_schema.go` 及迁移身份测试 | 追加 v27 `task-billing-evidence`，仅新增可空 `tasks.billing_evidence`，没有回填、默认值或旧 ledger 改写。 |
+| `backend/internal/app/*_test.go`、`backend/internal/repository/*_test.go`、`backend/internal/task/outcome_test.go` | 增加扣费原值及字段存在性、图片异步 job 当前轮次 GET/下载零 POST、操作回执冲突/回放/清理、BeefAPI 与第三方 Outcome 分支测试。 |
+
+## 3. 关键规则
+
+### 3.1 扣费投影
+
+- `source=beefapi` 且 `usage_state` 字段存在时，优先直接读取它：`failed`、`refunded`、`not_charged` 等明确未收费值允许重新生成；`pending` 或存在但为空时阻塞；`completed`、`settled`、`charged` 需要确认。
+- 没有 `usage_state` 时才看存在的 `billing_state`；图片的 `refunded`、`failed` 或明确未收费值允许，空值阻塞，`settled` / `completed` / `charged` 需要确认。
+- 字段缺失不能当作 pending。没有 BeefAPI 扣费字段的图片和所有第三方失败任务，取不回时保持 `confirm`。
+- 任务已明确 `not_sent`、`rejected_no_job` 或没有上游请求号时，沿原有事实规则允许重新生成；这不是对第三方收费结果的推断。
+- 计费字段按原字符串和存在性保存，不新增本地收费状态机，不根据错误文本猜测退款。
+
+### 3.2 图片异步免费取回
+
+- job ID 只从当前任务、当前 `RouteRun` 的 BeefAPI 图片创建日志取得；旧轮次日志不能让新轮次走恢复。
+- 查询路径固定为 `GET /v1/images/jobs/{job_id}`。状态为 queued/pending/running 时返回“仍待查询”的空结果，不走冻结请求 POST；失败/取消/过期写恢复错误；有图片结果时再下载并转换成本地结果。
+- job 查询与结果下载都使用原任务上下文，日志带 `task_id`、`routeRun` 和 `requestKind=poll/download`。已有的结果回执、资源入库和画布绑定继续复用旧实现。
+- `recoverAcceptedImage`、后台图片扫描和 `/retry` 兼容分支都使用这一条查询优先路径；它们不会因为拿不到图片 job 结果就直接提交新的生成请求。
+
+### 3.3 视频第三方恢复
+
+- 有原 `ProviderRequestID` 的失败视频任务可以沿原协议查询，查询成功后复用已有下载、资源物化和任务投影。
+- Gemini Veo 的兼容 fallback 只覆盖查询，使用正确的 Google API key Header 和 `/v1beta/{operation}` 路径；不改变生成入口，也不授权新的创建请求。
+- 显式插件缺失的其他官方协议和已删除的自定义协议仍拒绝查询，避免用猜测的协议路径访问上游。
+
+### 3.4 操作幂等
+
+- `/tasks/:id/retry` 的 payload hash 包含操作类型、任务 ID 和调用时的 `routeRun`。同一 `clientOperationId` 跨轮次重用会冲突，而不是被误认为新购买。
+- 付费重跑进入任务事务时由 `AgentOpRecord` 唯一记录保护；免费恢复先领取临时回执，成功写入结果，失败回收 `running` 记录。
+- 重放返回持久化的原任务快照，不再次排队、不递增 `routeRun`。本步没有实现报价、`quoteId`、真人确认证明或外部客户端付费开关；这些属于后续步骤。
+
+## 4. 验证
+
+所有验证使用本机临时 SQLite、`httptest` 假上游、临时数据目录和假凭据；没有真实账号、真实用户数据库或真实付费生成。
+
+前置：
+
+```text
+sh plugin-packages/build-packages.sh
+```
+
+该命令只生成本机被 `.gitignore` 忽略的官方协议包，供完整 app 测试加载；没有修改提交内容。
+
+专项和基础包测试：
+
+```text
+go test ./internal/database -count=1                         通过
+go test ./internal/repository -count=1                       通过
+go test ./internal/task -count=1                             通过
+go test ./internal/task -run '^TestComputeOutcome$'          通过
+go test ./internal/app -run '^TestImageJobResultQueriesCurrentRouteWithoutCreating$' -count=1 通过
+go test ./internal/app -run 'TestProviderBillingStates|TestImageJobIDFromHeaders|TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating|TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes' -count=1 通过
+go test ./internal/repository -run '^TestRetryOperationReceiptIsIdempotentAndAbortable$' -count=1 通过
+```
+
+补齐测试依赖：
+
+```text
+cd agent-host && bun install --frozen-lockfile 通过
+bun 1.4.2；121 个包已安装；未修改 agent-host/package.json 或 bun.lock
+```
+
+实际安装日志：`docs/implementation/evidence/generation-task-state-step-3/agent-host-bun-install.txt`。
+
+app 包专项与最终全套中的结果：
+
+```text
+go test ./internal/app -run '^TestVideoProtocolUpgradeRecoversOriginalTasks$' -count=1 -timeout=15m 通过（约 6 分钟）
+go test ./internal/app -count=1 -timeout=20m                         通过（722.649 秒）
+```
+
+`TestVideoProtocolUpgradeRecoversOriginalTasks` 曾在默认 10 分钟的整包运行中尚未轮到结束，因此第一次整包结果是 timeout；当时用 `-skip '^TestVideoProtocolUpgradeRecoversOriginalTasks$'` 只是定位用，不能作为最终全包结论。随后长用例单独通过，app 包完整运行也通过；本次 backend 全套复跑中 `internal/app` 同样通过（882.560 秒）。app 包最终摘要日志保留在 `app-package-final.txt`，专项测试原始日志保留在 `special-tests-rerun.txt`。
+
+handler 7 组真实 host 集成复跑：
+
+```text
+go test ./internal/handler -run '^(TestDurableActualHostRestartsAgainstRealGoTurnAndUndo|TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure|TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure|TestDefaultDurableHostDispatchesActualNativeMediaBytes|TestFullAccessActualDurableCrossCanvasMoveCrashReplayAndGroupUndo|TestSelectedSkillsActualHostBusinessFlows|TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines)$' -count=1 -timeout=20m -v
+通过，7 组全部通过，59.601 秒
+```
+
+实际复跑日志：`docs/implementation/evidence/generation-task-state-step-3/handler-real-host-rerun.txt`。日志中的 host 仅使用本机依赖和测试夹具，没有真实上游生成。
+
+backend 全套复跑：
+
+```text
+go test ./... -count=1 -timeout=25m
+通过，2026-10-27T22:06:00Z–2026-10-27T22:20:46Z，14 分 46 秒
+```
+
+实际全套日志：`docs/implementation/evidence/generation-task-state-step-3/backend-go-test-all-rerun.txt`。
+
+第一次补依赖后的全套运行曾因 `TestDesktopColdOpenBudgetAndNoIdleOutbound` 达到 5.208 秒、超过 5 秒预算而失败；根因未定，没有证据足以归因为“机器抖动”。没有改动该测试或放宽预算，立即单独复跑为 1.064 秒并通过，随后第二次 `go test ./...` 全套通过。第一次失败原始日志保留在 `backend-go-test-all.txt`，单测复跑日志保留在 `bootstrap-cold-open-rerun.txt`，均在同一证据目录中。
+
+提交树核对：推送提交 `f936deb453e7e860901594fd67b2ec1d1ea89d0d` 的 `git ls-tree -r --long` 已确认以下 7 个实际日志均进入提交；字节数和 SHA-256 从 `HEAD:<path>` 重新读取核对，而不是用工作区代替：
+
+| 文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `agent-host-bun-install.txt` | 324 | `a1b29287819c0a92999f469597cd948f1c1cea1d7fff15dd6cfc98a500d152d2` |
+| `app-package-final.txt` | 51 | `3b9779c5c6fc11ae125b8b088e4c1e6ed3bf17611d5ddf27113413e5dc1be062` |
+| `special-tests-rerun.txt` | 286 | `6f1dfc7e932ed0e7c1c6143e1b5e946451436269dd3363d492d3cc5189d3eb62` |
+| `handler-real-host-rerun.txt` | 5,735 | `ac38214e86d80c06127d34794953bab0c1ed8cfbea062cc874d7376d06da00a6` |
+| `bootstrap-cold-open-rerun.txt` | 40,651 | `031016e240bacdd0eae197d3c08cd0affa893f6968a32b87f4e1f73352f60a16` |
+| `backend-go-test-all.txt` | 1,850,015 | `d69919a291f5538ee6c891ba964a20e2c9601a1aa4d08c476673b4f29077650c` |
+| `backend-go-test-all-rerun.txt` | 4,020 | `a3d8e67ef4dff0d209056f946feb0554a0d2986fd2a7874895c2c4363139b0f8` |
+
+第三方视频恢复问题现状：**已解决**。原任务查询、Gemini Veo query-only fallback、禁止 POST/创建、结果下载及显式缺失插件 fail-closed 断言均通过。
+
+图片异步任务现状：**已实现并有专项假上游验证**。当前轮次 job ID 只触发 `GET /v1/images/jobs/{id}`，随后只下载结果，假上游收到 POST=0；pending 不会落到生成重放，旧轮次 job ID 不会被采用，扣费字段会按当前轮次写入后台证据。
+
+视频扣费现状：**已实现后台事实采集和 Outcome 投影**。视频 provider 响应中的 `usage_state` 会按当前 `RouteRun` 记录；失败、待结算、已扣费分别得到 `allowed`、`blocked`、`confirm` 的投影。第三方渠道没有可核实扣费字段时保持 `confirm`。本步没有实现前端按钮、费用报价或外部调用方确认协议。
+
+## 5. 未测项、未实现与交接边界
+
+- 本轮未做真实 BeefTV、真实第三方或真实付费生成；全部任务恢复和计费断言使用本机假上游、隔离数据和临时 SQLite。
+- 未做真实桌面客户端或前端绘制验收；新增的是后台和服务端测试。Windows、web 前端及发布流水线由本轮 `backend/go test ./...` 之外的 CI job 负责，未在本机声称通过。
+- 未新增 `/tasks/:id/recover`，未改 MCP/CLI 工具合同，未实现 `paid_confirmation_required`、报价、`quoteId`、用户同意记录、外部付费开关。
+- 未新增计费状态转移或渠道退款规则表；BeefAPI 原值是证据，第三方仍交由用户确认。
+- 未发布、未开 PR、未合入主线；本分支只作为独立后续实现交付，不回写发布流程，也不扩大到第 4–7 步。
+
+## 6. 回退与风险
+
+- v27 只追加可空列；回退代码不能把已升级数据库降回 v26。若必须回退，使用升级前完整工作区备份和匹配版本程序在独立目录打开。
+- 旧任务没有 `billing_evidence` 时，读投影只接受当前轮次、正式 BeefAPI 日志中的扣费字段；日志缺失或字段缺失不会猜测为未扣费。
+- 图片 job 查询失败时不会把任务当成已退款，也不会为了“修复”而自动 POST；结果不明仍按既有回执/用户确认规则处理。
+- 本轮测试只证明本机假上游和临时数据库中的行为，不证明生产 BeefAPI 的新协议字段、视频生产去重开关或第三方保留期已改变。
+
+## 7. 新会话接续与独立复查交接
+
+### 7.1 固定输入和主线核对
+
+2026-10-28 接续任务 #88 时，通过项目仓库工具重新 fetch `main`，读回 `6a155448096d2425aa07e81cc6016410091ad0be`。它与原候选基线、新会话工作区起点完全一致，没有新增主线差异需要合并或改变已确认行为。
+
+| 输入 | 固定提交 | 本轮处理 |
+| --- | --- | --- |
+| 原实现及完整证据 | `cf22847c0ae5fff8eba8256dd18347fc3eca3ed2`，原分支 `tds/conv-01a17e9c-c7fd-7f9c-96a2-ae93f8e1ef81` | 重新 fetch 并核对提交；相对基线的 38 个文件完整复制，复制后逐字节一致 |
+| 实现主体 | `32df618cf2526fb98917fcee08f683016b6289fa` | 随完整候选保留，不从旧方案或研究补丁重写 |
+| #86 修订方案 | `bffc87f54625406ccb7b778e088e01d1e5165f01` | 重新 fetch 并核对提交，读取重构顺序、统筹记录及状态方案 3.11 |
+| #83 研究 | `4b84a40d52e7f7da97397349adbb11a1bf7ff42b` | 重新 fetch 并核对提交，读取研究报告、组合行为反例及夹具要求；不复制实验补丁 |
+
+修订方案的完整规则见 [#86 状态方案 3.11](https://github.com/glanderness/BeefTV/blob/bffc87f54625406ccb7b778e088e01d1e5165f01/docs/architecture/generation-task-state.md#311-第-3-步专项调整先固定操作再执行和投影)，研究与 16 项检查见 [#83 固定报告](https://github.com/glanderness/BeefTV/blob/4b84a40d52e7f7da97397349adbb11a1bf7ff42b/docs/research/generation-task-state-step-3-recheck.md)。研究的 5 过、11 失败针对旧 #68；不能当作本候选的测试结果，也不能当作本候选已经全部修复的证明。
+
+### 7.2 本轮改动与证据
+
+- 新分支为 `tds/conv-01a18064-1402-7d75-9399-bb10bb3d06d2`。从固定候选复制的 30 个后台源码及测试文件、7 份日志保持原字节；旧分支和固定提交不改动。
+- 实施说明只更新当前接续状态、撤回未经证实的冷启动归因，并新增本节。原验证日志不重写、不摘要替换；原全套通过时间为北京时间 2026-10-28 06:06–06:20:46。
+- [接续校验清单](evidence/generation-task-state-step-3/continuation-manifest.json) 保存原候选 38 个文件的 Git blob、字节数和 SHA-256，以及新分支对应文件的字节数和 SHA-256。除本文外，37 个文件必须完全一致。
+- 本轮只执行复制一致性、文件清单、Git 收录和差异检查，没有新增运行验证、安装依赖或改变测试阈值。原有全套测试通过不等于真实桌面、跨平台、真实付费生成或完整行为验收已通过。
+- 推送后以本轮固定提交的 `git ls-tree` / `git show` 复读每个文件，按清单核对 Git 对象、大小和哈希；提交号随交接消息提供，不用工作区文件代替提交树证据。
+
+### 7.3 独立复查安排与后续权限
+
+本实现会话只完成接续和自查，不自行派子任务或启动评审。交给大总管在单独会话按用户批准的 OpenClaw「[Mem云端·Claude Pro官方OAuth] Claude Opus 5.5」复查；精确模型为 `mem-claude/opus-5-5`，配置为 `pQiCsL4MCjIlonzbKPeV-`，不是 `mem-cloud/claude-opus-5-5` 代理。
+
+复查对象是本轮固定提交相对主线的实际 diff；原测试日志是证据输入，本文的实现自述不代替评审结论。复查覆盖免费取回、扣费原值、防重复操作和数据库兼容，并按 3.11 与研究夹具核对完整请求行为和未覆盖时序。若发现问题，由本任务新会话承接获批范围内的必要修正，再运行相应验证。
+
+本轮不提前第 4–7 步，不修改画布保存、悬停、连线或进度绘制，不恢复已停任务，不开 PR、不合入、不发布，不改 v2.0.5 发布记录。

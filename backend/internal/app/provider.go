@@ -34,11 +34,12 @@ type providerAnalyticsContext struct {
 	VideoSeconds      int
 	RequestKind       string
 	ProviderRequestID string
+	RouteRun          int
 	ConcurrencyLimit  int
 }
 
 func withProviderAnalytics(ctx context.Context, service *Service, task model.Task) context.Context {
-	metadata := providerAnalyticsContext{UserID: task.UserID, TaskID: task.ID, ProjectID: task.ProjectID, TaskType: task.Type, TraceID: task.TraceID, RequestID: task.RequestID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID}
+	metadata := providerAnalyticsContext{UserID: task.UserID, TaskID: task.ID, ProjectID: task.ProjectID, TaskType: task.Type, TraceID: task.TraceID, RequestID: task.RequestID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID, RouteRun: task.RouteRun}
 	var input struct {
 		Mode   string         `json:"mode"`
 		Config providerConfig `json:"config"`

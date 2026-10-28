@@ -150,6 +150,18 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 	if len(result) > 0 && receiptErr == nil {
 		return result, "", nil
 	}
+	jobResult, jobHandled, jobErr := s.imageJobResult(ctx, task)
+	if jobHandled {
+		if jobErr != nil {
+			return nil, "", jobErr
+		}
+		if len(jobResult) > 0 {
+			return jobResult, "", nil
+		}
+		// The original gateway job is still pending; do not fall through to
+		// the frozen POST replay path.
+		return nil, "", nil
+	}
 
 	if attempt != nil && attempt.RouteRun == task.RouteRun && attempt.DispatchState == "rejected_no_job" && (submission == nil || !submission.ResponseAccepted) {
 		return nil, localtask.RecoveryNoResult, nil

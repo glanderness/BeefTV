@@ -331,17 +331,140 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 	})
 }
 
+var (
+	ErrRetryOperationConflict   = errors.New("retry operation id reused with a different payload")
+	ErrRetryOperationInProgress = errors.New("retry operation is already in progress")
+	errRetryOperationReplayed   = errors.New("retry operation replayed")
+)
+
+type retryOperationReceipt struct {
+	Task             model.Task `json:"task"`
+	Action           string     `json:"action"`
+	OriginalRouteRun int        `json:"originalRouteRun"`
+	AcceptedRouteRun int        `json:"acceptedRouteRun"`
+}
+
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
-	return r.retryTask(userID, prepared, limit, nil)
+	return r.retryTaskWithOperation(userID, prepared, limit, nil, "", "")
 }
 
 func (r *Repository) RetryTaskWithExpectedInput(userID string, prepared *model.Task, limit int, expectedInputJSON string) (*model.Task, error) {
-	return r.retryTask(userID, prepared, limit, &expectedInputJSON)
+	return r.retryTaskWithOperation(userID, prepared, limit, &expectedInputJSON, "", "")
 }
 
-func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, expectedInputJSON *string) (*model.Task, error) {
+func (r *Repository) RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error) {
+	return r.retryTaskWithOperation(userID, prepared, limit, nil, operationID, payloadHash)
+}
+
+func (r *Repository) BeginRetryOperation(userID, operationID, payloadHash string) error {
+	if strings.TrimSpace(operationID) == "" {
+		return nil
+	}
+	record := model.AgentOpRecord{UserID: userID, Op: "task.retry", OpID: operationID, PayloadHash: payloadHash, Status: "running", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := r.db.Create(&record).Error; err == nil {
+		return nil
+	} else if !isUniqueConstraint(err) {
+		return err
+	}
+	var existing model.AgentOpRecord
+	if err := r.db.Where("user_id = ? AND op_id = ?", userID, operationID).First(&existing).Error; err != nil {
+		return err
+	}
+	if existing.Op != "task.retry" || existing.PayloadHash != payloadHash {
+		return ErrRetryOperationConflict
+	}
+	if existing.Status == "succeeded" {
+		return nil
+	}
+	return ErrRetryOperationInProgress
+}
+
+func (r *Repository) AbortRetryOperation(userID, operationID, payloadHash string) error {
+	if strings.TrimSpace(operationID) == "" {
+		return nil
+	}
+	result := r.db.Where("user_id = ? AND op_id = ? AND op = ? AND payload_hash = ? AND status = ?", userID, operationID, "task.retry", payloadHash, "running").Delete(&model.AgentOpRecord{})
+	return result.Error
+}
+
+func (r *Repository) CompleteRetryOperation(userID, operationID, payloadHash, action string, task *model.Task) error {
+	if strings.TrimSpace(operationID) == "" || task == nil {
+		return nil
+	}
+	resultJSON, err := json.Marshal(retryOperationReceipt{Task: *task, Action: action, AcceptedRouteRun: task.RouteRun})
+	if err != nil {
+		return err
+	}
+	result := r.db.Model(&model.AgentOpRecord{}).Where("user_id = ? AND op_id = ? AND op = ? AND payload_hash = ? AND status = ?", userID, operationID, "task.retry", payloadHash, "running").Updates(map[string]any{"status": "succeeded", "result_json": string(resultJSON), "updated_at": time.Now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrRetryOperationInProgress
+	}
+	return nil
+}
+
+func (r *Repository) RetryOperationResult(userID, operationID, payloadHash string) (*model.Task, bool, error) {
+	var record model.AgentOpRecord
+	err := r.db.Where("user_id = ? AND op_id = ?", userID, operationID).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if record.Op != "task.retry" || record.PayloadHash != payloadHash {
+		return nil, false, ErrRetryOperationConflict
+	}
+	if record.Status != "succeeded" {
+		return nil, false, ErrRetryOperationInProgress
+	}
+	var receipt retryOperationReceipt
+	if err := json.Unmarshal([]byte(record.ResultJSON), &receipt); err != nil {
+		return nil, false, err
+	}
+	receipt.Task.RouteRun = receipt.AcceptedRouteRun
+	return &receipt.Task, true, nil
+}
+
+func (r *Repository) retryTaskWithOperation(userID string, prepared *model.Task, limit int, expectedInputJSON *string, operationID, payloadHash string) (*model.Task, error) {
+	if operationID != "" {
+		replayed, found, err := r.RetryOperationResult(userID, operationID, payloadHash)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return replayed, nil
+		}
+	}
 	var task model.Task
 	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
+		if operationID != "" {
+			record := model.AgentOpRecord{UserID: userID, Op: "task.retry", OpID: operationID, PayloadHash: payloadHash, Status: "running", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			if createErr := tx.Create(&record).Error; createErr != nil {
+				if !isUniqueConstraint(createErr) {
+					return createErr
+				}
+				var existing model.AgentOpRecord
+				if findErr := tx.Where("user_id = ? AND op_id = ?", userID, operationID).First(&existing).Error; findErr != nil {
+					return findErr
+				}
+				if existing.Op != "task.retry" || existing.PayloadHash != payloadHash {
+					return ErrRetryOperationConflict
+				}
+				if existing.Status == "succeeded" {
+					var receipt retryOperationReceipt
+					if unmarshalErr := json.Unmarshal([]byte(existing.ResultJSON), &receipt); unmarshalErr != nil {
+						return unmarshalErr
+					}
+					receipt.Task.RouteRun = receipt.AcceptedRouteRun
+					task = receipt.Task
+					return errRetryOperationReplayed
+				}
+				return ErrRetryOperationInProgress
+			}
+		}
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
 			return err
 		}
@@ -356,7 +479,7 @@ func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, e
 			return err
 		}
 		updates := map[string]any{
-			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "recovery_outcome": nil, "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
+			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "recovery_outcome": nil, "billing_evidence": nil, "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "provider_cancel_status": "", "provider_cancel_error": "", "provider_cancel_attempts": 0,
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil, "route_run": gorm.Expr("route_run + ?", 1),
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID, "channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,
@@ -376,8 +499,23 @@ func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, e
 		if err := tx.Delete(&model.TaskTextDelta{}, "user_id = ? AND task_id = ?", userID, prepared.ID).Error; err != nil {
 			return err
 		}
-		return tx.First(&task, "id = ? AND user_id = ?", prepared.ID, userID).Error
+		if err := tx.First(&task, "id = ? AND user_id = ?", prepared.ID, userID).Error; err != nil {
+			return err
+		}
+		if operationID != "" {
+			resultJSON, marshalErr := json.Marshal(retryOperationReceipt{Task: task, Action: "retry", OriginalRouteRun: prepared.RouteRun, AcceptedRouteRun: task.RouteRun})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := tx.Model(&model.AgentOpRecord{}).Where("user_id = ? AND op_id = ?", userID, operationID).Updates(map[string]any{"status": "succeeded", "result_json": string(resultJSON), "updated_at": time.Now()}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+	if errors.Is(err, errRetryOperationReplayed) {
+		return &task, nil
+	}
 	return &task, err
 }
 
