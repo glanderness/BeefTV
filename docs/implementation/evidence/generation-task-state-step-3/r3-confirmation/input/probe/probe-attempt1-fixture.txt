@@ -1,0 +1,68 @@
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound/accepted-no-conclusion
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.268ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.276ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:51: round 4 refund requeue precondition: <nil> err=生成失败。请查看详情后再决定是否重试。
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-unknown-billing
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.201ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.047ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.022ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:51: round 4 refund requeue precondition: <nil> err=生成失败。请查看详情后再决定是否重试。
+=== RUN   TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-stale-refund-evidence
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.157ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.055ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.064ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-4" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.112ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:41:41 [31;1m/tmp/s3r3-work/probe/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.073ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "probe-image" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r3_probe_test.go:51: round 4 refund requeue precondition: <nil> err=生成失败。请查看详情后再决定是否重试。
+--- FAIL: TestOpusR3RefundBypassDoesNotLeakIntoNextRound (0.65s)
+    --- FAIL: TestOpusR3RefundBypassDoesNotLeakIntoNextRound/accepted-no-conclusion (0.25s)
+    --- FAIL: TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-unknown-billing (0.21s)
+    --- FAIL: TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-stale-refund-evidence (0.19s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.668s
+FAIL

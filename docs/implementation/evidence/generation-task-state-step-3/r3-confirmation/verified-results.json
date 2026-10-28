@@ -1,0 +1,199 @@
+{
+  "review_commit": "f557d147ab5760b5eb09c3a10cdadf5afd7cbe28",
+  "product_candidate": "30ed8d92910fe928b84cf918d870b8d600923144",
+  "verification_method": "读取固定报告、原始RUN/PASS/FAIL/SKIP、退出码和哈希；本会话没有重跑Go",
+  "n1": {
+    "top_level_pass": [
+      "TestOpusR2ImageNoResultRetryCanRequeue",
+      "TestOpusR2ImageUnrecoverableRetryCanRequeue",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue",
+      "TestStep3ImageRefundRetryAfterResultConclusion"
+    ],
+    "subtest_pass": [
+      "TestOpusR2ImageUnrecoverableRetryCanRequeue/charged",
+      "TestOpusR2ImageUnrecoverableRetryCanRequeue/refunded",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue/missing_billing/legacy",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue/missing_billing/new_operation",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue/pending/legacy",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue/pending/new_operation",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue/settled/legacy",
+      "TestStep3ImageConclusionWithoutRefundDoesNotRequeue/settled/new_operation",
+      "TestStep3ImageRefundRetryAfterResultConclusion/expired_accepted_request/legacy",
+      "TestStep3ImageRefundRetryAfterResultConclusion/expired_accepted_request/new_operation",
+      "TestStep3ImageRefundRetryAfterResultConclusion/failed/legacy",
+      "TestStep3ImageRefundRetryAfterResultConclusion/failed/new_operation",
+      "TestStep3ImageRefundRetryAfterResultConclusion/gone_result/legacy",
+      "TestStep3ImageRefundRetryAfterResultConclusion/gone_result/new_operation"
+    ],
+    "top_level_count": 4,
+    "subtest_count": 14,
+    "pass_records": 18,
+    "report_claimed_subtests": 20,
+    "count_correction": "原始日志为4个顶层+14个子项，不沿用报告20子项的计数；没有缺项或失败"
+  },
+  "adjacent": {
+    "passed_top_level_tests": [
+      "TestAutomaticImageRecoveryConclusions",
+      "TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates",
+      "TestImageSubmissionCountErrorCannotErasePriorAcceptance",
+      "TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse",
+      "TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate",
+      "TestReviewFreeRecoveryReceiptRecordsRouteRuns",
+      "TestReviewFreeRecoveryRunningReceiptAfterCrash",
+      "TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays",
+      "TestStep3ConcurrentRetryHTTPAndConflictingTask",
+      "TestStep3FreeReplayReadsCurrentTask",
+      "TestStep3ImageJobTerminalConclusionAndResultJSON",
+      "TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun",
+      "TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID"
+    ],
+    "count": 13,
+    "missing": [],
+    "skipped": []
+  },
+  "cross_round_probe": {
+    "passed_subtests": [
+      "TestOpusR3RefundBypassDoesNotLeakIntoNextRound/accepted-no-conclusion",
+      "TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-stale-refund-evidence",
+      "TestOpusR3RefundBypassDoesNotLeakIntoNextRound/conclusion-unknown-billing"
+    ],
+    "count": 3,
+    "fixture_failures_preserved_separately": true
+  },
+  "source_snapshots_verified": {
+    "candidate": {
+      "commit": "30ed8d92910fe928b84cf918d870b8d600923144",
+      "backend_source_files_verified": 1673
+    },
+    "unchanged-850": {
+      "commit": "850d89c109b7e94a356834ee51eedba6dba019fb",
+      "backend_source_files_verified": 1672
+    }
+  },
+  "linux_compilation_and_targeted": "passed",
+  "new_full_suite_for_30ed": "not_run",
+  "mac_compilation_tests_and_timing": "not_run",
+  "real_client_or_paid_generation": "not_run",
+  "copied_review_inputs": [
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/.gitattributes",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/.gitattributes",
+      "sha256": "7db6a4594ca028c9756c1c6f838e247424a086289bc4516147589efdaf27380c",
+      "bytes": 13
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/SHA256SUMS",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/SHA256SUMS",
+      "sha256": "bbe09936223e4503d1d3f7c2b09ca48e38471cb6668f4b6db23fce1a94d708b0",
+      "bytes": 1782
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/probe/command.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/probe/command.txt",
+      "sha256": "47ef6d35417f381f3cd6265206fa311e6f35c93c6b3348698fc05c243227bae1",
+      "bytes": 351
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/probe/opus_r3_probe_test.go.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/probe/opus_r3_probe_test.go.txt",
+      "sha256": "1a0a4cf57a12b7d61fe9dd5b1819494804be736e020abaa55dd411019dc95ff9",
+      "bytes": 4531
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/probe/probe-attempt1-fixture.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/probe/probe-attempt1-fixture.txt",
+      "sha256": "4584ac2634b31cbcea84270a98c843b29fd84b1f5032dd4d58ccab7520cc2700",
+      "bytes": 6296
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/probe/probe-attempt2-fixture.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/probe/probe-attempt2-fixture.txt",
+      "sha256": "141b266effcfad5acd1fdaecdbaf0989cd435b384d4bba31b724b231b95f0121",
+      "bytes": 12069
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/probe/probe-exits.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/probe/probe-exits.txt",
+      "sha256": "22c081a3048e7bdc40c993886722d420d56e5d0c9d78a2f6ecda7455658f1d3f",
+      "bytes": 21
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/probe/probe-final.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/probe/probe-final.txt",
+      "sha256": "a3bbbbc085d467414f154b1835a7c883462ad473ef55cfd4cc36ba42ffb1a22e",
+      "bytes": 14337
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/candidate-adjacent.json",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/candidate-adjacent.json",
+      "sha256": "210a44bdb2f661b15b2b7f79bc6b6cf49d1cbfe972f531a11b3b75d1d193a6fe",
+      "bytes": 1064
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/candidate-adjacent.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/candidate-adjacent.txt",
+      "sha256": "b07033439a166ba8158881ee1c284768fa4ae526d7bce6df691e08d7e4307969",
+      "bytes": 25446
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/candidate-n1.json",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/candidate-n1.json",
+      "sha256": "e1e9a1efb41dca615452f8d42d01e53f911d2712be3f10ec8aa7fa68827464e7",
+      "bytes": 507
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/candidate-n1.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/candidate-n1.txt",
+      "sha256": "bb065a5af19fad942f3ec446a730dfa3ce49d54542c18867e39a97b35ffe40f1",
+      "bytes": 44922
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/candidate-sources.json",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/candidate-sources.json",
+      "sha256": "c29b212430cd3341751912b0a68c9680c4ef1cd0ebad2a39f4b50b5bb272282e",
+      "bytes": 203135
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/command.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/command.txt",
+      "sha256": "bd58d01f086c76c317271f18220e3625a46856284ab2d750f82a3bac8936321e",
+      "bytes": 349
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/driver-exit.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/driver-exit.txt",
+      "sha256": "c272314d15d6f6954bce47759116781583ab995c1827b8482780db9459b62f7a",
+      "bytes": 33
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/driver.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/driver.txt",
+      "sha256": "e71f54d1e0b1dcc3f30dbca7edcb66aff2197cfe3cc440e0513d916a733cb25c",
+      "bytes": 121
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/environment.json",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/environment.json",
+      "sha256": "d68e0688c5ea9ab301e2dbdfe2f82f490926e40b1b94b47c0e705844bc206045",
+      "bytes": 290
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/unchanged-850-n1.json",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/unchanged-850-n1.json",
+      "sha256": "5758bc59707dc60146594ef17b686b90a3ba7fcdf19eb305e34f6418da678b7b",
+      "bytes": 507
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/unchanged-850-n1.txt",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/unchanged-850-n1.txt",
+      "sha256": "43117ea4299e9659b4e5c430c7d36c6b5f6b052f195eced77b3e331e7d049c9c",
+      "bytes": 60683
+    },
+    {
+      "source_path": "docs/reviews/2026-10-28-generation-task-step-3-opus/r3/replay/unchanged-850-sources.json",
+      "copied_to": "docs/implementation/evidence/generation-task-state-step-3/r3-confirmation/input/replay/unchanged-850-sources.json",
+      "sha256": "395db7c0d60de15e2c6a347f8cac86929f4b4390f5a2b95481d7018930b78e61",
+      "bytes": 203000
+    }
+  ]
+}

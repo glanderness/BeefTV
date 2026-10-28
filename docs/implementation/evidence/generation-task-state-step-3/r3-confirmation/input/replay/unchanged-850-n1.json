@@ -1,0 +1,18 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^(TestOpusR2Image(NoResult|Unrecoverable)RetryCanRequeue|TestStep3Image(RefundRetryAfterResultConclusion|ConclusionWithoutRefundDoesNotRequeue))$",
+    "-count=1",
+    "-timeout=5m",
+    "-v"
+  ],
+  "expected_exit": 1,
+  "started": "2026-10-28T06:39:40.736183+00:00",
+  "pid": 544359,
+  "exit": 1,
+  "finished": "2026-10-28T06:39:56.670637+00:00",
+  "sha256": "43117ea4299e9659b4e5c430c7d36c6b5f6b052f195eced77b3e331e7d049c9c"
+}

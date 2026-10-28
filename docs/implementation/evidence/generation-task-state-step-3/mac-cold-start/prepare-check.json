@@ -1,0 +1,32 @@
+{
+  "status": "只校验prepare；未调用execute，未做Go预编译/测试/计时",
+  "started_utc": "2026-10-28T07:03:42.506330+00:00",
+  "finished_utc": "2026-10-28T07:03:44.392971+00:00",
+  "prepare_exit": 0,
+  "raw_output_sha256": "d7658f4fdbe664371b722572ccc35dc028da05f4d39f0d4eba57cf09beb71988",
+  "python_syntax": "AST解析通过",
+  "diagnostic_go_format": "gofmt -l无输出，仅格式解析",
+  "variants": [
+    {
+      "label": "base",
+      "changed_files": [
+        "backend/internal/bootstrap/runtime.go"
+      ],
+      "original_runtime_sha256": "d8d2d397fe7c1e906f23d3f743575e8fc9422e2b9b5ea02669e8130a0d3ee10b",
+      "diagnostic_runtime_sha256": "173c2eda8bf92d7f40f2229b71807501bd02df14ad6d522db3310fe98731298b",
+      "original_test_sha256": "f1186b14b555d5ff5ae00a2fa35379cbedbb1c5aaabf46d7b5f105d904a1b861"
+    },
+    {
+      "label": "candidate",
+      "changed_files": [
+        "backend/internal/bootstrap/runtime.go"
+      ],
+      "original_runtime_sha256": "d8d2d397fe7c1e906f23d3f743575e8fc9422e2b9b5ea02669e8130a0d3ee10b",
+      "diagnostic_runtime_sha256": "173c2eda8bf92d7f40f2229b71807501bd02df14ad6d522db3310fe98731298b",
+      "original_test_sha256": "f1186b14b555d5ff5ae00a2fa35379cbedbb1c5aaabf46d7b5f105d904a1b861"
+    }
+  ],
+  "all_original_tests_identical": true,
+  "go_mod_and_sum_identical": true,
+  "temporary_sources_removed_after_check": true
+}
