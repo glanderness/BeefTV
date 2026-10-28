@@ -73,36 +73,26 @@ func (r *Repository) FailedVideoTasksForRecovery(afterID string, limit int) ([]m
 		limit = 8
 	}
 	err := r.db.Where("tasks.id > ? AND tasks.status = ? AND tasks.provider_request_id <> ?", afterID, model.TaskStatusFailed, "").
-		Where("tasks.type LIKE ? OR tasks.type LIKE ? OR tasks.type LIKE ?", "canvas_video%", "video_%", "%upscale%").
-		Where("(tasks.recovery_outcome IS NULL OR tasks.recovery_outcome = '') AND (tasks.next_poll_at IS NULL OR tasks.next_poll_at <= ?)", time.Now()).
+		Where("tasks.type LIKE ? OR tasks.type LIKE ? OR tasks.model IN ?", "canvas_video%", "video_%", []string{"topaz-standard-v2", "topaz-wonder-3.5", "topaz-proteus", "topaz-starlight-fast-2"}).
+		Where("(tasks.recovery_outcome IS NULL OR tasks.recovery_outcome = '' OR ("+pendingBillingSQL+")) AND (tasks.next_poll_at IS NULL OR tasks.next_poll_at <= ?)", time.Now()).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
-func (r *Repository) FinishProviderRecoveryWait(task model.Task, nextPollAt time.Time) error {
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
-		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
-		Updates(map[string]any{"next_poll_at": nextPollAt, "updated_at": time.Now()})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrTaskStateConflict
-	}
-	return nil
-}
+// Billing polling can outlive result recovery, using the same scan and lease.
+const pendingBillingSQL = `json_extract(tasks.billing_evidence, '$.source') = 'beefapi' AND json_extract(tasks.billing_evidence, '$.routeRun') = tasks.route_run AND ((json_extract(tasks.billing_evidence, '$.usageStatePresent') = 1 AND COALESCE(json_extract(tasks.billing_evidence, '$.usageState'), '') IN ('pending', '')) OR (COALESCE(json_extract(tasks.billing_evidence, '$.usageStatePresent'), 0) = 0 AND json_extract(tasks.billing_evidence, '$.billingStatePresent') = 1 AND COALESCE(json_extract(tasks.billing_evidence, '$.billingState'), '') = ''))`
 
 func (r *Repository) FailedImagesForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
 	err := r.db.Where("tasks.id > ? AND tasks.type = ? AND tasks.status = ?", afterID, "canvas_image", model.TaskStatusFailed).
-		Where("(recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
+		Where("(recovery_outcome IS NULL OR recovery_outcome = '' OR ("+pendingBillingSQL+")) AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
 		Where(`stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')`).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
 // 不改变 status/route_run；后台恢复不是重新排队，也不会进入创建任务执行器。
-func (r *Repository) FinishFailedImageRecovery(task model.Task, outcome *string, nextPollAt *time.Time) error {
+func (r *Repository) FinishFailedResultRecovery(task model.Task, outcome *string, nextPollAt *time.Time) error {
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
 		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
 		Updates(map[string]any{"recovery_outcome": outcome, "next_poll_at": nextPollAt, "updated_at": time.Now()})

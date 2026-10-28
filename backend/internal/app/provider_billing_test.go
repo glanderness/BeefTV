@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestProviderBillingStatesPreservesFieldPresenceAndNestedValues(t *testing.T) {
+func TestProviderBillingStatesReadsOnlyDocumentedEnvelope(t *testing.T) {
 	usage, usagePresent, billing, billingPresent := providerBillingStates([]byte(`{
-		"data": {"usage_state": "pending"},
-		"job": {"billingState": ""}
+		"code":"success",
+		"data": {"usage_state": "pending", "billing_state":"", "metadata":{"usage_state":"failed"}}
 	}`))
 	if usage != "pending" || !usagePresent || billing != "" || !billingPresent {
 		t.Fatalf("states = %q/%v %q/%v", usage, usagePresent, billing, billingPresent)

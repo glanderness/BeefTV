@@ -3,14 +3,25 @@ package model
 import "time"
 
 type TaskBillingEvidence struct {
-	RouteRun            int    `json:"routeRun"`
-	ProviderRequestID   string `json:"providerRequestId,omitempty"`
-	Source              string `json:"source,omitempty"`
-	UsageState          string `json:"usageState,omitempty"`
-	UsageStatePresent   bool   `json:"usageStatePresent"`
-	BillingState        string `json:"billingState,omitempty"`
-	BillingStatePresent bool   `json:"billingStatePresent"`
-	ReconcileDeadline   string `json:"reconcileDeadline,omitempty"`
+	RouteRun            int       `json:"routeRun"`
+	ProviderRequestID   string    `json:"providerRequestId,omitempty"`
+	Source              string    `json:"source,omitempty"`
+	UsageState          string    `json:"usageState,omitempty"`
+	UsageStatePresent   bool      `json:"usageStatePresent"`
+	BillingState        string    `json:"billingState,omitempty"`
+	BillingStatePresent bool      `json:"billingStatePresent"`
+	ReconcileDeadline   int64     `json:"reconcileDeadline,omitempty"`
+	RouteID             string    `json:"routeId,omitempty"`
+	ChannelModelID      string    `json:"channelModelId,omitempty"`
+	ChannelID           string    `json:"channelId,omitempty"`
+	ObservedAt          time.Time `json:"observedAt"`
+}
+
+type TaskRetryOperation struct {
+	TaskID           string `json:"taskId"`
+	Action           string `json:"action"`
+	OriginalRouteRun int    `json:"originalRouteRun"`
+	AcceptedRouteRun int    `json:"acceptedRouteRun"`
 }
 
 type Task struct {
@@ -58,6 +69,7 @@ type Task struct {
 	// It is intentionally separate from recovery_outcome: result availability
 	// and charge settlement are different facts.
 	BillingEvidence    *TaskBillingEvidence    `json:"-" gorm:"serializer:json;type:text"`
+	RetryOperation     *TaskRetryOperation     `json:"retryOperation,omitempty" gorm:"-"`
 	Outcome            *TaskOutcome            `json:"outcome,omitempty" gorm:"-"`
 	ResultState        string                  `json:"resultState,omitempty" gorm:"-"`
 	Outputs            []TaskOutput            `json:"outputs,omitempty" gorm:"-"`

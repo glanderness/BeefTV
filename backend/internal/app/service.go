@@ -19,6 +19,7 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -106,6 +107,7 @@ type Service struct {
 	workspaceOpsMu           sync.Mutex
 	imageRecoveryActive      atomic.Bool
 	imageRecoveryAfterID     string
+	providerRecoveryAfterID  string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -299,78 +301,97 @@ func (s *Service) RetryTaskWithOperation(userID, id, clientOperationID string) (
 	return s.retryTask(userID, id, clientOperationID)
 }
 
-func (s *Service) retryTask(userID, id, clientOperationID string) (*model.Task, error) {
-	if strings.TrimSpace(clientOperationID) == "" && s.IsDraining() {
+func (s *Service) retryTask(userID, id, clientOperationID string) (result *model.Task, err error) {
+	operationID := strings.TrimSpace(clientOperationID)
+	if s.repo == nil || (operationID == "" && s.IsDraining()) {
 		return s.taskDomain().Retry(userID, id)
 	}
-	var task *model.Task
-	if s.repo != nil {
-		if loaded, err := s.repo.TaskForUser(userID, id); err == nil {
-			task = loaded
+	defer func() {
+		// Another request may commit between the initial lookup and a domain
+		// eligibility read. Resolve that admission rather than returning a
+		// spurious "only failed tasks" error to the concurrent replay.
+		if err != nil && operationID != "" {
+			if replayed, found, lookupErr := s.repo.RetryOperationForTask(userID, operationID, id); lookupErr == nil && found {
+				s.attachTaskDelivery(replayed)
+				result = taskForOutput(*replayed)
+				err = nil
+				return
+			}
+		}
+		switch {
+		case errors.Is(err, repository.ErrRetryOperationConflict):
+			err = kernel.NewAppError(kernel.CodeConflict, "此操作编号已用于其他重试，请使用新的操作编号")
+		case errors.Is(err, repository.ErrRetryOperationInProgress), errors.Is(err, repository.ErrTaskStateConflict), errors.Is(err, repository.ErrTaskProviderRecoveryConflict):
+			err = kernel.NewAppError(kernel.CodeConflict, "任务正在处理中，请稍后重试")
+		}
+	}()
+	if operationID != "" {
+		replayed, found, lookupErr := s.repo.RetryOperationForTask(userID, operationID, id)
+		if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRetryOperationInProgress) {
+			return nil, lookupErr
+		}
+		if found {
+			s.attachTaskDelivery(replayed)
+			return taskForOutput(*replayed), nil
 		}
 	}
-	operationID := strings.TrimSpace(clientOperationID)
-	payloadHash := ""
-	if operationID != "" && task != nil {
-		payload := map[string]any{"taskId": id, "routeRun": task.RouteRun, "action": "retry"}
-		encoded, _ := json.Marshal(payload)
-		payloadHash = operations.PayloadHash("task.retry", operations.CanonicalJSON(encoded))
-		if replayed, found, err := s.repo.RetryOperationResult(userID, operationID, payloadHash); err != nil {
-			return nil, err
-		} else if found {
-			return replayed, nil
-		}
-	}
-	freeRecovery := task != nil && s.freeRetryPath(*task)
-	operationClaimed := false
-	if operationID != "" && freeRecovery && !s.IsDraining() {
-		if err := s.repo.BeginRetryOperation(userID, operationID, payloadHash); err != nil {
-			return nil, err
-		}
-		operationClaimed = true
-	}
-	var result *model.Task
-	var err error
-	if s.IsDraining() {
-		if operationID != "" {
-			result, err = s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
-		} else {
-			result, err = s.taskDomain().Retry(userID, id)
-		}
-	} else if task != nil && task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
-		result, err = s.resumeGenerationDownload(*task)
-	} else if task != nil {
-		if restored, handled, recoveryErr := s.recoverAcceptedImage(*task); handled {
-			result, err = restored, recoveryErr
-		} else if operationID != "" {
-			result, err = s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
-		} else {
-			result, err = s.taskDomain().Retry(userID, id)
-		}
-	} else if operationID != "" {
-		result, err = s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
-	} else {
-		result, err = s.taskDomain().Retry(userID, id)
-	}
+	task, err := s.repo.TaskForUser(userID, id)
 	if err != nil {
-		if operationClaimed {
-			// Free recovery may fail before the task reaches a terminal
-			// projection. Do not leave a running receipt that blocks a later
-			// retry of the same client operation after a transient failure.
-			_ = s.repo.AbortRetryOperation(userID, operationID, payloadHash)
-		}
 		return nil, err
 	}
-	if operationID != "" && freeRecovery && !s.IsDraining() {
-		if err := s.repo.CompleteRetryOperation(userID, operationID, payloadHash, "free_recovery", result); err != nil {
-			return nil, err
+	payload, _ := json.Marshal(map[string]any{"taskId": id, "routeRun": task.RouteRun, "action": "retry"})
+	payloadHash := operations.PayloadHash("task.retry", operations.CanonicalJSON(payload))
+	if s.IsDraining() {
+		return s.taskDomain().Retry(userID, id)
+	}
+	if s.freeRetryPath(*task) {
+		if operationID != "" {
+			// Pause removal and admission are one short transaction. Even an
+			// exit before the first GET leaves a task the existing worker resumes.
+			admitted, accepted, admitErr := s.admitFreeRetry(userID, operationID, payloadHash, *task)
+			if admitErr != nil {
+				return nil, admitErr
+			}
+			if accepted && task.Status == model.TaskStatusFailed {
+				_, _, _ = s.recoverOriginalTask(context.Background(), *task)
+			}
+			current, readErr := s.Task(userID, id)
+			if readErr != nil {
+				return nil, readErr
+			}
+			current.RetryOperation = admitted.RetryOperation
+			return current, nil
+		}
+		if recovered, handled, recoverErr := s.recoverOriginalTask(context.Background(), *task); handled {
+			return recovered, recoverErr
 		}
 	}
-	return result, nil
+	if operationID != "" {
+		return s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
+	}
+	return s.taskDomain().Retry(userID, id)
+}
+
+func (s *Service) recoverOriginalTask(ctx context.Context, task model.Task) (*model.Task, bool, error) {
+	if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+		result, err := s.resumeGenerationDownload(task)
+		return result, true, err
+	}
+	if task.Status == model.TaskStatusFailed && task.ProviderRequestID != "" && (strings.HasPrefix(task.Type, "canvas_video") || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") {
+		result, err := s.queryFailedVideoTask(ctx, &task, task.UserID)
+		if err != nil {
+			return nil, true, err
+		}
+		return result.Task, true, nil
+	}
+	return s.recoverAcceptedImageContext(ctx, task)
 }
 
 func (s *Service) freeRetryPath(task model.Task) bool {
 	if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+		return true
+	}
+	if task.Status == model.TaskStatusFailed && task.Stage != "submission_unknown" && task.ProviderRequestID != "" && (task.RecoveryOutcome == nil || *task.RecoveryOutcome == "") && (strings.HasPrefix(task.Type, "canvas_video") || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") {
 		return true
 	}
 	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed {
@@ -378,9 +399,9 @@ func (s *Service) freeRetryPath(task model.Task) bool {
 	}
 	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
 	if err != nil {
-		return false
+		return true
 	}
-	if _, handled, receiptErr := imageResultFromReceipt(receipt); handled && receiptErr == nil {
+	if receipt != nil && receipt.StatusCode < 300 {
 		return true
 	}
 	// An accepted BeefAPI image may only expose an asynchronous job ID in its

@@ -1,0 +1,14 @@
+{
+  "command": [
+    "go",
+    "run",
+    "./cmd/step3-fixture",
+    "/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-replay-hzfwulcf/v26/workspace.db"
+  ],
+  "started": "2026-10-28T04:52:15.682099+00:00",
+  "expected_exit": 0,
+  "pid": 93181,
+  "exit": 0,
+  "finished": "2026-10-28T04:52:16.553931+00:00",
+  "sha256": "b8915bc901ca04bcdf3a12cd386b2ecd0cc9a91054968e6d9b88c0b5c56a0d63"
+}

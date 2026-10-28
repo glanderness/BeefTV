@@ -1,0 +1,8 @@
+=== RUN   TestAgentProductReconcileHistoricalLedgers
+=== RUN   TestAgentProductReconcileHistoricalLedgers/product-v1
+    local_schema_reconcile_test.go:32: 执行本地数据库迁移 v28 provider-billing-log-columns: 本地数据库表 api_call_logs 不存在，无法添加列 route_run
+--- FAIL: TestAgentProductReconcileHistoricalLedgers (0.18s)
+    --- FAIL: TestAgentProductReconcileHistoricalLedgers/product-v1 (0.17s)
+FAIL
+FAIL	infinite-canvas/backend/internal/database	1.119s
+FAIL

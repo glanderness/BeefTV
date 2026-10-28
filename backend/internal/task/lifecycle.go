@@ -14,8 +14,7 @@ import (
 )
 
 type retryOperationStore interface {
-	RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error)
-	RetryOperationResult(userID, operationID, payloadHash string) (*model.Task, bool, error)
+	RetryWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error)
 }
 
 type retryOperation struct {
@@ -47,25 +46,6 @@ func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh, oper
 	}
 	if s.store == nil {
 		return nil, kernel.WrapAppError(kernel.CodeInternal, "任务服务不可用", errStoreRequired)
-	}
-	if operation != nil {
-		store, ok := s.store.(retryOperationStore)
-		if !ok {
-			return nil, unavailable()
-		}
-		replayed, found, err := store.RetryOperationResult(userID, operation.id, operation.hash)
-		if err != nil {
-			if errors.Is(err, repository.ErrRetryOperationConflict) {
-				return nil, kernel.NewAppError(kernel.CodeConflict, "同一操作 ID 已用于不同的重试任务")
-			}
-			if errors.Is(err, repository.ErrRetryOperationInProgress) {
-				return nil, kernel.NewAppError(kernel.CodeConflict, "同一重试操作正在执行，请稍后重试")
-			}
-			return nil, err
-		}
-		if found {
-			return presentTask(s.deps.Present, *replayed)
-		}
 	}
 	task, err := s.store.TaskForUser(userID, id)
 	if err != nil {
@@ -156,7 +136,7 @@ func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh, oper
 		if !ok {
 			return nil, unavailable()
 		}
-		task, err = store.RetryTaskWithOperation(userID, task, limit, operation.id, operation.hash)
+		task, err = store.RetryWithOperation(userID, task, limit, operation.id, operation.hash)
 	} else {
 		task, err = s.store.Retry(userID, task, limit)
 	}

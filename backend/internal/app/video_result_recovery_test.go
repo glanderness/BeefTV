@@ -277,7 +277,7 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 		if r.Header.Get("Authorization") != "Bearer test-key" || r.Header.Get("X-Gateway-Secret") != "private-value" {
 			t.Error("gateway request lost authentication")
 		}
-		if r.URL.Path == "/v1/videos/original" {
+		if r.URL.Path == "/v1/video/generations/original" {
 			polls.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "metadata": map[string]any{"url": media.URL + "/tos.mp4?signature=expired"}})
 			return

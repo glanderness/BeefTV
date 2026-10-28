@@ -1,0 +1,68 @@
+=== RUN   TestStep3WorkerRecoversFailedThirdPartyVideo
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:632 [35;1mrecord not found
+[0m[33m[0.044ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.056ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.151ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "auto-original" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "auto-original" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:858 [35;1mrecord not found
+[0m[33m[0.063ms] [34;1m[rows:0][0m SELECT * FROM `resources` WHERE user_id = "local" AND upload_key = "c3dd0fe7edbb6a5b4e8f2a8f3182b281b9db18aa0283e5ae6e50106daf491679" ORDER BY `resources`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:858 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `resources` WHERE user_id = "local" AND upload_key = "c3dd0fe7edbb6a5b4e8f2a8f3182b281b9db18aa0283e5ae6e50106daf491679" ORDER BY `resources`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:1007 [35;1mrecord not found
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `assets` WHERE id = "generation_ef52da88ff21c3e1601e56a43eda22ef196ca891dd91367a342e203f6d67fd1b" ORDER BY `assets`.`id` LIMIT 1
+--- PASS: TestStep3WorkerRecoversFailedThirdPartyVideo (0.15s)
+=== RUN   TestStep3ClosedResultStillReconcilesPendingBilling
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:632 [35;1mrecord not found
+[0m[33m[0.068ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "pending-closed" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3ClosedResultStillReconcilesPendingBilling (0.04s)
+=== RUN   TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:632 [35;1mrecord not found
+[0m[33m[0.030ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "original-local-task" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "original-local-task" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:58:04 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.036ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "original-local-task" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:58:05 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/app/canvas_workflow_run.go:192 [35;1msql: database is closed
+[0m[33m[0.026ms] [34;1m[rows:0][0m SELECT * FROM `canvas_workflow_runs` WHERE status IN ("queued","running") ORDER BY created_at ASC
+
+2026/10/28 11:58:05 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:276 [35;1mrecord not found
+[0m[33m[0.080ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE (capability = "video" AND request_kind = "create") AND task_id = "original-local-task" ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 11:58:05 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:858 [35;1mrecord not found
+[0m[33m[0.097ms] [34;1m[rows:0][0m SELECT * FROM `resources` WHERE user_id = "local" AND upload_key = "b8b7681e4133cd79b0cddee7a88b9791ac6d3ad8288dc509c75b31c2c2f4d405" ORDER BY `resources`.`id` LIMIT 1
+
+2026/10/28 11:58:05 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:858 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `resources` WHERE user_id = "local" AND upload_key = "b8b7681e4133cd79b0cddee7a88b9791ac6d3ad8288dc509c75b31c2c2f4d405" ORDER BY `resources`.`id` LIMIT 1
+
+2026/10/28 11:58:05 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/repository.go:1007 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `assets` WHERE id = "generation_85e50c8c70317f3aede113c7067e72289a0376b62a2c35803d0ec9025abba014" ORDER BY `assets`.`id` LIMIT 1
+--- PASS: TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask (1.11s)
+PASS
+ok  	infinite-canvas/backend/internal/app	1.878s

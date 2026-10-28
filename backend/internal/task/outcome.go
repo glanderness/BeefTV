@@ -64,20 +64,20 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	if facts.BillingSource == "beefapi" {
 		if facts.UsageStatePresent {
 			switch normalizeBillingState(facts.UsageState) {
-			case "failed", "refunded", "not_charged", "uncharged", "no_charge", "refund_completed":
+			case "failed":
 				regenerate = "allowed"
 			case "pending", "":
 				regenerate = "blocked"
-			case "completed", "settled", "charged":
+			case "completed":
 				regenerate = "confirm"
 			}
 		} else if facts.BillingStatePresent {
 			switch normalizeBillingState(facts.BillingState) {
-			case "refunded", "failed", "not_charged", "uncharged", "no_charge", "refund_completed":
+			case "refunded":
 				regenerate = "allowed"
 			case "":
 				regenerate = "blocked"
-			case "settled", "completed", "charged":
+			case "settled":
 				regenerate = "confirm"
 			}
 		}

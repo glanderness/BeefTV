@@ -1,0 +1,71 @@
+=== RUN   TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays
+    step3_retry_regression_test.go:51: first: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"b450eea6bee41128e0f088e59dbe2a03","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","retryOperation":{"taskId":"review-paid-1","action":"retry","originalRouteRun":0,"acceptedRouteRun":1},"outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T11:49:13.508182+08:00","updatedAt":"2026-10-28T11:49:13.510523+08:00"},"msg":"ok"}
+    step3_retry_regression_test.go:53: after first: status=queued routeRun=1
+    step3_retry_regression_test.go:56: receipts after first: 1
+    step3_retry_regression_test.go:63: second: status=200 body={"code":0,"data":{"id":"review-paid-1","userId":"b450eea6bee41128e0f088e59dbe2a03","projectId":"","type":"canvas_text","status":"queued","stage":"等待队列调度","progress":5,"prompt":"手工写一段分镜","operation":"","provider":"","model":"","inputJson":"{\"mode\":\"text\"}","resultJson":"","error":"","retryOperation":{"taskId":"review-paid-1","action":"retry","originalRouteRun":0,"acceptedRouteRun":1},"outcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"resultState":"NOT_AVAILABLE","attempts":0,"startedAt":null,"completedAt":null,"createdAt":"2026-10-28T11:49:13.508182+08:00","updatedAt":"2026-10-28T11:49:13.510523+08:00"},"msg":"ok"}
+--- PASS: TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays (0.06s)
+PASS
+ok  	infinite-canvas/backend/internal/handler	2.166s
+=== RUN   TestReviewFreeRecoveryRunningReceiptAfterCrash
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.052ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_free_admission_regression_test.go:29: after restart, same op: err=<nil>
+    step3_free_admission_regression_test.go:35: receipt status=succeeded
+--- PASS: TestReviewFreeRecoveryRunningReceiptAfterCrash (0.05s)
+=== RUN   TestReviewFreeRecoveryReceiptRecordsRouteRuns
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.007ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-free" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    step3_free_admission_regression_test.go:56: first status=succeeded stage=正在取回结果 receipt={"taskId":"paused-free-2","action":"free_recovery","originalRouteRun":3,"acceptedRouteRun":3}
+    step3_free_admission_regression_test.go:67: replay: status=true stage=正在取回结果 outcome=&{Phase:ready Regenerate:allowed Reason:result_ready} err=<nil>
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.010ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "paused-free-2" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestReviewFreeRecoveryReceiptRecordsRouteRuns (0.04s)
+=== RUN   TestStep3FreeReplayReadsCurrentTask
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:616 [35;1mrecord not found
+[0m[33m[0.035ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.015ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.011ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-current" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.008ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-current" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "free-current" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+--- PASS: TestStep3FreeReplayReadsCurrentTask (0.04s)
+=== RUN   TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable
+--- PASS: TestReviewUpgradedV26DatabaseKeepsLogsAndOutcomeReadable (0.02s)
+PASS
+ok  	infinite-canvas/backend/internal/app	1.252s
+=== RUN   TestFreeRetryAdmissionIsAtomicAndReplaysCurrentTask
+
+2026/10/28 11:49:12 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/local_runtime.go:369 [35;1mrecord not found
+[0m[33m[0.029ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "user-1" AND op_id = "free-op" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+--- PASS: TestFreeRetryAdmissionIsAtomicAndReplaysCurrentTask (0.01s)
+PASS
+ok  	infinite-canvas/backend/internal/repository	1.501s

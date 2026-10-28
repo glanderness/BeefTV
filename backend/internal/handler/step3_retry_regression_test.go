@@ -1,0 +1,108 @@
+package handler
+
+// Independent review probes for generation-task step 3 (candidate 6d4d1373).
+// Free local fixtures only: temp SQLite, no upstream, fake credentials.
+
+import (
+	"net/http"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+)
+
+func reviewRetryRouter(t *testing.T) (*gorm.DB, http.Handler, string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "review.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = database.MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	service := app.NewLocal(repository.New(db), t.TempDir())
+	t.Cleanup(func() { _ = service.Close() })
+	owner, err := service.LocalWorkspaceOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.Use(RuntimeDependenciesMiddleware(defaultRuntimeDependencies(service)))
+	RegisterTaskRoutes(router.Group("/api"), service)
+	return db, router, owner.ID
+}
+
+func TestStep3ConcurrentRetryHTTPAndConflictingTask(t *testing.T) {
+	db, router, owner := reviewRetryRouter(t)
+	seedRetryableFailedTask(t, db, owner, "concurrent")
+	seedRetryableFailedTask(t, db, owner, "other-task")
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	codes := make(chan int, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			response := creationAuthCall(t, router, http.MethodPost, "/api/tasks/concurrent/retry", nil, `{"clientOperationId":"same-op"}`)
+			codes <- response.Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(codes)
+	for code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("same concurrent operation returned %d", code)
+		}
+	}
+	current := loadTask(t, db, "concurrent")
+	if current.RouteRun != 1 {
+		t.Fatalf("concurrent admission increased route more than once: %d", current.RouteRun)
+	}
+	conflict := creationAuthCall(t, router, http.MethodPost, "/api/tasks/other-task/retry", nil, `{"clientOperationId":"same-op"}`)
+	body := decodeFailureEnvelope(t, conflict)
+	if conflict.Code != http.StatusConflict || body.Reason != "conflict" || strings.Contains(body.Msg, "retry operation") {
+		t.Fatalf("conflict not translated: %d %+v", conflict.Code, body)
+	}
+}
+
+// P1: paid /retry with clientOperationId must requeue exactly like the
+// legacy request, and replaying the same id must not requeue again.
+func TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays(t *testing.T) {
+	db, router, ownerID := reviewRetryRouter(t)
+	seedRetryableFailedTask(t, db, ownerID, "review-paid-1")
+	body := `{"clientOperationId":"op-paid-1"}`
+	first := creationAuthCall(t, router, http.MethodPost, "/api/tasks/review-paid-1/retry", nil, body)
+	t.Logf("first: status=%d body=%s", first.Code, first.Body.String())
+	afterFirst := loadTask(t, db, "review-paid-1")
+	t.Logf("after first: status=%s routeRun=%d", afterFirst.Status, afterFirst.RouteRun)
+	var receipts int64
+	db.Model(&model.AgentOpRecord{}).Where("op_id = ?", "op-paid-1").Count(&receipts)
+	t.Logf("receipts after first: %d", receipts)
+	if first.Code != http.StatusOK || afterFirst.Status != model.TaskStatusQueued || afterFirst.RouteRun != 1 {
+		t.Errorf("paid retry with clientOperationId did not requeue (legacy body {} does)")
+	}
+
+	// Network retry of the same operation after a lost response.
+	second := creationAuthCall(t, router, http.MethodPost, "/api/tasks/review-paid-1/retry", nil, body)
+	t.Logf("second: status=%d body=%s", second.Code, second.Body.String())
+	afterSecond := loadTask(t, db, "review-paid-1")
+	if afterSecond.RouteRun != afterFirst.RouteRun {
+		t.Errorf("replay changed routeRun %d -> %d", afterFirst.RouteRun, afterSecond.RouteRun)
+	}
+	if first.Code == http.StatusOK && second.Code != http.StatusOK {
+		t.Errorf("same clientOperationId after success was not replayed: %d", second.Code)
+	}
+}

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/bootstrap",
+    "-run",
+    "^TestDesktopColdOpenBudgetAndNoIdleOutbound$",
+    "-count=1",
+    "-timeout=5m",
+    "-v"
+  ],
+  "started": "2026-10-28T05:08:31.217264+00:00",
+  "pid": 56422,
+  "exit": 0,
+  "finished": "2026-10-28T05:08:36.519799+00:00",
+  "sha256": "4ed9f975abdbd9f6582c3e7f6b989cab1b308ae6003aa70fbc5f8df9109366e9"
+}

@@ -66,6 +66,8 @@ func (s repoStore) RetryWithOperation(userID string, prepared *model.Task, limit
 	return s.repo.RetryTaskWithOperation(userID, prepared, limit, operationID, payloadHash)
 }
 
+var _ retryOperationStore = repoStore{}
+
 func (s repoStore) RetryWithExpectedInput(userID string, prepared *model.Task, limit int, expectedInputJSON string) (*model.Task, error) {
 	if err := s.require(); err != nil {
 		return nil, err

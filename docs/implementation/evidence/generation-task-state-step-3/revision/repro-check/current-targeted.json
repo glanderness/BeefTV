@@ -1,0 +1,20 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "./internal/handler",
+    "./internal/repository",
+    "-run",
+    "^(TestReview|TestStep3|TestFreeRetryAdmission)",
+    "-count=1",
+    "-timeout=5m",
+    "-v"
+  ],
+  "started": "2026-10-28T04:18:01.782293+00:00",
+  "expected_exit": 0,
+  "pid": 55279,
+  "exit": 0,
+  "finished": "2026-10-28T04:19:20.561012+00:00",
+  "sha256": "1099cf1fb00ca3c47319dc6ff7a3cadf68fd39fed52a8b81181c4fb7847974fc"
+}

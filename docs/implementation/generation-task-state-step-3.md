@@ -1,6 +1,6 @@
 # 生成任务状态重构：第 3 步实施说明
 
-状态：原第 3 步候选已完整接续到新会话分支，等待大总管安排独立复查。原候选已按仓库 CI 流程补齐锁定的 agent-host 测试依赖，专项、app、handler 与 backend 全套测试已有通过日志；本轮没有重复这些测试。完整第 3 步是否满足修订方案的 3A–3C 及研究反例，仍须独立复查，不能只凭全套测试通过判定。改动未合入主线、未发布，也没有调用真实付费生成。
+状态：Opus #97 对原候选的独立复查不通过，本轮已据反例修正后台实现，专项验证已通过。最新完整后台测试已结束，退出 1，仅冷启动 5 秒预算失败；该用例随后单独复跑通过，根因未定，不能称全套通过。修正候选交回大总管安排同一路线复核；未合入、未发布、零真实付费。第 1–7 节保留原候选的实现与验证历史，本轮改动和证据以第 8 节为准，不用原全套绿灯代替本轮验证。
 
 依据：`docs/architecture/generation-task-state.md` 第 3.1–3.7 节及本任务已确认范围。本文只记录本分支实际完成的后台能力，不把第 4–7 步的报价、用户确认、MCP/CLI 付费守门或前端改动写成已实现。
 
@@ -181,3 +181,68 @@ go test ./... -count=1 -timeout=25m
 复查对象是本轮固定提交相对主线的实际 diff；原测试日志是证据输入，本文的实现自述不代替评审结论。复查覆盖免费取回、扣费原值、防重复操作和数据库兼容，并按 3.11 与研究夹具核对完整请求行为和未覆盖时序。若发现问题，由本任务新会话承接获批范围内的必要修正，再运行相应验证。
 
 本轮不提前第 4–7 步，不修改画布保存、悬停、连线或进度绘制，不恢复已停任务，不开 PR、不合入、不发布，不改 v2.0.5 发布记录。
+
+## 8. Opus 复查后的必要修正
+
+### 8.1 输入与证据口径
+
+- 本轮从干净的 `6d4d13735569751a98126052055021a8a04549dd` 接续；重新 fetch 的 `main` 仍为 `6a155448096d2425aa07e81cc6016410091ad0be`。
+- 已读 #97 固定报告 `977f86e678832c3e0566d94141a16dc1a1515f9d` 及 9 份测试/输出文件。报告中的 `review-tests.txt`、`mkv26.txt` 在同步时改变过字节，Mac 原件已删；本轮只把它们当复查记录，不称为逐字节原始日志。
+- 本轮在 Git archive 导出的未改候选 `6d4d1373` 上加入测试，保存进程直接写出的新失败输出；没有加入 `probe_store_patch.go.txt`，不复制 #83 的实验补丁。新的原始输出在 [revision](evidence/generation-task-state-step-3/revision/) 中。
+- 数据库夹具分别来自主线 v26 的真实迁移，以及该库经未改候选升级得到的 v27；另运行仓库自带的早期历史布局夹具。它们不等于所有历史版本的真实用户数据库。
+- 所有请求均为假凭据、本机 HTTP 假上游；数据库和文件在临时目录。没有操作正式客户端、生产数据、真实模型或发布配置。
+
+### 8.2 已复现反例与修正
+
+| 问题 | 本轮失败证据与条件 | 实际修正及对应验证 |
+| --- | --- | --- |
+| P2：v26 升级漏 API 日志列 | `fixed-candidate-review-red.txt`、`upgrade-red.txt`：未改候选缺 6 列，日志写入报错，失败任务投影不可读 | 追加 v28，保留 v27 ledger；补齐 6 个可空日志列，历史缺表时创建日志表。v26/v27 升级后的写日志、读投影和旧请求重试已复放。缺列会阻止 Ready。 |
+| P1：带编号付费重试 500 | `fixed-candidate-review-red.txt`、`paid-retry-red.txt`：公开 `/retry` 返回“任务服务不可用” | task store 的写端口名称与实际实现一致，并有编译期接口检查。回执查找及错误翻译集中在 app；仓储事务只为并发接纳再核对一次。公开 HTTP 用例验证成功、同编号并发仅入队一轮及不同任务返回中文 409。 |
+| P1b：第一次成功后同编号冲突 | 未改候选被 P1 阻断，不能声称在原代码直接走到了此处。`paid-replay-red-after-adapter.txt` 是本轮先修正 store 接入后捕获的第二层失败；#97 的探针证据仍只属于临时实验条件 | 先按用户、编号、目标任务读回执，不再用任务当前轮次重算原回执指纹；返回原接纳身份和当前任务投影。公开入口、数据库重开及任务进入后续轮次后的重放均有验证。 |
+| P3：免费恢复退出后卡 running | `fixed-candidate-review-red.txt`：未改候选领取后退出的同编号被永久拒绝 | 免费接纳及暂停解除在同一个短事务里提交，回执直接表示“已接纳”，网络执行复用现有任务、扫描和租约。新代码不创建长期 running 免费锁；旧候选留下的同轮 running 行可完成接纳。新测试用等价数据库行构造原退出状态，不依赖已撤除的 Begin/Complete/Abort API。 |
+| P4：原轮次丢失 | `fixed-candidate-review-red.txt`：免费回执为 0/3 | 回执保存 `{taskId, action, originalRouteRun, acceptedRouteRun}`，不再序列化整份 Task。新增 `retryOperation` 只读返回原接纳身份。 |
+| P4：旧快照回放 | #97 对此仅作代码阅读；本轮 `fixed-candidate-stale-replay-red.txt` 独立复现：交付阶段已改变，重放仍返回旧阶段和进度 | 每次命中回执后重读当前任务并投影。`TestStep3FreeReplayReadsCurrentTask` 同一用例修正后通过；原轮次和旧快照是两项分开的验证。 |
+| 自动视频扫描没有接入口 | `fixed-candidate-background-red.txt`：实际 `StartWorker` 后没有查询失败视频；结算继续读取的有效失败证据为 `fixed-candidate-pending-red-fixture-corrected.txt` | 接入原交付恢复循环，继续复用原查询、租约和交付器，不新建计费 worker。无已知期限的 72 小时旧任务仍查询原 ID；已有结果结束结论但扣费 pending 的任务仍可入选，刷新至退款后停止该轮查询。 |
+| 图片失败、过期和结果 JSON 未处理 | `fixed-candidate-billing-image-red.txt`：未改候选不保存终态，也没有读取 `result_url` 的结果 JSON | 人工与自动图片恢复共用实现。明确失败/取消保存 `no_result`；明确过期或结果端点 410 保存 `unrecoverable`；503、短响应及临时错误只退避。同步图片按原 job 再 GET 结果 JSON，配置 URL 带 `/v1` 也能正确查询；不生成新任务。 |
+| 扣费仍以日志作第二来源 | `fixed-candidate-billing-image-red.txt`：仅有诊断退款日志也能改变购买结论；真实 DTO 路径与持久事实缺失 | 仅官方状态查询直接写任务观察，移除日志回查与日志反写任务。保存原值/存在性、轮次、路由/渠道、上游 ID、观察时间及 `reconcile_deadline`。写入核对轮次、路由、上游身份和冻结输入；迟到旧路由响应不能覆盖当前任务。 |
+| 图片超分未被扫描 | `upscale-red.txt` 是本轮扫描修正中的追加失败，不能冒称未改候选输出：图片超分类型是 `canvas_image`，原查询条件漏选 | 扫描覆盖已有 4 个超分型号；使用原 `/media-upscale/tasks/:id/recover` 的合法查询 POST，再 GET 原任务。`upscale-green.txt` 证明没有调用创建接口、没有增加轮次。 |
+
+视频与图片字段来自 BeefAPI 固定 `be8f70726a385e77d5bc0aae242f47ab92c7c7ab` 的 `dto/task.go`、`model/task.go`、`model/task_billing.go`、`controller/image_jobs.go` 和 `relay/relay_task.go`，不是按字段名猜测。视频 `usage_state` 只按 `failed/pending/completed` 映射；图片 `billing_state` 按 `refunded/settled/显式空值` 映射。未知值不会作为退款证明。解析仅识别文档化的根对象或 `code/data` 信封，不递归搜索媒体元数据中同名字段。
+
+DTO 数字 `id` 是数据库行号，原上游身份是 `task_id`；原始供应商 `data` 不当成第二层状态信封。实时查询不含扣费字段或查询失败时，已存同轮观察不会被抹掉。第三方无可信扣费观察时仍需确认；没有新增计费状态机、费用报价或第 4–7 步的付费守门。
+
+旧候选已经写出的任务快照回执仍可读取，用其中的任务号加载当前投影，不删除回执来放开再次入队。旧免费回执缺少的原轮次仍为 0，本轮不从当前轮次猜出历史值；新回执才完整保存两项轮次。
+
+### 8.3 验证、失败与复放
+
+- 原始失败与成功输出分别保留，没有覆盖原候选 7 份日志。运行输出均由对应进程直接写入 `.txt`；它们是否进入提交、字节数和 SHA-256 由本轮提交树清单核对。
+- `operation-green.txt`、`billing-image-green.txt`、`background-green.txt`、`upscale-green.txt`、`continuity-green.txt`、`targeted-all.txt` 保存本轮专项。`research-replay.txt` 为 #83 稳定夹具的正式适配：事实改存任务、暂停通过现有 `/retry` 兼容入口、扫描使用当前 Service 入口；原解析 helper 的 `result_url` 检查改由真实两次 HTTP 查询覆盖。未复制实验判定器。
+- `fixed-candidate-background-red.txt` 中首次 pending 场景没有启动工作运行时，不能单独证明产品漏查询；修正夹具后在未改候选再次失败的输出保存在 `fixed-candidate-pending-red-fixture-corrected.txt`。实际 `StartWorker` 场景的失败不受这一夹具问题影响。
+- 修正期间的 v28 先遗漏了“历史夹具没有日志表”这一情况，原有 `TestAgentProductReconcileHistoricalLedgers/product-v1` 实际失败，见 `historical-migration-red.txt`。已补建表分支并保留所有原迁移身份检查，只追加 v28 的期望记录；数据库包全套结果见 `database-all-green.txt`。
+- 第一轮全套在上述失败确认后由本会话停止，日志为 `backend-all-attempt-1-stopped.txt`，元数据记录 `exit=-15` 和停止原因；它不是通过结论。随后一次完整运行保存为 [final-check/backend-all.txt](evidence/generation-task-state-step-3/revision/final-check/backend-all.txt)，2026-10-28 04:14:35–04:30:28 UTC 实际退出 1，不能计作通过。
+- 这次完整运行发现两处本轮兼容回归：不完整图片回执的旧错误被吞掉，以及排空状态下空仓储路径崩溃；还发现一个旧视频下载续传夹具仍按旧查询路径断言。已恢复旧入口的回执报错与排空处理，并将夹具改为已核实的扣费查询路径。失败的“响应成功”不证明发生过新付费生成。`full-regressions-green.txt` 保存对应修正后的通过结果；其中旧库夹具因没有设置环境变量而跳过，由带真实旧库夹具的复放与全套另行验证。
+- 冷启动本次完整运行记录 5.911 秒超过原 5 秒预算，原因未定；`cold-open-rerun.txt` 单项复跑实测 1.064 秒、空闲外发 0 并通过。没有修改测试或放宽预算，也不把该次失败归因为“机器抖动”。
+- 上述修正后的完整重跑另存 [verified-check/backend-all.txt](evidence/generation-task-state-step-3/revision/verified-check/backend-all.txt) 及同名 JSON，2026-10-28 04:33:38–04:48:57 UTC 实际退出 1。这次只有 `TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID` 失败：新增免费视频分支覆盖了旧 `submission_unknown` 阻断提示。已恢复 `/retry` 原有的提交未确认排除条件，没有放开这类任务重新生成；`workflow-regressions-green.txt` 保存修正后 RunningHub 与并发重试专项通过的输出。冷启动及其余包在该轮通过，不能因此把全套计为通过。
+- 最后一次完整重跑保存在 [accepted-check/backend-all.txt](evidence/generation-task-state-step-3/revision/accepted-check/backend-all.txt) 及同名 JSON，2026-10-28 04:52:17–05:07:43 UTC 实际退出 1。仅 `TestDesktopColdOpenBudgetAndNoIdleOutbound` 失败：Open 实测 5.588227625 秒超过 5 秒（整项用例 6.22 秒）；app、handler、database、repository、task 及其余包通过。`accepted-check` 只是输出目录名，不表示通过。未修改冷启动用例或预算，也未证实并发负载是根因。
+- [cold-open-final-isolated.txt](evidence/generation-task-state-step-3/revision/cold-open-final-isolated.txt) 为最后单独复跑，2026-10-28 05:08:31–05:08:36 UTC 退出 0，Open 982 毫秒、空闲外发 0。单项通过不替代上述全套退出 1；没有继续靠重复整套测试寻找绿灯。
+- 最新全套的源码指纹为 `accepted-check/tested-source-files.json`，覆盖 1,936 个实际后台源码/测试、锁定的宿主依赖入口及协议包源码；测试开始后没有再改变这些文件。推送后从固定提交逐项核对，不用工作区文件代替提交树。38 个改动过的 Go 文件通过 `gofmt -l`，`git diff --check` 无错误。
+
+复放脚本会从固定 Git 对象生成隔离的 v26 库和 v26→旧候选 v27 库，临时源码和 SQLite 在退出时清理。先红后绿复放（不加入探针补丁）：
+
+```sh
+python3 docs/implementation/evidence/generation-task-state-step-3/revision/replay.py --repo . --output .local/cache/step3-replay --red
+```
+
+完整后台验证使用 `--full`，仍为 `go test ./... -count=1 -timeout=25m`，不调整冷启动 5 秒预算。脚本使用现有 Go/Bun 锁定依赖和本机生成的协议包；首次准备命令与原第 4 节相同。输出目录可自行指定，避免覆盖本次证据。实际复放脚本结果保存在 `repro-check/`：未改候选 13 个测试失败，当前专项 26 个测试通过、无跳过；该复放不能代替后续包含兼容修正的最新全套结果。
+
+### 8.4 当前交接状态
+
+本轮仅后台修正、必要测试和对应数据库/API 文档；没有修改前端画布、模型配置、依赖锁文件或发布记录。只读结构自查确认本轮撤除了三处重复操作回读中的 task 域回读、免费 running 执行锁、任务快照回放以及日志扣费后备读取；自查不算独立复查。
+
+[本轮提交树校验清单](evidence/generation-task-state-step-3/revision/delivery-manifest.json) 记录相对未改候选的交付文件、原 7 份证据及对应字节数、SHA-256 和 Git blob。完整测试源码清单单独保存在 `accepted-check/tested-source-files.json`；校验清单不包含自身，避免自引用。固定提交号随交接消息提供，推送后再从该提交树核对这些文件。
+
+本轮 Go 重测试已实际结束，已经立即通知大总管 #95 可开始正式原生 FPS 采样；没有遗留外部后台作业。本轮新反例的专项及最新全套中的功能包通过，但完整命令仍为退出 1，不能把第 3 步标为已通过全部检查。独立复查仍由大总管安排指定的官方 OAuth `mem-claude/opus-5-5` 会话，核对本轮修正及尚未确定根因的冷启动失败。真实桌面、Windows 和真实付费生成未测；没有做真实进程强杀/断电测试，退出恢复是隔离数据库状态及连接重开的验证。
+
+本轮生成的临时源码归档、隔离 SQLite 和进程核查临时文件已清理；锁定依赖与已生成的协议包保留供后续复核使用，没有保留额外客户端实例。
+
+旧库迁移验证的通用教训已保存到项目记忆及 nmem `15bf81bf-157b-4722-bc55-613253d12b6a`，未另存本机笔记；任务运行状态仍以本说明及原始证据为准。

@@ -1,0 +1,15 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./...",
+    "-count=1",
+    "-timeout=25m"
+  ],
+  "started": "2026-10-28T04:52:17.979177+00:00",
+  "expected_exit": 0,
+  "pid": 93237,
+  "exit": 1,
+  "finished": "2026-10-28T05:07:43.294630+00:00",
+  "sha256": "926088d8deb4035c38ecb946be78cb3b7c6f4bd608001e0376232f8c4f0f65eb"
+}

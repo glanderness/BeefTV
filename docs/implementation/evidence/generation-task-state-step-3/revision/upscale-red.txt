@@ -1,0 +1,12 @@
+=== RUN   TestStep3AutomaticImageUpscaleUsesOriginalRecoveryPOST
+
+2026/10/28 12:05:15 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/database/local_schema.go:632 [35;1mrecord not found
+[0m[33m[0.040ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 12:05:15 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+    step3_upscale_recovery_test.go:48: query POST omitted or used create: recover=0 query=0 create=0
+--- FAIL: TestStep3AutomaticImageUpscaleUsesOriginalRecoveryPOST (0.05s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.584s
+FAIL

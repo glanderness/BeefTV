@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
@@ -25,48 +27,37 @@ func (s *Service) recoverAcceptedImageContext(ctx context.Context, task model.Ta
 	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed {
 		return nil, false, nil
 	}
-	ctx = withProviderRequestKind(withProviderAnalytics(ctx, s, task), "poll")
 	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
 	}
-	result, handled, receiptErr := imageResultFromReceiptContext(ctx, receipt)
-	if receiptErr != nil || !handled {
-		jobResult, jobHandled, jobErr := s.imageJobResult(ctx, task)
-		if jobHandled {
-			result, handled, receiptErr = jobResult, true, jobErr
-		} else if receiptErr != nil {
-			return nil, true, receiptErr
-		} else {
-			result, handled, receiptErr = nil, false, nil
+	jobID, err := s.repo.LatestBeefAPIImageJobIDForTask(task)
+	if err != nil {
+		return nil, true, imageRecoveryError{err}
+	}
+	if jobID == "" && (receipt == nil || receipt.StatusCode >= 300) {
+		return nil, false, nil
+	}
+	if jobID == "" {
+		// Keep the legacy /retry error for incomplete or ambiguous receipts;
+		// an HTTP acceptance without a result must not look like a new retry.
+		if _, handled, receiptErr := imageResultFromReceiptContext(ctx, receipt); !handled || receiptErr != nil {
+			return nil, handled, receiptErr
 		}
 	}
-	if !handled || receiptErr != nil {
-		return nil, handled, receiptErr
-	}
-	if len(result) == 0 {
-		// A known job that is still running is handled so /retry cannot turn
-		// the pending provider request into a second paid submission.
-		return taskForOutput(task), true, nil
-	}
-	owner := "manual-recovery:" + newID()
-	if err := s.repo.ClaimFailedTaskProviderRecovery(task.ID, task.UserID, owner, providerTaskRecoveryLeaseDuration); err != nil {
+	if err := s.recoverFailedImage(ctx, task); err != nil {
 		return nil, true, err
 	}
-	task.LeaseOwner = owner
-	defer s.repo.ReleaseTaskProviderRecovery(task.ID, owner)
-	task.Error = ""
-	task.FailureDiagnostics = nil
-	if err := s.saveTaskCompletionWithinStorageQuota(&task, result, nil, false); err != nil {
-		return nil, true, err
-	}
-	_ = s.log(task.UserID, task.ID, "info", "已从原始成功响应恢复图片，等待取回结果", receipt.ID)
-	s.attachTaskDelivery(&task)
-	return taskForOutput(task), true, nil
+	current, err := s.Task(task.UserID, task.ID)
+	return current, true, err
 }
 
 // 人工 /retry 与自动扫描共用相同的回执有效性检查。
 func (s *Service) imageJobResult(ctx context.Context, task model.Task) ([]byte, bool, error) {
+	return s.imageJobResultWithMode(ctx, task, false)
+}
+
+func (s *Service) imageJobResultWithMode(ctx context.Context, task model.Task, billingOnly bool) ([]byte, bool, error) {
 	ctx = withProviderRequestKind(withProviderAnalytics(ctx, s, task), "poll")
 	jobID, err := s.repo.LatestBeefAPIImageJobIDForTask(task)
 	if err != nil {
@@ -93,10 +84,19 @@ func (s *Service) imageJobResult(ctx context.Context, task model.Task) ([]byte, 
 		return nil, true, imageRecoveryError{errors.New("图片任务查询协议不受支持")}
 	}
 	var payload map[string]any
+	started := time.Now()
 	err = getJSON(ctx, config, path, &payload)
-	s.captureTaskBillingEvidence(&task)
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
+	}
+	if returned, ok := payload["job_id"].(string); ok && returned != jobID {
+		return nil, true, imageRecoveryError{errors.New("上游返回的任务与原图片任务不一致")}
+	}
+	if err := s.observeTaskBilling(task, config, jobID, payload, started); err != nil {
+		return nil, true, err
+	}
+	if billingOnly {
+		return nil, true, nil
 	}
 	status := imageJobStatus(payload)
 	switch status {
@@ -108,9 +108,24 @@ func (s *Service) imageJobResult(ctx context.Context, task model.Task) ([]byte, 
 			return nil, true, nil
 		}
 	case "failed", "error", "cancelled", "canceled", "expired":
-		return nil, true, imageRecoveryError{errors.New("图片任务未能生成结果")}
+		outcome := "no_result"
+		if status == "expired" {
+			outcome = "unrecoverable"
+		}
+		return nil, true, originalResultConclusion{outcome}
 	}
 	data := imageJobData(payload)
+	if data == nil && strings.TrimSpace(stringValue(payload["result_url"])) != "" {
+		var result map[string]any
+		if err := getJSON(ctx, config, path+"/result", &result); err != nil {
+			var upstream providerHTTPError
+			if errors.As(err, &upstream) && upstream.StatusCode == http.StatusGone {
+				return nil, true, originalResultConclusion{"unrecoverable"}
+			}
+			return nil, true, imageRecoveryError{err}
+		}
+		data = imageJobData(result)
+	}
 	if data == nil {
 		return nil, true, imageRecoveryError{errors.New("图片任务结果缺少图片数据")}
 	}
@@ -128,10 +143,10 @@ func (s *Service) imageJobResult(ctx context.Context, task model.Task) ([]byte, 
 
 func isBeefAPIImageRecoveryConfig(config providerConfig) bool {
 	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
-	if testOrigin := strings.TrimRight(strings.TrimSpace(os.Getenv("BEEFTV_ENTERPRISE_TEST_ORIGIN")), "/"); testOrigin != "" && baseURL == testOrigin {
+	parsed, err := url.Parse(baseURL)
+	if testOrigin := strings.TrimRight(strings.TrimSpace(os.Getenv("BEEFTV_ENTERPRISE_TEST_ORIGIN")), "/"); testOrigin != "" && err == nil && parsed.Scheme+"://"+parsed.Host == testOrigin {
 		return true
 	}
-	parsed, err := url.Parse(baseURL)
 	return beefapi.IsManagedChannel(config.ChannelID, "", config.BaseURL) || (err == nil && parsed.Hostname() != "" && generation.IsBeefAPIHost(parsed.Hostname()))
 }
 

@@ -257,40 +257,27 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 }
 
 func providerBillingStates(body []byte) (usage string, usagePresent bool, billing string, billingPresent bool) {
-	var payload any
+	var payload map[string]json.RawMessage
 	if json.Unmarshal(body, &payload) != nil {
-		return "", false, "", false
+		return
 	}
-	var visit func(any)
-	visit = func(value any) {
-		if usagePresent && billingPresent {
-			return
-		}
-		switch item := value.(type) {
-		case map[string]any:
-			for key, nested := range item {
-				switch strings.ToLower(strings.ReplaceAll(key, "-", "_")) {
-				case "usage_state", "usagestate":
-					usagePresent = true
-					if text, ok := nested.(string); ok {
-						usage = text
-					}
-				case "billing_state", "billingstate":
-					billingPresent = true
-					if text, ok := nested.(string); ok {
-						billing = text
-					}
-				}
-				visit(nested)
-			}
-		case []any:
-			for _, nested := range item {
-				visit(nested)
-			}
+	// TaskDto has exactly one code/data envelope; never traverse provider
+	// metadata or image result objects looking for similarly named fields.
+	if code := payload["code"]; string(code) == `"success"` {
+		var data map[string]json.RawMessage
+		if json.Unmarshal(payload["data"], &data) == nil && data != nil {
+			payload = data
 		}
 	}
-	visit(payload)
-	return usage, usagePresent, billing, billingPresent
+	if raw, ok := payload["usage_state"]; ok {
+		usagePresent = true
+		_ = json.Unmarshal(raw, &usage)
+	}
+	if raw, ok := payload["billing_state"]; ok {
+		billingPresent = true
+		_ = json.Unmarshal(raw, &billing)
+	}
+	return
 }
 
 func imageJobIDFromHeaders(headers http.Header) string {

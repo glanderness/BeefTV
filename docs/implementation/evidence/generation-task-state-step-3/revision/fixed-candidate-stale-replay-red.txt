@@ -1,0 +1,15 @@
+=== RUN   TestStep3FreeReplayReadsCurrentTask
+
+2026/10/28 11:46:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/database/local_schema.go:605 [35;1mrecord not found
+[0m[33m[0.057ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 11:46:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 11:46:43 [31;1m/Volumes/ExternalWork/todos/workspaces/01a18064-1402-7d75-9399-bb10bb3d06d2/.local/cache/step3-review-candidate/backend/internal/repository/local_runtime.go:410 [35;1mrecord not found
+[0m[33m[0.069ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "op-current" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+    step3_free_replay_regression_test.go:22: replay returned stale task: stage="正在取回结果" progress=0
+--- FAIL: TestStep3FreeReplayReadsCurrentTask (0.05s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.649s
+FAIL

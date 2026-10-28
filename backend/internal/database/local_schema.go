@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 27
+const CurrentSchemaVersion int64 = 28
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -127,6 +127,20 @@ func canonicalLocalMigrations() []localMigration {
 		}},
 		{version: 27, name: "task-billing-evidence", apply: func(tx *gorm.DB) error {
 			return ensureSQLiteColumn(tx, "tasks", "billing_evidence", "TEXT")
+		}},
+		{version: 28, name: "provider-billing-log-columns", apply: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&model.ApiCallLog{}) {
+				return tx.Migrator().CreateTable(&model.ApiCallLog{})
+			}
+			for _, column := range []struct{ name, sqlType string }{
+				{"route_run", "INTEGER"}, {"usage_state", "TEXT"}, {"billing_state", "TEXT"},
+				{"usage_state_present", "BOOLEAN"}, {"billing_state_present", "BOOLEAN"}, {"image_job_id", "TEXT"},
+			} {
+				if err := ensureSQLiteColumn(tx, "api_call_logs", column.name, column.sqlType); err != nil {
+					return err
+				}
+			}
+			return nil
 		}},
 	}
 }
@@ -567,6 +581,22 @@ func requireReconciledSchema(db *gorm.DB) error {
 	if version >= 24 {
 		if !db.Migrator().HasTable(&model.CanvasWorkflowRevision{}) || !db.Migrator().HasColumn(&model.CanvasWorkflow{}, "revision") || !db.Migrator().HasColumn(&model.CanvasWorkflowRun{}, "template_revision") {
 			return fmt.Errorf("本地工作流版本结构缺失，请启用自动迁移")
+		}
+	}
+	if version >= 27 {
+		if has, err := sqliteHasColumn(db, "tasks", "billing_evidence"); err != nil {
+			return err
+		} else if !has {
+			return fmt.Errorf("本地任务扣费查询结构缺失，请启用自动迁移")
+		}
+	}
+	if version >= 28 {
+		for _, column := range []string{"route_run", "usage_state", "billing_state", "usage_state_present", "billing_state_present", "image_job_id"} {
+			if has, err := sqliteHasColumn(db, "api_call_logs", column); err != nil {
+				return err
+			} else if !has {
+				return fmt.Errorf("本地请求日志结构缺失列 %s，请启用自动迁移", column)
+			}
 		}
 	}
 	return nil

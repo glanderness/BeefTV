@@ -1,43 +1,28 @@
 package repository
 
 import (
-	"errors"
-	"testing"
-
 	"infinite-canvas/backend/internal/model"
+	"testing"
 )
 
-func TestRetryOperationReceiptIsIdempotentAndAbortable(t *testing.T) {
-	repo, _ := newAdmissionRepo(t)
-	if err := repo.BeginRetryOperation("user-1", "op-1", "hash-1"); err != nil {
+func TestFreeRetryAdmissionIsAtomicAndReplaysCurrentTask(t *testing.T) {
+	repo, db := newAdmissionRepo(t)
+	paused := model.Task{ID: "free", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded, Stage: "delivery_paused", RouteRun: 3}
+	if err := db.Create(&paused).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.BeginRetryOperation("user-1", "op-1", "hash-1"); !errors.Is(err, ErrRetryOperationInProgress) {
-		t.Fatalf("second begin = %v", err)
-	}
-	if err := repo.BeginRetryOperation("user-1", "op-1", "hash-other"); !errors.Is(err, ErrRetryOperationConflict) {
-		t.Fatalf("conflicting begin = %v", err)
-	}
-
-	accepted := &model.Task{ID: "task-1", UserID: "user-1", RouteRun: 2, Status: model.TaskStatusQueued, Type: "canvas_image"}
-	if err := repo.CompleteRetryOperation("user-1", "op-1", "hash-1", "free_recovery", accepted); err != nil {
+	first, _, err := repo.AdmitFreeRetry(paused.UserID, "free-op", "free-hash", paused)
+	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, found, err := repo.RetryOperationResult("user-1", "op-1", "hash-1")
-	if err != nil || !found || replayed.ID != accepted.ID || replayed.RouteRun != accepted.RouteRun {
-		t.Fatalf("replay = %+v found=%v err=%v", replayed, found, err)
+	if first.Stage != "正在取回结果" || first.RetryOperation == nil || first.RetryOperation.OriginalRouteRun != 3 || first.RetryOperation.AcceptedRouteRun != 3 {
+		t.Fatalf("admission=%+v", first)
 	}
-	if _, _, err := repo.RetryOperationResult("user-1", "op-1", "hash-other"); !errors.Is(err, ErrRetryOperationConflict) {
-		t.Fatalf("conflicting replay = %v", err)
-	}
-
-	if err := repo.BeginRetryOperation("user-1", "op-2", "hash-2"); err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", paused.ID).Updates(map[string]any{"stage": "任务完成", "progress": 100}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.AbortRetryOperation("user-1", "op-2", "hash-2"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.BeginRetryOperation("user-1", "op-2", "hash-2"); err != nil {
-		t.Fatalf("begin after abort = %v", err)
+	replayed, found, err := repo.RetryOperationForTask(paused.UserID, "free-op", paused.ID)
+	if err != nil || !found || replayed.Stage != "任务完成" || replayed.Progress != 100 {
+		t.Fatalf("replay=%+v found=%v err=%v", replayed, found, err)
 	}
 }
