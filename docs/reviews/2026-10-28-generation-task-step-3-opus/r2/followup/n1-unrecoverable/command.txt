@@ -1,0 +1,2 @@
+# 交付时补写：原 command.txt 未保留在暂存区；以下为本次运行的包与用例范围（输出头尾可对照）
+cd backend && go test ./internal/app -run '^TestOpusR2Image(Unrecoverable|NoResult)RetryCanRequeue$' -count=1 -v

@@ -1,5 +1,19 @@
 705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da  ./.gitattributes
 49dc32a3f5dc8832ad2286d1703ea4c01c45a766aaa4703e375cfcf270824b18  ./agent-host-bun-install.txt
+c45893d282678296aad302054aed6f307e02d4121a8e3acceaf7d68efdf0e9ec  ./followup/cold-ab/attempt1-base-env-gap/end.txt
+d117fa006ba9208500b2930ce69cbde436c647afa917cb7396a9bc9111a46dd2  ./followup/cold-ab/attempt1-base-env-gap/exit.txt
+89e6f681f22ea4c28abe990725d6ac11b07b1d92d54cda23ccedc4bdcb27e4d0  ./followup/cold-ab/attempt1-base-env-gap/run.sh
+5a744dd346fc1d745f0c71da4713f625c26fb0e82ea61399f3b2c06d3d14c775  ./followup/cold-ab/attempt1-base-env-gap/runs.txt
+3d5e00c7435995eed86058f9409456fb85b60f200762a57aabfbd590bb7cfda6  ./followup/cold-ab/attempt1-base-env-gap/start.txt
+92b6c65291ac5783924f8c0c5a3c2a2c4f2394783f27697f9c75e5bdc407ab72  ./followup/cold-ab/run/end.txt
+635a98001b9c0545cb85075d032a49ca4ace7d4aa91306dd9213256cfcbc08d8  ./followup/cold-ab/run/run2.sh
+115f6f6276836313d608e5ad5f2cfd705a65868b49c30ead032e29be6602d467  ./followup/cold-ab/run/runs.txt
+68c6f1bdf5e960f5632a0bbf7fb79106517e6199b8f80cb1d7b2cdb83e068b4d  ./followup/cold-ab/run/start.txt
+2be0b8fcb6abb363bb415a855b28e70c0a4deab7129ac53e8e5848f9a501dfe7  ./followup/n1-unrecoverable/command.txt
+950d770634fa1a2532341e5360ed00257db878d4423a53da05e493132dd97e1c  ./followup/n1-unrecoverable/end.txt
+cf205dbb8cea84897b488abcc281bf96698d5e94b1096b16657b4caba9082a22  ./followup/n1-unrecoverable/exit.txt
+c441b9eaebc2e035a9b17cdee6f59e46b5b57fb1fc36ba2c656fce391ba2aa4d  ./followup/n1-unrecoverable/review-n1u.txt
+1f8a1b4f6db869afea32d3a246892b4cc798bd02cd9bf7969fb7e2df61859074  ./followup/n1-unrecoverable/start.txt
 249635ce76958005213cb17605345c4dede933201bf64f770db02cb1ca8d1f50  ./full3/backend-all.txt
 5eda9fa63604700f54f8d030f1b0dc92417da54fc9987f9019b36411a30faa05  ./full3/end.txt
 cf205dbb8cea84897b488abcc281bf96698d5e94b1096b16657b4caba9082a22  ./full3/exit.txt
@@ -27,6 +41,7 @@ cf205dbb8cea84897b488abcc281bf96698d5e94b1096b16657b4caba9082a22  ./targeted/exi
 db1a15d01dc156d69dde45b04863f9ab76d0d50503b34bd28fd2086d27c23dd2  ./targeted/review-r2.txt
 1834043864baf441e4311ae0cb63cf01802131ce01f65ef8a19bbf0a417836ef  ./targeted/start.txt
 bf02d72c13b2bd3be7961d8d3c94501d170adb39b92a0c503e1c17dd33c00fcd  ./tests/mkv26_main.go.txt
+b3888fb0faeb9a84cfe837059aaeec0ec224904c8a6ae863061471817eea4571  ./tests/opus_r2_n1_unrecoverable_test.go.txt
 0814e358f792db7e8cbafd32e5d000a303b6b41646afe623ea5f093c303b2499  ./tests/opus_r2_test.go.txt
 204e57892578cf9e693226bf4810268ec3982dcaae18b74bb28fe34add89e4f9  ./tests/r1_review_opus_step3_app_test.go.txt
 b42a03c8660eb64767b5144725af76d5d421e721143197dbc074781cb978ad97  ./tests/r1_review_opus_step3_handler_test.go.txt

@@ -194,3 +194,34 @@
 推翻条件：若 Chief 认定任务中心/MCP 对 `no_result` 图片不应提供 `/retry` 重新生成（例如只允许新建任务），N1 降为文案/结论一致性问题；若同条件 A/B 显示候选在 Mac 上冷启动显著慢于基线，冷启动应改判为本步回归。
 
 证据目录：`2026-10-28-generation-task-step-3-opus/r2/`，`SHA256SUMS` 为提交前的本机原件哈希；该目录用 `.gitattributes` 关闭文本转换，保持原字节。
+
+## R2-7. 补测：过期图片（N1 `unrecoverable`）与冷启动 15+15 对照
+
+本节补交 R2-6 发出后在同一台 8 核 Linux 上完成的两项补测，固定源码不变（候选 `850d89c1`，基线 `6a155448`）。原始输出在 `r2/followup/`，用例源码在 `r2/tests/opus_r2_n1_unrecoverable_test.go.txt`。上面 R2-5、R2-6 保留原文，下面的结论覆盖其中“N1 `unrecoverable` 变体未复放”和“没有同条件 A/B”两句。
+
+### 过期图片（`r2/followup/n1-unrecoverable/`）
+
+- 运行 06:05:11–06:05:19Z，exit 1；两个用例都按预期失败，失败就是问题复现。`command.txt` 是交付时补写的命令（暂存区没留下原文件），输出头尾可对照。
+- `TestOpusR2ImageUnrecoverableRetryCanRequeue`：有 job 号的图片，上游查询返回过期（410）。免费恢复后写入 `recovery_outcome=unrecoverable`，`outcome.regenerate` 在已退款时是 `allowed`，扣费时是 `confirm`。之后：
+  - 不带编号的 `/retry`：无报错，任务仍是 `failed`、轮次 4，又查了 1 次上游；
+  - 带新编号的 `/retry`：被接纳成 `free_recovery`（4/4），任务不变，又查了 1 次上游。
+  - 已退款和已扣费两种情况表现相同。
+- 同一次运行里 `TestOpusR2ImageNoResultRetryCanRequeue` 再次失败，结果与 R2-4/R2-5 相同。
+- 结论：N1 同样出现在 `unrecoverable`（过期）情况，修正范围应同时覆盖 `no_result` 和 `unrecoverable`。没有多扣费，影响仍是任务中心和 MCP/CLI 的 `/retry` 会把用户锁住。界面表现未测。
+
+### 冷启动对照（`r2/followup/cold-ab/`）
+
+- `attempt1-base-env-gap/`（06:04:34–06:05:00Z，基线和候选交替各 10 次）：基线 10 次全部失败，原因是 `未找到官方插件目录 plugin-packages；请设置 CANVAS_OFFICIAL_PLUGIN_DIR`（基线只检出了 `backend/`），属于环境缺口，**不能用作对照**；候选 10 次都通过。原件保留，只作记录。
+- `run/`（06:06:19–06:06:48Z，`run2.sh`）：两边使用同一官方插件目录，各自预编译测试二进制，交替单项运行 `TestDesktopColdOpenBudgetAndNoIdleOutbound` 各 15 次，5 秒预算未改。
+
+| 版本 | 次数 | 通过 | `local_open_ms` 平均 | 最小 | 最大 |
+| --- | --- | --- | --- | --- | --- |
+| 基线 `6a155448` | 15 | 15 | 245 | 193 | 295 |
+| 候选 `850d89c1` | 15 | 15 | 249 | 207 | 292 |
+
+- 能确认：Linux 上单项冷启动在基线和候选之间没有可见差异，都远低于 5 秒。
+- 不能确认：这是单项交替运行，不是并行全套；Mac 上全套 5.588 秒的根因仍未查明，Mac 上没有做对照。对照结果让“候选让冷启动本身变慢”的可能性更低，但 Mac 全套 exit 1 的记录仍然有效，不能写成“全套通过”。
+
+### 本节证据核对
+
+`r2/SHA256SUMS` 已按本次提交前的工作区原件重算。除补写的 `followup/n1-unrecoverable/command.txt` 外，其余文件与云端暂存清单 `SHA256SUMS.new` 一致；`attempt1-base-env-gap/exit.txt` 是暂存清单漏列的原件，一并提交。测试二进制没有提交。
