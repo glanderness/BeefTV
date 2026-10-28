@@ -1,0 +1,3 @@
+{"check": "unchanged-850-n1", "exit": 1}
+{"check": "candidate-n1", "exit": 0}
+{"check": "candidate-adjacent", "exit": 0}

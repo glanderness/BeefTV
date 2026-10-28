@@ -1,0 +1,96 @@
+package app
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
+)
+
+// Opus r3 independent probe: after a refunded round-4 image was requeued to
+// round 5, round-4 refund facts must not authorize another paid retry when
+// round 5 fails with an accepted submission or with an unknown billing result.
+func TestOpusR3RefundBypassDoesNotLeakIntoNextRound(t *testing.T) {
+	for _, variant := range []string{"accepted-no-conclusion", "conclusion-unknown-billing", "conclusion-stale-refund-evidence"} {
+		t.Run(variant, func(t *testing.T) {
+			allowLoopbackProviderTest(t)
+			var creates atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					creates.Add(1)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job", "status": "failed", "billing_state": "refunded"})
+			}))
+			defer server.Close()
+			t.Setenv("BEEFTV_ENTERPRISE_TEST_ORIGIN", server.URL)
+			svc, db := openDBRuntimeMatrix(t, t.TempDir())
+			defer closeDBRuntimeMatrix(t, svc, db)
+			input, _ := json.Marshal(canvasGenerationInput{Mode: "image", Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "fake-key"}})
+			task := model.Task{ID: "probe-image", UserID: "local", Type: "canvas_image", Status: model.TaskStatusFailed, Stage: "任务失败", Error: "请求过于频繁", RouteRun: 4, InputJSON: string(input)}
+			if err := db.Create(&task).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.ApiCallLog{ID: "image-create", UserID: task.UserID, TaskID: task.ID, RouteRun: 4, Source: "beefapi", Capability: "image", RequestKind: "create", Method: "POST", ImageJobID: "job", CreatedAt: time.Now()}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.RetryTaskWithOperation(task.UserID, task.ID, "recover-4"); err != nil {
+				t.Fatal(err)
+			}
+			var round4 model.Task
+			if err := db.First(&round4, "id = ?", task.ID).Error; err != nil || round4.BillingEvidence == nil || round4.RecoveryOutcome == nil {
+				t.Fatalf("round 4 precondition: %+v err=%v", round4, err)
+			}
+			queued, err := svc.RetryTask(task.UserID, task.ID)
+			if err != nil || queued.Status != model.TaskStatusQueued || queued.RouteRun != 5 {
+				t.Fatalf("round 4 refund requeue precondition: %+v err=%v", queued, err)
+			}
+			var stored model.Task
+			_ = db.First(&stored, "id = ?", task.ID).Error
+			if stored.RecoveryOutcome != nil || stored.BillingEvidence != nil {
+				t.Fatalf("requeue kept stale conclusion: outcome=%v billing=%+v", stored.RecoveryOutcome, stored.BillingEvidence)
+			}
+			updates := map[string]any{"status": model.TaskStatusFailed, "stage": "任务失败", "error": "请求过于频繁"}
+			switch variant {
+			case "accepted-no-conclusion":
+				attempt := model.RouteAttempt{ID: "accepted-5", TaskID: task.ID, RouteRun: 5, DispatchState: "accepted", StartedAt: time.Now()}
+				if err := db.Create(&attempt).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Create(&model.ImageSubmission{AttemptID: attempt.ID, TaskID: task.ID, UserID: task.UserID, ResponseAccepted: true}).Error; err != nil {
+					t.Fatal(err)
+				}
+			case "conclusion-unknown-billing":
+				updates["recovery_outcome"] = "no_result"
+			case "conclusion-stale-refund-evidence":
+				updates["recovery_outcome"] = "no_result"
+			}
+			if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
+				t.Fatal(err)
+			}
+			if variant == "conclusion-stale-refund-evidence" {
+				stale := *round4.BillingEvidence
+				if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Select("billing_evidence").Updates(&model.Task{BillingEvidence: &stale}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, op := range []string{"", "new-5"} {
+				if op == "" {
+					_, err = svc.RetryTask(task.UserID, task.ID)
+				} else {
+					_, err = svc.RetryTaskWithOperation(task.UserID, task.ID, op)
+				}
+				current, readErr := svc.Task(task.UserID, task.ID)
+				t.Logf("round 5 retry op=%q err=%v status=%s routeRun=%d outcome=%+v", op, err, current.Status, current.RouteRun, current.Outcome)
+				if readErr != nil || current.RouteRun != 5 || current.Status == model.TaskStatusQueued || creates.Load() != 0 {
+					t.Fatalf("round-4 refund leaked into round 5: op=%q status=%s routeRun=%d creates=%d err=%v", op, current.Status, current.RouteRun, creates.Load(), err)
+				}
+			}
+		})
+	}
+}

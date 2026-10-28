@@ -225,3 +225,45 @@
 ### 本节证据核对
 
 `r2/SHA256SUMS` 已按本次提交前的工作区原件重算。除补写的 `followup/n1-unrecoverable/command.txt` 外，其余文件与云端暂存清单 `SHA256SUMS.new` 一致；`attempt1-base-env-gap/exit.txt` 是暂存清单漏列的原件，一并提交。测试二进制没有提交。
+
+## R3. N1 修正候选 `30ed8d92` 核验
+
+固定候选 `30ed8d92910fe928b84cf918d870b8d600923144`（#88 分支 `tds/conv-01a18064-…`），对照未改的 `850d89c1`。同一台 8 核 Linux、Go 1.27.3，复用已有官方协议目录 `/tmp/s3r/basefull/plugin-packages`（只读）。全部是假上游、临时 SQLite、假密钥，零付费调用；没有动 Mac、没有跑全套、没有改候选代码或断言。原始输出在 `r3/`，校验和见 `r3/SHA256SUMS`。
+
+### 先核对输入
+
+- 候选生产改动只有 `image_submission.go`（新增 `imageRecoveryAllowsRetry`）和 `service.go`（免费分支先看它）两处，共 14 行，和第 9.2 节描述一致。放行条件是：图片任务、已失败、恢复结论是 `no_result` 或 `unrecoverable`、并且同一个 `ComputeOutcome` 算出 `regenerate=allowed`。
+- 脚本叠加的两份原用例 `opus_r2_test.go.txt`、`opus_r2_n1_unrecoverable_test.go.txt` 与本报告 `r2/tests/` 原件 SHA-256 相同，没有被改。
+- 脚本自己的检查偏松：先红只认 `NoResult` 一项失败，绿灯只看出现过 `=== RUN` 和退出码，空选择或部分选择也可能放过。所以下面每个测试名都是逐条从原始输出里核对的，不只信脚本的成功提示。
+
+### 复放结果（`r3/replay/`，06:39:40–06:40:19Z，脚本退出 0）
+
+| 步骤 | 退出码 | 实际结果 |
+| --- | --- | --- |
+| 未改 `850d89c1` 跑 N1 四项 | 1（预期） | 两个原 N1 用例失败；新退款用例 6 个子项全失败；未退款用例 6 个子项通过 |
+| 候选跑 N1 四项 | 0 | 4 项、20 个子项全部通过 |
+| 候选跑相邻 13 项（app 11 + handler 2） | 0 | 13 项全部 PASS，没有缺项 |
+
+850 的失败都落在业务断言上（例如"legacy /retry … did not requeue … upstream re-queried 1 times"，"new operation id … admitted as free_recovery"），不是编译失败、缺插件或夹具前置条件，所以算原反例的真红灯。
+
+按实际场景区分（更正 R2-7 的写法）：
+
+- R2-7 里写的"过期（410）"不准确：原用例上游实际返回 HTTP 200、`status=expired`；其中"扣费"一支用的是 `billing_state=charged`，这是未知值，只证明它停在 `confirm`，不等于正式 `settled`。
+- 本轮新用例真正覆盖了：`status=failed`+退款、`status=expired`+退款且带已接受的提交记录、结果端点 HTTP 410+退款且带已接受的提交记录。三种情况不带编号和带新编号都重新排队到第 5 轮，新编号重放只接纳一次，原免费编号前后都还是 `free_recovery` 4/4，重试不再查旧 job、不向上游提交。
+- 未退款：正式 `settled`（停在 `confirm`）、`billing_state` 为空（`blocked`）、缺键（`confirm`）三种，不带编号和带新编号都不排队、不提交。
+
+### 独立补充检查（`r3/probe/`）
+
+脚本没有覆盖的风险：第 4 轮退款放行以后，第 5 轮再失败时，会不会沿用第 4 轮的退款事实又绕过保护。我写了一个探针用例，从第 4 轮退款重新排队开始，再把第 5 轮改成三种失败：
+
+1. 第 5 轮有已接受的提交、没有恢复结论：`blocked / image_recovery_pending`，不排队；
+2. 第 5 轮有 `no_result` 结论、计费未知：`confirm`，不排队；
+3. 同上，再把第 4 轮的退款证据原样写回：仍是 `confirm`，不排队（计费证据按轮次过滤）。
+
+三种情况不带编号和带新编号都没有排队、没有向上游提交，退出 0。同时确认重新排队会清空 `recovery_outcome` 和 `billing_evidence`。`probe-attempt1/2-fixture.txt` 是我夹具写错的两次失败（失败原因写成不可重试的 "x"、写 JSON 字段方式不对），与产品无关，原样保留。候选两个改动文件和新用例 `gofmt -l` 无输出。
+
+### 结论
+
+- 候选能编译；N1 先红后绿在 Linux 上成立，相邻 13 项通过，没有发现需要 Sol 修改的编译或行为问题。
+- 顺带看到但不属于本轮问题：第 5 轮处于 `blocked`/`confirm` 时，带新编号的 `/retry` 返回无报错但不排队（不带编号时会报"图片结果尚未确认"）。这是候选之前就有的行为，未退款时怎样确认重跑仍属后续步骤，本轮不提修改。
+- 没测：Mac 编译和测试、Linux 全套、Mac 冷启动 5.588 秒问题（第 9.4 节仍只是建议）、界面和真实客户端、真实上游。Linux 通过不能代替 Mac 结果，候选也还没有合并或发布。

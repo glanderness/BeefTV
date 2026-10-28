@@ -1,0 +1,2 @@
+python3 -I /tmp/s3r3-work/replay_n1.py --repo <本 worktree> --candidate 30ed8d92910fe928b84cf918d870b8d600923144 --plugins /tmp/s3r/basefull/plugin-packages --output /tmp/s3r3-out
+# replay_n1.py = 30ed8d92 中 docs/implementation/evidence/generation-task-state-step-3/r2-fix/replay_n1.py（blob 7cee9afa，sha256 21e0ce82...7201）；CGO_ENABLED=1
