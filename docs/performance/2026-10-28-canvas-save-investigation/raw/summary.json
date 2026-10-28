@@ -1,0 +1,431 @@
+{
+  "scope": "生产比较/序列化函数的 CPU 测量 + 由代码调用点推算的每分钟开销模型；不是浏览器帧率、不是桌面客户端实测、不含 IndexedDB/HTTP 真实 IO 时间",
+  "runtime": "bun 1.4.2",
+  "platform": "darwin/arm64",
+  "cpuCount": 10,
+  "loadAveragePerRun": [
+    [
+      11.96,
+      12.39,
+      12.29
+    ],
+    [
+      11.86,
+      12.36,
+      12.28
+    ],
+    [
+      11.18,
+      12.2,
+      12.22
+    ]
+  ],
+  "runs": [
+    "run-1.json",
+    "run-2.json",
+    "run-3.json"
+  ],
+  "aggregation": "每个指标取各轮次中位数的中位数（3 轮）",
+  "table": [
+    {
+      "nodeCount": 26,
+      "serializedBytes": 41467,
+      "perOperation": {
+        "sameCanvasContent(current, ticked)": 0.196,
+        "sameCanvasContent(current, current)": 0.0001,
+        "sameCanvasContent(current, viewportOnly)": 0.0011,
+        "canvasDocumentMatchesFields(observed, renderSnapshot)": 0.0012,
+        "canvasDocumentMatchesFields(current, { nodes: ticked })": 0.0022,
+        "mergeCanvasRefreshPatch(base, incoming, live)": 0.015,
+        "sameCanvasDocument(confirmed, live)": 0.1821,
+        "canvasContentSnapshot(project)": 0.0002,
+        "JSON.stringify(project)": 0.017,
+        "structuredClone(project)": 0.069,
+        "parse + rebase + serialize": 0.0799,
+        "tickGenerationProgress(project)": 0.0019
+      },
+      "scenarios": [
+        {
+          "pollMs": 2000,
+          "ticks": 30,
+          "A": 22.3,
+          "B": 16.49,
+          "C": 0.14,
+          "layers": {
+            "L1": 5.88,
+            "L2": 0.07,
+            "L3": 0.45,
+            "L4": 5.46,
+            "L5": 2.4,
+            "L6": 8.04
+          }
+        },
+        {
+          "pollMs": 500,
+          "ticks": 120,
+          "A": 89.22,
+          "B": 65.96,
+          "C": 0.55,
+          "layers": {
+            "L1": 23.52,
+            "L2": 0.29,
+            "L3": 1.8,
+            "L4": 21.85,
+            "L5": 9.59,
+            "L6": 32.17
+          }
+        }
+      ]
+    },
+    {
+      "nodeCount": 101,
+      "serializedBytes": 135263,
+      "perOperation": {
+        "sameCanvasContent(current, ticked)": 1.1844,
+        "sameCanvasContent(current, current)": 0,
+        "sameCanvasContent(current, viewportOnly)": 0.001,
+        "canvasDocumentMatchesFields(observed, renderSnapshot)": 0.0005,
+        "canvasDocumentMatchesFields(current, { nodes: ticked })": 0.0013,
+        "mergeCanvasRefreshPatch(base, incoming, live)": 0.026,
+        "sameCanvasDocument(confirmed, live)": 1.4541,
+        "canvasContentSnapshot(project)": 0.0002,
+        "JSON.stringify(project)": 0.0531,
+        "structuredClone(project)": 0.2537,
+        "parse + rebase + serialize": 0.191,
+        "tickGenerationProgress(project)": 0.001
+      },
+      "scenarios": [
+        {
+          "pollMs": 2000,
+          "ticks": 30,
+          "A": 138.52,
+          "B": 103.03,
+          "C": 0.07,
+          "layers": {
+            "L1": 35.53,
+            "L2": 0.03,
+            "L3": 0.78,
+            "L4": 43.62,
+            "L5": 5.73,
+            "L6": 52.83
+          }
+        },
+        {
+          "pollMs": 500,
+          "ticks": 120,
+          "A": 554.09,
+          "B": 412.12,
+          "C": 0.28,
+          "layers": {
+            "L1": 142.13,
+            "L2": 0.12,
+            "L3": 3.12,
+            "L4": 174.49,
+            "L5": 22.92,
+            "L6": 211.31
+          }
+        }
+      ]
+    },
+    {
+      "nodeCount": 301,
+      "serializedBytes": 384619,
+      "perOperation": {
+        "sameCanvasContent(current, ticked)": 4.1954,
+        "sameCanvasContent(current, current)": 0,
+        "sameCanvasContent(current, viewportOnly)": 0.001,
+        "canvasDocumentMatchesFields(observed, renderSnapshot)": 0.0005,
+        "canvasDocumentMatchesFields(current, { nodes: ticked })": 0.0015,
+        "mergeCanvasRefreshPatch(base, incoming, live)": 0.0731,
+        "sameCanvasDocument(confirmed, live)": 3.8905,
+        "canvasContentSnapshot(project)": 0.0002,
+        "JSON.stringify(project)": 0.1528,
+        "structuredClone(project)": 0.8343,
+        "parse + rebase + serialize": 0.5666,
+        "tickGenerationProgress(project)": 0.0027
+      },
+      "scenarios": [
+        {
+          "pollMs": 2000,
+          "ticks": 30,
+          "A": 408.13,
+          "B": 282.31,
+          "C": 0.07,
+          "layers": {
+            "L1": 125.86,
+            "L2": 0.03,
+            "L3": 2.19,
+            "L4": 116.71,
+            "L5": 17,
+            "L6": 146.33
+          }
+        },
+        {
+          "pollMs": 500,
+          "ticks": 120,
+          "A": 1632.5,
+          "B": 1129.24,
+          "C": 0.3,
+          "layers": {
+            "L1": 503.45,
+            "L2": 0.12,
+            "L3": 8.77,
+            "L4": 466.86,
+            "L5": 67.99,
+            "L6": 585.31
+          }
+        }
+      ]
+    },
+    {
+      "nodeCount": 1001,
+      "serializedBytes": 1257584,
+      "perOperation": {
+        "sameCanvasContent(current, ticked)": 15.0564,
+        "sameCanvasContent(current, current)": 0,
+        "sameCanvasContent(current, viewportOnly)": 0.0008,
+        "canvasDocumentMatchesFields(observed, renderSnapshot)": 0.0003,
+        "canvasDocumentMatchesFields(current, { nodes: ticked })": 0.003,
+        "mergeCanvasRefreshPatch(base, incoming, live)": 0.2103,
+        "sameCanvasDocument(confirmed, live)": 18.3438,
+        "canvasContentSnapshot(project)": 0.0002,
+        "JSON.stringify(project)": 1.0594,
+        "structuredClone(project)": 4.7258,
+        "parse + rebase + serialize": 3.3391,
+        "tickGenerationProgress(project)": 0.0062
+      },
+      "scenarios": [
+        {
+          "pollMs": 2000,
+          "ticks": 30,
+          "A": 1832.38,
+          "B": 1380.77,
+          "C": 0.11,
+          "layers": {
+            "L1": 451.69,
+            "L2": 0.02,
+            "L3": 6.31,
+            "L4": 550.31,
+            "L5": 100.17,
+            "L6": 723.87
+          }
+        },
+        {
+          "pollMs": 500,
+          "ticks": 120,
+          "A": 7329.5,
+          "B": 5523.1,
+          "C": 0.43,
+          "layers": {
+            "L1": 1806.77,
+            "L2": 0.07,
+            "L3": 25.24,
+            "L4": 2201.26,
+            "L5": 400.69,
+            "L6": 2895.48
+          }
+        }
+      ]
+    }
+  ],
+  "perRunScenarios": [
+    {
+      "run": "run-1.json",
+      "loadAverage": [
+        11.96,
+        12.39,
+        12.29
+      ],
+      "scenarios": [
+        {
+          "nodeCount": 26,
+          "pollMs": 2000,
+          "A": 36.75,
+          "B": 20.4,
+          "C": 0.04
+        },
+        {
+          "nodeCount": 26,
+          "pollMs": 500,
+          "A": 180.38,
+          "B": 132,
+          "C": 0.31
+        },
+        {
+          "nodeCount": 101,
+          "pollMs": 2000,
+          "A": 268.75,
+          "B": 185.82,
+          "C": 0.14
+        },
+        {
+          "nodeCount": 101,
+          "pollMs": 500,
+          "A": 932.03,
+          "B": 684.68,
+          "C": 0.47
+        },
+        {
+          "nodeCount": 301,
+          "pollMs": 2000,
+          "A": 591.68,
+          "B": 376.62,
+          "C": 0.06
+        },
+        {
+          "nodeCount": 301,
+          "pollMs": 500,
+          "A": 1832.33,
+          "B": 1164.13,
+          "C": 0.61
+        },
+        {
+          "nodeCount": 1001,
+          "pollMs": 2000,
+          "A": 1284.52,
+          "B": 895.3,
+          "C": 0.79
+        },
+        {
+          "nodeCount": 1001,
+          "pollMs": 500,
+          "A": 5639.8,
+          "B": 3874.9,
+          "C": 0.43
+        }
+      ]
+    },
+    {
+      "run": "run-2.json",
+      "loadAverage": [
+        11.86,
+        12.36,
+        12.28
+      ],
+      "scenarios": [
+        {
+          "nodeCount": 26,
+          "pollMs": 2000,
+          "A": 47.87,
+          "B": 34.65,
+          "C": 0.04
+        },
+        {
+          "nodeCount": 26,
+          "pollMs": 500,
+          "A": 90.55,
+          "B": 68.33,
+          "C": 0.17
+        },
+        {
+          "nodeCount": 101,
+          "pollMs": 2000,
+          "A": 122,
+          "B": 88.21,
+          "C": 0.05
+        },
+        {
+          "nodeCount": 101,
+          "pollMs": 500,
+          "A": 438.67,
+          "B": 302.59,
+          "C": 0.19
+        },
+        {
+          "nodeCount": 301,
+          "pollMs": 2000,
+          "A": 424.56,
+          "B": 310.14,
+          "C": 0.06
+        },
+        {
+          "nodeCount": 301,
+          "pollMs": 500,
+          "A": 1406.68,
+          "B": 961.42,
+          "C": 0.31
+        },
+        {
+          "nodeCount": 1001,
+          "pollMs": 2000,
+          "A": 1799.93,
+          "B": 1317.77,
+          "C": 0.11
+        },
+        {
+          "nodeCount": 1001,
+          "pollMs": 500,
+          "A": 5213.36,
+          "B": 3639.5,
+          "C": 0.43
+        }
+      ]
+    },
+    {
+      "run": "run-3.json",
+      "loadAverage": [
+        11.18,
+        12.2,
+        12.22
+      ],
+      "scenarios": [
+        {
+          "nodeCount": 26,
+          "pollMs": 2000,
+          "A": 39.83,
+          "B": 33.19,
+          "C": 0.07
+        },
+        {
+          "nodeCount": 26,
+          "pollMs": 500,
+          "A": 154.99,
+          "B": 107.74,
+          "C": 0.4
+        },
+        {
+          "nodeCount": 101,
+          "pollMs": 2000,
+          "A": 133.63,
+          "B": 79.97,
+          "C": 0.08
+        },
+        {
+          "nodeCount": 101,
+          "pollMs": 500,
+          "A": 347.5,
+          "B": 252.82,
+          "C": 0.19
+        },
+        {
+          "nodeCount": 301,
+          "pollMs": 2000,
+          "A": 361.51,
+          "B": 225.58,
+          "C": 0.06
+        },
+        {
+          "nodeCount": 301,
+          "pollMs": 500,
+          "A": 1373.2,
+          "B": 955.87,
+          "C": 0.25
+        },
+        {
+          "nodeCount": 1001,
+          "pollMs": 2000,
+          "A": 1057.36,
+          "B": 709.14,
+          "C": 0.11
+        },
+        {
+          "nodeCount": 1001,
+          "pollMs": 500,
+          "A": 5318.84,
+          "B": 3829.72,
+          "C": 3.02
+        }
+      ]
+    }
+  ]
+}

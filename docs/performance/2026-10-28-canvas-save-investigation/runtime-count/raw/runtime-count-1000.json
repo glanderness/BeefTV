@@ -1,0 +1,585 @@
+{
+  "scope": "真实浏览器里的真实生产入口运行计数：真实 useCanvasProjectLifecycle + useCanvasGeneration + zustand 画布 store + 真实 400/500ms 去抖；后端是假 CAS 服务，生成任务由假任务对象驱动（无付费上游）",
+  "runtime": "bun 1.4.2 / chromium unknown",
+  "platform": "darwin/arm64",
+  "cpuCount": 10,
+  "loadAverage": [
+    8.05,
+    8.95,
+    7.88
+  ],
+  "measuredAt": "2026-10-28T03:53:22.588Z",
+  "nodeCount": 1000,
+  "scenarios": [
+    {
+      "mode": "poll",
+      "cadenceMs": 2000,
+      "ticks": 8,
+      "nodes": 1000,
+      "wallMs": 17674,
+      "counts": {
+        "store.updateProject": 17,
+        "sameCanvasContent": 17,
+        "canonicalize": 48,
+        "store.updateProject.write": 16,
+        "canvasDocumentMatchesFields": 24,
+        "sameCanvasDocumentValue": 112,
+        "mergeCanvasRefreshPatch": 8,
+        "backend.scheduleSync": 16,
+        "flush.writeQueuedCanvasPersist": 16,
+        "rebaseCanvasProjects": 16,
+        "serializeCanvasStorageDocument": 16,
+        "indexedDb.setItem": 32,
+        "indexedDb.setItem::infinite-canvas:canvas_store": 16,
+        "backend.syncLocalCanvasProject": 8,
+        "sameCanvasDocument": 8,
+        "indexedDb.setItem::canvas-document-journal:c1": 16,
+        "backend.commitCanvasDocument": 8
+      },
+      "timeline": [
+        [
+          "store.updateProject",
+          2312
+        ],
+        [
+          "store.updateProject",
+          3820
+        ],
+        [
+          "store.updateProject.write",
+          3824
+        ],
+        [
+          "store.updateProject",
+          3827
+        ],
+        [
+          "store.updateProject.write",
+          3833
+        ],
+        [
+          "backend.scheduleSync",
+          3833
+        ],
+        [
+          "backend.scheduleSync",
+          3833
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          4235
+        ],
+        [
+          "indexedDb.setItem",
+          4241
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          4335
+        ],
+        [
+          "sameCanvasDocument",
+          4350
+        ],
+        [
+          "indexedDb.setItem",
+          4356
+        ],
+        [
+          "backend.commitCanvasDocument",
+          4361
+        ],
+        [
+          "indexedDb.setItem",
+          4375
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          4378
+        ],
+        [
+          "indexedDb.setItem",
+          4382
+        ],
+        [
+          "store.updateProject",
+          5826
+        ],
+        [
+          "store.updateProject.write",
+          5830
+        ],
+        [
+          "store.updateProject",
+          5832
+        ],
+        [
+          "store.updateProject.write",
+          5837
+        ],
+        [
+          "backend.scheduleSync",
+          5837
+        ],
+        [
+          "backend.scheduleSync",
+          5837
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          6239
+        ],
+        [
+          "indexedDb.setItem",
+          6242
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          6339
+        ],
+        [
+          "sameCanvasDocument",
+          6346
+        ],
+        [
+          "indexedDb.setItem",
+          6354
+        ],
+        [
+          "backend.commitCanvasDocument",
+          6358
+        ],
+        [
+          "indexedDb.setItem",
+          6374
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          6376
+        ],
+        [
+          "indexedDb.setItem",
+          6378
+        ],
+        [
+          "store.updateProject",
+          7832
+        ],
+        [
+          "store.updateProject.write",
+          7837
+        ],
+        [
+          "store.updateProject",
+          7837
+        ],
+        [
+          "store.updateProject.write",
+          7842
+        ],
+        [
+          "backend.scheduleSync",
+          7842
+        ],
+        [
+          "backend.scheduleSync",
+          7842
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          8243
+        ],
+        [
+          "indexedDb.setItem",
+          8250
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          8344
+        ],
+        [
+          "sameCanvasDocument",
+          8356
+        ],
+        [
+          "indexedDb.setItem",
+          8369
+        ],
+        [
+          "backend.commitCanvasDocument",
+          8380
+        ],
+        [
+          "indexedDb.setItem",
+          8397
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          8400
+        ],
+        [
+          "indexedDb.setItem",
+          8403
+        ],
+        [
+          "store.updateProject",
+          9839
+        ],
+        [
+          "store.updateProject.write",
+          9847
+        ],
+        [
+          "store.updateProject",
+          9849
+        ],
+        [
+          "store.updateProject.write",
+          9855
+        ],
+        [
+          "backend.scheduleSync",
+          9855
+        ],
+        [
+          "backend.scheduleSync",
+          9856
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          10256
+        ],
+        [
+          "indexedDb.setItem",
+          10259
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          10357
+        ],
+        [
+          "sameCanvasDocument",
+          10363
+        ],
+        [
+          "indexedDb.setItem",
+          10370
+        ],
+        [
+          "backend.commitCanvasDocument",
+          10374
+        ],
+        [
+          "indexedDb.setItem",
+          10389
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          10391
+        ],
+        [
+          "indexedDb.setItem",
+          10393
+        ],
+        [
+          "store.updateProject",
+          11848
+        ],
+        [
+          "store.updateProject.write",
+          11859
+        ],
+        [
+          "store.updateProject",
+          11861
+        ],
+        [
+          "store.updateProject.write",
+          11869
+        ],
+        [
+          "backend.scheduleSync",
+          11869
+        ],
+        [
+          "backend.scheduleSync",
+          11870
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          12271
+        ],
+        [
+          "indexedDb.setItem",
+          12275
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          12371
+        ],
+        [
+          "sameCanvasDocument",
+          12380
+        ],
+        [
+          "indexedDb.setItem",
+          12390
+        ],
+        [
+          "backend.commitCanvasDocument",
+          12398
+        ],
+        [
+          "indexedDb.setItem",
+          12416
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          12421
+        ],
+        [
+          "indexedDb.setItem",
+          12424
+        ],
+        [
+          "store.updateProject",
+          13860
+        ],
+        [
+          "store.updateProject.write",
+          13864
+        ],
+        [
+          "store.updateProject",
+          13865
+        ],
+        [
+          "store.updateProject.write",
+          13869
+        ],
+        [
+          "backend.scheduleSync",
+          13869
+        ],
+        [
+          "backend.scheduleSync",
+          13870
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          14271
+        ],
+        [
+          "indexedDb.setItem",
+          14276
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          14371
+        ],
+        [
+          "sameCanvasDocument",
+          14383
+        ],
+        [
+          "indexedDb.setItem",
+          14397
+        ],
+        [
+          "backend.commitCanvasDocument",
+          14404
+        ],
+        [
+          "indexedDb.setItem",
+          14422
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          14428
+        ],
+        [
+          "indexedDb.setItem",
+          14433
+        ],
+        [
+          "store.updateProject",
+          15867
+        ],
+        [
+          "store.updateProject.write",
+          15879
+        ],
+        [
+          "store.updateProject",
+          15881
+        ],
+        [
+          "store.updateProject.write",
+          15886
+        ],
+        [
+          "backend.scheduleSync",
+          15886
+        ],
+        [
+          "backend.scheduleSync",
+          15886
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          16288
+        ],
+        [
+          "indexedDb.setItem",
+          16297
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          16388
+        ],
+        [
+          "sameCanvasDocument",
+          16398
+        ],
+        [
+          "indexedDb.setItem",
+          16411
+        ],
+        [
+          "backend.commitCanvasDocument",
+          16418
+        ],
+        [
+          "indexedDb.setItem",
+          16436
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          16444
+        ],
+        [
+          "indexedDb.setItem",
+          16447
+        ],
+        [
+          "store.updateProject",
+          17880
+        ],
+        [
+          "store.updateProject.write",
+          17890
+        ],
+        [
+          "store.updateProject",
+          17891
+        ],
+        [
+          "store.updateProject.write",
+          17896
+        ],
+        [
+          "backend.scheduleSync",
+          17896
+        ],
+        [
+          "backend.scheduleSync",
+          17896
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          18297
+        ],
+        [
+          "indexedDb.setItem",
+          18301
+        ],
+        [
+          "backend.syncLocalCanvasProject",
+          18398
+        ],
+        [
+          "sameCanvasDocument",
+          18405
+        ],
+        [
+          "indexedDb.setItem",
+          18413
+        ],
+        [
+          "backend.commitCanvasDocument",
+          18418
+        ],
+        [
+          "indexedDb.setItem",
+          18434
+        ],
+        [
+          "flush.writeQueuedCanvasPersist",
+          18442
+        ],
+        [
+          "indexedDb.setItem",
+          18444
+        ]
+      ],
+      "requests": {
+        "commit": 8,
+        "commitAccepted": 8,
+        "commitConflict": 0,
+        "readProject": 0
+      },
+      "commits": [
+        {
+          "at": 1793159607541,
+          "nodes": 1000,
+          "revision": 106
+        },
+        {
+          "at": 1793159609539,
+          "nodes": 1000,
+          "revision": 107
+        },
+        {
+          "at": 1793159611563,
+          "nodes": 1000,
+          "revision": 108
+        },
+        {
+          "at": 1793159613557,
+          "nodes": 1000,
+          "revision": 109
+        },
+        {
+          "at": 1793159615580,
+          "nodes": 1000,
+          "revision": 110
+        },
+        {
+          "at": 1793159617587,
+          "nodes": 1000,
+          "revision": 111
+        },
+        {
+          "at": 1793159619600,
+          "nodes": 1000,
+          "revision": 112
+        },
+        {
+          "at": 1793159621599,
+          "nodes": 1000,
+          "revision": 113
+        }
+      ]
+    }
+  ],
+  "requests": {
+    "commit": 8,
+    "commitAccepted": 8,
+    "commitConflict": 0,
+    "readProject": 1,
+    "listProjects": 0,
+    "other": 0
+  },
+  "pageErrors": [],
+  "graph": "true:1000:0"
+}
