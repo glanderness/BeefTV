@@ -216,6 +216,7 @@ DTO 数字 `id` 是数据库行号，原上游身份是 `task_id`；原始供应
 ### 8.3 验证、失败与复放
 
 - 原始失败与成功输出分别保留，没有覆盖原候选 7 份日志。运行输出均由对应进程直接写入 `.txt`；它们是否进入提交、字节数和 SHA-256 由本轮提交树清单核对。
+- 首次推送 `c24dc28a5b2572faff5a464ccb3bf1cb5f1b072d` 后的提交树核对发现，根 `.gitattributes` 的 `text=auto eol=lf` 将 30 份新输出中的 CRLF 转为 LF，哈希与本机原件不符。本机原件始终保留，已在本轮证据目录用 `.gitattributes` 关闭 `.txt` 的文本/换行转换后补交原字节；不清洗颜色码、不重跑来替换输出。该规则不影响原候选 7 份日志。后续固定交付以补交后的提交树核对为准。
 - `operation-green.txt`、`billing-image-green.txt`、`background-green.txt`、`upscale-green.txt`、`continuity-green.txt`、`targeted-all.txt` 保存本轮专项。`research-replay.txt` 为 #83 稳定夹具的正式适配：事实改存任务、暂停通过现有 `/retry` 兼容入口、扫描使用当前 Service 入口；原解析 helper 的 `result_url` 检查改由真实两次 HTTP 查询覆盖。未复制实验判定器。
 - `fixed-candidate-background-red.txt` 中首次 pending 场景没有启动工作运行时，不能单独证明产品漏查询；修正夹具后在未改候选再次失败的输出保存在 `fixed-candidate-pending-red-fixture-corrected.txt`。实际 `StartWorker` 场景的失败不受这一夹具问题影响。
 - 修正期间的 v28 先遗漏了“历史夹具没有日志表”这一情况，原有 `TestAgentProductReconcileHistoricalLedgers/product-v1` 实际失败，见 `historical-migration-red.txt`。已补建表分支并保留所有原迁移身份检查，只追加 v28 的期望记录；数据库包全套结果见 `database-all-green.txt`。

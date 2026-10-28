@@ -6,7 +6,7 @@
   "independent_review_commit": "977f86e678832c3e0566d94141a16dc1a1515f9d",
   "plan_commit": "bffc87f54625406ccb7b778e088e01d1e5165f01",
   "research_commit": "4b84a40d52e7f7da97397349adbb11a1bf7ff42b",
-  "generated_utc": "2026-10-28T05:10:11.345261+00:00",
+  "generated_utc": "2026-10-28T05:12:04.669692+00:00",
   "verification": {
     "test_command": [
       "go",
@@ -267,6 +267,12 @@
       "bytes": 68468,
       "sha256": "778f8e832841e40cce2dd45f2813aaecb7c05f9c8830819f26f7a72ef430796d",
       "git_blob": "4d5cade40304dc1e60b934e87d08d34e21b0b133"
+    },
+    {
+      "path": "docs/implementation/evidence/generation-task-state-step-3/revision/.gitattributes",
+      "bytes": 17,
+      "sha256": "f8fe2ca3fb096e1a7ffcfe86a8b97ff3fd4d04898c2859e984a6382d7aa7456f",
+      "git_blob": "dec0de89ccbe5ed75cf4d7842a43df6e5a972202"
     },
     {
       "path": "docs/implementation/evidence/generation-task-state-step-3/revision/accepted-check/backend-all.json",
@@ -660,9 +666,9 @@
     },
     {
       "path": "docs/implementation/generation-task-state-step-3.md",
-      "bytes": 32125,
-      "sha256": "ce0c8c9ce6a535cdc8f75fea8885e547e0d487daa511135bfc879a53d3c46bf1",
-      "git_blob": "91d1d74ed4b4728a187a5f6e0737accd6c9b3490"
+      "bytes": 32607,
+      "sha256": "cb8a199d064833fed0568a1ca31cfa0ff818bb5ea90d08c037397f45e60cf25e",
+      "git_blob": "02b2c7cbb7323aff560b7b81779c8a299772ce1c"
     }
   ],
   "preserved_original_evidence": [
@@ -715,5 +721,6 @@
       "git_blob": "421a7f4539209738ebe1f55279e1a21a42f903a3",
       "unchanged_from_original": true
     }
-  ]
+  ],
+  "original_byte_preservation": "首次推送因根text=auto eol=lf将30份新输出CRLF转LF；本机原始文件完整保留，证据目录禁用转换后补交。以补交提交树为准。"
 }
