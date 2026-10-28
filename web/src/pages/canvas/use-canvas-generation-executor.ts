@@ -33,7 +33,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
+import { blockCanvasGenerationSubmit, canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -112,8 +112,10 @@ export function useCanvasGenerationExecutor({
     );
 
     return useCallback(
-        (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options?: CanvasNodeGenerationOptions) =>
-            runCanvasGenerationSubmissionOnce(
+        (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options?: CanvasNodeGenerationOptions) => {
+            // 右上角 Toast 被全局 CSS 隐藏，被拦下的提交必须同时写进节点提示，否则点生成看不到反应。
+            const blockSubmit = (content: string) => setNodes((current) => blockCanvasGenerationSubmit(current, nodeId, content));
+            return runCanvasGenerationSubmissionOnce(
                 submissionLocksRef.current,
                 nodeId,
                 async (releaseSubmission) => {
@@ -168,7 +170,12 @@ export function useCanvasGenerationExecutor({
                                     : await findGenerationTaskByOperation(operationId!, projectId, controller.signal);
                                 controller.signal.throwIfAborted();
                                 assertUserScope(scope);
-                                if (!task) { message.warning("尚未查到上次提交的任务，请稍后再查询，暂勿重新生成"); continue; }
+                                if (!task) {
+                                    const missingTaskMessage = "尚未查到上次提交的任务，请稍后再查询，暂勿重新生成";
+                                    blockSubmit(missingTaskMessage);
+                                    message.warning(missingTaskMessage);
+                                    continue;
+                                }
                                 if (task.projectId && task.projectId !== projectId) throw new Error("生成任务不属于当前画布");
                                 bindGenerationTask(target.id, task);
                                 const completed = await waitForGenerationTask(task.id, { signal: controller.signal, expectedScope: scope, initialTask: task, onTaskUpdate: (update) => bindGenerationTask(target.id, update) });
@@ -180,17 +187,23 @@ export function useCanvasGenerationExecutor({
                         }
                         if (mode === "image" && canvasImageGenerationHasPendingResult(sourceNode, inputNodes)) {
                             diagnostic("generation_pending_result", "warning");
-                            message.warning(canvasImagePendingResultMessage(sourceNode, inputNodes));
+                            const pendingMessage = canvasImagePendingResultMessage(sourceNode, inputNodes);
+                            blockSubmit(pendingMessage);
+                            message.warning(pendingMessage);
                             return;
                         }
                         if (isCanvasNodeGenerating(nodesRef.current.find((node) => node.id === nodeId))) {
                             diagnostic("generation_task_active", "warning");
-                            message.info("该节点的生成任务仍在进行中，请等待完成后再生成");
+                            const runningMessage = "该节点的生成任务仍在进行中，请等待完成后再生成";
+                            blockSubmit(runningMessage);
+                            message.info(runningMessage);
                             return;
                         }
                         if (sourceNode?.type === CanvasNodeType.Video && sourceNode.metadata?.videoEditOperation === "concat") {
                             diagnostic("generation_concat_source", "warning");
-                            message.info("合并成片节点不直接重新生成，请重新选择源视频合并");
+                            const concatMessage = "合并成片节点不直接重新生成，请重新选择源视频合并";
+                            blockSubmit(concatMessage);
+                            message.info(concatMessage);
                             return;
                         }
                         let generationConfig: ReturnType<typeof buildConfirmedGenerationConfig>;
@@ -331,7 +344,9 @@ export function useCanvasGenerationExecutor({
                         const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
                         if (canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode })) {
                             diagnostic("generation_retry_blocked", "warning");
-                            message.warning(sourceNode?.metadata?.errorDetails || "请先查看失败原因并调整输入，再重新生成");
+                            const retryBlockedMessage = sourceNode?.metadata?.errorDetails || "请先查看失败原因并调整输入，再重新生成";
+                            blockSubmit(retryBlockedMessage);
+                            message.warning(retryBlockedMessage);
                             return;
                         }
                         if (mode === "audio" && generationContext.characterReferences.length) {
@@ -558,9 +573,12 @@ export function useCanvasGenerationExecutor({
                 },
                 () => {
                     recordDiagnosticEvent({ category: "action", level: "warning", code: "generation_duplicate_click", canvasId: projectId, message: "该节点已有生成请求正在提交或执行" });
-                    message.info({ key: `canvas-generation-submission-${nodeId}`, content: "该节点已有生成请求正在提交或执行，请勿重复点击" });
+                    const duplicateMessage = "该节点已有生成请求正在提交或执行，请勿重复点击";
+                    blockSubmit(duplicateMessage);
+                    message.info({ key: `canvas-generation-submission-${nodeId}`, content: duplicateMessage });
                 },
-            ),
+            );
+        },
         [
             addedSkills,
             applyGenerationTaskResult,

@@ -20,7 +20,7 @@ import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import type { GenerationTask } from "@/services/api/task-center";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
-import { canvasGenerationFailureMetadata, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage, isKeptGenerationResultCode } from "./canvas-generation-failure";
+import { blockCanvasGenerationSubmit, canvasGenerationFailureMetadata, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage, isKeptGenerationResultCode } from "./canvas-generation-failure";
 
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -59,13 +59,16 @@ export async function executeImageGeneration({
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
     if (canvasImageGenerationHasPendingResult(sourceNode, canvasNodes)) {
-        showError(canvasImagePendingResultMessage(sourceNode, canvasNodes));
+        const pendingMessage = canvasImagePendingResultMessage(sourceNode, canvasNodes);
+        setNodes((current) => blockCanvasGenerationSubmit(current, nodeId, pendingMessage));
+        showError(pendingMessage);
         return;
     }
     const expectedScope = captureUserScope();
     const isCurrent = () => userScopeMatches(expectedScope) && !controller.signal.aborted;
     const referenceLimitError = canvasImageReferenceLimitError(generationConfig, generationContext.referenceImages);
     if (referenceLimitError) {
+        setNodes((current) => blockCanvasGenerationSubmit(current, nodeId, referenceLimitError));
         showError(referenceLimitError);
         return;
     }

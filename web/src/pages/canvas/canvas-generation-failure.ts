@@ -95,6 +95,12 @@ export function imageSubmissionUnknown(metadata: CanvasNodeMetadata | undefined)
     return metadata?.generationSubmissionState === "unknown" || metadata?.taskStage === "submission_unknown" || metadata?.generationErrorCode === "submission_uncertain";
 }
 
+// 右上角 Toast 被全局 CSS 隐藏（styles/globals.css 的 .ant-message），提交前被拦下的原因必须同时写进节点，
+// 提示词面板会渲染成「未开始生成：…」；否则点生成看起来毫无反应。
+export function blockCanvasGenerationSubmit(nodes: CanvasNodeData[], nodeId: string, content: string): CanvasNodeData[] {
+    return nodes.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, generationPreflightError: content } } : node));
+}
+
 export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId: string, task: GenerationTask): CanvasNodeData[] {
     return nodes.map((node) => {
         const failed = task.status === "failed" || task.status === "cancelled";

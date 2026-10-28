@@ -226,22 +226,29 @@ test("account abandonment or cancellation during result consumption cannot repor
     }
 });
 
-test("main generation and batch generation stop before changing nodes when a paid result awaits recovery", async () => {
+test("main generation and batch generation stop before a paid submission and only add the visible notice", async () => {
     for (const batch of [false, true]) {
         const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" as const } };
         const root = batch ? { ...target, id: "batch-root", metadata: { batchChildIds: [target.id], status: "success" as const } } : target;
-        let mutations = 0;
+        const nodes = batch ? [root, target] : [target];
+        const nodeUpdates: CanvasNodeData[][] = [];
+        let otherMutations = 0;
         const notices: string[] = [];
-        const unexpected = () => { mutations++; };
+        const unexpected = () => { otherMutations++; };
         await executeImageGeneration({
-            sourceNode: root, nodeId: root.id, canvasNodes: batch ? [root, target] : [target], canvasConnections: [],
+            sourceNode: root, nodeId: root.id, canvasNodes: nodes, canvasConnections: [],
             prompt: "修改后再点生成", effectivePrompt: "修改后再点生成", projectId: project.id,
             generationConfig: { count: batch ? "2" : "1" }, generationContext: { referenceImages: [] }, controller: new AbortController(),
-            setNodes: unexpected, setConnections: unexpected, registerPendingNodeIds: unexpected,
+            setNodes: (update: CanvasNodeData[] | ((current: CanvasNodeData[]) => CanvasNodeData[])) => { nodeUpdates.push(typeof update === "function" ? update(nodes) : update); },
+            setConnections: unexpected, registerPendingNodeIds: unexpected,
             showError: (value: string) => notices.push(value),
         } as unknown as CanvasGenerationExecution);
-        expect(mutations).toBe(0);
+        expect(otherMutations).toBe(0);
         expect(notices).toEqual(["生成结果已保留，请点击「继续取回」"]);
+        // 被拦下的提交只允许追加面板可见的「未开始生成」提示；取回所需的任务身份、恢复标记和连线都必须原样保留。
+        expect(nodeUpdates).toHaveLength(1);
+        expect(nodeUpdates[0]!.map((node) => ({ ...node.metadata, generationPreflightError: undefined }))).toEqual(nodes.map((node) => ({ ...node.metadata, generationPreflightError: undefined })));
+        expect(nodeUpdates[0]!.find((node) => node.id === root.id)?.metadata?.generationPreflightError).toBe(notices[0]);
     }
 });
 
