@@ -5,14 +5,13 @@ import { latchCanvasConnectionApproach, type CanvasConnectionApproach } from "@/
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { getNodeSpec } from "@/constant/canvas";
-import { batchSourceRestriction, buildBatchConnectionCreateRequest, hasBatchConnectionCandidate, planBatchConnections, type CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
-import { batchReferenceHandleAtY } from "@/lib/canvas/canvas-batch-table";
+import { batchSourceRestriction, buildBatchConnectionCreateRequest, planBatchConnections, type CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
 import { connectedNodeCenterFromEdgeDrop } from "@/lib/canvas/canvas-connected-node-placement";
 import { canvasConnectionError } from "@/lib/canvas/canvas-connection-policy";
-import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardPromptTemplateMetadata, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
+import { resolveBatchConnectionDropTarget, resolveConnectionDropTarget, type CanvasConnectionDropTarget } from "@/lib/canvas/canvas-connection-target";
+import { attachNodeToStoryboardRow, createCanvasNode, normalizeConnection, storyboardPromptTemplateMetadata, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
 import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
-import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import { preferredMediaGeneratorMetadata } from "@/lib/canvas/canvas-generation-config";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { normalizeRunningHubCapability, type AiConfig } from "@/stores/use-config-store";
@@ -46,15 +45,6 @@ export type ConnectionReplaceHover = {
     clientX: number;
     clientY: number;
 };
-
-type ConnectionDropTarget = {
-    nodeId: string | null;
-    handleId?: string;
-    anchorRatio?: number;
-    isNearNode: boolean;
-};
-
-type BatchConnectionDropTarget = ConnectionDropTarget;
 
 // LibTV's 80px world-space quick-add zone renders at roughly 110px on the
 // reference canvas. Use the same generous 112px screen-space diameter here,
@@ -455,87 +445,33 @@ export function useCanvasConnectionController({
         return canvasConnectionError(config, pendingNodes, connectionsRef.current, connection);
     }, [config, connectionsRef, nodesRef, runtimeStatuses]);
 
-    const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): ConnectionDropTarget => {
+    const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): CanvasConnectionDropTarget => {
         const world = screenToCanvas(clientX, clientY);
         const scale = Math.max(viewportRef.current.k, 0.05);
-        const handleRadius = CONNECTION_SNAP_RADIUS / scale;
-        let isNearNode = false;
-        let bestNodeId: string | null = null;
-        let bestHandleId: string | undefined;
-        let bestAnchorRatio: number | undefined;
-        let bestPriority = Number.POSITIVE_INFINITY;
-
-        [...nodesRef.current]
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
-            .reverse()
-            .forEach((node) => {
-                const scrollTop = scriptScrollTopById[node.id] || 0;
-                const targetHandleId = node.type === CanvasNodeType.Script ? storyboardHandleAtY(node, world.y, scrollTop) : node.type === CanvasNodeType.BatchTable ? batchReferenceHandleAtY(node, world.y, handleRadius) : undefined;
-                if ((node.type === CanvasNodeType.Script || node.type === CanvasNodeType.BatchTable) && !targetHandleId) return;
-                // Ordinary nodes expose one centered input/output port. Only
-                // storyboard rows have a meaningful vertical target position.
-                const targetAnchorRatio = undefined;
-                const anchor = getConnectionTargetAnchor(node, current, targetHandleId, scrollTop);
-                const dx = world.x - anchor.x;
-                const dy = world.y - anchor.y;
-                // Do not treat the node body or a rectangular padding band as a
-                // connection target. LibTV snaps only inside the circular
-                // quick-add area centred on the corresponding side handle.
-                const hitsSnapZone = dx * dx + dy * dy <= handleRadius * handleRadius;
-                if (!hitsSnapZone) return;
-                isNearNode = true;
-                const normalized = node.id === current.nodeId ? null : normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType);
-                if (!normalized || canvasConnectionError(config, nodesRef.current, connectionsRef.current, normalized)) return;
-                if (1 < bestPriority) {
-                    bestNodeId = node.id;
-                    bestHandleId = targetHandleId;
-                    bestAnchorRatio = targetAnchorRatio;
-                    bestPriority = 1;
-                }
-            });
-        return { nodeId: bestNodeId, handleId: bestHandleId, anchorRatio: bestAnchorRatio, isNearNode };
+        return resolveConnectionDropTarget({
+            nodes: nodesRef.current,
+            connections: connectionsRef.current,
+            config,
+            world,
+            handleRadius: CONNECTION_SNAP_RADIUS / scale,
+            current,
+            scriptScrollTopById,
+        });
     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
 
-    const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): BatchConnectionDropTarget => {
-        const source = sourceNodeIds
-            .map((id) => nodesRef.current.find((node) => node.id === id))
-            .find((node): node is CanvasNodeData => Boolean(node && !batchSourceRestriction(node)));
-        if (!source) return { nodeId: null, isNearNode: false };
-
+    const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): CanvasConnectionDropTarget => {
         const world = screenToCanvas(clientX, clientY);
         const scale = Math.max(viewportRef.current.k, 0.05);
-        const handleRadius = CONNECTION_SNAP_RADIUS / scale;
-        let isNearNode = false;
-        let bestNodeId: string | null = null;
-        let bestHandleId: string | undefined;
-        let bestAnchorRatio: number | undefined;
-        let bestPriority = Number.POSITIVE_INFINITY;
-        const current: ConnectionHandle = { nodeId: source.id, handleType: "source" };
-
-        [...nodesRef.current]
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
-            .reverse()
-            .forEach((node) => {
-                const scrollTop = scriptScrollTopById[node.id] || 0;
-                const targetHandleId = node.type === CanvasNodeType.Script ? storyboardHandleAtY(node, world.y, scrollTop) : node.type === CanvasNodeType.BatchTable ? batchReferenceHandleAtY(node, world.y, handleRadius) : undefined;
-                if ((node.type === CanvasNodeType.Script || node.type === CanvasNodeType.BatchTable) && !targetHandleId) return;
-                const targetAnchorRatio = undefined;
-                const anchor = getConnectionTargetAnchor(node, current, targetHandleId, scrollTop);
-                const dx = world.x - anchor.x;
-                const dy = world.y - anchor.y;
-                const hitsSnapZone = dx * dx + dy * dy <= handleRadius * handleRadius;
-                if (!hitsSnapZone) return;
-                isNearNode = true;
-                if (!hasBatchConnectionCandidate(sourceNodeIds, node.id, nodesRef.current)) return;
-                if (1 < bestPriority) {
-                    bestNodeId = node.id;
-                    bestHandleId = targetHandleId;
-                    bestAnchorRatio = targetAnchorRatio;
-                    bestPriority = 1;
-                }
-            });
-        return { nodeId: bestNodeId, handleId: bestHandleId, anchorRatio: bestAnchorRatio, isNearNode };
-    }, [nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+        return resolveBatchConnectionDropTarget({
+            nodes: nodesRef.current,
+            connections: connectionsRef.current,
+            config,
+            world,
+            handleRadius: CONNECTION_SNAP_RADIUS / scale,
+            sourceNodeIds,
+            scriptScrollTopById,
+        });
+    }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
 
     const startBatchConnection = useCallback((event: ReactPointerEvent, sourceNodeIds: string[]) => {
         const eligible = sourceNodeIds.filter((id) => {

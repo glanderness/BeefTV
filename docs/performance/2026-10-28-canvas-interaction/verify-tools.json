@@ -1,0 +1,188 @@
+{
+  "baseline": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "first_index_candidate": "f7b82b710e593e959573d6594aeada6048b6d3a9",
+  "tangent_fix_candidate": "e54d4863d52244c5b024464c70e6a1e9e7a4e0c7",
+  "source_sha256": {
+    "web/src/lib/canvas/canvas-connection-target.ts": "a0dc587c728a4b20f0ef3c21e39bb73474a15e9cb653db6f1963dc492adca270",
+    "web/scripts/canvas-interaction-bench.ts": "8268deaa92fa4e550f73ab27e4e689acf655f586f885f8a7cee10f6edc8599f2",
+    "web/test/canvas-connection-drop.browser.test.ts": "fc2a8398dbe1c5dfe37413e41a47261ed8738d77909b64d06f5865f028f6f238",
+    "docs/performance/2026-10-28-canvas-interaction/seed-canvas.py": "f0bf173146fd99a6c95ee30e174990380e1c4d4d804648b7b08dbbab3273b677"
+  },
+  "commands": [
+    "bun run scripts/verify-probe-runner.ts /Volumes/ExternalWork/todos/workspaces/01a180d1-e57e-7d8d-96af-582e28ce1e1b/.local/canvas-tools-verify/run-nb2h63em/web/scripts/verify-probe-source.ts",
+    "bun run scripts/canvas-interaction-bench.ts --boundary",
+    "bun run scripts/canvas-interaction-bench.ts --parity",
+    "bun test test/canvas-connection-drop.browser.test.ts"
+  ],
+  "seed": [
+    {
+      "nodes": 300,
+      "connections": 150,
+      "invalidEndpoints": 0,
+      "example": [],
+      "grouped": false
+    },
+    {
+      "nodes": 301,
+      "connections": 150,
+      "invalidEndpoints": 0,
+      "example": [],
+      "grouped": true
+    }
+  ],
+  "native_probe_patch_sha256": "697b44d819d824ef21112db2d23c71ea1c53845b276a3be1775e11a739a4d9ff",
+  "native_patch_applies_on_candidate": {
+    "exitCode": 0,
+    "output": ""
+  },
+  "probe": {
+    "scope": "隔离 JS 探针：一帧内一次落点、一次建立；未启动客户端",
+    "output": "场景=gesture 帧=1 fps=60.0 p50=16.67 p95=16.67 p99=16.67 max=16.67 gt33=0 gt50=0 gt100=0 含落点帧=1 含重建帧=1 落点调用=1 落点总耗时=0 索引建立=1 索引建立耗时=3 索引查询=0 索引查询耗时=1 索引合计耗时=4 候选数=0 进度查询=0 进度耗时=0 页面渲染=0 节点渲染=0 挂载卡=0"
+  },
+  "boundary_current": {
+    "samples": 2880,
+    "mismatches": 0,
+    "byFixture": {
+      "mixed|nodes=100": {
+        "samples": 720,
+        "mismatches": 0,
+        "ordinaryMismatches": 0,
+        "batchMismatches": 0
+      },
+      "mixed|nodes=300": {
+        "samples": 720,
+        "mismatches": 0,
+        "ordinaryMismatches": 0,
+        "batchMismatches": 0
+      },
+      "group-late|nodes=100": {
+        "samples": 720,
+        "mismatches": 0,
+        "ordinaryMismatches": 0,
+        "batchMismatches": 0
+      },
+      "group-late|nodes=300": {
+        "samples": 720,
+        "mismatches": 0,
+        "ordinaryMismatches": 0,
+        "batchMismatches": 0
+      }
+    },
+    "coverage": {
+      "mixed|nodes=100": {
+        "positions": 720,
+        "ordinaryHit": 480,
+        "ordinaryNear": 500,
+        "batchHit": 480,
+        "batchNear": 500,
+        "types": {
+          "image": 360,
+          "video": 72,
+          "text": 144,
+          "script": 72,
+          "batch-table": 72
+        }
+      },
+      "mixed|nodes=300": {
+        "positions": 720,
+        "ordinaryHit": 460,
+        "ordinaryNear": 480,
+        "batchHit": 460,
+        "batchNear": 480,
+        "types": {
+          "image": 360,
+          "video": 72,
+          "text": 144,
+          "script": 72,
+          "batch-table": 72
+        }
+      },
+      "group-late|nodes=100": {
+        "positions": 720,
+        "ordinaryHit": 478,
+        "ordinaryNear": 498,
+        "batchHit": 478,
+        "batchNear": 498,
+        "types": {
+          "image": 720
+        }
+      },
+      "group-late|nodes=300": {
+        "positions": 720,
+        "ordinaryHit": 464,
+        "ordinaryNear": 484,
+        "batchHit": 464,
+        "batchNear": 484,
+        "types": {
+          "image": 720
+        }
+      }
+    }
+  },
+  "boundary_first_index": {
+    "samples": 2880,
+    "mismatches": 144,
+    "byFixture": {
+      "mixed|nodes=100": {
+        "samples": 720,
+        "mismatches": 32,
+        "ordinaryMismatches": 32,
+        "batchMismatches": 32
+      },
+      "mixed|nodes=300": {
+        "samples": 720,
+        "mismatches": 36,
+        "ordinaryMismatches": 36,
+        "batchMismatches": 36
+      },
+      "group-late|nodes=100": {
+        "samples": 720,
+        "mismatches": 36,
+        "ordinaryMismatches": 36,
+        "batchMismatches": 36
+      },
+      "group-late|nodes=300": {
+        "samples": 720,
+        "mismatches": 40,
+        "ordinaryMismatches": 40,
+        "batchMismatches": 40
+      }
+    }
+  },
+  "parity": {
+    "counts": [
+      100,
+      300,
+      500
+    ],
+    "resolvers": [
+      "ordinary",
+      "batch"
+    ],
+    "samples": 5400,
+    "mismatches": 0,
+    "ordinaryMismatches": 0,
+    "batchMismatches": 0,
+    "timingSkipped": true
+  },
+  "browser_current": {
+    "exitCode": 0,
+    "tail": [
+      "",
+      " 3 pass",
+      " 0 fail",
+      " 30 expect() calls",
+      "Ran 3 tests across 1 file. [10.40s]"
+    ]
+  },
+  "browser_first_index": {
+    "exitCode": 1,
+    "tail": [
+      "",
+      " 2 pass",
+      " 1 fail",
+      " 25 expect() calls",
+      "Ran 3 tests across 1 file. [9.33s]"
+    ]
+  }
+}

@@ -1,0 +1,360 @@
+diff --git a/web/src/components/canvas/canvas-node.tsx b/web/src/components/canvas/canvas-node.tsx
+index 03e3ae1..1ae0df3 100644
+--- a/web/src/components/canvas/canvas-node.tsx
++++ b/web/src/components/canvas/canvas-node.tsx
+@@ -143,6 +143,7 @@ export const CanvasNode = React.memo(function CanvasNode({
+     onConfirmVideoCrop,
+     onContextMenu,
+ }: CanvasNodeProps) {
++    { const perf = (globalThis as any).__perf; if (perf) perf.node += 1; }
+     const theme = canvasThemes[useActiveTheme()];
+     const [hovered, setHovered] = useState(false);
+     const [isEditingContent, setIsEditingContent] = useState(false);
+diff --git a/web/src/lib/canvas/canvas-connection-target.ts b/web/src/lib/canvas/canvas-connection-target.ts
+index 99d8c27..1e5fe9e 100644
+--- a/web/src/lib/canvas/canvas-connection-target.ts
++++ b/web/src/lib/canvas/canvas-connection-target.ts
+@@ -49,8 +49,14 @@ function snapBounds(node: CanvasNodeData): CanvasSpatialBounds {
+ function nodeIndexFor(nodes: CanvasNodeData[]) {
+     let index = nodeIndexCache.get(nodes);
+     if (!index) {
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
+         index = buildCanvasSpatialIndex(nodes.map((node) => ({ id: node.id, bounds: snapBounds(node), value: node })));
+         nodeIndexCache.set(nodes, index);
++        if (perf) {
++            perf.indexBuilds += 1;
++            perf.indexBuildMs += performance.now() - begin;
++        }
+     }
+     return index;
+ }
+@@ -81,7 +87,17 @@ function resolveDropTarget(
+     { nodes, connections, config, world, handleRadius, current, scriptScrollTopById }: DropTargetOptions,
+     isEligible: (node: CanvasNodeData) => boolean,
+ ): CanvasConnectionDropTarget {
+-    const candidates = nodeIndexFor(nodes).query(queryBounds(world, handleRadius));
++    const perf = (globalThis as any).__perf;
++    // 索引建立成本在 nodeIndexFor 内单独计时；这里只量 query，避免和「索引建立耗时」
++    // 把同一段时间重复相加。
++    const index = nodeIndexFor(nodes);
++    const queryBegin = perf ? performance.now() : 0;
++    const candidates = index.query(queryBounds(world, handleRadius));
++    if (perf) {
++        perf.indexQueries += 1;
++        perf.indexQueryMs += performance.now() - queryBegin;
++        perf.indexCandidates += candidates.length;
++    }
+     let isNearNode = false;
+     let bestNodeId: string | null = null;
+     let bestHandleId: string | undefined;
+diff --git a/web/src/lib/operation-progress.ts b/web/src/lib/operation-progress.ts
+index 4c84439..7471e13 100644
+--- a/web/src/lib/operation-progress.ts
++++ b/web/src/lib/operation-progress.ts
+@@ -18,11 +18,15 @@ export type OperationProgress = {
+ };
+ 
+ export function canvasNodeOperation(entries: Record<string, OperationProgress>, projectId: string | undefined, nodeId: string, taskId?: string) {
+-    return Object.values(entries).reverse().find(item => {
++    const perf = (globalThis as any).__perf;
++    const begin = perf ? performance.now() : 0;
++    const result = Object.values(entries).reverse().find(item => {
+         if (!item.target || item.phase === "done" || item.phase === "error") return false;
+         if (item.target.projectId !== projectId) return false;
+         return item.target.taskId ? item.target.taskId === taskId && item.target.nodeId === nodeId : item.target.projectId === projectId && item.target.nodeId === nodeId;
+     });
++    if (perf) { perf.progressLookups += 1; perf.progressMs += performance.now() - begin; }
++    return result;
+ }
+ 
+ const finite = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value >= 0;
+diff --git a/web/src/main.tsx b/web/src/main.tsx
+index 83a345b..329bbd8 100644
+--- a/web/src/main.tsx
++++ b/web/src/main.tsx
+@@ -1,3 +1,4 @@
++import "./perf-probe";
+ import "@fontsource-variable/inter";
+ import "@fontsource-variable/jetbrains-mono";
+ import { startCheckedWorkspace } from "@/services/diagnostics/startup-preflight";
+diff --git a/web/src/pages/canvas/project.tsx b/web/src/pages/canvas/project.tsx
+index f41659b..776177b 100644
+--- a/web/src/pages/canvas/project.tsx
++++ b/web/src/pages/canvas/project.tsx
+@@ -187,6 +187,7 @@ export default function CanvasPage() {
+ }
+ 
+ function InfiniteCanvasPage() {
++    { const perf = (globalThis as any).__perf; if (perf) perf.page += 1; }
+     // 命令式确认必须走 App.useApp().modal；静态 Modal.confirm 拿不到主题和 App 上下文。
+     const { message, modal } = App.useApp();
+     const params = useParams<{ id: string }>();
+diff --git a/web/src/pages/canvas/use-canvas-connection-controller.ts b/web/src/pages/canvas/use-canvas-connection-controller.ts
+index 792ca30..c4ebef7 100644
+--- a/web/src/pages/canvas/use-canvas-connection-controller.ts
++++ b/web/src/pages/canvas/use-canvas-connection-controller.ts
+@@ -448,7 +448,9 @@ export function useCanvasConnectionController({
+     const getConnectionDropTarget = useCallback((clientX: number, clientY: number, current: ConnectionHandle): CanvasConnectionDropTarget => {
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+-        return resolveConnectionDropTarget({
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
++        const target = resolveConnectionDropTarget({
+             nodes: nodesRef.current,
+             connections: connectionsRef.current,
+             config,
+@@ -457,12 +459,19 @@ export function useCanvasConnectionController({
+             current,
+             scriptScrollTopById,
+         });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++        }
++        return target;
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const getBatchConnectionDropTarget = useCallback((clientX: number, clientY: number, sourceNodeIds: string[]): CanvasConnectionDropTarget => {
+         const world = screenToCanvas(clientX, clientY);
+         const scale = Math.max(viewportRef.current.k, 0.05);
+-        return resolveBatchConnectionDropTarget({
++        const perf = (globalThis as any).__perf;
++        const begin = perf ? performance.now() : 0;
++        const target = resolveBatchConnectionDropTarget({
+             nodes: nodesRef.current,
+             connections: connectionsRef.current,
+             config,
+@@ -471,6 +480,11 @@ export function useCanvasConnectionController({
+             sourceNodeIds,
+             scriptScrollTopById,
+         });
++        if (perf) {
++            perf.dropTargetCalls += 1;
++            perf.dropTargetMs += performance.now() - begin;
++        }
++        return target;
+     }, [config, connectionsRef, nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+ 
+     const startBatchConnection = useCallback((event: ReactPointerEvent, sourceNodeIds: string[]) => {
+diff --git a/web/src/perf-probe.ts b/web/src/perf-probe.ts
+new file mode 100644
+index 0000000..77116d2
+--- /dev/null
++++ b/web/src/perf-probe.ts
+@@ -0,0 +1,214 @@
++// 仅用于本地测量构建的探针，不参与产品逻辑。补丁留档在
++// docs/performance/2026-10-28-canvas-interaction/native-probe.patch。
++//
++// 记录：rAF 帧间隔、页面/节点渲染次数、连线落点调用与索引建立/重建/热查询、
++// 进度查询次数；并把结果写进一个可被无障碍树读到的文本，供外部真实鼠标驱动读取。
++//
++// 帧级标记（含落点帧 / 含重建帧）按「每帧累计差值」计算：自增发生在控制器与落点模块里，
++// 这里只在每帧边界读一次总量并取差。
++type PerfCounters = {
++    page: number;
++    node: number;
++    indexBuilds: number;
++    indexBuildMs: number;
++    indexQueries: number;
++    indexQueryMs: number;
++    indexCandidates: number;
++    dropTargetCalls: number;
++    dropTargetMs: number;
++    progressLookups: number;
++    progressMs: number;
++};
++
++const perf: PerfCounters = {
++    page: 0,
++    node: 0,
++    indexBuilds: 0,
++    indexBuildMs: 0,
++    indexQueries: 0,
++    indexQueryMs: 0,
++    indexCandidates: 0,
++    dropTargetCalls: 0,
++    dropTargetMs: 0,
++    progressLookups: 0,
++    progressMs: 0,
++};
++
++(window as any).__perf = perf;
++
++// 结果回传：WKWebView 里写不了文件，无障碍树也读不回一长串数字，所以同时用
++// 回环端口的接收脚本落盘（docs/performance/2026-10-28-canvas-interaction/perf-sink.py）。
++const SINK = "http://127.0.0.1:8799/perf";
++function report(kind: string, text: string) {
++    document.title = `perf-${kind} ${text}`;
++    try {
++        void fetch(`${SINK}?kind=${encodeURIComponent(kind)}&d=${encodeURIComponent(text)}`, { mode: "no-cors", keepalive: true });
++    } catch {
++        /* 接收端没起也不影响测量 */
++    }
++}
++
++const frameIntervals: number[] = [];
++const frameDropTargets: number[] = [];
++const frameIndexBuilds: number[] = [];
++let recording = false;
++let label = "idle";
++let last = performance.now();
++// 帧边界上的上一次总量快照。早先这里是两个「本帧计数」变量，只在初始化和清零时赋值、
++// 从不随计数增加，干跑里总调用 22/67/68 而「含落点帧」一直为 0（#101 第二轮复核）。
++let previousDropTargetCalls = 0;
++let previousIndexBuilds = 0;
++let framesWithDropTarget = 0;
++let framesWithRebuild = 0;
++
++function loop(now: number) {
++    if (recording) {
++        frameIntervals.push(now - last);
++        const dropTargetDelta = perf.dropTargetCalls - previousDropTargetCalls;
++        const indexBuildDelta = perf.indexBuilds - previousIndexBuilds;
++        frameDropTargets.push(dropTargetDelta);
++        frameIndexBuilds.push(indexBuildDelta);
++        if (dropTargetDelta > 0) framesWithDropTarget += 1;
++        if (indexBuildDelta > 0) framesWithRebuild += 1;
++    }
++    previousDropTargetCalls = perf.dropTargetCalls;
++    previousIndexBuilds = perf.indexBuilds;
++    last = now;
++    requestAnimationFrame(loop);
++}
++requestAnimationFrame(loop);
++
++function quantile(sorted: number[], p: number) {
++    return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : 0;
++}
++
++function stats() {
++    const sorted = [...frameIntervals].sort((left, right) => left - right);
++    const span = frameIntervals.reduce((sum, value) => sum + value, 0);
++    const round = (value: number) => Number(value.toFixed(3));
++    return [
++        `场景=${label}`,
++        `帧=${frameIntervals.length}`,
++        `fps=${span ? ((frameIntervals.length / span) * 1000).toFixed(1) : "-"}`,
++        `p50=${round(quantile(sorted, 0.5))}`,
++        `p95=${round(quantile(sorted, 0.95))}`,
++        `p99=${round(quantile(sorted, 0.99))}`,
++        `max=${round(sorted.length ? sorted[sorted.length - 1] : 0)}`,
++        `gt33=${sorted.filter((value) => value > 33.4).length}`,
++        `gt50=${sorted.filter((value) => value > 50).length}`,
++        `gt100=${sorted.filter((value) => value > 100).length}`,
++        `含落点帧=${framesWithDropTarget}`,
++        `含重建帧=${framesWithRebuild}`,
++        `落点调用=${perf.dropTargetCalls}`,
++        `落点总耗时=${round(perf.dropTargetMs)}`,
++        `索引建立=${perf.indexBuilds}`,
++        `索引建立耗时=${round(perf.indexBuildMs)}`,
++        `索引查询=${perf.indexQueries}`,
++        // 查询耗时只含 query；索引建立成本在 nodeIndexFor 内单独计时，合计在这里给出，
++        // 不要把「建立耗时 + 查询耗时」当同一段时间重复相加。
++        `索引查询耗时=${round(perf.indexQueryMs)}`,
++        `索引合计耗时=${round(perf.indexBuildMs + perf.indexQueryMs)}`,
++        `候选数=${perf.indexCandidates}`,
++        `进度查询=${perf.progressLookups}`,
++        `进度耗时=${round(perf.progressMs)}`,
++        `页面渲染=${perf.page}`,
++        `节点渲染=${perf.node}`,
++        `挂载卡=${document.querySelectorAll("[data-node-id]").length}`,
++    ].join(" ");
++}
++
++function reset() {
++    frameIntervals.length = 0;
++    frameDropTargets.length = 0;
++    frameIndexBuilds.length = 0;
++    framesWithDropTarget = 0;
++    framesWithRebuild = 0;
++    previousDropTargetCalls = 0;
++    previousIndexBuilds = 0;
++    for (const key of Object.keys(perf) as Array<keyof PerfCounters>) perf[key] = 0;
++}
++
++const box = document.createElement("div");
++box.setAttribute("data-canvas-no-zoom", "");
++box.style.cssText = "position:fixed;right:8px;bottom:8px;z-index:2147483647;max-width:600px;font:11px/1.4 monospace;background:#000d;color:#0f0;padding:6px;border-radius:6px;pointer-events:auto";
++const out = document.createElement("div");
++out.setAttribute("data-perf-out", "");
++out.setAttribute("aria-label", "perf idle");
++out.textContent = "perf probe ready";
++box.append(out);
++
++function button(name: string, color: string, onClick: () => void) {
++    const element = document.createElement("button");
++    element.textContent = name;
++    element.setAttribute("aria-label", name);
++    element.style.cssText = `margin:4px 4px 0 0;padding:2px 6px;background:#222;color:${color};border:1px solid ${color}`;
++    element.onclick = (event) => {
++        event.stopPropagation();
++        onClick();
++    };
++    box.append(element);
++    return element;
++}
++
++button("perf-rec-start", "#0f0", () => {
++    reset();
++    label = "gesture";
++    recording = true;
++    out.textContent = "记录中";
++    out.setAttribute("aria-label", "perf recording");
++    report("start", "recording");
++});
++
++button("perf-rec-stop", "#f80", () => {
++    recording = false;
++    const text = stats();
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfres ${text}`);
++    (window as any).__perfLast = text;
++    report("stop", text);
++});
++
++button("perf-ports", "#ff0", () => {
++    // 真实鼠标要在窗口坐标里点/拖，所以把可见节点的两侧连接点中心报出来（CSS px）。
++    const nodes = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].filter((element) => {
++        const rect = element.getBoundingClientRect();
++        return rect.width > 60 && rect.height > 60 && rect.top > 60 && rect.left > 60 && rect.bottom < window.innerHeight - 60 && rect.right < window.innerWidth - 60;
++    });
++    const rails = (element: HTMLElement, side: string) => {
++        const rail = element.querySelector<HTMLElement>(`[data-canvas-connection-rail="${side}"]`);
++        if (!rail) return null;
++        const rect = rail.getBoundingClientRect();
++        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
++    };
++    const first = nodes[0];
++    const second = nodes.find((element) => element !== first && element.dataset.canvasNodeType === first?.dataset.canvasNodeType) || nodes[1];
++    const text = [
++        `视口=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`,
++        `out=${first ? JSON.stringify(rails(first, "right")) : "null"}`,
++        `in=${second ? JSON.stringify(rails(second, "left")) : "null"}`,
++        `nodeA=${first?.dataset.nodeId ?? "null"} nodeB=${second?.dataset.nodeId ?? "null"}`,
++        `卡片数=${nodes.length}`,
++    ].join(" ");
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfports ${text}`);
++    report("ports", text);
++});
++
++button("perf-open", "#0ff", () => {
++    location.hash = `#/canvas/${(window as any).__perfCanvasId}`;
++});
++
++button("perf-hover", "#0ff", () => {
++    // 悬停用真实鼠标，这里只报出若干可见卡片中心，方便逐个移过去。
++    const centers = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].map((element) => {
++        const rect = element.getBoundingClientRect();
++        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), id: element.dataset.nodeId };
++    }).filter((center) => center.x > 80 && center.y > 80 && center.x < window.innerWidth - 80 && center.y < window.innerHeight - 80);
++    const text = `卡片中心=${centers.slice(0, 8).map((center) => `${center.x},${center.y}`).join(" ")}`;
++    out.textContent = text;
++    out.setAttribute("aria-label", `perfcenters ${text}`);
++    report("centers", text);
++});
++
++const attach = () => (document.body ? document.body.append(box) : setTimeout(attach, 50));
++attach();
