@@ -1,6 +1,6 @@
 # 生成任务状态重构：第 3 步实施说明
 
-状态：Opus #97 对原候选的独立复查不通过，本轮已据反例修正后台实现，专项验证已通过。最新完整后台测试已结束，退出 1，仅冷启动 5 秒预算失败；该用例随后单独复跑通过，根因未定，不能称全套通过。修正候选交回大总管安排同一路线复核；未合入、未发布、零真实付费。第 1–7 节保留原候选的实现与验证历史，本轮改动和证据以第 8 节为准，不用原全套绿灯代替本轮验证。
+状态：第二轮 Opus 已确认 `850d89c1` 的首轮问题修正，并在独立 Linux 上跑通该固定候选的全套；新增 N1（已退款图片仍只查询、不重新入队）已在本轮做小范围代码修正。**未做本轮编译验证**，新用例与修正候选等待大总管交指定 Opus 云端独立副本执行必要检查，不能据旧候选的绿灯验收。Mac 冷启动全套退出 1 的记录及根因未定结论保留。未合入、未发布、零真实付费。第 1–8 节保留此前实现与验证历史，本轮改动和待执行命令以第 9 节为准。
 
 依据：`docs/architecture/generation-task-state.md` 第 3.1–3.7 节及本任务已确认范围。本文只记录本分支实际完成的后台能力，不把第 4–7 步的报价、用户确认、MCP/CLI 付费守门或前端改动写成已实现。
 
@@ -247,3 +247,83 @@ python3 docs/implementation/evidence/generation-task-state-step-3/revision/repla
 本轮生成的临时源码归档、隔离 SQLite 和进程核查临时文件已清理；锁定依赖与已生成的协议包保留供后续复核使用，没有保留额外客户端实例。
 
 旧库迁移验证的通用教训已保存到项目记忆及 nmem `15bf81bf-157b-4722-bc55-613253d12b6a`，未另存本机笔记；任务运行状态仍以本说明及原始证据为准。
+
+## 9. 第二轮 N1：已退款图片的重新入队
+
+### 9.1 固定输入与已确认事实
+
+- 从完整候选 `850d89c109b7e94a356834ee51eedba6dba019fb` 接续，不回退到更早实现。本轮重新 fetch 的主线为 `285c7dec8ee4f2ddc9c53b32076e664b9d8f813b`；相对原基线 `6a155448` 只新增 `docs/ops/2026-10-28-openclaw-launcher-repair.md`，没有后台代码冲突。本分支未合并该文档提交。
+- 已读第二轮固定报告 `737816c038fd77b77961edde0e2f1f5eb00c01fa` 的 R2 和 `r2/` 原始用例/输出，33 项校验和匹配。随后补测已实际进入固定 `c7a0fb5b9d113816a98d9a83b9a05faf00d4abe4`；已读 R2-7、过期用例及冷启动对照，重核全部 48 项校验和匹配，包含 `followup/` 的 14 个文件和补测源码。不是仅根据聊天摘要推断补交完成。
+- 第二轮独立复放确认首轮 P1/P1b/P2/P3/P4、并发与重开重放通过；Linux `full4` 66 个包通过、退出 0。这些结果属于固定 `850d89c1`，不能替代本轮候选的编译或测试。
+- N1 原用例 `TestOpusR2ImageNoResultRetryCanRequeue` 在未改 `850d89c1` 上实际失败：免费查询后已存 `no_result`、退款原值，投影为 `regenerate=allowed`；无编号或新编号的 `/retry` 都只再查询旧 job，不增加轮次、不排队。过期变体的退款分支也实际失败。
+- 原用例、补测用例及两份直接失败输出按原字节保存在 [r2-fix/input](evidence/generation-task-state-step-3/r2-fix/input/)。它们是 #97 已执行的独立反例，本轮没有在 Mac 重跑，也不把这些复制件称为本轮新运行的输出。`followup/n1-unrecoverable/command.txt` 是补交时重写的命令说明，不是遗留下来的原始命令文件。
+- 补测文案把过期写成“410”，但原用例实际返回 HTTP 200、`status=expired`。其中 `billing_state=charged` 只验证未知值保持 `confirm`，不能当作真实图片 `settled` 协议的覆盖。本轮新增用例另列结果端点 HTTP 410 与正式 `settled` 字段，仍待执行。
+
+行为依据仍为 #86 `bffc87f54625406ccb7b778e088e01d1e5165f01` 的第 3.11 节：持有 job 号不表示永远只能取回；明确 `no_result/unrecoverable` 后按扣费事实处理。没有新增产品选择或第 4–7 步的确认参数。
+
+### 9.2 最小修正与新增用例
+
+生产代码只改两个文件：
+
+- `app/image_submission.go` 增加窄方法 `imageRecoveryAllowsRetry`：仅对失败图片和两项明确恢复结论，调用现有 `taskOutcomeFacts` 与唯一 `task.ComputeOutcome`，读取当前轮次的 `regenerate=allowed`。不另写退款字符串判断、不从日志授权、不信任旧回执快照。
+- `app/service.go` 的图片免费分支使用该结果：已允许重新生成时交给原付费重试事务，不再先接纳成 `free_recovery`。旧编号查回执仍在分流和资格检查之前，原编号不变成新购买。
+- 同一个窄方法用于图片的旧“已有 accepted 请求”校验，避免真实任务留有 route attempt/submission 时又被这道旧校验挡住。其余资格、审核、取消、排空及失败分类检查保留；付费入队、`routeRun+1`、清空旧观察和操作回执继续使用既有事务。
+
+没有改恢复扫描、数据库结构、日志协议、旧回执未知轮次、公开返回字段、前端或发布记录。结算中、明确已扣费和缺键不因已有恢复结论而自动获得新轮次；确认重跑怎样携带同意仍属后续步骤，本轮不添加参数，也不声称已解决这一产品问题。
+
+新增 `app/step3_image_retry_after_refund_test.go`（**尚未编译或执行**）：
+
+- 通过现有 Service 入口验证失败、`status=expired`、结果端点 HTTP 410 三类退款结果；无编号与新编号各自独立验证重新入队，避免原 N1 用例中旧式重试成功后跳过新编号分支。
+- 过期和 410 变体包含真实 accepted route attempt/submission 结构，检查旧保护不会继续锁住已允许重试的图片。
+- 验证新编号重放只接纳一轮，原免费编号在前后都保持原身份和当前投影；再次重试不查询旧 job、不提交上游创建。
+- 用正式 `settled`、显式空值和缺键检查未退款图片不被放开；只检查仍不入队，不为“反复查旧 job”增加新的行为承诺。
+
+### 9.3 本轮验证分工与可复放命令
+
+用户已调整验证分工：#95 正在 Mac 正式采样，本轮不启动 Mac Go 编译、测试或全套；由大总管复用 #97 的官方 Opus 云端会话，在独立临时副本执行。同一候选必要检查通过后才可能验收。本轮只运行 `gofmt` 格式化、文本差异检查和 Python/命令清单的静态检查；这些都不证明 Go 能编译或新用例通过。
+
+[replay_n1.py](evidence/generation-task-state-step-3/r2-fix/replay_n1.py) 从 Git 对象解出两个临时副本：未改 `850d89c1` 与本轮完整固定提交。它只叠加保存的两份 Opus 用例和新增回归，不改 #97 原件或原测试目录；复用已物化的官方协议包。依次保存旧候选失败、修正候选 N1 与相邻 app/handler 回归的原始输出、退出码、起止时间和源码指纹。脚本未在本轮运行。
+
+```sh
+python3 docs/implementation/evidence/generation-task-state-step-3/r2-fix/replay_n1.py \
+  --repo "$STEP3_N1_REPO" \
+  --candidate "$STEP3_N1_CANDIDATE" \
+  --plugins "$STEP3_N1_PLUGINS" \
+  --output "$STEP3_N1_NEW_OUTPUT"
+```
+
+上述变量分别为含两个 Git 对象的仓库、本轮交接消息的完整 40 位 SHA、已有的官方协议包目录、尚不存在的新输出目录。只有该脚本中“旧候选失败、候选及相邻回归通过”都真正结束才可报告先红后绿；环境缺插件、编译失败或没有运行到用例不能算旧代码反例。脚本退出后清理自己的临时源码，不删除 #97 原件。
+
+脚本在已叠加原用例的临时副本内运行以下 N1 命令，旧候选预期退出 1、修正候选预期退出 0：
+
+```sh
+go test ./internal/app -run '^(TestOpusR2Image(NoResult|Unrecoverable)RetryCanRequeue|TestStep3Image(RefundRetryAfterResultConclusion|ConclusionWithoutRefundDoesNotRequeue))$' -count=1 -timeout=5m -v
+```
+
+相邻 app/handler 回归命令（不自动运行全套、不重复数据库升级检查）：
+
+```sh
+go test ./internal/app ./internal/handler -run '^(TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate|TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates|TestAutomaticImageRecoveryConclusions|TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse|TestImageSubmissionCountErrorCannotErasePriorAcceptance|TestStep3ImageJobTerminalConclusionAndResultJSON|TestStep3FreeReplayReadsCurrentTask|TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun|TestReviewFreeRecoveryRunningReceiptAfterCrash|TestReviewFreeRecoveryReceiptRecordsRouteRuns|TestStep3ConcurrentRetryHTTPAndConflictingTask|TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays|TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID)$' -count=1 -timeout=5m -v
+```
+
+这组回归覆盖正常免费取回、未知提交保护、旧回执重放、新编号去重、并发 HTTP 与 RunningHub 提交未确认保护。只用假上游、隔离 SQLite 和假凭据；未运行真实生成或正式客户端。
+
+### 9.4 冷启动：已读证据与下一项最小区分验证
+
+已读的 Linux 补测先预编译测试二进制、共用同一个官方插件目录，基线和 `850d89c1` 交替各跑 15 次单项，30 次全部通过；基线平均 245 毫秒、候选 249 毫秒。首次基线缺协议目录的 10 次失败不参与比较。它们不能替代 Mac 并行全套的 5.588 秒失败，也不能证明原因是机器抖动。
+
+源码核对能确认：Open 计时包含临时目录创建、工作区锁、数据库/迁移、插件初始化、内置模板/技能和 HTTP 路由注册；不包含之前的 Go 编译，也不包含计时结束后 `Runtime.Start()` 才启动的后台任务循环。本轮的 `/retry` 分流及图片重试校验不在这段启动调用链内。新建空库先由 v1 创建当前模型，v27/v28 会检查已存在的列，不能假定这里一定执行了七次 ALTER。
+
+**以下仅为后续建议，未实施、未运行，须等大总管协调 Mac 采样结束后的时段：**
+
+1. 暂不再跑完整全套。先在 Mac 上为基线和候选各预编译同一个冷启动测试二进制，固定官方插件目录、输出位置、数据盘和环境。每次仍用新的隔离数据目录，保留原 5 秒阈值及空闲外发断言；记录实际工具链、环境和进程起止。
+2. 只在临时诊断副本给 Open 的数据库/迁移、NewLocal 插件构造、内置资源初始化、路由注册四段加时间戳，基线/候选按 A-B-B-A 各两次单项。区分“候选某一固定阶段增加了稳定开销”与“同机空闲时无明显差异”。诊断计时不进入本次产品补丁，也不把带额外计时的结果替代原验收用例。
+3. 若 Mac 单项仍无差异，就保留“并行全套条件下原因未定”，不要继续靠多次全套寻找绿灯。再由大总管决定是否安排一次带阶段/调度跟踪的原并行条件复现，或先缩小并发包组合；先看到慢在哪段再选择负载，不能拿随意制造的 CPU 压力当作原问题。`-parallel` 控制包内并行测试，不能当作跨包 `-p` 的替代。
+
+本轮没有改变启动实现或冷启动阈值，也没有安排上述 Mac 验证。
+
+### 9.5 本轮交付状态
+
+本轮是**未做本轮编译验证**的小范围修正候选。固定提交、输入原件与交付文件的字节数、SHA-256 和 Git 对象见 [r2-fix/delivery-manifest.json](evidence/generation-task-state-step-3/r2-fix/delivery-manifest.json)；该清单不包含自身。原 7 份日志及第 8 节证据保持原字节，新增证据目录单独关闭文本转换。
+
+本实现会话不自行派评审。候选与上述命令交回大总管安排既有官方 OAuth Opus 云端核验，结果返回后再处理必要修正。本会话没有启动或遗留 Go 编译、测试或外部后台作业，未合入、未发布。原 Linux 绿灯、Mac 失败及单项通过记录各自保留；没有把尚未执行的检查写成通过。

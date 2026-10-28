@@ -397,6 +397,9 @@ func (s *Service) freeRetryPath(task model.Task) bool {
 	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed {
 		return false
 	}
+	if s.imageRecoveryAllowsRetry(task) {
+		return false
+	}
 	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
 	if err != nil {
 		return true

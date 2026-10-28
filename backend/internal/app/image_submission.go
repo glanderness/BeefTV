@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 const imageRecoveryMaxSends = 12
@@ -35,8 +36,16 @@ type imageWireRequest struct {
 	ReplayProtocol string
 }
 
+func (s *Service) imageRecoveryAllowsRetry(task model.Task) bool {
+	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed || task.RecoveryOutcome == nil || (*task.RecoveryOutcome != localtask.RecoveryNoResult && *task.RecoveryOutcome != localtask.RecoveryUnrecoverable) {
+		return false
+	}
+	facts := s.taskOutcomeFacts([]model.Task{task})
+	return localtask.ComputeOutcome(task, "", facts[task.ID]).Regenerate == "allowed"
+}
+
 func (s *Service) validateImageTaskRetry(task *model.Task) error {
-	if task.Type != "canvas_image" {
+	if task.Type != "canvas_image" || s.imageRecoveryAllowsRetry(*task) {
 		return nil
 	}
 	attempt, err := s.repo.LatestRouteAttempt(task.ID)

@@ -1,0 +1,73 @@
+package app
+
+// N1 variant: BeefAPI image job reports status=expired (-> recovery_outcome
+// unrecoverable). Free local fixtures only: temp SQLite, httptest fake
+// upstream, fake credentials.
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
+)
+
+func TestOpusR2ImageUnrecoverableRetryCanRequeue(t *testing.T) {
+	for _, billing := range []string{"refunded", "charged"} {
+		t.Run(billing, func(t *testing.T) {
+			allowLoopbackProviderTest(t)
+			var gets, nonGets atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					nonGets.Add(1)
+					w.WriteHeader(400)
+					return
+				}
+				gets.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job", "status": "expired", "billing_state": billing})
+			}))
+			defer server.Close()
+			t.Setenv("BEEFTV_ENTERPRISE_TEST_ORIGIN", server.URL)
+			svc, db := openDBRuntimeMatrix(t, t.TempDir())
+			defer closeDBRuntimeMatrix(t, svc, db)
+			input, _ := json.Marshal(canvasGenerationInput{Mode: "image", Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "fake-key"}})
+			task := model.Task{ID: "img-expired", UserID: "local", Type: "canvas_image", Status: model.TaskStatusFailed, Stage: "任务失败", Error: "请求过于频繁", RouteRun: 4, InputJSON: string(input)}
+			if err := db.Create(&task).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.ApiCallLog{ID: "img-expired-create", UserID: "local", TaskID: task.ID, RouteRun: 4, Source: "beefapi", Capability: "image", RequestKind: "create", Method: "POST", ImageJobID: "job", CreatedAt: time.Now()}).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := svc.RetryTaskWithOperation("local", task.ID, "recover-1")
+			got, _ := svc.Task("local", task.ID)
+			t.Logf("free recovery err=%v status=%s routeRun=%d outcome=%v recovery=%v gets=%d", err, got.Status, got.RouteRun, outcomeString(got), deref(got.RecoveryOutcome), gets.Load())
+			if got.RecoveryOutcome == nil || *got.RecoveryOutcome != "unrecoverable" || got.Outcome == nil {
+				t.Fatalf("precondition not reached: recovery=%v", deref(got.RecoveryOutcome))
+			}
+			regenerate := got.Outcome.Regenerate
+
+			before := gets.Load()
+			legacy, err := svc.RetryTask("local", task.ID)
+			stored, _ := svc.Task("local", task.ID)
+			t.Logf("legacy /retry: regenerate=%s err=%v returned=%v stored status=%s routeRun=%d extraGets=%d", regenerate, err, statusOf(legacy), stored.Status, stored.RouteRun, gets.Load()-before)
+			if regenerate == "allowed" && stored.Status != model.TaskStatusQueued {
+				t.Errorf("outcome says regenerate=allowed but legacy /retry did not requeue (status=%s routeRun=%d, upstream re-queried %d times)", stored.Status, stored.RouteRun, gets.Load()-before)
+			}
+			if stored.Status != model.TaskStatusQueued {
+				before = gets.Load()
+				_, err = svc.RetryTaskWithOperation("local", task.ID, "regen-2")
+				stored, _ = svc.Task("local", task.ID)
+				var record model.AgentOpRecord
+				db.Where("op_id = ?", "regen-2").First(&record)
+				t.Logf("/retry regen-2: err=%v stored status=%s routeRun=%d receipt=%s extraGets=%d", err, stored.Status, stored.RouteRun, record.ResultJSON, gets.Load()-before)
+			}
+			if nonGets.Load() != 0 {
+				t.Errorf("free recovery sent %d non-GET requests", nonGets.Load())
+			}
+		})
+	}
+}

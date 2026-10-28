@@ -1,0 +1,157 @@
+=== RUN   TestOpusR2ImageUnrecoverableRetryCanRequeue
+=== RUN   TestOpusR2ImageUnrecoverableRetryCanRequeue/refunded
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.162ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.032ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.130ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_test.go:47: free recovery err=<nil> status=failed routeRun=4 outcome=phase=failed regenerate=allowed recovery=unrecoverable gets=1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.080ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_test.go:56: legacy /retry: regenerate=allowed err=<nil> returned=failed stored status=failed routeRun=4 extraGets=1
+    opus_r2_n1_unrecoverable_test.go:58: outcome says regenerate=allowed but legacy /retry did not requeue (status=failed routeRun=4, upstream re-queried 1 times)
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.099ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.042ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.123ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.163ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.088ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_test.go:66: /retry regen-2: err=<nil> stored status=failed routeRun=4 receipt={"taskId":"img-expired","action":"free_recovery","originalRouteRun":4,"acceptedRouteRun":4} extraGets=1
+=== RUN   TestOpusR2ImageUnrecoverableRetryCanRequeue/charged
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.158ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.095ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.109ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.103ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.189ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.069ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_test.go:47: free recovery err=<nil> status=failed routeRun=4 outcome=phase=failed regenerate=confirm recovery=unrecoverable gets=1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.071ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.141ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_test.go:56: legacy /retry: regenerate=confirm err=<nil> returned=failed stored status=failed routeRun=4 extraGets=1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.080ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.116ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.289ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:18 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.091ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-expired" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_n1_unrecoverable_test.go:66: /retry regen-2: err=<nil> stored status=failed routeRun=4 receipt={"taskId":"img-expired","action":"free_recovery","originalRouteRun":4,"acceptedRouteRun":4} extraGets=1
+--- FAIL: TestOpusR2ImageUnrecoverableRetryCanRequeue (0.50s)
+    --- FAIL: TestOpusR2ImageUnrecoverableRetryCanRequeue/refunded (0.23s)
+    --- PASS: TestOpusR2ImageUnrecoverableRetryCanRequeue/charged (0.27s)
+=== RUN   TestOpusR2ImageNoResultRetryCanRequeue
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/database/local_schema.go:635 [35;1mrecord not found
+[0m[33m[0.138ms] [34;1m[rows:0][0m SELECT * FROM `workspaces` ORDER BY created_at ASC,`workspaces`.`id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/plugin_states.go:52 [35;1mrecord not found
+[0m[33m[0.053ms] [34;1m[rows:0][0m SELECT * FROM `system_settings` WHERE key = "plugin_registry" ORDER BY `system_settings`.`key` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.023ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "recover-1" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.110ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.213ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:70: free recovery err=<nil> gets=1 nonGets=0
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.176ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:72: after free recovery: status=failed routeRun=4 outcome=phase=failed regenerate=allowed recovery=no_result
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:230 [35;1mrecord not found
+[0m[33m[0.319ms] [34;1m[rows:0][0m SELECT * FROM `api_call_logs` WHERE task_id = "img-no-job" AND user_id = "local" AND route_run = 4 AND source = "beefapi" AND capability = "image" AND request_kind = "create" AND method = "POST" AND image_job_id <> "" ORDER BY created_at DESC, id DESC,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/logical_models.go:266 [35;1mrecord not found
+[0m[33m[0.150ms] [34;1m[rows:0][0m SELECT * FROM `route_attempts` WHERE task_id = "img-no-job" ORDER BY route_run desc, attempt_number desc,`route_attempts`.`id` LIMIT 1
+    opus_r2_test.go:79: control legacy /retry: err=<nil> status=queued
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.071ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:88: legacy /retry: err=<nil> returned=failed stored status=failed routeRun=4 extraGets=1
+    opus_r2_test.go:90: legacy /retry on no_result+refunded image did not requeue (status=failed routeRun=4); upstream re-queried 1 times
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.318ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/local_runtime.go:365 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `agent_op_records` WHERE user_id = "local" AND op_id = "regen-2" ORDER BY `agent_op_records`.`user_id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.076ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.148ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+
+2026/10/28 06:05:19 [31;1m/tmp/s3r/rev/backend/internal/repository/analytics.go:175 [35;1mrecord not found
+[0m[33m[0.053ms] [34;1m[rows:0][0m SELECT `provider_request_id` FROM `api_call_logs` WHERE task_id = "img-job-failed" AND provider_request_id <> '' ORDER BY created_at desc,`api_call_logs`.`id` LIMIT 1
+    opus_r2_test.go:100: /retry regen-2: err=<nil> returned=failed stored status=failed routeRun=4 receipt={"taskId":"img-job-failed","action":"free_recovery","originalRouteRun":4,"acceptedRouteRun":4} extraGets=1
+    opus_r2_test.go:102: new operation id on no_result+refunded image was admitted as "{\"taskId\":\"img-job-failed\",\"action\":\"free_recovery\",\"originalRouteRun\":4,\"acceptedRouteRun\":4}" instead of a paid retry
+--- FAIL: TestOpusR2ImageNoResultRetryCanRequeue (0.25s)
+FAIL
+FAIL	infinite-canvas/backend/internal/app	0.767s
+FAIL

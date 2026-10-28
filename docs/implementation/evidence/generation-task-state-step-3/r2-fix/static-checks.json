@@ -1,0 +1,83 @@
+{
+  "execution_status": "未做本轮编译验证；未运行Go测试或复放脚本",
+  "static_checks": [
+    "gofmt -l 无输出",
+    "git diff --check 源码及实施说明通过",
+    "Python AST 语法解析通过",
+    "命令选择器与现有测试函数名静态匹配"
+  ],
+  "selected_test_functions": {
+    "N1": [
+      {
+        "package": "backend/internal/app",
+        "test": "TestStep3ImageRefundRetryAfterResultConclusion"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestStep3ImageConclusionWithoutRefundDoesNotRequeue"
+      },
+      {
+        "package": "input overlay",
+        "test": "TestOpusR2ImageNoResultRetryCanRequeue"
+      },
+      {
+        "package": "input overlay",
+        "test": "TestOpusR2ImageUnrecoverableRetryCanRequeue"
+      }
+    ],
+    "ADJACENT": [
+      {
+        "package": "backend/internal/app",
+        "test": "TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestWorkflowAcceptedNotRecordedMapsToUnknownBlocksRetryAndKeepsID"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestImageSubmissionCountErrorCannotErasePriorAcceptance"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestAutomaticImageRecoveryConclusions"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestStep3FreeReplayReadsCurrentTask"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestStep3PaidRetryReplayAfterDatabaseReopenAndNewRun"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestStep3ImageJobTerminalConclusionAndResultJSON"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestReviewFreeRecoveryRunningReceiptAfterCrash"
+      },
+      {
+        "package": "backend/internal/app",
+        "test": "TestReviewFreeRecoveryReceiptRecordsRouteRuns"
+      },
+      {
+        "package": "backend/internal/handler",
+        "test": "TestStep3ConcurrentRetryHTTPAndConflictingTask"
+      },
+      {
+        "package": "backend/internal/handler",
+        "test": "TestReviewPaidRetryWithOperationIDRequeuesOnceAndReplays"
+      }
+    ]
+  }
+}
