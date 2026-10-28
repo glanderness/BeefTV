@@ -1,0 +1,18 @@
+{
+  "base": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "candidate": "f7b82b710e593e959573d6594aeada6048b6d3a9",
+  "candidate_tree": "f16d75562ec451cdc278bc6edb40bf2f19b21c5d",
+  "bun": "1.4.2",
+  "platform": "Darwin arm64",
+  "started_at": "2026-10-28T03:40:33.101758+00:00",
+  "load_average": [
+    4.09423828125,
+    5.19970703125,
+    6.62255859375
+  ],
+  "cpu_count": 10,
+  "source_sha256": {
+    "web/src/lib/canvas/canvas-connection-target.ts": "fcd6197b87f3d47db5234480db96a9c543464581d03235200c7804597c190152",
+    "web/src/pages/canvas/use-canvas-connection-controller.ts": "b8f89ae7bfb91973a43e5d43216540a84a0770f4077a081e2707dfe6ada29496"
+  }
+}

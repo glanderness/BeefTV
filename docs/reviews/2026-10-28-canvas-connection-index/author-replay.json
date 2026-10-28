@@ -1,0 +1,149 @@
+{
+  "scope": "纯 JS 逻辑耗时（performance.now 包裹的单次调用），不含渲染、绘制、网络与原生宿主；同机负载会影响绝对值，改前改后在同一次运行内交替测量",
+  "repeats": 60,
+  "nodeCounts": [
+    300
+  ],
+  "entryCounts": [
+    60
+  ],
+  "connectionDropTarget": {
+    "fixture=mixed|nodes=300|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0196,
+        "p95Ms": 0.0629
+      },
+      "current": {
+        "medianMs": 0.001,
+        "p95Ms": 0.0013
+      }
+    },
+    "fixture=mixed|nodes=300|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.0216,
+        "p95Ms": 0.0925
+      },
+      "current": {
+        "medianMs": 0.0064,
+        "p95Ms": 0.0102
+      }
+    },
+    "fixture=mixed|nodes=300|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0137,
+        "p95Ms": 0.0727
+      },
+      "current": {
+        "medianMs": 0.0004,
+        "p95Ms": 0.0018
+      }
+    },
+    "fixture=mixed|nodes=300|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.015,
+        "p95Ms": 0.0203
+      },
+      "current": {
+        "medianMs": 0.0043,
+        "p95Ms": 0.0062
+      }
+    },
+    "fixture=batch-heavy|nodes=300|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0073,
+        "p95Ms": 0.0152
+      },
+      "current": {
+        "medianMs": 0.0004,
+        "p95Ms": 0.0011
+      }
+    },
+    "fixture=batch-heavy|nodes=300|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.01,
+        "p95Ms": 0.0409
+      },
+      "current": {
+        "medianMs": 0.0035,
+        "p95Ms": 0.0077
+      }
+    },
+    "fixture=batch-heavy|nodes=300|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.0076,
+        "p95Ms": 0.0242
+      },
+      "current": {
+        "medianMs": 0.0003,
+        "p95Ms": 0.0008
+      }
+    },
+    "fixture=batch-heavy|nodes=300|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.009,
+        "p95Ms": 0.0341
+      },
+      "current": {
+        "medianMs": 0.0094,
+        "p95Ms": 0.0108
+      }
+    },
+    "fixture=root-late|nodes=300|scale=1|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.1245,
+        "p95Ms": 0.1495
+      },
+      "current": {
+        "medianMs": 0.0003,
+        "p95Ms": 0.0006
+      }
+    },
+    "fixture=root-late|nodes=300|scale=1|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.1228,
+        "p95Ms": 0.2324
+      },
+      "current": {
+        "medianMs": 0.007,
+        "p95Ms": 0.0189
+      }
+    },
+    "fixture=root-late|nodes=300|scale=0.3|pointer-empty-space": {
+      "legacy": {
+        "medianMs": 0.1066,
+        "p95Ms": 0.1222
+      },
+      "current": {
+        "medianMs": 0.0003,
+        "p95Ms": 0.001
+      }
+    },
+    "fixture=root-late|nodes=300|scale=0.3|pointer-on-node-edge": {
+      "legacy": {
+        "medianMs": 0.115,
+        "p95Ms": 0.1345
+      },
+      "current": {
+        "medianMs": 0.0086,
+        "p95Ms": 0.0113
+      }
+    }
+  },
+  "nodeOperationLookup": {
+    "entries=60|lookups-per-frame=33": {
+      "legacy": {
+        "medianMs": 0.0261,
+        "p95Ms": 0.0305
+      },
+      "current": {
+        "medianMs": 0.0281,
+        "p95Ms": 0.0788
+      }
+    }
+  },
+  "parity": {
+    "samples": 5400,
+    "mismatches": 0,
+    "examples": []
+  }
+}
