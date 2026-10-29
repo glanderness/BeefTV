@@ -14,7 +14,7 @@ import (
 )
 
 func TestManagedUnknownVideoSendsCatalogResolutionAndExplicitBusinessSwitches(t *testing.T) {
-	for _, tc := range []struct {
+	for index, tc := range []struct {
 		quality, want string
 		profile       *VideoCapabilityConfig
 	}{
@@ -38,16 +38,16 @@ func TestManagedUnknownVideoSendsCatalogResolutionAndExplicitBusinessSwitches(t 
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
 				}
-				if body["model"] != "unseen-catalog-video" || body["resolution"] != tc.want || body["enable_safety_checker"] != true {
+				if body["model"] != "unseen-catalog-video" || body["resolution"] != tc.want || body["enable_safety_checker"] != true || body["seed"] != float64(0) {
 					t.Errorf("wrong declared token/options: %#v", body)
 				}
-				if value, present := body["sync_mode"]; !present || value != false {
-					t.Errorf("explicit false lost: %#v", body)
+				if _, present := body["sync_mode"]; present {
+					t.Errorf("historical result transport override leaked: %#v", body)
 				}
 				_ = json.NewEncoder(w).Encode(map[string]string{"id": "same-task"})
 			}))
 			defer server.Close()
-			input := Input{Mode: "video", Prompt: "free wire fixture", Config: Config{CredentialRef: beefapi.CredentialRef, Model: "unseen-catalog-video", BaseURL: server.URL, APIKey: "fixture", VQuality: tc.quality}, VideoCapability: tc.profile, Metadata: map[string]any{"videoH3Options": map[string]any{"enable_safety_checker": true, "sync_mode": false}}}
+			input := Input{Mode: "video", Prompt: "free wire fixture", Config: Config{CredentialRef: beefapi.CredentialRef, Model: "unseen-catalog-video", BaseURL: server.URL, APIKey: "fixture", VQuality: tc.quality}, VideoCapability: tc.profile, Metadata: map[string]any{"videoH3Options": map[string]any{"seed": float64(0), "enable_safety_checker": true, "sync_mode": index%2 == 0}}}
 			ctx := WithSubmissionKey(WithEndpoints(context.Background(), Endpoints{BeefAPIVideoBaseURL: server.URL}), "same-attempt")
 			policy := DefaultVideoPollPolicy()
 			policy.Sleep = func(context.Context, time.Duration) error { return context.Canceled }
@@ -66,7 +66,7 @@ func TestManagedVideoCanonicalIntentHasNoModelTransportRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		meta := body["metadata"].(map[string]any)
-		if body["model"] != id || body["resolution"] != "768p" || body["seconds"] != "0.925" || body["aspect_ratio"] != "9:16" || meta["operation"] != "reference_to_video" || meta["generate_audio"] != false || meta["watermark"] != false || body["seed"] != float64(0) || body["middle_frame_time"] != 2.5 || body["prompt_expansion_mode"] != "quality" || body["damage_level"] != "heavy" || body["enable_safety_checker"] != false || body["sync_mode"] != true {
+		if body["model"] != id || body["resolution"] != "768p" || body["seconds"] != "0.925" || body["aspect_ratio"] != "9:16" || meta["operation"] != "reference_to_video" || meta["generate_audio"] != false || meta["watermark"] != false || body["seed"] != float64(0) || body["middle_frame_time"] != 2.5 || body["prompt_expansion_mode"] != "quality" || body["damage_level"] != "heavy" || body["enable_safety_checker"] != false {
 			t.Fatalf("lost user controls: %#v", body)
 		}
 		content := body["content"].([]map[string]any)
@@ -77,7 +77,7 @@ func TestManagedVideoCanonicalIntentHasNoModelTransportRules(t *testing.T) {
 		if !reflect.DeepEqual(roles, []any{"reference_audio", "first_frame", "reference_video", "middle_frame", "last_frame"}) {
 			t.Fatalf("order/roles: %#v", content)
 		}
-		for _, key := range []string{"operation", "first_frame_url", "reference_conditions", "response_format"} {
+		for _, key := range []string{"operation", "first_frame_url", "reference_conditions", "response_format", "sync_mode"} {
 			if _, present := body[key]; present {
 				t.Fatalf("supplier field %s leaked", key)
 			}

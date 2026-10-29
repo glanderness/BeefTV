@@ -47,7 +47,9 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 		body["middle_frame_time"] = value
 	}
 	if controls, ok := input.Metadata["videoH3Options"].(map[string]any); ok {
-		for _, key := range []string{"seed", "prompt_expansion_mode", "damage_level", "enable_safety_checker", "sync_mode"} {
+		// sync_mode selects result transport, so even a historical value must
+		// never override BeefAPI's URL/task delivery contract.
+		for _, key := range []string{"seed", "prompt_expansion_mode", "damage_level", "enable_safety_checker"} {
 			if value, exists := controls[key]; exists {
 				body[key] = value
 			}
