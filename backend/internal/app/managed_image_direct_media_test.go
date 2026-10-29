@@ -58,11 +58,15 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 			if tc.largeReference {
 				var large bytes.Buffer
 				encoder := png.Encoder{CompressionLevel: png.NoCompression}
-				if err := encoder.Encode(&large, image.NewNRGBA(image.Rect(0, 0, 1024, 1024))); err != nil {
+				pixels := image.NewNRGBA(image.Rect(0, 0, 4096, 4096))
+				for i := 3; i < len(pixels.Pix); i += 4 {
+					pixels.Pix[i] = 255
+				}
+				if err := encoder.Encode(&large, pixels); err != nil {
 					t.Fatal(err)
 				}
 				referenceBytes = large.Bytes()
-				if len(referenceBytes) < 4<<20 {
+				if len(referenceBytes) <= 30<<20 {
 					t.Fatalf("large fixture too small: %d", len(referenceBytes))
 				}
 			}
