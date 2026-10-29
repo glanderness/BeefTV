@@ -147,7 +147,7 @@ func (s *Service) refreshCanvasWorkflowCredentials(input map[string]any, channel
 			return e
 		}
 		if key == "" {
-			return workflowBad("BeefAPI 连接已断开，请先在设置中重新连接")
+			return workflowBad("BeefTV 连接已断开，请先在设置中重新连接")
 		}
 		config["apiKey"] = key
 		config["baseUrl"] = base
