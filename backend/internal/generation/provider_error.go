@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/outbound"
 )
 
@@ -457,6 +458,14 @@ func ClassifyError(err error) Failure {
 	var unknown SubmissionUnknownError
 	if errors.As(err, &unknown) {
 		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Retryable: false})
+	}
+	var managed *beefapi.MediaTaskError
+	if errors.As(err, &managed) {
+		category := FailureCategory(managed.Category)
+		if _, supported := categoryCopies[category]; !supported {
+			category = CategoryUnknown
+		}
+		return normalizeFailure(Failure{Category: category, TaskID: sanitizeDebugID(managed.TaskID), ProviderCode: sanitizeProviderCode(managed.Code), ProviderMessage: DiagnosticSummary(managed.Message), Structured: true, FromCode: true})
 	}
 	var protocolPreparation ProtocolPreparationError
 	if errors.As(err, &protocolPreparation) {

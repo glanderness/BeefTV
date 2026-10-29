@@ -38,6 +38,11 @@ func NormalizeCatalogImageCapability(raw json.RawMessage) (map[string]any, bool)
 		return nil, false
 	}
 	sizes, ok := catalogStringList(size["values"], true)
+	if size["values"] == nil && parameter == "none" {
+		sizes = []string{}
+		size["values"] = sizes
+		ok = true
+	}
 	if !ok {
 		return nil, false
 	}
@@ -58,6 +63,11 @@ func NormalizeCatalogImageCapability(raw json.RawMessage) (map[string]any, bool)
 		return nil, false
 	}
 	qualities, ok := catalogStringList(quality["values"], true)
+	if quality["values"] == nil && !qualitySupported {
+		qualities = []string{}
+		quality["values"] = qualities
+		ok = true
+	}
 	if !ok {
 		return nil, false
 	}

@@ -53,7 +53,7 @@ func negotiateImageReplay(req *http.Request, configured *http.Client) (*http.Req
 }
 
 func probeImageReplay(req *http.Request, configured *http.Client) (*http.Request, error) {
-	if (!imageSubmissionURL(req) && !imageMediaProbe(req)) || RecoverableImageEndpoint(req) || directImageMedia(req.Context()) {
+	if !imageSubmissionURL(req) || RecoverableImageEndpoint(req) {
 		return req, nil
 	}
 	if err := req.Context().Err(); err != nil {
@@ -76,7 +76,7 @@ func probeImageReplay(req *http.Request, configured *http.Client) (*http.Request
 		return nil, err
 	}
 	probe.Header = req.Header.Clone()
-	for _, name := range []string{"Content-Type", "Content-Length", "Transfer-Encoding", "Idempotency-Key", "X-Idempotency-Key", ImageMediaProtocolHeader} {
+	for _, name := range []string{"Content-Type", "Content-Length", "Transfer-Encoding", "Idempotency-Key", "X-Idempotency-Key"} {
 		probe.Header.Del(name)
 	}
 	outbound.ApplyDefaultOutboundHeaders(probe)
@@ -94,9 +94,6 @@ func probeImageReplay(req *http.Request, configured *http.Client) (*http.Request
 		ctx := req.Context()
 		if resp.Header.Get("X-Image-Submission-Protocol") == ImageReplayProtocol {
 			ctx = WithImageReplayProtocol(ctx, ImageReplayProtocol)
-		}
-		if resp.Header.Get(ImageMediaProtocolHeader) == ImageMediaProtocol {
-			ctx = context.WithValue(ctx, imageMediaContext{}, ImageMediaProtocol)
 		}
 		return req.WithContext(ctx), nil
 	}

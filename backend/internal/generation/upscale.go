@@ -7,10 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"infinite-canvas/backend/internal/beefapi"
 
 	_ "golang.org/x/image/webp"
 )
@@ -32,8 +33,8 @@ func UpscaleMediaType(model string) string {
 }
 
 func ValidateUpscaleInput(input Input) error {
-	kind := UpscaleMediaType(input.Config.Model)
-	if kind == "" || input.Mode != kind || input.Upscale == nil {
+	kind := input.Mode
+	if (kind != "image" && kind != "video") || input.Config.Model == "" || input.Upscale == nil {
 		return errors.New("超分模型、素材类型或参数无效")
 	}
 	if input.Upscale.Factor < 1 || input.Upscale.Factor > 4 {
@@ -66,7 +67,7 @@ func PrepareUpscale(ctx context.Context, input Input) (Input, error) {
 	if err := ValidateUpscaleInput(input); err != nil {
 		return input, err
 	}
-	if !IsBeefAPIVideoConfig(ctx, input.Config) {
+	if !managedConnection(input.Config) && !IsBeefAPIVideoConfig(ctx, input.Config) {
 		return input, errors.New("AI 超分需要连接官方算力账号")
 	}
 	runtime, _ := RuntimeFromContext(ctx)
@@ -131,28 +132,21 @@ func upscaleImageConfig(data []byte) (image.Config, error) {
 	return meta, nil
 }
 
-func upscaleBody(input Input) map[string]any {
-	body := map[string]any{"model": input.Config.Model, "upscale_factor": input.Upscale.Factor}
-	if input.Mode == "image" {
-		body["image_url"] = input.ReferenceImages[0].URL
-		body["output_format"] = defaultString(input.Upscale.OutputFormat, "png")
-		body["face_enhancement"] = false
-		if input.Config.Model == "topaz-wonder-3.5" {
-			body["enhancement_strength"] = "low"
-		}
-	} else {
-		body["video_url"] = input.ReferenceVideos[0].URL
-		body["H264_output"] = true
+func legacyUpscaleInput(input Input) beefapi.LegacyUpscaleInput {
+	request := beefapi.LegacyUpscaleInput{Model: input.Config.Model, MediaType: input.Mode, Factor: input.Upscale.Factor, OutputFormat: input.Upscale.OutputFormat}
+	if input.Mode == "image" && len(input.ReferenceImages) > 0 {
+		request.SourceURL = input.ReferenceImages[0].URL
 	}
-	return body
+	if input.Mode == "video" && len(input.ReferenceVideos) > 0 {
+		request.SourceURL = input.ReferenceVideos[0].URL
+	}
+	return request
+}
+func upscaleBody(input Input) map[string]any {
+	return beefapi.LegacyUpscaleBody(legacyUpscaleInput(input))
 }
 
-type UpscaleEstimate struct {
-	Model               string  `json:"model"`
-	Currency            string  `json:"currency"`
-	Reservation         float64 `json:"reservation"`
-	GenerationSubmitted bool    `json:"generation_submitted"`
-}
+type UpscaleEstimate = beefapi.UpscaleEstimate
 
 func EstimateUpscale(ctx context.Context, input Input) (UpscaleEstimate, error) {
 	var estimate UpscaleEstimate
@@ -160,27 +154,17 @@ func EstimateUpscale(ctx context.Context, input Input) (UpscaleEstimate, error) 
 	if err != nil {
 		return estimate, RequestPreparationError{Cause: err}
 	}
-	err = PostJSON(WithRequestKind(ctx, "estimate"), prepared.Config, "/media-upscale/estimate", upscaleBody(prepared), &estimate)
-	if err == nil && (estimate.Model != input.Config.Model || estimate.Currency != "CNY" || estimate.Reservation <= 0 || estimate.GenerationSubmitted) {
-		err = errors.New("超分预估费用无效，请重新获取")
-	}
-	return estimate, err
+	queryCtx := WithRequestKind(ctx, "estimate")
+	return managedMediaClient(queryCtx, prepared.Config).EstimateLegacyUpscale(queryCtx, legacyUpscaleInput(prepared))
 }
 
-var upscaleTaskID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-
-func upscaleTaskPath(id string) (string, error) {
-	if !upscaleTaskID.MatchString(id) {
-		return "", errors.New("超分任务 ID 无效")
-	}
-	return "/media-upscale/tasks/" + url.PathEscape(id), nil
-}
+func upscaleTaskPath(id string) (string, error) { return beefapi.LegacyUpscaleTaskPath(id) }
 
 func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	if err := ValidateUpscaleInput(input); err != nil {
 		return nil, RequestPreparationError{Cause: err}
 	}
-	if !IsBeefAPIVideoConfig(ctx, input.Config) {
+	if !managedConnection(input.Config) && !IsBeefAPIVideoConfig(ctx, input.Config) {
 		return nil, RequestPreparationError{Cause: errors.New("AI 超分需要连接官方算力账号")}
 	}
 	id := ResumedProviderRequestID(ctx)
@@ -192,15 +176,10 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 		if SubmissionKeyFromContext(ctx) == "" {
 			return nil, RequestPreparationError{Cause: errors.New("超分任务缺少持久操作 ID")}
 		}
-		var receipt struct {
-			TaskID string `json:"task_id"`
-		}
-		if err := postJSONWithSubmissionKey(WithRequestKind(ctx, "create"), prepared.Config, "/media-upscale/tasks", upscaleBody(prepared), &receipt, upscaleSubmissionError); err != nil {
-			return nil, err
-		}
-		id = receipt.TaskID
-		if _, err := upscaleTaskPath(id); err != nil {
-			return nil, SubmissionUnknownError{Cause: err}
+		createCtx := WithRequestKind(ctx, "create")
+		id, err = managedMediaClient(createCtx, prepared.Config).CreateLegacyUpscale(createCtx, SubmissionKeyFromContext(ctx), legacyUpscaleInput(prepared))
+		if err != nil {
+			return nil, UncertainVideoSubmission(ctx, upscaleSubmissionError(legacyMediaError(err)))
 		}
 	}
 	runtime, _ := RuntimeFromContext(ctx)
@@ -216,21 +195,8 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	})
 }
 
-// Manual recovery actively queries the saved upstream task; polling remains GET-only.
+// BeefAPI owns provider recovery. Client recovery only queries the original task.
 func RecoverUpscaleResult(ctx context.Context, input Input, id string) (map[string]any, string, error) {
-	path, err := upscaleTaskPath(id)
-	if err != nil {
-		return nil, "", err
-	}
-	var receipt struct {
-		TaskID string `json:"task_id"`
-	}
-	if err := PostJSON(WithRequestKind(ctx, "poll"), input.Config, path+"/recover", map[string]any{}, &receipt); err != nil {
-		return nil, "", err
-	}
-	if receipt.TaskID != id {
-		return nil, "", errors.New("超分回执与原任务不一致")
-	}
 	return QueryUpscaleResult(ctx, input, id)
 }
 
@@ -264,27 +230,15 @@ func upscaleSubmissionError(err error) error {
 // Receipts cannot choose a download host or path. Only the authenticated
 // content endpoint for this exact original task is used.
 func QueryUpscaleStatus(ctx context.Context, config Config, id string) (string, error) {
-	path, err := upscaleTaskPath(id)
-	if err != nil {
-		return "", err
-	}
-	var receipt struct {
-		TaskID    string `json:"task_id"`
-		Model     string `json:"model"`
-		Status    string `json:"status"`
-		MediaType string `json:"media_type"`
-	}
-	if err := GetJSON(WithRequestKind(ctx, "poll"), config, path, &receipt); err != nil {
-		return "", err
-	}
-	if receipt.TaskID != id || receipt.Model != config.Model || receipt.MediaType != UpscaleMediaType(config.Model) {
-		return "", errors.New("超分回执与原任务不一致")
-	}
-	return receipt.Status, nil
+	ctx = WithRequestKind(ctx, "poll")
+	task, err := managedMediaClient(ctx, config).QueryLegacyUpscale(ctx, id, config.Model, "")
+	return task.Status, legacyMediaError(err)
 }
 
 func QueryUpscaleResult(ctx context.Context, input Input, id string) (map[string]any, string, error) {
-	status, err := QueryUpscaleStatus(ctx, input.Config, id)
+	queryCtx := WithRequestKind(ctx, "poll")
+	receipt, err := managedMediaClient(queryCtx, input.Config).QueryLegacyUpscale(queryCtx, id, input.Config.Model, input.Mode)
+	status := receipt.Status
 	if err != nil {
 		return nil, "", err
 	}
@@ -297,10 +251,13 @@ func QueryUpscaleResult(ctx context.Context, input Input, id string) (map[string
 	default:
 		return nil, status, StatePendingError{TaskID: id, Cause: fmt.Errorf("unknown upscale status")}
 	}
-	path, _ := upscaleTaskPath(id)
 	ctx = WithRequestKind(ctx, "download")
 	data, mime, err := RunVideoDownload(ctx, id, DefaultVideoPollPolicy(), func(ctx context.Context) ([]byte, string, error) {
-		return GetBinary(ctx, input.Config, path+"/content")
+		limit, limitErr := GeneratedFileLimit(ctx)
+		if limitErr != nil {
+			return nil, "", limitErr
+		}
+		return managedMediaClient(ctx, input.Config).LegacyUpscaleContent(ctx, id, limit)
 	})
 	if err != nil {
 		return nil, status, VideoDownloadError{TaskID: id, Cause: err}
@@ -331,19 +288,5 @@ func QueryUpscaleResult(ctx context.Context, input Input, id string) (map[string
 }
 
 func CancelUpscale(ctx context.Context, config Config, id string) error {
-	path, err := upscaleTaskPath(id)
-	if err != nil {
-		return err
-	}
-	var response struct {
-		TaskID    string `json:"task_id"`
-		Requested bool   `json:"cancellation_requested"`
-	}
-	if err := PostJSON(ctx, config, path+"/cancel", map[string]any{}, &response); err != nil {
-		return err
-	}
-	if response.TaskID != id || !response.Requested {
-		return errors.New("超分取消请求尚未确认")
-	}
-	return nil
+	return managedMediaClient(ctx, config).CancelLegacyUpscale(ctx, id)
 }

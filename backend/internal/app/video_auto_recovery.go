@@ -193,6 +193,10 @@ func (s *Service) recordMissingVideoReceiptOutcome(task *model.Task, claimUserID
 	if task == nil {
 		return
 	}
+	if managedTaskConnection(*task) {
+		s.deferManagedVideoQuery(task, claimUserID)
+		return
+	}
 	outcome := localtask.RecoveryUnrecoverable
 	if attempt, err := s.repo.LatestRouteAttempt(task.ID); err == nil && attempt != nil && attempt.RouteRun == task.RouteRun {
 		if attempt.DispatchState == "not_sent" || attempt.DispatchState == "rejected_no_job" {
@@ -209,6 +213,10 @@ func (s *Service) recordUnrecoverableVideoOutcome(task *model.Task, claimUserID 
 	if task == nil {
 		return
 	}
+	if managedTaskConnection(*task) {
+		s.deferManagedVideoQuery(task, claimUserID)
+		return
+	}
 	outcome := localtask.RecoveryUnrecoverable
 	_ = s.withFailedVideoRecoveryLease(task, claimUserID, func(leased *model.Task) error {
 		return s.repo.FinishFailedVideoRecovery(*leased, &outcome, nil)
@@ -217,6 +225,12 @@ func (s *Service) recordUnrecoverableVideoOutcome(task *model.Task, claimUserID 
 }
 
 func classifyFailedVideoQueryOutcome(task model.Task, providerStatus string, err error) string {
+	if managedTaskConnection(task) {
+		if isTerminalVideoProviderStatus(providerStatus) && (task.BeefUsageState != nil || task.BeefBillingState != nil) {
+			return localtask.RecoveryNoResult
+		}
+		return ""
+	}
 	var dns *outbound.DNSResolutionError
 	if errors.As(err, &dns) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return ""
@@ -269,11 +283,20 @@ func isUnrecoverableVideoQueryError(err error) bool {
 }
 
 func videoTaskPastRetentionWindow(task model.Task, now time.Time) bool {
+	if managedTaskConnection(task) {
+		return false
+	}
 	anchor := task.CreatedAt
 	if task.StartedAt != nil && !task.StartedAt.IsZero() {
 		anchor = *task.StartedAt
 	}
 	return !anchor.IsZero() && now.Sub(anchor) >= videoRecoveryRetentionWindow
+}
+
+func (s *Service) deferManagedVideoQuery(task *model.Task, user string) {
+	next := time.Now().Add(videoRecoveryPollBackoff(*task))
+	_ = s.withFailedVideoRecoveryLease(task, user, func(leased *model.Task) error { return s.repo.FinishFailedVideoRecovery(*leased, nil, &next) })
+	task.NextPollAt = &next
 }
 
 func videoRecoveryPollBackoff(task model.Task) time.Duration {

@@ -22,7 +22,7 @@ func RunAudioTask(ctx context.Context, input Input) (map[string]interface{}, err
 	if music {
 		input.Config.AudioFormat = "mp3"
 	}
-	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
+	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok && input.Config.CredentialRef != beefapi.CredentialRef {
 		return RunDeclarativeProtocolTask(ctx, input)
 	}
 	if resolved, ok := input.Metadata["resolvedCharacterVersions"].([]interface{}); ok && len(resolved) > 0 {
@@ -50,13 +50,17 @@ func RunAudioTask(ctx context.Context, input Input) (map[string]interface{}, err
 	if music {
 		body["metadata"] = map[string]interface{}{"audio_setting": map[string]interface{}{"sample_rate": 44100, "bitrate": 256000, "format": "mp3"}}
 	}
-	if input.Config.InterfaceType == string(model.ChannelInterfaceAsyncAudio) {
+	if input.Config.InterfaceType == string(model.ChannelInterfaceAsyncAudio) && input.Config.CredentialRef != beefapi.CredentialRef {
 		return RunAsyncAudioTask(ctx, input, body, format)
 	}
-	if music && isBeefAPIHostFromURL(input.Config.BaseURL) {
-		body["stream_format"] = "sse"
+	var data []byte
+	var mimeType string
+	var err error
+	if input.Config.CredentialRef == beefapi.CredentialRef {
+		data, mimeType, err = managedMediaClient(ctx, input.Config).LegacySpeech(ctx, body)
+	} else {
+		data, mimeType, err = PostBinary(ctx, input.Config, "/audio/speech", body)
 	}
-	data, mimeType, err := PostBinary(ctx, input.Config, "/audio/speech", body)
 	if err != nil {
 		return nil, err
 	}

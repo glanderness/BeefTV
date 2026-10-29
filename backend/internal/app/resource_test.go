@@ -251,8 +251,8 @@ func TestBeefAPILocalVideoReferenceHydratesInlineForFlatRequest(t *testing.T) {
 	if fmt.Sprint(image["url"]) != "https://example.com/reference.png" {
 		t.Fatalf("image = %#v, want URL-only reference", image)
 	}
-	if content[0]["role"] != "first_frame" || body["metadata"].(map[string]interface{})["ratio"] != "adaptive" {
-		t.Fatal("hydration lost frame constraints")
+	if content[0]["role"] != "reference_image" || body["metadata"].(map[string]interface{})["operation"] != "image_to_video" {
+		t.Fatal("hydration changed the reference role or user operation")
 	}
 }
 

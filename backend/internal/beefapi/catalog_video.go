@@ -102,6 +102,13 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["durationSupported"] = supported
 	}
+	if value, present := object["taskTypeConstraints"]; present {
+		enabled, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		video["taskTypeConstraints"] = enabled
+	}
 	return video, true
 }
 
@@ -197,6 +204,15 @@ func normalizeCatalogDuration(input map[string]any) (map[string]any, bool) {
 		return nil, false
 	}
 	duration := map[string]any{"selection": selection, "default": defaultValue}
+	continuous := false
+	if raw, present := input["continuous"]; present {
+		var valid bool
+		continuous, valid = raw.(bool)
+		if !valid {
+			return nil, false
+		}
+		duration["continuous"] = continuous
+	}
 	switch selection {
 	case "range":
 		min, hasMin, ok := catalogIntField(input, "min")
@@ -211,10 +227,16 @@ func normalizeCatalogDuration(input map[string]any) (map[string]any, bool) {
 		if !ok || !hasStep {
 			return nil, false
 		}
-		if min < 1 || max < min || max > 3600 || step < 1 || defaultValue < min || defaultValue > max || (defaultValue-min)%step != 0 {
+		if min < 1 || max < min || max > 3600 || step < 1 || defaultValue < min || defaultValue > max || !continuous && (defaultValue-min)%step != 0 {
 			return nil, false
 		}
 		duration["min"], duration["max"], duration["step"] = min, max, step
+		if fractional, present, ok := catalogFloatField(input, "fractionalMin"); present {
+			if !ok || !continuous || fractional <= 0 || fractional > float64(min) {
+				return nil, false
+			}
+			duration["fractionalMin"] = fractional
+		}
 	case "enum":
 		rawValues, ok := input["values"].([]any)
 		if !ok || len(rawValues) == 0 || len(rawValues) > 100 {

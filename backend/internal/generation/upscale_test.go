@@ -124,7 +124,7 @@ func TestUpscaleExecuteFourModelsUsesOwnedUploadAndOriginalResult(t *testing.T) 
 					t.Error("missing gateway auth")
 				}
 				switch r.URL.Path {
-				case "/v1/video-references/uploads":
+				case "/v1/media/uploads":
 					uploads.Add(1)
 					_ = json.NewEncoder(w).Encode(BeefAPISeedanceUploadSession{Ticket: "ticket", UploadURL: server.URL + "/put", UploadMethod: "PUT", RequiredHeaders: map[string]string{"Content-Type": mime}})
 				case "/put":
@@ -132,7 +132,7 @@ func TestUpscaleExecuteFourModelsUsesOwnedUploadAndOriginalResult(t *testing.T) 
 					if !bytes.Equal(data, source) || r.Header.Get("Authorization") != "" {
 						t.Error("upload altered original bytes or leaked key")
 					}
-				case "/v1/video-references/uploads/complete":
+				case "/v1/media/uploads/complete":
 					sum := sha256.Sum256(source)
 					_ = json.NewEncoder(w).Encode(BeefAPISeedanceUploadComplete{URL: server.URL + "/source", Kind: kind, Mime: mime, Bytes: int64(len(source)), SHA256: hex.EncodeToString(sum[:])})
 				case "/v1/media-upscale/estimate":
@@ -187,9 +187,6 @@ func TestUpscaleExecuteFourModelsUsesOwnedUploadAndOriginalResult(t *testing.T) 
 				want["image_url"] = server.URL + "/source"
 				want["face_enhancement"] = false
 				want["output_format"] = "png"
-				if model == "topaz-wonder-3.5" {
-					want["enhancement_strength"] = "low"
-				}
 			} else {
 				want["video_url"] = server.URL + "/source"
 				want["H264_output"] = true
@@ -274,7 +271,7 @@ func TestUpscaleOriginalStatusIdentityAndCancellation(t *testing.T) {
 	if err != nil || result != nil || observed != "unknown" {
 		t.Fatalf("unknown result=%v status=%s err=%v", result, observed, err)
 	}
-	if _, _, err := RecoverUpscaleResult(ctx, Input{Mode: "image", Config: config}, "original-task"); err != nil || recovers.Load() != 1 {
+	if _, _, err := RecoverUpscaleResult(ctx, Input{Mode: "image", Config: config}, "original-task"); err != nil || recovers.Load() != 0 {
 		t.Fatalf("manual recover: calls=%d err=%v", recovers.Load(), err)
 	}
 	if err := CancelUpscale(ctx, config, "original-task"); err != nil {
@@ -472,4 +469,3 @@ func TestUpscaleProviderErrorClassificationDistinguishesUnavailableFromInvalidSo
 		t.Fatalf("unexpected 400 image invalid_upscale_source classification: %#v", invalidImage)
 	}
 }
-

@@ -513,7 +513,7 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
         model: requestConfig.model,
         ...generationOptions,
         capabilityConfig: modelCapabilityConfigFor(config, config.model),
-		imageCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.imageCapabilitiesVersion,
+        imageCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.imageCapabilitiesVersion,
         videoCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.videoCapabilitiesVersion,
         systemPrompt: config.systemPrompt,
     };

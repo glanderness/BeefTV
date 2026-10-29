@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -39,6 +40,25 @@ func (s *Service) beginTaskRouteAttempt(task *model.Task) (*model.RouteAttempt, 
 	image := modelcatalog.ImageSubmissionView{}
 	if len(attempts) > 0 {
 		existing := &attempts[len(attempts)-1]
+		if managedTaskConnection(*task) || existing.ChannelID == beefapi.ChannelID {
+			if task.Type == "canvas_image" && existing.DispatchState != "not_sent" {
+				if _, err := s.repo.ImageSubmission(existing.ID, task.ID, task.UserID); err != nil {
+					return nil, imageRecoveryError{errors.New("原任务发送信息暂不可用，尚未确认结果")}
+				}
+			}
+			// Restarting an authorized attempt never authorizes a new paid one.
+			// The existing executor/query path owns this original identity.
+			if existing.DispatchState == "not_sent" || existing.ProviderRequestID != "" || (task.Type == "canvas_image" && (existing.DispatchState == "accepted" || existing.DispatchState == "submission_unknown")) {
+				if task.ProviderRequestID == "" && existing.ProviderRequestID != "" {
+					task.ProviderRequestID = existing.ProviderRequestID
+					if err := s.repo.UpdateTaskProviderState(task.ID, task.ProviderRequestID, task.PollStage, task.NextPollAt); err != nil {
+						return nil, err
+					}
+				}
+				return existing, nil
+			}
+			return nil, imageRecoveryError{errors.New("原任务已提交，尚未确认结果")}
+		}
 		if task.Type == "canvas_image" && (existing.DispatchState == "submission_unknown" || existing.DispatchState == "accepted") {
 			image = s.imageSubmissionView(existing, task)
 		}
@@ -103,6 +123,11 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 }
 
 func (s *Service) nextRouteAttemptAfterFailure(task *model.Task, attempt *model.RouteAttempt, taskErr error) (*model.RouteAttempt, error) {
+	if task != nil {
+		if config, ok := s.resolveImageRecoveryConfig(*task); ok && config.CredentialRef == beefapi.CredentialRef {
+			return nil, nil
+		}
+	}
 	info := routeFailureInfo(taskErr)
 	if task != nil && task.Type == "canvas_image" && attempt != nil {
 		if !modelcatalog.ShouldRetryImageThrottle(task, attempt, info) {

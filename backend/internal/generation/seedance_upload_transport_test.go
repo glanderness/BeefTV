@@ -24,29 +24,6 @@ func TestReferenceUploadGateway4xxKeepsRequestIDAndCategory(t *testing.T) {
 	}
 }
 
-func TestSeedanceInlineFallbackCombinedLimit(t *testing.T) {
-	data := make([]byte, 25<<20)
-	inline := DataURL("image/png", data)
-	for _, stored := range []bool{false, true} {
-		t.Run(map[bool]string{false: "inline_and_inline", true: "inline_and_stored"}[stored], func(t *testing.T) {
-			second := Media{DataURL: inline}
-			if stored {
-				second = Media{StorageKey: "resource:second", Bytes: int64(len(data)), MimeType: "image/png"}
-			}
-			input := Input{ReferenceImages: []Media{{DataURL: inline}, second}}
-			read := func(kind string, media Media) ([]byte, string, bool, error) {
-				if media.StorageKey != "" {
-					return data, "image/png", false, nil
-				}
-				return ReadBeefAPISeedanceInlineMedia(kind, media)
-			}
-			if err := FallbackBeefAPISeedanceInline(context.Background(), &input, read); !errors.Is(err, ErrVideoJSONRequestTooLarge) {
-				t.Fatalf("combined inline body exceeded 64 MiB without rejection: %v", err)
-			}
-		})
-	}
-}
-
 func TestReferenceUploadTLSDeadlineIsRecordedBeforeGeneration(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	address, closeServer := stalledTLS(t)
@@ -54,7 +31,7 @@ func TestReferenceUploadTLSDeadlineIsRecordedBeforeGeneration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	receipts := &recordingReceipts{}
-	ctx = WithRuntime(ctx, Runtime{Receipts: receipts})
+	ctx = WithRuntime(ctx, Runtime{Receipts: receipts, Endpoints: Endpoints{BeefAPIVideoBaseURL: address}})
 	ctx = withReferenceUpload(ctx, ReferenceUploadMeta{Kind: "image", Index: 2})
 	err := PutBeefAPISeedanceBytes(ctx, BeefAPISeedanceUploadSession{UploadURL: address + "/?X-Amz-Signature=PRIVATE"}, []byte("owned-fixture"))
 	var upload *ReferenceUploadError

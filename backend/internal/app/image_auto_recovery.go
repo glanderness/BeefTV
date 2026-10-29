@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
@@ -79,6 +80,26 @@ func imageRecoveryNeedsPolling(task model.Task) bool {
 	return task.RecoveryOutcome == nil || *task.RecoveryOutcome == "" || imageSettlementNeedsPolling(task)
 }
 
+// Earlier clients could conclude that an API task was unrecoverable from its
+// local request age. Only the API can now confirm that conclusion.
+func (s *Service) managedImageNeedsRecheck(task model.Task) bool {
+	if task.RecoveryOutcome == nil || *task.RecoveryOutcome != localtask.RecoveryUnrecoverable {
+		return false
+	}
+	if managedTaskConnection(task) {
+		return true
+	}
+	attempt, err := s.repo.LatestRouteAttempt(task.ID)
+	if err != nil || attempt == nil || attempt.RouteRun != task.RouteRun {
+		return false
+	}
+	if attempt.ChannelID == beefapi.ChannelID {
+		return true
+	}
+	row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+	return err == nil && row.QueryCipher != ""
+}
+
 func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) error {
 	if generation.UpscaleMediaType(candidate.Model) != "" {
 		return nil
@@ -93,12 +114,13 @@ func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) 
 	if err != nil {
 		return err
 	}
-	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || !imageRecoveryNeedsPolling(*task) {
+	recheck := s.managedImageNeedsRecheck(*task)
+	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || (!imageRecoveryNeedsPolling(*task) && !recheck) {
 		return nil
 	}
 	var outcome string
 	var recoveryErr error
-	if task.RecoveryOutcome != nil && *task.RecoveryOutcome != "" {
+	if task.RecoveryOutcome != nil && *task.RecoveryOutcome != "" && !recheck {
 		outcome = *task.RecoveryOutcome
 	} else {
 		var result []byte
@@ -181,6 +203,26 @@ func (s *Service) resolveImageRecoveryConfig(task model.Task) (generation.Config
 }
 
 func (s *Service) syncFailedImageBeefSettlement(ctx context.Context, task *model.Task) error {
+	if attempt, err := s.repo.LatestRouteAttempt(task.ID); err == nil && attempt != nil {
+		if row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID); err == nil {
+			queryCtx := context.WithValue(ctx, imageTaskContext{}, *task)
+			client, key, _, managed, queryErr := s.managedImageQueryClient(queryCtx, *task, row)
+			if managed {
+				if queryErr != nil {
+					return queryErr
+				}
+				if latest, err := s.repo.Task(task.ID); err == nil && latest.BeefBillingState != nil && strings.TrimSpace(*latest.BeefBillingState) != "" {
+					task.BeefBillingState, task.BeefReconcileDeadline = latest.BeefBillingState, latest.BeefReconcileDeadline
+					return nil
+				}
+				_, err := client.Query(queryCtx, key, "image")
+				if latest, loadErr := s.repo.Task(task.ID); loadErr == nil {
+					task.BeefBillingState, task.BeefReconcileDeadline = latest.BeefBillingState, latest.BeefReconcileDeadline
+				}
+				return err
+			}
+		}
+	}
 	if task == nil {
 		return nil
 	}
@@ -241,6 +283,27 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 	}
 	evidence := all[task.ID]
 	attempt, submission := evidence.Attempt, evidence.Submission
+	if (managedTaskConnection(task) || (attempt != nil && attempt.ChannelID == beefapi.ChannelID)) && (attempt == nil || submission == nil || attempt.RouteRun != task.RouteRun) {
+		return nil, "", imageRecoveryError{errors.New("原任务查询信息暂不可用，尚未确认结果")}
+	}
+	if attempt != nil && submission != nil && attempt.RouteRun == task.RouteRun {
+		row, loadErr := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+		if loadErr != nil {
+			return nil, "", loadErr
+		}
+		queryCtx := context.WithValue(withProviderAnalytics(ctx, s, task), imageTaskContext{}, task)
+		if recovered, managed, collectErr := s.collectManagedImage(queryCtx, task, row); managed {
+			if collectErr != nil {
+				var terminal *beefapi.MediaTaskError
+				if errors.As(collectErr, &terminal) {
+					return nil, localtask.RecoveryNoResult, nil
+				}
+				return nil, "", collectErr
+			}
+			body, marshalErr := json.Marshal(recovered)
+			return body, "", marshalErr
+		}
+	}
 	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
 	// 同键恢复也会追加创建日志。历史日志有歧义时不能挑一个旧成功结果，
 	// 但仍可由当前轮次的冻结请求及原键向网关取回确切回执。

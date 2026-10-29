@@ -26,6 +26,9 @@ func TestTaskSettlementMigrationUpgradesReleasedV26Database(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err = db.Exec("ALTER TABLE image_submissions DROP COLUMN query_cipher").Error; err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Exec(`INSERT INTO tasks(id,user_id,type,status,stage,result_json,recovery_outcome) VALUES('released','owner','canvas_image','failed','任务失败','original','no_result')`).Error; err != nil {
 		t.Fatal(err)
 	}

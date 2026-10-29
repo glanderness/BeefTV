@@ -453,6 +453,9 @@ func TestBeefAPISeedancePreuploadRejectsOversizedFileBeforeNetwork(t *testing.T)
 		providerMedia{},
 		providerMedia{},
 	)
+	// File limits are directory capabilities, never inferred from the model ID.
+	input.VideoCapability = &generation.VideoCapabilityConfig{}
+	input.VideoCapability.References.MaxImageBytes = beefAPISeedanceImageMaxBytes
 	err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, func(kind string, media providerMedia) ([]byte, string, bool, error) {
 		readCalls++
 		return []byte("nope"), "image/png", false, nil
@@ -717,7 +720,7 @@ func newBeefAPISeedanceUploadHarness(t *testing.T) *beefAPISeedanceUploadHarness
 	harness := &beefAPISeedanceUploadHarness{putsByTicket: map[string]beefAPISeedancePutRecord{}}
 	harness.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/video-references/uploads/complete"):
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media/uploads/complete"):
 			harness.mu.Lock()
 			harness.completes++
 			harness.completeAuth = r.Header.Get("Authorization")
@@ -753,7 +756,7 @@ func newBeefAPISeedanceUploadHarness(t *testing.T) *beefAPISeedanceUploadHarness
 				harness.mutateReceipt(receipt)
 			}
 			_ = json.NewEncoder(w).Encode(receipt)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/video-references/uploads"):
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media/uploads"):
 			harness.mu.Lock()
 			harness.creates++
 			harness.createAuth = r.Header.Get("Authorization")

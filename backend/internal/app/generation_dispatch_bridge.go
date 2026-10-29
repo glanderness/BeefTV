@@ -808,10 +808,6 @@ func readBeefAPISeedanceInlineMedia(kind string, media providerMedia) ([]byte, s
 	return generation.ReadBeefAPISeedanceInlineMedia(kind, media)
 }
 
-func fallbackBeefAPISeedanceInline(ctx context.Context, input *canvasGenerationInput, read beefAPISeedanceMediaReader) error {
-	return generation.FallbackBeefAPISeedanceInline(ctx, input, read)
-}
-
 func createBeefAPISeedanceUpload(ctx context.Context, config providerConfig, request beefAPISeedanceUploadRequest) (beefAPISeedanceUploadSession, error) {
 	return generation.CreateBeefAPISeedanceUpload(ctx, config, request)
 }

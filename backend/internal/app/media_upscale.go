@@ -22,7 +22,7 @@ func (s *Service) upscaleConfig(name string) (generation.Config, error) {
 	if key == "" {
 		return generation.Config{}, BadAuthRequest("请先连接官方算力账号")
 	}
-	return generation.Config{BaseURL: base, APIKey: key, Model: name, InterfaceType: "newapi"}, nil
+	return generation.Config{BaseURL: base, APIKey: key, CredentialRef: managedBeefAPIRef, Model: name, InterfaceType: "newapi"}, nil
 }
 
 func (s *Service) MediaUpscaleCapabilities() map[string]any {

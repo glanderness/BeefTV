@@ -23,8 +23,8 @@ type OpenAIModelRecord = {
     model_type?: string;
     supported_endpoint_types?: string[];
     video_capabilities?: unknown;
-	image_capabilities?: unknown;
-	image_capabilities_version?: string;
+    image_capabilities?: unknown;
+    image_capabilities_version?: string;
     video_capabilities_version?: string;
     video_pricing?: unknown;
 };
@@ -39,8 +39,8 @@ async function fetchOpenAIModelCatalog(config: Pick<ModelChannel, "baseUrl" | "a
                 displayName: model.display_name || model.name,
                 modelType: model.model_type,
                 supportedEndpointTypes: model.supported_endpoint_types,
-				imageCapabilities: model.image_capabilities,
-				imageCapabilitiesVersion: model.image_capabilities_version,
+                imageCapabilities: model.image_capabilities,
+                imageCapabilitiesVersion: model.image_capabilities_version,
                 videoCapabilities: model.video_capabilities,
                 videoCapabilitiesVersion: model.video_capabilities_version,
                 videoPricing: model.video_pricing,

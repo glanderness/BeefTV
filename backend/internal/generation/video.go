@@ -9,10 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
-	"slices"
 	"strconv"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/protocol"
@@ -40,8 +40,8 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
-	if IsBeefAPIVideoConfig(ctx, input.Config) && (IsSeedanceVideoConfig(input.Config) || IsBeefAPIH3Model(input.Config.Model) || isBeefAPIFlatFrameVideo(input.Config.Model)) {
-		return RunSeedanceVideosTask(ctx, input, pollPolicy)
+	if managedConnection(input.Config) || IsBeefAPIVideoConfig(ctx, input.Config) {
+		return runManagedLegacyVideo(ctx, input, pollPolicy)
 	}
 	// 路由顺序是协议边界，不是“哪个请求先试”：官方声明式接口必须由已注册适配器执行，
 	// 缺少适配器时直接失败，不能偷偷退回遗留手写协议；只有未声明为官方插件的旧渠道才继续走兼容分支。
@@ -212,6 +212,9 @@ func GrokVideoBody(input Input) (map[string]interface{}, error) {
 }
 
 func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	if managedConnection(input.Config) || IsBeefAPIVideoConfig(ctx, input.Config) {
+		return runManagedLegacyVideo(ctx, input, pollPolicy)
+	}
 	pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
 	// 恢复任务已有 provider ID 时只能继续查询，绝不能重新 create，否则会产生第二个上游任务。
 	// create 成功后的 poll/download 任一失败都保留失败或结果未知语义，不降级成“成功但无内容”。
@@ -220,27 +223,11 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 	if id == "" {
 		var body interface{}
 		var err error
-		if IsBeefAPIVideoConfig(ctx, input.Config) {
-			body, err = BeefAPIVideoRequestBody(input)
-		} else {
-			body, err = SeedanceVideosRequestBody(input)
-		}
+		body, err = SeedanceVideosRequestBody(input)
 		if err != nil {
 			return nil, err
 		}
-		if IsBeefAPIVideoConfig(ctx, input.Config) {
-			encoded, marshalErr := json.Marshal(body)
-			if marshalErr != nil {
-				return nil, fmt.Errorf("序列化上游请求失败：%w", marshalErr)
-			}
-			if int64(len(encoded)) > VideoJSONRequestLimitBytes {
-				return nil, ErrVideoJSONRequestTooLarge
-			}
-		}
 		post := PostJSON
-		if IsBeefAPIVideoConfig(ctx, input.Config) {
-			post = PostJSONWithSubmissionKey
-		}
 		if err := post(ctx, input.Config, "/videos", body, &created); err != nil {
 			return nil, UncertainVideoSubmission(ctx, err)
 		}
@@ -312,162 +299,10 @@ func SeedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 	return status, videoURL
 }
 
-// beefAPIVideoRequestBody implements BeefAPI Enterprise's model-specific
-// /v1/videos contract. Seedance reference mode uses top-level content items;
-// image/reference_images are Grok fields and must not be reused for Seedance.
-// 2.5 uses explicit roles even for one frame; 2.0 retains the legacy image field
-// only when the single image has explicit frame intent.
+// BeefAPIVideoRequestBody assembles only user intent. The BeefAPI adapter
+// serializes canonical references and the server selects supplier parameters.
 func BeefAPIVideoRequestBody(input Input) (map[string]interface{}, error) {
-	if IsBeefAPIH3Model(input.Config.Model) {
-		return beefAPIH3VideoBody(input)
-	}
-	if isBeefAPIFlatFrameVideo(input.Config.Model) {
-		return beefAPIFlatFrameVideoBody(input)
-	}
-	options := SeedanceTaskOptions(input)
-	resolution := videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality)
-	if resolution == "" {
-		resolution = NormalizeVideoResolution(input.Config.VQuality)
-	}
-	// A regular single reference must not become a first frame: that would
-	// silently replace the selected output ratio with the image's ratio.
-	singleReference := len(input.ReferenceImages) == 1 && modelcatalog.IsSeedance2Family("newapi", input.Config.Model) &&
-		SeedanceTaskImageRole(input, input.ReferenceImages[0]) == "reference_image"
-	referenceMode := singleReference || metadataString(input.Metadata, "videoEditOperation") == "reference_to_video" ||
-		len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 || (modelcatalog.IsSeedance25Model(input.Config.Model) && len(input.ReferenceImages) > 0)
-	if referenceMode {
-		content := make([]map[string]interface{}, 0, len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios))
-		for _, image := range input.ReferenceImages {
-			url, err := openAIImageInputURL(image)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, map[string]interface{}{
-				"type": "image_url", "image_url": map[string]interface{}{"url": url}, "role": SeedanceTaskImageRole(input, image),
-			})
-		}
-		for _, video := range input.ReferenceVideos {
-			url, err := SeedanceVideosMediaURL(video)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, map[string]interface{}{
-				"type": "video_url", "video_url": map[string]interface{}{"url": url}, "role": "reference_video",
-			})
-		}
-		for _, audio := range input.ReferenceAudios {
-			url, err := BeefAPIAudioURL(audio)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, map[string]interface{}{
-				"type": "audio_url", "audio_url": map[string]interface{}{"url": url}, "role": "reference_audio",
-			})
-		}
-		metadata := map[string]interface{}{
-			"ratio": options.AspectRatio,
-		}
-		if kind := protocol.SeedanceOmniTaskType(options); kind != "" {
-			metadata["omni_reference_task_type"] = kind
-		}
-		if VideoCapabilitySupportsAudio(input) {
-			metadata["generate_audio"] = ParseBool(input.Config.VideoGenerateAudio, true)
-		}
-		if VideoCapabilitySupportsWatermark(input) {
-			metadata["watermark"] = ParseBool(input.Config.VideoWatermark, false)
-		}
-		return map[string]interface{}{
-			"model": input.Config.Model, "prompt": SeedanceVideosPromptText(input),
-			"seconds":    strconv.Itoa(options.Duration),
-			"resolution": resolution, "content": content, "metadata": metadata,
-		}, nil
-	}
-	body := map[string]interface{}{
-		"model":      input.Config.Model,
-		"prompt":     SeedanceVideosPromptText(input),
-		"duration":   NormalizeSeedanceVideosDuration(input.Config.VideoSeconds),
-		"resolution": resolution,
-	}
-	if VideoCapabilitySupportsAudio(input) {
-		body["generate_audio"] = ParseBool(input.Config.VideoGenerateAudio, true)
-	}
-	if VideoCapabilitySupportsWatermark(input) {
-		body["watermark"] = ParseBool(input.Config.VideoWatermark, false)
-	}
-	images := make([]map[string]interface{}, 0, len(input.ReferenceImages))
-	for _, image := range input.ReferenceImages {
-		url, err := openAIImageInputURL(image)
-		if err != nil {
-			return nil, err
-		}
-		images = append(images, map[string]interface{}{"url": url})
-	}
-	if len(images) == 1 {
-		body["image"] = images[0]
-	}
-	// Seedance's first-frame mode derives the output ratio from the image and
-	// rejects an explicit ratio as InvalidParameter.TaskTypeConstraint.
-	if _, firstFrame := body["image"]; !firstFrame {
-		body["aspect_ratio"] = NormalizeSeedanceVideosRatio(input.Config.Size)
-	}
-	return body, nil
-}
-
-func isBeefAPIFlatFrameVideo(name string) bool {
-	return name == "grok-imagine-video-1.5" || name == "kling-video-v3"
-}
-
-// These gateway models take resolution and aspect_ratio separately. The Sora
-// multipart adapter uses size/resolution_name and sends numeric UI resolutions.
-func beefAPIFlatFrameVideoBody(input Input) (map[string]interface{}, error) {
-	contract, _ := providerpreset.BeefAPIVideoContract(input.Config.Model)
-	if len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 {
-		return nil, errors.New("当前视频模型只支持一张参考图片")
-	}
-	seconds := defaultString(input.Config.VideoSeconds, strconv.Itoa(contract.Duration.Default))
-	duration, err := strconv.Atoi(seconds)
-	if err != nil || duration <= 0 {
-		return nil, errors.New("视频时长必须为正整数")
-	}
-	maxDuration := contract.Duration.Max
-	if len(input.ReferenceImages) > 0 && contract.MaxImageDuration > 0 {
-		maxDuration = contract.MaxImageDuration
-	}
-	if duration < contract.Duration.Min || duration > maxDuration {
-		return nil, fmt.Errorf("当前视频模型时长须为 %d～%d 秒", contract.Duration.Min, maxDuration)
-	}
-	resolution := NormalizeVideoResolution(input.Config.VQuality)
-	if isAutomaticVideoResolution(input.Config.VQuality) {
-		resolution = "720p"
-	}
-	if !slices.Contains(contract.Resolutions, resolution) {
-		return nil, fmt.Errorf("当前视频模型不支持分辨率 %s", resolution)
-	}
-	if len(input.ReferenceImages) > 0 && contract.ReferenceResolution != "" && resolution != contract.ReferenceResolution {
-		return nil, fmt.Errorf("当前视频模型带参考图片时须选择 %s 分辨率", contract.ReferenceResolution)
-	}
-	ratio := defaultString(input.Config.Size, "16:9")
-	if (input.Config.Model != "kling-video-v3" || len(input.ReferenceImages) == 0) && !slices.Contains(contract.Ratios, ratio) {
-		return nil, fmt.Errorf("当前视频模型不支持比例 %s", ratio)
-	}
-	body := map[string]interface{}{
-		"model": input.Config.Model, "prompt": NewAPIVideoPromptText(input),
-		"duration": duration, "resolution": resolution,
-		"generate_audio": ParseBool(input.Config.VideoGenerateAudio, true),
-	}
-	if len(input.ReferenceImages) == 1 {
-		url, err := openAIImageInputURL(input.ReferenceImages[0])
-		if err != nil {
-			return nil, err
-		}
-		body["image"] = map[string]interface{}{"url": url}
-	}
-	// Kling derives the ratio from its first frame. Grok also accepts an
-	// explicit output ratio for image-to-video.
-	if input.Config.Model != "kling-video-v3" || len(input.ReferenceImages) == 0 {
-		body["aspect_ratio"] = ratio
-	}
-	return body, nil
+	return beefapi.LegacyVideoBody(managedLegacyVideoInput(input))
 }
 
 func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {

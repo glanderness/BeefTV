@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 27
+const CurrentSchemaVersion int64 = 28
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -138,6 +138,9 @@ func canonicalLocalMigrations() []localMigration {
 				}
 			}
 			return nil
+		}},
+		{version: 28, name: "managed-media-query-identity", apply: func(tx *gorm.DB) error {
+			return ensureSQLiteColumn(tx, "image_submissions", "query_cipher", "TEXT")
 		}},
 	}
 }

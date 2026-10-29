@@ -232,40 +232,7 @@ func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, i
 }
 
 func queryBeefAPIVideoResultWithSettlement(ctx context.Context, input canvasGenerationInput, id string) (map[string]interface{}, string, generation.BeefAPIVideoSettlement, error) {
-	var state map[string]interface{}
-	err := getJSON(ctx, input.Config, "/video/generations/"+id, &state)
-	var httpErr providerHTTPError
-	if err != nil && errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
-		state = nil
-		err = getJSON(ctx, input.Config, "/videos/"+id, &state)
-	}
-	var payloadErr generation.PayloadError
-	if err != nil && (!errors.As(err, &payloadErr) || len(state) == 0) {
-		return nil, "", generation.BeefAPIVideoSettlement{}, err
-	}
-	rawSettlement := generation.ExtractBeefAPIVideoSettlement(state)
-	state, validateErr := generation.ValidateVideoTaskState(id, state)
-	if validateErr != nil {
-		return nil, "", generation.BeefAPIVideoSettlement{}, validateErr
-	}
-	status, videoURL := seedancePollStatusAndURL(state)
-	if status == "failed" || status == "failure" || status == "cancelled" || status == "expired" {
-		return nil, status, rawSettlement, errors.New(defaultString(seedanceErrorMessage(state), "视频生成失败"))
-	}
-	if err != nil {
-		return nil, status, rawSettlement, err
-	}
-	if !generation.VideoTaskSucceeded(status) {
-		return nil, status, rawSettlement, nil
-	}
-	if videoURL == "" {
-		videoURL = generation.APIURL(input.Config.BaseURL, "/videos/"+id+"/content")
-	}
-	data, mimeType, err := generation.DownloadVideoResult(ctx, input.Config, videoURL, id)
-	if err != nil {
-		return nil, status, rawSettlement, err
-	}
-	return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}}, status, rawSettlement, nil
+	return generation.QueryManagedLegacyVideo(ctx, input, id)
 }
 
 func providerTaskRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {

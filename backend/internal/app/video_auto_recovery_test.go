@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -160,7 +161,7 @@ func TestVideoAndUpscaleAutomaticRecoveryDownloadsAndBindsCanvas(t *testing.T) {
 		t.Fatalf("upscale before recovery = %+v err=%v", beforeUp, err)
 	}
 
-	if err := s.recoverFailedVideos(context.Background(), 8); err != nil {
+	if err := s.recoverFailedVideos(generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: upstream.URL}), 8); err != nil {
 		t.Fatalf("recoverFailedVideos error = %v", err)
 	}
 	if err := s.RecoverIncompleteGenerationDeliveries(0); err != nil {
@@ -175,8 +176,8 @@ func TestVideoAndUpscaleAutomaticRecoveryDownloadsAndBindsCanvas(t *testing.T) {
 	if err != nil || afterUp.Status != model.TaskStatusSucceeded || afterUp.Outcome == nil || afterUp.Outcome.Phase != "ready" || afterUp.RouteRun != 1 {
 		t.Fatalf("upscale after recovery = %+v outcome=%+v err=%v", afterUp, afterUp.Outcome, err)
 	}
-	if createPostCount.Load() != 0 || recoverPostCount.Load() != 1 || getCount.Load() == 0 {
-		t.Fatalf("expected 0 create POSTs, 1 upscale recover POST, and GET downloads, got GET=%d recoverPOST=%d createPOST=%d", getCount.Load(), recoverPostCount.Load(), createPostCount.Load())
+	if createPostCount.Load() != 0 || recoverPostCount.Load() != 0 || getCount.Load() == 0 {
+		t.Fatalf("expected only GET queries/downloads, got GET=%d recoverPOST=%d createPOST=%d", getCount.Load(), recoverPostCount.Load(), createPostCount.Load())
 	}
 	var totalTasks int64
 	db.Model(&model.Task{}).Count(&totalTasks)
@@ -474,10 +475,10 @@ func TestRecoverTaskResetsBackoffAndRecoversAcrossDeliveryImageVideoAndUpscaleWi
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: upstream.URL})
 	for _, tc := range []struct {
-		id       string
-		wantRun  int
+		id      string
+		wantRun int
 	}{
 		{id: upscaleTask.ID, wantRun: 1},
 		{id: imageTask.ID, wantRun: 2},

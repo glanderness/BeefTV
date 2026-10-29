@@ -81,7 +81,7 @@ func TestExtractBeefAPIImageSettlementAndQueryJob(t *testing.T) {
 	}))
 	defer server.Close()
 
-	settlement, _, err := QueryBeefAPIImageJob(context.Background(), Config{
+	settlement, _, err := QueryBeefAPIImageJob(WithEndpoints(context.Background(), Endpoints{BeefAPIVideoBaseURL: server.URL}), Config{
 		BaseURL: server.URL,
 		APIKey:  "test-key",
 	}, "job-err-settled")

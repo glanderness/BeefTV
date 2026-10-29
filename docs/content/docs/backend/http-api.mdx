@@ -97,11 +97,17 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 `POST /depth-captures` 接收待处理视频素材编号，创建本机深度动作捕捉任务。只接受当前用户已上传完成的视频。可选 `nodeId` 指定结果节点，此时必须提供 `projectId`；任务保存目标节点并在完成后使用既有画布任务绑定操作回填。节点必须仍引用该任务，已删除或已改用其他任务的节点不会被恢复或覆盖。
 
-### 内置连接的图片素材协议
+### 内置连接的媒体协议
 
-内置 BeefAPI 图片任务在读取本地参考图之前，向同源 `/v1/models` 协商 `X-BeefAPI-Image-Media-Protocol: direct-media-v1`。缺少或不识别的版本会在上传和生成前失败。协议以服务端声明为准，不按模型名称决定传输。图片目录的 `image_capabilities` 使用现有图片能力字段，`image_capabilities_version` 标识该声明；文件大小 `0` 表示没有额外的本地文件上限。
+内置 BeefAPI 新图片任务在读取本地参考图之前，向配置的 API origin 查询 `/v1/models`。响应头 `X-BeefAPI-Media-Protocol: managed-media-v1` 与正文 `media_protocol.version` 必须一致；缺少或不识别的版本会在上传和生成前失败。目录声明 `supported_media_types`、`task_submit_url`、`task_query_url_template` 和 `uploads_url`，本批只启用图片任务。图片能力仍使用 `image_capabilities` 和 `image_capabilities_version`；文件大小 `0` 表示没有额外的本地文件上限。连接验证成功后复用现有目录刷新一次；离线、请求失败或声明无效时保留最后一份有效目录。
 
-参考图和蒙版复用现有上传 ticket、存储直传与确认流程。生成只发送 JSON：`image` 为 HTTPS 链接数组，`mask` 为单个 HTTPS 链接，并回传协商的协议头；最终序列化移除 `response_format`，结果格式由 API 决定。图片结果按原流程从 URL 下载、保存为本地资源。第三方连接保留各自协议；已经冻结的旧请求按原字节、Header 和幂等键恢复，不补新协议头、不重新生成。
+本地参考图和蒙版通过 `/v1/media/uploads` 申请票据，直接 PUT 到存储，再以原票据 `/complete` 确认。生成只向 `/v1/media/tasks` 发送小 JSON：`task_ref` 是一次授权 attempt 的稳定编号，另有 `media_type`、`model`、`operation`、`input.prompt`、`input.references[{kind,role,url}]` 和业务 `options`。参考图角色为 `reference`，蒙版为 `mask`。`response_format` 和协议覆盖字段不会进入最终请求。API 决定供应商协议和结果转存；客户端不按模型名称选择传输。
+
+首次 POST 前持久化原 attempt 和发送记录。POST 结果丢失、明确 429、404、超时或应用重启均只查询 `GET /v1/media/tasks/{task_ref}`，不自动换键或重发。状态为 `queued`、`in_progress`、`completed`、`failed` 或 `unknown`；缺失的扣费字段不能解释为未扣费。`reconcile_deadline` 只接受 API 已有期限，不在本地计算。v28 的小型加密 `query_cipher` 保留原查询身份，24 小时后清理包含素材的大请求；升级前已经清空且无法找回的查询身份保持未知，不重建生成请求。
+
+新图片结果只接收 `outputs` 的 URL，逐项元数据、顺序、层信息与 `usage` 一并保存。历史任务可由 API 返回 `result_receipt:{format:"openai-image-response",url,expires_at}`；唯一 BeefAPI 适配层直接从存储读取最多 64MiB 的原 JSON，识别实际图片 MIME，保留旧层。该读取不携带 API 或第三方 Header/Cookie，跳转也不携带。存储目标及每次跳转必须为公网 HTTPS；直连只拨已验证 IP，用户显式配置的代理仍作为网络路由使用，代理内部 DNS 不由客户端固定。第三方连接与 BYOK 保留各自协议。
+
+现有视频和超分请求也集中到同一 BeefAPI 适配层，恢复只 GET 原任务，供应商参数由 API 根据通用参考角色与用户操作转换。这批尚未将视频、超分和音频迁入新的通用任务引擎；音频保留既有 speech/music 兼容行为，历史视频与超分内容接口仍可能由主 API 返回文件。
 
 ### 任务读取与后台图片恢复
 
@@ -342,7 +348,7 @@ schema 3 另包含以下证据：
 
 图片创建请求完整返回 HTTP 400 或 422，且错误确认是输入参数、输入素材或输入内容审核拒绝时，保留实际错误类别，不标记为 `submission_unknown`，也不自动重发。若已经获得供应商任务 ID、接受回执，或此前发送结果不确定，仍阻止重复提交。历史 `submission_unknown` 任务的诊断摘要未保留完整响应及重放标志，不能据此解锁重试或修改其失败状态。内容审核失败须调整输入后重新生成，不能原样重试。
 
-NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID 并继续后台取回，自动恢复最长到任务开始后 24 小时；超出窗口后可在失败任务详情手动取回。任务日志接口提供脱敏的 `summary`，不返回原始 `message` / `payload` 内容；摘要不写回数据库。
+视频暂时下载断连会保留原任务 ID 并继续查询。内置 BeefAPI 不用本地 24 小时或查询 404 判定任务无法取回、未扣费；BYOK 保留原恢复窗口。任务日志接口提供脱敏的 `summary`，不返回原始 `message` / `payload` 内容；摘要不写回数据库。
 
 任务列表与详情中的 `errorCode` 是 BeefTV 归类后的错误类别，不能当作上游原始代码。已识别的 SQLite 缺表/列、锁定、只读、I/O 和约束失败使用 `local_storage`，提示本地数据库无法读写、不自动重试；不能因为外层 HTTP 400 把它归为模型参数错误。判断只读取实际错误消息，不读取请求或提示词回显。新记录的失败任务可包含 `failureDiagnostics`：`source` 区分本地校验、上游 HTTP / 业务响应、本地结果处理及未知来源；`summary` 保存脱敏后的错误摘要，另带实际记录到的 `providerCode`、`httpStatus`、`param`、`requestId`、`providerTaskId`、`stage` 和 `capturedAt`。缺失信息不推断或补造。`createdAt` 是任务创建时间，`completedAt` 是结束时间，均不等于错误记录时间。
 
@@ -352,17 +358,15 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 持久化图片任务收到公开媒体地址后，先保存原结果，再由结果交付流程下载；下载失败不会重放图片生成请求。BeefAPI 的签名图片代理地址也走此流程。需要供应商鉴权的同源媒体接口与非持久化调用仍先读取字节，保持原有鉴权方式。结果交付会校验图片内容，不把 HTTP 200 返回的错误文档保存为图片。下载响应头等待和传输停滞属于超时，不归为用户取消。
 
-内置 BeefAPI Seedance 的素材预上传分为申请地址、上传文件（PUT）和确认上传，轨迹分别记录为 `reference_create`、`reference_put`、`reference_complete`。上传失败的 `source=reference_upload`；摘要包含素材类型、从 1 开始的序号和失败阶段，并保留实际采集到的 HTTP 状态、连接阶段、存储错误代码和请求 ID。存储错误正文只提取代码与请求 ID，不保存签名地址、签名头、素材内容或原始 XML。
+内置 BeefAPI 素材上传分为申请地址、上传文件（PUT）和确认上传，轨迹分别记录为 `reference_create`、`reference_put`、`reference_complete`。上传失败的 `source=reference_upload`；摘要包含素材类型、从 1 开始的序号和失败阶段，并保留实际采集到的 HTTP 状态、连接阶段、存储错误代码和请求 ID。存储错误正文只提取代码与请求 ID，不保存签名地址、签名头、素材内容或原始 XML。
 
-单文件 PUT 的临时连接或传输失败最多尝试 3 次。可能已经传完但回执丢失时，先用原票据确认；只有服务端明确返回 `video_reference_upload_incomplete` 才重传相同文件。确认回执丢失只重试同票据确认，不重新上传，也不创建新票据。首次失败后的自动恢复受 30 秒总时限和任务取消约束，间隔采用带随机量的退避；正常路径没有额外预检或等待。证书校验失败、地址安全拒绝、单文件存储 403 和确定的网关鉴权/参数错误不自动重试。分片仍按原收件回执跳过已确认部分。
+单文件 PUT 的临时连接或传输失败最多尝试 3 次。可能已经传完但回执丢失时，先用原票据确认；只有服务端明确返回未完成才重传相同文件。确认回执丢失只重试同票据确认，不重新上传，也不创建新票据。证书校验失败、地址安全拒绝、单文件存储 403 和确定的网关鉴权/参数错误不自动重试。分片按原收件回执跳过已确认部分，任务取消仍受原执行上下文控制。
 
 网络阶段从实际请求被动采集，不用额外探测请求阻塞上传。`requests[].attempt` 保存当前操作的尝试序号，摘要同时标注次数；仍只保留首次和最近 7 条请求，超出条数以 `omittedRequests` 说明。素材准备失败还保存 `failedOperation` 和已采集到的 `transportPhase`，避免把最后一次恢复查询误当作原失败。导出的 schema 3 ZIP 和离线分析可识别素材准备失败及已记录的连接阶段；阶段定位不等于网络责任归属，也不能恢复旧记录没有采集到的证据。
 
-视频原任务查询保留 DNS 错误的网络类型：临时故障或超时在原查询循环中重试，永久域名不存在、取消和安全地址拒绝不重试；此机制不重发生成 POST。已持有 BeefAPI 任务 ID 时，后台恢复继续使用原 ID，仍受取消、租约与原 24 小时恢复窗口限制。诊断使用提交、查询、上游素材读取、本机结果下载等实际阶段；DNS 故障的 `source=local_network`、`transportPhase=dns`，只导出安全文案，不保存底层错误中的域名、DNS 服务器或签名地址。HTTP 200 内的业务失败与本机网络失败分别分析。
+视频原任务查询保留 DNS 错误的网络类型：临时故障或超时在原查询循环中重试，永久域名不存在、取消和安全地址拒绝不重试；此机制不重发生成 POST。已持有 BeefAPI 任务 ID 时，后台恢复继续使用原 ID，仍受取消与租约控制；本地时钟不会把内置任务判定为无法取回。诊断使用提交、查询、上游素材读取、本机结果下载等实际阶段；DNS 故障的 `source=local_network`、`transportPhase=dns`，只导出安全文案，不保存底层错误中的域名、DNS 服务器或签名地址。HTTP 200 内的业务失败与本机网络失败分别分析。
 
-生成尚未提交时，文件上传连接失败、签名拒绝、限流或临时服务异常可改用网关已有的内嵌素材接口，合并后的 Base64 与 JSON 仍受原 64 MiB 上限约束，并重新校验剩余素材的类型、大小和模型限制。已经完成上传的素材链接保留，最终只提交一次生成。取消、地址安全校验拒绝、素材校验失败、上传确认失败以及无法满足大小限制时停止提交并保留错误；不会因上传失败重试付费生成。无法恢复的上传错误使用 `reference_preupload_failed`，禁止自动重试，允许用户检查网络后手动重试。
-
-上述内嵌恢复只适用于 Seedance；要求 HTTP 参考链接的模型在预上传失败时停止准备，不回退到内嵌素材，也不提交生成。
+内置 BeefAPI 素材上传失败时恢复原上传票据，或在生成提交前停止。Seedance 不再回退到内嵌 Base64，也不会为上传失败重发生成任务。
 
 生成结果正在取回时，任务详情与列表的 `delivery.outputs[]` 给出该任务每个输出的 `downloadedBytes`、`totalBytes`（未知为 -1）、`bytesPerSecond`、`updatedAt`（Unix 毫秒采样时间）和 `state`（`downloading` / `retrying` / `waiting`），供页面显示进度。页面在采样超过 3 秒后隐藏速度与剩余时间。它只存在进程内存中，不写数据库，取回结束即消失，重启后不保留；没有取回中的下载时该字段省略。
 
@@ -390,4 +394,4 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 本地素材分片上传以 `X-Idempotency-Key` 复用当前用户的上传会话。`POST /api/resources/uploads` 返回 `uploadId`、`chunkSize`、`chunkCount` 和 `received`（已完整保存的分片索引）；客户端重试时查询同一会话并跳过这些分片，最后仍须调用 `complete` 确认资源保存成功。此恢复只适用于仍有效的会话，不保证应用重启或会话过期后继续上传。
 
-Seedance 参考素材使用独立的企业接口协议：客户端申请时传 `resumable: true`，支持的网关对大于 8MiB 的素材返回 COS/R2 原生分片计划。单片断流后查询 `/video-references/uploads/resume`，跳过已收完整的片段；确认丢失时复用原 ticket 调用 `/complete`，最终仍核验整文件大小、SHA-256 和类型。一次上传内最多进行 4 轮传输恢复，取消或最终失败会尽力 `/abort` 清理。沿用系统和环境代理；不强制直连。15 分钟有效期和应用重启后继续的能力不扩展，旧网关及小文件仍使用原整文件 PUT。所有重试均发生在模型提交前，不重复发生成请求；轨迹增加 `reference_resume`、`reference_abort`。
+托管参考素材共用 `/v1/media/uploads`：客户端申请时传 `resumable: true`，按 API 返回的单 PUT 或 COS/R2 原生分片计划上传。分片断流后查询同票据 `/resume`，跳过已收完整的片段；确认丢失时复用原票据 `/complete`，最终仍核验整文件大小、SHA-256 和类型。取消或最终失败会尽力 `/abort` 清理。文件流式散列与上传，不能 seek 的来源才暂存到临时文件；不新增通用文件上限。沿用系统和环境代理。所有重试均发生在模型提交前，不重复发生成请求。

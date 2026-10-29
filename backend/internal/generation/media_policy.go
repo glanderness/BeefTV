@@ -9,7 +9,10 @@ import (
 )
 
 func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPolicy {
-	if input.Mode == "image" && usesDirectImageMedia(ctx, input.Config) {
+	if managedConnection(input.Config) && (input.Mode == "image" || input.Mode == "video") {
+		return MediaHydrationPolicy{KeepLocal: true}
+	}
+	if input.Mode == "video" && IsBeefAPIVideoConfig(ctx, input.Config) {
 		return MediaHydrationPolicy{KeepLocal: true}
 	}
 	if input.Config.InterfaceType == "full-video" {

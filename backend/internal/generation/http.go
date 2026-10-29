@@ -186,13 +186,6 @@ func GetGeminiBinary(ctx context.Context, config Config, rawURL string) ([]byte,
 }
 
 func newJSONRequest(ctx context.Context, method, rawURL string, config Config, body interface{}) (*http.Request, error) {
-	var err error
-	if method == http.MethodPost {
-		body, err = directImageBody(ctx, rawURL, body)
-		if err != nil {
-			return nil, RequestPreparationError{Cause: err}
-		}
-	}
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -255,7 +248,6 @@ func DoJSON(req *http.Request, target interface{}) error {
 }
 
 func DoBinary(req *http.Request) ([]byte, string, error) {
-	applyImageMediaHeader(req)
 	var protocolErr error
 	req, protocolErr = NegotiateImageReplay(req)
 	if protocolErr != nil {
@@ -282,7 +274,6 @@ func DoBinary(req *http.Request) ([]byte, string, error) {
 }
 
 func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
-	applyImageMediaHeader(req)
 	if partial, _ := req.Context().Value(videoDownloadPartialContext{}).(string); partial != "" && req.Method == http.MethodGet && onChunk == nil {
 		return getResumableVideoBinary(req, partial)
 	}
@@ -404,14 +395,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			cancel(nil)
 		}()
 	}
-	if transport, ok := client.Transport.(*http.Transport); ok {
-		observation.TransportRoute = "direct"
-		if transport.Proxy != nil {
-			if proxy, proxyErr := transport.Proxy(req); proxyErr == nil && proxy != nil {
-				observation.TransportRoute = "proxy"
-			}
-		}
-	}
+	observation.TransportRoute = outbound.RequestNetworkRoute(req, client.Transport)
 	resp, err := client.Do(req)
 	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {

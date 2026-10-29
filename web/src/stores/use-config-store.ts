@@ -380,7 +380,7 @@ export type ModelChannel = {
         referenceMediaTransport?: ReferenceMediaTransport;
         authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
-		imageCapabilitiesVersion?: string;
+        imageCapabilitiesVersion?: string;
         videoCapabilitiesVersion?: string;
         videoPricing?: VideoPriceQuote | null;
         logicalModelId?: string;
@@ -898,7 +898,7 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
     const existing = new Map((channel.modelProfiles || []).map((item) => [item.model, item]));
     for (const model of models.filter(isImageModelName)) {
         const current = existing.get(model);
-		if (current?.imageCapabilitiesVersion && current.capabilityConfig?.image) continue;
+        if (current?.imageCapabilitiesVersion && current.capabilityConfig?.image) continue;
         // These BeefAPI models use Images, even when an older generic catalog
         // saved a text protocol. Do not rewrite arbitrary custom model routes.
         const contract = beefAPIImageContract(model);
@@ -1023,8 +1023,8 @@ export function modelOptionName(value: string) {
 }
 
 export function modelDisplayName(config: AiConfig, value: string) {
-	const portrait = seedancePortraitLabel(value);
-	if (portrait) return portrait;
+    const portrait = seedancePortraitLabel(value);
+    if (portrait) return portrait;
     const model = modelOptionName(value);
     const channel = resolveModelChannel(config, value);
     const displayName = channelModelProfile(channel, model)?.displayName?.trim();

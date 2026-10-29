@@ -199,7 +199,7 @@ func TestVideoRecoveryBeefAPIQueryUsesOnlyGet(t *testing.T) {
 		_, _ = io.WriteString(w, `{"data":{"id":"original","status":"completed"}}`)
 	}))
 	defer server.Close()
-	result, _, err := queryBeefAPIVideoResult(context.Background(), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
+	result, _, err := queryBeefAPIVideoResult(generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL}), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
 	if err != nil || result == nil || queries.Load() != 1 || downloads.Load() != 1 {
 		t.Fatalf("result=%v err=%v queries=%d downloads=%d", result, err, queries.Load(), downloads.Load())
 	}
@@ -222,7 +222,7 @@ func TestVideoRecoveryBeefAPIRejectsDifferentTaskBeforeDownload(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"original","data":{"task_id":"different","status":"completed"}}`)
 	}))
 	defer server.Close()
-	result, _, err := queryBeefAPIVideoResult(context.Background(), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
+	result, _, err := queryBeefAPIVideoResult(generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL}), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
 	if err == nil || result != nil || queries.Load() != 1 || downloads.Load() != 0 || creates.Load() != 0 {
 		t.Fatalf("result=%v err=%v queries=%d downloads=%d creates=%d", result, err, queries.Load(), downloads.Load(), creates.Load())
 	}

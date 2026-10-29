@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/outbound"
 )
 
@@ -183,6 +184,7 @@ type Runtime struct {
 	DownloadCache     VideoDownloadCachePort
 	ReferenceProgress ReferenceProgressPort
 	Images            ImageSubmissionPort
+	ManagedMedia      beefapi.MediaStatePort
 	Workflow          WorkflowPort
 	Prompt            PromptPort
 	Config            ConfigPort

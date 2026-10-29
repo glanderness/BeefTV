@@ -101,8 +101,8 @@ export type VideoCapabilityConfig = {
         maxAudioTotalDurationSeconds?: number;
     };
     duration: {
-		continuous?: boolean;
-		fractionalMin?: number;
+        continuous?: boolean;
+        fractionalMin?: number;
         selection: "range" | "enum";
         min?: number;
         max?: number;
@@ -724,7 +724,7 @@ export function modelCapabilityConfigFor(
     // capability object while retaining the legacy entry as a fallback.
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
-	if (profile?.imageCapabilitiesVersion && profile.capabilityConfig?.image) return structuredClone(profile.capabilityConfig);
+    if (profile?.imageCapabilitiesVersion && profile.capabilityConfig?.image) return structuredClone(profile.capabilityConfig);
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
     // Official gateway contracts also upgrade capabilities cached by older installs.
     try {
@@ -778,14 +778,14 @@ export function modelCapabilityConfigFor(
 }
 
 export function sanitizeServerImageCapability(value: unknown): ImageCapabilityConfig | null {
-	if (!value || typeof value !== "object") return null;
-	const image = value as ImageCapabilityConfig;
-	if (!image.references || !image.size || !image.quality || !image.transparentBackground || !image.responseFormat || !image.outputFormat) return null;
-	if (![image.references.promptMaxChars, image.references.maxImages, image.references.maxImageBytes].every((item) => Number.isInteger(item) && item >= 0) || !Number.isInteger(image.maxOutputs) || image.maxOutputs < 1) return null;
-	if (!["none", "size", "aspect_ratio"].includes(image.size.parameter) || !Array.isArray(image.size.values) || !Array.isArray(image.quality.values)) return null;
-	if (image.size.parameter !== "none" && (!image.size.default || (!image.size.allowCustom && !image.size.values.includes(image.size.default)))) return null;
-	if (image.quality.supported && !image.quality.values.includes(image.quality.default)) return null;
-	return structuredClone(image);
+    if (!value || typeof value !== "object") return null;
+    const image = value as ImageCapabilityConfig;
+    if (!image.references || !image.size || !image.quality || !image.transparentBackground || !image.responseFormat || !image.outputFormat) return null;
+    if (![image.references.promptMaxChars, image.references.maxImages, image.references.maxImageBytes].every((item) => Number.isInteger(item) && item >= 0) || !Number.isInteger(image.maxOutputs) || image.maxOutputs < 1) return null;
+    if (!["none", "size", "aspect_ratio"].includes(image.size.parameter) || !Array.isArray(image.size.values) || !Array.isArray(image.quality.values)) return null;
+    if (image.size.parameter !== "none" && (!image.size.default || (!image.size.allowCustom && !image.size.values.includes(image.size.default)))) return null;
+    if (image.quality.supported && !image.quality.values.includes(image.quality.default)) return null;
+    return structuredClone(image);
 }
 
 export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
@@ -1494,7 +1494,7 @@ function normalizeRangeDuration(profile: VideoCapabilityConfig, value: number) {
     const step = profile.duration.step || 1;
     const candidate = Number.isFinite(value) ? (profile.duration.continuous ? value : Math.floor(value)) : profile.duration.default;
     const clamped = Math.min(max, Math.max(min, candidate));
-	if (profile.duration.continuous) return clamped;
+    if (profile.duration.continuous) return clamped;
     const maxStep = Math.max(0, Math.floor((max - min) / step));
     return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
 }
@@ -1515,7 +1515,7 @@ export function videoDurationRequirement(duration: VideoCapabilityConfig["durati
 
 export function videoDurationOptions(profile: VideoCapabilityConfig) {
     if (profile.duration.selection === "enum") return profile.duration.values || [];
-	if (profile.duration.continuous) return [profile.duration.fractionalMin || profile.duration.min || .92,...Array.from({length:15},(_,i)=>i+1)];
+    if (profile.duration.continuous) return [profile.duration.fractionalMin || profile.duration.min || .92,...Array.from({length:15},(_,i)=>i+1)];
     const min = profile.duration.min || 1;
     const max = profile.duration.max || min;
     const step = profile.duration.step || 1;

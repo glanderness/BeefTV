@@ -120,6 +120,9 @@ func isImageRecoveryError(err error) bool {
 // Only a definite gateway rate-limit rejection can start a new paid attempt.
 // The executor caps the entire logical task to three attempts and backs off.
 func (s *Service) retryRejectedImageAttempt(task *model.Task, previous *model.RouteAttempt, taskErr error) (*model.RouteAttempt, error) {
+	if config, ok := s.resolveImageRecoveryConfig(*task); ok && config.CredentialRef == beefapi.CredentialRef {
+		return nil, nil
+	}
 	if previous.DispatchState != "rejected_no_job" || !definiteImageThrottle(taskErr) {
 		return nil, nil
 	}
@@ -144,6 +147,9 @@ func (s *Service) retryRejectedImageAttempt(task *model.Task, previous *model.Ro
 	var wire imageWireRequest
 	if err := json.Unmarshal([]byte(plain), &wire); err != nil {
 		return nil, err
+	}
+	if managedFrozenImage(*task, wire) {
+		return nil, nil
 	}
 	key, _ := withProviderSubmissionKey(context.Background(), attempt).Value(providerSubmissionKeyContext{}).(string)
 	wire.Header.Set("Idempotency-Key", key)
@@ -173,6 +179,9 @@ func (s *Service) shouldDeferImageRecovery(task model.Task, taskErr error, provi
 		return false
 	}
 	row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+	if err == nil && (managedTaskConnection(task) || attempt.ChannelID == beefapi.ChannelID || row.QueryCipher != "") {
+		return true
+	}
 	if err != nil || row.RequestCipher == "" || time.Since(row.CreatedAt) >= imageRecoveryLifetime {
 		return false
 	}
@@ -227,7 +236,7 @@ func recoverableImageEndpoint(req *http.Request) bool {
 // Recoverable BeefAPI canvas_image routes fail closed when the bound owner or
 // attempt identity is missing; other hosts decline so the normal POST proceeds.
 func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmission, bool, error) {
-	if req == nil || !recoverableImageEndpoint(req) {
+	if req == nil || (!recoverableImageEndpoint(req) && !isManagedMediaRequest(req)) {
 		return nil, false, nil
 	}
 	if s == nil {
@@ -279,7 +288,11 @@ func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmissi
 	if channelID == "" && beefapi.IsEnterpriseBaseURL(req.URL.String()) {
 		channelID = beefapi.ChannelID
 	}
-	raw, err := json.Marshal(imageWireRequest{ChannelID: channelID, URL: req.URL.String(), Header: header, Body: body, ReplayProtocol: generation.ImageReplayProtocol})
+	protocol := generation.ImageReplayProtocol
+	if isManagedMediaRequest(req) {
+		protocol = beefapi.MediaProtocolVersion
+	}
+	raw, err := json.Marshal(imageWireRequest{ChannelID: channelID, URL: req.URL.String(), Header: header, Body: body, ReplayProtocol: protocol})
 	if err != nil {
 		return nil, true, err
 	}
@@ -288,6 +301,17 @@ func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmissi
 		return nil, true, err
 	}
 	row = &model.ImageSubmission{AttemptID: attemptID, TaskID: task.ID, UserID: task.UserID, RequestCipher: cipher, CreatedAt: time.Now()}
+	var wire imageWireRequest
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, true, err
+	}
+	row.QueryCipher, err = s.managedImageQueryCipher(task, wire)
+	if err != nil {
+		return nil, true, err
+	}
+	if err := s.expireImageSubmissionRequests(); err != nil {
+		return nil, true, err
+	}
 	if err := s.repo.CreateImageSubmission(row); err != nil {
 		return nil, true, err
 	}
@@ -331,6 +355,9 @@ func (s *Service) sendImageSubmissionWithMode(ctx context.Context, task model.Ta
 	wire, err := s.imageSubmissionWire(row)
 	if err != nil {
 		return nil, "", imageRecoveryError{err}
+	}
+	if managedFrozenImage(task, wire) {
+		return nil, "", imageRecoveryError{errors.New("BeefAPI 图片任务只能按原编号查询")}
 	}
 	deadline := time.Now().Add(imageRecoveryWait)
 	if expires := row.CreatedAt.Add(imageRecoveryLifetime); expires.Before(deadline) {
@@ -502,6 +529,9 @@ func (s *Service) recoverImageSubmission(ctx context.Context, task model.Task) (
 	}
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
+	}
+	if result, managed, collectErr := s.collectManagedImage(ctx, task, row); managed {
+		return result, true, collectErr
 	}
 	data, _, err := s.sendImageSubmission(ctx, task, row)
 	if err != nil {

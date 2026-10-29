@@ -18,7 +18,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
@@ -95,6 +97,10 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 					objects[strings.TrimPrefix(r.URL.Path, "/objects/")] = data
 					return
 				}
+				if r.URL.Path == "/delivery" {
+					http.Redirect(w, r, "/generated.png", http.StatusFound)
+					return
+				}
 				downloads++
 				w.Header().Set("Content-Type", "image/png")
 				_, _ = w.Write(imageBytes)
@@ -105,8 +111,8 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
-					w.Header().Set(generation.ImageMediaProtocolHeader, generation.ImageMediaProtocol)
-					_, _ = io.WriteString(w, `{"data":[]}`)
+					w.Header().Set(beefapi.MediaProtocolHeader, beefapi.MediaProtocolVersion)
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{}, "media_protocol": beefapi.MediaDiscovery{Version: beefapi.MediaProtocolVersion, SupportedMediaTypes: []string{"image"}, TaskSubmitURL: "/v1/media/tasks", TaskQueryURLTemplate: "/v1/media/tasks/{task_ref}", UploadsURL: "/v1/media/uploads"}})
 					return
 				}
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/images/proxy" {
@@ -125,7 +131,7 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
-				case "/v1/video-references/uploads":
+				case "/v1/media/uploads":
 					var req generation.BeefAPISeedanceUploadRequest
 					if err := json.Unmarshal(data, &req); err != nil {
 						t.Error(err)
@@ -139,7 +145,7 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 					ticket := fmt.Sprintf("ticket-%d", len(uploads))
 					uploads[ticket] = req
 					_ = json.NewEncoder(w).Encode(generation.BeefAPISeedanceUploadSession{Ticket: ticket, UploadURL: storage.URL + "/objects/" + ticket, UploadMethod: "PUT", RequiredHeaders: map[string]string{"Content-Type": "image/png"}})
-				case "/v1/video-references/uploads/complete":
+				case "/v1/media/uploads/complete":
 					var req struct {
 						Ticket string `json:"ticket"`
 					}
@@ -150,43 +156,46 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 					}
 					completes++
 					_ = json.NewEncoder(w).Encode(generation.BeefAPISeedanceUploadComplete{URL: storage.URL + "/objects/" + req.Ticket, Kind: metadata.Kind, Mime: metadata.Mime, Bytes: metadata.Bytes, SHA256: metadata.SHA256})
-				case "/v1/images/generations", "/v1/images/edits":
+				case "/v1/media/tasks":
 					posts++
 					var body map[string]any
 					_ = json.Unmarshal(data, &body)
-					if body["response_format"] != nil || body["model"] != tc.model || r.Header.Get(generation.ImageMediaProtocolHeader) != generation.ImageMediaProtocol {
+					if body["response_format"] != nil || body["model"] != tc.model || r.Header.Get(beefapi.MediaProtocolHeader) != beefapi.MediaProtocolVersion || body["task_ref"] != r.Header.Get("Idempotency-Key") {
 						t.Errorf("URL contract missing: %#v", body)
 					}
-					if tc.mask && (r.URL.Path != "/v1/images/edits" || !strings.HasPrefix(body["mask"].(string), storage.URL+"/objects/")) {
-						t.Error("mask URL or edits path lost")
+					options := body["options"].(map[string]any)
+					if options["response_format"] != nil {
+						t.Error("cached or plugin Base64 choice entered media options")
 					}
-					if tc.transparent && (body["background"] != "transparent" || body["output_format"] != "png") {
+					if tc.transparent && (options["background"] != "transparent" || options["output_format"] != "png") {
 						t.Error("transparent PNG options lost")
 					}
-					if tc.model == "midjourney-v8.2" && body["n"] != float64(4) {
+					if tc.model == "midjourney-v8.2" && options["n"] != float64(4) {
 						t.Error("fixed four Midjourney outputs lost")
 					}
-					var refs []any
-					if raw, ok := body["image"].(string); ok {
-						refs = []any{raw}
-					} else if raw, ok := body["image"].([]any); ok {
-						refs = raw
-					} else if raw, ok := body["images"].([]any); ok {
-						refs = raw
+					requestInput := body["input"].(map[string]any)
+					refs, _ := requestInput["references"].([]any)
+					wantRefs := tc.refs
+					if tc.mask {
+						wantRefs++
 					}
-					if len(refs) != tc.refs {
-						t.Errorf("references=%#v, want %d", refs, tc.refs)
+					if len(refs) != wantRefs {
+						t.Errorf("references=%#v, want %d", refs, wantRefs)
 					}
 					for i, ref := range refs {
-						if ref != storage.URL+fmt.Sprintf("/objects/ticket-%d", i) {
+						item := ref.(map[string]any)
+						if item["url"] != storage.URL+fmt.Sprintf("/objects/ticket-%d", i) {
 							t.Errorf("reference order changed: %#v", refs)
+						}
+						if tc.mask && i == tc.refs && item["role"] != "mask" {
+							t.Error("mask role lost")
 						}
 					}
 					items := make([]map[string]any, tc.outputs)
 					for i := range items {
-						items[i] = map[string]any{"url": gateway.URL + "/v1/images/proxy", "z_index": i + 1, "name": fmt.Sprintf("layer-%d", i)}
+						items[i] = map[string]any{"kind": "image", "url": storage.URL + "/delivery", "metadata": map[string]any{"z_index": i + 1, "name": fmt.Sprintf("layer-%d", i)}}
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"data": items, "usage": map[string]any{"total_tokens": 7}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"task_ref": body["task_ref"], "media_type": "image", "status": "completed", "outputs": items, "usage": map[string]any{"total_tokens": 7}})
 				default:
 					http.NotFound(w, r)
 				}
@@ -217,8 +226,20 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 				mask := seedManagedImageLocalResource(t, svc, "mask", referenceBytes)
 				input.Mask = &mask
 			}
+			inputJSON, _ := json.Marshal(input)
+			task := model.Task{ID: "original-task", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusRunning, LeaseOwner: "test-owner", InputJSON: string(inputJSON)}
+			expires := time.Now().Add(time.Hour)
+			task.LeaseExpiresAt = &expires
+			attempt := &model.RouteAttempt{ID: "original-attempt", TaskID: task.ID, ChannelID: beefapi.ChannelID, Status: "dispatching", DispatchState: "submission_unknown", StartedAt: time.Now()}
+			for _, row := range []any{&task, attempt} {
+				if err := db.Create(row).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
 			ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: gateway.URL})
 			ctx = svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: "user-1", TaskID: "original-task", TaskType: "canvas_image"})
+			ctx = withProviderSubmissionKey(ctx, attempt)
+			ctx = context.WithValue(ctx, imageTaskContext{}, task)
 			ctx = generation.WithProtocolRegistry(ctx, generation.LoadOfficialFallbackRegistry())
 			if tc.hostFallback {
 				registry, _ := protocol.NewRegistry()
@@ -241,12 +262,6 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 			}
 			if result["usage"].(map[string]any)["total_tokens"] != float64(7) {
 				t.Fatalf("usage lost: %#v", result)
-			}
-			inputJSON, _ := json.Marshal(input)
-			task := model.Task{ID: "original-task", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusRunning, InputJSON: string(inputJSON)}
-			if err := db.Create(&task).Error; err != nil {
-				closeDB(t, db)
-				t.Fatal(err)
 			}
 			resultJSON, _ := json.Marshal(result)
 			if err := svc.saveTaskCompletionWithinStorageQuota(&task, resultJSON, nil, false); err != nil {
@@ -318,7 +333,9 @@ func newManagedImageDirectService(t *testing.T, path, dataDir string) (*Service,
 	if err := database.MigrateLocalSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	return NewLocal(svc.repo, dataDir), db
+	service := NewLocal(svc.repo, dataDir)
+	service.generationDeliveryMedia = generationDeliveryMediaAdapter{service: service, allowManagedMediaHTTPForTest: true}
+	return service, db
 }
 
 func seedManagedImageLocalResource(t *testing.T, svc *Service, id string, data []byte) generation.Media {

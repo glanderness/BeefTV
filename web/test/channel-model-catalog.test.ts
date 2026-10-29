@@ -38,6 +38,9 @@ test("陌生图片ID刷新服务端能力后可选，保留零文件上限和新
     channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [{ id: model, supportedEndpointTypes: ["image-generation"], imageCapabilities: changed, imageCapabilitiesVersion: "v2" }]);
     expect(modelCapabilityConfigFor({ channels: [channel] }, model).image!.references.maxImages).toBe(7);
     expect(channel.modelProfiles[0]!.imageCapabilitiesVersion).toBe("v2");
+    channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [{ id: model, supportedEndpointTypes: ["image-generation"] }]);
+    expect(channel.modelProfiles[0]!.imageCapabilitiesVersion).toBe("v2");
+    expect(channel.modelProfiles[0]!.capabilityConfig!.image).toEqual(changed);
 });
 
 test("官方GPT图片旧默认配置升级质量和21:9尺寸，保留显式限制与第三方配置", () => {

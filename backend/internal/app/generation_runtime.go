@@ -376,6 +376,7 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		Limits:           appLimitsPort{service: s},
 		Receipts:         appReceiptPort{service: s},
 		Images:           appImagePort{service: s},
+		ManagedMedia:     appManagedMediaPort{service: s},
 		Workflow:         appWorkflowPort{service: s},
 		Prompt:           appPromptPort{service: s},
 		Config:           appConfigPort{service: s},
