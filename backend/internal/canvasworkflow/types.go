@@ -64,20 +64,25 @@ type RunRequest struct {
 	Inputs            map[string]Value `json:"inputs"`
 }
 type Step struct {
-	NodeID     string  `json:"nodeId"`
-	Title      string  `json:"title"`
-	Status     string  `json:"status"`
-	TaskID     string  `json:"taskId,omitempty"`
-	Error      string  `json:"error,omitempty"`
-	ResourceID string  `json:"resourceId,omitempty"`
-	Text       string  `json:"text,omitempty"`
-	Candidates []Value `json:"candidates,omitempty"`
+	Progress       int                  `json:"progress,omitempty"`
+	Stage          string               `json:"stage,omitempty"`
+	Replacement    *ReplacementProgress `json:"replacement,omitempty"`
+	ReviewRequired bool                 `json:"reviewRequired,omitempty"`
+	NodeID         string               `json:"nodeId"`
+	Title          string               `json:"title"`
+	Status         string               `json:"status"`
+	TaskID         string               `json:"taskId,omitempty"`
+	Error          string               `json:"error,omitempty"`
+	ResourceID     string               `json:"resourceId,omitempty"`
+	Text           string               `json:"text,omitempty"`
+	Candidates     []Value              `json:"candidates,omitempty"`
 }
 type Output struct {
-	NodeID     string `json:"nodeId"`
-	MediaType  string `json:"mediaType"`
-	ResourceID string `json:"resourceId,omitempty"`
-	Text       string `json:"text,omitempty"`
+	ReviewRequired bool   `json:"reviewRequired,omitempty"`
+	NodeID         string `json:"nodeId"`
+	MediaType      string `json:"mediaType"`
+	ResourceID     string `json:"resourceId,omitempty"`
+	Text           string `json:"text,omitempty"`
 }
 type Run struct {
 	TemplateRevision int       `json:"templateRevision"`

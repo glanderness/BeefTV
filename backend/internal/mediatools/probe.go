@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,9 @@ type MediaMetadata struct {
 	FormatName         string
 	Width, Height      int
 	DurationMs         int64
+	FPS                float64
+	VideoFrames        int64
+	PixelAspectRatio   float64
 	HasAudio, HasVideo bool
 }
 
@@ -36,7 +40,7 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 		return facts, err
 	}
 	cmd := exec.CommandContext(ctx, bin, "-v", "error", "-protocol_whitelist", "file,pipe",
-		"-show_entries", "stream=codec_type,width,height,duration:format=duration,format_name", "-of", "json", path)
+		"-show_entries", "stream=codec_type,width,height,duration,avg_frame_rate,nb_frames,sample_aspect_ratio:format=duration,format_name", "-of", "json", path)
 	HideConsole(cmd)
 	output, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -50,6 +54,9 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			CodecType     string `json:"codec_type"`
 			Width, Height int
 			Duration      string `json:"duration"`
+			FrameRate     string `json:"avg_frame_rate"`
+			FrameCount    string `json:"nb_frames"`
+			PixelAspect   string `json:"sample_aspect_ratio"`
 		} `json:"streams"`
 		Format struct {
 			FormatName string `json:"format_name"`
@@ -69,6 +76,23 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			facts.HasVideo = true
 			if facts.Width == 0 {
 				facts.Width, facts.Height = stream.Width, stream.Height
+				facts.VideoFrames, _ = strconv.ParseInt(stream.FrameCount, 10, 64)
+				facts.PixelAspectRatio = 1
+				if parts := strings.SplitN(stream.PixelAspect, ":", 2); len(parts) == 2 {
+					n, _ := strconv.ParseFloat(parts[0], 64)
+					d, _ := strconv.ParseFloat(parts[1], 64)
+					if n > 0 && d > 0 && !math.IsInf(n/d, 0) && !math.IsNaN(n/d) {
+						facts.PixelAspectRatio = n / d
+					}
+				}
+				parts := strings.SplitN(stream.FrameRate, "/", 2)
+				if len(parts) == 2 {
+					n, _ := strconv.ParseFloat(parts[0], 64)
+					d, _ := strconv.ParseFloat(parts[1], 64)
+					if n > 0 && d > 0 && !math.IsNaN(n/d) && !math.IsInf(n/d, 0) {
+						facts.FPS = n / d
+					}
+				}
 			}
 		}
 		if facts.DurationMs == 0 {

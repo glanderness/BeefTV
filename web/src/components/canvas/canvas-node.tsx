@@ -8,6 +8,7 @@ import { canReloadCanvasNodeResource, isNodeRegenerateBlocked } from "@/lib/task
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasConnectionTilt } from "@/lib/canvas/canvas-connection-tilt";
 import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
+import { isWorkflowGeometryFixed } from "@/lib/canvas/canvas-node-size";
 import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type Position } from "@/types/canvas";
@@ -349,19 +350,19 @@ export const CanvasNode = React.memo(function CanvasNode({
                 setHovered(false);
                 onHoverEnd(data.id);
             }}
-            onContextMenu={(event) => onContextMenu(event, data.id)}
+            onContextMenu={(event) => { if(data.metadata?.workflowSlot){event.preventDefault();event.stopPropagation();return;} onContextMenu(event, data.id); }}
         >
             {!data.metadata?.reusableWorkflow ? <NodeExternalHeader
                 node={data}
                 scale={scale}
                 dimensionLabel={null}
                 active={isSelected || isFocusRelated}
-                editable={!readOnly && !data.metadata?.locked && Boolean(onTitleChange)}
+                editable={!readOnly && !data.metadata?.locked && !data.metadata?.workflowSlot && Boolean(onTitleChange)}
                 editing={isEditingTitle}
                 draft={titleDraft}
                 theme={theme}
                 onDraftChange={setTitleDraft}
-                onDragStart={readOnly ? undefined : (event) => onMouseDown(event, data.id)}
+                onDragStart={readOnly || data.metadata?.workflowSlot?.role === "input" || data.metadata?.workflowSlot?.role === "constant" ? undefined : (event) => onMouseDown(event, data.id)}
                 onEdit={() => setIsEditingTitle(true)}
                 onCommit={commitTitle}
                 onCancel={() => { setTitleDraft(data.title); setIsEditingTitle(false); }}
@@ -568,7 +569,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         <BatchChildActionButton theme={theme} label="下载主图" icon={<Download className="size-3.5" />} onClick={() => downloadNode?.(data)} />
                     </div>
                 ) : null}
-                {!readOnly && !data.metadata?.locked && (isSelected || hovered) ? <>
+                {!readOnly && !data.metadata?.locked && !isWorkflowGeometryFixed(data) && (isSelected || hovered) ? <>
                     <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
                     <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
                     <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
@@ -576,8 +577,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </> : null}
             </div>
 
-            {!readOnly && data.type !== CanvasNodeType.Script && data.type !== CanvasNodeType.BatchTable && data.type !== CanvasNodeType.WorkflowControl ? <ConnectionSideRail side="left" scale={scale} theme={theme} visible={hovered || isSelected || forceInputVisible} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "target", undefined, anchorRatio)} /> : null}
-            {!readOnly && data.type !== CanvasNodeType.Script && data.type !== CanvasNodeType.Config && showOutputConnection ? <ConnectionSideRail side="right" scale={scale} theme={theme} visible={hovered || isSelected} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "source", undefined, anchorRatio)} /> : null}
+            {!readOnly && !isWorkflowGeometryFixed(data) && data.type !== CanvasNodeType.Script && data.type !== CanvasNodeType.BatchTable ? <ConnectionSideRail side="left" scale={scale} theme={theme} visible={hovered || isSelected || forceInputVisible} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "target", undefined, anchorRatio)} /> : null}
+            {!readOnly && !isWorkflowGeometryFixed(data) && data.type !== CanvasNodeType.Script && data.type !== CanvasNodeType.Config && showOutputConnection ? <ConnectionSideRail side="right" scale={scale} theme={theme} visible={hovered || isSelected} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "source", undefined, anchorRatio)} /> : null}
 
         </div>
     );
@@ -759,8 +760,8 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
                     // LibTV 标题行只展示节点类型图标；保留无障碍拖动按钮，但不额外绘制抓手，
                     // 节点主体仍支持拖动，避免标题前出现一组原版没有的竖向点。
                     className="flex size-0 shrink-0 touch-none items-center justify-center overflow-hidden rounded p-0 opacity-0 cursor-grab active:cursor-grabbing disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-1"
-                    aria-label={node.metadata?.locked ? "节点已锁定" : `拖动节点：${node.title}`}
-                    title={node.metadata?.locked ? "节点已锁定，请先解锁" : "拖动此处移动节点；点击名称可重命名"}
+                    aria-label={node.metadata?.locked ? "节点已锁定" : node.metadata?.workflowSlot ? onDragStart ? `拖出结果：${node.title}` : `固定节点：${node.title}` : `拖动节点：${node.title}`}
+                    title={node.metadata?.locked ? "节点已锁定，请先解锁" : node.metadata?.workflowSlot ? "内部布局固定；生成结果可拖出到画布处理" : "拖动此处移动节点；点击名称可重命名"}
                     disabled={!onDragStart || Boolean(node.metadata?.locked)}
                     onPointerDown={(event) => {
                         if (event.button !== 0) return;

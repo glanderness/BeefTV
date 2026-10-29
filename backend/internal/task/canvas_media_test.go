@@ -1,10 +1,38 @@
 package task
 
 import (
+	"encoding/json"
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"infinite-canvas/backend/internal/model"
 	"testing"
 )
+
+func TestReplacementFinishAdmissionRejectsForeignSegments(t *testing.T) {
+	svc, _, media, _ := newSpecializedMem(nil)
+	for _, id := range []string{"source", "reference"} {
+		r := readyVideo(id)
+		r.Kind = "video"
+		r.MimeType = "video/mp4"
+		media.put("owner", r)
+	}
+	foreign := readyVideo("generated")
+	foreign.Kind = "video"
+	foreign.MimeType = "video/mp4"
+	media.put("other", foreign)
+	p, _ := cw.PlanCharacterReplacement(640, 360, 30, 30, nil, 12)
+	p.SourceResourceID = "source"
+	p.Segments[0].ResourceID = "reference"
+	p.Segments[0].OutputResourceID = "generated"
+	raw, _ := json.Marshal(p)
+	n := cw.Node{ID: "finish", Role: "operation", OperationID: cw.ReplacementFinishOperation, OperationVersion: 1, MediaType: "video", Config: map[string]any{"manifest": string(raw)}}
+	if _, err := svc.CreateCanvasMediaTask("owner", n, "source", "foreign-finish"); err == nil {
+		t.Fatal("foreign generation accepted")
+	}
+	media.put("owner", foreign)
+	if _, err := svc.CreateCanvasMediaTask("owner", n, "source", "owned-finish"); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCanvasMediaAdmissionIsLocalOwnedAndIdempotent(t *testing.T) {
 	svc, _, media, _ := newSpecializedMem(nil)

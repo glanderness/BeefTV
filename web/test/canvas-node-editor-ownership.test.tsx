@@ -68,6 +68,19 @@ function mountEditor(canvasId = "canvas-a") {
     return { editor, nodesRef, writes };
 }
 
+test("workflow geometry and slot titles stay fixed while ordinary nodes remain editable", () => {
+    const { editor, nodesRef } = mountEditor();
+    const slot = imageNode("slot", { workflowSlot: { instanceId: "control", nodeId: "input", role: "input", mediaType: "image" } });
+    const frame = { ...imageNode("frame"), type: CanvasNodeType.Workflow };
+    const control = { ...imageNode("control"), type: CanvasNodeType.WorkflowControl };
+    nodesRef.current = [slot, frame, control, imageNode("ordinary")];
+    for (const node of nodesRef.current) editor.handleNodeResize(node.id, 900, 1200, { x: 50, y: 60 });
+    editor.handleNodeTitleChange("slot", "changed");
+    editor.handleNodeTitleChange("ordinary", "renamed");
+    expect(nodesRef.current.slice(0, 3)).toEqual([slot, frame, control]);
+    expect(nodesRef.current[3]).toMatchObject({ title: "renamed", width: 900, height: 1200, position: { x: 50, y: 60 } });
+});
+
 test("category change threads canvas-manual source, category, captured scope and signal", async () => {
     const restore = switchScope("owner-a");
     const entered = deferred();

@@ -21,6 +21,14 @@ const workflow: CanvasWorkflow = {
     ], edges: [{ fromNodeId: "motion", toNodeId: "depth" }, { fromNodeId: "person", toNodeId: "out" }, { fromNodeId: "depth", toNodeId: "out" }, { fromNodeId: "prompt", toNodeId: "out" }], outputNodeIds: ["out"] },
 };
 
+test("workflow spacing balances the top inset with a clear gap above node titles", () => {
+    const graph = createWorkflowInstance(workflow, { x: 100, y: 200 });
+    const firstSlotY = Math.min(...graph.nodes.filter(node => node.metadata?.workflowSlot).map(node => node.position.y));
+    expect(graph.control.position.y - graph.frame.position.y).toBe(40);
+    expect(firstSlotY - (graph.control.position.y + graph.control.height)).toBe(100);
+    expect(normalizeWorkflowContainers(graph.nodes)).toBe(graph.nodes);
+});
+
 describe("canvas workflow instances", () => {
     test("workflow containers never consume small moves as material drops inside their original bounds", () => {
         const graph = createWorkflowInstance(workflow, { x: 0, y: 0 });
@@ -65,7 +73,7 @@ describe("canvas workflow instances", () => {
         expect(result.find(node => node.id === slot.id)?.metadata?.storageKey).toBe("resource:new-person");
         expect(normalizeWorkflowContainers(result)).toBe(result);
         const resized = result.map(node => node.id === container.id ? { ...node, width: node.width + 200 } : node);
-        expect(normalizeWorkflowContainers(resized).find(node => node.id === control.id)?.width).toBe(container.width + 200 - 80);
+        expect(normalizeWorkflowContainers(resized).find(node => node.id === control.id)?.width).toBe(container.width - 80);
     });
     test("ordinary boards and special viewers are never assumed to be image generators", () => {
         const template = createWorkflowInstance(workflow, { x: 0, y: 0 }).frame;
@@ -138,6 +146,23 @@ describe("canvas workflow instances", () => {
         ownResult.metadata!.storageKey = "resource:own-result";
         expect(workflowDropSlot(graph.nodes, ownResult, point)).toBeUndefined();
     });
+});
+
+test("workflow layout repairs resize and movement without losing media or execution receipts", () => {
+    const graph = createWorkflowInstance(workflow, { x: 100, y: 200 });
+    const changed = graph.nodes.map(node => node.id === graph.frame.id ? { ...node, width: 2400, height: 1900 }
+        : node.metadata?.workflowSlot ? { ...node, width: 800, height: 1400, title: "changed", position: { x: -50, y: 999 }, metadata: { ...node.metadata, storageKey: "resource:kept", workflowSlot: { ...node.metadata.workflowSlot, status: "succeeded" as const } } }
+        : node);
+    const repaired = normalizeWorkflowContainers(changed);
+    for (const expected of graph.nodes) {
+        const actual = repaired.find(node => node.id === expected.id)!;
+        expect([actual.width, actual.height, actual.position, actual.title]).toEqual([expected.width, expected.height, expected.position, expected.title]);
+        if (actual.metadata?.workflowSlot) {
+            expect(actual.metadata.storageKey).toBe("resource:kept");
+            expect(actual.metadata.workflowSlot.status).toBe("succeeded");
+        }
+    }
+    expect(normalizeWorkflowContainers(repaired)).toBe(repaired);
 });
 
 

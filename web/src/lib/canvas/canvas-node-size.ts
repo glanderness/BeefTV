@@ -4,6 +4,10 @@ import { CanvasNodeType, isBuiltinCanvasNodeType, type CanvasNodeData } from "@/
 export const MEDIA_NODE_MIN_SIZE = { width: 420, height: 236 } as const;
 export const VIDEO_NODE_MAX_SIZE = { width: 720, height: 520 } as const;
 
+export function isWorkflowGeometryFixed(node: CanvasNodeData) {
+    return node.type===CanvasNodeType.Workflow || node.type===CanvasNodeType.WorkflowControl || Boolean(node.metadata?.workflowSlot || node.metadata?.reusableWorkflow);
+}
+
 export function fitNodeSize(width: number, height: number, maxWidth = 720, maxHeight = 520, minWidth = MEDIA_NODE_MIN_SIZE.width, minHeight = MEDIA_NODE_MIN_SIZE.height) {
     const w = Math.max(1, width);
     const h = Math.max(1, height);

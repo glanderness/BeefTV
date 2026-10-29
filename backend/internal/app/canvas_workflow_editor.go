@@ -26,6 +26,13 @@ func workflowRevision(n int) int {
 
 func (s *Service) CanvasWorkflowOperations() []cw.Operation {
 	operations := cw.Operations()
+	public := operations[:0]
+	for _, op := range operations {
+		if !cw.IsReplacementLocalOperation(op.ID) {
+			public = append(public, op)
+		}
+	}
+	operations = public
 	if snapshot, err := s.canvasWorkflowProviderConfig(); err == nil {
 		upscaleChannels := []cw.FieldOption{}
 		if _, err := s.upscaleConfig(""); err == nil {
@@ -40,10 +47,10 @@ func (s *Service) CanvasWorkflowOperations() []cw.Operation {
 		for i := range operations {
 			for j := range operations[i].Fields {
 				field := &operations[i].Fields[j]
-				if strings.HasPrefix(operations[i].ID, "generate.") && field.Key == "modelOption" {
+				if (strings.HasPrefix(operations[i].ID, "generate.") || operations[i].ID == cw.CharacterReplacementOperation) && field.Key == "modelOption" {
 					raw, _ := json.Marshal(snapshot)
 					for _, candidate := range modelcatalog.ParseLocalChannelModels(raw) {
-						if candidate.Enabled && generation.UpscaleMediaType(candidate.Model) == "" && candidate.Capability == operations[i].OutputType && candidate.Protocol != "" {
+						if candidate.Enabled && generation.UpscaleMediaType(candidate.Model) == "" && candidate.Capability == operations[i].OutputType && candidate.Protocol != "" && (operations[i].ID != cw.CharacterReplacementOperation || candidate.Model == "seedance-2.0-fast") {
 							field.Options = append(field.Options, cw.FieldOption{Label: candidate.DisplayName + " · " + candidate.ChannelID, Value: candidate.ChannelID + "::" + candidate.Model, Capabilities: candidate.CapabilityConfig})
 						}
 					}

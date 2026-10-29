@@ -24,7 +24,8 @@ export function useCanvasWorkflowInstances({ canvasId, domainProjectId, readOnly
     const currentReadOnly = useRef(readOnly);
     currentReadOnly.current = readOnly;
     const locks = useRef(new Set<string>());
-    const uploads = useRef(new Set<string>());
+    const uploads = useRef(new Map<string, string>());
+    const inputVersions = useRef(new Map<string, string>());
     const syncing = useRef(new Set<string>());
     const config = { expectedScope: scope };
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, [canvasId]);
@@ -71,8 +72,12 @@ export function useCanvasWorkflowInstances({ canvasId, domainProjectId, readOnly
         setConnections(connectionsRef.current);
         focusNode(instance.frame);
     };
-    const setValue = async (nodeId: string, value: WorkflowValue) => {
-        if (locks.current.has(nodeId)) return;
+    const setValue = async (nodeId: string, value: WorkflowValue, uploadToken?: string) => {
+        if (nodesRef.current.find(node => node.id === nodeId)?.metadata?.workflowSlot?.role !== "input" && locks.current.has(nodeId)) return;
+        if (uploadToken && uploads.current.get(nodeId) !== uploadToken) return;
+        const version = uploadToken || nanoid();
+        if (!uploadToken) uploads.current.delete(nodeId);
+        inputVersions.current.set(nodeId, version);
         locks.current.add(nodeId);
         try {
             const node = nodesRef.current.find(item => item.id === nodeId);
@@ -90,11 +95,12 @@ export function useCanvasWorkflowInstances({ canvasId, domainProjectId, readOnly
             if (!node || slot?.role !== "input" || !control) throw new Error("输入槽位不存在");
             if (workflowInstanceLocked(control) || locks.current.has(control.id)) throw new Error("工作流提交或运行中，请结束后再替换素材");
             const next = node.type === "text" ? { ...node, metadata: { ...node.metadata, content: value.text || "" } } : await valueNode(node, value);
+            if (inputVersions.current.get(nodeId) !== version || uploadToken && uploads.current.get(nodeId) !== uploadToken) return;
             // The user may have removed the instance while an upload was being bound.
             if (workflowInstanceLocked(nodesRef.current.find(item => item.id === control.id))) throw new Error("工作流已开始运行，请结束后再替换素材");
             commit(current => current.map(item => item.id === node.id ? { ...item, metadata: { ...next.metadata, workflowSlot: item.metadata?.workflowSlot } }
                 : item.id === control.id ? { ...item, metadata: { ...item.metadata, reusableWorkflow: { ...item.metadata!.reusableWorkflow!, error: undefined, inputsChanged: true } } } : item));
-        } finally { locks.current.delete(nodeId); }
+        } finally { if (inputVersions.current.get(nodeId) === version) locks.current.delete(nodeId); }
     };
     const syncRun = async (instanceId: string, run: WorkflowRun) => {
         const control = nodesRef.current.find(node => node.id === instanceId);
@@ -216,7 +222,10 @@ export function useCanvasWorkflowInstances({ canvasId, domainProjectId, readOnly
         // Reads current nodes and canvas identity before committing.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [canvasId, readOnly, domainProjectId]);
-    const uploadBusy = (id: string, busy: boolean) => { if (busy) uploads.current.add(id); else uploads.current.delete(id); };
+    const uploadBusy = (id: string, busy: boolean, token?: string) => {
+        if (busy) { const attempt = nanoid(); uploads.current.set(id, attempt); return attempt; }
+        if (token && uploads.current.get(id) === token) uploads.current.delete(id);
+    };
     const update = async (instanceId: string) => {
         try {
             assertCurrent();

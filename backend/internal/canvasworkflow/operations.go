@@ -67,6 +67,7 @@ func Operations() []Operation {
 			out[i].Name = name
 		}
 	}
+	out = append(out, characterReplacementOperation())
 	return append(append(out, MediaOperations()...), ImageWorkflowOperations()...)
 }
 func OperationByID(id string) Operation {
@@ -116,6 +117,9 @@ func ValidateOperation(n Node) error {
 		if start < 0 || end <= start {
 			return fmt.Errorf("节点 %s 裁剪结束时间必须大于开始时间", n.ID)
 		}
+	}
+	if op.ID == CharacterReplacementOperation {
+		return ValidateCharacterReplacement(n)
 	}
 	if strings.HasSuffix(op.ID, ".ai-upscale") {
 		_, err := UpscaleRequest(n)
