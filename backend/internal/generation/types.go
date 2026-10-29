@@ -145,6 +145,7 @@ type MediaHydrationPolicy struct {
 
 type ImageResponse struct {
 	Data  []map[string]interface{} `json:"data"`
+	Usage map[string]interface{}   `json:"usage,omitempty"`
 	Error *UpstreamError           `json:"error"`
 	Code  *int                     `json:"code"`
 	Msg   string                   `json:"msg"`

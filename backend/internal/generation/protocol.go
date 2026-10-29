@@ -65,6 +65,9 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 	// create、poll、download 是同一个外部任务的三个阶段：任一阶段失败都向上返回真实错误，
 	// 不把“已提交但结果未知”伪装成成功，也不把下载失败降级成空结果。
 	request := ProtocolRequestFromInput(input)
+	if input.Mode == "image" && isManagedImageURLConfig(ctx, input.Config) {
+		request.Extra["transparentBackground"] = input.Config.TransparentBackground
+	}
 	taskID := ResumedProviderRequestID(ctx)
 	var created protocol.CreateResult
 	if taskID == "" {
@@ -531,6 +534,11 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 }
 
 func ProtocolRequestBody(ctx context.Context, config Config, spec protocol.RequestSpec) (io.Reader, string, error) {
+	var err error
+	spec, err = managedImageRequestSpec(ctx, config, spec)
+	if err != nil {
+		return nil, "", err
+	}
 	contentType := strings.ToLower(strings.TrimSpace(strings.Split(spec.ContentType, ";")[0]))
 	if spec.Body == nil && len(spec.Files) == 0 {
 		return nil, "", nil
@@ -1011,7 +1019,11 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 	}
 	switch mode {
 	case "image":
-		return map[string]interface{}{"mode": "image", "images": items}, nil
+		output := map[string]interface{}{"mode": "image", "images": items}
+		if result.Usage != nil {
+			output["usage"] = result.Usage
+		}
+		return output, nil
 	case "video":
 		return map[string]interface{}{"mode": "video", "video": items[0]}, nil
 	default:

@@ -79,16 +79,19 @@ type BeefAPISeedanceUploadRequest struct {
 // PrepareBeefAPIVideoReferences uploads built-in BeefAPI local/inline
 // references through the same generation key, then rewrites each item to the
 // completed HTTPS URL. PUT uses only the returned headers and known length.
-// Only Seedance allows recoverable PUT failures or a first-create 404/501
-// to fall back within its existing 64 MiB inline wire limit;
-// HTTP-only contracts must never fall back to inline or asset:// references.
+// Managed uploads must finish before dispatch. Storage failures never send the
+// same large bytes back through the gateway as an inline generation request.
 func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *Input, read BeefAPISeedanceMediaReader) (err error) {
 	requiresHTTP := requiresBeefAPIHTTPReferences(ctx, config)
 	if input == nil || (!requiresHTTP && !IsBeefAPISeedancePreuploadConfig(ctx, config)) {
 		return nil
 	}
+	return prepareBeefAPIReferenceUploads(ctx, config, input, read, false)
+}
+
+func prepareBeefAPIReferenceUploads(ctx context.Context, config Config, input *Input, read BeefAPISeedanceMediaReader, imageTask bool) (err error) {
 	defer func() {
-		if requiresHTTP && err != nil {
+		if err != nil {
 			err = RequestPreparationError{Cause: err}
 		}
 	}()
@@ -98,20 +101,26 @@ func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *In
 	if read == nil {
 		read = ReadBeefAPISeedanceInlineMedia
 	}
-	started := false
-	for _, group := range BeefAPISeedanceMediaGroups(input) {
+	groups := BeefAPISeedanceMediaGroups(input)
+	if imageTask && input.Mask != nil {
+		mask := []Media{*input.Mask}
+		groups = append(groups, BeefAPISeedanceMediaGroup{kind: "image", items: mask})
+		defer func() { *input.Mask = mask[0] }()
+	}
+	for _, group := range groups {
 		for index := range group.items {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			media := &group.items[index]
 			if SkipBeefAPISeedanceMedia(*media) {
-				if requiresHTTP && !IsPublicMediaURL(strings.TrimSpace(media.URL)) {
+				if (imageTask || requiresBeefAPIHTTPReferences(ctx, config)) && !IsPublicMediaURL(strings.TrimSpace(media.URL)) {
 					return errors.New("当前模型需要可访问的参考图片链接，请重新导入图片。本次尚未开始生成")
 				}
+				media.DataURL = ""
 				continue
 			}
-			if media.Bytes > 0 {
+			if !imageTask && media.Bytes > 0 {
 				if err := ValidateBeefAPISeedanceMediaSize(group.kind, media.Bytes); err != nil {
 					return err
 				}
@@ -121,13 +130,16 @@ func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *In
 				return err
 			}
 			if skip {
-				if requiresHTTP {
-					return errors.New("参考素材未能读取，请重新导入图片。本次尚未开始生成")
-				}
-				continue
+				return errors.New("参考素材未能读取，请重新导入图片。本次尚未开始生成")
 			}
-			if err := ValidateBeefAPISeedanceMediaSize(group.kind, int64(len(data))); err != nil {
-				return err
+			if imageTask {
+				if err := validateManagedImageReference(input, int64(len(data))); err != nil {
+					return err
+				}
+			} else {
+				if err := ValidateBeefAPISeedanceMediaSize(group.kind, int64(len(data))); err != nil {
+					return err
+				}
 			}
 			mime, err = CanonicalBeefAPISeedanceMime(group.kind, mime, data)
 			if err != nil {
@@ -156,27 +168,19 @@ func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *In
 				SHA256: hexDigest,
 				Mime:   mime,
 			})
-			if !started && BeefAPISeedancePreuploadUnavailable(err) {
-				if requiresHTTP {
-					return errors.New("参考素材上传暂不可用，本次尚未开始生成。请稍后重试或使用可访问的图片链接")
-				}
-				return FallbackBeefAPISeedanceInline(ctx, input, read)
-			}
 			if err != nil {
-				if requiresHTTP {
-					return MapBeefAPISeedanceUploadError(err, false)
+				if BeefAPISeedancePreuploadUnavailable(err) {
+					upload := referenceUploadError(uploadCtx, err)
+					upload.Detail = "参考素材上传暂不可用，本次尚未开始生成。请稍后重试或使用可访问的图片链接"
+					return upload
 				}
-				return inlineAfterReferencePutFailure(uploadCtx, input, read, MapBeefAPISeedanceUploadError(err, false))
+				return MapBeefAPISeedanceUploadError(err, false)
 			}
-			started = true
 			uploaded, err := CompleteBeefAPISeedanceUpload(uploadCtx, config, session, data)
 			size := int64(len(data))
 			data = nil
 			if err != nil {
-				if requiresHTTP {
-					return err
-				}
-				return inlineAfterReferencePutFailure(uploadCtx, input, read, err)
+				return err
 			}
 			if uploaded.Kind != group.kind || uploaded.Bytes != size || uploaded.SHA256 != hexDigest {
 				return errBeefAPISeedanceUploadIncomplete

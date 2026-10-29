@@ -159,6 +159,9 @@ func runSeedreamImageTask(ctx context.Context, input Input) (map[string]interfac
 		layers = append(layers, layer)
 	}
 	result := map[string]interface{}{"mode": "image", "images": images}
+	if payload.Usage != nil {
+		result["usage"] = payload.Usage
+	}
 	if input.Config.SeedreamMode == "layers" {
 		result["imageLayers"] = layers
 	}
@@ -182,11 +185,12 @@ func readSeedreamImageEvents(data []byte) (ImageResponse, error) {
 			break
 		}
 		var event struct {
-			Type       string `json:"type"`
-			ImageIndex int    `json:"image_index"`
-			URL        string `json:"url"`
-			B64        string `json:"b64_json"`
-			Size       string `json:"size"`
+			Type       string                 `json:"type"`
+			ImageIndex int                    `json:"image_index"`
+			URL        string                 `json:"url"`
+			B64        string                 `json:"b64_json"`
+			Size       string                 `json:"size"`
+			Usage      map[string]interface{} `json:"usage"`
 			Error      *struct {
 				Message string `json:"message"`
 			} `json:"error"`
@@ -201,6 +205,9 @@ func readSeedreamImageEvents(data []byte) (ImageResponse, error) {
 		}
 		if event.Error != nil {
 			terminalErr = errors.New(event.Error.Message)
+		}
+		if event.Usage != nil {
+			payload.Usage = event.Usage
 		}
 	}
 	if len(payload.Data) > 0 {

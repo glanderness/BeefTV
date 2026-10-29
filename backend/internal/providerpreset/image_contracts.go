@@ -54,6 +54,16 @@ func BeefAPIImageContract(model string) (ImageContract, bool) {
 	return ImageContract{}, false
 }
 
+// VODGPTImageModel identifies the managed routes whose reference URL input has
+// no documented 30 MiB per-file cap. Base64's request limit does not apply to it.
+func VODGPTImageModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst":
+		return true
+	}
+	return false
+}
+
 func (c ImageContract) PixelSize(size string) (string, error) {
 	size = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
 	if size == "" || size == "auto" {

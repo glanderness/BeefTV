@@ -54,7 +54,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		}
 		return RunUpscaleTask(ctx, input)
 	}
-	if input.Mode == "image" && providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
+	if input.Mode == "image" && IsBeefAPIVideoConfig(ctx, input.Config) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			input.Config.InterfaceType = contract.Protocol
 			input.Config.APIFormat = "openai"
@@ -94,6 +94,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	if input.Mode == "image" {
+		input = managedImageURLResponse(ctx, input)
+	}
 
 	resumed := ResumedProviderRequestID(ctx) != ""
 	preparing := !resumed && hasReferenceMedia(input)
@@ -127,6 +130,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			}
 		}
 		if err := PrepareBeefAPIVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
+			return nil, err
+		}
+		if err := prepareBeefAPIImageReferences(ctx, userID, &input); err != nil {
 			return nil, err
 		}
 		if err := prepareFullVideoReferences(ctx, &input, ownedFullVideoMediaReader(ctx, userID)); err != nil {

@@ -210,7 +210,7 @@ func TestBeefAPISeedancePreuploadLargeLocalReference(t *testing.T) {
 	}
 }
 
-func TestBeefAPISeedancePreuploadFallbackOnMissingEndpoint(t *testing.T) {
+func TestBeefAPISeedancePreuploadMissingEndpointStopsBeforeGeneration(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusNotImplemented} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			harness := newBeefAPISeedanceUploadHarness(t)
@@ -221,8 +221,9 @@ func TestBeefAPISeedancePreuploadFallbackOnMissingEndpoint(t *testing.T) {
 				providerMedia{},
 				providerMedia{},
 			)
-			if err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, nil); err != nil {
-				t.Fatal(err)
+			var preparation generation.RequestPreparationError
+			if err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, nil); !errors.As(err, &preparation) {
+				t.Fatalf("missing upload endpoint did not stop preparation: %v", err)
 			}
 			if harness.puts != 0 || harness.completes != 0 || harness.generates != 0 {
 				t.Fatalf("fallback used object upload put=%d complete=%d generate=%d", harness.puts, harness.completes, harness.generates)
@@ -234,7 +235,7 @@ func TestBeefAPISeedancePreuploadFallbackOnMissingEndpoint(t *testing.T) {
 	}
 }
 
-func TestBeefAPISeedancePreuploadFallbackRejectsOversizeJSON(t *testing.T) {
+func TestBeefAPISeedancePreuploadMissingEndpointDoesNotReadInlineAgain(t *testing.T) {
 	harness := newBeefAPISeedanceUploadHarness(t)
 	harness.createStatus = http.StatusNotFound
 	readCalls := 0
@@ -247,11 +248,9 @@ func TestBeefAPISeedancePreuploadFallbackRejectsOversizeJSON(t *testing.T) {
 		readCalls++
 		return syntheticVideoMP4(1280, 720, 1000), "video/mp4", false, nil
 	})
-	if !errors.Is(err, errVideoJSONRequestTooLarge) {
-		t.Fatalf("error = %v, want 64MiB bound", err)
-	}
-	if generation.ClassifyError(err).Category != generation.CategoryInputTooLarge {
-		t.Fatalf("category = %s", generation.ClassifyError(err).Category)
+	var preparation generation.RequestPreparationError
+	if !errors.As(err, &preparation) {
+		t.Fatalf("error = %v, want preparation failure", err)
 	}
 	if readCalls > 1 {
 		t.Fatalf("fallback re-read the oversize file %d times", readCalls)

@@ -32,6 +32,7 @@ func usesSeedreamRequestBody(input Input) bool {
 }
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	input = managedImageURLResponse(ctx, input)
 	if usesSeedreamRequestBody(input) {
 		return runSeedreamImageTask(ctx, input)
 	}
@@ -39,7 +40,7 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 	if input.ImageCapability != nil && input.ImageCapability.FixedOutputs > 0 {
 		outputCount = input.ImageCapability.FixedOutputs
 	}
-	if providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
+	if IsBeefAPIVideoConfig(ctx, input.Config) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			if contract.FixedOutputs == 0 {
 				return runBeefAPIImageTask(ctx, input, contract)
@@ -89,6 +90,9 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		}
 	}
 	if len(input.ReferenceImages) > 0 || input.Mask != nil {
+		if isManagedOpenAIImageConfig(ctx, input.Config) {
+			return runManagedOpenAIImageTask(ctx, input, outputCount)
+		}
 		body := &bytes.Buffer{}
 		writer := multipart.NewWriter(body)
 		writeField(writer, "model", input.Config.Model)

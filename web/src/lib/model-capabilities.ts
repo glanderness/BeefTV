@@ -725,6 +725,18 @@ export function modelCapabilityConfigFor(
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
+    const alignManagedImageTransport = (image: ImageCapabilityConfig | undefined) => {
+        if (!image || protocol !== "openai-image" || !["gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(modelName.trim().toLowerCase())) return;
+        try {
+            const endpoint = new URL(channel?.baseUrl || "");
+            if (endpoint.protocol !== "https:" || !["beeftv.app", "enterprise.beefapi.com", "beefapi.com"].includes(endpoint.hostname.toLowerCase()) || endpoint.username || endpoint.password || (endpoint.port && endpoint.port !== "443")) return;
+            // The managed VOD request uses a URL. Its Base64 request limit is not
+            // a per-file URL limit, including for capabilities cached by old apps.
+            image.references = { ...image.references, maxImageBytes: 0 };
+            image.responseFormat = { supported: true, value: "url" };
+        } catch { /* An unrelated or missing endpoint keeps its stored settings. */ }
+    };
+    alignManagedImageTransport(fallback.image);
     // Official gateway contracts also upgrade capabilities cached by older installs.
     try {
         if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
@@ -773,6 +785,7 @@ export function modelCapabilityConfigFor(
               };
           })()
         : fallback.image;
+    alignManagedImageTransport(image);
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 

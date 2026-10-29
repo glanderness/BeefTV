@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -1132,6 +1133,15 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 
 func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 	profile = applyModelSpecificImageCapability(profile, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
+	if profile != nil && input.Config.InterfaceType == "openai-image" && providerpreset.VODGPTImageModel(input.Config.Model) {
+		endpoint, err := url.Parse(strings.TrimSpace(input.Config.BaseURL))
+		managed := providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) || (err == nil && endpoint.Scheme == "https" && strings.EqualFold(endpoint.Hostname(), "beefapi.com") && endpoint.User == nil && (endpoint.Port() == "" || endpoint.Port() == "443"))
+		if managed {
+			copied := *profile
+			copied.References.MaxImageBytes = 0
+			profile = &copied
+		}
+	}
 	if providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			profile = DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)

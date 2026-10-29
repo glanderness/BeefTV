@@ -158,13 +158,16 @@ func runBeefAPIImageTask(ctx context.Context, input Input, contract providerpres
 				return nil, fmt.Errorf("参考图片数据为空")
 			}
 			url, err := outbound.ValidateOutboundURL(image.URL)
-			if err != nil || url.Scheme != "https" {
+			if err != nil || (url.Scheme != "https" && !BeefAPISeedanceAllowInsecureTestURL(ctx, url)) {
 				return nil, fmt.Errorf("参考图片需要可访问的 HTTPS 链接")
 			}
 			images = append(images, image.URL)
 		}
 	}
 	body := map[string]interface{}{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "size": size}
+	if isManagedImageURLConfig(ctx, input.Config) {
+		body["response_format"] = "url"
+	}
 	if len(images) > 0 {
 		body["images"] = images
 	}
@@ -176,5 +179,9 @@ func runBeefAPIImageTask(ctx context.Context, input Input, contract providerpres
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"mode": "image", "images": output}, nil
+	result := map[string]interface{}{"mode": "image", "images": output}
+	if payload.Usage != nil {
+		result["usage"] = payload.Usage
+	}
+	return result, nil
 }

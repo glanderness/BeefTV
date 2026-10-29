@@ -10,17 +10,21 @@ import (
 )
 
 type midjourneyImagePort struct {
-	calls  int
-	n      string
-	path   string
-	prompt string
-	size   string
+	calls       int
+	n           string
+	path        string
+	prompt      string
+	size        string
+	format      string
+	contentType string
+	images      []interface{}
 }
 
 func (p *midjourneyImagePort) Intercept(req *http.Request) (bool, []byte, string, error) {
 	p.calls++
 	p.path = req.URL.Path
 	contentType, _, _ := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	p.contentType = contentType
 	if contentType == "multipart/form-data" {
 		if err := req.ParseMultipartForm(1 << 20); err != nil {
 			return true, nil, "", err
@@ -36,6 +40,8 @@ func (p *midjourneyImagePort) Intercept(req *http.Request) (bool, []byte, string
 		}
 		p.prompt, _ = body["prompt"].(string)
 		p.size, _ = body["size"].(string)
+		p.format, _ = body["response_format"].(string)
+		p.images, _ = body["image"].([]interface{})
 		if body["n"] == float64(4) {
 			p.n = "4"
 		}
@@ -57,7 +63,7 @@ func TestMidjourneySubmitsOneFourImageRequest(t *testing.T) {
 	for _, reference := range []bool{false, true} {
 		input := midjourneyImageInput()
 		if reference {
-			input.ReferenceImages = []Media{{DataURL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="}}
+			input.ReferenceImages = []Media{{URL: "https://media.example/reference.png"}}
 		}
 		port := &midjourneyImagePort{}
 		result, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input)
@@ -70,6 +76,9 @@ func TestMidjourneySubmitsOneFourImageRequest(t *testing.T) {
 		}
 		if port.calls != 1 || port.n != "4" || port.path != path || len(result["images"].([]map[string]string)) != 4 {
 			t.Fatalf("wire=%#v result=%#v", port, result)
+		}
+		if port.format != "url" || port.contentType != "application/json" || (reference && (len(port.images) != 1 || port.images[0] != input.ReferenceImages[0].URL)) {
+			t.Fatalf("managed Midjourney sent large image bytes: %#v", port)
 		}
 	}
 }
@@ -137,7 +146,7 @@ func TestMidjourneyEncodesGatewayAspectRatio(t *testing.T) {
 		input.Config.Size = "1456x816"
 		input.Config.SystemPrompt = "cinematic"
 		if reference {
-			input.ReferenceImages = []Media{{DataURL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="}}
+			input.ReferenceImages = []Media{{URL: "https://media.example/reference.png"}}
 		}
 		port := &midjourneyImagePort{}
 		_, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input)
