@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,6 +13,51 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 )
 
+func TestManagedUnknownVideoSendsCatalogResolutionAndExplicitBusinessSwitches(t *testing.T) {
+	for _, tc := range []struct {
+		quality, want string
+		profile       *VideoCapabilityConfig
+	}{
+		{quality: "480", want: "480p"},
+		{quality: "720", want: "720p"},
+		{quality: "1080", want: "1080p"},
+		{quality: "720", want: "720p", profile: &VideoCapabilityConfig{Resolutions: []string{"480p", "720p", "1080p"}}},
+		{quality: "2160", want: "4k", profile: &VideoCapabilityConfig{Resolutions: []string{"4k"}}},
+		{quality: "server-native", want: "server-native", profile: &VideoCapabilityConfig{Resolutions: []string{"server-native"}}},
+	} {
+		t.Run(tc.quality+"/"+tc.want, func(t *testing.T) {
+			creates := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/videos" {
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(500)
+					return
+				}
+				creates++
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["model"] != "unseen-catalog-video" || body["resolution"] != tc.want || body["enable_safety_checker"] != true {
+					t.Errorf("wrong declared token/options: %#v", body)
+				}
+				if value, present := body["sync_mode"]; !present || value != false {
+					t.Errorf("explicit false lost: %#v", body)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]string{"id": "same-task"})
+			}))
+			defer server.Close()
+			input := Input{Mode: "video", Prompt: "free wire fixture", Config: Config{CredentialRef: beefapi.CredentialRef, Model: "unseen-catalog-video", BaseURL: server.URL, APIKey: "fixture", VQuality: tc.quality}, VideoCapability: tc.profile, Metadata: map[string]any{"videoH3Options": map[string]any{"enable_safety_checker": true, "sync_mode": false}}}
+			ctx := WithSubmissionKey(WithEndpoints(context.Background(), Endpoints{BeefAPIVideoBaseURL: server.URL}), "same-attempt")
+			policy := DefaultVideoPollPolicy()
+			policy.Sleep = func(context.Context, time.Duration) error { return context.Canceled }
+			if _, err := RunVideoTaskWithPolicy(ctx, input, policy); !errors.Is(err, context.Canceled) || creates != 1 {
+				t.Fatalf("creates=%d err=%v", creates, err)
+			}
+		})
+	}
+}
+
 func TestManagedVideoCanonicalIntentHasNoModelTransportRules(t *testing.T) {
 	for _, id := range []string{"opaque-future-video", "minimax-h3-max", "seedance-2.5", "grok-imagine-video-1.5", "kling-video-v3"} {
 		input := Input{Prompt: "scene", Config: Config{Model: id, Size: "9:16", VideoSeconds: "0.925", VQuality: "768", VideoGenerateAudio: "false", VideoWatermark: "false"}, ReferenceImages: []Media{{ID: "first", URL: "https://example.com/first.png"}, {ID: "middle", URL: "https://example.com/middle.png"}, {ID: "last", URL: "https://example.com/last.png"}}, ReferenceVideos: []Media{{ID: "video", URL: "https://example.com/video.mp4"}}, ReferenceAudios: []Media{{ID: "audio", URL: "https://example.com/audio.wav"}}, Metadata: map[string]any{"videoEditOperation": "reference_to_video", "videoStartFrameNodeId": "first", "videoMiddleFrameNodeId": "middle", "videoEndFrameNodeId": "last", "videoMiddleFrameTime": 2.5, "videoReferenceOrder": []string{"audio", "first", "video", "middle", "last"}, "videoH3Options": map[string]any{"seed": float64(0), "prompt_expansion_mode": "quality", "damage_level": "heavy", "sync_mode": true, "enable_safety_checker": false}}}
@@ -20,7 +66,7 @@ func TestManagedVideoCanonicalIntentHasNoModelTransportRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		meta := body["metadata"].(map[string]any)
-		if body["model"] != id || body["resolution"] != "768" || body["seconds"] != "0.925" || body["aspect_ratio"] != "9:16" || meta["operation"] != "reference_to_video" || meta["generate_audio"] != false || meta["watermark"] != false || body["seed"] != float64(0) || body["middle_frame_time"] != 2.5 || body["prompt_expansion_mode"] != "quality" || body["damage_level"] != "heavy" {
+		if body["model"] != id || body["resolution"] != "768p" || body["seconds"] != "0.925" || body["aspect_ratio"] != "9:16" || meta["operation"] != "reference_to_video" || meta["generate_audio"] != false || meta["watermark"] != false || body["seed"] != float64(0) || body["middle_frame_time"] != 2.5 || body["prompt_expansion_mode"] != "quality" || body["damage_level"] != "heavy" || body["enable_safety_checker"] != false || body["sync_mode"] != true {
 			t.Fatalf("lost user controls: %#v", body)
 		}
 		content := body["content"].([]map[string]any)
@@ -31,7 +77,7 @@ func TestManagedVideoCanonicalIntentHasNoModelTransportRules(t *testing.T) {
 		if !reflect.DeepEqual(roles, []any{"reference_audio", "first_frame", "reference_video", "middle_frame", "last_frame"}) {
 			t.Fatalf("order/roles: %#v", content)
 		}
-		for _, key := range []string{"operation", "first_frame_url", "reference_conditions", "enable_safety_checker", "sync_mode", "response_format"} {
+		for _, key := range []string{"operation", "first_frame_url", "reference_conditions", "response_format"} {
 			if _, present := body[key]; present {
 				t.Fatalf("supplier field %s leaked", key)
 			}
@@ -53,7 +99,7 @@ func TestManagedUnknownVideoCreatesOnceAndResumesOnlyGET(t *testing.T) {
 			}
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["model"] != "opaque-future-video" || body["resolution"] != "768" || body["seconds"] != "5" {
+			if body["model"] != "opaque-future-video" || body["resolution"] != "768p" || body["seconds"] != "5" {
 				t.Errorf("changed user values: %#v", body)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "original"})

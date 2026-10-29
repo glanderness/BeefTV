@@ -78,3 +78,36 @@ func TestManagedMediaServerModelFixture(t *testing.T) {
 		t.Fatal("server zero/empty capability contract was not preserved")
 	}
 }
+
+func TestManagedMediaEnterpriseHandlerCapabilityFixtures(t *testing.T) {
+	paths, err := filepath.Glob("testdata/managed-media/models-enterprise-*.json")
+	if err != nil || len(paths) != 4 {
+		t.Fatalf("fixture count=%d err=%v", len(paths), err)
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raw struct {
+				Data []struct {
+					Image   json.RawMessage `json:"image_capabilities"`
+					Version string          `json:"image_capabilities_version"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			if len(raw.Data) != 3 {
+				t.Fatalf("models=%d", len(raw.Data))
+			}
+			for _, item := range raw.Data {
+				capability, ok := NormalizeCatalogImageCapability(item.Image)
+				if !ok || len(item.Version) != 64 || capability["references"].(map[string]any)["maxImageBytes"] != float64(0) {
+					t.Fatalf("server enterprise capability lost: version=%q capability=%#v", item.Version, capability)
+				}
+			}
+		})
+	}
+}

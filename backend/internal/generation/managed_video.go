@@ -9,7 +9,11 @@ import (
 )
 
 func managedLegacyVideoInput(input Input) beefapi.LegacyVideoInput {
-	request := beefapi.LegacyVideoInput{Model: input.Config.Model, Prompt: WithSystemPrompt(input.Config, strings.TrimSpace(input.Prompt)), Seconds: input.Config.VideoSeconds, Resolution: input.Config.VQuality, AspectRatio: input.Config.Size, Metadata: input.Metadata}
+	resolution := videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality)
+	if input.VideoCapability == nil && !isAutomaticVideoResolution(input.Config.VQuality) {
+		resolution = NormalizeVideoResolution(input.Config.VQuality)
+	}
+	request := beefapi.LegacyVideoInput{Model: input.Config.Model, Prompt: WithSystemPrompt(input.Config, strings.TrimSpace(input.Prompt)), Seconds: input.Config.VideoSeconds, Resolution: resolution, AspectRatio: input.Config.Size, Metadata: input.Metadata}
 	if input.Config.VideoGenerateAudio != "" {
 		value := ParseBool(input.Config.VideoGenerateAudio, true)
 		request.GenerateAudio = &value
