@@ -66,6 +66,8 @@ type modelsPayload struct {
 		DisplayName              string          `json:"display_name"`
 		ModelType                string          `json:"model_type"`
 		SupportedEndpointTypes   []string        `json:"supported_endpoint_types"`
+		ImageCapabilities        json.RawMessage `json:"image_capabilities"`
+		ImageCapabilitiesVersion string          `json:"image_capabilities_version"`
 		VideoCapabilities        json.RawMessage `json:"video_capabilities"`
 		VideoCapabilitiesVersion string          `json:"video_capabilities_version"`
 		VideoPricing             json.RawMessage `json:"video_pricing"`
@@ -306,6 +308,8 @@ func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
 			DisplayName:              strings.TrimSpace(item.DisplayName),
 			ModelType:                strings.ToLower(strings.TrimSpace(item.ModelType)),
 			SupportedEndpointTypes:   item.SupportedEndpointTypes,
+			ImageCapabilities:        append(json.RawMessage(nil), item.ImageCapabilities...),
+			ImageCapabilitiesVersion: strings.TrimSpace(item.ImageCapabilitiesVersion),
 			VideoCapabilities:        append(json.RawMessage(nil), item.VideoCapabilities...),
 			VideoCapabilitiesVersion: strings.TrimSpace(item.VideoCapabilitiesVersion),
 			VideoPricing:             append(json.RawMessage(nil), item.VideoPricing...),

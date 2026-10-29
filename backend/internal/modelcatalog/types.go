@@ -276,20 +276,21 @@ type MediaRef struct {
 // TaskConfig is the catalog/capability view of a generation request's model
 // selection and declared options.
 type TaskConfig struct {
-	ChannelID           string
-	ChannelModelKey     string
-	Model               string
-	InterfaceType       string
-	APIFormat           string
-	BaseURL             string
-	Size                string
-	Quality             string
-	Count               string
-	VideoSeconds        string
-	VQuality            string
-	CapabilityConfig    *ModelCapabilityConfig
-	SystemPrompt        string
-	ComposedPromptBytes int
+	ImageCapabilitiesVersion *string
+	ChannelID                string
+	ChannelModelKey          string
+	Model                    string
+	InterfaceType            string
+	APIFormat                string
+	BaseURL                  string
+	Size                     string
+	Quality                  string
+	Count                    string
+	VideoSeconds             string
+	VQuality                 string
+	CapabilityConfig         *ModelCapabilityConfig
+	SystemPrompt             string
+	ComposedPromptBytes      int
 }
 
 // TaskInput is the explicit adapter target for image/video capability checks.

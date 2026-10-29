@@ -8,7 +8,7 @@ import { CanvasVideoSettingsPopover } from "../src/components/canvas/canvas-vide
 import { VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
-import { defaultModelCapabilityConfig, pluginWorkflowCapabilityConfig } from "../src/lib/model-capabilities";
+import { defaultModelCapabilityConfig, modelCapabilityConfigFor, pluginWorkflowCapabilityConfig } from "../src/lib/model-capabilities";
 import { ChannelModelSettings } from "../src/pages/settings/channel-model-settings";
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
 import { fetchChannelModels } from "../src/services/api/image";
@@ -19,6 +19,26 @@ import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSna
 
 const originalAxiosRequest = axios.request;
 const originalApiRequest = apiClient.request;
+
+test("陌生图片ID刷新服务端能力后可选，保留零文件上限和新增质量", () => {
+    const model = "opaque-future-2030";
+    const channel = createModelChannel({ id: "beefapi", baseUrl: "https://beeftv.app", credentialRef: "beefapi-enterprise", models: [model] });
+    const image = defaultModelCapabilityConfig("openai-image", model).image!;
+    image.references.maxImageBytes = 0;
+    image.quality = { supported: true, values: ["ultra"], default: "ultra" };
+    image.maxOutputs = 4;
+    image.fixedOutputs = 4;
+    channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [{ id: model, supportedEndpointTypes: ["image-generation"], imageCapabilities: image, imageCapabilitiesVersion: "v1" }]);
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
+    expect(selectableModelsByCapability(config, "image")).toContain(`beefapi::${model}`);
+    expect(resolveModelRequestConfig(config, `beefapi::${model}`).model).toBe(model);
+    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).image).toEqual(image);
+    const changed = structuredClone(image);
+    changed.references.maxImages = 7;
+    channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [{ id: model, supportedEndpointTypes: ["image-generation"], imageCapabilities: changed, imageCapabilitiesVersion: "v2" }]);
+    expect(modelCapabilityConfigFor({ channels: [channel] }, model).image!.references.maxImages).toBe(7);
+    expect(channel.modelProfiles[0]!.imageCapabilitiesVersion).toBe("v2");
+});
 
 test("官方GPT图片旧默认配置升级质量和21:9尺寸，保留显式限制与第三方配置", () => {
     const model = "gpt-image-2.5-flare";

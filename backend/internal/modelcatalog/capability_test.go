@@ -8,15 +8,20 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func TestManagedVODURLInputDoesNotInheritInlineFileLimit(t *testing.T) {
-	for _, name := range []string{"gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
+func TestServerImageCapabilitiesOwnFileLimitWithoutModelOrHostExceptions(t *testing.T) {
+	for _, name := range []string{"opaque-future-2030", "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
 		profile := DefaultImageCapabilityConfig("openai-image", name)
 		for _, base := range []string{"https://beeftv.app", "https://enterprise.beefapi.com/v1", "https://beefapi.com", "https://third-party.example", "http://beeftv.app", "https://beeftv.app.evil.example"} {
 			input := TaskInput{Mode: "image", Prompt: "edit", Config: TaskConfig{BaseURL: base, InterfaceType: "openai-image", Model: name, Size: "1024x1024"}, ReferenceImages: []MediaRef{{Bytes: 48 << 20}}}
-			err := validateImageTask(profile, input)
-			managed := base == "https://beeftv.app" || base == "https://enterprise.beefapi.com/v1" || base == "https://beefapi.com"
-			if (err == nil) != managed {
-				t.Fatalf("%s at %s: error=%v", name, base, err)
+			if err := validateImageTask(profile, input); err == nil {
+				t.Fatal("hostname silently removed local limits")
+			}
+			server := *profile
+			server.References.MaxImageBytes = 0
+			version := "server-v1"
+			input.Config.ImageCapabilitiesVersion = &version
+			if err := validateImageTask(&server, input); err != nil {
+				t.Fatalf("%s at %s rejected server capability: %v", name, base, err)
 			}
 		}
 		if profile.References.MaxImageBytes != 30<<20 {

@@ -60,6 +60,15 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 					profile["videoCapabilitiesVersion"] = model.VideoCapabilitiesVersion
 				}
 			}
+			if capability == "image" {
+				// Clear stale server capabilities when an account's current catalog
+				// no longer supplies them; never merge old model-specific limits.
+				profile["capabilityConfig"], profile["imageCapabilitiesVersion"] = nil, ""
+				if image, ok := NormalizeCatalogImageCapability(model.ImageCapabilities); ok && model.ImageCapabilitiesVersion != "" {
+					profile["capabilityConfig"] = map[string]any{"version": 1, "image": image}
+					profile["imageCapabilitiesVersion"] = model.ImageCapabilitiesVersion
+				}
+			}
 		}
 		nextProfiles = append(nextProfiles, profile)
 	}

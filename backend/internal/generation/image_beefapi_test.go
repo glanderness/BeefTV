@@ -43,8 +43,8 @@ func TestBeefAPIHyImageUsesGenerationJSONForReferences(t *testing.T) {
 		if count > 0 && len(port.body["images"].([]interface{})) != count {
 			t.Fatalf("references = %#v", port.body)
 		}
-		if port.body["response_format"] != "url" {
-			t.Fatalf("managed response format = %#v", port.body["response_format"])
+		if port.body["response_format"] != nil {
+			t.Fatalf("gateway must choose response format: %#v", port.body["response_format"])
 		}
 		for _, key := range []string{"n", "quality", "output_format", "background", "mask", "image"} {
 			if _, exists := port.body[key]; exists {

@@ -9,7 +9,7 @@ import (
 )
 
 func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPolicy {
-	if input.Mode == "image" && isManagedImageURLConfig(ctx, input.Config) {
+	if input.Mode == "image" && usesDirectImageMedia(ctx, input.Config) {
 		return MediaHydrationPolicy{KeepLocal: true}
 	}
 	if input.Config.InterfaceType == "full-video" {

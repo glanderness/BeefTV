@@ -710,7 +710,7 @@ export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow
 }
 
 export function modelCapabilityConfigFor(
-    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> },
+    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol; imageCapabilitiesVersion?: string }> }> },
     model: string,
 ) {
     const separator = model.indexOf("::");
@@ -724,19 +724,8 @@ export function modelCapabilityConfigFor(
     // capability object while retaining the legacy entry as a fallback.
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
+	if (profile?.imageCapabilitiesVersion && profile.capabilityConfig?.image) return structuredClone(profile.capabilityConfig);
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
-    const alignManagedImageTransport = (image: ImageCapabilityConfig | undefined) => {
-        if (!image || protocol !== "openai-image" || !["gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(modelName.trim().toLowerCase())) return;
-        try {
-            const endpoint = new URL(channel?.baseUrl || "");
-            if (endpoint.protocol !== "https:" || !["beeftv.app", "enterprise.beefapi.com", "beefapi.com"].includes(endpoint.hostname.toLowerCase()) || endpoint.username || endpoint.password || (endpoint.port && endpoint.port !== "443")) return;
-            // The managed VOD request uses a URL. Its Base64 request limit is not
-            // a per-file URL limit, including for capabilities cached by old apps.
-            image.references = { ...image.references, maxImageBytes: 0 };
-            image.responseFormat = { supported: true, value: "url" };
-        } catch { /* An unrelated or missing endpoint keeps its stored settings. */ }
-    };
-    alignManagedImageTransport(fallback.image);
     // Official gateway contracts also upgrade capabilities cached by older installs.
     try {
         if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
@@ -785,8 +774,18 @@ export function modelCapabilityConfigFor(
               };
           })()
         : fallback.image;
-    alignManagedImageTransport(image);
     return { ...fallback, ...capabilityConfig, text, image, video };
+}
+
+export function sanitizeServerImageCapability(value: unknown): ImageCapabilityConfig | null {
+	if (!value || typeof value !== "object") return null;
+	const image = value as ImageCapabilityConfig;
+	if (!image.references || !image.size || !image.quality || !image.transparentBackground || !image.responseFormat || !image.outputFormat) return null;
+	if (![image.references.promptMaxChars, image.references.maxImages, image.references.maxImageBytes].every((item) => Number.isInteger(item) && item >= 0) || !Number.isInteger(image.maxOutputs) || image.maxOutputs < 1) return null;
+	if (!["none", "size", "aspect_ratio"].includes(image.size.parameter) || !Array.isArray(image.size.values) || !Array.isArray(image.quality.values)) return null;
+	if (image.size.parameter !== "none" && (!image.size.default || (!image.size.allowCustom && !image.size.values.includes(image.size.default)))) return null;
+	if (image.quality.supported && !image.quality.values.includes(image.quality.default)) return null;
+	return structuredClone(image);
 }
 
 export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {

@@ -32,7 +32,6 @@ func usesSeedreamRequestBody(input Input) bool {
 }
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
-	input = managedImageURLResponse(ctx, input)
 	if usesSeedreamRequestBody(input) {
 		return runSeedreamImageTask(ctx, input)
 	}
@@ -90,7 +89,7 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		}
 	}
 	if len(input.ReferenceImages) > 0 || input.Mask != nil {
-		if isManagedOpenAIImageConfig(ctx, input.Config) {
+		if usesDirectOpenAIImageMedia(ctx, input.Config) {
 			return runManagedOpenAIImageTask(ctx, input, outputCount)
 		}
 		body := &bytes.Buffer{}
@@ -158,7 +157,11 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"mode": "image", "images": images}, nil
+	result := map[string]interface{}{"mode": "image", "images": images}
+	if payload.Usage != nil {
+		result["usage"] = payload.Usage
+	}
+	return result, nil
 }
 
 func RunGeminiImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {

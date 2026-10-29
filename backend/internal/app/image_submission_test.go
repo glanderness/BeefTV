@@ -207,6 +207,9 @@ func TestImageSubmissionDiskRestartReplaysOneGenerationAndCompletesOnce(t *testi
 		if !bytes.Equal(got, body) {
 			t.Fatal("replay changed request bytes")
 		}
+		if req.Header.Get(generation.ImageMediaProtocolHeader) != "" {
+			t.Fatal("legacy frozen request acquired a new media contract")
+		}
 		if key == "" {
 			key = req.Header.Get("Idempotency-Key")
 			generations++

@@ -17,23 +17,20 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
-func TestManagedImageURLContractsDoNotOverrideThirdPartyOrGemini(t *testing.T) {
-	for _, name := range []string{"gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "midjourney-v8.2", "hy-image-v3", "dola-seedream-5-0-pro-260628"} {
-		for _, base := range []string{"https://beeftv.app", "https://enterprise.beefapi.com/v1", "https://beefapi.com", "https://third-party.example/v1"} {
-			config := Config{BaseURL: base, InterfaceType: "openai-image", Model: name}
-			want := !strings.Contains(base, "third-party")
-			if got := isManagedImageURLConfig(context.Background(), config); got != want {
-				t.Fatalf("%s at %s: managed URL=%t", name, base, got)
-			}
+func directImageTestContext() context.Context {
+	ctx := context.WithValue(context.Background(), imageMediaContext{}, ImageMediaProtocol)
+	return context.WithValue(ctx, imageMediaRequiredContext{}, "https://beeftv.app")
+}
+
+func TestManagedImageProtocolHasNoModelAllowlist(t *testing.T) {
+	for _, name := range []string{"gpt-image-2", "midjourney-v8.2", "hy-image-v3", "dola-seedream-5-0-pro-260628", "opaque-future-2030"} {
+		config := Config{BaseURL: "https://beeftv.app", CredentialRef: "beefapi-enterprise", InterfaceType: "openai-image", Model: name}
+		if usesDirectImageMedia(context.Background(), config) || !usesDirectImageMedia(directImageTestContext(), config) {
+			t.Fatalf("%s did not require advertised protocol", name)
 		}
-	}
-	for _, config := range []Config{
-		{BaseURL: "https://beeftv.app", InterfaceType: "gemini-image", Model: "gemini-3-pro-image-preview"},
-		{BaseURL: "https://beeftv.app", InterfaceType: "openai-image", Model: "unknown-image"},
-		{BaseURL: "https://beeftv.app", InterfaceType: "volcengine-ark-agent-plan-image", Model: "dola-seedream-5-0-pro-260628"},
-	} {
-		if isManagedImageURLConfig(context.Background(), config) {
-			t.Fatalf("unverified image wire contract opted in: %#v", config)
+		config.CredentialRef = ""
+		if usesDirectImageMedia(directImageTestContext(), config) {
+			t.Fatal("custom connection changed with hostname alone")
 		}
 	}
 }
@@ -44,21 +41,21 @@ func TestManagedOpenAIEditKeepsReferenceAndMaskURLs(t *testing.T) {
 		{Name: "image", Reference: protocol.MediaReference{URL: "https://media.example/two.png"}},
 		{Name: "mask", Reference: protocol.MediaReference{URL: "https://media.example/mask.png"}},
 	}
-	config := Config{BaseURL: "https://beeftv.app", InterfaceType: "openai-image", Model: "gpt-image-2"}
+	config := Config{BaseURL: "https://beeftv.app", CredentialRef: "beefapi-enterprise", InterfaceType: "openai-image", Model: "opaque-future-2030"}
 	spec := protocol.RequestSpec{Path: "/v1/images/edits", ContentType: "multipart/form-data", Body: map[string]any{"model": config.Model, "output_format": "png", "background": "transparent", "response_format": "b64_json"}, Files: refs}
-	converted, err := managedImageRequestSpec(context.Background(), config, spec)
+	converted, err := managedImageRequestSpec(directImageTestContext(), config, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := ProtocolBodyObject(converted.Body)
-	if converted.ContentType != "application/json" || converted.Files != nil || body["response_format"] != "url" || body["mask"] != refs[2].Reference.URL || !reflect.DeepEqual(body["image"], []string{refs[0].Reference.URL, refs[1].Reference.URL}) || body["background"] != "transparent" || body["output_format"] != "png" {
+	if converted.ContentType != "application/json" || converted.Files != nil || body["mask"] != refs[2].Reference.URL || !reflect.DeepEqual(body["image"], []string{refs[0].Reference.URL, refs[1].Reference.URL}) || body["background"] != "transparent" || body["output_format"] != "png" {
 		t.Fatalf("managed JSON contract lost: %#v", converted)
 	}
 	if spec.ContentType != "multipart/form-data" || len(spec.Files) != 3 || ProtocolBodyObject(spec.Body)["response_format"] != "b64_json" {
 		t.Fatal("conversion mutated original request or frozen options")
 	}
 	spec.Files = []protocol.RequestFilePart{{Name: "image", Reference: protocol.MediaReference{DataURL: DataURL("image/png", []byte("inline"))}}}
-	if _, _, err := ProtocolRequestBody(context.Background(), config, spec); err == nil {
+	if _, _, err := ProtocolRequestBody(directImageTestContext(), config, spec); err == nil {
 		t.Fatal("managed edit allowed inline bytes after upload preparation")
 	}
 }
@@ -101,8 +98,8 @@ func TestThirdPartyOpenAIEditPreservesMultipartBytes(t *testing.T) {
 }
 
 func TestManagedImagePublicURLSkipsUploadAndRemovesDuplicateInlineData(t *testing.T) {
-	input := Input{Mode: "image", Config: Config{BaseURL: "https://beeftv.app", InterfaceType: "openai-image", Model: "gpt-image-2"}, ReferenceImages: []Media{{URL: "https://media.example/one.png", DataURL: DataURL("image/png", []byte("do not send"))}}, Mask: &Media{URL: "https://media.example/mask.png"}}
-	if err := prepareBeefAPIImageReferences(context.Background(), "user-1", &input); err != nil {
+	input := Input{Mode: "image", Config: Config{BaseURL: "https://beeftv.app", CredentialRef: "beefapi-enterprise", InterfaceType: "openai-image", Model: "opaque-future-2030"}, ReferenceImages: []Media{{URL: "https://media.example/one.png", DataURL: DataURL("image/png", []byte("do not send"))}}, Mask: &Media{URL: "https://media.example/mask.png"}}
+	if err := prepareBeefAPIImageReferences(directImageTestContext(), "user-1", &input); err != nil {
 		t.Fatal(err)
 	}
 	if input.ReferenceImages[0].URL != "https://media.example/one.png" || input.ReferenceImages[0].DataURL != "" || input.Mask.URL != "https://media.example/mask.png" {
@@ -116,6 +113,10 @@ func TestManagedImageUploadFailureNeverDispatchesGeneration(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var posts atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
+					w.Header().Set(ImageMediaProtocolHeader, ImageMediaProtocol)
+					return
+				}
 				if strings.HasSuffix(r.URL.Path, "/images/edits") {
 					posts.Add(1)
 				}
@@ -123,7 +124,7 @@ func TestManagedImageUploadFailureNeverDispatchesGeneration(t *testing.T) {
 			}))
 			defer server.Close()
 			ctx := WithRuntime(context.Background(), taskRuntime(func(r *Runtime) { r.Endpoints.BeefAPIVideoBaseURL = server.URL }))
-			input := Input{Mode: "image", Prompt: "edit", Config: Config{BaseURL: server.URL, InterfaceType: "openai-image", Model: "gpt-image-2", APIKey: "synthetic"}, ReferenceImages: []Media{{DataURL: DataURL("image/png", []byte("image"))}}}
+			input := Input{Mode: "image", Prompt: "edit", Config: Config{BaseURL: server.URL, CredentialRef: "beefapi-enterprise", InterfaceType: "openai-image", Model: "opaque-future-2030", APIKey: "synthetic"}, ReferenceImages: []Media{{DataURL: DataURL("image/png", []byte("image"))}}}
 			_, err := Execute(WithProtocolRegistry(ctx, LoadOfficialFallbackRegistry()), input)
 			var preparation RequestPreparationError
 			if !errors.As(err, &preparation) || posts.Load() != 0 {
@@ -154,6 +155,8 @@ func TestManagedImageFailedPUTOrCompletionStopsBeforeGeneration(t *testing.T) {
 			var server *httptest.Server
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models"):
+					w.Header().Set(ImageMediaProtocolHeader, ImageMediaProtocol)
 				case strings.HasSuffix(r.URL.Path, "/video-references/uploads/complete"):
 					completes.Add(1)
 					w.WriteHeader(http.StatusBadRequest)
@@ -173,7 +176,7 @@ func TestManagedImageFailedPUTOrCompletionStopsBeforeGeneration(t *testing.T) {
 			}))
 			defer server.Close()
 			ctx := WithRuntime(context.Background(), taskRuntime(func(r *Runtime) { r.Endpoints.BeefAPIVideoBaseURL = server.URL }))
-			input := Input{Mode: "image", Prompt: "edit", Config: Config{BaseURL: server.URL, InterfaceType: "openai-image", Model: "gpt-image-2", APIKey: "synthetic"}, ReferenceImages: []Media{{DataURL: DataURL("image/png", []byte("image"))}}}
+			input := Input{Mode: "image", Prompt: "edit", Config: Config{BaseURL: server.URL, CredentialRef: "beefapi-enterprise", InterfaceType: "openai-image", Model: "opaque-future-2030", APIKey: "synthetic"}, ReferenceImages: []Media{{DataURL: DataURL("image/png", []byte("image"))}}}
 			_, err := Execute(WithProtocolRegistry(ctx, LoadOfficialFallbackRegistry()), input)
 			var preparation RequestPreparationError
 			if !errors.As(err, &preparation) || generations.Load() != 0 || creates.Load() != 1 || puts.Load() != 1 {

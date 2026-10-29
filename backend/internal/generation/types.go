@@ -76,6 +76,7 @@ type TextMessage struct {
 
 type Config struct {
 	ChannelID                string                    `json:"channelId"`
+	CredentialRef            string                    `json:"credentialRef,omitempty"`
 	ChannelModelKey          string                    `json:"channelModelKey,omitempty"`
 	VariantID                string                    `json:"variantId,omitempty"`
 	ProviderModelKey         string                    `json:"providerModelKey,omitempty"`
@@ -108,6 +109,7 @@ type Config struct {
 	AudioInstructions        string                    `json:"audioInstructions"`
 	SystemPrompt             string                    `json:"systemPrompt"`
 	CapabilityConfig         *ModelCapabilityConfig    `json:"capabilityConfig"`
+	ImageCapabilitiesVersion *string                   `json:"imageCapabilitiesVersion,omitempty"`
 	VideoCapabilitiesVersion *string                   `json:"videoCapabilitiesVersion,omitempty"`
 	WorkflowID               string                    `json:"workflowId"`
 	WebappID                 string                    `json:"webappId"`

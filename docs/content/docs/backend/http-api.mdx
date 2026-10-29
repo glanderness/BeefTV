@@ -97,6 +97,12 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 `POST /depth-captures` 接收待处理视频素材编号，创建本机深度动作捕捉任务。只接受当前用户已上传完成的视频。可选 `nodeId` 指定结果节点，此时必须提供 `projectId`；任务保存目标节点并在完成后使用既有画布任务绑定操作回填。节点必须仍引用该任务，已删除或已改用其他任务的节点不会被恢复或覆盖。
 
+### 内置连接的图片素材协议
+
+内置 BeefAPI 图片任务在读取本地参考图之前，向同源 `/v1/models` 协商 `X-BeefAPI-Image-Media-Protocol: direct-media-v1`。缺少或不识别的版本会在上传和生成前失败。协议以服务端声明为准，不按模型名称决定传输。图片目录的 `image_capabilities` 使用现有图片能力字段，`image_capabilities_version` 标识该声明；文件大小 `0` 表示没有额外的本地文件上限。
+
+参考图和蒙版复用现有上传 ticket、存储直传与确认流程。生成只发送 JSON：`image` 为 HTTPS 链接数组，`mask` 为单个 HTTPS 链接，并回传协商的协议头；最终序列化移除 `response_format`，结果格式由 API 决定。图片结果按原流程从 URL 下载、保存为本地资源。第三方连接保留各自协议；已经冻结的旧请求按原字节、Header 和幂等键恢复，不补新协议头、不重新生成。
+
 ### 任务读取与后台图片恢复
 
 任务详情、列表与按 `clientOperationId` 查回任务的接口新增只读字段：

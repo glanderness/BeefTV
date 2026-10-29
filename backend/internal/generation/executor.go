@@ -54,11 +54,24 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		}
 		return RunUpscaleTask(ctx, input)
 	}
+	if input.Mode == "image" {
+		var err error
+		ctx, err = negotiateManagedImageMedia(ctx, input.Config)
+		if err != nil {
+			return nil, err
+		}
+		if directImageMedia(ctx) && managedImageConnection(input.Config) {
+			input.Config.InterfaceType = "openai-image"
+			input.Config.APIFormat = "openai"
+		}
+	}
 	if input.Mode == "image" && IsBeefAPIVideoConfig(ctx, input.Config) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			input.Config.InterfaceType = contract.Protocol
 			input.Config.APIFormat = "openai"
-			input.Config.CapabilityConfig = &ModelCapabilityConfig{Version: 1, Image: modelcatalog.DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)}
+			if input.Config.ImageCapabilitiesVersion == nil || *input.Config.ImageCapabilitiesVersion == "" {
+				input.Config.CapabilityConfig = &ModelCapabilityConfig{Version: 1, Image: modelcatalog.DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)}
+			}
 		}
 	}
 	if input.Mode == "video" && providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
@@ -93,9 +106,6 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		if err := runtime.Config.ApplyCapabilities(ctx, &input); err != nil {
 			return nil, err
 		}
-	}
-	if input.Mode == "image" {
-		input = managedImageURLResponse(ctx, input)
 	}
 
 	resumed := ResumedProviderRequestID(ctx) != ""

@@ -165,9 +165,6 @@ func runBeefAPIImageTask(ctx context.Context, input Input, contract providerpres
 		}
 	}
 	body := map[string]interface{}{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "size": size}
-	if isManagedImageURLConfig(ctx, input.Config) {
-		body["response_format"] = "url"
-	}
 	if len(images) > 0 {
 		body["images"] = images
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 
 	"gorm.io/gorm"
 )
@@ -327,6 +328,27 @@ func styleAssetSupportsModel(baseModels []string, generationModel string) bool {
 }
 
 func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) error {
+	if input.Config.CredentialRef == managedBeefAPIRef {
+		body, err := s.ReadLocalModelConfig()
+		if err != nil {
+			return err
+		}
+		for _, item := range modelcatalog.ParseLocalChannelModels(body) {
+			if item.ChannelID != "beefapi" || item.Model != input.Config.Model || item.ImageCapabilitiesVersion == nil || *item.ImageCapabilitiesVersion == "" {
+				continue
+			}
+			raw, err := json.Marshal(item.CapabilityConfig)
+			if err != nil {
+				return err
+			}
+			input.Config.CapabilityConfig, err = DecodeModelCapabilityConfig(string(raw))
+			if err != nil {
+				return err
+			}
+			input.Config.ImageCapabilitiesVersion = item.ImageCapabilitiesVersion
+			break
+		}
+	}
 	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {

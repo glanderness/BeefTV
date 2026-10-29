@@ -8,52 +8,19 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/protocol"
-	"infinite-canvas/backend/internal/providerpreset"
 )
 
-// Only gateway contracts verified to accept remote image inputs opt in. A
-// third-party OpenAI/Gemini endpoint retains its own wire format and settings.
-func isManagedImageURLConfig(ctx context.Context, config Config) bool {
-	if !IsBeefAPIVideoConfig(ctx, config) {
-		return false
-	}
-	if seedreamFamily(config.Model) != "" {
-		return config.InterfaceType != string(model.ChannelInterfaceVolcengineArkAgentPlanImage)
-	}
-	if isManagedOpenAIImageConfig(ctx, config) {
-		return true
-	}
-	contract, ok := providerpreset.BeefAPIImageContract(config.Model)
-	return ok && contract.Model == "hy-image-v3"
+func usesDirectImageMedia(ctx context.Context, config Config) bool {
+	return managedImageConnection(config) && directImageMedia(ctx)
 }
 
-func isManagedOpenAIImageConfig(ctx context.Context, config Config) bool {
-	if !IsBeefAPIVideoConfig(ctx, config) || config.InterfaceType != string(model.ChannelInterfaceOpenAIImage) {
-		return false
-	}
-	return providerpreset.VODGPTImageModel(config.Model) || strings.EqualFold(strings.TrimSpace(config.Model), "midjourney-v8.2")
-}
-
-func managedImageURLResponse(ctx context.Context, input Input) Input {
-	if !isManagedImageURLConfig(ctx, input.Config) {
-		return input
-	}
-	profile := *modelcatalog.DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
-	if input.ImageCapability != nil {
-		profile = *input.ImageCapability
-	}
-	profile.ResponseFormat = modelcatalog.ImageResponseFormat{Supported: true, Value: modelcatalog.ImageResponseFormatURL}
-	if providerpreset.VODGPTImageModel(input.Config.Model) {
-		profile.References.MaxImageBytes = 0
-	}
-	input.ImageCapability = &profile
-	return input
+func usesDirectOpenAIImageMedia(ctx context.Context, config Config) bool {
+	return usesDirectImageMedia(ctx, config) && config.InterfaceType == string(model.ChannelInterfaceOpenAIImage)
 }
 
 func prepareBeefAPIImageReferences(ctx context.Context, userID string, input *Input) error {
-	if input == nil || input.Mode != "image" || !isManagedImageURLConfig(ctx, input.Config) {
+	if input == nil || input.Mode != "image" || !usesDirectImageMedia(ctx, input.Config) {
 		return nil
 	}
 	if len(input.ReferenceVideos)+len(input.ReferenceAudios) > 0 {
@@ -96,7 +63,7 @@ func validateManagedImageReference(input *Input, size int64) error {
 // accepts JSON references, so keep those references instead of downloading them
 // back into multipart files and sending large bytes through the API host.
 func managedImageRequestSpec(ctx context.Context, config Config, spec protocol.RequestSpec) (protocol.RequestSpec, error) {
-	if !isManagedOpenAIImageConfig(ctx, config) || strings.TrimSpace(strings.Split(spec.ContentType, ";")[0]) != "multipart/form-data" || !strings.HasSuffix(spec.Path, "/images/edits") {
+	if !usesDirectOpenAIImageMedia(ctx, config) || strings.TrimSpace(strings.Split(spec.ContentType, ";")[0]) != "multipart/form-data" || !strings.HasSuffix(spec.Path, "/images/edits") {
 		return spec, nil
 	}
 	body := make(map[string]any, len(ProtocolBodyObject(spec.Body))+3)
@@ -106,7 +73,7 @@ func managedImageRequestSpec(ctx context.Context, config Config, spec protocol.R
 	var images []string
 	for _, file := range spec.Files {
 		link := strings.TrimSpace(file.Reference.URL)
-		if !IsPublicMediaURL(link) || strings.TrimSpace(file.Reference.DataURL) != "" {
+		if !directImageReferences(ctx, link) || strings.TrimSpace(file.Reference.DataURL) != "" {
 			return spec, errors.New("参考图片尚未上传完成，本次尚未开始生成")
 		}
 		switch file.Name {
@@ -121,7 +88,7 @@ func managedImageRequestSpec(ctx context.Context, config Config, spec protocol.R
 	if len(images) == 0 {
 		return spec, errors.New("图片编辑必须提供源图片，本次尚未开始生成")
 	}
-	body["image"], body["response_format"] = images, "url"
+	body["image"] = images
 	spec.Body, spec.Files, spec.ContentType = body, nil, "application/json"
 	return spec, nil
 }
@@ -129,7 +96,7 @@ func managedImageRequestSpec(ctx context.Context, config Config, spec protocol.R
 func runManagedOpenAIImageTask(ctx context.Context, input Input, outputCount int) (map[string]interface{}, error) {
 	// The plugin is the normal route. Keep the host-only fallback on the same
 	// JSON contract for workspaces without that plugin installed.
-	body := map[string]any{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "n": outputCount, "response_format": "url", "output_format": "png"}
+	body := map[string]any{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "n": outputCount, "output_format": "png"}
 	if input.Config.TransparentBackground == "true" {
 		body["background"] = "transparent"
 	}

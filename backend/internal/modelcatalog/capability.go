@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -1132,17 +1131,11 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 }
 
 func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
-	profile = applyModelSpecificImageCapability(profile, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
-	if profile != nil && input.Config.InterfaceType == "openai-image" && providerpreset.VODGPTImageModel(input.Config.Model) {
-		endpoint, err := url.Parse(strings.TrimSpace(input.Config.BaseURL))
-		managed := providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) || (err == nil && endpoint.Scheme == "https" && strings.EqualFold(endpoint.Hostname(), "beefapi.com") && endpoint.User == nil && (endpoint.Port() == "" || endpoint.Port() == "443"))
-		if managed {
-			copied := *profile
-			copied.References.MaxImageBytes = 0
-			profile = &copied
-		}
+	sourced := input.Config.ImageCapabilitiesVersion != nil && *input.Config.ImageCapabilitiesVersion != ""
+	if !sourced {
+		profile = applyModelSpecificImageCapability(profile, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	}
-	if providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
+	if !sourced && providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			profile = DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)
 			if _, err := contract.PixelSize(input.Config.Size); err != nil {
@@ -1193,7 +1186,7 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 	if profile.Size.Parameter != "none" && !profile.Size.AllowCustom && strings.TrimSpace(input.Config.Size) != "" && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
 		return kernel.BadAuthRequest("图片尺寸不在当前模型支持范围内")
 	}
-	if profile.Size.Parameter == "size" && profile.Size.AllowCustom && strings.HasPrefix(modelName, "gpt-image-2") && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
+	if !sourced && profile.Size.Parameter == "size" && profile.Size.AllowCustom && strings.HasPrefix(modelName, "gpt-image-2") && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
 		if err := validateGPTImage2CustomSize(input.Config.Size); err != nil {
 			return kernel.BadAuthRequest(err.Error())
 		}

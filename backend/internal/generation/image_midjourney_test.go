@@ -62,11 +62,12 @@ func midjourneyImageInput() Input {
 func TestMidjourneySubmitsOneFourImageRequest(t *testing.T) {
 	for _, reference := range []bool{false, true} {
 		input := midjourneyImageInput()
+		input.Config.CredentialRef = "beefapi-enterprise"
 		if reference {
 			input.ReferenceImages = []Media{{URL: "https://media.example/reference.png"}}
 		}
 		port := &midjourneyImagePort{}
-		result, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input)
+		result, err := RunImageTask(WithRuntime(directImageTestContext(), Runtime{Images: port}), input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +78,7 @@ func TestMidjourneySubmitsOneFourImageRequest(t *testing.T) {
 		if port.calls != 1 || port.n != "4" || port.path != path || len(result["images"].([]map[string]string)) != 4 {
 			t.Fatalf("wire=%#v result=%#v", port, result)
 		}
-		if port.format != "url" || port.contentType != "application/json" || (reference && (len(port.images) != 1 || port.images[0] != input.ReferenceImages[0].URL)) {
+		if port.format != "" || port.contentType != "application/json" || (reference && (len(port.images) != 1 || port.images[0] != input.ReferenceImages[0].URL)) {
 			t.Fatalf("managed Midjourney sent large image bytes: %#v", port)
 		}
 	}
@@ -143,13 +144,14 @@ func TestMidjourneyRejectsUnsupportedInputBeforeSubmit(t *testing.T) {
 func TestMidjourneyEncodesGatewayAspectRatio(t *testing.T) {
 	for _, reference := range []bool{false, true} {
 		input := midjourneyImageInput()
+		input.Config.CredentialRef = "beefapi-enterprise"
 		input.Config.Size = "1456x816"
 		input.Config.SystemPrompt = "cinematic"
 		if reference {
 			input.ReferenceImages = []Media{{URL: "https://media.example/reference.png"}}
 		}
 		port := &midjourneyImagePort{}
-		_, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input)
+		_, err := RunImageTask(WithRuntime(directImageTestContext(), Runtime{Images: port}), input)
 		if err != nil {
 			t.Fatal(err)
 		}

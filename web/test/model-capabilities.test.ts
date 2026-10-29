@@ -7,20 +7,26 @@ import { modelCompatibilityError, modelPromptLengthError } from "../src/lib/mode
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
 
-test("managed VOD URL references upgrade old inline limits without changing third-party profiles", () => {
-    for (const model of ["gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+test("image transport does not depend on model names and server capabilities replace local defaults", () => {
+    for (const model of ["opaque-future-2030", "gpt-image-2", "gpt-image-2.5-flare"]) {
         const stored = defaultModelCapabilityConfig("openai-image", model);
         for (const baseUrl of ["https://beeftv.app", "https://enterprise.beefapi.com/v1", "https://beefapi.com", "https://third-party.example", "http://beeftv.app", "https://beeftv.app.evil.example"]) {
-            const managed = ["https://beeftv.app", "https://enterprise.beefapi.com/v1", "https://beefapi.com"].includes(baseUrl);
             for (const cached of [false, true]) {
                 const config = { channels: [{ id: "selected", baseUrl, models: [model], interfaceType: "openai-image", ...(cached ? { modelProfiles: [{ model, protocol: "openai-image", capabilityConfig: stored }] } : {}) }] } as AiConfig;
                 const image = modelCapabilityConfigFor(config, `selected::${model}`).image!;
-                assert.equal(image.references.maxImageBytes, managed ? 0 : 30 * 1024 * 1024);
-                assert.equal(image.responseFormat.value, managed ? "url" : undefined);
+                assert.equal(image.references.maxImageBytes, 30 * 1024 * 1024);
+                assert.equal(image.responseFormat.value, undefined);
             }
         }
         assert.equal(stored.image!.references.maxImageBytes, 30 * 1024 * 1024);
         assert.equal(stored.image!.responseFormat.value, undefined);
+        const sourced = structuredClone(stored);
+        sourced.image!.references.maxImageBytes = 0;
+        sourced.image!.references.maxImages = 7;
+        sourced.image!.quality = { supported: true, values: ["ultra"], default: "ultra" };
+        sourced.image!.fixedOutputs = 4;
+        const config = { channels: [{ id: "beefapi", baseUrl: "https://beeftv.app", models: [model], modelProfiles: [{ model, protocol: "openai-image", capabilityConfig: sourced, imageCapabilitiesVersion: "server-v2" }] }] } as AiConfig;
+        assert.deepEqual(modelCapabilityConfigFor(config, `beefapi::${model}`), sourced);
     }
     const model = "dola-seedream-5-0-pro-260628";
     const config = { channels: [{ id: "beefapi", baseUrl: "https://beeftv.app", models: [model], interfaceType: "openai-image" }] } as AiConfig;

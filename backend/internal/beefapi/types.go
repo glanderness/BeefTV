@@ -63,6 +63,8 @@ type CatalogModel struct {
 	DisplayName              string          `json:"displayName,omitempty"`
 	ModelType                string          `json:"modelType,omitempty"`
 	SupportedEndpointTypes   []string        `json:"supportedEndpointTypes,omitempty"`
+	ImageCapabilities        json.RawMessage `json:"imageCapabilities,omitempty"`
+	ImageCapabilitiesVersion string          `json:"imageCapabilitiesVersion,omitempty"`
 	VideoCapabilities        json.RawMessage `json:"videoCapabilities,omitempty"`
 	VideoCapabilitiesVersion string          `json:"videoCapabilitiesVersion,omitempty"`
 	VideoPricing             json.RawMessage `json:"videoPricing,omitempty"`

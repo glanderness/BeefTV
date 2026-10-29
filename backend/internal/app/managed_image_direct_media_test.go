@@ -22,6 +22,8 @@ import (
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/protocol"
 
 	"gorm.io/gorm"
 )
@@ -40,6 +42,7 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 		refs, outputs           int
 		mask, transparent       bool
 		largeReference          bool
+		hostFallback, oldBase64 bool
 	}{
 		{name: "Seedream multi-reference", model: "dola-seedream-5-0-pro-260628", size: "2K", refs: 2, outputs: 1},
 		{name: "Seedream transparent", model: "dola-seedream-5-0-flash-260915", size: "2K", refs: 1, outputs: 1, transparent: true},
@@ -51,6 +54,9 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 		{name: "GPT Sunburst mask", model: "gpt-image-2.5-sunburst", size: "1024x1024", refs: 1, outputs: 1, mask: true},
 		{name: "HyImage", model: "hy-image-v3", size: "1:1", refs: 3, outputs: 1},
 		{name: "Midjourney", model: "midjourney-v8.2", size: "1:1", refs: 1, outputs: 4},
+		{name: "Opaque 50MB multi-reference mask old Base64 plugin", model: "opaque-future-2030", size: "1024x1024", refs: 2, outputs: 1, mask: true, transparent: true, largeReference: true, oldBase64: true},
+		{name: "Opaque default plugin", model: "opaque-future-2030", size: "1024x1024", outputs: 1},
+		{name: "Opaque host fallback", model: "opaque-future-2030", size: "1024x1024", refs: 1, outputs: 1, hostFallback: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -98,6 +104,11 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 			gateway = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+					w.Header().Set(generation.ImageMediaProtocolHeader, generation.ImageMediaProtocol)
+					_, _ = io.WriteString(w, `{"data":[]}`)
+					return
+				}
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/images/proxy" {
 					http.Redirect(w, r, storage.URL+"/generated.png", http.StatusFound)
 					return
@@ -143,7 +154,7 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 					posts++
 					var body map[string]any
 					_ = json.Unmarshal(data, &body)
-					if body["response_format"] != "url" || body["model"] != tc.model {
+					if body["response_format"] != nil || body["model"] != tc.model || r.Header.Get(generation.ImageMediaProtocolHeader) != generation.ImageMediaProtocol {
 						t.Errorf("URL contract missing: %#v", body)
 					}
 					if tc.mask && (r.URL.Path != "/v1/images/edits" || !strings.HasPrefix(body["mask"].(string), storage.URL+"/objects/")) {
@@ -183,7 +194,16 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 			defer gateway.Close()
 			path, dataDir := filepath.Join(t.TempDir(), "workspace.db"), t.TempDir()
 			svc, db := newManagedImageDirectService(t, path, dataDir)
-			input := generation.Input{Mode: "image", Prompt: "synthetic fixture", Config: generation.Config{BaseURL: gateway.URL, APIKey: "synthetic-key", Model: tc.model, InterfaceType: "openai-image", Size: tc.size, SeedreamMode: tc.mode}}
+			version := "fixture-capabilities-v1"
+			capability := modelcatalog.DefaultImageCapabilityConfig("openai-image", tc.model)
+			if tc.largeReference {
+				capability.References.MaxImageBytes = 0
+			}
+			input := generation.Input{Mode: "image", Prompt: "synthetic fixture", Config: generation.Config{BaseURL: gateway.URL, CredentialRef: "beefapi-enterprise", APIKey: "synthetic-key", Model: tc.model, InterfaceType: "openai-image", Size: tc.size, SeedreamMode: tc.mode, ImageCapabilitiesVersion: &version, CapabilityConfig: &generation.ModelCapabilityConfig{Version: 1, Image: capability}}}
+			if tc.oldBase64 {
+				input.Metadata = map[string]any{"providerOptions": map[string]any{"openai-image": map[string]any{"response_format": "b64_json"}}}
+				capability.ResponseFormat.Value = "b64_json"
+			}
 			if tc.model == "midjourney-v8.2" {
 				input.Config.Count = "4"
 			}
@@ -200,6 +220,10 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 			ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: gateway.URL})
 			ctx = svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: "user-1", TaskID: "original-task", TaskType: "canvas_image"})
 			ctx = generation.WithProtocolRegistry(ctx, generation.LoadOfficialFallbackRegistry())
+			if tc.hostFallback {
+				registry, _ := protocol.NewRegistry()
+				ctx = generation.WithProtocolRegistry(ctx, registry)
+			}
 			result, err := generation.Execute(ctx, input)
 			if err != nil {
 				closeDB(t, db)
@@ -264,6 +288,27 @@ func TestManagedImageDirectReferencesPersistAndReopen(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestManagedImageCapabilityUsesSavedServerCatalog(t *testing.T) {
+	svc, _, _, _ := creationTestService(t)
+	const name = "opaque-future-2030"
+	server := modelcatalog.DefaultImageCapabilityConfig("openai-image", name)
+	server.References.MaxImageBytes = 0
+	server.Quality = modelcatalog.ImageQualityConfig{Supported: true, Values: []string{"ultra"}, Default: "ultra"}
+	body, _ := json.Marshal(map[string]any{"channels": []any{map[string]any{"id": "beefapi", "baseUrl": "https://beeftv.app", "apiKey": "fixture", "models": []string{name}, "modelProfiles": []any{map[string]any{"model": name, "capability": "image", "protocol": "openai-image", "capabilityConfig": map[string]any{"version": 1, "image": server}, "imageCapabilitiesVersion": "server-v2"}}}}})
+	if err := svc.SaveLocalModelConfig(body); err != nil {
+		t.Fatal(err)
+	}
+	stale := modelcatalog.DefaultImageCapabilityConfig("openai-image", name)
+	stale.References.MaxImageBytes = 1
+	input := generation.Input{Mode: "image", Prompt: "draw", Config: generation.Config{CredentialRef: "beefapi-enterprise", Model: name, InterfaceType: "openai-image", BaseURL: "https://beeftv.app", Size: "1024x1024", Quality: "ultra", CapabilityConfig: &generation.ModelCapabilityConfig{Version: 1, Image: stale}}, ReferenceImages: []generation.Media{{Bytes: 48 << 20}}}
+	if err := svc.validateResolvedImageCapability(&input); err != nil {
+		t.Fatal(err)
+	}
+	if input.ImageCapability.References.MaxImageBytes != 0 || input.Config.ImageCapabilitiesVersion == nil || *input.Config.ImageCapabilitiesVersion != "server-v2" || input.ImageCapability.Quality.Default != "ultra" {
+		t.Fatal("stale UI profile replaced the saved server catalog")
 	}
 }
 

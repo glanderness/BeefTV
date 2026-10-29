@@ -65,7 +65,7 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 	// create、poll、download 是同一个外部任务的三个阶段：任一阶段失败都向上返回真实错误，
 	// 不把“已提交但结果未知”伪装成成功，也不把下载失败降级成空结果。
 	request := ProtocolRequestFromInput(input)
-	if input.Mode == "image" && isManagedImageURLConfig(ctx, input.Config) {
+	if input.Mode == "image" && usesDirectImageMedia(ctx, input.Config) {
 		request.Extra["transparentBackground"] = input.Config.TransparentBackground
 	}
 	taskID := ResumedProviderRequestID(ctx)
@@ -545,7 +545,11 @@ func ProtocolRequestBody(ctx context.Context, config Config, spec protocol.Reque
 	}
 	switch contentType {
 	case "", "application/json":
-		data, err := json.Marshal(spec.Body)
+		value, err := directImageBody(ctx, spec.Path, spec.Body)
+		if err != nil {
+			return nil, "", err
+		}
+		data, err := json.Marshal(value)
 		if err != nil {
 			return nil, "", err
 		}
