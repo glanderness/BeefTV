@@ -203,6 +203,10 @@ func (c *MediaClient) networkContext(ctx context.Context) context.Context {
 func (c *MediaClient) send(req *http.Request, limit int64) ([]byte, http.Header, error) {
 	client := *c.httpClient()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c.sendWith(&client, req, limit)
+}
+
+func (c *MediaClient) sendWith(client *http.Client, req *http.Request, limit int64) ([]byte, http.Header, error) {
 	resp, err := client.Do(req)
 	var data []byte
 	if err == nil {

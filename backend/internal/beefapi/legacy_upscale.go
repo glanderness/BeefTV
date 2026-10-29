@@ -81,12 +81,22 @@ func (c *MediaClient) QueryLegacyUpscale(ctx context.Context, id, model, mediaTy
 	}
 	return task, nil
 }
+
+// LegacyUpscaleContent downloads a finished upscale. The API answers with a
+// redirect to the already-saved file in object storage; only this GET follows
+// it, through the storage client. JSON and POST calls still refuse redirects.
 func (c *MediaClient) LegacyUpscaleContent(ctx context.Context, id string, limit int64) ([]byte, string, error) {
 	path, err := LegacyUpscaleTaskPath(id)
 	if err != nil {
 		return nil, "", err
 	}
-	return c.LegacyBinary(ctx, http.MethodGet, path+"/content", nil, limit)
+	req, err := c.request(ctx, http.MethodGet, path+"/content", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Del(MediaProtocolHeader)
+	data, header, err := c.sendWith(c.storageClient("超分结果重定向次数过多"), req, limit)
+	return data, header.Get("Content-Type"), err
 }
 func (c *MediaClient) CancelLegacyUpscale(ctx context.Context, id string) error {
 	path, err := LegacyUpscaleTaskPath(id)

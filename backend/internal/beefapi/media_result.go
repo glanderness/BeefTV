@@ -27,19 +27,7 @@ func (c *MediaClient) storageJSON(ctx context.Context, receipt MediaReceipt) ([]
 	if err != nil {
 		return nil, err
 	}
-	client := *c.httpClient()
-	client.Jar = nil
-	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("历史回执重定向次数过多")
-		}
-		if err := c.validURLContext(next.Context(), next.URL.String()); err != nil {
-			return err
-		}
-		next.Header = make(http.Header)
-		return nil
-	}
-	resp, err := client.Do(req)
+	resp, err := c.storageClient("历史回执重定向次数过多").Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +44,24 @@ func (c *MediaClient) storageJSON(ctx context.Context, receipt MediaReceipt) ([]
 	}
 	return data, nil
 }
+
+// storageClient follows redirects to public HTTPS object storage only. Every
+// hop is validated, and each hop starts without headers or cookies, so the API
+// key and custom API headers never reach storage.
+func (c *MediaClient) storageClient(tooMany string) *http.Client {
+	client := *c.httpClient()
+	client.Jar = nil
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		next.Header = make(http.Header)
+		if len(via) >= storageRedirectLimit {
+			return errors.New(tooMany)
+		}
+		return c.validURLContext(next.Context(), next.URL.String())
+	}
+	return &client
+}
+
+const storageRedirectLimit = 10
 
 func (c *MediaClient) Result(ctx context.Context, task MediaTask, legacy bool) (map[string]any, error) {
 	items := make([]map[string]any, 0, len(task.Outputs))
