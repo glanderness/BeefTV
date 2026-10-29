@@ -97,3 +97,20 @@ A 类已经单源化：后台给结论，前端照读。第 8 项真正要处理
 2. 回放测试：取 Codex 列出的 20 多种输入，断言改动前后第一次显示的原因和操作建议完全一致。
 3. 再次展示测试：同一个失败保存、重新打开画布，显示和第一次一致（上一版就是这里坏的）。
 4. 旧节点测试：没有 `taskOutcome` 的旧节点打开后被补写，且补写结果与今天推断的结果一致。
+
+## 六、实施记录（2026-10-29 晚）：两次尝试都没合，顺序要反过来
+
+1. **3.1 写入时定结论**：全量测试 2 项失败。失败写下之后，还有 4 个文件会往节点上追加"提交未确认"标记（`canvas-project-generation.ts`、`use-canvas-generation.ts`、`use-canvas-upscale-batch.ts`、`canvas-generation-target.ts`）。读时推断看得到这些后加的标记，写入时定死的结论看不到。
+2. **3.2 本地失败多存一个错误类别**：测试全过，但 Codex 实测指出 8 类行为变化，包括：已有后台任务的节点的结论被覆盖，批量重试会把运行中的子节点也带上；错误卡片原本隐藏"重新生成"按钮，现在会显示；"视频结果下载失败"的提示从"继续取回原结果"变成"可以直接重新生成"；审核失败后改提示词会清掉任务绑定；被删目标节点的恢复路线从"单节点恢复"变成"去生成历史"。
+
+**原因**：至少 8 处代码各自读节点上的 `generationErrorCode`、`errorDetails`、`taskOutcome`、`taskStage` 来做判断（`task-outcome.ts` 的 `readNodeTaskOutcome`，`canvas-depth-capture.ts` 的 `canvasNodeFailureExplanation`，`canvas-node-content.tsx` 的重试按钮，`generation-error.ts` 的 `isContentModerationError`，`canvas-generation-orchestration.ts` 的批量重试筛选，`use-canvas-generation-batches.ts` 的提交未确认判断，`canvas-project-generation.ts` 的自动恢复判断，`use-canvas-node-editor.ts` 的改提示词重置）。只要写入的字段变了，这些地方就各自得出不同的结论。
+
+**新的顺序**：
+
+1. 先把上面 8 处读取收成一个函数：输入节点，输出"阶段、能否重新生成、原因、提示文字、操作建议、要不要显示重新生成按钮、要不要自动恢复、恢复走哪条路"。8 处都只调这个函数。
+2. 用测试把每一处今天的表现锁住：至少覆盖 Codex 两轮找出的全部输入，外加"已有后台任务的节点再失败一次"和"审核失败后改提示词"。
+3. 这一步做完，节点上存什么字段就只影响这一个函数。之后再按 3.1、3.2 改写入端，只改这一个函数的输入，用第 2 步的测试证明输出没变。
+4. 第 8 项（删旧推断）在第 3 步之后，按 3.3 的时间点做。
+
+第 1、2 步本身不改任何用户可见行为，可以按普通重构做、按普通标准审。
+
