@@ -507,8 +507,10 @@ func (a generationDeliveryMediaAdapter) managedArtifact(userID, identity string)
 	var retained struct {
 		Cipher string `json:"imageDeliveryCipher"`
 	}
-	if err := json.Unmarshal([]byte(task.InputJSON), &retained); err != nil {
-		return false, err
+	if strings.TrimSpace(task.InputJSON) != "" {
+		if err := json.Unmarshal([]byte(task.InputJSON), &retained); err != nil {
+			return false, err
+		}
 	}
 	if retained.Cipher != "" {
 		plain, err := a.service.decryptSettingSecret(retained.Cipher)

@@ -134,7 +134,7 @@ func (s *Service) recoverFailedImageForUser(ctx context.Context, userID, taskID 
 		_ = s.DeliverSucceededTask(*task)
 		return s.repo.TaskForUser(userID, taskID)
 	}
-	if !imageRecoveryNeedsPolling(*task) {
+	if !imageRecoveryNeedsPolling(*task) && !s.managedImageNeedsRecheck(*task) {
 		return task, nil
 	}
 	_ = s.recoverFailedImage(ctx, *task)

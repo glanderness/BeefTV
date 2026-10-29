@@ -80,6 +80,67 @@ func TestManagedImageOldLocalConclusionMustBeCheckedWithAPI(t *testing.T) {
 	}
 }
 
+func TestManagedImageManualAndCredentialOnlyOldConclusionQueriesOriginalTask(t *testing.T) {
+	for _, mode := range []string{"manual", "credential-only-scan", "third-party-same-host"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, db, task, row, _ := imageSubmissionFixture(t, false)
+			task.Status, task.InputJSON = model.TaskStatusFailed, `{"config":{"credentialRef":"beefapi-enterprise"}}`
+			if mode == "third-party-same-host" {
+				task.InputJSON = `{"config":{"baseUrl":"https://enterprise.beefapi.com","apiKey":"third-party"}}`
+			}
+			old := localtask.RecoveryUnrecoverable
+			task.RecoveryOutcome = &old
+			if err := db.Save(&task).Error; err != nil {
+				t.Fatal(err)
+			}
+			attempt, _ := svc.repo.LatestRouteAttempt(task.ID)
+			attempt.ChannelID = ""
+			if err := svc.repo.SaveRouteAttempt(attempt); err != nil {
+				t.Fatal(err)
+			}
+			gets, posts := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					posts++
+					w.WriteHeader(500)
+					return
+				}
+				gets++
+				ref := strings.TrimPrefix(r.URL.Path, "/v1/media/tasks/")
+				_ = json.NewEncoder(w).Encode(map[string]any{"task_ref": ref, "media_type": "image", "task_id": "historical-job", "status": "failed", "outputs": []any{}, "billing_state": "refunded"})
+			}))
+			defer server.Close()
+			wire, _ := svc.imageSubmissionWire(row)
+			wire.URL, wire.ChannelID = server.URL+"/v1/images/generations", ""
+			raw, _ := json.Marshal(wire)
+			row.RequestCipher, _ = svc.encryptSettingSecret(string(raw))
+			row.QueryCipher, row.SendCount = "", 1
+			if err := db.Save(row).Error; err != nil {
+				t.Fatal(err)
+			}
+			ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
+			if mode == "credential-only-scan" {
+				if err := svc.recoverFailedImages(ctx, 8); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := svc.recoverFailedImageForUser(ctx, task.UserID, task.ID); err != nil {
+				t.Fatal(err)
+			}
+			latest, _ := svc.repo.Task(task.ID)
+			if posts != 0 {
+				t.Fatal("recovery submitted a generation")
+			}
+			if mode == "third-party-same-host" {
+				if gets != 0 || latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != old {
+					t.Fatalf("third-party task adopted as managed: gets=%d task=%+v", gets, latest)
+				}
+			} else if gets != 1 || latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != localtask.RecoveryNoResult || latest.BeefBillingState == nil || *latest.BeefBillingState != "refunded" {
+				t.Fatalf("original query lost: gets=%d task=%+v", gets, latest)
+			}
+		})
+	}
+}
+
 func TestManagedImageExpiredRequestKeepsOnlySmallQueryIdentity(t *testing.T) {
 	for _, mode := range []string{"new-protocol", "legacy-wire", "already-missing"} {
 		t.Run(mode, func(t *testing.T) {

@@ -72,8 +72,10 @@ var upscaleModelKeys = []string{"topaz-standard-v2", "topaz-wonder-3.5", "topaz-
 
 func (r *Repository) FailedImagesForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
+	// The credential field only broadens the old-conclusion candidate scan.
+	// The service verifies the exact managed identity before any API query.
 	err := r.db.Where("tasks.id > ? AND tasks.type = ? AND tasks.model NOT IN ? AND tasks.status = ?", afterID, "canvas_image", upscaleModelKeys, model.TaskStatusFailed).
-		Where(`((recovery_outcome IS NULL OR recovery_outcome = '') OR beef_billing_state = '' OR (recovery_outcome = 'unrecoverable' AND (EXISTS (SELECT 1 FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run AND a.channel_id = 'beefapi') OR EXISTS (SELECT 1 FROM image_submissions s WHERE s.task_id = tasks.id AND s.query_cipher <> '')))) AND (next_poll_at IS NULL OR next_poll_at <= ?)`, time.Now()).
+		Where(`((recovery_outcome IS NULL OR recovery_outcome = '') OR beef_billing_state = '' OR (recovery_outcome = 'unrecoverable' AND (input_json LIKE '%"credentialRef"%' OR EXISTS (SELECT 1 FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run AND a.channel_id = 'beefapi') OR EXISTS (SELECT 1 FROM image_submissions s WHERE s.task_id = tasks.id AND s.query_cipher <> '')))) AND (next_poll_at IS NULL OR next_poll_at <= ?)`, time.Now()).
 		Where(`image_job_id <> '' OR stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')`).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err

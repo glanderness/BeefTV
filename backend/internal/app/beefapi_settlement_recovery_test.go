@@ -20,6 +20,10 @@ func TestBeefAPIVideoSettlementPendingThenFailed(t *testing.T) {
 
 	var polls atomic.Int32
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/videos/vid-settle-1" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/video/generations/vid-settle-1" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -161,7 +165,8 @@ func TestBeefAPIImageJobSettlementPendingRefundedAndAbsent(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := s.recoverFailedImage(context.Background(), task); err != nil {
+		ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: gateway.URL})
+		if err := s.recoverFailedImage(ctx, task); err != nil {
 			t.Fatal(err)
 		}
 		first, err := s.Task("user", task.ID)
@@ -178,7 +183,7 @@ func TestBeefAPIImageJobSettlementPendingRefundedAndAbsent(t *testing.T) {
 			t.Fatalf("first outcome = %+v", first.Outcome)
 		}
 
-		if err := s.recoverFailedImage(context.Background(), *first); err != nil {
+		if err := s.recoverFailedImage(ctx, *first); err != nil {
 			t.Fatal(err)
 		}
 		second, err := s.Task("user", task.ID)
@@ -229,7 +234,8 @@ func TestBeefAPIImageJobSettlementPendingRefundedAndAbsent(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := s.recoverFailedImage(context.Background(), task); err != nil {
+		ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: gateway.URL})
+		if err := s.recoverFailedImage(ctx, task); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Task("user", task.ID)
@@ -273,7 +279,8 @@ func TestBeefAPIImageJobSettlementPendingRefundedAndAbsent(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := s.recoverFailedImage(context.Background(), task); err != nil {
+		ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: gateway.URL})
+		if err := s.recoverFailedImage(ctx, task); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Task("user", task.ID)
