@@ -26,6 +26,8 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 
 ## 开发参考
 
+- [BeefTV UI 系统与字体排版规范](design-system/README.md)
+
 - [后端本地开发](content/docs/backend/local-development.mdx)
 - [beeftv 命令行基础使用](content/docs/backend/beeftv-cli.mdx)
 - [HTTP API](content/docs/backend/http-api.mdx)

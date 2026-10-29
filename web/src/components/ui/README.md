@@ -2,6 +2,12 @@
 
 `web/src/components/ui/` 下的自研组件层。本文是组件目录内的公开速查与维护约定。
 
+## 排版依据
+
+工作区组件的字体、字号、字重、行高、字距及文字色遵循 [BeefTV 字体与排版规范](../../../../docs/design-system/typography.md)。现有变量与基准页面并未全部统一；调用 token 前须核对完整排版角色，差异见[基线审计](../../../../docs/design-system/typography-audit.md)。
+
+画布外组件的壳、状态、样式所有权与覆盖边界另遵循 [UI 系统 Part 02](../../../../docs/design-system/interface-and-style-governance.md)，不能通过新增全局 important 或 final-lock 抢占另一组件职责。
+
 ## 分层
 
 | 层          | 目录              | 内容                                                                                         |

@@ -10,6 +10,10 @@
 
 不要提交 `.env`、数据库、数据目录、生成产物、编辑器配置或真实 API/OSS 密钥。新增配置项时只在 `.env.example` 中提供无敏感信息的说明。
 
+## UI 调整
+
+修改工作区界面前，请阅读 [BeefTV UI 系统](docs/design-system/README.md)和[字体与排版规范](docs/design-system/typography.md)。以首页、项目库、资产库为视觉基准；相同用途的文字使用同一排版角色。界面结构和样式归属遵循 [Part 02：画布外界面结构与样式治理](docs/design-system/interface-and-style-governance.md)。历史覆盖与迁移顺序见[画布外审计](docs/design-system/outer-ui-audit.md)，字体例外见[排版基线审计](docs/design-system/typography-audit.md)。
+
 ## 提交要求
 
 - 保持改动聚焦，沿用现有目录职责、命名和错误处理风格。
