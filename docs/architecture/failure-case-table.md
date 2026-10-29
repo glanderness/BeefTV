@@ -1,6 +1,6 @@
 # 生成失败怎么显示：用例表（第 7、8 项的前置）
 
-状态：待 Sunny 确认。只描述规则，不含代码改动。
+状态：Sunny 2026-10-29 确认按建议执行。
 依据：main `d3b3d773`。重构方案第十节第 7 项（前端错误改读错误码）、第 8 项（删 `task-outcome.ts` 的旧节点推断）。
 
 ## 一、为什么要先定这张表
@@ -31,20 +31,18 @@ A 类已经单源化：后台给结论，前端照读。第 8 项真正要处理
 
 不再在读的时候推断。每个写失败的地方（第四节列出全部 16 个文件），在写 `generationErrorCode` 的同时写 `taskOutcome`，按下表定：
 
-| 失败类别（`generationErrorCode`） | 阶段 | 能否重新生成 | 原因 | 显示 |
+| 节点上的情况 | 阶段 | 能否重新生成 | 原因 | 显示 |
 | --- | --- | --- | --- | --- |
-| `request_not_sent`、本地保存节点失败、`cancelled`（未提交时取消） | failed | 直接可以 | `not_charged` | "上次请求未扣费，可以直接重新生成" |
-| `canvas_conflict`、`download_failed`、`result_apply_failed`、`delivery_failed` | retrievable | 不可以 | `delivery_pending` | "上次生成结果已保留，系统正在自动取回" |
-| `result_target_unavailable` | failed | 不可以 | `result_target_unavailable` | "生成结果已保存在生成历史，当前目标节点已变更" |
-| `submission_uncertain`、`timeout`、`network`（已发出、不知道对方收没收到） | retrievable | 不可以 | `submission_unknown` | "正在核实并取回上次生成结果" |
-| `moderation_*`、`invalid_params`、`context_too_long`、`input_inaccessible`、`input_too_large` | failed | 先确认 | `input_rejected` | "提示词、参考素材或参数未通过校验" + 确认框 |
-| 其余（`auth`、`permission`、`quota_*`、`throttled`、`concurrency`、`provider_unavailable`、`model_missing`、`malformed_response`、`unknown` 等） | failed | 见下一行 | `task_failed` | 见下一行 |
-| ↳ 能证明请求没发出（浏览器直连收到明确拒绝、本地校验拦下） | failed | 直接可以 | `not_charged` | "上次请求未扣费，可以直接重新生成" |
-| ↳ 不能证明 | failed | 先确认 | `task_failed` | "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次" + 确认框 |
+| `generationSubmissionState` 为 unknown，或 `taskStage` 为 `submission_unknown` | retrievable | 不可以 | `submission_unknown` | "上次生成结果已保留，系统正在自动取回" |
+| 错误码 `result_target_unavailable` | failed | 不可以 | `result_target_unavailable` | "生成结果已保存在生成历史，当前目标节点已变更" |
+| 错误码 `canvas_conflict`、`download_failed`、`result_apply_failed`、`delivery_failed`、`submission_uncertain`、`results_missing` | retrievable | 不可以 | `delivery_pending` | "上次生成结果已保留，系统正在自动取回" |
+| 错误码 `moderation_*`、`invalid_params`、`context_too_long`、`input_inaccessible`、`input_too_large`、`content_policy_violation`、`sensitive_words_detected` | failed | 先确认 | `input_rejected` | "提示词、参考素材或参数未通过校验" + 确认框 |
+| 错误码 `request_not_sent`，或任务已取消 | failed | 直接可以 | `not_charged` | "上次请求未扣费，可以直接重新生成" |
+| 其余失败（鉴权、额度、限流、网络、超时、服务不可用、未知等） | failed | 直接可以 | `task_failed` | "上次生成未完成，可以直接重新生成" |
 
 这张表就是今天 `readNodeTaskOutcome` 里的规则，只是改到写入时执行一次、存下来，读的时候不再推。所以对已经在跑的用户，显示不变。
 
-**要你确认的第 1 点：** 鉴权失败、额度不足、请求过于频繁这几类，浏览器直连渠道收到的是供应商明确的拒绝，基本可以认定没扣钱。我建议归到"直接可以重新生成"，不弹确认框。今天的推断对它们统一弹确认框。这会改变用户看到的东西：少弹一次确认。
+**第 1 点（已确认，按建议）：** 浏览器直连渠道的鉴权、额度、限流失败，今天就允许直接重新生成、不弹确认框，上表保持这个行为。核对代码时发现初稿把这一点写反了，把"超时、网络"写成了"不可以重新生成"，也和今天不符，已改回。
 
 ### 3.2 错误类别和提示文案：只在第一次归类时算一次
 
@@ -60,7 +58,7 @@ A 类已经单源化：后台给结论，前端照读。第 8 项真正要处理
 
 这样同一个失败第一次和后来看到的提示一样，也不改变任何现有归类结果。
 
-**要你确认的第 2 点：** 前端约 135 处按文字归类的规则这一轮不删。它们仍然负责第一次归类，只是不会再被重复调用。要真正删掉，得让后台和 BeefAPI 返回带类别的错误。浏览器直连渠道的错误来自第三方供应商，前端只能看文字，这部分可能永远删不掉。我建议第 7 项的完成标准改成"已归类的失败不再重新归类"，而不是"文字判断降到只剩浏览器本地错误"。
+**第 2 点（已确认，按建议）：** 前端约 135 处按文字归类的规则这一轮不删。它们仍然负责第一次归类，只是不会再被重复调用。要真正删掉，得让后台和 BeefAPI 返回带类别的错误。浏览器直连渠道的错误来自第三方供应商，前端只能看文字，这部分可能永远删不掉。我建议第 7 项的完成标准改成"已归类的失败不再重新归类"，而不是"文字判断降到只剩浏览器本地错误"。
 
 ### 3.3 旧节点
 
@@ -68,7 +66,7 @@ A 类已经单源化：后台给结论，前端照读。第 8 项真正要处理
 
 补写一段时间后（建议两个发版周期），删除 `readNodeTaskOutcome` 和 `readTaskOutcome` 里的推断分支，没有结论的节点统一显示"上次生成未完成，可以直接重新生成"（就是现在 `taskOutcomeCopy` 对空结论的兜底）。
 
-**要你确认的第 3 点：** 删除推断的时间点。我建议两个发版周期，因为桌面客户端用户不一定马上升级。
+**第 3 点（已确认，按建议）：** 删除推断的时间点。我建议两个发版周期，因为桌面客户端用户不一定马上升级。
 
 ## 四、要改的写入点
 
