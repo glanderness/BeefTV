@@ -37,6 +37,21 @@ test("failed storage check keeps an actionable HTTP status", async () => {
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
+test("unreadable object storage config blocks overwriting saved credentials", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url + "?storage-load-error");
+        const pane = page.getByRole("region", { name: "参考素材对象存储", exact: true });
+        await pane.getByRole("alert").waitFor();
+        expect(await pane.getByRole("alert").textContent()).toContain("避免覆盖");
+        for (const label of ["S3 端点", "存储桶名称", "区域", "Access Key ID", "存储桶公网地址", "Secret Access Key"]) {
+            expect(await pane.getByLabel(label, { exact: true }).isDisabled()).toBe(true);
+        }
+        expect(await pane.getByRole("switch").isDisabled()).toBe(true);
+        expect(await pane.getByRole("button", { name: "保存对象存储配置", exact: true }).isDisabled()).toBe(true);
+        expect(await pane.getByRole("button", { name: "保存并测试上传", exact: true }).isDisabled()).toBe(true);
+    } finally { await page.close(); }
+}, 30000);
 for (const width of [1440, 390]) for (const dark of [false, true]) test(`storage password matches ordinary field height ${width} dark=${dark}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     try {
@@ -176,6 +191,11 @@ for (const width of [1440, 390])
                 await page.getByText("image:https://cdn.example.com/image.png", { exact: true }).waitFor();
                 await page.getByRole("textbox", { name: "S3 端点", exact: true }).fill("https://s3.example.com");
                 await page.getByRole("textbox", { name: "Secret Access Key", exact: true }).fill("fixture-secret");
+                await page.getByRole("textbox", { name: "Secret Access Key", exact: true }).press("Enter");
+                expect(await page.getByRole("textbox", { name: "Secret Access Key", exact: true }).inputValue()).toBe("fixture-secret");
+                expect(await page.getByPlaceholder("已保存，留空保持").count()).toBe(0);
+                await page.locator('label[for="reference-storage-secret"]').click();
+                expect(await page.locator("#reference-storage-secret").evaluate(input => document.activeElement === input)).toBe(true);
                 await page.getByRole("button", { name: "保存对象存储配置" }).click();
                 await page.getByPlaceholder("已保存，留空保持").waitFor();
                 expect(await page.getByRole("textbox", { name: "Secret Access Key", exact: true }).inputValue()).toBe("");

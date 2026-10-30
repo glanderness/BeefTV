@@ -39,7 +39,10 @@ window.go = {
                 localStorage.setItem("fixture-usage", JSON.stringify(usage));
                 return usage;
             },
-            ReferenceStorageSettings: async () => ({ ...config, enabled: params.has("auto") }),
+            ReferenceStorageSettings: async () => {
+                if (params.has("storage-load-error")) throw new Error("fixture settings unavailable");
+                return { ...config, enabled: params.has("auto") };
+            },
             SaveReferenceStorage: async (value) => {
                 const { secretAccessKey, ...publicValue } = value;
                 Object.assign(config, publicValue, { hasSecret: Boolean(secretAccessKey) || config.hasSecret });
