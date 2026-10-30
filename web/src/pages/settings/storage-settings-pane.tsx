@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { App, Button, Input } from "antd";
+import { App, Button, Form, Input } from "antd";
 import { FolderOpen } from "lucide-react";
+import { WorkspaceForm } from "@/components/ui/product/workspace-form";
 import { getDesktopAppBinding, type DesktopStorageUsage } from "@/services/desktop-runtime";
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { saveRemoteUserDataNow } from "@/services/local-workspace-sync";
@@ -125,15 +126,18 @@ export function StorageSettingsPane() {
                     </p>
                 ) : null}
             </div>
-            <label className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className="shrink-0 text-sm">新存储目录：</span>
-                <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-                    <Input className="min-w-0 flex-1" aria-label="新存储目录" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="例如 D:\BeefTV" disabled={busy} />
-                    <Button icon={<FolderOpen className="size-4" />} onClick={choose} disabled={busy}>
-                        选择文件夹
-                    </Button>
-                </div>
-            </label>
+            <div>
+                <WorkspaceForm component="div" layout="horizontal" disabled={busy}>
+                    <Form.Item label="新存储目录" htmlFor="storage-target-directory" style={{ marginBottom: 0 }}>
+                        <div className="flex min-w-0 flex-1 flex-wrap gap-2">
+                            <Input id="storage-target-directory" className="min-w-0 flex-1" aria-label="新存储目录" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="例如 D:\BeefTV" disabled={busy} />
+                            <Button icon={<FolderOpen className="size-4" />} onClick={choose} disabled={busy}>
+                                选择文件夹
+                            </Button>
+                        </div>
+                    </Form.Item>
+                </WorkspaceForm>
+            </div>
             <p className="text-sm leading-6 text-foreground/60">请选择空文件夹。迁移期间请暂停操作；完成后会重新载入。原目录会保留，请确认项目和素材完整后再清理。</p>
             {error ? (
                 <div role="alert" className="text-sm text-destructive break-words">
