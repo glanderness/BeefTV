@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -95,6 +96,7 @@ type SkillFileSearchResult struct {
 
 type skillPackageMetadata struct {
 	Name          string
+	TechnicalName string
 	Description   string
 	Version       string
 	MarketRelease *skillhub.Release
@@ -115,6 +117,9 @@ type githubSkillSpec struct {
 }
 
 func (s *Service) EnsureSkillPackages() error {
+	if err := s.ensureSkillDisplayNames(); err != nil {
+		return err
+	}
 	skills, err := s.repo.SkillsForPackageEnsure(skillSourceUser)
 	if err != nil {
 		return err
@@ -847,6 +852,18 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 		}
 	}
 	body := lines[bodyStart:]
+	metadata.TechnicalName = metadata.Name
+	if isTechnicalSkillName(metadata.Name) {
+		for _, line := range body {
+			if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+				title := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "# "))
+				if strings.ContainsFunc(title, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+					metadata.Name = title
+				}
+				break
+			}
+		}
+	}
 	if metadata.Name == "" {
 		for _, line := range body {
 			if strings.HasPrefix(strings.TrimSpace(line), "# ") {
