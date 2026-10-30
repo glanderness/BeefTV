@@ -2,6 +2,7 @@ import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
 
 import { getSkinAntOverrides, normalizeSkinID } from "@/lib/skin-themes";
+import { workspaceControlMetrics as controls } from "@/lib/workspace-control-metrics";
 
 // 主操作、普通选择和开关是不同交互语义，必须各自维护成对的背景/前景色。
 const controlTheme = {
@@ -386,25 +387,25 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
 export function getWorkspaceAntThemeConfig(): ThemeConfig {
     return {
         token: {
-            borderRadius: 12, borderRadiusLG: 16, borderRadiusSM: 8,
-            controlHeight: 38, controlHeightSM: 30, controlHeightLG: 44,
+            borderRadius: controls.radius.normal, borderRadiusLG: 16, borderRadiusSM: controls.radius.small,
+            controlHeight: controls.height.normal, controlHeightSM: controls.height.small, controlHeightLG: controls.height.large,
             motionDurationFast: "0.12s", motionDurationMid: "0.18s", motionDurationSlow: "0.36s",
             motionEaseInOut: "cubic-bezier(0.16, 1, 0.3, 1)",
             motionEaseOut: "cubic-bezier(0.16, 1, 0.3, 1)",
         },
         components: {
             Button: {
-                borderRadius: 12, borderRadiusSM: 8, borderRadiusLG: 14, fontWeight: 550,
+                borderRadius: controls.radius.normal, borderRadiusSM: controls.radius.small, borderRadiusLG: controls.radius.large, fontWeight: controls.buttonWeight,
                 colorPrimary: "var(--user-action-bg)", colorPrimaryHover: "var(--user-action-bg-hover)",
                 colorPrimaryActive: "var(--user-action-bg-active)", primaryColor: "var(--user-action-foreground)",
                 defaultBg: "var(--user-surface-muted)", defaultColor: "var(--user-ink)", defaultBorderColor: "transparent",
                 defaultHoverBg: "var(--user-surface-hover)", defaultHoverColor: "var(--user-ink)", defaultHoverBorderColor: "transparent",
                 defaultActiveBg: "var(--user-control-pressed)", defaultActiveColor: "var(--user-ink)", defaultActiveBorderColor: "transparent",
                 defaultShadow: "none", primaryShadow: "none", dangerShadow: "none",
-                paddingInline: 14, paddingInlineSM: 10,
+                paddingInline: controls.buttonPadding.normal, paddingInlineSM: controls.buttonPadding.small,
             },
-            Input: { borderRadius: 12, activeShadow: "0 0 0 2px var(--user-accent-soft)", paddingInline: 12 },
-            Select: { borderRadius: 12, optionSelectedBg: "var(--user-accent-soft)", optionSelectedColor: "var(--user-ink)", optionActiveBg: "var(--user-surface-muted)", optionPadding: "9px 12px" },
+            Input: { borderRadius: controls.radius.normal, activeShadow: "0 0 0 2px var(--user-accent-soft)", paddingInline: controls.inputPadding },
+            Select: { borderRadius: controls.radius.normal, optionSelectedBg: "var(--user-accent-soft)", optionSelectedColor: "var(--user-ink)", optionActiveBg: "var(--user-surface-muted)", optionPadding: "9px 12px" },
             Dropdown: { borderRadiusLG: 16, controlItemBgHover: "var(--user-surface-muted)", paddingBlock: 6 },
             Modal: { borderRadiusLG: 20 },
             Popconfirm: { borderRadiusLG: 16 },
