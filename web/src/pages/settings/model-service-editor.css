@@ -23,7 +23,6 @@
 .model-service-note svg { flex-shrink:0; margin-top:3px; }
 .model-service-note p { margin:0; font-size:12px; line-height:1.8; }
 .model-service-fields { padding:28px 32px; min-width:0; }
-.model-service-fields .ant-form-item { margin-bottom:22px; }
 .model-service-fields .ant-form-item-explain { margin:4px 0 10px; line-height:1.7; }
 .model-service-form-title { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
 .model-service-form-title h3,.model-service-catalog-header h3 { margin:0; font-size:16px; font-weight:600; }
