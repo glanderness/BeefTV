@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Input, Switch } from "antd";
+import { Alert, App, Button, Form, Input, Switch } from "antd";
+import { WorkspaceForm } from "@/components/ui/product/workspace-form";
+import { workspaceControlMetrics } from "@/lib/workspace-control-metrics";
 import { getDesktopAppBinding, type ReferenceStorageConfig } from "@/services/desktop-runtime";
 
 const fields = [
@@ -68,24 +70,28 @@ export function ReferenceStoragePane() {
                 <Switch checked={config.enabled} disabled={loadError || busy || loading} onChange={(enabled) => { setTestResult(null); setConfig((value) => ({ ...value, enabled })); }} />
             </label>
             <p className="text-sm leading-6 text-foreground/60">启用后，需要在线素材的渠道会使用上传后的链接。原始素材仍保存在本机；存储及流量由你的存储服务计费。</p>
-            <div className="grid min-w-0 gap-4 md:grid-cols-2">
-                {fields.map(([key, label, placeholder]) => (
-                    <label key={key} className="block min-w-0 space-y-2 text-sm">
-                        <span>{label}</span>
-                        <Input aria-label={label} value={config[key]} placeholder={placeholder} disabled={busy || loadError || loading} autoComplete="off" onChange={(event) => { setTestResult(null); setConfig((value) => ({ ...value, [key]: event.target.value })); }} />
-                    </label>
-                ))}
-                <label className="block min-w-0 space-y-2 text-sm">
-                    <span>Secret Access Key</span>
-                    <Input.Password
-                        aria-label="Secret Access Key"
-                        value={secret}
-                        autoComplete="new-password"
-                        placeholder={config.hasSecret ? "已保存，留空保持" : "请输入访问密钥"}
-                        disabled={busy || loadError || loading}
-                        onChange={(event) => { setTestResult(null); setSecret(event.target.value); }}
-                    />
-                </label>
+            <div>
+                <WorkspaceForm component="div" disabled={busy || loadError || loading} aria-busy={busy || loading}>
+                    <div className="grid min-w-0 gap-x-4 gap-y-[var(--workspace-field-gap)] md:grid-cols-2">
+                        {fields.map(([key, label, placeholder]) => (
+                            <Form.Item key={key} label={label} htmlFor={`reference-storage-${key}`} className="min-w-0" style={{ marginBottom: 0 }}>
+                                <Input id={`reference-storage-${key}`} aria-label={label} style={{ height: workspaceControlMetrics.height.normal }} value={config[key]} placeholder={placeholder} disabled={busy || loadError || loading} autoComplete="off" onChange={(event) => { setTestResult(null); setConfig((value) => ({ ...value, [key]: event.target.value })); }} />
+                            </Form.Item>
+                        ))}
+                        <Form.Item label="Secret Access Key" htmlFor="reference-storage-secret" className="min-w-0" style={{ marginBottom: 0 }}>
+                            <Input.Password
+                                id="reference-storage-secret"
+                                aria-label="Secret Access Key"
+                                style={{ height: workspaceControlMetrics.height.normal }}
+                                value={secret}
+                                autoComplete="new-password"
+                                placeholder={config.hasSecret ? "已保存，留空保持" : "请输入访问密钥"}
+                                disabled={busy || loadError || loading}
+                                onChange={(event) => { setTestResult(null); setSecret(event.target.value); }}
+                            />
+                        </Form.Item>
+                    </div>
+                </WorkspaceForm>
             </div>
             {loadError ? (
                 <p role="alert" className="text-sm text-destructive">
