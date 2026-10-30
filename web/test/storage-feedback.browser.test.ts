@@ -156,6 +156,8 @@ for (const width of [1440, 390])
                 await page.goto(server.url + (dark ? "?dark" : ""));
                 await page.getByRole("button", { name: "选择文件夹", exact: true }).click();
                 expect(await page.getByRole("textbox", { name: "新存储目录" }).inputValue()).toBe("D:\\BeefTV");
+                await page.getByRole("textbox", { name: "新存储目录" }).press("Enter");
+                expect(await page.getByText("当前目录：C:\\Users\\Creator\\AppData\\Roaming\\BeefTV", { exact: true }).isVisible()).toBe(true);
                 await page.getByRole("button", { name: "迁移旧数据并使用新目录" }).click();
                 await page.getByText("当前目录：D:\\BeefTV", { exact: true }).waitFor();
                 await page.getByRole("button", { name: "清理原目录，释放磁盘空间" }).click();
