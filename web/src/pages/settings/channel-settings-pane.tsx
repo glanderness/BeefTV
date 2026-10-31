@@ -13,6 +13,8 @@ import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api
 import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { ModelServiceEditor } from "./model-service-editor";
+import { ChannelExportButton } from "./channel-export-button";
+import { ChannelImportDialog } from "./channel-import-dialog";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 import { ModelLogo } from "@/components/model-logo";
 import beefTVAppIcon from "../../../../assets/app-icon.png";
@@ -43,6 +45,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [serviceEditor, setServiceEditor] = useState<ModelChannel | null | undefined>(undefined);
+    const [importOpen, setImportOpen] = useState(false);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
     const [beefBusy, setBeefBusy] = useState(false);
     const appliedConnectionState = useRef<string | undefined>(undefined);
@@ -347,11 +350,12 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
             <PageHeader
                 title={localMode ? "本地模型渠道" : "个人渠道"}
                 actions={(
-                    <div className="settings-pane-header-actions flex w-full gap-2 sm:w-auto sm:shrink-0">
+                    <div className="settings-pane-header-actions flex w-full min-w-0 max-w-full flex-wrap gap-2 sm:w-auto sm:shrink-0">
                     {onOpenDiagnostics ? <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<Bug className="size-4" />} onClick={onOpenDiagnostics}>问题诊断</Button> : null}
                     <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<RefreshCw className="size-4" />} loading={loadingChannelIds.includes("all")} disabled={loadingChannelIds.some((id) => id !== "all") || !userChannels.some(channel => !isTopazUpscaleChannel(channel))} onClick={() => void refreshAllModels()}>
                         拉取全部渠道模型
                     </Button>
+                    <Button className="h-10 flex-1 sm:h-8 sm:flex-none" onClick={() => setImportOpen(true)}>导入</Button>
                     <Button type="primary" className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<Plus className="size-4" />} onClick={addChannel}>
                         添加模型服务
                     </Button>
@@ -433,6 +437,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             拉取模型
                                         </Button>
                                         ) : null}
+                                        <ChannelExportButton channel={channel} />
                                         <Button
                                             size="small"
                                             icon={<Pencil className="size-3.5" />}
@@ -592,6 +597,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                 />
             )}
             {serviceEditor !== undefined && <ModelServiceEditor initial={serviceEditor || undefined} onClose={() => setServiceEditor(undefined)} onSave={saveService} />}
+            {importOpen && <ChannelImportDialog onClose={() => setImportOpen(false)} onSave={saveService} onImport={(channel) => { cancelCatalog(channel.id); setImportOpen(false); setServiceEditor(channel); }} />}
         </Form>
     );
 }

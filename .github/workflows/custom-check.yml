@@ -1,0 +1,36 @@
+name: custom-check
+
+# 下游定制专用：合入 custom 前检查双语词典和前端打包。
+on:
+  pull_request:
+    branches:
+      - custom
+  workflow_dispatch:
+
+concurrency:
+  group: custom-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    if: github.repository != 'glanderness/BeefTV'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/package.json
+      - run: bun install --frozen-lockfile
+      - name: Extract i18n keys
+        run: |
+          bun i18n/cli.mjs extract
+          if ! git diff --quiet src/i18n/locales/; then
+            echo "::warning::上游带来了新的中文文案，合并后请补翻译（英文界面暂时显示中文，不影响功能）。"
+          fi
+      - run: bun run build

@@ -7,6 +7,7 @@ import { defineConfig, type Plugin } from "vite";
 
 import { resolveHeavyMediaEnabled } from "./media-build-mode";
 import { distributionNotices } from "../scripts/distribution-notices.mjs";
+import { beeftvI18n } from "./i18n/vite-plugin.mjs";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = process.env.CANVAS_BUILD_VERSION?.trim() || readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
@@ -67,7 +68,7 @@ function licenseNoticesPlugin(): Plugin {
 }
 
 export default defineConfig({
-    plugins: [react(), pruneOptionalMediaPlugin(), licenseNoticesPlugin()],
+    plugins: [beeftvI18n(), react(), pruneOptionalMediaPlugin(), licenseNoticesPlugin()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
         __BEEFTV_HEAVY_MEDIA_ENABLED__: JSON.stringify(heavyMediaEnabled),

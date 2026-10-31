@@ -1,0 +1,49 @@
+name: custom-upstream-sync
+
+# 下游定制专用：把 main 快进到上游，并开 main -> custom 的同步 PR。说明见 CUSTOMIZATIONS.md。
+on:
+  schedule:
+    - cron: '0 1 * * 1' # 每周一 09:00（北京时间）
+  workflow_dispatch:
+
+concurrency:
+  group: custom-upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: github.repository != 'glanderness/BeefTV'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN }}
+      - name: Fast-forward main to upstream
+        run: |
+          git remote add upstream https://github.com/glanderness/BeefTV.git
+          git fetch upstream main
+          git merge --ff-only upstream/main
+          git push origin HEAD:main
+      - name: Open sync pull request
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          # gh 默认优先选名为 upstream 的远程，必须钉死在 fork 上
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git fetch origin custom
+          if [ "$(git rev-list --count origin/custom..HEAD)" = "0" ]; then
+            echo "custom 已包含上游最新代码。"
+            exit 0
+          fi
+          if [ -n "$(gh pr list --base custom --head main --state open --json number --jq '.[].number')" ]; then
+            echo "同步 PR 已存在，已随 main 自动更新。"
+            exit 0
+          fi
+          gh pr create --base custom --head main \
+            --title "chore(sync): 上游同步 - 合并 upstream/main" \
+            --body "自动同步上游。合并时请选 **Create a merge commit**；有冲突时按 CUSTOMIZATIONS.md 在本地运行 scripts/custom/sync-upstream.sh。"
