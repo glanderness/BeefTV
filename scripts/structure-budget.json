@@ -1,5 +1,5 @@
 {
-  "appLines": 18801,
+  "appLines": 18812,
   "largeFiles": {
     "backend/internal/handler/project.go": 1029,
     "backend/internal/protocol/builtin.go": 1131,
@@ -16,13 +16,13 @@
     "web/src/pages/assets/index.tsx": 2032,
     "web/src/pages/canvas/project.tsx": 1991,
     "web/src/pages/canvas/use-canvas-upload.ts": 1087,
-    "web/src/pages/create/index.tsx": 1265,
+    "web/src/pages/create/index.tsx": 1243,
     "web/src/services/local-workspace-repository.ts": 1165,
-    "web/src/stores/use-config-store.ts": 1287,
+    "web/src/stores/use-config-store.ts": 1219,
     "web/src/styles/globals.css": 21487,
     "web/src/styles/workspace-product.css": 1566
   },
-  "modelLiterals": 660,
+  "modelLiterals": 597,
   "handlersUsingAppService": 23,
   "sourceTextTests": 141
 }

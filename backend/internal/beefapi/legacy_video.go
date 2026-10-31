@@ -285,6 +285,19 @@ func (c *MediaClient) QueryLegacyVideo(ctx context.Context, id string) (LegacyVi
 	return task, nil
 }
 
+// LegacyVideoContent downloads a finished video from the task content endpoint.
+// The gateway may answer with a redirect to object storage; only this GET
+// follows redirects through storageClient so credentials never leave the gateway.
+func (c *MediaClient) LegacyVideoContent(ctx context.Context, path string, limit int64) ([]byte, string, error) {
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Del(MediaProtocolHeader)
+	data, header, err := c.sendWith(c.storageClient("视频结果重定向次数过多"), req, limit)
+	return data, header.Get("Content-Type"), err
+}
+
 func legacyVideoResultURL(state map[string]any, depth int) string {
 	if depth > 5 {
 		return ""

@@ -74,11 +74,14 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 	if err != nil {
 		return TaskOutputBindResult{}, err
 	}
+	// Refusals carry the revision this read observed, so a caller can tell
+	// whether the canvas changed since the refusal without re-reading it.
+	refusal := map[string]any{"revision": canvasRevisionValue(doc)}
 	node := findCanvasNode(doc, patch.NodeID)
 	if node == nil {
 		return TaskOutputBindResult{}, &kernel.AppError{
 			Status: http.StatusNotFound, Reason: kernel.ErrorReason("node_deleted"),
-			Message: "原任务节点已删除，未重新创建节点",
+			Message: "原任务节点已删除，未重新创建节点", Details: refusal,
 		}
 	}
 	if got := nodeString(nodeMetadata(node), "taskId"); got != strings.TrimSpace(patch.TaskID) && !canBindEmptyRenderNode(node, patch) && !canBindPendingVideoNode(node, patch) {
@@ -88,7 +91,7 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 		}
 		return TaskOutputBindResult{}, &kernel.AppError{
 			Status: http.StatusConflict, Reason: kernel.ErrorReason("node_task_mismatch"),
-			Message: message,
+			Message: message, Details: refusal,
 		}
 	}
 	metadata := nodeMetadata(node)

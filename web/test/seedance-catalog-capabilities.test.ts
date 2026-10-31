@@ -197,7 +197,7 @@ test("invalid or missing catalog video does not clear a good sourced profile", (
     expect(missing[0]?.capabilityConfig?.video?.duration).toEqual(sampleVideo(2, 2).duration);
 });
 
-test("custom channels ignore catalog video capabilities", () => {
+test("custom channels adopt only server-declared versioned video capabilities", () => {
     const capabilityConfig = { version: 1, video: sampleVideo(1, 0) };
     const channel = createModelChannel({
         id: "custom",
@@ -205,10 +205,15 @@ test("custom channels ignore catalog video capabilities", () => {
         models: ["seedance-2.0"],
         modelProfiles: [{ model: "seedance-2.0", capability: "video", protocol: "newapi", capabilityConfig }],
     });
-    const profiles = mergeFetchedChannelModelProfiles(channel, [{ id: "seedance-2.0", modelType: "video", videoCapabilities: sampleVideo(9, 9), videoCapabilitiesVersion: "ignore-me" }]);
-    expect(profiles[0]?.videoCapabilitiesVersion).toBeUndefined();
-    expect(profiles[0]?.capabilityConfig?.video?.references.maxVideos).toBe(1);
-    expect(profiles[0]?.capabilityConfig?.video?.references.maxAudios).toBe(0);
+    const declared = mergeFetchedChannelModelProfiles(channel, [{ id: "seedance-2.0", modelType: "video", videoCapabilities: sampleVideo(9, 9), videoCapabilitiesVersion: "gw-v2" }]);
+    expect(declared[0]?.videoCapabilitiesVersion).toBe("gw-v2");
+    expect(declared[0]?.capabilityConfig?.video?.references.maxVideos).toBe(9);
+    expect(declared[0]?.capabilityConfig?.video?.references.maxAudios).toBe(9);
+
+    const undeclared = mergeFetchedChannelModelProfiles(channel, [{ id: "seedance-2.0", modelType: "video", videoCapabilities: sampleVideo(9, 9) }]);
+    expect(undeclared[0]?.videoCapabilitiesVersion).toBeUndefined();
+    expect(undeclared[0]?.capabilityConfig?.video?.references.maxVideos).toBe(1);
+    expect(undeclared[0]?.capabilityConfig?.video?.references.maxAudios).toBe(0);
 });
 
 test("mergeManagedBeefAPICatalog copies sourced capabilities from the backend snapshot", () => {
