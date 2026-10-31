@@ -232,7 +232,7 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 | `creation_submissions` | 保存创作提案中每个生成项的请求、报价签名、审批和任务绑定 | `(run_id, item_key)` 与 `task_id` 分别唯一；相同提交只允许创建一个任务，过期、撤销或提案哈希不一致时拒绝执行 |
 | `tasks.creation_submission_id` | 将生成任务反向绑定到已批准的创作提交 | 字段可空以兼容普通任务和旧数据；非空值唯一，阻止同一提交产生多个任务 |
 | `tasks.client_operation_id` / `client_operation_hash` | 保存普通生成确认的稳定编号和原始请求 SHA-256 摘要 | 编号可空；`(user_id, client_operation_id)` 唯一。重放必须匹配完整原始生成请求，模型、参考素材或参数不同返回 409；摘要不对外返回。旧记录没有摘要时拒绝重放，不自动补单 |
-| `tasks.recovery_outcome` | 保存后台或手动恢复对失败生成任务记录的内部结论（`no_result` \| `unrecoverable`） | 仅由恢复流程在确认上游失败/未建单（`no_result`）或回执缺失/冲突/过保（`unrecoverable`）时写入；暂时性网络或读库错误保持为空以便下一轮继续取回。不直接对外暴露，仅通过 `task.ComputeOutcome` 投影为 `outcome` |
+| `tasks.recovery_outcome` | 保存后台或手动恢复对失败生成任务记录的内部结论（`no_result` \| `unrecoverable`）；成功任务上另存后台画布绑定扫描的私有标记（`canvas_bind:` 前缀，格式版本 4） | 恢复结论仅由恢复流程在确认上游失败/未建单（`no_result`）或回执缺失/冲突/过保（`unrecoverable`）时写入；暂时性网络或读库错误保持为空以便下一轮继续取回。画布绑定标记只在成功任务上写入，记录被拒的目标（节点已删除、节点已换任务时附带被拒那次读到的画布 revision），画布 revision 变化后重试，绑定成功或目标不再存在时清除；写入只替换空值或旧的 `canvas_bind:` 标记，不覆盖恢复结论，也不改 `updated_at`。两者都不直接对外暴露，恢复结论仅通过 `task.ComputeOutcome` 投影为 `outcome` |
 | `tasks.beef_usage_state` / `beef_billing_state` / `beef_reconcile_deadline` | 保存 BeefAPI 返回的本轮结算原值和核对截止时间 | 由提交与恢复流程写入，NULL 表示未读到结算事实；不直接对外暴露，仅通过 `task.ComputeOutcome` 投影为 `outcome`（`pending` 时暂不允许重新生成并返回截止时间） |
 | `tasks.image_job_id` | 保存 BeefAPI 图片任务编号，用于后台查询已提交图片的结果与结算 | 默认空串；只用于恢复查询，不用于重新提交 |
 | `workflow_template_versions` / `workflow_instances` / `workflow_step_instances` | 保存短剧生产模板和项目、章节实例 | 短剧分镜工作流 v2 顺序为剧情、资产、分镜、动作预演、视频、交付 |

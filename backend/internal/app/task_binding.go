@@ -46,11 +46,24 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 	intents := s.CanvasBindingIntents(task)
 	var last error
 	if registry != nil {
+		pass := localtask.NewCanvasBindPass(task.RecoveryOutcome)
 		for _, target := range canvasBindTargets(task, intents) {
+			if pass.Skip(target.nodeID, target.outputIndex, s.canvasRevision(task)) {
+				continue
+			}
 			if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
-				if skippableCanvasBindError(err) {
+				if reason, details := canvasBindRefusal(err); pass.Refused(target.nodeID, target.outputIndex, reason, details) || skippableCanvasBindError(err) {
 					continue
 				}
+				last = err
+				continue
+			}
+			pass.Bound(target.nodeID, target.outputIndex)
+		}
+		if marker, changed, err := pass.Finish(); err != nil {
+			last = err
+		} else if changed {
+			if err := s.repo.UpdateCanvasBindRecovery(task.UserID, task.ID, marker); err != nil {
 				last = err
 			}
 		}
@@ -167,9 +180,6 @@ func (s *Service) executeCanvasTaskBind(registry *operations.Registry, task mode
 		Caller: operations.ManualCaller(false),
 		Params: params,
 	})
-	if skippableCanvasBindError(err) {
-		return nil
-	}
 	return err
 }
 
@@ -203,7 +213,7 @@ func canvasBindTargets(task model.Task, intents []localtask.CanvasBindingIntent)
 		if intent.TargetBinding == nil {
 			continue
 		}
-		add(intent.TargetBinding.NodeID, intent.OutputIndex)
+		add(localtask.CanvasBindNodeID(task, intent.OutputIndex, intent.TargetBinding.NodeID), intent.OutputIndex)
 	}
 	switch strings.TrimSpace(task.Type) {
 	case "canvas_text", "text_replay":
@@ -246,11 +256,11 @@ func skippableCanvasBindError(err error) bool {
 	if bindInfrastructureUnavailable(err) {
 		return true
 	}
-	var opErr *operations.Error
-	if !errors.As(err, &opErr) {
+	reason, _ := canvasBindRefusal(err)
+	if reason == "" {
 		return false
 	}
-	switch opErr.Reason {
+	switch reason {
 	case "node_deleted", "node_task_mismatch", "node_mismatch", "canvas_mismatch",
 		"conversation_deleted", "message_deleted", "message_mismatch", "conversation_mismatch",
 		"message_task_mismatch",
@@ -262,6 +272,24 @@ func skippableCanvasBindError(err error) bool {
 	default:
 		return false
 	}
+}
+
+// canvasRevision reads the task canvas's current revision on demand, so the
+// scan only touches canvas metadata for targets that carry a refusal marker.
+func (s *Service) canvasRevision(task model.Task) func() (int64, error) {
+	return func() (int64, error) {
+		current, err := s.repo.CanvasProjectMetadata(task.UserID, task.ProjectID)
+		return current.Revision, err
+	}
+}
+
+// canvasBindRefusal reads the reason and details of a bind operation error.
+func canvasBindRefusal(err error) (string, map[string]any) {
+	var opErr *operations.Error
+	if err == nil || !errors.As(err, &opErr) {
+		return "", nil
+	}
+	return opErr.Reason, opErr.Details
 }
 
 func bindInfrastructureUnavailable(err error) bool {
