@@ -17,7 +17,7 @@ permissions:
 
 env:
   GOTOOLCHAIN: local
-  BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update.json
+  BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update-v2.json
   UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
   RELEASE_ENDPOINT: ${{ vars.BEEFTV_R2_ENDPOINT }}
   RELEASE_REGION: auto
@@ -480,6 +480,18 @@ jobs:
           go run ./cmd/update-release verify \
             --envelope "../dist/desktop-update.json" \
             --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+          if python3 -c 'import os, re, sys; m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", os.environ["VERSION"]); sys.exit(0 if m and (int(m[1]), int(m[2]), int(m[3])) >= (2, 1, 0) else 1)'; then
+            go run ./cmd/update-release sign \
+              --schema 2 \
+              --version "$VERSION" \
+              --from-envelope "../dist/desktop-update.json" \
+              --download-base "$UPDATER_DOWNLOAD_BASE" \
+              --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \
+              --output "../dist/desktop-update-v2-r2.json"
+            go run ./cmd/update-release verify \
+              --envelope "../dist/desktop-update-v2-r2.json" \
+              --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+          fi
 
       - name: Stage and verify immutable R2 assets
         run: |
@@ -505,6 +517,18 @@ jobs:
             --verifier "$RUNNER_TEMP/update-release" --provider r2 \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"
+
+      - name: Activate initial R2-only desktop-update-v2.json
+        if: steps.activate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          if [[ -f dist/desktop-update-v2-r2.json ]]; then
+            python3 scripts/publish-desktop-r2.py activate-v2 \
+              --manifest dist/desktop-update-v2-r2.json \
+              --verifier "$RUNNER_TEMP/update-release" --provider r2 \
+              --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
+              --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"
+          fi
           echo "Published $VERSION at $BEEFTV_UPDATER_FEED_URL."
 
       - name: Bridge activated feed for existing COS clients
@@ -518,7 +542,7 @@ jobs:
             --bucket "$LEGACY_COS_BUCKET"
 
   mirror:
-    name: Verify CNB installer mirror
+    name: Verify CNB mirror and publish domestic v2 feed
     needs: [preflight, publish]
     if: ${{ !cancelled() && needs.publish.outputs.activated == 'true' }}
     uses: ./.github/workflows/mirror-desktop.yml
@@ -526,3 +550,6 @@ jobs:
       version: ${{ needs.preflight.outputs.version }}
     secrets:
       BEEFTV_CNB_TRIGGER_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN }}
+      BEEFTV_UPDATER_PRIVATE_KEY: ${{ secrets.BEEFTV_UPDATER_PRIVATE_KEY }}
+      BEEFTV_R2_ACCESS_KEY_ID: ${{ secrets.BEEFTV_R2_ACCESS_KEY_ID }}
+      BEEFTV_R2_SECRET_ACCESS_KEY: ${{ secrets.BEEFTV_R2_SECRET_ACCESS_KEY }}

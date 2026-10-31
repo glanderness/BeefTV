@@ -25,9 +25,28 @@ type Payload struct {
 }
 
 type PlatformArtifact struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+	URL    string   `json:"url,omitempty"`
+	URLs   []string `json:"urls,omitempty"`
+	SHA256 string   `json:"sha256"`
+	Size   int64    `json:"size"`
+}
+
+func (a PlatformArtifact) CandidateURLs() []string {
+	if len(a.URLs) > 0 {
+		out := make([]string, 0, len(a.URLs))
+		for _, raw := range a.URLs {
+			if u := strings.TrimSpace(raw); u != "" {
+				out = append(out, u)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if u := strings.TrimSpace(a.URL); u != "" {
+		return []string{u}
+	}
+	return nil
 }
 
 func decodeJSONStrict(data []byte, dest any) error {
@@ -65,11 +84,22 @@ func verifyEnvelope(raw []byte, key ed25519.PublicKey) (Payload, []byte, error) 
 	if err := validatePayload(payload); err != nil {
 		return Payload{}, nil, err
 	}
+	for platform, artifact := range payload.Platforms {
+		if !knownPlatform(platform) {
+			continue
+		}
+		candidates := artifact.CandidateURLs()
+		artifact.URLs = candidates
+		if len(candidates) > 0 {
+			artifact.URL = candidates[0]
+		}
+		payload.Platforms[platform] = artifact
+	}
 	return payload, payloadBytes, nil
 }
 
 func validatePayload(payload Payload) error {
-	if payload.Schema != payloadSchema {
+	if payload.Schema != payloadSchema && payload.Schema != payloadSchemaV2 {
 		return ErrInvalidSignature
 	}
 	if _, err := parseStableVersion(payload.Version); err != nil {
@@ -85,7 +115,7 @@ func validatePayload(payload Payload) error {
 		if !knownPlatform(platform) {
 			continue
 		}
-		if err := validateArtifact(artifact); err != nil {
+		if err := validateArtifactForSchema(artifact, payload.Schema); err != nil {
 			return err
 		}
 	}
@@ -101,21 +131,100 @@ func knownPlatform(platform string) bool {
 	}
 }
 
+func validateArtifactForSchema(artifact PlatformArtifact, schema int) error {
+	switch schema {
+	case payloadSchema:
+		if len(artifact.URLs) > 0 || strings.TrimSpace(artifact.URL) == "" {
+			return fmt.Errorf("更新包地址无效")
+		}
+		if err := validateArtifactURL(artifact.URL, false); err != nil {
+			return err
+		}
+	case payloadSchemaV2:
+		if strings.TrimSpace(artifact.URL) != "" || len(artifact.URLs) == 0 {
+			return fmt.Errorf("更新包地址无效")
+		}
+		seen := make(map[string]struct{}, len(artifact.URLs))
+		for _, rawURL := range artifact.URLs {
+			trimmed := strings.TrimSpace(rawURL)
+			if _, dup := seen[trimmed]; dup {
+				return fmt.Errorf("更新包地址重复")
+			}
+			seen[trimmed] = struct{}{}
+			if err := validateArtifactURL(trimmed, true); err != nil {
+				return err
+			}
+		}
+	default:
+		return ErrInvalidSignature
+	}
+	return validateArtifactDigestAndSize(artifact)
+}
+
 func validateArtifact(artifact PlatformArtifact) error {
-	parsed, err := url.Parse(strings.TrimSpace(artifact.URL))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+	urls := artifact.CandidateURLs()
+	if len(urls) == 0 {
 		return fmt.Errorf("更新包地址无效")
 	}
+	for _, rawURL := range urls {
+		if err := validateArtifactURL(rawURL, false); err != nil {
+			return err
+		}
+	}
+	return validateArtifactDigestAndSize(artifact)
+}
+
+func validateArtifactDigestAndSize(artifact PlatformArtifact) error {
 	if !sha256Hex.MatchString(strings.TrimSpace(artifact.SHA256)) {
 		return ErrTampered
 	}
-	if artifact.Size <= 0 {
-		return ErrTampered
-	}
-	if artifact.Size > maxZipTotal {
+	if artifact.Size <= 0 || artifact.Size > maxZipTotal {
 		return ErrTampered
 	}
 	return nil
+}
+
+func validateArtifactURL(raw string, requireKnownDomain bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("更新包地址无效")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("更新包地址无效")
+	}
+	if requireKnownDomain && !isKnownArtifactURL(parsed) {
+		return fmt.Errorf("更新包域名不受信任")
+	}
+	return nil
+}
+
+func isKnownArtifactURL(parsed *url.URL) bool {
+	if parsed == nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "updates.beefapi.com":
+		return strings.HasPrefix(parsed.Path, "/beeftv/")
+	case "cnb.cool":
+		return strings.HasPrefix(parsed.Path, "/beeftv-downloads/desktop/-/releases/download/")
+	case "beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com":
+		return strings.HasPrefix(parsed.Path, "/beeftv/")
+	default:
+		return false
+	}
+}
+
+func isKnownDownloadHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "updates.beefapi.com", "cnb.cool", "beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func isKnownRedirectHost(host string) bool {
+	return isKnownDownloadHost(host) || strings.EqualFold(strings.TrimSpace(host), "asset.cnb.cool")
 }
 
 func platformArtifact(payload Payload, platform string) (PlatformArtifact, error) {

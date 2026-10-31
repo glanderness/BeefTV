@@ -2,6 +2,7 @@
 """Trigger the CNB mirror and wait for its public verification record."""
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 REPO = "beeftv-downloads/desktop"
 GITHUB = "https://api.github.com/repos/glanderness/BeefTV/releases/tags/"
@@ -18,6 +20,21 @@ PLATFORMS = {
     "darwin-arm64": ".dmg", "darwin-amd64": ".dmg",
     "windows-amd64": "-setup.exe", "linux-amd64": ".deb",
 }
+RESUME_PREFIX_BYTES = 16 * 1024 * 1024
+
+
+def version_tuple(version):
+    if not isinstance(version, str) or not re.fullmatch(r"v\d+\.\d+\.\d+", version):
+        raise RuntimeError("Expected a version at or after v2.0.3")
+    return tuple(map(int, version[1:].split(".")))
+
+
+class HTTPSOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urlsplit(newurl)
+        if parsed.scheme != "https" or parsed.hostname not in ("cnb.cool", "asset.cnb.cool"):
+            raise urllib.error.URLError("Untrusted CNB redirect target")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -61,23 +78,77 @@ def request_json(url, payload=None, token=None):
         raise RuntimeError("Invalid mirror metadata") from None
 
 
+def _expected_release_asset(release, version, platform, suffix, kind):
+    name = f"BeefTV-{version}-{platform}{suffix}"
+    matches = [asset for asset in release.get("assets", []) if asset.get("name") == name]
+    if len(matches) != 1:
+        raise RuntimeError(f"Missing or duplicate official {kind}: {platform}")
+    asset = matches[0]
+    if (asset.get("state") != "uploaded" or type(asset.get("size")) is not int or not 1 < asset["size"] <= 2 * 1024 ** 3
+            or not re.fullmatch(r"sha256:[a-f0-9]{64}", asset.get("digest") or "")
+            or asset.get("browser_download_url") != f"https://github.com/glanderness/BeefTV/releases/download/{version}/{name}"):
+        raise RuntimeError(f"Invalid official {kind} metadata: {platform}")
+    return {"platform": platform, "name": name, "size": asset["size"], "sha256": asset["digest"][7:]}
+
+
 def expected_installers(release, version):
     source = f"https://github.com/glanderness/BeefTV/releases/tag/{version}"
     if not release or release.get("tag_name") != version or release.get("draft") or release.get("prerelease") or release.get("html_url") != source:
         raise RuntimeError("Expected a published official release")
-    result = []
-    for platform, suffix in PLATFORMS.items():
-        name = f"BeefTV-{version}-{platform}{suffix}"
-        matches = [asset for asset in release.get("assets", []) if asset.get("name") == name]
-        if len(matches) != 1:
-            raise RuntimeError(f"Missing or duplicate official installer: {platform}")
-        asset = matches[0]
-        if (asset.get("state") != "uploaded" or type(asset.get("size")) is not int or not 1 < asset["size"] <= 2 * 1024 ** 3
-                or not re.fullmatch(r"sha256:[a-f0-9]{64}", asset.get("digest") or "")
-                or asset.get("browser_download_url") != f"https://github.com/glanderness/BeefTV/releases/download/{version}/{name}"):
-            raise RuntimeError(f"Invalid official installer metadata: {platform}")
-        result.append({"platform": platform, "name": name, "size": asset["size"], "sha256": asset["digest"][7:]})
-    return result
+    return [_expected_release_asset(release, version, platform, suffix, "installer")
+            for platform, suffix in PLATFORMS.items()]
+
+
+def expected_zips(release, version):
+    source = f"https://github.com/glanderness/BeefTV/releases/tag/{version}"
+    if not release or release.get("tag_name") != version or release.get("draft") or release.get("prerelease") or release.get("html_url") != source:
+        raise RuntimeError("Expected a published official release")
+    return [_expected_release_asset(release, version, platform, ".zip", "updater zip")
+            for platform in PLATFORMS]
+
+
+def expected_assets(release, version):
+    installers = expected_installers(release, version)
+    if version_tuple(version) >= (2, 1, 0):
+        return installers + expected_zips(release, version)
+    return installers
+
+
+def verify_cnb_zips(version, zips, opener=None):
+    if opener is None:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTPSOnlyRedirect()).open
+    for item in zips:
+        url = f"{PUBLIC}{version}/{item['name']}"
+        total = item["size"]
+        prefix = min(RESUME_PREFIX_BYTES, max(1, total // 2))
+        digest = hashlib.sha256()
+        received = 0
+        for range_header, expected_range, expected_len in [
+            (f"bytes=0-{prefix - 1}", f"bytes 0-{prefix - 1}/{total}", prefix),
+            (f"bytes={prefix}-", f"bytes {prefix}-{total - 1}/{total}", total - prefix),
+        ]:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": f"BeefTV-Desktop-Updater/{version}",
+                "Range": range_header,
+                "Cache-Control": "no-cache",
+            })
+            try:
+                with opener(req, timeout=180) as response:
+                    if response.status != 206 or response.headers.get("Content-Range") != expected_range:
+                        raise RuntimeError(f"CNB updater zip failed Range check: {item['name']}")
+                    part = 0
+                    while chunk := response.read(1024 * 1024):
+                        part += len(chunk)
+                        if part > expected_len:
+                            raise RuntimeError(f"CNB updater zip exceeded expected Range size: {item['name']}")
+                        digest.update(chunk)
+                    if part != expected_len:
+                        raise RuntimeError(f"CNB updater zip Range truncated: {item['name']}")
+                    received += part
+            except (urllib.error.URLError, TimeoutError, OSError) as err:
+                raise RuntimeError(f"CNB updater zip transfer failed: {item['name']}") from err
+        if received != total or digest.hexdigest() != item["sha256"]:
+            raise RuntimeError(f"CNB updater zip SHA-256 mismatch: {item['name']}")
 
 
 def record_matches(record, release, expected):
@@ -95,13 +166,15 @@ def record_matches(record, release, expected):
         return False
 
 
-def mirror(version, token, fetch=request_json, sleep=time.sleep, now=time.monotonic, timeout=2400):
-    if not re.fullmatch(r"v\d+\.\d+\.\d+", version) or tuple(map(int, version[1:].split("."))) < (2, 0, 3):
+def mirror(version, token, fetch=request_json, sleep=time.sleep, now=time.monotonic, timeout=2400, verify_zips=verify_cnb_zips):
+    vtuple = version_tuple(version)
+    if vtuple < (2, 0, 3):
         raise RuntimeError("Expected a version at or after v2.0.3")
     if not token:
         raise RuntimeError("Missing repository secret BEEFTV_CNB_TRIGGER_TOKEN")
     release = fetch(GITHUB + version)
-    expected = expected_installers(release, version)
+    expected = expected_assets(release, version)
+    zips = expected_zips(release, version) if vtuple >= (2, 1, 0) else []
     # Issue one POST only. An uncertain response may already have started the job.
     try:
         started = fetch(START, {"branch": "main", "event": "api_trigger_release", "env": {"BEEFTV_MIRROR_VERSION": version}}, token)
@@ -114,12 +187,14 @@ def mirror(version, token, fetch=request_json, sleep=time.sleep, now=time.monoto
         try:
             record = fetch(PUBLIC + version + "/beeftv-mirror.json")
             if record_matches(record, release, expected):
-                print(f"CNB mirror verified: {version} (all four official installer hashes match)")
+                if zips:
+                    verify_zips(version, zips)
+                print(f"CNB mirror verified: {version} (all {len(expected)} official release asset hashes match)")
                 return
             if record is not None:
                 raise RuntimeError("CNB verification record does not match the official release")
         except RuntimeError as error:
-            if str(error).startswith("CNB verification"):
+            if str(error).startswith(("CNB verification", "CNB updater zip")):
                 raise
         sleep(min(15, max(0, deadline - now())))
     raise RuntimeError("CNB mirror was not verified before timeout; its website links remain hidden. Retry only the mirror job, not the desktop release.")

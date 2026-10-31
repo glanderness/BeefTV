@@ -26,12 +26,14 @@ from desktop_cos_store import COSStore, PublishError, fingerprint
 PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
 PREFIX = "beeftv"
 LATEST = f"{PREFIX}/desktop-update.json"
+LATEST_V2 = f"{PREFIX}/desktop-update-v2.json"
 IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-store, max-age=0"
 MAX_MANIFEST = 2 * 1024 * 1024
 GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
 COS_PUBLIC_BASE = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv"
 R2_PUBLIC_BASE = "https://updates.beefapi.com/beeftv"
+CNB_PUBLIC_BASE = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download"
 PROBE_BYTES = 1024
 
 
@@ -305,16 +307,39 @@ class Publisher:
 
     def load(self, manifest):
         payload = signed_payload(manifest, self.verifier)
+        if payload.get("schema") != 1:
+            raise PublishError("Legacy manifest must use schema 1")
         if set(payload["platforms"]) != PLATFORMS:
             raise PublishError("Manifest must contain exactly all four desktop platforms")
         for platform, asset in payload["platforms"].items():
             name = f"BeefTV-{payload['version']}-{platform}.zip"
-            if asset["url"] != f"{self.public_base}/{payload['version']}/{name}":
+            if "urls" in asset or asset.get("url") != f"{self.public_base}/{payload['version']}/{name}":
                 raise PublishError("Manifest asset URL does not match immutable public version path")
             if type(asset["size"]) is not int or not 0 < asset["size"] <= 2 << 30:
                 raise PublishError("Invalid desktop archive size")
             if not re.fullmatch(r"[a-f0-9]{64}", asset["sha256"]):
                 raise PublishError("Invalid desktop archive hash")
+        return payload
+
+    def load_v2(self, manifest):
+        payload = signed_payload(manifest, self.verifier)
+        if payload.get("schema") != 2 or set(payload["platforms"]) != PLATFORMS:
+            raise PublishError("Manifest v2 must use schema 2 and contain all four desktop platforms")
+        url_counts = set()
+        for platform, asset in payload["platforms"].items():
+            name = f"BeefTV-{payload['version']}-{platform}.zip"
+            r2_url = f"{self.public_base}/{payload['version']}/{name}"
+            cnb_url = f"{CNB_PUBLIC_BASE}/{payload['version']}/{name}"
+            urls = asset.get("urls")
+            if "url" in asset or urls not in ([r2_url], [cnb_url, r2_url]):
+                raise PublishError("Manifest v2 asset URLs must be [r2] or [cnb, r2]")
+            url_counts.add(len(urls))
+            if type(asset["size"]) is not int or not 0 < asset["size"] <= 2 << 30:
+                raise PublishError("Invalid desktop archive size")
+            if not re.fullmatch(r"[a-f0-9]{64}", asset["sha256"]):
+                raise PublishError("Invalid desktop archive hash")
+        if len(url_counts) != 1:
+            raise PublishError("Manifest v2 platforms must all share the same source set")
         return payload
 
     def immutable_put(self, key, source):
@@ -402,6 +427,57 @@ class Publisher:
             self.public.check(f"{self.feed_public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
         return payload["version"]
 
+    def activate_v2(self, manifest):
+        if getattr(self.store, "provider", "r2") != "r2" or self.feed_public_base != R2_PUBLIC_BASE:
+            raise PublishError("Manifest v2 publication is only supported on canonical R2")
+        payload = self.load_v2(manifest)
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-latest-v2-") as directory:
+            active_v1 = Path(directory) / "active-v1.json"
+            if self.store.get(LATEST, active_v1) is None:
+                raise PublishError("R2 canonical v1 feed must be active before publishing v2 feed")
+            v1_payload = self.load(active_v1)
+            if (v1_payload["version"] != payload["version"] or v1_payload["commit"] != payload["commit"]
+                    or v1_payload["notes"] != payload["notes"]):
+                raise PublishError("Manifest v2 metadata does not match active R2 v1 feed")
+            for platform, asset in payload["platforms"].items():
+                v1_asset = v1_payload["platforms"][platform]
+                if (asset["size"], asset["sha256"]) != (v1_asset["size"], v1_asset["sha256"]):
+                    raise PublishError(f"Manifest v2 digest/size mismatch against active v1 feed: {platform}")
+            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(active_v1),
+                              version=payload["version"])
+            for asset in payload["platforms"].values():
+                for url in asset["urls"]:
+                    self.public.check(url, asset["size"], asset["sha256"], version=payload["version"])
+            has_domestic = any(len(a["urls"]) == 2 for a in payload["platforms"].values())
+            version_manifest_name = "desktop-update-v2.json" if has_domestic else "desktop-update-v2-r2.json"
+            self.immutable_put(f"{PREFIX}/{payload['version']}/{version_manifest_name}", manifest)
+            self.public.check(f"{self.public_base}/{payload['version']}/{version_manifest_name}",
+                              *fingerprint(manifest), version=payload["version"])
+            previous = Path(directory) / "previous-v2.json"
+            etag = self.store.get(LATEST_V2, previous)
+            if etag is not None:
+                old = self.load_v2(previous)
+                if version_tuple(old["version"]) > version_tuple(payload["version"]):
+                    raise PublishError("Refusing to downgrade latest v2 feed")
+                if version_tuple(old["version"]) == version_tuple(payload["version"]):
+                    if fingerprint(previous) == fingerprint(manifest):
+                        self.public.check(f"{self.feed_public_base}/desktop-update-v2.json",
+                                          *fingerprint(manifest), version=payload["version"])
+                        return payload["version"]
+                    old_has_domestic = any(len(a["urls"]) == 2 for a in old["platforms"].values())
+                    if old_has_domestic or not has_domestic:
+                        raise PublishError("Same latest v2 version has conflicting signed content")
+                backup = f"{PREFIX}/latest-v2-backups/{old['version']}-{fingerprint(previous)[1]}.json"
+                self.immutable_put(backup, previous)
+            if not self.store.put(LATEST_V2, manifest, REVALIDATE, etag=etag):
+                raise PublishError("Latest v2 feed changed concurrently; verify and rerun activation")
+            current = Path(directory) / "current-v2.json"
+            if self.store.get(LATEST_V2, current) is None or fingerprint(current) != fingerprint(manifest):
+                raise PublishError("Latest v2 storage readback mismatch")
+            self.public.check(f"{self.feed_public_base}/desktop-update-v2.json",
+                              *fingerprint(manifest), version=payload["version"])
+        return payload["version"]
+
     def resume(self, manifest, original_lock, original_claim, *, confirm_no_inflight=False,
                confirm_writers_frozen=False, confirm_no_unlock_attempt=False, installer_dir=None,
                require_active_source=False):
@@ -447,7 +523,7 @@ def storage_config(provider, endpoint, region, bucket, public_base):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["check-store", "stage", "activate", "bridge-cos", "resume", "resume-cos-bridge"])
+    parser.add_argument("command", choices=["check-store", "stage", "activate", "activate-v2", "bridge-cos", "resume", "resume-cos-bridge"])
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--assets-dir", type=Path)
     parser.add_argument("--with-installers", action="store_true")
@@ -471,6 +547,8 @@ def main():
     try:
         if args.verification_receipt and args.command not in ("stage", "activate"):
             raise PublishError("Verification receipts are only supported for stage and activate")
+        if args.command == "activate-v2" and (args.provider != "r2" or args.with_installers):
+            raise PublishError("activate-v2 requires R2 provider and no installer staging")
         store = storage_config(args.provider, args.endpoint_url, args.region, args.bucket, args.public_base)
         if args.command != "check-store" and (args.manifest is None or args.verifier is None):
             raise PublishError("Publication requires --manifest and --verifier")
@@ -523,6 +601,8 @@ def main():
                                            require_active_source=is_bridge)
             elif args.command == "bridge-cos":
                 version = publisher.activate(manifest, require_active_source=True)
+            elif args.command == "activate-v2":
+                version = publisher.activate_v2(manifest)
             else:
                 version = publisher.activate(manifest, assets_dir if args.with_installers else None)
         print(f"{args.command} verified: {version}")
