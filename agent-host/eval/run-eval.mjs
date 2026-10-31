@@ -183,6 +183,52 @@ export function redactSecrets(input, extraSecrets = []) {
   return result;
 }
 
+// 从上游 SSE 流或 JSON 响应中提取真实 usage（含 cached_tokens / prompt_cache_hit_tokens）
+export function extractUpstreamUsage(respText) {
+  let usage = null;
+  const trimmed = String(respText || '').trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      usage = parsed?.usage || parsed?.choices?.[0]?.usage || null;
+    } catch {
+      // ignore
+    }
+  }
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith('data:')) continue;
+    const payload = s.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const chunk = JSON.parse(payload);
+      const u = chunk?.usage || chunk?.choices?.[0]?.usage;
+      if (u && typeof u === 'object') {
+        usage = u;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!usage) return null;
+  const promptTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
+  const completionTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
+  const cachedTokens = Number(
+    usage.prompt_tokens_details?.cached_tokens ??
+      usage.prompt_cache_hit_tokens ??
+      usage.cached_tokens ??
+      usage.input_tokens_details?.cached_tokens ??
+      0,
+  );
+  return {
+    promptTokens: Number.isFinite(promptTokens) ? promptTokens : 0,
+    completionTokens: Number.isFinite(completionTokens) ? completionTokens : 0,
+    cachedTokens: Number.isFinite(cachedTokens) ? cachedTokens : 0,
+    raw: usage,
+  };
+}
+
 // 预算计量与请求账本器（包裹 Fake 模型或作为 Real 模型的本地计量代理）
 export function createCostMeter({
   mode = 'fake',
@@ -194,6 +240,7 @@ export function createCostMeter({
 } = {}) {
   const entries = [];
   let totalInputTokens = 0;
+  let totalCachedTokens = 0;
   let totalOutputTokens = 0;
   let totalCostCny = 0;
   let abortedBudget = false;
@@ -215,6 +262,7 @@ export function createCostMeter({
   function recordRequest({
     model = 'fake-eval-model',
     inputTokens = 0,
+    cachedTokens = 0,
     outputTokens = 0,
     durationMs = 0,
     scenarioId = currentContext.scenarioId,
@@ -222,12 +270,14 @@ export function createCostMeter({
     runIndex = currentContext.runIndex,
   }) {
     const inTok = Math.max(0, Number(inputTokens || 0));
+    const cachedTok = Math.max(0, Math.min(inTok, Number(cachedTokens || 0)));
     const outTok = Math.max(0, Number(outputTokens || 0));
     const costCny =
       (inTok / 1_000_000) * Number(priceInPerMillion || 0) +
       (outTok / 1_000_000) * Number(priceOutPerMillion || 0);
 
     totalInputTokens += inTok;
+    totalCachedTokens += cachedTok;
     totalOutputTokens += outTok;
     totalCostCny = Number((totalCostCny + costCny).toFixed(8));
 
@@ -244,6 +294,9 @@ export function createCostMeter({
         mode,
         model,
         inputTokens: inTok,
+        cachedTokens: cachedTok,
+        uncachedInputTokens: Math.max(0, inTok - cachedTok),
+        cachedTokenRatio: inTok > 0 ? Number((cachedTok / inTok).toFixed(4)) : 0,
         outputTokens: outTok,
         totalTokens: inTok + outTok,
         costCny: Number(costCny.toFixed(8)),
@@ -278,6 +331,9 @@ export function createCostMeter({
       priceOutPerMillion,
       totalRequests: entries.length,
       totalInputTokens,
+      totalCachedTokens,
+      totalCachedTokenRatio:
+        totalInputTokens > 0 ? Number((totalCachedTokens / totalInputTokens).toFixed(4)) : 0,
       totalOutputTokens,
       totalTokens: totalInputTokens + totalOutputTokens,
       totalCostCny,
@@ -320,6 +376,8 @@ export function computeScenarioMetrics({
   const structuralCompletenessRate = totalChecks > 0 ? Number((passedChecks / totalChecks).toFixed(4)) : 1;
 
   const inputTokens = requestEntries.reduce((sum, r) => sum + Number(r.inputTokens || 0), 0);
+  const cachedTokens = requestEntries.reduce((sum, r) => sum + Number(r.cachedTokens || 0), 0);
+  const cachedTokenRatio = inputTokens > 0 ? Number((cachedTokens / inputTokens).toFixed(4)) : 0;
   const outputTokens = requestEntries.reduce((sum, r) => sum + Number(r.outputTokens || 0), 0);
   const costCny = Number(requestEntries.reduce((sum, r) => sum + Number(r.costCny || 0), 0).toFixed(8));
 
@@ -344,6 +402,8 @@ export function computeScenarioMetrics({
     writeOps,
     readOps,
     inputTokens,
+    cachedTokens,
+    cachedTokenRatio,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
     costCny,
@@ -417,6 +477,8 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
       skillRetentionRate,
       totalRequests: meterState.totalRequests,
       totalInputTokens: meterState.totalInputTokens,
+      totalCachedTokens: meterState.totalCachedTokens,
+      totalCachedTokenRatio: meterState.totalCachedTokenRatio,
       totalOutputTokens: meterState.totalOutputTokens,
       totalTokens: meterState.totalTokens,
       totalCostCny: meterState.totalCostCny,
@@ -428,13 +490,17 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
 
 export function renderMarkdownReport(report) {
   const s = report.summary;
+  const cachedSummary =
+    typeof s.totalCachedTokens === 'number'
+      ? ` (缓存命中 \`${s.totalCachedTokens}\` tok / \`${((s.totalCachedTokenRatio || 0) * 100).toFixed(1)}%\`)`
+      : '';
   const lines = [
     '# BeefTV 内置创作助手评测报告 (Eval Harness)',
     '',
     `- **生成时间**: \`${report.generatedAt}\``,
     `- **整体状态**: **${report.status.toUpperCase()}**`,
     `- **模型模式**: \`${report.config.modelMode}\` | **每场景轮数**: \`${report.config.runs}\` | **单轮请求上限**: \`${report.config.maxRequests}\` | **总预算上限**: \`¥${report.config.budgetCny}\``,
-    `- **累计消耗**: 请求 \`${s.totalRequests}\` 次 | 输入 \`${s.totalInputTokens}\` tok | 输出 \`${s.totalOutputTokens}\` tok | 费用 \`¥${s.totalCostCny.toFixed(4)}\``,
+    `- **累计消耗**: 请求 \`${s.totalRequests}\` 次 | 输入 \`${s.totalInputTokens}\` tok${cachedSummary} | 输出 \`${s.totalOutputTokens}\` tok | 费用 \`¥${s.totalCostCny.toFixed(4)}\``,
     '',
     '## 1. 核心守护指标总览',
     '',
@@ -701,8 +767,9 @@ export async function runEval(rawOptions = {}) {
       const started = Date.now();
       try {
         meter.checkBudgetBeforeDispatch();
-        let rawBody = '';
-        for await (const chunk of req) rawBody += chunk;
+        const reqChunks = [];
+        for await (const chunk of req) reqChunks.push(Buffer.from(chunk));
+        const rawBody = Buffer.concat(reqChunks).toString('utf8');
         observeModelRequest?.(rawBody ? JSON.parse(rawBody) : {});
         if (activeTurnSteerHook) {
           const hook = activeTurnSteerHook;
@@ -752,11 +819,14 @@ export async function runEval(rawOptions = {}) {
             chunks.push(Buffer.from(chunk));
             respText += dec.decode(chunk, { stream: true });
           }
-          const inTok = Math.max(100, Math.ceil(requestBodyToSend.length / 4));
-          const outTok = Math.max(50, Math.ceil(respText.length / 8));
+          const parsedUsage = extractUpstreamUsage(respText);
+          const inTok = parsedUsage?.promptTokens > 0 ? parsedUsage.promptTokens : Math.max(100, Math.ceil(requestBodyToSend.length / 4));
+          const cachedTok = parsedUsage ? parsedUsage.cachedTokens : 0;
+          const outTok = parsedUsage?.completionTokens > 0 ? parsedUsage.completionTokens : Math.max(50, Math.ceil(respText.length / 8));
           meter.recordRequest({
             model: modelId,
             inputTokens: inTok,
+            cachedTokens: cachedTok,
             outputTokens: outTok,
             durationMs: Date.now() - attemptStart,
           });
@@ -838,11 +908,29 @@ export async function runEval(rawOptions = {}) {
             skillsPayload = [setupState.skillPin];
           }
           observeModelRequest = (body) => {
+            rawOptions.onModelRequest?.({
+              runIndex: runIdx,
+              scenarioId: scenario.id,
+              scenarioCode: scenario.code,
+              turnId,
+              canvasId,
+              sessionId,
+              body,
+            });
             if (!setupState?.skillPin) return;
             const pin = setupState.skillPin;
-            const systemText = JSON.stringify(body.system || (body.messages || []).filter((m) => m.role === 'system' || m.role === 'developer'));
-            const activeSkillPresent = systemText.includes('当前任务技能') &&
-              ['skillId', 'versionId', 'contentHash'].every((key) => systemText.includes(`${key}=\\"${pin[key]}\\"`));
+            const nonSystemMessages = (body.messages || []).filter(
+              (m) => m.role !== 'system' && m.role !== 'developer',
+            );
+            const nonSystemText = JSON.stringify(nonSystemMessages);
+            const systemText = JSON.stringify(
+              body.system || (body.messages || []).filter((m) => m.role === 'system' || m.role === 'developer'),
+            );
+            const activeSkillPresent =
+              !systemText.includes('beeftv_active_skills') &&
+              ['skillId', 'versionId', 'contentHash'].every((key) =>
+                nonSystemText.includes(`${key}=\\"${pin[key]}\\"`),
+              );
             requestEvidence.push({ turnId, activeSkillPresent });
           };
 

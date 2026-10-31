@@ -146,6 +146,11 @@ jobs:
       - name: Verify real production timing report
         working-directory: agent-host/eval
         run: python3 -m unittest report_production_test.py
+      - name: Verify agent-host request efficiency gate
+        working-directory: agent-host
+        run: |
+          bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs
+          bun eval/request-efficiency-gate.mjs
 
   web:
     name: Web checks

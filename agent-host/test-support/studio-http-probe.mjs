@@ -19,7 +19,11 @@ let canvas = { revision: 7, nodes: [], connections: [] };
 const readJSON = async req => { let raw = ''; for await (const part of req) raw += part; return JSON.parse(raw || '{}'); };
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 const text = message => typeof message.content === 'string' ? message.content : (message.content || []).map(part => part.text || '').join('');
-const system = body => body.messages.filter(m => ['system', 'developer'].includes(m.role)).map(text).join('\n');
+const systemHeader = body => body.messages.filter(m => ['system', 'developer'].includes(m.role)).map(text).join('\n');
+const system = body => {
+  assert.doesNotMatch(systemHeader(body), /<beeftv_studio>/);
+  return text(body.messages.filter(m => m.role === 'user').at(-1) || {});
+};
 const users = body => body.messages.filter(m => m.role === 'user').map(text).join('\n');
 const descriptors = [
   { id: 'canvas.get', readOnly: true, replay: 'safe', assistantModes: ['canvas', 'read-only', 'full-access'], scope: 'canvas', summary: 'Read canvas', params: { type: 'object', properties: { canvasId: { type: 'string' } }, required: ['canvasId'] } },
@@ -143,7 +147,7 @@ try {
       canvas.nodes[0].metadata.content += '-changed';
       const [recovered] = await chat();
       assert.match(system(recovered), /文本 6/);
-      const lastUser = recovered.messages.filter(m => m.role === 'user').at(-1);
+      const lastUser = recovered.messages.filter(m => m.role === 'user' && !text(m).trim().startsWith('<beeftv_studio>')).at(-1);
       assert.match(text(lastUser), /用户修改了「原节点0」/); assert.doesNotMatch(text(lastUser), /新增 6 个|删除了/);
     });
     readFailure = '';
