@@ -29,6 +29,7 @@ Seedance 专用调度与声明式视频插件共用该下载合同，包括直�
 - Runway 的 `promptImage` 按模型区分：`gen4.5`、`gen4_turbo`、`gemini_omni_flash`、`grok_imagine_1_5` 等模型的 `position` 只有 `first`，带尾帧会在提交前报错；`veo3.1`、`kling2.5_turbo_pro`、`seedance2_5`、`h3_max` 等支持尾帧的模型照常发送，本地只拦官方明确限制的单帧模型。创建与查询都带官方的 `X-Runway-Version`。
 - Luma 的 `keyframes.frame0.url` 只接受在线图片地址：本地首帧先上传到对象存储换成在线地址，拿不到在线地址时在提交前报错（`reference_media_requires_url`），不会把 data URL 发进该字段。
 - 「视频生成 JSON · ratio / duration」使用 `POST /v1/video/generations` 和 JSON，发送 `images` 对象数组及图片角色、整数 `duration`、`ratio`，并从查询结果 `data[].url` 取回视频。只有服务商文档符合该格式时才选择。
+- 「AIHubKit Video」对应 [AIHubKit 视频接口文档](https://86bdknokqu.apifox.cn/9260936m0)：使用 `POST /v1/videos` 和 JSON，发送整数 `duration`、`ratio`、带 `p` 后缀的 `resolution`，以及 `referenceImages/referenceVideos/referenceAudios` HTTPS URL 数组。安装并启用 `aihubkit-video` 插件后，在模型设置中选择该协议。使用本地参考素材时需配置公网对象存储，或提供可访问的 HTTPS 链接；当前文档未明确首尾帧字段，插件会在提交前拒绝显式首尾帧。状态通过 `GET /v1/videos/:id` 查询，完成后使用返回的 `url` 或同一任务的 `/content` 端点取回视频。
 - 既有 NewAPI Video Generations 使用 `seconds/aspect_ratio/image_urls`，与上一项的字段不同；方舟原生、fal 和其他专用协议也须按各自文档选择。
 
 在「设置 → 模型服务 → 管理服务 → 高级模型设置与测试 → 配置使用」选择协议，并按服务商文档设置素材与参数限制。生成测试会收费；保存配置和选择协议本身不会提交生成。HTTP 错误或超时后不会自动改用其他协议重发。

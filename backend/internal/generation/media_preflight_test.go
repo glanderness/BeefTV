@@ -20,6 +20,7 @@ func TestMediaTransportUsesSelectedContractBeforeReadingFiles(t *testing.T) {
 		{"URL only inline", "newapi-channel-2", "seedance_v2.5", "https://custom.example", Media{DataURL: "data:image/png;base64,YQ=="}, true},
 		{"URL only blob", "newapi-channel-2", "seedance_v2.5", "https://custom.example", Media{URL: "blob:local"}, true},
 		{"URL only HTTPS", "newapi-channel-2", "seedance_v2.5", "https://custom.example", Media{URL: "https://cdn.example/image.png"}, false},
+		{"AIHubKit Video requires public URLs", "aihubkit-video", "seedance-2.5_v1", "https://apimodel.aihubkit.com", Media{StorageKey: "resource:local"}, true},
 		{"full video upload", "full-video", "seedance-2.5", "https://custom.example", Media{StorageKey: "resource:local"}, false},
 		{"inline protocol", "newapi-channel-1", "video", "https://custom.example", Media{StorageKey: "resource:local"}, false},
 		{"BeefAPI upload", "newapi", "seedance-2.0-mini", "https://enterprise.beefapi.com", Media{StorageKey: "resource:local"}, false},

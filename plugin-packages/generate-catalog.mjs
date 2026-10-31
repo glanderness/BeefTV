@@ -692,6 +692,48 @@ add({
 });
 
 add({
+  id: "aihubkit-video", providerId: "aihubkit-video", name: "AIHubKit Video", vendor: "AIHubKit", capability: "video",
+  version: "1.0.0", baseUrl: "https://apimodel.aihubkit.com", auth: bearer, requiresPublicMediaUrls: true,
+  params: [
+    ["model", "string", true, "model", "渠道模型 ID，例如 seedance-2.5_v1。"],
+    ["prompt", "string", true, "prompt", "视频提示词。"],
+    ["duration", "integer", true, "duration", "视频时长（秒），范围由模型决定。"],
+    ["resolution", "string", true, "resolution", "分辨率；数字档位转换为带 p 后缀的小写值。"],
+    ["aspectRatio", "string", false, "ratio", "视频比例，例如 16:9。"],
+    ["images", "media[]", false, "referenceImages", "参考图片的公网 HTTPS URL，按素材顺序发送。"],
+    ["videos", "media[]", false, "referenceVideos", "参考视频的公网 HTTPS URL。"],
+    ["audios", "media[]", false, "referenceAudios", "参考音频的公网 HTTPS URL。"]
+  ],
+  validations: [
+    { assert: gt(len(trim(ref("request.model"))), 0), message: "AIHubKit Video 必须选择模型" },
+    { assert: gt(len(trim(ref("request.prompt"))), 0), message: "AIHubKit Video 提示词不能为空" },
+    { assert: gt(ref("request.duration"), 0), message: "AIHubKit Video 时长必须为正整数" },
+    { assert: gt(len(trim(ref("request.resolution"))), 0), message: "AIHubKit Video 必须选择分辨率" },
+    { assert: eq(len(filter(ref("request.images"), "media", { $not: { $in: [coalesce(ref("media.role"), "reference_image"), ["reference_image", "subject_reference", "style_reference"]] } })), 0), message: "AIHubKit Video 当前接口文档仅明确参考图字段，请使用参考图片，勿设置首尾帧或遮罩" },
+    ...["images", "videos", "audios"].map((kind) => ({
+      assert: eq(len(filter(ref(`request.${kind}`), "media", { $not: and(eq(at(split(ref("media.value"), "://"), 0), "https"), gt(len(at(split(ref("media.value"), "://"), 1)), 0)) })), 0),
+      message: "AIHubKit Video 参考素材必须使用公网 HTTPS URL，请先配置公网素材存储"
+    }))
+  ],
+  create: jsonCreate("/v1/videos", {
+    model: ref("request.model"), prompt: ref("request.prompt"), duration: ref("request.duration"),
+    ratio: omit(ref("request.aspectRatio")),
+    resolution: conditional(gt(toInt(trim(ref("request.resolution"))), 0), { $concat: [toInt(trim(ref("request.resolution"))), "p"] }, lower(trim(ref("request.resolution")))),
+    referenceImages: omit(map(sorted(ref("request.images")), "media", ref("media.value"))),
+    referenceVideos: omit(map(sorted(ref("request.videos")), "media", ref("media.value"))),
+    referenceAudios: omit(map(sorted(ref("request.audios")), "media", ref("media.value")))
+  }),
+  poll: { method: "GET", path: "/v1/videos/{{taskId}}" },
+  result: { method: "GET", path: "/v1/videos/{{taskId}}/content", headers: { Accept: "video/mp4" } },
+  response: {
+    taskId: coalesce(ref("response.id"), ref("response.task_id"), ref("taskId")),
+    status: coalesce(ref("response.status"), "unknown"), videos: ref("response.url"),
+    usage: ref("response.usage"), messagePaths: ["error.message", "message"], errorPaths: ["error.code"], resultEphemeral: true
+  },
+  notes: "接口依据：https://86bdknokqu.apifox.cn/9260936m0 。配置渠道 Base URL 为 https://apimodel.aihubkit.com（已有 /v1 后缀也可由宿主合并），在模型设置中选择 AIHubKit Video。不要选择 Agnes、OpenAI Videos multipart 或其他 JSON profile。所有参考素材必须为公网可访问的 HTTPS URL；requiresPublicMediaUrls 让宿主使用已配置的公网素材存储，插件不自动向第三方图床上传素材。当前文档未明确首尾帧的字段名，因此显式首尾帧输入会在提交前失败，不将其转换为参考图。模型的分辨率、时长、素材数量上限以渠道实际支持为准。queued/unknown 保持等待，in_progress 映射为处理中，completed 映射为成功，failed 保持失败。完成后的 url 指向鉴权下载端点，宿主只向同源地址附加凭证并持久化视频；未返回 url 时使用同一任务的 /content 端点。未执行真实付费生成验收。"
+});
+
+add({
   id: "xai-video", providerId: "xai-video", name: "xAI Video", vendor: "xAI", capability: "video",
   baseUrl: "https://api.x.ai", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   validations: [
