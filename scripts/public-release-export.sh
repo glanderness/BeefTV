@@ -20,7 +20,7 @@ if [ -e "$destination_directory" ]; then
     exit 73
 fi
 
-for required_file in README.md LICENSE NOTICE backend/go.mod web/package.json scripts/audit-public-docs.sh; do
+for required_file in README.md LICENSE NOTICE backend/go.mod web/package.json scripts/audit-public-docs.sh scripts/verify-real-generation-release.mjs; do
     if [ ! -f "$source_directory/$required_file" ]; then
         echo "source is missing required file: $required_file" >&2
         exit 65

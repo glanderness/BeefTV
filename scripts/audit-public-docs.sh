@@ -73,6 +73,11 @@ const allowedRootDocs = new Set([
   "docs/storage-settings.md",
 ]);
 
+if (!fs.existsSync("docs/index.md")) {
+  console.error("missing required public documentation index: docs/index.md");
+  process.exit(1);
+}
+
 for (const entry of fs.readdirSync("docs", { withFileTypes: true })) {
   if (entry.isFile() && /\.(?:md|mdx)$/i.test(entry.name)) {
     const rel = `docs/${entry.name}`;
@@ -83,20 +88,18 @@ for (const entry of fs.readdirSync("docs", { withFileTypes: true })) {
   }
 }
 
-if (fs.existsSync("docs/release-evidence")) {
-  try {
-    const currentVersion = normalizeVersion(fs.readFileSync("VERSION", "utf8"));
-    verifyReleaseEvidenceDirectory(process.cwd(), currentVersion);
-    const rel = `docs/release-evidence/${currentVersion}.json`;
-    const data = JSON.parse(fs.readFileSync(rel, "utf8"));
-    validateReleaseReceipt(data, {
-      expectedVersion: currentVersion,
-      requireSourceDigestMatch: false,
-    });
-  } catch (err) {
-    console.error(`release receipt validation failed: ${err.message || err}`);
-    process.exit(1);
-  }
+try {
+  const currentVersion = normalizeVersion(fs.readFileSync("VERSION", "utf8"));
+  verifyReleaseEvidenceDirectory(process.cwd(), currentVersion);
+  const rel = `docs/release-evidence/${currentVersion}.json`;
+  const data = JSON.parse(fs.readFileSync(rel, "utf8"));
+  validateReleaseReceipt(data, {
+    expectedVersion: currentVersion,
+    requireSourceDigestMatch: false,
+  });
+} catch (err) {
+  console.error(`release receipt validation failed: ${err.message || err}`);
+  process.exit(1);
 }
 
 const files = [];

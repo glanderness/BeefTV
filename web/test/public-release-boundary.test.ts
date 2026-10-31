@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 const exportScript = join(repoRoot, "scripts/public-release-export.sh");
 const auditScript = join(repoRoot, "scripts/public-release-audit.sh");
+const docsAuditScript = join(repoRoot, "scripts/audit-public-docs.sh");
+const releaseReceiptVerifier = join(repoRoot, "scripts/verify-real-generation-release.mjs");
 const workspaces: string[] = [];
 
 function temporaryDirectory(prefix: string) {
@@ -21,6 +23,33 @@ function fixtureFile(root: string, relativePath: string, contents = "fixture") {
     writeFileSync(target, contents);
 }
 
+function seedRequiredExportBaseline(source: string) {
+    fixtureFile(source, "README.md", "# BeefTV\n\nSee [docs](docs/index.md).\n");
+    fixtureFile(source, "LICENSE", "MIT\n");
+    fixtureFile(source, "NOTICE", "Third-party notices\n");
+    fixtureFile(source, "VERSION", "v2.1.0\n");
+    fixtureFile(source, "backend/go.mod", "module example.invalid/beeftv/backend\n");
+    fixtureFile(source, "web/package.json", '{"name":"beeftv"}\n');
+    fixtureFile(source, "docs/index.md", "# Docs\n");
+    fixtureFile(
+        source,
+        "docs/release-evidence/v2.1.0.json",
+        JSON.stringify(
+            {
+                version: "v2.1.0",
+                sourceDigest: "a".repeat(64),
+                passed: true,
+                evidenceSha256: "b".repeat(64),
+            },
+            null,
+            2,
+        ),
+    );
+    mkdirSync(join(source, "scripts"), { recursive: true });
+    copyFileSync(docsAuditScript, join(source, "scripts/audit-public-docs.sh"));
+    copyFileSync(releaseReceiptVerifier, join(source, "scripts/verify-real-generation-release.mjs"));
+}
+
 afterEach(() => {
     while (workspaces.length > 0) {
         rmSync(workspaces.pop()!, { recursive: true, force: true });
@@ -33,11 +62,7 @@ describe("public release boundary", () => {
         const destinationParent = temporaryDirectory("beeftv-public-destination-");
         const destination = join(destinationParent, "snapshot");
 
-        fixtureFile(source, "README.md", "# BeefTV\n");
-        fixtureFile(source, "LICENSE", "MIT\n");
-        fixtureFile(source, "NOTICE", "Third-party notices\n");
-        fixtureFile(source, "backend/go.mod", "module example.invalid/beeftv/backend\n");
-        fixtureFile(source, "web/package.json", '{"name":"beeftv"}\n');
+        seedRequiredExportBaseline(source);
         fixtureFile(source, "web/src/main.tsx", "export {};\n");
         fixtureFile(source, "web/scripts/beeftv-local-network-audit.mjs", "export {};\n");
         fixtureFile(source, "web/scripts/private-audit.mjs", "export {};\n");
@@ -57,6 +82,8 @@ describe("public release boundary", () => {
         fixtureFile(source, "debug.log");
         fixtureFile(source, "release.dmg");
         fixtureFile(source, "plugin-packages/example.beeftv-plugin");
+        fixtureFile(source, "docs/refactor/internal-notes.md", "# Internal\n");
+        fixtureFile(source, "reviews/pr1.md", "# Review\n");
 
         const result = spawnSync("sh", [exportScript, source, destination], { encoding: "utf8" });
 
@@ -80,6 +107,8 @@ describe("public release boundary", () => {
         expect(existsSync(join(destination, "debug.log"))).toBe(false);
         expect(existsSync(join(destination, "release.dmg"))).toBe(false);
         expect(existsSync(join(destination, "plugin-packages/example.beeftv-plugin"))).toBe(false);
+        expect(existsSync(join(destination, "docs/refactor"))).toBe(false);
+        expect(existsSync(join(destination, "reviews"))).toBe(false);
     });
 
     test("audit rejects a forbidden artifact and accepts the clean export", () => {
@@ -87,11 +116,7 @@ describe("public release boundary", () => {
         const destinationParent = temporaryDirectory("beeftv-public-audit-destination-");
         const destination = join(destinationParent, "snapshot");
 
-        fixtureFile(source, "README.md", "# BeefTV\n");
-        fixtureFile(source, "LICENSE", "MIT\n");
-        fixtureFile(source, "NOTICE", "Third-party notices\n");
-        fixtureFile(source, "backend/go.mod", "module example.invalid/beeftv/backend\n");
-        fixtureFile(source, "web/package.json", '{"name":"beeftv"}\n');
+        seedRequiredExportBaseline(source);
 
         expect(spawnSync("sh", [exportScript, source, destination]).status).toBe(0);
         fixtureFile(destination, ".git/config", `[core]\n\trepositoryformatversion = 0\n\tworktree = ${destination}\n`);
@@ -103,6 +128,18 @@ describe("public release boundary", () => {
         expect(rejected.signal).toBeNull();
         expect(rejected.status).not.toBe(0);
         expect(`${rejected.stdout}${rejected.stderr}`).toContain("data/private.db");
+
+        const leakedDocsSource = temporaryDirectory("beeftv-public-leaked-docs-source-");
+        const leakedDocsDest = join(temporaryDirectory("beeftv-public-leaked-docs-dest-"), "snapshot");
+        seedRequiredExportBaseline(leakedDocsSource);
+        fixtureFile(leakedDocsSource, "docs/index.md", `# Docs\n\nsess_${"12345678"}\n`);
+        const leakedExport = spawnSync("sh", [exportScript, leakedDocsSource, leakedDocsDest], {
+            encoding: "utf8",
+        });
+        expect(leakedExport.status).not.toBe(0);
+        expect(`${leakedExport.stdout}${leakedExport.stderr}`).toContain(
+            "forbidden internal patterns in public documentation",
+        );
     });
 
     test("export refuses to merge into an existing destination", () => {
