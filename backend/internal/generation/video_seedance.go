@@ -148,7 +148,13 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			value := ParseBool(input.Config.VideoWatermark, false)
 			body.Watermark = &value
 		}
-		if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+		if metadataString(input.Metadata, "videoDraftTaskId") != "" {
+			body.Ratio = ""
+			body.Duration = 0
+			body.GenerateAudio = nil
+			body.Draft = nil
+			body.OmniReferenceTaskType = ""
+		} else if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
 			value := true
 			body.Draft = &value
 			body.Resolution = "480p"
@@ -204,6 +210,9 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 }
 
 func SeedanceContent(input Input) ([]map[string]interface{}, error) {
+	if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+		return []map[string]interface{}{{"type": "draft_task", "draft_task": map[string]interface{}{"id": draftTaskID}}}, nil
+	}
 	content := make([]map[string]interface{}, 0, 1+len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios))
 	text := SeedancePromptText(input)
 	if strings.TrimSpace(text) != "" {
@@ -241,6 +250,13 @@ func SeedanceContent(input Input) ([]map[string]interface{}, error) {
 }
 
 func SeedanceVideosRequestBody(input Input) (SeedanceVideosRequest, error) {
+	if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+		return SeedanceVideosRequest{
+			Model:       input.Config.Model,
+			DraftTaskID: draftTaskID,
+			Resolution:  NormalizeSeedanceResolution(input.Config.VQuality, input.Config.Model),
+		}, nil
+	}
 	if len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 && len(input.ReferenceAudios) > 0 && !videoCapabilityAllowsAudioOnly(input.VideoCapability) {
 		return SeedanceVideosRequest{}, errors.New("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")
 	}

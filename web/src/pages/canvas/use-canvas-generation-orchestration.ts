@@ -351,6 +351,61 @@ export function useCanvasGenerationOrchestration({
         [pageUi, connectionsRef, effectiveConfig, message, nodesRef, projectId, setConnections, setNodes],
     );
 
+    const generateFinalVideoFromDraftNode = useCallback(
+        (node: CanvasNodeData, resolution: "720p" | "1080p") => {
+            const draftTaskId = node.metadata?.taskProviderRequestId?.trim();
+            if (!draftTaskId) {
+                message.warning("该样片缺少上游任务 ID，无法直接转高清成片");
+                return;
+            }
+            const promptText = node.metadata?.prompt || "";
+            const childNode: CanvasNodeData = {
+                id: nanoid(),
+                type: CanvasNodeType.Video,
+                title: `${node.title || "样片"} (${resolution.toUpperCase()} 成片)`.slice(0, 36),
+                position: { x: node.position.x + node.width + 96, y: node.position.y },
+                width: node.width,
+                height: node.height,
+                metadata: {
+                    status: "idle",
+                    prompt: promptText,
+                    composerContent: promptText,
+                    model: node.metadata?.model,
+                    size: node.metadata?.size,
+                    seconds: node.metadata?.seconds,
+                    vquality: resolution,
+                    generateAudio: node.metadata?.generateAudio ?? "true",
+                    watermark: node.metadata?.watermark ?? "false",
+                    draft: "false",
+                    videoEditOperation: "draft_to_final",
+                    videoDraftTaskId: draftTaskId,
+                    generatedFromNodeId: node.id,
+                    generationResultPlacement: "replace-node",
+                },
+            };
+            const nextNodes = [...nodesRef.current, childNode];
+            const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: node.id, toNodeId: childNode.id }];
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            pageUi.getState().setSelectedNodeIds(new Set([childNode.id]));
+            pageUi.getState().setSelectedConnectionId(null);
+            pageUi.getState().setDialogNodeId(null);
+            void handleGenerateNode(childNode.id, "video", promptText, {
+                confirmedInputs: {
+                    nodes: nextNodes,
+                    connections: nextConnections,
+                    config: effectiveConfig,
+                    assets,
+                    skills: addedSkills,
+                },
+                skipDuplicateConfirmation: true,
+            });
+        },
+        [addedSkills, assets, connectionsRef, effectiveConfig, handleGenerateNode, message, nodesRef, pageUi, setConnections, setNodes],
+    );
+
     return {
         applyGenerationTaskResult,
         bindGenerationTask,
@@ -399,5 +454,6 @@ export function useCanvasGenerationOrchestration({
         reconcileImageBatchRootNode,
         retryImageBatchChildren,
         generateImageFromTextNode,
+        generateFinalVideoFromDraftNode,
     };
 }

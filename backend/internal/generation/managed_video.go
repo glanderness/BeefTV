@@ -34,6 +34,15 @@ func managedLegacyVideoInput(input Input) beefapi.LegacyVideoInput {
 		value := ParseBool(input.Config.VideoWatermark, false)
 		request.Watermark = &value
 	}
+	if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+		request.DraftTaskID = draftTaskID
+		request.Draft = nil
+		request.Prompt = ""
+		request.Seconds = ""
+		request.AspectRatio = ""
+		request.GenerateAudio = nil
+		return request
+	}
 	if ParseBool(input.Config.VideoDraft, false) && (!serverOwned || input.VideoCapability.Draft.Supported) {
 		value := true
 		request.Draft = &value

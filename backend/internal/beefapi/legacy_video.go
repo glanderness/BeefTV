@@ -14,10 +14,10 @@ var ErrReferencesNotUploaded = errors.New("参考素材尚未上传完成")
 var ErrInvalidVideoReferences = errors.New("已选择的关键帧不在本次参考素材中")
 
 type LegacyVideoInput struct {
-	Model, Prompt, Seconds, Resolution, AspectRatio string
-	GenerateAudio, Watermark, Draft                 *bool
-	References                                      []LegacyVideoReference
-	Metadata                                        map[string]any
+	Model, Prompt, Seconds, Resolution, AspectRatio, DraftTaskID string
+	GenerateAudio, Watermark, Draft                              *bool
+	References                                                   []LegacyVideoReference
+	Metadata                                                     map[string]any
 }
 
 // This describes the user's requested content. Provider defaults, supported
@@ -39,6 +39,19 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 	}
 	if input.Watermark != nil {
 		metadata["watermark"] = *input.Watermark
+	}
+	if draftID := strings.TrimSpace(input.DraftTaskID); draftID != "" {
+		body["draft_task_id"] = draftID
+		metadata["draft_task_id"] = draftID
+		metadata["operation"] = "draft_to_final"
+		delete(body, "prompt")
+		delete(body, "seconds")
+		delete(body, "aspect_ratio")
+		delete(metadata, "generate_audio")
+		if len(metadata) > 0 {
+			body["metadata"] = metadata
+		}
+		return body, nil
 	}
 	if input.Draft != nil && *input.Draft {
 		body["draft"] = true

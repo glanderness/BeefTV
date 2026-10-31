@@ -136,6 +136,7 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 			video.TaskTypeConstraints = true
 			if containsCapabilityString(video.Resolutions, "480p") {
 				video.Draft = VideoBooleanConfig{Supported: true, Default: false}
+				video.Operations = appendUniqueString(video.Operations, "draft_to_final")
 			}
 			video.Operations = appendUniqueString(video.Operations, "audio_to_video")
 			if video.Duration.Selection == "range" && video.Duration.Max < 30 {
@@ -143,7 +144,7 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 			}
 		}
 	}
-	if isNativeDreaminaSeedance(protocol, modelName) {
+	if isNativeDreaminaSeedance(protocol, modelName) || (model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(protocol)) && isSeedance25Model(modelName)) {
 		video.Duration.Selection = "enum"
 		video.Duration.Min = 4
 		video.Duration.Values = []int{-1}
@@ -177,6 +178,9 @@ func mergeDraftVideoCapability(fallback, raw *VideoCapabilityConfig) *VideoCapab
 				result.DefaultOperation = fallback.DefaultOperation
 			}
 		}
+	}
+	if result.Draft.Supported {
+		result.Operations = appendUniqueString(result.Operations, "draft_to_final")
 	}
 	return &result
 }
@@ -377,6 +381,23 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
 	profile = tightenedVideoCapability(input.Config, profile)
+	operation := videoTaskOperation(profile, input)
+	if operation == "draft_to_final" {
+		if !containsCapabilityString(profile.Operations, "draft_to_final") && !profile.Draft.Supported {
+			return kernel.BadAuthRequest("当前视频模型不支持样片转高清成片")
+		}
+		if metadataString(input.Metadata, "videoDraftTaskId") == "" {
+			return kernel.BadAuthRequest("高清成片需要关联已完成的有声样片任务 ID")
+		}
+		res := normalizeResolution(input.Config.VQuality)
+		if res != "720p" && res != "1080p" {
+			return kernel.BadAuthRequest("样片转高清成片仅支持 720p 或 1080p 分辨率")
+		}
+		if len(profile.Resolutions) > 0 && videoResolutionNameRequest(profile, input.Config.VQuality) == "" {
+			return kernel.BadAuthRequest("输出分辨率不在当前模型支持范围内")
+		}
+		return nil
+	}
 	seconds, err := strconv.ParseFloat(strings.TrimSpace(input.Config.VideoSeconds), 64)
 	allowed := false
 	if err == nil && !math.IsNaN(seconds) && !math.IsInf(seconds, 0) {
@@ -399,7 +420,6 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 	if len(profile.Resolutions) > 0 && !isAutomaticVideoResolution(input.Config.VQuality) && videoResolutionNameRequest(profile, input.Config.VQuality) == "" {
 		return kernel.BadAuthRequest("输出分辨率不在当前模型支持范围内")
 	}
-	operation := videoTaskOperation(profile, input)
 	if !containsCapabilityString(profile.Operations, operation) {
 		return kernel.BadAuthRequest("当前视频模型不支持该生成模式")
 	}

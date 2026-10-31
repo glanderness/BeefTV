@@ -257,6 +257,9 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
         const draft = catalogBooleanConfig(object.draft);
         if (!draft) return null;
         video.draft = draft;
+        if (draft.supported && !video.operations.includes("draft_to_final")) {
+            video.operations.push("draft_to_final");
+        }
     }
     return video;
 }
@@ -408,15 +411,18 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
         if (isSeedance25Model(model) && video.resolutions.some((value) => value.toLowerCase() === "480p")) {
             video.draft = { supported: true, default: false };
+            if (!video.operations.includes("draft_to_final")) {
+                video.operations.push("draft_to_final");
+            }
         }
         if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
             video.duration = { ...video.duration, max: 30 };
         }
     }
-    if (isVolcengineArkVideoProtocol(protocol) && /^dreamina-seedance-2[.-](?:0|5)(?:-|$)/.test(model.trim().toLowerCase().split("/").pop() || "")) {
+    if (isVolcengineArkVideoProtocol(protocol) && (/^dreamina-seedance-2[.-](?:0|5)(?:-|$)/.test(model.trim().toLowerCase().split("/").pop() || "") || isSeedance25Model(model))) {
         video.duration = { ...video.duration, selection: "enum", min: 4, values: [-1, ...Array.from({ length: (video.duration.max || 15) - 3 }, (_, index) => index + 4)] };
-        video.ratios = [...video.ratios, "adaptive"];
-        if (isSeedance25Model(model)) video.operations = [...video.operations, "inpaint", "extend"];
+        if (!video.ratios.includes("adaptive")) video.ratios = [...video.ratios, "adaptive"];
+        if (isSeedance25Model(model)) video.operations = Array.from(new Set([...video.operations, "inpaint", "extend"]));
     }
     return video;
 }

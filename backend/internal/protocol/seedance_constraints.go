@@ -25,6 +25,17 @@ func NormalizeSeedanceTaskOptions(r GenerationRequest) GenerationRequest {
 	if locked {
 		r.AspectRatio = "adaptive"
 	}
+	if draftTaskID, ok := r.Extra["draft_task_id"].(string); ok && strings.TrimSpace(draftTaskID) != "" {
+		r.Operation = "draft_to_final"
+		r.Prompt = ""
+		r.Images = nil
+		r.Videos = nil
+		r.Audios = nil
+		r.Inputs = nil
+		delete(r.Extra, "draft")
+		r.Output.AspectRatio, r.Output.Duration, r.Output.Resolution = r.AspectRatio, r.Duration, r.Resolution
+		return r
+	}
 	if draft, ok := r.Extra["draft"].(bool); ok && draft {
 		r.Resolution = "480p"
 	}
@@ -33,6 +44,21 @@ func NormalizeSeedanceTaskOptions(r GenerationRequest) GenerationRequest {
 }
 
 func ApplySeedanceBodyFields(body map[string]any, r GenerationRequest) {
+	if draftTaskID, ok := r.Extra["draft_task_id"].(string); ok && strings.TrimSpace(draftTaskID) != "" {
+		id := strings.TrimSpace(draftTaskID)
+		body["content"] = []map[string]any{{"type": "draft_task", "draft_task": map[string]any{"id": id}}}
+		delete(body, "prompt")
+		delete(body, "images")
+		delete(body, "videos")
+		delete(body, "audios")
+		delete(body, "ratio")
+		delete(body, "aspect_ratio")
+		delete(body, "duration")
+		delete(body, "generate_audio")
+		delete(body, "draft")
+		delete(body, "omni_reference_task_type")
+		return
+	}
 	if kind := SeedanceOmniTaskType(r); kind != "" {
 		body["omni_reference_task_type"] = kind
 	}

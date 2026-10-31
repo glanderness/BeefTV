@@ -442,12 +442,15 @@ export function buildVideoGenerationMetadata(
     const workflowVideo = node?.type === CanvasNodeType.Config && (config?.taskWorkflowProvider === "runninghub" || isCanvasWorkflowProvider(metadata));
     const startFrame = workflowVideo ? undefined : requireConnectedVideoFrame(metadata?.videoStartFrameNodeId, "首帧", referenceImageIds);
     const endFrame = workflowVideo ? undefined : requireConnectedVideoFrame(metadata?.videoEndFrameNodeId, "尾帧", referenceImageIds);
+    const draftTaskId = metadata?.videoDraftTaskId?.trim() || undefined;
     return {
         ...(config ? generationWorkflowMetadata(config) : {}),
-        videoEditOperation:
-            config && isH3Model(config.model)
-                ? h3VideoOperation(config.model, { imageCount: context?.referenceImages.length || 0, videoCount: context?.referenceVideos.length || 0, audioCount: context?.referenceAudios.length || 0 }, metadata?.videoEditOperation)
-                : resolveVideoEditOperation(node, context),
+        videoEditOperation: draftTaskId
+            ? "draft_to_final"
+            : config && isH3Model(config.model)
+              ? h3VideoOperation(config.model, { imageCount: context?.referenceImages.length || 0, videoCount: context?.referenceVideos.length || 0, audioCount: context?.referenceAudios.length || 0 }, metadata?.videoEditOperation)
+              : resolveVideoEditOperation(node, context),
+        videoDraftTaskId: draftTaskId,
         videoCameraMoveId: metadata?.videoCameraMoveId,
         videoCameraMovePrompt: metadata?.videoCameraMovePrompt,
         videoStartFrameNodeId: startFrame,

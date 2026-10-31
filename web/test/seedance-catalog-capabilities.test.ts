@@ -335,3 +335,40 @@ test("Auto duration reaches canvas model selection and final generation unchange
     expect(result.model).toBe(model);
     expect(result.videoSeconds).toBe("-1");
 });
+
+test("Seedance 2.5 exposes draft and draft_to_final across managed and BYOK Ark channels", async () => {
+    const { buildVideoGenerationMetadata } = await import("../src/lib/canvas/canvas-project-generation");
+    const { CanvasNodeType } = await import("../src/types/canvas");
+    const profile = modelCapabilityConfigFor(
+        {
+            channels: [
+                {
+                    id: "ark",
+                    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+                    models: ["doubao-seedance-2-5-260628"],
+                    modelProfiles: [{ model: "doubao-seedance-2-5-260628", protocol: "volcengine-ark-video" }],
+                },
+            ],
+        },
+        "ark::doubao-seedance-2-5-260628",
+    ).video!;
+    expect(profile.draft).toEqual({ supported: true, default: false });
+    expect(profile.operations).toContain("draft_to_final");
+    expect(profile.operations).toContain("inpaint");
+    expect(profile.operations).toContain("extend");
+
+    const metadata = buildVideoGenerationMetadata({
+        id: "final-node",
+        type: CanvasNodeType.Video,
+        title: "Final",
+        position: { x: 0, y: 0 },
+        width: 100,
+        height: 100,
+        metadata: {
+            videoEditOperation: "draft_to_final",
+            videoDraftTaskId: "cgt-draft-123",
+        },
+    });
+    expect(metadata.videoEditOperation).toBe("draft_to_final");
+    expect(metadata.videoDraftTaskId).toBe("cgt-draft-123");
+});
