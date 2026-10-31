@@ -80,6 +80,7 @@ export async function executeVideoGeneration({
             vquality: generationConfig.vquality,
             generateAudio: generationConfig.videoGenerateAudio,
             watermark: generationConfig.videoWatermark,
+            draft: generationConfig.videoDraft,
             references: generationReferenceUrls(generationContext),
             ...videoGenerationMetadata,
             ...styleMetadata,

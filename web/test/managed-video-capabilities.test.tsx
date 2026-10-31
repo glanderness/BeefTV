@@ -127,3 +127,16 @@ test("a managed model without any profile falls back to default video controls w
     expect(hasDeclaredModelCapability(config, "beefapi::hy-image-v3", "image")).toBe(false);
     expect(modelCompatibilityError(config, "beefapi::hy-image-v3", { capability: "image", input: { textCount: 1, imageCount: 6, videoCount: 0, audioCount: 0, characterCount: 0 } })).toBe("");
 });
+
+test("Seedance 2.5 exposes 480P draft preview switch and task payload carries videoDraft", async () => {
+    const channel = createModelChannel({ id: "beefapi", pinned: true, interfaceType: "newapi", models: ["seedance-2.5"], baseUrl: "https://beeftv.app" });
+    const config = { ...configured(channel, "seedance-2.5"), videoDraft: "true" };
+    const capability = modelCapabilityConfigFor(config, "beefapi::seedance-2.5");
+    expect(capability.video?.draft).toEqual({ supported: true, default: false });
+    expect(capability.video?.resolutions).toContain("480p");
+    const html = renderToStaticMarkup(<VideoSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={() => {}} />);
+    expect(html).toContain("样片预览 (480P)");
+    const prepared = await prepareBackendGenerationTask({ mode: "video", prompt: "scene", config });
+    expect(prepared.input.config?.videoDraft).toBe("true");
+    expect(prepared.input.config?.vquality).toBe("480p");
+});

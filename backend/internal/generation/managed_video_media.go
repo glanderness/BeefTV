@@ -121,6 +121,9 @@ func runManagedVideoTask(ctx context.Context, client *beefapi.MediaClient, input
 	if intent.Watermark != nil {
 		options["watermark"] = *intent.Watermark
 	}
+	if intent.Draft != nil && *intent.Draft {
+		options["draft"] = true
+	}
 	if controls, ok := input.Metadata["videoH3Options"].(map[string]any); ok {
 		for _, key := range []string{"seed", "prompt_expansion_mode", "damage_level", "enable_safety_checker"} {
 			if value, exists := controls[key]; exists {

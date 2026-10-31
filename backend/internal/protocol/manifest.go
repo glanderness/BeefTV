@@ -485,10 +485,8 @@ func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (Reque
 		return RequestSpec{}, err
 	}
 	if a.manifest.Metadata.ID == "volcengine-ark-seedance" || a.manifest.Metadata.ID == "volcengine-ark-video" || a.manifest.Metadata.ID == "volcengine-ark-agent-plan-video" || a.manifest.Metadata.ID == "seedance-videos-compatible" {
-		if kind := SeedanceOmniTaskType(c.Request); kind != "" {
-			if body, ok := spec.Body.(map[string]any); ok {
-				body["omni_reference_task_type"] = kind
-			}
+		if body, ok := spec.Body.(map[string]any); ok {
+			ApplySeedanceBodyFields(body, c.Request)
 		}
 	}
 	// Some NewAPI-compatible gateways validate the prompt under input.content

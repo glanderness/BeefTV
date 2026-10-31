@@ -259,6 +259,13 @@ func VideoCapabilitySupportsWatermark(input Input) bool {
 	return input.VideoCapability == nil || input.VideoCapability.Watermark.Supported
 }
 
+func VideoCapabilitySupportsDraft(input Input) bool {
+	if input.VideoCapability != nil {
+		return input.VideoCapability.Draft.Supported
+	}
+	return modelcatalog.IsSeedance25Model(input.Config.Model)
+}
+
 func NewAPIVideoPromptText(input Input) string {
 	return strings.TrimSpace(input.Prompt)
 }

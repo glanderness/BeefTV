@@ -164,6 +164,13 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["taskTypeConstraints"] = enabled
 	}
+	if _, present := object["draft"]; present {
+		draft, ok := catalogBooleanConfig(object, "draft")
+		if !ok {
+			return nil, false
+		}
+		video["draft"] = draft
+	}
 	return video, true
 }
 

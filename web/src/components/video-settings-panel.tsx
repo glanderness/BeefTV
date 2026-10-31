@@ -22,7 +22,7 @@ const sizeOptions = [
 type VideoSettingsPanelProps = {
     taskConstraints?: VideoSettingsConstraints;
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoDraft" | "videoArkPrivateAssetUpload", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -47,6 +47,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const configuredResolutions = sortVideoResolutionOptions(profile.resolutions).map((value) => ({ value, label: formatVideoResolutionLabel(value) }));
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
+    const draftSupported = Boolean(profile.draft?.supported);
+    const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -56,7 +58,10 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <SettingGroup title="分辨率" color={theme.node.muted}>
                         <div className="grid grid-cols-3 gap-1.5">
                             {configuredResolutions.map((item) => (
-                                <OptionPill key={item.value} selected={isVideoResolutionMatch(resolution, item.value)} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                <OptionPill key={item.value} selected={isVideoResolutionMatch(resolution, item.value)} theme={theme} onClick={() => {
+                                    onConfigChange("vquality", item.value);
+                                    if (draft && !isVideoResolutionMatch(item.value, "480p")) onConfigChange("videoDraft", "false");
+                                }}>
                                     {item.label}
                                 </OptionPill>
                             ))}
@@ -100,11 +105,15 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {profile.durationSupported !== false ? <SettingGroup title="秒数" color={theme.node.muted}>
                     {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
                 </SettingGroup> : null}
-                {profile.generateAudio.supported || profile.watermark.supported ? (
+                {profile.generateAudio.supported || profile.watermark.supported || draftSupported ? (
                     <SettingGroup title="输出" color={theme.node.muted}>
                         <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
                             {profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
                             {profile.watermark.supported ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
+                            {draftSupported ? <SwitchRow label="样片预览 (480P)" checked={draft} theme={theme} onChange={(checked) => {
+                                onConfigChange("videoDraft", String(checked));
+                                if (checked && !isVideoResolutionMatch(resolution, "480p")) onConfigChange("vquality", "480p");
+                            }} /> : null}
                         </div>
                     </SettingGroup>
                 ) : null}
@@ -143,6 +152,8 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
+    const draftSupported = Boolean(profile.draft?.supported);
+    const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false);
     const useArkPrivateAssets = boolConfig(config.videoArkPrivateAssetUpload, true);
     const isArkSeedance = isVolcengineArkVideoProtocol(resolveModelRequestConfig(config, config.model).interfaceType);
 
@@ -160,7 +171,10 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                         {sortVideoResolutionOptions(profile.resolutions).map((value) => {
                             const item = { value, label: value.toUpperCase() };
                             return (
-                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => {
+                                    onConfigChange("vquality", item.value);
+                                    if (draft && !isVideoResolutionMatch(item.value, "480p")) onConfigChange("videoDraft", "false");
+                                }}>
                                     {item.label}
                                 </OptionPill>
                             );
@@ -197,6 +211,10 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                     <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
                         {profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
                         {profile.watermark.supported ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
+                        {draftSupported ? <SwitchRow label="样片预览 (480P)" checked={draft} theme={theme} onChange={(checked) => {
+                            onConfigChange("videoDraft", String(checked));
+                            if (checked && !isVideoResolutionMatch(resolution, "480p")) onConfigChange("vquality", "480p");
+                        }} /> : null}
                     </div>
                 </SettingGroup>
                 {isArkSeedance ? (

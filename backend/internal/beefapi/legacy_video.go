@@ -15,7 +15,7 @@ var ErrInvalidVideoReferences = errors.New("已选择的关键帧不在本次参
 
 type LegacyVideoInput struct {
 	Model, Prompt, Seconds, Resolution, AspectRatio string
-	GenerateAudio, Watermark                        *bool
+	GenerateAudio, Watermark, Draft                 *bool
 	References                                      []LegacyVideoReference
 	Metadata                                        map[string]any
 }
@@ -39,6 +39,10 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 	}
 	if input.Watermark != nil {
 		metadata["watermark"] = *input.Watermark
+	}
+	if input.Draft != nil && *input.Draft {
+		body["draft"] = true
+		metadata["draft"] = true
 	}
 	if operation, _ := input.Metadata["videoEditOperation"].(string); operation != "" {
 		metadata["operation"] = operation

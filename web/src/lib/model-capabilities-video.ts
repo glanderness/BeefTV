@@ -55,6 +55,7 @@ export type VideoCapabilityConfig = {
     defaultResolution: string;
     generateAudio: { supported: boolean; default: boolean };
     watermark: { supported: boolean; default: boolean };
+    draft?: { supported: boolean; default: boolean };
     operations: string[];
     defaultOperation: string;
     operationReferences?: Record<string, Partial<Pick<VideoCapabilityConfig["references"], "minImages" | "maxImages" | "maxVideos" | "maxAudios">>>;
@@ -252,6 +253,11 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
         if (typeof object.taskTypeConstraints !== "boolean") return null;
         video.taskTypeConstraints = object.taskTypeConstraints;
     }
+    if ("draft" in object) {
+        const draft = catalogBooleanConfig(object.draft);
+        if (!draft) return null;
+        video.draft = draft;
+    }
     return video;
 }
 
@@ -400,6 +406,9 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
         video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
         video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
+        if (isSeedance25Model(model) && video.resolutions.some((value) => value.toLowerCase() === "480p")) {
+            video.draft = { supported: true, default: false };
+        }
         if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
             video.duration = { ...video.duration, max: 30 };
         }
@@ -426,7 +435,7 @@ export function alignDocumentedVideoRouteLimits(video: VideoCapabilityConfig | u
 }
 
 export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
-    return Boolean(protocol && ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol) && String(modelName).toLowerCase().includes("seedance-2"));
+    return Boolean((!protocol || ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol)) && String(modelName).toLowerCase().includes("seedance-2"));
 }
 
 export function isSeedance25Model(modelName: string) {

@@ -25,8 +25,23 @@ func NormalizeSeedanceTaskOptions(r GenerationRequest) GenerationRequest {
 	if locked {
 		r.AspectRatio = "adaptive"
 	}
-	r.Output.AspectRatio, r.Output.Duration = r.AspectRatio, r.Duration
+	if draft, ok := r.Extra["draft"].(bool); ok && draft {
+		r.Resolution = "480p"
+	}
+	r.Output.AspectRatio, r.Output.Duration, r.Output.Resolution = r.AspectRatio, r.Duration, r.Resolution
 	return r
+}
+
+func ApplySeedanceBodyFields(body map[string]any, r GenerationRequest) {
+	if kind := SeedanceOmniTaskType(r); kind != "" {
+		body["omni_reference_task_type"] = kind
+	}
+	if draft, ok := r.Extra["draft"].(bool); ok && draft {
+		body["draft"] = true
+		if _, hasResolution := body["resolution"]; hasResolution {
+			body["resolution"] = "480p"
+		}
+	}
 }
 
 // SeedanceOmniTaskType preserves explicit operation intent at the wire boundary.

@@ -63,6 +63,10 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 			request.Messages = append(request.Messages, protocol.Message{Role: role, Content: content})
 		}
 	}
+	if input.Mode == "video" && ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+		request.Resolution = "480p"
+		request.Extra["draft"] = true
+	}
 	request.Inputs = append(request.Inputs, request.Images...)
 	request.Inputs = append(request.Inputs, request.Videos...)
 	request.Inputs = append(request.Inputs, request.Audios...)

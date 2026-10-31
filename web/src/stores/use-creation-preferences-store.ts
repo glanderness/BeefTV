@@ -20,6 +20,7 @@ export type CreationVideoPreferences = {
     videoQuality?: string;
     generateAudio?: string;
     watermark?: string;
+    draft?: string;
 };
 
 export type CreationComposerPreferences = {
@@ -74,6 +75,7 @@ function normalizeVideoPreferences(value: unknown): CreationVideoPreferences | u
         ...(nonEmptyString(raw.videoQuality) ? { videoQuality: raw.videoQuality } : {}),
         ...(nonEmptyString(raw.generateAudio) ? { generateAudio: raw.generateAudio } : {}),
         ...(nonEmptyString(raw.watermark) ? { watermark: raw.watermark } : {}),
+        ...(nonEmptyString(raw.draft) ? { draft: raw.draft } : {}),
     };
     return Object.keys(preferences).length ? preferences : undefined;
 }

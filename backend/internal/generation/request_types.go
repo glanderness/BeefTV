@@ -21,6 +21,7 @@ type SeedanceVideosRequest struct {
 	AspectRatio           string   `json:"aspect_ratio"`
 	Duration              int      `json:"duration"`
 	GenerateAudio         *bool    `json:"generate_audio,omitempty"`
+	Draft                 *bool    `json:"draft,omitempty"`
 	ImageURL              string   `json:"image_url,omitempty"`
 	ReferenceImageURLs    []string `json:"reference_image_urls,omitempty"`
 	ImageURLs             []string `json:"image_urls,omitempty"`
@@ -68,4 +69,5 @@ type SeedanceAgentPlanRequest struct {
 	Duration              int                      `json:"duration"`
 	GenerateAudio         *bool                    `json:"generate_audio,omitempty"`
 	Watermark             *bool                    `json:"watermark,omitempty"`
+	Draft                 *bool                    `json:"draft,omitempty"`
 }

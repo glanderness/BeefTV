@@ -705,6 +705,7 @@ function videoPreferencePatch(key: keyof AiConfig, value: string) {
     if (key === "vquality") return { videoQuality: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
+    if (key === "videoDraft") return { draft: value };
     return {};
 }
 
@@ -712,6 +713,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
+    if (key === "videoDraft") return { draft: value };
     if (key === "videoArkPrivateAssetUpload") return { arkPrivateAssetUpload: value };
     return { [key]: value };
 }

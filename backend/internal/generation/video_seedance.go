@@ -148,6 +148,11 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			value := ParseBool(input.Config.VideoWatermark, false)
 			body.Watermark = &value
 		}
+		if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+			value := true
+			body.Draft = &value
+			body.Resolution = "480p"
+		}
 		if err := PostJSON(ctx, input.Config, "/contents/generations/tasks", body, &created); err != nil {
 			return nil, err
 		}
@@ -253,6 +258,10 @@ func SeedanceVideosRequestBody(input Input) (SeedanceVideosRequest, error) {
 	if VideoCapabilitySupportsAudio(input) {
 		value := ParseBool(input.Config.VideoGenerateAudio, true)
 		body.GenerateAudio = &value
+	}
+	if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+		value := true
+		body.Draft = &value
 	}
 	imageURLs := make([]string, 0, len(input.ReferenceImages))
 	for _, image := range input.ReferenceImages {

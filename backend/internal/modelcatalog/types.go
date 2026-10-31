@@ -97,6 +97,7 @@ type VideoCapabilityConfig struct {
 	DefaultResolution   string                              `json:"defaultResolution"`
 	GenerateAudio       VideoBooleanConfig                  `json:"generateAudio"`
 	Watermark           VideoBooleanConfig                  `json:"watermark"`
+	Draft               VideoBooleanConfig                  `json:"draft"`
 	Operations          []string                            `json:"operations"`
 	DefaultOperation    string                              `json:"defaultOperation"`
 	TaskTypeConstraints bool                                `json:"taskTypeConstraints,omitempty"`

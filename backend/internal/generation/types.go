@@ -103,6 +103,7 @@ type Config struct {
 	VQuality                 string                    `json:"vquality"`
 	VideoGenerateAudio       string                    `json:"videoGenerateAudio"`
 	VideoWatermark           string                    `json:"videoWatermark"`
+	VideoDraft               string                    `json:"videoDraft"`
 	ArkPrivateAssetUpload    string                    `json:"videoArkPrivateAssetUpload"`
 	AudioVoice               string                    `json:"audioVoice"`
 	AudioFormat              string                    `json:"audioFormat"`
