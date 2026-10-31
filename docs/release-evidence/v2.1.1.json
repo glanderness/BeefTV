@@ -1,0 +1,354 @@
+{
+  "version": "v2.1.1",
+  "contractVersion": 3,
+  "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+  "baseRelease": "v2.1.0",
+  "baseCommit": "fd2fc7c107dc31bce3b8a79559da4e58efe8bd93",
+  "includedMain": "e901afbe42cc829dd54c8073a415076b1cdc074f",
+  "includedPullRequests": [
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356
+  ],
+  "ownerException": {
+    "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+    "evidence": [
+      "docs/release-evidence/v2.1.1-owner-authorization.json",
+      "docs/release-evidence/v2.1.1-release.md"
+    ],
+    "approvedBy": "Ender",
+    "scope": "v2.1.1-targeted-no-paid-20261101",
+    "instruction": "v2.1.1 采用免费专项验收（豁免重跑 12 次付费生成矩阵与 23 项助手实测，保留 DSH 独立审查、专项单测/集成测试、CI 与四平台打包/增量更新/双源镜像校验）",
+    "authorizationSHA256": "88dd1cf6efa81f6f126ca64228e9fecdad58292b7b1ac62604256f7833b903c3"
+  },
+  "liveMatrixStatus": "not_run_owner_waived",
+  "agentAcceptanceStatus": "not_run_targeted_release",
+  "acceptanceComplete": false,
+  "releasePublished": false,
+  "releaseComplete": false,
+  "cases": [],
+  "deferredAcceptance": {
+    "status": "not_run_owner_waived",
+    "caseKeys": [
+      "1/text-image",
+      "1/image-image",
+      "1/image-video",
+      "1/text-video",
+      "1/video-video",
+      "1/multi-video",
+      "2/text-image",
+      "2/image-image",
+      "2/image-video",
+      "2/text-video",
+      "2/video-video",
+      "2/multi-video"
+    ],
+    "agentCheckIds": [
+      "canvas_read",
+      "asset_reference",
+      "canvas_mutation",
+      "multi_turn",
+      "proposal_decline",
+      "proposal_stale",
+      "proposal_idempotency",
+      "session_history",
+      "session_restart",
+      "cancel",
+      "conflict_undo",
+      "host_recovery",
+      "scope_isolation",
+      "budget",
+      "cli_mcp",
+      "durable_resume",
+      "native_video",
+      "native_audio",
+      "skill_version",
+      "skill_files",
+      "permission_modes",
+      "external_business",
+      "media_film_review"
+    ]
+  },
+  "agentChecks": {
+    "canvas_read": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "asset_reference": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "canvas_mutation": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "multi_turn": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "proposal_decline": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "proposal_stale": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "proposal_idempotency": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "session_history": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "session_restart": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "cancel": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "conflict_undo": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "host_recovery": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "scope_isolation": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "budget": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "cli_mcp": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "durable_resume": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "native_video": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "native_audio": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "skill_version": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "skill_files": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "permission_modes": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "external_business": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    },
+    "media_film_review": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "not_run_targeted_release"
+    }
+  },
+  "newPaidBudgetCNY": 0,
+  "newPaidSubmissions": 0,
+  "newSpentCNY": 0,
+  "newPendingCNY": 0,
+  "billingAttempts": [],
+  "budgetCNY": null,
+  "spentCNY": null,
+  "pendingCNY": null,
+  "priorReceiptSHA256": "b428415f803d6184e846e1f108d297f698dc9df3b99c4b40dd859c84726c6cc2",
+  "knownLimitations": {
+    "carriedFromVersion": "v2.1.0",
+    "evidence": [
+      "docs/release-evidence/v2.1.0.json",
+      "docs/release-evidence/v2.1.1-release.md"
+    ]
+  },
+  "review": {
+    "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+    "evidence": [
+      "docs/release-evidence/v2.1.1-release.md"
+    ],
+    "result": "approved",
+    "independent": true,
+    "reviewer": "dsh-companion (deepseek-v4-1-flash-261017, 20261101-012420-review-cc23d6c2)"
+  },
+  "verification": {
+    "seedanceAndCanvasCapabilities": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed"
+    },
+    "agentHostCacheAndSkills": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed"
+    },
+    "canvasSizingAndTaskBinding": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed"
+    },
+    "externalMcpAndProtocolValidation": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed"
+    },
+    "publisher": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed"
+    },
+    "ci": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed"
+    },
+    "localReleaseGate": {
+      "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+      "evidence": [
+        ".github/workflows/release-desktop.yml",
+        "docs/release-evidence/v2.1.1-release.md"
+      ],
+      "status": "passed",
+      "method": "local-script",
+      "beforeDraft": true
+    }
+  },
+  "upgrade": {
+    "sourceDigest": "e26a99082a7e46c18848fca3080303974bb06e7f07707b0b33af8e832e09fc53",
+    "evidence": [
+      ".github/workflows/release-desktop.yml",
+      "docs/release-evidence/v2.1.1-release.md"
+    ],
+    "status": "pending_release_workflow",
+    "preservedData": null,
+    "requiredBeforePublish": true
+  },
+  "packages": {
+    "platforms": [
+      "darwin-arm64",
+      "darwin-amd64",
+      "windows-amd64",
+      "linux-amd64"
+    ],
+    "status": "pending_release_workflow",
+    "archives": null,
+    "workflowEvidence": [
+      ".github/workflows/release-desktop.yml",
+      ".github/workflows/mirror-desktop.yml"
+    ],
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "finalArchiveSmokeBeforeUpload": true,
+    "linuxNativeWindowBeforeUpload": true,
+    "signedManifestBeforePublish": true,
+    "publicReadbackAfterPublish": true
+  }
+}

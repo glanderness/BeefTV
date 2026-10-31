@@ -12,6 +12,7 @@ import { validateV203Release } from './v203-release-contract.mjs';
 import { validateV204Release } from './v204-release-contract.mjs';
 import { validateV205Release } from './v205-release-contract.mjs';
 import { validateV210Release } from './v210-release-contract.mjs';
+import { validateV211Release } from './v211-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -41,6 +42,19 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v2.1.1') {
+  const reviewedTree = receipt.review?.reviewedHead
+    ? execFileSync('git', ['ls-tree', '-r', receipt.review.reviewedHead, '--', ...sourcePaths], { encoding: 'utf8' })
+    : sourceTree;
+  execFileSync('git', ['merge-base', '--is-ancestor', 'e901afbe42cc829dd54c8073a415076b1cdc074f', 'HEAD']);
+  validateV211Release(receipt, sourceDigest, {
+    authorizationBytes: readFileSync('docs/release-evidence/v2.1.1-owner-authorization.json'),
+    priorReceiptBytes: readFileSync('docs/release-evidence/v2.1.0.json'),
+    reviewedSourceDigest: createHash('sha256').update(reviewedTree).digest('hex'),
+  });
+  console.log('v2.1.1 targeted release: complete paid matrix and assistant suite not rerun by owner waiver. Current-source independent review, targeted tests and all four final-package checks remain mandatory.');
+  process.exit(0);
+}
 if (version === 'v2.1.0') {
   const reviewedTree = receipt.review?.reviewedHead
     ? execFileSync('git', ['ls-tree', '-r', receipt.review.reviewedHead, '--', ...sourcePaths], { encoding: 'utf8' })
