@@ -3,6 +3,7 @@ package skills
 import (
 	"archive/zip"
 	"bytes"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -125,6 +126,83 @@ func TestEnsureSkillPackagesMigratesAndRefreshesBuiltinSkills(t *testing.T) {
 	}
 	if refreshed.ContentHash != wantArchive.ContentHash || refreshed.CurrentVersionID == "" {
 		t.Fatalf("builtin package was not refreshed: %#v", refreshed)
+	}
+}
+
+func TestBuiltinSeedSkillsIncludeLuckyPlusOnePackagesAndAuxiliaryFiles(t *testing.T) {
+	svc, _ := agentSkillFixture(t)
+	if err := svc.EnsureBuiltinSkills(); err != nil {
+		t.Fatalf("EnsureBuiltinSkills: %v", err)
+	}
+	if err := svc.EnsureSkillPackages(); err != nil {
+		t.Fatalf("EnsureSkillPackages: %v", err)
+	}
+
+	expected := []struct {
+		skillID   string
+		skillName string
+		minFiles  int
+		auxPaths  []string
+	}{
+		{
+			skillID:   "novel-to-manju-agent",
+			skillName: "小说改编漫剧 Agent",
+			minFiles:  20,
+			auxPaths:  []string{"references/dialogue.md", "references/requirements.md", "agents/director.md"},
+		},
+		{
+			skillID:   "ai-drama-reference-art",
+			skillName: "AI短剧参考图提示词编写",
+			minFiles:  1,
+			auxPaths:  nil,
+		},
+		{
+			skillID:   "seedance-clip-writer",
+			skillName: "Seedance 视频提示词编写",
+			minFiles:  9,
+			auxPaths:  []string{"references/performance_layer.md", "references/script_to_shot_breakdown.md", "references/transition_grammar.md"},
+		},
+	}
+
+	var pins []Pin
+	for _, tc := range expected {
+		detail, err := svc.SkillDetail("tester", tc.skillID)
+		if err != nil {
+			t.Fatalf("SkillDetail(%s): %v", tc.skillID, err)
+		}
+		if detail.SkillName != tc.skillName {
+			t.Fatalf("%s SkillName = %q, want %q", tc.skillID, detail.SkillName, tc.skillName)
+		}
+		if detail.EffectiveUser.Name != "lucky加一" || detail.OwnerUID != "lucky-plus-one" {
+			t.Fatalf("%s attribution = %+v (owner=%q), want lucky加一 / lucky-plus-one", tc.skillID, detail.EffectiveUser, detail.OwnerUID)
+		}
+		if detail.FileCount < tc.minFiles {
+			t.Fatalf("%s FileCount = %d, want >= %d", tc.skillID, detail.FileCount, tc.minFiles)
+		}
+		added, err := svc.SetSkillAdded("tester", tc.skillID, true)
+		if err != nil {
+			t.Fatalf("SetSkillAdded(%s): %v", tc.skillID, err)
+		}
+		pin := Pin{SkillID: added.SkillID, VersionID: added.VersionID, ContentHash: added.ContentHash}
+		pins = append(pins, pin)
+
+		resource, err := svc.AgentVersion("tester", pin)
+		if err != nil {
+			t.Fatalf("AgentVersion(%s): %v", tc.skillID, err)
+		}
+		if !strings.Contains(resource.Instruction, "lucky加一") {
+			t.Fatalf("%s instruction missing attribution lucky加一", tc.skillID)
+		}
+		for _, auxPath := range tc.auxPaths {
+			file, err := svc.AgentFile("tester", pin, auxPath)
+			if err != nil || strings.TrimSpace(file.Content) == "" {
+				t.Fatalf("AgentFile(%s, %s) failed: err=%v", tc.skillID, auxPath, err)
+			}
+		}
+	}
+
+	if _, err := svc.ValidateAgentSkills("tester", pins); err != nil {
+		t.Fatalf("ValidateAgentSkills(all 3 lucky加一 skills): %v", err)
 	}
 }
 

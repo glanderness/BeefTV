@@ -25,6 +25,10 @@ type skillPackageMetadata struct {
 }
 
 func archiveFromMarkdown(data []byte, fallbackName string, fallbackDescription string) (skillPackageArchive, error) {
+	return archiveFromMarkdownWithFiles(data, fallbackName, fallbackDescription, nil)
+}
+
+func archiveFromMarkdownWithFiles(data []byte, fallbackName string, fallbackDescription string, extraFiles map[string][]byte) (skillPackageArchive, error) {
 	if len(data) == 0 || len(data) > maxSkillFileBytes || !utf8.Valid(data) {
 		return skillPackageArchive{}, kernel.BadAuthRequest("Markdown 文件为空、过大或不是 UTF-8")
 	}
@@ -35,7 +39,14 @@ func archiveFromMarkdown(data []byte, fallbackName string, fallbackDescription s
 	if metadata.Description == "" {
 		metadata.Description = strings.TrimSpace(fallbackDescription)
 	}
-	files := map[string][]byte{"SKILL.md": data}
+	files := make(map[string][]byte, len(extraFiles)+1)
+	for filePath, content := range extraFiles {
+		if filePath == "SKILL.md" {
+			continue
+		}
+		files[filePath] = content
+	}
+	files["SKILL.md"] = data
 	return finalizeSkillArchive(files, metadata)
 }
 

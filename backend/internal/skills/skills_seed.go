@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -30,6 +31,7 @@ type builtinSkillDefinition struct {
 	SkillName     string              `json:"skill_name"`
 	Description   string              `json:"description"`
 	Instruction   string              `json:"instruction"`
+	Files         map[string]string   `json:"files,omitempty"`
 	Status        int                 `json:"status"`
 	MarkdownURL   string              `json:"markdown_url"`
 	CreateTime    int64               `json:"create_time"`
@@ -79,6 +81,9 @@ func (s *Service) EnsureBuiltinSkills() error {
 		if authorName == "" || (authorAvatarURL != "" && !validSkillURL(authorAvatarURL)) {
 			return fmt.Errorf("内置技能作者信息无效: %s", id)
 		}
+		if _, err := normalizeBuiltinSkillFiles(definition.Files); err != nil {
+			return fmt.Errorf("内置技能 %s 辅助文件无效: %w", id, err)
+		}
 		media := make([]SkillShowcaseMedia, 0, len(definition.ShowcaseMedia))
 		for _, item := range definition.ShowcaseMedia {
 			media = append(media, SkillShowcaseMedia{Type: item.Type, ShowcaseURI: item.ShowcaseURI, ShowcaseURL: item.ShowcaseURL})
@@ -104,4 +109,45 @@ func (s *Service) EnsureBuiltinSkills() error {
 		return fmt.Errorf("同步内置技能失败: %w", err)
 	}
 	return nil
+}
+
+func normalizeBuiltinSkillFiles(raw map[string]string) (map[string][]byte, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) >= maxSkillPackageFiles {
+		return nil, fmt.Errorf("辅助文件数量超过上限 %d", maxSkillPackageFiles-1)
+	}
+	files := make(map[string][]byte, len(raw))
+	for rawPath, content := range raw {
+		cleanPath, err := normalizeSkillPath(rawPath)
+		if err != nil || cleanPath != rawPath || cleanPath == "SKILL.md" {
+			return nil, fmt.Errorf("辅助文件路径无效: %q", rawPath)
+		}
+		data := []byte(content)
+		if len(data) == 0 || len(data) > maxSkillFileBytes || !utf8.Valid(data) {
+			return nil, fmt.Errorf("辅助文件内容无效: %q", rawPath)
+		}
+		files[cleanPath] = data
+	}
+	return files, nil
+}
+
+func builtinSkillAuxiliaryFiles() (map[string]map[string][]byte, error) {
+	var definitions []builtinSkillDefinition
+	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
+		return nil, fmt.Errorf("解析内置技能失败: %w", err)
+	}
+	result := make(map[string]map[string][]byte)
+	for _, definition := range definitions {
+		if len(definition.Files) == 0 {
+			continue
+		}
+		files, err := normalizeBuiltinSkillFiles(definition.Files)
+		if err != nil {
+			return nil, fmt.Errorf("内置技能 %s 辅助文件无效: %w", definition.SkillID, err)
+		}
+		result[strings.TrimSpace(definition.SkillID)] = files
+	}
+	return result, nil
 }

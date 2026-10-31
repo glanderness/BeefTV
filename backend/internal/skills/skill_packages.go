@@ -108,9 +108,17 @@ func (s *Service) EnsureSkillPackages() error {
 	if err != nil {
 		return err
 	}
+	builtinFiles, err := builtinSkillAuxiliaryFiles()
+	if err != nil {
+		return err
+	}
 	for index := range skills {
 		skill := &skills[index]
-		archive, err := archiveFromMarkdown([]byte(skill.Instruction), skill.Name, skill.Description)
+		var extraFiles map[string][]byte
+		if skill.Source != skillSourceUser {
+			extraFiles = builtinFiles[skill.ID]
+		}
+		archive, err := archiveFromMarkdownWithFiles([]byte(skill.Instruction), skill.Name, skill.Description, extraFiles)
 		if err != nil {
 			return fmt.Errorf("迁移技能 %s 文件包失败: %w", skill.ID, err)
 		}

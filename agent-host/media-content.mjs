@@ -138,8 +138,52 @@ export function trustedMediaSources(payload, { api, modelId, nativePartStore }) 
   }
   return sources;
 }
+function stripCacheControl(item) {
+  if (!item || typeof item !== 'object' || !('cache_control' in item)) return item;
+  const { cache_control: _ignored, ...rest } = item;
+  return rest;
+}
+
+// 多通道 Anthropic/Bedrock 网关在跨步工具调用时会把请求分发到不同上游节点：
+// 历史 assistant 消息里的 thinking 签名属于前一个节点，原样重发会触发 Invalid signature in thinking block；
+// 同时跨节点 ephemeral cache_control 会触发代理层虚报 9x cache_read_input_tokens 导致提前 compaction。
+// 这里在派发边界把历史 thinking 块转为普通 text（实时流与 SQLite 已在接收端完整落盘），并移除跨通道 cache_control。
+function adaptAnthropicRequest(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const next = { ...payload };
+  if (Array.isArray(payload.system)) {
+    next.system = payload.system.map(stripCacheControl);
+  }
+  if (Array.isArray(payload.tools)) {
+    next.tools = payload.tools.map(stripCacheControl);
+  }
+  if (Array.isArray(payload.messages)) {
+    next.messages = payload.messages.flatMap((message) => {
+      if (!message || typeof message !== 'object' || !Array.isArray(message.content)) return [message];
+      if (message.role === 'assistant') {
+        const blocks = [];
+        for (const rawBlock of message.content) {
+          const block = stripCacheControl(rawBlock);
+          if (block?.type === 'redacted_thinking') continue;
+          if (block?.type === 'thinking') {
+            if (typeof block.thinking === 'string' && block.thinking.trim().length > 0) {
+              blocks.push({ type: 'text', text: block.thinking });
+            }
+            continue;
+          }
+          blocks.push(block);
+        }
+        return blocks.length > 0 ? [{ ...message, content: blocks }] : [];
+      }
+      return [{ ...message, content: message.content.map(stripCacheControl) }];
+    });
+  }
+  return next;
+}
+
 export function adaptMediaRequest(payload, { api, modelId, nativePartStore }, extra = {}) {
   nativePartStore ||= extra.nativePartStore || (typeof extra.read === 'function' ? extra : undefined);
+  if (api === 'anthropic-messages') return adaptAnthropicRequest(payload);
   if (api !== 'openai-completions') return payload;
   const toolNames = new Map();
   const messages = [];

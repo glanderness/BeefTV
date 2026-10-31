@@ -124,3 +124,34 @@ test('a readable attached image reaches the model as image content', async () =>
   const content = await attachmentContent({ canvasId: 'c1', attachments: [{ kind: 'image', nodeId: 'n1', resourceId: 'r1' }] }, 't1', opsRequest);
   expect(content.filter(part => part.type === 'image')).toEqual([{ type: 'image', data: 'AAAA', mimeType: 'image/png' }]);
 });
+
+test('Anthropic adapter strips cross-channel thinking signatures and ephemeral cache_control on dispatch', () => {
+  const payload = {
+    model: 'claude-opus-5-5',
+    system: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+    tools: [{ name: 'canvas_get', cache_control: { type: 'ephemeral' } }],
+    thinking: { type: 'enabled', budget_tokens: 1024 },
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '先读取画布。', signature: 'sig-bedrock-channel-a' },
+          { type: 'redacted_thinking', data: 'opaque' },
+          { type: 'tool_use', id: 'toolu_1', name: 'canvas_get', input: { canvasId: 'c1' }, cache_control: { type: 'ephemeral' } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok', cache_control: { type: 'ephemeral' } }] },
+    ],
+  };
+  const adapted = adaptMediaRequest(payload, { api: 'anthropic-messages', modelId: 'claude-opus-5-5' });
+  expect(adapted.system).toEqual([{ type: 'text', text: 'sys' }]);
+  expect(adapted.tools).toEqual([{ name: 'canvas_get' }]);
+  expect(adapted.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+  expect(adapted.messages[1].content).toEqual([
+    { type: 'text', text: '先读取画布。' },
+    { type: 'tool_use', id: 'toolu_1', name: 'canvas_get', input: { canvasId: 'c1' } },
+  ]);
+  expect(JSON.stringify(adapted)).not.toContain('sig-bedrock-channel-a');
+  expect(JSON.stringify(adapted)).not.toContain('cache_control');
+});
