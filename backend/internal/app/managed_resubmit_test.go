@@ -389,7 +389,7 @@ func TestManagedVideoResubmissionInsufficientBalanceConcludesUnrecoverableAndBlo
 }
 
 // 视频原请求超过 23 小时保存期、原 Key 仍查不到原编号：不补交，结论为「无法取回」。
-// 它先于「无结算记录的托管视频等 7 天」生效，见 docs/architecture/unconfirmed-submission.md 第 5.1 节。
+// 它先于「无结算记录的托管视频等 7 天」生效。
 func TestManagedVideoExpiredMissingSubmissionConcludesWithoutResubmit(t *testing.T) {
 	v := newManagedLostVideo(t, nil)
 	if err := v.db.Model(&model.ImageSubmission{}).Where("task_id = ?", v.task.ID).Update("created_at", time.Now().Add(-25*time.Hour)).Error; err != nil {

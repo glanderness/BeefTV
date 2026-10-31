@@ -20,7 +20,7 @@ if [ -e "$destination_directory" ]; then
     exit 73
 fi
 
-for required_file in README.md LICENSE NOTICE backend/go.mod web/package.json; do
+for required_file in README.md LICENSE NOTICE backend/go.mod web/package.json scripts/audit-public-docs.sh; do
     if [ ! -f "$source_directory/$required_file" ]; then
         echo "source is missing required file: $required_file" >&2
         exit 65
@@ -78,10 +78,31 @@ rsync -a \
     --exclude='web/scripts/*smoke*' \
     --exclude='web/scripts/*persistent-playwright*' \
     --exclude='docs/public-release/internal-backup-manifest.md' \
+    --exclude='docs/adr/' \
+    --exclude='docs/design/' \
     --exclude='docs/superpowers/' \
     --exclude='docs/audits/' \
-    --exclude='docs/plans/' \
     --exclude='docs/visual-regression/' \
+    --exclude='docs/content/docs/progress/' \
+    --exclude='docs/refactor/' \
+    --exclude='docs/evidence/' \
+    --exclude='docs/review-evidence/' \
+    --exclude='docs/research/' \
+    --exclude='docs/architecture/' \
+    --exclude='docs/reports/' \
+    --exclude='docs/plans/' \
+    --exclude='docs/implementation/' \
+    --exclude='docs/ops/' \
+    --exclude='docs/agent-branch-testing.md' \
+    --exclude='docs/fal-h3-family.md' \
+    --exclude='docs/fal-h3-full-capabilities.md' \
+    --exclude='docs/fal-h3-max-turbo.md' \
+    --exclude='docs/model-provider-validation.md' \
+    --exclude='docs/real-generation-release.md' \
+    --exclude='docs/security-guardrail-audit.md' \
+    --exclude='docs/topaz-fal-integration-report-2026-10-20.md' \
+    --exclude='docs/windows-upgrade-compatibility.md' \
+    --exclude='reviews/' \
     --exclude='plugin-packages/*.beeftv-plugin' \
     --exclude='plugin-packages/official-payment-*' \
     --exclude='*.db' \
@@ -94,5 +115,7 @@ rsync -a \
     --exclude='*.tmp' \
     --exclude='*.bak' \
     "$source_directory/" "$destination_directory/"
+
+(cd "$destination_directory" && sh scripts/audit-public-docs.sh >/dev/null)
 
 printf 'exported BeefTV public source to %s\n' "$destination_directory"
