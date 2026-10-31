@@ -288,7 +288,7 @@ func (p appConfigPort) ApplyCapabilities(ctx context.Context, input *generation.
 			if err := p.service.resolveVideoCapability(ctx, input); err != nil {
 				return err
 			}
-			if input.VideoCapability != nil {
+			if strings.TrimSpace(input.Config.ChannelID) != "" && input.VideoCapability != nil {
 				return validateVideoTaskParameters(input.VideoCapability, *input)
 			}
 			return nil

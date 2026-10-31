@@ -89,10 +89,6 @@ func TestConfiguredAndWorkflowVideoPathsEnforceUTF16(t *testing.T) {
 	for name, validate := range map[string]func(TaskInput) error{
 		"video":      func(input TaskInput) error { return ValidateVideoTask(profile.Video, input) },
 		"parameters": func(input TaskInput) error { return ValidateVideoTaskParameters(profile.Video, input) },
-		"custom-channel": func(input TaskInput) error {
-			_, err := ValidateConfiguredTask(input, nil)
-			return err
-		},
 		"stored-channel": func(input TaskInput) error {
 			input.Config.ChannelID = "test-channel"
 			_, err := ValidateConfiguredTask(input, lookup)
@@ -113,6 +109,14 @@ func TestConfiguredAndWorkflowVideoPathsEnforceUTF16(t *testing.T) {
 			}
 		})
 	}
+	t.Run("custom-channel-delegates-to-server", func(t *testing.T) {
+		input := TaskInput{Mode: "video", Prompt: "😀😀中", Config: TaskConfig{
+			InterfaceType: "runway-video", Model: "gen4_turbo", VideoSeconds: "6", CapabilityConfig: profile,
+		}}
+		if _, err := ValidateConfiguredTask(input, nil); err != nil {
+			t.Fatalf("custom channel should delegate validation to server: %v", err)
+		}
+	})
 }
 
 func TestVideoNormalizationPreservesExplicitLimits(t *testing.T) {

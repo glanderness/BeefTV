@@ -12,9 +12,8 @@ import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
-import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions, VIDEO_CAPABILITIES_UNAVAILABLE } from "@/lib/model-capabilities";
-import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
-import { videoSubmitNotice } from "./creation-submit-guard";
+import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
+import { hasDeclaredModelCapability, inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -29,7 +28,7 @@ import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
-import { buildCreationMentionReferences, creationReferenceKindMessage, creationReferenceLimitsFor, creationReferenceOverflowMessage, expandCreationPrompt, fitCreationAttachmentsToLimits, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, selectedCreationReferences, type CreationReference } from "./creation-references";
+import { buildCreationMentionReferences, creationReferenceKindMessage, creationReferenceLimitsFor, expandCreationPrompt, fitCreationAttachmentsToLimits, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, selectedCreationReferences, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromAudio, creationAttachmentFromAudioAsset, creationAttachmentFromDocument, creationAttachmentFromExternalAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationAttachmentKind, creationAudioAsset, creationFileAccepted, creationImageAsset, creationMediaAspectRatio, creationUploadAccept, creationVideoAsset, removeCreationAttachment, splitCreationAttachments, type CreationAttachment } from "./creation-assets";
 import { defaultCreationMode, modeLabels, type CreationConversation, type CreationMessage, type CreationMode, type CreationRetryContext, type CreationSettings, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
 import { attachCreationTaskContexts, completedCreationGenerationTask, conversationTimestamp, creationShotRail, creationVideoShotOrdinal, isImageAttachment, isVideoAttachment, materializeCreationTaskResults, newConversation, newMessage, reconcileCreationTaskMessages } from "./creation-conversations";
@@ -171,10 +170,11 @@ export default function CreatePage() {
     // 参考素材上限按官方文档分类型取（视频：图 / 视频 / 音频各自限量，见 Seedance 2.0 的 9/3/3），
     // 不再自己合成一个总数上限。
     const referenceLimits = useMemo(() => {
-        // 只有显式配置过能力的文字模型才按它声明的图片/视频引用上限来限制；
-        // 没配 capabilityConfig 的自定义渠道拿到的是默认补出的 0，不能当成“不支持参考素材”。
-        const textReferencesDeclared = Boolean(resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel))?.capabilityConfig?.text);
-        return creationReferenceLimitsFor(mode, modelCapabilityConfigFor(config, selectedModel), { textReferencesDeclared });
+        const profile = resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel));
+        const textReferencesDeclared = Boolean(profile?.capabilityConfig?.text);
+        const imageReferencesDeclared = hasDeclaredModelCapability(config, selectedModel, "image");
+        const videoReferencesDeclared = hasDeclaredModelCapability(config, selectedModel, "video");
+        return creationReferenceLimitsFor(mode, modelCapabilityConfigFor(config, selectedModel), { textReferencesDeclared, imageReferencesDeclared, videoReferencesDeclared });
     }, [config, mode, selectedModel]);
     const referenceImageSize = useMemo(() => {
         const imageAttachments = attachments.filter(isImageAttachment);
@@ -649,28 +649,7 @@ export default function CreatePage() {
             releaseRetryLock();
             return;
         }
-        if (mode === "video" && modelCapabilityConfigFor(config, selectedModel).videoCapabilitiesUnavailable) {
-            setComposerNotice(VIDEO_CAPABILITIES_UNAVAILABLE);
-            releaseRetryLock();
-            return;
-        }
-        // 后端对图片和视频使用不同的参考字段；先拆分，提交前核对也用它。
         const { referenceImages, referenceVideos, referenceAudios } = splitCreationAttachments(attachments);
-        if (mode === "video") {
-            const notice = videoSubmitNotice(mode, videoProfile, seconds, { referenceImages, referenceVideos, referenceAudios });
-            if (notice) {
-                // 右上角 Toast 被全局 CSS 隐藏，提示改成输入框内始终可见的说明。
-                setComposerNotice(notice);
-                releaseRetryLock();
-                return;
-            }
-        }
-        const overflowMessage = creationReferenceOverflowMessage(referenceLimits, attachments);
-        if (overflowMessage) {
-            setReferenceNotice(overflowMessage);
-            releaseRetryLock();
-            return;
-        }
         const settings = { ratio, seconds, quality, videoQuality, count };
         const references = selectedCreationReferences(text, mentionReferences);
         const videoOperation = inferVideoOperation({

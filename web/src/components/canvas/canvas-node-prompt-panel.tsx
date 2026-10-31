@@ -18,6 +18,7 @@ import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
 import { DEFAULT_PROMPT_FONT_SIZE, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
+import { isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { videoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
@@ -108,6 +109,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const referenceCheck = useCanvasReferenceCheck(node.id, prompt, resolvedMentionReferences, referenceNodes, referenceConnections);
     const [referenceAction, setReferenceAction] = useState<CanvasReferenceAction | null>(null);
     const missingSubmissionIdentity = ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") && !node.metadata?.taskId && !node.metadata?.taskClientOperationId?.trim();
+    const needsRecoverySection = missingSubmissionIdentity || (!isRunning && isNodeRegenerateBlocked(node.metadata));
     const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill");
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, {
         textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
@@ -534,7 +536,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         未开始生成：{node.metadata.generationPreflightError}
                     </p>
                 ) : null}
-                {missingSubmissionIdentity && (onOpenGenerationHistory || onCreateGenerationReplacement) ? (
+                {needsRecoverySection && (onOpenGenerationHistory || onCreateGenerationReplacement) ? (
                     <section aria-label="生成恢复" className="mx-2.5 my-2 text-[var(--fs-tiny)]">
                         <p style={{ color: theme.node.muted }}>可以取回已有结果，或保留原节点、新建节点继续。</p>
                         <div className="mt-2 flex flex-wrap gap-2">

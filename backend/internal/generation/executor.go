@@ -137,7 +137,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			return nil, err
 		}
 	}
-	if input.Mode == "video" && input.VideoCapability != nil && !resumed {
+	if input.Mode == "video" && strings.TrimSpace(input.Config.ChannelID) != "" && input.VideoCapability != nil && !resumed {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}

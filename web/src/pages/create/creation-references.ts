@@ -44,24 +44,29 @@ const referenceKindUnits: Record<CreationAttachmentKind, string> = {
 export const creationReferenceKinds: CreationAttachmentKind[] = ["image", "video", "audio"];
 
 export type CreationReferenceLimitOptions = {
-    /** 所选文字模型是否显式配置过能力；未配置时拿到的是默认补出的 0，不能当成“不支持附件”。 */
+    /** 所选模型是否显式配置过能力；未配置时拿到的是默认兜底值，不能当成“不支持附件”。 */
     textReferencesDeclared?: boolean;
+    imageReferencesDeclared?: boolean;
+    videoReferencesDeclared?: boolean;
 };
 
 // 官方文档对参考素材是按类型分别限制的（Seedance 2.0 为 9 张图 / 3 个视频 / 3 段音频，2.5 为 30/10/10），
 // 所以这里直接跟随所选模型声明的 references，不再自己合成一个总数上限。
 // 文字模式的参考素材是上下文附件：文字能力只声明图片、视频的引用上限，
 // 音频和文档没有官方数量限制，因此不给它们编一个上限。
-// 没有显式配置过能力的文字模型（没填 capabilityConfig 的自定义渠道）拿到的 0 是默认值，
-// 不代表“不支持参考素材”，这里不设上限以免把用户已选好的附件和引用直接删掉。
+// 没有显式配置过能力的模型拿到的默认值不代表服务端不支持参考素材，
+// 这里不设上限以免把用户已选好的附件和引用直接删掉。
 export function creationReferenceLimitsFor(mode: CreationMode, capabilities: ModelCapabilityConfig, options: CreationReferenceLimitOptions = {}): CreationReferenceLimits {
     if (mode === "video") {
-        if (capabilities.videoCapabilitiesUnavailable) return {};
+        if (capabilities.videoCapabilitiesUnavailable || options.videoReferencesDeclared === false) return {};
         const video = capabilities.video;
         if (!video || !video.operations.includes("image_to_video")) return { image: 0, video: 0, audio: 0 };
         return { image: video.references.maxImages, video: video.references.maxVideos, audio: video.references.maxAudios };
     }
-    if (mode === "image") return { image: capabilities.image?.references.maxImages ?? 0, video: 0, audio: 0 };
+    if (mode === "image") {
+        if (options.imageReferencesDeclared === false) return { video: 0, audio: 0 };
+        return { image: capabilities.image?.references.maxImages ?? 0, video: 0, audio: 0 };
+    }
     if (!options.textReferencesDeclared) return {};
     return { image: capabilities.text?.references.maxImages ?? 0, video: capabilities.text?.references.maxVideos ?? 0 };
 }

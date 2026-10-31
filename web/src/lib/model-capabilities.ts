@@ -193,17 +193,6 @@ export function modelCapabilityConfigFor(
     if (profile?.imageCapabilitiesVersion && profile.capabilityConfig?.image) return structuredClone(profile.capabilityConfig);
     const sourcedVideo = versionedVideoCapability(profile?.capabilityConfig?.video, profile?.videoCapabilitiesVersion);
     if (sourcedVideo) return { ...defaultModelCapabilityConfig(), video: sourcedVideo };
-    if ((channel?.id === "beefapi" || channel?.credentialRef === "beefapi-enterprise") && (!profile || profile.capability === "video" || modelProtocolCapability(protocol) === "video")) {
-        // Keep callers renderable without claiming any controls are supported.
-        // Submission and settings surfaces display the unavailable state.
-        return { ...defaultModelCapabilityConfig(), videoCapabilitiesUnavailable: true, video: {
-            references: { promptMaxChars: 0, minImages: 0, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0, maxVideoDurationSeconds: 0, maxAudios: 0, maxAudioBytes: 0, maxAudioDurationSeconds: 0 },
-            duration: { selection: "enum", values: [], default: 0 },
-            ratios: [], defaultRatio: "", resolutions: [], defaultResolution: "",
-            generateAudio: { supported: false, default: false }, watermark: { supported: false, default: false },
-            operations: [], defaultOperation: "text_to_video",
-        } };
-    }
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
     // Official gateway contracts also upgrade capabilities cached by older installs.
     try {

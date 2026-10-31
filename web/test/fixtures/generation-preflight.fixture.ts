@@ -14,7 +14,6 @@ const loading = new Set<string>();
 let dispatched = 0;
 let running: string | null = null;
 let hydrate: (context: any) => Promise<any> = async (context) => context;
-let compatible = true;
 let executeVideo = async (input: any) => { dispatched++; input.bindGenerationTask(input.nodeId, { id: "task" }); };
 const react = await import("react");
 const clientDiagnostics = await import("@/services/diagnostics/client-diagnostics");
@@ -34,7 +33,7 @@ mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () =
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_id: any, _nodes: any, _edges: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: (context: any) => hydrate(context), compileNodeGenerationReferences: (context: any) => context }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));
 mock.module("@/lib/canvas/canvas-project-generation", () => ({ MISSING_GENERATION_TASK_IDENTITY_DETAILS: "missing task identity", isGenerationCanceled: (error: any) => error?.name === "AbortError", buildVideoGenerationMetadata: () => ({ videoEditOperation: "text_to_video" }) }));
-mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => compatible ? "" : "参数不兼容", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
+mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => "", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));
 mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}) }));
@@ -76,14 +75,14 @@ await tick();
 assert.equal(dispatched, 0, "late hydration after cancellation must not dispatch");
 assert.equal(errors.length, 0);
 
-hydrate = async (context) => context;
-compatible = false;
+hydrate = async () => { throw new Error("角色引用未关联短剧项目，无法解析角色版本"); };
 await generate("video", "video", "private prompt");
 assert.equal(dispatched, 0);
 assert.equal(requests.size, 0);
-assert(errors[0]!.includes("参数不兼容"));
+assert(errors[0]!.includes("角色引用未关联短剧项目"));
+assert.equal(nodesRef.current[0].metadata.generationPreflightError, "角色引用未关联短剧项目，无法解析角色版本");
 assert.equal(progressEntries().length, 0, "validation failure must clear node progress");
-compatible = true;
+hydrate = async (context) => context;
 await generate("video", "video", "private prompt");
 assert.equal(dispatched, 1);
 assert.equal(nodesRef.current[0].metadata.content, "old-result");
@@ -125,7 +124,7 @@ const failedDiag = diagnostics.find((e) => e.code === "generation_preflight_fail
 assert(failedDiag, "expected generation_preflight_failed event");
 assert(failedDiag.message.includes("model=fixture"), "expected model in diagnostic message");
 assert(failedDiag.message.includes("refs=i:0,v:0,a:0,c:0"), "expected ref counts in diagnostic message");
-assert(failedDiag.message.includes("参数不兼容"), "expected failure reason in diagnostic message");
+assert(failedDiag.message.includes("角色引用未关联短剧项目"), "expected failure reason in diagnostic message");
 assert(diagnostics.some((e) => e.code === "generation_preflight_timeout"));
 assert(diagnostics.some((e) => e.code === "generation_confirmation_cancelled"));
 
@@ -166,6 +165,44 @@ await next;
 assert.equal(running, null);
 assert.equal(requests.size, 0);
 assert.equal(loading.size, 0);
+
+// Early-return blocked nodes and image reference limits must leave a visible preflight reason on the node.
+nodesRef.current = [{
+    id: "blocked-video",
+    type: "video",
+    metadata: {
+        status: "error",
+        taskId: "task-retrievable",
+        taskOutcome: { phase: "retrievable", regenerate: "blocked", reason: "delivery_pending" },
+        errorDetails: "生成结果已保留，请点击「继续取回」",
+    },
+}];
+hydrate = async () => { throw new Error("blocked node must not hydrate references"); };
+await generate("blocked-video", "video", "blocked prompt");
+assert.equal(requests.size, 0);
+assert.equal(nodesRef.current[0].metadata.generationPreflightError, "生成结果已保留，请点击「继续取回」");
+
+// Stale confirmedInputs snapshot must still be blocked when the live node in nodesRef transitioned to retrievable.
+const staleNodes = [{ id: "blocked-video", type: "video" as const, title: "v", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { status: "idle" as const } }];
+nodesRef.current = [{
+    ...staleNodes[0],
+    metadata: {
+        status: "error",
+        taskId: "task-retrievable-live",
+        taskOutcome: { phase: "retrievable", regenerate: "blocked", reason: "delivery_pending" },
+        errorDetails: "结果待取回，请勿重复生成",
+    },
+}];
+await generate("blocked-video", "video", "blocked prompt", {
+    confirmedInputs: { nodes: staleNodes, connections: [], config: {} as any, assets: [], skills: [] },
+});
+assert.equal(requests.size, 0);
+assert.equal(nodesRef.current[0].metadata.generationPreflightError, "结果待取回，请勿重复生成");
+
+nodesRef.current = [{ id: "concat-video", type: "video", metadata: { status: "success", videoEditOperation: "concat" } }];
+await generate("concat-video", "video", "concat prompt");
+assert.equal(nodesRef.current[0].metadata.generationPreflightError, "合并成片节点不直接重新生成，请重新选择源视频合并");
+
 console.log("PASS: source release during delivery, isolated result controller, newer request survives old completion");
 console.log("PASS: preflight lifecycle, duplicate lock, abort fencing, validation, closed dialog retry, private diagnostics");
 

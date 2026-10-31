@@ -63,7 +63,6 @@ export async function runBackendCanvasGenerationTask(
     },
     dependencies?: GenerationTaskDependencies,
 ) {
-    if (mode === "image") assertCanvasImageReferenceLimit(config, referenceImages);
     return runBackendGenerationTask(
         {
             projectId,
@@ -226,6 +225,7 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
         taskType: task.type,
         taskOutcome: task.outcome,
         taskOutcomeSource: undefined,
+        generationPreflightError: undefined,
         taskClientOperationId: task.clientOperationId,
         generationSubmissionState: "accepted",
         retryOf: task.retryOf,

@@ -22,7 +22,7 @@ import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { DirectorScene } from "@/types/director";
-import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
+import { hasCancellableCanvasNodeTask } from "@/lib/canvas/canvas-node-task-state";
 import { cancelWorkflowRun } from "@/services/api/canvas-workflows";
 import { cancelGenerationTask } from "@/services/api/task-center";
 import { canvasTaskConfirmation } from "./canvas-task-confirmation";
@@ -425,7 +425,7 @@ export function useCanvasNodeOperations({
         const activeBatchItems = removedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
             batch.items.filter((item) => ["waiting", "submitting", "queued", "running"].includes(item.status))) || []);
         const hasActiveWorkflow = removedNodes.some(node => ["queued", "running"].includes(node.metadata?.reusableWorkflow?.run?.status || "") || node.metadata?.reusableWorkflow?.intent);
-        if (!hasActiveWorkflow && !removedNodes.some((node) => isCanvasNodeGenerating(node)) && !activeBatchItems.length) {
+        if (!hasActiveWorkflow && !removedNodes.some((node) => hasCancellableCanvasNodeTask(node)) && !activeBatchItems.length) {
             removeNodes(requestedIds);
             return;
         }
@@ -445,7 +445,7 @@ export function useCanvasNodeOperations({
                 const currentRemovedIds = removeCanvasNodes(nodesRef.current, requestedIds).removedIds;
                 const currentRemovedNodes = nodesRef.current.filter((node) => currentRemovedIds.has(node.id));
                 const taskIds = new Set([
-                    ...currentRemovedNodes.filter((node) => isCanvasNodeGenerating(node)).map((node) => node.metadata?.taskId),
+                    ...currentRemovedNodes.filter((node) => hasCancellableCanvasNodeTask(node)).map((node) => node.metadata?.taskId),
                     ...currentRemovedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
                         batch.items.filter((item) => ["submitting", "queued", "running"].includes(item.status)).map((item) => item.taskId)) || []),
                 ].filter((id): id is string => Boolean(id)));

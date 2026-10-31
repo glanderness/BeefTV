@@ -555,19 +555,18 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     const { getProjectCharacter } = await import("@/services/api/projects");
     const { getResource, resourceFileUrl, resourceStorageKey } = await import("@/services/api/resources");
     const details = await Promise.all(context.characterReferences.map((reference) => getProjectCharacter(domainProjectId, reference.assetId)));
-    const remainingBudget = Math.max(0, (referenceLimits?.maxImages ?? 9) - referenceImages.length);
+    const remainingBudget = referenceLimits ? Math.max(0, referenceLimits.maxImages - referenceImages.length) : Number.POSITIVE_INFINITY;
     const selected = details.flatMap((detail, index) => {
         const representation = preferredCharacterRepresentation(detail.character.representations);
         return representation ? [{ ...representation, sourceNodeId: context.characterReferences[index]!.nodeId }] : [];
     });
-    if (selected.length > remainingBudget) throw new Error(`当前模型参考图容量不足：角色至少需要 ${selected.length} 张主参考图`);
     const usedResourceIds = new Set(selected.map((item) => item.resourceId));
     const supplements = details.flatMap((detail, index) => detail.character.representations.filter((item) => {
         if (!["front", "side", "back", "turnaround_sheet"].includes(item.role) || usedResourceIds.has(item.resourceId)) return false;
         usedResourceIds.add(item.resourceId);
         return true;
     }).map((item) => ({ ...item, sourceNodeId: context.characterReferences[index]!.nodeId })));
-    const characterImages = [...selected, ...supplements].slice(0, Math.max(0, remainingBudget)).map((representation, index) => ({
+    const characterImages = [...selected, ...supplements.slice(0, Math.max(0, remainingBudget - selected.length))].map((representation, index) => ({
         id: `character-reference-${index + 1}`,
         sourceNodeId: representation.sourceNodeId,
         name: `character-reference-${index + 1}.png`,

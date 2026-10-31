@@ -39,6 +39,7 @@ export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
         mimeType: image.mimeType,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        generationPreflightError: undefined,
         failedPromptFingerprint: undefined,
     };
 }
@@ -65,6 +66,7 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
         } : undefined,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        generationPreflightError: undefined,
         failedPromptFingerprint: undefined,
     };
 }
@@ -86,6 +88,7 @@ export function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
         durationMs: audio.durationMs,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        generationPreflightError: undefined,
         failedPromptFingerprint: undefined,
     };
 }
@@ -347,6 +350,7 @@ function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
         taskUpdatedAt: task.updatedAt || task.updated_at,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        generationPreflightError: undefined,
         failedPromptFingerprint: undefined,
     };
 }

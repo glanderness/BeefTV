@@ -86,11 +86,12 @@ test("submission creates a stable operation ID without randomUUID in an HTTP Web
 });
 
 test("restoring a completed image retains recovery flags and cannot open a second paid generation", () => {
-    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" }, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请点击「继续取回」" } };
+    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, generationPreflightError: "旧的前置校验提示", taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" }, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请点击「继续取回」" } };
     const restored = canvasGenerationTaskNodes([target], target.id, task)[0];
     expect(restored.metadata).toMatchObject({ status: "error", taskStatus: "succeeded", generationErrorCode: "canvas_conflict" });
+    expect(restored.metadata?.generationPreflightError).toBeUndefined();
     expect(canReloadCanvasNodeResource(restored)).toBe(true);
-    expect(isCanvasNodeGenerating(restored)).toBe(true);
+    expect(isCanvasNodeGenerating(restored)).toBe(false);
     expect(isNodeRegenerateBlocked(restored.metadata)).toBe(true);
     const firstTerminal = canvasGenerationTaskNodes(project.nodes, input.nodeId, task)[0];
     expect(isCanvasNodeGenerating(firstTerminal)).toBe(true);

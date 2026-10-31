@@ -6,13 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
-	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
@@ -23,7 +21,7 @@ func (s *Service) validateResolvedVideoCapabilityContext(ctx context.Context, in
 	if err := s.resolveVideoCapability(ctx, input); err != nil {
 		return err
 	}
-	if input.VideoCapability == nil {
+	if strings.TrimSpace(input.Config.ChannelID) == "" || input.VideoCapability == nil {
 		return nil
 	}
 	return validateVideoTask(input.VideoCapability, *input)
@@ -61,37 +59,18 @@ func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGener
 			break
 		}
 		if input.Config.VideoCapabilitiesVersion == nil {
-			return BadAuthRequest("当前视频模型能力尚未加载，请在设置中刷新模型列表")
+			return nil
 		}
 	}
 	if input.Config.VideoCapabilitiesVersion != nil && strings.TrimSpace(*input.Config.VideoCapabilitiesVersion) != "" {
 		profile := input.Config.CapabilityConfig
-		if profile == nil || profile.Video == nil {
-			return BadAuthRequest("当前视频模型能力尚未加载，请在设置中刷新模型列表")
-		}
-		if err := modelcatalog.ValidateVideoCapabilityConfig(profile.Video); err != nil {
-			return err
+		if profile == nil || profile.Video == nil || modelcatalog.ValidateVideoCapabilityConfig(profile.Video) != nil {
+			input.VideoCapability = nil
+			return nil
 		}
 		input.VideoCapability = profile.Video
 		applyFixedVideoResolution(input, profile.Video)
 		return nil
-	}
-	if isBeefAPIVideoConfig(ctx, input.Config) {
-		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
-			for _, ref := range []struct {
-				kind, label string
-				count       int
-			}{
-				{"image", "图片", len(input.ReferenceImages)}, {"video", "视频", len(input.ReferenceVideos)}, {"audio", "音频", len(input.ReferenceAudios)},
-			} {
-				if limit, bounded := contract.MaxReferences[ref.kind]; bounded && ref.count > limit {
-					if limit == 0 {
-						return BadAuthRequest(fmt.Sprintf("当前模型暂不支持参考%s，请移除此素材或选择支持该素材的模型", ref.label))
-					}
-					return BadAuthRequest(fmt.Sprintf("当前模型最多支持 %d 个参考%s，请移除多余素材后重新生成", limit, ref.label))
-				}
-			}
-		}
 	}
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
@@ -105,7 +84,7 @@ func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGener
 		}
 		normalized, err := NormalizeModelCapabilityConfigForModel("video", input.Config.InterfaceType, input.Config.Model, profile)
 		if err != nil || normalized == nil || normalized.Video == nil {
-			return errors.New("当前视频模型能力参数无效")
+			return nil
 		}
 		input.Config.CapabilityConfig = normalized
 		restoreBeefAPISeedanceAudioControl(ctx, input.Config, normalized.Video)

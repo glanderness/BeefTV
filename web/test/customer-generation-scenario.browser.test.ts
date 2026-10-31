@@ -271,23 +271,15 @@ test("cancelled library lookup cannot submit when the late lookup completes", as
     } finally { release(); await close(); }
 }, 15000);
 
-test("preflight length failure keeps the prior output and clears when an explicit limit change allows the full prompt", async () => {
+test("long prompt submits directly so the server validates prompt length without client truncation", async () => {
     const { page, state, errors, close } = await open("five-images", "long-prompt-limit");
     try {
-        await start(page);
-        await page.waitForFunction(() => (window as any).__customer.settled);
-        const metadata = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata);
-        expect(metadata.generationPreflightError).toContain("8000");
-        expect(metadata.generationPreflightError).toContain("8066");
-        expect(metadata.storageKey).toBe("resource:previous-result");
-        expect(metadata.status).toBe("success");
-        expect(state.posts).toHaveLength(0);
-        await page.evaluate(() => (window as any).__customer.allowLongPrompt());
         await start(page);
         await until(() => state.posts.length === 1);
         expect(Array.from(state.posts[0].prompt).length).toBe(8066);
         expect(state.posts[0].input.referenceImages).toHaveLength(5);
         expect(await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.generationPreflightError)).toBeUndefined();
+        await page.getByRole("button", { name: "取消准备", exact: true }).click();
         expect(errors).toEqual([]);
     } finally { await close(); }
 }, 15000);
@@ -430,14 +422,15 @@ test("customer creation accepted then HTTP response lost refreshes by operation 
     } finally { await close(); }
 }, 15000);
 
-test("customer default model incompatible with five images reports a visible reason and never switches model", async () => {
+test("customer default model without server capability declaration submits five images to server without switching model", async () => {
     const { page, state, errors, close } = await open("five-images", "incompatible-model");
     try {
         await start(page);
-        await page.waitForFunction(() => (window as any).__customer.settled);
-        expect(await page.locator(".ant-message").innerText()).toContain("当前模型无法支持");
-        expect(state.posts).toHaveLength(0);
+        await until(() => state.posts.length === 1);
+        expect(state.posts[0].model).toBe("synthetic::kling-v2.6");
+        expect(state.posts[0].input.referenceImages).toHaveLength(5);
         expect(state.downloads).toHaveLength(0);
+        await page.getByRole("button", { name: "取消准备", exact: true }).click();
         expect(errors).toEqual([]);
     } finally { await close(); }
 }, 15000);

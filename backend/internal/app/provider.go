@@ -355,9 +355,10 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 		if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Image != nil {
 			input.ImageCapability = input.Config.CapabilityConfig.Image
 		} else {
+			fallback.References.MaxImageBytes = 0
 			input.ImageCapability = fallback
 		}
-		return validateImageTask(input.ImageCapability, *input)
+		return nil
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, providerChannelModelKey(input.Config))
 	if err != nil {

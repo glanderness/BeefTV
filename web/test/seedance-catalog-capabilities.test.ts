@@ -176,8 +176,8 @@ test("legacy BeefAPI Seedance waits for a versioned server declaration", () => {
     };
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [repaired] } }).config;
     expect(config.channels[0]?.modelProfiles?.[0]?.videoCapabilitiesVersion).toBeUndefined();
-    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).videoCapabilitiesUnavailable).toBe(true);
-    expect(modelCompatibilityError(config, `beefapi::${model}`, { capability: "video" })).toContain("刷新模型列表");
+    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).videoCapabilitiesUnavailable).toBeUndefined();
+    expect(modelCompatibilityError(config, `beefapi::${model}`, { capability: "video" })).toBe("");
 });
 
 test("invalid or missing catalog video does not clear a good sourced profile", () => {

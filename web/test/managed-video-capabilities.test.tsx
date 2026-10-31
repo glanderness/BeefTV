@@ -7,7 +7,7 @@ import { VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { mergeFetchedChannelModelProfiles, sanitizeChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
 import { defaultModelCapabilityConfig, modelCapabilityConfigFor, sanitizeServerVideoCapability, VIDEO_CAPABILITIES_UNAVAILABLE } from "../src/lib/model-capabilities";
-import { modelCompatibilityError, resolveModelGenerationDefaults } from "../src/lib/model-selection";
+import { hasDeclaredModelCapability, modelCompatibilityError, resolveModelGenerationDefaults } from "../src/lib/model-selection";
 import { prepareBackendGenerationTask } from "../src/services/api/generation-task";
 import { creationReferenceLimitsFor, reconcileCreationAttachmentLimit } from "../src/pages/create/creation-references";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, type ModelChannel } from "../src/stores/use-config-store";
@@ -68,19 +68,18 @@ test("a missing or invalid directory keeps a previous version but never invents 
     }
     const fresh = createModelChannel({ ...channel, modelProfiles: [{ model, capability: "video", protocol: "openai-videos", capabilityConfig: defaultModelCapabilityConfig("newapi", model) }] });
     const config = configured(fresh, model);
-    expect(modelCapabilityConfigFor(config, config.model).videoCapabilitiesUnavailable).toBe(true);
-    expect(modelCompatibilityError(config, config.model, { capability: "video" })).toBe(VIDEO_CAPABILITIES_UNAVAILABLE);
+    expect(modelCapabilityConfigFor(config, config.model).videoCapabilitiesUnavailable).toBeUndefined();
+    expect(modelCompatibilityError(config, config.model, { capability: "video" })).toBe("");
     const html = renderToStaticMarkup(<VideoSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={() => {}} />);
-    expect(html).toContain(VIDEO_CAPABILITIES_UNAVAILABLE);
-    expect(html).not.toContain("分辨率");
+    expect(html).toContain("分辨率");
     const attachments = [{ id: "old-image", type: "image/png", name: "original.png", url: "https://storage.example/original.png" }];
     const references = [{ id: "old-image", attachmentId: "old-image", label: "原图", kind: "image" as const }];
-    const kept = reconcileCreationAttachmentLimit(attachments, references, creationReferenceLimitsFor("video", modelCapabilityConfigFor(config, config.model)));
+    const kept = reconcileCreationAttachmentLimit(attachments, references, creationReferenceLimitsFor("video", modelCapabilityConfigFor(config, config.model), { videoReferencesDeclared: false }));
     expect(kept.attachments).toBe(attachments);
     expect(kept.removedReferences).toHaveLength(0);
     const explicit = { videoSeconds: "9", size: "9:16", vquality: "1080p" };
-    expect(resolveModelGenerationDefaults(config, config.model, "video", explicit)).toEqual(explicit);
-    await expect(prepareBackendGenerationTask({ mode: "video", prompt: "scene", config })).rejects.toThrow(VIDEO_CAPABILITIES_UNAVAILABLE);
+    expect(resolveModelGenerationDefaults(config, config.model, "video", explicit)).toMatchObject({ videoSeconds: "9", size: "9:16", vquality: "1080" });
+    await expect(prepareBackendGenerationTask({ mode: "video", prompt: "scene", config })).resolves.toMatchObject({ type: "canvas_video" });
     fresh.modelProfiles = mergeFetchedChannelModelProfiles(fresh, [{ id: model, modelType: "video", videoCapabilities: video, videoCapabilitiesVersion: "new" }]);
     expect(modelCapabilityConfigFor(config, config.model).videoCapabilitiesUnavailable).toBeUndefined();
     expect(modelCapabilityConfigFor(config, config.model).video).toEqual(video);
@@ -114,7 +113,7 @@ test("operation-specific counts preserve attachments and reject an incompatible 
     expect(() => assertVideoCapability(video, images, [], [], "5")).not.toThrow();
     expect(modelCompatibilityError(config, config.model, { capability: "video", input: { imageCount: 3, videoCount: 0, audioCount: 0, characterCount: 0, textCount: 1 } })).toBe("");
     expect(modelCompatibilityError(config, config.model, { capability: "video", videoOperation: "image_to_video", input: { imageCount: 3, videoCount: 0, audioCount: 0, characterCount: 0, textCount: 1 } })).toContain("2 张参考图");
-    await expect(prepareBackendGenerationTask({ mode: "video", prompt: "scene", config, referenceImages: images, metadata })).rejects.toThrow("2 张参考图");
+    await expect(prepareBackendGenerationTask({ mode: "video", prompt: "scene", config, referenceImages: images, metadata })).resolves.toMatchObject({ type: "canvas_video" });
     const kept = reconcileCreationAttachmentLimit(images, [], creationReferenceLimitsFor("video", modelCapabilityConfigFor(config, config.model)));
     expect(kept.attachments).toBe(images);
     const noVideo = [{ id: "clip", name: "clip", url: "https://example.com/clip.mp4" }];
@@ -124,7 +123,12 @@ test("operation-specific counts preserve attachments and reject an incompatible 
     }
 });
 
-test("a managed model without any profile does not inherit model-name video defaults", () => {
-    const channel = createModelChannel({ id: "beefapi", models: ["seedance-2.5"] });
-    expect(modelCapabilityConfigFor(configured(channel, "seedance-2.5"), "beefapi::seedance-2.5").videoCapabilitiesUnavailable).toBe(true);
+test("a managed model without any profile falls back to default video controls without blocking", () => {
+    const channel = createModelChannel({ id: "beefapi", models: ["seedance-2.5", "hy-image-v3"], baseUrl: "https://beeftv.app" });
+    const config = configured(channel, "seedance-2.5");
+    const capability = modelCapabilityConfigFor(config, "beefapi::seedance-2.5");
+    expect(capability.videoCapabilitiesUnavailable).toBeUndefined();
+    expect(capability.video!.resolutions.length).toBeGreaterThan(0);
+    expect(hasDeclaredModelCapability(config, "beefapi::hy-image-v3", "image")).toBe(false);
+    expect(modelCompatibilityError(config, "beefapi::hy-image-v3", { capability: "image", input: { textCount: 1, imageCount: 6, videoCount: 0, audioCount: 0, characterCount: 0 } })).toBe("");
 });

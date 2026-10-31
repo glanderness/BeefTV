@@ -65,13 +65,63 @@ test("an explicit outcome written over a local one is kept, so the node can rege
 });
 
 test("a local outcome is not a live task for generating state or upscale locks", async () => {
-    const { isCanvasNodeGenerating } = await import("@/lib/canvas/canvas-node-task-state");
+    const { hasCancellableCanvasNodeTask, isCanvasNodeGenerating } = await import("@/lib/canvas/canvas-node-task-state");
+    const { canReloadCanvasNodeResource, isNodeRegenerateBlocked } = await import("@/lib/task-outcome");
     const uncertain = failure();
     uncertain.metadata = { status: "error", generationSubmissionState: "unknown", errorDetails: "提交结果待确认" };
     const saved = persistCanvasNodeFailure(uncertain);
     expect(saved.metadata?.taskOutcome?.phase).toBe("retrievable");
     expect(isCanvasNodeGenerating(uncertain)).toBe(false);
     expect(isCanvasNodeGenerating(saved)).toBe(false);
+    const retrievable = {
+        ...failure(),
+        metadata: {
+            status: "error" as const,
+            taskId: "task-retrievable",
+            taskStatus: "succeeded" as const,
+            taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" },
+            errorDetails: "生成结果已保留，请点击「继续取回」",
+        },
+    };
+    expect(isCanvasNodeGenerating(retrievable)).toBe(false);
+    expect(hasCancellableCanvasNodeTask(retrievable)).toBe(true);
+    expect(canReloadCanvasNodeResource(retrievable)).toBe(true);
+    expect(isNodeRegenerateBlocked(retrievable.metadata)).toBe(true);
+    const errorWithRunningTask = {
+        ...failure(),
+        metadata: {
+            status: "error" as const,
+            taskId: "task-running-error",
+            taskStatus: "running" as const,
+        },
+    };
+    expect(isCanvasNodeGenerating(errorWithRunningTask)).toBe(false);
+    expect(hasCancellableCanvasNodeTask(errorWithRunningTask)).toBe(true);
+    expect(hasCancellableCanvasNodeTask({
+        ...failure(),
+        metadata: {
+            status: "error",
+            taskId: "task-legacy-retrievable",
+            generationErrorCode: "canvas_conflict",
+        },
+    })).toBe(true);
+    expect(isCanvasNodeGenerating({
+        ...failure(),
+        metadata: {
+            status: "error",
+            taskId: "task-ready-error",
+            taskStatus: "succeeded",
+            taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+        },
+    })).toBe(false);
+    expect(isCanvasNodeGenerating({
+        ...failure(),
+        metadata: {
+            status: "error",
+            taskId: "task-succeeded-error",
+            taskStatus: "succeeded",
+        },
+    })).toBe(false);
 });
 
 test("batch retry restore keeps the local marker instead of turning it into a backend outcome", async () => {

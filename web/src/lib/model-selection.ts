@@ -1,3 +1,4 @@
+import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, VIDEO_CAPABILITIES_UNAVAILABLE, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
@@ -70,6 +71,14 @@ export function portraitGenerationError(config: AiConfig, model: string, resolut
     return "";
 }
 
+export function hasDeclaredModelCapability(config: AiConfig, model: string, capability: "image" | "video") {
+    const channel = resolveModelChannel(config, model);
+    const profile = channelModelProfile(channel, modelOptionName(model));
+    if (!profile?.capabilityConfig?.[capability]) return false;
+    if (!isBeefAPIEndpoint(channel.baseUrl || "")) return true;
+    return capability === "image" ? Boolean(profile.imageCapabilitiesVersion?.trim()) : Boolean(profile.videoCapabilitiesVersion?.trim());
+}
+
 export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {
     const capability = requirements?.capability;
     if (!capability) return "";
@@ -91,19 +100,21 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     }
 
     if (capability === "image") {
+        const hasDeclaredImageCapability = hasDeclaredModelCapability(config, model, "image");
         const image = modelCapabilityConfigFor(config, model).image!;
         // 尺寸兼容不依赖输入摘要：无输入时（如画布重试/工具链）也要按尺寸过滤组内模型。
-        if (requirements.imageSize && !image.size.allowCustom && !image.size.values.includes(requirements.imageSize)) return "不支持当前尺寸";
+        if (hasDeclaredImageCapability && requirements.imageSize && !image.size.allowCustom && !image.size.values.includes(requirements.imageSize)) return "不支持当前尺寸";
         if (!input) return "";
         if (input.videoCount > 0) return "图片模型不支持参考视频";
         if (input.audioCount > 0) return "图片模型不支持参考音频";
-        if (visualInputCount > image.references.maxImages) return `最多支持 ${image.references.maxImages} 张参考图`;
+        if (hasDeclaredImageCapability && visualInputCount > image.references.maxImages) return `最多支持 ${image.references.maxImages} 张参考图`;
         return "";
     }
 
     if (capability === "video") {
         const capabilityConfig = modelCapabilityConfigFor(config, model);
         if (capabilityConfig.videoCapabilitiesUnavailable) return VIDEO_CAPABILITIES_UNAVAILABLE;
+        if (!hasDeclaredModelCapability(config, model, "video")) return "";
         const profile = capabilityConfig.video!;
         if (requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
         if (!input) return "";
@@ -335,6 +346,7 @@ export function resolveModelVideoBooleanOptions(config: AiConfig, model: string,
 export function maxModelInputCapacity(config: AiConfig, capability: "image" | "video", kind: "image" | "video" | "audio") {
     const options = selectableModelsByCapability(config, capability);
     if (!options.length) return null;
+    if (options.some((model) => !hasDeclaredModelCapability(config, model, capability))) return null;
     return options.reduce((maximum, model) => {
         const profile = modelCapabilityConfigFor(config, model);
         const value =
@@ -345,13 +357,15 @@ export function maxModelInputCapacity(config: AiConfig, capability: "image" | "v
 
 export function modelGroupReferenceLimits(config: AiConfig, selected: string, capability: ModelCapability, requirements?: ModelRequirements): ModelReferenceLimits | undefined {
     if (capability !== "image" && capability !== "video") return undefined;
+    if (selected && !hasDeclaredModelCapability(config, selected, capability)) return undefined;
     if (capability === "video" && modelCapabilityConfigFor(config, selected).videoCapabilitiesUnavailable) return undefined;
     const options = selectableModelsByCapability(config, capability);
     const selectedGroup = groupModelsByDisplayName(config, options).find((group) => group.models.includes(selected));
     const groupModels = selectedGroup?.models || (selected ? [selected] : []);
-    if (!groupModels.length) return undefined;
-    const compatibleModels = requirements ? groupModels.filter((model) => !modelCompatibilityError(config, model, requirements)) : groupModels;
-    const models = compatibleModels.length ? compatibleModels : groupModels;
+    const declaredModels = groupModels.filter((model) => hasDeclaredModelCapability(config, model, capability));
+    if (!declaredModels.length) return undefined;
+    const compatibleModels = requirements ? declaredModels.filter((model) => !modelCompatibilityError(config, model, requirements)) : declaredModels;
+    const models = compatibleModels.length ? compatibleModels : declaredModels;
     return models.reduce<ModelReferenceLimits>(
         (limits, model) => {
             const profile = modelCapabilityConfigFor(config, model);

@@ -428,7 +428,7 @@ export function CreationComposer(props: ComposerProps) {
             ? "描述画面、人物、场景、构图与风格"
             : "描述镜头内容、运动、光线与节奏";
     const emptyPlaceholder = "输入你的镜头、画面或故事。也可以添加参考图开始创作";
-    const imageReferencesSupported = props.imageProfile.references.maxImages > 0;
+    const imageReferencesSupported = props.referenceLimits.image === undefined || props.imageProfile.references.maxImages > 0;
     const referencesSupported = props.mode === "image" ? imageReferencesSupported : videoCapabilitiesUnavailable || props.mode !== "video" || props.videoProfile.operations.includes("image_to_video");
     const referenceCounts = useMemo(() => creationReferenceCounts(props.attachments), [props.attachments]);
     // 参考素材按官方文档分类型限量，只要还有任意一类没满就能继续添加。

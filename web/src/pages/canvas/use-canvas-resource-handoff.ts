@@ -305,7 +305,7 @@ export function useCanvasResourceHandoff({
             // 继续取回不会产生第二笔费用：先查询原任务；BeefAPI 没收到原请求时，这次点击会让后端用原编号补交一次（BeefAPI 按编号去重）。
             // 等待期间节点显示取回进度；失败后仍保留「继续取回」。
             setNodes((current) =>
-                current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined } } : item)),
+                current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, generationErrorCode: undefined, generationPreflightError: undefined, taskOutcome: undefined } } : item)),
             );
             let latest: GenerationTask | undefined;
             // 原任务已有结论时按后台结论显示；不在前端另编「等待取回」，否则节点会卡在继续取回、无法重新生成。

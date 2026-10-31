@@ -42,7 +42,7 @@ export async function backfillCanvasTaskOutcomes({ nodes, query, update, active 
                         || node.metadata.taskClientOperationId !== original.get(node.id)
                         || !backfillEligible(node)) return node;
                     changed = true;
-                    return { ...node, metadata: { ...node.metadata, taskOutcome: task.outcome, taskOutcomeSource: undefined } };
+                    return { ...node, metadata: { ...node.metadata, taskOutcome: task.outcome, taskOutcomeSource: undefined, generationPreflightError: undefined } };
                 });
                 return changed ? next : current;
             });
