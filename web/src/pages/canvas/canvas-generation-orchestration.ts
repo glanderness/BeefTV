@@ -165,7 +165,8 @@ export async function insertCanvasGenerationHistoryTask(input: {
 }): Promise<{ node: CanvasNodeData; nextNodes: CanvasNodeData[]; insertedNodes?: CanvasNodeData[]; abandoned?: boolean }> {
     const mode = generationTaskMode(input.task);
     const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
-    const count = mode === "image" ? beefAPIImageContract(input.task.model || "")?.fixedOutputs || 1 : 1;
+    const declaredOutputs = input.task.outputs?.length ? Math.max(...input.task.outputs.map((item) => (item.outputIndex ?? 0) + 1), input.task.outputs.length) : 0;
+    const count = mode === "image" ? (beefAPIImageContract(input.task.model || "")?.fixedOutputs || declaredOutputs || 1) : 1;
     const insertedNodes: CanvasNodeData[] = [];
     for (let index = 0; index < count; index++) {
         const node = createCanvasNode(nodeType, { x: input.center.x + (index % 2) * 400, y: input.center.y + Math.floor(index / 2) * 400 }, {
