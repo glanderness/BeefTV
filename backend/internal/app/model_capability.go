@@ -38,9 +38,6 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 		}
 	}
 	if isWorkflowProviderInterface(taskInput.Config.InterfaceType) {
-		if err := validateWorkflowProviderPromptLength(taskInput); err != nil {
-			return err
-		}
 		return validateWorkflowProviderConfig(taskInput.Mode, taskInput.Config)
 	}
 	validated, err := modelcatalog.ValidateConfiguredTask(taskInputFromCanvas(taskInput), s.channelModelLookup())

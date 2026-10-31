@@ -244,7 +244,6 @@ export default function CreatePage() {
 
     useEffect(() => {
         if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "video") return;
-        if (modelCapabilityConfigFor(config, selectedModel).videoCapabilitiesUnavailable) return;
         const saved = useCreationPreferencesStore.getState().preferences.video;
         // 优先恢复用户上次选择；只有当前模型不支持该值时，normalizeVideoValue 才回退到模型默认值。
         const normalized = normalizeVideoValue(videoProfile, {

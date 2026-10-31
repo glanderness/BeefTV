@@ -63,10 +63,6 @@ func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInp
 	return modelcatalog.ValidateImageTask(profile, taskInputFromCanvas(input))
 }
 
-func validateWorkflowProviderPromptLength(input canvasGenerationInput) error {
-	return modelcatalog.ValidateWorkflowProviderPromptLength(taskInputFromCanvas(input))
-}
-
 func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, operation string) ModelRequestIntent {
 	return modelcatalog.ModelRequestIntentFromTaskInput(input, taskType, operation)
 }

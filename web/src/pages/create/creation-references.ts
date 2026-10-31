@@ -58,7 +58,7 @@ export type CreationReferenceLimitOptions = {
 // 这里不设上限以免把用户已选好的附件和引用直接删掉。
 export function creationReferenceLimitsFor(mode: CreationMode, capabilities: ModelCapabilityConfig, options: CreationReferenceLimitOptions = {}): CreationReferenceLimits {
     if (mode === "video") {
-        if (capabilities.videoCapabilitiesUnavailable || options.videoReferencesDeclared === false) return {};
+        if (options.videoReferencesDeclared === false) return {};
         const video = capabilities.video;
         if (!video || !video.operations.includes("image_to_video")) return { image: 0, video: 0, audio: 0 };
         return { image: video.references.maxImages, video: video.references.maxVideos, audio: video.references.maxAudios };
@@ -134,11 +134,6 @@ export function creationReferenceKindMessage(limits: CreationReferenceLimits, at
 }
 
 /** 提交前的拦截提示，没有超出任何一类时返回空串。 */
-export function creationReferenceOverflowMessage(limits: CreationReferenceLimits, attachments: CreationAttachment[]) {
-    const kind = referenceOverflowKind(limits, attachments);
-    return kind ? creationReferenceLimitMessage(limits, kind) : "";
-}
-
 export function reconcileCreationAttachmentLimit(attachments: CreationAttachment[], references: CreationReference[], limits: CreationReferenceLimits) {
     const { attachments: nextAttachments, dropped } = fitCreationAttachmentsToLimits(attachments, limits);
     if (dropped.length === 0) return { attachments, removedReferences: [] as CreationReference[] };

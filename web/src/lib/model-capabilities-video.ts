@@ -1,5 +1,4 @@
 import { isVolcengineArkVideoProtocol, type ModelProtocol } from "@/lib/model-protocols";
-import { videoPromptLimits } from "@/lib/video-prompt-limits";
 
 /** 0 means no documented local character limit; the supplier still validates. */
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 0;
@@ -299,7 +298,6 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
     };
     if (protocol === "full-video") {
         const is25 = model.endsWith("2.5");
-        video.references.promptMaxChars = 4000;
         video.references.maxImages = is25 ? 30 : 9;
         video.references.maxVideos = is25 ? 10 : 3;
         video.references.maxAudios = is25 ? 10 : 3;
@@ -411,7 +409,6 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         video.ratios = [...video.ratios, "adaptive"];
         if (isSeedance25Model(model)) video.operations = [...video.operations, "inpaint", "extend"];
     }
-    Object.assign(video.references, videoPromptLimits(protocol, model));
     return video;
 }
 

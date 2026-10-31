@@ -3,7 +3,7 @@ import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
 import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue, videoDurationAllowed, videoSupportsTaskTypeConstraints } from "../src/lib/model-capabilities.ts";
-import { modelCompatibilityError, modelPromptLengthError } from "../src/lib/model-selection.ts";
+import { modelCompatibilityError } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
 
@@ -108,53 +108,32 @@ test("Seedance does not infer a native ceiling from a shared tool schema", () =>
     assert.equal(defaultModelCapabilityConfig("newapi", "other-video").video!.references.promptMaxChars, 0);
 });
 
-test("a refreshed Seedance catalog removes the generic cap but preserves explicit channel limits", () => {
-    const model = "seedance-2.0";
-    const capabilityConfig = defaultModelCapabilityConfig("newapi", model);
-    const config = { channels: [{ id: "official", name: "official", baseUrl: "https://enterprise.beefapi.com", apiKey: "test", apiFormat: "openai", models: [model], modelProfiles: [{ model, protocol: "newapi", capability: "video", capabilityConfig }] }] } as AiConfig;
-    assert.equal(modelPromptLengthError(config, `official::${model}`, "video", "镜".repeat(8101)), "");
-    assert.equal(modelPromptLengthError(config, `official::${model}`, "video", "镜".repeat(32000)), "");
-    assert.equal(modelPromptLengthError(config, `official::${model}`, "video", "镜".repeat(32001)), "");
-    capabilityConfig.video!.references.promptMaxChars = 4096;
-    assert.match(modelPromptLengthError(config, `official::${model}`, "video", "镜".repeat(4097)), /4096/);
-});
-
-test("documented prompt contracts are specific to the provider endpoint", () => {
-    for (const [protocol, model, chars] of [
-        ["minimax-video", "MiniMax-H3", 7000],
-        ["minimax-video", "MiniMax-Hailuo-2.3", 0],
-        ["dashscope-wan-video", "wan2.1-t2v-turbo", 800],
-        ["dashscope-wan-video", "wan2.6-i2v", 1500],
-        ["dashscope-wan-video", "wan2.7-r2v", 5000],
-        ["dashscope-wan-video", "wan3.0-t2v", 20000],
-        ["openai-videos", "sora-2-pro", 32000],
-        ["full-video", "sd-native-full-2.0", 4000],
-        ["kling-video", "kling-v3", 0],
-        ["luma-dream-machine", "ray-2", 5000],
-        ["pixverse-video", "v6-max", 5000],
-        ["zhipu-cogvideox", "cogvideox-3", 512],
-        ["volcengine-jimeng-video", "jimeng_t2v_v30", 800],
-        ["gemini-veo", "veo-3.1-generate-preview", 0],
-        ["newapi", "MiniMax-H3", 0],
-        ["custom-workflow", "wan3.0-t2v", 0],
+test("video prompt defaults do not invent local ceilings", () => {
+    for (const [protocol, model] of [
+        ["minimax-video", "MiniMax-H3"],
+        ["minimax-video", "MiniMax-Hailuo-2.3"],
+        ["dashscope-wan-video", "wan2.1-t2v-turbo"],
+        ["dashscope-wan-video", "wan2.6-i2v"],
+        ["dashscope-wan-video", "wan2.7-r2v"],
+        ["dashscope-wan-video", "wan3.0-t2v"],
+        ["openai-videos", "sora-2-pro"],
+        ["full-video", "sd-native-full-2.0"],
+        ["kling-video", "kling-v3"],
+        ["luma-dream-machine", "ray-2"],
+        ["pixverse-video", "v6-max"],
+        ["zhipu-cogvideox", "cogvideox-3"],
+        ["volcengine-jimeng-video", "jimeng_t2v_v30"],
+        ["gemini-veo", "veo-3.1-generate-preview"],
+        ["newapi", "MiniMax-H3"],
+        ["custom-workflow", "wan3.0-t2v"],
     ] as const) {
-        assert.equal(defaultModelCapabilityConfig(protocol, model).video!.references.promptMaxChars, chars, `${protocol}/${model}`);
+        assert.equal(defaultModelCapabilityConfig(protocol, model).video!.references.promptMaxChars, 0, `${protocol}/${model}`);
     }
-});
-
-test("Runway UTF-16 limits count astral characters consistently with the provider", () => {
-    const model = "gen4_turbo";
-    const capabilityConfig = defaultModelCapabilityConfig("runway-video", model);
-    const config = { channels: [{ id: "runway", models: [model], modelProfiles: [{ model, protocol: "runway-video", capabilityConfig }] }] } as AiConfig;
-    assert.equal(modelPromptLengthError(config, `runway::${model}`, "video", "😀".repeat(500)), "");
-    assert.match(modelPromptLengthError(config, `runway::${model}`, "video", "😀".repeat(501)), /1002.*UTF-16/);
-    assert.equal(modelPromptLengthError(config, `runway::${model}`, "video", "中".repeat(1000)), "");
-    assert.match(modelPromptLengthError(config, `runway::${model}`, "video", "中".repeat(1001)), /1001/);
 });
 
 test("persisted video prompt limits do not inherit new UTF-16 defaults after reload", () => {
     const model = "gen4_turbo";
-    assert.equal(defaultModelCapabilityConfig("runway-video", model).video!.references.promptMaxUtf16Units, 1000);
+    assert.equal(defaultModelCapabilityConfig("runway-video", model).video!.references.promptMaxUtf16Units ?? 0, 0);
     for (const chars of [8000, 0]) {
         for (const utf16Units of [undefined, 0]) {
             const capabilityConfig = defaultModelCapabilityConfig("runway-video", model);
@@ -165,11 +144,7 @@ test("persisted video prompt limits do not inherit new UTF-16 defaults after rel
             const reloaded = JSON.parse(persisted) as AiConfig;
             const resolved = modelCapabilityConfigFor(reloaded, `runway::${model}`).video!;
             assert.equal(resolved.references.promptMaxChars, chars);
-            assert.equal(resolved.references.promptMaxUtf16Units, 0);
-            assert.equal(modelPromptLengthError(reloaded, `runway::${model}`, "video", "😀".repeat(1001)), "");
-            assert.equal(modelPromptLengthError(reloaded, `runway::${model}`, "video", "镜".repeat(8000)), "");
-            if (chars === 8000) assert.match(modelPromptLengthError(reloaded, `runway::${model}`, "video", "镜".repeat(8001)), /8000/);
-            else assert.equal(modelPromptLengthError(reloaded, `runway::${model}`, "video", "镜".repeat(8001)), "");
+            assert.equal(resolved.references.promptMaxUtf16Units ?? 0, 0);
             assert.equal(JSON.stringify(reloaded), persisted, "resolving saved limits must not mutate the profile");
         }
     }

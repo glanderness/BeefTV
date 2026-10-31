@@ -249,6 +249,7 @@ func TestGrokImageQueueRejectsMaskAndMultipleReferences(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 			t.Cleanup(server.Close)
 			s, _, _, _ := creationTestService(t)
+			s.coordinator = platform.NewLocalCoordinator()
 			s.pluginRuntime = pluginRuntimeFromRecords(nil)
 			if err := s.pluginRuntime.registrySnapshot().Register(officialSourceProviderAdapter(t, "xai-grok-images", "grok-image")); err != nil {
 				t.Fatal(err)

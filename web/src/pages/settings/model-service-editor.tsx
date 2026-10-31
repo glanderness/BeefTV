@@ -140,6 +140,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             ...profile,
             protocol: definition.value,
             authType: definition.authType,
+            capabilitySource: undefined,
             capabilityConfig:
                 profile.capability === "image" || profile.capability === "video"
                     ? defaultModelCapabilityConfig(definition.value, profile.model)

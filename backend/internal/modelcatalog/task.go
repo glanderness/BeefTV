@@ -58,11 +58,3 @@ func ValidateConfiguredTask(input TaskInput, lookup ChannelModelLookup) (TaskInp
 	applyFixedVideoResolution(&input, normalized.Video)
 	return input, validateVideoTask(normalized.Video, input)
 }
-
-func ValidateWorkflowProviderPromptLength(input TaskInput) error {
-	profile := input.Config.CapabilityConfig
-	if input.Mode != "video" || profile == nil || profile.Video == nil {
-		return nil
-	}
-	return validateVideoPromptLength(input.Prompt, profile.Video.References)
-}

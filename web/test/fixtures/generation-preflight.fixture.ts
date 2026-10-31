@@ -33,7 +33,7 @@ mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () =
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_id: any, _nodes: any, _edges: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: (context: any) => hydrate(context), compileNodeGenerationReferences: (context: any) => context }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));
 mock.module("@/lib/canvas/canvas-project-generation", () => ({ MISSING_GENERATION_TASK_IDENTITY_DETAILS: "missing task identity", isGenerationCanceled: (error: any) => error?.name === "AbortError", buildVideoGenerationMetadata: () => ({ videoEditOperation: "text_to_video" }) }));
-mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => "", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
+mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => "", modelGroupReferenceLimits: () => undefined, modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));
 mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}) }));

@@ -85,19 +85,6 @@ export async function runBackendCanvasGenerationTask(
     );
 }
 
-export function canvasImageReferenceLimitError(config: AiConfig, referenceImages: ReferenceImage[]) {
-    // 工作流的参考素材上限由字段映射槽位决定，不能再套用当前普通图片模型的能力表。
-    if ((config.taskWorkflowProvider || "model") !== "model") return "";
-    const maxImages = modelCapabilityConfigFor(config, config.model).image?.references.maxImages;
-    if (maxImages === undefined || referenceImages.length <= maxImages) return "";
-    return `当前图片模型最多支持 ${maxImages} 张参考图，当前已连接 ${referenceImages.length} 张。请移除多余连线后重试`;
-}
-
-export function assertCanvasImageReferenceLimit(config: AiConfig, referenceImages: ReferenceImage[]) {
-    const error = canvasImageReferenceLimitError(config, referenceImages);
-    if (error) throw new Error(error);
-}
-
 export { backendProviderConfig };
 // 兼容故事板执行器的旧导入路径。
 export { logicalModelIDForConfig };

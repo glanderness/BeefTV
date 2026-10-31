@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
 import { managedVideoCatalogItem } from "./managed-video-fixture";
-import { assertVideoCapability } from "../src/services/api/video-validation";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { mergeFetchedChannelModelProfiles, sanitizeChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
-import { defaultModelCapabilityConfig, modelCapabilityConfigFor, sanitizeServerVideoCapability, VIDEO_CAPABILITIES_UNAVAILABLE } from "../src/lib/model-capabilities";
+import { defaultModelCapabilityConfig, modelCapabilityConfigFor, sanitizeServerVideoCapability } from "../src/lib/model-capabilities";
 import { hasDeclaredModelCapability, modelCompatibilityError, resolveModelGenerationDefaults } from "../src/lib/model-selection";
 import { prepareBackendGenerationTask } from "../src/services/api/generation-task";
 import { creationReferenceLimitsFor, reconcileCreationAttachmentLimit } from "../src/pages/create/creation-references";
@@ -108,16 +107,12 @@ test("operation-specific counts preserve attachments and reject an incompatible 
     const config = { ...configured(channel, item.id), videoSeconds: "5" };
     const images = Array.from({ length: 3 }, (_, i) => ({ id: `ref-${i}`, name: `ref-${i}`, type: "image/png", dataUrl: "", storageKey: `resource:ref-${i}` }));
     const metadata = { videoEditOperation: "image_to_video" };
-    expect(() => assertVideoCapability(video, images, [], [], "5", { operation: "image_to_video" })).toThrow("2 张参考图");
-    expect(() => assertVideoCapability(video, images, [], [], "5", { operation: "reference_to_video" })).not.toThrow();
-    expect(() => assertVideoCapability(video, images, [], [], "5")).not.toThrow();
     expect(modelCompatibilityError(config, config.model, { capability: "video", input: { imageCount: 3, videoCount: 0, audioCount: 0, characterCount: 0, textCount: 1 } })).toBe("");
     expect(modelCompatibilityError(config, config.model, { capability: "video", videoOperation: "image_to_video", input: { imageCount: 3, videoCount: 0, audioCount: 0, characterCount: 0, textCount: 1 } })).toContain("2 张参考图");
     await expect(prepareBackendGenerationTask({ mode: "video", prompt: "scene", config, referenceImages: images, metadata })).resolves.toMatchObject({ type: "canvas_video" });
     const kept = reconcileCreationAttachmentLimit(images, [], creationReferenceLimitsFor("video", modelCapabilityConfigFor(config, config.model)));
     expect(kept.attachments).toBe(images);
     const noVideo = [{ id: "clip", name: "clip", url: "https://example.com/clip.mp4" }];
-    expect(() => assertVideoCapability(video, images.slice(0, 1), noVideo, [], "5", { operation: "image_to_video" })).toThrow("0 个参考视频");
     for (const operationReferences of [{ image_to_video: { maxImages: 2.5 } }, { image_to_video: { minImages: 3, maxImages: 2 } }, { unknown: { maxImages: 2 } }]) {
         expect(sanitizeServerVideoCapability({ ...video, operationReferences })).toBeNull();
     }

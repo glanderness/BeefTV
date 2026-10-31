@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/beefapi"
 )
@@ -37,9 +36,6 @@ func runManagedAudioTask(ctx context.Context, client *beefapi.MediaClient, input
 		request.Operation = capability.Operations[0]
 	}
 	request.Input.Prompt = WithSystemPrompt(input.Config, input.Prompt)
-	if capability.PromptMaxChars > 0 && utf8.RuneCountInString(request.Input.Prompt) > capability.PromptMaxChars {
-		return nil, RequestPreparationError{Cause: errors.New("文本超过当前音频模型的长度限制")}
-	}
 	if input.Config.AudioFormat != "" && input.Config.AudioFormat != "mp3" {
 		return nil, RequestPreparationError{Cause: errors.New("当前模型不支持所选音频格式，请选择 MP3")}
 	}

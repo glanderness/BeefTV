@@ -16,9 +16,8 @@ func videoDurationSupported(value *VideoCapabilityConfig) bool {
 }
 
 func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapabilityConfig {
-	promptMaxChars, promptMaxUTF16Units := videoPromptLimits(protocol, modelName)
 	video := &VideoCapabilityConfig{
-		References:        VideoReferenceConfig{PromptMaxChars: promptMaxChars, PromptMaxUTF16Units: promptMaxUTF16Units, MinImages: 0, MaxImages: 9, MaxImageBytes: 30 * 1024 * 1024, MaxVideos: 0, MaxVideoBytes: 0, MaxVideoDuration: 0, MaxAudios: 0, MaxAudioBytes: 0, MaxAudioDuration: 0},
+		References:        VideoReferenceConfig{PromptMaxChars: DefaultVideoPromptMaxChars, MinImages: 0, MaxImages: 9, MaxImageBytes: 30 * 1024 * 1024, MaxVideos: 0, MaxVideoBytes: 0, MaxVideoDuration: 0, MaxAudios: 0, MaxAudioBytes: 0, MaxAudioDuration: 0},
 		Duration:          VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 6},
 		Ratios:            []string{"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"},
 		DefaultRatio:      "16:9",
@@ -87,7 +86,6 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 		video = applyModelSpecificVideoCapability(video, protocol, modelName)
 	case "full-video":
 		is25 := strings.HasSuffix(strings.ToLower(strings.TrimSpace(modelName)), "2.5")
-		video.References.PromptMaxChars = 4000
 		video.References.MaxImages = 9
 		video.References.MaxVideos = 3
 		video.References.MaxAudios = 3
@@ -365,9 +363,6 @@ func validateVideoTask(profile *VideoCapabilityConfig, input TaskInput) error {
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
-	if err := validateVideoPromptLength(input.Prompt, profile.References); err != nil {
-		return err
-	}
 	if err := validateVideoReferenceMedia(profile, input); err != nil {
 		return err
 	}
@@ -379,9 +374,6 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
 	profile = tightenedVideoCapability(input.Config, profile)
-	if err := validateVideoPromptLength(input.Prompt, profile.References); err != nil {
-		return err
-	}
 	seconds, err := strconv.ParseFloat(strings.TrimSpace(input.Config.VideoSeconds), 64)
 	allowed := false
 	if err == nil && !math.IsNaN(seconds) && !math.IsInf(seconds, 0) {
@@ -412,14 +404,6 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 		return validateVideoReferenceCounts(videoReferencesForOperation(profile, metadataString(input.Metadata, "videoEditOperation")), input)
 	}
 	return nil
-}
-
-func validateWorkflowProviderPromptLength(input TaskInput) error {
-	profile := input.Config.CapabilityConfig
-	if input.Mode != "video" || profile == nil || profile.Video == nil {
-		return nil
-	}
-	return validateVideoPromptLength(input.Prompt, profile.Video.References)
 }
 
 func videoDurationAllowed(value VideoDurationConfig, seconds int) bool {

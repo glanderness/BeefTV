@@ -80,15 +80,3 @@ test("被拦下的说明显示在输入框内，而不是被全局隐藏的 Toas
 test("没有拦截说明时不渲染这段提示", () => {
     expect(render()).not.toContain("creation-composer-notice");
 });
-
-test("缺少视频目录时提示刷新、保留参考入口，不显示空设置或零秒", () => {
-    const unavailable = structuredClone(config);
-    unavailable.channels[0].modelProfiles![0].videoCapabilitiesVersion = undefined;
-    const html = render(undefined, unavailable);
-    expect(html).toContain("请在设置中刷新模型列表");
-    expect(html).toContain('aria-label="添加更多参考内容"');
-    expect(html).not.toContain('aria-label="生成设置：');
-    expect(html).not.toContain('aria-label="视频时长：');
-    expect(html).not.toContain("0秒");
-    expect(render(undefined, config)).toContain('aria-label="视频时长：');
-});

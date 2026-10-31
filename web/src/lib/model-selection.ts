@@ -1,5 +1,4 @@
-import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
-import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, VIDEO_CAPABILITIES_UNAVAILABLE, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { sanitizeVideoPriceQuote, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
@@ -61,7 +60,9 @@ export function portraitGenerationError(config: AiConfig, model: string, resolut
     if (!normalizeModelOptionValue(model, config.channels)) return "真人素材版当前不可用，请刷新模型列表或重新选择模型";
     const channel = resolveModelChannel(config, model);
     const profile = channel.modelProfiles?.find((item) => item.model === modelOptionName(model));
-    const quote = sanitizeVideoPriceQuote(profile?.videoPricing);
+    // 只有渠道目录下发了报价字段时才按报价核对；自带 Key 的渠道没有报价，交给上游自己判断。
+    if (profile?.videoPricing === undefined) return "";
+    const quote = sanitizeVideoPriceQuote(profile.videoPricing);
     if (!quote || quote.mode !== "tokens") return "真人素材版价格暂不可用，请刷新模型列表";
     if (resolution !== undefined) {
         const normalized = normalizeVideoResolutionValue(resolution);
@@ -71,12 +72,16 @@ export function portraitGenerationError(config: AiConfig, model: string, resolut
     return "";
 }
 
+/**
+ * 只有三种能力来源可以限制用户：服务端目录带版本号的声明、部署方配置的系统渠道、用户在「能力与参数」里亲手改过的值。
+ * 设置页自动补出的默认能力只用来填充界面选项，不代表上游的真实上限，因此不能置灰模型或裁掉参考素材。
+ */
 export function hasDeclaredModelCapability(config: AiConfig, model: string, capability: "image" | "video") {
     const channel = resolveModelChannel(config, model);
     const profile = channelModelProfile(channel, modelOptionName(model));
     if (!profile?.capabilityConfig?.[capability]) return false;
-    if (!isBeefAPIEndpoint(channel.baseUrl || "")) return true;
-    return capability === "image" ? Boolean(profile.imageCapabilitiesVersion?.trim()) : Boolean(profile.videoCapabilitiesVersion?.trim());
+    const version = capability === "image" ? profile.imageCapabilitiesVersion : profile.videoCapabilitiesVersion;
+    return Boolean(version?.trim()) || channel.scope === "system" || profile.capabilitySource === "user";
 }
 
 export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {
@@ -113,7 +118,6 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
 
     if (capability === "video") {
         const capabilityConfig = modelCapabilityConfigFor(config, model);
-        if (capabilityConfig.videoCapabilitiesUnavailable) return VIDEO_CAPABILITIES_UNAVAILABLE;
         if (!hasDeclaredModelCapability(config, model, "video")) return "";
         const profile = capabilityConfig.video!;
         if (requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
@@ -135,20 +139,6 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
 
     if (input.characterCount > 1) return "角色配音一次只能引用一个角色卡";
     return input.imageCount > 0 || input.videoCount > 0 || input.audioCount > 0 ? "音频模型只接受文本或单个角色卡输入" : "";
-}
-
-export function modelPromptLengthError(config: AiConfig, model: string, capability: ModelCapability, prompt: string) {
-    const channel = resolveModelChannel(config, model);
-    const configuredProfile = channel.modelProfiles?.find((item) => item.model === modelOptionName(model))?.capabilityConfig;
-    if (!configuredProfile) return "";
-    const profile = modelCapabilityConfigFor(config, model);
-    const maxChars = capability === "text" ? profile.text?.references.promptMaxChars : capability === "image" ? profile.image?.references.promptMaxChars : capability === "video" ? profile.video?.references.promptMaxChars : undefined;
-    const actualChars = Array.from(prompt).length;
-    const label = capability === "text" ? "文本" : capability === "image" ? "图片" : "视频";
-    if (maxChars && maxChars > 0 && actualChars > maxChars) return `当前${label}模型提示词最多 ${maxChars} 个字符，完整提示词为 ${actualChars} 个字符。系统不会自动截断，请精简当前输入、连线内容或技能上下文后重试`;
-    const maxUnits = capability === "video" ? profile.video?.references.promptMaxUtf16Units : 0;
-    if (maxUnits && maxUnits > 0 && prompt.length > maxUnits) return `当前视频模型提示词最多 ${maxUnits} 个长度单位，完整提示词为 ${prompt.length} 个单位（此通道按 UTF-16 计数，常见表情占 2 个单位）。系统不会自动截断，请精简后重试`;
-    return "";
 }
 
 export function modelRequestOptions(config: AiConfig, capability: ModelCapability) {
@@ -304,7 +294,6 @@ export function resolveModelGenerationDefaults(
     const hasModelCapabilityProfile = Boolean(profile?.capabilityConfig);
     const source = (key: keyof ModelGenerationDefaults) => explicit[key] ?? (isManagedModel || hasModelCapabilityProfile ? undefined : fallback[key]);
     const capabilityProfile = modelCapabilityConfigFor(config, model);
-    if (capability === "video" && capabilityProfile.videoCapabilitiesUnavailable) return { ...fallback, ...explicit };
 
     if (capability === "image" && capabilityProfile.image) {
         const normalized = normalizeImageValue(capabilityProfile.image, {
@@ -358,7 +347,6 @@ export function maxModelInputCapacity(config: AiConfig, capability: "image" | "v
 export function modelGroupReferenceLimits(config: AiConfig, selected: string, capability: ModelCapability, requirements?: ModelRequirements): ModelReferenceLimits | undefined {
     if (capability !== "image" && capability !== "video") return undefined;
     if (selected && !hasDeclaredModelCapability(config, selected, capability)) return undefined;
-    if (capability === "video" && modelCapabilityConfigFor(config, selected).videoCapabilitiesUnavailable) return undefined;
     const options = selectableModelsByCapability(config, capability);
     const selectedGroup = groupModelsByDisplayName(config, options).find((group) => group.models.includes(selected));
     const groupModels = selectedGroup?.models || (selected ? [selected] : []);

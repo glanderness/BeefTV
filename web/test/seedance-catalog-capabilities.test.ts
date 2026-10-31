@@ -6,7 +6,6 @@ import { modelCapabilityConfigFor, sanitizeServerVideoCapability, type VideoCapa
 import { applyFetchedChannelModelCatalog, mergeManagedBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
 import { modelCompatibilityError, portraitGenerationError } from "../src/lib/model-selection";
 import { fetchChannelModels } from "../src/services/api/image-models";
-import { assertVideoCapability } from "../src/services/api/video-validation";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 
 function sampleVideo(maxVideos: number, maxAudios: number): VideoCapabilityConfig {
@@ -269,8 +268,6 @@ test("native Ark Seedance 2.x uses the documented 407696 pixel floor from backen
     ).video!;
     expect(profile.references.minVideoPixels).toBe(407696);
     const video = (width: number, height: number) => ({ id: "vid", name: "视频", type: "video/mp4", url: "https://example.com/v.mp4", width, height, durationMs: 3000, bytes: 1 });
-    expect(() => assertVideoCapability(profile, [], [video(720, 567)], [], "5")).not.toThrow();
-    expect(() => assertVideoCapability(profile, [], [video(720, 566)], [], "5")).toThrow("407696");
 });
 
 test("custom pixel restrictions stay in place for non-Ark channels", () => {
@@ -281,8 +278,6 @@ test("custom pixel restrictions stay in place for non-Ark channels", () => {
     ).video!;
     expect(profile.references.minVideoPixels).toBe(500000);
     const video = (width: number, height: number) => ({ id: "vid", name: "视频", type: "video/mp4", url: "https://example.com/v.mp4", width, height, durationMs: 3000, bytes: 1 });
-    expect(() => assertVideoCapability(profile, [], [video(720, 700)], [], "5")).not.toThrow();
-    expect(() => assertVideoCapability(profile, [], [video(720, 694)], [], "5")).toThrow("500000");
 });
 
 test("direct OpenAI catalog fetch keeps BeefAPI video capability fields", async () => {
@@ -313,14 +308,10 @@ test("direct OpenAI catalog fetch keeps BeefAPI video capability fields", async 
 
 test("Auto duration survives shared normalization and config hydration", async () => {
     const { normalizeVideoDuration } = await import("../src/lib/video-generation-options");
-    const { normalizeVideoSeconds } = await import("../src/services/api/video-validation");
     const { videoSecondsLabel } = await import("../src/components/video-settings-panel");
     expect(normalizeVideoDuration(-1)).toBe("-1");
-    expect(normalizeVideoSeconds("-1")).toBe("-1");
     expect(videoSecondsLabel("-1")).toBe("自动");
     expect(normalizeConfigSnapshot({ config: { ...defaultConfig, videoSeconds: "-1" } }).config.videoSeconds).toBe("-1");
-    expect(normalizeVideoSeconds("5")).toBe("5");
-    expect(normalizeVideoSeconds("-2")).toBe("1");
 });
 
 test("Auto duration reaches canvas model selection and final generation unchanged", async () => {

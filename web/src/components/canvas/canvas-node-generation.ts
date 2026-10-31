@@ -555,7 +555,9 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     const { getProjectCharacter } = await import("@/services/api/projects");
     const { getResource, resourceFileUrl, resourceStorageKey } = await import("@/services/api/resources");
     const details = await Promise.all(context.characterReferences.map((reference) => getProjectCharacter(domainProjectId, reference.assetId)));
-    const remainingBudget = referenceLimits ? Math.max(0, referenceLimits.maxImages - referenceImages.length) : Number.POSITIVE_INFINITY;
+    // 没有可信的能力声明时不知道上游能收几张图：只带每个角色的一张主参考图，补充视图交给用户自己连线，
+    // 避免自动塞进用户没选过的素材把请求撑爆。有声明时才按剩余容量补充正/侧/背面。
+    const remainingBudget = referenceLimits ? Math.max(0, referenceLimits.maxImages - referenceImages.length) : 0;
     const selected = details.flatMap((detail, index) => {
         const representation = preferredCharacterRepresentation(detail.character.representations);
         return representation ? [{ ...representation, sourceNodeId: context.characterReferences[index]!.nodeId }] : [];

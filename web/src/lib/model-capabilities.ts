@@ -93,10 +93,8 @@ export type ModelCapabilityConfig = {
     image?: ImageCapabilityConfig;
     video?: VideoCapabilityConfig;
     /** Local display state; never a supplier capability or request option. */
-    videoCapabilitiesUnavailable?: boolean;
 };
 
-export const VIDEO_CAPABILITIES_UNAVAILABLE = "当前视频模型能力尚未加载，请在设置中刷新模型列表";
 
 export type TextCapabilityConfig = {
     /** Whether the upstream text endpoint accepts SSE streaming responses. */

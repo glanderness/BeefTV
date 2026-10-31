@@ -81,6 +81,8 @@ export function ChannelModelSettings({
     const updateProfile = (model: string, patch: Partial<ModelProfile>, syncSameCapabilityUnconfigured = false) => {
         const current = channel.modelProfiles?.find((item) => item.model === model) || buildDefaultProfile(model);
         const nextProfile = { ...current, ...patch, model };
+        // 协议或能力切换会重写为默认参数；只有编辑器里的手动修改才保留「用户声明」标记。
+        if ("capabilityConfig" in patch && !("capabilitySource" in patch)) nextProfile.capabilitySource = undefined;
         const authType = "protocol" in patch ? modelProtocolDefinition(nextProfile.protocol, availableProtocols)?.authType : nextProfile.authType;
         if ("protocol" in patch) nextProfile.authType = authType;
         const byModel = new Map((channel.modelProfiles || []).map((item) => [item.model, item]));
@@ -95,6 +97,7 @@ export function ChannelModelSettings({
                         ...existing,
                         protocol: nextProfile.protocol,
                         authType,
+                        capabilitySource: undefined,
                         capabilityConfig:
                             existing.capability === "image" || existing.capability === "video"
                                 ? defaultModelCapabilityConfig(nextProfile.protocol, sibling)
@@ -274,7 +277,7 @@ export function ChannelModelSettings({
                                     model={activeModel}
                                     value={activeModelProfile?.capabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel)}
                                     protocol={activeProtocol}
-                                    onChange={(capabilityConfig) => updateProfile(activeModel, { capabilityConfig })}
+                                    onChange={(capabilityConfig) => updateProfile(activeModel, { capabilityConfig, capabilitySource: "user" })}
                                 />
                             ) : <p className="text-xs text-foreground/50">当前模型类型无需额外配置引用与参数。</p>}
                         </div>,

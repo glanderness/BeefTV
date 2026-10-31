@@ -362,9 +362,6 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 			if _, err := contract.GenerationPrompt(composedPrompt(input.Config.SystemPrompt, input.Prompt), input.Config.Size); err != nil {
 				return kernel.BadAuthRequest(err.Error())
 			}
-			if err := validateModelPromptLength("图片", composedPrompt(input.Config.SystemPrompt, input.Prompt), contract.PromptMaxChars); err != nil {
-				return err
-			}
 			if q := strings.ToLower(strings.TrimSpace(input.Config.Quality)); q != "" && q != "auto" && q != "any" {
 				return kernel.BadAuthRequest("当前图片模型不支持质量选项，请选择自动")
 			}
@@ -380,16 +377,6 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 		}
 	}
 	modelName := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(input.Config.Model)), "models/")
-	if input.Config.InterfaceType == string(model.ChannelInterfaceGrokImage) && modelName == "grok-imagine-image-quality" {
-		const maxPromptBytes = 8000
-		promptBytes := input.Config.ComposedPromptBytes
-		if promptBytes <= 0 {
-			promptBytes = len(composedPrompt(input.Config.SystemPrompt, input.Prompt))
-		}
-		if promptBytes > maxPromptBytes {
-			return kernel.BadAuthRequest(fmt.Sprintf("Grok 图片完整提示词为 %d UTF-8 字节，超过上游 %d 字节限制。系统不会自动删改；请精简当前输入、连线文本、角色卡、画风或模板内容后重试", promptBytes, maxPromptBytes))
-		}
-	}
 	if len(input.ReferenceImages) > profile.References.MaxImages {
 		return kernel.BadAuthRequest(fmt.Sprintf("当前图片模型最多支持 %d 张参考图", profile.References.MaxImages))
 	}

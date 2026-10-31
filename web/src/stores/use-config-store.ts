@@ -381,6 +381,8 @@ export type ModelChannel = {
         referenceMediaTransport?: ReferenceMediaTransport;
         authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
+        /** "user" 表示能力参数由用户在「能力与参数」里亲手改过；未标记的配置只是界面默认值，不能拿来拦截生成。 */
+        capabilitySource?: "user";
         imageCapabilitiesVersion?: string;
         videoCapabilitiesVersion?: string;
         mediaCapabilities?: MediaCapabilities;
@@ -1257,7 +1259,9 @@ export function isSystemProxyBaseUrl(baseUrl: string) {
 export function systemProxyChannelId(baseUrl: string) {
     const value = baseUrl.trim();
     const lowerValue = value.toLowerCase();
-    for (const marker of ["/api/ai/system/", "/api/"]) {
+    // `/api/<id>` 只认相对路径；第三方绝对地址（如 https://open.bigmodel.cn/api/paas）同样以 /api/<词> 结尾，必须仍按用户渠道处理。
+    const markers = value.startsWith("/") && !value.startsWith("//") ? ["/api/ai/system/", "/api/"] : ["/api/ai/system/"];
+    for (const marker of markers) {
         const index = lowerValue.lastIndexOf(marker);
         if (index < 0) continue;
         const remainder = value.slice(index + marker.length);

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -410,17 +409,6 @@ func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
 		return kernel.BadAuthRequest("引用素材大小限制不能小于 0")
 	}
 	return nil
-}
-
-func validateModelPromptLength(label string, prompt string, maxChars int) error {
-	if maxChars <= 0 {
-		return nil
-	}
-	actualChars := utf8.RuneCountInString(prompt)
-	if actualChars <= maxChars {
-		return nil
-	}
-	return kernel.BadAuthRequest(fmt.Sprintf("当前%s模型提示词最多 %d 个字符，完整提示词为 %d 个字符。系统不会自动截断，请精简当前输入、连线内容或技能上下文后重试", label, maxChars, actualChars))
 }
 
 func containsCapabilityString(values []string, target string) bool {

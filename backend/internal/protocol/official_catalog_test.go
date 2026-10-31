@@ -967,3 +967,57 @@ func TestOfficialArkSeedreamParsesB64JSONAsDataURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOfficialKlingVideoAndImageFollowOfficialContract(t *testing.T) {
+	videoAdapter := officialPackageAdapter(t, "kling-video.beeftv-plugin", "kling-video")
+	t2v, err := videoAdapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "kling-v2-master", Prompt: "镜头推进", Duration: 5, AspectRatio: "16:9",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t2vBody := manifestTestBody(t, t2v)
+	if t2v.Path != "/v1/videos/text2video" || t2vBody["model_name"] != "kling-v2-master" || t2vBody["duration"] != "5" || t2vBody["aspect_ratio"] != "16:9" {
+		t.Fatalf("Kling T2V = %#v, body = %#v", t2v, t2vBody)
+	}
+	i2v, err := videoAdapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "kling-v2-master", Prompt: "镜头推进", Duration: 10,
+		Images: []MediaReference{
+			{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 0},
+			{URL: "https://cdn.example/last.png", Role: "last_frame", Order: 1},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i2vBody := manifestTestBody(t, i2v)
+	if i2v.Path != "/v1/videos/image2video" || i2vBody["image"] != "https://cdn.example/first.png" || i2vBody["image_tail"] != "https://cdn.example/last.png" {
+		t.Fatalf("Kling I2V = %#v, body = %#v", i2v, i2vBody)
+	}
+	pollResult, err := videoAdapter.ParsePoll(context.Background(), PollContext{TaskID: "k-1"}, []byte(`{"code":0,"message":"SUCCEED","data":{"task_id":"k-1","task_status":"succeed","task_result":{"videos":[{"id":"v1","url":"https://cdn.example/kling.mp4","duration":"5"}]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pollResult.Status != StatusSucceeded || pollResult.Result == nil || len(pollResult.Result.Videos) != 1 || pollResult.Result.Videos[0].URL != "https://cdn.example/kling.mp4" {
+		t.Fatalf("Kling video poll result = %#v", pollResult)
+	}
+
+	imageAdapter := officialPackageAdapter(t, "kling-image.beeftv-plugin", "kling-image")
+	imgCreate, err := imageAdapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "kling-v2", Prompt: "电影感海报", ImageCount: 2, AspectRatio: "16:9",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgBody := manifestTestBody(t, imgCreate)
+	if imgCreate.Path != "/v1/images/generations" || imgBody["model_name"] != "kling-v2" || imgBody["n"] != float64(2) || imgBody["aspect_ratio"] != "16:9" {
+		t.Fatalf("Kling image create = %#v, body = %#v", imgCreate, imgBody)
+	}
+	imgPoll, err := imageAdapter.ParsePoll(context.Background(), PollContext{TaskID: "ki-1"}, []byte(`{"code":0,"message":"SUCCEED","data":{"task_id":"ki-1","task_status":"succeed","task_result":{"images":[{"index":0,"url":"https://cdn.example/kling.png"}]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imgPoll.Status != StatusSucceeded || imgPoll.Result == nil || len(imgPoll.Result.Images) != 1 || imgPoll.Result.Images[0].URL != "https://cdn.example/kling.png" {
+		t.Fatalf("Kling image poll result = %#v", imgPoll)
+	}
+}

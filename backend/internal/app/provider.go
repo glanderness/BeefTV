@@ -573,32 +573,7 @@ func allowedSystemModelKey(value, sku, authorizedUpstream string) bool {
 }
 
 func systemChannelIDFromBaseURL(baseURL string) string {
-	value := strings.TrimSpace(baseURL)
-	lowerValue := strings.ToLower(value)
-	for _, marker := range []string{"/api/ai/system/", "/api/"} {
-		index := strings.LastIndex(lowerValue, marker)
-		if index < 0 {
-			continue
-		}
-		id := strings.Trim(value[index+len(marker):], "/")
-		if queryIndex := strings.IndexAny(id, "?#"); queryIndex >= 0 {
-			id = id[:queryIndex]
-		}
-		if slash := strings.Index(id, "/"); slash >= 0 {
-			continue
-		}
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		switch strings.ToLower(id) {
-		case "v1", "v1beta", "v2", "v3", "plan", "ai":
-			continue
-		default:
-			return id
-		}
-	}
-	return ""
+	return modelcatalog.SystemChannelIDFromBaseURL(baseURL)
 }
 
 func openAIImageInputURL(media providerMedia) (string, error) {

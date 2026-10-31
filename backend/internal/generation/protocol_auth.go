@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -103,6 +105,21 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 	case "tc3":
 		secret := ProtocolCredentialField(config, auth.SecretField)
 		return SignProtocolTC3(req, credential, secret, auth)
+	case "jwt-hs256", "kling-jwt":
+		secret := ProtocolCredentialField(config, auth.SecretField)
+		if secret == "" {
+			if credential == "" {
+				return errors.New("JWT HS256 鉴权需要 Access Key 和 Secret Key（或已签名的 Bearer Token）")
+			}
+			header := defaultString(strings.TrimSpace(auth.Header), "Authorization")
+			prefix := auth.Prefix
+			if prefix == "" {
+				prefix = "Bearer "
+			}
+			req.Header.Set(header, prefix+credential)
+			return nil
+		}
+		return SignProtocolJWTHS256(req, credential, secret, auth)
 	default:
 		return fmt.Errorf("插件声明了尚未启用的鉴权驱动 %s", auth.Type)
 	}
@@ -184,6 +201,40 @@ func SignProtocolTC3(req *http.Request, secretID, secretKey string, auth protoco
 	secretSigning := ProtocolHMAC(secretService, "tc3_request")
 	signature := hex.EncodeToString(ProtocolHMAC(secretSigning, stringToSign))
 	req.Header.Set("Authorization", fmt.Sprintf("TC3-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s", secretID, scope, signedHeaders, signature))
+	return nil
+}
+
+func SignProtocolJWTHS256(req *http.Request, accessKey, secretKey string, auth protocol.ManifestAuth) error {
+	accessKey = strings.TrimSpace(accessKey)
+	secretKey = strings.TrimSpace(secretKey)
+	if accessKey == "" || secretKey == "" {
+		return errors.New("JWT HS256 鉴权需要 Access Key 和 Secret Key")
+	}
+	now := time.Now().UTC().Unix()
+	headerJSON, err := json.Marshal(map[string]string{
+		"alg": "HS256",
+		"typ": "JWT",
+	})
+	if err != nil {
+		return err
+	}
+	payloadJSON, err := json.Marshal(map[string]any{
+		"iss": accessKey,
+		"exp": now + 1800,
+		"nbf": now - 5,
+	})
+	if err != nil {
+		return err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(headerJSON) + "." + base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signature := base64.RawURLEncoding.EncodeToString(ProtocolHMAC([]byte(secretKey), signingInput))
+	token := signingInput + "." + signature
+	header := defaultString(strings.TrimSpace(auth.Header), "Authorization")
+	prefix := auth.Prefix
+	if prefix == "" {
+		prefix = "Bearer "
+	}
+	req.Header.Set(header, prefix+token)
 	return nil
 }
 

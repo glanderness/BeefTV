@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
 )
@@ -193,9 +192,6 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 		if err := runtime.Config.RequireWorkflow(input.Config.InterfaceType); err != nil {
 			return nil, err
 		}
-	}
-	if err := modelcatalog.ValidateWorkflowProviderPromptLength(taskInputFromCanvas(input)); err != nil {
-		return nil, err
 	}
 	if err := mapWorkflowConfigError(workflow.ValidateConfig(input.Mode, workflowConfig(input.Config))); err != nil {
 		return nil, err
