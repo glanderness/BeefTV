@@ -124,7 +124,11 @@ func (workflowRequestExecutor) Execute(ctx context.Context, req workflow.Request
 		httpReq.Header.Set("Content-Type", req.ContentType)
 	}
 	ApplyOutboundHeaders(httpReq, req.Headers)
-	data, mimeType, err := doBinary(httpReq)
+	execute := doBinary
+	if req.NoRedirect {
+		execute = generation.DoBinaryWithoutRedirect
+	}
+	data, mimeType, err := execute(httpReq)
 	if err != nil {
 		var httpErr providerHTTPError
 		if errors.As(err, &httpErr) {
@@ -228,7 +232,9 @@ func (p workflowVideoPoller) appPolicy(policy workflow.PollPolicy) videoPollPoli
 	if p.policy != nil {
 		appPolicy = *p.policy
 	}
-	if policy.InitialDelay > 0 {
+	if policy.SkipInitialDelay {
+		appPolicy.InitialDelay = 0
+	} else if policy.InitialDelay > 0 {
 		appPolicy.InitialDelay = policy.InitialDelay
 	}
 	if policy.Interval > 0 {

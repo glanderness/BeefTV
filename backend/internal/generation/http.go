@@ -31,7 +31,8 @@ type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
 type providerDownloadContext struct{}
 
-func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
+// DoBinaryWithoutRedirect 防止凭据与请求体被重定向到配置端点之外。
+func DoBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
 	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
 }
 
