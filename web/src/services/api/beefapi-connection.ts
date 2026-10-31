@@ -8,7 +8,7 @@ export function getBeefAPIConnectionEpoch() {
 /** 请求期间 BeefAPI 连接被重连或断开：丢弃旧连接的结果，不能当成新连接的数据。 */
 export class BeefAPIConnectionChangedError extends Error {
     constructor() {
-        super("BeefAPI 连接已变更，请重新读取");
+        super("BeefTV 连接已变更，请重新读取");
         this.name = "BeefAPIConnectionChangedError";
     }
 }

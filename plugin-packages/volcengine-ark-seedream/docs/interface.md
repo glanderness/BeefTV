@@ -1290,9 +1290,6 @@ JSON 中的图片和 SSE 中的已完成图片使用同一结果合同。SSE 按
                   "$ref": "vars.modern"
                 },
                 {
-                  "$ref": "vars.family45"
-                },
-                {
                   "$and": [
                     {
                       "$in": [

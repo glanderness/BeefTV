@@ -107,6 +107,9 @@ func TestSeedreamGroupAndLayerOptionsStayInOneRequest(t *testing.T) {
 	if body["response_format"] != "url" || body["stream"] != true || body["sequential_image_generation"] != "auto" || body["sequential_image_generation_options"].(map[string]any)["max_images"] != 3 {
 		t.Fatalf("body=%#v", body)
 	}
+	if _, exists := body["output_format"]; exists {
+		t.Fatalf("Seedream 4.5 must not send output_format: body=%#v", body)
+	}
 	input.Config.Model = "dola-seedream-5-0-flash-260915"
 	input.Config.Size = "2K"
 	input.Config.SeedreamMode = "layers"

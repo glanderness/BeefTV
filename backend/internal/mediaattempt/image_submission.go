@@ -388,7 +388,7 @@ func (s *Service) SendImageSubmissionWithMode(ctx context.Context, task model.Ta
 		return nil, "", imageRecoveryError{err}
 	}
 	if managedFrozenImage(task, wire) {
-		return nil, "", imageRecoveryError{errors.New("BeefAPI 图片任务只能按原编号查询")}
+		return nil, "", imageRecoveryError{errors.New("BeefTV 图片任务只能按原编号查询")}
 	}
 	deadline := time.Now().Add(RecoveryWait)
 	if expires := row.CreatedAt.Add(RecoveryLifetime); expires.Before(deadline) {

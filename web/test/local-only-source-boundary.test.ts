@@ -90,4 +90,15 @@ describe("local-only source boundary", () => {
 			.map((file) => relative(srcRoot, file));
 		expect(offenders).toEqual([]);
 	});
+
+	test("frontend source files do not display BeefAPI brand in user-facing string literals", () => {
+		const offenders: string[] = [];
+		for (const file of walkSourceFiles(srcRoot)) {
+			const literals = readFileSync(file, "utf8").match(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g) ?? [];
+			if (literals.some((lit) => /BeefAPI/.test(lit.replace(/\$\{[^}]*\}/g, "")) && !lit.includes("BeefAPIConnectionChangedError"))) {
+				offenders.push(relative(srcRoot, file));
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
 });
