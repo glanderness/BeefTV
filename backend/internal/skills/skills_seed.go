@@ -119,6 +119,7 @@ func normalizeBuiltinSkillFiles(raw map[string]string) (map[string][]byte, error
 		return nil, fmt.Errorf("辅助文件数量超过上限 %d", maxSkillPackageFiles-1)
 	}
 	files := make(map[string][]byte, len(raw))
+	var total int64
 	for rawPath, content := range raw {
 		cleanPath, err := normalizeSkillPath(rawPath)
 		if err != nil || cleanPath != rawPath || cleanPath == "SKILL.md" {
@@ -127,6 +128,10 @@ func normalizeBuiltinSkillFiles(raw map[string]string) (map[string][]byte, error
 		data := []byte(content)
 		if len(data) == 0 || len(data) > maxSkillFileBytes || !utf8.Valid(data) {
 			return nil, fmt.Errorf("辅助文件内容无效: %q", rawPath)
+		}
+		total += int64(len(data))
+		if total > maxSkillPackageBytes {
+			return nil, fmt.Errorf("辅助文件总大小超过上限 %d", maxSkillPackageBytes)
 		}
 		files[cleanPath] = data
 	}

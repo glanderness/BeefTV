@@ -202,6 +202,9 @@ func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata
 	for _, filePath := range sortedSkillPaths(files) {
 		content := files[filePath]
 		total += int64(len(content))
+		if total > maxSkillPackageBytes {
+			return skillPackageArchive{}, kernel.BadAuthRequest("技能包解压后不能超过 20MB")
+		}
 		hash.Write([]byte(filePath))
 		hash.Write([]byte{0})
 		hash.Write(content)
