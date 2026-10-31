@@ -88,6 +88,7 @@ export function createFakeModelServer(options = {}) {
   const requests = [];
   const hooks = {
     onRequest: options.onRequest || null,
+    onResponse: options.onResponse || null,
   };
 
   let callSeq = 0;
@@ -214,6 +215,41 @@ export function createFakeModelServer(options = {}) {
 
       if (hooks.onRequest) {
         await hooks.onRequest({ reqIndex, body, req });
+      }
+
+      if (hooks.onResponse) {
+        let pendingStatus = 200;
+        let pendingHeaders = {};
+        const pendingChunks = [];
+        let capturedRespText = '';
+        const origWriteHead = res.writeHead.bind(res);
+        const origWrite = res.write.bind(res);
+        const origEnd = res.end.bind(res);
+        res.writeHead = (statusCode, headers) => {
+          pendingStatus = statusCode;
+          pendingHeaders = headers || {};
+          return res;
+        };
+        res.write = (chunk) => {
+          if (chunk) {
+            pendingChunks.push(chunk);
+            capturedRespText += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+          }
+          return true;
+        };
+        res.end = (chunk, ...rest) => {
+          if (chunk && typeof chunk !== 'function') {
+            pendingChunks.push(chunk);
+            capturedRespText += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+          }
+          res.writeHead = origWriteHead;
+          res.write = origWrite;
+          res.end = origEnd;
+          hooks.onResponse({ reqIndex, body, respText: capturedRespText });
+          origWriteHead(pendingStatus, pendingHeaders);
+          for (const c of pendingChunks) origWrite(c);
+          return origEnd(...rest);
+        };
       }
 
       const messages = body.messages || [];
@@ -807,8 +843,12 @@ export function createFakeModelServer(options = {}) {
         '已完成都市短剧雨夜寻踪开场的 2 镜头分镜脚本、2 个首帧图节点与 2 个视频生成节点，完成了分镜行绑定与首帧到视频的参考连线，并提出了首帧图生成提议。',
       );
     } catch (error) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: String(error?.message || error) } }));
+      res.writeHead(error?.reason === 'aborted_budget' ? 429 : 500, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: { message: String(error?.message || error), code: error?.reason || 'fake_model_error' },
+        }),
+      );
     }
   });
 
