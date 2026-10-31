@@ -405,6 +405,9 @@ export type CanvasNodeMetadata = {
     sessionId?: string;
     videoEditOperation?: CanvasVideoEditOperation;
     videoDraftTaskId?: string;
+    returnLastFrame?: string;
+    lastFrameUrl?: string;
+    lastFrameStorageKey?: string;
     videoMergeSourceNodeIds?: string[];
     depthSourceNodeId?: string;
     arkPrivateAssetUpload?: string;

@@ -451,6 +451,7 @@ export function buildVideoGenerationMetadata(
               ? h3VideoOperation(config.model, { imageCount: context?.referenceImages.length || 0, videoCount: context?.referenceVideos.length || 0, audioCount: context?.referenceAudios.length || 0 }, metadata?.videoEditOperation)
               : resolveVideoEditOperation(node, context),
         videoDraftTaskId: draftTaskId,
+        returnLastFrame: metadata?.returnLastFrame ?? config?.videoReturnLastFrame,
         videoCameraMoveId: metadata?.videoCameraMoveId,
         videoCameraMovePrompt: metadata?.videoCameraMovePrompt,
         videoStartFrameNodeId: startFrame,

@@ -22,7 +22,7 @@ const sizeOptions = [
 type VideoSettingsPanelProps = {
     taskConstraints?: VideoSettingsConstraints;
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoDraft" | "videoArkPrivateAssetUpload", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoDraft" | "videoReturnLastFrame" | "videoArkPrivateAssetUpload", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -49,6 +49,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const draftSupported = Boolean(profile.draft?.supported);
     const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false);
+    const returnLastFrameSupported = Boolean(profile.returnLastFrame?.supported);
+    const returnLastFrame = returnLastFrameSupported && boolConfig(config.videoReturnLastFrame, profile.returnLastFrame?.default ?? false);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -105,7 +107,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {profile.durationSupported !== false ? <SettingGroup title="秒数" color={theme.node.muted}>
                     {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
                 </SettingGroup> : null}
-                {profile.generateAudio.supported || profile.watermark.supported || draftSupported ? (
+                {profile.generateAudio.supported || profile.watermark.supported || draftSupported || returnLastFrameSupported ? (
                     <SettingGroup title="输出" color={theme.node.muted}>
                         <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
                             {profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
@@ -114,6 +116,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 onConfigChange("videoDraft", String(checked));
                                 if (checked && !isVideoResolutionMatch(resolution, "480p")) onConfigChange("vquality", "480p");
                             }} /> : null}
+                            {returnLastFrameSupported ? <SwitchRow label="返回无损尾帧" checked={returnLastFrame} theme={theme} onChange={(checked) => onConfigChange("videoReturnLastFrame", String(checked))} /> : null}
                         </div>
                     </SettingGroup>
                 ) : null}
@@ -154,6 +157,8 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const draftSupported = Boolean(profile.draft?.supported);
     const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false);
+    const returnLastFrameSupported = Boolean(profile.returnLastFrame?.supported);
+    const returnLastFrame = returnLastFrameSupported && boolConfig(config.videoReturnLastFrame, profile.returnLastFrame?.default ?? false);
     const useArkPrivateAssets = boolConfig(config.videoArkPrivateAssetUpload, true);
     const isArkSeedance = isVolcengineArkVideoProtocol(resolveModelRequestConfig(config, config.model).interfaceType);
 
@@ -215,6 +220,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                             onConfigChange("videoDraft", String(checked));
                             if (checked && !isVideoResolutionMatch(resolution, "480p")) onConfigChange("vquality", "480p");
                         }} /> : null}
+                        {returnLastFrameSupported ? <SwitchRow label="返回无损尾帧" checked={returnLastFrame} theme={theme} onChange={(checked) => onConfigChange("videoReturnLastFrame", String(checked))} /> : null}
                     </div>
                 </SettingGroup>
                 {isArkSeedance ? (

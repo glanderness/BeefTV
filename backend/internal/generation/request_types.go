@@ -24,6 +24,7 @@ type SeedanceVideosRequest struct {
 	GenerateAudio         *bool    `json:"generate_audio,omitempty"`
 	Draft                 *bool    `json:"draft,omitempty"`
 	DraftTaskID           string   `json:"draft_task_id,omitempty"`
+	ReturnLastFrame       *bool    `json:"return_last_frame,omitempty"`
 	ImageURL              string   `json:"image_url,omitempty"`
 	ReferenceImageURLs    []string `json:"reference_image_urls,omitempty"`
 	ImageURLs             []string `json:"image_urls,omitempty"`
@@ -72,4 +73,5 @@ type SeedanceAgentPlanRequest struct {
 	GenerateAudio         *bool                    `json:"generate_audio,omitempty"`
 	Watermark             *bool                    `json:"watermark,omitempty"`
 	Draft                 *bool                    `json:"draft,omitempty"`
+	ReturnLastFrame       *bool                    `json:"return_last_frame,omitempty"`
 }

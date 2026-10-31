@@ -406,6 +406,53 @@ export function useCanvasGenerationOrchestration({
         [addedSkills, assets, connectionsRef, effectiveConfig, handleGenerateNode, message, nodesRef, pageUi, setConnections, setNodes],
     );
 
+    const createVideoEditNodeFromVideo = useCallback(
+        (node: CanvasNodeData, operation: "extend" | "inpaint") => {
+            if (!node.metadata?.content && !node.metadata?.storageKey) {
+                message.warning("视频节点为空，无法发起视频二创");
+                return;
+            }
+            const label = operation === "extend" ? "视频续写" : "视频局部修改";
+            const defaultPrompt = operation === "extend"
+                ? `基于 @视频1 自然顺延后续动作、镜头运动与环境氛围，保持人物与画风一致`
+                : `基于 @视频1 进行画面修改：保持原有构图与节奏，将主体调整为 `;
+            const childNode: CanvasNodeData = {
+                id: nanoid(),
+                type: CanvasNodeType.Video,
+                title: `${node.title || "视频"} · ${label}`.slice(0, 36),
+                position: { x: node.position.x + node.width + 96, y: node.position.y },
+                width: node.width,
+                height: node.height,
+                metadata: {
+                    status: "idle",
+                    prompt: defaultPrompt,
+                    composerContent: defaultPrompt,
+                    model: node.metadata?.model,
+                    size: "adaptive",
+                    seconds: node.metadata?.seconds,
+                    vquality: node.metadata?.vquality || "720p",
+                    generateAudio: node.metadata?.generateAudio ?? "true",
+                    watermark: node.metadata?.watermark ?? "false",
+                    draft: "false",
+                    videoEditOperation: operation,
+                    generatedFromNodeId: node.id,
+                },
+            };
+            const nextNodes = [...nodesRef.current, childNode];
+            const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: node.id, toNodeId: childNode.id }];
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            pageUi.getState().setHoveredNodeId(null);
+            pageUi.getState().setToolbarNodeId(null);
+            pageUi.getState().setSelectedNodeIds(new Set([childNode.id]));
+            pageUi.getState().setSelectedConnectionId(null);
+            pageUi.getState().setDialogNodeId(childNode.id);
+        },
+        [connectionsRef, message, nodesRef, pageUi, setConnections, setNodes],
+    );
+
     return {
         applyGenerationTaskResult,
         bindGenerationTask,
@@ -455,5 +502,6 @@ export function useCanvasGenerationOrchestration({
         retryImageBatchChildren,
         generateImageFromTextNode,
         generateFinalVideoFromDraftNode,
+        createVideoEditNodeFromVideo,
     };
 }

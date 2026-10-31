@@ -68,6 +68,9 @@ func ApplySeedanceBodyFields(body map[string]any, r GenerationRequest) {
 			body["resolution"] = "480p"
 		}
 	}
+	if returnLastFrame, ok := r.Extra["return_last_frame"].(bool); ok && returnLastFrame {
+		body["return_last_frame"] = true
+	}
 }
 
 // SeedanceOmniTaskType preserves explicit operation intent at the wire boundary.

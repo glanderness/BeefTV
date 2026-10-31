@@ -71,6 +71,9 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 			request.Resolution = "480p"
 			request.Extra["draft"] = true
 		}
+		if VideoRequestsReturnLastFrame(input) && VideoCapabilitySupportsReturnLastFrame(input) {
+			request.Extra["return_last_frame"] = true
+		}
 	}
 	request.Inputs = append(request.Inputs, request.Images...)
 	request.Inputs = append(request.Inputs, request.Videos...)

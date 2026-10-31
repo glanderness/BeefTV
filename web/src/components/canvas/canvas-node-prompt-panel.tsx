@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import { ArrowLeftRight, ArrowUp, Boxes, Camera, ChevronDown, FileText, ImagePlus, LoaderCircle, Maximize2, Music2, SlidersHorizontal, Video, WandSparkles, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
@@ -464,7 +465,32 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                     onConfigChange(node.id, videoConfigPatch(key, value));
                                 }}
                             >
-                                {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /></> : null}
+                                {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /></> : (requirements.input?.videoCount || 0) > 0 && (modelCapabilityConfigFor(config, config.model).video?.operations.includes("extend") || modelCapabilityConfigFor(config, config.model).video?.operations.includes("inpaint")) ? (
+                                    <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: theme.toolbar.border }}>
+                                        <div className="text-[var(--fs-tiny)] font-semibold" style={{ color: theme.node.muted }}>参考视频模式</div>
+                                        <div className="grid grid-cols-3 gap-1.5">
+                                            {([
+                                                { value: undefined, label: "参考生成" },
+                                                { value: "extend", label: "视频续写" },
+                                                { value: "inpaint", label: "视频局部修改" },
+                                            ] as const).map((item) => {
+                                                const active = (node.metadata?.videoEditOperation || undefined) === item.value;
+                                                return (
+                                                    <button
+                                                        key={item.label}
+                                                        type="button"
+                                                        className="h-8 cursor-pointer rounded-md px-1.5 text-[var(--fs-label)] font-medium transition-colors"
+                                                        style={{ background: active ? theme.toolbar.activeBg : theme.toolbar.itemHover, color: theme.node.text }}
+                                                        onMouseDown={(event) => event.stopPropagation()}
+                                                        onClick={() => onConfigChange(node.id, { videoEditOperation: item.value, size: item.value ? "adaptive" : node.metadata?.size })}
+                                                    >
+                                                        {item.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ) : null}
                             </CanvasVideoSettingsPopover>
                         </>
                     ) : mode === "audio" ? (
@@ -714,6 +740,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
     if (key === "videoDraft") return { draft: value };
+    if (key === "videoReturnLastFrame") return { returnLastFrame: value };
     if (key === "videoArkPrivateAssetUpload") return { arkPrivateAssetUpload: value };
     return { [key]: value };
 }

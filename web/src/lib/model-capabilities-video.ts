@@ -56,6 +56,7 @@ export type VideoCapabilityConfig = {
     generateAudio: { supported: boolean; default: boolean };
     watermark: { supported: boolean; default: boolean };
     draft?: { supported: boolean; default: boolean };
+    returnLastFrame?: { supported: boolean; default: boolean };
     operations: string[];
     defaultOperation: string;
     operationReferences?: Record<string, Partial<Pick<VideoCapabilityConfig["references"], "minImages" | "maxImages" | "maxVideos" | "maxAudios">>>;
@@ -261,6 +262,11 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
             video.operations.push("draft_to_final");
         }
     }
+    if ("returnLastFrame" in object) {
+        const returnLastFrame = catalogBooleanConfig(object.returnLastFrame);
+        if (!returnLastFrame) return null;
+        video.returnLastFrame = returnLastFrame;
+    }
     return video;
 }
 
@@ -407,6 +413,7 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
     }
     if (isSeedance2Family(protocol, model)) {
         if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
+        video.returnLastFrame = { supported: true, default: false };
         video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
         video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
         if (isSeedance25Model(model) && video.resolutions.some((value) => value.toLowerCase() === "480p")) {

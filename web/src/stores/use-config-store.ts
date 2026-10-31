@@ -424,7 +424,7 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
-    videoArkPrivateAssetUpload: string; videoDraft: string;
+    videoArkPrivateAssetUpload: string; videoDraft: string; videoReturnLastFrame?: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -476,7 +476,7 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
-    videoArkPrivateAssetUpload: "true", videoDraft: "false",
+    videoArkPrivateAssetUpload: "true", videoDraft: "false", videoReturnLastFrame: "false",
     systemPrompt: "",
     models: [],
     imageModels: [],

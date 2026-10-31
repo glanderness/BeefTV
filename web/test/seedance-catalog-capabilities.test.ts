@@ -353,6 +353,7 @@ test("Seedance 2.5 exposes draft and draft_to_final across managed and BYOK Ark 
         "ark::doubao-seedance-2-5-260628",
     ).video!;
     expect(profile.draft).toEqual({ supported: true, default: false });
+    expect(profile.returnLastFrame).toEqual({ supported: true, default: false });
     expect(profile.operations).toContain("draft_to_final");
     expect(profile.operations).toContain("inpaint");
     expect(profile.operations).toContain("extend");
@@ -365,10 +366,12 @@ test("Seedance 2.5 exposes draft and draft_to_final across managed and BYOK Ark 
         width: 100,
         height: 100,
         metadata: {
+            returnLastFrame: "true",
             videoEditOperation: "draft_to_final",
             videoDraftTaskId: "cgt-draft-123",
         },
     });
+    expect(metadata.returnLastFrame).toBe("true");
     expect(metadata.videoEditOperation).toBe("draft_to_final");
     expect(metadata.videoDraftTaskId).toBe("cgt-draft-123");
 });

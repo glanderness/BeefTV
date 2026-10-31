@@ -44,6 +44,7 @@ type CanvasNodeToolbarProps = {
     onUpscale: (node: CanvasNodeData) => void;
     onSuperResolve: (node: CanvasNodeData) => void;
     onDraftToFinal?: (node: CanvasNodeData, resolution: "720p" | "1080p") => void;
+    onVideoEditOperation?: (node: CanvasNodeData, operation: "extend" | "inpaint") => void;
     onAngle: (node: CanvasNodeData) => void;
     onLighting: (node: CanvasNodeData) => void;
     onPanorama: (node: CanvasNodeData) => void;
@@ -107,6 +108,7 @@ export function CanvasNodeToolbar({
     onUpscale,
     onSuperResolve,
     onDraftToFinal,
+    onVideoEditOperation,
     onAngle,
     onLighting,
     onPanorama,
@@ -418,6 +420,23 @@ export function CanvasNodeToolbar({
                             />
                         ) : null}
                         <NodeDockToolButton tool={{ id: "ai-upscale", label: "AI超分", icon: <UpscaleToolbarIcon />, group: "process", order: 1, onClick: () => onSuperResolve(node) }} showTooltip={false} />
+                        {(node.metadata?.content || node.metadata?.storageKey) ? (
+                            <NodeDockMenuButton
+                                menuId="video-ai-remix"
+                                label="视频二创"
+                                icon={null}
+                                tools={[
+                                    ...(onVideoEditOperation ? [
+                                        { id: "video-extend", label: "视频续写", icon: null, group: "process" as const, order: 1, onClick: () => onVideoEditOperation(node, "extend") },
+                                        { id: "video-inpaint", label: "视频局部修改", icon: null, group: "process" as const, order: 2, onClick: () => onVideoEditOperation(node, "inpaint") },
+                                    ] : []),
+                                    { id: "video-reverse-prompt", label: "反推提示词", icon: null, group: "process" as const, order: 3, onClick: () => onReversePrompt(node) },
+                                ]}
+                                openMenuId={openMenuId}
+                                onOpenChange={handleMenuOpenChange}
+                                placement="bottomLeft"
+                            />
+                        ) : null}
                         {videoProcessingTools.length ? <NodeDockMenuButton menuId="video-processing" label="视频处理" icon={null} tools={videoProcessingTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" /> : null}
                         {videoAudioTool ? <NodeDockToolButton tool={videoAudioTool} showTooltip={false} /> : null}
                         {videoSubtitleTool ? <NodeDockToolButton tool={videoSubtitleTool} showTooltip={false} /> : null}

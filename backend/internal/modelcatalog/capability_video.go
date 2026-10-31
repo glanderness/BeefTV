@@ -132,6 +132,7 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 			}
 		}
 		video.Operations = appendUniqueString(video.Operations, "reference_to_video")
+		video.ReturnLastFrame = VideoBooleanConfig{Supported: true, Default: false}
 		if isSeedance25Model(modelName) {
 			video.TaskTypeConstraints = true
 			if containsCapabilityString(video.Resolutions, "480p") {

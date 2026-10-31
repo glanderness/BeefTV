@@ -104,6 +104,7 @@ type Config struct {
 	VideoGenerateAudio       string                    `json:"videoGenerateAudio"`
 	VideoWatermark           string                    `json:"videoWatermark"`
 	VideoDraft               string                    `json:"videoDraft"`
+	VideoReturnLastFrame     string                    `json:"videoReturnLastFrame,omitempty"`
 	ArkPrivateAssetUpload    string                    `json:"videoArkPrivateAssetUpload"`
 	AudioVoice               string                    `json:"audioVoice"`
 	AudioFormat              string                    `json:"audioFormat"`
