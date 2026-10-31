@@ -121,6 +121,17 @@ func runManagedVideoTask(ctx context.Context, client *beefapi.MediaClient, input
 	if intent.Watermark != nil {
 		options["watermark"] = *intent.Watermark
 	}
+	if intent.DraftTaskID != "" {
+		operation = "draft_to_final"
+		options["draft_task_id"] = intent.DraftTaskID
+		delete(options, "seconds")
+		delete(options, "aspect_ratio")
+		delete(options, "generate_audio")
+		delete(options, "draft")
+		refs = nil
+	} else if intent.Draft != nil && *intent.Draft {
+		options["draft"] = true
+	}
 	if controls, ok := input.Metadata["videoH3Options"].(map[string]any); ok {
 		for _, key := range []string{"seed", "prompt_expansion_mode", "damage_level", "enable_safety_checker"} {
 			if value, exists := controls[key]; exists {

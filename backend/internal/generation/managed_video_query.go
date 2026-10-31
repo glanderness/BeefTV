@@ -65,5 +65,7 @@ func queryManagedLegacyVideoWithPolicy(ctx context.Context, input Input, id stri
 		return nil, task.Status, settlement, err
 	}
 	mime = NormalizedMediaMIMEType(mime, data)
-	return map[string]any{"mode": "video", "video": map[string]any{"dataUrl": DataURL(mime, data), "mimeType": mime}}, task.Status, settlement, nil
+	videoMap := map[string]any{"dataUrl": DataURL(mime, data), "mimeType": mime}
+	attachOptionalLastFrame(ctx, videoMap, task.LastFrameURL, client.AllowHTTPTest)
+	return map[string]any{"mode": "video", "video": videoMap}, task.Status, settlement, nil
 }

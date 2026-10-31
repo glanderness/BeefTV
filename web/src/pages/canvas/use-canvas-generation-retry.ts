@@ -358,6 +358,7 @@ export function useCanvasGenerationRetry({
                                           vquality: generationConfig.vquality,
                                           generateAudio: generationConfig.videoGenerateAudio,
                                           watermark: generationConfig.videoWatermark,
+                                          draft: generationConfig.videoDraft,
                                           ...videoGenerationMetadata,
                                           ...styleMetadata,
                                           ...skillMetadata,

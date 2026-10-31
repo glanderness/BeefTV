@@ -21,6 +21,7 @@ export function seedreamImageCapability(model: string): ImageCapabilityConfig | 
         size: { parameter: "size", values: modern ? ["1K", "1.5K", "2K"] : family === "lite" ? ["2K", "3K", "4K"] : family === "4.0" ? ["1K", "2K", "4K"] : ["2K", "4K"], default: "2K", allowCustom: true },
         quality: { supported: false, values: [], default: "auto" },
         transparentBackground: { supported: modern, default: false },
+        sequentialGeneration: { supported: !modern, default: false },
         responseFormat: { supported: true }, outputFormat: { supported: modern || family === "lite" }, maxOutputs: 15,
     };
 }

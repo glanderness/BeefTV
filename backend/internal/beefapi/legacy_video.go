@@ -14,10 +14,10 @@ var ErrReferencesNotUploaded = errors.New("参考素材尚未上传完成")
 var ErrInvalidVideoReferences = errors.New("已选择的关键帧不在本次参考素材中")
 
 type LegacyVideoInput struct {
-	Model, Prompt, Seconds, Resolution, AspectRatio string
-	GenerateAudio, Watermark                        *bool
-	References                                      []LegacyVideoReference
-	Metadata                                        map[string]any
+	Model, Prompt, Seconds, Resolution, AspectRatio, DraftTaskID string
+	GenerateAudio, Watermark, Draft, ReturnLastFrame             *bool
+	References                                                   []LegacyVideoReference
+	Metadata                                                     map[string]any
 }
 
 // This describes the user's requested content. Provider defaults, supported
@@ -39,6 +39,27 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 	}
 	if input.Watermark != nil {
 		metadata["watermark"] = *input.Watermark
+	}
+	if input.ReturnLastFrame != nil {
+		body["return_last_frame"] = *input.ReturnLastFrame
+		metadata["return_last_frame"] = *input.ReturnLastFrame
+	}
+	if draftID := strings.TrimSpace(input.DraftTaskID); draftID != "" {
+		body["draft_task_id"] = draftID
+		metadata["draft_task_id"] = draftID
+		metadata["operation"] = "draft_to_final"
+		delete(body, "prompt")
+		delete(body, "seconds")
+		delete(body, "aspect_ratio")
+		delete(metadata, "generate_audio")
+		if len(metadata) > 0 {
+			body["metadata"] = metadata
+		}
+		return body, nil
+	}
+	if input.Draft != nil && *input.Draft {
+		body["draft"] = true
+		metadata["draft"] = true
 	}
 	if operation, _ := input.Metadata["videoEditOperation"].(string); operation != "" {
 		metadata["operation"] = operation
@@ -180,7 +201,7 @@ func (c *MediaClient) CreateLegacyVideo(ctx context.Context, key string, input L
 type LegacyVideoTask struct {
 	ID                            string
 	State                         map[string]any
-	Status, URL                   string
+	Status, URL, LastFrameURL     string
 	UsageState, ReconcileDeadline *string
 	ContentPath                   string
 }
@@ -249,12 +270,16 @@ func (c *MediaClient) QueryLegacyVideo(ctx context.Context, id string) (LegacyVi
 	value, _ := state["status"].(string)
 	task.Status = strings.ToLower(value)
 	task.URL, _ = state["video_url"].(string)
+	task.LastFrameURL, _ = state["last_frame_url"].(string)
 	if metadata, ok := state["metadata"].(map[string]any); ok {
 		if status, _ := metadata["generation_status"].(string); status != "" {
 			task.Status = strings.ToLower(status)
 		}
 		if task.URL == "" {
 			task.URL, _ = metadata["url"].(string)
+		}
+		if task.LastFrameURL == "" {
+			task.LastFrameURL, _ = metadata["last_frame_url"].(string)
 		}
 	}
 	if task.URL == "" {

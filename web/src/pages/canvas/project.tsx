@@ -1791,8 +1791,8 @@ function InfiniteCanvasPage() {
                             onPortraitTexture={openPortraitTextureEditor}
                             onCrop={(node) => node.type === CanvasNodeType.Video ? openVideoCrop(node) : setCropNodeId(node.id)}
                             onSplit={(node, params) => void splitImageNode(node, params)}
-                            onUpscale={(node) => setUpscaleNodeId(node.id)}
-                            onSuperResolve={createUpscaleProcessingNode}
+                            onUpscale={(node) => setUpscaleNodeId(node.id)} onSuperResolve={createUpscaleProcessingNode}
+                            onDraftToFinal={generation.generateFinalVideoFromDraftNode} onVideoEditOperation={generation.createVideoEditNodeFromVideo}
                             onAngle={(node) => { setDialogNodeId(null); setAngleNodeId((current) => (current === node.id ? null : node.id)); }}
                             onLighting={(node) => { setDialogNodeId(null); setLightingNodeId((current) => (current === node.id ? null : node.id)); }}
                             onPanorama={openPanoramaConfig}

@@ -407,3 +407,49 @@ func TestSeedanceProFlashResolutionAndReferenceRolesTable(t *testing.T) {
 		})
 	}
 }
+
+func TestSeedance25DraftAndDraftToFinalCapabilityAndValidation(t *testing.T) {
+	video := DefaultModelCapabilityConfigForModel("volcengine-ark-video", "doubao-seedance-2-5-260628").Video
+	if !video.Draft.Supported || video.Draft.Default {
+		t.Fatalf("expected Seedance 2.5 draft supported=true default=false, got %+v", video.Draft)
+	}
+	if !slices.Contains(video.Operations, "draft_to_final") {
+		t.Fatalf("expected Seedance 2.5 operations to include draft_to_final, got %v", video.Operations)
+	}
+	if !slices.Contains(video.Operations, "inpaint") || !slices.Contains(video.Operations, "extend") {
+		t.Fatalf("expected domestic Seedance 2.5 on volcengine-ark-video to support inpaint/extend, got %v", video.Operations)
+	}
+
+	// Valid draft_to_final request
+	validInput := TaskInput{
+		Config: TaskConfig{
+			InterfaceType: "volcengine-ark-video",
+			Model:         "doubao-seedance-2-5-260628",
+			VQuality:      "1080p",
+		},
+		Metadata: map[string]any{
+			"videoEditOperation": "draft_to_final",
+			"videoDraftTaskId":   "cgt-draft-123",
+		},
+	}
+	if err := ValidateVideoTaskParameters(video, validInput); err != nil {
+		t.Fatalf("expected valid draft_to_final parameters, got %v", err)
+	}
+	if err := ValidateVideoReferenceMedia(video, validInput); err != nil {
+		t.Fatalf("expected valid draft_to_final reference media, got %v", err)
+	}
+
+	// Reject 480p for draft_to_final
+	invalid480 := validInput
+	invalid480.Config.VQuality = "480p"
+	if err := ValidateVideoTaskParameters(video, invalid480); err == nil {
+		t.Fatal("expected 480p draft_to_final to be rejected")
+	}
+
+	// Reject missing videoDraftTaskId
+	missingID := validInput
+	missingID.Metadata = map[string]any{"videoEditOperation": "draft_to_final"}
+	if err := ValidateVideoTaskParameters(video, missingID); err == nil {
+		t.Fatal("expected missing videoDraftTaskId to be rejected")
+	}
+}

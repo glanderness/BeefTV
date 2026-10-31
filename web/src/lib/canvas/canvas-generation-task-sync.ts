@@ -201,11 +201,22 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
                   height: videoSize.height,
                   position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 },
               };
+        const lastFrameSource = result.video?.lastFrame?.url || result.video?.lastFrame?.dataUrl || "";
+        const lastFrameKey = reuseGeneratedMediaStorageKey(result.video?.lastFrame?.storageKey, lastFrameSource) || result.video?.lastFrame?.storageKey;
         return {
             ...node,
             type: CanvasNodeType.Video,
             ...geometry,
-            metadata: applyGeneratedMediaResultMetadata(node, { ...videoMetadata(video), outputParameterWarning: seedanceOutputWarning(task.inputJson, video.width, video.height, task.model) }, { prompt, ...completedTaskMetadata(task) }),
+            metadata: applyGeneratedMediaResultMetadata(
+                node,
+                {
+                    ...videoMetadata(video),
+                    ...(lastFrameSource ? { lastFrameUrl: lastFrameSource } : {}),
+                    ...(lastFrameKey ? { lastFrameStorageKey: lastFrameKey } : {}),
+                    outputParameterWarning: seedanceOutputWarning(task.inputJson, video.width, video.height, task.model),
+                },
+                { prompt, ...completedTaskMetadata(task) },
+            ),
         };
     }
 
@@ -276,7 +287,7 @@ export async function applyMaterializedGenerationTaskResultToNodes(nodes: Canvas
         };
         result.images = images;
     } else if (asset.kind === "video") {
-        result.video = { dataUrl: asset.data.url, ...asset.data };
+        result.video = { ...result.video, dataUrl: asset.data.url, ...asset.data };
     } else if (asset.kind === "audio") {
         result.audio = { dataUrl: asset.data.url, ...asset.data };
     } else {

@@ -34,6 +34,24 @@ func managedLegacyVideoInput(input Input) beefapi.LegacyVideoInput {
 		value := ParseBool(input.Config.VideoWatermark, false)
 		request.Watermark = &value
 	}
+	if VideoRequestsReturnLastFrame(input) && (!serverOwned || input.VideoCapability.ReturnLastFrame.Supported) {
+		value := true
+		request.ReturnLastFrame = &value
+	}
+	if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+		request.DraftTaskID = draftTaskID
+		request.Draft = nil
+		request.Prompt = ""
+		request.Seconds = ""
+		request.AspectRatio = ""
+		request.GenerateAudio = nil
+		return request
+	}
+	if ParseBool(input.Config.VideoDraft, false) && (!serverOwned || input.VideoCapability.Draft.Supported) {
+		value := true
+		request.Draft = &value
+		request.Resolution = "480p"
+	}
 	for _, group := range BeefAPISeedanceMediaGroups(&input) {
 		for _, media := range group.items {
 			request.References = append(request.References, beefapi.LegacyVideoReference{ID: media.ID, Kind: group.kind, URL: firstNonEmpty(media.URL, media.DataURL)})

@@ -120,7 +120,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         const capabilityConfig = modelCapabilityConfigFor(config, model);
         if (!hasDeclaredModelCapability(config, model, "video")) return "";
         const profile = capabilityConfig.video!;
-        if (requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
+        if (requirements.videoOperation !== "draft_to_final" && requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
         if (!input) return "";
         const operation = resolveVideoOperation(input, requirements.videoOperation);
         const refs = videoReferencesForOperation(profile, requirements.videoOperation || "");
@@ -394,5 +394,6 @@ function videoOperationLabel(operation: string) {
     if (operation === "audio_to_video") return "音频生视频";
     if (operation === "reference_to_video") return "全模态参考";
     if (operation === "extend") return "视频续写";
+    if (operation === "draft_to_final") return "样片转成片";
     return "当前生成模式";
 }

@@ -424,7 +424,7 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
-    videoArkPrivateAssetUpload: string;
+    videoArkPrivateAssetUpload: string; videoDraft: string; videoReturnLastFrame?: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -476,7 +476,7 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
-    videoArkPrivateAssetUpload: "true",
+    videoArkPrivateAssetUpload: "true", videoDraft: "false", videoReturnLastFrame: "false",
     systemPrompt: "",
     models: [],
     imageModels: [],
@@ -808,7 +808,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             vquality: normalizeVideoResolution(config.vquality),
             videoGenerateAudio: normalizeVideoBoolean(config.videoGenerateAudio) ?? "true",
             videoWatermark: normalizeVideoBoolean(config.videoWatermark) ?? "false",
-            videoArkPrivateAssetUpload: normalizeVideoBoolean(config.videoArkPrivateAssetUpload) ?? "true",
+            videoArkPrivateAssetUpload: normalizeVideoBoolean(config.videoArkPrivateAssetUpload) ?? "true", videoDraft: normalizeVideoBoolean(config.videoDraft) ?? "false",
             transparentBackground: config.transparentBackground === "true" ? "true" : "false",
             canvasImageCount: config.canvasImageCount || defaultConfig.canvasImageCount,
             imageModels,
@@ -888,9 +888,9 @@ function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilit
     // The built-in BeefAPI Seedance contract supports the audio switch even
     // when an older saved profile advertised no control. Keep its default.
     const generateAudio = { ...video!.generateAudio, supported: true };
-    if (!legacy) return { ...current, video: { ...video!, generateAudio } };
+    if (!legacy) return { ...current, video: { ...video!, generateAudio, ...(defaults.video?.draft ? { draft: video!.draft ?? defaults.video.draft } : {}) } };
     const next = defaults.video!;
-    return { ...current, video: { ...video!, generateAudio, operations: next.operations, references: { ...refs!,
+    return { ...current, video: { ...video!, generateAudio, ...(next.draft ? { draft: video!.draft ?? next.draft } : {}), operations: next.operations, references: { ...refs!,
         maxImages: next.references.maxImages,
         maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
         maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,

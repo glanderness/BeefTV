@@ -259,6 +259,30 @@ func VideoCapabilitySupportsWatermark(input Input) bool {
 	return input.VideoCapability == nil || input.VideoCapability.Watermark.Supported
 }
 
+func VideoCapabilitySupportsDraft(input Input) bool {
+	if input.VideoCapability != nil {
+		return input.VideoCapability.Draft.Supported
+	}
+	return modelcatalog.IsSeedance25Model(input.Config.Model)
+}
+
+func VideoCapabilitySupportsReturnLastFrame(input Input) bool {
+	if input.VideoCapability != nil {
+		return input.VideoCapability.ReturnLastFrame.Supported
+	}
+	return modelcatalog.IsSeedance2Family(input.Config.InterfaceType, input.Config.Model)
+}
+
+func VideoRequestsReturnLastFrame(input Input) bool {
+	if ParseBool(input.Config.VideoReturnLastFrame, false) || ParseBool(metadataString(input.Metadata, "returnLastFrame"), false) {
+		return true
+	}
+	if b, ok := input.Metadata["returnLastFrame"].(bool); ok {
+		return b
+	}
+	return false
+}
+
 func NewAPIVideoPromptText(input Input) string {
 	return strings.TrimSpace(input.Prompt)
 }

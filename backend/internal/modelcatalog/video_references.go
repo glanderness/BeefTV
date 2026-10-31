@@ -6,6 +6,9 @@ import (
 )
 
 func videoTaskOperation(profile *VideoCapabilityConfig, input TaskInput) string {
+	if metadataString(input.Metadata, "videoDraftTaskId") != "" {
+		return "draft_to_final"
+	}
 	if operation := metadataString(input.Metadata, "videoEditOperation"); operation != "" {
 		return operation
 	}

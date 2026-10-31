@@ -10,6 +10,7 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/protocol"
 )
 
@@ -57,20 +58,25 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		}
 		status, videoURL := SeedancePollStatusAndURL(state)
 		if VideoTaskSucceeded(status) {
+			lastFrameURL := SeedanceLastFrameURL(state)
 			if videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
-				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
+				videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
+				attachOptionalLastFrame(ctx, videoMap, lastFrameURL, true)
+				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 			}
 			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("视频任务成功但未返回视频 URL，备用内容下载失败：%w", err)
 			}
 			mimeType = NormalizedMediaMIMEType(mimeType, data)
-			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
+			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
+			attachOptionalLastFrame(ctx, videoMap, lastFrameURL, true)
+			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
 			message := SeedanceErrorMessage(state)
@@ -99,6 +105,35 @@ func SeedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 		}
 	}
 	return status, videoURL
+}
+
+func SeedanceLastFrameURL(state map[string]interface{}) string {
+	if url := stringField(state, "last_frame_url"); url != "" {
+		return url
+	}
+	if metadata, ok := state["metadata"].(map[string]interface{}); ok {
+		if url := stringField(metadata, "last_frame_url"); url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
+func attachOptionalLastFrame(ctx context.Context, videoResult map[string]interface{}, lastFrameURL string, allowHTTP bool) {
+	link := strings.TrimSpace(lastFrameURL)
+	if link == "" {
+		return
+	}
+	downloadCtx := WithRequestKind(ctx, "download")
+	if !allowHTTP {
+		downloadCtx = outbound.WithPublicHTTPS(downloadCtx)
+	}
+	data, mime, err := GetExternalBinary(downloadCtx, link)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	mime = NormalizedMediaMIMEType(mime, data)
+	videoResult["lastFrame"] = map[string]interface{}{"dataUrl": DataURL(mime, data), "mimeType": mime}
 }
 
 // BeefAPIVideoRequestBody assembles only user intent. The BeefAPI adapter
@@ -148,6 +183,21 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			value := ParseBool(input.Config.VideoWatermark, false)
 			body.Watermark = &value
 		}
+		if VideoRequestsReturnLastFrame(input) && VideoCapabilitySupportsReturnLastFrame(input) {
+			value := true
+			body.ReturnLastFrame = &value
+		}
+		if metadataString(input.Metadata, "videoDraftTaskId") != "" {
+			body.Ratio = ""
+			body.Duration = 0
+			body.GenerateAudio = nil
+			body.Draft = nil
+			body.OmniReferenceTaskType = ""
+		} else if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+			value := true
+			body.Draft = &value
+			body.Resolution = "480p"
+		}
 		if err := PostJSON(ctx, input.Config, "/contents/generations/tasks", body, &created); err != nil {
 			return nil, err
 		}
@@ -189,7 +239,9 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 				return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 			}
 			mimeType = NormalizedMediaMIMEType(mimeType, data)
-			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
+			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
+			attachOptionalLastFrame(ctx, videoMap, stringField(content, "last_frame_url"), true)
+			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
 			return VideoPollOutcome{}, fmt.Errorf("%s视频生成失败", providerName)
@@ -199,6 +251,9 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 }
 
 func SeedanceContent(input Input) ([]map[string]interface{}, error) {
+	if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+		return []map[string]interface{}{{"type": "draft_task", "draft_task": map[string]interface{}{"id": draftTaskID}}}, nil
+	}
 	content := make([]map[string]interface{}, 0, 1+len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios))
 	text := SeedancePromptText(input)
 	if strings.TrimSpace(text) != "" {
@@ -236,6 +291,13 @@ func SeedanceContent(input Input) ([]map[string]interface{}, error) {
 }
 
 func SeedanceVideosRequestBody(input Input) (SeedanceVideosRequest, error) {
+	if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+		return SeedanceVideosRequest{
+			Model:       input.Config.Model,
+			DraftTaskID: draftTaskID,
+			Resolution:  NormalizeSeedanceResolution(input.Config.VQuality, input.Config.Model),
+		}, nil
+	}
 	if len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 && len(input.ReferenceAudios) > 0 && !videoCapabilityAllowsAudioOnly(input.VideoCapability) {
 		return SeedanceVideosRequest{}, errors.New("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")
 	}
@@ -253,6 +315,14 @@ func SeedanceVideosRequestBody(input Input) (SeedanceVideosRequest, error) {
 	if VideoCapabilitySupportsAudio(input) {
 		value := ParseBool(input.Config.VideoGenerateAudio, true)
 		body.GenerateAudio = &value
+	}
+	if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+		value := true
+		body.Draft = &value
+	}
+	if VideoRequestsReturnLastFrame(input) && VideoCapabilitySupportsReturnLastFrame(input) {
+		value := true
+		body.ReturnLastFrame = &value
 	}
 	imageURLs := make([]string, 0, len(input.ReferenceImages))
 	for _, image := range input.ReferenceImages {

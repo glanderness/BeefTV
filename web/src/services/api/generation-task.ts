@@ -24,7 +24,7 @@ export type BackendGenerationMode = "text" | "image" | "video" | "audio";
 export type BackendGenerationResult = {
     mode?: BackendGenerationMode;
     images?: Array<{ dataUrl: string; url?: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string }>;
-    video?: { dataUrl: string; url?: string; storageKey?: string; previewUrl?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string };
+    video?: { dataUrl: string; url?: string; storageKey?: string; previewUrl?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string; lastFrame?: { dataUrl: string; url?: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string } };
     audio?: { dataUrl: string; url?: string; storageKey?: string; durationMs?: number; bytes?: number; mimeType?: string; format?: string };
     text?: string;
     toolCalls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string }; thoughtSignature?: string }>;
@@ -454,9 +454,11 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
         seedreamWatermark: config.seedreamWatermark,
         count: config.count,
         videoSeconds: config.videoSeconds,
-        vquality: config.vquality,
+        vquality: config.videoDraft === "true" ? "480p" : config.vquality,
         videoGenerateAudio: config.videoGenerateAudio == null ? undefined : String(config.videoGenerateAudio),
         videoWatermark: config.videoWatermark == null ? undefined : String(config.videoWatermark),
+        videoDraft: config.videoDraft == null ? undefined : String(config.videoDraft),
+        videoReturnLastFrame: config.videoReturnLastFrame == null ? undefined : String(config.videoReturnLastFrame),
         videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload == null ? undefined : String(config.videoArkPrivateAssetUpload),
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
@@ -547,7 +549,7 @@ function logicalCapabilityOptions(config: AiConfig, mode: BackendGenerationMode)
         mode === "image"
             ? { size: config.size, quality: omittedImageQuality(config.quality, resolveModelRequestConfig(config, config.model)), transparentBackground: config.transparentBackground === "true", count: Number(config.count) }
             : mode === "video"
-              ? { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
+              ? { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.videoDraft === "true" ? "480p" : config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
               : mode === "audio"
                 ? { audioVoice: config.audioVoice, audioFormat: config.audioFormat, audioSpeed: Number(config.audioSpeed), audioPitch: Number(config.audioPitch), audioVolume: Number(config.audioVolume) }
                 : {};

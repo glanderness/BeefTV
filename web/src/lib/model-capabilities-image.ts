@@ -42,6 +42,7 @@ export type ImageCapabilityConfig = {
         default: string;
     };
     transparentBackground: { supported: boolean; default: boolean };
+    sequentialGeneration?: { supported: boolean; default: boolean };
     responseFormat: ImageResponseFormatConfig;
     outputFormat: { supported: boolean };
     maxOutputs: number;

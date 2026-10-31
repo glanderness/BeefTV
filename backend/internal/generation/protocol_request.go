@@ -63,6 +63,18 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 			request.Messages = append(request.Messages, protocol.Message{Role: role, Content: content})
 		}
 	}
+	if input.Mode == "video" {
+		if draftTaskID := metadataString(input.Metadata, "videoDraftTaskId"); draftTaskID != "" {
+			request.Extra["draft_task_id"] = draftTaskID
+			request.Operation = "draft_to_final"
+		} else if ParseBool(input.Config.VideoDraft, false) && VideoCapabilitySupportsDraft(input) {
+			request.Resolution = "480p"
+			request.Extra["draft"] = true
+		}
+		if VideoRequestsReturnLastFrame(input) && VideoCapabilitySupportsReturnLastFrame(input) {
+			request.Extra["return_last_frame"] = true
+		}
+	}
 	request.Inputs = append(request.Inputs, request.Images...)
 	request.Inputs = append(request.Inputs, request.Videos...)
 	request.Inputs = append(request.Inputs, request.Audios...)

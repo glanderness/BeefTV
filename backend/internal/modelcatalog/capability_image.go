@@ -25,7 +25,7 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		} else if family == "4.0" {
 			sizes = []string{"1K", "2K", "4K"}
 		}
-		return &ImageCapabilityConfig{References: ImageReferenceConfig{PromptMaxChars: 32000, MaxImages: refs, MaxImageBytes: 30 * 1024 * 1024}, Size: ImageSizeConfig{Parameter: "size", Values: sizes, Default: "2K", AllowCustom: true}, Quality: ImageQualityConfig{Default: "auto"}, TransparentBackground: VideoBooleanConfig{Supported: modern}, ResponseFormat: ImageResponseFormat{Supported: true}, OutputFormat: ParameterSupport{Supported: modern || family == "lite"}, MaxOutputs: 15}
+		return &ImageCapabilityConfig{References: ImageReferenceConfig{PromptMaxChars: 32000, MaxImages: refs, MaxImageBytes: 30 * 1024 * 1024}, Size: ImageSizeConfig{Parameter: "size", Values: sizes, Default: "2K", AllowCustom: true}, Quality: ImageQualityConfig{Default: "auto"}, TransparentBackground: VideoBooleanConfig{Supported: modern}, SequentialGeneration: VideoBooleanConfig{Supported: !modern}, ResponseFormat: ImageResponseFormat{Supported: true}, OutputFormat: ParameterSupport{Supported: modern || family == "lite"}, MaxOutputs: 15}
 	}
 	if contract, ok := providerpreset.BeefAPIImageContract(modelName); ok && protocol == "openai-image" {
 		values := make([]string, 0, len(contract.Sizes))

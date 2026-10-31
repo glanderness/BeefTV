@@ -82,6 +82,21 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     }
     const connectedInputs = withArkAssetReferenceInputs(buildNodeGenerationInputs(nodeId, nodes, connections), nodes, assets);
     const sourceNode = nodes.find((node) => node.id === nodeId);
+    if (sourceNode?.metadata?.videoEditOperation === "draft_to_final" || Boolean(sourceNode?.metadata?.videoDraftTaskId?.trim())) {
+        return {
+            prompt: "",
+            referenceImages: [],
+            referenceVideos: [],
+            referenceAudios: [],
+            characterReferences: [],
+            resolvedCharacterVersions: [],
+            resolvedCharacterVoices: [],
+            textCount: 0,
+            imageCount: 0,
+            videoCount: 0,
+            audioCount: 0,
+        };
+    }
     // 显式 @ 引用必须与提示词面板展示的资源集合一致；默认自动输入仍只取入边，
     // 避免已有图片在没有 @图片N 时被悄悄当作自身参考图。
     const mentionInputs = nodeGenerationMentionInputs(nodeId, nodes, connections, assets);

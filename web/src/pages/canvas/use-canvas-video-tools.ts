@@ -22,7 +22,7 @@ import { applyInlineVideoTrimMetadata, normalizeInlineVideoTrimRange, type Inlin
 import { generationErrorMessage } from "@/lib/generation-error";
 import { storeGeneratedVideo } from "@/services/api/video";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
+import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { getResourcePlaybackBlob, ownedResourceIdFromMediaRef, resourceStorageKey } from "@/services/api/resources";
@@ -358,8 +358,51 @@ export function useCanvasVideoTools({
         const timeMs = resolveVideoFramePresetTimeMs(preset, durationMs, currentMs);
         pageUi.getState().setHoveredNodeId(null);
         pageUi.getState().setToolbarNodeId(null);
+        if (preset === "last" && (node.metadata?.lastFrameStorageKey || node.metadata?.lastFrameUrl)) {
+            void (async () => {
+                const operation = beginMediaOperation();
+                if (!operation.isCurrent() || extractingVideoFramesNodeIdRef.current) return;
+                const progress = startUploadStatus("截取无损尾帧", "读取上游尾帧", 3);
+                extractingVideoFramesNodeIdRef.current = node.id;
+                setExtractingVideoFramesNodeId(node.id);
+                try {
+                    const resolved = await operation.wait(resolveImageUrl(node.metadata?.lastFrameStorageKey, node.metadata?.lastFrameUrl || ""));
+                    if (!resolved) throw new Error("上游尾帧读取失败");
+                    operation.run(() => progress.update("保存无损尾帧画面", 2));
+                    const uploaded = await operation.wait(uploadImage(resolved));
+                    const frameNodes = buildVideoFrameNodes(node, [{ timeMs, image: uploaded }], nodesRef.current);
+                    if (!frameNodes.length) throw new Error("无损尾帧节点创建失败");
+                    const links = frameNodes.map((frameNode) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: frameNode.id }));
+                    const nextNodes = [...nodesRef.current, ...frameNodes];
+                    const nextConnections = [...connectionsRef.current, ...links];
+                    const selection = new Set(frameNodes.map((frameNode) => frameNode.id));
+                    nodesRef.current = nextNodes;
+                    connectionsRef.current = nextConnections;
+                    selectedNodeIdsRef.current = selection;
+                    setNodes(nextNodes);
+                    setConnections(nextConnections);
+                    pageUi.getState().setSelectedNodeIds(selection);
+                    pageUi.getState().setSelectedConnectionId(null);
+                    await operation.wait(persistMediaNodes(frameNodes, links, {}));
+                    operation.run(() => progress.done("已提取上游无损尾帧并创建独立图片节点"));
+                    message.success("已提取上游无损尾帧，新图片节点已生成在视频右侧");
+                } catch {
+                    if (!operation.isCurrent()) return;
+                    extractingVideoFramesNodeIdRef.current = null;
+                    setExtractingVideoFramesNodeId(null);
+                    void extractVideoFrames(node, { timesMs: [timeMs] });
+                    return;
+                } finally {
+                    if (operation.isCurrent()) {
+                        extractingVideoFramesNodeIdRef.current = null;
+                        setExtractingVideoFramesNodeId(null);
+                    }
+                }
+            })();
+            return;
+        }
         void extractVideoFrames(node, { timesMs: [timeMs] });
-    }, [pageUi, projectId, extractVideoFrames, message]);
+    }, [beginMediaOperation, connectionsRef, extractVideoFrames, message, nodesRef, pageUi, persistMediaNodes, selectedNodeIdsRef, setConnections, setNodes, startUploadStatus]);
 
     const openInlineVideoTrim = useCallback((node: CanvasNodeData) => {
         if (!node.metadata?.content) {
