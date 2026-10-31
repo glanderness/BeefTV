@@ -328,13 +328,23 @@ func styleAssetSupportsModel(baseModels []string, generationModel string) bool {
 }
 
 func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) error {
+	if err := s.resolveImageCapability(input); err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.Config.ChannelID) == "" || input.ImageCapability == nil {
+		return nil
+	}
+	return validateImageTask(input.ImageCapability, *input)
+}
+
+func (s *Service) resolveImageCapability(input *canvasGenerationInput) error {
 	if input.Config.CredentialRef == managedBeefAPIRef {
 		body, err := s.ReadLocalModelConfig()
 		if err != nil {
 			return err
 		}
 		for _, item := range modelcatalog.ParseLocalChannelModels(body) {
-			if item.ChannelID != "beefapi" || item.Model != input.Config.Model || item.ImageCapabilitiesVersion == nil || *item.ImageCapabilitiesVersion == "" {
+			if item.ChannelID != "beefapi" || item.Model != input.Config.Model || item.ImageCapabilitiesVersion == nil || strings.TrimSpace(*item.ImageCapabilitiesVersion) == "" {
 				continue
 			}
 			raw, err := json.Marshal(item.CapabilityConfig)
@@ -348,6 +358,15 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 			input.Config.ImageCapabilitiesVersion = item.ImageCapabilitiesVersion
 			break
 		}
+	}
+	if input.Config.ImageCapabilitiesVersion != nil && strings.TrimSpace(*input.Config.ImageCapabilitiesVersion) != "" {
+		profile := input.Config.CapabilityConfig
+		if profile == nil || profile.Image == nil || !validVersionedImageCapability(profile.Image) {
+			input.ImageCapability = nil
+			return nil
+		}
+		input.ImageCapability = profile.Image
+		return nil
 	}
 	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
 	channelID := strings.TrimSpace(input.Config.ChannelID)
@@ -373,7 +392,23 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 	} else {
 		input.ImageCapability = fallback
 	}
-	return validateImageTask(input.ImageCapability, *input)
+	return nil
+}
+
+func validVersionedImageCapability(image *ImageCapabilityConfig) bool {
+	if image == nil {
+		return false
+	}
+	copied := *image
+	if modelcatalog.ValidateImageCapabilityConfig(&copied) == nil {
+		return true
+	}
+	raw, err := json.Marshal(image)
+	if err != nil {
+		return false
+	}
+	_, ok := modelcatalog.NormalizeCatalogImageCapability(raw)
+	return ok
 }
 
 func metadataStringValues(value any) map[string]string {

@@ -563,4 +563,70 @@ describe("public channel model catalog", () => {
         expect(selectableModelsByCapability(staleSnapshot, "image")).not.toContain("ghost-image");
     });
 
+    test("preserves server-declared versioned image and video capabilities and pricing on custom channels", async () => {
+        const image = defaultModelCapabilityConfig("openai-image", "custom-img-pro").image!;
+        image.references.maxImages = 6;
+        image.references.maxImageBytes = 0;
+        image.quality = { supported: true, values: ["ultra"], default: "ultra" };
+        image.maxOutputs = 4;
+        image.fixedOutputs = 4;
+
+        const video = defaultModelCapabilityConfig("newapi", "custom-vid-pro").video!;
+        video.references.maxImages = 8;
+        video.references.maxVideos = 2;
+        video.references.maxAudios = 1;
+        video.resolutions = ["1080p"];
+        video.defaultResolution = "1080p";
+        const pricing = {
+            currency: "CNY" as const,
+            mode: "tokens" as const,
+            rates: { "1080p": { output: 50, reference_video: 30 } },
+        };
+
+        axios.request = (async () => ({
+            data: {
+                data: [
+                    {
+                        id: "custom-img-pro",
+                        display_name: "Custom Image Pro",
+                        model_type: "image",
+                        supported_endpoint_types: ["image-generation"],
+                        image_capabilities: image,
+                        image_capabilities_version: "gw-img-v1",
+                    },
+                    {
+                        id: "custom-vid-pro",
+                        display_name: "Custom Video Pro",
+                        supported_endpoint_types: ["openai-video"],
+                        video_capabilities: video,
+                        video_capabilities_version: "gw-vid-v1",
+                        video_pricing: pricing,
+                    },
+                ],
+            },
+        })) as typeof axios.request;
+
+        const channel = createModelChannel({
+            id: "custom-gw",
+            name: "Custom Gateway",
+            baseUrl: "https://gateway.example.com/v1",
+            apiKey: "synthetic-test-key",
+            models: [],
+        });
+
+        const discovered = await fetchChannelModels(channel);
+        const applied = applyFetchedChannelModelCatalog(channel, discovered);
+        const normalized = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [applied] } }).config;
+
+        expect(selectableModelsByCapability(normalized, "image")).toContain("custom-gw::custom-img-pro");
+        expect(selectableModelsByCapability(normalized, "video")).toContain("custom-gw::custom-vid-pro");
+        expect(modelCapabilityConfigFor(normalized, "custom-gw::custom-img-pro").image).toEqual(image);
+        expect(modelCapabilityConfigFor(normalized, "custom-gw::custom-vid-pro").video).toEqual(video);
+
+        const profiles = normalized.channels[0]!.modelProfiles!;
+        expect(profiles.find((p) => p.model === "custom-img-pro")?.imageCapabilitiesVersion).toBe("gw-img-v1");
+        expect(profiles.find((p) => p.model === "custom-vid-pro")?.videoCapabilitiesVersion).toBe("gw-vid-v1");
+        expect(profiles.find((p) => p.model === "custom-vid-pro")?.videoPricing).toEqual(pricing);
+    });
+
 });

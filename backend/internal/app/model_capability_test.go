@@ -855,3 +855,71 @@ func TestValidateVideoTaskRequiresDeclaredMinimumImages(t *testing.T) {
 		t.Fatalf("validateVideoTask() error = %v", err)
 	}
 }
+
+func TestCustomChannelHonoursServerDeclaredImageAndVideoCapabilities(t *testing.T) {
+	imgVersion := "custom-gateway-img-v1"
+	imgProfile := DefaultImageCapabilityConfig("openai-image", "gpt-image-2")
+	imgProfile.References.PromptMaxChars = 0
+	imgProfile.References.MaxImages = 5
+	imgProfile.References.MaxImageBytes = 0
+	imgProfile.Quality = ImageQualityConfig{Supported: true, Values: []string{"ultra"}, Default: "ultra"}
+	imgProfile.MaxOutputs = 4
+	imgProfile.FixedOutputs = 4
+
+	imgInput := canvasGenerationInput{
+		Mode:   "image",
+		Prompt: "custom image",
+		Config: providerConfig{
+			ChannelID:                "custom-gateway",
+			BaseURL:                  "https://gateway.example.com/v1",
+			APIKey:                   "custom-key",
+			InterfaceType:            "openai-image",
+			Model:                    "gpt-image-2",
+			Size:                     "1024x1024",
+			Quality:                  "ultra",
+			Count:                    "4",
+			CapabilityConfig:         &ModelCapabilityConfig{Version: 1, Image: imgProfile},
+			ImageCapabilitiesVersion: &imgVersion,
+		},
+		ReferenceImages: make([]providerMedia, 5),
+	}
+	if err := (&Service{}).validateResolvedImageCapability(&imgInput); err != nil {
+		t.Fatalf("custom channel versioned image capability rejected: %v", err)
+	}
+	if imgInput.ImageCapability == nil || imgInput.ImageCapability.References.MaxImages != 5 || imgInput.ImageCapability.Quality.Default != "ultra" || imgInput.ImageCapability.FixedOutputs != 4 {
+		t.Fatalf("custom channel image capability = %#v", imgInput.ImageCapability)
+	}
+
+	videoVersion := "custom-gateway-vid-v1"
+	videoProfile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0")
+	videoProfile.Video.References.MaxImages = 11
+	videoProfile.Video.GenerateAudio.Supported = false
+	videoProfile.Video.Resolutions = []string{"1080p"}
+	videoProfile.Video.DefaultResolution = "1080p"
+
+	videoInput := canvasGenerationInput{
+		Mode:   "video",
+		Prompt: "custom video",
+		Config: providerConfig{
+			ChannelID:                "custom-gateway",
+			BaseURL:                  "https://gateway.example.com/v1",
+			APIKey:                   "custom-key",
+			InterfaceType:            "newapi",
+			Model:                    "seedance-2.0",
+			VideoSeconds:             "5",
+			Size:                     "16:9",
+			VQuality:                 "720p",
+			CapabilityConfig:         videoProfile,
+			VideoCapabilitiesVersion: &videoVersion,
+		},
+	}
+	for i := 0; i < 11; i++ {
+		videoInput.ReferenceImages = append(videoInput.ReferenceImages, providerMedia{URL: "asset://test", Width: 640, Height: 640, Bytes: 10})
+	}
+	if err := (&Service{}).validateResolvedVideoCapability(&videoInput); err != nil {
+		t.Fatalf("custom channel versioned video capability rejected: %v", err)
+	}
+	if videoInput.VideoCapability == nil || videoInput.VideoCapability.References.MaxImages != 11 || videoInput.VideoCapability.GenerateAudio.Supported || videoInput.Config.VQuality != "1080p" {
+		t.Fatalf("custom channel video capability = %#v, vquality = %q", videoInput.VideoCapability, videoInput.Config.VQuality)
+	}
+}

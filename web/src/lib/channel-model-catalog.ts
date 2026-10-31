@@ -154,12 +154,13 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         const existing = existingByModel.get(item.id);
         const managed = channel.id === "beefapi" || channel.credentialRef === "beefapi-enterprise";
         const mapped = catalogModelMapping(item, { providerNameFallback: isBeefAPICatalogChannel(channel) });
-        const catalogVideo = isBeefAPICatalogChannel(channel) ? versionedVideoCapability(item.videoCapabilities, item.videoCapabilitiesVersion) : null;
+        const catalogVideo = versionedVideoCapability(item.videoCapabilities, item.videoCapabilitiesVersion);
+        const catalogImage = item.imageCapabilitiesVersion ? sanitizeServerImageCapability(item.imageCapabilities) : null;
         const inferredProtocol = catalogVideo && managed ? "openai-videos" : mapped.protocol || (isBeefAPICatalogChannel(channel) ? protocolForBeefAPICatalog(item.supportedEndpointTypes) : protocolForModelCatalog(item.supportedEndpointTypes));
-        // BeefAPI may advertise generic OpenAI endpoints without modelType.
-        // Its explicit video contract still identifies the profile and its quote.
-        const inferredCapability = (catalogVideo ? "video" : undefined) || mapped.capability || item.modelType || modelProtocolCapability(inferredProtocol);
-        const sourcedImage = isBeefAPICatalogChannel(channel) && inferredCapability === "image" && item.imageCapabilitiesVersion ? sanitizeServerImageCapability(item.imageCapabilities) : null;
+        // BeefAPI and compatible gateways may advertise generic OpenAI endpoints without modelType.
+        // An explicit versioned contract still identifies the profile and its quote.
+        const inferredCapability = (catalogVideo ? "video" : catalogImage ? "image" : undefined) || mapped.capability || item.modelType || modelProtocolCapability(inferredProtocol);
+        const sourcedImage = inferredCapability === "image" ? catalogImage : null;
         if (mapped.skipGeneration) {
             continue;
         }
@@ -168,19 +169,19 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
                 next.push({ ...existing, ...(item.displayName ? { displayName: item.displayName } : {}), videoPricing: sanitizeVideoPriceQuote(item.videoPricing) });
                 continue;
             }
-            if (!sourcedImage && isBeefAPICatalogChannel(channel) && inferredCapability === "image" && existing.imageCapabilitiesVersion && sanitizeServerImageCapability(existing.capabilityConfig?.image)) {
+            if (!sourcedImage && (inferredCapability || existing.capability) === "image" && existing.imageCapabilitiesVersion && sanitizeServerImageCapability(existing.capabilityConfig?.image)) {
                 next.push({ ...existing, ...(item.displayName ? { displayName: item.displayName } : {}) });
                 continue;
             }
             if (sourcedImage) {
-                next.push({ ...existing, model: item.id, capability: "image", protocol: inferredProtocol || "openai-image", ...(item.displayName ? { displayName: item.displayName } : {}), capabilityConfig: { version: 1, image: sourcedImage }, imageCapabilitiesVersion: item.imageCapabilitiesVersion });
+                next.push({ ...existing, model: item.id, capability: "image", protocol: inferredProtocol || existing.protocol || "openai-image", ...(item.displayName ? { displayName: item.displayName } : {}), capabilityConfig: { version: 1, image: sourcedImage }, imageCapabilitiesVersion: item.imageCapabilitiesVersion });
                 continue;
             }
             const protocol = inferredProtocol || existing.protocol;
             const capability = inferredCapability || existing.capability;
             const capabilityChanged = capability !== existing.capability;
             const sourcedVideo = capability === "video" ? catalogVideo : null;
-            const keepSourced = isBeefAPICatalogChannel(channel) && capability === "video" && Boolean(versionedVideoCapability(existing.capabilityConfig?.video, existing.videoCapabilitiesVersion)) && !sourcedVideo;
+            const keepSourced = capability === "video" && Boolean(versionedVideoCapability(existing.capabilityConfig?.video, existing.videoCapabilitiesVersion)) && !sourcedVideo;
             const missingManagedVideo = managed && capability === "video" && !sourcedVideo && !keepSourced;
             const patchCapabilityConfig = !missingManagedVideo && !keepSourced && !sourcedVideo && hasCatalogCapabilityConfig(item) && (capability === "image" || capability === "video");
             const capabilityConfig = sourcedVideo
