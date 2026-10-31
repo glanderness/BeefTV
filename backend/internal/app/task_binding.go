@@ -3,12 +3,13 @@ package app
 import (
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	localtask "infinite-canvas/backend/internal/task"
+
+	"gorm.io/gorm"
 )
 
 const canvasBindRecoveryBatch = 64
@@ -33,51 +34,63 @@ func (s *Service) workspaceOperations() *operations.Registry {
 }
 
 func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
-	if s == nil || strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.UserID) == "" {
+	if s == nil || strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.UserID) == "" || task.Status != model.TaskStatusSucceeded {
 		return nil
 	}
-	if task.Status != model.TaskStatusSucceeded {
-		return nil
-	}
-	if err := s.prepareSeedreamOutputNodes(task); err != nil {
+	intents := s.CanvasBindingIntents(task)
+	canvasIDs, missing, err := localtask.TaskCanvasState(task, intents, s.isOwnedBusinessProject(task.UserID), s.canvasExists(task.UserID))
+	if err != nil {
 		return err
 	}
-	registry := s.workspaceOperations()
-	intents := s.CanvasBindingIntents(task)
 	var last error
-	if registry != nil {
-		pass := localtask.NewCanvasBindPass(task.RecoveryOutcome)
-		for _, target := range canvasBindTargets(task, intents) {
-			if pass.Skip(target.nodeID, target.outputIndex, s.canvasRevision(task)) {
-				continue
-			}
-			if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
-				if reason, details := canvasBindRefusal(err); pass.Refused(target.nodeID, target.outputIndex, reason, details) || skippableCanvasBindError(err) {
-					continue
-				}
-				last = err
-				continue
-			}
-			pass.Bound(target.nodeID, target.outputIndex)
+	if missing {
+		if localtask.HasCanvasBindMarker(task.RecoveryOutcome) {
+			last = s.repo.UpdateCanvasBindRecovery(task.UserID, task.ID, nil)
 		}
-		if marker, changed, err := pass.Finish(); err != nil {
+	} else {
+		if len(canvasIDs) > 0 {
+			if err := s.prepareSeedreamOutputNodes(task); err != nil {
+				return err
+			}
+		}
+		if err := s.RegisterTaskOutputFromTask(task); err != nil {
 			last = err
-		} else if changed {
-			if err := s.repo.UpdateCanvasBindRecovery(task.UserID, task.ID, marker); err != nil {
-				last = err
-			}
+		} else if localtask.HasWorkflowOutputIntent(task.InputJSON) {
+			_ = s.generationDeliverer().Deliver(task)
+			intents = s.CanvasBindingIntents(task)
 		}
-		for _, target := range messageBindTargets(task, intents) {
-			if err := s.executeMessageTaskAttach(registry, task, target.conversationID, target.messageID, target.outputIndex); err != nil {
-				if skippableCanvasBindError(err) {
-					continue
+		if len(canvasIDs) > 0 {
+			if registry := s.workspaceOperations(); registry != nil {
+				pass := localtask.NewCanvasBindPass(task.RecoveryOutcome)
+				for _, target := range localtask.CanvasBindTargets(task, intents) {
+					if pass.Skip(target.NodeID, target.OutputIndex, s.canvasRevision(task)) {
+						continue
+					}
+					if err := s.executeCanvasTaskBind(registry, task, target.NodeID, target.OutputIndex); err != nil {
+						if reason, details := canvasBindRefusal(err); pass.Refused(target.NodeID, target.OutputIndex, reason, details) || skippableCanvasBindError(err) {
+							continue
+						}
+						last = err
+						continue
+					}
+					pass.Bound(target.NodeID, target.OutputIndex)
 				}
-				last = err
+				if marker, changed, err := pass.Finish(); err != nil {
+					last = err
+				} else if changed {
+					if err := s.repo.UpdateCanvasBindRecovery(task.UserID, task.ID, marker); err != nil {
+						last = err
+					}
+				}
 			}
 		}
 	}
-	if err := s.RegisterTaskOutputFromTask(task); err != nil {
-		last = err
+	if registry := s.workspaceOperations(); registry != nil {
+		for _, target := range localtask.MessageBindTargets(task, intents) {
+			if err := s.executeMessageTaskAttach(registry, task, target.ConversationID, target.MessageID, target.OutputIndex); err != nil {
+				last = err
+			}
+		}
 	}
 	if projectID := strings.TrimSpace(task.ProjectID); projectID != "" {
 		s.reconcileCharacterTurnaroundTasks(task.UserID, projectID)
@@ -183,72 +196,6 @@ func (s *Service) executeCanvasTaskBind(registry *operations.Registry, task mode
 	return err
 }
 
-type canvasBindTarget struct {
-	nodeID      string
-	outputIndex int
-}
-
-type messageBindTarget struct {
-	conversationID string
-	messageID      string
-	outputIndex    int
-}
-
-func canvasBindTargets(task model.Task, intents []localtask.CanvasBindingIntent) []canvasBindTarget {
-	seen := map[string]bool{}
-	targets := make([]canvasBindTarget, 0, len(intents)+1)
-	add := func(nodeID string, outputIndex int) {
-		nodeID = strings.TrimSpace(nodeID)
-		if nodeID == "" {
-			return
-		}
-		key := nodeID + ":" + strconv.Itoa(outputIndex)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		targets = append(targets, canvasBindTarget{nodeID: nodeID, outputIndex: outputIndex})
-	}
-	for _, intent := range intents {
-		if intent.TargetBinding == nil {
-			continue
-		}
-		add(localtask.CanvasBindNodeID(task, intent.OutputIndex, intent.TargetBinding.NodeID), intent.OutputIndex)
-	}
-	switch strings.TrimSpace(task.Type) {
-	case "canvas_text", "text_replay":
-		add(localtask.TargetBindingFromInput(task.InputJSON).NodeID, 0)
-	}
-	return targets
-}
-
-func messageBindTargets(task model.Task, intents []localtask.CanvasBindingIntent) []messageBindTarget {
-	seen := map[string]bool{}
-	targets := make([]messageBindTarget, 0, len(intents)+1)
-	add := func(conversationID, messageID string, outputIndex int) {
-		conversationID = strings.TrimSpace(conversationID)
-		messageID = strings.TrimSpace(messageID)
-		if conversationID == "" || messageID == "" {
-			return
-		}
-		key := conversationID + ":" + messageID + ":" + strconv.Itoa(outputIndex)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		targets = append(targets, messageBindTarget{conversationID: conversationID, messageID: messageID, outputIndex: outputIndex})
-	}
-	for _, intent := range intents {
-		if intent.TargetBinding == nil {
-			continue
-		}
-		add(intent.TargetBinding.ConversationID, intent.TargetBinding.MessageID, intent.OutputIndex)
-	}
-	target := localtask.TargetBindingFromInput(task.InputJSON)
-	add(target.ConversationID, target.MessageID, 0)
-	return targets
-}
-
 func skippableCanvasBindError(err error) bool {
 	if err == nil {
 		return true
@@ -280,6 +227,32 @@ func (s *Service) canvasRevision(task model.Task) func() (int64, error) {
 	return func() (int64, error) {
 		current, err := s.repo.CanvasProjectMetadata(task.UserID, task.ProjectID)
 		return current.Revision, err
+	}
+}
+
+func (s *Service) canvasExists(userID string) func(string) (bool, error) {
+	return func(canvasID string) (bool, error) {
+		_, err := s.repo.CanvasProjectMetadata(userID, canvasID)
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) || bindInfrastructureUnavailable(err) {
+			return false, nil
+		}
+		return false, err
+	}
+}
+
+func (s *Service) isOwnedBusinessProject(userID string) func(string) (bool, error) {
+	return func(projectID string) (bool, error) {
+		_, err := s.repo.ProjectForUser(userID, projectID)
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) || bindInfrastructureUnavailable(err) {
+			return false, nil
+		}
+		return false, err
 	}
 }
 

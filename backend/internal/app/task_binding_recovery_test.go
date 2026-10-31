@@ -2,9 +2,11 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	localtask "infinite-canvas/backend/internal/task"
@@ -578,4 +580,418 @@ func TestCanvasBindRecoveryMarkerDoesNotTouchUpdatedAt(t *testing.T) {
 	if !after.UpdatedAt.Equal(stamp) {
 		t.Fatalf("scanner marker changed updated_at: %v -> %v", stamp, after.UpdatedAt)
 	}
+}
+
+func restoreDeletedTestCanvas(t *testing.T, svc *Service, raw []byte) {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["revision"] = 0
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpsertUserCanvasProject("local", encoded); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCanvasBindRecoverySkipsDeletedCanvasAndResumesOnRestore(t *testing.T) {
+	t.Run("normal text task with marker, media conclusion, and message attach", func(t *testing.T) {
+		svc, canvasID, revision := newAssistantTurnService(t)
+		db := svc.Database()
+		now := time.Now()
+		convPayload, err := json.Marshal(map[string]any{
+			"id":        "conv-deleted-canvas",
+			"title":     "画布删除对话",
+			"updatedAt": "2026-10-02T00:00:00.000Z",
+			"messages": []any{
+				map[string]any{"id": "user-1", "role": "user", "content": "生成文案", "mode": "text"},
+				map[string]any{
+					"id": "msg-deleted-canvas", "role": "assistant", "mode": "text", "content": "", "status": "pending",
+					"taskIds": []any{"bind-deleted-canvas-text"},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		conversations := conversation.New(conversation.NewStore(svc.repo))
+		if _, err := conversations.Put("local", "conv-deleted-canvas", 0, convPayload); err != nil {
+			t.Fatal(err)
+		}
+
+		// Seed with a conflicting node taskId first so recovery writes a canvas_bind: refusal marker.
+		task := seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-deleted-canvas-text", "node-text", "other-task")
+		if err := svc.recoverCanvasTaskBindings(task); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := svc.repo.Task(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := localtask.DecodeCanvasBindRecovery(stored.RecoveryOutcome); !ok {
+			t.Fatalf("expected refusal marker before canvas delete, got %v", stored.RecoveryOutcome)
+		}
+
+		// Attach a conversation/message target before deleting the canvas so the deleted-canvas pass exercises conversation.message.attach.
+		stored.InputJSON = `{"mode":"text","metadata":{"source":"canvas","nodeId":"node-text","conversationId":"conv-deleted-canvas","messageId":"msg-deleted-canvas"}}`
+		if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("input_json", stored.InputJSON).Error; err != nil {
+			t.Fatal(err)
+		}
+
+		// Prepare the restored canvas document with the matching taskId before deleting the canvas.
+		setCanvasBindTestNodeTaskID(t, svc, canvasID, "node-text", task.ID)
+		savedCanvas, err := svc.UserCanvasProject("local", canvasID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.CanvasService().DeleteUserCanvasProject("local", canvasID); err != nil {
+			t.Fatal(err)
+		}
+
+		beforeBinds := canvasBindTraceCount(t, svc)
+		if err := svc.recoverCanvasTaskBindings(*stored); err != nil {
+			t.Fatalf("deleted canvas returned scan error: %v", err)
+		}
+		if got := canvasBindTraceCount(t, svc); got != beforeBinds {
+			t.Fatalf("deleted canvas called canvas.bind: before=%d after=%d", beforeBinds, got)
+		}
+		cleared, err := svc.repo.Task(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cleared.RecoveryOutcome != nil {
+			t.Fatalf("deleted canvas did not clear stale canvas_bind marker: %v", *cleared.RecoveryOutcome)
+		}
+		convRow, err := conversations.Get("local", "conv-deleted-canvas")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var convDoc map[string]any
+		if err := json.Unmarshal(convRow.Document, &convDoc); err != nil {
+			t.Fatal(err)
+		}
+		messages, _ := convDoc["messages"].([]any)
+		msg, _ := messages[1].(map[string]any)
+		if msg["status"] != "done" || msg["content"] != "节点重建后绑定" {
+			t.Fatalf("deleted canvas skipped conversation.message.attach: %#v", msg)
+		}
+
+		// Media recovery conclusions (no_result / unrecoverable) must be preserved on a deleted canvas without touching updated_at.
+		for _, conclusion := range []string{"no_result", "unrecoverable"} {
+			stamp := now.Add(-2 * time.Hour).Round(time.Second)
+			if err := db.Model(&model.Task{}).Where("id = ?", task.ID).UpdateColumns(map[string]any{"recovery_outcome": conclusion, "updated_at": stamp}).Error; err != nil {
+				t.Fatal(err)
+			}
+			withConclusion, err := svc.repo.Task(task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.recoverCanvasTaskBindings(*withConclusion); err != nil {
+				t.Fatalf("deleted canvas with %s returned error: %v", conclusion, err)
+			}
+			afterConclusion, err := svc.repo.Task(task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterConclusion.RecoveryOutcome == nil || *afterConclusion.RecoveryOutcome != conclusion {
+				t.Fatalf("deleted canvas overwrote %s conclusion: %v", conclusion, afterConclusion.RecoveryOutcome)
+			}
+			if !afterConclusion.UpdatedAt.Equal(stamp) {
+				t.Fatalf("deleted canvas with %s touched updated_at: %v -> %v", conclusion, stamp, afterConclusion.UpdatedAt)
+			}
+		}
+		if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("recovery_outcome", nil).Error; err != nil {
+			t.Fatal(err)
+		}
+		readyTask, err := svc.repo.Task(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		restoreDeletedTestCanvas(t, svc, savedCanvas)
+		if err := svc.recoverCanvasTaskBindings(*readyTask); err != nil {
+			t.Fatalf("restored canvas failed to bind: %v", err)
+		}
+		if got := canvasBindTraceCount(t, svc); got != beforeBinds+1 {
+			t.Fatalf("restored canvas bind count = %d, want %d", got, beforeBinds+1)
+		}
+		meta := canvasBindTestNodeMetadata(t, svc, canvasID, "node-text")
+		if meta["content"] != "节点重建后绑定" {
+			t.Fatalf("restored canvas node content = %#v", meta["content"])
+		}
+	})
+
+	t.Run("seedream multi-output task", func(t *testing.T) {
+		svc, canvasID, revision := newAssistantTurnService(t)
+		db := svc.Database()
+		now := time.Now()
+		task := model.Task{
+			ID: "bind-deleted-canvas-seedream", UserID: "local", ProjectID: canvasID,
+			Type: "canvas_image", Model: "channel::dola-seedream-5-0-pro-260628",
+			Status: model.TaskStatusSucceeded, InputJSON: `{"metadata":{"nodeId":"root"}}`,
+			CreatedAt: now, UpdatedAt: now, CompletedAt: &now,
+		}
+		images := []map[string]any{}
+		for i := 0; i < 3; i++ {
+			id := fmt.Sprintf("deleted-seedream-res-%d", i)
+			if err := db.Create(&model.Resource{
+				ID: id, UserID: "local", Kind: "image", MimeType: "image/png",
+				Status: model.ResourceStatusReady, Width: 512, Height: 512, Size: 100,
+				CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			images = append(images, map[string]any{"resourceId": id, "storageKey": "resource:" + id})
+		}
+		resultBytes, _ := json.Marshal(map[string]any{"images": images})
+		task.ResultJSON = string(resultBytes)
+		if err := db.Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.generationDeliverer().Deliver(task); err != nil {
+			t.Fatal(err)
+		}
+		savedCanvas, err := json.Marshal(map[string]any{
+			"id": canvasID, "title": "Seedream 删除恢复", "revision": revision,
+			"nodes": []any{map[string]any{
+				"id": "root", "type": "image", "position": map[string]any{"x": 0, "y": 0},
+				"metadata": map[string]any{"taskId": task.ID},
+			}},
+			"connections": []any{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.UpsertUserCanvasProject("local", savedCanvas); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.CanvasService().DeleteUserCanvasProject("local", canvasID); err != nil {
+			t.Fatal(err)
+		}
+
+		beforeBinds := canvasBindTraceCount(t, svc)
+		if err := svc.recoverCanvasTaskBindings(task); err != nil {
+			t.Fatalf("deleted canvas seedream task returned scan error: %v", err)
+		}
+		if got := canvasBindTraceCount(t, svc); got != beforeBinds {
+			t.Fatalf("deleted canvas seedream task called canvas.bind: before=%d after=%d", beforeBinds, got)
+		}
+
+		restoreDeletedTestCanvas(t, svc, savedCanvas)
+		if err := svc.recoverCanvasTaskBindings(task); err != nil {
+			t.Fatalf("restored canvas seedream task failed to bind: %v", err)
+		}
+		doc := canvasBindTestDocument(t, svc, canvasID)
+		nodes := doc["nodes"].([]any)
+		if len(nodes) != 3 {
+			t.Fatalf("restored seedream canvas got %d nodes, want 3", len(nodes))
+		}
+		for i, rawNode := range nodes {
+			node := rawNode.(map[string]any)
+			meta := node["metadata"].(map[string]any)
+			if node["id"] != localtask.SeedreamOutputNodeID(task, i) || meta["storageKey"] != fmt.Sprintf("resource:deleted-seedream-res-%d", i) {
+				t.Fatalf("restored seedream output %d bound improperly: %#v", i, node)
+			}
+		}
+	})
+
+	t.Run("workflow task on deleted canvas and non-canvas project workflow task", func(t *testing.T) {
+		svc, canvasID, revision := newAssistantTurnService(t)
+		db := svc.Database()
+		now := time.Now()
+		project := model.Project{ID: "drama-proj-1", UserID: "local", Name: "短剧项目", Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
+		unit := model.ProjectUnit{ID: "drama-unit-1", ProjectID: project.ID, Kind: model.ProjectUnitKindChapter, Title: "第一章", Status: model.ProjectUnitStatusDraft, CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&project).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&unit).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.EnsureBuiltinProjectWorkflowTemplate(); err != nil {
+			t.Fatal(err)
+		}
+		workflow, err := svc.ProjectService().CreateUnitWorkflow("local", project.ID, unit.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var videoStep model.WorkflowStepInstance
+		for _, step := range workflow.Steps {
+			if step.StepKey == "video" {
+				videoStep = step
+			}
+		}
+		shot, err := svc.ProjectService().CreateProjectShot("local", project.ID, CreateProjectShotRequest{
+			UnitID: unit.ID, Title: "SC.01", Description: "镜头一", DurationMs: 3000,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resCanvas := model.Resource{ID: "res-wf-canvas", UserID: "local", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 256, CreatedAt: now, UpdatedAt: now}
+		resProject := model.Resource{ID: "res-wf-project", UserID: "local", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 256, CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&resCanvas).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&resProject).Error; err != nil {
+			t.Fatal(err)
+		}
+
+		// 1) Workflow task bound to a canvas node (without explicit domainProjectId so it relies on canvas.ProjectID).
+		canvasInput, _ := json.Marshal(map[string]any{
+			"metadata": map[string]any{
+				"source":         "canvas",
+				"nodeId":         "node-wf-video",
+				"workflowStepId": videoStep.ID,
+				"unitId":         unit.ID,
+				"shotId":         shot.ID,
+				"artifactType":   "video",
+				"role":           "output",
+			},
+		})
+		canvasTask := model.Task{
+			ID: "bind-deleted-canvas-wf", UserID: "local", ProjectID: canvasID,
+			Type: "canvas_video", Status: model.TaskStatusSucceeded,
+			InputJSON:  string(canvasInput),
+			ResultJSON: `{"mode":"video","video":{"resourceId":"res-wf-canvas","storageKey":"resource:res-wf-canvas"}}`,
+			CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+		}
+		if err := db.Create(&canvasTask).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.generationDeliverer().Deliver(canvasTask); err != nil {
+			t.Fatal(err)
+		}
+		savedCanvas, _ := json.Marshal(map[string]any{
+			"id": canvasID, "projectId": project.ID, "title": "工作流画布", "revision": revision,
+			"nodes": []any{map[string]any{
+				"id": "node-wf-video", "type": "video",
+				"metadata": map[string]any{"taskId": canvasTask.ID},
+			}},
+			"connections": []any{},
+		})
+		if _, err := svc.UpsertUserCanvasProject("local", savedCanvas); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.CanvasService().DeleteUserCanvasProject("local", canvasID); err != nil {
+			t.Fatal(err)
+		}
+
+		beforeBinds := canvasBindTraceCount(t, svc)
+		if err := svc.recoverCanvasTaskBindings(canvasTask); err != nil {
+			t.Fatalf("deleted canvas workflow task returned scan error: %v", err)
+		}
+		if got := canvasBindTraceCount(t, svc); got != beforeBinds {
+			t.Fatalf("deleted canvas workflow task called canvas.bind: before=%d after=%d", beforeBinds, got)
+		}
+		var canvasArtifacts int64
+		if err := db.Table("shot_artifacts").Where("task_id = ?", canvasTask.ID).Count(&canvasArtifacts).Error; err != nil || canvasArtifacts != 0 {
+			t.Fatalf("deleted canvas workflow task registered artifact early: count=%d err=%v", canvasArtifacts, err)
+		}
+
+		// 2) Non-canvas short-drama workflow task (task.ProjectID == project.ID) must NOT be skipped.
+		projectInput, _ := json.Marshal(map[string]any{
+			"metadata": map[string]any{
+				"workflowStepId": videoStep.ID,
+				"unitId":         unit.ID,
+				"shotId":         shot.ID,
+				"artifactType":   "video",
+				"role":           "output",
+			},
+		})
+		projectTask := model.Task{
+			ID: "bind-non-canvas-project-wf", UserID: "local", ProjectID: project.ID,
+			Type: "canvas_video", Status: model.TaskStatusSucceeded,
+			InputJSON:  string(projectInput),
+			ResultJSON: `{"mode":"video","video":{"resourceId":"res-wf-project","storageKey":"resource:res-wf-project"}}`,
+			CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+		}
+		if err := db.Create(&projectTask).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.recoverCanvasTaskBindings(projectTask); err != nil {
+			t.Fatalf("non-canvas project workflow task failed: %v", err)
+		}
+		var projectArtifacts int64
+		if err := db.Table("shot_artifacts").Where("task_id = ?", projectTask.ID).Count(&projectArtifacts).Error; err != nil || projectArtifacts != 1 {
+			t.Fatalf("non-canvas project workflow task did not register artifact: count=%d err=%v", projectArtifacts, err)
+		}
+
+		// 3) Restoring the canvas registers the workflow output and binds the canvas node.
+		restoreDeletedTestCanvas(t, svc, savedCanvas)
+		if err := svc.recoverCanvasTaskBindings(canvasTask); err != nil {
+			t.Fatalf("restored canvas workflow task failed: %v", err)
+		}
+		if err := db.Table("shot_artifacts").Where("task_id = ?", canvasTask.ID).Count(&canvasArtifacts).Error; err != nil || canvasArtifacts != 1 {
+			t.Fatalf("restored canvas workflow task artifact count = %d, err = %v", canvasArtifacts, err)
+		}
+		meta := canvasBindTestNodeMetadata(t, svc, canvasID, "node-wf-video")
+		if meta["content"] != "/api/resources/"+resCanvas.ID+"/file" {
+			t.Fatalf("restored canvas workflow node content = %#v", meta["content"])
+		}
+	})
+
+	t.Run("business project pseudo-node tasks (character turnaround and chapter extraction)", func(t *testing.T) {
+		svc, _, _ := newAssistantTurnService(t)
+		db := svc.Database()
+		now := time.Now()
+		project, err := svc.ProjectService().CreateProject("local", CreateProjectRequest{Name: "三视图短剧项目"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		character, err := svc.ProjectService().CreateProjectCharacter("local", project.ID, CreateProjectCharacterRequest{
+			Name:       "主角阿昭",
+			Definition: map[string]any{"role": "主角", "appearance": "黑发"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resTurnaround := model.Resource{
+			ID: "res-turnaround-pseudo", UserID: "local", Kind: "image",
+			Status: model.ResourceStatusReady, MimeType: "image/png", Width: 512, Height: 512, Size: 128,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(&resTurnaround).Error; err != nil {
+			t.Fatal(err)
+		}
+		turnaroundTask := model.Task{
+			ID: "bind-pseudo-turnaround", UserID: "local", ProjectID: project.ID,
+			Type: "canvas_image", Status: model.TaskStatusSucceeded, Prompt: "三视图",
+			InputJSON:  `{"nodeId":"character-turnaround:` + character.Asset.ID + `","metadata":{"operation":"character_turnaround","characterAssetId":"` + character.Asset.ID + `"}}`,
+			ResultJSON: `{"images":[{"resourceId":"res-turnaround-pseudo","storageKey":"resource:res-turnaround-pseudo"}]}`,
+			CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+		}
+		chapterTask := model.Task{
+			ID: "bind-pseudo-chapter", UserID: "local", ProjectID: project.ID,
+			Type: "canvas_text", Status: model.TaskStatusSucceeded, Prompt: "章节提取",
+			InputJSON:  `{"nodeId":"chapter_assets_extract:chapter-1","metadata":{"domainProjectId":"` + project.ID + `","chapterId":"chapter-1","operation":"chapter_assets_extract"}}`,
+			ResultJSON: `{"mode":"text","text":"{\"characters\":[]}"}`,
+			CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+		}
+		for _, item := range []*model.Task{&turnaroundTask, &chapterTask} {
+			if err := db.Create(item).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := svc.generationDeliverer().Deliver(chapterTask); err != nil {
+			t.Fatal(err)
+		}
+
+		beforeBinds := canvasBindTraceCount(t, svc)
+		if err := svc.recoverCanvasTaskBindings(chapterTask); err != nil {
+			t.Fatalf("chapter pseudo-node task returned error: %v", err)
+		}
+		if err := svc.recoverCanvasTaskBindings(turnaroundTask); err != nil {
+			t.Fatalf("turnaround pseudo-node task returned error: %v", err)
+		}
+		if got := canvasBindTraceCount(t, svc); got != beforeBinds {
+			t.Fatalf("pseudo-node business project tasks called canvas.bind: before=%d after=%d", beforeBinds, got)
+		}
+		bound, err := svc.projectDomain().CharacterTurnaroundBound(turnaroundTask.ID)
+		if err != nil || !bound {
+			t.Fatalf("character turnaround card was not reconciled: bound=%v err=%v", bound, err)
+		}
+	})
 }
