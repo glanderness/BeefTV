@@ -301,6 +301,35 @@ func TestOfficialVideoProfilesPreserveExplicitMediaRoles(t *testing.T) {
 	}
 }
 
+func TestOfficialVideoProfilesPassThroughCustomDuration(t *testing.T) {
+	t.Run("minimax-video", func(t *testing.T) {
+		adapter := officialPackageAdapter(t, "minimax-hailuo-video-v2.beeftv-plugin", "minimax-video")
+		spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Model: "MiniMax-H3", Prompt: "custom duration clip", Duration: 30, AspectRatio: "16:9", Resolution: "768P",
+		}})
+		if err != nil {
+			t.Fatalf("BuildCreate() error = %v", err)
+		}
+		body := manifestTestBody(t, spec)
+		if body["duration"] != float64(30) {
+			t.Fatalf("MiniMax duration = %#v, want 30", body["duration"])
+		}
+	})
+	t.Run("agnes-video", func(t *testing.T) {
+		adapter := officialPackageAdapter(t, "agnes-video-25.beeftv-plugin", "agnes-video")
+		spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Model: "agnes-video-2.5", Prompt: "custom duration clip", Duration: 30, AspectRatio: "16:9", Resolution: "720P",
+		}})
+		if err != nil {
+			t.Fatalf("BuildCreate() error = %v", err)
+		}
+		body := manifestTestBody(t, spec)
+		if body["seconds"] != "30" {
+			t.Fatalf("Agnes seconds = %#v, want \"30\"", body["seconds"])
+		}
+	})
+}
+
 func TestNewAPIChannel1AddsSeedanceContentAliasAndParsesDataURL(t *testing.T) {
 	adapter := officialPackageAdapter(t, "newapi-media-task-v1.beeftv-plugin", "newapi-channel-1")
 	spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
