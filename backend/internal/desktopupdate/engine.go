@@ -33,6 +33,7 @@ type stagedUpdate struct {
 	archive  string
 	platform string
 	artifact PlatformArtifact
+	isDelta  bool
 }
 
 type Host struct {
@@ -265,15 +266,37 @@ func (e *Engine) CheckForUpdate(ctx context.Context) (UpdateState, error) {
 	e.verified = &verifiedUpdate{payload: payload, artifact: artifact, platform: e.platform}
 	e.staged = nil
 	e.mu.Unlock()
+	totalBytes := artifact.Size
+	if delta, _, ok := e.candidateDelta(artifact); ok {
+		totalBytes = delta.Size
+	}
 	e.set(func(state *UpdateState) {
 		state.Status = StatusAvailable
 		state.LatestVersion = payload.Version
 		state.ReleaseNotes = payload.Notes
 		state.DownloadedBytes = 0
-		state.TotalBytes = artifact.Size
+		state.TotalBytes = totalBytes
 		state.Error = ""
 	})
 	return e.snapshot(), nil
+}
+
+func (e *Engine) candidateDelta(artifact PlatformArtifact) (DeltaArtifact, Target, bool) {
+	if len(artifact.Deltas) == 0 {
+		return DeltaArtifact{}, Target{}, false
+	}
+	delta, ok := artifact.Deltas[e.currentVersion]
+	if !ok || len(delta.CandidateURLs()) == 0 {
+		return DeltaArtifact{}, Target{}, false
+	}
+	target, err := e.locate()
+	if err != nil {
+		return DeltaArtifact{}, Target{}, false
+	}
+	if _, _, err := targetInstallContainer(target.Path, e.platform); err != nil {
+		return DeltaArtifact{}, Target{}, false
+	}
+	return delta, target, true
 }
 
 func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
@@ -291,13 +314,18 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 		e.fail(ErrNotAvailable.Error())
 		return e.snapshot(), ErrNotAvailable
 	}
+	delta, target, useDelta := e.candidateDelta(verified.artifact)
+	initialTotal := verified.artifact.Size
+	if useDelta {
+		initialTotal = delta.Size
+	}
 	e.set(func(state *UpdateState) {
 		state.InstallPrepared = false
 		state.Status = StatusDownloading
 		state.LatestVersion = verified.payload.Version
 		state.ReleaseNotes = verified.payload.Notes
 		state.DownloadedBytes = 0
-		state.TotalBytes = verified.artifact.Size
+		state.TotalBytes = initialTotal
 		state.Error = ""
 	})
 	stageRoot, err := e.prepareStaging(verified.payload.Version)
@@ -305,7 +333,6 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 		e.fail("无法准备下载目录。")
 		return e.snapshot(), err
 	}
-	archivePath := filepath.Join(stageRoot, "update.zip")
 	stagingAccepted := false
 	defer func() {
 		// Only remove this invocation's incomplete download, never recovery data.
@@ -313,6 +340,51 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 			_ = os.RemoveAll(stageRoot)
 		}
 	}()
+	if useDelta {
+		deltaPath := filepath.Join(stageRoot, "update.delta.zip")
+		deltaArtifact := delta.ToPlatformArtifact()
+		deltaErr := e.downloadArchive(ctx, deltaArtifact, deltaPath)
+		if deltaErr == nil {
+			deltaErr = verifyDeltaAgainstTarget(ctx, deltaPath, target.Path, verified.platform, e.currentVersion, verified.payload.Version)
+		}
+		if deltaErr == nil {
+			e.mu.Lock()
+			e.staged = &stagedUpdate{
+				version:  verified.payload.Version,
+				notes:    verified.payload.Notes,
+				archive:  deltaPath,
+				platform: verified.platform,
+				artifact: deltaArtifact,
+				isDelta:  true,
+			}
+			e.mu.Unlock()
+			stagingAccepted = true
+			e.set(func(state *UpdateState) {
+				state.Status = StatusReady
+				state.LatestVersion = verified.payload.Version
+				state.ReleaseNotes = verified.payload.Notes
+				state.DownloadedBytes = deltaArtifact.Size
+				state.TotalBytes = deltaArtifact.Size
+				state.Reconnecting = false
+				state.Error = ""
+			})
+			return e.snapshot(), nil
+		}
+		_ = os.Remove(deltaPath)
+		if ctx.Err() != nil {
+			_ = os.RemoveAll(stageRoot)
+			e.logf("delta download canceled: %v", rawCause(deltaErr))
+			e.fail(publicError(deltaErr))
+			return e.snapshot(), wrapPublic(deltaErr)
+		}
+		e.logf("delta update fallback from=%s to=%s: %v", e.currentVersion, verified.payload.Version, rawCause(deltaErr))
+		e.set(func(state *UpdateState) {
+			state.DownloadedBytes = 0
+			state.TotalBytes = verified.artifact.Size
+			state.Reconnecting = false
+		})
+	}
+	archivePath := filepath.Join(stageRoot, "update.zip")
 	if err := e.downloadArchive(ctx, verified.artifact, archivePath); err != nil {
 		// The staging directory is still empty here; resumable bytes live in
 		// the shared downloads directory.

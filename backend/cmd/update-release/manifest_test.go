@@ -289,7 +289,7 @@ func TestSignSchema2AndFromEnvelopeWithDomesticMirror(t *testing.T) {
 		t.Fatal("expected untrusted domestic domain to fail")
 	}
 
-	// Reject --domestic-download-base on schema 1
+		// Reject --domestic-download-base on schema 1
 	if err := run([]string{
 		"sign",
 		"--schema", "1",
@@ -302,6 +302,70 @@ func TestSignSchema2AndFromEnvelopeWithDomesticMirror(t *testing.T) {
 		"--asset", "darwin-arm64=" + darwinZip,
 	}, ioDiscard{}, ioDiscard{}); err == nil {
 		t.Fatal("expected --domestic-download-base with --schema 1 to fail")
+	}
+
+	// Build delta from v2.0.6 -> v2.1.0, verify-delta, and sign schema-2 with --delta
+	prevZip := packageNamed(t, dir, platformDarwinARM64, "v2.0.6")
+	deltaPath := filepath.Join(dir, deltaArtifactFileName("v2.1.0", platformDarwinARM64, "v2.0.6"))
+	if err := run([]string{
+		"build-delta",
+		"--platform", platformDarwinARM64,
+		"--from-version", "v2.0.6",
+		"--to-version", "v2.1.0",
+		"--from-zip", prevZip,
+		"--to-zip", darwinZip,
+		"--output", deltaPath,
+	}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatalf("build-delta: %v", err)
+	}
+	if err := run([]string{
+		"verify-delta",
+		"--platform", platformDarwinARM64,
+		"--from-version", "v2.0.6",
+		"--to-version", "v2.1.0",
+		"--input", deltaPath,
+	}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatalf("verify-delta: %v", err)
+	}
+
+	v2DeltaR2Path := filepath.Join(dir, "desktop-update-v2-delta-r2.json")
+	if err := run([]string{
+		"sign",
+		"--schema", "2",
+		"--version", "v2.1.0",
+		"--from-envelope", v1Path,
+		"--delta", platformDarwinARM64 + "=v2.0.6=" + deltaPath,
+		"--private-key", privatePath,
+		"--expect-public-key", encodeKey(public),
+		"--output", v2DeltaR2Path,
+	}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatalf("sign schema 2 with --delta: %v", err)
+	}
+
+	v2DeltaDomPath := filepath.Join(dir, "desktop-update-v2-delta-dom.json")
+	if err := run([]string{
+		"sign",
+		"--schema", "2",
+		"--version", "v2.1.0",
+		"--from-envelope", v2DeltaR2Path,
+		"--domestic-download-base", defaultDomesticHost,
+		"--private-key", privatePath,
+		"--expect-public-key", encodeKey(public),
+		"--output", v2DeltaDomPath,
+	}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatalf("sign schema 2 preserving delta with domestic base: %v", err)
+	}
+	deltaDomBody, err := verifyEnvelopeFile(v2DeltaDomPath, public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotDeltaURLs := deltaDomBody.Platforms[platformDarwinARM64].Deltas["v2.0.6"].URLs
+	wantDeltaURLs := []string{
+		"https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.0/BeefTV-v2.1.0-darwin-arm64-from-v2.0.6.delta.zip",
+		"https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64-from-v2.0.6.delta.zip",
+	}
+	if len(gotDeltaURLs) != 2 || gotDeltaURLs[0] != wantDeltaURLs[0] || gotDeltaURLs[1] != wantDeltaURLs[1] {
+		t.Fatalf("got delta URLs %v, want %v", gotDeltaURLs, wantDeltaURLs)
 	}
 }
 
@@ -317,12 +381,14 @@ func packageNamed(t *testing.T, dir, platform, version string) string {
 		}
 		writer := zip.NewWriter(file)
 		for name, body := range map[string]string{
-			"BeefTV.app/Contents/MacOS/BeefTV":                                                                   "binary",
+			"BeefTV.app/Contents/MacOS/BeefTV":                                                                   "binary-" + version,
 			"BeefTV.app/Contents/MacOS/cli/beeftv":                                                               "cli",
-			"BeefTV.app/Contents/Info.plist":                                                                     "<plist></plist>",
+			"BeefTV.app/Contents/Info.plist":                                                                     "<plist>" + version + "</plist>",
 			"BeefTV.app/Contents/Resources/plugin-packages/core.beeftv-plugin":                                   "plugin",
 			"BeefTV.app/Contents/Resources/agent-host/server.mjs":                                                "host",
 			"BeefTV.app/Contents/Resources/agent-host/session-identity.mjs":                                      "identity",
+			"BeefTV.app/Contents/Resources/agent-host/canvas-turn.mjs":                                           "turn",
+			"BeefTV.app/Contents/Resources/agent-host/request-budget.mjs":                                        "budget",
 			"BeefTV.app/Contents/Resources/agent-host/package.json":                                              "{}",
 			"BeefTV.app/Contents/Resources/agent-host/runtime/bin/node":                                          "node",
 			"BeefTV.app/Contents/Resources/agent-host/node_modules/@earendil-works/pi-coding-agent/package.json": "{}",

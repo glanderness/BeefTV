@@ -82,12 +82,12 @@ jobs:
             exit 0
           fi
           curl --fail --silent --show-error --location \
-            "$UPDATER_DOWNLOAD_BASE/desktop-update.json" \
-            -o "$RUNNER_TEMP/desktop-update.json"
+            "$UPDATER_DOWNLOAD_BASE/$VERSION/desktop-update-v2-r2.json" \
+            -o "$RUNNER_TEMP/source-update.json"
           "$RUNNER_TEMP/update-release" sign \
             --schema 2 \
             --version "$VERSION" \
-            --from-envelope "$RUNNER_TEMP/desktop-update.json" \
+            --from-envelope "$RUNNER_TEMP/source-update.json" \
             --download-base "$UPDATER_DOWNLOAD_BASE" \
             --domestic-download-base "$DOMESTIC_DOWNLOAD_BASE" \
             --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \

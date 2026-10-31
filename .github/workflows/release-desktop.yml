@@ -38,6 +38,7 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       commit: ${{ steps.meta.outputs.commit }}
+      previous_version: ${{ steps.meta.outputs.previous_version }}
     steps:
       - name: Require official main
         run: |
@@ -173,6 +174,7 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "previous_version=$latest" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release gate dependencies
         run: |
@@ -315,11 +317,13 @@ jobs:
           go test ./internal/app -run 'TestWindowsVideoConnectionResetRecovery|TestVideoRecoverySocketResetNeverResubmits|TestVideoRecoveryLostReceiptNeverResubmits|TestVideoRecoveryBeefAPIQueryUsesOnlyGet' -count=1 -timeout=120s
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Package updater zip
+      - name: Package updater zip and incremental delta
         working-directory: backend
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
+          PREVIOUS_VERSION: ${{ needs.preflight.outputs.previous_version }}
           PLATFORM: ${{ matrix.platform }}
+          BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -334,6 +338,27 @@ jobs:
             --platform "$PLATFORM" \
             --input "$input" \
             --output "../dist/BeefTV-${VERSION}-${PLATFORM}.zip"
+          if [[ -n "${PREVIOUS_VERSION:-}" ]] && python3 -c 'import os, re, sys; m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", os.environ["VERSION"]); sys.exit(0 if m and (int(m[1]), int(m[2]), int(m[3])) >= (2, 1, 0) else 1)'; then
+            if curl --fail --silent --show-error --location --retry 3 --max-time 60 \
+              "${UPDATER_DOWNLOAD_BASE}/${PREVIOUS_VERSION}/desktop-update.json" \
+              -o "$RUNNER_TEMP/prev-desktop-update.json" && \
+              go run ./cmd/update-release verify \
+                --envelope "$RUNNER_TEMP/prev-desktop-update.json" \
+                --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY" && \
+              curl --fail --silent --show-error --location --retry 3 --max-time 600 \
+                "${UPDATER_DOWNLOAD_BASE}/${PREVIOUS_VERSION}/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip" \
+                -o "$RUNNER_TEMP/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip"; then
+              go run ./cmd/update-release build-delta \
+                --platform "$PLATFORM" \
+                --from-version "$PREVIOUS_VERSION" \
+                --to-version "$VERSION" \
+                --from-zip "$RUNNER_TEMP/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip" \
+                --to-zip "../dist/BeefTV-${VERSION}-${PLATFORM}.zip" \
+                --output "../dist/BeefTV-${VERSION}-${PLATFORM}-from-${PREVIOUS_VERSION}.delta.zip"
+            else
+              echo "::warning::Previous release ${PREVIOUS_VERSION} ${PLATFORM} zip unavailable; skipping delta archive."
+            fi
+          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -410,6 +435,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.preflight.outputs.version }}
+      PREVIOUS_VERSION: ${{ needs.preflight.outputs.previous_version }}
       COMMIT: ${{ needs.preflight.outputs.commit }}
       BEEFTV_UPDATER_PRIVATE_KEY: ${{ secrets.BEEFTV_UPDATER_PRIVATE_KEY }}
       BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
@@ -451,7 +477,7 @@ jobs:
       - name: Check complete platform set
         run: |
           set -euo pipefail
-          mapfile -t zips < <(find dist -maxdepth 1 -name "BeefTV-${VERSION}-*.zip" | LC_ALL=C sort)
+          mapfile -t zips < <(find dist -maxdepth 1 -name "BeefTV-${VERSION}-*.zip" ! -name "*.delta.zip" | LC_ALL=C sort)
           if [[ "${#zips[@]}" -ne 4 ]]; then
             echo "Expected 4 platform zips on draft $VERSION before signing desktop-update.json, found ${#zips[@]}."
             printf '%s\n' "${zips[@]}"
@@ -460,6 +486,18 @@ jobs:
           for name in "darwin-arm64.dmg" "darwin-amd64.dmg" "windows-amd64-setup.exe" "linux-amd64.deb"; do
             test -s "dist/BeefTV-${VERSION}-${name}"
           done
+          if [[ -n "${PREVIOUS_VERSION:-}" ]]; then
+            delta_count=0
+            for platform in darwin-arm64 darwin-amd64 windows-amd64 linux-amd64; do
+              if [[ -s "dist/BeefTV-${VERSION}-${platform}-from-${PREVIOUS_VERSION}.delta.zip" ]]; then
+                delta_count=$((delta_count + 1))
+              fi
+            done
+            if [[ "$delta_count" -ne 4 ]]; then
+              echo "::warning::Found ${delta_count}/4 delta archives from ${PREVIOUS_VERSION}; omitting incomplete delta set."
+              rm -f dist/BeefTV-"${VERSION}"-*-from-"${PREVIOUS_VERSION}".delta.zip
+            fi
+          fi
 
       - name: Sign and verify desktop-update.json
         working-directory: backend
@@ -481,12 +519,19 @@ jobs:
             --envelope "../dist/desktop-update.json" \
             --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
           if python3 -c 'import os, re, sys; m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", os.environ["VERSION"]); sys.exit(0 if m and (int(m[1]), int(m[2]), int(m[3])) >= (2, 1, 0) else 1)'; then
+            delta_args=()
+            if [[ -n "${PREVIOUS_VERSION:-}" ]] && [[ -s "../dist/BeefTV-${VERSION}-darwin-arm64-from-${PREVIOUS_VERSION}.delta.zip" ]]; then
+              for platform in darwin-arm64 darwin-amd64 windows-amd64 linux-amd64; do
+                delta_args+=(--delta "${platform}=${PREVIOUS_VERSION}=../dist/BeefTV-${VERSION}-${platform}-from-${PREVIOUS_VERSION}.delta.zip")
+              done
+            fi
             go run ./cmd/update-release sign \
               --schema 2 \
               --version "$VERSION" \
               --from-envelope "../dist/desktop-update.json" \
               --download-base "$UPDATER_DOWNLOAD_BASE" \
               --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \
+              "${delta_args[@]}" \
               --output "../dist/desktop-update-v2-r2.json"
             go run ./cmd/update-release verify \
               --envelope "../dist/desktop-update-v2-r2.json" \
@@ -495,8 +540,14 @@ jobs:
 
       - name: Stage and verify immutable R2 assets
         run: |
+          set -euo pipefail
+          v2_args=()
+          if [[ -f dist/desktop-update-v2-r2.json ]]; then
+            v2_args+=(--manifest-v2 dist/desktop-update-v2-r2.json)
+          fi
           python3 scripts/publish-desktop-r2.py stage \
             --manifest dist/desktop-update.json --assets-dir dist --with-installers \
+            "${v2_args[@]}" \
             --verification-receipt "$RUNNER_TEMP/release-public-verification.json" \
             --verifier "$RUNNER_TEMP/update-release" --provider r2 \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \

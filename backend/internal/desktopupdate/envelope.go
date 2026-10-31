@@ -24,11 +24,41 @@ type Payload struct {
 	Platforms map[string]PlatformArtifact `json:"platforms"`
 }
 
-type PlatformArtifact struct {
-	URL    string   `json:"url,omitempty"`
-	URLs   []string `json:"urls,omitempty"`
+type DeltaArtifact struct {
+	URLs   []string `json:"urls"`
 	SHA256 string   `json:"sha256"`
 	Size   int64    `json:"size"`
+}
+
+func (d DeltaArtifact) CandidateURLs() []string {
+	out := make([]string, 0, len(d.URLs))
+	for _, raw := range d.URLs {
+		if u := strings.TrimSpace(raw); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func (d DeltaArtifact) ToPlatformArtifact() PlatformArtifact {
+	urls := d.CandidateURLs()
+	out := PlatformArtifact{
+		URLs:   urls,
+		SHA256: d.SHA256,
+		Size:   d.Size,
+	}
+	if len(urls) > 0 {
+		out.URL = urls[0]
+	}
+	return out
+}
+
+type PlatformArtifact struct {
+	URL    string                   `json:"url,omitempty"`
+	URLs   []string                 `json:"urls,omitempty"`
+	SHA256 string                   `json:"sha256"`
+	Size   int64                    `json:"size"`
+	Deltas map[string]DeltaArtifact `json:"deltas,omitempty"`
 }
 
 func (a PlatformArtifact) CandidateURLs() []string {
@@ -93,6 +123,10 @@ func verifyEnvelope(raw []byte, key ed25519.PublicKey) (Payload, []byte, error) 
 		if len(candidates) > 0 {
 			artifact.URL = candidates[0]
 		}
+		for fromVer, delta := range artifact.Deltas {
+			delta.URLs = delta.CandidateURLs()
+			artifact.Deltas[fromVer] = delta
+		}
 		payload.Platforms[platform] = artifact
 	}
 	return payload, payloadBytes, nil
@@ -115,7 +149,7 @@ func validatePayload(payload Payload) error {
 		if !knownPlatform(platform) {
 			continue
 		}
-		if err := validateArtifactForSchema(artifact, payload.Schema); err != nil {
+		if err := validateArtifactForSchema(artifact, payload.Schema, payload.Version); err != nil {
 			return err
 		}
 	}
@@ -131,10 +165,10 @@ func knownPlatform(platform string) bool {
 	}
 }
 
-func validateArtifactForSchema(artifact PlatformArtifact, schema int) error {
+func validateArtifactForSchema(artifact PlatformArtifact, schema int, targetVersion string) error {
 	switch schema {
 	case payloadSchema:
-		if len(artifact.URLs) > 0 || strings.TrimSpace(artifact.URL) == "" {
+		if len(artifact.URLs) > 0 || len(artifact.Deltas) > 0 || strings.TrimSpace(artifact.URL) == "" {
 			return fmt.Errorf("更新包地址无效")
 		}
 		if err := validateArtifactURL(artifact.URL, false); err != nil {
@@ -144,14 +178,21 @@ func validateArtifactForSchema(artifact PlatformArtifact, schema int) error {
 		if strings.TrimSpace(artifact.URL) != "" || len(artifact.URLs) == 0 {
 			return fmt.Errorf("更新包地址无效")
 		}
-		seen := make(map[string]struct{}, len(artifact.URLs))
-		for _, rawURL := range artifact.URLs {
-			trimmed := strings.TrimSpace(rawURL)
-			if _, dup := seen[trimmed]; dup {
-				return fmt.Errorf("更新包地址重复")
+		if err := validateURLList(artifact.URLs, true); err != nil {
+			return err
+		}
+		for fromVer, delta := range artifact.Deltas {
+			cmp, err := compareStable(fromVer, targetVersion)
+			if err != nil || cmp >= 0 {
+				return fmt.Errorf("更新版本号无效")
 			}
-			seen[trimmed] = struct{}{}
-			if err := validateArtifactURL(trimmed, true); err != nil {
+			if len(delta.URLs) == 0 {
+				return fmt.Errorf("更新包地址无效")
+			}
+			if err := validateURLList(delta.URLs, true); err != nil {
+				return err
+			}
+			if err := validateArtifactDigestAndSize(delta.ToPlatformArtifact()); err != nil {
 				return err
 			}
 		}
@@ -159,6 +200,21 @@ func validateArtifactForSchema(artifact PlatformArtifact, schema int) error {
 		return ErrInvalidSignature
 	}
 	return validateArtifactDigestAndSize(artifact)
+}
+
+func validateURLList(urls []string, requireKnownDomain bool) error {
+	seen := make(map[string]struct{}, len(urls))
+	for _, rawURL := range urls {
+		trimmed := strings.TrimSpace(rawURL)
+		if _, dup := seen[trimmed]; dup {
+			return fmt.Errorf("更新包地址重复")
+		}
+		seen[trimmed] = struct{}{}
+		if err := validateArtifactURL(trimmed, requireKnownDomain); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateArtifact(artifact PlatformArtifact) error {

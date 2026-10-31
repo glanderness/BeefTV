@@ -209,6 +209,7 @@ BeefTV-vX.Y.Z-darwin-arm64.zip
 BeefTV-vX.Y.Z-darwin-amd64.zip
 BeefTV-vX.Y.Z-windows-amd64.zip
 BeefTV-vX.Y.Z-linux-amd64.zip
+BeefTV-vX.Y.Z-<platform>-from-vA.B.C.delta.zip
 desktop-update.json
 desktop-update-v2.json
 ```
@@ -228,9 +229,11 @@ https://updates.beefapi.com/beeftv/desktop-update.json
 https://updates.beefapi.com/beeftv/desktop-update-v2.json
 ```
 
-`v2.0.6` 及更早客户端使用 `desktop-update.json`（`schema: 1`，严格解码，只含单 `url`）；`v2.1.0` 起使用 `desktop-update-v2.json`（`schema: 2`，含 `urls: [国内源, R2]` 或 `[R2]`）。客户端按系统时区或语言判断：中国大陆优先连接国内源（CNB），其他地区优先 R2；任一源连接失败、超时或持续低速时自动切换另一源并从已下载字节续传，最终以同一份 `sha256` 校验为准。
+`v2.0.6` 及更早客户端使用 `desktop-update.json`（`schema: 1`，严格解码，只含单 `url`）；`v2.1.0` 起使用 `desktop-update-v2.json`（`schema: 2`，含 `urls: [国内源, R2]` 或 `[R2]`，并可选携带 `deltas[fromVersion]` 增量包）。客户端按系统时区或语言判断：中国大陆优先连接国内源（CNB），其他地区优先 R2；任一源连接失败、超时或持续低速时自动切换另一源并从已下载字节续传，最终以同一份 `sha256` 校验为准。
 
-流水线先验证 R2 和遗留 COS 清单入口的条件写能力，再建 draft，四个平台构建任务把包保存为 Actions 产物。收齐后生成签名清单，先将版本包和版本清单写入 R2 不可变路径并从公开地址完整读回校验。之后发布 GitHub Release，按旧 ETag 条件替换 R2 最新清单（同时激活仅含 R2 地址的 `desktop-update-v2.json`），再将已激活的原始签名信封同步到遗留 COS 清单入口。随后 `mirror` 作业触发 CNB 将四个安装包与四个更新 ZIP 同步到 CNB 并完成匿名 Range 续传与完整 SHA-256 校验（生成八文件 `beeftv-mirror.json`），并在 GitHub Actions 侧再次对四个更新 ZIP 执行匿名 HTTP 206 续传与完整 SHA-256 校验，校验全部通过后才将包含国内源与 R2 双源地址的 `desktop-update-v2.json` 条件激活到 R2；若镜像作业失败，只需重跑 `mirror-desktop.yml`，不重跑整个发版。失败或缺包不会激活 R2 更新源。COS 同步失败会使发布作业失败，但不会回滚已生效的 R2 清单或删除正式 GitHub Release。
+当 `desktop-update-v2.json` 包含匹配当前运行版本的 `deltas[currentVersion]` 时，`v2.1.0+` 客户端优先下载增量包 `BeefTV-vX.Y.Z-<platform>-from-vA.B.C.delta.zip`：未变化的运行时文件（如 `node`、`ffmpeg`、静态插件）直接从本机安装目录复用并逐文件核验 SHA-256，主程序可执行文件使用内置纯 Go 二进制差分补丁（`BTDELTA1`）还原并核验新版本 SHA-256，把常规升级下载量从 160–280 MB 压缩至数 MB。若本机已安装文件缺失或哈希不符、或增量包下载/校验失败，更新器会自动无缝回退为下载并安装完整平台 `.zip`。
+
+流水线先验证 R2 和遗留 COS 清单入口的条件写能力，再建 draft，四个平台构建任务把包保存为 Actions 产物。收齐后基于上一正式版本的平台 `.zip` 构建并自检四个平台的 `.delta.zip`（若上一正式版本缺少对应 `.zip` 则跳过增量包），生成签名清单，先将版本包（含完整 `.zip` 与 `.delta.zip`）和版本清单写入 R2 不可变路径并从公开地址完整读回校验。之后发布 GitHub Release，按旧 ETag 条件替换 R2 最新清单（同时激活仅含 R2 地址的 `desktop-update-v2.json`），再将已激活的原始签名信封同步到遗留 COS 清单入口。随后 `mirror` 作业触发 CNB 将四个安装包、四个完整更新 ZIP 与（若存在）四个增量 `.delta.zip` 同步到 CNB 并完成匿名 Range 续传与完整 SHA-256 校验，并在 GitHub Actions 侧再次对全部更新 ZIP（含 `.delta.zip`）执行匿名 HTTP 206 续传与完整 SHA-256 校验，校验全部通过后才将包含国内源与 R2 双源地址的 `desktop-update-v2.json` 条件激活到 R2；若镜像作业失败，只需重跑 `mirror-desktop.yml`，不重跑整个发版。失败或缺包不会激活 R2 更新源。COS 同步失败会使发布作业失败，但不会回滚已生效的 R2 清单或删除正式 GitHub Release。
 
 Linux 发布任务会从最终 ZIP 解压执行随包 CLI，并在 Xvfb 中启动桌面程序，确认本地后端和可见窗口。PR 的 `Linux desktop package checks` 提前执行同一构建与启动检查，不发布版本，也不调用付费模型。
 

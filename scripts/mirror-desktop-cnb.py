@@ -107,10 +107,29 @@ def expected_zips(release, version):
             for platform in PLATFORMS]
 
 
+def expected_deltas(release, version):
+    source = f"https://github.com/glanderness/BeefTV/releases/tag/{version}"
+    if not release or release.get("tag_name") != version or release.get("draft") or release.get("prerelease") or release.get("html_url") != source:
+        raise RuntimeError("Expected a published official release")
+    pattern = re.compile(rf"^BeefTV-{re.escape(version)}-({'|'.join(map(re.escape, PLATFORMS))})-from-(v\d+\.\d+\.\d+)\.delta\.zip$")
+    from_versions = sorted({
+        m.group(2) for asset in release.get("assets", [])
+        if isinstance(asset, dict) and (m := pattern.match(asset.get("name") or ""))
+    }, key=version_tuple)
+    target_vtuple = version_tuple(version)
+    deltas = []
+    for from_ver in from_versions:
+        if version_tuple(from_ver) >= target_vtuple:
+            raise RuntimeError(f"Invalid official updater delta zip fromVersion: {from_ver}")
+        for platform in PLATFORMS:
+            deltas.append(_expected_release_asset(release, version, platform, f"-from-{from_ver}.delta.zip", "updater delta zip"))
+    return deltas
+
+
 def expected_assets(release, version):
     installers = expected_installers(release, version)
     if version_tuple(version) >= (2, 1, 0):
-        return installers + expected_zips(release, version)
+        return installers + expected_zips(release, version) + expected_deltas(release, version)
     return installers
 
 
@@ -174,7 +193,7 @@ def mirror(version, token, fetch=request_json, sleep=time.sleep, now=time.monoto
         raise RuntimeError("Missing repository secret BEEFTV_CNB_TRIGGER_TOKEN")
     release = fetch(GITHUB + version)
     expected = expected_assets(release, version)
-    zips = expected_zips(release, version) if vtuple >= (2, 1, 0) else []
+    zips = (expected_zips(release, version) + expected_deltas(release, version)) if vtuple >= (2, 1, 0) else []
     # Issue one POST only. An uncertain response may already have started the job.
     try:
         started = fetch(START, {"branch": "main", "event": "api_trigger_release", "env": {"BEEFTV_MIRROR_VERSION": version}}, token)

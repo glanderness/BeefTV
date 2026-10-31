@@ -30,11 +30,18 @@ type payload struct {
 	Platforms map[string]platformAsset `json:"platforms"`
 }
 
-type platformAsset struct {
-	URL    string   `json:"url,omitempty"`
-	URLs   []string `json:"urls,omitempty"`
+type deltaAsset struct {
+	URLs   []string `json:"urls"`
 	SHA256 string   `json:"sha256"`
 	Size   int64    `json:"size"`
+}
+
+type platformAsset struct {
+	URL    string                `json:"url,omitempty"`
+	URLs   []string              `json:"urls,omitempty"`
+	SHA256 string                `json:"sha256"`
+	Size   int64                 `json:"size"`
+	Deltas map[string]deltaAsset `json:"deltas,omitempty"`
 }
 
 type envelope struct {
@@ -59,6 +66,8 @@ func cmdSign(args []string, stdout, stderr io.Writer) error {
 	requirePlatforms := fs.String("require-platforms", "", "comma-separated platforms that must all be present")
 	var assets assetFlags
 	fs.Var(&assets, "asset", "platform=path, repeatable (example: darwin-arm64=/tmp/BeefTV-v1.6.0-darwin-arm64.zip)")
+	var deltas deltaFlags
+	fs.Var(&deltas, "delta", "platform=fromVersion=path, repeatable (schema 2 only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -67,6 +76,9 @@ func cmdSign(args []string, stdout, stderr io.Writer) error {
 	}
 	if *schema == payloadSchema && strings.TrimSpace(*domesticBase) != "" {
 		return fmt.Errorf("--domestic-download-base requires --schema 2")
+	}
+	if *schema == payloadSchema && len(deltas.values) > 0 {
+		return fmt.Errorf("--delta requires --schema 2")
 	}
 
 	private, err := loadPrivateKey(*privatePath)
@@ -142,6 +154,10 @@ func cmdSign(args []string, stdout, stderr io.Writer) error {
 			Notes:     noteText,
 			Platforms: built,
 		}
+	}
+
+	if err := attachDeltaAssets(body.Version, strings.TrimRight(*downloadBase, "/"), strings.TrimRight(strings.TrimSpace(*domesticBase), "/"), body.Platforms, deltas.values); err != nil {
+		return err
 	}
 
 	for _, platform := range required {
@@ -277,7 +293,8 @@ func verifyEnvelope(data []byte, public ed25519.PublicKey) (payload, error) {
 	if body.Schema != payloadSchema && body.Schema != payloadSchemaV2 {
 		return payload{}, fmt.Errorf("unsupported updater payload schema %d", body.Schema)
 	}
-	if _, err := parseStableVersion(body.Version); err != nil {
+	targetVer, err := parseStableVersion(body.Version)
+	if err != nil {
 		return payload{}, err
 	}
 	if _, err := parseCommitSHA(body.Commit); err != nil {
@@ -295,21 +312,29 @@ func verifyEnvelope(data []byte, public ed25519.PublicKey) (payload, error) {
 		}
 		switch body.Schema {
 		case payloadSchema:
-			if len(asset.URLs) > 0 || !strings.HasPrefix(asset.URL, "https://") {
-				return payload{}, fmt.Errorf("platform %s schema-1 url must be HTTPS without urls", platform)
+			if len(asset.URLs) > 0 || len(asset.Deltas) > 0 || !strings.HasPrefix(asset.URL, "https://") {
+				return payload{}, fmt.Errorf("platform %s schema-1 url must be HTTPS without urls or deltas", platform)
 			}
 		case payloadSchemaV2:
 			if strings.TrimSpace(asset.URL) != "" || len(asset.URLs) == 0 {
 				return payload{}, fmt.Errorf("platform %s schema-2 requires urls without legacy url", platform)
 			}
-			seen := make(map[string]struct{}, len(asset.URLs))
-			for _, u := range asset.URLs {
-				if _, dup := seen[u]; dup {
-					return payload{}, fmt.Errorf("platform %s has duplicate url %s", platform, u)
+			if err := validateSchema2URLList(platform, asset.URLs); err != nil {
+				return payload{}, err
+			}
+			for fromVer, delta := range asset.Deltas {
+				parsedFrom, err := parseStableVersion(fromVer)
+				if err != nil || targetVer.compare(parsedFrom) <= 0 {
+					return payload{}, fmt.Errorf("platform %s has invalid delta fromVersion %s", platform, fromVer)
 				}
-				seen[u] = struct{}{}
-				if err := validateSchema2URL(u); err != nil {
-					return payload{}, fmt.Errorf("platform %s: %w", platform, err)
+				if len(delta.URLs) == 0 {
+					return payload{}, fmt.Errorf("platform %s delta %s requires urls", platform, fromVer)
+				}
+				if err := validateSchema2URLList(platform+" delta "+fromVer, delta.URLs); err != nil {
+					return payload{}, err
+				}
+				if len(delta.SHA256) != 64 || delta.Size <= 0 {
+					return payload{}, fmt.Errorf("platform %s delta %s has invalid digest or size", platform, fromVer)
 				}
 			}
 		}
@@ -321,6 +346,20 @@ func verifyEnvelope(data []byte, public ed25519.PublicKey) (payload, error) {
 		}
 	}
 	return body, nil
+}
+
+func validateSchema2URLList(label string, urls []string) error {
+	seen := make(map[string]struct{}, len(urls))
+	for _, u := range urls {
+		if _, dup := seen[u]; dup {
+			return fmt.Errorf("%s has duplicate url %s", label, u)
+		}
+		seen[u] = struct{}{}
+		if err := validateSchema2URL(u); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+	}
+	return nil
 }
 
 func validateSchema2URL(raw string) error {
@@ -400,10 +439,27 @@ func buildSchema2AssetsFromSource(version, downloadBase, domesticBase string, sr
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", platform, err)
 		}
+		var deltas map[string]deltaAsset
+		if len(asset.Deltas) > 0 {
+			deltas = make(map[string]deltaAsset, len(asset.Deltas))
+			for fromVer, d := range asset.Deltas {
+				dName := deltaArtifactFileName(version, platform, fromVer)
+				dURLs, err := buildSchema2URLs(version, dName, downloadBase, domesticBase)
+				if err != nil {
+					return nil, fmt.Errorf("%s delta %s: %w", platform, fromVer, err)
+				}
+				deltas[fromVer] = deltaAsset{
+					URLs:   dURLs,
+					SHA256: d.SHA256,
+					Size:   d.Size,
+				}
+			}
+		}
 		built[platform] = platformAsset{
 			URLs:   urls,
 			SHA256: asset.SHA256,
 			Size:   asset.Size,
+			Deltas: deltas,
 		}
 	}
 	return built, nil

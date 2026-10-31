@@ -231,7 +231,7 @@ class PublicationTests(unittest.TestCase):
         path.write_text(json.dumps({"payload": base64.b64encode(json.dumps(payload).encode()).decode(), "signature": "fixture"}))
         return path
 
-    def manifest_v2(self, version="v1.5.7", with_domestic=False, copies=32):
+    def manifest_v2(self, version="v1.5.7", with_domestic=False, from_version=None, copies=32):
         platforms = {}
         for platform in sorted(release.PLATFORMS):
             name = f"BeefTV-{version}-{platform}.zip"
@@ -240,7 +240,16 @@ class PublicationTests(unittest.TestCase):
             r2_url = f"https://updates.beefapi.com/beeftv/{version}/{name}"
             cnb_url = f"{release.CNB_PUBLIC_BASE}/{version}/{name}"
             urls = [cnb_url, r2_url] if with_domestic else [r2_url]
-            platforms[platform] = {"urls": urls, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            entry = {"urls": urls, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            if from_version:
+                d_name = f"BeefTV-{version}-{platform}-from-{from_version}.delta.zip"
+                d_data = (f"delta-{from_version}-{version}-{platform}").encode() * 8
+                (self.root / d_name).write_bytes(d_data)
+                d_r2_url = f"https://updates.beefapi.com/beeftv/{version}/{d_name}"
+                d_cnb_url = f"{release.CNB_PUBLIC_BASE}/{version}/{d_name}"
+                d_urls = [d_cnb_url, d_r2_url] if with_domestic else [d_r2_url]
+                entry["deltas"] = {from_version: {"urls": d_urls, "size": len(d_data), "sha256": hashlib.sha256(d_data).hexdigest()}}
+            platforms[platform] = entry
         payload = {"schema": 2, "version": version, "commit": "a" * 40, "notes": "test release", "platforms": platforms}
         suffix = "v2-domestic" if with_domestic else "v2-r2"
         path = self.root / f"{version}-{suffix}.json"
@@ -249,25 +258,25 @@ class PublicationTests(unittest.TestCase):
 
     def test_activate_v2_requires_active_r2_v1_feed_and_upgrades_r2_only_to_domestic_after_verification(self):
         v1 = self.manifest("v2.1.0")
-        v2_r2 = self.manifest_v2("v2.1.0", with_domestic=False)
-        v2_domestic = self.manifest_v2("v2.1.0", with_domestic=True)
-        self.publisher.stage(v1, self.root)
+        v2_r2 = self.manifest_v2("v2.1.0", with_domestic=False, from_version="v2.0.6")
+        v2_domestic = self.manifest_v2("v2.1.0", with_domestic=True, from_version="v2.0.6")
+        self.publisher.stage(v1, self.root, manifest_v2=v2_r2)
         # Before R2 v1 feed is activated, v2 cannot be activated
         with self.assertRaisesRegex(release.PublishError, "v1 feed must be active"):
             self.publisher.activate_v2(v2_r2)
         self.assertNotIn(release.LATEST_V2, self.store.objects)
-        # Activate R2 v1 feed, then activate R2-only v2 feed
+        # Activate R2 v1 feed, then activate R2-only v2 feed (including staged R2 delta zips)
         self.publisher.activate(v1)
         self.assertEqual(self.publisher.activate_v2(v2_r2), "v2.1.0")
         self.assertEqual(self.store.objects[release.LATEST_V2], v2_r2.read_bytes())
-        # Domestic v2 manifest must fail when CNB assets are missing or corrupt, keeping R2-only v2 feed intact
+        # Domestic v2 manifest must fail when CNB assets (or CNB deltas) are missing, keeping R2-only v2 feed intact
         with self.assertRaises(release.PublishError):
             self.publisher.activate_v2(v2_domestic)
         self.assertEqual(self.store.objects[release.LATEST_V2], v2_r2.read_bytes())
-        # Populate verified CNB ZIPs and upgrade v2 feed to domestic+R2
+        # Populate verified CNB full ZIPs and delta ZIPs, then upgrade v2 feed to domestic+R2
         for platform in release.PLATFORMS:
-            name = f"BeefTV-v2.1.0-{platform}.zip"
-            self.cnb_store.objects[f"beeftv-downloads/desktop/-/releases/download/v2.1.0/{name}"] = (self.root / name).read_bytes()
+            for name in (f"BeefTV-v2.1.0-{platform}.zip", f"BeefTV-v2.1.0-{platform}-from-v2.0.6.delta.zip"):
+                self.cnb_store.objects[f"beeftv-downloads/desktop/-/releases/download/v2.1.0/{name}"] = (self.root / name).read_bytes()
         self.assertEqual(self.publisher.activate_v2(v2_domestic), "v2.1.0")
         self.assertEqual(self.store.objects[release.LATEST_V2], v2_domestic.read_bytes())
         v2_backups = [val for key, val in self.store.objects.items() if key.startswith("beeftv/latest-v2-backups/")]

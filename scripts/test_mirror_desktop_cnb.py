@@ -156,6 +156,24 @@ class MirrorTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
             cnb.verify_cnb_zips("v2.1.0", bad_zips, opener=fake_opener)
 
+        # Also verify delta zips when present on the GitHub Release
+        delta_assets = []
+        for platform in cnb.PLATFORMS:
+            name = f"BeefTV-v2.1.0-{platform}-from-v2.0.6.delta.zip"
+            delta_assets.append({
+                "name": name, "state": "uploaded", "size": len(payload_bytes),
+                "digest": "sha256:" + sha,
+                "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/v2.1.0/{name}",
+            })
+        source_with_deltas = {**source, "assets": source["assets"] + delta_assets}
+        ready_with_deltas = {**ready, "assets": cnb.expected_assets(source_with_deltas, "v2.1.0")}
+        range_calls.clear()
+        cnb.mirror("v2.1.0", "test",
+                   lambda url, *_: source_with_deltas if url.startswith(cnb.GITHUB) else {"success": True} if url == cnb.START else ready_with_deltas,
+                   lambda _: None,
+                   verify_zips=lambda v, zips: cnb.verify_cnb_zips(v, zips, opener=fake_opener))
+        self.assertEqual(len(range_calls), 16)  # (4 full zips + 4 delta zips) * 2 Range requests each
+
 
 if __name__ == "__main__":
     unittest.main()
