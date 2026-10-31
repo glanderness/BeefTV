@@ -24,6 +24,7 @@ type Artifact struct {
 	Parts        []ArtifactPart `json:"parts,omitempty"`
 	Files        int            `json:"files,omitempty"`
 	ExpandedSize int64          `json:"expandedSize,omitempty"`
+	Wheels       []Wheel        `json:"wheels,omitempty"`
 }
 
 type ArtifactPart struct {

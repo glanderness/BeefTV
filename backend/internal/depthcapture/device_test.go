@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,11 @@ func TestWorkerFindsBundledMediaToolsWithoutShellPath(t *testing.T) {
 	t.Setenv("CANVAS_FFPROBE_PATH", "/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffprobe")
 	t.Setenv("CANVAS_FFMPEG_PATH", "/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg")
 	for _, platform := range []string{"darwin", "windows"} {
+		if runtime.GOOS == "windows" && platform == "darwin" {
+			// The live resolver and inherited environment use the host's path
+			// rules. Native Darwin is covered by the macOS package run.
+			continue
+		}
 		env := WorkerEnvForPlatform("/depth/worker", platform)
 		count := 0
 		for _, entry := range env {
@@ -46,7 +52,11 @@ func TestWindowsWorkerUsesUTF8ForChineseProgress(t *testing.T) {
 
 func TestWorkerCheckpointDownloadUsesResolvedDesktopProxy(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
-	t.Setenv("https_proxy", "http://127.0.0.1:9999")
+	if runtime.GOOS != "windows" {
+		// Windows environment names are case insensitive; this would replace
+		// HTTPS_PROXY rather than model a second conflicting setting.
+		t.Setenv("https_proxy", "http://127.0.0.1:9999")
+	}
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")
 	env := WorkerEnvForPlatform("C:/depth/worker", "windows")

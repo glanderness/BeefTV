@@ -103,6 +103,12 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 	if err != nil {
 		return Installation{}, err
 	}
+	paths = artifactPaths(paths, runtimeArtifact)
+	if len(runtimeArtifact.Wheels) > 0 {
+		if err := cleanupWheelStages(ctx, filepath.Dir(paths.Root)); err != nil {
+			return Installation{}, err
+		}
+	}
 	runtimeRoot := paths.Root
 	modelRuntime := filepath.Join(options.DataDir, "models", "video-depth-anything-small", "v1")
 	python := paths.Python
@@ -111,7 +117,7 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 	archivePath := paths.Archive
 	runtimeReady := installedRuntime(paths, options.Platform)
 	archiveReady := runtimeReady || verifyFileContext(ctx, archivePath, runtimeArtifact) == nil
-	plan, err := installationPlan(options.DataDir, runtimeArtifact, manifest.Model, archiveReady, verifyFileContext(ctx, modelPath, manifest.Model) == nil, runtimeReady)
+	plan, err := installationPlan(ctx, options.DataDir, runtimeArtifact, manifest.Model, archiveReady, verifyFileContext(ctx, modelPath, manifest.Model) == nil, runtimeReady)
 	if err != nil {
 		return Installation{}, fmt.Errorf("无法读取组件目录的可用空间: %w", err)
 	}
@@ -127,6 +133,9 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 				return Installation{}, err
 			}
 		}
+		if err := downloadWheels(ctx, options.DataDir, runtimeArtifact.Wheels, options.Progress); err != nil {
+			return Installation{}, err
+		}
 		if err := os.MkdirAll(filepath.Dir(runtimeRoot), 0o750); err != nil {
 			return Installation{}, err
 		}
@@ -135,6 +144,13 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 			return Installation{}, err
 		}
 		defer os.RemoveAll(stage)
+		if len(runtimeArtifact.Wheels) > 0 {
+			owner, err := claimWheelStage(stage)
+			if err != nil {
+				return Installation{}, err
+			}
+			defer func() { owner.Close(); os.Remove(stage + ".owner.lock") }()
+		}
 		maxExpanded := int64(3 << 30)
 		if windows {
 			maxExpanded = 12 << 30
@@ -148,6 +164,9 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		if windows {
 			if !pathRegular(filepath.Join(stage, ".python", "python.exe")) {
 				return Installation{}, errors.New("深度组件缺少 Windows Python")
+			}
+			if err := installWheels(ctx, options.DataDir, stage, runtimeArtifact.Wheels, runWheelPython); err != nil {
+				return Installation{}, err
 			}
 		} else {
 			if err := os.Chmod(filepath.Join(stage, ".venv", "bin", "python"), 0o750); err != nil {
