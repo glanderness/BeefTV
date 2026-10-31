@@ -140,7 +140,7 @@ BeefTV also includes project and personal asset libraries, asynchronous tasks, m
 | --- | --- | --- |
 | Rendering, media previews, and task handling optimized for complex canvases. | Local-first, with one desktop workspace to get started and capabilities loaded as needed. | An Agent to advance your work, Skills to guide it, and Workflows to reuse the steps. |
 
-## Open by design
+## Source available, customizable and extensible
 
 - Configure text, image, video, and audio model providers freely, without being tied to a single provider.
 - Manage projects, canvases, assets, and tasks in one workspace, with data that can be saved and migrated locally.
