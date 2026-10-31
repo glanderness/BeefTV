@@ -253,6 +253,8 @@ done < shots.txt
 beeftv business upload --file ./ref.png --target resource
 ```
 
+`business call` 和 `business upload` 都可以用 `--operation-id <id>` 提供幂等键，重试同一操作时复用同一个值；`business call` 提交生成（会扣费）时这个参数必填，并会写进任务的 `clientOperationId`，重试不会重复扣费。
+
 CLI 自己读取本地文件再提交资源接口，服务端不接受任意宿主路径；单个文件上限 64 MiB，更大的文件走分片上传（见 `beeftv business discover` 里的 `business_post_resources_uploads`）。`--target` 还支持 `skill` 和 `plugin`，用来安装本地技能包或插件包，文件类型不符时由服务端拒绝。
 
 ## 7. 脚本化约定
@@ -286,17 +288,22 @@ CLI 自己读取本地文件再提交资源接口，服务端不接受任意宿�
 只想省 token 的话，本页的子命令比 MCP 更直接；需要把工作区能力交给某个模型客户端时再开 MCP：
 
 ```bash
-beeftv mcp serve              # 暴露全部工具
-beeftv mcp serve --read-only  # 只暴露只读工具
+beeftv mcp serve                       # 画布、素材、媒体、技能操作 + 底层接口的两个入口
+beeftv mcp serve --read-only           # 只暴露只读工具
+beeftv mcp serve --all-business-tools  # 把每个底层业务接口单独列成工具
 ```
+
+默认只列出画布、素材、媒体与技能这组操作（和内置助手用的是同一套），再加两个入口：`business.list` 按关键字查找底层业务接口（素材库、文件夹、项目、任务、时间线等），`business.call` 按查到的接口 ID 调用。这样模型客户端一开始读到的工具说明少很多，也不容易选错工具。确实需要把每个底层接口单独列出来时，加 `--all-business-tools`，或设置环境变量 `BEEFTV_MCP_ALL_BUSINESS_TOOLS=1`。
 
 启动时 stderr 会打印工具数量和连接的工作区，例如：
 
 ```text
-beeftv mcp serve: 87 个工具，base=http://127.0.0.1:<动态端口>/api（运行中的桌面工作区），client=client-xxxxxxxx
+beeftv mcp serve: 43 个工具，base=http://127.0.0.1:<动态端口>/api（运行中的桌面工作区），client=client-xxxxxxxx
 ```
 
-MCP 的写工具要求在参数里带 `operationId`，重试必须复用同一个值。
+`media.overview`、`media.inspect` 读到的图片会作为 MCP 图片内容返回，音频作为音频内容返回，客户端可以直接看图；文字部分只保留时长、来源和校验值。MCP 没有视频内容类型，视频片段不随结果附带：看画面用 `mode=frames`，看连续动作或听声音用 `media.review`。
+
+MCP 的写工具（包括 `business.call` 调用写接口）要求在参数里带 `operationId`，重试必须复用同一个值；通过 `business.call` 提交生成任务时，它同时作为任务的 `clientOperationId`，同一次提交重试不会重复扣费。`business.call` 读到的图片、音频文件也按 MCP 图片、音频内容返回。
 
 ## 9. 不需要工作区的命令
 

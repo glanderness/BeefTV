@@ -279,7 +279,7 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 桌面实例的已登记外部客户端使用自身 ID 与 Bearer 凭据访问 `/ops`、`/ops/:op` 以及业务目录列出的 REST 接口，不需要也不应持有桌面启动令牌。`GET /business/tools` 从当前挂载的业务路由生成目录，包含方法、路径、参数 Schema 和收费提交标记；只有目录中的方法与路径接受外部凭据。业务调用复用原 handler/service，继续检查归属、参数、余额与版本冲突。外部凭据不能签发客户端、换取 UI 会话、读取既有密钥或控制内置宿主、更新器。内置 UI 会话签发另需 Wails 绑定提供的独立 `X-Beeftv-UI-Bootstrap` 凭据；仅有 `X-Desktop-Token` 不足以签发。
 
-外部 Agent 的执行审批由连接的 Agent 负责。新连接不再显示权限选择，缺省签发完整创作访问；历史明确签发的只读连接保留只读，可重新连接取得新凭据。MCP 从同一业务目录与共享操作目录注册工具。CLI 使用 `ops call <operation> --params '<JSON>'` 调用共享操作，使用 `business discover`、`business call --tool <id> --params '<JSON>'` 和 `business upload --file <path>` 发现、调用和上传。上传文件由外部 CLI 在本机读取，再经资源、技能或插件上传接口发送；后端不接受任意本机文件路径。模型配置读取会隐藏所有渠道密钥；带 `expectedRevision` 保存配置时，密钥字段缺省或为空会保留已有值。
+外部 Agent 的执行审批由连接的 Agent 负责。新连接不再显示权限选择，缺省签发完整创作访问；历史明确签发的只读连接保留只读，可重新连接取得新凭据。MCP 默认把共享操作目录里的每个操作注册成工具，业务目录只通过 `business.list`（按关键字查找）和 `business.call`（按接口 ID 调用）两个入口暴露；`beeftv mcp serve --all-business-tools` 才把业务目录的每个接口单独注册成工具。MCP 的写调用必须带 `operationId`：它作为 `X-Idempotency-Key` 转发，调用 `POST /tasks` 时还会写进 `input.metadata.clientOperationId`，重试同一次提交不会重复创建任务。CLI 使用 `ops call <operation> --params '<JSON>'` 调用共享操作，使用 `business discover`、`business call --tool <id> --params '<JSON>'` 和 `business upload --file <path>` 发现、调用和上传。上传文件由外部 CLI 在本机读取，再经资源、技能或插件上传接口发送；后端不接受任意本机文件路径。模型配置读取会隐藏所有渠道密钥；带 `expectedRevision` 保存配置时，密钥字段缺省或为空会保留已有值。
 
 只读是**操作层与 MCP 的策略边界，不是操作系统级隔离**：同一台机器上持有 owner 凭据的进程本来就能直接访问数据目录，
 因此历史只读凭据和客户端主动选择的只读过滤只收紧该连接的工具能力，不能限制本机其他程序。
