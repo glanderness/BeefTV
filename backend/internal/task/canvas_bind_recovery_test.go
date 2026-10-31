@@ -113,3 +113,84 @@ func TestCanvasBindNodeIDUsesFrozenOutputDestinations(t *testing.T) {
 		t.Fatalf("tasks without frozen outputs keep the fallback: %q", got)
 	}
 }
+
+func TestTaskCanvasIDsAndMissingDistinguishCanvasFromProjectTasks(t *testing.T) {
+	ownedProject := func(id string) (bool, error) { return id == "proj-1", nil }
+
+	textTask := model.Task{ID: "t-text", ProjectID: "canvas-1", Type: "canvas_text", InputJSON: `{"metadata":{"nodeId":"node-1"}}`}
+	if ids, err := TaskCanvasIDs(textTask, nil, ownedProject); err != nil || len(ids) != 1 || ids[0] != "canvas-1" {
+		t.Fatalf("text task canvas IDs = %v err = %v", ids, err)
+	}
+	if missing, err := TaskCanvasMissing(textTask, nil, ownedProject, func(id string) (bool, error) { return false, nil }); err != nil || !missing {
+		t.Fatalf("missing canvas must report missing=true: missing=%v err=%v", missing, err)
+	}
+	if missing, err := TaskCanvasMissing(textTask, nil, ownedProject, func(id string) (bool, error) { return true, nil }); err != nil || missing {
+		t.Fatalf("existing canvas must report missing=false: missing=%v err=%v", missing, err)
+	}
+
+	seedreamTask := model.Task{ID: "t-seedream", ProjectID: "canvas-seedream", Type: "canvas_image", Model: "channel::dola-seedream-5-0-pro-260628", InputJSON: `{"metadata":{"nodeId":"root"}}`}
+	if ids, err := TaskCanvasIDs(seedreamTask, nil, ownedProject); err != nil || len(ids) != 1 || ids[0] != "canvas-seedream" {
+		t.Fatalf("seedream task canvas IDs = %v err = %v", ids, err)
+	}
+
+	canvasWorkflowTask := model.Task{ID: "t-wf-canvas", ProjectID: "canvas-wf", Type: "canvas_video", InputJSON: `{"metadata":{"workflowStepId":"step-1","domainProjectId":"proj-1","canvasId":"canvas-wf"}}`}
+	if ids, err := TaskCanvasIDs(canvasWorkflowTask, nil, ownedProject); err != nil || len(ids) != 1 || ids[0] != "canvas-wf" {
+		t.Fatalf("canvas workflow task canvas IDs = %v err = %v", ids, err)
+	}
+
+	canvasWorkflowWithoutDomain := model.Task{ID: "t-wf-canvas-2", ProjectID: "canvas-wf", Type: "canvas_video", InputJSON: `{"metadata":{"workflowStepId":"step-1"}}`}
+	if ids, err := TaskCanvasIDs(canvasWorkflowWithoutDomain, nil, ownedProject); err != nil || len(ids) != 1 || ids[0] != "canvas-wf" {
+		t.Fatalf("canvas workflow task without domainProjectId canvas IDs = %v err = %v", ids, err)
+	}
+
+	projectWorkflowTask := model.Task{ID: "t-wf-proj", ProjectID: "proj-1", Type: "canvas_video", InputJSON: `{"metadata":{"workflowStepId":"step-1","domainProjectId":"proj-1"}}`}
+	if ids, err := TaskCanvasIDs(projectWorkflowTask, nil, ownedProject); err != nil || len(ids) != 0 {
+		t.Fatalf("short-drama project workflow task must not require a canvas: %v err=%v", ids, err)
+	}
+	projectWorkflowImplicit := model.Task{ID: "t-wf-proj-implicit", ProjectID: "proj-1", Type: "canvas_video", InputJSON: `{"metadata":{"workflowStepId":"step-1"}}`}
+	if ids, err := TaskCanvasIDs(projectWorkflowImplicit, nil, ownedProject); err != nil || len(ids) != 0 {
+		t.Fatalf("implicit short-drama project workflow task must not require a canvas: %v err=%v", ids, err)
+	}
+
+	characterTurnaroundTask := model.Task{
+		ID: "t-turnaround", ProjectID: "proj-1", Type: "canvas_image",
+		InputJSON: `{"nodeId":"character-turnaround:asset-1","metadata":{"operation":"character_turnaround","characterAssetId":"asset-1"}}`,
+	}
+	if ids, err := TaskCanvasIDs(characterTurnaroundTask, []CanvasBindingIntent{{TaskID: "t-turnaround", OutputIndex: 0, TargetBinding: &TargetBinding{NodeID: "character-turnaround:asset-1"}}}, ownedProject); err != nil || len(ids) != 0 {
+		t.Fatalf("character turnaround project task with pseudo nodeId must not require a canvas: %v err=%v", ids, err)
+	}
+
+	chapterExtractTask := model.Task{
+		ID: "t-chapter", ProjectID: "proj-1", Type: "canvas_text",
+		InputJSON: `{"nodeId":"chapter_assets_extract:chapter-1","metadata":{"domainProjectId":"proj-1","chapterId":"chapter-1","operation":"chapter_assets_extract"}}`,
+	}
+	if ids, err := TaskCanvasIDs(chapterExtractTask, nil, ownedProject); err != nil || len(ids) != 0 {
+		t.Fatalf("chapter extraction project task with pseudo nodeId must not require a canvas: %v err=%v", ids, err)
+	}
+
+	ownedPseudoNodeTask := model.Task{
+		ID: "t-owned-pseudo", ProjectID: "proj-1", Type: "canvas_image",
+		InputJSON: `{"metadata":{"nodeId":"pseudo-node","canvasId":"stale-canvas"}}`,
+	}
+	if ids, err := TaskCanvasIDs(ownedPseudoNodeTask, nil, ownedProject); err != nil || len(ids) != 0 {
+		t.Fatalf("owned business project task with pseudo nodeId must not require a canvas: %v err=%v", ids, err)
+	}
+
+	if missing, err := TaskCanvasMissing(projectWorkflowImplicit, nil, ownedProject, func(string) (bool, error) {
+		t.Fatal("non-canvas task must not query canvasExists")
+		return false, nil
+	}); err != nil || missing {
+		t.Fatalf("non-canvas task reported missing=%v err=%v", missing, err)
+	}
+
+	messageOnly := model.Task{ID: "t-msg", Type: "canvas_text", InputJSON: `{"metadata":{"conversationId":"conv-1","messageId":"msg-1"}}`}
+	if ids, err := TaskCanvasIDs(messageOnly, nil, func(string) (bool, error) {
+		t.Fatal("message-only task must not query isOwnedProject")
+		return false, nil
+	}); err != nil || len(ids) != 0 {
+		t.Fatalf("message-only task canvas IDs = %v err = %v", ids, err)
+	}
+	if got := MessageBindTargets(messageOnly, nil); len(got) != 1 || got[0].ConversationID != "conv-1" || got[0].MessageID != "msg-1" {
+		t.Fatalf("message bind targets = %+v", got)
+	}
+}
