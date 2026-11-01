@@ -3,8 +3,9 @@ import {
   buildStudioDigest,
   describeChangesSince,
   isTransientStudioTailMessage,
-   nodeState,
+  nodeState,
   normalizeSystemHeaderMessages,
+  pruneHistoricalToolImages,
   snapshotOf,
   withCurrentStudio,
 } from './studio-digest.mjs';
@@ -160,5 +161,104 @@ describe('normalizeSystemHeaderMessages & withCurrentStudio', () => {
     expect(twice.length).toBe(4);
     expect(twice[2].content[0].text).toContain('用户自己贴的计划文本');
     expect(twice[3].content[0].text).toContain('画布版本 2');
+  });
+
+  test('pruneHistoricalToolImages 保留当前批次及连续媒体探查中的 toolResult 图片，但裁剪已转入画布写入或历史轮次的旧预览图', () => {
+    const bigPad = 'A'.repeat(20 * 1024);
+    const imgPart = (tag) => ({ type: 'image', mimeType: 'image/jpeg', data: `${tag}_${bigPad}` });
+    const tinyPart = { type: 'image', mimeType: 'image/png', data: 'TINY_ICON' };
+    const freshBatch = [
+      { role: 'user', content: [{ type: 'text', text: '查看三张首帧图' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'c1', name: 'media_overview', arguments: { nodeId: 'img-1' } },
+          { type: 'toolCall', id: 'c2', name: 'media_overview', arguments: { nodeId: 'img-2' } },
+        ],
+      },
+      { role: 'toolResult', toolCallId: 'c1', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('BASE64_1'), tinyPart] },
+      { role: 'toolResult', toolCallId: 'c2', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('BASE64_2')] },
+    ];
+    // 尚未有后续 assistant 响应时，同批 2 张图完整保留
+    const projectedFresh = pruneHistoricalToolImages(freshBatch);
+    expect(projectedFresh[2].content[1]).toEqual(imgPart('BASE64_1'));
+    expect(projectedFresh[3].content[1]).toEqual(imgPart('BASE64_2'));
+
+    // 连续 media_inspect（无新图片，例如音频检查）或只读/记账工具（plan_update、canvas_get）时，同轮刚读完的 overview 图仍保留，确保紧随其后的写操作请求能看到参考图
+    const duringInspectAndPlan = [
+      ...freshBatch,
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'c3', name: 'media_inspect', arguments: { nodeId: 'vid-1', mode: 'audio' } },
+          { type: 'toolCall', id: 'c3p', name: 'plan_update', arguments: { items: [] } },
+          { type: 'toolCall', id: 'c3g', name: 'canvas_get', arguments: {} },
+        ],
+      },
+      { role: 'toolResult', toolCallId: 'c3', content: [{ type: 'text', text: '{"op":"media.inspect"}' }] },
+      { role: 'toolResult', toolCallId: 'c3p', content: [{ type: 'text', text: 'Current plan:' }] },
+      { role: 'toolResult', toolCallId: 'c3g', content: [{ type: 'text', text: '{"revision":2}' }] },
+    ];
+    const projectedInspect = pruneHistoricalToolImages(duringInspectAndPlan);
+    expect(projectedInspect[2].content[1]).toEqual(imgPart('BASE64_1'));
+    expect(projectedInspect[3].content[1]).toEqual(imgPart('BASE64_2'));
+
+    // 当同轮仅有 [BEEFTV_INPUT:...] 补充消息紧跟在 toolResult 后时，不裁剪当轮刚读出的图片
+    const withSupplementOnly = [
+      ...freshBatch,
+      { role: 'user', content: [{ type: 'text', text: '[BEEFTV_INPUT:s1]\n请重点看第二张图' }] },
+    ];
+    expect(pruneHistoricalToolImages(withSupplementOnly)[2].content[1]).toEqual(imgPart('BASE64_1'));
+
+    // 当上一轮在 toolResult 后直接中断并进入下一轮普通 user 消息（无中间 assistant）时，旧轮图片必须被裁剪
+    const interruptedThenNextTurn = [
+      ...freshBatch,
+      { role: 'user', content: [{ type: 'text', text: '开启新一轮对话' }] },
+    ];
+    expect(pruneHistoricalToolImages(interruptedThenNextTurn)[2].content[1]).toEqual({
+      type: 'text',
+      text: '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+    });
+
+    // 一旦助手已读完图片并开始调用 canvas_node_configure，后续步骤不再重复上传旧 toolResult 的 base64
+    const afterCanvasConfigure = [
+      ...freshBatch,
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'c4', name: 'canvas_node_configure', arguments: { nodeId: 'vid-1' } }],
+      },
+      { role: 'toolResult', toolCallId: 'c4', content: [{ type: 'text', text: '{"op":"canvas.node.configure"}' }] },
+    ];
+    const projectedAfterWrite = withCurrentStudio(afterCanvasConfigure, '现场摘要');
+    expect(projectedAfterWrite[2].content[1]).toEqual({
+      type: 'text',
+      text: '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+    });
+    expect(projectedAfterWrite[3].content[1]).toEqual({
+      type: 'text',
+      text: '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+    });
+    // 小尺寸图标/占位图（<16KB）保持原样以维持前缀缓存一致
+    expect(projectedAfterWrite[2].content[2]).toEqual(tinyPart);
+    // 原数组不发生原地修改（保证持久层不变）
+    expect(freshBatch[2].content[1]).toEqual(imgPart('BASE64_1'));
+
+    // 跨轮进入新用户消息并读取新一批视频帧时，旧轮图片被裁剪、新轮刚读出的视频帧保留
+    const nextTurnWithNewFrames = [
+      ...afterCanvasConfigure,
+      { role: 'assistant', content: [{ type: 'text', text: '已完成配置' }] },
+      { role: 'user', content: [{ type: 'text', text: '继续验收视频并交付' }, imgPart('USER_ATTACHMENT')] },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'c5', name: 'media_overview', arguments: { nodeId: 'vid-1' } }],
+      },
+      { role: 'toolResult', toolCallId: 'c5', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('VIDEO_FRAME_1')] },
+    ];
+    const projectedNextTurn = withCurrentStudio(nextTurnWithNewFrames, '现场摘要');
+    expect(projectedNextTurn[2].content[1].type).toBe('text');
+    // 用户消息自带的附件图片始终保留
+    expect(projectedNextTurn[7].content[1]).toEqual(imgPart('USER_ATTACHMENT'));
+    // 新一轮刚读取的 toolResult 视频帧完整保留
+    expect(projectedNextTurn[9].content[1]).toEqual(imgPart('VIDEO_FRAME_1'));
   });
 });

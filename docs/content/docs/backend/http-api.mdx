@@ -248,7 +248,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 媒体工具从已拥有的画布节点或素材读取资源。`storageKey`、`content` 支持 `resource:<id>` 和资源文件 URL（如 `/api/resources/<id>/file`），与画布保存使用相同的资源 ID 解析规则。URL 只用于提取 ID，不会被直接请求；读取前仍校验目标关联关系、资源归属和就绪状态。
 
-静态图片不再固定缩到 640 像素。PNG/JPEG 在单张 3 MiB 的传输预算内直接返回原始文件，其他可解码图片转为原始像素大小的 PNG。结果的 `image` 描述实际返回的 `view: original|preview|crop`、`width`、`height`、`originalWidth`、`originalHeight`。超过预算时，`media.overview` 返回明确标注的概览预览；`media.inspect` 不会为满足体积而缩小图片，可传 `imageCrop:{x,y,width,height}` 按原始像素读取局部，坐标为显示方向上从左上角起的 0～1 比例，范围须完整位于图片内。图片检查的 `startMs`、`endMs` 均为 0；局部结果仍绑定原资源版本，不写入新素材。视频抽帧的预览尺寸不受此改动影响。
+静态图片不再固定缩到 640 像素。`media.overview` 在单张 256 KiB 内直接返回原始文件，超过 256 KiB 时自动生成长边不超过 1600 像素的 JPEG 概览预览（`view: "preview"`，保留 `originalWidth`、`originalHeight`，并在原图不超过 3 MiB 时标记 `inspectable: true`）；`media.inspect` 在单张 3 MiB 的传输预算内始终返回 1:1 原始像素文件（其他可解码图片转为原始像素大小的 PNG），不会为满足体积而缩小图片，且可传 `imageCrop:{x,y,width,height}` 按原始像素读取局部，坐标为显示方向上从左上角起的 0～1 比例，范围须完整位于图片内。结果的 `image` 描述实际返回的 `view: original|preview|crop`、`width`、`height`、`originalWidth`、`originalHeight` 及可选 `inspectable`。图片检查的 `startMs`、`endMs` 均为 0；局部结果仍绑定原资源版本，不写入新素材。视频抽帧的预览尺寸不受此改动影响。
 
 活跃回合的历史响应可带 `active.streamed`，用于页面刷新后恢复当前文字；计划来自顶层 `plan`。文字仅包含本轮助手可见文本，不带推理内容、工具参数或上游错误原文。重新附着观察流会先发送当前文字和计划快照，不重新执行模型调用。
 

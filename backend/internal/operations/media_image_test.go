@@ -133,7 +133,7 @@ func TestOversizeImageOverviewLabelsPreviewAndInspectionCanCrop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.Image.View != "preview" || preview.Image.Width != 2048 || preview.Image.OriginalWidth != 2300 || !strings.Contains(preview.Note, "imageCrop") {
+	if preview.Image.View != "preview" || preview.Image.Inspectable || preview.Image.Width != maxOverviewPreviewEdge || preview.Image.OriginalWidth != 2300 || !strings.Contains(preview.Note, "imageCrop") {
 		t.Fatal("overview silently lost detail")
 	}
 	args.ExpectedVersion, args.Mode = preview.Source.Version, "frames"
@@ -147,6 +147,49 @@ func TestOversizeImageOverviewLabelsPreviewAndInspectionCanCrop(t *testing.T) {
 	}
 	if detail.Image.View != "crop" || detail.Image.Width != 575 || detail.Image.Height != 150 || detail.Source.Version != preview.Source.Version {
 		t.Fatal("oversized image could not be inspected at original pixel resolution")
+	}
+}
+
+func TestHighResPhotoOverviewUsesCompactPreviewWhileInspectKeepsOriginal(t *testing.T) {
+	picture := image.NewNRGBA(image.Rect(0, 0, 1584, 2816))
+	for y := 0; y < 2816; y++ {
+		for x := 0; x < 1584; x++ {
+			bx, by := x/4, y/4
+			picture.SetNRGBA(x, y, color.NRGBA{
+				R: uint8((bx*7 + by*3) & 0xff),
+				G: uint8((bx*5 ^ by*11) & 0xff),
+				B: uint8((bx*13 + by*17) & 0xff),
+				A: 255,
+			})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, picture, &jpeg.Options{Quality: 88}); err != nil {
+		t.Fatal(err)
+	}
+	if int64(encoded.Len()) <= maxOverviewImageBytes || int64(encoded.Len()) >= maxInlineImageBytes {
+		t.Fatalf("fixture bytes=%d, want between %d and %d", encoded.Len(), maxOverviewImageBytes, maxInlineImageBytes)
+	}
+	d := &mediaDomain{owner: "owner", data: encoded.Bytes(), mimeType: "image/jpeg"}
+	args := mediaArgs{CanvasID: "canvas", NodeID: "node"}
+	overview, err := mediaTestCall(t, d, "media.overview", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewBytes := imageBytes(t, overview)
+	if overview.Image == nil || overview.Image.View != "preview" || !overview.Image.Inspectable || overview.Image.Width != 900 || overview.Image.Height != 1600 || overview.Image.OriginalWidth != 1584 || overview.Image.OriginalHeight != 2816 {
+		t.Fatalf("unexpected overview image metadata: %+v", overview.Image)
+	}
+	if len(previewBytes) >= encoded.Len()/2 {
+		t.Fatalf("preview bytes=%d did not shrink significantly from original=%d", len(previewBytes), encoded.Len())
+	}
+	args.ExpectedVersion, args.Mode = overview.Source.Version, "frames"
+	inspected, err := mediaTestCall(t, d, "media.inspect", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Image == nil || inspected.Image.View != "original" || inspected.Image.Width != 1584 || inspected.Image.Height != 2816 || !bytes.Equal(imageBytes(t, inspected), encoded.Bytes()) {
+		t.Fatalf("inspect did not preserve original pixels: %+v", inspected.Image)
 	}
 }
 
