@@ -98,6 +98,8 @@ const GENERATION_ERROR_METADATA_KEYS = [
     "errorDetails",
     "generationErrorCode",
     "generationErrorSummary",
+    "generationProviderCode",
+    "taskFailureDiagnostics",
     "generationFailure",
     "generationPreflightError",
     "taskOutcomeSource",

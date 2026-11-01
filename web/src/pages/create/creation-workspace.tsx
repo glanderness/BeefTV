@@ -226,7 +226,7 @@ export function CreationMessageView({ item, shotNumber, onRetryFailure, onCreate
     const textRetryBlocked = textOutcome ? isRegenerateBlocked(textOutcome) : textExplanation.blockManualRetry;
     return <article className={`creation-assistant-message is-${mode}`}>
         {mode === "text" ? <><div className="creation-message-heading">{heading}</div>{item.reasoning ? <div className="creation-message-reasoning-wrap"><MessageReasoning reasoning={item.reasoning} isStreaming={item.status === "streaming"} /></div> : null}<div className="creation-message-content">{item.content ? <AIMessageMarkdown isStreaming={item.status === "streaming"}>{item.content}</AIMessageMarkdown> : <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><WorkingDots dotSize={5} gap={2} /><span>正在生成…</span></span>}</div></> : <GenerationToolCard status={toolStatus} heading={heading}><MediaResult item={item} onRetryFailure={onRetryFailure} onCreateVariant={onCreateVariant} onContinueCanvas={onContinueCanvas} openingCanvas={openingCanvas} /></GenerationToolCard>}
-        {item.error && mode === "text" ? <div className="creation-message-error"><GenerationFailureNotice explanation={{ ...textExplanation, blockManualRetry: textRetryBlocked }} retryDisabled={textRetryBlocked} onRetry={textRetryBlocked ? undefined : onRetryFailure} /></div> : null}
+        {item.error && mode === "text" ? <div className="creation-message-error"><GenerationFailureNotice explanation={{ ...textExplanation, blockManualRetry: textRetryBlocked }} context={{ failureDiagnostics: item.taskFailureDiagnostics, errorSummary: item.generationErrorSummary, providerCode: item.generationProviderCode, model: item.model, createdAt: item.createdAt, stage: item.generationStage }} retryDisabled={textRetryBlocked} onRetry={textRetryBlocked ? undefined : onRetryFailure} /></div> : null}
     </article>;
 }
 
@@ -290,7 +290,7 @@ function MediaResult({ item, onRetryFailure, onCreateVariant, onContinueCanvas, 
         const mediaOutcome = normalizeTaskOutcome(item.taskOutcome);
         const explanation = explainGenerationError(item.generationErrorCode ? { code: item.generationErrorCode, message: mediaErrorMessage } : mediaErrorMessage, { stage: mediaOutcome ? undefined : item.generationStage });
         const retryBlocked = mediaOutcome ? isRegenerateBlocked(mediaOutcome) : explanation.blockManualRetry;
-        return <div className="creation-media-error"><GenerationFailureNotice explanation={{ ...explanation, blockManualRetry: retryBlocked }} retryDisabled={retryBlocked} onRetry={retryBlocked ? undefined : onRetryFailure} /></div>;
+        return <div className="creation-media-error"><GenerationFailureNotice explanation={{ ...explanation, blockManualRetry: retryBlocked }} context={{ failureDiagnostics: item.taskFailureDiagnostics, errorSummary: item.generationErrorSummary, providerCode: item.generationProviderCode, model: item.model, createdAt: item.createdAt, stage: item.generationStage }} retryDisabled={retryBlocked} onRetry={retryBlocked ? undefined : onRetryFailure} /></div>;
     }
     if (!resultUrls.length) return <div className="creation-media-empty">没有返回可预览结果 <button type="button" onClick={onRetryFailure}>重试</button></div>;
     const isVideo = item.mode === "video";

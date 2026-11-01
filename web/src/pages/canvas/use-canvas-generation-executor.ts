@@ -440,6 +440,9 @@ export function useCanvasGenerationExecutor({
                                                   taskCreatedAt: new Date().toISOString(),
                                                   errorDetails: undefined,
                                                   generationErrorCode: undefined,
+                                                  generationErrorSummary: undefined,
+                                                  generationProviderCode: undefined,
+                                                  taskFailureDiagnostics: undefined,
                                                   taskOutcome: undefined,
                                                   failedPromptFingerprint: undefined,
                                                   failedInputFingerprint: undefined,
@@ -460,7 +463,7 @@ export function useCanvasGenerationExecutor({
                                     node.id === nodeId
                                         ? {
                                               ...node,
-                                              metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
+                                              metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
                                           }
                                         : node,
                                 ),
@@ -561,7 +564,7 @@ export function useCanvasGenerationExecutor({
                                     if (node.id === nodeId && !pendingNodeIds.includes(node.id)) {
                                         if (sourceReleased) return node;
                                         if (hasPreviousResult) {
-                                            return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
+                                            return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
                                         }
                                         if (!markSourceStatus) return node;
                                     }

@@ -139,6 +139,8 @@ export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId:
                               : {}),
                           errorDetails: undefined,
                           generationErrorCode: undefined,
+                          generationErrorSummary: undefined,
+                          generationProviderCode: undefined,
                           failedPromptFingerprint: undefined,
                           failedInputFingerprint: undefined,
                       })),

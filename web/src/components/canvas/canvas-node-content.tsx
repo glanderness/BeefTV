@@ -220,7 +220,7 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
                     compact
                     summaryOnly={batchChild}
                     explanation={explanation}
-                    context={{ ...canvasNodeDiagnosticContext(node), model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage, providerRequestId: node.metadata?.taskProviderRequestId, failureDiagnostics: node.metadata?.taskFailureDiagnostics, errorSummary: node.metadata?.generationErrorSummary, completedAt: node.metadata?.taskCompletedAt, updatedAt: node.metadata?.taskUpdatedAt }}
+                    context={{ ...canvasNodeDiagnosticContext(node), model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage, providerRequestId: node.metadata?.taskProviderRequestId, failureDiagnostics: node.metadata?.taskFailureDiagnostics, errorSummary: node.metadata?.generationErrorSummary, providerCode: node.metadata?.generationProviderCode, completedAt: node.metadata?.taskCompletedAt, updatedAt: node.metadata?.taskUpdatedAt }}
                     onOpenDetails={node.metadata?.taskId && onOpenTaskDetails ? () => onOpenTaskDetails(node) : undefined}
                     retryDisabled={retryBlocked}
                     onRetry={retryBlocked ? undefined : onRetry ? () => onRetry(node) : undefined}

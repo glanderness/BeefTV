@@ -1,6 +1,7 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import {
     allowlistedString,
+    CATEGORY_COPY,
     categoryFromHttpStatus,
     categoryFromProviderCode,
     categoryFromProviderMessage,
@@ -75,12 +76,15 @@ export type GenerationFailureMetadata = {
     generationErrorSummary?: string;
     errorDetails: string;
     generationErrorCode?: string;
+    generationProviderCode?: string;
+    taskFailureDiagnostics?: GenerationFailureDiagnostics;
     failedPromptFingerprint?: string;
     failedInputFingerprint?: string;
 };
 
 export type GenerationFailureContext = SupportDiagnosticContext & {
     errorSummary?: string;
+    providerCode?: string;
     failureDiagnostics?: GenerationFailureDiagnostics;
     completedAt?: string;
     updatedAt?: string;
@@ -129,10 +133,12 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
     const preparation = confirmedReferencePreparation(classified);
     const blockAutomaticRetry = uncertain || moderation || preparation || Object.hasOwn(REFERENCE_PREPARATION_COPY, classified.providerCode || "") || !["throttled", "concurrency", "provider_unavailable", "cancelled", "request_not_sent"].includes(classified.category);
+    const rawSummary = providerPayloadMessage(error instanceof Error ? error.message : error);
+    const sanitizedSummary = sanitizeProviderText(rawSummary);
     return {
         category: classified.category,
         httpStatus: classified.status,
-        summary: ["local_storage", "local_disk_full"].includes(classified.category) ? copy.reason : sanitizeProviderText(error instanceof Error ? error.message : typeof error === "string" ? error : providerPayloadMessage(error)),
+        summary: ["local_storage", "local_disk_full"].includes(classified.category) || Boolean(resourceStorageFailureMessage(rawSummary)) ? copy.reason : sanitizedSummary.includes("[已隐藏]") || sanitizedSummary.includes("[路径已隐藏]") || /[{}]/.test(sanitizedSummary) || /(?<![A-Za-z0-9._-])\/+(?!v\d+\/)[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+/.test(sanitizedSummary) ? "" : sanitizedSummary,
         reason: copy.reason,
         action: copy.action,
         message: message || DEFAULT_GENERATION_ERROR_MESSAGE,
@@ -164,10 +170,21 @@ export function generationErrorCode(error: unknown) {
 export function generationFailureMetadata(error: unknown, prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []): GenerationFailureMetadata {
     const explained = explainGenerationError(error);
     const inputFingerprint = generationInputFingerprint(prompt, references);
-    if (!explained.moderation) return { errorDetails: explained.message, generationErrorSummary: explained.summary, generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode };
+    if (!explained.moderation) {
+        return {
+            errorDetails: explained.message,
+            generationErrorSummary: explained.summary,
+            generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode,
+            generationProviderCode: explained.providerCode,
+            taskFailureDiagnostics: undefined,
+        };
+    }
     return {
         errorDetails: explained.message,
+        generationErrorSummary: undefined,
         generationErrorCode: explained.errorCode,
+        generationProviderCode: explained.providerCode,
+        taskFailureDiagnostics: undefined,
         failedPromptFingerprint: generationPromptFingerprint(prompt),
         failedInputFingerprint: inputFingerprint,
     };
@@ -233,6 +250,75 @@ export function generationInputFingerprint(prompt: string, references: Array<str
         .filter(Boolean)
         .sort();
     return generationPromptFingerprint(`${prompt.trim()}\n${referenceKeys.join("\n")}`);
+}
+
+const LOCAL_ONLY_FAILURE_CATEGORIES: ReadonlySet<GenerationErrorCategory> = new Set([
+    "local_storage",
+    "local_disk_full",
+    "local_credential",
+    "canvas_conflict",
+    "result_apply_failed",
+    "result_target_unavailable",
+    "request_not_sent",
+    "cancelled",
+]);
+
+const LOCAL_DIAGNOSTIC_SOURCES: ReadonlySet<string> = new Set(["local_validation", "local_network", "local_result", "local_response", "reference_upload", "client_result"]);
+
+function normalizeComparableText(value: string) {
+    return value.replace(/[\s,，。.;；:：!！?？、·"'“”‘’「」『』（）()[\]【】]+/gu, "").toLowerCase();
+}
+
+function cleanUpstreamCandidate(raw: string | undefined, explanation: GenerationFailureExplanation): string {
+    if (!raw || resourceStorageFailureMessage(raw) || /<\/?[a-z!][^>]*>/i.test(raw)) return "";
+    const sanitized = sanitizeProviderText(providerPayloadMessage(raw));
+    if (sanitized.includes("[已隐藏]") || sanitized.includes("[路径已隐藏]") || /[{}]/.test(sanitized) || /(?<![A-Za-z0-9._-])\/+(?!v\d+\/)[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+/.test(sanitized)) return "";
+    const cleaned = sanitized
+        .replace(/\{\s*\[已隐藏\]/g, "")
+        .replace(/\[已隐藏\]/g, "")
+        .replace(/\s*\(request\s*id:\s*[A-Za-z0-9._:-]{6,127}\)\s*$/i, "")
+        .replace(/(?:[。.\s]*排查编号：[^。]+)。?$/u, "")
+        .replace(/[:：,，\s[[{}]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!cleaned || /[{}]/.test(cleaned)) return "";
+    if (/^(?:opaque(?:\s+(?:provider\s+)?(?:message|failure|error))?|bad\s+request|failure|任务失败|已停止)$/i.test(cleaned)) return "";
+    if (/^(?:模型服务|接口)?请求失败(?:[（(]\s*HTTP\s*\d{3}\s*[)）])?$/i.test(cleaned)) return "";
+    if (BACKEND_FAILURE_CATEGORIES.has(cleaned.toLowerCase())) return "";
+    if (isNetworkText(cleaned) || isMalformedText(cleaned) || isCancelledText(cleaned) || isDownloadText(cleaned) || isResultsMissingText(cleaned) || containsInfrastructureDetails(cleaned)) return "";
+    const normalized = normalizeComparableText(cleaned);
+    if (!normalized) return "";
+    const reason = normalizeComparableText(explanation.reason);
+    const action = normalizeComparableText(explanation.action);
+    const combined = normalizeComparableText(`${explanation.reason}${explanation.action}`);
+    if (normalized === reason || normalized === action || normalized === combined) return "";
+    if (reason && normalized.startsWith(reason) && (!action || normalized.includes(action))) return "";
+    for (const copy of [LOCAL_TASK_ADMISSION_FAILURE, ...Object.values(CATEGORY_COPY), ...Object.values(REFERENCE_PREPARATION_COPY)]) {
+        if (normalized === normalizeComparableText(copy.reason) || normalized === normalizeComparableText(`${copy.reason}${copy.action}`)) return "";
+    }
+    return cleaned;
+}
+
+export function formatUpstreamFailureDetail(explanation: GenerationFailureExplanation, context: GenerationFailureContext = {}): string {
+    if (LOCAL_ONLY_FAILURE_CATEGORIES.has(explanation.category)) return "";
+    const evidence = context.failureDiagnostics;
+    if (evidence?.source && LOCAL_DIAGNOSTIC_SOURCES.has(evidence.source)) return "";
+    const upstreamEvidence = evidence && ["upstream_http", "upstream_response"].includes(evidence.source);
+    if (!upstreamEvidence && explanation.category === "unknown" && !explanation.httpStatus && !explanation.providerCode && !context.providerCode) return "";
+    const detail = [upstreamEvidence ? evidence?.summary : "", context.errorSummary, explanation.summary]
+        .map((candidate) => cleanUpstreamCandidate(candidate, explanation))
+        .find(Boolean);
+    if (!detail) return "";
+    const rawCode = sanitizeProviderCode((upstreamEvidence ? evidence?.providerCode : "") || explanation.providerCode || context.providerCode || "");
+    const showCode = Boolean(
+        rawCode &&
+            !/^\d+$/.test(rawCode) &&
+            !BACKEND_FAILURE_CATEGORIES.has(rawCode.toLowerCase()) &&
+            !Object.hasOwn(REFERENCE_PREPARATION_COPY, rawCode) &&
+            !isGenericProviderCode(rawCode) &&
+            !detail.toLowerCase().includes(rawCode.toLowerCase()),
+    );
+    return `上游返回：${detail}${showCode ? ` (${rawCode})` : ""}`;
 }
 
 export function formatGenerationDiagnostics(explanation: GenerationFailureExplanation, context: GenerationFailureContext = {}) {
