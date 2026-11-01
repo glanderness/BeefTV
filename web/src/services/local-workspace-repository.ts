@@ -370,8 +370,8 @@ async function applyBackendCanvasRead(
         const hadLive = Boolean(liveNow) || hadLiveAtStart;
         const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
         traceCanvasGraph("repository.read.select", { local: currentLocal, backend, base: canvasDocumentBase(backend.id, scope)?.snapshot, chosen });
-        if (!currentLocal || chosen === backend || sameCanvasDocument(chosen, backend)) {
-            const journal = peekCanvasOperationJournal(backend.id, scope);
+        const journal = peekCanvasOperationJournal(backend.id, scope);
+        if (!currentLocal || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
             const base = journal?.pendingProjection?.base
                 ?? journal?.confirmedSnapshot
                 ?? canvasDocumentBase(backend.id, scope)?.snapshot

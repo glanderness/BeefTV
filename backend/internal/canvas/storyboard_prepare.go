@@ -48,7 +48,7 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 	if err := requireExpectedRevision(expectedRevision); err != nil {
 		return UserDataSummary{}, result, err
 	}
-	if (input.Script == nil && len(input.RowIDs) < 1) || len(input.RowIDs) > 8 || len(input.ReferenceNodeIDs) > 4 || (len(input.Image) == 0 && len(input.Video) == 0) {
+	if (input.Script == nil && len(input.RowIDs) < 1) || len(input.RowIDs) > 8 || len(input.ReferenceNodeIDs) > 4 || (input.Script == nil && len(input.Image) == 0 && len(input.Video) == 0) {
 		return fail("请选择 1..8 个分镜及图片或视频参数，参考图片最多 4 张")
 	}
 	if len(input.Image) == 0 && len(input.ReferenceNodeIDs) > 0 {
@@ -217,7 +217,7 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 			node := map[string]any{"id": createdID, "type": kind, "title": title, "metadata": metadata,
 				"position": map[string]any{"x": left, "y": 160 + float64(index)*rowStride}, "width": width, "height": height}
 			for name, value := range patch {
-				if name == "title" || name == "content" {
+				if name == "title" || name == "content" || name == "prompt" {
 					return fail("生成参数不能覆盖分镜提示词或名称")
 				}
 				if _, exists := descriptor.PatchFields[name]; !exists {

@@ -28,7 +28,8 @@ export function canvasWriteView(data, operation, params = {}) {
   const metadata = {};
   for (const name of Object.keys(params.patch || {})) {
     if (name === 'title') continue;
-    const key = operation === 'canvas.node.update' && name === 'content' && MEDIA_KINDS.has(source.type)
+    const key = ((operation === 'canvas.node.update' && name === 'content') ||
+      (operation === 'canvas.node.configure' && name === 'prompt')) && MEDIA_KINDS.has(source.type)
       ? 'composerContent' : name;
     if (Object.hasOwn(source.metadata || {}, key)) {
       metadata[key] = field(source.metadata[key], `/metadata/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`);

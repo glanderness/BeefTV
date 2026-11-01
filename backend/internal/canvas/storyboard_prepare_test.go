@@ -195,3 +195,29 @@ func TestPrepareVideoUsesExistingImageAndReferenceIsNotVideoFirstFrame(t *testin
 		t.Fatal("invalid graph")
 	}
 }
+
+func TestPrepareStoryboardScriptOnlyCreation(t *testing.T) {
+	svc, id, _, revision := storyboardFixture(t)
+	summary, result, err := svc.PrepareUserCanvasStoryboard("owner", id, "", StoryboardPreparation{
+		Script: &StoryboardDraft{
+			Title: "三镜分镜",
+			Rows: []StoryboardRowDraft{
+				{DurationSeconds: floatPtr(5), PlotDescription: strPtr("第一镜"), ImageGenerationPrompt: strPtr("镜1首帧"), VideoMotionPrompt: strPtr("镜1运镜")},
+				{DurationSeconds: floatPtr(6), PlotDescription: strPtr("第二镜"), ImageGenerationPrompt: strPtr("镜2首帧"), VideoMotionPrompt: strPtr("镜2运镜")},
+			},
+		},
+	}, revision)
+	if err != nil {
+		t.Fatalf("只建分镜应成功: %v", err)
+	}
+	if summary.Revision != revision+1 || result.ScriptNodeID == "" || len(result.Created) != 1 || len(result.Shots) != 2 || len(result.CreatedEdgeIDs) != 0 {
+		t.Fatalf("只建分镜返回不符预期: %#v %#v", summary, result)
+	}
+	rows := storyboardRowsOf(t, svc, id, result.ScriptNodeID)
+	if len(rows) != 2 || rows[0]["imageGenerationPrompt"] != "镜1首帧" || rows[1]["videoMotionPrompt"] != "镜2运镜" {
+		t.Fatalf("分镜行内容不符预期: %#v", rows)
+	}
+	if _, _, err := svc.PrepareUserCanvasStoryboard("owner", id, result.ScriptNodeID, StoryboardPreparation{RowIDs: []string{result.Shots[0].RowID}}, summary.Revision); err == nil {
+		t.Fatal("已有分镜且不传 image/video 参数应被拒绝")
+	}
+}
