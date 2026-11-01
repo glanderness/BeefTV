@@ -26,6 +26,8 @@ import (
 
 var ErrUploadIncomplete = errors.New("参考素材未能确认，请重新提交")
 var ErrUploadRedirect = errors.New("参考素材上传不允许重定向")
+var uploadControlTimeout = 30 * time.Second
+var uploadCompleteTimeout = 90 * time.Second
 
 type UploadPart struct {
 	Number          int               `json:"number"`
@@ -117,7 +119,13 @@ func (c *MediaClient) uploadJSON(ctx context.Context, path string, body, out any
 		meta.Attempt = 1
 	}
 	ctx = withUploadMeta(ctx, stage, meta.Attempt)
-	req, err := c.request(ctx, http.MethodPost, path, body)
+	attemptTimeout := uploadControlTimeout
+	if stage == "complete" {
+		attemptTimeout = uploadCompleteTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
+	defer cancel()
+	req, err := c.request(reqCtx, http.MethodPost, path, body)
 	if err != nil {
 		return uploadError(ctx, err)
 	}
@@ -332,7 +340,7 @@ func retryUploadControl(err error) bool {
 	if errors.As(err, &dns) {
 		return dns.Timeout() || dns.Temporary()
 	}
-	return errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	return errors.As(err, &network) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func RetryUploadError(err error) bool { return retryUploadControl(err) }
@@ -464,6 +472,9 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if ref.StorageKey != "" {
+		ref.URL = ""
+	}
 	if ref.URL != "" && !strings.HasPrefix(ref.URL, "data:") {
 		// Forwarded references are validated and fetched by BeefAPI. Do not
 		// require this desktop's DNS/network route to fetch the same URL.
@@ -475,20 +486,16 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 			return ref.URL, nil
 		}
 		// Measured video/audio and upscale sources must be finalized by the
-		// upload-ticket validator. Prefer the owned resource over a remote URL.
-		if ref.StorageKey != "" {
-			ref.URL = ""
-		} else {
-			body, mime, size, err := c.openRemoteReference(ctx, ref.URL, ref.MaxBytes)
-			if err != nil {
-				return "", err
-			}
-			defer body.Close()
-			copy := *c
-			copy.Open = func(context.Context, string) (io.ReadCloser, string, int64, error) { return body, mime, size, nil }
-			ref.URL, ref.StorageKey, ref.MIME = "", "remote-reference", mime
-			return copy.UploadReference(ctx, ref)
+		// upload-ticket validator.
+		body, mime, size, err := c.openRemoteReference(ctx, ref.URL, ref.MaxBytes)
+		if err != nil {
+			return "", err
 		}
+		defer body.Close()
+		copy := *c
+		copy.Open = func(context.Context, string) (io.ReadCloser, string, int64, error) { return body, mime, size, nil }
+		ref.URL, ref.StorageKey, ref.MIME = "", "remote-reference", mime
+		return copy.UploadReference(ctx, ref)
 	}
 	mime := ref.MIME
 	inline := ref.DataURL

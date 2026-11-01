@@ -1,4 +1,4 @@
-import { canvasNodeResourceId, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
+import { bindCanvasNodeResourceAsset, canvasNodeResourceId, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import type { CanvasNodeAssetResult } from "@/services/project-asset-sync";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -120,6 +120,15 @@ export async function persistOwnedCanvasMediaNodes(
         if (primaryAssetId && rootResourceId && primaryResourceId && rootResourceId === primaryResourceId) {
             assetIds.set(id, primaryAssetId);
             latestNodes.set(id, { ...node, metadata: { ...node.metadata, assetId: primaryAssetId } });
+        }
+    }
+    const siblingCandidates = [...latestNodes.values()];
+    for (const [id, node] of latestNodes.entries()) {
+        if (node.metadata?.assetId) continue;
+        const bound = bindCanvasNodeResourceAsset(node, siblingCandidates, []);
+        if (bound.metadata?.assetId) {
+            assetIds.set(id, bound.metadata.assetId);
+            latestNodes.set(id, bound);
         }
     }
 
