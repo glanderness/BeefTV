@@ -104,6 +104,7 @@ In the local example **The Last Bottle of Water**, the user specified the produc
 - **Plan:** Define the world, characters, and storyboard, including shot duration, visuals, motion, and sound.
 - **Execute:** Create nodes and reference connections, then generate characters, scenes, shots, and narration after confirmation.
 - **Inspect and continue:** Read actual outputs, check designs and first frames, preserve successful assets and failure states, and continue refining.
+- **Connect external Agents via MCP:** Generate connection configs in the sidebar "BeefTV MCP" page to connect Codex, Claude Code, Claude Desktop, or Cursor to your local workspace; see [External Agent Integration](docs/content/docs/backend/external-agents.mdx) (Chinese).
 
 ## Skills
 

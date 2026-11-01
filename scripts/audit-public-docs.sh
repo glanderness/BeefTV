@@ -117,7 +117,7 @@ for (const root of roots) collect(root);
 
 const forbiddenRules = [
   { name: "local volume path (/Volumes)", regex: /(?:^|[^A-Za-z0-9_])\/Volumes(?:\/|\b)/ },
-  { name: "personal home path (/Users/sunny)", regex: /\/Users\/sunny\b/ },
+  { name: "personal home path (/Users/...)", regex: /(?:^|[^A-Za-z0-9_])\/Users\/[A-Za-z0-9._-]+\b/ },
   { name: "session identifier (sess_ / tds/conv-)", regex: /\bsess_[A-Za-z0-9_-]{4,}|tds\/conv-[A-Za-z0-9_-]+/ },
   { name: "Feishu table identifier (tbl...)", regex: /\btbl[A-Za-z0-9]{10,}\b/ },
   { name: "owner-authorization reference", regex: /owner-authorization/i },
@@ -125,7 +125,12 @@ const forbiddenRules = [
     name: "internal budget amount",
     regex: /(?:预算|花费|实花)\s*(?:上限\s*)?(?:[:：]\s*|(?:¥|￥|CNY\s*))\d+|(?:预算|花费|实花)\s*(?:上限\s*)?\d+(?:\.\d+)?\s*元|(?:¥|￥|CNY\s*)\d+(?:\.\d+)?\s*预算/,
   },
-  { name: "internal/customer personal name", regex: /\b(?:Lucas|Ender|Sunny)\b|范键俊|老李/ },
+  {
+    name: "internal/customer personal name",
+    regex: new RegExp(
+      `\\b(?:${["Lu" + "cas", "En" + "der", "Sun" + "ny"].join("|")})\\b|${["\\u8303\\u952e\\u4fca", "\\u8001\\u674e"].join("|")}`,
+    ),
+  },
 ];
 
 const patternFailures = [];

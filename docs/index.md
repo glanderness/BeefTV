@@ -21,11 +21,12 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [模型配置持久化](local-model-config-persistence.md)
 - [存储与导出设置](storage-settings.md)
 - [桌面账号与钱包](content/docs/backend/desktop-account.mdx)
-- [视频提示词长度与接入接口](content/docs/backend/video-prompt-limits.mdx)
+- [提示词长度由服务端校验](content/docs/backend/video-prompt-limits.mdx)
 
 ## 开发参考
 
 - [后端本地开发](content/docs/backend/local-development.mdx)
+- [外部 Agent 接入](content/docs/backend/external-agents.mdx)
 - [beeftv 命令行基础使用](content/docs/backend/beeftv-cli.mdx)
 - [HTTP API](content/docs/backend/http-api.mdx)
 - [代码地图](content/docs/backend/code-map.mdx)

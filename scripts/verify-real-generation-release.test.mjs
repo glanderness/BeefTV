@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -163,6 +163,13 @@ test('audit-public-docs.sh passes on repository and rejects internal paths, sess
     encoding: 'utf8',
   });
   assert.match(output, /public documentation audit passed/);
+  for (const scriptRel of ['scripts/audit-public-docs.sh', 'scripts/verify-real-generation-release.test.mjs']) {
+    const scriptText = readFileSync(join(ROOT_DIR, scriptRel), 'utf8');
+    assert.doesNotMatch(
+      scriptText,
+      new RegExp(['/Users/sun' + 'ny\\b', '\\bsun' + 'ny\\b', '\\u8303\\u952e\\u4fca', '\\u8001\\u674e'].join('|'), 'i'),
+    );
+  }
 
   function createCleanAuditFixture() {
     const dir = mkdtempSync(join(tmpdir(), 'beeftv-audit-docs-'));
@@ -278,7 +285,7 @@ test('audit-public-docs.sh passes on repository and rejects internal paths, sess
 
   const forbiddenSamples = [
     ['local volume path', ['', 'Volumes', 'Work'].join('/')],
-    ['personal home path', ['', 'Users', 'sunny', 'Work'].join('/')],
+    ['personal home path', ['', 'Users', 'alice', 'Work'].join('/')],
     ['session identifier sess_', 'sess_' + '12345678'],
     ['session identifier tds/conv-', 'tds/conv-' + 'abcd1234'],
     ['Feishu table identifier', 'tbl' + 'AbcdEfgh1234'],
@@ -286,8 +293,8 @@ test('audit-public-docs.sh passes on repository and rejects internal paths, sess
     ['internal budget amount symbol', '预算 ' + '¥50'],
     ['internal budget amount yuan', '预算 ' + '50 元'],
     ['internal budget amount colon', '预算：' + '1000'],
-    ['internal personal name', '联系 ' + '范键俊'],
-    ['internal personal name Sunny', 'owner ' + 'Sunny'],
+    ['internal personal name', '联系 ' + '\u8303\u952e\u4fca'],
+    ['internal personal name english', 'owner ' + 'Sun' + 'ny'],
   ];
 
   for (const [label, sample] of forbiddenSamples) {
