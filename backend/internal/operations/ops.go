@@ -159,7 +159,17 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		return nil, err
 	}
 	proposalID := newProposalID()
+	pricing := ResolveModelPricing(ctx.Domain, resolved.ModelKey)
+	graph := generationDependencyGraph{nodes: owned, incoming: map[string][]string{}, config: map[string]string{}}
+	if edges, ok := doc["connections"].([]any); ok {
+		for _, v := range edges {
+			e, _ := v.(map[string]any)
+			to, from := dependencyString(e, "toNodeId"), dependencyString(e, "fromNodeId")
+			graph.incoming[to] = append(graph.incoming[to], from)
+		}
+	}
 	targetsSummary := make([]map[string]any, 0, len(nodeIDs))
+	fallbackTargets := make([]GenerationTarget, 0, len(nodeIDs))
 	for _, id := range nodeIDs {
 		node := owned[id]
 		meta := dependencyMetadata(node)
@@ -173,21 +183,38 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 				paramsMap[key] = fmt.Sprint(v)
 			}
 		}
+		refs := uniqueTargetIDs(graph.references(id, args.Kind))
+		if refs == nil {
+			refs = []string{}
+		}
 		targetsSummary = append(targetsSummary, map[string]any{
-			"nodeId":     id,
-			"title":      dependencyString(node, "title"),
-			"kind":       args.Kind,
-			"model":      resolved.Display,
-			"modelKey":   resolved.ModelKey,
-			"prompt":     prompt,
-			"parameters": paramsMap,
+			"nodeId":           id,
+			"title":            dependencyString(node, "title"),
+			"kind":             args.Kind,
+			"model":            resolved.Display,
+			"modelKey":         resolved.ModelKey,
+			"pricing":          pricing,
+			"prompt":           prompt,
+			"parameters":       paramsMap,
+			"referenceNodeIds": refs,
+		})
+		fallbackTargets = append(fallbackTargets, GenerationTarget{
+			NodeID:           id,
+			Title:            dependencyString(node, "title"),
+			Kind:             args.Kind,
+			ModelKey:         resolved.ModelKey,
+			Prompt:           prompt,
+			Parameters:       paramsMap,
+			ReferenceNodeIDs: refs,
 		})
 	}
+	approvalMode := ctx.Caller.EffectiveApprovalMode()
 	result := map[string]any{
-		"proposalId": proposalID, "kind": args.Kind, "nodeIds": nodeIDs,
-		"model": resolved.Display, "modelKey": resolved.ModelKey, "note": strings.TrimSpace(args.Note),
-		"targets": targetsSummary,
-		"source":  map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
+		"proposalId": proposalID, "orderId": proposalID, "kind": args.Kind, "nodeIds": nodeIDs,
+		"model": resolved.Display, "modelKey": resolved.ModelKey, "pricing": pricing,
+		"approvalMode": string(approvalMode), "status": string(GenerationOrderPending),
+		"note": strings.TrimSpace(args.Note), "targets": targetsSummary,
+		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
 	}
 	var proposedTargets []GenerationTarget
 	if len(args.ProductionNodeIDs) > 0 {
@@ -207,15 +234,20 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		proposedTargets = targets
 		result["production"] = map[string]any{"targets": targets}
 	}
+	_, hasOrderRecorder := ctx.Domain.(GenerationOrderRecorder)
+	if len(proposedTargets) == 0 {
+		if strings.TrimSpace(ctx.TurnID) != "" || (hasOrderRecorder && !ctx.Caller.ReadOnly) {
+			targets, err := GenerationTargets(ctx.Domain, doc, nodeIDs)
+			if err != nil {
+				return nil, AsError(err)
+			}
+			proposedTargets = targets
+		} else {
+			proposedTargets = fallbackTargets
+		}
+	}
 	if strings.TrimSpace(ctx.TurnID) != "" {
 		if recorder, ok := ctx.Domain.(ProposedGenerationRecorder); ok {
-			if len(proposedTargets) == 0 {
-				var err error
-				proposedTargets, err = GenerationTargets(ctx.Domain, doc, nodeIDs)
-				if err != nil {
-					return nil, AsError(err)
-				}
-			}
 			if err := recorder.RecordAssistantGenerationProposal(ctx.UserID, ctx.TurnID, args.CanvasID, GenerationAuthorization{
 				ProposalID: proposalID,
 				Targets:    proposedTargets,
@@ -224,11 +256,55 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 			}
 		}
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	order := GenerationOrder{
+		OrderID:             proposalID,
+		ProposalID:          proposalID,
+		CanvasID:            args.CanvasID,
+		CanvasRevision:      canvasRevision(doc),
+		ModelConfigRevision: resolved.Revision,
+		CallerKind:          ctx.Caller.Kind,
+		CallerClient:        ctx.Caller.EffectiveClientLabel(),
+		ApprovalMode:        approvalMode,
+		Status:              GenerationOrderPending,
+		Kind:                args.Kind,
+		Model:               resolved.Display,
+		ModelKey:            resolved.ModelKey,
+		Pricing:             pricing,
+		Note:                strings.TrimSpace(args.Note),
+		NodeIDs:             nodeIDs,
+		ProductionNodeIDs:   args.ProductionNodeIDs,
+		Targets:             proposedTargets,
+		TargetViews:         BuildGenerationOrderTargetViews(ctx.Domain, proposedTargets),
+		SourceTurnID:        strings.TrimSpace(ctx.TurnID),
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	if !ctx.Caller.ReadOnly {
+		if orderRecorder, ok := ctx.Domain.(GenerationOrderRecorder); ok {
+			if err := orderRecorder.RecordGenerationOrder(ctx.UserID, order); err != nil {
+				return nil, AsError(err)
+			}
+		}
+		result["order"] = order
+	}
 	if ctx.Caller.Kind == CallerExternal && !ctx.Caller.ReadOnly {
-		result["nextAction"] = map[string]any{
-			"operation": "canvas.generation.submit", "approval": "external-client",
-			"params":  map[string]any{"canvasId": args.CanvasID, "nodeIds": nodeIDs, "kind": args.Kind, "expectedRevision": doc["revision"], "expectedModelConfigRevision": resolved.Revision},
-			"message": "本次提议尚未生成或扣费。由外部调用方确认后，使用稳定 operationId 提交；无需寻找内置助手确认卡。",
+		if approvalMode == ApprovalModeAsk {
+			result["nextAction"] = map[string]any{
+				"operation":  "beeftv approve " + proposalID,
+				"approval":   "owner-required",
+				"proposalId": proposalID,
+				"params":     map[string]any{"canvasId": args.CanvasID, "proposalId": proposalID, "nodeIds": nodeIDs, "kind": args.Kind, "expectedRevision": doc["revision"], "expectedModelConfigRevision": resolved.Revision},
+				"message":    "生成单已开出（待人工批准）。请在 BeefTV 界面确认，或在终端运行 `beeftv approve " + proposalID + "` 批准并执行；Agent 自身凭据不能自批。",
+			}
+		} else {
+			result["nextAction"] = map[string]any{
+				"operation":  "canvas.generation.submit",
+				"approval":   "external-client",
+				"proposalId": proposalID,
+				"params":     map[string]any{"canvasId": args.CanvasID, "proposalId": proposalID, "nodeIds": nodeIDs, "kind": args.Kind, "expectedRevision": doc["revision"], "expectedModelConfigRevision": resolved.Revision},
+				"message":    "本次提议尚未生成或扣费。由外部调用方确认后，使用稳定 operationId 提交；无需寻找内置助手确认卡。",
+			}
 		}
 	}
 	return result, nil

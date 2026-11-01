@@ -422,6 +422,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	})
 
 	r.POST("/assistant/turns/:turnId/proposals/:proposalId/production", func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" || isAssistantHostRequest(c, svc) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "agent_token_cannot_approve",
+				"msg":    "Agent 自身的凭据不能批准生成单，请使用工作区 owner 凭据或在 BeefTV 界面确认",
+			})
+			return
+		}
 		if !guard(c, true) {
 			return
 		}
@@ -438,6 +446,48 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		payload.ProposalID = c.Param("proposalId")
 		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
+		if err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
+	r.GET("/assistant/generation-orders", func(c *gin.Context) {
+		if !guard(c, false) {
+			return
+		}
+		canvasID := strings.TrimSpace(c.Query("canvasId"))
+		if canvasID != "" {
+			if _, allowed := requireOwnedCanvas(c, canvasID); !allowed {
+				return
+			}
+		}
+		orders, err := svc.ListGenerationOrders(c.GetString("agentUserId"), canvasID)
+		if err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, gin.H{"orders": orders})
+	})
+
+	r.POST("/assistant/generation-orders/:proposalId/approve", func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" || isAssistantHostRequest(c, svc) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "agent_token_cannot_approve",
+				"msg":    "Agent 自身的凭据不能批准生成单，请使用工作区 owner 凭据或在 BeefTV 界面确认",
+			})
+			return
+		}
+		if !guard(c, true) {
+			return
+		}
+		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成单标识无效"))
+			return
+		}
+		result, err := svc.ApproveGenerationOrder(c.GetString("agentUserId"), c.Param("proposalId"), "ui")
 		if err != nil {
 			failAssistantProposal(c, err)
 			return

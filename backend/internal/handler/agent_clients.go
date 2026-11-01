@@ -46,9 +46,10 @@ func RegisterAgentClientRoutes(r gin.IRouter, svc *app.Service, clients *agentop
 			return
 		}
 		var req struct {
-			Kind  string `json:"kind"`
-			Mode  string `json:"mode"`
-			Label string `json:"label"`
+			Kind         string `json:"kind"`
+			Mode         string `json:"mode"`
+			Label        string `json:"label"`
+			ApprovalMode string `json:"approvalMode"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体无效"))
@@ -65,7 +66,7 @@ func RegisterAgentClientRoutes(r gin.IRouter, svc *app.Service, clients *agentop
 			failInternal(c, http.StatusInternalServerError, err)
 			return
 		}
-		reg, token, err := clients.RegisterKind(string(kind), req.Label, agentops.ClientMode(strings.TrimSpace(req.Mode)))
+		reg, token, err := clients.RegisterClient(string(kind), req.Label, agentops.ClientMode(strings.TrimSpace(req.Mode)), agentops.ClientApprovalMode(req.ApprovalMode))
 		if err != nil {
 			failAgentOps(c, err)
 			return
@@ -124,13 +125,18 @@ func clientViews(items []agentops.ClientRegistration) []gin.H {
 }
 
 func clientView(item agentops.ClientRegistration) gin.H {
+	approvalMode, err := agentops.NormalizeClientApprovalMode(string(item.ApprovalMode))
+	if err != nil {
+		approvalMode = agentops.ClientApprovalCaller
+	}
 	view := gin.H{
-		"id":         item.ID,
-		"label":      item.Label,
-		"kind":       string(agentops.NormalizeClientKind(string(item.Kind))),
-		"mode":       string(item.Mode),
-		"createdAt":  item.CreatedAt.UTC().Format(time.RFC3339),
-		"lastUsedAt": nil,
+		"id":           item.ID,
+		"label":        item.Label,
+		"kind":         string(agentops.NormalizeClientKind(string(item.Kind))),
+		"mode":         string(item.Mode),
+		"approvalMode": string(approvalMode),
+		"createdAt":    item.CreatedAt.UTC().Format(time.RFC3339),
+		"lastUsedAt":   nil,
 	}
 	if item.LastUsedAt != nil {
 		view["lastUsedAt"] = item.LastUsedAt.UTC().Format(time.RFC3339)

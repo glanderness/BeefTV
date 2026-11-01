@@ -228,7 +228,7 @@
   },
   {
     "id": "canvas.generation.submit",
-    "summary": "提交画布素材生成，按所选渠道计费。外部 MCP/CLI 由调用方审批，必填画布与模型配置版本，不需要内置助手确认卡；内置助手仍须已确认的制作授权。返回原任务 ID，重试须复用 operationId",
+    "summary": "凭生成单执行画布素材生成，按所选渠道计费。支持三种凭据审批档位：ask（需人工在界面或用 beeftv approve 批准）、caller（外部调用方核对画布与模型版本后自行批准）、auto（确定性脚本一步开单并自动批准）。返回原任务 ID，重试须复用 operationId",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -237,12 +237,12 @@
           "type": "string"
         },
         "expectedModelConfigRevision": {
-          "description": "外部调用必填，来自生成提议的 source.modelConfigRevision",
+          "description": "caller 档位必填（auto 档位可选），来自生成提议的 source.modelConfigRevision",
           "minimum": 0,
           "type": "integer"
         },
         "expectedRevision": {
-          "description": "外部调用必填，来自 canvas.get 或生成提议的 source.canvasRevision",
+          "description": "caller 档位必填（auto 档位可选），来自 canvas.get 或生成提议的 source.canvasRevision",
           "minimum": 1,
           "type": "integer"
         },
@@ -266,6 +266,14 @@
         },
         "operationId": {
           "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "orderId": {
+          "description": "proposalId 的同义字段",
+          "type": "string"
+        },
+        "proposalId": {
+          "description": "可选，canvas.generation.propose 返回的生成单 ID",
           "type": "string"
         }
       },

@@ -47,7 +47,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			return
 		}
 		caller = withRequestScope(caller, scope)
-		ok(c, gin.H{"ops": registry.List(caller), "readOnly": caller.ReadOnly, "client": clientLabel, "caller": caller.Kind})
+		ok(c, gin.H{"ops": registry.List(caller), "readOnly": caller.ReadOnly, "client": clientLabel, "caller": caller.Kind, "approvalMode": caller.EffectiveApprovalMode()})
 	})
 
 	r.POST("/ops/clients", func(c *gin.Context) {
@@ -63,22 +63,23 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			return
 		}
 		var req struct {
-			Label string `json:"label"`
-			Mode  string `json:"mode"`
-			Kind  string `json:"kind"`
+			Label        string `json:"label"`
+			Mode         string `json:"mode"`
+			Kind         string `json:"kind"`
+			ApprovalMode string `json:"approvalMode"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体无效"))
 			return
 		}
-		reg, token, err := clients.RegisterKind(req.Kind, req.Label, agentops.ClientMode(req.Mode))
+		reg, token, err := clients.RegisterClient(req.Kind, req.Label, agentops.ClientMode(req.Mode), agentops.ClientApprovalMode(req.ApprovalMode))
 		if err != nil {
 			opErr := agentops.AsError(err)
 			c.JSON(agentops.HTTPStatus(opErr.Code), gin.H{"code": agentops.HTTPStatus(opErr.Code), "reason": opErr.Reason, "msg": opErr.Message})
 			return
 		}
 		// token 只在本次响应返回一次，服务端只保存哈希。
-		ok(c, gin.H{"client": gin.H{"id": reg.ID, "label": reg.Label, "kind": reg.Kind, "mode": reg.Mode}, "token": token})
+		ok(c, gin.H{"client": gin.H{"id": reg.ID, "label": reg.Label, "kind": reg.Kind, "mode": reg.Mode, "approvalMode": reg.ApprovalMode}, "token": token})
 	})
 
 	r.GET("/ops/clients", func(c *gin.Context) {
@@ -90,6 +91,72 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			return
 		}
 		ok(c, gin.H{"clients": clients.List()})
+	})
+
+	r.GET("/ops/orders", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) {
+			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if _, _, authErr := resolveCaller(c, svc, clients); authErr != nil {
+			fail(c, http.StatusForbidden, app.BadAuthRequest(authErr.Error()))
+			return
+		}
+		orders, err := svc.ListGenerationOrders(user.ID, c.Query("canvasId"))
+		if err != nil {
+			opErr := agentops.AsError(err)
+			c.JSON(agentops.HTTPStatus(opErr.Code), gin.H{"code": agentops.HTTPStatus(opErr.Code), "reason": opErr.Reason, "msg": opErr.Message})
+			return
+		}
+		ok(c, gin.H{"orders": orders})
+	})
+
+	r.POST("/ops/orders/:proposalId/approve", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) {
+			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
+			return
+		}
+		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" || isAssistantHostRequest(c, svc) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "agent_token_cannot_approve",
+				"msg":    "Agent 自身的凭据不能批准生成单，请使用工作区 owner 凭据或在 BeefTV 界面确认",
+			})
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		approvedBy := ""
+		if agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
+			approvedBy = "owner-cli"
+		} else if trustedDesktopUI(c) {
+			approvedBy = "ui"
+		} else {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "owner_required",
+				"msg":    "批准生成单需要工作区 owner 凭据或受信任的桌面界面",
+			})
+			return
+		}
+		result, execErr := svc.ApproveGenerationOrder(user.ID, c.Param("proposalId"), approvedBy)
+		if execErr != nil {
+			opErr := agentops.AsError(execErr)
+			c.JSON(agentops.HTTPStatus(opErr.Code), gin.H{
+				"code": agentops.HTTPStatus(opErr.Code), "reason": opErr.Reason, "msg": opErr.Message,
+				"details": opErr.Details,
+			})
+			return
+		}
+		ok(c, result)
 	})
 
 	r.POST("/ops/:op", func(c *gin.Context) {
@@ -162,7 +229,11 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 // owner 通道是手工 UI 与本机直连的身份。
 func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (agentops.Caller, string, error) {
 	if isAssistantHostRequest(c, svc) {
-		return agentops.Caller{Kind: agentops.CallerAssistant}, "assistant-host", nil
+		return agentops.Caller{
+			Kind:         agentops.CallerAssistant,
+			ClientLabel:  "assistant-host",
+			ApprovalMode: agentops.ApprovalModeAsk,
+		}, "assistant-host", nil
 	}
 	clientID := strings.TrimSpace(c.GetHeader("X-Beeftv-Client"))
 	if clientID != "" {
@@ -171,13 +242,19 @@ func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientReg
 		if !found {
 			return agentops.Caller{}, "", errUnknownClient
 		}
-		return agentops.Caller{Kind: agentops.CallerExternal, ReadOnly: reg.Mode == agentops.ClientReadOnly}, reg.Label, nil
+		return agentops.Caller{
+			Kind:         agentops.CallerExternal,
+			ReadOnly:     reg.Mode == agentops.ClientReadOnly,
+			ClientID:     reg.ID,
+			ClientLabel:  reg.Label,
+			ApprovalMode: agentops.ApprovalMode(reg.ApprovalMode),
+		}, reg.Label, nil
 	}
 	if agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
-		return agentops.Caller{Kind: agentops.CallerManual}, "owner", nil
+		return agentops.Caller{Kind: agentops.CallerManual, ClientLabel: "owner"}, "owner", nil
 	}
 	if trustedDesktopUI(c) {
-		return agentops.Caller{Kind: agentops.CallerManual}, "desktop-ui", nil
+		return agentops.Caller{Kind: agentops.CallerManual, ClientLabel: "desktop-ui"}, "desktop-ui", nil
 	}
 	return agentops.Caller{}, "", errUnidentified
 }
