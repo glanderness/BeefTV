@@ -1,7 +1,7 @@
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { buildLibTVImagePreviewUrl } from "@/lib/canvas/libtv-import";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration, hasCachedCanvasVideoPreview } from "@/services/canvas-video-preview";
+import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration, getCachedCanvasVideoPreviewBlob, hasCachedCanvasVideoPreview } from "@/services/canvas-video-preview";
 import { resolveImageUrl } from "@/services/image-storage";
 import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -225,6 +225,19 @@ async function loadVideoThumbnail(node: CanvasNodeData) {
         if (url) return rasterize(url);
     }
     if (persisted && !canvasVideoPreviewNeedsHydration(node)) return rasterize(persisted);
+    const cachedBlob = getCachedCanvasVideoPreviewBlob(node);
+    if (cachedBlob && typeof createImageBitmap === "function") {
+        try {
+            const bitmap = await createImageBitmap(cachedBlob);
+            try {
+                return rasterizeSource(bitmap, bitmap.width, bitmap.height);
+            } finally {
+                bitmap.close?.();
+            }
+        } catch {
+            // Fall through to object URL lease if ImageBitmap decode is unavailable.
+        }
+    }
     // Same display-only poster lease as the DOM card; release once copied.
     const lease = acquireCanvasVideoPreview(node);
     try {
@@ -236,27 +249,29 @@ async function loadVideoThumbnail(node: CanvasNodeData) {
     }
 }
 
+function rasterizeSource(source: CanvasImageSource, naturalWidth: number, naturalHeight: number): CanvasLodThumbnail | null {
+    if (!naturalWidth || !naturalHeight) return null;
+    const ratio = Math.min(1, THUMBNAIL_MAX_SIDE / Math.max(naturalWidth, naturalHeight));
+    const width = Math.max(1, Math.round(naturalWidth * ratio));
+    const height = Math.max(1, Math.round(naturalHeight * ratio));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(source, 0, 0, width, height);
+    return { source: canvas, width: naturalWidth, height: naturalHeight };
+}
+
 async function rasterize(url: string): Promise<CanvasLodThumbnail | null> {
     const image = new Image();
     image.decoding = "async";
     try {
         image.src = url;
         await image.decode();
-        const naturalWidth = image.naturalWidth;
-        const naturalHeight = image.naturalHeight;
-        if (!naturalWidth || !naturalHeight) return null;
-        const ratio = Math.min(1, THUMBNAIL_MAX_SIDE / Math.max(naturalWidth, naturalHeight));
-        const width = Math.max(1, Math.round(naturalWidth * ratio));
-        const height = Math.max(1, Math.round(naturalHeight * ratio));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext("2d");
-        if (!context) return null;
-        context.imageSmoothingEnabled = true;
-        context.imageSmoothingQuality = "high";
-        context.drawImage(image, 0, 0, width, height);
-        return { source: canvas, width: naturalWidth, height: naturalHeight };
+        return rasterizeSource(image, image.naturalWidth, image.naturalHeight);
     } finally {
         image.src = "";
     }

@@ -98,6 +98,11 @@ export function hasCachedCanvasVideoPreview(node: VideoPreviewSource) {
     return posterBlobCache.has(requestKey) || Boolean(previewRequests.get(requestKey)?.url);
 }
 
+export function getCachedCanvasVideoPreviewBlob(node: VideoPreviewSource) {
+    const requestKey = canvasDerivedPreviewSourceKey(node);
+    return posterBlobCache.get(requestKey)?.poster || null;
+}
+
 async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: string, signal?: AbortSignal): Promise<VideoPreview | null> {
     const cached = posterBlobCache.get(requestKey);
     if (cached) {
