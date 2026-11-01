@@ -128,6 +128,17 @@ export function nodeState(node) {
 }
 const STATE_LABEL = { done: '完成', running: '生成中', failed: '失败', empty: '空' };
 
+function formatMediaStatus(node) {
+  if (!node) return '不存在';
+  const state = nodeState(node);
+  const label = STATE_LABEL[state] || '不存在';
+  const durationMs = Number(node?.metadata?.durationMs);
+  if (state === 'done' && Number.isFinite(durationMs) && durationMs > 0) {
+    return `${label}(${Math.round(durationMs)}ms)`;
+  }
+  return label;
+}
+
 function fnv(text) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 0x01000193) >>> 0; }
@@ -179,8 +190,8 @@ export function buildStudioDigest(canvas, { maxBytes = 3600, selectedNodeIds = [
     rows.forEach((row, index) => {
       if (row.imageNodeId) rowBound.add(row.imageNodeId);
       if (row.videoNodeId) rowBound.add(row.videoNodeId);
-      const image = row.imageNodeId ? STATE_LABEL[nodeState(byId.get(row.imageNodeId))] || '不存在' : '未建';
-      const video = row.videoNodeId ? STATE_LABEL[nodeState(byId.get(row.videoNodeId))] || '不存在' : '未建';
+      const image = row.imageNodeId ? formatMediaStatus(byId.get(row.imageNodeId)) : '未建';
+      const video = row.videoNodeId ? formatMediaStatus(byId.get(row.videoNodeId)) : '未建';
       const prompts = `${row.imageGenerationPrompt ? '图词✓' : '图词✗'} ${row.videoMotionPrompt ? '视词✓' : '视词✗'}`;
       lines.push(`  镜${row.shotNumber ?? index + 1} ${row.durationSeconds ?? '?'}s｜行id=${row.id}｜首帧 ${row.imageNodeId || '—'} ${image}｜视频 ${row.videoNodeId || '—'} ${video}｜${prompts}｜${clip(row.plotDescription, 18)}`);
     });
@@ -192,9 +203,9 @@ export function buildStudioDigest(canvas, { maxBytes = 3600, selectedNodeIds = [
   if (failed.length) lines.push(`失败：${failed.slice(0, 6).map((node) => `${node.id}「${clip(node.title, 14)}」${clip(node.metadata?.generationErrorSummary || node.metadata?.errorDetails || node.metadata?.taskErrorCode, 40)}`).join('；')}${failed.length > 6 ? `…共 ${failed.length}` : ''}`);
   const loose = nodes.filter((node) => MEDIA.has(node.type) && !rowBound.has(node.id));
   if (loose.length && !nodes.some((node) => node.type === 'script')) {
-    lines.push(`媒体节点：${loose.slice(0, 16).map((node) => `${node.id}「${clip(node.title, 14)}」${TYPE_LABEL[node.type]}${STATE_LABEL[nodeState(node)]}`).join('、')}${loose.length > 16 ? `…共 ${loose.length}` : ''}`);
+    lines.push(`媒体节点：${loose.slice(0, 16).map((node) => `${node.id}「${clip(node.title, 14)}」${TYPE_LABEL[node.type]}${formatMediaStatus(node)}`).join('、')}${loose.length > 16 ? `…共 ${loose.length}` : ''}`);
   } else if (loose.length) {
-    lines.push(`不在分镜行里的媒体节点 ${loose.length} 个：${loose.slice(0, 8).map((node) => `${node.id}「${clip(node.title, 14)}」${TYPE_LABEL[node.type]}`).join('、')}${loose.length > 8 ? `…共 ${loose.length}` : ''}（如需关联分镜行请用 canvas_script_row_update 绑定 imageNodeId/videoNodeId）`);
+    lines.push(`不在分镜行里的媒体节点 ${loose.length} 个：${loose.slice(0, 8).map((node) => `${node.id}「${clip(node.title, 14)}」${TYPE_LABEL[node.type]}${formatMediaStatus(node)}`).join('、')}${loose.length > 8 ? `…共 ${loose.length}` : ''}（如需关联分镜行请用 canvas_script_row_update 绑定 imageNodeId/videoNodeId）`);
   }
   const selected = selectedNodeIds.map((id) => byId.get(id)).filter(Boolean);
   if (selected.length) lines.push(`用户选中：${selected.slice(0, 8).map((node) => `${node.id}「${clip(node.title, 14)}」`).join('、')}`);

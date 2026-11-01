@@ -68,6 +68,20 @@ describe('buildStudioDigest', () => {
     expect(text).toContain('canvas_get');
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(3600);
   });
+  test('已完成视频与音频在摘要中直接带出 durationMs，避免重复调用 canvas_get', () => {
+    const { text } = buildStudioDigest({
+      revision: 15,
+      nodes: [
+        board([row(1, { imageNodeId: 'img-1', videoNodeId: 'vid-1' })]),
+        media('img-1', 'image', '镜1首帧', { status: 'success', assetId: 'a1' }),
+        media('vid-1', 'video', '镜1视频', { status: 'success', assetId: 'v1', durationMs: 5120 }),
+        media('aud-1', 'audio', '旁白', { status: 'success', assetId: 'au1', durationMs: 4800 }),
+      ],
+      connections: [],
+    });
+    expect(text).toContain('视频 vid-1 完成(5120ms)');
+    expect(text).toContain('aud-1「旁白」音频完成(4800ms)');
+  });
 });
 
 describe('describeChangesSince', () => {

@@ -11,30 +11,20 @@ import (
 )
 
 func registerCanvasNodeConfigureOps(r *Registry) {
-	properties := map[string]any{}
-	for _, kind := range []string{"image", "video", "audio"} {
-		descriptor, _ := capability.BuiltinRegistry().Resolve(kind)
-		for name, field := range descriptor.PatchFields {
-			if name == "title" || name == "content" {
-				continue
-			}
-			if previous, exists := properties[name]; exists {
-				previous.(map[string]any)["description"] = previous.(map[string]any)["description"].(string) + "、" + kind
-				continue
-			}
-			properties[name] = map[string]any{"type": field.Kind, "description": field.Description + "；适用 " + kind}
-		}
-	}
-	properties["count"] = map[string]any{"type": "integer", "minimum": 1, "maximum": 8, "description": "仅 image"}
-	for _, name := range []string{"transparentBackground", "generateAudio", "watermark"} {
-		properties[name].(map[string]any)["enum"] = []string{"true", "false"}
+	properties := map[string]any{
+		"model":         map[string]any{"type": "string"},
+		"prompt":        map[string]any{"type": "string"},
+		"size":          map[string]any{"type": "string"},
+		"seconds":       map[string]any{"type": "string"},
+		"generateAudio": map[string]any{"type": "string", "enum": []string{"true", "false"}},
+		"audioVoice":    map[string]any{"type": "string"},
 	}
 	params, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false,
 		"properties": map[string]any{"canvasId": map[string]any{"type": "string"}, "nodeId": map[string]any{"type": "string"},
 			"kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio"}}, "expectedRevision": map[string]any{"type": "integer", "minimum": 1},
-			"patch": map[string]any{"type": "object", "additionalProperties": false, "minProperties": 1, "properties": properties}},
+			"patch": map[string]any{"type": "object", "minProperties": 1, "properties": properties}},
 		"required": []string{"canvasId", "nodeId", "kind", "expectedRevision", "patch"}})
-	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.node.configure", Summary: "设置已有媒体节点的提示词草稿与生成参数；不生成、不扣费，不改任务或现有成品", Scope: ScopeCanvas, Params: params, Handler: opCanvasNodeConfigure})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.node.configure", Summary: "设置媒体节点的提示词草稿与生成参数；不启动生成", Scope: ScopeCanvas, Params: params, Handler: opCanvasNodeConfigure})
 }
 
 func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {

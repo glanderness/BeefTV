@@ -158,8 +158,8 @@ func BuildGenerationOrderTargetViews(domain Domain, targets []GenerationTarget) 
 }
 
 func registerGenerationSubmit(r *Registry) {
-	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.generation.submit", Summary: "凭生成单执行画布素材生成，按所选渠道计费。支持三种凭据审批档位：ask（需人工在界面或用 beeftv approve 批准）、caller（外部调用方核对画布与模型版本后自行批准）、auto（确定性脚本一步开单并自动批准）。返回原任务 ID，重试须复用 operationId", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string","description":"可选，canvas.generation.propose 返回的生成单 ID"},"orderId":{"type":"string","description":"proposalId 的同义字段"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8,"description":"同批必须相互独立且参考已就绪；外部提交只接受尚未关联任务的节点，已有任务用 task.get 查询或原任务恢复入口处理"},"kind":{"type":"string","enum":["image","video","audio"],"description":"可省略以按各节点实际类型提交混合批次"},"expectedRevision":{"type":"integer","minimum":1,"description":"caller 档位必填（auto 档位可选），来自 canvas.get 或生成提议的 source.canvasRevision"},"expectedModelConfigRevision":{"type":"integer","minimum":0,"description":"caller 档位必填（auto 档位可选），来自生成提议的 source.modelConfigRevision"}},"required":["canvasId","nodeIds"]}`), Handler: opGenerationSubmit})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.generation.submit", Summary: "凭已批准生成单执行画布素材生成并按渠道计费（ask 需人工批准、caller 核对版本后自批、auto 自动批准）", Scope: ScopeCanvas,
+		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`), Handler: opGenerationSubmit})
 }
 
 func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {

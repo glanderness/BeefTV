@@ -41,8 +41,6 @@ export function canvasWriteView(data, operation, params = {}) {
   } };
 }
 
-export function canvasWriteViewDescription(operation) {
-  return NODE_WRITES.has(operation) || operation === 'canvas.task.bind'
-    ? '。写入回执只含节点身份及本次修改字段的实际值；writeView 标明省略的节点数据。长字段的 preview 不是完整原文，需要时把 readView 传给 canvas_get 读取。'
-    : '';
+export function canvasWriteViewDescription(_operation) {
+  return '';
 }

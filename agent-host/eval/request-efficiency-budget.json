@@ -1,6 +1,6 @@
 {
   "minAdjacentPrefixCoverageRatio": 0.95,
-  "maxHeaderChars": 7361,
-  "maxToolsChars": 31398,
-  "maxHeaderPlusToolsChars": 38759
+  "maxHeaderChars": 2898,
+  "maxToolsChars": 17864,
+  "maxHeaderPlusToolsChars": 20762
 }
