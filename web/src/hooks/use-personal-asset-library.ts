@@ -22,6 +22,8 @@ export function usePersonalAssetLibrary(enabled = true) {
             return [...new Map(assets.filter((asset) => asset.status !== "archived" && asset.kind !== "entity").map((asset) => [asset.id, asset])).values()];
         },
         staleTime: 5000,
+        refetchOnMount: "always",
+        retry: 1,
     });
     return query.data ?? EMPTY_ASSETS;
 }

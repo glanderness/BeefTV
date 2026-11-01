@@ -98,6 +98,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const [presetOpen, setPresetOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
+    const [expandedModalRendered, setExpandedModalRendered] = useState(false);
     const [expandedModalSize, setExpandedModalSize] = useState<{ width: number; height: number } | null>(null);
     const expandedModalRef = useRef<HTMLDivElement>(null);
     const [promptContentHeight, setPromptContentHeight] = useState(() => estimatePromptContentHeight(savedPrompt, false));
@@ -655,6 +656,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             <Modal
                 className="canvas-prompt-editor-modal"
                 open={expandedPromptOpen}
+                afterOpenChange={setExpandedModalRendered}
                 title={null}
                 footer={null}
                 centered
@@ -670,7 +672,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     body: { minHeight: 0, padding: 0 },
                 }}
             >
-                {expandedPromptOpen ? (
+                {expandedPromptOpen || expandedModalRendered ? (
                     <div ref={expandedModalRef} className="relative flex min-h-0 flex-col" style={{ ...composerTokens, color: theme.node.text, maxHeight: `calc(100dvh - ${PROMPT_EDITOR_VIEWPORT_MARGIN}px)`, ...(expandedModalSize ? { height: expandedModalSize.height } : null) }}>
                         <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
                             <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>

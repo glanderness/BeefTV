@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, canvasResourceReferenceInsertText, findCanvasResourceAutoLinkMatch, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, canvasResourceReferenceInsertText, findCanvasResourceAutoLinkMatch, referencedAssetIdsInPrompt, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { replaceCanvasReferenceToken, type CanvasReferenceAction, type CanvasReferenceIssue } from "@/lib/canvas/canvas-reference-issues";
 import {
     clamp,
@@ -124,9 +124,13 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         };
     }, []);
     const canvasReferences = useResolvedCanvasResourceReferences(references);
-    const rawAssetReferences = useMemo(() => includeAssetLibrary
-        ? [...new Map([...buildAssetMentionReferences(assets), ...selectedAssetReferences].map((item) => [item.assetId, item])).values()].map((item) => ({ ...item, active: highlightLabels && value.includes(canvasResourceMentionToken(item)) }))
-        : [], [assets, selectedAssetReferences, includeAssetLibrary, highlightLabels, value]);
+    const activeAssetIdsKey = includeAssetLibrary && highlightLabels ? referencedAssetIdsInPrompt(value).join("\x00") : "";
+    const rawAssetReferences = useMemo(() => {
+        if (!includeAssetLibrary) return EMPTY_REFERENCES;
+        const activeIds = new Set(activeAssetIdsKey ? activeAssetIdsKey.split("\x00") : []);
+        return [...new Map([...buildAssetMentionReferences(assets), ...selectedAssetReferences].map((item) => [item.assetId, item])).values()]
+            .map((item) => ({ ...item, active: Boolean(item.assetId && activeIds.has(item.assetId)) }));
+    }, [activeAssetIdsKey, assets, includeAssetLibrary, selectedAssetReferences]);
     const assetReferences = useResolvedCanvasResourceReferences(rawAssetReferences);
     const activeCanvasReferences = useMemo(() => canvasReferences.filter((item) => item.active), [canvasReferences]);
     const availableReferences = useMemo(() => [...(onSelectReference ? canvasReferences : activeCanvasReferences), ...assetReferences], [onSelectReference, canvasReferences, activeCanvasReferences, assetReferences]);

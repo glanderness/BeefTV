@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasNodePromptPanel } from "@/components/canvas/canvas-node-prompt-panel";
-import { buildCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasResourceReferences, isCanvasTextResourceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -14,6 +14,7 @@ import type { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import type { useCanvasSelectionController } from "./use-canvas-selection-controller";
 import type { useCanvasNodeReferences } from "./use-canvas-node-references";
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
+const EMPTY_TEXT_NODES: CanvasNodeData[] = [];
 
 type Props = {
     node: CanvasNodeData;
@@ -35,8 +36,8 @@ export function CanvasProjectNodePrompt({ node: panelNode, projectId, videoModel
     renderModel, generation, nodeEditor, pageUi, referenceActions, onFocusNode: focusCanvasNode,
     onCreateReplacement: createGenerationReplacement, onNodeMouseDown: handleNodeMouseDown,
 }: Props) {
-    const { nodesRef, connectionsRef } = document;
-    const { configInputsById, mentionReferencesByNodeId, skillMentionReferences } = renderModel;
+    const { connections, nodesRef, connectionsRef } = document;
+    const { configInputsById, mentionReferencesByNodeId, semanticNodes, skillMentionReferences } = renderModel;
     const { handleConfigNodeChange, handleNodePromptChange } = nodeEditor;
     const { handleGenerateNode, runningNodeId } = generation;
     const { setDialogNodeId, setNodeImageSettingsOpen, setToolbarNodeId } = pageUi.getState();
@@ -44,12 +45,30 @@ export function CanvasProjectNodePrompt({ node: panelNode, projectId, videoModel
     const { handleRemoveNodeReference, handleReorderNodeReferences, handleReplaceNodeReference, handleReplaceNodeReferenceFiles } = referenceActions;
     const workspaceMode = "professional";
     const activeMentionReferences = mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES;
+    const usesPromptPanel = panelNode.type !== CanvasNodeType.Config && panelNode.type !== CanvasNodeType.Script && panelNode.type !== CanvasNodeType.Drawing;
+    const panelNodeIsTextResource = usesPromptPanel && isCanvasTextResourceNode(panelNode);
+    const otherTextNodesRef = useRef<CanvasNodeData[]>(EMPTY_TEXT_NODES);
+    const otherTextNodes = useMemo(() => {
+        if (!usesPromptPanel) {
+            otherTextNodesRef.current = EMPTY_TEXT_NODES;
+            return EMPTY_TEXT_NODES;
+        }
+        const next = semanticNodes.filter((node) => node.id !== panelNode.id && isCanvasTextResourceNode(node));
+        const previous = otherTextNodesRef.current;
+        if (previous.length === next.length && next.every((node, index) => node === previous[index])) {
+            return previous;
+        }
+        otherTextNodesRef.current = next;
+        return next;
+    }, [panelNode.id, semanticNodes, usesPromptPanel]);
     const mentionReferences = useMemo(
-        () => [
-            ...activeMentionReferences,
-            ...buildCanvasResourceReferences(nodesRef.current, connectionsRef.current).filter((reference) => reference.kind === "text" && reference.nodeId !== panelNode.id && !activeMentionReferences.some((active) => active.nodeId === reference.nodeId)),
-        ],
-        [activeMentionReferences, connectionsRef, nodesRef, panelNode.id],
+        () => usesPromptPanel
+            ? [
+                ...activeMentionReferences,
+                ...buildCanvasResourceReferences(nodesRef.current, connections).filter((reference) => reference.kind === "text" && reference.nodeId !== panelNode.id && !activeMentionReferences.some((active) => active.nodeId === reference.nodeId)),
+            ]
+            : EMPTY_RESOURCE_REFERENCES,
+        [activeMentionReferences, connections, nodesRef, otherTextNodes, panelNode.id, panelNodeIsTextResource, usesPromptPanel],
     );
     if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
     return panelNode.type === CanvasNodeType.Config ? (

@@ -14,7 +14,8 @@ const EMPTY_ISSUES: CanvasReferenceIssue[] = [];
 
 export function useCanvasReferenceCheck(nodeId: string, prompt: string, references: CanvasResourceReference[], nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const assets = useAssetStore((state) => state.assets);
-    const selectedIds = useMemo(() => referencedAssetIdsInPrompt(prompt), [prompt]);
+    const selectedIdsKey = referencedAssetIdsInPrompt(prompt).join("\x00");
+    const selectedIds = useMemo(() => selectedIdsKey ? selectedIdsKey.split("\x00") : [], [selectedIdsKey]);
     const missingIds = useMemo(() => selectedIds.filter((id) => !assets.some((asset) => asset.id === id)), [assets, selectedIds]);
     const lookup = useQuery({
         queryKey: ["canvas-explicit-reference-check", missingIds],
