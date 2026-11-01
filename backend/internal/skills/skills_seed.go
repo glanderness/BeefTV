@@ -46,6 +46,7 @@ type builtinSkillDefinition struct {
 	ShowcaseMedia []seedShowcaseMedia `json:"showcase_media"`
 	AddedCount    int64               `json:"added_count"`
 	ExtraInfo     string              `json:"extra_info"`
+	DefaultAdded  bool                `json:"default_added,omitempty"`
 }
 
 // EnsureBuiltinSkills 校验并同步内置技能正文；用户关系独立保存，因此重复启动不会清空加入或收藏状态。
@@ -155,4 +156,18 @@ func builtinSkillAuxiliaryFiles() (map[string]map[string][]byte, error) {
 		result[strings.TrimSpace(definition.SkillID)] = files
 	}
 	return result, nil
+}
+
+func builtinDefaultAddedSkillIDs() ([]string, error) {
+	var definitions []builtinSkillDefinition
+	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
+		return nil, fmt.Errorf("解析内置技能失败: %w", err)
+	}
+	var ids []string
+	for _, definition := range definitions {
+		if definition.DefaultAdded {
+			ids = append(ids, strings.TrimSpace(definition.SkillID))
+		}
+	}
+	return ids, nil
 }

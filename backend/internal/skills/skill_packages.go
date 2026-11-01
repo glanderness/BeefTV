@@ -133,7 +133,60 @@ func (s *Service) EnsureSkillPackages() error {
 			return fmt.Errorf("保存技能 %s 文件包失败: %w", skill.ID, err)
 		}
 	}
+	if err := s.ensureDefaultAddedBuiltinSkills(); err != nil {
+		return err
+	}
 	return s.ensureSkillDisplayNames()
+}
+
+func (s *Service) ensureDefaultAddedBuiltinSkills() error {
+	defaultAddedIDs, err := builtinDefaultAddedSkillIDs()
+	if err != nil || len(defaultAddedIDs) == 0 {
+		return err
+	}
+	seededSkills := make([]*model.Skill, 0, len(defaultAddedIDs))
+	for _, skillID := range defaultAddedIDs {
+		skill, err := s.repo.Skill(skillID)
+		if err != nil || skill == nil || skill.CurrentVersionID == "" {
+			continue
+		}
+		seededSkills = append(seededSkills, skill)
+	}
+	if len(seededSkills) == 0 {
+		return nil
+	}
+	ws, err := s.repo.DefaultWorkspace()
+	if err != nil || ws == nil || strings.TrimSpace(ws.ID) == "" {
+		return nil
+	}
+	userID := strings.TrimSpace(ws.ID)
+	for _, skill := range seededSkills {
+		state, err := s.repo.UserSkillState(userID, skill.ID)
+		if err != nil {
+			return err
+		}
+		if state == nil {
+			state = &model.UserSkillState{
+				ID:                 kernel.NewID(),
+				UserID:             userID,
+				SkillID:            skill.ID,
+				Added:              true,
+				InstalledVersionID: skill.CurrentVersionID,
+				AutoUpdate:         false,
+			}
+			if err := s.repo.SetUserSkillAdded(state); err != nil {
+				return err
+			}
+			continue
+		}
+		if state.InstalledVersionID != skill.CurrentVersionID {
+			state.InstalledVersionID = skill.CurrentVersionID
+			if err := s.repo.SetUserSkillAdded(state); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Service) InstallSkillUpload(userID string, sourceType string, header *multipart.FileHeader, req SkillInstallRequest) (*SkillItem, error) {

@@ -263,6 +263,8 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 				metadata.Name = value
 			case indent == 0 && key == "description":
 				metadata.Description = value
+			case indent == 0 && key == "version":
+				metadata.Version = value
 			case indent == 0 && key == "metadata":
 				metadataIndent = indent
 			case metadataIndent >= 0 && indent > metadataIndent && key == "version":
