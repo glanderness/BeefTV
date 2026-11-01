@@ -43,11 +43,11 @@
 
 ## 最近更新
 
+- **[v2.0.5](https://github.com/glanderness/BeefTV/releases/tag/v2.0.5)** — 新增助手思考折叠展示，提升 Mac 画布流畅度，修复视频取回并支持部分失败图片恢复。
+- **[v2.0.4](https://github.com/glanderness/BeefTV/releases/tag/v2.0.4)** — 优化大画布缩放与拖动，完善参考素材校验、生成状态同步及助手操作的保存与授权检查。
 - **[v2.0.3](https://github.com/glanderness/BeefTV/releases/tag/v2.0.3)** — 优化视频提示词与素材引用校验，修复重试参数恢复，并改善超分请求稳定性。
 - **[v2.0.2](https://github.com/glanderness/BeefTV/releases/tag/v2.0.2)** — 新增 Seedream 图层拆分与关联组图，改进 Agent 多图检查、任务恢复与素材上传。
 - **[v2.0.1](https://github.com/glanderness/BeefTV/releases/tag/v2.0.1)** — 新增可复用工作流与 Topaz 超分，完善技能的固定版本安装、回退和私人改写。
-- **[v2.0.0](https://github.com/glanderness/BeefTV/releases/tag/v2.0.0)** — 创作助手贯通分镜方案、制作与成片导出，加入影音检查和技能市场，保留可编辑工程。
-- **[v1.7.27](https://github.com/glanderness/BeefTV/releases/tag/v1.7.27)** — 统一 Music 3.0 的 MP3 输出，改善音乐生成连接稳定性与桌面更新下载。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
@@ -56,8 +56,6 @@
 <div>
   <video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
 </div>
-
-新版产品演示 · 约 45 秒。
 
 ## 工作流
 
@@ -106,10 +104,7 @@
 - **先规划**：确定世界观、角色与分镜，写入镜头时长、画面、动作和声音要求。
 - **再执行**：创建节点与参考连线，确认后调用模型，生成角色图、场景图、镜头和旁白。
 - **可检查、可继续**：读取实际产物，核对设定图与分镜首帧，保留成功素材和失败状态，继续调整与编辑。
-
-[开场旁白试听](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [制作记录](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作)
-
-本例已完成 3 张角色图、2 张场景图、5 张分镜首帧、3 段视频与 2 段旁白；整片剪辑、字幕和最终影音验收尚未完成。生成需要可用的模型渠道，影音审查还需支持的多模态模型；结果仍需人工核对。
+- **支持外部 Agent / MCP 接入**：可在侧栏「BeefTV MCP」页一键生成连接配置，将 Codex、Claude Code、Claude Desktop、Cursor 等外部 Agent 接入本地工作区，详见[外部 Agent 接入](docs/content/docs/backend/external-agents.mdx)。
 
 ## Skills
 
@@ -124,8 +119,6 @@
 | 双镜头文字分镜 | 咖啡短片：两镜各 4 秒，列出画面、声音与待确认项。 |
 | 采访提纲 | 社区书店：三个开放问题、条件追问、补拍与授权清单。 |
 | 素材清单整理 | 咖啡视频＋清晨照片：用途分类、授权记录与时长、声音缺口。 |
-
-上图为 2.0.1 安装版实拍。实测使用官方 1.0.0 技能文件的本地私人副本；市场仍标注「效果尚未验证」。[查看三个示例的输入与结果](docs/content/docs/overview/examples.mdx#skills三个文字任务)。
 
 - **按需使用**：启用或停用已安装技能，管理自己的技能库。
 - **保留版本**：查看更新，也可回退到已安装的历史版本。
@@ -148,7 +141,7 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 | --- | --- | --- |
 | 面向复杂画布优化渲染、媒体预览与任务处理。 | 本地优先，一个桌面工作区即可开始，能力按需加载。 | Agent 推进创作，Skills 提供方法，工作流复用步骤。 |
 
-## 完全开源，构建属于你自己的BeefTV
+## 源码可用，支持自定义与扩展
 
 - 可以自由配置文本、图片、视频与音频模型渠道，不绑定单一 Provider。
 - 项目、画布、素材与任务由统一工作区管理，数据可以本地保存和迁移。

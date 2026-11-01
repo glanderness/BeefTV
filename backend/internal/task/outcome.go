@@ -3,7 +3,6 @@ package task
 import (
 	"strings"
 
-	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -51,7 +50,7 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	if facts.Unreadable {
 		return out("retrievable", "blocked", "evidence_unavailable")
 	}
-	if outcome, ok := computeBeefAPIOutcome(task); ok {
+	if outcome, ok := computeProviderSettlementOutcome(task); ok {
 		return outcome
 	}
 	regenerate := "confirm"
@@ -71,10 +70,10 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 			return out("failed", regenerate, "no_result")
 		}
 	}
-	if task.Type == "canvas_image" && generation.UpscaleMediaType(task.Model) == "" && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
+	if task.Type == "canvas_image" && !task.IsUpscale() && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
 		return out("retrievable", "blocked", "image_recovery_pending")
 	}
-	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
+	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale()) && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
 		return out("retrievable", "blocked", "provider_result_pending")
 	}
 	return out("failed", regenerate, "task_failed")
@@ -98,45 +97,37 @@ func isInputRejectedCode(code string) bool {
 	return code == "content_policy_violation" || code == "content_moderation" || strings.HasPrefix(code, "SAFETY.INPUT.")
 }
 
-func computeBeefAPIOutcome(task model.Task) (Outcome, bool) {
-	deadline := ""
-	if task.BeefReconcileDeadline != nil {
-		deadline = strings.TrimSpace(*task.BeefReconcileDeadline)
-	}
+func computeProviderSettlementOutcome(task model.Task) (Outcome, bool) {
+	deadline := strings.TrimSpace(task.ProviderReconcileDeadline())
 	terminalRecovery := task.RecoveryOutcome != nil && (*task.RecoveryOutcome == RecoveryNoResult || *task.RecoveryOutcome == RecoveryUnrecoverable)
-
-	if task.BeefUsageState != nil {
-		switch strings.ToLower(strings.TrimSpace(*task.BeefUsageState)) {
-		case "pending":
-			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
-		case "completed":
-			if terminalRecovery {
-				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
-			}
-			return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
-		case "failed":
-			return Outcome{Phase: "failed", Regenerate: "allowed", Reason: beefRefundedFailureReason(task)}, true
-		}
+	if task.MediaSettlementPending() {
+		return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
 	}
 
-	if task.BeefBillingState != nil {
-		switch strings.ToLower(strings.TrimSpace(*task.BeefBillingState)) {
-		case "":
-			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
-		case "settled":
-			if terminalRecovery {
-				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
-			}
-			return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}, true
-		case "refunded":
-			return Outcome{Phase: "failed", Regenerate: "allowed", Reason: beefRefundedFailureReason(task)}, true
+	switch strings.ToLower(strings.TrimSpace(task.ProviderUsageState())) {
+	case "completed":
+		if terminalRecovery {
+			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
 		}
+		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
+	case "failed":
+		return Outcome{Phase: "failed", Regenerate: "allowed", Reason: providerRefundedFailureReason(task)}, true
+	}
+
+	switch strings.ToLower(strings.TrimSpace(task.ProviderBillingState())) {
+	case "settled":
+		if terminalRecovery {
+			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
+		}
+		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}, true
+	case "refunded":
+		return Outcome{Phase: "failed", Regenerate: "allowed", Reason: providerRefundedFailureReason(task)}, true
 	}
 
 	return Outcome{}, false
 }
 
-func beefRefundedFailureReason(task model.Task) string {
+func providerRefundedFailureReason(task model.Task) string {
 	if d := task.FailureDiagnostics; d != nil && isInputRejectedCode(d.ProviderCode) {
 		return "input_rejected"
 	}

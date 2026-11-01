@@ -13,19 +13,19 @@ import { preferredMediaGeneratorMetadata } from "@/lib/canvas/canvas-generation-
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodeCreationDisabledReason } from "@/lib/canvas/canvas-feature-availability";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type Position } from "@/types/canvas";
-import { cloneCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
+import { cloneCanvasDrawing, removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
+import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { DirectorScene } from "@/types/director";
-import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
+import { hasCancellableCanvasNodeTask } from "@/lib/canvas/canvas-node-task-state";
 import { cancelWorkflowRun } from "@/services/api/canvas-workflows";
 import { cancelGenerationTask } from "@/services/api/task-center";
 import { canvasTaskConfirmation } from "./canvas-task-confirmation";
-import { subscribeUserScope } from "@/lib/user-scope";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type CanvasClipboard = {
@@ -80,10 +80,8 @@ export function useCanvasNodeOperations({
             recoveryConfirmation.current?.destroy?.();
             recoveryConfirmation.current = null;
         };
-        const unsubscribe = subscribeUserScope(dismiss);
         return () => {
             mounted.current = false;
-            unsubscribe();
             dismiss();
         };
     }, [projectId]);
@@ -403,8 +401,21 @@ export function useCanvasNodeOperations({
         commitNodes(nextNodes);
         commitConnections(nextConnections);
         selectNodes(new Set());
+        pageUi.getState().clearRemovedNodes(result.removedIds);
         onNodesDeleted(result.removedIds, nextNodes, removedNodes);
-    }, [commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
+        const context = deletionContext.current;
+        const drawingIds = removedNodes.flatMap(node => node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
+        if (drawingIds.length) {
+            void Promise.all(drawingIds.map(id => removeCanvasDrawing(projectId, id))).catch(() => {
+                if (mounted.current && deletionContext.current === context) message.warning("绘图节点已删除，但本地绘图缓存清理失败");
+            });
+        }
+        // Persist the exact deletion before an external refresh can restore an older graph.
+        if (isLocalWorkspaceMode()) {
+            void syncLocalCanvasSnapshot(projectId, { nodes: nextNodes, connections: nextConnections })
+                .catch(error => console.error("删除节点后的本地后端同步失败", error));
+        }
+    }, [pageUi, projectId, message, commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
 
     const deleteNodes = useCallback((ids: Set<string>) => {
         if (!ids.size || deleteConfirmation.current || !mounted.current) return;
@@ -414,15 +425,14 @@ export function useCanvasNodeOperations({
         const activeBatchItems = removedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
             batch.items.filter((item) => ["waiting", "submitting", "queued", "running"].includes(item.status))) || []);
         const hasActiveWorkflow = removedNodes.some(node => ["queued", "running"].includes(node.metadata?.reusableWorkflow?.run?.status || "") || node.metadata?.reusableWorkflow?.intent);
-        if (!hasActiveWorkflow && !removedNodes.some((node) => isCanvasNodeGenerating(node)) && !activeBatchItems.length) {
+        if (!hasActiveWorkflow && !removedNodes.some((node) => hasCancellableCanvasNodeTask(node)) && !activeBatchItems.length) {
             removeNodes(requestedIds);
             return;
         }
         const context = deletionContext.current;
-        const expectedScope = captureUserScope();
         const pending: { destroy?: () => void } = {};
         deleteConfirmation.current = pending;
-        const isCurrent = () => mounted.current && deletionContext.current === context && userScopeMatches(expectedScope);
+        const isCurrent = () => mounted.current && deletionContext.current === context;
         const confirmation = modal.confirm({
             ...canvasTaskConfirmation,
             title: "删除正在生成的节点？",
@@ -435,7 +445,7 @@ export function useCanvasNodeOperations({
                 const currentRemovedIds = removeCanvasNodes(nodesRef.current, requestedIds).removedIds;
                 const currentRemovedNodes = nodesRef.current.filter((node) => currentRemovedIds.has(node.id));
                 const taskIds = new Set([
-                    ...currentRemovedNodes.filter((node) => isCanvasNodeGenerating(node)).map((node) => node.metadata?.taskId),
+                    ...currentRemovedNodes.filter((node) => hasCancellableCanvasNodeTask(node)).map((node) => node.metadata?.taskId),
                     ...currentRemovedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
                         batch.items.filter((item) => ["submitting", "queued", "running"].includes(item.status)).map((item) => item.taskId)) || []),
                 ].filter((id): id is string => Boolean(id)));
@@ -444,7 +454,7 @@ export function useCanvasNodeOperations({
                     const run = node.metadata?.reusableWorkflow?.run;
                     return run && ["queued", "running"].includes(run.status) ? [run.id] : [];
                 }));
-                const cancellations = [...[...taskIds].map((id) => cancelGenerationTask(id)), ...[...workflowRuns].map(id => cancelWorkflowRun(id, { expectedScope }))];
+                const cancellations = [...[...taskIds].map((id) => cancelGenerationTask(id)), ...[...workflowRuns].map(id => cancelWorkflowRun(id))];
                 removeNodes(requestedIds);
                 const results = await Promise.allSettled(cancellations);
                 if (isCurrent() && results.some((result) => result.status === "rejected")) {
@@ -523,7 +533,6 @@ export function useCanvasNodeOperations({
 
     const createGenerationReplacement = useCallback((nodeId: string) => {
         const context = deletionContext.current;
-        const scope = captureUserScope();
         if (!nodesRef.current.some(node => node.id === nodeId)) return;
         recoveryConfirmation.current?.destroy?.();
         const confirmation = modal.confirm({
@@ -533,7 +542,7 @@ export function useCanvasNodeOperations({
             okText: "新建节点",
             cancelText: "取消",
             onOk: () => {
-                if (!mounted.current || deletionContext.current !== context || !userScopeMatches(scope)) return;
+                if (!mounted.current || deletionContext.current !== context) return;
                 duplicateNode(nodeId, "copy");
             },
             afterClose: () => { if (recoveryConfirmation.current === confirmation) recoveryConfirmation.current = null; },

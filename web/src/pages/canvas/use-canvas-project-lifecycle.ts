@@ -21,7 +21,6 @@ import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/s
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { hasUnconfirmedCanvasEdits, holdExternalCanvasRevisionForEditor, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
-import { assertUserScope, captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
 import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
@@ -30,6 +29,9 @@ import { useUserStore } from "@/stores/use-user-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { CanvasHistorySnapshot } from "./use-canvas-history";
+import { backfillCanvasTaskOutcomes } from "@/services/canvas-task-outcome-backfill";
+import { queryGenerationTask } from "@/services/api/task-center";
+import { persistCanvasNodeFailure } from "@/lib/canvas/canvas-node-failure-state";
 
 const CANVAS_VIEWPORT_SAVE_DELAY_MS = 2000;
 
@@ -167,6 +169,7 @@ type UseCanvasProjectLifecycleOptions = {
     viewportRef: MutableRefObject<ViewportTransform>;
     historyPausedRef: MutableRefObject<boolean>;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+    adoptNodes?: (nodes: CanvasNodeData[]) => void;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
     setChatSessions: Dispatch<SetStateAction<CanvasAssistantSession[]>>;
     setActiveChatId: Dispatch<SetStateAction<string | null>>;
@@ -199,6 +202,7 @@ export function useCanvasProjectLifecycle({
     viewportRef,
     historyPausedRef,
     setNodes,
+    adoptNodes = setNodes,
     setConnections,
     setChatSessions,
     setActiveChatId,
@@ -224,6 +228,7 @@ export function useCanvasProjectLifecycle({
     const [addedSkills, setAddedSkills] = useState<Skill[]>([]);
     const [loadError, setLoadError] = useState("");
     const [loadAttempt, setLoadAttempt] = useState(0);
+    const [initialReadComplete, setInitialReadComplete] = useState(false);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const observedContentRef = useRef<CanvasHistorySnapshot | null>(null);
@@ -236,6 +241,32 @@ export function useCanvasProjectLifecycle({
     // changes. Track which project the live editor refs actually belong to so
     // that transition render can never persist A's snapshot into B (or vice versa).
     const editorProjectIdRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!projectLoaded || !initialReadComplete || editorProjectIdRef.current !== projectId) return;
+        const controller = new AbortController();
+        // Do not turn cache-open restoration into a pending local write while
+        // the first authoritative read is still merging into that cache.
+        // Derived failure fields are not user edits: adopt them as the undo
+        // baseline so Ctrl+Z cannot revert them.
+        const adoptDerived = (apply: (nodes: CanvasNodeData[]) => CanvasNodeData[]) => {
+            const current = nodesRef.current;
+            const next = apply(current);
+            if (next === current) return;
+            adoptExternalSnapshot?.({ nodes: next, connections: connectionsRef.current });
+            setNodes(next);
+        };
+        adoptDerived(current => {
+            const next = current.map(persistCanvasNodeFailure);
+            return next.some((node, index) => node !== current[index]) ? next : current;
+        });
+        void backfillCanvasTaskOutcomes({
+            nodes: nodesRef.current,
+            active: () => !controller.signal.aborted && editorProjectIdRef.current === projectId,
+            query: id => queryGenerationTask(id, { signal: controller.signal}),
+            update: adoptDerived,
+        });
+        return () => controller.abort();
+    }, [projectId, projectLoaded, initialReadComplete, nodesRef, connectionsRef, setNodes, adoptExternalSnapshot]);
     // The stored document the editor last lined up with, before editor-only
     // normalization. Anything another writer changed since then is merged into
     // editor writes instead of being overwritten by the editor's older copy.
@@ -255,7 +286,7 @@ export function useCanvasProjectLifecycle({
     const showMergedEditorDocument = (merged: EditorDocument, from: EditorDocument, base: CanvasProject | undefined, incoming: CanvasProject) => {
         nodesRef.current = merged.nodes;
         connectionsRef.current = merged.connections;
-        setNodes(merged.nodes);
+        adoptNodes(merged.nodes);
         setConnections(merged.connections);
         if (merged.chatSessions !== from.chatSessions) {
             chatSessionsRef.current = merged.chatSessions;
@@ -366,6 +397,7 @@ export function useCanvasProjectLifecycle({
         // nodes appear on screen but every persistence effect is skipped.
         if (!localMode && (!hydrated || !sessionHydrated)) return;
         let cancelled = false;
+        setInitialReadComplete(false);
         // Keep load intent on the refs until this attempt finishes. React Strict
         // Mode remounts the effect; consuming the flags here would turn "load
         // latest" into a normal open and immediately recreate the conflict.
@@ -425,7 +457,7 @@ export function useCanvasProjectLifecycle({
             nodesRef.current = snapshot.nodes;
             connectionsRef.current = snapshot.connections;
             viewportRef.current = targetProject.viewport;
-            setNodes(snapshot.nodes);
+            adoptNodes(snapshot.nodes);
             setConnections(snapshot.connections);
             setChatSessions(snapshot.chatSessions);
             setActiveChatId(snapshot.activeChatId);
@@ -478,6 +510,7 @@ export function useCanvasProjectLifecycle({
         void load()
             .then(() => {
                 if (cancelled) return;
+                setInitialReadComplete(true);
                 loadLatestRef.current = false;
                 if (pendingReloadRef.current === pendingReload) {
                     pendingReloadRef.current = null;
@@ -486,6 +519,8 @@ export function useCanvasProjectLifecycle({
             })
             .catch((error) => {
                 if (cancelled) return;
+                // A failed first read leaves the cache unreconciled; do not
+                // capture failures or backfill outcomes on top of it.
                 loadLatestRef.current = false;
                 if (historyRestoreRef.current === historyRestore) {
                     historyRestoreRef.current = null;
@@ -503,7 +538,7 @@ export function useCanvasProjectLifecycle({
         return () => {
             cancelled = true;
         };
-    }, [hydrated, sessionHydrated, loadAttempt, message, navigate, openProject, projectId, resetHistory, setActiveChatId, setBackgroundMode, setCanvasAppearance, setChatSessions, setConnections, setNodes, setShowImageInfo, setViewport]);
+    }, [hydrated, sessionHydrated, loadAttempt, message, navigate, openProject, projectId, resetHistory, setActiveChatId, setBackgroundMode, setCanvasAppearance, setChatSessions, setConnections, setNodes, adoptNodes, setShowImageInfo, setViewport]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -601,9 +636,7 @@ export function useCanvasProjectLifecycle({
     // page must not depend on the 400 ms store timer or the 500 ms backend timer.
     useEffect(() => {
         if (!projectLoaded) return;
-        const owner = captureUserScope();
         const flushOnLeave = (reason: string) => {
-            if (!userScopeMatches(owner)) return;
             if (editorProjectIdRef.current !== projectId) return;
             if (!useCanvasStore.getState().openProject(projectId)) return;
             const live = leaveFlushStateRef.current;
@@ -626,8 +659,7 @@ export function useCanvasProjectLifecycle({
             updateProject(projectId, { viewport: viewportRef.current });
             void (async () => {
                 await flushCanvasStorePersistence();
-                if (!userScopeMatches(owner)) return;
-                if (localMode) await syncLocalCanvasProjectToBackend(projectId, owner);
+                if (localMode) await syncLocalCanvasProjectToBackend(projectId);
             })().catch((error) => {
                 if (isCanvasSubmitControlError(error)) return;
                 console.error("离开画布时保存失败", { projectId, reason, error });
@@ -663,19 +695,16 @@ export function useCanvasProjectLifecycle({
     }, [currentProject, localMode, message, navigate]);
 
     const deleteCurrentProject = useCallback(async () => {
-        const scope = captureUserScope();
         const siblingCanvases = listCanvasWorkspaceProjectCanvases(useCanvasStore.getState().projects, projectId);
         const nextCanvas = siblingCanvases.find((canvas) => canvas.id !== projectId);
         let drawingIds = nodesRef.current.flatMap((node) => node.type === "drawing" && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
         const drafts = await readCanvasSyncDrafts(projectId);
-        assertUserScope(scope);
         const preserved = new Set(drafts.flatMap((draft) => draft.project.nodes.flatMap((node) => node.metadata?.drawingId ? [node.metadata.drawingId] : [])));
         drawingIds = drawingIds.filter((id) => !preserved.has(id));
         await deleteWorkspaceCanvasProjects([projectId]);
-        assertUserScope(scope);
         if (drawingIds.length) {
             void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId)))
-                .catch(() => { if (userScopeMatches(scope)) message.warning("画布已删除，但部分本地绘图缓存清理失败"); });
+                .catch(() => { message.warning("画布已删除，但部分本地绘图缓存清理失败"); });
         }
         cleanupAssetImages();
         navigate(nextCanvas ? `/canvas/${nextCanvas.id}` : "/canvas");

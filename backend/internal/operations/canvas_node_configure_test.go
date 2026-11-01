@@ -63,6 +63,16 @@ func TestConfigurePreservesExistingMediaAndValidatesModelSelection(t *testing.T)
 			}
 		})
 	}
+	p := configureFixture(t, "image")
+	raw, _ := json.Marshal(map[string]any{"canvasId": "c1", "nodeId": "n", "kind": "image", "expectedRevision": 4, "patch": map[string]any{"prompt": "next draft prompt"}})
+	result, err := opCanvasNodeConfigure(&Context{UserID: "owner", Domain: p}, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := result.(map[string]any)["node"].(map[string]any)["metadata"].(map[string]any)
+	if metadata["composerContent"] != "next draft prompt" || metadata["prompt"] != "submitted" {
+		t.Fatalf("configure prompt should update composerContent and preserve historical prompt: %#v", metadata)
+	}
 }
 func TestConfigureRejectsForeignKindUnknownFieldsAndMalformedValues(t *testing.T) {
 	for _, target := range []struct{ nodeID, kind string }{{"n", "audio"}, {"missing", "video"}} {

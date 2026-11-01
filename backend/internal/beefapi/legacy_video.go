@@ -14,10 +14,10 @@ var ErrReferencesNotUploaded = errors.New("参考素材尚未上传完成")
 var ErrInvalidVideoReferences = errors.New("已选择的关键帧不在本次参考素材中")
 
 type LegacyVideoInput struct {
-	Model, Prompt, Seconds, Resolution, AspectRatio string
-	GenerateAudio, Watermark                        *bool
-	References                                      []LegacyVideoReference
-	Metadata                                        map[string]any
+	Model, Prompt, Seconds, Resolution, AspectRatio, DraftTaskID string
+	GenerateAudio, Watermark, Draft, ReturnLastFrame             *bool
+	References                                                   []LegacyVideoReference
+	Metadata                                                     map[string]any
 }
 
 // This describes the user's requested content. Provider defaults, supported
@@ -40,6 +40,27 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 	if input.Watermark != nil {
 		metadata["watermark"] = *input.Watermark
 	}
+	if input.ReturnLastFrame != nil {
+		body["return_last_frame"] = *input.ReturnLastFrame
+		metadata["return_last_frame"] = *input.ReturnLastFrame
+	}
+	if draftID := strings.TrimSpace(input.DraftTaskID); draftID != "" {
+		body["draft_task_id"] = draftID
+		metadata["draft_task_id"] = draftID
+		metadata["operation"] = "draft_to_final"
+		delete(body, "prompt")
+		delete(body, "seconds")
+		delete(body, "aspect_ratio")
+		delete(metadata, "generate_audio")
+		if len(metadata) > 0 {
+			body["metadata"] = metadata
+		}
+		return body, nil
+	}
+	if input.Draft != nil && *input.Draft {
+		body["draft"] = true
+		metadata["draft"] = true
+	}
 	if operation, _ := input.Metadata["videoEditOperation"].(string); operation != "" {
 		metadata["operation"] = operation
 	}
@@ -55,6 +76,36 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 			}
 		}
 	}
+	refs, err := VideoIntentReferences(input)
+	if err != nil {
+		return nil, err
+	}
+	content := make([]map[string]any, 0, len(refs))
+	for _, ref := range refs {
+		if ref.URL == "" {
+			return nil, ErrReferencesNotUploaded
+		}
+		kind := ref.Kind + "_url"
+		content = append(content, map[string]any{"type": kind, kind: map[string]any{"url": ref.URL}, "role": ref.Role})
+	}
+	if len(content) > 0 {
+		body["content"] = content
+	}
+	if len(metadata) > 0 {
+		body["metadata"] = metadata
+	}
+	return body, nil
+}
+
+type VideoIntentReference struct {
+	LegacyVideoReference
+	Role        string
+	SourceIndex int
+}
+
+// Frame selection and user reference order are shared by legacy and managed
+// envelopes. Neither envelope derives roles from a supplier or model name.
+func VideoIntentReferences(input LegacyVideoInput) ([]VideoIntentReference, error) {
 	roles := map[string][]string{}
 	for _, selected := range []struct{ key, role string }{{"videoStartFrameNodeId", "first_frame"}, {"videoEndFrameNodeId", "last_frame"}, {"videoMiddleFrameNodeId", "middle_frame"}} {
 		if id, _ := input.Metadata[selected.key].(string); id != "" {
@@ -71,7 +122,10 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 			roles[id] = append(roles[id], selected.role)
 		}
 	}
-	references := input.References
+	references := make([]VideoIntentReference, len(input.References))
+	for index, ref := range input.References {
+		references[index] = VideoIntentReference{LegacyVideoReference: ref, SourceIndex: index}
+	}
 	var order []string
 	switch raw := input.Metadata["videoReferenceOrder"].(type) {
 	case []string:
@@ -84,7 +138,7 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 		}
 	}
 	if len(order) > 0 {
-		sorted := make([]LegacyVideoReference, 0, len(references))
+		sorted := make([]VideoIntentReference, 0, len(references))
 		seen := map[string]bool{}
 		for _, id := range order {
 			for _, ref := range references {
@@ -101,27 +155,19 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 		}
 		references = sorted
 	}
-	content := make([]map[string]any, 0, len(references))
+	result := make([]VideoIntentReference, 0, len(references))
 	for _, ref := range references {
-		if ref.URL == "" {
-			return nil, errors.New("参考素材尚未上传完成")
-		}
 		selected := roles[ref.ID]
 		if len(selected) == 0 {
 			selected = []string{"reference_" + ref.Kind}
 		}
-		kind := ref.Kind + "_url"
 		for _, role := range selected {
-			content = append(content, map[string]any{"type": kind, kind: map[string]any{"url": ref.URL}, "role": role})
+			item := ref
+			item.Role = role
+			result = append(result, item)
 		}
 	}
-	if len(content) > 0 {
-		body["content"] = content
-	}
-	if len(metadata) > 0 {
-		body["metadata"] = metadata
-	}
-	return body, nil
+	return result, nil
 }
 
 // Dispatch is stricter than historical body inspection: built-in video creates
@@ -155,7 +201,7 @@ func (c *MediaClient) CreateLegacyVideo(ctx context.Context, key string, input L
 type LegacyVideoTask struct {
 	ID                            string
 	State                         map[string]any
-	Status, URL                   string
+	Status, URL, LastFrameURL     string
 	UsageState, ReconcileDeadline *string
 	ContentPath                   string
 }
@@ -224,12 +270,16 @@ func (c *MediaClient) QueryLegacyVideo(ctx context.Context, id string) (LegacyVi
 	value, _ := state["status"].(string)
 	task.Status = strings.ToLower(value)
 	task.URL, _ = state["video_url"].(string)
+	task.LastFrameURL, _ = state["last_frame_url"].(string)
 	if metadata, ok := state["metadata"].(map[string]any); ok {
 		if status, _ := metadata["generation_status"].(string); status != "" {
 			task.Status = strings.ToLower(status)
 		}
 		if task.URL == "" {
 			task.URL, _ = metadata["url"].(string)
+		}
+		if task.LastFrameURL == "" {
+			task.LastFrameURL, _ = metadata["last_frame_url"].(string)
 		}
 	}
 	if task.URL == "" {
@@ -258,6 +308,19 @@ func (c *MediaClient) QueryLegacyVideo(ctx context.Context, id string) (LegacyVi
 		}
 	}
 	return task, nil
+}
+
+// LegacyVideoContent downloads a finished video from the task content endpoint.
+// The gateway may answer with a redirect to object storage; only this GET
+// follows redirects through storageClient so credentials never leave the gateway.
+func (c *MediaClient) LegacyVideoContent(ctx context.Context, path string, limit int64) ([]byte, string, error) {
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Del(MediaProtocolHeader)
+	data, header, err := c.sendWith(c.storageClient("视频结果重定向次数过多"), req, limit)
+	return data, header.Get("Content-Type"), err
 }
 
 func legacyVideoResultURL(state map[string]any, depth int) string {

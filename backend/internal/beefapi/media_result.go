@@ -64,6 +64,9 @@ func (c *MediaClient) storageClient(tooMany string) *http.Client {
 const storageRedirectLimit = 10
 
 func (c *MediaClient) Result(ctx context.Context, task MediaTask, legacy bool) (map[string]any, error) {
+	if task.MediaType != "image" {
+		return c.singleMediaResult(ctx, task)
+	}
 	items := make([]map[string]any, 0, len(task.Outputs))
 	usage, metadata := task.Usage, task.Metadata
 	if len(task.Outputs) == 0 && task.ResultReceipt != nil {
@@ -158,6 +161,54 @@ func (c *MediaClient) Result(ctx context.Context, task MediaTask, legacy bool) (
 			return nil, err
 		}
 		result["usage"] = value
+	}
+	return result, nil
+}
+
+// Videos, speech and upscale return one owned storage URL. Local delivery owns
+// downloading it; control-plane queries never proxy the media bytes.
+func (c *MediaClient) singleMediaResult(ctx context.Context, task MediaTask) (map[string]any, error) {
+	if task.MediaType != "video" && task.MediaType != "audio" && task.MediaType != "upscale" {
+		return nil, errors.New("媒体任务类型不受支持")
+	}
+	if len(task.Outputs) != 1 {
+		return nil, errors.New("媒体任务未返回唯一可保存的结果")
+	}
+	output := task.Outputs[0]
+	if task.MediaType == "upscale" {
+		if output.Kind != "image" && output.Kind != "video" {
+			return nil, errors.New("超分结果类型不匹配")
+		}
+		if c.ExpectedOutputKind != "" && output.Kind != c.ExpectedOutputKind {
+			return nil, errors.New("超分结果与原素材类型不一致")
+		}
+	} else if output.Kind != task.MediaType {
+		return nil, errors.New("媒体结果类型不匹配")
+	}
+	if err := c.validURLContext(ctx, output.URL); err != nil {
+		return nil, err
+	}
+	item := map[string]any{"url": output.URL}
+	for key, value := range output.Metadata {
+		if key != "url" && key != "dataUrl" && key != "resourceId" && key != "storageKey" {
+			item[key] = value
+		}
+	}
+	result := map[string]any{"mode": output.Kind}
+	if output.Kind == "image" {
+		result["images"] = []map[string]any{item}
+	} else {
+		result[output.Kind] = item
+	}
+	if len(task.Metadata) > 0 {
+		result["metadata"] = task.Metadata
+	}
+	if len(task.Usage) > 0 && string(task.Usage) != "null" {
+		var usage any
+		if err := json.Unmarshal(task.Usage, &usage); err != nil {
+			return nil, err
+		}
+		result["usage"] = usage
 	}
 	return result, nil
 }

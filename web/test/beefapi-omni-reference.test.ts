@@ -18,7 +18,7 @@ for (const model of ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini", "
             capabilityConfig.video!.operations = ["text_to_video", "image_to_video"];
             Object.assign(capabilityConfig.video!.references, { maxImages: 9, maxVideos: 0, maxAudios: 0, maxVideoDurationSeconds: 0, maxAudioDurationSeconds: 0 });
             const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [model], modelProfiles: [{ model, capability: "video", protocol: "openai-videos", ...(legacy ? { capabilityConfig } : {}) }] });
-            expect(modelCapabilityConfigFor({ channels: [channel] }, `beefapi::${model}`).videoCapabilitiesUnavailable).toBe(true);
+            expect(modelCapabilityConfigFor({ channels: [channel] }, `beefapi::${model}`).videoCapabilitiesUnavailable).toBeUndefined();
             channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [managedVideoCatalogItem(model)]);
             let config = { ...defaultConfig, channels: [channel] };
             for (let reload = 0; reload < 2; reload++) {

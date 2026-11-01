@@ -7,7 +7,6 @@ import { generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
 import { canRecoverTaskOutcome, readTaskOutcome } from "@/lib/task-outcome";
 import { canvasNodeResourceId } from "@/lib/canvas/canvas-resource-id";
 import { bindBackendCanvasGenerationResult, CanvasGenerationDurableAckError, CanvasGenerationMaterializationError, CanvasGenerationOutputMissingError } from "@/services/canvas-generation-consumer";
-import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { ensureCanvasNodeAsset, retryCanvasAssetSyncAfterRateLimit } from "@/services/project-asset-sync";
 import { findGenerationTaskByOperation, listGenerationTasks, recoverTask, subscribeGenerationTasks, type GenerationTask } from "@/services/api/task-center";
 import { useTaskDetails } from "@/hooks/use-task-details";
@@ -264,10 +263,9 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const applyGenerationTaskResult = useCallback(
         async (nodeId: string, task: GenerationTask, isNodeOwned: () => boolean = () => true) => {
-            const capturedScope = captureUserScope();
             const capturedCanvasId = projectId;
             const controller = consumerControllerRef.current;
-            const isCurrentCanvas = () => projectIdRef.current === capturedCanvasId && !controller.signal.aborted && userScopeMatches(capturedScope) && isNodeOwned();
+            const isCurrentCanvas = () => projectIdRef.current === capturedCanvasId && !controller.signal.aborted && isNodeOwned();
             if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
             if (task.status !== "succeeded") {
                 const outcome = readTaskOutcome(task);
@@ -292,14 +290,13 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                         saving?.dismiss();
                         saving = undefined;
                         if (phase !== "saving" || !isCurrentCanvas()) return;
-                        saving = startOperation("保存生成结果", { owner: capturedScope, target: { projectId: capturedCanvasId, nodeId, taskId: task.id }, detail: "正在保存视频并更新画布" });
+                        saving = startOperation("保存生成结果", { target: { projectId: capturedCanvasId, nodeId, taskId: task.id }, detail: "正在保存视频并更新画布" });
                         saving.update({ phase: "processing" });
                     } : undefined,
                 });
                 if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") throw error;
-                if (isUserScopeAbandonedError(error)) throw error;
                 throw error instanceof CanvasGenerationDurableAckError || error instanceof CanvasGenerationMaterializationError || error instanceof CanvasGenerationOutputMissingError ? error : new CanvasGenerationDurableAckError(error);
             } finally {
                 saving?.dismiss();

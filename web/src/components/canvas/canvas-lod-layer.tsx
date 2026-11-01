@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 
 import { canvasLodContainRect, canvasLodHitTest, type CanvasLodDragOffset } from "@/lib/canvas/canvas-lod";
-import { getCanvasLodThumbnail } from "@/lib/canvas/canvas-lod-thumbnails";
+import { getCanvasLodThumbnail, setCanvasLodRedrawListener } from "@/lib/canvas/canvas-lod-thumbnails";
 import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
 import { sortCanvasNodesByStackOrder, type CanvasNodeStackOrder } from "@/lib/canvas/canvas-node-stack-order";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -26,6 +26,11 @@ type CanvasLodLayerProps = {
 // Mirrors InfiniteCanvas: floating UI and explicit no-zoom controls keep their events.
 const POINTER_IGNORE_SELECTOR = "[data-canvas-no-zoom],[data-connection-create-menu],[data-connection-id],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown";
 const NODE_RADIUS = 12;
+const LOD_BACKING_RELEASE_MS = 30_000;
+
+function lodPixelRatio() {
+    return Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+}
 
 /**
  * Overview renderer: one screen-space canvas below the DOM world layer. It
@@ -40,9 +45,18 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
     const dragRef = useRef<CanvasLodDragOffset>(null);
     const sizeRef = useRef({ width: 0, height: 0, dpr: 1, left: 0, top: 0 });
     const frameRef = useRef<number | null>(null);
+    const releaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hoverRef = useRef<string | null>(null);
     // Child layout effects run before the viewport's own ref is attached.
     const resolveContainer = useCallback(() => props.containerRef.current || canvasRef.current?.closest<HTMLDivElement>("[data-canvas-viewport]") || null, [props.containerRef]);
+
+    const ensureCanvasBackingSize = useCallback((canvas: HTMLCanvasElement) => {
+        const { width, height, dpr } = sizeRef.current;
+        const pixelWidth = width > 0 ? Math.max(1, Math.round(width * dpr)) : 0;
+        const pixelHeight = height > 0 ? Math.max(1, Math.round(height * dpr)) : 0;
+        if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+        if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    }, []);
 
     const orderedNodes = useMemo(() => {
         const sorted = sortCanvasNodesByStackOrder(props.nodes, props.nodeStackOrder);
@@ -54,14 +68,14 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
     orderedRef.current = orderedNodes;
 
     const draw = useCallback(() => {
+        const { active, theme, selectedNodeIds } = propsRef.current;
+        const { width, height, dpr } = sizeRef.current;
+        if (!active || !width || !height) return;
         const canvas = canvasRef.current;
         const context = canvas?.getContext("2d");
         if (!canvas || !context) return;
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.clearRect(0, 0, canvas.width, canvas.height);
-        const { active, theme, selectedNodeIds } = propsRef.current;
-        const { width, height, dpr } = sizeRef.current;
-        if (!active || !width || !height) return;
         const viewport = viewportRef.current;
         const k = viewport.k;
         context.setTransform(dpr * k, 0, 0, dpr * k, dpr * viewport.x, dpr * viewport.y);
@@ -75,6 +89,8 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
         const radius = NODE_RADIUS * k >= 1.5 ? NODE_RADIUS : 0;
         const drag = dragRef.current;
         const requestRedraw = scheduleDrawRef.current;
+        const container = propsRef.current.containerRef.current;
+        const allowQueue = container?.dataset.canvasViewportInteracting !== "true" && container?.dataset.canvasNodeDragging !== "true";
         for (const node of orderedRef.current) {
             const moved = drag?.nodeIds.has(node.id);
             const x = node.position.x + (moved ? drag!.x : 0);
@@ -94,7 +110,7 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
                 }
             }
             if (isMedia) {
-                const thumbnail = getCanvasLodThumbnail(node, requestRedraw);
+                const thumbnail = getCanvasLodThumbnail(node, requestRedraw, allowQueue);
                 if (thumbnail && thumbnail !== "failed") {
                     const rect = canvasLodContainRect(box, thumbnail.width, thumbnail.height, Boolean(node.metadata?.freeResize));
                     context.drawImage(thumbnail.source, rect.x, rect.y, rect.width, rect.height);
@@ -131,8 +147,15 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
     const scheduleDrawRef = useRef(scheduleDraw);
     scheduleDrawRef.current = scheduleDraw;
 
+    useEffect(() => {
+        if (!props.active) return;
+        setCanvasLodRedrawListener(scheduleDraw);
+        return () => setCanvasLodRedrawListener(null);
+    }, [props.active, scheduleDraw]);
+
     useEffect(() => () => {
         if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+        if (releaseTimerRef.current !== null) clearTimeout(releaseTimerRef.current);
     }, []);
 
     // Size the backing store from observer callbacks only; never read layout
@@ -143,14 +166,11 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
         if (!container || !canvas) return;
         const resize = () => {
             const rect = container.getBoundingClientRect();
-            const dpr = window.devicePixelRatio || 1;
-            const active = propsRef.current.active;
+            const dpr = lodPixelRatio();
             sizeRef.current = { width: rect.width, height: rect.height, dpr, left: rect.left, top: rect.top };
-            // Inactive overview keeps no GPU backing store.
-            const pixelWidth = active ? Math.max(1, Math.round(rect.width * dpr)) : 0;
-            const pixelHeight = active ? Math.max(1, Math.round(rect.height * dpr)) : 0;
-            if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
-            if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+            if (propsRef.current.active || canvas.width > 0 || canvas.height > 0) {
+                ensureCanvasBackingSize(canvas);
+            }
             draw();
         };
         resize();
@@ -161,11 +181,45 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
             observer.disconnect();
             window.removeEventListener("resize", resize);
         };
-    }, [draw, props.active, resolveContainer]);
+    }, [draw, ensureCanvasBackingSize, resolveContainer]);
 
     useLayoutEffect(() => {
+        viewportRef.current = props.viewport;
+    }, [props.viewport]);
+
+    useLayoutEffect(() => {
+        const canvas = canvasRef.current;
+        if (!props.active) {
+            if (canvas && canvas.width && canvas.height) {
+                canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+                if (releaseTimerRef.current === null) {
+                    releaseTimerRef.current = setTimeout(() => {
+                        releaseTimerRef.current = null;
+                        if (!propsRef.current.active && canvasRef.current) {
+                            canvasRef.current.width = 0;
+                            canvasRef.current.height = 0;
+                        }
+                    }, LOD_BACKING_RELEASE_MS);
+                }
+            }
+            return;
+        }
+        if (releaseTimerRef.current !== null) {
+            clearTimeout(releaseTimerRef.current);
+            releaseTimerRef.current = null;
+        }
+        if (canvas) {
+            if (!sizeRef.current.width || !sizeRef.current.height) {
+                const container = resolveContainer();
+                if (container) {
+                    const rect = container.getBoundingClientRect();
+                    sizeRef.current = { width: rect.width, height: rect.height, dpr: lodPixelRatio(), left: rect.left, top: rect.top };
+                }
+            }
+            ensureCanvasBackingSize(canvas);
+        }
         draw();
-    }, [draw, orderedNodes, props.active, props.selectedNodeIds, props.theme]);
+    }, [draw, ensureCanvasBackingSize, orderedNodes, props.active, props.selectedNodeIds, props.theme, resolveContainer]);
 
     useLayoutEffect(() => {
         const container = resolveContainer();
@@ -265,7 +319,7 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
             aria-hidden
             data-canvas-lod-layer={props.active ? "active" : "idle"}
             className="pointer-events-none absolute inset-0"
-            style={{ width: "100%", height: "100%", display: props.active ? "block" : "none" }}
+            style={{ width: "100%", height: "100%", visibility: props.active ? "visible" : "hidden" }}
         />
     );
 }

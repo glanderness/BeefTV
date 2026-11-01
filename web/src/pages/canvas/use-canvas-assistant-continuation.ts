@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cancelAssistantContinuations, listAssistantContinuations, type AssistantContinuation } from "@/services/api/assistant-continuation";
 import { subscribeGenerationTasks } from "@/services/api/task-center";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import type { CanvasAssistantController } from "./use-canvas-assistant";
 import { cancelAgentChat } from "@/services/api/agent-assistant";
 
@@ -44,8 +43,7 @@ export function useCanvasAssistantContinuation(assistant: CanvasAssistantControl
     useEffect(() => { stopped.current = false; setRows([]); setNotice(""); }, [identity]);
     useEffect(() => {
         if (!enabled || !assistant.sessionId || !assistant.historyLoaded) return;
-        const scope = captureUserScope();
-        const isCurrent = () => mounted.current && activeEnabled.current && userScopeMatches(scope) && active.current === identity && !stopped.current;
+        const isCurrent = () => mounted.current && activeEnabled.current && active.current === identity && !stopped.current;
         const timer = setTimeout(() => {
             if (!isCurrent()) return;
             if (checking.current.has(identity)) { dirty.current.add(identity); return; }
@@ -78,18 +76,17 @@ export function useCanvasAssistantContinuation(assistant: CanvasAssistantControl
         const controller = live.current;
         if (!controller.sessionId) return;
         const targets = knownRows.current.filter(row => row.canvasId === controller.canvasId && row.sessionId === controller.sessionId);
-        const scope = captureUserScope();
         const stoppedIdentity = active.current;
         try {
             await cancelAssistantContinuations(controller.canvasId, controller.sessionId);
             // Fence each exact continuation request even if another window started
             // it. Never stop an unrelated user turn which became active meanwhile.
             await Promise.all(targets.map(row => cancelAgentChat(row.canvasId, {sessionId: row.sessionId, requestId: row.requestId})));
-            if (!userScopeMatches(scope) || active.current !== stoppedIdentity || !mounted.current) return;
+            if (active.current !== stoppedIdentity || !mounted.current) return;
             await controller.reloadHistory();
-            if (!userScopeMatches(scope) || active.current !== stoppedIdentity || !mounted.current) return;
+            if (active.current !== stoppedIdentity || !mounted.current) return;
             setRows([]); setNotice("已停止自动继续，生成任务可在任务中心查看。");
-        } catch { if (userScopeMatches(scope) && active.current === stoppedIdentity && mounted.current) setNotice("停止状态未能确认，请重试停止。"); }
+        } catch { if (active.current === stoppedIdentity && mounted.current) setNotice("停止状态未能确认，请重试停止。"); }
     }, []);
     return { pending: rows.length > 0, notice: rows.length ? notice || "生成结果就绪后，会继续检查与剪辑。" : notice, stop, refresh: () => { stopped.current = false; setRefresh(value => value + 1); } };
 }

@@ -9,9 +9,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"infinite-canvas/backend/internal/app"
+	localproject "infinite-canvas/backend/internal/project"
 )
 
-func registerCanvasProductionRoutes(r *gin.RouterGroup, svc *app.Service) {
+type canvasProductionService interface {
+	workspaceOwners
+	ProjectService() *localproject.Service
+}
+
+func registerCanvasProductionRoutes(r *gin.RouterGroup, svc canvasProductionService) {
 	path := "/projects/:id/canvases/:canvasId/production-context"
 	r.GET(path, func(c *gin.Context) {
 		user, err := currentUser(c, svc)

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { MediaCapabilities } from "@/lib/media-capabilities";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
@@ -12,6 +13,7 @@ import { defaultModelCapabilityConfig, upgradeGPTImageCapability, workflowFieldR
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
 import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+export { buildApiUrl, isSystemProxyBaseUrl, resolveBackendApiUrl, systemProxyChannelId } from "@/lib/channel-url";
 
 export type ApiCallFormat = "openai" | "gemini" | "claude";
 export type ChannelInterfaceType = ModelProtocol;
@@ -380,8 +382,12 @@ export type ModelChannel = {
         referenceMediaTransport?: ReferenceMediaTransport;
         authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
+        /** "user" 表示能力参数由用户在「能力与参数」里亲手改过；未标记的配置只是界面默认值，不能拿来拦截生成。 */
+        capabilitySource?: "user";
         imageCapabilitiesVersion?: string;
         videoCapabilitiesVersion?: string;
+        mediaCapabilities?: MediaCapabilities;
+        mediaCapabilitiesVersion?: string;
         videoPricing?: VideoPriceQuote | null;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
@@ -418,7 +424,7 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
-    videoArkPrivateAssetUpload: string;
+    videoArkPrivateAssetUpload: string; videoDraft: string; videoReturnLastFrame?: string;
     systemPrompt: string;
     models: string[];
     imageModels: string[];
@@ -470,7 +476,7 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
-    videoArkPrivateAssetUpload: "true",
+    videoArkPrivateAssetUpload: "true", videoDraft: "false", videoReturnLastFrame: "false",
     systemPrompt: "",
     models: [],
     imageModels: [],
@@ -520,7 +526,7 @@ function isVideoModelName(model: string) {
         value.includes("animatediff") ||
         value.includes("ltx-video") ||
         value.includes("ltxvideo") ||
-        value.includes("minimax-video") ||
+        /minimax-(?:video|h3)/.test(value) ||
         value.includes("abab-video")
     );
 }
@@ -810,7 +816,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             vquality: normalizeVideoResolution(config.vquality),
             videoGenerateAudio: normalizeVideoBoolean(config.videoGenerateAudio) ?? "true",
             videoWatermark: normalizeVideoBoolean(config.videoWatermark) ?? "false",
-            videoArkPrivateAssetUpload: normalizeVideoBoolean(config.videoArkPrivateAssetUpload) ?? "true",
+            videoArkPrivateAssetUpload: normalizeVideoBoolean(config.videoArkPrivateAssetUpload) ?? "true", videoDraft: normalizeVideoBoolean(config.videoDraft) ?? "false",
             transparentBackground: config.transparentBackground === "true" ? "true" : "false",
             canvasImageCount: config.canvasImageCount || defaultConfig.canvasImageCount,
             imageModels,
@@ -890,9 +896,9 @@ function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilit
     // The built-in BeefAPI Seedance contract supports the audio switch even
     // when an older saved profile advertised no control. Keep its default.
     const generateAudio = { ...video!.generateAudio, supported: true };
-    if (!legacy) return { ...current, video: { ...video!, generateAudio } };
+    if (!legacy) return { ...current, video: { ...video!, generateAudio, ...(defaults.video?.draft ? { draft: video!.draft ?? defaults.video.draft } : {}) } };
     const next = defaults.video!;
-    return { ...current, video: { ...video!, generateAudio, operations: next.operations, references: { ...refs!,
+    return { ...current, video: { ...video!, generateAudio, ...(next.draft ? { draft: video!.draft ?? next.draft } : {}), operations: next.operations, references: { ...refs!,
         maxImages: next.references.maxImages,
         maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
         maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,
@@ -1218,75 +1224,4 @@ function normalizeRawModelName(value: unknown) {
     if (typeof value !== "string") return "";
     const model = modelOptionName(value).trim();
     return model && model !== "undefined" && model !== "null" ? model : "";
-}
-
-export function buildApiUrl(baseUrl: string, path: string) {
-    let normalizedBaseUrl = resolveBackendApiUrl(baseUrl).replace(/\/+$/, "");
-    normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
-    const requestPath = path.startsWith("/") ? path : `/${path}`;
-    if (isSystemProxyBaseUrl(normalizedBaseUrl)) return `${normalizedBaseUrl}${requestPath}`;
-
-    const knownPrefixes = ["/api/plan/v3", "/api/v3", "/v1beta", "/v1", "/v2", "/v3"];
-    const requestPrefixFor = (value: string) =>
-        knownPrefixes.find((prefix) => {
-            const lower = value.toLowerCase();
-            return lower === prefix || lower.startsWith(`${prefix}/`) || lower.startsWith(`${prefix}?`) || lower.startsWith(`${prefix}#`);
-        }) || "";
-    const basePrefixFor = (value: string) =>
-        knownPrefixes.find((prefix) => {
-            const lower = value.toLowerCase();
-            return lower.endsWith(prefix) || lower.includes(`${prefix}/`) || lower.includes(`${prefix}?`) || lower.includes(`${prefix}#`);
-        }) || "";
-    const basePrefix = basePrefixFor(normalizedBaseUrl);
-    const requestPrefix = requestPrefixFor(requestPath);
-    if (requestPrefix) {
-        const root = basePrefix ? normalizedBaseUrl.slice(0, -basePrefix.length) : normalizedBaseUrl;
-        return `${root}${requestPath}`;
-    }
-    return `${normalizedBaseUrl}${basePrefix ? "" : "/v1"}${requestPath}`;
-}
-
-export function resolveBackendApiUrl(value: string) {
-    const url = value.trim();
-    if (!url.startsWith("/api/")) return url;
-    const backendBaseUrl = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api")
-        .trim()
-        .replace(/\/+$/, "");
-    return backendBaseUrl === "/api" ? url : `${backendBaseUrl}${url.slice("/api".length)}`;
-}
-
-export function isSystemProxyBaseUrl(baseUrl: string) {
-    return Boolean(systemProxyChannelId(baseUrl));
-}
-
-export function systemProxyChannelId(baseUrl: string) {
-    const value = baseUrl.trim();
-    const lowerValue = value.toLowerCase();
-    for (const marker of ["/api/ai/system/", "/api/"]) {
-        const index = lowerValue.lastIndexOf(marker);
-        if (index < 0) continue;
-        const remainder = value.slice(index + marker.length);
-        if (/[/?#]/.test(remainder)) continue;
-        const channelId = remainder.trim();
-        if (channelId && !channelId.includes("\\") && !["v1", "v1beta", "v2", "v3", "plan", "ai"].includes(channelId.toLowerCase())) return channelId;
-    }
-    return "";
-}
-
-function normalizeArkPlanBaseUrl(baseUrl: string) {
-    try {
-        const url = new URL(baseUrl);
-        const path = url.pathname.replace(/\/+$/, "");
-        const lowerPath = path.toLowerCase();
-        const arkPlanIndex = lowerPath.indexOf("/api/plan/v3");
-        if (arkPlanIndex < 0) return baseUrl;
-        const end = arkPlanIndex + "/api/plan/v3".length;
-        if (lowerPath.length !== end && lowerPath[end] !== "/") return baseUrl;
-        url.pathname = path.slice(0, end);
-        url.search = "";
-        url.hash = "";
-        return url.toString().replace(/\/+$/, "");
-    } catch {
-        return baseUrl;
-    }
 }

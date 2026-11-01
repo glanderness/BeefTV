@@ -218,8 +218,8 @@ describe("task-outcome", () => {
             },
             nowMs,
         );
-        expect(confirmUncertain.reason).toBe("这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次");
-        expect(confirmUncertain.confirmContent).toContain("这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次");
+        expect(confirmUncertain.reason).toBe("无法确认上次是否已扣费，可先到模型服务后台查看使用记录");
+        expect(confirmUncertain.confirmContent).toContain("重新生成可能会再扣一次");
 
         const confirmCharged = taskOutcomeCopy(
             {

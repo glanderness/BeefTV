@@ -13,9 +13,9 @@ import (
 func (r *Repository) FailedVideosForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
 	err := r.db.Where("tasks.id > ? AND tasks.status = ?", afterID, model.TaskStatusFailed).
-		Where("(tasks.type = ? OR tasks.type LIKE ? OR tasks.model IN ?)", "canvas_video", "video_%", upscaleModelKeys).
-		Where("((recovery_outcome IS NULL OR recovery_outcome = '') OR beef_usage_state = 'pending') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
-		Where(`provider_request_id <> '' OR stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.provider_request_id <> '') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) = 'submission_unknown'`).
+		Where("(tasks.type = ? OR tasks.type LIKE ? OR "+upscaleTaskPredicate+" OR (tasks.type = 'canvas_audio' AND EXISTS (SELECT 1 FROM image_submissions s WHERE s.task_id = tasks.id AND s.user_id = tasks.user_id AND s.query_cipher <> '')))", "canvas_video", "video_%").
+		Where("((recovery_outcome IS NULL OR recovery_outcome = '') OR LOWER(TRIM(beef_usage_state)) IN ? OR LOWER(TRIM(beef_billing_state)) IN ?) AND (next_poll_at IS NULL OR next_poll_at <= ?)", model.PendingMediaUsageStates(), model.PendingMediaBillingStates(), time.Now()).
+		Where(`provider_request_id <> '' OR stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.provider_request_id <> '') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) = 'submission_unknown' OR EXISTS (SELECT 1 FROM image_submissions s JOIN route_attempts a ON a.id = s.attempt_id WHERE s.task_id = tasks.id AND s.user_id = tasks.user_id AND a.route_run = tasks.route_run AND s.query_cipher <> '' AND s.send_count > 0)`).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
@@ -36,7 +36,7 @@ func (r *Repository) FinishFailedVideoRecovery(task model.Task, outcome *string,
 	}
 	if task.BeefReconcileDeadline != nil {
 		updates["beef_reconcile_deadline"] = *task.BeefReconcileDeadline
-	} else if task.BeefUsageState != nil && !strings.EqualFold(strings.TrimSpace(*task.BeefUsageState), "pending") {
+	} else if task.BeefUsageState != nil && !pendingVideoUsage(*task.BeefUsageState) {
 		updates["beef_reconcile_deadline"] = nil
 	}
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
@@ -60,7 +60,7 @@ func (r *Repository) UpdateTaskBeefVideoSettlement(taskID string, usageState *st
 	if usageState != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*usageState))
 		updates["beef_usage_state"] = normalized
-		if normalized != "pending" && reconcileDeadline == nil {
+		if !pendingVideoUsage(normalized) && reconcileDeadline == nil {
 			updates["beef_reconcile_deadline"] = nil
 		}
 	}
@@ -73,6 +73,10 @@ func (r *Repository) UpdateTaskBeefVideoSettlement(taskID string, usageState *st
 		}
 	}
 	return r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error
+}
+
+func pendingVideoUsage(state string) bool {
+	return model.IsPendingMediaUsage(state)
 }
 
 // ResetTaskRecoveryBackoff clears next_poll_at on a failed task so an explicit

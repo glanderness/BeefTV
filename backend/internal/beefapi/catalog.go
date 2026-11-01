@@ -93,6 +93,9 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 					profile["imageCapabilitiesVersion"] = model.ImageCapabilitiesVersion
 				}
 			}
+			if len(model.MediaCapabilities) > 0 && model.MediaCapabilitiesVersion != "" {
+				profile["mediaCapabilities"], profile["mediaCapabilitiesVersion"] = model.MediaCapabilities, model.MediaCapabilitiesVersion
+			}
 		}
 		nextProfiles = append(nextProfiles, profile)
 	}
@@ -208,6 +211,9 @@ func catalogProtocol(model CatalogModel) string {
 }
 
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
+	if audio, ok := model.MediaCapabilities["audio"]; ok && model.MediaCapabilitiesVersion != "" && len(audio.Operations) > 0 {
+		return "audio", "openai-audio"
+	}
 	if _, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
 		return "video", "openai-videos"
 	}

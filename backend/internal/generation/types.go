@@ -77,6 +77,7 @@ type TextMessage struct {
 type Config struct {
 	ChannelID                string                    `json:"channelId"`
 	CredentialRef            string                    `json:"credentialRef,omitempty"`
+	MediaProtocolVersion     string                    `json:"mediaProtocolVersion,omitempty"`
 	ChannelModelKey          string                    `json:"channelModelKey,omitempty"`
 	VariantID                string                    `json:"variantId,omitempty"`
 	ProviderModelKey         string                    `json:"providerModelKey,omitempty"`
@@ -102,6 +103,8 @@ type Config struct {
 	VQuality                 string                    `json:"vquality"`
 	VideoGenerateAudio       string                    `json:"videoGenerateAudio"`
 	VideoWatermark           string                    `json:"videoWatermark"`
+	VideoDraft               string                    `json:"videoDraft"`
+	VideoReturnLastFrame     string                    `json:"videoReturnLastFrame,omitempty"`
 	ArkPrivateAssetUpload    string                    `json:"videoArkPrivateAssetUpload"`
 	AudioVoice               string                    `json:"audioVoice"`
 	AudioFormat              string                    `json:"audioFormat"`

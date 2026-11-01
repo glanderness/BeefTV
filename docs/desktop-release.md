@@ -10,6 +10,34 @@
 
 前端未压缩产物的默认体积上限为 105 MiB，可通过 `BEEFTV_WEB_BUDGET_MIB` 调整。包含 FFmpeg、MediaPipe 和预设资源的主线基线约为 99.24 MiB；自动更新增量约 25 KiB。此上限不是 zip 下载大小。
 
+## GitHub tag 自动发布安装包
+
+`.github/workflows/release-desktop-tag.yml` 在推送 `aihubkit-v*` 标签后触发。GitHub 标签使用独立命名空间 `aihubkit-vMAJOR.MINOR.PATCH`，根目录 `VERSION` 使用对应的标准应用版本 `vMAJOR.MINOR.PATCH`，二者的数字部分必须完全一致；`CHANGELOG.md` 还必须有对应的非空 `## vMAJOR.MINOR.PATCH` 条目。不符合时在构建前失败。这个命名规则避免与 Fork 继承的上游历史标签冲突，aihubkit 版本可独立演进。
+
+准备好版本提交后，推送该提交及对应标签。例如当前首版 `VERSION` 为 `v1.0.1` 时：
+
+```bash
+git tag aihubkit-v1.0.1
+git push origin aihubkit-v1.0.1
+```
+
+标签所指的提交必须已包含此工作流及其调用的脚本。Fork 需要启用 GitHub Actions，仓库或组织策略须允许工作流使用 `contents: write` 创建 Release。不需要配置 R2、COS、CNB 或自动更新签名密钥，发布使用 GitHub 自带的 `GITHUB_TOKEN`。
+
+构建复用 `desktop-installers.yml`，在各系统的原生 Runner 上执行：
+
+| 支持目标 | 安装包 | 便携包 |
+| --- | --- | --- |
+| Windows x64 | `BeefTV-vX.Y.Z-windows-amd64-setup.exe` | `BeefTV-vX.Y.Z-windows-amd64.zip` |
+| Ubuntu 24.04 x64 | `BeefTV-vX.Y.Z-linux-amd64.deb` | `BeefTV-vX.Y.Z-linux-amd64.zip` |
+| macOS Apple Silicon | `BeefTV-vX.Y.Z-darwin-arm64.dmg` | `BeefTV-vX.Y.Z-darwin-arm64.zip` |
+| macOS Intel | `BeefTV-vX.Y.Z-darwin-amd64.dmg` | `BeefTV-vX.Y.Z-darwin-amd64.zip` |
+
+工作流实际执行安装、启动、覆盖安装、用户数据保留和卸载检查，再验证最终 ZIP 中的 CLI；Linux 额外验证最终 ZIP 的桌面窗口和干净 Ubuntu 上的 DEB 系统依赖。安装载荷包含编译后的前端、Go 后端、CLI、Node 助手运行时和官方插件，使用者无需安装开发工具链。Windows 仍需 WebView2；Ubuntu 通过 apt 安装包声明的系统依赖。
+
+四个目标和媒体源码打包作业全部成功后，发布作业核对四份安装包、四份 ZIP、两份 macOS ffprobe 对应源码和一份 FFmpeg WASM 对应源码，生成 `SHA256SUMS.txt`。文件先上传到 draft Release，全部上传成功后才公开；任一目标失败都不会发布不完整的版本。失败后可在 Actions 重跑失败作业，尚未公开的 draft 允许继续上传；已公开的 Release 禁止覆盖，修复需使用新版本和新标签。容器镜像仍由 `publish-images.yml` 独立构建，不再创建同名 Release。
+
+这条 tag 流程构建独立下载包，不注入上游官方更新公钥、不启用官方应用内更新、不激活 R2/COS 更新源，也不触发 CNB 镜像。升级时下载安装新版。需要官方签名自动更新时，仍使用下方的手动 `Release desktop` 流程，并在创建任何 tag 前完成其版本预检。Windows 包未做 Authenticode 签名，macOS 包使用 ad hoc 签名且未做 Apple 公证，首次安装可能需要按系统提示放行；安装步骤见[安装 BeefTV](desktop-install.md)。
+
 ## macOS
 
 ```bash
@@ -29,7 +57,7 @@ BEEFTV_GO_DIR=/tmp/beeftv-go.rpIfVN/go ./scripts/build-beeftv-release.sh
 | 变量 | 作用 |
 | --- | --- |
 | `BEEFTV_UPDATER_PUBLIC_KEY` | 注入更新源公钥；缺省则更新器保持关闭 |
-| `BEEFTV_UPDATER_FEED_URL` | 可选，默认官方 `desktop-update.json` 地址 |
+| `BEEFTV_UPDATER_FEED_URL` | 可选，默认官方 `desktop-update-v2.json` 地址（`v2.0.6` 及更早版本使用 `desktop-update.json`） |
 | `BEEFTV_WAILS_PLATFORM` | 可选，例如 `darwin/arm64` 或 `darwin/amd64` |
 | `BEEFTV_SKIP_LOCAL_VERIFY` | 设为 `1` 时跳过本地门禁；发布流水线的校验作业会跑门禁 |
 | `BEEFTV_EXTRA_LDFLAGS` | 追加到 Wails `-ldflags` |
@@ -189,7 +217,7 @@ export BEEFTV_UPDATER_PUBLIC_KEY="$(tr -d '[:space:]' < /path/to/beeftv-updater.
 
 脚本会把下面两个链接期变量写进二进制：
 
-- `infinite-canvas/backend/internal/desktopupdate.FeedURL` = `https://updates.beefapi.com/beeftv/desktop-update.json`
+- `infinite-canvas/backend/internal/desktopupdate.FeedURL` = `https://updates.beefapi.com/beeftv/desktop-update-v2.json`（`v2.1.0+`；`v2.0.6` 及以前为 `desktop-update.json`）
 - `infinite-canvas/backend/internal/desktopupdate.PublicKey` = 公钥 Base64
 
 两个都为空时，应用里的更新器保持关闭，但仍显示当前版本。
@@ -209,7 +237,9 @@ BeefTV-vX.Y.Z-darwin-arm64.zip
 BeefTV-vX.Y.Z-darwin-amd64.zip
 BeefTV-vX.Y.Z-windows-amd64.zip
 BeefTV-vX.Y.Z-linux-amd64.zip
+BeefTV-vX.Y.Z-<platform>-from-vA.B.C.delta.zip
 desktop-update.json
+desktop-update-v2.json
 ```
 
 Actions 中的 `desktop-*` 临时安装包保留 7 天，用于发布任务之间传递文件及短期排查。正式 GitHub Release 和 R2 下载文件不受此期限影响。清理历史临时包前，应确认对应发布任务成功，且对应版本的平台安装包和更新清单齐全；未确认发布成功的包和升级验证报告保留。
@@ -220,13 +250,18 @@ zip 里的布局：
 - Windows：根目录的 `BeefTV.exe` 和 `plugin-packages/*.beeftv-plugin`。
 - Linux x64：`BeefTV-linux/` 内包含 `BeefTV`、`cli/beeftv`、`agent-host/` 和 `plugin-packages/`。在 Ubuntu 24.04 原生构建，使用 GTK3 和 WebKitGTK 4.1；安装依赖和启动方法见 [Linux 安装说明](linux-install.md)。更新和回滚替换整个程序目录，用户数据留在配置目录。
 
-新版本更新清单和安装包使用 Cloudflare R2：
+新版本更新清单和安装包使用 Cloudflare R2（国内源镜像同步至 CNB `https://cnb.cool/beeftv-downloads/desktop`）：
 
 ```text
 https://updates.beefapi.com/beeftv/desktop-update.json
+https://updates.beefapi.com/beeftv/desktop-update-v2.json
 ```
 
-流水线先验证 R2 和遗留 COS 清单入口的条件写能力，再建 draft，四个平台构建任务把包保存为 Actions 产物。收齐后生成签名清单，先将版本包和版本清单写入 R2 不可变路径并从公开地址完整读回校验。之后发布 GitHub Release，按旧 ETag 条件替换 R2 最新清单，最后将已激活的原始签名信封同步到遗留 COS 清单入口。失败或缺包不会激活 R2 更新源。COS 同步失败会使发布作业失败，但不会回滚已生效的 R2 清单或删除正式 GitHub Release。
+`v2.0.6` 及更早客户端使用 `desktop-update.json`（`schema: 1`，严格解码，只含单 `url`）；`v2.1.0` 起使用 `desktop-update-v2.json`（`schema: 2`，含 `urls: [国内源, R2]` 或 `[R2]`，并可选携带 `deltas[fromVersion]` 增量包）。客户端按系统时区或语言判断：中国大陆优先连接国内源（CNB），其他地区优先 R2；任一源连接失败、超时或持续低速时自动切换另一源并从已下载字节续传，最终以同一份 `sha256` 校验为准。
+
+当 `desktop-update-v2.json` 包含匹配当前运行版本的 `deltas[currentVersion]` 时，`v2.1.0+` 客户端优先下载增量包 `BeefTV-vX.Y.Z-<platform>-from-vA.B.C.delta.zip`：未变化的运行时文件（如 `node`、`ffmpeg`、静态插件）直接从本机安装目录复用并逐文件核验 SHA-256，主程序可执行文件使用内置纯 Go 二进制差分补丁（`BTDELTA1`）还原并核验新版本 SHA-256，把常规升级下载量从 160–280 MB 压缩至数 MB。若本机已安装文件缺失或哈希不符、或增量包下载/校验失败，更新器会自动无缝回退为下载并安装完整平台 `.zip`。
+
+流水线先验证 R2 和遗留 COS 清单入口的条件写能力，再建 draft，四个平台构建任务把包保存为 Actions 产物。收齐后基于上一正式版本的平台 `.zip` 构建并自检四个平台的 `.delta.zip`（若上一正式版本缺少对应 `.zip` 则跳过增量包），生成签名清单，先将版本包（含完整 `.zip` 与 `.delta.zip`）和版本清单写入 R2 不可变路径并从公开地址完整读回校验。之后发布 GitHub Release，按旧 ETag 条件替换 R2 最新清单（同时激活仅含 R2 地址的 `desktop-update-v2.json`），再将已激活的原始签名信封同步到遗留 COS 清单入口。随后 `mirror` 作业触发 CNB 将四个安装包、四个完整更新 ZIP 与（若存在）四个增量 `.delta.zip` 同步到 CNB 并完成匿名 Range 续传与完整 SHA-256 校验，并在 GitHub Actions 侧再次对全部更新 ZIP（含 `.delta.zip`）执行匿名 HTTP 206 续传与完整 SHA-256 校验，校验全部通过后才将包含国内源与 R2 双源地址的 `desktop-update-v2.json` 条件激活到 R2；若镜像作业失败，只需重跑 `mirror-desktop.yml`，不重跑整个发版。失败或缺包不会激活 R2 更新源。COS 同步失败会使发布作业失败，但不会回滚已生效的 R2 清单或删除正式 GitHub Release。
 
 Linux 发布任务会从最终 ZIP 解压执行随包 CLI，并在 Xvfb 中启动桌面程序，确认本地后端和可见窗口。PR 的 `Linux desktop package checks` 提前执行同一构建与启动检查，不发布版本，也不调用付费模型。
 
@@ -360,4 +395,4 @@ go run ./cmd/update-release sign \
 `/releases/latest` 指向最近一次发布的正式版，按发布时间而不是按最大版本号。只按时间顺序发布递增的稳定版本。
 # 真实生成门禁
 
-每次发版先完成 [六路径、两轮真实客户端测试](./real-generation-release.md)，提交对应版本的脱敏验收记录。发布工作流在创建 draft 前检查记录与当前源码绑定，不允许只凭单元测试或健康检查发布。
+每次发版先完成发版门禁验收，公开仓库的 `docs/release-evidence/` 目录只保留当前 `VERSION` 对应的单份最小发版回执 `docs/release-evidence/<VERSION>.json`（版本号 `version`、源码指纹 `sourceDigest`、发版门禁是否通过 `passed`、完整内部证据文件的 SHA-256 摘要 `evidenceSha256`）。完整验收明细与授权记录保存在内部证据目录，并在本地生成或复核回执时通过 `node scripts/verify-real-generation-release.mjs --evidence-file <path>` 核验其字节哈希与 `evidenceSha256` 一致；公开仓库的发布工作流在创建 draft 前通过 `node scripts/verify-real-generation-release.mjs` 校验唯一最小回执结构、`passed === true`、`evidenceSha256` 格式及当前发布源码指纹 `sourceDigest` 绑定，不允许只凭单元测试或健康检查发布。

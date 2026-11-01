@@ -30,7 +30,10 @@ func TestNativeArkLimitMeasuresSerializedBodyOnly(t *testing.T) {
 func TestNativeArkUnconfiguredReferencesStillPreflight(t *testing.T) {
 	for _, protocol := range []string{"volcengine-ark-video", "volcengine-ark-agent-plan-video"} {
 		input := canvasGenerationInput{Prompt: "test", Config: providerConfig{InterfaceType: protocol, Model: "doubao-seedance-2-5-260528", VideoSeconds: "5"}, ReferenceImages: []providerMedia{{Width: 384, Height: 216}}}
-		if err := (&Service{}).validateResolvedVideoCapability(&input); err == nil || !strings.Contains(err.Error(), "高度为 216") {
+		if err := (&Service{}).resolveVideoCapability(context.Background(), &input); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateVideoTask(input.VideoCapability, input); err == nil || !strings.Contains(err.Error(), "高度为 216") {
 			t.Fatalf("native preflight skipped: %v", err)
 		}
 	}
@@ -72,7 +75,10 @@ func TestSeedanceInlineVideoDimensionsOverrideForgedMetadata(t *testing.T) {
 	if input.ReferenceVideos[0].Width != 432 || input.ReferenceVideos[0].Height != 768 {
 		t.Fatal("caller metadata trusted")
 	}
-	err := (&Service{}).validateResolvedVideoCapability(&input)
+	if err := (&Service{}).resolveVideoCapability(context.Background(), &input); err != nil {
+		t.Fatal(err)
+	}
+	err := validateVideoTask(input.VideoCapability, input)
 	if err == nil || !strings.Contains(err.Error(), "331776（432×768）") {
 		t.Fatalf("invalid video admitted: %v", err)
 	}

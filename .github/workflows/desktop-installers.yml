@@ -18,7 +18,18 @@ on:
       - 'backend/internal/desktopupdate/**'
       - '.github/workflows/desktop-installers.yml'
       - '.github/workflows/release-desktop.yml'
+      - '.github/workflows/release-desktop-tag.yml'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      standalone-release:
+        description: Prepare downloadable archives without the official updater
+        type: boolean
+        default: false
+      release-tag:
+        description: GitHub tag that will host standalone release source bundles
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -62,6 +73,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Retrieve source bundle for packaged license links
+        if: inputs.standalone-release
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-tag-wasm-source
+          path: dist
       - name: Select bundled Node runtime
         shell: bash
         run: |
@@ -103,7 +120,8 @@ jobs:
         env:
           BEEFTV_SKIP_LOCAL_VERIFY: '1'
           BEEFTV_WAILS_PLATFORM: ${{ matrix.target }}
-          BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
+          BEEFTV_UPDATER_PUBLIC_KEY: ${{ !inputs.standalone-release && vars.BEEFTV_UPDATER_PUBLIC_KEY || '' }}
+          BEEFTV_RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           sh plugin-packages/build-packages.sh
           ./scripts/build-beeftv-release.sh
@@ -111,7 +129,8 @@ jobs:
         if: runner.os == 'Windows'
         env:
           CGO_ENABLED: '1'
-          BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
+          BEEFTV_UPDATER_PUBLIC_KEY: ${{ !inputs.standalone-release && vars.BEEFTV_UPDATER_PUBLIC_KEY || '' }}
+          BEEFTV_RELEASE_TAG: ${{ inputs.release-tag }}
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1
       - name: Package native installer
@@ -148,11 +167,29 @@ jobs:
             cat /tmp/links
             ! grep -q "not found" /tmp/links
           '
+      - name: Package and verify downloadable archive
+        if: inputs.standalone-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          platform='${{ matrix.platform }}'
+          payload='cmd/desktop/build/bin'
+          if [[ "$platform" == darwin-* ]]; then payload="$payload/BeefTV.app"; fi
+          if [[ "$platform" == linux-* ]]; then payload="$payload/BeefTV-linux"; fi
+          (
+            cd backend
+            go run ./cmd/update-release package --platform "$platform" --input "$payload" --output "../dist/BeefTV-${version}-${platform}.zip"
+          )
+          python scripts/smoke-packaged-cli.py --platform "$platform" --archive "dist/BeefTV-${version}-${platform}.zip"
+          if [[ "$platform" == linux-* ]]; then
+            xvfb-run -a dbus-run-session -- python scripts/smoke-linux-desktop.py --archive "dist/BeefTV-${version}-${platform}.zip"
+          fi
       - name: Preserve installer artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: installer-check-${{ matrix.platform }}
-          path: dist/BeefTV-*
+          path: dist/BeefTV-*-${{ matrix.platform }}*
           retention-days: 7
           if-no-files-found: error

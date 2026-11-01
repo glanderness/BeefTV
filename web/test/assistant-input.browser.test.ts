@@ -13,12 +13,9 @@ const undoRequests: Record<string, any>[] = [];
 let rejectNextUndo = false;
 let running = false, cancelled = false, nextId = 0, failNextAsset = false;
 let activePermissionMode: string | undefined;
-let holdNextAsset = false, releaseAsset: (() => void) | null = null;
-let assetHeld: (() => void) | null = null;
 const uploadKeys: string[] = [];
 const uploadMetadata: { name: string; width: string | null; height: string | null; durationMs: string | null }[] = [];
 const registeredAssets: Record<string, any>[] = [];
-let assetScope = "guest";
 const turns: Record<string, any>[] = [];
 let png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII=", "base64");
 let wav: Buffer, longWav: Buffer, video: Buffer, jpeg: Buffer;
@@ -29,7 +26,6 @@ const firstPreviewStarted = new Promise<void>(resolve => { markFirstPreviewStart
 const selectedSkill = { skillId: "story", versionId: "story-v1", contentHash: "a".repeat(64), skillName: "分镜", version: "1.0", status: 1, isAdded: true };
 let installedSkills = [selectedSkill];
 const skillInstalls: { sourceType: string; isPrivate: string; fileName: string }[] = [];
-let holdSkillInstall = false, releaseSkillInstall: (() => void) | null = null;
 beforeAll(async () => {
     scratch = mkdtempSync(tmpdir() + "/assistant-input-");
     execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=24000:duration=0.25", scratch + "/beat.wav"]);
@@ -82,19 +78,16 @@ beforeAll(async () => {
         if (pathname.startsWith("/api/assets/") && req.method === "PUT") {
             if (failNextAsset) { failNextAsset = false; return Response.json({ code: 500, message: "素材登记失败" }, { status: 500 }); }
             const body = await req.json();
-            if (holdNextAsset) { holdNextAsset = false; await new Promise<void>(resolve => { releaseAsset = resolve; assetHeld?.(); }); }
             registeredAssets.push(body.asset);
             return ok({ asset: { id: body.asset.id } });
         }
-        if (pathname === "/test/asset-scope") { assetScope = (await req.json()).scope; return ok({}); }
         if (pathname === "/api/assets" && req.method === "GET") {
-            const assets = assetScope === "guest" ? registeredAssets : [];
+            const assets = registeredAssets;
             return ok({ assets, page: 1, pageSize: 100, total: assets.length, hasMore: false });
         }
         if (pathname.endsWith("/skills/install")) {
             const form = await req.formData();
             skillInstalls.push({ sourceType: String(form.get("sourceType")), isPrivate: String(form.get("isPrivate")), fileName: (form.get("file") as File).name });
-            if (holdSkillInstall) await new Promise<void>(resolve => { releaseSkillInstall = resolve; });
             const skill = { ...selectedSkill, skillId: "coffee", skillName: "咖啡审片", versionId: "coffee-v2", version: "2.0", contentHash: "b".repeat(64) };
             installedSkills = [skill];
             return ok({ skill });
@@ -130,7 +123,7 @@ beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
 afterAll(async () => { await browser?.close(); server?.stop(true); if (scratch) rmSync(scratch, { recursive: true, force: true }); });
-beforeEach(() => { registeredAssets.length = 0; assetScope = "guest"; });
+beforeEach(() => { registeredAssets.length = 0; });
 
 test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, draft restore and busy supplement", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } }); await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
@@ -239,7 +232,7 @@ test("asset registration failure remains unsent; explicit upload retry keeps its
     await page.close();
 }, 15000);
 
-test("native-local Sidebar publishes accepted uploads for immediate @ reuse, while removal and scope changes preserve ownership", async () => {
+test("native-local Sidebar publishes accepted uploads for immediate @ reuse, and removal preserves ownership", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加参考素材"]')?.disabled);
@@ -267,17 +260,6 @@ test("native-local Sidebar publishes accepted uploads for immediate @ reuse, whi
     expect(chats[before]?.references).toEqual([{ kind: "asset", id: registered[0].id }]);
     expect(chats[before]?.attachments).toBeUndefined();
 
-    const held = new Promise<void>(resolve => { assetHeld = resolve; });
-    holdNextAsset = true;
-    await page.locator('input[type="file"]').setInputFiles({ name: "old-account.png", mimeType: "image/png", buffer: png });
-    await held;
-    await page.evaluate(() => (window as any).assistantInputFixture.switchScope());
-    const completed = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/api/assets/"));
-    releaseAsset!(); await completed;
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加参考素材"]')?.disabled);
-    await page.waitForTimeout(100);
-    expect(await page.evaluate(() => (window as any).assistantInputFixture.assets())).toEqual([]);
-    expect(await page.getByRole("combobox", { name: "old-account.png 的用途" }).count()).toBe(0);
     await page.close();
 }, 15000);
 
@@ -301,7 +283,7 @@ test("missing resource duration is recovered from a real twelve-second WAV for r
     await page.close();
 }, 15000);
 
-test("permission choices persist by workspace; trusted active mode locks the turn and supplements cannot elevate it", async () => {
+test("permission choices persist; trusted active mode locks the turn and supplements cannot elevate it", async () => {
     running = false; cancelled = false;
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
@@ -334,17 +316,6 @@ test("permission choices persist by workspace; trusted active mode locks the tur
     expect(await selector.isDisabled()).toBe(true);
     running = false;
     await page.reload();
-    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="助手权限"]')?.disabled);
-    expect(await selectedText()).toBe("完全访问");
-    await page.evaluate(() => (window as any).assistantInputFixture.switchScope("other-workspace"));
-    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="助手权限"]')?.disabled);
-    expect(await selectedText()).toBe("当前画布");
-    await selector.click(); await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText("只读", { exact: true }).click();
-    await page.getByRole("textbox", { name: "给助手的消息" }).fill("只分析");
-    const readonlySent = page.waitForResponse(response => response.url().endsWith("/assistant/chat"));
-    await page.getByRole("button", { name: "发送", exact: true }).click(); await readonlySent;
-    expect(chats.at(-1)?.permissionMode).toBe("read-only");
-    await page.evaluate(() => (window as any).assistantInputFixture.switchScope("guest"));
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="助手权限"]')?.disabled);
     expect(await selectedText()).toBe("完全访问");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -421,30 +392,3 @@ for (const mode of ["markdown", "zip"] as const) {
         await page.close();
     }, 20000);
 }
-
-test("an installation completing after an account switch cannot select a skill in the replacement draft", async () => {
-    running = false; installedSkills = []; holdSkillInstall = true;
-    const page = await browser.newPage();
-    try {
-        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
-        await page.getByRole("button", { name: "选择技能", exact: true }).click();
-        await page.getByText("还没有已安装的技能。", { exact: true }).waitFor();
-        await page.getByRole("button", { name: "安装技能", exact: true }).click();
-        const dialog = page.getByRole("dialog", { name: "安装技能" });
-        await dialog.locator('input[type="file"]').setInputFiles({ name: "SKILL.md", mimeType: "text/markdown", buffer: Buffer.from("# Coffee") });
-        const held = page.waitForRequest(request => request.url().endsWith("/skills/install"));
-        await dialog.getByRole("button", { name: "安装技能", exact: true }).click(); await held;
-        await page.evaluate(() => (window as any).assistantInputFixture.switchScope("replacement"));
-        await dialog.waitFor({ state: "hidden" });
-        const completed = page.waitForResponse(response => response.url().endsWith("/skills/install"));
-        releaseSkillInstall?.(); await completed;
-        await page.getByRole("textbox", { name: "给助手的消息" }).fill("新账号的草稿");
-        const sent = page.waitForResponse(response => response.url().endsWith("/assistant/chat"));
-        await page.getByRole("button", { name: "发送", exact: true }).click(); await sent;
-        expect(chats.at(-1)?.skills).toBeUndefined();
-        expect(await page.getByRole("button", { name: "移除技能 咖啡审片" }).count()).toBe(0);
-    } finally {
-        holdSkillInstall = false; releaseSkillInstall?.(); releaseSkillInstall = null;
-        await page.close();
-    }
-}, 20000);

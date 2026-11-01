@@ -66,6 +66,27 @@ type Task struct {
 	ImageJobID            string  `json:"-" gorm:"column:image_job_id;size:191"`
 }
 
+func (t Task) ProviderUsageState() string {
+	if t.BeefUsageState == nil {
+		return ""
+	}
+	return *t.BeefUsageState
+}
+
+func (t Task) ProviderBillingState() string {
+	if t.BeefBillingState == nil {
+		return ""
+	}
+	return *t.BeefBillingState
+}
+
+func (t Task) ProviderReconcileDeadline() string {
+	if t.BeefReconcileDeadline == nil {
+		return ""
+	}
+	return *t.BeefReconcileDeadline
+}
+
 // TaskFailureDiagnostics contains bounded, redacted evidence, never request bodies.
 type TaskFailureDiagnostics struct {
 	Version         string                `json:"version,omitempty"`

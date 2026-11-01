@@ -5,7 +5,7 @@ import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCanvasGeneration } from "../../src/pages/canvas/use-canvas-generation";
 import { useCanvasGenerationExecutor } from "../../src/pages/canvas/use-canvas-generation-executor";
-import { stampCanvasNodeChanges } from "../../src/lib/canvas/canvas-node-timestamps";
+import { useCanvasNodeState } from "../../src/pages/canvas/use-canvas-document-state";
 import { createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "../../src/stores/use-config-store";
 import { useCanvasProjectLifecycle } from "../../src/pages/canvas/use-canvas-project-lifecycle";
 import { useCanvasHistory } from "../../src/pages/canvas/use-canvas-history";
@@ -19,7 +19,6 @@ import { hasUnconfirmedCanvasEdits, pendingExternalCanvasRevision } from "../../
 import { canvasBackendSubmitPaused } from "../../src/services/canvas-revision-conflict";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
 import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
-import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
 import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
 const pageUi = createCanvasPageUiStore();
@@ -60,7 +59,6 @@ function Recovery({ projectId, projectLoaded, nodes, nodesRef, setNodes }: Param
 function Harness() {
     const [projectId, setProjectId] = useState("c1");
     (harness as any).switchCanvas = setProjectId;
-    (harness as any).scopeCycle = () => { const scope = getActiveUserScope(); setActiveUserScope("leave-owner-b"); setActiveUserScope(scope); };
     const [, unrelatedRender] = useState(0);
     (harness as any).pulse = () => new Promise<void>(resolve => {
         let count = 0;
@@ -69,23 +67,7 @@ function Harness() {
             if (++count === 17) { clearInterval(timer); resolve(); }
         }, 50);
     });
-    const [nodes, setNodesState] = useState<CanvasNodeData[]>([]);
-    const nodesRef = useRef(nodes);
-    // Use the page's updater contract: functional updates also advance the live
-    // ref, while direct generation writes reach it synchronously.
-    const setNodes = useCallback<Dispatch<SetStateAction<CanvasNodeData[]>>>(value => {
-        if (typeof value === "function") {
-            setNodesState(current => {
-                const next = stampCanvasNodeChanges(current, value(current));
-                nodesRef.current = next;
-                return next;
-            });
-        } else {
-            const next = stampCanvasNodeChanges(nodesRef.current, value);
-            nodesRef.current = next;
-            setNodesState(next);
-        }
-    }, []);
+    const { nodes, nodesRef, setNodes, setNodesState, adoptNodes } = useCanvasNodeState();
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -96,7 +78,7 @@ function Harness() {
     const [projectLoaded, setProjectLoaded] = useState(false);
     const connectionsRef = useRef(connections), chatSessionsRef = useRef(chatSessions), activeChatIdRef = useRef(activeChatId), viewportRef = useRef(viewport);
     const history = useCanvasHistory({ pageUi, projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo });
-    useCanvasProjectLifecycle({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
+    useCanvasProjectLifecycle({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, adoptNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
     const generation = useCanvasGeneration({ projectId, projectLoaded: false, nodes, nodesRef, setNodes });
     const generate = useCanvasGenerationExecutor({ pageUi, projectId, addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });

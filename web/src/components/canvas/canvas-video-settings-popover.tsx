@@ -33,12 +33,14 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const sizeSupported = Boolean(videoProfile?.ratios.length);
     const resolution = videoProfile ? resolveVideoResolutionValue(videoProfile, config.vquality) : "";
     const size = videoProfile ? resolveVideoRatioValue(videoProfile, config.size) : "";
+    const draftActive = Boolean(videoProfile?.draft?.supported && config.videoDraft === "true");
     const summary = [
         ...(resolutionSupported ? [videoResolutionLabel(resolution)] : []),
+        ...(draftActive ? ["样片"] : []),
         ...(sizeSupported ? [taskConstraints?.ratioLabel || videoSizeLabel(size)] : []),
         taskConstraints?.durationLocked ? "随原视频时长" : videoSecondsLabel(config.videoSeconds, videoProfile),
     ].join(" · ");
-    const displaySummary = capabilityConfig.videoCapabilitiesUnavailable ? "模型能力未加载" : summaryOverride || summary;
+    const displaySummary = summaryOverride || summary;
 
     useEffect(() => {
         if (!open) return;

@@ -73,6 +73,14 @@ function initialChannel(): ModelChannel {
             modelProfiles: [{ model: "doubao-seedance-2.5", capability: "video", protocol: "volcengine-ark-video", authType: "bearer" }],
         });
     }
+    if (scenario === "compatible-seedance") {
+        return createModelChannel({
+            name: "第三方模型服务",
+            baseUrl: "https://relay.example.com/v1",
+            apiKey: "synthetic-key",
+            models: ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128"],
+        });
+    }
     return createModelChannel({ name: "火山方舟", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", models: [] });
 }
 

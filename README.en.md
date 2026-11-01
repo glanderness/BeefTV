@@ -43,11 +43,11 @@
 
 ## Recent updates
 
+- **[v2.0.5](https://github.com/glanderness/BeefTV/releases/tag/v2.0.5)** — Add collapsible assistant reasoning, improve Mac canvas performance, fix video retrieval, and recover results from some failed image tasks.
+- **[v2.0.4](https://github.com/glanderness/BeefTV/releases/tag/v2.0.4)** — Optimize large-canvas zooming and dragging; improve reference validation, generation status synchronization, and save and authorization checks for assistant actions.
 - **[v2.0.3](https://github.com/glanderness/BeefTV/releases/tag/v2.0.3)** — Improve video prompt and reference validation, restore saved parameters on retry, and improve upscaling request reliability.
 - **[v2.0.2](https://github.com/glanderness/BeefTV/releases/tag/v2.0.2)** — Add Seedream layer splitting and related image sets; improve Agent multi-image checks, task recovery, and reference uploads.
 - **[v2.0.1](https://github.com/glanderness/BeefTV/releases/tag/v2.0.1)** — Add reusable workflows and Topaz upscaling, with fixed-version skill installation, rollback, and private adaptations.
-- **[v2.0.0](https://github.com/glanderness/BeefTV/releases/tag/v2.0.0)** — Connect storyboard planning, production, and video export through the creative assistant, with audiovisual checks, a skill marketplace, and editable projects.
-- **[v1.7.27](https://github.com/glanderness/BeefTV/releases/tag/v1.7.27)** — Standardize Music 3.0 output on MP3 and improve music generation connections and desktop update downloads.
 
 [All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
 
@@ -56,8 +56,6 @@
 <div>
   <video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
 </div>
-
-New product demo · About 45 seconds.
 
 ## Workflows
 
@@ -106,10 +104,7 @@ In the local example **The Last Bottle of Water**, the user specified the produc
 - **Plan:** Define the world, characters, and storyboard, including shot duration, visuals, motion, and sound.
 - **Execute:** Create nodes and reference connections, then generate characters, scenes, shots, and narration after confirmation.
 - **Inspect and continue:** Read actual outputs, check designs and first frames, preserve successful assets and failure states, and continue refining.
-
-[Listen to the opening narration](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [Production record](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作) (Chinese)
-
-This example has 3 character images, 2 scene images, 5 shot first frames, 3 video clips, and 2 narration clips. Final editing, subtitles, and audiovisual acceptance remain unfinished. Generation requires configured model providers; audiovisual review also requires a supported multimodal model. Human review is still needed.
+- **Connect external Agents via MCP:** Generate connection configs in the sidebar "BeefTV MCP" page to connect Codex, Claude Code, Claude Desktop, or Cursor to your local workspace; see [External Agent Integration](docs/content/docs/backend/external-agents.mdx) (Chinese).
 
 ## Skills
 
@@ -124,8 +119,6 @@ Give the creative assistant methods, steps, and requirements for specific tasks.
 | Two-shot text storyboard | Coffee short: two 4-second shots, with visuals, sound, and items to confirm. |
 | Interview outline | Community bookstore: three open questions, follow-ups, supporting footage, and permissions. |
 | Media inventory | Coffee video + dawn photo: purposes, stated permissions, and duration and sound gaps. |
-
-Captured from the installed 2.0.1 app. These runs used private local copies of the official 1.0.0 skill files. The marketplace still labels their results as unverified. [See all three inputs and results](docs/content/docs/overview/examples.mdx#skills三个文字任务) (Chinese).
 
 - **Use what you need:** Enable or disable installed skills in your library.
 - **Manage versions:** Check for updates or return to a previously installed version.
@@ -148,7 +141,7 @@ BeefTV also includes project and personal asset libraries, asynchronous tasks, m
 | --- | --- | --- |
 | Rendering, media previews, and task handling optimized for complex canvases. | Local-first, with one desktop workspace to get started and capabilities loaded as needed. | An Agent to advance your work, Skills to guide it, and Workflows to reuse the steps. |
 
-## Open by design
+## Source available, customizable and extensible
 
 - Configure text, image, video, and audio model providers freely, without being tied to a single provider.
 - Manage projects, canvases, assets, and tasks in one workspace, with data that can be saved and migrated locally.

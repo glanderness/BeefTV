@@ -91,8 +91,9 @@ describe('creative producer durable host', () => {
       }, BACKGROUND_CONTEXT);
       const first = await fixture.store.submit(entry, { turnId: 'legacy-1', requestId: 'legacy-1', content: '看当前画布', userText: '看当前画布', revisionBefore: 8 });
       await fixture.store.wait(entry, first);
-      expect(systemText(fixture.payloads[0])).toContain('文本 1');
-      expect(systemText(fixture.payloads[0])).not.toContain('画布是空的');
+      expect(systemText(fixture.payloads[0])).not.toContain('<beeftv_studio>');
+      expect(userText(fixture.payloads[0])).toContain('文本 1');
+      expect(userText(fixture.payloads[0])).not.toContain('画布是空的');
       expect(userText(fixture.payloads[0])).not.toContain('<canvas_changes>');
       canvasState.current.revision++;
       canvasState.current.nodes[0].metadata.content = '用户修改后的内容';
@@ -169,9 +170,10 @@ describe('creative producer durable host', () => {
       await fixture.store.wait(entry, sub1);
 
       expect(fixture.payloads.length).toBe(1);
-      expect(systemText(fixture.payloads[0])).toContain('<beeftv_studio>');
-      expect(systemText(fixture.payloads[0])).toContain('都市逆袭分镜');
-      expect(systemText(fixture.payloads[0])).toContain('生成中 1');
+      expect(systemText(fixture.payloads[0])).not.toContain('<beeftv_studio>');
+      expect(userText(fixture.payloads[0])).toContain('<beeftv_studio>');
+      expect(userText(fixture.payloads[0])).toContain('都市逆袭分镜');
+      expect(userText(fixture.payloads[0])).toContain('生成中 1');
       expect(userText(fixture.payloads[0])).not.toContain('<canvas_changes>');
 
       // Simulate user editing the storyboard title and image generation completing between turns
@@ -197,8 +199,9 @@ describe('creative producer durable host', () => {
       await fixture.store.wait(entry, sub2);
 
       expect(fixture.payloads.length).toBe(2);
-      expect(systemText(fixture.payloads[1])).toContain('赛博天台分镜（用户已改）');
-      expect(systemText(fixture.payloads[1])).toContain('完成 1');
+      expect(systemText(fixture.payloads[1])).toBe(systemText(fixture.payloads[0]));
+      expect(userText(fixture.payloads[1])).toContain('赛博天台分镜（用户已改）');
+      expect(userText(fixture.payloads[1])).toContain('完成 1');
       expect(userText(fixture.payloads[1])).toContain('<canvas_changes>');
       expect(userText(fixture.payloads[1])).toContain('用户修改了「赛博天台分镜（用户已改）」');
       expect(userText(fixture.payloads[1])).toContain('「镜1首帧」生成完成');
@@ -251,8 +254,10 @@ describe('creative producer durable host', () => {
 
       expect(fixture.payloads.length).toBe(4);
       expect(userText(fixture.payloads[2])).toContain('计划还没做完。继续做「创建首帧节点并提议生成」');
-      expect(systemText(fixture.payloads[3])).toContain('<beeftv_plan>');
-      expect(systemText(fixture.payloads[3])).toContain('[等你确认] 创建首帧节点并提议生成');
+      expect(systemText(fixture.payloads[3])).not.toContain('<beeftv_plan>');
+      expect(systemText(fixture.payloads[3])).toBe(systemText(fixture.payloads[0]));
+      expect(userText(fixture.payloads[3])).toContain('<beeftv_plan>');
+      expect(userText(fixture.payloads[3])).toContain('[等你确认] 创建首帧节点并提议生成');
       expect(record.reply).toContain('请确认后开始生成');
       expect(record.plan).toMatchObject({ done: 1, total: 2 });
 

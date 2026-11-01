@@ -131,3 +131,151 @@ func TestExternalGenerationValidationAndAtomicAdmission(t *testing.T) {
 		t.Fatal("rolled-back batch could not retry same key", err)
 	}
 }
+
+func TestGenerationOrderModesAskCallerAutoAndUnifiedApprove(t *testing.T) {
+	svc, r, canvasID, revision := externalGenerationFixture(t)
+
+	// 1. ask 模式：外部客户端开单后不能自己 submit，需由 owner 批准执行。
+	askCaller := operations.Caller{
+		Kind:         operations.CallerExternal,
+		ClientID:     "client-ask",
+		ClientLabel:  "claude-ask",
+		ApprovalMode: operations.ApprovalModeAsk,
+	}
+	proposeParams, _ := json.Marshal(map[string]any{
+		"canvasId": canvasID,
+		"nodeIds":  []string{"image"},
+		"kind":     "image",
+		"note":     "ask mode test",
+	})
+	proposed, err := r.Execute(operations.Request{
+		Op:     "canvas.generation.propose",
+		UserID: "local",
+		Caller: askCaller,
+		Params: proposeParams,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	propMap := proposed.Result.(map[string]any)
+	proposalID, _ := propMap["proposalId"].(string)
+	if proposalID == "" || propMap["approvalMode"] != "ask" || propMap["status"] != "pending" {
+		t.Fatalf("unexpected ask proposal: %+v", propMap)
+	}
+
+	submitParams, _ := json.Marshal(map[string]any{
+		"canvasId":                    canvasID,
+		"proposalId":                  proposalID,
+		"nodeIds":                     []string{"image"},
+		"expectedRevision":            revision,
+		"expectedModelConfigRevision": 1,
+	})
+	if _, err := r.Execute(operations.Request{
+		Op:     "canvas.generation.submit",
+		OpID:   "submit-ask-self",
+		UserID: "local",
+		Caller: askCaller,
+		Params: submitParams,
+	}); err == nil || operations.AsError(err).Reason != "generation_approval_required" {
+		t.Fatalf("ask caller must not self-submit: %v", err)
+	}
+
+	approved, err := svc.ApproveGenerationOrder("local", proposalID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appMap := approved.(map[string]any)
+	orderVal, _ := appMap["order"].(*operations.GenerationOrder)
+	if orderVal == nil || orderVal.Status != operations.GenerationOrderSubmitted || orderVal.ApprovedBy != "owner" || len(orderVal.TaskIDs) != 1 {
+		t.Fatalf("unexpected approved order: %+v", appMap)
+	}
+	// 再次批准同一单应幂等返回，不重复建任务。
+	approvedAgain, err := svc.ApproveGenerationOrder("local", proposalID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(approvedAgain.(map[string]any)["taskIds"], appMap["taskIds"]) {
+		t.Fatalf("idempotent approve taskIds mismatch: %+v vs %+v", approvedAgain, appMap)
+	}
+
+	// 2. auto 模式（脚本）：一步提交自动生成并落生成单，无需先 propose 或传 expectedRevision。
+	autoCaller := operations.Caller{
+		Kind:         operations.CallerExternal,
+		ClientID:     "client-auto",
+		ClientLabel:  "batch-script",
+		ApprovalMode: operations.ApprovalModeAuto,
+	}
+	autoParams, _ := json.Marshal(map[string]any{
+		"canvasId": canvasID,
+		"nodeIds":  []string{"image-2"},
+		"kind":     "image",
+	})
+	autoRes, err := r.Execute(operations.Request{
+		Op:     "canvas.generation.submit",
+		OpID:   "submit-auto-1",
+		UserID: "local",
+		Caller: autoCaller,
+		Params: autoParams,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	autoMap := autoRes.Result.(map[string]any)
+	autoOrderID, _ := autoMap["orderId"].(string)
+	if autoOrderID == "" || autoMap["approvalMode"] != "auto" {
+		t.Fatalf("unexpected auto submit result: %+v", autoMap)
+	}
+	orders, err := svc.ListGenerationOrders("local", canvasID)
+	if err != nil || len(orders) != 2 {
+		t.Fatalf("expected 2 generation orders, got %d (%v)", len(orders), err)
+	}
+}
+
+func TestConfirmAssistantProductionHandlesOrdinarySingleBatchProposal(t *testing.T) {
+	svc, r, canvasID, _ := externalGenerationFixture(t)
+	const turnID = "bbaa112233445566"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, turnID, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	proposeParams, _ := json.Marshal(map[string]any{
+		"canvasId": canvasID,
+		"nodeIds":  []string{"image"},
+		"kind":     "image",
+	})
+	proposed, err := r.Execute(operations.Request{
+		Op:     "canvas.generation.propose",
+		UserID: "local",
+		TurnID: turnID,
+		Caller: operations.ManualCaller(false),
+		Params: proposeParams,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.FinalizeAssistantTurn(turnID); err != nil {
+		t.Fatal(err)
+	}
+	proposalID, _ := proposed.Result.(map[string]any)["proposalId"].(string)
+	if proposalID == "" {
+		t.Fatalf("missing proposalId: %+v", proposed.Result)
+	}
+	confirmed, err := svc.ConfirmAssistantProduction("local", turnID, AssistantProductionConfirmation{
+		CanvasID:   canvasID,
+		ProposalID: proposalID,
+		Kind:       "image",
+		NodeIDs:    []string{"image"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	confMap := confirmed.(map[string]any)
+	taskIDs, _ := confMap["taskIds"].([]string)
+	contID, _ := confMap["continuationId"].(string)
+	if len(taskIDs) != 1 || contID != "" {
+		t.Fatalf("ordinary proposal should create 1 task without continuation, got %+v", confMap)
+	}
+	orders, err := svc.ListGenerationOrders("local", canvasID)
+	if err != nil || len(orders) != 1 || orders[0].Status != operations.GenerationOrderSubmitted || orders[0].ApprovedBy != "ui" {
+		t.Fatalf("expected submitted generation order approved by ui, got %+v (%v)", orders, err)
+	}
+}

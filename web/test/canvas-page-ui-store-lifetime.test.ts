@@ -58,6 +58,6 @@ describe("canvas page ui store lifetime", () => {
 
         const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
         const effect = project.slice(project.indexOf("pageUi.getState().resetForProject()"), project.indexOf("pageUi.getState().resetForProject()") + 180);
-        expect(effect).toContain("[pageUi, projectId, canvasStorageScope]");
+        expect(effect).toContain("[pageUi, projectId]");
     });
 });

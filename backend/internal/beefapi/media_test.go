@@ -190,3 +190,67 @@ func TestHistoricalMediaReceiptPreservesMIMEOrderLayersUsageAndNoCredentials(t *
 		t.Fatal("new task fetched historical receipt")
 	}
 }
+
+func TestDetectMediaContentTypeSupportsTIFFAndISOImages(t *testing.T) {
+	if got := detectMediaContentType([]byte{'I', 'I', '*', 0, 8, 0, 0, 0}); got != "image/tiff" {
+		t.Fatalf("little-endian TIFF = %q, want image/tiff", got)
+	}
+	if got := detectMediaContentType([]byte{'M', 'M', 0, '*', 0, 0, 0, 8}); got != "image/tiff" {
+		t.Fatalf("big-endian TIFF = %q, want image/tiff", got)
+	}
+	if got := detectMediaContentType([]byte{0, 0, 0, 28, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}); got != "image/avif" {
+		t.Fatalf("AVIF = %q, want image/avif", got)
+	}
+	if got := detectMediaContentType([]byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'}); got != "image/heic" {
+		t.Fatalf("HEIC = %q, want image/heic", got)
+	}
+}
+
+func TestConfirmUploadRetriesStalledControlAttempt(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	previousControl := uploadControlTimeout
+	previousComplete := uploadCompleteTimeout
+	uploadControlTimeout = 10 * time.Millisecond
+	uploadCompleteTimeout = 120 * time.Millisecond
+	defer func() {
+		uploadControlTimeout = previousControl
+		uploadCompleteTimeout = previousComplete
+	}()
+
+	var mu sync.Mutex
+	attempts := 0
+	unblock := make(chan struct{})
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/media/uploads/complete" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		attempts++
+		current := attempts
+		mu.Unlock()
+		if current == 1 {
+			<-unblock
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(UploadedMedia{URL: serverURL + "/completed.png", Kind: "image", Mime: "image/png", Bytes: 4, SHA256: "deadbeef"})
+	}))
+	defer server.Close()
+	defer close(unblock)
+	serverURL = server.URL
+
+	client := &MediaClient{BaseURL: server.URL, APIKey: "fixture", AllowHTTPTest: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	uploaded, err := client.confirmUpload(ctx, "ticket-1")
+	if err != nil {
+		t.Fatalf("confirmUpload failed: %v", err)
+	}
+	if uploaded.URL != server.URL+"/completed.png" || attempts != 2 {
+		t.Fatalf("uploaded=%+v attempts=%d", uploaded, attempts)
+	}
+}

@@ -18,7 +18,10 @@ const noop = () => {};
 function Harness() {
     const [projectId, setProjectId] = useState("canvas-test");
     const [, refresh] = useState(0);
-    const [nodes, setNodes] = useState<CanvasNodeData[]>([{ id: "node-test", type: CanvasNodeType.Video, title: "取回测试", position: { x: 0, y: 0 }, width: 560, height: 320, metadata: { status: "loading", taskId: "task-test", taskStatus: "succeeded", content: location.search.includes("old") ? "data:video/mp4;base64,AA==" : undefined } }]);
+    const unknownSubmission = location.search.includes("unknown");
+    const [nodes, setNodes] = useState<CanvasNodeData[]>([{ id: "node-test", type: CanvasNodeType.Video, title: "取回测试", position: { x: 0, y: 0 }, width: 560, height: 320, metadata: unknownSubmission
+        ? { status: "error", taskId: "task-test", taskStatus: "failed", errorDetails: "提交结果待确认", taskOutcome: { phase: "retrievable", regenerate: "blocked", reason: "submission_unknown" } }
+        : { status: "loading", taskId: "task-test", taskStatus: "succeeded", content: location.search.includes("old") ? "data:video/mp4;base64,AA==" : undefined } }]);
     const nodesRef = useRef(nodes);
     nodesRef.current = nodes;
     const connectionsRef = useRef([]);

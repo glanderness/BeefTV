@@ -1,7 +1,7 @@
 import { createClientId } from "@/lib/client-id";
 import { Button, Dropdown, Tooltip } from "antd";
 import { History, MessageSquarePlus, X, ArrowUpRight } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { assetLibraryQueryKey, assetPickerQueryKey } from "@/components/assets/asset-view-session";
@@ -13,8 +13,6 @@ import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
 import { AssistantPublicationEntry } from "@/pages/skills/assistant-publication-entry";
 import { Link } from "react-router";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
-import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment, type AssistantInputDraft } from "@/services/assistant-attachments";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_CHECK_RESULTS_PROMPT, ASSISTANT_STARTER_PROMPTS, appendAssistantDraft, assistantSkillLabel, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
@@ -75,9 +73,7 @@ export function CanvasAssistantSidebar(props: Props) {
     const [skillsLoading, setSkillsLoading] = useState(false);
     const [skillsError, setSkillsError] = useState("");
     const inputGeneration = useRef(0);
-    const inputScope = useRef(captureUserScope());
-    const accountEpoch = useSyncExternalStore(subscribeUserScope, () => `${getActiveUserScope()}:${getActiveUserScopeEpoch()}`, () => "");
-    const draftIdentity = JSON.stringify([assistant.canvasId, accountEpoch]);
+    const draftIdentity = assistant.canvasId;
     const [selectionAttached, setSelectionAttached] = useState(true);
     const [resultSelection, setResultSelection] = useState<AssistantInputDraft["resultSelection"]>(null);
     const resultNodeIds = assistant.sessionId && resultSelection?.sessionId === assistant.sessionId ? resultSelection.nodeIds : [];
@@ -87,41 +83,41 @@ export function CanvasAssistantSidebar(props: Props) {
     const mediaReferences = references.filter(item => ["image", "video", "audio"].includes(item.kind));
 
     useEffect(() => {
-        const generation = ++inputGeneration.current, expected = captureUserScope(); inputScope.current = expected;
+        const generation = ++inputGeneration.current;
         setDraftLoaded(false); setLoadedDraftIdentity(null); setDraft(""); setAttachments([]); setSelectedSkills([]); setResultSelection(null); setUploads([]); setInputError(""); setAvailableSkills([]); setSkillsOpen(false); setSkillInstallOpen(false); setReferencePickerOpen(false);
-        void readAssistantInputDraft(assistant.canvasId, expected).then(saved => {
-            if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
+        void readAssistantInputDraft(assistant.canvasId).then(saved => {
+            if (generation !== inputGeneration.current) return;
             if (saved) { setDraft(saved.text || ""); setAttachments(saved.attachments || []); setSelectedSkills(saved.skills || []); setResultSelection(saved.resultSelection ?? null); }
             setDraftLoaded(true);
             setLoadedDraftIdentity(draftIdentity);
         }).catch(() => { if (generation === inputGeneration.current) { setInputError("暂时无法读取未发送的素材，请重新添加。"); setDraftLoaded(true); } });
-    }, [assistant.canvasId, accountEpoch, draftIdentity, draftReadAttempt]);
+    }, [assistant.canvasId, draftIdentity, draftReadAttempt]);
 
     useEffect(() => {
         if (!draftLoaded || loadedDraftIdentity !== draftIdentity) return;
         const generation = inputGeneration.current;
         const version = ++draftWriteVersion.current;
-        void saveAssistantInputDraft(assistant.canvasId, { text: draft, attachments, skills: selectedSkills, resultSelection }, inputScope.current)
+        void saveAssistantInputDraft(assistant.canvasId, { text: draft, attachments, skills: selectedSkills, resultSelection })
             .catch(() => { if (generation === inputGeneration.current && version === draftWriteVersion.current) setInputError("未发送内容暂时无法保存，请保持窗口打开。"); });
     }, [assistant.canvasId, attachments, draft, draftIdentity, draftLoaded, loadedDraftIdentity, selectedSkills, resultSelection]);
 
     const upload = useCallback(async (id: string, file: File) => {
-        const generation = inputGeneration.current, expected = inputScope.current;
+        const generation = inputGeneration.current;
         setUploads(items => items.map(item => item.id === id ? { ...item, busy: true, error: undefined } : item));
         try {
-            const attachment = await uploadAssistantAttachment(file, expected, id);
-            if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
-            void appQueryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(expected) });
-            void appQueryClient.invalidateQueries({ queryKey: assetPickerQueryKey(expected) });
+            const attachment = await uploadAssistantAttachment(file, id);
+            if (generation !== inputGeneration.current) return;
+            void appQueryClient.invalidateQueries({ queryKey: assetLibraryQueryKey() });
+            void appQueryClient.invalidateQueries({ queryKey: assetPickerQueryKey() });
             setAttachments(items => [...items, attachment]); setUploads(items => items.filter(item => item.id !== id));
         } catch (error) {
-            if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
+            if (generation !== inputGeneration.current) return;
             setUploads(items => items.map(item => item.id === id ? { ...item, busy: false, error: error instanceof Error ? error.message : "上传没有完成" } : item));
         }
     }, []);
 
     const addFiles = useCallback((files: File[]) => {
-        if (readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity || !userScopeMatches(inputScope.current)) return;
+        if (readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity) return;
         if (attachmentCount.current + files.length > 8) { setInputError("一次最多添加 8 份参考素材"); return; }
         setInputError("");
         attachmentCount.current += files.length;
@@ -131,9 +127,8 @@ export function CanvasAssistantSidebar(props: Props) {
     }, [attachments.length, draftIdentity, draftLoaded, loadedDraftIdentity, readOnly, upload, uploads.length]);
 
     const loadSkills = useCallback(async () => {
-        const expected = inputScope.current;
         setSkillsLoading(true); setSkillsError("");
-        try { const data = await listAddedSkills(); if (userScopeMatches(expected)) setAvailableSkills(data.skills.filter(skill => skill.status === 1 && skill.isAdded)); }
+        try { const data = await listAddedSkills(); setAvailableSkills(data.skills.filter(skill => skill.status === 1 && skill.isAdded)); }
         catch { setSkillsError("没有读到已安装技能，请重试。"); }
         finally { setSkillsLoading(false); }
     }, []);
@@ -162,7 +157,7 @@ export function CanvasAssistantSidebar(props: Props) {
 
     const send = useCallback(() => {
         const text = draft;
-        if ((!text.trim() && !attachments.length) || readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity || !userScopeMatches(inputScope.current) || uploads.length || attachments.some(item => attachmentRangeError(item)) || assistant.awaitingReceipt || assistant.sessionBusy || assistant.supplementBusy || (assistant.streaming && !assistant.canSupplement)) return;
+        if ((!text.trim() && !attachments.length) || readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity || uploads.length || attachments.some(item => attachmentRangeError(item)) || assistant.awaitingReceipt || assistant.sessionBusy || assistant.supplementBusy || (assistant.streaming && !assistant.canSupplement)) return;
         followLatestRef.current = true;
         setDraft("");
         setResultSelection(null);
@@ -355,7 +350,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 </>}
             />
             <SkillInstallModal open={skillInstallOpen} onClose={() => setSkillInstallOpen(false)} onInstalled={skill => {
-                if (skillInstallGeneration !== inputGeneration.current || !userScopeMatches(inputScope.current)) return;
+                if (skillInstallGeneration !== inputGeneration.current) return;
                 setSkillInstallOpen(false);
                 if (!skill.versionId || !/^[a-f0-9]{64}$/i.test(skill.contentHash)) {
                     setInputError("技能已安装，但没有读到可用版本，请重新读取技能。");

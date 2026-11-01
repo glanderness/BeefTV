@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/model"
 	localplayback "infinite-canvas/backend/internal/playback"
 	"infinite-canvas/backend/internal/prompts"
@@ -33,17 +34,22 @@ type userDataUsage interface {
 	PrepareResourcePlayback(userID, resourceID string) (*model.Resource, error)
 }
 
-func RegisterUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptsDomain *prompts.Service, library *asset.Library, resources *asset.Service, playbackRuntime *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows *app.Service) {
+type userDataWorkflows interface {
+	canvasWorkflowService
+	localapp.AssetPort
+}
+
+func RegisterUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptsDomain *prompts.Service, library *asset.Library, resources *asset.Service, playbackRuntime *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows userDataWorkflows) {
 	registerUserDataRoutes(r, owners, canvasData, promptsDomain, library, resources, playbackRuntime, usage, canvasWrites, workflows)
 }
 
 // RegisterDesktopUserDataRoutes keeps hosted object-storage controls out of
 // the native app while retaining local resource and workspace CRUD.
-func RegisterDesktopUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptsDomain *prompts.Service, library *asset.Library, resources *asset.Service, playbackRuntime *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows *app.Service) {
+func RegisterDesktopUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptsDomain *prompts.Service, library *asset.Library, resources *asset.Service, playbackRuntime *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows userDataWorkflows) {
 	registerUserDataRoutes(r, owners, canvasData, promptsDomain, library, resources, playbackRuntime, usage, canvasWrites, workflows)
 }
 
-func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptDomain *prompts.Service, library *asset.Library, resources *asset.Service, playback *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows *app.Service) {
+func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptDomain *prompts.Service, library *asset.Library, resources *asset.Service, playback *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows userDataWorkflows) {
 	registerCanvasLibraryRoutes(r, owners, canvasData, canvasWrites)
 	registerCanvasWorkflowRoutes(r, workflows)
 	r.POST("/assets/batch", func(c *gin.Context) {

@@ -23,7 +23,7 @@ export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
         const host = new URL(channel.baseUrl).hostname;
         if (host === "api.openai.com") return "openai";
         if (host === "generativelanguage.googleapis.com") return "gemini";
-        if (/^ark\.[a-z0-9-]+\.volces\.com$/.test(host) || host === "ark.ap-southeast.bytepluses.com") return "ark";
+        if (/^ark\.[a-z0-9-]+\.(?:volces|bytepluses)\.com$/.test(host)) return "ark";
     } catch { /* An unfinished connection has no provider identity yet. */ }
     return "compatible";
 }

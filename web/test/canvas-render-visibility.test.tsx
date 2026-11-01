@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
 import { useCanvasRenderModel } from "@/pages/canvas/use-canvas-render-model";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 
@@ -101,4 +102,25 @@ test("frames stay DOM in the overview so their titles and controls remain", () =
     expect(model.lodActive).toBe(true);
     expect(model.dom).toContain("frame");
     expect(model.lod).not.toContain("frame");
+});
+
+test("zooming out reuses pre-rendered margin until exceeded, then mounts newly visible cards above LOD", () => {
+    const size = { width: 1440, height: 900 };
+    const rendered: ViewportTransform = { x: 0, y: 0, k: 1 };
+    // A small zoom-out centered on the viewport stays within the 128px pre-rendered margin.
+    expect(shouldRefreshCanvasVirtualization(rendered, { x: 57.6, y: 36, k: 0.92 }, 0, 100, size, 128)).toBe(false);
+    // A larger zoom-out above the LOD threshold expands past the 128px margin and triggers a refresh.
+    const zoomedOut: ViewportTransform = { x: 360, y: 225, k: 0.5 };
+    expect(shouldRefreshCanvasVirtualization(rendered, zoomedOut, 0, 100, size, 128)).toBe(true);
+
+    const centerNode: CanvasNodeData = { id: "center", type: CanvasNodeType.Image, title: "Center", width: 720, height: 480, position: { x: 100, y: 100 } };
+    const edgeNode: CanvasNodeData = { id: "edge", type: CanvasNodeType.Image, title: "Edge", width: 720, height: 480, position: { x: 1800, y: 100 } };
+    const farNode: CanvasNodeData = { id: "far", type: CanvasNodeType.Image, title: "Far", width: 720, height: 480, position: { x: 6000, y: 100 } };
+    const initial = renderModel([centerNode, edgeNode, farNode], { viewport: rendered });
+    expect(initial.lodActive).toBe(false);
+    expect(initial.dom).toEqual(["center"]);
+
+    const refreshed = renderModel([centerNode, edgeNode, farNode], { viewport: zoomedOut });
+    expect(refreshed.lodActive).toBe(false);
+    expect(refreshed.dom).toEqual(["center", "edge"]);
 });

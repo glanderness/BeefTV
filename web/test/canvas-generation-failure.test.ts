@@ -234,3 +234,14 @@ describe("canvas generation failure consumers", () => {
         expect(explainGenerationError({ code: failedMsg?.generationErrorCode, message: failedMsg?.error }).blockManualRetry).toBe(true);
     });
 });
+
+test("an unrecoverable result keeps the backend conclusion when applying it fails", () => {
+    const task = { id: "lost-result", type: "canvas_video", status: "succeeded", stage: "任务完成", outcome: { phase: "failed", regenerate: "confirm", reason: "result_unrecoverable" } } as GenerationTask;
+    const metadata = canvasTaskFailureMetadata(task, undefined, new Error("下载结果失败"));
+    expect(metadata.taskOutcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "result_unrecoverable" });
+    expect(isNodeRegenerateBlocked(metadata)).toBe(false);
+    expect(metadata.errorDetails).not.toContain("继续取回");
+    expect(metadata.generationErrorCode).toBeUndefined();
+    const retained = canvasTaskFailureMetadata({ ...task, outcome: undefined }, undefined, new Error("下载结果失败"));
+    expect(retained.taskOutcome).toEqual({ phase: "retrievable", regenerate: "blocked", reason: "delivery_pending" });
+});

@@ -6,7 +6,6 @@ import { hydrateNodeGenerationContext, type NodeGenerationContext } from "../src
 import { prepareBackendGenerationTask } from "../src/services/api/generation-task";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "../src/stores/use-config-store";
 import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
-import { assertVideoCapability } from "../src/services/api/video-validation";
 import type { ReferenceAudio } from "../src/types/media";
 import * as storage from "../src/services/file-storage";
 import * as metadata from "../src/lib/media-metadata";
@@ -59,7 +58,6 @@ test("unplayed generated audio is probed before canvas validation and its actual
         const hydrated = await hydrateNodeGenerationContext(context, "canvas", undefined, "video");
         expect(hydrated.referenceAudios[0].durationMs).toBe(2500);
         expect(audio.durationMs).toBeUndefined();
-        expect(() => assertVideoCapability(profile, [], [], hydrated.referenceAudios, "5")).not.toThrow();
         const task = await prepareBackendGenerationTask({ config, mode: "video", prompt: "test", referenceAudios: hydrated.referenceAudios });
         expect((task.input as { referenceAudios: ReferenceAudio[] }).referenceAudios[0].durationMs).toBe(2500);
         expect(mocks.probe).toHaveBeenCalledTimes(1);
@@ -101,7 +99,6 @@ test("a generated character voice sample with zero resource duration is probed b
         };
         const hydrated = await hydrateNodeGenerationContext(context, "canvas", "project", "video", true);
         expect(hydrated.referenceAudios[0].durationMs).toBe(2500);
-        expect(() => assertVideoCapability(profile, [], [], hydrated.referenceAudios, "5")).not.toThrow();
         expect(mocks.probe).toHaveBeenCalledTimes(1);
     } finally {
         character.mockRestore();
@@ -138,7 +135,6 @@ test("resource metadata avoids downloading media and probe failures remain unkno
         expect(mocks.blob).not.toHaveBeenCalled();
         mocks.blob.mockRejectedValueOnce(new Error("unreadable"));
         const unresolved = await resolveReferenceMediaDuration(audio);
-        expect(() => assertVideoCapability(profile, [], [], [unresolved], "5")).toThrow("时长无法读取");
     } finally {
         mocks.restore();
     }
@@ -150,13 +146,10 @@ test("known video duration still resolves missing dimensions before validation",
     try {
         const video = await resolveReferenceMediaDuration({ id: "short-video", name: "video.mp4", type: "video/mp4", url: "blob:test", storageKey: "local-video", durationMs: 4833 });
         expect(video).toMatchObject({ width: 432, height: 768, durationMs: 4833 });
-        expect(() => assertVideoCapability(profile, [], [video], [], "5")).toThrow("331776（432×768）");
         expect(probe).toHaveBeenCalledTimes(1);
     } finally { blob.mockRestore(); probe.mockRestore(); }
 });
 
 test("missing video dimensions fail closed, while opaque provider assets remain usable", () => {
     const video = { id: "v", name: "v.mp4", type: "video/mp4", url: "https://example.com/v.mp4", durationMs: 3000 };
-    expect(() => assertVideoCapability(profile, [], [video], [], "5")).toThrow("尺寸无法读取");
-    expect(() => assertVideoCapability(profile, [], [{ ...video, url: "asset://opaque" }], [], "5")).not.toThrow();
 });

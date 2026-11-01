@@ -1,4 +1,5 @@
-import { isRegenerateBlocked, isTaskOutcomeWorking, normalizeTaskOutcome } from "@/lib/task-outcome";
+import { isRegenerateBlocked, isTaskOutcomeWorking } from "@/lib/task-outcome";
+import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 
@@ -14,7 +15,7 @@ export function hasPendingUpscaleTask(metadata?: CanvasNodeMetadata): boolean {
     if (!metadata) return false;
     // 成功任务的结果已经落到节点上时，旧的「待取回」结论不再有效。
     if (metadata.taskStatus === "succeeded" && (metadata.content || metadata.storageKey)) return false;
-    const explicitOutcome = normalizeTaskOutcome(metadata.taskOutcome);
+    const explicitOutcome = authoritativeNodeOutcome(metadata);
     if (explicitOutcome) {
         if (explicitOutcome.phase === "ready") return !metadata.content && !metadata.storageKey;
         return isTaskOutcomeWorking(explicitOutcome) || isRegenerateBlocked(explicitOutcome) || Boolean(metadata.taskId);
@@ -46,7 +47,7 @@ export function upscaleObservationFailureMetadata(task: Pick<GenerationTask, "id
 export function canRecoverUpscaleNode(node: CanvasNodeData): boolean {
     const metadata = node.metadata;
     if (!metadata?.workflowOperation?.id.endsWith(".ai-upscale") || !metadata.taskId) return false;
-    const explicitOutcome = normalizeTaskOutcome(metadata.taskOutcome);
+    const explicitOutcome = authoritativeNodeOutcome(metadata);
     if (explicitOutcome) {
         return explicitOutcome.phase === "retrievable" || explicitOutcome.phase === "failed" || (explicitOutcome.phase === "ready" && !metadata.content && !metadata.storageKey);
     }

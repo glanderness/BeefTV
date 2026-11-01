@@ -243,9 +243,15 @@ func TestAssistantProductionPendingProposalCannotAuthorizeNextTurn(t *testing.T)
 	}
 	for _, id := range []string{proposeTurn, confirmTurn} {
 		var turn model.AssistantTurn
-		if err := svc.Database().First(&turn, "turn_id = ?", id).Error; err != nil { t.Fatal(err) }
+		if err := svc.Database().First(&turn, "turn_id = ?", id).Error; err != nil {
+			t.Fatal(err)
+		}
 		var grant operations.GenerationAuthorization
-		if turn.GenerationAuthorizationJSON != "" { _ = json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &grant) }
-		if grant.SourceTurnID != "" { t.Fatal("unconfirmed call persisted a spend grant") }
+		if turn.GenerationAuthorizationJSON != "" {
+			_ = json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &grant)
+		}
+		if grant.SourceTurnID != "" {
+			t.Fatal("unconfirmed call persisted a spend grant")
+		}
 	}
 }

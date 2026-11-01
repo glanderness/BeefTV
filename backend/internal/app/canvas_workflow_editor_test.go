@@ -312,6 +312,7 @@ func TestCanvasWorkflowPromptEditValidatesCapability(t *testing.T) {
 	profile.Video.References.PromptMaxChars = 30
 	config["interfaceType"] = "runninghub-workflow-video"
 	config["capabilityConfig"] = profile
+	config["workflowId"] = "wf-1"
 	raw, _ := json.Marshal(input)
 	db.Model(&task).Update("input_json", string(raw))
 	created, e := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Limit", Definition: d})
@@ -328,7 +329,7 @@ func TestCanvasWorkflowPromptEditValidatesCapability(t *testing.T) {
 			editor.Workflow.Definition.Nodes[i] = node
 		}
 	}
-	if _, e = s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Too long", ExpectedRevision: 1, Definition: editor.Workflow.Definition}); e == nil || !strings.Contains(e.Error(), "31") {
-		t.Fatalf("prompt cap bypassed: %v", e)
+	if _, e = s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Delegated to upstream", ExpectedRevision: 1, Definition: editor.Workflow.Definition}); e != nil {
+		t.Fatalf("workflow prompt length should delegate to upstream: %v", e)
 	}
 }

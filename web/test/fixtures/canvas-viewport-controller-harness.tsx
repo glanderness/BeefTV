@@ -11,9 +11,10 @@ const pageUi = createCanvasPageUiStore();
 Object.assign(window, { async scopedScaleProbe() {
     const container = document.createElement("div");
     container.style.cssText = "position:relative;--canvas-committed-scale:0.05";
-    container.innerHTML = '<div data-canvas-world-layer><div style="transform:scale(.05);transform-origin:0 0"><div id="scope-title" data-canvas-live-scale style="width:100px;height:20px;transform:scale(var(--canvas-live-inverse-scale));transform-origin:0 0"></div><div id="scope-unrelated" data-node-id="scope-unrelated" style="width:100px;height:20px"></div></div></div>';
+    container.innerHTML = '<div data-canvas-world-layer><div style="transform:scale(.05);transform-origin:0 0"><div class="node-element" data-node-lod-pinned="true"><div id="scope-title" data-canvas-live-scale style="width:100px;height:20px;transform:scale(var(--canvas-live-inverse-scale));transform-origin:0 0"></div></div><div class="node-element"><div id="scope-unpinned" data-canvas-live-scale style="width:100px;height:20px"></div></div><div id="scope-unrelated" data-node-id="scope-unrelated" style="width:100px;height:20px"></div></div></div>';
     document.body.append(container);
     const title = container.querySelector<HTMLElement>("#scope-title")!;
+    const unpinned = container.querySelector<HTMLElement>("#scope-unpinned")!;
     const unrelated = container.querySelector<HTMLElement>("#scope-unrelated")!;
     applyCanvasLiveViewport(container, { x: 0, y: 0, k: .05 });
     const first = { titleWidth: title.getBoundingClientRect().width, inverse: getComputedStyle(title).getPropertyValue("--canvas-live-inverse-scale"), unrelated: getComputedStyle(unrelated).getPropertyValue("--canvas-live-inverse-scale") };
@@ -21,10 +22,15 @@ Object.assign(window, { async scopedScaleProbe() {
     late.style.transform = "scale(var(--canvas-live-inverse-scale))"; container.append(late);
     await new Promise(resolve => requestAnimationFrame(resolve));
     const lateInverse = getComputedStyle(late).getPropertyValue("--canvas-live-inverse-scale");
+    container.dataset.canvasLodDomHidden = "true";
+    applyCanvasLiveViewport(container, { x: 0, y: 0, k: .08 });
+    const lodPinnedInverse = getComputedStyle(title).getPropertyValue("--canvas-live-inverse-scale");
+    const lodUnpinnedInverse = getComputedStyle(unpinned).getPropertyValue("--canvas-live-inverse-scale");
+    delete container.dataset.canvasLodDomHidden;
     applyCanvasLiveViewport(container, { x: 30, y: 20, k: .1 });
     applyCanvasNodeSelectionPreview(container, { includeNodeIds: new Set(["scope-unrelated"]), removeNodeIds: new Set() });
     const next = { titleWidth: title.getBoundingClientRect().width, inverse: getComputedStyle(title).getPropertyValue("--canvas-live-inverse-scale"), selectionInverse: getComputedStyle(unrelated).getPropertyValue("--canvas-live-inverse-scale") };
-    container.remove(); return { first, lateInverse, next };
+    container.remove(); return { first, lateInverse, lodPinnedInverse, lodUnpinnedInverse, next };
 } });
 
 let nodeRenders = 0;
