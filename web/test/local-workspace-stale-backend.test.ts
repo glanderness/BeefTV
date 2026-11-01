@@ -231,8 +231,12 @@ describe("local workspace stale backend protection", () => {
         store.recordCanvasDocumentBase(project({ nodes: [] }));
         request.setRemoteProject(remote);
 
-        // The local draft survives and is rebased onto the newer backend revision.
-        expect(await repository.openLocalCanvasProjectFromBackend(local.id)).toMatchObject({ nodes: [{ id: "kept-node" }], revision: 2 });
+        // revision 规则：本地 revision 未超过已记录基线时 read 采用后端进行对账，
+        // 本地独有的草稿节点经三方对账保留，文档 revision/updatedAt 对齐服务端；
+        // 过期缓存不会再无条件压过后端新版本。
+        const opened = await repository.openLocalCanvasProjectFromBackend(local.id);
+        expect(opened?.nodes).toEqual([{ id: "kept-node" }]);
+        expect(opened?.revision).toBe(2);
         expect(store.projects[0].nodes).toEqual([{ id: "kept-node" }]);
     });
 
