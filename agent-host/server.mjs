@@ -541,8 +541,68 @@ const server = http.createServer(async (req, res) => {
       if (!canvasId || !message || message.length > 8000) {
         respond(res, 400, { code: 400, reason: 'invalid_request' }); return;
       }
+      const requestedSessionId = String(body.sessionId || '').trim();
+      const currentSessionId = currentId(canvasId);
+      const targetSessionId = requestedSessionId || currentSessionId;
+      const cleanKind = String(body.kind || 'event').replace(/[^a-z0-9_-]/gi, '_');
+      if (
+        cleanKind === 'task_completed' &&
+        !providerReason &&
+        !READ_ONLY_MODE &&
+        currentSessionId &&
+        isDurableSessionId(currentSessionId) &&
+        (!requestedSessionId || requestedSessionId === currentSessionId)
+      ) {
+        const entry = await durable.ensureCurrentSession(canvasId, currentSessionId).catch(() => null);
+        if (entry && !entry.busy) {
+          const requestId = String(body.requestId || crypto.randomUUID()).trim();
+          const rawTurnId = String(body.turnId || '').trim().toLowerCase();
+          const turnId = /^[0-9a-f]{8,64}$/.test(rawTurnId)
+            ? rawTurnId
+            : crypto.createHash('sha256').update(`wake:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
+          let openedTurn = false;
+          try {
+            await ops.opsRequest('POST', '/assistant/runtime/turns', {
+              turnId,
+              canvasId,
+              permissionMode: 'canvas',
+              sessionId: entry.sessionId,
+            });
+            openedTurn = true;
+            const wakeText = `<canvas_event kind="${cleanKind}">\n${message}\n</canvas_event>`;
+            const content = [{
+              type: 'text',
+              text: `${turnContextPrefix({ canvasId })}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${wakeText}`,
+            }];
+            const submission = await durable.submit(entry, {
+              turnId,
+              requestId: `event:${requestId}`,
+              content,
+              userText: message,
+              revisionBefore: Number(body.revisionBefore || 0),
+              permissionMode: 'canvas',
+            });
+            if (submission) {
+              followDurable(entry, submission);
+              respond(res, 202, {
+                accepted: true,
+                woken: true,
+                sessionId: entry.sessionId,
+                turnId,
+                requestId: `event:${requestId}`,
+              });
+              return;
+            }
+            await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
+          } catch {
+            if (openedTurn) {
+              await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
+            }
+          }
+        }
+      }
       const result = await durable.recordEvent(canvasId, {
-        sessionId: body.sessionId || currentId(canvasId),
+        sessionId: targetSessionId,
         requestId: body.requestId,
         kind: body.kind || 'event',
         message,

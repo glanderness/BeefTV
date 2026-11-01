@@ -736,7 +736,10 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
   const totalRuns = scenarioRuns.length;
   const passedRuns = scenarioRuns.filter((r) => r.metrics.status === 'passed').length;
   const baselineGapRuns = scenarioRuns.filter((r) => r.metrics.status === 'baseline_gap').length;
-  const failedRuns = scenarioRuns.filter((r) => r.metrics.status === 'failed').length;
+  const unexpectedGapRuns = scenarioRuns.filter(
+    (r) => r.metrics.status === 'baseline_gap' && r.expectedBaselinePass,
+  ).length;
+  const failedRuns = scenarioRuns.filter((r) => r.metrics.status === 'failed').length + unexpectedGapRuns;
   const abortedRuns = scenarioRuns.filter((r) => r.metrics.status === 'aborted_budget').length;
 
   const avgStructuralRate =
@@ -847,7 +850,9 @@ export function renderMarkdownReport(report) {
       m.status === 'passed'
         ? 'PASS'
         : m.status === 'baseline_gap'
-          ? 'GAP (expected)'
+          ? item.expectedBaselinePass
+            ? 'FAIL (unexpected gap)'
+            : 'GAP (expected)'
           : m.status === 'aborted_budget'
             ? 'ABORTED_BUDGET'
             : 'FAIL';
