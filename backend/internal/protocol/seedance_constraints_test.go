@@ -144,7 +144,7 @@ func TestVendorNeutralBYOKProtocolsSupportBusinessActionsAndLastFramePoll(t *tes
 			AspectRatio: "16:9",
 			Duration:    5,
 			Videos:      []MediaReference{{URL: "https://example.com/ref.mp4"}},
-			Extra:       map[string]any{"draft": true, "return_last_frame": true},
+			Extra:       map[string]any{"draft": true, "return_last_frame": true, "taskTypeConstraints": true},
 		}})
 		if err != nil {
 			t.Fatalf("%s BuildCreate failed: %v", plugin.id, err)
@@ -152,6 +152,23 @@ func TestVendorNeutralBYOKProtocolsSupportBusinessActionsAndLastFramePoll(t *tes
 		body := manifestTestBody(t, spec)
 		if body["draft"] != true || body["return_last_frame"] != true || body["omni_reference_task_type"] != "edit" {
 			t.Fatalf("%s missing vendor-neutral body fields: %#v", plugin.id, body)
+		}
+		if params, ok := body["parameters"].(map[string]any); ok {
+			if params["ratio"] != "adaptive" || params["duration"] != float64(-1) {
+				t.Fatalf("%s parameters did not normalize ratio/duration: %#v", plugin.id, params)
+			}
+		} else {
+			ratio := body["ratio"]
+			if ratio == nil {
+				ratio = body["aspect_ratio"]
+			}
+			duration := body["duration"]
+			if duration == nil {
+				duration = body["seconds"]
+			}
+			if ratio != "adaptive" || (duration != float64(-1) && duration != "-1") {
+				t.Fatalf("%s body did not normalize ratio/duration: %#v", plugin.id, body)
+			}
 		}
 
 		finalSpec, err := a.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
@@ -169,7 +186,7 @@ func TestVendorNeutralBYOKProtocolsSupportBusinessActionsAndLastFramePoll(t *tes
 			t.Fatalf("%s draft_to_final missing content: %#v", plugin.id, finalBody)
 		}
 
-		poll, err := a.ParsePoll(context.Background(), PollContext{TaskID: "t1"}, []byte(`{"status":"completed","video_url":"https://example.com/out.mp4","last_frame_url":"https://example.com/last.png","data":[{"url":"https://example.com/out.mp4"}]}`))
+		poll, err := a.ParsePoll(context.Background(), PollContext{TaskID: "t1"}, []byte(`{"status":"completed","video_url":"https://example.com/out.mp4","data":[{"url":"https://example.com/out.mp4","last_frame_url":"https://example.com/last.png"}]}`))
 		if err != nil || poll.Result == nil || len(poll.Result.Videos) == 0 {
 			t.Fatalf("%s ParsePoll failed: %+v err=%v", plugin.id, poll, err)
 		}

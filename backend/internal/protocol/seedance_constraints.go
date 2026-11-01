@@ -9,8 +9,13 @@ func isSeedanceConstraintPluginID(id string) bool {
 	return id == "volcengine-ark-seedance" || id == "volcengine-ark-video" || id == "volcengine-ark-agent-plan-video" || id == "seedance-videos-compatible"
 }
 
+func hasExplicitTaskTypeConstraints(r GenerationRequest) bool {
+	enabled, ok := r.Extra["taskTypeConstraints"].(bool)
+	return ok && enabled
+}
+
 func applyManifestTaskOptions(manifestID string, req GenerationRequest) GenerationRequest {
-	if isSeedanceConstraintPluginID(manifestID) {
+	if isSeedanceConstraintPluginID(manifestID) || (req.Capability == CapabilityVideo && hasExplicitTaskTypeConstraints(req)) {
 		return NormalizeSeedanceTaskOptions(req)
 	}
 	if req.Capability == CapabilityVideo {
@@ -54,6 +59,9 @@ func attachLastFrameMetadata(references []MediaReference, payload map[string]any
 		"last_frame_url", "lastFrameUrl",
 		"content.last_frame_url", "content.lastFrameUrl",
 		"data.last_frame_url", "data.lastFrameUrl",
+		"data.0.last_frame_url", "data.0.lastFrameUrl",
+		"content.0.last_frame_url", "content.0.lastFrameUrl",
+		"output.0.last_frame_url", "output.0.lastFrameUrl",
 		"metadata.last_frame_url", "metadata.lastFrameUrl",
 		"output.last_frame_url", "output.lastFrameUrl",
 		"result.last_frame_url", "result.lastFrameUrl",
@@ -169,6 +177,33 @@ func ApplySeedanceBodyFields(body map[string]any, r GenerationRequest) {
 		body["omni_reference_task_type"] = kind
 		if parameters, ok := body["parameters"].(map[string]any); ok {
 			parameters["omni_reference_task_type"] = kind
+		}
+	}
+	if isSeedance25ConstraintModel(r) && (hasExplicitTaskTypeConstraints(r) || r.Duration == -1 || r.AspectRatio == "adaptive") {
+		if r.AspectRatio == "adaptive" {
+			for _, key := range []string{"ratio", "aspect_ratio", "size"} {
+				if _, exists := body[key]; exists {
+					body[key] = "adaptive"
+				}
+			}
+			if parameters, ok := body["parameters"].(map[string]any); ok {
+				if _, exists := parameters["ratio"]; exists {
+					parameters["ratio"] = "adaptive"
+				}
+			}
+		}
+		if r.Duration == -1 {
+			if _, exists := body["duration"]; exists {
+				body["duration"] = -1
+			}
+			if _, exists := body["seconds"]; exists {
+				body["seconds"] = "-1"
+			}
+			if parameters, ok := body["parameters"].(map[string]any); ok {
+				if _, exists := parameters["duration"]; exists {
+					parameters["duration"] = -1
+				}
+			}
 		}
 	}
 	if draft, ok := r.Extra["draft"].(bool); ok && draft {

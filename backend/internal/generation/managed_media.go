@@ -131,9 +131,11 @@ func managedImageOptions(input Input) map[string]any {
 	if config.SeedreamMode == "layers" {
 		options["layer_decomposition"] = true
 	}
-	if n, err := strconv.Atoi(config.SeedreamMaxImages); err == nil && n > 1 {
-		options["sequential_image_generation"] = "auto"
-		options["sequential_image_generation_options"] = map[string]any{"max_images": n}
+	if input.ImageCapability == nil || input.ImageCapability.SequentialGeneration.Supported {
+		if n := sequentialMaxImagesForInput(input); n > 1 {
+			options["sequential_image_generation"] = "auto"
+			options["sequential_image_generation_options"] = map[string]any{"max_images": n}
+		}
 	}
 	if config.SeedreamOptimize != "" {
 		options["optimize_prompt_options"] = map[string]any{"mode": config.SeedreamOptimize}

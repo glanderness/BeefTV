@@ -193,7 +193,7 @@ func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, reso
 	}
 	payload := map[string]interface{}{"GroupId": groupID, "URL": resourceURL, "AssetType": assetType, "Name": "ark-private-asset-" + resource.ID, "ProjectName": setting.ProjectName, "Moderation": map[string]interface{}{"Strategy": "Skip"}}
 	response, err := callArkPrivateAssetAPI(ctx, *setting, "CreateAsset", payload)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "moderation") {
+	if isUnsupportedArkModerationParamError(err) {
 		delete(payload, "Moderation")
 		response, err = callArkPrivateAssetAPI(ctx, *setting, "CreateAsset", payload)
 	}
@@ -291,6 +291,21 @@ func (s *Service) waitForArkPrivateAsset(ctx context.Context, binding *model.Ark
 		binding = latest
 	}
 	return "", errors.New("方舟可信素材审核超时，请稍后重新提交视频任务")
+}
+
+func isUnsupportedArkModerationParamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "moderation") {
+		return false
+	}
+	return strings.Contains(lower, "invalidparameter") ||
+		strings.Contains(lower, "unknownparameter") ||
+		strings.Contains(lower, "unsupported") ||
+		strings.Contains(lower, "unrecognized") ||
+		strings.Contains(lower, "not support")
 }
 
 func (s *Service) failArkPrivateAssetBinding(binding *model.ArkPrivateAssetBinding, reason error) error {

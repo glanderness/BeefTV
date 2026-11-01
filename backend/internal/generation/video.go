@@ -145,7 +145,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
-				attachOptionalLastFrame(ctx, videoMap, lastFrameURL, true)
+				attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 			}
 			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
@@ -153,7 +153,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 				return VideoPollOutcome{}, err
 			}
 			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
-			attachOptionalLastFrame(ctx, videoMap, lastFrameURL, true)
+			attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}
 		if status == "failed" || status == "cancelled" {

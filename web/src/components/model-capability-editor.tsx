@@ -9,7 +9,8 @@ import { defaultImageCapabilityConfig, defaultModelCapabilityConfig, imageRespon
 import type { ModelProtocol } from "@/lib/model-protocols";
 import { VIDEO_RESOLUTION_CAPABILITY_OPTIONS } from "@/lib/video-generation-options";
 
-const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
+const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"];
+const ratioOptionLabel = (item: string) => (item === "adaptive" ? "自适应 (adaptive)" : item);
 const operationOptions = [
     { label: "文生视频", value: "text_to_video" },
     { label: "图生视频", value: "image_to_video" },
@@ -166,12 +167,12 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                                     className="w-full"
                                     disabled={disabled}
                                     value={profile.ratios}
-                                    options={ratioOptions.map((item) => ({ label: item, value: item }))}
+                                    options={ratioOptions.map((item) => ({ label: ratioOptionLabel(item), value: item }))}
                                     onChange={(ratios) => update({ ratios, defaultRatio: ratios.includes(profile.defaultRatio) ? profile.defaultRatio : ratios[0] || "16:9" })}
                                 />
                             </Field>
                             <Field label="默认比例">
-                                <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: item, value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
+                                <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: ratioOptionLabel(item), value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
                             </Field>
                             <Field label="输出分辨率">
                                 <Select
@@ -278,12 +279,12 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                                 className="w-full"
                                 disabled={disabled}
                                 value={profile.ratios}
-                                options={ratioOptions.map((item) => ({ label: item, value: item }))}
+                                options={ratioOptions.map((item) => ({ label: ratioOptionLabel(item), value: item }))}
                                 onChange={(ratios) => update({ ratios, defaultRatio: ratios.includes(profile.defaultRatio) ? profile.defaultRatio : ratios[0] || "16:9" })}
                             />
                         </Field>
                         <Field label="默认比例">
-                            <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: item, value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
+                            <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: ratioOptionLabel(item), value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
                         </Field>
                         <Field label="输出分辨率">
                             <Select
