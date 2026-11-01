@@ -104,6 +104,11 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     assertResolvableGenerationMentions(prompt, mentionInputs);
     const hasExplicitResourceMention = hasResolvableGenerationMention(prompt, mentionInputs);
     const isWorkflowSource = sourceNode?.type === CanvasNodeType.Config && isCanvasWorkflowProvider(sourceNode.metadata);
+    const textInputs = connectedInputs.filter((input) => input.type === "text");
+    const upstreamText = textInputs
+        .map((input) => input.text)
+        .filter(Boolean)
+        .join("\n\n");
     const hasConnectedMedia = connectedInputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio" || input.type === "character");
     if ((promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && (sourceNode?.type === CanvasNodeType.Config || isWorkflowSource)) || hasExplicitResourceMention) {
         const includeConnectedMedia = isWorkflowSource || ((promptOnly || sourceNode?.type === CanvasNodeType.Config) && hasConnectedMedia);
@@ -115,6 +120,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
             promptOnly,
             includeConnectedMedia,
             connectedInputs,
+            textInputs.length > 0,
             options.preserveMediaBindings,
         );
         const tableReferences = generationImageTableReferences(context.referenceImages, mentionInputs);
@@ -125,17 +131,12 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
 
     const isStoryboardMedia = sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video;
     const basePrompt = isStoryboardMedia && storyboardInputs.length ? removeTrailingInputBlocks(prompt, storyboardInputs) : prompt;
-    const textInputs = connectedInputs.filter((input) => input.type === "text");
     const characterReferences = connectedInputs.map((input) => input.character).filter((item): item is CharacterGenerationReference => Boolean(item));
-    const upstreamText = textInputs
-        .map((input) => input.text)
-        .filter(Boolean)
-        .join("\n\n");
     const referenceImages = connectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = connectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
     const referenceAudios = connectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
 
-    const composedPrompt = promptOnly ? prompt : upstreamText ? `${basePrompt}\n\n${upstreamText}` : basePrompt;
+    const composedPrompt = upstreamText ? `${basePrompt}\n\n${upstreamText}` : basePrompt;
     const tableReferences = generationImageTableReferences(referenceImages, connectedInputs);
     if (!options.preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) assertCanvasImageReferenceTable(composedPrompt, tableReferences);
     return {
@@ -213,6 +214,7 @@ function buildComposerGenerationContext(
     promptOnly = false,
     includeConnectedMedia = false,
     workflowMediaInputs: NodeGenerationInput[] = [],
+    autoIncludeConnectedText = false,
     preserveMediaBindings = false,
 ): NodeGenerationContext {
     const normalizedPrompt = preserveMediaBindings ? prompt : normalizeGenerationNodeMentionTokens(prompt, inputs);
@@ -222,6 +224,7 @@ function buildComposerGenerationContext(
     const selectedInputs: NodeGenerationInput[] = [];
     const labelByNodeId = new Map<string, string>();
     const textBlocks: string[] = [];
+    const includedTextNodeIds = new Set<string>();
     const counts = { image: 0, drawing: 0, video: 0, audio: 0, text: 0, character: 0 };
     let hasToken = false;
     let lastIndex = 0;
@@ -249,7 +252,10 @@ function buildComposerGenerationContext(
                 const labelKind = input.sourceKind === "drawing" ? "drawing" : input.type;
                 label = generationLabel(labelKind, counts[labelKind]++);
                 labelByNodeId.set(input.nodeId, label);
-                if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
+                if (input.type === "text") {
+                    textBlocks.push(`【${label}】\n${input.text || ""}`);
+                    includedTextNodeIds.add(input.nodeId);
+                }
                 else selectedInputs.push(input);
             }
             const media = input.image || input.video || input.audio;
@@ -262,7 +268,16 @@ function buildComposerGenerationContext(
     }
 
     nextPrompt += normalizedPrompt.slice(lastIndex);
-    // 显式 @文本 引用是用户写进输入框的内容，必须内联真实文本；promptOnly 只拦自动上游文本。
+    if (autoIncludeConnectedText) {
+        workflowMediaInputs.forEach((input) => {
+            if (input.type !== "text" || !input.text?.trim() || includedTextNodeIds.has(input.nodeId)) return;
+            const label = labelByNodeId.get(input.nodeId) || generationInputMentionLabel(input, inputs);
+            labelByNodeId.set(input.nodeId, label);
+            textBlocks.push(`【${label}】\n${input.text}`);
+            includedTextNodeIds.add(input.nodeId);
+        });
+    }
+    // 连线文本是生成节点的上下文，自动合并；显式 @文本 仍保留在提示词中的原位置。
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
     if (preserveMediaBindings) {
         // Explicitly quoted text can itself contain selected media tokens.
@@ -329,7 +344,7 @@ function buildComposerGenerationContext(
         characterReferences,
         resolvedCharacterVersions: [],
         resolvedCharacterVoices: [],
-        textCount: counts.text,
+        textCount: includedTextNodeIds.size,
         imageCount: referenceImages.length,
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
