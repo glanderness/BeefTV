@@ -140,6 +140,8 @@ func arkPrivateAssetResourceID(reference providerMedia) string {
 	return generation.ArkPrivateAssetResourceID(reference)
 }
 
+var arkPrivateAssetTypeForMime = generation.ArkPrivateAssetTypeForMime
+
 func shouldRetryArkPrivateAssetBinding(binding *model.ArkPrivateAssetBinding) bool {
 	return generation.ShouldRetryArkPrivateAssetBinding(binding)
 }
