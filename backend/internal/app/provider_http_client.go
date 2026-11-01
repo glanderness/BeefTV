@@ -6,16 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"infinite-canvas/backend/internal/generation"
+	"infinite-canvas/backend/internal/model"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"strings"
 	"time"
-
-	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/model"
 )
 
 func withHTTPRequestRuntime(req *http.Request) *http.Request {
@@ -33,22 +31,6 @@ func getGeminiJSON(ctx context.Context, config providerConfig, path string, targ
 	return generation.GetGeminiJSON(bindRequestReceipts(ctx), config, path, target)
 }
 
-func getGeminiBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
-	return generation.GetGeminiBinary(bindRequestReceipts(ctx), config, rawURL)
-}
-
-func geminiVeoURL(baseURL string, path string) string {
-	return generation.GeminiURL(baseURL, path)
-}
-
-func postStreamingBinary(ctx context.Context, config providerConfig, path string, body interface{}, onChunk func(string, []byte)) ([]byte, string, error) {
-	return generation.PostStreamingBinary(bindRequestReceipts(ctx), config, path, body, onChunk)
-}
-
-func postJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
-	return generation.PostJSON(bindRequestReceipts(ctx), config, path, body, target)
-}
-
 func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
 	ctx = bindRequestReceipts(ctx)
 	if generation.SubmissionKeyFromContext(ctx) == "" {
@@ -59,60 +41,16 @@ func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path 
 	return generation.PostJSONWithSubmissionKey(ctx, config, path, body, target)
 }
 
-func applyProviderAuth(req *http.Request, config providerConfig) {
-	generation.ApplyAuth(req, config)
-}
-
-func postForm(ctx context.Context, config providerConfig, path string, contentType string, body io.Reader, target interface{}) error {
-	return generation.PostForm(bindRequestReceipts(ctx), config, path, contentType, body, target)
-}
-
 func getJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
 	return generation.GetJSON(bindRequestReceipts(ctx), config, path, target)
-}
-
-func postBinary(ctx context.Context, config providerConfig, path string, body interface{}) ([]byte, string, error) {
-	return generation.PostBinary(bindRequestReceipts(ctx), config, path, body)
-}
-
-func getBinary(ctx context.Context, config providerConfig, path string) ([]byte, string, error) {
-	return generation.GetBinary(bindRequestReceipts(ctx), config, path)
-}
-
-func getExternalBinary(ctx context.Context, rawURL string) ([]byte, string, error) {
-	return generation.GetExternalBinary(bindRequestReceipts(ctx), rawURL)
-}
-
-func getProviderExternalBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
-	return generation.GetProviderExternalBinary(bindRequestReceipts(ctx), config, rawURL)
-}
-
-func providerDownloadURL(baseURL string, rawURL string) string {
-	return generation.ProviderDownloadURL(baseURL, rawURL)
-}
-
-func isBeefAPIHost(host string) bool {
-	return generation.IsBeefAPIHost(host)
 }
 
 func sameProviderOrigin(baseURL string, rawURL string) bool {
 	return generation.SameProviderOrigin(baseURL, rawURL)
 }
 
-func doJSON(req *http.Request, target interface{}) error {
-	return generation.DoJSON(withHTTPRequestRuntime(req), target)
-}
-
 func doBinary(req *http.Request) ([]byte, string, error) {
 	return generation.DoBinary(withHTTPRequestRuntime(req))
-}
-
-func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
-	return generation.DoBinaryWithConsumer(withHTTPRequestRuntime(req), onChunk)
-}
-
-func parseRetryAfter(value string, now time.Time) time.Duration {
-	return generation.ParseRetryAfter(value, now)
 }
 
 func providerPollingDeadline(ctx context.Context) time.Time {
@@ -204,6 +142,12 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 	}
 	if status == model.ApiCallStatusSucceeded && (requestKind == "create" || requestKind == "poll") && (call.Capability == "image" || call.Capability == "video") {
 		service.syncProviderTaskProgress(call.TaskID, responseBody)
+	}
+	if call.TaskID != "" && call.Capability == "video" && (requestKind == "create" || requestKind == "poll") && service.repo != nil {
+		settlement := generation.ExtractBeefAPIVideoSettlementBytes(responseBody)
+		if settlement.UsageState != nil || settlement.ReconcileDeadline != nil {
+			_ = service.repo.UpdateTaskBeefVideoSettlement(call.TaskID, settlement.UsageState, settlement.ReconcileDeadline)
+		}
 	}
 	apiFormat := "openai"
 	if req.Header.Get("x-goog-api-key") != "" {

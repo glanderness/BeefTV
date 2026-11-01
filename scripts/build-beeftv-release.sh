@@ -14,6 +14,13 @@ if [[ "$AGENT_TARGET" == linux/* && ( "$HOST_OS" != linux || "$AGENT_TARGET" != 
   echo "Linux releases require a native Linux x64 host" >&2
   exit 1
 fi
+# A clean build host has no installed BeefTV. Only an explicitly supplied
+# encoder is a required input; the native probe packet is built below.
+if [[ "$AGENT_TARGET" == darwin/* && -n "${BEEFTV_FFMPEG_RUNTIME:-}" ]]; then
+  [[ -x "$BEEFTV_FFMPEG_RUNTIME" ]] || { echo "Explicit encoder is not executable: $BEEFTV_FFMPEG_RUNTIME" >&2; exit 1; }
+  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$BEEFTV_FFMPEG_RUNTIME")/ffmpeg.LICENSE}"
+  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
+fi
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
 
 if [[ ! -f "$ROOT_DIR/VERSION" ]]; then

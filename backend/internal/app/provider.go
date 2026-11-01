@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 
 	"gorm.io/gorm"
 )
@@ -327,15 +328,56 @@ func styleAssetSupportsModel(baseModels []string, generationModel string) bool {
 }
 
 func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) error {
+	if err := s.resolveImageCapability(input); err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.Config.ChannelID) == "" || input.ImageCapability == nil {
+		return nil
+	}
+	return validateImageTask(input.ImageCapability, *input)
+}
+
+func (s *Service) resolveImageCapability(input *canvasGenerationInput) error {
+	if input.Config.CredentialRef == managedBeefAPIRef {
+		body, err := s.ReadLocalModelConfig()
+		if err != nil {
+			return err
+		}
+		for _, item := range modelcatalog.ParseLocalChannelModels(body) {
+			if item.ChannelID != "beefapi" || item.Model != input.Config.Model || item.ImageCapabilitiesVersion == nil || strings.TrimSpace(*item.ImageCapabilitiesVersion) == "" {
+				continue
+			}
+			raw, err := json.Marshal(item.CapabilityConfig)
+			if err != nil {
+				return err
+			}
+			input.Config.CapabilityConfig, err = DecodeModelCapabilityConfig(string(raw))
+			if err != nil {
+				return err
+			}
+			input.Config.ImageCapabilitiesVersion = item.ImageCapabilitiesVersion
+			break
+		}
+	}
+	if input.Config.ImageCapabilitiesVersion != nil && strings.TrimSpace(*input.Config.ImageCapabilitiesVersion) != "" {
+		profile := input.Config.CapabilityConfig
+		if profile == nil || profile.Image == nil || !validVersionedImageCapability(profile.Image) {
+			input.ImageCapability = nil
+			return nil
+		}
+		input.ImageCapability = profile.Image
+		return nil
+	}
 	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Image != nil {
 			input.ImageCapability = input.Config.CapabilityConfig.Image
 		} else {
+			fallback.References.MaxImageBytes = 0
 			input.ImageCapability = fallback
 		}
-		return validateImageTask(input.ImageCapability, *input)
+		return nil
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, providerChannelModelKey(input.Config))
 	if err != nil {
@@ -350,7 +392,23 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 	} else {
 		input.ImageCapability = fallback
 	}
-	return validateImageTask(input.ImageCapability, *input)
+	return nil
+}
+
+func validVersionedImageCapability(image *ImageCapabilityConfig) bool {
+	if image == nil {
+		return false
+	}
+	copied := *image
+	if modelcatalog.ValidateImageCapabilityConfig(&copied) == nil {
+		return true
+	}
+	raw, err := json.Marshal(image)
+	if err != nil {
+		return false
+	}
+	_, ok := modelcatalog.NormalizeCatalogImageCapability(raw)
+	return ok
 }
 
 func metadataStringValues(value any) map[string]string {
@@ -550,32 +608,7 @@ func allowedSystemModelKey(value, sku, authorizedUpstream string) bool {
 }
 
 func systemChannelIDFromBaseURL(baseURL string) string {
-	value := strings.TrimSpace(baseURL)
-	lowerValue := strings.ToLower(value)
-	for _, marker := range []string{"/api/ai/system/", "/api/"} {
-		index := strings.LastIndex(lowerValue, marker)
-		if index < 0 {
-			continue
-		}
-		id := strings.Trim(value[index+len(marker):], "/")
-		if queryIndex := strings.IndexAny(id, "?#"); queryIndex >= 0 {
-			id = id[:queryIndex]
-		}
-		if slash := strings.Index(id, "/"); slash >= 0 {
-			continue
-		}
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		switch strings.ToLower(id) {
-		case "v1", "v1beta", "v2", "v3", "plan", "ai":
-			continue
-		default:
-			return id
-		}
-	}
-	return ""
+	return modelcatalog.SystemChannelIDFromBaseURL(baseURL)
 }
 
 func openAIImageInputURL(media providerMedia) (string, error) {

@@ -1,12 +1,117 @@
 // 制作现场：把整张画布压成助手每轮都能一眼看懂的几百字，
 // 以及“上一次对话结束后别人（用户、生成任务）又改了什么”的差异说明。
 // 纯函数、无 IO、结果确定（同一画布状态永远得到同一段文字），便于提示词缓存与测试。
+import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
 
 const TYPE_LABEL = {
   image: '图片', video: '视频', audio: '音频', text: '文本', markdown: '文档', script: '分镜板',
   frame: '分组', svg: 'SVG', html: '网页', panorama: '全景', compare: '对比', chart: '图表',
 };
 const MEDIA = new Set(['image', 'video', 'audio']);
+
+const HEADER_SECTION_ORDER = ['instructions', 'beeftv_skill_catalog'];
+
+function extractMessageText(message) {
+  if (!message) return '';
+  if (typeof message.content === 'string') return message.content;
+  if (!Array.isArray(message.content)) return '';
+  return message.content
+    .map((part) => (typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : ''))
+    .join('\n');
+}
+
+const SERIALIZED_STUDIO_TAIL_RE =
+  /^(?:\[系统恢复：以下技能之前已加载，因对话被压缩，原文补回。[\s\S]*<\/skill>(?:\n\n|$))?(?:<beeftv_plan>\n[\s\S]*\n<\/beeftv_plan>(?:\n\n|$))?(?:<beeftv_studio>\n[\s\S]*\n<\/beeftv_studio>)?$/;
+
+export function isTransientStudioTailMessage(message) {
+  if (!message || message.role !== 'user') return false;
+  if (message.transientStudioTail === true) return true;
+  const text = extractMessageText(message).trim();
+  if (!text) return false;
+  return (
+    (text.startsWith('<beeftv_studio>\n') ||
+      text.startsWith('<beeftv_plan>\n') ||
+      text.startsWith('[系统恢复：以下技能之前已加载，因对话被压缩，原文补回。')) &&
+    SERIALIZED_STUDIO_TAIL_RE.test(text)
+  );
+}
+
+// Pin stable system sections from the initial system message in deterministic
+// key order (instructions first, beeftv_skill_catalog second), falling back to
+// getCurrentSystemMessage only if a section was absent on messages[0]. Even if
+// a session is reopened after a restart and a later turn emits a modified catalog
+// delta, pinning from messages[0] keeps the leading header byte-identical.
+export function normalizeSystemHeaderMessages(messages = []) {
+  const firstSystemIdx = messages.findIndex((m) => m && m.role === 'system');
+  if (firstSystemIdx < 0) return messages.slice();
+  const initialSections = messages[firstSystemIdx]?.sections || {};
+  const replayed = getCurrentSystemMessage(messages);
+  const rawSections = replayed?.sections || {};
+  const orderedSections = {};
+  for (const key of HEADER_SECTION_ORDER) {
+    const initialVal = initialSections[key];
+    const val = typeof initialVal === 'string' && initialVal.length > 0 ? initialVal : rawSections[key];
+    if (typeof val === 'string' && val.length > 0 && !(key in initialSections && initialVal === null)) {
+      orderedSections[key] = val;
+    }
+  }
+  return messages.flatMap((message, idx) => {
+    if (!message || message.role !== 'system') return [message];
+    if (idx === firstSystemIdx) {
+      return [{ ...message, content: '', sections: orderedSections }];
+    }
+    const hasToolsAdded = Array.isArray(message.toolsAdded) && message.toolsAdded.length > 0;
+    const hasToolsRemoved = Array.isArray(message.toolsRemoved) && message.toolsRemoved.length > 0;
+    if (!hasToolsAdded && !hasToolsRemoved) return [];
+    const nextMsg = { ...message, content: '' };
+    delete nextMsg.sections;
+    return [nextMsg];
+  });
+}
+
+// The SDK can resume an already prepared request. Normalize system header sections
+// (instructions first, skill catalog second; no transient studio/plan/active_skills)
+// and append transient studio/plan/restored-skills context at the end as a non-system message.
+export function withCurrentStudio(messages, digest, options = {}) {
+  const {
+    includeStudio = true,
+    planText = '',
+    restoredSkillsText = '',
+  } = options || {};
+  const normalized = normalizeSystemHeaderMessages(messages).filter(
+    (message, idx, arr) => !(idx === arr.length - 1 && message?.transientStudioTail === true),
+  );
+  const tailBlocks = [];
+  if (typeof restoredSkillsText === 'string' && restoredSkillsText.trim()) {
+    tailBlocks.push(restoredSkillsText.trim());
+  }
+  if (typeof planText === 'string' && planText.trim()) {
+    const trimmedPlan = planText.trim();
+    tailBlocks.push(
+      trimmedPlan.startsWith('<beeftv_plan>')
+        ? trimmedPlan
+        : `<beeftv_plan>\n${trimmedPlan}\n</beeftv_plan>`,
+    );
+  }
+  if (includeStudio) {
+    const studioText =
+      digest ||
+      '当前画布无法读取，现场状态未知。不要使用历史快照推断当前内容；本次相关写入已暂停，请说明读取失败后再继续。';
+    tailBlocks.push(`<beeftv_studio>\n${studioText}\n</beeftv_studio>`);
+  }
+  if (tailBlocks.length === 0) {
+    return normalized;
+  }
+  return [
+    ...normalized,
+    {
+      role: 'user',
+      transientStudioTail: true,
+      content: [{ type: 'text', text: tailBlocks.join('\n\n') }],
+      timestamp: Date.now(),
+    },
+  ];
+}
 
 const clip = (value, limit) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -61,6 +166,11 @@ export function buildStudioDigest(canvas, { maxBytes = 3600, selectedNodeIds = [
   });
   lines.push(`[制作现场｜画布版本 ${canvas?.revision ?? '?'}｜本轮请求前的实际状态]`);
   lines.push(nodes.length ? `概况：${summary.join('｜')}｜连线 ${connections.length}` : '概况：画布是空的。');
+  const documents = nodes.filter(node => !MEDIA.has(node.type) && node.type !== 'script');
+  if (documents.length) {
+    lines.push(`内容节点（正文仅为预览，原文用 canvas_get 按当前版本读取）：${documents.slice(0, 8).map(node =>
+      `${node.id}「${clip(node.title, 24)}」${TYPE_LABEL[node.type] || node.type} ${clip(node.metadata?.content || node.metadata?.composerContent, 100)}`).join('；')}${documents.length > 8 ? `…共 ${documents.length} 个` : ''}`);
+  }
 
   const rowBound = new Set();
   for (const board of nodes.filter((node) => node.type === 'script')) {

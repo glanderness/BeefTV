@@ -13,7 +13,7 @@ import (
 var allowedConfigKeys = []string{
 	"channelId", "channelModelKey", "model", "variantId", "apiFormat", "interfaceType",
 	"size", "quality", "transparentBackground", "count", "videoSeconds", "vquality",
-	"videoGenerateAudio", "videoWatermark", "videoArkPrivateAssetUpload", "systemPrompt",
+	"videoGenerateAudio", "videoWatermark", "videoDraft", "videoArkPrivateAssetUpload", "systemPrompt",
 }
 
 func (s *Service) constrainTask(userID string, repo *repository.Repository, req *TaskRequest) error {

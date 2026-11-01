@@ -1,5 +1,4 @@
 import { canvasNodeResourceId, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
-import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import type { CanvasNodeAssetResult } from "@/services/project-asset-sync";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -15,7 +14,7 @@ function throwIfAborted(signal?: AbortSignal) {
 }
 
 function isPersistStop(error: unknown) {
-    return isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError") || error instanceof CanvasMediaPersistUnconfirmedError;
+    return (error instanceof Error && error.name === "AbortError") || error instanceof CanvasMediaPersistUnconfirmedError;
 }
 
 export type PersistOwnedCanvasMediaNodesInput = {
@@ -23,7 +22,6 @@ export type PersistOwnedCanvasMediaNodesInput = {
     domainProjectId?: string;
     mediaNodes: CanvasNodeData[];
     mediaConnections?: CanvasConnection[];
-    expectedScope?: CapturedUserScope;
     signal?: AbortSignal;
 };
 
@@ -39,15 +37,14 @@ export type PersistOwnedCanvasMediaNodesDeps = {
         node: CanvasNodeData;
         source: "canvas-manual";
         signal?: AbortSignal;
-        expectedScope?: CapturedUserScope;
     }) => Promise<CanvasNodeAssetResult>;
     getStoredProject: (canvasId: string) => PersistOwnedCanvasMediaNodesStore | undefined;
     hasProject: (canvasId: string) => boolean;
-    openProject?: (canvasId: string, expectedScope: CapturedUserScope) => Promise<unknown>;
+    openProject?: (canvasId: string) => Promise<unknown>;
     updateProject: (canvasId: string, patch: PersistOwnedCanvasMediaNodesStore) => void;
-    flushPersistence: (expectedScope: CapturedUserScope) => Promise<void>;
-    syncSnapshot?: (canvasId: string, patch: PersistOwnedCanvasMediaNodesStore, expectedScope: CapturedUserScope) => Promise<unknown>;
-    readSavedProject?: (canvasId: string, expectedScope: CapturedUserScope) => Promise<{ nodes: CanvasNodeData[] } | undefined>;
+    flushPersistence: () => Promise<void>;
+    syncSnapshot?: (canvasId: string, patch: PersistOwnedCanvasMediaNodesStore) => Promise<unknown>;
+    readSavedProject?: (canvasId: string) => Promise<{ nodes: CanvasNodeData[] } | undefined>;
     setNodes: (updater: (current: CanvasNodeData[]) => CanvasNodeData[]) => void;
     getLiveProjectId: () => string;
     getLiveNodes: () => CanvasNodeData[];
@@ -61,14 +58,12 @@ export async function persistOwnedCanvasMediaNodes(
     input: PersistOwnedCanvasMediaNodesInput,
     deps: PersistOwnedCanvasMediaNodesDeps,
 ): Promise<Map<string, string>> {
-    const expected = input.expectedScope ?? captureUserScope();
     const originalProjectId = input.canvasId;
     const mediaConnections = input.mediaConnections ?? [];
     const assetIds = new Map<string, string>();
 
     const assertPersistOwnership = () => {
         throwIfAborted(input.signal);
-        assertUserScope(expected);
         if (deps.getLiveProjectId() !== originalProjectId) {
             throw new DOMException("Aborted", "AbortError");
         }
@@ -83,7 +78,6 @@ export async function persistOwnedCanvasMediaNodes(
                 node,
                 source: "canvas-manual",
                 signal: input.signal,
-                expectedScope: expected,
             });
             assertPersistOwnership();
             if (!result.confirmed) throw new CanvasMediaPersistUnconfirmedError();
@@ -144,7 +138,7 @@ export async function persistOwnedCanvasMediaNodes(
 
     assertPersistOwnership();
     if (!deps.hasProject(originalProjectId) && deps.isLocalWorkspace()) {
-        await deps.openProject?.(originalProjectId, expected);
+        await deps.openProject?.(originalProjectId);
         assertPersistOwnership();
     }
     if (!deps.hasProject(originalProjectId)) {
@@ -160,12 +154,12 @@ export async function persistOwnedCanvasMediaNodes(
     deps.updateProject(originalProjectId, snapshot);
     try {
         assertPersistOwnership();
-        await deps.flushPersistence(expected);
+        await deps.flushPersistence();
         assertPersistOwnership();
         if (deps.isLocalWorkspace()) {
-            await deps.syncSnapshot?.(originalProjectId, snapshot, expected);
+            await deps.syncSnapshot?.(originalProjectId, snapshot);
             assertPersistOwnership();
-            const saved = await deps.readSavedProject?.(originalProjectId, expected);
+            const saved = await deps.readSavedProject?.(originalProjectId);
             assertPersistOwnership();
             if (!saved || input.mediaNodes.some((node) => !saved.nodes.some((savedNode) => savedNode.id === node.id))) {
                 throw new Error("本地项目库回读校验未包含刚生成的媒体节点");

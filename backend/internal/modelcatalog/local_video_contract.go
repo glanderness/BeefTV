@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"slices"
+	"strings"
 
 	"infinite-canvas/backend/internal/providerpreset"
 )
@@ -10,11 +11,15 @@ import (
 // A versioned gateway profile owns its limits. Otherwise, verified route limits
 // repair legacy generic profiles without changing the saved audio default.
 func ApplyLocalVideoContract(item LocalChannelModel, config *ModelCapabilityConfig) *ModelCapabilityConfig {
-	if item.Capability != "video" || item.VideoCapabilitiesVersion != nil || !providerpreset.IsBeefAPIEndpoint(item.BaseURL) || config == nil || config.Video == nil {
+	isBeefRoute := providerpreset.IsBeefAPIEndpoint(item.BaseURL) || (strings.TrimSpace(item.BaseURL) == "" && strings.EqualFold(strings.TrimSpace(item.ChannelID), "beefapi"))
+	if item.Capability != "video" || item.VideoCapabilitiesVersion != nil || !isBeefRoute || config == nil || config.Video == nil {
 		return config
 	}
 	contract, ok := providerpreset.BeefAPIVideoContract(item.Model)
 	if !ok {
+		if isSeedance2Family(item.Protocol, item.Model) {
+			return repairLegacyEnterpriseSeedanceVideoProfile(item.Protocol, item.Model, config)
+		}
 		return config
 	}
 	result := *config
@@ -55,5 +60,37 @@ func ApplyLocalVideoContract(item LocalChannelModel, config *ModelCapabilityConf
 			video.DefaultOperation = video.Operations[0]
 		}
 	}
+	return &result
+}
+
+func repairLegacyEnterpriseSeedanceVideoProfile(protocol, modelName string, config *ModelCapabilityConfig) *ModelCapabilityConfig {
+	if config == nil || config.Video == nil {
+		return config
+	}
+	refs := config.Video.References
+	if refs.MaxVideos != 0 || refs.MaxAudios != 0 || refs.MaxVideoDuration != 0 || refs.MaxAudioDuration != 0 {
+		return config
+	}
+	defaults := DefaultModelCapabilityConfigForModel(protocol, modelName)
+	if defaults == nil || defaults.Video == nil {
+		return config
+	}
+	result := *config
+	video := *config.Video
+	video.References.MaxImages = max(refs.MaxImages, defaults.Video.References.MaxImages)
+	video.References.MaxVideos = defaults.Video.References.MaxVideos
+	video.References.MaxAudios = defaults.Video.References.MaxAudios
+	video.References.MinVideoDuration = defaults.Video.References.MinVideoDuration
+	video.References.MaxVideoDuration = defaults.Video.References.MaxVideoDuration
+	video.References.MinAudioDuration = defaults.Video.References.MinAudioDuration
+	video.References.MaxAudioDuration = defaults.Video.References.MaxAudioDuration
+	video.References.MaxVideoTotalDuration = defaults.Video.References.MaxVideoTotalDuration
+	video.References.MaxAudioTotalDuration = defaults.Video.References.MaxAudioTotalDuration
+	video.GenerateAudio = defaults.Video.GenerateAudio
+	for _, op := range defaults.Video.Operations {
+		video.Operations = appendUniqueString(video.Operations, op)
+	}
+	video.TaskTypeConstraints = defaults.Video.TaskTypeConstraints
+	result.Video = &video
 	return &result
 }

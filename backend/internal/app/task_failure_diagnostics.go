@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"time"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
@@ -35,6 +36,8 @@ func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 		d.Source, d.Stage, d.RequestID, d.HTTPStatus = "local_response", "本地响应大小校验", last.RequestID, last.HTTPStatus
 	}
 	var httpErr providerHTTPError
+	var managedHTTP *beefapi.MediaHTTPError
+	var managedTask *beefapi.MediaTaskError
 	var payload providerPayloadError
 	var appErr *kernel.AppError
 	var upload *generation.ReferenceUploadError
@@ -56,6 +59,15 @@ func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	case errors.As(err, &httpErr):
 		d.Source, d.HTTPStatus, d.ProviderCode = "upstream_http", httpErr.StatusCode, failure.ProviderCode
 		d.RequestID = firstNonEmpty(failure.RequestID, httpErr.RequestID)
+	case errors.As(err, &managedHTTP):
+		d.Source, d.HTTPStatus, d.ProviderCode = "upstream_http", managedHTTP.StatusCode, failure.ProviderCode
+		d.RequestID = firstNonEmpty(failure.RequestID, managedHTTP.RequestID)
+	case errors.As(err, &managedTask):
+		d.Source, d.ProviderCode = "upstream_response", failure.ProviderCode
+		if len(d.Requests) > 0 {
+			last := d.Requests[len(d.Requests)-1]
+			d.RequestID, d.HTTPStatus = firstNonEmpty(d.RequestID, last.RequestID), last.HTTPStatus
+		}
 	case errors.As(err, &payload):
 		d.Source, d.ProviderCode = "upstream_response", failure.ProviderCode
 		if failure.Category == generation.CategoryInputInaccessible {

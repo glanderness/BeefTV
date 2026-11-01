@@ -56,11 +56,11 @@ func normalizeAssistantReferences(svc *app.Service, userID string, items []assis
 		}
 		switch kind {
 		case "asset":
-			if _, err := svc.UserAsset(userID, id); err != nil {
+			if _, err := svc.CanvasService().UserAsset(userID, id); err != nil {
 				return nil, errors.New("引用的素材不存在或不属于当前工作区")
 			}
 		case "canvas":
-			if _, err := svc.UserCanvasProject(userID, id); err != nil {
+			if _, err := svc.CanvasService().UserCanvasProject(userID, id); err != nil {
 				return nil, errors.New("引用的画布不存在或不属于当前工作区")
 			}
 		default:
@@ -103,7 +103,7 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 	if !app.ValidAssistantTurnID(turnID) {
 		return nil, "", errors.New("回合标识非法")
 	}
-	scope, ok, err := svc.AssistantTurnScopeForHost(userID, turnID)
+	scope, ok, err := svc.AssistantTurns().ScopeForHost(userID, turnID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -139,7 +139,7 @@ func assistantSkillPinSet(groups ...[]skills.Pin) map[skills.Pin]bool {
 // assistantSkillInstalled is true only for the caller's currently installed
 // version of a skill, compared by exact identity.
 func assistantSkillInstalled(svc *app.Service, userID string, pin skills.Pin) bool {
-	catalog, err := svc.AgentSkillCatalog(userID)
+	catalog, err := svc.SkillsDomain().AgentCatalog(userID)
 	if err != nil {
 		return false
 	}

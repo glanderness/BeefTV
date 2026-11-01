@@ -39,6 +39,8 @@ export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
   turn.canvasChanges = {};
   turn.writeChains = [];
   turn.writeRequests = [];
+  delete turn.studioReadAvailable;
+  delete turn.canvasContextChanged;
   return turn;
 }
 

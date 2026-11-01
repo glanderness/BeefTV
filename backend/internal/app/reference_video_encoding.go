@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 )
 
 // Sample timing belongs to the video track, not the movie/audio duration.
@@ -150,7 +151,7 @@ func referenceFragmentSamples(data []byte, trackID uint32) (samples, ticks float
 
 func seedanceFrameRatePreflight(config providerConfig) bool {
 	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) {
-		return isSeedance2Family(config.InterfaceType, config.Model)
+		return modelcatalog.IsSeedance2Family(config.InterfaceType, config.Model)
 	}
 	u, err := url.Parse(config.BaseURL)
 	if err != nil {

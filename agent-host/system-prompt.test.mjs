@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { expect, test } from 'bun:test';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 
@@ -31,4 +32,13 @@ test('producer workflow respects studio changes, maintains plan_update, and insp
   }
   expect(SYSTEM_PROMPT).toContain('成功提案会结束本轮并等待用户确认');
   expect(SYSTEM_PROMPT).toContain('不要把计划更新留到提案之后');
+});
+
+test('optional short-film storyboard and cross-shot method lives in the versioned builtin skill instead of resident prompt', () => {
+  expect(SYSTEM_PROMPT).not.toContain('短片分镜只填本次必需字段');
+  expect(SYSTEM_PROMPT).not.toContain('同一商品、角色或场景需要跨镜一致时');
+  const skills = JSON.parse(fs.readFileSync(new URL('../backend/internal/skills/seed/skills.json', import.meta.url), 'utf8'));
+  const producerSkill = skills.find((item) => item.skill_id === '14811816970252');
+  expect(producerSkill?.instruction).toContain('短片分镜只填本次必需字段');
+  expect(producerSkill?.instruction).toContain('同一商品、角色或场景需要跨镜一致时');
 });

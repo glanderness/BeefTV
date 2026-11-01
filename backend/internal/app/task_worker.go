@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"infinite-canvas/backend/internal/generation"
 	"strings"
 	"time"
 
@@ -72,7 +71,7 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 	// 保留任务行本身（数据不删）以便追溯。
 	if retiredAgentTask(task) {
 		// 任务已被终态收尾（含失败日志），这不是 worker 执行失败，因此返回 nil。
-		err := s.terminalCoordinator().refuse(task, "功能已下线", retiredAgentBoundaryMessage)
+		err := s.terminalCoordinator().Refuse(task, "功能已下线", retiredAgentBoundaryMessage)
 		return taskruntime.Outcome{Kind: taskruntime.KindRejected, Err: err, Applied: err == nil}
 	}
 	terminal := s.terminalCoordinator()
@@ -80,7 +79,7 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 	// 取消请求可能在任务领取和注册 worker context 之间到达；再次读取终态
 	// 可以避免这种极窄窗口仍然向上游发起调用。
 	if latest, latestErr := s.repo.Task(task.ID); latestErr == nil && latest.Status == model.TaskStatusCancelled {
-		err := terminal.handleAlreadyCancelled(*latest)
+		err := terminal.HandleAlreadyCancelled(*latest)
 		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: err, Applied: true}
 	}
 
@@ -113,7 +112,7 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 	routeAttempt, err := s.beginTaskRouteAttempt(task)
 	if err != nil {
 		uncertain := isRouteDispatchUncertain(err)
-		termErr := terminal.markPreparationFailure(task, "路由准备失败", err, uncertain, "路由准备失败，上游请求未发出")
+		termErr := terminal.MarkPreparationFailure(task, "路由准备失败", err, uncertain, "路由准备失败，上游请求未发出")
 		kind := taskruntime.KindFailed
 		if uncertain {
 			kind = taskruntime.KindUncertain
@@ -183,14 +182,20 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		if errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &imageRecovery) {
 			err = errors.New(taskTimeoutMessage(task.Type))
 		}
-		return executionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest)
+		outcome := executionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest)
+		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome != nil {
+			failed := *task
+			failed.LeaseOwner = ""
+			_ = s.repo.FinishFailedImageRecovery(failed, task.RecoveryOutcome, nil)
+		}
+		return outcome
 	}
 	latest, err := s.repo.Task(task.ID)
 	if err != nil {
 		return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: err, ProviderAccepted: providerAccepted}
 	}
 	if latest.Status == model.TaskStatusCancelled {
-		termErr := terminal.handleCancelledResult(*latest)
+		termErr := terminal.HandleCancelledResult(*latest)
 		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: termErr, Applied: true, ProviderAccepted: providerAccepted}
 	}
 	resultJSON, err := json.Marshal(result)
@@ -211,7 +216,7 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		}
 		return persistenceFailureOutcome(terminal, task, err, true)
 	}
-	termErr := terminal.handleSuccess(task)
+	termErr := terminal.HandleSuccess(task)
 	return taskruntime.Outcome{Kind: taskruntime.KindCompleted, Err: termErr, Applied: true, ProviderAccepted: true}
 }
 
@@ -246,7 +251,11 @@ func leaseLostOutcome(session taskruntime.Session, providerAccepted bool) taskru
 }
 
 func executionFailureOutcome(terminal *taskTerminalCoordinator, task *model.Task, err error, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest bool) taskruntime.Outcome {
-	termErr := terminal.handleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
+	if task != nil && task.Type == "canvas_image" && !task.IsUpscale() && imageTaskEnded(err) {
+		noResult := "no_result"
+		task.RecoveryOutcome = &noResult
+	}
+	termErr := terminal.HandleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
 	if errors.Is(err, context.Canceled) && termErr == nil {
 		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Applied: true, ProviderAccepted: providerAccepted}
 	}
@@ -260,7 +269,7 @@ func executionFailureOutcome(terminal *taskTerminalCoordinator, task *model.Task
 }
 
 func persistenceFailureOutcome(terminal *taskTerminalCoordinator, task *model.Task, err error, providerAccepted bool) taskruntime.Outcome {
-	handled, termErr := terminal.handleResultPersistenceFailure(task, err)
+	handled, termErr := terminal.HandleResultPersistenceFailure(task, err)
 	if handled {
 		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: termErr, Applied: termErr == nil, ProviderAccepted: providerAccepted}
 	}
@@ -314,8 +323,12 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 }
 
 func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput string, err error) bool {
+	var input canvasGenerationInput
+	if json.Unmarshal([]byte(decryptedInput), &input) != nil {
+		return false
+	}
 	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
-	if providerRequestID == "" || (!strings.HasPrefix(task.Type, "canvas_video") && !strings.HasPrefix(task.Type, "video_") && generation.UpscaleMediaType(task.Model) == "") {
+	if providerRequestID == "" || (!strings.HasPrefix(task.Type, "canvas_video") && !strings.HasPrefix(task.Type, "video_") && input.Upscale == nil) {
 		return false
 	}
 	deferSignal := errors.Is(err, context.DeadlineExceeded)
@@ -336,10 +349,6 @@ func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput s
 		deferSignal = strings.TrimSpace(pendingErr.TaskID) == providerRequestID && !newAPIChannel2TaskSyncExpired(task, err, time.Now())
 	}
 	if !deferSignal {
-		return false
-	}
-	var input canvasGenerationInput
-	if json.Unmarshal([]byte(decryptedInput), &input) != nil {
 		return false
 	}
 	// Selecting the known query-only contract does not need another DNS lookup.

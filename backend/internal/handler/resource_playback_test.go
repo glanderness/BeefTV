@@ -45,7 +45,7 @@ func TestPlaybackMissingCopyDoesNotReturnStaleVariant304(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := gin.New()
-	RegisterUserDataRoutes(router.Group("/api"), svc)
+	RegisterUserDataRoutes(router.Group("/api"), svc, svc.CanvasService(), svc.PromptService(), svc.AssetLibraryService(), svc.ResourceService(), svc.PlaybackService(), svc, svc, svc)
 	request := httptest.NewRequest(http.MethodGet, "/api/resources/video/file?variant=playback&proxy=1", nil)
 	request.Header.Set("If-None-Match", playbackResponseETag(resourceResponseETag(&resource)))
 	response := httptest.NewRecorder()

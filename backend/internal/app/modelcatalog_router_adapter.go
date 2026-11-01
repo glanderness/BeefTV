@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"infinite-canvas/backend/internal/generation"
+	"infinite-canvas/backend/internal/mediaattempt"
 	"log"
 	"strings"
 	"time"
@@ -169,9 +170,16 @@ func routeFailureInfo(err error) modelcatalog.FailureInfo {
 		info.StatusCode = upstream.StatusCode
 		info.RetryAfter = upstream.RetryAfter
 	}
+	if status, rejected, terminal := mediaattempt.ManagedFailureInfo(err); status > 0 || rejected || terminal {
+		if status > 0 {
+			info.StatusCode = status
+		}
+		info.ExplicitRejection = info.ExplicitRejection || rejected
+		info.TerminalProviderFailure = info.TerminalProviderFailure || terminal
+	}
 	info.ImageThrottle = definiteImageThrottle(err)
 	var rejection generation.SubmissionRejectedError
-	info.ExplicitRejection = definiteMidjourneyCountRejection(err) || errors.As(err, &rejection)
+	info.ExplicitRejection = info.ExplicitRejection || definiteMidjourneyCountRejection(err) || errors.As(err, &rejection)
 	if definiteVODImageParameterFailure(err) {
 		// The gateway includes this marker only for an actual supplier task.
 		info.TerminalProviderFailure = strings.Contains(upstream.Body, "upstream_task_id:")
