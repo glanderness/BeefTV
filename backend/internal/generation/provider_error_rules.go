@@ -138,8 +138,22 @@ func moderationCategoryFromMessage(normalized string) FailureCategory {
 	return CategoryModerationInput
 }
 
+func hasAuthoritativeProviderCode(fields extractedFields) bool {
+	if _, ok := categoryFromProviderCode(fields.Code); ok && !genericProviderCode(fields.Code) {
+		return true
+	}
+	if _, ok := categoryFromProviderCode(fields.Status); ok && !genericProviderCode(fields.Status) {
+		return true
+	}
+	if _, ok := categoryFromProviderCode(fields.Type); ok && !genericProviderCode(fields.Type) {
+		return true
+	}
+	return false
+}
+
 func specializeModeration(failure *Failure, fields extractedFields) {
-	if f, ok := persistedModerationCopy(fields.Message); ok && (failure.Category == f.Category || (genericProviderCode(fields.Code) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams))) {
+	refinableCode := !hasAuthoritativeProviderCode(fields)
+	if f, ok := persistedModerationCopy(fields.Message); ok && (failure.Category == f.Category || (refinableCode && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams))) {
 		failure.Category, failure.Reason, failure.Action = f.Category, f.Reason, f.Action
 		requestID, taskID := persistedReferenceIDs(fields.Message)
 		failure.RequestID = firstNonEmpty(failure.RequestID, requestID)
@@ -147,11 +161,9 @@ func specializeModeration(failure *Failure, fields extractedFields) {
 		return
 	}
 	if failure.RequestID == "" {
-		if m := regexp.MustCompile(`(?i)\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b`).FindStringSubmatch(sanitizeProviderText(fields.Message)); len(m) == 2 {
-			failure.RequestID = sanitizeDebugID(m[1])
-		}
+		failure.RequestID = requestIDFromMessage(fields.Message)
 	}
-	if failure.IsModeration() || ((failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) && genericProviderCode(fields.Code)) {
+	if failure.IsModeration() || ((failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) && refinableCode) {
 		if f, ok := moderationErrorCopy(fields.Code, sanitizeProviderText(fields.Message)); ok {
 			failure.Category, failure.Reason, failure.Action = f.Category, f.Reason, f.Action
 			return
@@ -176,7 +188,7 @@ func specializeModeration(failure *Failure, fields extractedFields) {
 }
 
 func refineInvalidParams(failure *Failure, fields extractedFields) {
-	if genericProviderCode(fields.Code) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) {
+	if !hasAuthoritativeProviderCode(fields) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) {
 		if category, ok := categoryFromProviderMessage(fields.Message); ok {
 			failure.Category = category
 		}

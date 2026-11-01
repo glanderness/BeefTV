@@ -57,6 +57,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"forbidden":                        CategoryPermission,
 	"access_denied":                    CategoryPermission,
 	"model_permission":                 CategoryPermission,
+	"channel_excluded":                 CategoryPermission,
 	"insufficient_quota":               CategoryQuotaUnknown,
 	"insufficient_balance":             CategoryQuotaUnknown,
 	"billing_not_active":               CategoryQuotaUnknown,
@@ -217,6 +218,9 @@ func extractProviderFields(raw string) extractedFields {
 		if fields.RequestID == "" {
 			fields.RequestID = requestID
 		}
+		if fields.RequestID == "" {
+			fields.RequestID = requestIDFromMessage(fields.Message)
+		}
 		return fields
 	}
 	for start := 0; start < len(raw); {
@@ -229,11 +233,23 @@ func extractProviderFields(raw string) extractedFields {
 			if fields.RequestID == "" {
 				fields.RequestID = requestID
 			}
+			if fields.RequestID == "" {
+				fields.RequestID = requestIDFromMessage(fields.Message)
+			}
 			return fields
 		}
 		start = absolute + 1
 	}
 	return extractedFields{}
+}
+
+var embeddedRequestIDPattern = regexp.MustCompile(`(?i)\brequest\s*id:\s*([A-Za-z0-9._:-]{6,127})\b`)
+
+func requestIDFromMessage(message string) string {
+	if m := embeddedRequestIDPattern.FindStringSubmatch(sanitizeProviderText(message)); len(m) == 2 {
+		return sanitizeDebugID(m[1])
+	}
+	return ""
 }
 
 func fieldsFromJSON(data []byte) (extractedFields, bool) {

@@ -102,6 +102,7 @@ const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     insufficient_user_quota: "quota_user",
     model_temporarily_unavailable: "provider_unavailable",
     no_available_channel: "provider_unavailable",
+    channel_excluded: "permission",
     "channel:invalid_key": "provider_unavailable",
     "channel:no_available_key": "provider_unavailable",
     "channel:param_override_invalid": "unknown",

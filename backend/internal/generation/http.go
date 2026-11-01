@@ -295,7 +295,9 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	observation := TransportObservation{Request: req, StartedAt: startedAt, ResponseLimitBytes: MaxResponseBytes}
 	defer func() {
 		observation.Dispatched, observation.TransportPhase = trace.result(resultErr)
-		observation.Body = responseData
+		if len(observation.Body) == 0 {
+			observation.Body = responseData
+		}
 		observation.Err = resultErr
 		if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Receipts != nil {
 			runtime.Receipts.Observe(observation)
@@ -451,6 +453,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		}
 	}
 	data := buffered.Bytes()
+	observation.Body = data
 	if int64(len(data)) > responseLimit {
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 	}

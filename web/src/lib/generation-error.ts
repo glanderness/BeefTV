@@ -400,10 +400,10 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
         classified = { ...classified, category: "quota_user", fromCode: true, reason: undefined, action: undefined };
     }
     if (classified.category !== "unknown" && !classified.fromCode && !trustProviderMessageStatus(status)) {
-        classified = { category: "unknown", retryable: false };
+        classified = { ...classified, category: "unknown", reason: undefined, action: undefined, retryable: false };
     }
-    if (!classified.fromCode && (classified.category === "unknown" || classified.category === "malformed_response") && status) {
-        classified = { category: categoryFromHttpStatus(status), status, retryable: false };
+    if (!classified.fromCode && (classified.category === "unknown" || classified.category === "malformed_response" || (classified.category === "invalid_params" && status && status !== 400 && status !== 422 && status !== 409)) && status) {
+        classified = { ...classified, category: categoryFromHttpStatus(status), reason: undefined, action: undefined, status, retryable: false };
         if (status === 524) {
             classified.category = "timeout";
             classified.uncertain = true;
@@ -441,6 +441,7 @@ function classifyText(raw: string): Classified {
         return {
             category: "invalid_params",
             ...durationCopy,
+            fromCode: true,
             requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
             taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
             retryable: false,
@@ -452,6 +453,7 @@ function classifyText(raw: string): Classified {
         return {
             category: mediaCopy.reason.includes("过大") ? "input_too_large" : "invalid_params",
             ...mediaCopy,
+            fromCode: true,
             requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
             taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
             retryable: false,
@@ -471,7 +473,21 @@ function classifyText(raw: string): Classified {
     if (LOCAL_DATABASE_ERROR.test(databaseMessage)) return { category: "local_storage", fromCode: true, requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
     if (fields.code || fields.type || fields.message || fields.status) {
         const fromCode = categoryFromProviderCode(fields.code, fields.type, fields.status);
-        if (fromCode) return specialize({ category: fromCode, fromCode: true, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
+        const codeOrStatusKnown = Boolean(categoryFromProviderCode(fields.code, fields.status));
+        if (fromCode) {
+            const specialized = specialize(
+                {
+                    category: fromCode,
+                    fromCode: codeOrStatusKnown || !isGenericProviderCode(fields.type),
+                    providerCode: sanitizeProviderCode(fields.code),
+                    requestId: sanitizeDebugId(fields.requestId),
+                    taskId: sanitizeDebugId(fields.taskId),
+                },
+                fields,
+            );
+            if (specialized.category !== "invalid_params" || specialized.reason) specialized.fromCode = true;
+            return specialized;
+        }
         const fromMessage = categoryFromProviderMessage(`${fields.message} ${fields.type} ${fields.status}`);
         if (fromMessage) return specialize({ category: fromMessage, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
     }
@@ -489,25 +505,41 @@ function classifyText(raw: string): Classified {
     return { category: "unknown", retryable: false };
 }
 
+function isGenericProviderCode(code: string) {
+    return (
+        ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(code)) ||
+        /^\d{3}$/.test(code.trim())
+    );
+}
+
+function hasAuthoritativeProviderCode(fields: ExtractedFields) {
+    return (
+        (Boolean(categoryFromProviderCode(fields.code)) && !isGenericProviderCode(fields.code)) ||
+        (Boolean(categoryFromProviderCode(fields.status)) && !isGenericProviderCode(fields.status)) ||
+        (Boolean(categoryFromProviderCode(fields.type)) && !isGenericProviderCode(fields.type))
+    );
+}
+
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
-    classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
-    // Only broad wrappers may be refined by a more specific provider message.
-    const genericCode =
-        ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||
-        /^\d{3}$/.test(fields.code);
+    classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9._:-]{6,127})\b/i)?.[1]);
+    // Only broad wrappers (or unrecognized codes paired with a generic type) may be refined by a more specific provider message.
+    const genericCode = !hasAuthoritativeProviderCode(fields);
     if (genericCode && ["unknown", "invalid_params"].includes(classified.category)) {
         const refined = categoryFromProviderMessage(fields.message);
-        if (refined) classified.category = refined;
+        if (refined) {
+            classified.category = refined;
+            if (refined !== "invalid_params") classified.fromCode = true;
+        }
     }
     if (isModerationCategory(classified.category) || (genericCode && ["unknown", "invalid_params"].includes(classified.category))) {
         const moderationCopy = moderationErrorCopy(fields.code, fields.message);
-        if (moderationCopy) return { ...classified, ...moderationCopy, retryable: false };
+        if (moderationCopy) return { ...classified, ...moderationCopy, fromCode: true, retryable: false };
     }
     const audioOrDuration = referenceAudioCopy(fields.message, normalizeCode(fields.code) === "invalid_reference_audio") || referenceDurationCopy(fields.message);
-    if (audioOrDuration) return { ...classified, category: "invalid_params", ...audioOrDuration, retryable: false };
+    if (audioOrDuration) return { ...classified, category: "invalid_params", ...audioOrDuration, fromCode: true, retryable: false };
     const mediaCopy = ["unknown", "invalid_params", "input_too_large", "input_inaccessible"].includes(classified.category) ? referenceMediaConstraintCopy(fields.message) : undefined;
-    if (mediaCopy) return { ...classified, category: mediaCopy.reason.includes("过大") ? "input_too_large" : "invalid_params", ...mediaCopy, retryable: false };
+    if (mediaCopy) return { ...classified, category: mediaCopy.reason.includes("过大") ? "input_too_large" : "invalid_params", ...mediaCopy, fromCode: true, retryable: false };
     if (classified.category === "invalid_params") {
         const refined = categoryFromProviderMessage(fields.message);
         if (refined === "context_too_long" || refined === "input_inaccessible" || refined === "input_too_large" || refined === "model_missing") classified.category = refined;
@@ -559,6 +591,7 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
         classified.reason = "当前模型为思考或推理模式，不支持强制工具调用";
         classified.action = "请改用自动工具选择或更换非思考模式模型";
     }
+    if (classified.reason) classified.fromCode = true;
     classified.retryable = retryableCategory(classified.category);
     return classified;
 }
