@@ -1,6 +1,7 @@
 package modelcatalog
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -451,6 +452,75 @@ func TestSeedance25DraftAndDraftToFinalCapabilityAndValidation(t *testing.T) {
 	missingID.Metadata = map[string]any{"videoEditOperation": "draft_to_final"}
 	if err := ValidateVideoTaskParameters(video, missingID); err == nil {
 		t.Fatal("expected missing videoDraftTaskId to be rejected")
+	}
+
+	rawCap, err := json.Marshal(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, ok := NormalizeCatalogVideoCapability(rawCap)
+	if !ok {
+		t.Fatal("expected NormalizeCatalogVideoCapability to accept Seedance 2.5 video capability")
+	}
+	if _, hasDraft := normalized["draft"]; !hasDraft {
+		t.Fatalf("expected NormalizeCatalogVideoCapability to preserve draft, got %+v", normalized)
+	}
+	if _, hasLastFrame := normalized["returnLastFrame"]; !hasLastFrame {
+		t.Fatalf("expected NormalizeCatalogVideoCapability to preserve returnLastFrame, got %+v", normalized)
+	}
+
+	legacy25 := &ModelCapabilityConfig{
+		Version: 1,
+		Video: &VideoCapabilityConfig{
+			Operations:        []string{"text_to_video", "image_to_video"},
+			DefaultOperation:  "text_to_video",
+			Duration:          VideoDurationConfig{Selection: "range", Min: 4, Max: 15, Step: 1, Default: 5},
+			Ratios:            []string{"16:9"},
+			DefaultRatio:      "16:9",
+			Resolutions:       []string{"720p", "1080p"},
+			DefaultResolution: "720p",
+			References: VideoReferenceConfig{
+				MaxImages:     9,
+				MaxVideos:     0,
+				MaxAudios:     0,
+				MaxVideoBytes: 200 * 1024 * 1024,
+				MaxAudioBytes: 15 * 1024 * 1024,
+			},
+		},
+	}
+	repaired, err := NormalizeModelCapabilityDraft(ModelCapabilityDraft{
+		Capability:       "video",
+		Protocol:         "newapi",
+		Model:            "seedance-2.5",
+		ChannelID:        "beefapi",
+		CapabilityConfig: legacy25,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeModelCapabilityDraft on legacy seedance-2.5 failed: %v", err)
+	}
+	if !repaired.Video.Draft.Supported || !repaired.Video.ReturnLastFrame.Supported || !slices.Equal(repaired.Video.Resolutions, []string{"720p", "1080p", "480p"}) || !slices.Contains(repaired.Video.Operations, "draft_to_final") {
+		t.Fatalf("expected NormalizeModelCapabilityDraft on seedance-2.5 to restore draft, returnLastFrame, draft_to_final, and 720p/1080p/480p, got %+v", repaired.Video)
+	}
+	legacyCustom := repairLegacyEnterpriseSeedanceVideoProfile("newapi", "seedance-2.5-custom", legacy25)
+	if !legacyCustom.Video.Draft.Supported || !legacyCustom.Video.ReturnLastFrame.Supported || !slices.Equal(legacyCustom.Video.Resolutions, []string{"720p", "1080p", "480p"}) || !slices.Contains(legacyCustom.Video.Operations, "draft_to_final") {
+		t.Fatalf("expected legacy custom seedance-2.5 repair to restore draft, returnLastFrame, draft_to_final, and only 480p without 1440p/2160p, got %+v", legacyCustom.Video)
+	}
+	nonZeroRefs := *legacy25
+	nonZeroVideo := *legacy25.Video
+	nonZeroVideo.References.MaxVideos = 3
+	nonZeroRefs.Video = &nonZeroVideo
+	repairedNonZero, err := NormalizeModelCapabilityDraft(ModelCapabilityDraft{
+		Capability:       "video",
+		Protocol:         "newapi",
+		Model:            "seedance-2.5",
+		ChannelID:        "beefapi",
+		CapabilityConfig: &nonZeroRefs,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeModelCapabilityDraft on non-zero-refs seedance-2.5 failed: %v", err)
+	}
+	if !repairedNonZero.Video.Draft.Supported || !repairedNonZero.Video.ReturnLastFrame.Supported || !slices.Contains(repairedNonZero.Video.Resolutions, "480p") || !slices.Contains(repairedNonZero.Video.Operations, "draft_to_final") {
+		t.Fatalf("expected non-zero-refs seedance-2.5 to restore draft, returnLastFrame, 480p, and draft_to_final, got %+v", repairedNonZero.Video)
 	}
 }
 

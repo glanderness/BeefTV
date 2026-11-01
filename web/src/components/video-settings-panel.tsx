@@ -48,7 +48,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const draftSupported = Boolean(profile.draft?.supported);
-    const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false);
+    const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false) && (!resolution || isVideoResolutionMatch(resolution, "480p"));
     const returnLastFrameSupported = Boolean(profile.returnLastFrame?.supported);
     const returnLastFrame = returnLastFrameSupported && boolConfig(config.videoReturnLastFrame, profile.returnLastFrame?.default ?? false);
 
@@ -156,7 +156,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const draftSupported = Boolean(profile.draft?.supported);
-    const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false);
+    const draft = draftSupported && boolConfig(config.videoDraft, profile.draft?.default ?? false) && (!resolution || isVideoResolutionMatch(resolution, "480p"));
     const returnLastFrameSupported = Boolean(profile.returnLastFrame?.supported);
     const returnLastFrame = returnLastFrameSupported && boolConfig(config.videoReturnLastFrame, profile.returnLastFrame?.default ?? false);
     const useArkPrivateAssets = boolConfig(config.videoArkPrivateAssetUpload, true);

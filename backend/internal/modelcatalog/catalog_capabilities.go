@@ -182,6 +182,13 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["returnLastFrame"] = returnLastFrame
 	}
+	if _, present := object["returnLastFrame"]; present {
+		returnLastFrame, ok := catalogBooleanConfig(object, "returnLastFrame")
+		if !ok {
+			return nil, false
+		}
+		video["returnLastFrame"] = returnLastFrame
+	}
 	return video, true
 }
 
