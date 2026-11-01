@@ -4,9 +4,9 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
-## v1.0.0
+## v1.0.1
 
-- 发布 aihubkit 独立版本线的首个桌面版本，版本号从 `v1.0.0` 开始，与上游 BeefTV 的版本号独立演进。
+- 发布 aihubkit 独立版本线的首个桌面版本，发布版本为 `v1.0.1`，与上游 BeefTV 的版本号独立演进。
 - 本版基于上游 BeefTV `v2.1.1`，提供 Windows x64、Ubuntu 24.04 x64、macOS Apple Silicon 和 Intel 安装包及便携包。
 
 ## v2.1.1
