@@ -42,35 +42,62 @@ export type CanvasNodeSelectionPreview = {
 const nodeDragPreviewDomStates = new WeakMap<HTMLDivElement, NodeDragPreviewDomState>();
 const nodeSelectionPreviewDomStates = new WeakMap<HTMLDivElement, NodeSelectionPreviewDomState>();
 const liveViewportElements = new WeakMap<HTMLDivElement, { worldLayer: HTMLElement | null }>();
-const observedScaleContainers = new WeakSet<HTMLDivElement>();
+const scopedScaleStates = new WeakMap<HTMLDivElement, { elements: HTMLElement[]; pinnedElements: HTMLElement[]; dirty: boolean; lastScale: number }>();
 const LIVE_SCALE_SELECTOR = "[data-canvas-live-scale], [data-canvas-selection-preview]";
+const PINNED_LIVE_SCALE_SELECTOR = '[data-node-lod-pinned="true"] [data-canvas-live-scale], [data-node-lod-pinned="true"][data-canvas-live-scale], [data-canvas-selection-preview]';
+
+function applyScopedElementScale(element: Element, scaleStr: string, inverseStr: string) {
+    const style = (element as HTMLElement).style;
+    if (!style) return;
+    setLiveViewportProperty(style, "--canvas-live-scale", scaleStr);
+    setLiveViewportProperty(style, "--canvas-live-inverse-scale", inverseStr);
+}
 
 function applyScopedCanvasScale(root: Element, scale: number) {
-    const apply = (element: Element) => {
-        const style = (element as HTMLElement).style;
-        if (!style) return;
-        setLiveViewportProperty(style, "--canvas-live-scale", String(scale));
-        setLiveViewportProperty(style, "--canvas-live-inverse-scale", String(1 / Math.max(scale, 0.05)));
-    };
-    if (root.matches(LIVE_SCALE_SELECTOR)) apply(root);
-    root.querySelectorAll(LIVE_SCALE_SELECTOR).forEach(apply);
+    const scaleStr = String(scale);
+    const inverseStr = String(1 / Math.max(scale, 0.05));
+    if (root.matches(LIVE_SCALE_SELECTOR)) applyScopedElementScale(root, scaleStr, inverseStr);
+    root.querySelectorAll(LIVE_SCALE_SELECTOR).forEach((el) => applyScopedElementScale(el, scaleStr, inverseStr));
 }
 
 function syncScopedCanvasScale(container: HTMLDivElement, scale: number) {
-    applyScopedCanvasScale(container, scale);
-    if (typeof MutationObserver === "undefined" || observedScaleContainers.has(container)) return;
-    observedScaleContainers.add(container);
-    // Controls can mount while the camera is stationary (e.g. an image error
-    // or crop toolbar). Initialize them before paint, without restyling media.
-    new MutationObserver((records) => {
-        const current = Number(container.style.getPropertyValue("--canvas-live-scale")) || 1;
-        for (const record of records) {
-            if (record.type === "attributes") applyScopedCanvasScale(record.target as Element, current);
-            for (const node of record.addedNodes) {
-                if (node instanceof Element) applyScopedCanvasScale(node, current);
+    if (typeof MutationObserver === "undefined" || !(container instanceof Node)) {
+        applyScopedCanvasScale(container, scale);
+        return;
+    }
+    let state = scopedScaleStates.get(container);
+    if (!state) {
+        state = { elements: [], pinnedElements: [], dirty: true, lastScale: NaN };
+        scopedScaleStates.set(container, state);
+        // Controls can mount while the camera is stationary (e.g. an image error
+        // or crop toolbar). Initialize them before paint, without restyling media.
+        new MutationObserver((records) => {
+            state!.dirty = true;
+            const current = Number(container.style.getPropertyValue("--canvas-live-scale")) || 1;
+            for (const record of records) {
+                if (record.type === "attributes") applyScopedCanvasScale(record.target as Element, current);
+                for (const node of record.addedNodes) {
+                    if (node instanceof Element) applyScopedCanvasScale(node, current);
+                }
             }
-        }
-    }).observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-canvas-live-scale", "data-canvas-selection-preview"] });
+        }).observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-canvas-live-scale", "data-canvas-selection-preview", "data-node-lod-pinned"] });
+    }
+    if (!state.dirty && state.lastScale === scale) return;
+    if (state.dirty) {
+        state.elements = Array.from(container.querySelectorAll<HTMLElement>(LIVE_SCALE_SELECTOR));
+        state.pinnedElements = Array.from(container.querySelectorAll<HTMLElement>(PINNED_LIVE_SCALE_SELECTOR));
+        state.dirty = false;
+    }
+    const scaleStr = String(scale);
+    const inverseStr = String(1 / Math.max(scale, 0.05));
+    if (container.matches(LIVE_SCALE_SELECTOR)) applyScopedElementScale(container, scaleStr, inverseStr);
+    if (container.dataset.canvasLodDomHidden === "true") {
+        state.lastScale = NaN;
+        for (const element of state.pinnedElements) applyScopedElementScale(element, scaleStr, inverseStr);
+        return;
+    }
+    state.lastScale = scale;
+    for (const element of state.elements) applyScopedElementScale(element, scaleStr, inverseStr);
 }
 
 export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewport: ViewportTransform, notify = true) {

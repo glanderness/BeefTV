@@ -77,10 +77,13 @@ export async function cacheResourceImagePreviewObjectUrl(storageKey: string, max
 }
 
 /** 同步读取本会话内存中的 Blob URL，命中时节点首帧即可上屏，不必等 IndexedDB 异步读取。 */
-export function peekCachedResourceObjectUrl(storageKey: string) {
+export function peekCachedResourceObjectUrl(storageKey: string, previewSize?: number) {
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return "";
     const userScope = getActiveUserScope();
+    if (previewSize && [128, 512, 1024, 2048].includes(previewSize)) {
+        return objectUrls.get(`${userScope}:${resourceId}:canvas-preview-v2-p3-${previewSize}`) || "";
+    }
     return objectUrls.get(`${userScope}:${resourceId}:file`) || "";
 }
 

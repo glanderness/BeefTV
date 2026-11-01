@@ -38,6 +38,7 @@ type CanvasNodeProps = {
     forceInputVisible?: boolean;
     showImageInfo: boolean;
     reduceMediaEffects?: boolean;
+    lodPinned?: boolean;
     readOnly?: boolean;
     resourceLabel?: CanvasResourceReference;
     mentionReferences?: CanvasResourceReference[];
@@ -98,6 +99,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     connectionApproach,
     forceInputVisible = false,
     reduceMediaEffects = false,
+    lodPinned = false,
     readOnly = false,
     mentionReferences = [],
     renderNodeContent,
@@ -334,6 +336,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             data-video-merge-source-count={data.metadata?.videoMergeSourceNodeIds?.length ? String(data.metadata.videoMergeSourceNodeIds.length) : undefined}
             data-media-operation-error={data.metadata?.mediaOperationError || undefined}
             data-node-hovered={hovered ? "true" : undefined}
+            data-node-lod-pinned={lodPinned ? "true" : undefined}
             data-asset-category={data.metadata?.assetCategory || undefined}
             className={`node-element absolute flex select-none flex-col ${dragOffset ? "cursor-grabbing" : data.type === CanvasNodeType.Drawing ? "cursor-pointer" : "cursor-default"} ${isSelected ? "z-[var(--z-node-toolbar)]" : isFocusRelated || isConnectionTarget ? "z-[var(--z-node-active)]" : "z-[var(--z-node)]"}`}
             style={{
@@ -589,7 +592,7 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.data === next.data &&
         previous.dragOffset?.x === next.dragOffset?.x &&
         previous.dragOffset?.y === next.dragOffset?.y &&
-        previous.scale === next.scale &&
+        Math.abs(previous.scale - next.scale) < 1e-6 &&
         previous.isSelected === next.isSelected &&
         previous.mediaActive === next.mediaActive &&
         previous.isRelated === next.isRelated &&
@@ -600,8 +603,8 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.forceInputVisible === next.forceInputVisible &&
         previous.showImageInfo === next.showImageInfo &&
         previous.reduceMediaEffects === next.reduceMediaEffects &&
+        previous.lodPinned === next.lodPinned &&
         previous.readOnly === next.readOnly &&
-        previous.resourceLabel === next.resourceLabel &&
         previous.mentionReferences === next.mentionReferences &&
         (!usesCanvasCustomNodeContent(next.data) || previous.renderNodeContent === next.renderNodeContent) &&
         previous.drawingProjectId === next.drawingProjectId &&

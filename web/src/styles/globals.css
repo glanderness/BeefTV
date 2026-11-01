@@ -11577,13 +11577,8 @@ html:not(.dark) .creation-studio-control:hover,
         }
     }
 
-    [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) {
-        animation: none !important;
-    }
-
-    [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) {
-        will-change: transform;
-    }
+    [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) { animation: none !important; }
+    [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) { will-change: transform; }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, .canvas-node-toolbar > div, [data-canvas-node-panel], [data-canvas-node-panel] .canvas-floating-panel, [data-canvas-node-panel] .canvas-node-panel-placement-change) {
         animation-play-state: paused !important;
@@ -11600,9 +11595,10 @@ html:not(.dark) .creation-studio-control:hover,
 
     /* 平移、缩放期间每条连线只画一条单色主线：底衬描边、光晕、端点、流光都先不画。
        透明的点击路径不产生绘制，保留不动。 */
-    [data-canvas-viewport-interacting="true"] g[data-canvas-connection-id] > :not(.canvas-connection-line, [data-connection-id], defs) {
-        display: none;
-    }
+    [data-canvas-viewport-interacting="true"] g[data-canvas-connection-id] > :not(.canvas-connection-line, [data-connection-id], defs) { display: none; }
+
+    /* 缩放进入概览画布时，手势期间保留在 DOM 中的非固定卡片仅隐藏绘制与命中，避免 display: none 重建渲染树与合成层。 */
+    [data-canvas-lod-dom-hidden="true"] .node-element:not([data-node-lod-pinned="true"]) { visibility: hidden !important; pointer-events: none !important; }
 
     /* 节点状态徽章 success 淡出动画（对应 #97 决策2）*/
     @keyframes canvas-status-success-fade {

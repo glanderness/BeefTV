@@ -38,6 +38,7 @@ type CanvasProjectWorldLayersProps = {
     linkedFolderPreviewNodesById: Map<string, CanvasNodeData[]>;
     dragPreview: DragPreview;
     selectedNodeIds: Set<string>;
+    lodPinnedNodeIds?: ReadonlySet<string>;
     /** Playing media node; owned by the page so the overview keeps it mounted. */
     activeMediaNodeId: string | null;
     onActiveMediaNodeChange: (nodeId: string | null) => void;
@@ -253,6 +254,7 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         data={node}
                         dragOffset={props.dragPreview?.nodeIds.has(node.id) ? props.dragPreview : undefined}
                         scale={viewportScale}
+                        lodPinned={props.lodPinnedNodeIds?.has(node.id)}
                         isSelected={props.selectedNodeIds.has(node.id)}
                         mediaActive={activeMediaNodeId === node.id}
                         onMediaPlayRequest={setActiveMediaNodeId}

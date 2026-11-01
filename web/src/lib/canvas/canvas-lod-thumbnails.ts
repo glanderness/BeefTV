@@ -1,7 +1,7 @@
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { buildLibTVImagePreviewUrl } from "@/lib/canvas/libtv-import";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration } from "@/services/canvas-video-preview";
+import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration, hasCachedCanvasVideoPreview } from "@/services/canvas-video-preview";
 import { resolveImageUrl } from "@/services/image-storage";
 import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -21,7 +21,8 @@ type Entry = {
 };
 
 const THUMBNAIL_MAX_SIDE = 256;
-const MAX_ENTRIES = 900;
+const MAX_ENTRIES = 600;
+const MAX_PREWARM_QUEUE = 64;
 const MAX_CONCURRENT_LOADS = 4;
 const FAILED_RETRY_DELAY_MS = 1000;
 // Persisted preview tier shared with the DOM image cards.
@@ -29,7 +30,15 @@ const IMAGE_PREVIEW_TIER = 512;
 
 const entries = new Map<string, Entry>();
 const queue: Array<{ key: string; node: CanvasNodeData }> = [];
+const prewarmQueue: Array<{ key: string; node: CanvasNodeData }> = [];
+const prewarmQueuedKeys = new Set<string>();
 let activeLoads = 0;
+let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
+let redrawListener: (() => void) | null = null;
+
+export function setCanvasLodRedrawListener(listener: (() => void) | null) {
+    redrawListener = listener;
+}
 
 export function canvasLodThumbnailKey(node: CanvasNodeData) {
     const metadata = node.metadata;
@@ -44,20 +53,33 @@ export function canvasLodThumbnailKey(node: CanvasNodeData) {
     return "";
 }
 
+function canLoadVideoThumbnail(node: CanvasNodeData) {
+    if (node.metadata?.videoPreview?.storageKey) return true;
+    const persisted = canvasNodeVideoPreviewUrl(node);
+    if (persisted && !canvasVideoPreviewNeedsHydration(node)) return true;
+    return hasCachedCanvasVideoPreview(node);
+}
+
+function isCanvasInteracting() {
+    return typeof document !== "undefined" && Boolean(document.querySelector('[data-canvas-viewport-interacting="true"],[data-canvas-node-dragging="true"]'));
+}
+
 /**
  * Returns the bitmap when ready; otherwise queues one load and calls
  * `onReady` once it settles. Callers redraw from scratch, so a missed
  * notification only delays the thumbnail until the next frame.
  */
-export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void): CanvasLodThumbnail | null | "failed" {
+export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void, allowQueue?: boolean): CanvasLodThumbnail | null | "failed" {
     const key = canvasLodThumbnailKey(node);
     if (!key) return null;
     const existing = entries.get(key);
     if (existing) {
         if (existing.state === "ready") {
-            // Refresh LRU position.
-            entries.delete(key);
-            entries.set(key, existing);
+            if (allowQueue !== false) {
+                // Refresh LRU position outside active gesture frames.
+                entries.delete(key);
+                entries.set(key, existing);
+            }
             return existing.thumbnail || null;
         }
         if (existing.state === "failed") {
@@ -70,6 +92,9 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void)
             return null;
         }
     }
+    const canQueue = allowQueue ?? !isCanvasInteracting();
+    if (!canQueue) return null;
+    if (node.type === CanvasNodeType.Video && !canLoadVideoThumbnail(node)) return null;
     const entry: Entry = { state: "pending", listeners: new Set([onReady]) };
     entries.set(key, entry);
     queue.push({ key, node });
@@ -88,6 +113,10 @@ function evictOverflow() {
 }
 
 function pumpQueue() {
+    if (isCanvasInteracting()) {
+        schedulePrewarmStep();
+        return;
+    }
     while (activeLoads < MAX_CONCURRENT_LOADS && queue.length) {
         // Most recent requests are what the user is looking at now.
         const job = queue.pop()!;
@@ -108,11 +137,62 @@ function pumpQueue() {
                 activeLoads -= 1;
                 const listeners = [...entry.listeners];
                 entry.listeners.clear();
-                listeners.forEach((listener) => listener());
+                if (listeners.length) listeners.forEach((listener) => listener());
+                else redrawListener?.();
                 evictOverflow();
                 pumpQueue();
+                schedulePrewarmStep();
             });
     }
+}
+
+/**
+ * Low-priority background warmup for media thumbnails so the first zoom across
+ * the overview threshold draws cached bitmaps instead of decoding in flight.
+ */
+export function prewarmCanvasLodThumbnails(nodes: readonly CanvasNodeData[]) {
+    if (typeof window === "undefined") return;
+    for (const node of nodes) {
+        if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video) || (!node.metadata?.content && !node.metadata?.previewContent)) continue;
+        if (node.type === CanvasNodeType.Video && !canLoadVideoThumbnail(node)) continue;
+        const key = canvasLodThumbnailKey(node);
+        if (!key || entries.has(key) || prewarmQueuedKeys.has(key)) continue;
+        if (prewarmQueue.length >= MAX_PREWARM_QUEUE) {
+            const dropped = prewarmQueue.shift();
+            if (dropped) prewarmQueuedKeys.delete(dropped.key);
+        }
+        prewarmQueuedKeys.add(key);
+        prewarmQueue.push({ key, node });
+    }
+    schedulePrewarmStep();
+}
+
+function schedulePrewarmStep() {
+    if (prewarmTimer !== null || (!prewarmQueue.length && !queue.length) || activeLoads > 0) return;
+    if (typeof window === "undefined") return;
+    prewarmTimer = setTimeout(() => {
+        prewarmTimer = null;
+        if (activeLoads > 0) return;
+        if (isCanvasInteracting()) {
+            schedulePrewarmStep();
+            return;
+        }
+        if (queue.length > 0) {
+            pumpQueue();
+            return;
+        }
+        while (prewarmQueue.length) {
+            const job = prewarmQueue.shift()!;
+            prewarmQueuedKeys.delete(job.key);
+            if (entries.has(job.key)) continue;
+            const entry: Entry = { state: "pending", listeners: new Set() };
+            entries.set(job.key, entry);
+            queue.push(job);
+            pumpQueue();
+            evictOverflow();
+            return;
+        }
+    }, 120);
 }
 
 async function loadThumbnail(node: CanvasNodeData): Promise<CanvasLodThumbnail | null> {
