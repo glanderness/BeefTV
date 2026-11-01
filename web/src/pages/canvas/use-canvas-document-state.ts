@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatc
 import { stampCanvasNodeChanges } from "@/lib/canvas/canvas-node-timestamps";
 import { bringCanvasNodeToFront, type CanvasNodeStackOrder } from "@/lib/canvas/canvas-node-stack-order";
 import { refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
+import { notifyExternalCanvasEvent, subscribeCanvasEventsStream } from "@/services/canvas-external-writes";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { persistCanvasNodeFailure } from "@/lib/canvas/canvas-node-failure-state";
@@ -90,9 +91,11 @@ export function useCanvasDocumentState(projectId: string) {
             if (!disposed) void refreshLocalCanvasProjectIfChanged(projectId);
         };
         const timer = window.setInterval(sync, 4000);
-        const source = window.location.protocol === "http:" ? new EventSource(`/api/canvas-projects/${encodeURIComponent(projectId)}/events`) : undefined;
-        source?.addEventListener("canvas.updated", sync);
-        return () => { disposed = true; window.clearInterval(timer); source?.removeEventListener("canvas.updated", sync); source?.close(); };
+        const unsubscribeStream = subscribeCanvasEventsStream(projectId, () => {
+            sync();
+            if (!disposed) notifyExternalCanvasEvent(projectId);
+        });
+        return () => { disposed = true; window.clearInterval(timer); unsubscribeStream(); };
     }, [projectId]);
     return { nodes, nodesRef, setNodes, setNodesState, adoptNodes, connections, connectionsRef, setConnections, chatSessions, chatSessionsRef, setChatSessions, activeChatId, activeChatIdRef, setActiveChatId, nodeStackOrder, bringNodeToFront, ...content };
 }
