@@ -36,10 +36,19 @@ test('producer workflow respects studio changes, maintains plan_update, and insp
 });
 
 test('optional short-film storyboard and cross-shot method lives in the versioned builtin skill instead of resident prompt', () => {
+  expect(SYSTEM_PROMPT.length).toBeLessThanOrEqual(2500);
   expect(SYSTEM_PROMPT).not.toContain('短片分镜只填本次必需字段');
   expect(SYSTEM_PROMPT).not.toContain('同一商品、角色或场景需要跨镜一致时');
+  expect(SYSTEM_PROMPT).not.toContain('H3 系列');
+  expect(SYSTEM_PROMPT).not.toContain('prepareMedia');
+  expect(SYSTEM_PROMPT).not.toContain('syncBoundNodes');
+  expect(SYSTEM_PROMPT).toContain('省略 image/video');
+  expect(SYSTEM_PROMPT).toContain('不要编造审批，也不要承诺已经扣费或已经出图');
   const skills = JSON.parse(fs.readFileSync(new URL('../backend/internal/skills/seed/skills.json', import.meta.url), 'utf8'));
   const producerSkill = skills.find((item) => item.skill_id === '14811816970252');
   expect(producerSkill?.instruction).toContain('短片分镜只填本次必需字段');
   expect(producerSkill?.instruction).toContain('同一商品、角色或场景需要跨镜一致时');
+  expect(producerSkill?.instruction).toContain('H3 系列');
+  expect(producerSkill?.instruction).toContain('此规则不用于多素材参考模式');
+  expect(producerSkill?.instruction).toContain('不声称完成工具未提供的模式切换');
 });

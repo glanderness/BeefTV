@@ -809,6 +809,13 @@ func runMCP(c *client, args []string) error {
 		return err
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "beeftv", Version: "1.0.0"}, nil)
+	filteredOps := make([]opDescriptor, 0, len(ops))
+	for _, op := range ops {
+		if isDefaultMCPOperation(op.ID) {
+			filteredOps = append(filteredOps, op)
+		}
+	}
+	ops = filteredOps
 	registeredTools := len(ops)
 	business, businessErr := c.businessTools(ctx)
 	if businessErr != nil {
@@ -867,6 +874,10 @@ func runMCP(c *client, args []string) error {
 	_, baseSource := resolveBaseURL()
 	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", registeredTools, c.currentBaseURL(), baseSource, orNone(c.clientID))
 	return server.Run(ctx, &mcp.StdioTransport{})
+}
+
+func isDefaultMCPOperation(id string) bool {
+	return !strings.HasPrefix(id, "conversation.") && !strings.HasPrefix(id, "skill.publish.")
 }
 
 func orNone(value string) string {

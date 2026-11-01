@@ -56,7 +56,7 @@ type MediaImageRead struct {
 	Crop           *MediaImageCrop `json:"crop,omitempty"`
 }
 
-const mediaImageCropSchema = `{"type":"object","description":"仅用于图片 frames 检查。按原始像素读取局部，不缩小分辨率；坐标相对显示方向，从左上角起，x/y/width/height 均为0到1的比例，范围必须完整位于图内。用于小字、纹理及长图分区。","properties":{"x":{"type":"number","minimum":0,"maximum":1},"y":{"type":"number","minimum":0,"maximum":1},"width":{"type":"number","exclusiveMinimum":0,"maximum":1},"height":{"type":"number","exclusiveMinimum":0,"maximum":1}},"required":["x","y","width","height"],"additionalProperties":false}`
+const mediaImageCropSchema = `{"type":"object","description":"图片局部原像素裁剪（0~1比例）","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]}`
 
 // 3 MiB becomes 4 MiB of base64, below the SDK's default 4.5 MiB inline budget.
 // This bounds payload bytes without imposing a pixel limit on detail inspection.

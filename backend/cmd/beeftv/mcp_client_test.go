@@ -55,7 +55,25 @@ func TestMCPClientLoop(t *testing.T) {
 	}
 	registry := operations.NewRegistry(nil, nil)
 	operations.RegisterDefaultOps(registry)
-	expected := registry.List(operations.ManualCaller(false))
+	excluded := map[string]bool{
+		"conversation.message.attach": true,
+		"skill.publish.prepare":       true,
+		"skill.publish.status":        true,
+	}
+	var expected []operations.Descriptor
+	for _, op := range registry.List(operations.ManualCaller(false)) {
+		if !excluded[op.ID] {
+			expected = append(expected, op)
+		}
+	}
+	if len(expected) != 38 {
+		t.Fatalf("expected 38 default MCP operations, got %d", len(expected))
+	}
+	for _, tool := range tools.Tools {
+		if excluded[tool.Name] {
+			t.Fatalf("excluded operation %s leaked into default MCP tools", tool.Name)
+		}
+	}
 	apiClient, clientErr := newClient()
 	if clientErr != nil {
 		t.Fatal(clientErr)

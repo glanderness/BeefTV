@@ -91,7 +91,11 @@ func businessFixture(t *testing.T) (*httptest.Server, func() []string) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ops"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"ops":[{"id":"canvas.get","summary":"读画布","readOnly":true,"params":{"type":"object"}}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"ops":[
+				{"id":"canvas.get","summary":"读画布","readOnly":true,"params":{"type":"object"}},
+				{"id":"conversation.search","summary":"搜对话","readOnly":true,"params":{"type":"object"}},
+				{"id":"skill.publish.prepare","summary":"发技能","readOnly":true,"params":{"type":"object"}}
+			]}}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/business/tools"):
 			_, _ = w.Write([]byte(`{"code":0,"data":{"tools":[
 				{"id":"business_get_assets","summary":"GET /assets","method":"GET","path":"/assets","readOnly":true,"params":{"type":"object","properties":{}}},

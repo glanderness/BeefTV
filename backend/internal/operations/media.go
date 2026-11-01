@@ -94,7 +94,7 @@ type mediaEvidenceRequest struct {
 	Checks  bool     `json:"checks"`
 }
 
-const mediaEvidenceSchema = `{"type":"object","description":"从同一份媒体字节一次读取明确区间的实际证据；每次最多15秒，不代表质量通过。静态帧不能替代连续视频或声音。","properties":{"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":1},"modes":{"type":"array","minItems":1,"maxItems":3,"uniqueItems":true,"items":{"type":"string","enum":["frames","video","audio"]}},"checks":{"type":"boolean","description":"同时检测该区间的黑场、音量与静音；不能判断声音内容。"}},"required":["startMs","endMs","modes"],"additionalProperties":false}`
+const mediaEvidenceSchema = `{"type":"object","description":"一次读取15秒内区间的证据","properties":{"startMs":{"type":"integer"},"endMs":{"type":"integer"},"modes":{"type":"array","items":{"type":"string","enum":["frames","video","audio"]}},"checks":{"type":"boolean"}},"required":["startMs","endMs","modes"]}`
 
 // ValidateMediaReference shares the owned-node/asset linkage checks with chat
 // admission. Client-supplied resource IDs never grant access on their own.
@@ -115,9 +115,9 @@ func ValidateMediaReference(domain Domain, userID, canvasID, nodeID, assetID, re
 func registerMediaOps(r *Registry) {
 	registerMediaReview(r)
 	summaries := map[string]string{
-		"media.overview": "获取已关联媒体的版本、时长与画面。图片在大小允许时保留原始像素；image.view=preview 表示仅有概览，细节需用 media.inspect imageCrop 分区查看。已知15秒以内影音区间可用 evidence 读取真实 frames/video/audio 及客观检测。概览不能替代连续影音审查。",
-		"media.inspect":  "实际读取媒体：图片默认保留原始像素，可用 imageCrop 分区看小字、纹理和长图，图片 startMs/endMs 均为0；影音每次最多 15 秒，frames 看截图，video 看连续视频，audio 听音频，不把抽帧当作完整影音审查。",
-		"media.check":    "客观测量指定区间的黑屏、音量与静音停顿（固定 -35 dB、最少 120 ms，返回原素材坐标）；音量与停顿不能判断声音内容。停顿仅是候选切点，随后用 media.inspect audio 裁剪并实际听取确认，不能当作词时间戳或语义切点，不能替代实际查看和听取。",
+		"media.overview": "获取媒体版本、时长与概览（可选15秒内 evidence）；概览不能替代连续影音审查",
+		"media.inspect":  "读取媒体片段（每次最多 15 秒；图片可用 imageCrop 分区查看）",
+		"media.check":    "客观测量黑屏、音量与静音停顿；不能判断声音内容，不能替代实际听看",
 	}
 	for _, id := range []string{"media.overview", "media.inspect", "media.check"} {
 		operation := id
@@ -132,7 +132,7 @@ func registerMediaOps(r *Registry) {
 			properties = `,"imageCrop":` + mediaImageCropSchema
 		}
 		r.Register(Op{AssistantCanvas: true, ID: operation, Summary: summaries[operation], ReadOnly: true, Scope: ScopeCanvas,
-			Params:  json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string","minLength":1,"description":"先调用 media.overview，使用返回的 version；inspect 和 check 必填，不猜版本。"},"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":0},"mode":{"type":"string","description":"frames：离散静态截图，用于构图与画面内容，不能判断连续运动或声音；video：连续原生视频片段，用于运镜、动作、转场与音画关系，保留可用音轨；audio：原生音频片段，用于说话、对白、音乐和声音内容。按检查目标选择；inspect 每次最多 15 秒。","enum":["frames","video","audio"]}%s},"required":%s}`, properties, required)),
+			Params:  json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string","minLength":1},"startMs":{"type":"integer"},"endMs":{"type":"integer"},"mode":{"type":"string","description":"frames静态截图（不能判断连续运动或声音）；video连续；audio声音","enum":["frames","video","audio"]}%s},"required":%s}`, properties, required)),
 			Handler: func(ctx *Context, raw json.RawMessage) (any, error) { return runMedia(ctx, operation, raw) }})
 	}
 }

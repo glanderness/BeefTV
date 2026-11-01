@@ -186,7 +186,7 @@ export async function installDurableExtensions({
   function hostTools() {
     const items = [{
       name: 'plan_update', label: 'plan.update', readOnly: true, replay: 'safe',
-      description: '维护当前对话的创作制作计划（整体替换步骤清单；每完成一步及时更新状态）。',
+      description: '更新当前创作计划（整体替换步骤清单）',
       parameters: PLAN_UPDATE_PARAMETERS,
       execute: async (toolCallId, args) => {
         const started = Date.now();
@@ -210,7 +210,7 @@ export async function installDurableExtensions({
     if (skills) {
       items.push({
         name: 'skill_load', label: 'skill.load', readOnly: false, replay: 'safe',
-        description: '按技能目录里的 id 加载一个已安装技能的固定版本，并在当前会话持续使用；不修改画布。需要只检查文件时使用 skill_file。',
+        description: '按技能目录 id 加载已安装技能正文',
         parameters: SKILL_LOAD_PARAMETERS,
         execute: async (_toolCallId, args, signal) => {
           const id = String(args?.id || '').trim();

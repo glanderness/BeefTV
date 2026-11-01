@@ -178,7 +178,7 @@ func SearchProject(
 func registerProjectSearchOps(r *Registry) {
 	for _, target := range []string{"media", "canvas"} {
 		kind := target
-		r.Register(Op{AssistantCanvas: true, ID: "project." + kind + ".search", Summary: "在当前画布所属项目查找媒体或画布；无项目只查当前画布关联资源", ReadOnly: true, Scope: ScopeCanvas,
+		r.Register(Op{AssistantCanvas: true, ID: "project." + kind + ".search", Summary: "在当前项目查找媒体或画布", ReadOnly: true, Scope: ScopeCanvas,
 			Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"query":{"type":"string"},"kind":{"type":"string","enum":["image","video","audio"]},"page":{"type":"integer"},"pageSize":{"type":"integer"}},"required":["canvasId"]}`),
 			Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
 				var args struct {
