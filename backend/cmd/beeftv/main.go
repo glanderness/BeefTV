@@ -385,6 +385,10 @@ func run(args []string) error {
 		return runApprove(c, args[1:])
 	case "orders":
 		return runOrders(c, args[1:])
+	case "writes":
+		return runExternalWrites(c, args[1:])
+	case "undo":
+		return runUndoExternalWrite(c, args[1:])
 	case "mcp":
 		return runMCP(c, args[1:])
 	case "business":
@@ -415,6 +419,8 @@ func usage() {
   beeftv task get --task <id> [--json]
   beeftv orders [--canvas <id>] [--json]
   beeftv approve <proposalId> [--json]
+  beeftv writes [--canvas <id>] [--json]
+  beeftv undo <opId|latest> [--canvas <id>] [--json]
   beeftv client register --label <label> [--kind codex|claude|cursor|other] [--mode read-only|read-write] [--approval ask|caller|auto]
   beeftv mcp serve [--read-only] [--all-business-tools]
 
@@ -784,6 +790,76 @@ func runOrders(c *client, args []string) error {
 		return err
 	}
 	return printResult(raw, *jsonOut)
+}
+
+func runExternalWrites(c *client, args []string) error {
+	fs := flag.NewFlagSet("writes", flag.ContinueOnError)
+	canvasID := fs.String("canvas", "", "按画布 ID 过滤")
+	jsonOut := fs.Bool("json", false, "输出 JSON")
+	if err := fs.Parse(args); err != nil {
+		return flagError(err)
+	}
+	c.ensureLocalOwnerToken()
+	path := "/ops/external-writes"
+	if trimmed := strings.TrimSpace(*canvasID); trimmed != "" {
+		path += "?canvasId=" + url.QueryEscape(trimmed)
+	}
+	raw, err := c.do(context.Background(), http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	return printResult(raw, *jsonOut)
+}
+
+func runUndoExternalWrite(c *client, args []string) error {
+	jsonOut := false
+	opID := ""
+	canvasID := ""
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprintln(os.Stderr, "用法: beeftv undo <opId|latest> [--canvas <id>] [--json]")
+			return nil
+		case arg == "--json" || arg == "-json":
+			jsonOut = true
+		case arg == "--canvas" || arg == "-canvas":
+			if i+1 >= len(args) {
+				return &cliError{code: exitUsage, reason: "missing_flag", msg: "--canvas 需要参数"}
+			}
+			i++
+			canvasID = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--canvas="):
+			canvasID = strings.TrimSpace(strings.TrimPrefix(arg, "--canvas="))
+		case arg == "--op-id" || arg == "-op-id":
+			if i+1 >= len(args) {
+				return &cliError{code: exitUsage, reason: "missing_flag", msg: "--op-id 需要参数"}
+			}
+			i++
+			opID = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--op-id="):
+			opID = strings.TrimSpace(strings.TrimPrefix(arg, "--op-id="))
+		case strings.HasPrefix(arg, "-"):
+			return &cliError{code: exitUsage, reason: "bad_flags", msg: "未知参数: " + arg}
+		case opID == "":
+			opID = arg
+		default:
+			return &cliError{code: exitUsage, reason: "bad_flags", msg: "多余的参数: " + arg}
+		}
+	}
+	if opID == "" {
+		if canvasID != "" {
+			opID = "latest"
+		} else {
+			return &cliError{code: exitUsage, reason: "missing_flag", msg: "请提供写入 opId 或 --canvas：beeftv undo <opId> [--canvas <id>]"}
+		}
+	}
+	c.ensureLocalOwnerToken()
+	raw, err := c.do(context.Background(), http.MethodPost, "/ops/external-writes/"+url.PathEscape(opID)+"/undo", map[string]any{"canvasId": canvasID})
+	if err != nil {
+		return err
+	}
+	return printResult(raw, jsonOut)
 }
 
 func runMCP(c *client, args []string) error {

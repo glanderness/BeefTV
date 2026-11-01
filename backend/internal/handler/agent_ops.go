@@ -173,6 +173,75 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.
 		ok(c, result)
 	})
 
+	r.GET("/ops/external-writes", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) {
+			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if _, _, authErr := resolveCaller(c, svc, clients); authErr != nil {
+			fail(c, http.StatusForbidden, app.BadAuthRequest(authErr.Error()))
+			return
+		}
+		writes, err := store.ListExternalCanvasWrites(user.ID, c.Query("canvasId"))
+		if err != nil {
+			opErr := agentops.AsError(err)
+			c.JSON(agentops.HTTPStatus(opErr.Code), gin.H{"code": agentops.HTTPStatus(opErr.Code), "reason": opErr.Reason, "msg": opErr.Message})
+			return
+		}
+		ok(c, gin.H{"writes": writes})
+	})
+
+	r.POST("/ops/external-writes/:opId/undo", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) {
+			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		caller, _, authErr := resolveCaller(c, svc, clients)
+		if authErr != nil {
+			fail(c, http.StatusForbidden, app.BadAuthRequest(authErr.Error()))
+			return
+		}
+		if caller.ReadOnly || caller.Kind == agentops.CallerAssistant {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "permission_denied",
+				"msg":    "撤销外部写入需要工作区读写权限或桌面界面",
+			})
+			return
+		}
+		var req struct {
+			CanvasID string `json:"canvasId"`
+		}
+		_ = c.ShouldBindJSON(&req)
+		if req.CanvasID == "" {
+			req.CanvasID = c.Query("canvasId")
+		}
+		var restrictClient string
+		if caller.Kind == agentops.CallerExternal {
+			restrictClient = caller.ClientID
+		}
+		result, undoErr := store.UndoExternalCanvasWrite(c.Request.Context(), svc, user.ID, req.CanvasID, c.Param("opId"), restrictClient)
+		if undoErr != nil {
+			opErr := agentops.AsError(undoErr)
+			c.JSON(agentops.HTTPStatus(opErr.Code), gin.H{
+				"code": agentops.HTTPStatus(opErr.Code), "reason": opErr.Reason, "msg": opErr.Message,
+				"details": opErr.Details,
+			})
+			return
+		}
+		ok(c, result)
+	})
+
 	r.POST("/ops/:op", func(c *gin.Context) {
 		// 本机入口：只接受 loopback 来源，避免被浏览器跨站或外部主机调用。
 		if !isLoopbackRequest(c.Request) {

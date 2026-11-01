@@ -227,7 +227,10 @@ func ApproveExternalGenerationOrderInTx(tx *gorm.DB, domain Domain, userID, prop
 		return nil, err
 	}
 	if order.CanvasRevision > 0 && canvasRevision(doc) != order.CanvasRevision {
-		return nil, Conflict("revision_conflict", "画布已变化，请重新生成提议后再批准", nil)
+		expected := order.CanvasRevision
+		opErr := Conflict("revision_conflict", "画布已变化，请重新生成提议后再批准", nil)
+		EnrichCanvasConflictErrorInTx(tx, domain, userID, order.CanvasID, &expected, raw, opErr)
+		return nil, opErr
 	}
 	batchTargets, err := GenerationTargets(domain, doc, order.NodeIDs)
 	if err != nil {

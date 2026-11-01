@@ -13,8 +13,11 @@ type (
 	ApprovalMode = operations.ApprovalMode
 	Request      = operations.Request
 	Result       = operations.Result
-	Receipt      = operations.Receipt
-	Registry     = operations.Registry
+	Receipt                       = operations.Receipt
+	Registry                      = operations.Registry
+	ExternalCanvasWrite           = operations.ExternalCanvasWrite
+	ExternalCanvasWriteUndoResult = operations.ExternalCanvasWriteUndoResult
+	CanvasNodeRef                 = operations.CanvasNodeRef
 )
 
 const (

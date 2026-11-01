@@ -536,11 +536,12 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// isOpsEntryPath 只认操作层入口：GET /api/ops、GET /api/ops/orders、POST /api/ops/<op> 与 POST /api/ops/orders/<proposalId>/approve。
+// isOpsEntryPath 只认操作层入口：GET /api/ops、GET /api/ops/orders、GET /api/ops/external-writes、
+// POST /api/ops/<op>、POST /api/ops/orders/<proposalId>/approve 与 POST /api/ops/external-writes/<opId>/undo。
 // /api/ops/clients 是凭据签发，不在豁免范围。
 func isOpsEntryPath(r *http.Request) bool {
 	path := r.URL.Path
-	if r.Method == http.MethodGet && (path == "/api/ops" || path == "/api/ops/orders") {
+	if r.Method == http.MethodGet && (path == "/api/ops" || path == "/api/ops/orders" || path == "/api/ops/external-writes") {
 		return true
 	}
 	if r.Method != http.MethodPost || !strings.HasPrefix(path, "/api/ops/") {
@@ -550,6 +551,10 @@ func isOpsEntryPath(r *http.Request) bool {
 	if strings.HasPrefix(op, "orders/") && strings.HasSuffix(op, "/approve") {
 		proposalID := strings.TrimSuffix(strings.TrimPrefix(op, "orders/"), "/approve")
 		return proposalID != "" && !strings.Contains(proposalID, "/")
+	}
+	if strings.HasPrefix(op, "external-writes/") && strings.HasSuffix(op, "/undo") {
+		opID := strings.TrimSuffix(strings.TrimPrefix(op, "external-writes/"), "/undo")
+		return opID != "" && !strings.Contains(opID, "/")
 	}
 	return op != "" && op != "clients" && !strings.Contains(op, "/")
 }
