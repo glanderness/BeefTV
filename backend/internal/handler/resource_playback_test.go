@@ -77,4 +77,22 @@ func TestPlaybackMissingCopyDoesNotReturnStaleVariant304(t *testing.T) {
 	if response.Code != http.StatusPartialContent || response.Body.String() != "playback" {
 		t.Fatalf("playback range = %d %s", response.Code, response.Body.String())
 	}
+
+	missingResource := model.Resource{
+		ID: "missing-image", UserID: owner.ID, Kind: "image", MimeType: "image/png",
+		Provider: "local", Status: model.ResourceStatusReady, ObjectKey: "missing.png",
+	}
+	if err := db.Create(&missingResource).Error; err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/resources/missing-image/file?proxy=1", nil)
+	request.Header.Set("If-None-Match", resourceResponseETag(&missingResource))
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing local file status = %d, want 404: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("ETag") != "" || response.Header().Get("Cache-Control") != "" {
+		t.Fatalf("missing local file leaked cache headers: ETag=%q Cache-Control=%q", response.Header().Get("ETag"), response.Header().Get("Cache-Control"))
+	}
 }

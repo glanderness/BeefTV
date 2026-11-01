@@ -1,12 +1,14 @@
 import { App, Button, Dropdown, Popover } from "antd";
 import { CheckCircle2, CircleAlert, CloudCheck, CloudOff, LoaderCircle, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { exportCanvasProjects, exportCanvasProjectsByIds } from "@/lib/canvas/canvas-export";
+import { resolveWorkspaceExportCanvasIds } from "@/lib/canvas/canvas-workspace-project";
 import { ApiError } from "@/services/api/request";
 import { readAllCanvasSyncDrafts, readCanvasSyncDrafts, type CanvasSyncDraft } from "@/services/canvas-sync-drafts";
 import { fetchExternalCanvasWrites, subscribeExternalCanvasEvent, undoExternalCanvasWrite, type ExternalCanvasWrite } from "@/services/canvas-external-writes";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { acceptExternalCanvasRevision, pendingExternalCanvasRevision, refreshLocalCanvasProjectIfChanged, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
 import { highlightAssistantNodes } from "./canvas-assistant-highlight";
 import { canvasExternalRevisionVersion, subscribeCanvasExternalRevision, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { canvasSyncProgressKey, useSyncProgressStore, type SyncProjectProgress } from "@/stores/use-sync-progress-store";
@@ -262,15 +264,43 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { 
                                 disabled={busy}
                                 onClick={() =>
                                     void run(async () => {
-                                        const project = useCanvasStore.getState().openProject(projectId);
+                                        const store = useCanvasStore.getState();
+                                        const project = store.openProject(projectId);
                                         if (project) {
-                                            const result = await exportCanvasProjects([project], `${project.title}-本地草稿`);
+                                            let skippedCount = 0;
+                                            const result = await exportCanvasProjects([project], `${project.title}-本地草稿`, {
+                                                folders: store.folders,
+                                                allowMissingMedia: true,
+                                                onSkippedFiles: (missing) => { skippedCount = missing.length; },
+                                            });
                                             if (result === "cancelled") return;
+                                            if (skippedCount > 0) message.warning(`已导出备份，已自动跳过 ${skippedCount} 个缺失或无法读取的素材`);
                                         }
                                     })
                                 }
                             >
                                 下载当前内容
+                            </Button>
+                            <Button
+                                size="small"
+                                disabled={busy}
+                                onClick={() =>
+                                    void run(async () => {
+                                        const store = useCanvasStore.getState();
+                                        const ids = resolveWorkspaceExportCanvasIds(store.projects, [projectId]);
+                                        await exportCanvasProjectsByIds(
+                                            ids,
+                                            async (id) => (await loadCanvasProjectForEditing(id).catch(() => undefined)) || store.openProject(id),
+                                            {
+                                                folders: store.folders,
+                                                allowMissingMedia: true,
+                                                onSkipped: (count) => message.warning(`已导出备份，已自动跳过 ${count} 个缺失或无法读取的素材`),
+                                            },
+                                        );
+                                    })
+                                }
+                            >
+                                导出整个项目
                             </Button>
                             {onOpenVersions ? (
                                 <Button
@@ -335,9 +365,18 @@ export function CanvasSyncDraftMenu({ projectId }: { projectId?: string }) {
                                   return;
                               }
                               setExporting(true);
-                              void exportCanvasProjects([draft.project], `${draft.project.title}-本地草稿`, { includeLocalDrawings: false })
+                              let skippedCount = 0;
+                              void exportCanvasProjects([draft.project], `${draft.project.title}-本地草稿`, {
+                                  includeLocalDrawings: false,
+                                  folders: useCanvasStore.getState().folders,
+                                  allowMissingMedia: true,
+                                  onSkippedFiles: (missing) => { skippedCount = missing.length; },
+                              })
                                   .then((result) => {
-                                      if (result === "saved") message.success("草稿已下载，可从画布列表导入为新画布");
+                                      if (result === "saved") {
+                                          if (skippedCount > 0) message.warning(`已导出草稿，已自动跳过 ${skippedCount} 个缺失或无法读取的素材`);
+                                          else message.success("草稿已下载，可从画布列表导入为新画布");
+                                      }
                                   })
                                   .catch(() => message.error("草稿下载失败，请重试"))
                                   .finally(() => setExporting(false));

@@ -279,6 +279,18 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		if usePlayback {
 			serveETag = playbackResponseETag(etag)
 		}
+		rangeHeader := c.GetHeader("Range")
+		if ifRange := strings.TrimSpace(c.GetHeader("If-Range")); ifRange != "" && ifRange != serveETag {
+			rangeHeader = ""
+		}
+		if stream == nil {
+			stream, err = resources.OpenRange(user.ID, resource.ID, rangeHeader)
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			defer stream.Body.Close()
+		}
 		// 资源 ID 内容不可变（上传永远生成新 ID，不会原地覆盖）：图片可以放心交给浏览器
 		// 磁盘强缓存 30 天，大画布二次打开零请求直读磁盘缓存。视频/音频涉及转码副本
 		// 就绪与 Range 语义，保持逐次条件请求（304）。
@@ -297,18 +309,6 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		if ifNoneMatch(c.GetHeader("If-None-Match"), serveETag) {
 			c.Status(http.StatusNotModified)
 			return
-		}
-		rangeHeader := c.GetHeader("Range")
-		if ifRange := strings.TrimSpace(c.GetHeader("If-Range")); ifRange != "" && ifRange != serveETag {
-			rangeHeader = ""
-		}
-		if stream == nil {
-			stream, err = resources.OpenRange(user.ID, resource.ID, rangeHeader)
-			if err != nil {
-				failService(c, err)
-				return
-			}
-			defer stream.Body.Close()
 		}
 		if resource.MimeType == "" {
 			resource.MimeType = "application/octet-stream"
