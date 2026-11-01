@@ -185,6 +185,7 @@ function InfiniteCanvasPage() {
     // While the overview canvas is active it culls every frame itself, so
     // camera previews need not re-render this page to refresh virtualization.
     const lodActiveRef = useRef(false);
+    const lodEnterScaleRef = useRef(0);
     const contextMenu = pageUi((state) => state.contextMenu);
     const setContextMenu = pageUi((state) => state.setContextMenu);
     const {
@@ -461,6 +462,7 @@ function InfiniteCanvasPage() {
         setViewport,
         setVirtualizationViewport,
         virtualizationPausedRef: lodActiveRef,
+        lodEnterScaleRef,
     });
 
     const workflowInstances = useCanvasWorkflowInstances({
@@ -945,30 +947,13 @@ function InfiniteCanvasPage() {
         viewportInteracting: Boolean(virtualizationViewport),
     });
     const {
-        activeNodeId,
-        angleNode,
-        lightingNode,
-        emotionNode,
-        batchChildCountById,
-        batchMotionById,
-        canvasImageNodes,
-        contextMenuNode,
-        displayConnections,
-        frameChildrenById,
-        lodActive,
-        lodNodes,
-        maskEditNode,
-        mentionReferencesByNodeId,
-        nodeById,
-        reduceMediaEffects,
-        relatedHighlight,
-        resourceReferenceByNodeId,
-        selectedNodeBounds,
-        selectedVideoNodes,
-        toolbarNode,
-        visibleNodes,
+        activeNodeId, angleNode, lightingNode, emotionNode, batchChildCountById, batchMotionById,
+        canvasImageNodes, contextMenuNode, displayConnections, frameChildrenById, lodActive, lodEnterScale,
+        lodNodes, maskEditNode, mentionReferencesByNodeId, nodeById, reduceMediaEffects, relatedHighlight,
+        resourceReferenceByNodeId, selectedNodeBounds, selectedVideoNodes, toolbarNode, visibleNodes,
     } = renderModel;
     lodActiveRef.current = lodActive;
+    lodEnterScaleRef.current = lodEnterScale;
     const renderedConnections = showConnections ? displayConnections : [];
     const dialogNodeCandidate = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const dialogNode = canOpenCanvasNodePromptPanel(dialogNodeCandidate) ? dialogNodeCandidate : null;
@@ -1149,25 +1134,32 @@ function InfiniteCanvasPage() {
         closeConnectionCreateMenu,
     });
 
+    const renderModelRef = useRef(renderModel);
+    renderModelRef.current = renderModel;
+    const cancelImageCrop = useCallback(() => setCropNodeId(null), [setCropNodeId]);
+    const cancelAnnotation = useCallback(() => setAnnotationNodeId(null), [setAnnotationNodeId]);
+    const cancelMaskEdit = useCallback(() => setMaskEditNodeId(null), [setMaskEditNodeId]);
+    const cancelVideoCrop = useCallback(() => setVideoCropNodeId(null), [setVideoCropNodeId]);
+
     const renderCanvasNodePanel = useCallback((node: CanvasNodeData) => (
         <CanvasProjectNodePrompt node={node} projectId={projectId} videoModel={config.videoModel}
-            document={document} dialogs={dialogs} renderModel={renderModel} generation={generation}
+            document={document} dialogs={dialogs} renderModel={renderModelRef.current} generation={generation}
             nodeEditor={nodeEditor} pageUi={pageUi} referenceActions={referenceActions}
             onFocusNode={focusCanvasNode} onCreateReplacement={createGenerationReplacement}
             onNodeMouseDown={handleNodeMouseDown} />
-    ), [projectId, config.videoModel, document, dialogs, renderModel, generation, nodeEditor, pageUi,
+    ), [projectId, config.videoModel, document, dialogs, generation, nodeEditor, pageUi,
         referenceActions, focusCanvasNode, createGenerationReplacement, handleNodeMouseDown]);
 
     const renderCanvasNodeContent = useCallback((node: CanvasNodeData) => (
         <CanvasProjectNodeContent node={node} projectId={projectId} readOnly={readOnly}
             theme={theme} viewportScale={viewport.k} document={document} dialogs={dialogs}
-            renderModel={renderModel} generation={generation} nodeEditor={nodeEditor}
+            renderModel={renderModelRef.current} generation={generation} nodeEditor={nodeEditor}
             mediaTools={mediaTools} connectionController={connectionController} uploads={uploads}
             workflowInstances={workflowInstances} pageUi={pageUi} nodeDropTargetId={nodeDropTargetId}
             directorScenes={currentProject?.directorScenes} onFocusImage={focusCanvasImageNode}
             onOpenDirector={openDirectorWorkbench} onOpenStory={openStoryInput} onNodeMouseDown={handleNodeMouseDown}
         />
-    ), [projectId, readOnly, theme, viewport.k, document, dialogs, renderModel, generation, nodeEditor,
+    ), [projectId, readOnly, theme, viewport.k, document, dialogs, renderModel.configInputsById, generation, nodeEditor,
         mediaTools, connectionController, uploads, workflowInstances, pageUi, nodeDropTargetId,
         currentProject?.directorScenes, focusCanvasImageNode, openDirectorWorkbench, openStoryInput, handleNodeMouseDown]);
 
@@ -1448,6 +1440,7 @@ function InfiniteCanvasPage() {
                                     appearance={canvasAppearance}
                                     backgroundMode={backgroundMode}
                                     wheelBehavior={wheelBehavior}
+                                    lodDomHidden={lodActive && !isCanvasNodeMoving}
                                     graphicsLayer={
                                         <>
                                         <CanvasLodLayer
@@ -1514,6 +1507,7 @@ function InfiniteCanvasPage() {
                                                 linkedFolderPreviewNodesById={linkedFolderPreviewNodesById}
                                                 dragPreview={dragPreview}
                                                 selectedNodeIds={selectedNodeIds}
+                                                lodPinnedNodeIds={lodPinnedNodeIds}
                                                 activeMediaNodeId={activeMediaNodeId}
                                                 onActiveMediaNodeChange={setActiveMediaNodeId}
                                                 frameDropTargetId={frameDropTargetId}
@@ -1560,17 +1554,17 @@ function InfiniteCanvasPage() {
                                                 onOpenDrawing={openDrawingNode}
                                                 onStartBatchConnection={startBatchConnection}
                                                 imageCropNodeId={cropNodeId}
-                                                onCancelImageCrop={() => setCropNodeId(null)}
+                                                onCancelImageCrop={cancelImageCrop}
                                                 onConfirmImageCrop={cropImageNode}
                                                 annotationNodeId={annotationNodeId}
-                                                onCancelAnnotation={() => setAnnotationNodeId(null)}
+                                                onCancelAnnotation={cancelAnnotation}
                                                 onConfirmAnnotation={saveAnnotatedImageNode}
                                                 maskEditNodeId={maskEditNodeId}
                                                 maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
-                                                onCancelMaskEdit={() => setMaskEditNodeId(null)}
+                                                onCancelMaskEdit={cancelMaskEdit}
                                                 onConfirmMaskEdit={maskEditImageNode}
                                                 videoCropNodeId={videoCropNodeId}
-                                                onCancelVideoCrop={() => setVideoCropNodeId(null)}
+                                                onCancelVideoCrop={cancelVideoCrop}
                                                 onConfirmVideoCrop={cropVideoNode}
                                             />
                                         </CanvasNodeGraphContext.Provider>

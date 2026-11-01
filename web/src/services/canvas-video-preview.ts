@@ -93,6 +93,11 @@ export function canvasVideoPreviewNeedsHydration(node: VideoPreviewSource) {
     return !preview?.content || preview.captureVersion !== CANVAS_VIDEO_PREVIEW_VERSION || preview.sourceKey !== sourceKey;
 }
 
+export function hasCachedCanvasVideoPreview(node: VideoPreviewSource) {
+    const requestKey = canvasDerivedPreviewSourceKey(node);
+    return posterBlobCache.has(requestKey) || Boolean(previewRequests.get(requestKey)?.url);
+}
+
 async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: string, signal?: AbortSignal): Promise<VideoPreview | null> {
     const cached = posterBlobCache.get(requestKey);
     if (cached) {

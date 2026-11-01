@@ -13,6 +13,7 @@ import { useOperationProgress } from "@/stores/use-operation-progress";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { fitImageNodeToDecodedSize, fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
+import { prewarmCanvasLodThumbnails } from "@/lib/canvas/canvas-lod-thumbnails";
 import { canvasNodeVideoPreviewUrl, inferVideoHasAudio } from "@/lib/canvas/canvas-media-preview";
 import { bindCanvasVideoHoverPreview } from "@/lib/canvas/canvas-video-hover-preview";
 import { canvasVideoPresentationState } from "@/lib/canvas/canvas-video-presentation";
@@ -544,7 +545,10 @@ export function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true,
         setHydrating(true);
         void lease.promise
             .then((videoPreview) => {
-                if (active && videoPreview) setDerivedPreview({ sourceKey, content: videoPreview.content });
+                if (active && videoPreview) {
+                    setDerivedPreview({ sourceKey, content: videoPreview.content });
+                    prewarmCanvasLodThumbnails([node]);
+                }
             })
             .catch(() => undefined)
             .finally(() => {
@@ -672,7 +676,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, previewSize?: 
     const isRemoteResource = Boolean(resourceId);
     // 远程资源接口受登录/桌面令牌保护，原生 `<img>` 无法附带该令牌。
     // 重登后只能先通过 cacheResourceObjectUrl() 走鉴权下载，再挂载 Blob URL。
-    const synchronousUrl = !previewSize && eager && isRemoteResource && node.type === CanvasNodeType.Image ? peekCachedResourceObjectUrl(storageKey) : "";
+    const synchronousUrl = eager && isRemoteResource && node.type === CanvasNodeType.Image ? peekCachedResourceObjectUrl(storageKey, previewSize) : "";
     // Inline data URLs are already local, but decoding thousands of them is
     // still expensive. Images must wait for the same viewport gate as remote
     // resources; otherwise DOM virtualization does not reduce image work.
@@ -731,7 +735,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, previewSize?: 
         }
         const reload = reloadRequested.current;
         reloadRequested.current = false;
-        const cachedSync = reload || previewSize ? "" : peekCachedResourceObjectUrl(storageKey);
+        const cachedSync = reload || !eager ? "" : peekCachedResourceObjectUrl(storageKey, previewSize);
         if (cachedSync) {
             setUrl(cachedSync);
             setLoading(false);
@@ -769,14 +773,33 @@ function useNearViewport(ref: RefObject<Element | null>) {
             setNearViewport(true);
             return;
         }
+        let zoomWaitTimer: ReturnType<typeof setTimeout> | null = null;
         const observer = new IntersectionObserver((entries) => {
-            if (entries.some((entry) => entry.isIntersecting)) {
-                setNearViewport(true);
-                observer.disconnect();
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            if (element.closest('[data-canvas-viewport-zooming="true"]')) {
+                if (!zoomWaitTimer) {
+                    const retryWhenZoomIdle = () => {
+                        zoomWaitTimer = null;
+                        if (!element.isConnected) return;
+                        if (element.closest('[data-canvas-viewport-zooming="true"]')) {
+                            zoomWaitTimer = setTimeout(retryWhenZoomIdle, 80);
+                            return;
+                        }
+                        observer.unobserve(element);
+                        observer.observe(element);
+                    };
+                    zoomWaitTimer = setTimeout(retryWhenZoomIdle, 80);
+                }
+                return;
             }
+            setNearViewport(true);
+            observer.disconnect();
         }, { rootMargin: "600px" });
         observer.observe(element);
-        return () => observer.disconnect();
+        return () => {
+            if (zoomWaitTimer) clearTimeout(zoomWaitTimer);
+            observer.disconnect();
+        };
     }, [ref]);
     return nearViewport;
 }
