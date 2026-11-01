@@ -93,12 +93,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Test immutable publication and activation
         run: |
+          sh scripts/audit-public-docs.sh
           node --test scripts/configure-ubuntu-apt.test.mjs
-          node --test scripts/image-preparation-release-contract.test.mjs
-          node --test scripts/music3-release-contract.test.mjs
-          node --test scripts/v201-release-contract.test.mjs scripts/v202-release-contract.test.mjs scripts/v203-release-contract.test.mjs scripts/v204-release-contract.test.mjs scripts/v205-release-contract.test.mjs
+          node --test scripts/verify-real-generation-release.test.mjs
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
           python3 -m unittest discover -s scripts -p 'test_mirror_desktop_cnb.py'
           node --test scripts/distribution-notices.test.mjs

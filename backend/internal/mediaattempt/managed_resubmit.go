@@ -25,8 +25,6 @@ var ErrManagedResubmitted = errors.New("已用原编号补交原请求，正在�
 //   - 用户手动继续取回、原请求还在：用原 Key、原编号、原内容补交一次。BeefAPI 按编号去重，
 //     收到过就返回原任务，没收到才第一次执行，所以不会产生第二次付费生成。
 //   - 后台恢复：只查询，不补交。
-//
-// 方案见 docs/architecture/unconfirmed-submission.md。
 func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task model.Task) (string, bool, error) {
 	// 已下过的「无法取回」保持不变：复查仍查不到时不能把它清掉，否则节点会在锁住和解锁之间来回跳。
 	if task.RecoveryOutcome != nil && *task.RecoveryOutcome == localtask.RecoveryUnrecoverable {

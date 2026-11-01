@@ -367,4 +367,4 @@ go run ./cmd/update-release sign \
 `/releases/latest` 指向最近一次发布的正式版，按发布时间而不是按最大版本号。只按时间顺序发布递增的稳定版本。
 # 真实生成门禁
 
-每次发版先完成 [六路径、两轮真实客户端测试](./real-generation-release.md)，提交对应版本的脱敏验收记录。发布工作流在创建 draft 前检查记录与当前源码绑定，不允许只凭单元测试或健康检查发布。
+每次发版先完成发版门禁验收，公开仓库的 `docs/release-evidence/` 目录只保留当前 `VERSION` 对应的单份最小发版回执 `docs/release-evidence/<VERSION>.json`（版本号 `version`、源码指纹 `sourceDigest`、发版门禁是否通过 `passed`、完整内部证据文件的 SHA-256 摘要 `evidenceSha256`）。完整验收明细与授权记录保存在内部证据目录，并在本地生成或复核回执时通过 `node scripts/verify-real-generation-release.mjs --evidence-file <path>` 核验其字节哈希与 `evidenceSha256` 一致；公开仓库的发布工作流在创建 draft 前通过 `node scripts/verify-real-generation-release.mjs` 校验唯一最小回执结构、`passed === true`、`evidenceSha256` 格式及当前发布源码指纹 `sourceDigest` 绑定，不允许只凭单元测试或健康检查发布。

@@ -66,7 +66,7 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      - name: Require two rounds of real client generation
+      - name: Verify minimal release receipt and source digest
         run: node scripts/verify-real-generation-release.mjs
 
       - name: Require updater keys

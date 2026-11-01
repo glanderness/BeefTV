@@ -123,7 +123,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
 - 后端：`cd backend && go test ./...`；涉及资源、任务或权限时补对应集成/冒烟路径。
-- 旧内置 Agent 已从产品运行面退场：`/agent/*` 路由不再注册，通用任务创建、任务重试和任务 Worker 拒绝 `cloud_agent`、`cloud_agent_step`、`agent_memory_compact`，旧轮次与记忆压缩调度保持停用，历史数据保留。当前分支的替换内核采用 `agent-host/` 中钉选的官方 pi SDK，Go 管理运行时、业务轮次及操作授权；React 使用 `/api/assistant/*`。宿主只有 Durable 一套执行运行时：旧 JSONL 会话只读历史，在旧会话里发新消息会以交接说明开一条新的 Durable 会话，不恢复旧 SDK 的 create/prompt/replace/abort 执行路径。按 `docs/refactor/pi-official-reuse.md` 核对官方 API 与实际接入路径，不能恢复旧入口或另建模型会话循环。零模型宿主验证、真实业务操作、付费模型验收与正式发布分别记证据。
+- 旧内置 Agent 已从产品运行面退场：`/agent/*` 路由不再注册，通用任务创建、任务重试和任务 Worker 拒绝 `cloud_agent`、`cloud_agent_step`、`agent_memory_compact`，旧轮次与记忆压缩调度保持停用，历史数据保留。当前分支的替换内核采用 `agent-host/` 中钉选的官方 pi SDK，Go 管理运行时、业务轮次及操作授权；React 使用 `/api/assistant/*`。宿主只有 Durable 一套执行运行时：旧 JSONL 会话只读历史，在旧会话里发新消息会以交接说明开一条新的 Durable 会话，不恢复旧 SDK 的 create/prompt/replace/abort 执行路径。核对官方 API 与实际接入路径，不能恢复旧入口或另建模型会话循环；零模型宿主验证、真实业务操作、付费模型验收与正式发布分别记证据。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
 - UI 变更能浏览器验证时，检查关键路由、明暗主题、滚动、弹窗、空态和核心交互；不能验证时说明替代依据，不把静态阅读或 `git diff` 写成运行验证。
 
@@ -135,9 +135,9 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 - `README.md` 是根 README 的中文准稿；每次修改 `README.md` 时，同步更新 `README.en.md`，并在两个文件顶部保留语言切换链接。
 - 功能与代码地图分别维护在 `docs/content/docs/overview/features.mdx`、`docs/content/docs/backend/code-map.mdx`。尚未确认的实现状态保留在任务或拉取请求中，不写入公开产品文档。
 - API、数据表、SSE、资源存储、部署或安全边界变化时同步对应专题文档；不要只改代码和根 README。
-- 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号或机器敏感路径。命令、端口、环境变量必须以当前脚本和 Compose 为准。
+- 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号、机器敏感路径、会话编号、飞书表编号、内部授权记录、预算金额、线上日志编号或客户与内部人名；提交说明和 PR 描述里也不写这些内容。命令、端口、环境变量必须以当前脚本和 Compose 为准。
 - Git 提交说明使用 `<type>(<scope>): <业务模块> - <变更摘要>`，`type` 为 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`。
-- 交叉 review：改动涉及前端 UI、交互或用户可见功能（含文案、设置项、安装与更新体验）的 PR，开出后由发起人在飞书团队群通知另一位协作者 review，附 PR 链接、改动要点和截图或录屏；对方在 PR 上 approve 或在飞书明确回复可以合并后再合并。纯后端或内部改动在 PR 描述里写明影响范围即可。AI 代理默认不合并 PR、不发版；项目负责人对某个 PR 明确授权时才可合并该 PR，授权不延伸到其他 PR 或发版，用户可见功能的 PR 仍须先完成交叉 review。通知内容只写已验证的事实，不附密钥、诊断包原文或本机路径。
+- 团队协作流程（交叉 review、付费授权、预算与合并/发版审批）另见团队私有工作约定，不在公开仓库维护。AI 代理默认不直接合并 PR 或发版。
 
 交付前至少检查：改动是否聚焦、调用方和类型是否同步、错误/权限/数据归属是否完整、必要文档是否同步、验证是否如实说明、是否留下密钥或本地数据。
 
