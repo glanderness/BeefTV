@@ -4,6 +4,11 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+## v1.0.1
+
+- 发布 aihubkit 独立版本线的首个桌面版本，发布版本为 `v1.0.1`，与上游 BeefTV 的版本号独立演进。
+- 本版基于上游 BeefTV `v2.1.1`，提供 Windows x64、Ubuntu 24.04 x64、macOS Apple Silicon 和 Intel 安装包及便携包。
+
 ## v2.1.1
 
 - 视频与图片生成新能力：Seedance 2.5 支持先生成 480P 样片预览构图与动作，满意后一键从样片转高清成片；画布新增视频延长、视频局部重绘、反推提示词、输出尾帧，以及图片连续组图生成。

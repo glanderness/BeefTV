@@ -10,6 +10,34 @@
 
 前端未压缩产物的默认体积上限为 105 MiB，可通过 `BEEFTV_WEB_BUDGET_MIB` 调整。包含 FFmpeg、MediaPipe 和预设资源的主线基线约为 99.24 MiB；自动更新增量约 25 KiB。此上限不是 zip 下载大小。
 
+## GitHub tag 自动发布安装包
+
+`.github/workflows/release-desktop-tag.yml` 在推送 `aihubkit-v*` 标签后触发。GitHub 标签使用独立命名空间 `aihubkit-vMAJOR.MINOR.PATCH`，根目录 `VERSION` 使用对应的标准应用版本 `vMAJOR.MINOR.PATCH`，二者的数字部分必须完全一致；`CHANGELOG.md` 还必须有对应的非空 `## vMAJOR.MINOR.PATCH` 条目。不符合时在构建前失败。这个命名规则避免与 Fork 继承的上游历史标签冲突，aihubkit 版本可独立演进。
+
+准备好版本提交后，推送该提交及对应标签。例如当前首版 `VERSION` 为 `v1.0.1` 时：
+
+```bash
+git tag aihubkit-v1.0.1
+git push origin aihubkit-v1.0.1
+```
+
+标签所指的提交必须已包含此工作流及其调用的脚本。Fork 需要启用 GitHub Actions，仓库或组织策略须允许工作流使用 `contents: write` 创建 Release。不需要配置 R2、COS、CNB 或自动更新签名密钥，发布使用 GitHub 自带的 `GITHUB_TOKEN`。
+
+构建复用 `desktop-installers.yml`，在各系统的原生 Runner 上执行：
+
+| 支持目标 | 安装包 | 便携包 |
+| --- | --- | --- |
+| Windows x64 | `BeefTV-vX.Y.Z-windows-amd64-setup.exe` | `BeefTV-vX.Y.Z-windows-amd64.zip` |
+| Ubuntu 24.04 x64 | `BeefTV-vX.Y.Z-linux-amd64.deb` | `BeefTV-vX.Y.Z-linux-amd64.zip` |
+| macOS Apple Silicon | `BeefTV-vX.Y.Z-darwin-arm64.dmg` | `BeefTV-vX.Y.Z-darwin-arm64.zip` |
+| macOS Intel | `BeefTV-vX.Y.Z-darwin-amd64.dmg` | `BeefTV-vX.Y.Z-darwin-amd64.zip` |
+
+工作流实际执行安装、启动、覆盖安装、用户数据保留和卸载检查，再验证最终 ZIP 中的 CLI；Linux 额外验证最终 ZIP 的桌面窗口和干净 Ubuntu 上的 DEB 系统依赖。安装载荷包含编译后的前端、Go 后端、CLI、Node 助手运行时和官方插件，使用者无需安装开发工具链。Windows 仍需 WebView2；Ubuntu 通过 apt 安装包声明的系统依赖。
+
+四个目标和媒体源码打包作业全部成功后，发布作业核对四份安装包、四份 ZIP、两份 macOS ffprobe 对应源码和一份 FFmpeg WASM 对应源码，生成 `SHA256SUMS.txt`。文件先上传到 draft Release，全部上传成功后才公开；任一目标失败都不会发布不完整的版本。失败后可在 Actions 重跑失败作业，尚未公开的 draft 允许继续上传；已公开的 Release 禁止覆盖，修复需使用新版本和新标签。容器镜像仍由 `publish-images.yml` 独立构建，不再创建同名 Release。
+
+这条 tag 流程构建独立下载包，不注入上游官方更新公钥、不启用官方应用内更新、不激活 R2/COS 更新源，也不触发 CNB 镜像。升级时下载安装新版。需要官方签名自动更新时，仍使用下方的手动 `Release desktop` 流程，并在创建任何 tag 前完成其版本预检。Windows 包未做 Authenticode 签名，macOS 包使用 ad hoc 签名且未做 Apple 公证，首次安装可能需要按系统提示放行；安装步骤见[安装 BeefTV](desktop-install.md)。
+
 ## macOS
 
 ```bash

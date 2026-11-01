@@ -9,6 +9,12 @@ description: 签名清单、打包布局、密钥、发布工作流、回滚和�
 
 `v1.5.2` 及以前的安装包没有更新器。给仓库补上清单，不会让已经装好的程序自己升级。用户需要先手动安装第一个带更新器的版本。
 
+## GitHub tag 安装包
+
+推送独立版本标签 `aihubkit-vMAJOR.MINOR.PATCH` 后，`release-desktop-tag.yml` 自动构建 Windows x64、Ubuntu 24.04 x64、macOS Apple Silicon 和 Intel 安装包及便携 ZIP。标签数字部分必须与标准应用版本 `VERSION=vMAJOR.MINOR.PATCH` 一致；该命名空间与 Fork 继承的上游标签隔离。每个平台的安装与启动检查、最终 ZIP 检查及媒体源码打包全部成功后，工作流才公开 GitHub Release，并附上 `SHA256SUMS.txt`。无需配置官方存储与签名密钥，但需启用 Actions 并允许工作流创建 Release。
+
+tag 构建不注入官方更新公钥，不启用应用内自动更新；安装新版时从当前仓库的 Releases 下载，用户数据仍留在独立目录。Windows 需要 WebView2，Ubuntu 使用 apt 安装 DEB 及系统依赖；Windows/macOS 首次安装可能需要系统放行。官方带签名清单的自动更新仍使用手动 `release-desktop.yml` 发布。版本准备、文件名、失败重跑和权限要求见仓库 `docs/desktop-release.md` 的「GitHub tag 自动发布安装包」。
+
 ## 用户侧行为
 
 带更新器的应用会显示当前版本，并在启动时检查一次更新。用户点击“下载并安装更新”后，应用会下载更新包、保存当前工作、准备安装，再退出并启动新版本。保存失败或超过 60 秒未完成时会留在当前应用中，允许稍后重试；迟到的保存结果不会自动触发安装。上次保存尚未结束时，重试会提示等待，不会重复保存；结束后再次重试会重新保存当前工作。

@@ -107,6 +107,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_package_wasm_sources.py'
           python3 -m unittest discover -s scripts -p 'test_desktop_cos_store.py'
           python3 -m unittest discover -s scripts -p 'test_smoke_desktop_installer.py'
+          python3 -m unittest discover -s scripts -p 'test_prepare_github_desktop_release.py'
 
   backend:
     name: Backend checks

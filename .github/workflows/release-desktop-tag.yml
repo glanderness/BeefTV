@@ -1,0 +1,108 @@
+name: Release desktop from tag
+
+on:
+  push:
+    tags:
+      - 'aihubkit-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-tag-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check tag, VERSION and changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/prepare-github-desktop-release.py --tag "$RELEASE_TAG" --notes "$RUNNER_TEMP/release-notes.md"
+
+  build:
+    name: Build and install all supported desktop targets
+    needs: [preflight, sources]
+    uses: ./.github/workflows/desktop-installers.yml
+    with:
+      standalone-release: true
+      release-tag: ${{ github.ref_name }}
+
+  sources:
+    name: Package corresponding WASM source
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install locked frontend dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Verify binary and collect source bundle
+        run: |
+          APP_VERSION="$(tr -d '[:space:]' < VERSION)"
+          python scripts/package-wasm-sources.py --version "$APP_VERSION" --binary-dir web/node_modules/@ffmpeg/core/dist/esm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-tag-wasm-source
+          path: dist/BeefTV-*-ffmpeg-wasm-sources.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish complete GitHub Release
+    needs: [preflight, build, sources]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-check-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-tag-wasm-source
+          path: dist
+      - name: Require every target and generate SHA-256 checksums
+        run: python scripts/prepare-github-desktop-release.py --tag "$RELEASE_TAG" --assets-dir dist --notes "$RUNNER_TEMP/release-notes.md"
+      - name: Upload all assets before making the release public
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/is-draft"; then
+            if [[ "$(cat "$RUNNER_TEMP/is-draft")" != true ]]; then
+              echo "Release $RELEASE_TAG is already public; published assets must not be overwritten." >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "BeefTV $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          # Retrying a failed upload may replace assets only while still a draft.
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"

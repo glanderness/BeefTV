@@ -172,24 +172,24 @@ describe("canvas node generation video text references", () => {
         expect(context.imageCount).toBe(1);
     });
 
-    test("视频 promptOnly 下未显式引用的连线文本不会自动拼进提示词", () => {
+    test("视频 promptOnly 下未显式引用的连线文本会自动拼进提示词", () => {
         const target = targetNode();
         const image = node("image-a", CanvasNodeType.Image, "data:image/png;base64,a");
         const note = node("note", CanvasNodeType.Text, "角色设定：禾禾");
         const context = buildNodeGenerationContext(target.id, [image, note, target], [connection(image.id), connection(note.id)], "生成一段暗调舞蹈视频", [], true);
 
-        expect(context.prompt).toBe("生成一段暗调舞蹈视频");
+        expect(context.prompt).toBe("生成一段暗调舞蹈视频\n\n【文本1】\n角色设定：禾禾");
         expect(context.referenceImages.map((item) => item.id)).toEqual(["image-a"]);
-        expect(context.textCount).toBe(0);
+        expect(context.textCount).toBe(1);
     });
 
-    test("视频 promptOnly 非显式引用路径仍丢弃上游文本，关闭后恢复自动拼接", () => {
+    test("视频 promptOnly 没有媒体输入时也会自动拼接上游文本", () => {
         const target = targetNode();
         const note = node("note", CanvasNodeType.Text, "角色设定：禾禾");
         const nodes = [note, target];
         const connections = [connection(note.id)];
 
-        expect(buildNodeGenerationContext(target.id, nodes, connections, "跳舞", [], true).prompt).toBe("跳舞");
+        expect(buildNodeGenerationContext(target.id, nodes, connections, "跳舞", [], true).prompt).toBe("跳舞\n\n角色设定：禾禾");
         expect(buildNodeGenerationContext(target.id, nodes, connections, "跳舞", [], false).prompt).toBe("跳舞\n\n角色设定：禾禾");
     });
 });
