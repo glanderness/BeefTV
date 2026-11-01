@@ -275,3 +275,54 @@ test("assistantProposalProgress treats retrievable failed and fetching tasks as 
     expect(settledWithFailure.ready).toBe(true);
     expect(settledWithFailure.text).toBe("1 个结果已就绪，1 个结果因任务失败或取消而未生成。");
 });
+
+test("ordinary proposal with generation order targets renders collapsible order details", () => {
+    const ordinaryWithOrder: AssistantGenerationProposal = {
+        proposalId: "gp-order-1",
+        orderId: "gp-order-1",
+        kind: "image",
+        nodeIds: ["shot-1"],
+        model: "gpt-image-1.5",
+        modelKey: "beefapi::gpt-image-1.5",
+        pricing: "unknown",
+        approvalMode: "ask",
+        status: "pending",
+        targets: [{
+            nodeId: "shot-1",
+            title: "镜头1",
+            kind: "image",
+            model: "gpt-image-1.5",
+            modelKey: "beefapi::gpt-image-1.5",
+            pricing: "unknown",
+            prompt: "雨夜霓虹街角，主角回头",
+            parameters: { size: "16:9", count: "1" },
+            referenceNodeIds: [],
+        }],
+    };
+    const turn: AssistantTurn = {
+        turnId: "turn-order-1",
+        userText: "生成镜头1的首帧",
+        selectedNodeIds: ["shot-1"],
+        reply: "已开出生成单，请确认。",
+        toolCalls: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-11-01",
+        proposals: [ordinaryWithOrder],
+    };
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={turn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).toContain("<details class=\"canvas-assistant-proposal-details\"><summary>查看 1 项生成单明细</summary>");
+    expect(html).toContain("雨夜霓虹街角，主角回头");
+    expect(html).toContain("报价：未知（按所选渠道实际标准计费）");
+});

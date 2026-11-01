@@ -81,22 +81,76 @@ export type AssistantTurnChange = {
 
 export type AssistantCanvasChange = Omit<AssistantTurnChange, "canvasChanges"> & { canvasId: string; operationIds: string[] };
 
-/** 付费生成提议：后端只登记，不生成、不扣费，执行发生在画布既有生成链路。 */
+export type GenerationOrderTargetView = {
+    nodeId: string;
+    title: string;
+    kind: "image" | "video" | "audio";
+    model?: string;
+    modelKey: string;
+    pricing?: unknown;
+    prompt: string;
+    parameters: Record<string, string>;
+    metadata?: Record<string, unknown>;
+    referenceNodeIds: string[];
+};
+
+export type GenerationOrder = {
+    orderId: string;
+    proposalId: string;
+    canvasId: string;
+    canvasRevision: number;
+    modelConfigRevision: number;
+    callerKind: "manual" | "assistant" | "external";
+    callerClient?: string;
+    approvalMode: "ask" | "caller" | "auto";
+    status: "pending" | "approved" | "submitted" | "rejected";
+    approvedBy?: string;
+    approvedAt?: string;
+    kind: "image" | "video" | "audio";
+    model: string;
+    modelKey: string;
+    pricing?: unknown;
+    note?: string;
+    nodeIds: string[];
+    productionNodeIds?: string[];
+    targetViews?: GenerationOrderTargetView[];
+    sourceTurnId?: string;
+    taskIds?: string[];
+    continuationId?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+/** 付费生成提议（生成单）：后端只登记，不生成、不扣费，批准后统一按生成单执行。 */
 export type AssistantGenerationProposal = {
     proposalId: string;
+    orderId?: string;
     kind: "image" | "video" | "audio";
     nodeIds: string[];
     model: string;
     modelKey: string;
+    pricing?: unknown;
+    approvalMode?: "ask" | "caller" | "auto";
+    status?: "pending" | "approved" | "submitted" | "rejected";
     note?: string;
+    targets?: GenerationOrderTargetView[];
+    order?: GenerationOrder;
     production?: { targets: { nodeId: string; title: string; kind: "image" | "video" | "audio"; modelKey: string; prompt: string; parameters: Record<string,string>; metadata?: Record<string, unknown>; referenceNodeIds: string[] }[] };
     source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
 };
 
-export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal) {
-    return http.post<{ taskIds: string[]; continuationId: string }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposal.proposalId)}/production`, {
-        canvasId, kind: proposal.kind, nodeIds: proposal.nodeIds, targets: proposal.production?.targets,
+export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
+    return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposal.proposalId)}/production`, {
+        canvasId, kind: proposal.kind, nodeIds: proposal.nodeIds, targets: proposal.production?.targets, continuePlan,
     }, await uiSessionConfig());
+}
+
+export async function listGenerationOrders(canvasId: string) {
+    return http.get<{ orders: GenerationOrder[] }>(`/assistant/generation-orders?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
+}
+
+export async function approveGenerationOrder(proposalId: string) {
+    return http.post<{ taskIds: string[]; continuationId?: string; order?: GenerationOrder }>(`/assistant/generation-orders/${encodeURIComponent(proposalId)}/approve`, {}, await uiSessionConfig());
 }
 
 export type AssistantPlan = {

@@ -83,7 +83,7 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 			allSaved = false
 			continue
 		}
-		if err := validateProductionTask(task, receipt.CanvasID, target); err != nil {
+		if err := operations.ValidateProductionTask(task, receipt.CanvasID, target); err != nil {
 			return false, err
 		}
 		inspection, err := assistantturns.InspectTaskTargetsInTx(tx, receipt.UserID, *task, target.Kind, target.NodeID, []string{target.NodeID}, func(id string) (map[string]any, bool) {

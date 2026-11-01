@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
-import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProductionProposalParts, assistantProposalText, assistantProposalProgress, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantOrderTargetLines, assistantProductionProposalParts, assistantProposalText, assistantProposalProgress, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
@@ -171,6 +171,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 const awaitingConfirmation = !started && !skipped && !undone && !turn.proposalsInvalidated;
                 const productionParts = assistantProductionProposalParts(proposal, awaitingConfirmation, config);
+                const orderTargetLines = assistantOrderTargetLines(proposal);
                 const legacyProposalNote = !assistantVisibleReply(turn.reply || "") && proposal.note?.trim() ? proposal.note.trim() : "";
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
@@ -193,7 +194,21 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                 {productionParts.footer ? <span className="canvas-assistant-meta" style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{productionParts.footer}</span> : null}
                             </>
                         ) : (
-                            <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), awaitingConfirmation, config)}</span>
+                            <>
+                                <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), awaitingConfirmation, config)}</span>
+                                {orderTargetLines.length > 0 ? (
+                                    <details className="canvas-assistant-proposal-details">
+                                        <summary>查看 {orderTargetLines.length} 项生成单明细</summary>
+                                        <div className="canvas-assistant-proposal-targets">
+                                            {orderTargetLines.map((line, index) => (
+                                                <div key={proposal.targets?.[index]?.nodeId || index} className="canvas-assistant-proposal-target">
+                                                    {line}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </details>
+                                ) : null}
+                            </>
                         )}
                         {priceError && awaitingConfirmation ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
                         {!skipped && !running && ((!undone && !turn.proposalsInvalidated) || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}

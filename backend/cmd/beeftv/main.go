@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -380,6 +381,10 @@ func run(args []string) error {
 		return runTask(c, args[1:])
 	case "client":
 		return runClient(c, args[1:])
+	case "approve":
+		return runApprove(c, args[1:])
+	case "orders":
+		return runOrders(c, args[1:])
 	case "mcp":
 		return runMCP(c, args[1:])
 	case "business":
@@ -408,7 +413,9 @@ func usage() {
   beeftv asset list [--query <q>] [--kind <kind>] [--favorite] [--recent] [--project <name>] [--generated] [--json]
   beeftv asset get --asset <id> [--json]
   beeftv task get --task <id> [--json]
-  beeftv client register --label <label> [--kind codex|claude|cursor|other] [--mode read-only|read-write]
+  beeftv orders [--canvas <id>] [--json]
+  beeftv approve <proposalId> [--json]
+  beeftv client register --label <label> [--kind codex|claude|cursor|other] [--mode read-only|read-write] [--approval ask|caller|auto]
   beeftv mcp serve [--read-only] [--all-business-tools]
 
 连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用，端口是动态的。
@@ -684,12 +691,95 @@ func runClient(c *client, args []string) error {
 	fs := flag.NewFlagSet("client register", flag.ContinueOnError)
 	label := fs.String("label", "", "客户端名称")
 	mode := fs.String("mode", "read-write", "read-only 或 read-write")
+	approval := fs.String("approval", "caller", "生成审批模式：ask（每次问我）、caller（调用方自己批）或 auto（自动）")
 	kind := fs.String("kind", "other", "codex、claude、cursor 或 other")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return flagError(err)
 	}
-	raw, err := c.do(context.Background(), http.MethodPost, "/ops/clients", map[string]any{"label": *label, "mode": *mode, "kind": *kind})
+	raw, err := c.do(context.Background(), http.MethodPost, "/ops/clients", map[string]any{
+		"label":        *label,
+		"mode":         *mode,
+		"approvalMode": *approval,
+		"kind":         *kind,
+	})
+	if err != nil {
+		return err
+	}
+	return printResult(raw, *jsonOut)
+}
+
+func (c *client) ensureLocalOwnerToken() {
+	if c.clientID != "" || c.token != "" || c.ownerToken != "" {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("BEEFTV_AGENT_TOKEN")) != "" || strings.TrimSpace(os.Getenv("BEEFTV_AGENT_TURN")) != "" || strings.TrimSpace(os.Getenv("BEEFTV_AGENT_DESKTOP_TOKEN")) != "" {
+		return
+	}
+	dataDir, err := runtimeinfo.DefaultDataDir()
+	if err != nil || strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	raw, err := os.ReadFile(filepath.Join(dataDir, "agent_owner_token"))
+	if err != nil {
+		return
+	}
+	if token := strings.TrimSpace(string(raw)); token != "" {
+		c.ownerToken = token
+	}
+}
+
+func runApprove(c *client, args []string) error {
+	jsonOut := false
+	proposalID := ""
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprintln(os.Stderr, "用法: beeftv approve <proposalId> [--json]")
+			return nil
+		case arg == "--json" || arg == "-json":
+			jsonOut = true
+		case arg == "--proposal" || arg == "-proposal":
+			if i+1 >= len(args) {
+				return &cliError{code: exitUsage, reason: "missing_flag", msg: "--proposal 需要参数"}
+			}
+			i++
+			proposalID = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--proposal="):
+			proposalID = strings.TrimSpace(strings.TrimPrefix(arg, "--proposal="))
+		case strings.HasPrefix(arg, "-"):
+			return &cliError{code: exitUsage, reason: "bad_flags", msg: "未知参数: " + arg}
+		case proposalID == "":
+			proposalID = arg
+		default:
+			return &cliError{code: exitUsage, reason: "bad_flags", msg: "多余的参数: " + arg}
+		}
+	}
+	if proposalID == "" {
+		return &cliError{code: exitUsage, reason: "missing_flag", msg: "请提供生成单编号：beeftv approve <proposalId>"}
+	}
+	c.ensureLocalOwnerToken()
+	raw, err := c.do(context.Background(), http.MethodPost, "/ops/orders/"+url.PathEscape(proposalID)+"/approve", map[string]any{})
+	if err != nil {
+		return err
+	}
+	return printResult(raw, jsonOut)
+}
+
+func runOrders(c *client, args []string) error {
+	fs := flag.NewFlagSet("orders", flag.ContinueOnError)
+	canvasID := fs.String("canvas", "", "按画布 ID 过滤")
+	jsonOut := fs.Bool("json", false, "输出 JSON")
+	if err := fs.Parse(args); err != nil {
+		return flagError(err)
+	}
+	c.ensureLocalOwnerToken()
+	path := "/ops/orders"
+	if trimmed := strings.TrimSpace(*canvasID); trimmed != "" {
+		path += "?canvasId=" + url.QueryEscape(trimmed)
+	}
+	raw, err := c.do(context.Background(), http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
