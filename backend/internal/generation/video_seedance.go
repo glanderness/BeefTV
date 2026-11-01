@@ -66,7 +66,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
-				attachOptionalLastFrame(ctx, videoMap, lastFrameURL, true)
+				attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 			}
 			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
@@ -75,7 +75,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 			}
 			mimeType = NormalizedMediaMIMEType(mimeType, data)
 			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
-			attachOptionalLastFrame(ctx, videoMap, lastFrameURL, true)
+			attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
@@ -108,18 +108,39 @@ func SeedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 }
 
 func SeedanceLastFrameURL(state map[string]interface{}) string {
-	if url := stringField(state, "last_frame_url"); url != "" {
-		return url
-	}
-	if metadata, ok := state["metadata"].(map[string]interface{}); ok {
-		if url := stringField(metadata, "last_frame_url"); url != "" {
+	for _, key := range []string{"last_frame_url", "lastFrameUrl"} {
+		if url := stringField(state, key); url != "" {
 			return url
+		}
+	}
+	for _, containerKey := range []string{"metadata", "content", "data", "output", "result", "task"} {
+		if nested, ok := state[containerKey].(map[string]interface{}); ok {
+			for _, key := range []string{"last_frame_url", "lastFrameUrl"} {
+				if url := stringField(nested, key); url != "" {
+					return url
+				}
+			}
+		}
+		if items, ok := state[containerKey].([]interface{}); ok {
+			for _, raw := range items {
+				if nested, ok := raw.(map[string]interface{}); ok {
+					for _, key := range []string{"last_frame_url", "lastFrameUrl"} {
+						if url := stringField(nested, key); url != "" {
+							return url
+						}
+					}
+				}
+			}
 		}
 	}
 	return ""
 }
 
 func attachOptionalLastFrame(ctx context.Context, videoResult map[string]interface{}, lastFrameURL string, allowHTTP bool) {
+	attachOptionalProviderLastFrame(ctx, Config{}, videoResult, lastFrameURL, allowHTTP)
+}
+
+func attachOptionalProviderLastFrame(ctx context.Context, config Config, videoResult map[string]interface{}, lastFrameURL string, allowHTTP bool) {
 	link := strings.TrimSpace(lastFrameURL)
 	if link == "" {
 		return
@@ -128,7 +149,14 @@ func attachOptionalLastFrame(ctx context.Context, videoResult map[string]interfa
 	if !allowHTTP {
 		downloadCtx = outbound.WithPublicHTTPS(downloadCtx)
 	}
-	data, mime, err := GetExternalBinary(downloadCtx, link)
+	var data []byte
+	var mime string
+	var err error
+	if strings.TrimSpace(config.BaseURL) != "" {
+		data, mime, err = GetProviderExternalBinary(downloadCtx, config, link)
+	} else {
+		data, mime, err = GetExternalBinary(downloadCtx, link)
+	}
 	if err != nil || len(data) == 0 {
 		return
 	}
@@ -240,7 +268,7 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			}
 			mimeType = NormalizedMediaMIMEType(mimeType, data)
 			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
-			attachOptionalLastFrame(ctx, videoMap, stringField(content, "last_frame_url"), true)
+			attachOptionalProviderLastFrame(ctx, input.Config, videoMap, stringField(content, "last_frame_url"), true)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {

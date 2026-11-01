@@ -361,7 +361,7 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
     }
     if (protocol === "video-generations-json") {
         video.duration.default = 5;
-        video.resolutions = ["720p", "1080p"];
+        video.resolutions = isSeedance25Model(model) ? ["480p", "720p", "1080p"] : ["720p", "1080p"];
         video.watermark = { supported: true, default: false };
         video.operations.push("reference_to_video");
     }
@@ -415,11 +415,14 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
         video.returnLastFrame = { supported: true, default: false };
         video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
-        video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
-        if (isSeedance25Model(model) && video.resolutions.some((value) => value.toLowerCase() === "480p")) {
-            video.draft = { supported: true, default: false };
-            if (!video.operations.includes("draft_to_final")) {
-                video.operations.push("draft_to_final");
+        video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? (["audio_to_video", "inpaint", "extend"] as const) : [])]));
+        if (isSeedance25Model(model)) {
+            if (!video.ratios.includes("adaptive")) video.ratios = [...video.ratios, "adaptive"];
+            if (video.resolutions.some((value) => value.toLowerCase() === "480p")) {
+                video.draft = { supported: true, default: false };
+                if (!video.operations.includes("draft_to_final")) {
+                    video.operations.push("draft_to_final");
+                }
             }
         }
         if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
@@ -448,7 +451,7 @@ export function alignDocumentedVideoRouteLimits(video: VideoCapabilityConfig | u
 }
 
 export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
-    return Boolean((!protocol || ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol)) && String(modelName).toLowerCase().includes("seedance-2"));
+    return Boolean((!protocol || ["openai", "openai-videos", "newapi", "newapi-channel-1", "newapi-channel-2", "video-generations-json", "seedance-videos-compatible", "full-video", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol)) && String(modelName).toLowerCase().includes("seedance-2"));
 }
 
 export function isSeedance25Model(modelName: string) {

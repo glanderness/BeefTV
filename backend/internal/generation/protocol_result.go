@@ -87,6 +87,11 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 			}
 		}
 		item := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
+		if mode == "video" {
+			if lastFrameURL, ok := reference.Metadata["last_frame_url"].(string); ok && strings.TrimSpace(lastFrameURL) != "" {
+				attachOptionalProviderLastFrame(ctx, config, item, lastFrameURL, true)
+			}
+		}
 		items = append(items, item)
 	}
 	switch mode {

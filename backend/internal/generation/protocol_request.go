@@ -74,6 +74,14 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		if VideoRequestsReturnLastFrame(input) && VideoCapabilitySupportsReturnLastFrame(input) {
 			request.Extra["return_last_frame"] = true
 		}
+		if input.VideoCapability != nil && input.VideoCapability.TaskTypeConstraints {
+			request.Extra["taskTypeConstraints"] = true
+		}
+	}
+	if input.Mode == "image" && input.ImageCapability != nil && input.ImageCapability.SequentialGeneration.Supported {
+		if maxImages := sequentialMaxImagesForInput(input); maxImages > 1 {
+			request.Extra["sequential_image_generation_max"] = maxImages
+		}
 	}
 	request.Inputs = append(request.Inputs, request.Images...)
 	request.Inputs = append(request.Inputs, request.Videos...)
@@ -82,7 +90,7 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		request.Extra["max_output_tokens"] = input.MaxOutputTokens
 		request.Extra["max_tokens"] = input.MaxOutputTokens
 	}
-	if duration, err := strconv.Atoi(strings.TrimSpace(input.Config.VideoSeconds)); err == nil && (duration > 0 || (duration == -1 && model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)))) {
+	if duration, err := strconv.Atoi(strings.TrimSpace(input.Config.VideoSeconds)); err == nil && (duration > 0 || (duration == -1 && (model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) || (input.VideoCapability != nil && input.VideoCapability.TaskTypeConstraints)))) {
 		request.Duration = duration
 	}
 	if count, err := strconv.Atoi(strings.TrimSpace(input.Config.Count)); err == nil && count > 0 {
@@ -114,8 +122,12 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		}
 	}
 	applyImageResponseFormatOption(&request, input)
-	if input.Mode == "video" && usesSeedanceTaskOptions(input.Config) {
-		request = protocol.NormalizeSeedanceTaskOptions(request)
+	if input.Mode == "video" {
+		if usesSeedanceTaskOptions(input.Config) || (input.VideoCapability != nil && input.VideoCapability.TaskTypeConstraints) {
+			request = protocol.NormalizeSeedanceTaskOptions(request)
+		} else if request.Extra["draft"] == true || request.Extra["draft_task_id"] != nil {
+			request = protocol.NormalizeVideoDraftTaskOptions(request)
+		}
 	}
 	return request
 }
@@ -197,7 +209,7 @@ func ProtocolVideoImageReferences(input Input) []protocol.MediaReference {
 	for index, value := range input.ReferenceImages {
 		item := ProtocolMediaReference(value, "image", index)
 		item.Role = VideoImageRoleOrDefault(input, value, fallbackRole)
-		if modelcatalog.IsSeedance25Model(input.Config.Model) && item.Role == "" && usesSeedanceTaskOptions(input.Config) {
+		if modelcatalog.IsSeedance25Model(input.Config.Model) && item.Role == "" && (usesSeedanceTaskOptions(input.Config) || (input.VideoCapability != nil && input.VideoCapability.TaskTypeConstraints)) {
 			item.Role = SeedanceTaskImageRole(input, value)
 		}
 		if item.URL != "" || item.DataURL != "" {

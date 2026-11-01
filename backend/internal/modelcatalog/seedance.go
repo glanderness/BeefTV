@@ -52,8 +52,12 @@ const (
 
 func isSeedance2Family(protocol, modelName string) bool {
 	normalizedProtocol := strings.TrimSpace(protocol)
-	if normalizedProtocol != "newapi-channel-2" && normalizedProtocol != "newapi" && normalizedProtocol != "openai" && normalizedProtocol != "openai-videos" && !model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(normalizedProtocol)) {
-		return false
+	switch normalizedProtocol {
+	case "newapi-channel-1", "newapi-channel-2", "newapi", "openai", "openai-videos", "video-generations-json", "seedance-videos-compatible", "full-video":
+	default:
+		if !model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(normalizedProtocol)) {
+			return false
+		}
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	return strings.Contains(name, "seedance-2")

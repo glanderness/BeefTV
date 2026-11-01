@@ -121,6 +121,9 @@ func runManagedVideoTask(ctx context.Context, client *beefapi.MediaClient, input
 	if intent.Watermark != nil {
 		options["watermark"] = *intent.Watermark
 	}
+	if intent.ReturnLastFrame != nil {
+		options["return_last_frame"] = *intent.ReturnLastFrame
+	}
 	if intent.DraftTaskID != "" {
 		operation = "draft_to_final"
 		options["draft_task_id"] = intent.DraftTaskID

@@ -96,6 +96,12 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		if key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
 			writeField(writer, key, value)
 		}
+		if input.ImageCapability != nil && input.ImageCapability.SequentialGeneration.Supported {
+			if maxImages := sequentialMaxImagesForInput(input); maxImages > 1 {
+				writeField(writer, "sequential_image_generation", "auto")
+				writeField(writer, "sequential_image_generation_options", fmt.Sprintf(`{"max_images":%d}`, maxImages))
+			}
+		}
 		for _, image := range input.ReferenceImages {
 			if err := writeMediaPart(writer, "image", image); err != nil {
 				return nil, err
@@ -132,6 +138,12 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		}
 		if key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
 			body[key] = value
+		}
+		if input.ImageCapability != nil && input.ImageCapability.SequentialGeneration.Supported {
+			if maxImages := sequentialMaxImagesForInput(input); maxImages > 1 {
+				body["sequential_image_generation"] = "auto"
+				body["sequential_image_generation_options"] = map[string]interface{}{"max_images": maxImages}
+			}
 		}
 		if err := PostJSON(ctx, input.Config, "/images/generations", body, &payload); err != nil {
 			return nil, err

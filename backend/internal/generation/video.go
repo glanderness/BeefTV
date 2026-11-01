@@ -137,19 +137,24 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		}
 		status := strings.ToLower(stringField(state, "status"))
 		if VideoTaskSucceeded(status) {
+			lastFrameURL := SeedanceLastFrameURL(state)
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败（任务 %s）：%w", id, err)
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
-				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
+				videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
+				attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
+				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 			}
 			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
 			if err != nil {
 				return VideoPollOutcome{}, err
 			}
-			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
+			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
+			attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
+			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}
 		if status == "failed" || status == "cancelled" {
 			return VideoPollOutcome{}, errors.New("视频生成失败")

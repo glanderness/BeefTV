@@ -9,7 +9,8 @@ import { defaultImageCapabilityConfig, defaultModelCapabilityConfig, imageRespon
 import type { ModelProtocol } from "@/lib/model-protocols";
 import { VIDEO_RESOLUTION_CAPABILITY_OPTIONS } from "@/lib/video-generation-options";
 
-const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
+const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"];
+const ratioOptionLabel = (item: string) => (item === "adaptive" ? "自适应 (adaptive)" : item);
 const operationOptions = [
     { label: "文生视频", value: "text_to_video" },
     { label: "图生视频", value: "image_to_video" },
@@ -20,6 +21,7 @@ const operationOptions = [
     { label: "运镜调整", value: "camera_motion" },
     { label: "风格迁移", value: "style_transfer" },
     { label: "音频生视频", value: "audio_to_video" },
+    { label: "样片转成片", value: "draft_to_final" },
 ];
 
 function ImageSizeHelp() {
@@ -48,6 +50,12 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
     const update = (patch: Partial<VideoCapabilityConfig>) => onChange?.({ version: 1, video: { ...profile, ...patch } });
     const updateReferences = (patch: Partial<VideoCapabilityConfig["references"]>) => update({ references: { ...profile.references, ...patch } });
     const updateDuration = (patch: Partial<VideoCapabilityConfig["duration"]>) => update({ duration: { ...profile.duration, ...patch } });
+    const updateDraft = (draft: { supported: boolean; default: boolean }) => {
+        const operations = draft.supported
+            ? Array.from(new Set([...profile.operations, "draft_to_final"]))
+            : profile.operations.filter((item) => item !== "draft_to_final");
+        update({ draft, operations });
+    };
     const durationValues = (profile.duration.values || []).join(",");
     const resolutionOptions = Array.from(new Set([...VIDEO_RESOLUTION_CAPABILITY_OPTIONS, ...profile.resolutions]));
 
@@ -83,6 +91,8 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                     <ReferenceCard title="通用限制" description="所有视频请求共用的基础约束">
                         <VideoPromptLimitFields references={profile.references} defaults={defaults.references} disabled={disabled} onChange={updateReferences} />
                         <BooleanField label="水印" value={profile.watermark} disabled={disabled} onChange={(watermark) => update({ watermark })} />
+                        <BooleanField label="样片预览 (480P)" value={profile.draft || { supported: false, default: false }} disabled={disabled} onChange={updateDraft} />
+                        <BooleanField label="返回无损尾帧" value={profile.returnLastFrame || { supported: false, default: false }} disabled={disabled} onChange={(returnLastFrame) => update({ returnLastFrame })} />
                     </ReferenceCard>
                 </div>
             </div>
@@ -157,12 +167,12 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                                     className="w-full"
                                     disabled={disabled}
                                     value={profile.ratios}
-                                    options={ratioOptions.map((item) => ({ label: item, value: item }))}
+                                    options={ratioOptions.map((item) => ({ label: ratioOptionLabel(item), value: item }))}
                                     onChange={(ratios) => update({ ratios, defaultRatio: ratios.includes(profile.defaultRatio) ? profile.defaultRatio : ratios[0] || "16:9" })}
                                 />
                             </Field>
                             <Field label="默认比例">
-                                <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: item, value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
+                                <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: ratioOptionLabel(item), value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
                             </Field>
                             <Field label="输出分辨率">
                                 <Select
@@ -269,12 +279,12 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                                 className="w-full"
                                 disabled={disabled}
                                 value={profile.ratios}
-                                options={ratioOptions.map((item) => ({ label: item, value: item }))}
+                                options={ratioOptions.map((item) => ({ label: ratioOptionLabel(item), value: item }))}
                                 onChange={(ratios) => update({ ratios, defaultRatio: ratios.includes(profile.defaultRatio) ? profile.defaultRatio : ratios[0] || "16:9" })}
                             />
                         </Field>
                         <Field label="默认比例">
-                            <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: item, value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
+                            <Select className="w-full" disabled={disabled} value={profile.defaultRatio} options={profile.ratios.map((item) => ({ label: ratioOptionLabel(item), value: item }))} onChange={(defaultRatio) => update({ defaultRatio })} />
                         </Field>
                         <Field label="输出分辨率">
                             <Select
@@ -342,6 +352,8 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                         <div className="grid gap-3 sm:grid-cols-2">
                             <VideoPromptLimitFields references={profile.references} defaults={defaults.references} disabled={disabled} onChange={updateReferences} />
                             <BooleanField label="水印" value={profile.watermark} disabled={disabled} onChange={(watermark) => update({ watermark })} />
+                            <BooleanField label="样片预览 (480P)" value={profile.draft || { supported: false, default: false }} disabled={disabled} onChange={updateDraft} />
+                            <BooleanField label="返回无损尾帧" value={profile.returnLastFrame || { supported: false, default: false }} disabled={disabled} onChange={(returnLastFrame) => update({ returnLastFrame })} />
                         </div>
                     </CapabilityGroup>
                 </>
@@ -516,6 +528,7 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, sec
                             </div>
                         ) : null}
                         <BooleanField label="透明背景" value={profile.transparentBackground} disabled={disabled} onChange={(transparentBackground) => update({ transparentBackground })} />
+                        <BooleanField label="关联组图" value={profile.sequentialGeneration || { supported: false, default: false }} disabled={disabled} onChange={(sequentialGeneration) => update({ sequentialGeneration })} />
                         <ResponseFormatField label="response_format" value={profile.responseFormat} disabled={disabled} selectable={responseFormatSelectable} onChange={(patch) => update({ responseFormat: { ...profile.responseFormat, ...patch } })} />
                         <ParameterField label="output_format" description="发送 PNG 输出格式" supported={profile.outputFormat.supported} disabled={disabled} onChange={(supported) => update({ outputFormat: { supported } })} />
                     </ProtocolParameterCard>
@@ -600,6 +613,7 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, sec
                     </div>
                 ) : null}
                 <BooleanField label="透明背景" value={profile.transparentBackground} disabled={disabled} onChange={(transparentBackground) => update({ transparentBackground })} />
+                <BooleanField label="关联组图" value={profile.sequentialGeneration || { supported: false, default: false }} disabled={disabled} onChange={(sequentialGeneration) => update({ sequentialGeneration })} />
                 <div className="grid gap-3 sm:grid-cols-2">
                     <ResponseFormatField label="response_format" value={profile.responseFormat} disabled={disabled} selectable={responseFormatSelectable} onChange={(patch) => update({ responseFormat: { ...profile.responseFormat, ...patch } })} />
                     <ParameterField label="output_format" description="发送 PNG 输出格式" supported={profile.outputFormat.supported} disabled={disabled} onChange={(supported) => update({ outputFormat: { supported } })} />

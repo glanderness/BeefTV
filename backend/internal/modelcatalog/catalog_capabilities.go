@@ -170,6 +170,17 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 			return nil, false
 		}
 		video["draft"] = draft
+		if draft["supported"] == true && !containsCatalogString(operations, "draft_to_final") {
+			operations = append(operations, "draft_to_final")
+			video["operations"] = operations
+		}
+	}
+	if _, present := object["returnLastFrame"]; present {
+		returnLastFrame, ok := catalogBooleanConfig(object, "returnLastFrame")
+		if !ok {
+			return nil, false
+		}
+		video["returnLastFrame"] = returnLastFrame
 	}
 	return video, true
 }
@@ -255,6 +266,13 @@ func NormalizeCatalogImageCapability(raw json.RawMessage) (map[string]any, bool)
 		if _, ok := item["supported"].(bool); !ok {
 			return nil, false
 		}
+	}
+	if _, present := value["sequentialGeneration"]; present {
+		seq, ok := catalogBooleanConfig(value, "sequentialGeneration")
+		if !ok {
+			return nil, false
+		}
+		value["sequentialGeneration"] = seq
 	}
 	return value, true
 }
