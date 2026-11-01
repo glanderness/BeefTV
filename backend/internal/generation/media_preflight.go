@@ -13,6 +13,7 @@ import (
 // ValidateMediaTransport uses the same installed contract as execution, without
 // reading file bytes, uploading anything, or creating a provider task.
 func ValidateMediaTransport(ctx context.Context, input Input) error {
+	ctx = withReferenceStorage(ctx, input.Config)
 	if managedConnection(input.Config) {
 		return nil
 	}

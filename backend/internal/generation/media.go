@@ -15,6 +15,7 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 	if input == nil {
 		return nil
 	}
+	ctx = withReferenceStorage(ctx, input.Config)
 	groups := [][]Media{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
 	for kind, group := range groups {
 		groupPolicy := mediaPolicyForKind(ctx, *input, []string{"image", "video", "audio"}[kind], policy)
@@ -25,7 +26,16 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 		}
 	}
 	if input.Mask != nil {
-		return HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "mask", policy))
+		if err := HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "mask", policy)); err != nil {
+			return err
+		}
+	}
+	if runtime, ok := RuntimeFromContext(ctx); ok {
+		if batch, ok := runtime.ReferenceStorage.(interface{ ValidateReferences(context.Context) error }); ok {
+			if err := batch.ValidateReferences(ctx); err != nil {
+				return RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
+			}
+		}
 	}
 	return nil
 }

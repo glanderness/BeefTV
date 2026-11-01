@@ -1,5 +1,6 @@
 import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { apiBaseURL } from "@/services/api/request";
+import { hubSessionHeaders } from "@/integrations/aihubkit/api";
 import { isSystemProxyBaseUrl, MANAGED_BEEFAPI_CREDENTIAL_REF, type AiConfig, type ChannelHeader } from "@/stores/use-config-store";
 
 type RelayConfig = Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat"> & { headers?: ChannelHeader[]; credentialRef?: string };
@@ -11,6 +12,7 @@ export type ChannelRequest = {
 };
 
 function isManagedEnterpriseRelay(config: Pick<RelayConfig, "baseUrl" | "credentialRef">) {
+    if (config.credentialRef?.startsWith("aihubkit:")) return true;
     if (config.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF) return true;
     try {
         return isBeefAPIEndpoint(config.baseUrl || "");
@@ -41,7 +43,8 @@ export function channelRequest(config: RelayConfig, upstreamUrl: string, headers
     const normalizedUpstreamUrl = requireHttpUrl(upstreamUrl, "当前模型请求地址");
     normalizedHeaders.delete("X-Canvas-Upstream-Headers");
     normalizedHeaders.delete("x-goog-api-key");
-    normalizedHeaders.set("Authorization", `Bearer ${config.apiKey}`);
+    normalizedHeaders.set("Authorization", `Bearer ${config.credentialRef?.startsWith("aihubkit:") ? config.credentialRef : config.apiKey}`);
+    for (const [name, value] of Object.entries(hubSessionHeaders())) normalizedHeaders.set(name, value);
     normalizedHeaders.set("X-Canvas-Upstream-URL", normalizedUpstreamUrl);
     normalizedHeaders.set("X-Canvas-Upstream-Format", config.apiFormat === "gemini" ? "gemini" : config.apiFormat === "claude" ? "claude" : "openai");
     normalizedHeaders.set("X-Canvas-Upstream-Base-URL", normalizedBaseUrl);

@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { App, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 
+import { IntegrationGate } from "@/integrations/aihubkit/gate";
 import { WorkspaceBootstrapHydrator } from "@/components/workspace/workspace-bootstrap-hydrator";
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
 import { appPathname } from "@/lib/app-routing";
@@ -43,13 +44,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark, appearance.activeSkin)} modal={{ centered: true }}>
             <App message={{ duration: 3, maxCount: 3 }} notification={{ duration: 4.5, maxCount: 3, placement: "topRight" }}>
                 <QueryClientProvider client={appQueryClient}>
-                    {isolateDevRepro ? (
-                        children
-                    ) : (
-                        <WorkspaceBootstrapHydrator>
-                            <ClientRootBoundary>{children}</ClientRootBoundary>
-                        </WorkspaceBootstrapHydrator>
-                    )}
+                    <IntegrationGate localChildren={isolateDevRepro ? children : <WorkspaceBootstrapHydrator><ClientRootBoundary>{children}</ClientRootBoundary></WorkspaceBootstrapHydrator>}>
+                        <ClientRootBoundary>{children}</ClientRootBoundary>
+                    </IntegrationGate>
                 </QueryClientProvider>
             </App>
         </ConfigProvider>

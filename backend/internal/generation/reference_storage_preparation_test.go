@@ -73,3 +73,55 @@ func TestReferenceStorageFailureStopsBeforeModelDispatch(t *testing.T) {
 		t.Fatalf("storage failure reached model dispatch: uploads=%d requests=%d error=%v", storage.uploads, requests.Load(), err)
 	}
 }
+
+type expiringBatchStorage struct {
+	referenceStorageFixture
+	validated bool
+}
+
+func (s *expiringBatchStorage) ValidateReferences(context.Context) error {
+	s.validated = true
+	return errors.New("an earlier reference expired during the batch")
+}
+
+func TestBatchExpiryStopsBeforePaidModelDispatch(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	var events []string
+	storage := &expiringBatchStorage{}
+	runtime := taskRuntime(func(r *Runtime) {
+		r.Call.UserID = "owner"
+		r.Config = stageConfig{events: &events}
+		r.Resources = stageResources{events: &events}
+		r.SelectReferenceStorage = func(config Config) ReferenceStoragePort {
+			if config.CredentialRef == "host:managed" {
+				return storage
+			}
+			return nil
+		}
+	})
+	input := Input{Mode: "text", Prompt: "describe", Config: Config{BaseURL: server.URL, APIKey: "test", Model: "text", CredentialRef: "host:managed", ReferenceMediaTransport: map[string]string{"image": "url", "video": "url"}}, ReferenceImages: []Media{{StorageKey: "resource:one"}}, ReferenceVideos: []Media{{StorageKey: "resource:one"}}}
+	_, err := Execute(WithRuntime(context.Background(), runtime), input)
+	var preparation RequestPreparationError
+	if !errors.As(err, &preparation) || !storage.validated || storage.uploads != 2 || requests.Load() != 0 {
+		t.Fatalf("expired batch reached model dispatch: uploads=%d validated=%v requests=%d error=%v", storage.uploads, storage.validated, requests.Load(), err)
+	}
+
+	// A user-supplied channel keeps the official inline transport; the host
+	// selector must not route its media through managed platform storage.
+	storage.validated = false
+	input.Config.CredentialRef = ""
+	input.Config.ReferenceMediaTransport = nil
+	ctx := WithRuntime(context.Background(), runtime)
+	if err := HydrateMedia(ctx, "owner", &input, MediaHydrationPolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if storage.validated || storage.uploads != 2 || !strings.HasPrefix(input.ReferenceImages[0].DataURL, "data:") {
+		t.Fatal("managed storage changed the user-supplied channel")
+	}
+}

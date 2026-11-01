@@ -233,7 +233,7 @@ func (a *DesktopApp) StorageMigrationStatus() desktopstorage.Progress {
 	return a.migrationProgress
 }
 
-func (a *DesktopApp) installStorageRuntime(path string, runtime *bootstrap.Runtime) {
+func (a *DesktopApp) installStorageRuntime(path string, runtime bootstrap.HostRuntime) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.dataDir = path

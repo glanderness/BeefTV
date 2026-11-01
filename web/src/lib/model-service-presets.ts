@@ -1,5 +1,5 @@
 import type { ModelChannel, ModelCapability } from "@/stores/use-config-store";
-import { buildApiUrl } from "@/stores/use-config-store";
+import { buildApiUrl, channelHasManagedCredential } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { inferProtocolCapabilityFromModel, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
@@ -85,7 +85,7 @@ export function serviceConnectionError(channel: ModelChannel, options?: { protoc
     if (options?.requireCredential !== false) {
         const credential = serviceCredentialGuide(channel, options?.protocols);
         if (credential.conflict) return credential.conflict;
-        if (!channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return `请填写 ${credential.apiKeyLabel}`;
+        if (!channelHasManagedCredential(channel) && !channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return `请填写 ${credential.apiKeyLabel}`;
         // 空的 Secret Key 栏有两种意思：还没填，或者后端已经存着一份（回读时被清空）。后端会把
         // 「这份密钥到底存没存」作为 hasApiKey/hasSecretKey 返回，只认这个标记，不靠
         // 「连接已经存在」推断——改协议后旧的空密钥仍然是空，后端沿用不了任何东西。

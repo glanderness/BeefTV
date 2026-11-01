@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/bootstrap"
+	"infinite-canvas/backend/internal/integrations"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,7 +44,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	listenAddr := env("CANVAS_BACKEND_ADDR", bootstrap.DefaultServerListenAddr)
-	runtime, err := bootstrap.Open(ctx, bootstrap.Config{
+	runtime, err := integrations.Open(ctx, bootstrap.Config{
 		Profile:          bootstrap.ProfileServer,
 		DataDir:          dataDir,
 		DatabaseDriver:   env("CANVAS_DATABASE_DRIVER", "sqlite"),
@@ -129,7 +130,7 @@ func envDuration(key string, fallback time.Duration) (time.Duration, error) {
 	return parsed, nil
 }
 
-const corsAllowedHeaders = "Accept, Content-Type, Authorization, X-Requested-With, X-Canvas-Scene, X-Idempotency-Key, X-Canvas-Trace-ID, Traceparent, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL"
+const corsAllowedHeaders = "Accept, Content-Type, Authorization, X-Requested-With, X-Aihubkit-Session, X-Aihubkit-Client, X-Canvas-Scene, X-Idempotency-Key, X-Canvas-Trace-ID, Traceparent, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL, X-Canvas-Upstream-Headers"
 
 const corsAllowedMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 

@@ -11,7 +11,7 @@ import { commitModelConfig, flushModelConfig, hydrateModelConfig } from "@/servi
 import { normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
-export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }) {
+export function WorkspaceBootstrapHydrator({ children, allowLocalFallback = true, transformBootstrap }: { children: ReactNode; allowLocalFallback?: boolean; transformBootstrap?: (payload: WorkspaceBootstrapPayload) => WorkspaceBootstrapPayload }) {
     const hydrated = useUserStore((state) => state.hydrated);
     const modelConfigReady = useRef(false);
     const [restoreStatus, setRestoreStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -21,13 +21,14 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
         const loadWorkspace = () => {
             const bootstrap = getWorkspaceBootstrap();
             const timeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("本地工作区启动超时")), 15_000));
-            return Promise.race([bootstrap, timeout]);
+            return Promise.race([bootstrap, timeout]).then((payload) => transformBootstrap ? transformBootstrap(payload) : payload);
         };
         void initializeWorkspaceState({
             loadWorkspace,
             createLocalWorkspace: createLocalWorkspacePayload,
             applySession: applyUserSession,
             restoreModelConfig: hydrateLocalModelConfig,
+            allowLocalFallback,
         })
             .then(() => {
                 if (cancelled) return;
@@ -76,25 +77,30 @@ export async function initializeWorkspaceState<T>({
     createLocalWorkspace,
     applySession,
     restoreModelConfig,
+    allowLocalFallback = true,
 }: {
     loadWorkspace: () => Promise<T>;
     createLocalWorkspace: () => T;
     applySession: (payload: T) => Promise<void>;
     restoreModelConfig: () => Promise<void>;
+    allowLocalFallback?: boolean;
 }) {
+    let sessionApplied = false;
     try {
         try {
             await applySession(await loadWorkspace());
-        } catch {
+        } catch (error) {
+            if (!allowLocalFallback) throw error;
             // Keep the desktop usable while the embedded backend is still
             // starting. There is no remote/account fallback in a local build.
             await applySession(createLocalWorkspace());
         }
+        sessionApplied = true;
     } finally {
         // The provider snapshot is an independent, canonical desktop file.
         // Browser persistence may be corrupt or unavailable; that must never
         // prevent configured channels and credentials from being restored.
-        await restoreModelConfig();
+        if (allowLocalFallback || sessionApplied) await restoreModelConfig();
     }
 }
 

@@ -21,6 +21,37 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
+func TestMain(m *testing.M) {
+	// The official desktop suite exercises the local workspace. Platform-mode
+	// tests select their mode explicitly so the default login gate is covered too.
+	if err := os.Setenv("BEEFTV_INTEGRATION", "local"); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestDesktopDefaultIntegrationRequiresLogin(t *testing.T) {
+	t.Setenv("BEEFTV_INTEGRATION", "")
+	app := newDesktopApp(t.TempDir())
+	if err := app.start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer app.stop(context.Background())
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{
+		{"/api/integrations/aihubkit/session", http.StatusOK},
+		{"/api/workspace/bootstrap", http.StatusUnauthorized},
+	} {
+		w := httptest.NewRecorder()
+		desktopAssetHandler{app: app}.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if w.Code != tc.status {
+			t.Fatalf("%s: status=%d body=%s", tc.path, w.Code, w.Body.String())
+		}
+	}
+}
+
 // The local backend must expose a usable loopback URL and ephemeral launch
 // token before the frontend can make its first authenticated API request.
 func TestDesktopAppStartsRuntimeOnLoopback(t *testing.T) {

@@ -36,6 +36,17 @@ func (s *Service) resolveManagedBeefAPISecrets(input map[string]any) (map[string
 	channelID := strings.TrimSpace(stringValue(config["channelId"]))
 	credentialRef := strings.TrimSpace(stringValue(config["credentialRef"]))
 	baseURL := strings.TrimSpace(stringValue(config["baseUrl"]))
+	if s.extensions.ResolveCredential != nil {
+		base, key, handled, err := s.extensions.ResolveCredential(credentialRef)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			config["baseUrl"], config["apiKey"], config["channelId"] = base, key, ""
+			delete(config, "headers")
+			return input, nil
+		}
+	}
 	if !beefapi.IsManagedChannel(channelID, credentialRef, baseURL) && !s.hasLegacyBeefAPIKey(channelID, baseURL) {
 		return input, nil
 	}
@@ -131,6 +142,16 @@ func (s *Service) resolveChannelModelsRequest(input *ChannelModelsRequest) error
 	if input == nil {
 		return nil
 	}
+	if s.extensions.ResolveCredential != nil {
+		base, key, handled, err := s.extensions.ResolveCredential(input.CredentialRef)
+		if err != nil {
+			return err
+		}
+		if handled {
+			input.BaseURL, input.APIKey = base, key
+			return nil
+		}
+	}
 	if !beefapi.IsManagedChannel(input.ChannelID, input.CredentialRef, input.BaseURL) && input.ChannelID != beefapi.ChannelID {
 		return nil
 	}
@@ -153,6 +174,18 @@ func (s *Service) ResolveCustomRelayAPIKey(targetURL, incoming string) (string, 
 }
 
 func (s *Service) resolveCustomRelayKey(targetURL, incoming string) (string, error) {
+	if s.extensions.ResolveCredential != nil {
+		base, key, handled, err := s.extensions.ResolveCredential(incoming)
+		if err != nil {
+			return "", err
+		}
+		if handled {
+			if !sameCredentialOrigin(targetURL, base) {
+				return "", errors.New("托管凭据不能发送到其他地址")
+			}
+			return key, nil
+		}
+	}
 	// An unrelated custom channel must remain usable even if the managed
 	// connection is revoked. Resolve its secret only for the bound origin.
 	if s.beefAPI != nil && s.beefAPI.HasManagedCredential() && !sameCredentialOrigin(targetURL, s.beefAPI.Origin()) {

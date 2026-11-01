@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"infinite-canvas/backend/internal/app"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,8 @@ type Config struct {
 	AutoMigrate      bool
 	ShutdownTimeout  time.Duration
 	RouterMiddleware []gin.HandlerFunc
+	// ConfigureService installs optional host capabilities before workers start.
+	ConfigureService func(*app.Service) error
 }
 
 func (c Config) withDefaults() Config {

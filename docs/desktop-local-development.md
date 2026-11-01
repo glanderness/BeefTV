@@ -30,7 +30,7 @@ backend\cmd\desktop\build\bin\BeefTV.exe
 ./scripts/beeftv-shared-dev.sh
 ```
 
-脚本会为本次开发会话生成一个临时桌面令牌，并让 Vite 代理自动转发到同一个 Go 后端；生产包仍使用随机令牌和动态 loopback 端口。
+脚本会为本次开发会话生成一个临时桌面令牌，让 Vite 代理自动转发到同一个 Go 后端，并仅为开发会话放行 `http://127.0.0.1:3000` 来源；生产包仍使用随机令牌和动态 loopback 端口。首次 Go 编译或热重载期间，前端会等待后端恢复，不需要反复刷新错误页。
 
 前端检查：
 

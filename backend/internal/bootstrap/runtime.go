@@ -161,6 +161,12 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		return nil, beefAPIErr
 	}
 	svc.SetBeefAPI(beefAPIConnection)
+	if cfg.ConfigureService != nil {
+		if err := cfg.ConfigureService(svc); err != nil {
+			cleanupService()
+			return nil, err
+		}
+	}
 	localKernel := app.NewLocalKernel(svc)
 	assetService := svc.ResourceService()
 	projectService := svc.ProjectService()

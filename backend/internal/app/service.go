@@ -89,6 +89,7 @@ type Service struct {
 	depthCapture             *depthcapture.Service
 	depthCaptureOnce         sync.Once
 	beefAPI                  *beefapi.Service
+	extensions               Extensions
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer
 	deliveryMu               sync.Mutex

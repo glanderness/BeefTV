@@ -15,6 +15,7 @@ import (
 
 	"infinite-canvas/backend/internal/bootstrap"
 	"infinite-canvas/backend/internal/desktopstorage"
+	"infinite-canvas/backend/internal/integrations"
 	"infinite-canvas/backend/internal/model"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -48,10 +49,10 @@ type DesktopApp struct {
 // private to the host process while the bound object exposes only its tiny API.
 var (
 	desktopRuntimeRegistryMu sync.RWMutex
-	desktopRuntimeRegistry   = make(map[*DesktopApp]*bootstrap.Runtime)
+	desktopRuntimeRegistry   = make(map[*DesktopApp]bootstrap.HostRuntime)
 )
 
-func (a *DesktopApp) runtime() *bootstrap.Runtime {
+func (a *DesktopApp) runtime() bootstrap.HostRuntime {
 	desktopRuntimeRegistryMu.RLock()
 	defer desktopRuntimeRegistryMu.RUnlock()
 	return desktopRuntimeRegistry[a]
@@ -84,12 +85,12 @@ func (a *DesktopApp) start(ctx context.Context) error {
 	return nil
 }
 
-func openDesktopRuntime(ctx context.Context, dataDir string) (*bootstrap.Runtime, error) {
+func openDesktopRuntime(ctx context.Context, dataDir string) (bootstrap.HostRuntime, error) {
 	listenAddr := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_BACKEND_ADDR"))
 	if listenAddr == "" {
 		listenAddr = "127.0.0.1:0"
 	}
-	runtime, err := bootstrap.Open(ctx, bootstrap.Config{
+	runtime, err := integrations.Open(ctx, bootstrap.Config{
 		Profile:         bootstrap.ProfileDesktop,
 		DataDir:         dataDir,
 		DatabaseDriver:  "sqlite",

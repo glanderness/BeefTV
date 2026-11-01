@@ -175,21 +175,22 @@ type VideoDownloadCachePort interface {
 }
 
 type Runtime struct {
-	ReferenceStorage  ReferenceStoragePort
-	Resources         ResourcePort
-	Limits            LimitsPort
-	Receipts          ReceiptPort
-	Stages            StagePort
-	Delivery          DeliveryProgressPort
-	DownloadCache     VideoDownloadCachePort
-	ReferenceProgress ReferenceProgressPort
-	Images            ImageSubmissionPort
-	ManagedMedia      beefapi.MediaStatePort
-	Workflow          WorkflowPort
-	Prompt            PromptPort
-	Config            ConfigPort
-	Style             StylePort
-	Probe             MediaProbePort
-	Call              CallMeta
-	Endpoints         Endpoints
+	SelectReferenceStorage func(Config) ReferenceStoragePort
+	ReferenceStorage       ReferenceStoragePort
+	Resources              ResourcePort
+	Limits                 LimitsPort
+	Receipts               ReceiptPort
+	Stages                 StagePort
+	Delivery               DeliveryProgressPort
+	DownloadCache          VideoDownloadCachePort
+	ReferenceProgress      ReferenceProgressPort
+	Images                 ImageSubmissionPort
+	ManagedMedia           beefapi.MediaStatePort
+	Workflow               WorkflowPort
+	Prompt                 PromptPort
+	Config                 ConfigPort
+	Style                  StylePort
+	Probe                  MediaProbePort
+	Call                   CallMeta
+	Endpoints              Endpoints
 }

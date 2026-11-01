@@ -11,13 +11,31 @@ import (
 	"strconv"
 	"time"
 
+	"infinite-canvas/backend/internal/bootstrap"
 	"infinite-canvas/backend/internal/referencestorage"
 )
 
-func (a *DesktopApp) ReferenceStorageSettings() (referencestorage.PublicConfig, error) {
+func (a *DesktopApp) referenceWorkspace() (bootstrap.HostRuntime, string, func(), error) {
 	a.mu.RLock()
-	dir := a.dataDir
+	runtime, dir, closing := a.runtime(), a.dataDir, a.closing
 	a.mu.RUnlock()
+	if runtime == nil || closing {
+		return nil, "", nil, errors.New("工作区尚未就绪")
+	}
+	if scoped, ok := runtime.(interface {
+		AcquireWorkspace() (bootstrap.HostRuntime, string, func(), error)
+	}); ok {
+		return scoped.AcquireWorkspace()
+	}
+	return runtime, dir, func() {}, nil
+}
+
+func (a *DesktopApp) ReferenceStorageSettings() (referencestorage.PublicConfig, error) {
+	_, dir, release, err := a.referenceWorkspace()
+	if err != nil {
+		return referencestorage.PublicConfig{}, err
+	}
+	defer release()
 	config, err := referencestorage.Load(dir)
 	return config.Public(), err
 }
@@ -27,9 +45,11 @@ func (a *DesktopApp) SaveReferenceStorage(config referencestorage.Config) (refer
 		return referencestorage.PublicConfig{}, errors.New("工作区正在迁移，请稍后保存")
 	}
 	defer a.migrationMu.Unlock()
-	a.mu.RLock()
-	dir := a.dataDir
-	a.mu.RUnlock()
+	_, dir, release, err := a.referenceWorkspace()
+	if err != nil {
+		return referencestorage.PublicConfig{}, err
+	}
+	defer release()
 	return referencestorage.Save(dir, config)
 }
 
@@ -41,14 +61,11 @@ func (a *DesktopApp) UploadReferenceMedia(ids []string) (map[string]string, erro
 		return nil, errors.New("工作区正在迁移或上传，请稍后重试")
 	}
 	defer a.migrationMu.Unlock()
-	a.mu.RLock()
-	dir := a.dataDir
-	runtime := a.runtime()
-	closing := a.closing
-	a.mu.RUnlock()
-	if runtime == nil || closing {
-		return nil, errors.New("工作区尚未就绪")
+	runtime, dir, release, err := a.referenceWorkspace()
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	config, err := referencestorage.Load(dir)
 	if err != nil {
 		return nil, err
@@ -119,12 +136,11 @@ func (a *DesktopApp) TestReferenceStorage() error {
 		return errors.New("工作区正在迁移或上传，请稍后测试")
 	}
 	defer a.migrationMu.Unlock()
-	a.mu.RLock()
-	dir, closing := a.dataDir, a.closing
-	a.mu.RUnlock()
-	if closing {
-		return errors.New("工作区正在关闭")
+	_, dir, release, err := a.referenceWorkspace()
+	if err != nil {
+		return err
 	}
+	defer release()
 	config, err := referencestorage.Load(dir)
 	if err != nil {
 		return err

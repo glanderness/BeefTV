@@ -657,9 +657,17 @@ export function channelHasManagedBeefAPICredential(channel: Pick<ModelChannel, "
     return channel.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF || channel.hasApiKey === true;
 }
 
+export function channelHasManagedCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey">) {
+    const credentialRef = channel.credentialRef?.trim();
+    if (!credentialRef) return false;
+    // The BeefAPI reference is reserved for its pinned system channel. Other
+    // references are resolved by optional backend integration extensions.
+    return credentialRef !== MANAGED_BEEFAPI_CREDENTIAL_REF || channelHasManagedBeefAPICredential(channel);
+}
+
 export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey" | "modelProfiles">, model = "") {
     if (model && channel.modelProfiles?.some((item) => item.model === modelOptionName(model) && item.authType === "none")) return true;
-    return channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
+    return channelHasManagedCredential(channel) || channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
