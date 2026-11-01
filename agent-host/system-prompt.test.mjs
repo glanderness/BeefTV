@@ -31,7 +31,8 @@ test('producer workflow respects studio changes, maintains plan_update, and insp
     expect(SYSTEM_PROMPT).toContain(instruction);
   }
   expect(SYSTEM_PROMPT).toContain('成功提案会结束本轮并等待用户确认');
-  expect(SYSTEM_PROMPT).toContain('不要把计划更新留到提案之后');
+  expect(SYSTEM_PROMPT).toContain('在同一次响应发出');
+  expect(SYSTEM_PROMPT).toContain('也不要留到提案之后');
 });
 
 test('optional short-film storyboard and cross-shot method lives in the versioned builtin skill instead of resident prompt', () => {

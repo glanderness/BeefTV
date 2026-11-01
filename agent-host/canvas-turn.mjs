@@ -11,7 +11,7 @@ export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthro
 // or IDs from that payload. Business tools retain their own batch parameters.
 export function toolCallCapabilityContext({ api, modelId }) {
   return api === 'openai-completions' && modelId === 'gemini-3.8-flash'
-    ? '[本轮工具通路限制，优先于多工具合并建议：每条模型响应只调用一个工具，等结果再决定下一步；不能同一响应发出多个不同工具调用。优先用单个业务工具的批量或组合参数：model_catalog capabilities、canvas_script_prepare script、混合 canvas_generation_submit。需要成片和可编辑工程时使用 canvas_timeline_deliver，一次完成时间线保存、合成、画布绑定和工程导出；不要拆成逐步调用，只有组合回执明确失败时才恢复对应原步骤。计划更新与其他工具也分开。这是兼容通路限制，不需要用户逐步确认或人工续做。]'
+    ? '[本轮工具通路限制，优先于多工具合并建议和「计划更新与提方案同一次响应发出」的要求：每条模型响应只调用一个工具，等结果再决定下一步；不能同一响应发出多个不同工具调用。优先用单个业务工具的批量或组合参数：model_catalog capabilities、canvas_script_prepare script、混合 canvas_generation_submit。需要成片和可编辑工程时使用 canvas_timeline_deliver，一次完成时间线保存、合成、画布绑定和工程导出；不要拆成逐步调用，只有组合回执明确失败时才恢复对应原步骤。计划更新与其他工具也分开。这是兼容通路限制，不需要用户逐步确认或人工续做。]'
     : '';
 }
 
