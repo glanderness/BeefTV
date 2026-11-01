@@ -105,3 +105,20 @@ bun eval/run-eval.mjs --model real --scenario all --runs 3 --max-requests 25 --b
 - **S7 是用户主动复查**：用户再发一条消息发起检查，与 S5 自动唤醒分别计分，不能用 S7 通过宣称自动续做已实现。图片和缺陷说明由模拟器提供；真实模型模式也使用模拟产物及缺陷说明，不是对真实图片视觉判断准确率的测量。
 - **S6 不测试压缩**：场景已从 `skill-after-compaction` 更名为 `skill-across-turns`。真实调用 Durable 压缩、故意使用有损摘要并验证技能重新注入的测试在 `../durable-skills-cases.mjs`，由 `bun test durable-skills.test.mjs` 运行；这份评测报告不继承其结论。
 - **新增场景**：在 `scenarios.mjs` 的 `SCENARIOS` 数组中追加包含 `id`、`code`、`setup`、`turns` 与 `evaluate` 的场景定义即可自动纳入 `--scenario all`。
+
+---
+
+## 真实后端效率测量（不用模拟器）
+
+`eval/real-go-driver.mjs` 加 `backend/internal/handler/assistant_real_baseline_test.go`：由 Go 测试起隔离的真实后端（真实画布、权限、方案登记），再起真实 `agent-host`，模型请求经计量代理转发，逐请求记录输入/输出 token、缓存命中、耗时和工具调用（含参数前 400 字），按回合汇总到 `summary.md` 与 `raw.json`。付费生成只登记方案，不会提交。
+
+```bash
+cd backend
+# 默认：脚本化假模型，只验证测量工具本身
+go test ./internal/handler -run TestAssistantEfficiencyBaselineOnRealBackend -count=1
+# 真实模型（费用自理；密钥只通过环境变量传入，不写文件）
+BEEFTV_REAL_BASELINE_URL=https://<网关>/v1 BEEFTV_REAL_BASELINE_KEY=... BEEFTV_REAL_BASELINE_MODEL=deepseek-v4.1-flash \
+BEEFTV_REAL_BASELINE_OUT=/tmp/baseline go test ./internal/handler -run TestAssistantEfficiencyBaselineOnRealBackend -count=1 -timeout 25m
+```
+
+模型目录由测试写入的本地配置提供；目录为空时测试直接失败，避免得到失真的基线。
