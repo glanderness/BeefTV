@@ -483,6 +483,9 @@ Section "BeefTV (required)" SEC_APP
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "DisplayIcon" "$INSTDIR\BeefTV.exe"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "NoRepair" 1
+  WriteRegStr HKCU "Software\Classes\beeftv" "" "URL:BeefTV skill link"
+  WriteRegStr HKCU "Software\Classes\beeftv" "URL Protocol" ""
+  WriteRegStr HKCU "Software\Classes\beeftv\shell\open\command" "" '$\"$INSTDIR\BeefTV.exe$\" $\"%1$\"'
   # A successful move replaces the registered install; remove only the old
   # installer's shipped payload. Unknown user files remain in that directory.
   ${If} $PreviousInstallDir != ""
@@ -512,6 +515,10 @@ Section "Uninstall"
   # or remove shortcuts for the current installation.
   ReadRegStr $RegisteredInstallDir HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "InstallLocation"
   ${If} $RegisteredInstallDir == $INSTDIR
+    ReadRegStr $0 HKCU "Software\Classes\beeftv\shell\open\command" ""
+    ${If} $0 == '$\"$INSTDIR\BeefTV.exe$\" $\"%1$\"'
+      DeleteRegKey HKCU "Software\Classes\beeftv"
+    ${EndIf}
     Delete "$DESKTOP\BeefTV.lnk"
     Delete "$SMPROGRAMS\BeefTV\BeefTV.lnk"
     Delete "$SMPROGRAMS\BeefTV\Uninstall.lnk"

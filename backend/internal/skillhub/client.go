@@ -35,6 +35,7 @@ type Metadata struct {
 	SourceURL        string     `json:"sourceUrl"`
 	VersionLabel     string     `json:"versionLabel"`
 	Requirements     []string   `json:"requirements"`
+	RequirementNotes string     `json:"requirementNotes,omitempty"`
 	Showcase         []Showcase `json:"showcase"`
 	MinClientVersion string     `json:"minClientVersion,omitempty"`
 	Tags             []string   `json:"tags,omitempty"`
@@ -42,16 +43,33 @@ type Metadata struct {
 }
 type Release struct {
 	Metadata
-	ReleaseID     string       `json:"releaseId"`
-	Author        string       `json:"author"`
-	ContentHash   string       `json:"contentHash"`
-	ArchiveSHA256 string       `json:"archiveSha256"`
-	ArchiveBytes  int64        `json:"archiveBytes"`
-	Files         []File       `json:"files"`
-	DownloadURL   string       `json:"downloadUrl"`
-	PublishedAt   string       `json:"publishedAt"`
-	Signature     string       `json:"signature,omitempty"`
-	Attestation   *Attestation `json:"attestation,omitempty"`
+	Review        *ReviewSummary `json:"review,omitempty"`
+	ReleaseID     string         `json:"releaseId"`
+	Author        string         `json:"author"`
+	ContentHash   string         `json:"contentHash"`
+	ArchiveSHA256 string         `json:"archiveSha256"`
+	ArchiveBytes  int64          `json:"archiveBytes"`
+	Files         []File         `json:"files"`
+	DownloadURL   string         `json:"downloadUrl"`
+	PublishedAt   string         `json:"publishedAt"`
+	Signature     string         `json:"signature,omitempty"`
+	Attestation   *Attestation   `json:"attestation,omitempty"`
+}
+type ReviewSummary struct {
+	ReviewedAt    string        `json:"reviewedAt"`
+	Revision      int64         `json:"revision"`
+	ContentHash   string        `json:"contentHash"`
+	ArchiveSHA256 string        `json:"archiveSha256"`
+	PreviewDigest string        `json:"previewDigest"`
+	Trials        []ReviewTrial `json:"trials"`
+}
+type ReviewTrial struct {
+	Scenario       string `json:"scenario"`
+	Target         string `json:"target"`
+	RuntimeVersion string `json:"runtimeVersion"`
+	Model          string `json:"model"`
+	Conclusion     string `json:"conclusion"`
+	TestedAt       string `json:"testedAt"`
 }
 type Attestation struct {
 	Algorithm string `json:"algorithm"`
@@ -66,6 +84,7 @@ type Catalog struct {
 	PageSize int       `json:"pageSize"`
 }
 type Draft struct {
+	ReviewReason  string   `json:"reviewReason,omitempty"`
 	ContentHash   string   `json:"contentHash"`
 	ArchiveSHA256 string   `json:"archiveSha256"`
 	ArchiveBytes  int64    `json:"archiveBytes"`

@@ -107,6 +107,26 @@ func TestSnapshotTimeWindowIncludesBothBounds(t *testing.T) {
 	}
 }
 
+func TestSnapshotWithoutUpperBoundIncludesPersistedClockAheadEvents(t *testing.T) {
+	r := newRecorder(t, t.TempDir())
+	now := time.Now().UTC()
+	r.journal.now = func() time.Time { return now }
+	for i, at := range []time.Time{now, now.Add(time.Millisecond)} {
+		r.record(Event{Fields: Fields{UserID: "owner-clock"}, ID: fmt.Sprintf("clock-%d", i), Timestamp: at, Name: "task.execute", Phase: "end", LaunchID: r.launchID}, false)
+	}
+	r.record(Event{Fields: Fields{UserID: "other-owner"}, ID: "other-clock", Timestamp: now.Add(time.Hour), Name: "task.execute", Phase: "end", LaunchID: r.launchID}, false)
+	// Another owner's future record must not widen this owner's loss window.
+	r.journal.recordDrop("owner-clock", now.Add(time.Hour), 1)
+	all := snapshot(t, r, "owner-clock")
+	if len(all.Events) != 2 || all.Coverage.Status != "complete" || all.Coverage.Dropped != 0 {
+		t.Fatalf("persisted events omitted or another owner's window imported: %+v", all)
+	}
+	bounded, err := r.Snapshot("owner-clock", time.Time{}, now)
+	if err != nil || len(bounded.Events) != 1 || bounded.Events[0].ID != "clock-0" {
+		t.Fatalf("explicit upper bound changed: %+v %v", bounded, err)
+	}
+}
+
 func TestStartSurvivesKilledProcess(t *testing.T) {
 	if dir := os.Getenv("BEEFTV_SUPPORTTRACE_TEST_CHILD"); dir != "" {
 		r, err := New(dir)

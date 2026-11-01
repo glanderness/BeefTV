@@ -116,9 +116,15 @@ func TestMarketVersionMetadataSurvivesOfflineForkEditAndRollback(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(editedBundle.MarketRelease, &r1) {
 		t.Fatal("editing discarded original attribution and license", err)
 	}
-	plan, err := s.PublishPrepare("owner", fork.SkillID, skillhub.Metadata{})
+	if _, err := s.PublishPrepare("owner", fork.SkillID, skillhub.Metadata{}, PublicationTarget{}); err == nil {
+		t.Fatal("market derivative silently chose a publication target")
+	}
+	plan, err := s.PublishPrepare("owner", fork.SkillID, skillhub.Metadata{}, PublicationTarget{Kind: "new"})
 	if err != nil || plan.Metadata.License != r1.License || plan.Metadata.SourceURL != r1.SourceURL || !reflect.DeepEqual(plan.Source, &r1) || plan.VersionID != edited.VersionID || plan.ContentHash != edited.ContentHash {
 		t.Fatal("publication preparation lost provenance or used the original package instead of the edited version", err)
+	}
+	if plan.Metadata.SkillID != "" || plan.MarketSkillID != "" {
+		t.Fatal("new derivative targeted original author's cloud skill")
 	}
 	if _, err := s.SkillPackageBundle("another-owner", fork.SkillID); err == nil {
 		t.Fatal("release metadata bypassed private package ownership")

@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	// The updater helper must run before defaultDataDir/prepareDesktopApp so a
+	// The updater helper must run before defaultDataDir/runDesktopApp so a
 	// replacement never opens the user database or data directory.
 	if done, err := desktopupdate.HandleHelperCommand(os.Args); done {
 		if err != nil {
@@ -36,21 +36,24 @@ func main() {
 		log.Fatal(err)
 	}
 	app := newDesktopApp(dataDir)
-	if err := configureDesktopTemp(dataDir); err != nil {
-		log.Fatal(err)
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "beeftv:") {
+			app.queueSkillLink(arg)
+		}
 	}
-	startupErrorPath := filepath.Join(dataDir, "startup-error.log")
-	if err := prepareDesktopApp(app); err != nil {
-		_ = os.MkdirAll(dataDir, 0o755)
-		_ = os.WriteFile(startupErrorPath, []byte(err.Error()+"\n"), 0o600)
-		log.Fatalf("启动本地后端失败: %v", err)
-	}
-	_ = os.Remove(startupErrorPath)
-
-	err = wails.Run(desktopAppOptions(app))
+	err = runDesktopApp(app, wails.Run)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func runDesktopApp(app *DesktopApp, run func(*options.App) error) error {
+	if err := configureDesktopTemp(app.dataDir); err != nil {
+		return err
+	}
+	// Wails must forward a second launch before the primary instance's workspace
+	// lock is acquired. Only OnStartup (or its asset-server fallback) opens it.
+	return run(desktopAppOptions(app))
 }
 
 func desktopAppOptions(app *DesktopApp) *options.App {
@@ -60,6 +63,7 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 		Height:           960,
 		BackgroundColour: &options.RGBA{R: 13, G: 15, B: 18, A: 255},
 		Mac: &mac.Options{
+			OnUrlOpen: app.queueSkillLink,
 			// WKWebView disables element fullscreen by default, including the
 			// video player's fullscreen control.
 			Preferences: &mac.Preferences{FullscreenEnabled: mac.Enabled},
@@ -79,14 +83,31 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 			Assets:  assets,
 			Handler: desktopAssetHandler{app: app},
 		},
-		OnStartup:  app.startup,
+		OnStartup: app.startup,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: skillInstanceID(app.dataDir),
+			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
+				for _, arg := range data.Args {
+					if strings.HasPrefix(arg, "beeftv:") {
+						app.queueSkillLink(arg)
+					}
+				}
+			},
+		},
 		OnShutdown: app.shutdown,
 		Bind:       []interface{}{app},
 	}
 }
 
 func prepareDesktopApp(app *DesktopApp) error {
-	return app.start(context.Background())
+	startupErrorPath := filepath.Join(app.dataDir, "startup-error.log")
+	if err := app.start(context.Background()); err != nil {
+		_ = os.MkdirAll(app.dataDir, 0o755)
+		_ = os.WriteFile(startupErrorPath, []byte(err.Error()+"\n"), 0o600)
+		return err
+	}
+	_ = os.Remove(startupErrorPath)
+	return nil
 }
 
 func defaultDataDir() (string, error) {

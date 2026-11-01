@@ -350,6 +350,39 @@ test('media discovery preserves descriptions, required versions and modes in mod
   }
 });
 
+test('media review exposes and forwards the selected resource with its owned target', async () => {
+  const descriptor = descriptors.find(op => op.id === 'media.review');
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/ops') {
+      res.end(JSON.stringify({ code: 0, data: { ops: [descriptor] } }));
+      return;
+    }
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({ path: req.url, body: JSON.parse(raw) });
+    res.end(JSON.stringify({ code: 0, data: { result: { review: { observations: 'fixture observation' } } } }));
+  });
+  const port = await listen(server);
+  try {
+    const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
+    await bridge.loadDescriptors();
+    const tool = bridge.buildTools('canvas', [], { aborted: false }, newTurnAccumulator(), 'session')[0];
+    expect(tool.name).toBe('media_review');
+    expect(tool.parameters.properties.resourceId.type).toBe('string');
+    expect(tool.parameters.required).not.toContain('resourceId');
+    expect(tool.parameters.additionalProperties).toBe(false);
+    expect(tool.replay).toBe('unsafe');
+    const params = { nodeId: 'node', resourceId: 'selected-resource', expectedVersion: 'version', startMs: 0, endMs: 1000, question: '观察片段' };
+    await tool.execute('review-call', params);
+    expect(requests).toEqual([{ path: '/ops/media.review', body: { opId: '', params: { ...params, canvasId: 'canvas' } } }]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 const EDGE_CREATE_PARAMS = {
   type: 'object',
   properties: { canvasId: { type: 'string' }, fromNodeId: { type: 'string' }, toNodeId: { type: 'string' }, expectedRevision: { type: 'integer' } },
@@ -379,6 +412,11 @@ async function withCasBridge(run, { revision = 9 } = {}) {
       return;
     }
     const op = req.url.slice('/ops/'.length);
+    if (op === 'canvas.get') {
+      res.end(JSON.stringify({ code: 0, data: { result: { canvasId: parsed.params.canvasId,
+        canvas: { revision: state.revision, nodes: [], connections: [] } } } }));
+      return;
+    }
     state.seen.push({ op, expectedRevision: parsed.params?.expectedRevision });
     if (parsed.params?.expectedRevision !== state.revision) {
       res.writeHead(409);
@@ -443,9 +481,9 @@ describe('同一轮的并行写入', () => {
       state.revision += 1; // foreign write: 10 -> 11
       await expect(call('canvas_edge_create', 'c2', { fromNodeId: 'a', toNodeId: 'c', expectedRevision: 9 })).rejects.toThrow('stale_revision');
       expect(state.seen.at(-1).expectedRevision).toBe(10);
-      // A revision outside this turn's own chain is never rewritten.
-      await expect(call('canvas_edge_create', 'c3', { fromNodeId: 'a', toNodeId: 'd', expectedRevision: 8 })).rejects.toThrow('stale_revision');
-      expect(state.seen.at(-1).expectedRevision).toBe(8);
+      // Remaining queued writes wait for a new model decision, without HTTP dispatch.
+      await expect(call('canvas_edge_create', 'c3', { fromNodeId: 'a', toNodeId: 'd', expectedRevision: 8 })).rejects.toThrow('canvas_context_changed');
+      expect(state.seen.map(item => item.expectedRevision)).toEqual([9, 10]);
       expect(log.at(-1).rebasedFrom).toBeUndefined();
       expect(state.revision).toBe(11);
     });

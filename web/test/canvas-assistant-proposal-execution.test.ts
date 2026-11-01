@@ -227,7 +227,7 @@ test("F02: reference-driven compatibility fallback is rejected after re-resoluti
             const capabilityConfig = defaultModelCapabilityConfig(undefined, model);
             capabilityConfig.video!.operations = [index ? "image_to_video" : "text_to_video"];
             capabilityConfig.video!.references.maxImages = index;
-            return { model, displayName: "Cinema", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, capabilityConfig };
+            return { model, displayName: "Cinema", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, capabilityConfig, capabilitySource: "user" as const };
         }) }],
     };
     const videoNode = { ...node, type: CanvasNodeType.Video };

@@ -51,6 +51,20 @@ type AgentFile struct {
 
 var agentSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
+// Requirements belong to the selected immutable version, not the current
+// package or a model-supplied declaration.
+func (s *Service) AgentRequirements(userID string, pin Pin) ([]string, error) {
+	_, version, _, err := s.agentPackage(userID, pin)
+	if err != nil {
+		return nil, err
+	}
+	release, err := marketReleaseMetadata(version.MarketReleaseJSON)
+	if err != nil || release == nil {
+		return nil, err
+	}
+	return release.Requirements, nil
+}
+
 func ValidatePin(pin Pin) error {
 	if !agentSkillIDPattern.MatchString(pin.SkillID) || !agentSkillIDPattern.MatchString(pin.VersionID) || len(pin.ContentHash) != 64 {
 		return kernel.BadAuthRequest("技能选择必须包含技能、版本和内容摘要")

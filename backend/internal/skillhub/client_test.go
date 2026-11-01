@@ -24,7 +24,7 @@ func TestDedicatedReleaseSignatureCannotBeChangedOrSelfTrusted(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	r := Release{Metadata: Metadata{SkillID: "one", Name: "Original"}, ReleaseID: "r1", ArchiveSHA256: "fixed"}
+	r := Release{Metadata: Metadata{SkillID: "one", Name: "Original", RequirementNotes: "Text only, no paid tool required"}, ReleaseID: "r1", ArchiveSHA256: "fixed", Review: &ReviewSummary{Revision: 2, Trials: []ReviewTrial{{Scenario: "normal", Target: "beeftv", Conclusion: "Observed output"}}}}
 	payload, _ := json.Marshal(r)
 	r.Attestation = &Attestation{Algorithm: "Ed25519", KeyID: "market-key", Payload: base64.StdEncoding.EncodeToString(payload), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(private, payload))}
 	keys, _ := json.Marshal(map[string]string{"market-key": base64.StdEncoding.EncodeToString(public)})
@@ -32,6 +32,16 @@ func TestDedicatedReleaseSignatureCannotBeChangedOrSelfTrusted(t *testing.T) {
 	if e = VerifyRelease(&r); e != nil {
 		t.Fatal(e)
 	}
+	r.Review.Trials[0].Conclusion = "Tampered"
+	if e = VerifyRelease(&r); e == nil {
+		t.Fatal("review evidence changed without rejection")
+	}
+	r.Review.Trials[0].Conclusion = "Observed output"
+	r.RequirementNotes = "Changed requirement"
+	if e = VerifyRelease(&r); e == nil {
+		t.Fatal("requirements changed without rejection")
+	}
+	r.RequirementNotes = "Text only, no paid tool required"
 	r.Name = "Changed"
 	if e = VerifyRelease(&r); e == nil {
 		t.Fatal("signed metadata changed without rejection")

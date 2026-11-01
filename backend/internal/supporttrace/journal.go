@@ -344,6 +344,15 @@ func (j *journal) snapshot(userID string, from, to time.Time) (Snapshot, error) 
 	}
 	if to.IsZero() {
 		to = j.now()
+		// SDK span ends use monotonic elapsed time. On Windows their wall
+		// timestamps can briefly lead time.Now(), despite already being durable.
+		// An unbounded snapshot includes all retained records for this owner;
+		// explicit caller-supplied time windows remain strict.
+		for _, event := range events {
+			if event.UserID == userID && event.Timestamp.After(to) {
+				to = event.Timestamp
+			}
+		}
 	}
 	result := Snapshot{Events: []Event{}, Coverage: Coverage{Status: "complete", RetentionHours: int(j.retention.Hours()), MaxBytes: j.maxBytes}}
 	for _, event := range events {

@@ -80,21 +80,17 @@ func (s *Service) platformDomain() *platform.Service {
 	if s == nil {
 		return platform.New(nil, nil, nil)
 	}
-	if s.platform != nil {
-		return s.platform
-	}
-	// Tests and small embedded callers may construct Service literals instead
-	// of using New. Cache the lazily-created domain so its bounded read caches
-	// retain their intended lifetime and do not turn every read into a DB hit.
-	s.workerRuntimeMu.Lock()
-	defer s.workerRuntimeMu.Unlock()
-	if s.platform == nil {
-		if s.IsLocalMode() {
-			s.platform = platform.NewLocal(s.repo, s.coordinator, newPlatformHost(s))
-		} else {
-			s.platform = platform.New(s.repo, s.coordinator, newPlatformHost(s))
+	// Use sync.Once so the init runs at most once and concurrent callers never
+	// race on s.platform, while avoiding a mutex on every subsequent hot call.
+	s.platformOnce.Do(func() {
+		if s.platform == nil {
+			if s.IsLocalMode() {
+				s.platform = platform.NewLocal(s.repo, s.coordinator, newPlatformHost(s))
+			} else {
+				s.platform = platform.New(s.repo, s.coordinator, newPlatformHost(s))
+			}
 		}
-	}
+	})
 	return s.platform
 }
 

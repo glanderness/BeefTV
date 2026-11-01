@@ -19,7 +19,7 @@ func registerCanvasProductionRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		result, err := svc.CanvasProductionContext(user.ID, c.Param("id"), c.Param("canvasId"), c.Query("unitId"), c.Query("shotId"), c.Query("stepKey"))
+		result, err := svc.ProjectService().CanvasProductionContext(user.ID, c.Param("id"), c.Param("canvasId"), c.Query("unitId"), c.Query("shotId"), c.Query("stepKey"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -40,7 +40,7 @@ func registerCanvasProductionRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("制作记录参数无效"))
 			return
 		}
-		result, err := svc.RegisterCanvasProductionTask(user.ID, c.Param("id"), c.Param("canvasId"), req)
+		result, err := svc.ProjectService().RegisterCanvasProductionTask(user.ID, c.Param("id"), c.Param("canvasId"), req)
 		if err != nil {
 			failService(c, err)
 			return

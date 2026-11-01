@@ -16,7 +16,7 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 		if !valid {
 			return
 		}
-		result, err := svc.ArmAssistantContinuation(c.GetString("agentUserId"), input)
+		result, err := svc.AssistantTurns().ArmContinuation(c.GetString("agentUserId"), input)
 		if err != nil {
 			skillContextFailure(c, err)
 			return
@@ -27,7 +27,7 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 		if !guard(c, false) {
 			return
 		}
-		result, err := svc.ListAssistantContinuations(c.GetString("agentUserId"), c.Query("canvasId"), c.Query("sessionId"))
+		result, err := svc.AssistantTurns().ListContinuations(c.GetString("agentUserId"), c.Query("canvasId"), c.Query("sessionId"))
 		if err != nil {
 			skillContextFailure(c, err)
 			return
@@ -42,22 +42,11 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 		if !valid {
 			return
 		}
-		if err := svc.RegisterAssistantContinuationManifest(c.GetString("agentUserId"), c.Param("id"), input); err != nil {
+		if err := svc.AssistantTurns().RegisterContinuationManifest(c.GetString("agentUserId"), c.Param("id"), input); err != nil {
 			skillContextFailure(c, err)
 			return
 		}
 		ok(c, gin.H{"accepted": true})
-	})
-	r.POST("/assistant/continuations/:id/claim", func(c *gin.Context) {
-		if !guard(c, true) {
-			return
-		}
-		result, err := svc.ClaimAssistantContinuation(c.GetString("agentUserId"), c.Param("id"))
-		if err != nil {
-			skillContextFailure(c, err)
-			return
-		}
-		ok(c, result)
 	})
 	r.POST("/assistant/continuations/cancel", func(c *gin.Context) {
 		if !guard(c, true) {
@@ -74,7 +63,7 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 sessionId 必填"))
 			return
 		}
-		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), input.CanvasID, input.SessionID, false); err != nil {
+		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), input.CanvasID, input.SessionID, false); err != nil {
 			skillContextFailure(c, err)
 			return
 		}
@@ -97,7 +86,7 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 		if !valid {
 			return
 		}
-		if err = svc.VerifyAssistantContinuation(user.ID, c.Param("id"), input.TurnID, input.SessionID); err != nil {
+		if err = svc.AssistantTurns().VerifyContinuation(user.ID, c.Param("id"), input.TurnID, input.SessionID); err != nil {
 			skillContextFailure(c, err)
 			return
 		}

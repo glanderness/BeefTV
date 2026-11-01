@@ -27,11 +27,11 @@ func (s *operationSession) ReadSkillMarketFile(id, release, name string, offset,
 func (s *operationSession) DraftSkill(user string, input skills.SkillMutationRequest) (*skills.SkillItem, error) {
 	return skills.New(s.repo, s.service.dataDir, nil).CreateSkill(user, input)
 }
-func (s *operationSession) PrepareSkillPublication(user, id, canvas string, metadata skillhub.Metadata) (*skills.PublishPlan, error) {
+func (s *operationSession) PrepareSkillPublication(user, id, canvas string, metadata skillhub.Metadata, target skills.PublicationTarget) (*skills.PublishPlan, error) {
 	if _, e := s.UserCanvasProject(user, canvas); e != nil {
 		return nil, e
 	}
-	return skills.New(s.repo, s.service.dataDir, nil).PublishPrepareInCanvas(user, id, canvas, metadata)
+	return skills.New(s.repo, s.service.dataDir, nil).PublishPrepareInCanvas(user, id, canvas, metadata, target)
 }
 func (s *operationSession) SkillPublicationStatus(user, id string) (*skills.PublishPlan, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

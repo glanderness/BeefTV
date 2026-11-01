@@ -20,6 +20,8 @@ import (
 )
 
 type PublishPlan struct {
+	PublicationTarget
+	ReviewReason  string            `json:"reviewReason,omitempty"`
 	Source        *skillhub.Release `json:"source,omitempty"`
 	Instruction   string            `json:"instruction"`
 	CanvasID      string            `json:"canvasId,omitempty"`
@@ -37,18 +39,83 @@ type PublishPlan struct {
 	CreatedAt     time.Time         `json:"createdAt"`
 }
 
+// The local source and the optional cloud update target are separate identities.
+// Metadata.SkillID is populated only after this explicit target is validated.
+type PublicationTarget struct {
+	Kind          string `json:"publicationTarget"`
+	MarketSkillID string `json:"marketSkillId,omitempty"`
+}
+
+func resolvePublicationTarget(localID string, meta *skillhub.Metadata, target *PublicationTarget) error {
+	invalid := func(message string) error {
+		return &kernel.AppError{Status: 400, Code: 400, Reason: "invalid_publication_target", Message: message}
+	}
+	if meta.SkillID != "" {
+		return invalid("metadata.skillId 不能填写本机或市场编号。新技能请选择 publicationTarget=new；已有市场技能的新版本请选择 existing，并将市场编号填写到 marketSkillId。请重新准备投稿。")
+	}
+	if target.Kind == "" {
+		target.Kind = "new"
+	}
+	switch target.Kind {
+	case "new":
+		if target.MarketSkillID != "" {
+			return invalid("新技能不能指定已有市场技能编号；请明确选择投稿目标后重新准备。")
+		}
+	case "existing":
+		if target.MarketSkillID == localID || !agentSkillIDPattern.MatchString(target.MarketSkillID) {
+			return invalid("marketSkillId 必须是你在技能市场已发布的技能编号，不能使用本机技能编号；新投稿请选择 new。")
+		}
+		meta.SkillID = target.MarketSkillID
+	default:
+		return invalid("publicationTarget 只接受 new（新技能）或 existing（已有市场技能的新版本）。")
+	}
+	return nil
+}
+
 func (s *Service) planFile(user, id string) (string, error) {
 	if !agentSkillIDPattern.MatchString(id) {
 		return "", kernel.BadAuthRequest("投稿草稿编号无效")
 	}
 	return filepath.Join(s.marketUserDir(user), "plans", id+".json"), nil
 }
-func (s *Service) PublishPrepare(user, id string, meta skillhub.Metadata) (*PublishPlan, error) {
-	return s.PublishPrepareInCanvas(user, id, "", meta)
+func (s *Service) PublishPrepare(user, id string, meta skillhub.Metadata, target PublicationTarget) (*PublishPlan, error) {
+	return s.PublishPrepareInCanvas(user, id, "", meta, target)
 }
-func (s *Service) PublishPrepareInCanvas(user, id, canvas string, meta skillhub.Metadata) (*PublishPlan, error) {
+func (s *Service) PublishPrepareInCanvas(user, id, canvas string, meta skillhub.Metadata, target PublicationTarget) (*PublishPlan, error) {
 	bundle, e := s.SkillPackageBundle(user, id)
 	if e != nil {
+		return nil, e
+	}
+	return s.preparePublicationBundle(user, id, canvas, meta, target, bundle)
+}
+
+// Repreparing changes metadata only. The saved source plan still binds the
+// original owner, canvas and immutable local version, never a replacement file.
+func (s *Service) PublishReprepare(user, sourcePlanID string, meta skillhub.Metadata, target PublicationTarget) (*PublishPlan, error) {
+	unlock := s.lockMarket(user)
+	defer unlock()
+	source, err := s.PublishPlan(user, sourcePlanID)
+	if err != nil {
+		return nil, err
+	}
+	if source.SubmissionID != "" || source.Status != "awaiting_upload_confirmation" {
+		return nil, kernel.NewAppError(409, "这份稿件已有上传记录，请刷新状态并在官网修改")
+	}
+	bundle, err := s.SkillPackageBundle(user, source.SkillID)
+	if err != nil {
+		return nil, err
+	}
+	if bundle.VersionID != source.VersionID || bundle.ContentHash != source.ContentHash {
+		return nil, kernel.NewAppError(409, "本机技能已更新，原稿仍保留；请检查当前文件后重新准备投稿")
+	}
+	return s.preparePublicationBundle(user, source.SkillID, source.CanvasID, meta, target, bundle)
+}
+
+func (s *Service) preparePublicationBundle(user, id, canvas string, meta skillhub.Metadata, target PublicationTarget, bundle *SkillPackageBundle) (*PublishPlan, error) {
+	if bundle.MarketRelease != nil && target.Kind == "" {
+		return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "invalid_publication_target", Message: "这份技能来自市场，请明确选择发布新技能，或为你本人已发布的市场技能更新版本。"}
+	}
+	if e := resolvePublicationTarget(id, &meta, &target); e != nil {
 		return nil, e
 	}
 	files := map[string][]byte{}
@@ -94,6 +161,9 @@ func (s *Service) PublishPrepareInCanvas(user, id, canvas string, meta skillhub.
 		if meta.Requirements == nil {
 			meta.Requirements = source.Requirements
 		}
+		if meta.RequirementNotes == "" {
+			meta.RequirementNotes = source.RequirementNotes
+		}
 		if meta.MinClientVersion == "" {
 			meta.MinClientVersion = source.MinClientVersion
 		}
@@ -104,12 +174,15 @@ func (s *Service) PublishPrepareInCanvas(user, id, canvas string, meta skillhub.
 	if meta.Requirements == nil {
 		meta.Requirements = []string{}
 	}
+	if e := validatePublicationRequirements(meta.Requirements); e != nil {
+		return nil, e
+	}
 	if meta.Showcase == nil {
 		meta.Showcase = []skillhub.Showcase{}
 	}
 	sort.Slice(manifest, func(i, j int) bool { return manifest[i].Path < manifest[j].Path })
 	sum := sha256.Sum256(data)
-	p := &PublishPlan{Source: bundle.MarketRelease, Instruction: string(files["SKILL.md"]), CanvasID: canvas, ID: kernel.NewID(), SkillID: id, VersionID: bundle.VersionID, ContentHash: bundle.ContentHash, ArchiveSHA256: hex.EncodeToString(sum[:]), Metadata: meta, Files: manifest, Status: "awaiting_upload_confirmation", CreatedAt: time.Now()}
+	p := &PublishPlan{PublicationTarget: target, Source: bundle.MarketRelease, Instruction: string(files["SKILL.md"]), CanvasID: canvas, ID: kernel.NewID(), SkillID: id, VersionID: bundle.VersionID, ContentHash: bundle.ContentHash, ArchiveSHA256: hex.EncodeToString(sum[:]), Metadata: meta, Files: manifest, Status: "awaiting_upload_confirmation", CreatedAt: time.Now()}
 	file, _ := s.planFile(user, p.ID)
 	if e = os.MkdirAll(filepath.Dir(file), 0700); e != nil {
 		return nil, e
@@ -121,6 +194,13 @@ func (s *Service) PublishPrepareInCanvas(user, id, canvas string, meta skillhub.
 		return nil, e
 	}
 	return p, nil
+}
+
+func validatePublicationRequirements(requirements []string) error {
+	if checkMarketRequirements(requirements) != nil {
+		return &kernel.AppError{Status: 400, Code: 400, Reason: "invalid_skill_requirements", Message: "requirements 只接受 beeftv.canvas、model.image、model.video、model.audio。纯文字技能请使用空数组 []，其他条件写入 requirementNotes；修正后重新准备投稿。"}
+	}
+	return nil
 }
 func (s *Service) PublishPlans(user string) ([]PublishPlan, error) {
 	unlock := s.lockMarket(user)
@@ -166,6 +246,19 @@ func (s *Service) PublishUpload(ctx context.Context, user, id, expectedHash stri
 	if p.Status == "submitted" {
 		return p, nil
 	}
+	if e := validatePublicationRequirements(p.Metadata.Requirements); e != nil {
+		return nil, e
+	}
+	if p.SubmissionID == "" {
+		metadata := p.Metadata
+		if p.Kind == "existing" && metadata.SkillID == p.MarketSkillID {
+			metadata.SkillID = ""
+		}
+		target := p.PublicationTarget
+		if e := resolvePublicationTarget(p.SkillID, &metadata, &target); e != nil {
+			return nil, e
+		}
+	}
 	c, e := marketClient()
 	if e != nil {
 		return nil, e
@@ -192,7 +285,9 @@ func (s *Service) PublishUpload(ctx context.Context, user, id, expectedHash stri
 		return nil, e
 	}
 	p.Revision = draft.Revision
-	if draft.ContentHash != "" && (draft.ContentHash != p.ContentHash || draft.ArchiveSHA256 != p.ArchiveSHA256) {
+	// The service canonicalizes ZIP headers. Compare file identity here; refresh
+	// separately verifies the downloaded canonical ZIP against its server digest.
+	if draft.ContentHash != "" && (draft.ContentHash != p.ContentHash || !samePublicationFiles(draft.Files, p.Files)) {
 		return nil, kernel.NewAppError(409, "服务器草稿与确认上传的文件不同，请检查并刷新公开预览")
 	}
 	if p.Preview != nil || p.Status == "needs_preview" || (len(draft.Files) > 0 && draft.ContentHash != "") {
@@ -232,6 +327,27 @@ func (s *Service) PublishUpload(ctx context.Context, user, id, expectedHash stri
 		return nil, e
 	}
 	return s.refreshPublication(ctx, user, c, token, p)
+}
+
+func samePublicationFiles(left, right []skillhub.File) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	files := make(map[string]skillhub.File, len(left))
+	for _, file := range left {
+		if _, exists := files[file.Path]; exists {
+			return false
+		}
+		files[file.Path] = file
+	}
+	for _, file := range right {
+		other, exists := files[file.Path]
+		if !exists || other.Size != file.Size || other.SHA256 != file.SHA256 {
+			return false
+		}
+		delete(files, file.Path)
+	}
+	return len(files) == 0
 }
 func (s *Service) PublishSubmit(ctx context.Context, user, id string, revision int64, digest string) (*PublishPlan, error) {
 	unlock := s.lockMarket(user)

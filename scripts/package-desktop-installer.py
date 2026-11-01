@@ -61,7 +61,7 @@ def package(version, platform, payload, output):
             applications.mkdir(parents=True)
             (applications / 'beeftv.desktop').write_text(
                 '[Desktop Entry]\nType=Application\nName=BeefTV\n'
-                'Exec=/opt/beeftv/BeefTV-linux/BeefTV\nIcon=beeftv\n'
+                'Exec=/opt/beeftv/BeefTV-linux/BeefTV %u\nIcon=beeftv\nMimeType=x-scheme-handler/beeftv;\n'
                 'Terminal=false\nCategories=Graphics;AudioVideo;\nStartupWMClass=BeefTV\n')
             icons = stage / 'usr/share/pixmaps'
             icons.mkdir(parents=True)

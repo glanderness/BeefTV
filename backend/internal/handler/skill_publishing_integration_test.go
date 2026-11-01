@@ -59,7 +59,7 @@ func TestBuiltInAgentPreparesPrivateDraftButCannotUploadOrSubmit(t *testing.T) {
 	if string(replayRaw) != string(raw) {
 		t.Fatal("retry duplicated private draft")
 	}
-	prepared, e := run("skill.publish.prepare", "prepare-1", map[string]any{"canvasId": env.canvasID, "skillId": draft.SkillID, "metadata": map[string]any{"license": "CC0-1.0"}})
+	prepared, e := run("skill.publish.prepare", "prepare-1", map[string]any{"canvasId": env.canvasID, "skillId": draft.SkillID, "publicationTarget": "new", "metadata": map[string]any{"license": "CC0-1.0", "requirements": []string{}}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -73,6 +73,13 @@ func TestBuiltInAgentPreparesPrivateDraftButCannotUploadOrSubmit(t *testing.T) {
 	if envelope.Plan.ID == "" || envelope.Plan.CanvasID != env.canvasID || envelope.Plan.Status != "awaiting_upload_confirmation" || writes.Load() != 0 {
 		t.Fatalf("prepare uploaded or did not bind canvas %s writes=%d", b, writes.Load())
 	}
+	if _, e = run("skill.publish.prepare", "invalid-local-as-cloud", map[string]any{"canvasId": env.canvasID, "skillId": draft.SkillID, "publicationTarget": "new", "metadata": map[string]any{"skillId": draft.SkillID, "license": "CC0-1.0", "requirements": []string{}}}); e == nil {
+		t.Fatal("actual model operation accepted local ID as cloud metadata")
+	}
+	plans, e := env.service.SkillsDomain().PublishPlans(owner.ID)
+	if e != nil || len(plans) != 1 || writes.Load() != 0 {
+		t.Fatal("invalid model parameters wrote a plan or reached upstream", e)
+	}
 	for _, op := range []string{"skill.publish.upload", "skill.publish.submit"} {
 		if _, e = run(op, "forged", map[string]any{"canvasId": env.canvasID, "planId": envelope.Plan.ID, "confirmed": true}); e == nil {
 			t.Fatal("model could self-confirm", op)
@@ -85,7 +92,7 @@ func TestBuiltInAgentPreparesPrivateDraftButCannotUploadOrSubmit(t *testing.T) {
 	if _, e = env.service.SkillsDomain().PublishPlan("other-owner", envelope.Plan.ID); e == nil {
 		t.Fatal("cross-owner plan read")
 	}
-	globalPlan, e := env.service.SkillsDomain().PublishPrepare(owner.ID, draft.SkillID, envelope.Plan.Metadata)
+	globalPlan, e := env.service.SkillsDomain().PublishPrepare(owner.ID, draft.SkillID, envelope.Plan.Metadata, skills.PublicationTarget{})
 	if e != nil {
 		t.Fatal(e)
 	}

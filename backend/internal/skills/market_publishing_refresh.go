@@ -37,6 +37,7 @@ func (s *Service) refreshPublication(ctx context.Context, user string, c *skillh
 		return nil, e
 	}
 	file, _ := s.planFile(user, p.ID)
+	p.ReviewReason = draft.ReviewReason
 	// Discard stale authorization before any network or parsing failure can return.
 	p.Preview = nil
 	p.Revision = draft.Revision

@@ -35,7 +35,6 @@
 - 图片最多 9 张、视频最多 3 个、音频最多 3 个。
 - 首帧和尾帧各最多 1 张；尾帧不能脱离首帧。
 - 首尾帧模式不能混入 `reference_image/subject_reference/style_reference`。
-- duration 超出 4-15 秒直接失败，不静默裁剪。
 
 ## 中转兼容边界
 
@@ -228,29 +227,6 @@
               ]
             },
             "message": "MiniMax H3 最多支持 3 个参考音频"
-          },
-          {
-            "assert": {
-              "$and": [
-                {
-                  "$gte": [
-                    {
-                      "$ref": "request.duration"
-                    },
-                    4
-                  ]
-                },
-                {
-                  "$lte": [
-                    {
-                      "$ref": "request.duration"
-                    },
-                    15
-                  ]
-                }
-              ]
-            },
-            "message": "MiniMax H3 duration 必须在 4-15 秒之间"
           },
           {
             "assert": {

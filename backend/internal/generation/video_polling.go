@@ -20,6 +20,7 @@ const DefaultVideoPollInterval = 30 * time.Second
 const beefAPIVideoPollInterval = 5 * time.Second
 
 type VideoPollPolicy struct {
+	QueryStage            string
 	InitialDelay          time.Duration
 	Interval              time.Duration
 	MaxNotFoundMisses     int
@@ -83,6 +84,10 @@ func videoPollPolicyForConfig(ctx context.Context, config Config, policy VideoPo
 
 func RunVideoPollLoop(ctx context.Context, taskID string, policy VideoPollPolicy, query func(context.Context) (VideoPollOutcome, error)) (map[string]interface{}, error) {
 	policy = NormalizeVideoPollPolicy(policy)
+	runtime, _ := RuntimeFromContext(ctx)
+	if err := setExecutionStage(ctx, runtime, policy.QueryStage); err != nil {
+		return nil, err
+	}
 	deadline := PollingDeadline(ctx)
 	pollContext, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
@@ -148,6 +153,9 @@ func RunVideoPollLoop(ctx context.Context, taskID string, policy VideoPollPolicy
 }
 
 func NormalizeVideoPollPolicy(policy VideoPollPolicy) VideoPollPolicy {
+	if policy.QueryStage == "" {
+		policy.QueryStage = "正在查询上游任务"
+	}
 	if policy.Interval <= 0 {
 		policy.Interval = DefaultVideoPollInterval
 	}
@@ -224,6 +232,11 @@ func videoResultPending(err error) bool {
 		return false
 	}
 	code, _ := FailureDetails(payload)
+	if code == "" {
+		if errObj, ok := payload["error"].(map[string]any); ok {
+			code = normalizedUpstreamErrorCode(errObj["type"])
+		}
+	}
 	return httpErr.StatusCode == http.StatusServiceUnavailable && code == "video_delivery_pending"
 }
 

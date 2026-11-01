@@ -13,9 +13,10 @@ type referenceUploadContextKey struct{}
 // ReferenceUploadMeta identifies a local preparation call without retaining a
 // resource id, filename, payload or signed storage URL.
 type ReferenceUploadMeta struct {
-	Kind  string
-	Index int
-	Stage string
+	Kind    string
+	Index   int
+	Stage   string
+	Attempt int
 }
 
 func ReferenceUploadFromContext(ctx context.Context) (ReferenceUploadMeta, bool) {
@@ -32,7 +33,11 @@ func (m ReferenceUploadMeta) Label() string {
 		name += fmt.Sprintf(" %d", m.Index)
 	}
 	stage := map[string]string{"create": "申请上传", "put": "上传文件", "resume": "恢复上传", "complete": "确认上传", "abort": "取消上传"}[m.Stage]
-	return strings.TrimSpace(name + " " + stage)
+	label := strings.TrimSpace(name + " " + stage)
+	if m.Attempt > 0 {
+		label += fmt.Sprintf("（第 %d 次）", m.Attempt)
+	}
+	return label
 }
 
 func withReferenceUpload(ctx context.Context, meta ReferenceUploadMeta) context.Context {
@@ -45,15 +50,23 @@ func referenceUploadStage(ctx context.Context, stage string) context.Context {
 	return withReferenceUpload(WithRequestKind(ctx, "reference_"+stage), meta)
 }
 
+func referenceUploadAttempt(ctx context.Context, attempt int) context.Context {
+	meta, _ := ReferenceUploadFromContext(ctx)
+	meta.Attempt = attempt
+	return withReferenceUpload(ctx, meta)
+}
+
 // ReferenceUploadError proves that preparation failed before model dispatch.
 // Cause stays available in process; Error exposes only scrubbed diagnostic text.
 type ReferenceUploadError struct {
-	Meta       ReferenceUploadMeta
-	HTTPStatus int
-	Code       string
-	RequestID  string
-	Detail     string
-	Cause      error
+	Meta           ReferenceUploadMeta
+	HTTPStatus     int
+	Code           string
+	RequestID      string
+	Detail         string
+	Cause          error
+	Dispatched     bool
+	TransportPhase string
 }
 
 func (e *ReferenceUploadError) Error() string {
@@ -91,22 +104,4 @@ func referenceUploadAddressError(ctx context.Context, cause error) *ReferenceUpl
 		upload.Code = "upload_transport_error"
 	}
 	return upload
-}
-
-func inlineAfterReferencePutFailure(ctx context.Context, input *Input, read BeefAPISeedanceMediaReader, err error) error {
-	var upload *ReferenceUploadError
-	if ctx.Err() != nil || !errors.As(err, &upload) || upload.Meta.Stage != "put" ||
-		errors.Is(err, errBeefAPISeedanceUploadRedirect) ||
-		(upload.Code != "upload_transport_error" && upload.HTTPStatus != 403 && upload.HTTPStatus != 408 && upload.HTTPStatus != 429 && upload.HTTPStatus < 500) {
-		return err
-	}
-	// No model request exists yet. Reuse the gateway's existing bounded inline
-	// contract, never retry generation or send storage credentials to the gateway.
-	if fallbackErr := FallbackBeefAPISeedanceInline(ctx, input, read); fallbackErr != nil {
-		if errors.Is(fallbackErr, ErrVideoJSONRequestTooLarge) {
-			return err
-		}
-		return fallbackErr
-	}
-	return nil
 }

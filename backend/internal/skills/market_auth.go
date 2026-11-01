@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -87,6 +88,9 @@ func (s *Service) MarketAuthorization(ctx context.Context, user string, start bo
 		return nil, e
 	}
 	file := filepath.Join(s.marketUserDir(user), "authorization.json")
+	website, _ := url.Parse(c.BaseURL())
+	website.Path, website.RawQuery, website.Fragment = "/skills", "", ""
+	websiteURL := website.String()
 	if start {
 		var a skillhub.Authorization
 		e = c.JSON(ctx, "POST", "authorizations", "", "", map[string]string{"clientName": "BeefTV 创作助手"}, &a)
@@ -97,20 +101,20 @@ func (s *Service) MarketAuthorization(ctx context.Context, user string, start bo
 		if e != nil {
 			return nil, e
 		}
-		return map[string]any{"userCode": a.UserCode, "verificationUrl": a.VerificationURL, "expiresIn": a.ExpiresIn, "interval": a.Interval}, nil
+		return map[string]any{"userCode": a.UserCode, "verificationUrl": a.VerificationURL, "expiresIn": a.ExpiresIn, "interval": a.Interval, "websiteUrl": websiteURL}, nil
 	}
 	if _, e = s.marketToken(user, c); e == nil {
-		return map[string]bool{"connected": true}, nil
+		return map[string]any{"connected": true, "websiteUrl": websiteURL}, nil
 	}
 	var a marketAuth
 	if e = readMarketJSON(file, &a); e != nil || a.DeviceCode == "" || a.Endpoint != c.BaseURL() || time.Now().After(a.ExpiresAt) {
-		return map[string]bool{"connected": false}, nil
+		return map[string]any{"connected": false, "websiteUrl": websiteURL}, nil
 	}
 	var t skillhub.Token
 	e = c.JSON(ctx, "POST", "authorizations/token", "", "", map[string]string{"deviceCode": a.DeviceCode}, &t)
 	var remote *skillhub.Error
 	if errors.As(e, &remote) && (remote.Reason == "authorization_pending" || remote.Reason == "slow_down") {
-		return map[string]any{"connected": false, "pending": true, "reason": remote.Reason}, nil
+		return map[string]any{"connected": false, "pending": true, "reason": remote.Reason, "websiteUrl": websiteURL}, nil
 	}
 	if e != nil {
 		return nil, e
@@ -119,7 +123,7 @@ func (s *Service) MarketAuthorization(ctx context.Context, user string, start bo
 		return nil, kernel.BadAuthRequest("投稿授权未完成")
 	}
 	e = writeMarketJSON(file, marketAuth{Endpoint: c.BaseURL(), AccessToken: t.AccessToken, ExpiresAt: time.Now().Add(time.Duration(t.ExpiresIn) * time.Second)})
-	return map[string]bool{"connected": e == nil}, e
+	return map[string]any{"connected": e == nil, "websiteUrl": websiteURL}, e
 }
 func (s *Service) MarketDisconnect(ctx context.Context, user string) error {
 	unlock := s.lockMarket(user)

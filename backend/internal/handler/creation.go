@@ -18,11 +18,11 @@ func RegisterCreationRoutes(r *gin.RouterGroup, svc *app.Service) {
 			var value any
 			switch action {
 			case "list":
-				value, err = svc.ListCreationRuns(user.ID)
+				value, err = svc.Creation().List(user.ID)
 			case "get":
-				value, err = svc.GetCreationRun(user.ID, c.Param("id"))
+				value, err = svc.Creation().Get(user.ID, c.Param("id"))
 			case "snapshot":
-				value, err = svc.CreationCanvasSnapshot(user.ID, c.Param("id"))
+				value, err = svc.Creation().CanvasSnapshot(user.ID, c.Param("id"))
 			}
 			if err != nil {
 				failService(c, err)

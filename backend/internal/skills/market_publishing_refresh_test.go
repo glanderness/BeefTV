@@ -16,7 +16,7 @@ import (
 func TestPublicationCloudEditRequiresFreshPreviewWithoutReupload(t *testing.T) {
 	s, _ := agentSkillFixture(t)
 	pin := installAgentSkill(t, s, map[string]string{"SKILL.md": "---\nname: Original\ndescription: Original method\n---\nORIGINAL_BODY"})
-	plan, e := s.PublishPrepare("owner", pin.SkillID, skillhub.Metadata{License: "CC0-1.0"})
+	plan, e := s.PublishPrepare("owner", pin.SkillID, skillhub.Metadata{License: "CC0-1.0"}, PublicationTarget{})
 	if e != nil {
 		t.Fatal(e)
 	}

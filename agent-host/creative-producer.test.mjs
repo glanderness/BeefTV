@@ -5,8 +5,11 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
+import { defineDoc } from '@earendil-works/pi-durable';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createDurableSessionStore } from './durable-session-owner.mjs';
-import { createDurableTextProjection } from './durable-stream-text.mjs';
+import { createDurableTurnProjection } from './durable-turn-projection.mjs';
+import { fixtureSkillContext } from './test-support/skill-context-fixture.mjs';
 
 const msgText = (message) => typeof message.content === 'string'
   ? message.content
@@ -14,7 +17,7 @@ const msgText = (message) => typeof message.content === 'string'
 const userText = (payload) => payload.messages.filter((m) => m.role === 'user').map(msgText).join('\n');
 const systemText = (payload) => payload.messages.filter((m) => m.role === 'system' || m.role === 'developer').map(msgText).join('\n');
 
-async function createProducerFixture({ canvasState, script = () => null, buildTools = () => [], maxPlanContinuations = 4 } = {}) {
+async function createProducerFixture({ canvasState, script = () => null, buildTools = () => [], maxPlanContinuations = 4, withSkills = false } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-producer-'));
   const payloads = [];
   const server = createServer(async (req, res) => {
@@ -56,6 +59,7 @@ async function createProducerFixture({ canvasState, script = () => null, buildTo
     buildTools,
     authorizeTurn: async () => ({ open: true, canvasId: 'canvas-1', permissionMode: 'canvas' }),
     readCanvas: canvasState ? async () => canvasState.current : null,
+    skills: withSkills ? { ...fixtureSkillContext(directory), readCatalog: async () => ({ items: [] }) } : null,
     maxPlanContinuations,
     settings: { retry: { maxRetries: 0 } },
   });
@@ -72,6 +76,44 @@ async function createProducerFixture({ canvasState, script = () => null, buildTo
 }
 
 describe('creative producer durable host', () => {
+  test('rebuilds legacy unverified baselines and clears snapshot revision on skill task reset', async () => {
+    const canvasState = { current: { revision: 8, nodes: [{ id: 'old-node', type: 'text', title: '已有角色', metadata: { content: '原内容' } }], connections: [] } };
+    const fixture = await createProducerFixture({ canvasState, withSkills: true });
+    try {
+      const entry = await fixture.store.ensureSession('canvas-1');
+      const state = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session', initial: () => ({}) });
+      expect((await entry.harness.snapshot(state, BACKGROUND_CONTEXT)).lastStudioSnapshotRevision).toBeNull();
+      await entry.harness.commit(async tx => {
+        const doc = await tx.doc(state);
+        doc.lastStudioSnapshot = {};
+        doc.studioDigestText = '[制作现场｜画布版本 ?｜本轮请求前的实际状态]\n概况：画布是空的。';
+        delete doc.lastStudioSnapshotRevision;
+      }, BACKGROUND_CONTEXT);
+      const first = await fixture.store.submit(entry, { turnId: 'legacy-1', requestId: 'legacy-1', content: '看当前画布', userText: '看当前画布', revisionBefore: 8 });
+      await fixture.store.wait(entry, first);
+      expect(systemText(fixture.payloads[0])).not.toContain('<beeftv_studio>');
+      expect(userText(fixture.payloads[0])).toContain('文本 1');
+      expect(userText(fixture.payloads[0])).not.toContain('画布是空的');
+      expect(userText(fixture.payloads[0])).not.toContain('<canvas_changes>');
+      canvasState.current.revision++;
+      canvasState.current.nodes[0].metadata.content = '用户修改后的内容';
+      const next = await fixture.store.submit(entry, { turnId: 'legacy-2', requestId: 'legacy-2', content: '再次查看', userText: '再次查看', revisionBefore: 9 });
+      await fixture.store.wait(entry, next);
+      expect(userText(fixture.payloads[1])).toContain('用户修改了「已有角色」');
+      expect((await entry.harness.snapshot(state, BACKGROUND_CONTEXT)).lastStudioSnapshotRevision).toBe(9);
+      const context = await fixture.store.skillContext(entry);
+      await fixture.store.changeSkillContext(entry, { action: 'new_scope', pins: [], expectedRevision: context.revision, requestId: 'new-skill-task' });
+      const reset = await entry.harness.snapshot(state, BACKGROUND_CONTEXT);
+      expect(reset.lastStudioSnapshot).toBeNull();
+      expect(reset.lastStudioSnapshotRevision).toBeNull();
+      expect(reset.studioDigestText).toBe('');
+      canvasState.current.revision++;
+      canvasState.current.nodes[0].metadata.content = '新任务内容';
+      const fresh = await fixture.store.submit(entry, { turnId: 'fresh-task', requestId: 'fresh-task', content: '独立新任务', userText: '独立新任务', revisionBefore: 10 });
+      await fixture.store.wait(entry, fresh);
+      expect(userText(fixture.payloads[2])).not.toContain('<canvas_changes>');
+    } finally { await fixture.close(); }
+  });
   test('official watch events restore a one-chunk reply and publish a committed plan before the next model finishes', async () => {
     let releaseReply;
     const planSeen = new Promise(resolve => { releaseReply = resolve; });
@@ -80,7 +122,7 @@ describe('creative producer durable host', () => {
       await planSeen;
       return { reply: '开头和结尾必须完整。' };
     } });
-    const projection = createDurableTextProjection();
+    const projection = createDurableTurnProjection();
     const events = [];
     try {
       const entry = await fixture.store.ensureSession('canvas-1');
@@ -95,6 +137,8 @@ describe('creative producer durable host', () => {
       } });
       expect(record.reply).toBe('开头和结尾必须完整。');
       expect(projection.text).toBe(record.reply);
+      // 终态思考与实时流同形：这条假模型没有思考，两边都不该凭空造出来。
+      expect(projection.reasoning).toEqual(record.reasoning ?? []);
       expect(events.some(event => event.type === 'message_start' && event.message.role === 'assistant')).toBe(true);
       expect(events.some(event => event.type === 'plan' && event.plan?.goal === '实时制作计划')).toBe(true);
     } finally { releaseReply(); await fixture.close(); }
@@ -126,9 +170,10 @@ describe('creative producer durable host', () => {
       await fixture.store.wait(entry, sub1);
 
       expect(fixture.payloads.length).toBe(1);
-      expect(systemText(fixture.payloads[0])).toContain('<beeftv_studio>');
-      expect(systemText(fixture.payloads[0])).toContain('都市逆袭分镜');
-      expect(systemText(fixture.payloads[0])).toContain('生成中 1');
+      expect(systemText(fixture.payloads[0])).not.toContain('<beeftv_studio>');
+      expect(userText(fixture.payloads[0])).toContain('<beeftv_studio>');
+      expect(userText(fixture.payloads[0])).toContain('都市逆袭分镜');
+      expect(userText(fixture.payloads[0])).toContain('生成中 1');
       expect(userText(fixture.payloads[0])).not.toContain('<canvas_changes>');
 
       // Simulate user editing the storyboard title and image generation completing between turns
@@ -154,8 +199,9 @@ describe('creative producer durable host', () => {
       await fixture.store.wait(entry, sub2);
 
       expect(fixture.payloads.length).toBe(2);
-      expect(systemText(fixture.payloads[1])).toContain('赛博天台分镜（用户已改）');
-      expect(systemText(fixture.payloads[1])).toContain('完成 1');
+      expect(systemText(fixture.payloads[1])).toBe(systemText(fixture.payloads[0]));
+      expect(userText(fixture.payloads[1])).toContain('赛博天台分镜（用户已改）');
+      expect(userText(fixture.payloads[1])).toContain('完成 1');
       expect(userText(fixture.payloads[1])).toContain('<canvas_changes>');
       expect(userText(fixture.payloads[1])).toContain('用户修改了「赛博天台分镜（用户已改）」');
       expect(userText(fixture.payloads[1])).toContain('「镜1首帧」生成完成');
@@ -208,8 +254,10 @@ describe('creative producer durable host', () => {
 
       expect(fixture.payloads.length).toBe(4);
       expect(userText(fixture.payloads[2])).toContain('计划还没做完。继续做「创建首帧节点并提议生成」');
-      expect(systemText(fixture.payloads[3])).toContain('<beeftv_plan>');
-      expect(systemText(fixture.payloads[3])).toContain('[等你确认] 创建首帧节点并提议生成');
+      expect(systemText(fixture.payloads[3])).not.toContain('<beeftv_plan>');
+      expect(systemText(fixture.payloads[3])).toBe(systemText(fixture.payloads[0]));
+      expect(userText(fixture.payloads[3])).toContain('<beeftv_plan>');
+      expect(userText(fixture.payloads[3])).toContain('[等你确认] 创建首帧节点并提议生成');
       expect(record.reply).toContain('请确认后开始生成');
       expect(record.plan).toMatchObject({ done: 1, total: 2 });
 

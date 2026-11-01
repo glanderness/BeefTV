@@ -13,6 +13,9 @@ import (
 // ValidateMediaTransport uses the same installed contract as execution, without
 // reading file bytes, uploading anything, or creating a provider task.
 func ValidateMediaTransport(ctx context.Context, input Input) error {
+	if managedConnection(input.Config) {
+		return nil
+	}
 	for kind, transport := range input.Config.ReferenceMediaTransport {
 		if (kind != "image" && kind != "video" && kind != "audio") || (transport != "" && transport != "auto" && transport != "inline" && transport != "url" && transport != "link") {
 			return &kernel.AppError{Status: 400, Code: 400, Reason: "invalid_reference_transport", Message: "参考素材传输方式无效，请重新选择"}

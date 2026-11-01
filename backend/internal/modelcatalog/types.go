@@ -14,6 +14,7 @@ type TextCapabilityConfig struct {
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
 	Streaming  *bool               `json:"streaming,omitempty"`
+	Thinking   *bool               `json:"thinking,omitempty"`
 	References TextReferenceConfig `json:"references"`
 }
 
@@ -30,7 +31,8 @@ type ImageCapabilityConfig struct {
 	Size                  ImageSizeConfig      `json:"size"`
 	Quality               ImageQualityConfig   `json:"quality"`
 	TransparentBackground VideoBooleanConfig   `json:"transparentBackground"`
-	ResponseFormat        ParameterSupport     `json:"responseFormat"`
+	SequentialGeneration  VideoBooleanConfig   `json:"sequentialGeneration"`
+	ResponseFormat        ImageResponseFormat  `json:"responseFormat"`
 	OutputFormat          ParameterSupport     `json:"outputFormat"`
 	MaxOutputs            int                  `json:"maxOutputs"`
 	GenerationOutputs     []int                `json:"generationOutputs,omitempty"`
@@ -70,22 +72,63 @@ type ParameterSupport struct {
 	Supported bool `json:"supported"`
 }
 
+// ImageResponseFormat 是图片接口 response_format 的开关与取值。
+// Value 为空时按 b64_json 处理，保持既有渠道的行为不变；url 让上游返回图片链接，
+// 由 BeefTV 下载成字节后再落库——链接会过期，不能直接当作结果保存。
+type ImageResponseFormat struct {
+	Supported bool   `json:"supported"`
+	Value     string `json:"value,omitempty"`
+}
+
+const (
+	// ImageResponseFormatBase64 让上游内联返回 base64，是默认取值。
+	ImageResponseFormatBase64 = "b64_json"
+	// ImageResponseFormatURL 让上游返回图片链接，由 BeefTV 下载后转成字节。
+	ImageResponseFormatURL = "url"
+)
+
 type VideoCapabilityConfig struct {
-	References        VideoReferenceConfig `json:"references"`
-	Duration          VideoDurationConfig  `json:"duration"`
-	DurationSupported *bool                `json:"durationSupported,omitempty"`
-	Ratios            []string             `json:"ratios"`
-	DefaultRatio      string               `json:"defaultRatio"`
-	Resolutions       []string             `json:"resolutions"`
-	DefaultResolution string               `json:"defaultResolution"`
-	GenerateAudio     VideoBooleanConfig   `json:"generateAudio"`
-	Watermark         VideoBooleanConfig   `json:"watermark"`
-	Operations        []string             `json:"operations"`
-	DefaultOperation  string               `json:"defaultOperation"`
+	References          VideoReferenceConfig                `json:"references"`
+	OperationReferences map[string]VideoOperationReferences `json:"operationReferences,omitempty"`
+	Duration            VideoDurationConfig                 `json:"duration"`
+	DurationSupported   *bool                               `json:"durationSupported,omitempty"`
+	Ratios              []string                            `json:"ratios"`
+	DefaultRatio        string                              `json:"defaultRatio"`
+	Resolutions         []string                            `json:"resolutions"`
+	DefaultResolution   string                              `json:"defaultResolution"`
+	GenerateAudio       VideoBooleanConfig                  `json:"generateAudio"`
+	Watermark           VideoBooleanConfig                  `json:"watermark"`
+	Draft               VideoBooleanConfig                  `json:"draft"`
+	ReturnLastFrame     VideoBooleanConfig                  `json:"returnLastFrame"`
+	Operations          []string                            `json:"operations"`
+	DefaultOperation    string                              `json:"defaultOperation"`
+	TaskTypeConstraints bool                                `json:"taskTypeConstraints,omitempty"`
+}
+
+// Nil inherits the model-wide count; a declared zero forbids that media kind.
+type VideoOperationReferences struct {
+	MinImages *int `json:"minImages,omitempty"`
+	MaxImages *int `json:"maxImages,omitempty"`
+	MaxVideos *int `json:"maxVideos,omitempty"`
+	MaxAudios *int `json:"maxAudios,omitempty"`
+}
+
+type ModelCapabilityDraft struct {
+	Capability               string                 `json:"capability,omitempty"`
+	Category                 string                 `json:"category,omitempty"`
+	Type                     string                 `json:"type,omitempty"`
+	Protocol                 string                 `json:"protocol,omitempty"`
+	InterfaceType            string                 `json:"interfaceType,omitempty"`
+	Model                    string                 `json:"model"`
+	BaseURL                  string                 `json:"baseUrl,omitempty"`
+	ChannelID                string                 `json:"channelId,omitempty"`
+	VideoCapabilitiesVersion *string                `json:"videoCapabilitiesVersion,omitempty"`
+	CapabilityConfig         *ModelCapabilityConfig `json:"capabilityConfig,omitempty"`
 }
 
 type VideoReferenceConfig struct {
 	PromptMaxChars        int     `json:"promptMaxChars"`
+	PromptMaxUTF16Units   int     `json:"promptMaxUtf16Units"`
 	MinImages             int     `json:"minImages"`
 	MaxImages             int     `json:"maxImages"`
 	MaxImageBytes         int64   `json:"maxImageBytes"`
@@ -117,10 +160,9 @@ type VideoReferenceConfig struct {
 	MaxAudioTotalDuration int     `json:"maxAudioTotalDurationSeconds,omitempty"`
 }
 
-// DefaultVideoPromptMaxChars 是普通视频模型提示词字符数的默认上限。
-// 视频提示词由输入框文本、连线内容和技能上下文合成，远长于用户手输内容；
-// 默认值过小会把画布工作流正常可用的提示词拦在本地。管理员仍可按模型覆盖。
-const DefaultVideoPromptMaxChars = 8000
+// DefaultVideoPromptMaxChars 为 0 时不假设供应商未公开的字符硬限。
+// 已公布的协议限制与用户配置由对应能力合同提供。
+const DefaultVideoPromptMaxChars = 0
 
 type VideoDurationConfig struct {
 	Selection     string  `json:"selection"`
@@ -246,20 +288,22 @@ type MediaRef struct {
 // TaskConfig is the catalog/capability view of a generation request's model
 // selection and declared options.
 type TaskConfig struct {
-	ChannelID           string
-	ChannelModelKey     string
-	Model               string
-	InterfaceType       string
-	APIFormat           string
-	BaseURL             string
-	Size                string
-	Quality             string
-	Count               string
-	VideoSeconds        string
-	VQuality            string
-	CapabilityConfig    *ModelCapabilityConfig
-	SystemPrompt        string
-	ComposedPromptBytes int
+	ImageCapabilitiesVersion *string
+	VideoCapabilitiesVersion *string
+	ChannelID                string
+	ChannelModelKey          string
+	Model                    string
+	InterfaceType            string
+	APIFormat                string
+	BaseURL                  string
+	Size                     string
+	Quality                  string
+	Count                    string
+	VideoSeconds             string
+	VQuality                 string
+	CapabilityConfig         *ModelCapabilityConfig
+	SystemPrompt             string
+	ComposedPromptBytes      int
 }
 
 // TaskInput is the explicit adapter target for image/video capability checks.

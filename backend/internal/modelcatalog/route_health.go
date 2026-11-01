@@ -69,6 +69,9 @@ func RouteFailureCode(info FailureInfo) string {
 	if info.PreparationFailed && !info.ImageRecovery {
 		return "request_not_sent"
 	}
+	if info.TerminalProviderFailure || info.ExplicitRejection {
+		return "upstream_failed"
+	}
 	return "submission_unknown"
 }
 

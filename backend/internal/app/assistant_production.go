@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -61,7 +62,10 @@ func (s *Service) ConfirmAssistantProduction(userID, turnID string, input Assist
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current}
 		encoded, _ := json.Marshal(plan)
 		if source.GenerationAuthorizationJSON != "" && source.GenerationAuthorizationJSON != string(encoded) {
-			return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+			var existing operations.GenerationAuthorization
+			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) != nil || existing.SourceTurnID != "" {
+				return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+			}
 		}
 		if err = tx.Model(&source).Update("generation_authorization_json", string(encoded)).Error; err != nil {
 			return err
@@ -106,6 +110,31 @@ func productionTaskKey(plan operations.GenerationAuthorization, nodeID string) s
 	return "proposal:" + plan.ProposalID + ":" + nodeID
 }
 
+func (s *operationSession) RecordAssistantGenerationProposal(userID, turnID, canvasID string, proposal operations.GenerationAuthorization) error {
+	if strings.TrimSpace(turnID) == "" || strings.TrimSpace(proposal.ProposalID) == "" || len(proposal.Targets) == 0 {
+		return nil
+	}
+	var turn model.AssistantTurn
+	if err := s.tx.First(&turn, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if turn.GenerationAuthorizationJSON != "" {
+		var existing operations.GenerationAuthorization
+		if json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &existing) == nil && existing.SourceTurnID != "" {
+			return nil
+		}
+	}
+	proposal.SourceTurnID = ""
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		return err
+	}
+	return s.tx.Model(&turn).Update("generation_authorization_json", string(encoded)).Error
+}
+
 func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []operations.GenerationTarget) (any, error) {
 	var source model.AssistantTurn
 	if err := s.tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
@@ -113,7 +142,9 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 	}
 	var plan operations.GenerationAuthorization
 	if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &plan) != nil || plan.SourceTurnID == "" {
-		return nil, operations.PreconditionFailed("production_authorization_required", "请先确认本次整片制作方案", nil)
+		// Only the trusted confirmation endpoint can create a spend grant.
+		// A later model call cannot promote a recorded, unconfirmed proposal.
+		return nil, operations.PreconditionFailed("production_authorization_required", "请先在确认卡片中确认本次制作方案", nil)
 	}
 	var owner model.AssistantTurn
 	if err := s.tx.First(&owner, "turn_id = ? AND user_id = ? AND canvas_id = ?", plan.SourceTurnID, userID, canvasID).Error; err != nil {
@@ -184,8 +215,18 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 			}
 			// Preserve successful material bindings. Missing receipts use the
 			// normal delivery recovery path with the same task identity.
-			if id, _ := meta["taskId"].(string); id != "" && id != existing.ID {
+			id, _ := meta["taskId"].(string)
+			id = strings.TrimSpace(id)
+			opID, _ := meta["taskClientOperationId"].(string)
+			opID = strings.TrimSpace(opID)
+			storage, _ := meta["storageKey"].(string)
+			content, _ := meta["content"].(string)
+			if (id != "" && id != existing.ID) || (id == "" && ((opID != "" && opID != key) || meta["generationSubmissionState"] == "submitting" || strings.TrimSpace(storage) != "" || strings.TrimSpace(content) != "")) {
 				return nil, operations.Conflict("production_node_changed", "素材节点已使用其他任务，请先检查当前结果", nil)
+			}
+			proj, _, _, err := assistantturns.ProjectTaskInTx(s.tx, userID, *existing)
+			if err != nil {
+				return nil, err
 			}
 			for field, value := range map[string]any{"taskId": existing.ID, "taskStatus": string(existing.Status), "taskClientOperationId": key, "generationSubmissionState": "accepted"} {
 				if meta[field] != value {
@@ -193,7 +234,7 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 					changed = true
 				}
 			}
-			if existing.Status == model.TaskStatusFailed || existing.Status == model.TaskStatusCancelled {
+			if existing.Status == model.TaskStatusCancelled || (existing.Status == model.TaskStatusFailed && proj.Outcome.Phase == "failed") {
 				if meta["status"] != "error" {
 					meta["status"] = "error"
 					changed = true
@@ -210,6 +251,14 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 			nodeIDs = append(nodeIDs, target.NodeID)
 			continue
 		}
+		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
+		if meta == nil {
+			meta = map[string]any{}
+			nodes[target.NodeID]["metadata"] = meta
+		}
+		if meta["status"] == "loading" || meta["taskStatus"] == "queued" || meta["taskStatus"] == "running" || meta["generationSubmissionState"] == "submitting" {
+			return nil, operations.Conflict("production_node_changed", "素材节点已使用其他任务，请先检查当前结果", nil)
+		}
 		input, err := s.productionTaskInput(userID, target, nodes)
 		if err != nil {
 			return nil, err
@@ -219,11 +268,6 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 		task, err := domain.CreateTask(userID, localtask.CreateRequest{ProjectID: canvasID, Type: "canvas_" + target.Kind, Prompt: target.Prompt, Input: input})
 		if err != nil {
 			return nil, err
-		}
-		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
-		if meta == nil {
-			meta = map[string]any{}
-			nodes[target.NodeID]["metadata"] = meta
 		}
 		meta["taskId"], meta["taskStatus"], meta["status"] = task.ID, string(task.Status), "loading"
 		meta["taskClientOperationId"], meta["generationSubmissionState"] = key, "accepted"

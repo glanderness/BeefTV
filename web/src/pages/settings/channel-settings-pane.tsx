@@ -251,10 +251,20 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                 message.warning(`${latestChannel.name || "当前渠道"}的连接配置已改变，已忽略旧的拉取结果`);
                 return;
             }
-            updateChannels(
-                latestConfig.channels.map((item) => (item.id === channel.id ? applyFetchedChannelModelCatalog(item, result) : item)),
-                latestConfig,
-            );
+            if (localMode && isBuiltinBeefAPIChannel(latestChannel)) {
+                const server = await getLocalModelConfig();
+                if (!requests.current.current(channel.id, request)) return;
+                const current = useConfigStore.getState().config;
+                replaceConfig(localWorkspaceConfig(normalizeConfigSnapshot({
+                    config: mergeManagedBeefAPICatalog(current, server.config),
+                }).config));
+            } else {
+                updateChannels(
+                    latestConfig.channels.map((item) => (item.id === channel.id ? applyFetchedChannelModelCatalog(item, result) : item)),
+                    latestConfig,
+                );
+            }
+            await flushModelConfig();
             message.success(`${latestChannel.name || "当前渠道"}模型列表已更新`);
         } catch (error) {
             if (requests.current.current(channel.id, request)) message.error(channelModelFetchErrorMessage(error));
@@ -302,13 +312,19 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
             const failed = results.filter((item) => !item.cancelled && !item.result.models.length);
             if (successful.length) {
                 const resultMap = new Map(successful.map((item) => [item.channel.id, item.result] as const));
-                updateChannels(
-                    latestConfig.channels.map((channel) => {
-                        const fetched = resultMap.get(channel.id);
-                        return fetched ? applyFetchedChannelModelCatalog(channel, fetched) : channel;
-                    }),
-                    latestConfig,
-                );
+                const refreshedManagedBeefAPI = localMode && successful.some((item) => isBuiltinBeefAPIChannel(item.channel));
+                const server = refreshedManagedBeefAPI ? await getLocalModelConfig() : null;
+                const current = useConfigStore.getState().config;
+                const nextChannels = current.channels.map((channel) => {
+                    if (refreshedManagedBeefAPI && isBuiltinBeefAPIChannel(channel)) return channel;
+                    const fetched = resultMap.get(channel.id);
+                    return fetched ? applyFetchedChannelModelCatalog(channel, fetched) : channel;
+                });
+                const updated = withChannels(current, nextChannels);
+                replaceConfig(server ? localWorkspaceConfig(normalizeConfigSnapshot({
+                    config: mergeManagedBeefAPICatalog(updated, server.config),
+                }).config) : updated);
+                await flushModelConfig();
                 message.success(`已更新 ${successful.length} 个渠道的模型`);
             }
             const warnings = [
@@ -591,7 +607,8 @@ export function applyFetchedChannelModelCatalog(channel: ModelChannel, result: C
         modelProfiles: profiles.map((profile) => {
             const previous = existing.get(profile.model);
             if (!previous) return profile;
-            return seedancePortraitModel(profile.model) ? { ...previous, videoPricing: profile.videoPricing ?? null } : previous;
+            if (seedancePortraitModel(profile.model)) return { ...previous, videoPricing: profile.videoPricing ?? null };
+            return profile.videoPricing ? { ...previous, videoPricing: profile.videoPricing } : previous;
         }).concat((channel.modelProfiles || []).filter((profile) => !profiles.some((item) => item.model === profile.model))
             .map((profile) => seedancePortraitModel(profile.model) ? { ...profile, videoPricing: null } : profile)),
     };

@@ -229,29 +229,6 @@
           },
           {
             "assert": {
-              "$and": [
-                {
-                  "$gte": [
-                    {
-                      "$ref": "request.duration"
-                    },
-                    4
-                  ]
-                },
-                {
-                  "$lte": [
-                    {
-                      "$ref": "request.duration"
-                    },
-                    12
-                  ]
-                }
-              ]
-            },
-            "message": "Agnes Video 2.5 时长必须在 4–12 秒之间"
-          },
-          {
-            "assert": {
               "$in": [
                 {
                   "$upper": {

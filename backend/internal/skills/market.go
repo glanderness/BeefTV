@@ -227,7 +227,8 @@ func marketClientCompatible(current, minimum string) bool {
 		}
 		return v, true
 	}
-	a, ok := parse(current)
+	currentParts := strings.SplitN(current, "-", 2)
+	a, ok := parse(currentParts[0])
 	if !ok {
 		return false
 	}
@@ -240,5 +241,5 @@ func marketClientCompatible(current, minimum string) bool {
 			return a[i] > b[i]
 		}
 	}
-	return true
+	return len(currentParts) == 1
 }

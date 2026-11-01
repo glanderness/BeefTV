@@ -64,8 +64,13 @@ func TestMCPClientLoop(t *testing.T) {
 	if discoveryErr != nil {
 		t.Fatal(discoveryErr)
 	}
-	if len(tools.Tools) != len(expected)+len(business) {
-		t.Fatalf("MCP tools = %d, workspace operations = %d, business handlers = %d", len(tools.Tools), len(expected), len(business))
+	// 底层业务接口默认只通过 business.list / business.call 两个入口暴露。
+	gateway := 0
+	if len(business) > 0 {
+		gateway = 2
+	}
+	if len(tools.Tools) != len(expected)+gateway {
+		t.Fatalf("MCP tools = %d, workspace operations = %d, business gateway = %d", len(tools.Tools), len(expected), gateway)
 	}
 	for _, operation := range expected {
 		found := false

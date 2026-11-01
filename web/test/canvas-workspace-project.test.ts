@@ -88,10 +88,12 @@ describe("canvas workspace project grouping", () => {
     test("keeps the workspace title stable while switching between child canvases", () => {
         const editor = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");
         const lifecycle = readFileSync(new URL("../src/pages/canvas/use-canvas-project-lifecycle.ts", import.meta.url), "utf8");
+        const projectMenu = readFileSync(new URL("../src/pages/canvas/use-canvas-project-menu.ts", import.meta.url), "utf8");
 
         expect(editor).toContain("const workspaceProject = workspaceCanvases[0] || null");
         expect(editor).toContain('title={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}');
-        expect(editor).toContain('setTitleDraft(workspaceProject?.title || "未命名工作区")');
+        expect(editor).toContain("workspaceTitle: workspaceProject?.title");
+        expect(projectMenu).toContain('setTitleDraft(workspaceTitle || "未命名工作区")');
         expect(lifecycle).toContain("renameProject(canvasWorkspaceProjectId(currentProject), title)");
     });
 
@@ -134,8 +136,10 @@ describe("canvas workspace project grouping", () => {
 
     test("duplicates the live editor snapshot when the selected canvas is currently open", () => {
         const editor = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");
+        const projectMenu = readFileSync(new URL("../src/pages/canvas/use-canvas-project-menu.ts", import.meta.url), "utf8");
 
-        expect(editor).toContain("const sourceSnapshot = canvasId === projectId");
+        expect(projectMenu).toContain("const sourceSnapshot = canvasId === projectId ? { ...source, ...readLiveContent() } : source");
+        expect(editor).toContain("readLiveContent: readLiveCanvasContent");
         expect(editor).toContain("nodes: nodesRef.current");
         expect(editor).toContain("connections: connectionsRef.current");
         expect(editor).toContain("chatSessions: chatSessionsRef.current");

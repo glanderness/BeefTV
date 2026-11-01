@@ -29,6 +29,7 @@ var ErrVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 
 
 type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
+type providerDownloadContext struct{}
 
 func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
 	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
@@ -126,6 +127,7 @@ func GetExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 }
 
 func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+	ctx = context.WithValue(ctx, providerDownloadContext{}, true)
 	downloadURL := ProviderDownloadURL(config.BaseURL, rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -281,13 +283,18 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 // DoBinaryWithDispatchAdmission fences a paid send after local preflight and
 // channel admission, immediately before transport can make its outcome unknown.
 func DoBinaryWithDispatchAdmission(req *http.Request, admit func() error) ([]byte, string, error) {
+	// 冻结图片提交的幂等合同只属于原端点；重定向不能把 POST 带到未核实的渠道。
+	req = req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true))
 	return doBinaryWithAdmission(req, nil, admit)
 }
 
 func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admit func() error) (responseData []byte, responseMime string, resultErr error) {
 	startedAt := time.Now()
+	trace := &transportTrace{}
+	req = trace.attach(req)
 	observation := TransportObservation{Request: req, StartedAt: startedAt, ResponseLimitBytes: MaxResponseBytes}
 	defer func() {
+		observation.Dispatched, observation.TransportPhase = trace.result(resultErr)
 		observation.Body = responseData
 		observation.Err = resultErr
 		if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Receipts != nil {
@@ -336,13 +343,31 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	if videoIdleTimeout > 0 && !SameProviderOrigin(credentials.Origin, req.URL.String()) {
 		stripVideoCredentialQuery(req.URL, credentials.Values)
 	}
-	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
+	if _, err := outbound.ValidateOutboundURLContext(req.Context(), req.URL.String()); err != nil {
 		return nil, "", err
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
 	if videoIdleTimeout > 0 {
 		client = videoDownloadHTTPClient(req, requestTimeout)
+	} else if download, _ := req.Context().Value(providerDownloadContext{}).(bool); download {
+		checkRedirect := client.CheckRedirect
+		leftOrigin := false
+		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+			if err := checkRedirect(next, via); err != nil {
+				return err
+			}
+			if !SameProviderOrigin(req.URL.String(), next.URL.String()) {
+				leftOrigin = true
+			}
+			// Go may copy custom headers (and same-host Authorization) to a CDN.
+			// Never restore provider headers after leaving, even on a return hop.
+			if leftOrigin {
+				next.Header = make(http.Header)
+				outbound.ApplyDefaultOutboundHeaders(next)
+			}
+			return nil
+		}
 	}
 	if noRedirect, _ := req.Context().Value(binaryNoRedirectContext{}).(bool); noRedirect {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -370,18 +395,9 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			cancel(nil)
 		}()
 	}
-	trace := &transportTrace{}
-	req = trace.attach(req)
-	if transport, ok := client.Transport.(*http.Transport); ok {
-		observation.TransportRoute = "direct"
-		if transport.Proxy != nil {
-			if proxy, proxyErr := transport.Proxy(req); proxyErr == nil && proxy != nil {
-				observation.TransportRoute = "proxy"
-			}
-		}
-	}
+	observation.TransportRoute = outbound.RequestNetworkRoute(req, client.Transport)
 	resp, err := client.Do(req)
-	observation.Dispatched, observation.TransportPhase = trace.result()
+	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {
 		if usesGenerationCircuit {
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
@@ -392,6 +408,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	observation.Headers = resp.Header.Clone()
 	observation.HTTPStatus = resp.StatusCode
 	observation.StatusCode = resp.StatusCode
 	observation.DeclaredResponseBytes = resp.ContentLength

@@ -148,6 +148,9 @@ func ensureImageSubmissionsTable(tx *gorm.DB) error {
 		if err := ensureSQLiteColumn(tx, "image_submissions", "request_cipher", "TEXT"); err != nil {
 			return err
 		}
+		if err := ensureSQLiteColumn(tx, "image_submissions", "query_cipher", "TEXT"); err != nil {
+			return err
+		}
 		if err := ensureSQLiteColumn(tx, "image_submissions", "send_count", "INTEGER"); err != nil {
 			return err
 		}
@@ -169,6 +172,7 @@ func ensureImageSubmissionsTable(tx *gorm.DB) error {
 		task_id TEXT,
 		user_id TEXT,
 		request_cipher TEXT,
+		query_cipher TEXT,
 		send_count INTEGER,
 		response_accepted NUMERIC,
 		created_at DATETIME

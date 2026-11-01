@@ -9,6 +9,7 @@ import {
   parseCliArgs,
   validateEvalConfig,
   redactSecrets,
+  extractModelRequestTrace,
   createCostMeter,
   computeScenarioMetrics,
   runEval,
@@ -379,12 +380,178 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
       expect(res.report.status).toBe('passed');
       expect(res.report.scenarios.length).toBe(1);
       expect(res.report.scenarios[0].metrics.passed).toBe(true);
+      expect(res.report.scenarios[0].metrics.eliminableRequests).toBeGreaterThanOrEqual(1);
+      const td = res.report.scenarios[0].turnDiagnostics[0];
+      expect(td.requestCount).toBe(5);
+      expect(td.eliminableRequestCount).toBe(3);
+      expect(td.toolSequence).toEqual([
+        'R1:canvas_get[可省]',
+        'R2:canvas_nodes_create',
+        'R3:canvas_script_rows_append[可省]',
+        'R4:canvas_script_row_update[可省]',
+        'R5:<reply>',
+      ]);
+      expect(Array.isArray(td.requests)).toBe(true);
+      expect(td.requests.length).toBe(5);
       expect(fs.existsSync(res.jsonPath)).toBe(true);
       expect(fs.existsSync(res.mdPath)).toBe(true);
       expect(fs.existsSync(res.ledgerPath)).toBe(true);
     } finally {
       fs.rmSync(outDir, { recursive: true, force: true });
     }
+  });
+
+  test('extractModelRequestTrace 识别工具报错重试、空画布 canvas_get、单独 plan_update 与串行分步改画布', () => {
+    const sseWithTool = (name, argsObj) =>
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { name, arguments: JSON.stringify(argsObj) } }],
+            },
+          },
+        ],
+      })}\n\ndata: [DONE]\n`;
+
+    // 1) 空画布已有 <beeftv_studio> 仍调用 canvas_get -> 可省往返
+    const tEmptyGet = extractModelRequestTrace(
+      {
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: '帮我做两镜短剧' },
+          { role: 'user', content: '<beeftv_studio>\n[制作现场｜画布版本 1]\n概况：画布是空的。\n</beeftv_studio>' },
+        ],
+      },
+      sseWithTool('canvas_get', { canvasId: 'c1' }),
+      [],
+    );
+    expect(tEmptyGet.trigger).toBe('user_message');
+    expect(tEmptyGet.responseTools).toEqual(['canvas_get']);
+    expect(tEmptyGet.eliminable).toBe(true);
+    expect(tEmptyGet.eliminableReason).toContain('空画布已有 <beeftv_studio>');
+
+    // 2) 工具报错触发的下一跳重试 -> 可省往返
+    const tErrRetry = extractModelRequestTrace(
+      {
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: '帮我建分镜' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{ id: 'tc-1', function: { name: 'canvas_script_prepare', arguments: '{}' } }],
+          },
+          { role: 'tool', tool_call_id: 'tc-1', content: '{"error":"模拟器未实现操作: canvas.script.prepare"}' },
+          { role: 'user', content: '<beeftv_studio>\n概况：画布是空的。\n</beeftv_studio>' },
+        ],
+      },
+      sseWithTool('canvas_nodes_create', { nodes: [{ type: 'script', title: '分镜' }] }),
+      [],
+    );
+    expect(tErrRetry.trigger).toBe('tool_error_result');
+    expect(tErrRetry.eliminable).toBe(true);
+    expect(tErrRetry.eliminableReason).toContain('canvas_script_prepare:unsupported_operation');
+
+    // 3) 单独调用 plan_update -> 可省往返
+    const tPlanOnly = extractModelRequestTrace(
+      {
+        messages: [{ role: 'user', content: '开始' }],
+      },
+      sseWithTool('plan_update', { steps: [{ title: '步骤1', status: 'in_progress' }] }),
+      [],
+    );
+    expect(tPlanOnly.eliminable).toBe(true);
+    expect(tPlanOnly.eliminableReason).toContain('单独调用 plan_update');
+
+    // 4) 同轮第二次串行写画布 -> 可省往返
+    const tSerialWrite = extractModelRequestTrace(
+      {
+        messages: [
+          { role: 'user', content: '建分镜' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{ id: 'tc-2', function: { name: 'canvas_nodes_create', arguments: '{}' } }],
+          },
+          { role: 'tool', tool_call_id: 'tc-2', content: '{"revision":2}' },
+        ],
+      },
+      sseWithTool('canvas_script_rows_append', { nodeId: 'n1', rows: [{ plotDescription: '镜1' }] }),
+      [{ responseTools: ['canvas_nodes_create'] }],
+    );
+    expect(tSerialWrite.eliminable).toBe(true);
+    expect(tSerialWrite.eliminableReason).toContain('串行分步改画布');
+
+    // 5) 真实宿主格式识别：planContinuation、supplementMarker (/steer) 与 <canvas_event>
+    const tPlanCont = extractModelRequestTrace(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: '计划还没做完。继续做「创建首帧节点」；做完用 plan_update 更新状态。',
+          },
+        ],
+      },
+      sseWithTool('canvas_nodes_create', { nodes: [] }),
+      [],
+    );
+    expect(tPlanCont.trigger).toBe('plan_continue');
+    expect(tPlanCont.eliminable).toBe(true);
+    expect(tPlanCont.eliminableReason).toContain('planContinuation');
+
+    const tSteer = extractModelRequestTrace(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{ id: 'tc-s1', function: { name: 'canvas_nodes_create', arguments: '{}' } }],
+          },
+          { role: 'tool', tool_call_id: 'tc-s1', content: '{"revision":2}' },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: '[BEEFTV_INPUT:1]' }, { type: 'text', text: '改成赛博朋克 2 镜' }],
+          },
+        ],
+      },
+      sseWithTool('canvas_nodes_create', { nodes: [] }),
+      [{ responseTools: ['canvas_nodes_create'] }],
+    );
+    expect(tSteer.trigger).toBe('user_steer');
+    expect(tSteer.prevTools.map((t) => t.name)).toEqual(['canvas_nodes_create']);
+    // user_steer 触发的重写不计为可省串行写
+    expect(tSteer.eliminable).toBe(false);
+
+    const tWake = extractModelRequestTrace(
+      {
+        messages: [{ role: 'user', content: '<canvas_event kind="generation_finished">\n好了\n</canvas_event>' }],
+      },
+      sseWithTool('media_overview', { nodeId: 'n1' }),
+      [],
+    );
+    expect(tWake.trigger).toBe('auto_wake');
+
+    // 6) plan_update 与 canvas_generation_propose 同批调用导致多一次总结请求
+    const tPostProposeReply = extractModelRequestTrace(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              { id: 'tc-p1', function: { name: 'plan_update', arguments: '{}' } },
+              { id: 'tc-p2', function: { name: 'canvas_generation_propose', arguments: '{}' } },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'tc-p1', content: '{"ok":true}' },
+          { role: 'tool', tool_call_id: 'tc-p2', content: '{"proposalId":"prop-1"}' },
+        ],
+      },
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '已发起生成提议' } }] })}\n\ndata: [DONE]\n`,
+      [],
+    );
+    expect(tPostProposeReply.eliminable).toBe(true);
+    expect(tPostProposeReply.eliminableReason).toContain('terminate 未生效');
   });
 
   test('已知自动唤醒缺口不能掩盖首轮失败或完成事件投递失败', () => {

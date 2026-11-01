@@ -104,7 +104,7 @@ func testMediaReviewAudio(t *testing.T, format string) {
 	registry := operations.NewRegistry(svc, operations.NewStore(svc.repo.DB()))
 	operations.RegisterDefaultOps(registry)
 	sum := sha256.Sum256(source)
-	params, _ := json.Marshal(map[string]any{"canvasId": canvasID, "nodeId": "audio", "expectedVersion": hex.EncodeToString(sum[:]),
+	params, _ := json.Marshal(map[string]any{"canvasId": canvasID, "nodeId": "audio", "resourceId": resource.ID, "expectedVersion": hex.EncodeToString(sum[:]),
 		"startMs": 200, "endMs": 1200, "mode": "audio", "question": "描述实际听到的声音和不确定项"})
 	result, err := registry.Execute(operations.Request{UserID: "local", Op: "media.review", Params: params,
 		Caller: operations.AssistantCaller(&agentops.AssistantScope{CanvasID: canvasID}, true)})
@@ -168,7 +168,8 @@ func testMediaReviewAudio(t *testing.T, format string) {
 		{"blank-question", map[string]any{"question": "  "}},
 		{"direct-path", map[string]any{"path": "/tmp/not-authorized.wav"}},
 		{"direct-url", map[string]any{"url": "https://example.invalid/audio.wav"}},
-		{"direct-resource", map[string]any{"resourceId": resource.ID}},
+		{"resource-without-target", map[string]any{"nodeId": "", "resourceId": resource.ID}},
+		{"unreferenced-resource", map[string]any{"resourceId": "not-referenced"}},
 	} {
 		t.Run(bad.name, func(t *testing.T) {
 			var values map[string]any

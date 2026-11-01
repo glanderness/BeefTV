@@ -128,7 +128,7 @@ func TestPublicationRequiresTwoSpecificUserConfirmations(t *testing.T) {
 	if e := writeMarketJSON(filepath.Join(s.marketUserDir("owner"), "authorization.json"), marketAuth{Endpoint: server.URL, AccessToken: "btvpub_test_fixture_only", ExpiresAt: time.Now().Add(time.Hour)}); e != nil {
 		t.Fatal(e)
 	}
-	plan, e := s.PublishPrepareInCanvas("owner", pin.SkillID, "canvas-one", skillhub.Metadata{License: "CC0-1.0"})
+	plan, e := s.PublishPrepareInCanvas("owner", pin.SkillID, "canvas-one", skillhub.Metadata{License: "CC0-1.0"}, PublicationTarget{})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -167,7 +167,7 @@ func TestMarketMinimumClientVersion(t *testing.T) {
 	for _, c := range []struct {
 		current, minimum string
 		want             bool
-	}{{"dev", "", true}, {"dev", "1.0.0", false}, {"1.7.22", "1.7.21", true}, {"1.7.22", "1.8.0", false}, {"1.7.22", "garbage", false}, {"1.7.22", "1.7.22", true}} {
+	}{{"dev", "", true}, {"dev", "1.0.0", false}, {"1.7.22", "1.7.21", true}, {"1.7.22", "1.8.0", false}, {"1.7.22", "garbage", false}, {"1.7.22", "1.7.22", true}, {"v2.0.1-skill.1", "2.0.0", true}, {"v2.0.1-skill.1", "2.0.1", false}} {
 		if got := marketClientCompatible(c.current, c.minimum); got != c.want {
 			t.Fatalf("%+v got %v", c, got)
 		}

@@ -4,8 +4,10 @@ import { createServer } from 'node:http';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { newTurnAccumulator, resetTurnAccumulator } from './canvas-turn.mjs';
 import { canvasWriteView } from './canvas-write-view.mjs';
-import { boundOutput } from './node_modules/@earendil-works/pi-durable/dist/harness/output.js';
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from './node_modules/@earendil-works/pi-durable/dist/truncate.js';
+import { boundOutput } from '@earendil-works/chord/output';
+
+// Documented Pi tool-output limits, exercised through the public shared API.
+const DEFAULT_MAX_BYTES = 50 * 1024, DEFAULT_MAX_LINES = 2000;
 
 const longPrompt = '镜'.repeat(9000);
 

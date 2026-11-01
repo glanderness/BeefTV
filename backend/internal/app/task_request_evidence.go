@@ -90,6 +90,7 @@ func recordTaskRequestEvidence(req *http.Request, evidence model.TaskRequestEvid
 	reference, isReference := generation.ReferenceUploadFromContext(req.Context())
 	if isReference {
 		evidence.Operation = "reference_" + reference.Stage
+		evidence.Attempt = reference.Attempt
 		evidence.Summary = reference.Label()
 	}
 	responseLimited := evidence.Outcome == "response_limit"

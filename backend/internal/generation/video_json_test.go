@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,5 +107,99 @@ func TestVideoJSONMissingPluginDoesNotSubmit(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "插件未安装") {
 			t.Fatalf("model=%s err=%v", name, err)
 		}
+	}
+}
+
+func TestVideoJSONPreservesFiveReferencesAndTaskLifecycle(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	for _, outcome := range []string{"success", "415", "resume", "missing plugin", "cancelled"} {
+		t.Run(outcome, func(t *testing.T) {
+			creates, polls, downloads := 0, 0, 0
+			images := make([]Media, 5)
+			for i := range images {
+				images[i] = Media{ID: fmt.Sprintf("ref-%d", i+1), URL: fmt.Sprintf("https://media.example/reference-%d.png", i+1)}
+			}
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer test-key" {
+					t.Error("missing provider authentication")
+				}
+				switch {
+				case r.Method == "POST" && r.URL.Path == "/v1/video/generations":
+					creates++
+					if r.Header.Get("Content-Type") != "application/json" {
+						t.Error("expected JSON rather than Sora multipart")
+					}
+					var body struct {
+						Model, Prompt, Ratio string
+						Duration             int
+						Images               []struct{ URL, Role string }
+					}
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					if body.Model != "seedance-2.0-fast" || body.Prompt != "Use all five references in order." || body.Ratio != "9:16" || body.Duration != 5 || len(body.Images) != 5 {
+						t.Errorf("unexpected request: %+v", body)
+					}
+					for i, image := range body.Images {
+						if i >= len(images) || image.URL != images[i].URL || image.Role != "reference_image" {
+							t.Errorf("reference %d changed or became a keyframe: %+v", i+1, image)
+						}
+					}
+					if outcome == "415" {
+						w.WriteHeader(http.StatusUnsupportedMediaType)
+						_, _ = w.Write([]byte(`{"error":{"message":"unsupported media type"}}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"id":"original","status":"pending"}`))
+				case r.Method == "GET" && r.URL.Path == "/v1/video/generations/original":
+					polls++
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "data": []any{map[string]any{"url": server.URL + "/result.mp4"}}})
+				case r.Method == "GET" && r.URL.Path == "/result.mp4":
+					downloads++
+					w.Header().Set("Content-Type", "video/mp4")
+					_, _ = w.Write([]byte("original video"))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			config := Config{BaseURL: server.URL + "/v1", APIKey: "test-key", InterfaceType: "video-generations-json", Model: "seedance-2.0-fast", Size: "9:16", VideoSeconds: "5"}
+			ctx := context.Background()
+			if outcome == "resume" {
+				ctx = WithCallMeta(ctx, CallMeta{ProviderRequestID: "original"})
+			}
+			if outcome == "missing plugin" {
+				registry, _ := protocol.NewRegistry()
+				ctx = WithProtocolRegistry(ctx, registry)
+			}
+			if outcome == "cancelled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			policy := DefaultVideoPollPolicy()
+			policy.Sleep = func(context.Context, time.Duration) error { return nil }
+			result, err := RunVideoTaskWithPolicy(ctx, Input{Mode: "video", Prompt: "Use all five references in order.", Config: config, ReferenceImages: images}, policy)
+			wantCreates := 1
+			if outcome == "resume" || outcome == "missing plugin" || outcome == "cancelled" {
+				wantCreates = 0
+			}
+			if creates != wantCreates {
+				t.Fatalf("create count = %d, want %d", creates, wantCreates)
+			}
+			if outcome == "415" || outcome == "missing plugin" || outcome == "cancelled" {
+				if err == nil || polls != 0 || downloads != 0 {
+					t.Fatalf("err=%v polls=%d downloads=%d", err, polls, downloads)
+				}
+				return
+			}
+			if err != nil || polls != 1 || downloads != 1 || result["video"] == nil {
+				t.Fatalf("result=%v err=%v polls=%d downloads=%d", result, err, polls, downloads)
+			}
+		})
 	}
 }

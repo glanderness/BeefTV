@@ -131,14 +131,20 @@ func openVideoDownloadResponse(req *http.Request, limit int64) (*http.Response, 
 	if !SameProviderOrigin(credentials.Origin, req.URL.String()) {
 		stripVideoCredentialQuery(req.URL, credentials.Values)
 	}
-	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
-		return nil, err
-	}
 	runtime, _ := RuntimeFromContext(req.Context())
 	observation := TransportObservation{Request: req, StartedAt: time.Now(), ResponseLimitBytes: limit}
 	trace := &transportTrace{}
-	response, err := videoDownloadHTTPClient(req, 0).Do(trace.attach(req))
-	observation.Dispatched, observation.TransportPhase = trace.result()
+	req = trace.attach(req)
+	if _, err := outbound.ValidateOutboundURLContext(req.Context(), req.URL.String()); err != nil {
+		observation.Dispatched, observation.TransportPhase = trace.result(err)
+		observation.Err = err
+		if runtime.Receipts != nil {
+			runtime.Receipts.Observe(observation)
+		}
+		return nil, err
+	}
+	response, err := videoDownloadHTTPClient(req, 0).Do(req)
+	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {
 		observation.Err = err
 		if runtime.Receipts != nil {

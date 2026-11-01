@@ -12,7 +12,7 @@ export function timelineDeliveryTool(tools) {
   };
   return {
     name: 'canvas_timeline_deliver', label: 'canvas.timeline.deliver', readOnly: false, replay: 'safe',
-    description: '免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程。局部重生成且剪辑不变时只传refreshNodeIds，精确更新指定节点的素材引用并保留字幕、时序、裁剪、声音和输出规格；它与timeline二选一。两者均省略则使用已保存时间线。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本。成功后检查成片。失败保留回执，只用failedStep对应原生工具及原任务继续。',
+    description: '用户需要成片和可编辑工程时使用本组合工具，一次免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程。不必拆成多次模型调用。局部重生成且剪辑不变时只传refreshNodeIds，精确更新指定节点的素材引用并保留字幕、时序、裁剪、声音和输出规格；它与timeline二选一。两者均省略则使用已保存时间线。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本。成功后检查成片。失败保留回执，只用failedStep对应原生工具及原任务继续。',
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -33,6 +33,9 @@ export function timelineDeliveryTool(tools) {
       async function call(operation, params, key) {
         signal?.throwIfAborted();
         step = operation;
+        const stage = { 'canvas.timeline.update': 'checking', 'canvas.timeline.render': 'rendering',
+          'canvas.nodes.create': 'binding', 'canvas.task.bind': 'binding', 'canvas.project.export': 'exporting' }[operation];
+        if (stage) await api.reportProgress?.({ stage });
         const reply = await api.executeTool(byOperation.get(operation).name, { ...canvas, ...params }, { key });
         if (reply.isError) {
           const error = new Error(reply.diagnostics?.map(item => item.message || '').filter(Boolean).join('; ') || '业务步骤失败');

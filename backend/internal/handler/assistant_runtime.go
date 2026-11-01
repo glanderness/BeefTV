@@ -22,7 +22,7 @@ func registerAssistantRuntimeRoutes(r gin.IRouter, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		state, err := svc.AssistantTurnRuntimeState(user.ID, c.Param("turnId"))
+		state, err := svc.AssistantTurns().RuntimeState(user.ID, c.Param("turnId"))
 		if err != nil {
 			fail(c, http.StatusForbidden, app.Forbidden("任务不可恢复"))
 			return
@@ -59,7 +59,7 @@ func registerAssistantRuntimeRoutes(r gin.IRouter, svc *app.Service) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("会话绑定参数无效"))
 			return
 		}
-		if err := svc.BindAssistantDurableSession(user.ID, c.Param("turnId"), body.SessionID, body.Historical); err != nil {
+		if err := svc.AssistantTurns().BindDurableSession(user.ID, c.Param("turnId"), body.SessionID, body.Historical); err != nil {
 			failService(c, err)
 			return
 		}

@@ -45,9 +45,12 @@ func SanitizeTaskDiagnostics(input *model.TaskFailureDiagnostics) *model.TaskFai
 	}
 	for i := range d.Requests {
 		r := &d.Requests[i]
-		r.Operation = diagnosticEnum(r.Operation, "image_edit", "image_generate", "query_or_download", "submit", "reference_create", "reference_put", "reference_complete", "other")
+		r.Operation = diagnosticEnum(r.Operation, "image_edit", "image_generate", "query_or_download", "submit", "reference_create", "reference_put", "reference_complete", "reference_resume", "reference_abort", "other")
 		r.Method = diagnosticEnum(r.Method, "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
-		r.TransportPhase = diagnosticEnum(r.TransportPhase, "connect", "tls", "request", "response_wait", "response")
+		r.TransportPhase = diagnosticEnum(r.TransportPhase, "dns", "connect", "tls", "request", "response_wait", "response")
+		if r.Attempt < 0 || r.Attempt > 4 {
+			r.Attempt = 0
+		}
 		r.TransportRoute = diagnosticEnum(r.TransportRoute, "direct", "proxy")
 		r.Outcome = diagnosticEnum(r.Outcome, "response_received", "transport_error", "not_dispatched", "http_error", "cancelled", "timeout", "business_error", "response_limit")
 		r.RequestID, r.ProviderCode, r.Summary = sanitizeDebugID(r.RequestID), sanitizeProviderCode(r.ProviderCode), DiagnosticSummary(r.Summary)
@@ -68,12 +71,18 @@ func SanitizeTaskDiagnostics(input *model.TaskFailureDiagnostics) *model.TaskFai
 		d.Input = &v
 	}
 	switch d.Source {
-	case "local_validation", "upstream_http", "upstream_response", "local_result", "local_response", "reference_upload":
+	case "local_validation", "local_network", "upstream_http", "upstream_response", "local_result", "local_response", "reference_upload":
 	default:
 		d.Source = "unknown"
 	}
 	d.Summary = DiagnosticSummary(d.Summary)
 	d.Stage = DiagnosticSummary(d.Stage)
+	if d.FailedOperation != "" {
+		d.FailedOperation = diagnosticEnum(d.FailedOperation, "reference_create", "reference_put", "reference_complete", "reference_resume", "reference_abort")
+	}
+	if d.TransportPhase != "" {
+		d.TransportPhase = diagnosticEnum(d.TransportPhase, "dns", "connect", "tls", "request", "response_wait", "response")
+	}
 	d.ProviderCode = sanitizeProviderCode(d.ProviderCode)
 	if d.Source != "upstream_http" && d.Source != "upstream_response" && d.Source != "reference_upload" {
 		d.ProviderCode = ""

@@ -2,29 +2,19 @@ package app
 
 import (
 	"context"
-	"time"
-
-	"github.com/google/uuid"
 	"infinite-canvas/backend/internal/generation"
+	"infinite-canvas/backend/internal/mediaattempt"
 	"infinite-canvas/backend/internal/model"
+	"time"
 )
 
-type providerSubmissionKeyContext struct{}
+type providerSubmissionKeyContext = mediaattempt.SubmissionKeyContext
 
 func uncertainVideoSubmission(ctx context.Context, err error) error {
 	return generation.UncertainVideoSubmission(ctx, err)
 }
-
 func withProviderSubmissionKey(ctx context.Context, attempt *model.RouteAttempt) context.Context {
-	if attempt == nil {
-		return ctx
-	}
-	// Stable for this persisted attempt across worker/process recovery; an
-	// explicitly new user retry or a safely rejected route gets a new attempt.
-	key := uuid.NewSHA1(uuid.NameSpaceOID, []byte(attempt.TaskID+":"+attempt.ID)).String()
-	ctx = context.WithValue(ctx, imageAttemptContext{}, attempt.ID)
-	ctx = context.WithValue(ctx, providerSubmissionKeyContext{}, key)
-	return generation.WithSubmissionKey(ctx, key)
+	return mediaattempt.WithAttempt(ctx, attempt)
 }
 
 func (s *Service) createDirectTaskAttempt(task *model.Task) (*model.RouteAttempt, error) {

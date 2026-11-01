@@ -3,19 +3,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 type Stored = Map<string, string>;
 const stored: Stored = new Map();
 let activeScope = "guest";
-let activeEpoch = 1;
 let failNextSetItem = false;
 let failSetItemOn = 0;
 let setItemCount = 0;
-
-function assertMockExpectedScope(config?: { expectedScope?: { userScope: string; epoch: number } }) {
-    if (!config?.expectedScope) return;
-    if (config.expectedScope.userScope !== activeScope || config.expectedScope.epoch !== activeEpoch) {
-        const error = new Error("账号已切换，本次操作已停止");
-        error.name = "UserScopeAbandonedError";
-        throw error;
-    }
-}
 
 function isRetryableStatus(status?: number) {
     return status === 408 || status === 425 || status === 429 || (status !== undefined && status >= 500 && status <= 599);
@@ -77,15 +67,10 @@ mock.module("@/lib/localforage-storage", () => ({
 
 mock.module("@/lib/user-scope", () => ({
     getActiveUserScope: () => activeScope,
-    getActiveUserScopeEpoch: () => activeEpoch,
-    getUserScopeGeneration: () => activeEpoch,
-    captureUserScopeEpoch: (scope = activeScope) => ({ scope, generation: activeEpoch }),
-    userScopeEpochMatches: (epoch: { scope: string; generation: number }) => epoch.scope === activeScope && epoch.generation === activeEpoch,
     setActiveUserScope: (userId?: string | null) => {
         activeScope = userId || "guest";
-        activeEpoch += 1;
     },
-    subscribeUserScope: () => () => {},
+    onStorageNamespaceChange: () => () => {},
     scopedStorageKey: (name: string, scope = activeScope) => `${name}:user:${scope}`,
     scopedLocalStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 }));
@@ -97,32 +82,29 @@ mock.module("@/services/api/request", () => ({
     apiBaseURL: "/api",
     compactApiParams: (params: Record<string, unknown>) => params,
     http: {
-        get: async (_path: string, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
+        get: async (_path: string) => {
             if (server.holdDispatch) {
                 server.dispatchWaiting = true;
                 await server.holdDispatch;
                 server.dispatchWaiting = false;
             }
-            assertMockExpectedScope(config);
             return { project: server.document };
         },
-        put: async (_path: string, _body: unknown, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
+        put: async (_path: string, _body: unknown) => {
             if (server.holdDispatch) {
                 server.dispatchWaiting = true;
                 await server.holdDispatch;
                 server.dispatchWaiting = false;
             }
-            assertMockExpectedScope(config);
             if (server.missingCreateReceipt) return {};
             return { project: { id: "c1", revision: 1 } };
         },
-        post: async (_path: string, body: { opId: string; params: { expectedRevision: number; document: { title: string; nodes?: Array<{ id: string }> } } }, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
+        post: async (_path: string, body: { opId: string; params: { expectedRevision: number; document: { title: string; nodes?: Array<{ id: string }> } } }) => {
             if (server.holdDispatch) {
                 server.dispatchWaiting = true;
                 await server.holdDispatch;
                 server.dispatchWaiting = false;
             }
-            assertMockExpectedScope(config);
             server.postStarted += 1;
             if (server.hold) await server.hold;
             if (server.failNext?.transport) {
@@ -173,13 +155,12 @@ mock.module("@/services/api/request", () => ({
                 result: { canvasId: "c1", revision: server.revision, updatedAt: "2026-01-01T00:00:00.000Z" },
             };
         },
-        delete: async (path: string, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
+        delete: async (path: string) => {
             if (server.holdDispatch) {
                 server.dispatchWaiting = true;
                 await server.holdDispatch;
                 server.dispatchWaiting = false;
             }
-            assertMockExpectedScope(config);
             server.deleteStarted += 1;
             if (server.deleteHold) await server.deleteHold;
             server.deletes.push(path);
@@ -194,9 +175,7 @@ mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () =
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 mock.module("@/services/api/resources", () => ({ resourceIdFromStorageKey: () => "" }));
 
-const { persistCanvasDocument, refreshLocalCanvasProjectIfChanged, resetLocalCanvasBackendSaveState, syncLocalCanvasProjectToBackend, hasUnconfirmedCanvasEdits, selectPreferredCanvasProject, deleteLocalCanvasProjects, adoptServerConfirmedGenerationPatch, openLocalCanvasProjectFromBackend, setCanvasProjectionStoreFlushForTest, CanvasStaleScopeError, CanvasBackendSubmitPausedError, CanvasProjectionError } = await import("@/services/local-workspace-repository");
-const { setActiveUserScope } = await import("@/lib/user-scope");
-const { captureUserScope } = await import("@/lib/user-scope-guard");
+const { persistCanvasDocument, refreshLocalCanvasProjectIfChanged, resetLocalCanvasBackendSaveState, syncLocalCanvasProjectToBackend, hasUnconfirmedCanvasEdits, selectPreferredCanvasProject, adoptServerConfirmedGenerationPatch, openLocalCanvasProjectFromBackend, setCanvasProjectionStoreFlushForTest, CanvasBackendSubmitPausedError, CanvasProjectionError } = await import("@/services/local-workspace-repository");
 const { useCanvasStore, canvasDocumentBase, canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase } = await import("@/stores/canvas/use-canvas-store");
 const { CanvasJournalError, clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal, recordConfirmedCanvasCommit, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay, updateCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
 const { canvasBackendSubmitPaused, pauseCanvasBackendSubmit } = await import("@/services/canvas-revision-conflict");
@@ -249,7 +228,7 @@ test("真实保存途中删除图片节点会再次提交删除，且不启动�
     useCanvasStore.getState().updateProject("c1", { nodes: [target as never] });
     let release!: () => void;
     server.hold = new Promise<void>((resolve) => { release = resolve; });
-    const saving = persistCanvasGenerationTarget({ projectId: "c1", nodeId: target.id, expectedScope: captureUserScope() });
+    const saving = persistCanvasGenerationTarget({ projectId: "c1", nodeId: target.id });
     // Attach rejection before releasing the held HTTP acknowledgement.
     const rejected = saving.catch((error: unknown) => error);
     await waitUntil(() => server.postStarted === 1);
@@ -269,9 +248,8 @@ test("多张图片的真实保存串行读取最新画布，不覆盖已完成�
     useCanvasStore.getState().updateProject("c1", { nodes: [first, second] as never, connections });
     let release!: () => void;
     server.hold = new Promise<void>((resolve) => { release = resolve; });
-    const expectedScope = captureUserScope();
-    const savingA = persistCanvasGenerationTarget({ projectId: "c1", nodeId: first.id, expectedScope });
-    const savingB = persistCanvasGenerationTarget({ projectId: "c1", nodeId: second.id, expectedScope });
+    const savingA = persistCanvasGenerationTarget({ projectId: "c1", nodeId: first.id });
+    const savingB = persistCanvasGenerationTarget({ projectId: "c1", nodeId: second.id });
     await waitUntil(() => server.postStarted === 1);
     useCanvasStore.getState().updateProject("c1", { nodes: [node(first.id, "A", { metadata: { taskId: "task-a", status: "success", content: "/a.png" } }), second] as never });
     release();
@@ -313,7 +291,6 @@ beforeEach(() => {
     resetCanvasOperationJournalMemory();
     resetLocalCanvasBackendSaveState();
     activeScope = "guest";
-    activeEpoch = 1;
     failNextSetItem = false;
     failSetItemOn = 0;
     setItemCount = 0;
@@ -619,44 +596,6 @@ describe("画布文档提交日记", () => {
         expect(loaded.confirmedSnapshot).toBeNull();
     });
 
-    test("账号切换时进行中的提交写回原作用域，不污染新账号", async () => {
-        activeScope = "user-a";
-        resetCanvasOperationJournalMemory();
-        useCanvasStore.setState({ projects: [canvas("用户A基线", 1)] });
-        recordCanvasDocumentBase(canvas("用户A基线", 1), "user-a");
-        await saveCanvasOperationJournal({
-            userScope: "user-a",
-            canvasId: "c1",
-            confirmedRevision: 1,
-            confirmedSnapshot: canvas("用户A基线", 1),
-            inFlight: null,
-        });
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-
-        let release = () => {};
-        server.hold = new Promise<void>((resolve) => { release = resolve; });
-        const pending = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.postStarted === 1);
-
-        activeScope = "user-b";
-        useCanvasStore.setState({ projects: [canvas("用户B画布", 1)] });
-        recordCanvasDocumentBase(canvas("用户B画布", 1), "user-b");
-        release();
-        await pending;
-
-        const journalA = await loadCanvasOperationJournal("c1", "user-a");
-        expect(journalA.inFlight).toBeNull();
-        expect(journalA.confirmedRevision).toBeGreaterThan(1);
-        expect(journalA.confirmedSnapshot?.title).toBe("用户A草稿");
-        expect(canvasDocumentBase("c1", "user-a")?.snapshot.title).toBe("用户A草稿");
-
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户B画布");
-        expect(canvasDocumentBase("c1", "user-b")?.snapshot.title).toBe("用户B画布");
-        const journalB = await loadCanvasOperationJournal("c1", "user-b");
-        expect(journalB.inFlight).toBeNull();
-        expect(journalB.confirmedSnapshot).toBeNull();
-    });
-
     test("重启后脏草稿仍相对记录基线未确认", async () => {
         await saveCanvasOperationJournal({
             userScope: "guest",
@@ -873,230 +812,6 @@ describe("画布文档提交日记", () => {
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
     });
 
-    test("账号切换后未发出的提交返回过期作用域错误，不是成功", async () => {
-        activeScope = "user-a";
-        resetCanvasOperationJournalMemory();
-        useCanvasStore.setState({ projects: [canvas("用户A基线", 1)] });
-        recordCanvasDocumentBase(canvas("用户A基线", 1), "user-a");
-        await saveCanvasOperationJournal({
-            userScope: "user-a",
-            canvasId: "c1",
-            confirmedRevision: 1,
-            confirmedSnapshot: canvas("用户A基线", 1),
-            inFlight: null,
-        });
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-
-        let release = () => {};
-        server.hold = new Promise<void>((resolve) => { release = resolve; });
-        const first = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.postStarted === 1);
-
-        useCanvasStore.getState().updateProject("c1", { title: "用户A再改" });
-        const second = persistCanvasDocument("c1", { title: "用户A再改" });
-        activeScope = "user-b";
-        useCanvasStore.setState({ projects: [canvas("用户B画布", 1)] });
-        recordCanvasDocumentBase(canvas("用户B画布", 1), "user-b");
-        release();
-        await first;
-        await expect(second).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(server.commits).toHaveLength(1);
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户B画布");
-    });
-
-    test("删除与未完成提交串行，账号切换后不以新凭证删除同一 id", async () => {
-        activeScope = "user-a";
-        resetCanvasOperationJournalMemory();
-        useCanvasStore.setState({ projects: [canvas("用户A基线", 1)] });
-        recordCanvasDocumentBase(canvas("用户A基线", 1), "user-a");
-        await saveCanvasOperationJournal({
-            userScope: "user-a",
-            canvasId: "c1",
-            confirmedRevision: 1,
-            confirmedSnapshot: canvas("用户A基线", 1),
-            inFlight: null,
-        });
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-
-        let release = () => {};
-        server.hold = new Promise<void>((resolve) => { release = resolve; });
-        const save = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.postStarted === 1);
-
-        const pendingDelete = deleteLocalCanvasProjects(["c1"]);
-        await Promise.resolve();
-        expect(server.deleteStarted).toBe(0);
-
-        activeScope = "user-b";
-        useCanvasStore.setState({ projects: [canvas("用户B画布", 1)] });
-        recordCanvasDocumentBase(canvas("用户B画布", 1), "user-b");
-        release();
-        await save;
-        await expect(pendingDelete).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(server.deleteStarted).toBe(0);
-        expect(server.deletes).toEqual([]);
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户B画布");
-        expect(canvasDocumentBase("c1", "user-b")?.snapshot.title).toBe("用户B画布");
-    });
-
-    async function seedUserACanvas() {
-        activeScope = "user-a";
-        activeEpoch = 1;
-        resetCanvasOperationJournalMemory();
-        useCanvasStore.setState({ projects: [canvas("用户A基线", 1)] });
-        recordCanvasDocumentBase(canvas("用户A基线", 1), "user-a");
-        await saveCanvasOperationJournal({
-            userScope: "user-a",
-            canvasId: "c1",
-            confirmedRevision: 1,
-            confirmedSnapshot: canvas("用户A基线", 1),
-            inFlight: null,
-        });
-    }
-
-    function bounceAccountBackToA(title = "用户A回来") {
-        setActiveUserScope("user-b");
-        useCanvasStore.setState({ projects: [canvas("用户B画布", 1)] });
-        recordCanvasDocumentBase(canvas("用户B画布", 1), "user-b");
-        setActiveUserScope("user-a");
-        useCanvasStore.setState({ projects: [canvas(title, 1)] });
-        recordCanvasDocumentBase(canvas(title, 1), "user-a");
-    }
-
-    test("A→B→A 未发出的提交不再自己 dispatch，日记在途留给新 epoch 显式重放", async () => {
-        await seedUserACanvas();
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-        let release = () => {};
-        server.holdDispatch = new Promise<void>((resolve) => { release = resolve; });
-        const pending = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.dispatchWaiting);
-        bounceAccountBackToA();
-        release();
-        await expect(pending).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(server.postStarted).toBe(0);
-        expect(server.commits).toEqual([]);
-        const journal = await loadCanvasOperationJournal("c1", "user-a");
-        expect(journal.inFlight?.payload.document.title).toBe("用户A草稿");
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-        await syncLocalCanvasProjectToBackend("c1");
-        expect(server.commits).toEqual([expect.objectContaining({ title: "用户A草稿" })]);
-        expect((await loadCanvasOperationJournal("c1", "user-a")).inFlight).toBeNull();
-    });
-
-    test("A→B→A 队列里的后续提交不得跟着旧执行流发出", async () => {
-        await seedUserACanvas();
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-        let release = () => {};
-        server.hold = new Promise<void>((resolve) => { release = resolve; });
-        const first = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.postStarted === 1);
-        const second = persistCanvasDocument("c1", { title: "用户A再改" });
-        bounceAccountBackToA();
-        release();
-        await first;
-        await expect(second).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(server.commits).toHaveLength(1);
-        expect(server.commits[0]?.title).toBe("用户A草稿");
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        expect((await loadCanvasOperationJournal("c1", "user-b")).confirmedSnapshot).toBeNull();
-    });
-
-    test("A→B→A 旧响应不得投影到当前账号 live", async () => {
-        await seedUserACanvas();
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-        let release = () => {};
-        server.hold = new Promise<void>((resolve) => { release = resolve; });
-        const pending = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.postStarted === 1);
-        bounceAccountBackToA();
-        release();
-        await pending;
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        const journalA = await loadCanvasOperationJournal("c1", "user-a");
-        expect(journalA.confirmedSnapshot?.title).toBe("用户A草稿");
-        expect(journalA.inFlight).toBeNull();
-    });
-
-    test("A→B→A 失败仍保留原账号 receipt，新 epoch 显式动作才重放", async () => {
-        await seedUserACanvas();
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-        let release = () => {};
-        server.hold = new Promise<void>((resolve) => { release = resolve; });
-        server.failNext = { status: 503 };
-        const pending = persistCanvasDocument("c1", { title: "用户A草稿" });
-        await waitUntil(() => server.postStarted === 1);
-        bounceAccountBackToA();
-        release();
-        await expect(pending).rejects.toThrow();
-        const journal = await loadCanvasOperationJournal("c1", "user-a");
-        const opId = journal.inFlight?.operationId;
-        expect(opId).toBeTruthy();
-        expect(journal.inFlight?.payload.document.title).toBe("用户A草稿");
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        expect(server.commits).toEqual([]);
-
-        useCanvasStore.getState().updateProject("c1", { title: "用户A草稿" });
-        await syncLocalCanvasProjectToBackend("c1");
-        expect(server.commits).toEqual([expect.objectContaining({ opId, title: "用户A草稿" })]);
-        expect((await loadCanvasOperationJournal("c1", "user-a")).inFlight).toBeNull();
-    });
-
-    test("A→B→A 旧生成回写不得写入当前账号投影", async () => {
-        await seedUserACanvas();
-        const hold = await holdJournalWrite();
-        const pending = adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }), "user-a");
-        await hold.wait();
-        bounceAccountBackToA();
-        hold.resume();
-        expect(await pending).toBeUndefined();
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
-        const journalA = await loadCanvasOperationJournal("c1", "user-a");
-        expect(journalA.confirmedRevision).toBe(4);
-        expect(journalA.pendingProjection?.remote.nodes.map((item) => item.id)).toEqual(["n-gen"]);
-    });
-
-    test("传入过期 expectedScope 的 persist 立即拒绝，不改当前账号", async () => {
-        await seedUserACanvas();
-        const captured = captureUserScope();
-        bounceAccountBackToA();
-        await expect(persistCanvasDocument("c1", { title: "旧epoch写入" }, captured)).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        expect(server.postStarted).toBe(0);
-    });
-
-    test("A→B→A 删除不得用旧执行流发出", async () => {
-        await seedUserACanvas();
-        let release = () => {};
-        server.holdDispatch = new Promise<void>((resolve) => { release = resolve; });
-        const pending = deleteLocalCanvasProjects(["c1"]);
-        await waitUntil(() => server.dispatchWaiting);
-        bounceAccountBackToA();
-        release();
-        await expect(pending).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(server.deleteStarted).toBe(0);
-        expect(server.deletes).toEqual([]);
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-    });
-
-    test("A→B→A 读取后投影不得写入当前账号", async () => {
-        await seedUserACanvas();
-        server.document = canvas("远端", 5, { nodes: [node("n-remote", "远端节点")] });
-        let release = () => {};
-        server.holdDispatch = new Promise<void>((resolve) => { release = resolve; });
-        const pending = openLocalCanvasProjectFromBackend("c1");
-        await waitUntil(() => server.dispatchWaiting);
-        bounceAccountBackToA();
-        release();
-        const opened = await pending;
-        expect(opened?.title).toBe("用户A回来");
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
-        expect((await loadCanvasOperationJournal("c1", "user-a")).confirmedRevision).toBe(1);
-    });
-
     test("未落盘投影 flush 失败时文档提交不得发出，pending 不被 ack", async () => {
         const generated = node("n-gen", "生成结果", { metadata: { storageKey: "res-gen" } });
         const base = canvas("基线", 1, { nodes: [node("n1", "镜头1")] });
@@ -1119,24 +834,61 @@ describe("画布文档提交日记", () => {
         expect(journal.confirmedRevision).toBe(4);
     });
 
-    test("A→B→A 投影 flush 期间切账号不得 ack pending", async () => {
-        await seedUserACanvas();
-        let release = () => {};
-        let waiting = false;
-        setCanvasProjectionStoreFlushForTest(async () => {
-            waiting = true;
-            await new Promise<void>((resolve) => { release = resolve; });
+    test.each(["loading", "error"])("同版本绑定回执仍结算本地 %s 状态，保留提示词和新增节点", async (status) => {
+        const completed = node("image-result", "图片", {
+            metadata: { taskId: "task-result", status: "success", taskStatus: "succeeded", content: "/api/resources/result/file", storageKey: "resource:result", prompt: "原提示" },
         });
-        const pending = adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }), "user-a");
-        await waitUntil(() => waiting);
-        bounceAccountBackToA();
-        release();
-        await expect(pending).rejects.toBeInstanceOf(CanvasStaleScopeError);
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户A回来");
-        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
-        const journalA = await loadCanvasOperationJournal("c1", "user-a");
-        expect(journalA.confirmedRevision).toBe(4);
-        expect(journalA.pendingProjection?.remote.nodes.map((item) => item.id)).toEqual(["n-gen"]);
+        const confirmed = canvas("已确认", 329, { nodes: [completed] });
+        await seedConfirmed(confirmed);
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [
+                { ...completed, metadata: { taskId: "task-result", status, taskStatus: "running", content: "", errorDetails: "旧的回写提示", prompt: "用户新提示" } },
+                node("local-only", "本地新节点"),
+            ] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(confirmed);
+
+        expect(adopted.nodes[0].metadata).toMatchObject({ status: "success", content: "/api/resources/result/file", storageKey: "resource:result", prompt: "用户新提示" });
+        expect(adopted.nodes.map((item) => item.id)).toEqual(["image-result", "local-only"]);
+        expect(useCanvasStore.getState().openProject("c1")?.nodes).toEqual(adopted.nodes);
+        expect(adopted.nodes[0].metadata?.errorDetails).toBeUndefined();
+        expect(server.postStarted).toBe(0);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(329);
+        server.revision = 329;
+        server.document = confirmed;
+        server.enforceRevision = true;
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.commits).toHaveLength(1);
+        expect(server.commits[0].expectedRevision).toBe(329);
+        expect((server.document as { nodes: Array<{ metadata: Record<string, unknown> }> }).nodes[0].metadata.status).toBe("success");
+    });
+
+    test("同版本绑定回执不解除已有冲突，也不覆盖新任务或人类换图", async () => {
+        const completed = node("image-result", "图片", {
+            metadata: { taskId: "task-result", status: "success", content: "/api/resources/result/file", storageKey: "resource:result" },
+        });
+        const confirmed = canvas("已确认", 329, { nodes: [completed] });
+        await seedConfirmed(confirmed);
+        pauseCanvasBackendSubmit("c1");
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...completed, metadata: { taskId: "task-result", status: "loading", content: "" } }] as never,
+        });
+        expect((await adoptServerConfirmedGenerationPatch(confirmed)).nodes[0].metadata?.status).toBe("success");
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        for (const metadata of [
+            { taskId: "task-new", status: "loading", content: "" },
+            { taskId: "task-result", status: "loading", content: "用户换的图" },
+            { taskId: "task-result", status: "idle", content: "" },
+        ]) {
+            useCanvasStore.getState().updateProject("c1", { nodes: [{ ...completed, metadata }] as never });
+            const adopted = await adoptServerConfirmedGenerationPatch(confirmed);
+            expect(adopted.nodes[0].metadata).toEqual(metadata);
+            expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        }
+        useCanvasStore.getState().updateProject("c1", { nodes: [] });
+        expect((await adoptServerConfirmedGenerationPatch(confirmed)).nodes).toEqual([]);
+        expect(server.postStarted).toBe(0);
     });
 
     test("生成回写入草稿时按 id 合并，不丢掉本地额外节点", async () => {
@@ -1483,28 +1235,6 @@ describe("画布文档提交日记", () => {
 
         expect(useCanvasStore.getState().projects).toEqual([]);
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
-    });
-
-    test("等待生成回写时切换账号，不改新账号的 store", async () => {
-        activeScope = "user-a";
-        resetCanvasOperationJournalMemory();
-        await seedConfirmed(canvas("用户A基线", 1), "user-a");
-        const hold = await holdJournalWrite();
-        const pending = adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }), "user-a");
-        await hold.wait();
-        activeScope = "user-b";
-        useCanvasStore.setState({ projects: [canvas("用户B画布", 1)] });
-        recordCanvasDocumentBase(canvas("用户B画布", 1), "user-b");
-        hold.resume();
-        expect(await pending).toBeUndefined();
-
-        expect(useCanvasStore.getState().projects[0].title).toBe("用户B画布");
-        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
-        const journalA = await loadCanvasOperationJournal("c1", "user-a");
-        expect(journalA.confirmedRevision).toBe(4);
-        expect(journalA.confirmedSnapshot?.revision).toBe(4);
-        expect(canvasDocumentBase("c1", "user-b")?.snapshot.title).toBe("用户B画布");
-        expect((await loadCanvasOperationJournal("c1", "user-b")).confirmedSnapshot).toBeNull();
     });
 
     test("过期生成响应不改确认快照，在途回执仍可回放，revision 与 snapshot 对齐", async () => {

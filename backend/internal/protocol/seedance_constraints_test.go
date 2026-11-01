@@ -72,3 +72,59 @@ func TestInstalledSeedancePluginsPreserveExplicitTaskType(t *testing.T) {
 		}
 	}
 }
+
+func TestInstalledSeedancePluginsSupportDraftAndDraftToFinal(t *testing.T) {
+	for _, plugin := range []struct{ file, id string }{
+		{"volcengine-ark-seedance.beeftv-plugin", "volcengine-ark-video"},
+		{"volcengine-ark-agent-plan-seedance.beeftv-plugin", "volcengine-ark-agent-plan-video"},
+		{"seedance-videos-compatible.beeftv-plugin", "seedance-videos-compatible"},
+	} {
+		a := officialPackageAdapter(t, plugin.file, plugin.id)
+
+		draftSpec, err := a.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Capability:  CapabilityVideo,
+			Model:       "doubao-seedance-2-5-260628",
+			Prompt:      "preview shot",
+			AspectRatio: "16:9",
+			Duration:    5,
+			Quality:     "480p",
+			Extra:       map[string]any{"draft": true},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		draftBody := manifestTestBody(t, draftSpec)
+		if draftBody["draft"] != true {
+			t.Fatalf("%s draft body missing draft=true: %#v", plugin.id, draftBody)
+		}
+
+		finalSpec, err := a.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Capability: CapabilityVideo,
+			Model:      "doubao-seedance-2-5-260628",
+			Operation:  "draft_to_final",
+			Quality:    "1080p",
+			Extra:      map[string]any{"draft_task_id": "cgt-draft-123"},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		finalBody := manifestTestBody(t, finalSpec)
+		content, ok := finalBody["content"].([]any)
+		if !ok || len(content) != 1 {
+			t.Fatalf("%s draft_to_final content invalid: %#v", plugin.id, finalBody)
+		}
+		item, ok := content[0].(map[string]any)
+		if !ok || item["type"] != "draft_task" {
+			t.Fatalf("%s draft_to_final item invalid: %#v", plugin.id, item)
+		}
+		draftTask, ok := item["draft_task"].(map[string]any)
+		if !ok || draftTask["id"] != "cgt-draft-123" {
+			t.Fatalf("%s draft_to_final id invalid: %#v", plugin.id, item)
+		}
+		for _, forbidden := range []string{"prompt", "ratio", "aspect_ratio", "duration", "draft"} {
+			if _, exists := finalBody[forbidden]; exists {
+				t.Fatalf("%s draft_to_final retained forbidden field %q: %#v", plugin.id, forbidden, finalBody)
+			}
+		}
+	}
+}

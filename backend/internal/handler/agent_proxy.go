@@ -281,7 +281,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 必填"))
 			return nil, false
 		}
-		raw, err := svc.UserCanvasProject(c.GetString("agentUserId"), canvasID)
+		raw, err := svc.CanvasService().UserCanvasProject(c.GetString("agentUserId"), canvasID)
 		if err != nil {
 			fail(c, http.StatusNotFound, app.BadAuthRequest("画布不存在或不属于当前工作区"))
 			return nil, false
@@ -369,7 +369,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		revision, err := svc.UndoAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
+		revision, err := svc.AssistantTurns().Undo(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
 		if err != nil {
 			var turnErr *app.AssistantTurnError
 			if errors.As(err, &turnErr) {
@@ -405,7 +405,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		if err := svc.CheckAssistantProposalRunnable(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId")); err != nil {
+		if err := svc.AssistantTurns().CheckProposalRunnable(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId")); err != nil {
 			var turnErr *app.AssistantTurnError
 			if errors.As(err, &turnErr) {
 				status := http.StatusConflict
@@ -439,7 +439,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		payload.ProposalID = c.Param("proposalId")
 		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
 		if err != nil {
-			failService(c, err)
+			failAssistantProposal(c, err)
 			return
 		}
 		ok(c, result)
@@ -466,7 +466,6 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		var payload struct {
-			ContinuationID  string                    `json:"continuationId"`
 			PermissionMode  string                    `json:"permissionMode"`
 			CanvasID        string                    `json:"canvasId"`
 			Message         string                    `json:"message"`
@@ -490,27 +489,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if !allowed {
 			return
 		}
-		var continuation *assistantturns.ContinuationView
-		if payload.ContinuationID != "" {
-			var claimErr error
-			continuation, claimErr = svc.ClaimAssistantContinuation(c.GetString("agentUserId"), payload.ContinuationID)
-			if claimErr != nil {
-				skillContextFailure(c, claimErr)
-				return
-			}
-			if continuation.CanvasID != payload.CanvasID || continuation.SessionID != payload.SessionID {
-				c.JSON(409, gin.H{"reason": "continuation_scope_changed"})
-				return
-			}
-			payload.Message = continuation.Message
-			payload.RequestID = &continuation.RequestID
-			payload.PermissionMode = continuation.PermissionMode
-			payload.SelectedNodeIDs = continuation.SelectedNodeIDs
-			payload.Attachments = nil
-			payload.References = nil
-			payload.Skills = nil
-			body, _ = json.Marshal(payload)
-		} else if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, payload.SessionID) {
+		// Automatic continuation turns are started only by the backend worker.
+		// A client-supplied continuationId is never read here.
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, payload.SessionID) {
 			return
 		}
 		if !assistantturns.ValidMode(payload.PermissionMode) {
@@ -568,14 +549,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		input.PermissionMode = assistantturns.Mode(payload.PermissionMode)
 		input.SkillPins = pins
 		c.Header("X-Beeftv-Turn-Admission", "unknown")
-		var revisionBefore int64
-		var snapshotErr error
-		if continuation != nil {
-			turnID = continuation.TurnID
-			revisionBefore = continuation.RevisionBefore
-		} else {
-			revisionBefore, snapshotErr = svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
-		}
+		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
 		if snapshotErr != nil {
 			// No request has reached the host, even if saving the turn snapshot
 			// failed ambiguously. There can be no model or operation to recover.
@@ -597,12 +571,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			var trusted map[string]any
 			_ = json.Unmarshal(forwarded, &trusted)
 			trusted["permissionMode"] = input.PermissionMode
-			// Display identity comes only from the claimed Go receipt. In
-			// particular, never forward a client key ignored by struct decoding.
+			// Display identity comes only from the backend worker's claimed receipt;
+			// never forward a client key ignored by struct decoding.
 			delete(trusted, "continuationId")
-			if continuation != nil {
-				trusted["continuationId"] = continuation.ID
-			}
 			forwarded, err = json.Marshal(trusted)
 		}
 		if err != nil {
@@ -614,7 +585,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		upstream, err := host.NewChildRequest(context.WithoutCancel(c.Request.Context()), http.MethodPost, "/chat",
 			strings.NewReader(string(forwarded)))
 		if err != nil {
-			settle = continuation == nil
+			settle = true
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
 				"msg": "内置创作助手宿主未运行"})
 			return
@@ -628,9 +599,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
-			// A continuation has one fixed turn. Keep an uncertain host admission
-			// recoverable under that identity; only its actual completion or Stop settles it.
-			settle = continuation == nil
+			settle = true
 			// 宿主拒绝这次对话时没有流可转：按统一失败信封回，reason 保持宿主给的机器可读原因。
 			payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 			var rejection struct {
@@ -707,7 +676,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			target["sessionId"] = *payload.SessionID
 			target["requestId"] = *payload.RequestID
 		}
-		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
+		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
 			failService(c, err)
 			return
 		}
@@ -799,7 +768,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			}
 			input := assistantTurnInput(nil, refs)
 			input.SkillPins = pins
-			if err := svc.ExtendAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
+			if err := svc.AssistantTurns().Extend(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
 				failService(c, err)
 				return
 			}
@@ -868,4 +837,24 @@ func settleAssistantTurn(turnID string, svc *app.Service) {
 	if err := svc.FinalizeAssistantTurn(turnID); err != nil {
 		log.Printf("assistant_turn_settle_failed turn=%q error_type=%T", turnID, err)
 	}
+}
+
+// failAssistantProposal 投影确认生成方案时的失败：回合不存在或已变化（404/409）、
+// 方案已变化、已撤销或参数无效（操作层 409/412/400）都不是服务内部错误。
+func failAssistantProposal(c *gin.Context, err error) {
+	var turnErr *app.AssistantTurnError
+	if errors.As(err, &turnErr) {
+		status := http.StatusConflict
+		if turnErr.Reason == app.AssistantTurnReasonNotFound {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"code": status, "reason": turnErr.Reason, "msg": turnErr.Error()})
+		return
+	}
+	var opErr *agentops.Error
+	if errors.As(err, &opErr) {
+		failAgentOps(c, err)
+		return
+	}
+	failService(c, err)
 }

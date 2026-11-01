@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { App } from "antd";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { appQueryClient } from "@/lib/query-client";
@@ -16,4 +17,4 @@ function Harness() {
             onLocateNodes={() => {}} onRunProposal={() => { throw new Error("This fixture never submits generation"); }} onOpenModelSettings={() => {}} />
     </div></App>;
 }
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<MemoryRouter><QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider></MemoryRouter>);

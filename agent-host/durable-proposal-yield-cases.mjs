@@ -96,17 +96,21 @@ test('successful proposal ends through official control without a summary reques
 test('writes and plan_update before proposing persist without a post-proposal model request', { timeout: 30000 }, async t => {
   const plan = { goal: 'Create the next shot', items: [{ id: 'shot', title: 'Generate the first frame', status: 'needs_user' }] };
   const f = await fixture(t, { onRequest: async (_, count) => count === 1
-    ? { toolCalls: [configure, { id: 'plan', name: 'plan_update', args: plan }] }
+    ? { reply: '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。', toolCalls: [configure, { id: 'plan', name: 'plan_update', args: plan }] }
     : count === 2 ? { toolCalls: [propose] } : { reply: 'Unexpected post-proposal summary.' } });
   const { store } = f.current, entry = await store.createSession('canvas');
   const record = await store.wait(entry, await store.submit(entry, input));
-  assert.equal(f.state.models.length, 2); assert.equal(record.reply, ''); assert.equal(record.error, null);
+  assert.equal(f.state.models.length, 2);
+  assert.equal(record.reply, '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。');
+  assert.equal(record.error, null);
   assert.equal(record.proposals.length, 1); assert.deepEqual(record.plan.items, plan.items);
   assert.equal(record.proposals[0].source.canvasRevision, 2);
   assert.equal(record.change.revisionAfter, 2); assert.deepEqual(record.change.updatedNodeIds, ['shot']);
   assert.deepEqual(f.state.completions[0].record.change, record.change);
+  assert.equal(f.state.completions[0].record.reply, '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。');
   const history = await store.history('canvas', entry.sessionId);
   assert.deepEqual(history.plan.items, plan.items); assert.deepEqual(history.turns[0].plan.items, plan.items);
+  assert.equal(history.turns[0].reply, '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。');
   assert.match(f.state.models[1].tools.find(tool => tool.function.name === 'canvas_generation_propose').function.description, /先完成本阶段的计划更新/);
 });
 

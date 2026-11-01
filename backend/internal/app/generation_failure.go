@@ -38,7 +38,7 @@ func applyAppFailureWrappers(err error, failure generation.Failure) generation.F
 	}
 	var preparation imagePreparationError
 	if errors.As(err, &preparation) {
-		failure = generation.ClassifyError(preparation.cause)
+		failure = generation.ClassifyError(preparation.Cause)
 		failure.Uncertain, failure.Retryable = false, false
 		failure.Reason = preparation.Error()
 		failure.Action = "请保留排查信息并联系支持检查本地任务记录"

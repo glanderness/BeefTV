@@ -15,6 +15,8 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { confirmDesktopUpdateStartup } from "@/services/desktop-update-startup";
 import { runStartupEnvironmentCheck } from "@/services/diagnostics/environment-startup";
+import { getDesktopAppBinding } from "@/services/desktop-runtime";
+import { appHref } from "@/lib/app-routing";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const config = useConfigStore((state) => state.config);
@@ -33,6 +35,22 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const localMediaCleanupScope = useRef("");
     const updateStartupConfirmed = useRef(false);
     const environmentScope = useRef("");
+
+    useEffect(() => {
+        let stopped = false, pending = false;
+        const read = async () => {
+            const consume = getDesktopAppBinding()?.ConsumeSkillLink;
+            if (!consume || pending || !userId) return;
+            pending = true;
+            try {
+                const route = await consume();
+                if (!stopped && route.startsWith("/skills?")) window.location.assign(appHref(route));
+            } finally { pending = false; }
+        };
+        const timer = window.setInterval(() => void read().catch(() => {}), 1000);
+        void read().catch(() => {});
+        return () => { stopped = true; clearInterval(timer); };
+    }, [userId]);
 
     useEffect(() => {
         if (!userId || !localMode || environmentScope.current === userId) return;

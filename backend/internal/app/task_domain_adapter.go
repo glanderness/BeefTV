@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -42,6 +43,7 @@ func (s *Service) taskDependencies() localtask.Dependencies {
 		Failures:               taskFailuresAdapter{},
 		TextReplay:             s.TextReplay(),
 		Provider:               taskProviderAdapter{s},
+		Recovery:               taskRecoveryAdapter{s},
 		Present:                taskPresenterAdapter{s},
 		Logs:                   taskLogAdapter{s},
 		Activity:               taskActivityAdapter{s},
@@ -78,7 +80,12 @@ func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (
 	}
 	config, _ := input["config"].(map[string]any)
 	name := stringValue(config["model"])
-	if kind := generation.UpscaleMediaType(name); kind != "" {
+	legacyKind := generation.UpscaleMediaType(name)
+	if input["upscale"] != nil || legacyKind != "" {
+		kind := stringValue(input["mode"])
+		if (kind != "image" && kind != "video") || (legacyKind != "" && kind != legacyKind) {
+			return localtask.SelectResult{}, BadAuthRequest("超分模型与任务类型不一致")
+		}
 		if req.Model != name || req.Type != "canvas_"+kind || stringValue(input["mode"]) != kind {
 			return localtask.SelectResult{}, BadAuthRequest("超分模型与任务类型不一致")
 		}
@@ -141,7 +148,10 @@ func (a taskCatalogAdapter) RequireCustomChannels(input map[string]any) error {
 
 func (a taskCatalogAdapter) ValidateCapability(input map[string]any) error {
 	config, _ := input["config"].(map[string]any)
-	if generation.UpscaleMediaType(stringValue(config["model"])) != "" {
+	if input["upscale"] != nil || generation.UpscaleMediaType(stringValue(config["model"])) != "" {
+		if stringValue(config["credentialRef"]) == managedBeefAPIRef {
+			config["mediaProtocolVersion"] = beefapi.MediaProtocolVersion
+		}
 		raw, err := json.Marshal(input)
 		if err != nil {
 			return err
@@ -290,12 +300,29 @@ func (a taskProviderAdapter) RequestCancel(ctx context.Context, task *model.Task
 	return a.s.requestProviderCancellation(ctx, task)
 }
 
+type taskRecoveryAdapter struct{ s *Service }
+
+func (a taskRecoveryAdapter) ResetBackoff(userID, taskID string) error {
+	return a.s.repo.ResetTaskRecoveryBackoff(userID, taskID)
+}
+
+func (a taskRecoveryAdapter) ResumeDelivery(ctx context.Context, userID, taskID string) (*model.Task, error) {
+	return a.s.resumeTaskDeliveryForUser(ctx, userID, taskID)
+}
+
+func (a taskRecoveryAdapter) RecoverImage(ctx context.Context, userID, taskID string) (*model.Task, error) {
+	return a.s.recoverFailedImageForUser(ctx, userID, taskID)
+}
+
+func (a taskRecoveryAdapter) RecoverVideoOrUpscale(ctx context.Context, userID, taskID string) (*model.Task, error) {
+	return a.s.recoverFailedVideoOrUpscaleForUser(ctx, userID, taskID)
+}
+
 type taskPresenterAdapter struct{ s *Service }
 
 func (a taskPresenterAdapter) Task(task model.Task) *model.Task {
-	projected := taskForOutput(task)
-	a.s.attachTaskDelivery(projected)
-	return projected
+	a.s.attachTaskDelivery(&task)
+	return taskForOutput(task)
 }
 
 func (a taskPresenterAdapter) Summaries(tasks []model.Task) []localtask.Summary {

@@ -76,17 +76,32 @@ jobs:
           name: released-windows-upgrade-evidence
           path: upgrade-evidence/
 
+  structure-budget:
+    name: Structure budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Structure numbers may only shrink
+        run: |
+          node --test scripts/structure-budget.test.mjs
+          node scripts/structure-budget.mjs
+
   release-publisher:
     name: Release publisher checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Test immutable publication and activation
         run: |
-          node --test scripts/image-preparation-release-contract.test.mjs
-          node --test scripts/music3-release-contract.test.mjs
+          sh scripts/audit-public-docs.sh
+          node --test scripts/configure-ubuntu-apt.test.mjs
+          node --test scripts/verify-real-generation-release.test.mjs
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+          python3 -m unittest discover -s scripts -p 'test_mirror_desktop_cnb.py'
           node --test scripts/distribution-notices.test.mjs
           python3 -m unittest discover -s scripts -p 'test_package_macos_media_source.py'
           python3 -m unittest discover -s scripts -p 'test_package_wasm_sources.py'
@@ -109,7 +124,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.15.0'
+          node-version: '24.22.1'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -118,6 +133,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
+          bash ../scripts/configure-ubuntu-apt.sh
           sudo apt-get update
           sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk
           fc-cache -f
@@ -131,10 +147,15 @@ jobs:
       - name: Verify real production timing report
         working-directory: agent-host/eval
         run: python3 -m unittest report_production_test.py
+      - name: Verify agent-host request efficiency gate
+        working-directory: agent-host
+        run: |
+          bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs
+          bun eval/request-efficiency-gate.mjs
 
   web:
     name: Web checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -148,8 +169,11 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          bash ../scripts/configure-ubuntu-apt.sh
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
           ffmpeg -version
           ffprobe -version
       - name: Lint retired Ant Design APIs

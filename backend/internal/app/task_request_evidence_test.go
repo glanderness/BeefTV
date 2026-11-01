@@ -7,15 +7,89 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
+
+func TestReferenceRecoveryEvidenceSurvivesSQLiteAndDiagnosticZIP(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	puts, confirms, other := 0, 0, 0
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/storage":
+			puts++
+			w.WriteHeader(503)
+		case "/v1/media/uploads/complete":
+			confirms++
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(`{"error":{"code":"video_reference_upload_incomplete","message":"not received"}}`))
+		default:
+			other++
+			w.WriteHeader(500)
+		}
+	}))
+	defer server.Close()
+	ctx := generation.WithRuntime(context.Background(), generation.Runtime{Endpoints: generation.Endpoints{BeefAPIVideoBaseURL: server.URL}})
+	ctx, recorder := withTaskRequestEvidence(ctx)
+	_, uploadErr := generation.CompleteBeefAPISeedanceUpload(ctx, generation.Config{BaseURL: server.URL + "/v1"}, generation.BeefAPISeedanceUploadSession{Ticket: "private-ticket", UploadURL: server.URL + "/storage?X-Amz-Signature=PRIVATE"}, []byte("owned"))
+	mu.Lock()
+	defer mu.Unlock()
+	if uploadErr == nil || puts != 3 || confirms != 3 || other != 0 {
+		t.Fatalf("err=%v put=%d confirm=%d other=%d", uploadErr, puts, confirms, other)
+	}
+	now := time.Now().UTC()
+	task := model.Task{ID: "owned-failed", UserID: "owner", Status: model.TaskStatusFailed, FailureDiagnostics: recorder.snapshot(false), CreatedAt: now, UpdatedAt: now}
+	captureTaskFailureDiagnostics(&task, uploadErr, "unknown")
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	if err := db.AutoMigrate(&model.Task{}, &model.TaskLog{}, &model.ApiCallLog{}, &model.CanvasProject{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := diagnostics.New(diagnostics.Dependencies{Store: repository.New(db)}).Export("owner", diagnostics.ExportRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := diagnostics.AnalyzeBundle(bundle.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, finding := range findings {
+		if finding.Reason == "reference_preparation_failed" && finding.Stage == "reference_put/response" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("terminal PUT failure confused with recovery query: %+v", findings)
+	}
+	var restored model.Task
+	if err := db.First(&restored, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	d := restored.FailureDiagnostics
+	if d.Source != "reference_upload" || d.Requests[4].Attempt != 3 || d.Requests[5].Operation != "reference_complete" || strings.Contains(d.Summary, "PRIVATE") || strings.Contains(d.Summary, "private-ticket") {
+		t.Fatalf("lost or unsafe recovery evidence: %+v", d)
+	}
+}
 
 // Exercise the real HTTP reader, terminal capture, SQLite and list projection.
 // A struct-only serialization test misses both successful headers and SELECT omissions.
