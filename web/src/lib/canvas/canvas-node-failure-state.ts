@@ -59,8 +59,30 @@ export function persistCanvasNodeFailure(node: CanvasNodeData): CanvasNodeData {
         || metadata.taskStatus === "failed" || metadata.taskStatus === "cancelled"
         || Boolean(metadata.errorDetails && metadata.status !== "loading" && !metadata.fileUpload);
     if (!failed) {
-        if (!metadata.generationFailure && !metadata.taskOutcomeSource) return node;
-        return { ...node, metadata: { ...metadata, generationFailure: undefined, taskOutcome: hasLocalNodeOutcome(metadata) ? undefined : metadata.taskOutcome, taskOutcomeSource: undefined } };
+        const storedOutcome = normalizeTaskOutcome(metadata.taskOutcome);
+        const hasBoundMedia = Boolean(
+            (typeof metadata.content === "string" && metadata.content.trim())
+            || (typeof metadata.storageKey === "string" && metadata.storageKey.trim())
+            || (typeof metadata.assetId === "string" && metadata.assetId.trim()),
+        );
+        const healStaleBoundRunning = metadata.status === "success"
+            && (!metadata.taskStatus || metadata.taskStatus === "succeeded")
+            && hasBoundMedia
+            && (storedOutcome?.phase === "running" || storedOutcome?.phase === "fetching");
+        if (!metadata.generationFailure && !metadata.taskOutcomeSource && !healStaleBoundRunning) return node;
+        return {
+            ...node,
+            metadata: {
+                ...metadata,
+                generationFailure: undefined,
+                taskOutcome: healStaleBoundRunning
+                    ? { phase: "ready", regenerate: "allowed", reason: "result_ready" }
+                    : hasLocalNodeOutcome(metadata)
+                      ? undefined
+                      : metadata.taskOutcome,
+                taskOutcomeSource: undefined,
+            },
+        };
     }
     let next = metadata;
     let localOutcome = hasLocalNodeOutcome(metadata) ? metadata.generationFailure?.localOutcome : undefined;

@@ -15,6 +15,7 @@ import { applyGenerationConsumerEffect, generationEffectApplied } from "@/servic
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
+import { readNodeTaskOutcome } from "@/lib/task-outcome";
 import { generationTaskInput, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-identity";
 export { generationTaskInput, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-identity";
 
@@ -330,7 +331,31 @@ export async function syncGenerationTaskToCanvasStore(task: GenerationTask) {
     const candidates = project.nodes.filter((node) => node.metadata?.taskId === task.id || node.id === target?.id);
     let changed = false;
     for (const node of candidates) {
-        if (node.metadata?.taskId === task.id && node.metadata.status === "success" && node.metadata.content) continue;
+        const hasBoundMedia = Boolean(
+            node.metadata?.content || node.metadata?.storageKey || node.metadata?.assetId,
+        );
+        if (node.metadata?.taskId === task.id && node.metadata.status === "success" && hasBoundMedia) {
+            const outcomePhase = readNodeTaskOutcome(node.metadata)?.phase;
+            if (outcomePhase !== "running" && outcomePhase !== "fetching") {
+                continue;
+            }
+            const healedNode: CanvasNodeData = {
+                ...node,
+                metadata: {
+                    ...node.metadata,
+                    taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+                    taskOutcomeSource: undefined,
+                    generationFailure: undefined,
+                },
+            };
+            const latest = useCanvasStore.getState().projects.find((item) => item.id === project.id);
+            if (!latest?.nodes.some((item) => item.id === node.id)) continue;
+            useCanvasStore.getState().updateProject(project.id, {
+                nodes: latest.nodes.map((item) => (item.id === node.id ? healedNode : item)),
+            });
+            changed = true;
+            continue;
+        }
         const updatedNode = await buildGenerationTaskNodeResult(node, task, project.nodes);
         const latest = useCanvasStore.getState().projects.find((item) => item.id === project.id);
         if (!latest?.nodes.some((item) => item.id === node.id)) continue;
@@ -350,7 +375,10 @@ function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
         taskFailureDiagnostics: task.failureDiagnostics,
         taskProviderRequestId: task.providerRequestId,
         taskId: task.id,
-        taskOutcome: task.outcome || { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+        taskOutcome:
+            !task.outcome || task.outcome.phase === "running" || task.outcome.phase === "fetching"
+                ? { phase: "ready", regenerate: "allowed", reason: "result_ready" }
+                : task.outcome,
         taskStatus: task.status,
         taskProgress: typeof task.progress === "number" && Number.isFinite(task.progress) ? Math.max(0, Math.min(100, Math.round(task.progress))) : 100,
         taskStage: task.stage,

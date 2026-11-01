@@ -145,3 +145,47 @@ test("derived failure fields and outcome backfill do not stamp a new updatedAt",
     const [edited] = stampCanvasNodeChanges([original], [{ ...original, metadata: { ...original.metadata, errorDetails: "invalid api key" } }], "2026-02-02T00:00:00.000Z");
     expect(edited.updatedAt).toBe("2026-02-02T00:00:00.000Z");
 });
+
+test("bound success node with stale running taskOutcome is healed to ready on persist and task sync", async () => {
+    const { isCanvasNodeGenerating } = await import("@/lib/canvas/canvas-node-task-state");
+    const { isNodeRegenerateBlocked } = await import("@/lib/task-outcome");
+    const { canvasGenerationTaskNodes } = await import("@/pages/canvas/canvas-generation-failure");
+
+    const staleSuccess: CanvasNodeData = {
+        ...failure(),
+        metadata: {
+            status: "success",
+            taskId: "task-img-1",
+            taskStatus: "succeeded",
+            taskProgress: 100,
+            content: "/api/resources/res-1/file",
+            storageKey: "resource:res-1",
+            assetId: "asset-1",
+            taskOutcome: { phase: "running", regenerate: "blocked", reason: "in_flight" },
+        },
+    };
+    const healed = persistCanvasNodeFailure(staleSuccess);
+    expect(healed.metadata?.taskOutcome).toEqual({
+        phase: "ready",
+        regenerate: "allowed",
+        reason: "result_ready",
+    });
+    expect(isCanvasNodeGenerating(healed)).toBe(false);
+    expect(isNodeRegenerateBlocked(healed.metadata)).toBe(false);
+
+    const [synced] = canvasGenerationTaskNodes([staleSuccess], staleSuccess.id, {
+        id: "task-img-1",
+        type: "canvas_image",
+        prompt: "test",
+        status: "succeeded",
+        progress: 100,
+        attempts: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:05.000Z",
+    });
+    expect(synced.metadata?.taskOutcome).toEqual({
+        phase: "ready",
+        regenerate: "allowed",
+        reason: "result_ready",
+    });
+});
