@@ -341,9 +341,9 @@ export function CanvasNodeToolbar({
     const viewpointLightingTools = compact ? [] : isImage ? [...inGroup("viewpoint"), ...inGroup("lighting")].filter((tool) => tool.id === "angle" || tool.id === "lighting") : [...inGroup("viewpoint"), ...inGroup("lighting")];
     const panoramaTools = compact || isImage ? [] : inGroup("panorama");
     const processTools = compact
-        ? [...inGroup("portrait"), ...inGroup("viewpoint"), ...inGroup("lighting"), ...inGroup("panorama"), ...inGroup("process")]
+        ? [...inGroup("portrait"), ...inGroup("viewpoint"), ...inGroup("lighting"), ...inGroup("panorama"), ...inGroup("process"), ...(isImage ? allTools.filter((tool) => tool.id === "reversePrompt") : [])]
         : isImage
-          ? inGroup("process").filter((tool) => tool.id === "crop" || tool.id === "split" || tool.id === "annotation")
+          ? [...inGroup("process").filter((tool) => tool.id === "crop" || tool.id === "split" || tool.id === "annotation"), ...allTools.filter((tool) => tool.id === "reversePrompt")]
           : inGroup("process");
     const workspaceTools = narrow ? [] : inGroup("workspace");
     const utilityTools = inGroup("utility");

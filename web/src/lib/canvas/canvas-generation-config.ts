@@ -153,6 +153,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                   )
                 : config.runningHub.workflows,
     };
+    const resolvedVquality = generationDefaults.vquality ?? requestedConfig.vquality;
     return {
         ...requestedConfig,
         taskWorkflowProvider: workflowProvider,
@@ -162,10 +163,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         size: generationDefaults.size ?? requestedConfig.size,
         transparentBackground: generationDefaults.transparentBackground || (requestedConfig.transparentBackground === "true" ? "true" : "false"),
         videoSeconds: generationDefaults.videoSeconds || requestedConfig.videoSeconds,
-        vquality: generationDefaults.vquality ?? requestedConfig.vquality,
+        vquality: resolvedVquality,
         videoGenerateAudio: generationDefaults.videoGenerateAudio || requestedConfig.videoGenerateAudio,
         videoWatermark: generationDefaults.videoWatermark || requestedConfig.videoWatermark,
-        videoDraft: requestedConfig.videoDraft,
+        videoDraft: requestedConfig.videoDraft === "true" && (!resolvedVquality || /^480p?$/i.test(String(resolvedVquality))) ? "true" : "false",
+        videoReturnLastFrame: requestedConfig.videoReturnLastFrame,
         videoArkPrivateAssetUpload: requestedConfig.videoArkPrivateAssetUpload,
         count: generationDefaults.count || requestedConfig.count,
     };

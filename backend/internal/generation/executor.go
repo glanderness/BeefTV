@@ -17,7 +17,7 @@ import (
 func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	runtime, _ := RuntimeFromContext(ctx)
 	userID := strings.TrimSpace(runtime.Call.UserID)
-	if strings.TrimSpace(input.Mode) == "" && strings.HasPrefix(runtime.Call.TaskType, "video_") {
+	if strings.TrimSpace(input.Mode) == "" && (runtime.Call.TaskType == "canvas_video" || strings.HasPrefix(runtime.Call.TaskType, "video_")) {
 		input.Mode = "video"
 	}
 
@@ -32,7 +32,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		}
 		input.Prompt = compiled
 	}
-	if strings.TrimSpace(input.Prompt) == "" {
+	if strings.TrimSpace(input.Prompt) == "" && !(input.Mode == "video" && strings.TrimSpace(metadataString(input.Metadata, "videoDraftTaskId")) != "") {
 		return nil, errors.New("prompt is required")
 	}
 

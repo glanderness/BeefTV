@@ -7,6 +7,7 @@ import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeL
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
 import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue } from "@/lib/model-capabilities";
+import { isVideoResolutionMatch } from "@/lib/video-generation-options";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { VideoSettingsConstraints } from "@/lib/video-settings-constraints";
@@ -33,7 +34,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const sizeSupported = Boolean(videoProfile?.ratios.length);
     const resolution = videoProfile ? resolveVideoResolutionValue(videoProfile, config.vquality) : "";
     const size = videoProfile ? resolveVideoRatioValue(videoProfile, config.size) : "";
-    const draftActive = Boolean(videoProfile?.draft?.supported && config.videoDraft === "true");
+    const draftActive = Boolean(videoProfile?.draft?.supported && config.videoDraft === "true" && (!resolution || isVideoResolutionMatch(resolution, "480p")));
     const summary = [
         ...(resolutionSupported ? [videoResolutionLabel(resolution)] : []),
         ...(draftActive ? ["样片"] : []),

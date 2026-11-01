@@ -15,11 +15,11 @@ func ApplyLocalVideoContract(item LocalChannelModel, config *ModelCapabilityConf
 	if item.Capability != "video" || item.VideoCapabilitiesVersion != nil || !isBeefRoute || config == nil || config.Video == nil {
 		return config
 	}
+	if isSeedance2Family(item.Protocol, item.Model) {
+		config = repairLegacyEnterpriseSeedanceVideoProfile(item.Protocol, item.Model, config)
+	}
 	contract, ok := providerpreset.BeefAPIVideoContract(item.Model)
 	if !ok {
-		if isSeedance2Family(item.Protocol, item.Model) {
-			return repairLegacyEnterpriseSeedanceVideoProfile(item.Protocol, item.Model, config)
-		}
 		return config
 	}
 	result := *config
@@ -60,7 +60,31 @@ func ApplyLocalVideoContract(item LocalChannelModel, config *ModelCapabilityConf
 			video.DefaultOperation = video.Operations[0]
 		}
 	}
+	if isSeedance2Family(item.Protocol, item.Model) {
+		repairSeedanceBooleanFlagsAndDraftResolution(item.Protocol, item.Model, &video)
+	}
 	return &result
+}
+
+func repairSeedanceBooleanFlagsAndDraftResolution(protocol, modelName string, video *VideoCapabilityConfig) {
+	defaults := DefaultModelCapabilityConfigForModel(protocol, modelName)
+	if defaults == nil || defaults.Video == nil || video == nil {
+		return
+	}
+	if defaults.Video.Draft.Supported && !video.Draft.Supported {
+		video.Draft = defaults.Video.Draft
+	}
+	if video.Draft.Supported {
+		if slices.Contains(defaults.Video.Resolutions, "480p") {
+			video.Resolutions = appendUniqueString(video.Resolutions, "480p")
+		}
+		if slices.Contains(defaults.Video.Operations, "draft_to_final") {
+			video.Operations = appendUniqueString(video.Operations, "draft_to_final")
+		}
+	}
+	if defaults.Video.ReturnLastFrame.Supported && !video.ReturnLastFrame.Supported {
+		video.ReturnLastFrame = defaults.Video.ReturnLastFrame
+	}
 }
 
 func repairLegacyEnterpriseSeedanceVideoProfile(protocol, modelName string, config *ModelCapabilityConfig) *ModelCapabilityConfig {
@@ -69,7 +93,11 @@ func repairLegacyEnterpriseSeedanceVideoProfile(protocol, modelName string, conf
 	}
 	refs := config.Video.References
 	if refs.MaxVideos != 0 || refs.MaxAudios != 0 || refs.MaxVideoDuration != 0 || refs.MaxAudioDuration != 0 {
-		return config
+		result := *config
+		video := *config.Video
+		repairSeedanceBooleanFlagsAndDraftResolution(protocol, modelName, &video)
+		result.Video = &video
+		return &result
 	}
 	defaults := DefaultModelCapabilityConfigForModel(protocol, modelName)
 	if defaults == nil || defaults.Video == nil {
@@ -87,6 +115,7 @@ func repairLegacyEnterpriseSeedanceVideoProfile(protocol, modelName string, conf
 	video.References.MaxVideoTotalDuration = defaults.Video.References.MaxVideoTotalDuration
 	video.References.MaxAudioTotalDuration = defaults.Video.References.MaxAudioTotalDuration
 	video.GenerateAudio = defaults.Video.GenerateAudio
+	repairSeedanceBooleanFlagsAndDraftResolution(protocol, modelName, &video)
 	for _, op := range defaults.Video.Operations {
 		video.Operations = appendUniqueString(video.Operations, op)
 	}

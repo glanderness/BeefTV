@@ -75,7 +75,7 @@ func TestBindTaskOutputReconcilesUnboundStoredMediaNodes(t *testing.T) {
 			"nodes":[
 				{"id":"ref-slot","type":"image","metadata":{"storageKey":"resource:res-ref","content":"/api/resources/res-ref/file"}},
 				{"id":"batch-root","type":"image","metadata":{"isBatchRoot":true,"primaryImageId":"ref-slot","storageKey":"resource:res-ref","content":"/api/resources/res-ref/file"}},
-				{"id":"video-node","type":"video","metadata":{"taskId":"task-seedance","status":"loading","content":"/api/resources/res-old-video/file","storageKey":"resource:res-old-video","assetId":"asset-old-video","videoPreview":{"content":"/api/resources/res-ref/file","storageKey":"resource:res-ref"},"previewContent":"/api/resources/res-ref/file","durationMs":9000,"hasAudio":true}}
+				{"id":"video-node","type":"video","metadata":{"taskId":"task-seedance","status":"loading","taskOutcome":{"phase":"running","regenerate":"blocked","reason":"task_running"},"taskOutcomeSource":"canvas_task","generationFailure":"previous","generationPreflightError":"preflight","content":"/api/resources/res-old-video/file","storageKey":"resource:res-old-video","assetId":"asset-old-video","videoPreview":{"content":"/api/resources/res-ref/file","storageKey":"resource:res-ref"},"previewContent":"/api/resources/res-ref/file","durationMs":9000,"hasAudio":true}}
 			],
 			"connections":[]
 		}`,
@@ -112,7 +112,11 @@ func TestBindTaskOutputReconcilesUnboundStoredMediaNodes(t *testing.T) {
 	if nodeString(meta, "storageKey") != "resource:res-video" || nodeString(meta, "content") != "/api/resources/res-video/file" {
 		t.Fatalf("new video did not replace retained media: %+v", meta)
 	}
-	for _, key := range []string{"videoPreview", "previewContent", "durationMs", "hasAudio"} {
+	outcome, _ := meta["taskOutcome"].(map[string]any)
+	if nodeString(outcome, "phase") != "ready" || nodeString(outcome, "regenerate") != "allowed" {
+		t.Fatalf("expected taskOutcome ready/allowed after bind, got %+v", meta["taskOutcome"])
+	}
+	for _, key := range []string{"videoPreview", "previewContent", "durationMs", "hasAudio", "taskOutcomeSource", "generationFailure", "generationPreflightError"} {
 		if _, exists := meta[key]; exists {
 			t.Fatalf("new video inherited old output %s: %+v", key, meta[key])
 		}
@@ -134,6 +138,44 @@ func TestBindTaskOutputReconcilesUnboundStoredMediaNodes(t *testing.T) {
 		if got := nodeString(nodeMetadata(node), "assetId"); got != wantAssetID {
 			t.Fatalf("node %s assetId = %q, want %q", id, got, wantAssetID)
 		}
+	}
+
+	// Second call with identical TaskOutputBind on clean ready node must be idempotent (revision stays 2).
+	noopResult, err := svc.BindTaskOutputToExistingNode("owner", TaskOutputBind{
+		CanvasID:    "canvas-bind-reconcile",
+		NodeID:      "video-node",
+		TaskID:      "task-seedance",
+		OutputIndex: 0,
+		EffectKey:   "attach-node:task-seedance:video-node:0",
+		MediaType:   "video",
+		AssetID:     "asset-video",
+		ResourceID:  "res-video",
+		StorageKey:  "resource:res-video",
+		Content:     "/api/resources/res-video/file",
+		MimeType:    "video/mp4",
+		Bytes:       100,
+		Width:       1280,
+		Height:      720,
+	})
+	if err != nil {
+		t.Fatalf("idempotent BindTaskOutputToExistingNode failed: %v", err)
+	}
+	if noopResult.Revision != 2 {
+		t.Fatalf("expected idempotent bind revision 2, got %d", noopResult.Revision)
+	}
+
+	// If an already-succeeded node has a stale running taskOutcome, alreadyBound returns false and cleans it up.
+	videoNode := findCanvasNode(doc, "video-node")
+	videoMeta := nodeMetadata(videoNode)
+	videoMeta["taskOutcome"] = map[string]any{"phase": "running", "regenerate": "blocked"}
+	videoMeta["taskOutcomeSource"] = "canvas_task"
+	if alreadyBound(videoMeta, TaskOutputBind{
+		TaskID:     "task-seedance",
+		EffectKey:  "attach-node:task-seedance:video-node:0",
+		StorageKey: "resource:res-video",
+		Content:    "/api/resources/res-video/file",
+	}) {
+		t.Fatal("expected alreadyBound to return false when taskOutcome is stale running/blocked")
 	}
 }
 

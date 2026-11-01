@@ -887,15 +887,14 @@ function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilit
     if (!current || !video) return defaults;
     // The built-in BeefAPI Seedance contract supports the audio switch even
     // when an older saved profile advertised no control. Keep its default.
-    const generateAudio = { ...video!.generateAudio, supported: true };
-    if (!legacy) return { ...current, video: { ...video!, generateAudio, ...(defaults.video?.draft ? { draft: video!.draft ?? defaults.video.draft } : {}) } };
+    const generateAudio = { ...video!.generateAudio, supported: true }, draftSupported = Boolean(video!.draft?.supported ?? defaults.video?.draft?.supported);
+    const baseRes = Array.isArray(video!.resolutions) ? video!.resolutions : defaults.video?.resolutions ?? [], baseOps = Array.isArray(video!.operations) ? video!.operations : defaults.video?.operations ?? [];
+    const resolutions = draftSupported && !baseRes.some((item) => String(item).toLowerCase() === "480p") ? ["480p", ...baseRes] : baseRes;
+    const operations = draftSupported && defaults.video?.operations?.includes("draft_to_final") && !baseOps.includes("draft_to_final") ? [...baseOps, "draft_to_final"] : baseOps;
+    const flags = { resolutions, operations, ...(defaults.video?.draft ? { draft: video!.draft ?? defaults.video.draft } : {}), ...(defaults.video?.returnLastFrame ? { returnLastFrame: video!.returnLastFrame ?? defaults.video.returnLastFrame } : {}) };
+    if (!legacy) return { ...current, video: { ...video!, generateAudio, ...flags } };
     const next = defaults.video!;
-    return { ...current, video: { ...video!, generateAudio, ...(next.draft ? { draft: video!.draft ?? next.draft } : {}), operations: next.operations, references: { ...refs!,
-        maxImages: next.references.maxImages,
-        maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
-        maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,
-        maxAudioDurationSeconds: next.references.maxAudioDurationSeconds,
-    } } };
+    return { ...current, video: { ...video!, generateAudio, ...flags, operations: next.operations, references: { ...refs!, maxImages: next.references.maxImages, maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios, maxVideoDurationSeconds: next.references.maxVideoDurationSeconds, maxAudioDurationSeconds: next.references.maxAudioDurationSeconds } } };
 }
 
 function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
