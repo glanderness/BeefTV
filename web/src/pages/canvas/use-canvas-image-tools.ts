@@ -27,7 +27,7 @@ import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
+import { defaultImageParamsForModel, normalizeMaskEditQuality, normalizeMaskEditSize, resolveMaskEditModel } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -40,15 +40,6 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 const NODE_STATUS_IDLE = "idle" as const;
-
-function normalizeMaskEditQuality(quality: string | undefined, size: string | undefined) {
-    const value = String(quality || "").trim().toLowerCase();
-    if (value && value !== "auto" && value !== "any") return value;
-    const match = String(size || "").trim().toLowerCase().match(/^(\d+)x(\d+)$/);
-    if (!match) return quality || "auto";
-    const pixels = Number(match[1]) * Number(match[2]);
-    return pixels <= 2_000_000 ? "1k" : pixels <= 4_300_000 ? "2k" : pixels <= 8_294_400 ? "4k" : quality || "auto";
-}
 
 export type UseCanvasImageToolsOptions = {
     pageUi: CanvasPageUiStoreHook;
@@ -247,22 +238,28 @@ export function useCanvasImageTools({
         try {
             if (!node.metadata?.content) return;
             const baseGenerationConfig = buildGenerationConfig(effectiveConfig, node, "image");
-            const selectedModel = payload.generationConfig?.model || payload.generationConfig?.imageModel || baseGenerationConfig.model;
+            const requestedModel = payload.generationConfig?.model || payload.generationConfig?.imageModel || baseGenerationConfig.model;
+            const selectedModel = resolveMaskEditModel(
+                { ...effectiveConfig, ...baseGenerationConfig, imageModel: effectiveConfig.imageModel || baseGenerationConfig.imageModel, imageModels: effectiveConfig.imageModels, models: effectiveConfig.models },
+                requestedModel,
+            );
             const modelDefaults = defaultImageParamsForModel(baseGenerationConfig, selectedModel);
             const selectedImageProfile = modelCapabilityConfigFor(baseGenerationConfig, selectedModel).image;
             if (!selectedImageProfile?.references.maskSupported) {
                 message.error("当前图片模型不支持局部重绘蒙版，请选择支持蒙版编辑的模型");
                 return;
             }
+            const explicitSize = payload.generationConfig?.size;
+            const rawSize = explicitSize || node.metadata?.size || modelDefaults.size;
             const generationConfig = {
                 ...baseGenerationConfig,
                 ...payload.generationConfig,
                 model: selectedModel,
-                imageModel: payload.generationConfig?.imageModel || payload.generationConfig?.model || effectiveConfig.imageModel,
-                quality: normalizeMaskEditQuality(payload.generationConfig?.quality || node.metadata?.quality || baseGenerationConfig.quality || modelDefaults.quality, payload.generationConfig?.size || node.metadata?.size || baseGenerationConfig.size || modelDefaults.size),
+                imageModel: selectedModel,
+                quality: normalizeMaskEditQuality(payload.generationConfig?.quality || node.metadata?.quality || baseGenerationConfig.quality || modelDefaults.quality, rawSize, selectedImageProfile.quality?.supported ? selectedImageProfile.quality.values : [], modelDefaults.quality),
                 count: String(payload.generationConfig?.count || 1),
                 // 原图像素尺寸不是模型的输出尺寸合同；非高级设置时使用模型默认尺寸，避免把节点尺寸误发给上游。
-                size: payload.generationConfig?.size || node.metadata?.size || modelDefaults.size,
+                size: normalizeMaskEditSize(rawSize, selectedImageProfile.size?.values ?? [], modelDefaults.size, Boolean(explicitSize) && Boolean(selectedImageProfile.size?.allowCustom)),
             };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 navigateToSettings({ continueCreation: true });

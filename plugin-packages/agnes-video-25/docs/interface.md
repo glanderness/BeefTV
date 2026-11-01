@@ -129,6 +129,11 @@
         ],
         "baseUrl": "https://apihub.agnes-ai.com/v1",
         "requiresPublicMediaUrls": true,
+        "mediaTransport": {
+          "image": "inline",
+          "video": "url",
+          "audio": "url"
+        },
         "auth": {
           "type": "bearer",
           "field": "apiKey"

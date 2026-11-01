@@ -589,7 +589,7 @@ func categoryFromHTTPStatus(status int) (FailureCategory, bool) {
 		return CategoryPermission, true
 	case http.StatusPaymentRequired:
 		return CategoryQuotaUnknown, true
-	case http.StatusNotFound:
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
 		return CategoryModelMissing, true
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout, 524:
 		return CategoryTimeout, true

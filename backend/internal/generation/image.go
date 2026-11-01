@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
@@ -57,6 +58,9 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 			input.Mode = "image"
 		}
 		return RunProtocolAdapterTask(ctx, input, adapter)
+	}
+	if input.Config.ImageCapabilitiesVersion == nil || strings.TrimSpace(*input.Config.ImageCapabilitiesVersion) == "" {
+		input.ImageCapability = modelcatalog.ApplyModelSpecificImageCapability(input.ImageCapability, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	}
 	outputCount := 1
 	if input.ImageCapability != nil && input.ImageCapability.FixedOutputs > 0 {

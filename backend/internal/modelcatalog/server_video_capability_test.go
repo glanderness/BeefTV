@@ -107,3 +107,30 @@ func TestServerVideoOperationReferencesUseExplicitOperation(t *testing.T) {
 	}
 	t.Fatal("Wan fixture missing")
 }
+
+func TestWan30VideoAndMossImageDefaultCapabilitiesAndQualityAliases(t *testing.T) {
+	for _, modelName := range []string{"wan3.0-video", "wan3.0", "wan3"} {
+		wan := DefaultModelCapabilityConfigForModel("newapi-channel-2", modelName).Video
+		if wan == nil || len(wan.Operations) != 2 || wan.Operations[0] != "text_to_video" || wan.Operations[1] != "image_to_video" || wan.References.MaxImages != 1 || wan.References.MaxVideos != 0 || wan.References.MaxAudios != 0 {
+			t.Fatalf("%s default capability = %#v", modelName, wan)
+		}
+	}
+	kling := DefaultModelCapabilityConfigForModel("newapi-channel-2", "kling-video-v3").Video
+	if kling == nil || kling.References.MaxImages != 9 || kling.References.MaxVideos != 3 || kling.References.MaxAudios != 3 || !containsCapabilityString(kling.Operations, "reference_to_video") {
+		t.Fatalf("kling-video-v3 on newapi-channel-2 should retain generic channel-2 limits, got %#v", kling)
+	}
+	moss := DefaultImageCapabilityConfig("openai-image", "moss-image-sft-1.0")
+	if moss == nil || moss.Quality.Supported || moss.OutputFormat.Supported || !moss.ResponseFormat.Supported || moss.ResponseFormat.Value != ImageResponseFormatURL || moss.MaxOutputs != 1 || moss.References.MaxImages != 0 || moss.References.MaskSupported {
+		t.Fatalf("moss-image-sft-1.0 default capability = %#v", moss)
+	}
+	if err := ValidateImageTask(moss, TaskInput{Config: TaskConfig{InterfaceType: "openai-image", Model: "moss-image-sft-1.0", Size: "1024x1024", Count: "1"}}); err != nil {
+		t.Fatalf("moss-image valid size rejected: %v", err)
+	}
+	if err := ValidateImageTask(moss, TaskInput{Config: TaskConfig{InterfaceType: "openai-image", Model: "moss-image-sft-1.0", Size: "4096x4096", Count: "1"}}); err == nil {
+		t.Fatal("moss-image oversized dimension should be rejected")
+	}
+	gptImage := DefaultImageCapabilityConfig("openai-image", "gpt-image-2")
+	if err := ValidateImageTask(gptImage, TaskInput{Config: TaskConfig{InterfaceType: "openai-image", Model: "gpt-image-2", Size: "1024x1024", Quality: "2k", Count: "1"}}); err != nil {
+		t.Fatalf("gpt-image-2 should accept 2k quality alias: %v", err)
+	}
+}

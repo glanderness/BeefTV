@@ -1050,3 +1050,88 @@ func TestOfficialKlingVideoAndImageFollowOfficialContract(t *testing.T) {
 		t.Fatalf("Kling image poll result = %#v", imgPoll)
 	}
 }
+
+func TestAgnesVideoPluginsAllowLocalReferenceMediaAndMapUnassignedImage(t *testing.T) {
+	builtinMeta := agnesAdapter().Metadata()
+	if !builtinMeta.RequiresPublicMediaURLs || builtinMeta.MediaTransport["image"] != "inline" || builtinMeta.MediaTransport["video"] != "url" || builtinMeta.MediaTransport["audio"] != "url" {
+		t.Fatalf("builtin agnes-video media metadata = %#v", builtinMeta)
+	}
+	for _, pkg := range []struct {
+		file, id string
+	}{
+		{"agnes-video-25.beeftv-plugin", "agnes-video"},
+		{"agnes-video-v20.beeftv-plugin", "agnes-video-v20"},
+	} {
+		adapter := officialPackageAdapter(t, pkg.file, pkg.id)
+		meta := adapter.Metadata()
+		if !meta.RequiresPublicMediaURLs || meta.MediaTransport["image"] != "inline" || meta.MediaTransport["video"] != "url" || meta.MediaTransport["audio"] != "url" {
+			t.Fatalf("%s media metadata = %#v, want requiresPublicMediaUrls=true and inline image transport", pkg.file, meta)
+		}
+	}
+	v20 := officialPackageAdapter(t, "agnes-video-v20.beeftv-plugin", "agnes-video-v20")
+	spec, err := v20.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "agnes-video-v2.0", Prompt: "角色转身", Duration: 5, AspectRatio: "16:9", Resolution: "720p",
+		Images: []MediaReference{{DataURL: "data:image/png;base64,Zm9v"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := manifestTestBody(t, spec)
+	if body["image"] != "data:image/png;base64,Zm9v" {
+		t.Fatalf("agnes-video-v20 unassigned image = %#v, want data URL in image field", body["image"])
+	}
+}
+
+func TestNewAPIVideoGenerationsIncludesSingularAndArrayImageFields(t *testing.T) {
+	adapter := officialPackageAdapter(t, "newapi-video-generations-v1.beeftv-plugin", "newapi-channel-2")
+	spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "wan3.0-video", Prompt: "镜头拉远", Duration: 5, AspectRatio: "16:9", Resolution: "720p",
+		Images: []MediaReference{{URL: "https://cdn.example/frame1.png", Role: "first_frame"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := manifestTestBody(t, spec)
+	if body["image"] != "https://cdn.example/frame1.png" || body["image_url"] != "https://cdn.example/frame1.png" {
+		t.Fatalf("newapi-channel-2 singular image fields missing: %#v", body)
+	}
+	urls, _ := body["image_urls"].([]any)
+	if len(urls) != 1 || urls[0] != "https://cdn.example/frame1.png" {
+		t.Fatalf("newapi-channel-2 image_urls = %#v", body["image_urls"])
+	}
+}
+
+func TestMiniMaxHailuoVideoParsesNestedTaskErrorsAndDataFields(t *testing.T) {
+	adapter := officialPackageAdapter(t, "minimax-hailuo-video-v2.beeftv-plugin", "minimax-video")
+	created, err := adapter.ParseCreate(context.Background(), []byte(`{"data":{"task_id":"mm-task-1","status":"Preparing"}}`))
+	if err != nil || created.TaskID != "mm-task-1" || created.Status != StatusPending {
+		t.Fatalf("minimax nested data create = %#v, err = %v", created, err)
+	}
+	failed, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "mm-task-1"}, []byte(`{"task":{"id":"mm-task-1","status":"Fail","error":{"code":"invalid_parameter","message":"unsupported resolution"}}}`))
+	if err != nil || failed.Status != StatusFailed || failed.Message != "unsupported resolution" {
+		t.Fatalf("minimax nested task error poll = %#v, err = %v", failed, err)
+	}
+	builtinDone, err := parseAsyncMediaPoll(PollContext{TaskID: "mm-task-2"}, map[string]any{
+		"data": map[string]any{
+			"status": "Success",
+			"file": map[string]any{
+				"download_url": "https://cdn.example/mm.mp4",
+			},
+		},
+	}, CapabilityVideo)
+	if err != nil || builtinDone.Status != StatusSucceeded || builtinDone.Result == nil || len(builtinDone.Result.Videos) != 1 || builtinDone.Result.Videos[0].URL != "https://cdn.example/mm.mp4" {
+		t.Fatalf("parseAsyncMediaPoll nested file.download_url = %#v, err = %v", builtinDone, err)
+	}
+	builtinFailed, err := parseAsyncMediaPoll(PollContext{TaskID: "mm-task-3"}, map[string]any{
+		"task": map[string]any{
+			"status": "Fail",
+			"error": map[string]any{
+				"code":    "invalid_parameter",
+				"message": "bad input",
+			},
+		},
+	}, CapabilityVideo)
+	if err != nil || builtinFailed.Status != StatusFailed || builtinFailed.Message != "bad input" {
+		t.Fatalf("parseAsyncMediaPoll nested task.error = %#v, err = %v", builtinFailed, err)
+	}
+}
