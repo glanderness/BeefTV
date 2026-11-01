@@ -1,5 +1,6 @@
 import { onStorageNamespaceChange } from "@/lib/user-scope";
 import { captureVideoPoster } from "@/lib/video-poster";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
@@ -117,12 +118,32 @@ async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: 
     let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
     try {
         throwIfAborted(signal);
-        const source = await acquireCanvasVideoSource(node.metadata?.storageKey, node.metadata?.content || "", signal);
+        const storageKey = node.metadata?.storageKey;
+        const fallback = node.metadata?.content || "";
+        const source = await acquireCanvasVideoSource(storageKey, fallback, signal);
         if (!source.url) { source.release(); return null; }
+        let firstError: unknown;
         try {
             captured = await captureVideoPoster(source.url, { signal, maxWidth: 400 });
+        } catch (error) {
+            firstError = error;
+            captured = { width: 0, height: 0, capturedAtMs: 0 };
         } finally {
             source.release();
+        }
+        if (!captured.poster) {
+            throwIfAborted(signal);
+            if (!resourceIdFromStorageKey(storageKey)) {
+                if (firstError) throw firstError;
+                return null;
+            }
+            const compatibleSource = await acquireCanvasVideoSource(storageKey, fallback, signal, true);
+            if (!compatibleSource.url) { compatibleSource.release(); return null; }
+            try {
+                captured = await captureVideoPoster(compatibleSource.url, { signal, maxWidth: 400 });
+            } finally {
+                compatibleSource.release();
+            }
         }
     } finally {
         releaseSlot();

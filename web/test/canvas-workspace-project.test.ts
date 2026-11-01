@@ -53,6 +53,10 @@ describe("canvas workspace project grouping", () => {
         const other = canvas("project-b", "2026-01-03T00:00:00.000Z", "project-b");
 
         expect(workspaceProject.canvasIdsForWorkspaceProjects([root, second, other], [root.id])).toEqual(["project-a", "canvas-a2"]);
+        if ("resolveWorkspaceExportCanvasIds" in workspaceProject && typeof workspaceProject.resolveWorkspaceExportCanvasIds === "function") {
+            expect(workspaceProject.resolveWorkspaceExportCanvasIds([root, second, other], [root.id, "missing-id"])).toEqual(["project-a", "canvas-a2", "missing-id"]);
+            expect(workspaceProject.resolveWorkspaceExportCanvasIds([root, second, other], [second.id], { singleCanvasOnly: true })).toEqual(["canvas-a2"]);
+        }
     });
 
     test("creates a root canvas for a new project and lets child canvases inherit that project", () => {
