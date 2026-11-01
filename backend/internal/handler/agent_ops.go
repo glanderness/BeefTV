@@ -13,15 +13,29 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/operations"
+	"infinite-canvas/backend/internal/skills"
 	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
 // agentOpsMaxBody 与画布 PUT 上限对齐：文档提交会带上整份画布，1MB 不够。
 const agentOpsMaxBody = 5 << 20
 
+type agentOpsService interface {
+	operations.DomainBinder
+	workspaceOwners
+	ownerCredentialDirs
+	AssistantTurns() *assistantturns.Service
+	SkillsDomain() *skills.Service
+	ValidateAgentProjectReference(userID, canvasID, kind, id string) error
+	ListGenerationOrders(userID, canvasID string) ([]operations.GenerationOrder, error)
+	ApproveGenerationOrder(userID, proposalID, approvedBy string) (any, error)
+}
+
 // RegisterAgentOpsRoutes 暴露统一操作层：CLI、MCP 与内置 pi 都调用同一组端点，
 // 不各自打开数据库或另起 worker。
-func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Store, clients *agentops.ClientRegistry) *agentops.Registry {
+func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.Store, clients *agentops.ClientRegistry) *agentops.Registry {
 	registry := agentops.NewRegistry(svc, store)
 	agentops.RegisterDefaultOps(registry)
 
@@ -227,7 +241,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 // 已登记的客户端：模式完全由服务端登记决定，请求体/请求头都不能自行提升或改变。
 // 内置助手宿主：凭自己那份后端注入的宿主凭据拿到读写；页面的 UI 会话凭据不在这里。
 // owner 通道是手工 UI 与本机直连的身份。
-func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (agentops.Caller, string, error) {
+func resolveCaller(c *gin.Context, svc ownerCredentialDirs, clients *agentops.ClientRegistry) (agentops.Caller, string, error) {
 	if isAssistantHostRequest(c, svc) {
 		return agentops.Caller{
 			Kind:         agentops.CallerAssistant,
@@ -297,7 +311,7 @@ func requireTrustedDesktopWritePrincipal(c *gin.Context, message string) bool {
 	return true
 }
 
-func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (bool, string, error) {
+func resolveClientMode(c *gin.Context, svc ownerCredentialDirs, clients *agentops.ClientRegistry) (bool, string, error) {
 	caller, label, err := resolveCaller(c, svc, clients)
 	return caller.ReadOnly, label, err
 }

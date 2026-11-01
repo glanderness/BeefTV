@@ -8,13 +8,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantruntime"
+	"infinite-canvas/backend/internal/assistantturns"
 )
+
+type assistantContinuationIntentService interface {
+	AssistantTurns() *assistantturns.Service
+}
 
 // An unattached browser sends /chat rather than /steer. New messages and
 // session changes must stop a background continuation before taking its slot.
-func stopAssistantContinuationsForIntent(c *gin.Context, svc *app.Service, host *assistantruntime.Host, canvasID, sessionID string) bool {
+func stopAssistantContinuationsForIntent(c *gin.Context, svc assistantContinuationIntentService, host *assistantruntime.Host, canvasID, sessionID string) bool {
 	userID := c.GetString("agentUserId")
 	rows, err := svc.AssistantTurns().StopContinuationsForIntent(userID, canvasID, sessionID)
 	if err != nil {
