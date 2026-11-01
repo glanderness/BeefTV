@@ -1,6 +1,6 @@
 // 助手评测尺子：7 个固定评测场景（S1–S7）定义、确定性检查项与本地 Fake OpenAI SSE 模型服务。
 // 覆盖：短剧 2 镜开场、8 镜分镜表且仅物化前 2 镜首帧、单镜局部修改、同轮中途补充改向、
-// 生成后画面复查（标注 wake-on-generation 能力缺口）、长对话多轮后技能规则保持。
+// 生成后自动唤醒复查（wake-on-generation）、长对话多轮后技能规则保持。
 
 import http from 'node:http';
 import { isTransientStudioTailMessage } from '../studio-digest.mjs';
@@ -299,10 +299,6 @@ export function createFakeModelServer(options = {}) {
                 durationSeconds: 5,
                 plotDescription: '赛博朋克霓虹夜市街头，黑客抬头看向闪烁的全息广告牌',
                 dialogue: '信号就是从夜市深处发出来的。',
-                shotSize: '近景',
-                camera: '平视',
-                motion: '缓慢推进',
-                emotion: '警觉',
                 imageGenerationPrompt: '赛博朋克霓虹夜市，全息招牌下的黑客近景，冷蓝与品红霓虹光，9:16',
                 videoMotionPrompt: '镜头缓慢推向黑客脸部，身后霓虹灯牌闪烁，雨水滑落',
               },
@@ -310,10 +306,6 @@ export function createFakeModelServer(options = {}) {
                 durationSeconds: 5,
                 plotDescription: '赛博朋克霓虹夜市暗巷，微型无人机掠过蒸汽摊位',
                 dialogue: '跟上它，别跟丢了！',
-                shotSize: '中景',
-                camera: '跟拍',
-                motion: '快速横移',
-                emotion: '紧张',
                 imageGenerationPrompt: '赛博朋克霓虹夜市暗巷，蒸汽与全息投影交织，微型无人机掠过，9:16',
                 videoMotionPrompt: '镜头跟随无人机快速穿梭于霓虹夜市摊位之间',
               },
@@ -382,10 +374,6 @@ export function createFakeModelServer(options = {}) {
               durationSeconds: n <= 4 ? 4 : 3,
               plotDescription: `第 ${n} 镜：深空探索任务关键画面 ${n}，展现星际跃迁与未知遗迹`,
               dialogue: n === 1 ? '这里是先驱号，准备进入跃迁轨道。' : `第 ${n} 镜台词：信号强度持续上升。`,
-              shotSize: n % 2 === 1 ? '远景' : '特写',
-              camera: '平视',
-              motion: '平稳推进',
-              emotion: '悬疑震撼',
               imageGenerationPrompt: `科幻电影感第 ${n} 镜首帧提示词，深空探索场景 ${n}，高细节写实光影`,
               videoMotionPrompt: `第 ${n} 镜视频运镜提示词，镜头平稳推进展现科幻空间纵深`,
             };
@@ -591,10 +579,6 @@ export function createFakeModelServer(options = {}) {
                   durationSeconds: 5,
                   plotDescription: '雨夜天台，林晚攥着染血的怀表质问沈默',
                   dialogue: '林晚：这块表为什么会在你手里？',
-                  shotSize: '近景',
-                  camera: '平视',
-                  motion: '缓慢推进',
-                  emotion: '震惊质问',
                   imageGenerationPrompt: '竖屏 9:16 写实电影感，雨夜天台，26岁黑色风衣女记者攥着怀表，冷色调',
                   videoMotionPrompt: '镜头从怀表特写上移至林晚质问的脸庞，雨水滑落',
                 },
@@ -602,10 +586,6 @@ export function createFakeModelServer(options = {}) {
                   durationSeconds: 5,
                   plotDescription: '沈默站在霓虹阴影中冷笑转身',
                   dialogue: '沈默：你以为你查到的是真相吗？',
-                  shotSize: '中景',
-                  camera: '侧拍',
-                  motion: '固定',
-                  emotion: '冷酷反转',
                   imageGenerationPrompt: '竖屏 9:16 写实电影感，30岁金丝眼镜男子站在天台阴影中回眸冷笑',
                   videoMotionPrompt: '沈默缓缓转头看向镜头，身后闪电划破夜空',
                 },
@@ -764,10 +744,6 @@ export function createFakeModelServer(options = {}) {
               durationSeconds: 5,
               plotDescription: '女主在都市雨夜街头积水旁发现失踪案关键银色袖扣',
               dialogue: '这枚袖扣……他昨晚真的来过这里！',
-              shotSize: '特写',
-              camera: '俯拍',
-              motion: '缓慢推镜',
-              emotion: '震惊',
               imageGenerationPrompt: '都市雨夜街头，女主撑着透明雨伞蹲在积水路边，捡起一枚带刻痕的银色袖扣，9:16',
               videoMotionPrompt: '镜头从雨水涟漪推向女主手中的银色袖扣，女主手指微微颤抖',
             },
@@ -775,10 +751,6 @@ export function createFakeModelServer(options = {}) {
               durationSeconds: 5,
               plotDescription: '女主抬头发现暗巷黑影闪过，立刻起身追入雨幕',
               dialogue: '站住！别走！',
-              shotSize: '中景',
-              camera: '平视跟拍',
-              motion: '快速推进',
-              emotion: '急切紧张',
               imageGenerationPrompt: '女主猛然抬头看向街角暗巷，远处黑影一闪而过，雨丝如织，悬疑冷色调，9:16',
               videoMotionPrompt: '女主撑伞急步追向街角暗巷，镜头快速跟拍',
             },
@@ -1362,7 +1334,7 @@ export const SCENARIOS = [
     name: 'S5 生成后自动唤醒画面复查与重提生成',
     description: '首轮提交生成提议并由模拟器完成带六指缺陷的生成产物，验证宿主是否具备 wake-on-generation 自动唤醒复查能力。',
     capabilities: ['wake-on-generation'],
-    expectedBaselinePass: false,
+    expectedBaselinePass: true,
     setup(simGo, canvasId) {
       const doc = simGo.ensureCanvas(canvasId);
       simGo.flagNextTaskDefect('人物右手有6根手指，手部明显畸形');

@@ -77,6 +77,11 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 			storyboard = metadata["storyboard"].(map[string]any)
 			for i, draft := range input.Script.Rows {
 				row := buildStoryboardRow(i+1, draft)
+				if plot, _ := row["plotDescription"].(string); strings.TrimSpace(plot) == "" {
+					if imgPrompt, _ := row["imageGenerationPrompt"].(string); strings.TrimSpace(imgPrompt) != "" {
+						row["plotDescription"] = strings.TrimSpace(imgPrompt)
+					}
+				}
 				rows = append(rows, row)
 				input.RowIDs = append(input.RowIDs, rowIDOf(row))
 			}
@@ -126,6 +131,13 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 			}
 			if bound, _ := row[kind+"NodeId"].(string); bound != "" {
 				return fail("分镜已有" + kind + "节点，请修改原节点而不是重复创建")
+			}
+			if kind == "image" {
+				if prompt, _ := row[promptField].(string); strings.TrimSpace(prompt) == "" {
+					if plot, _ := row["plotDescription"].(string); strings.TrimSpace(plot) != "" {
+						row[promptField] = strings.TrimSpace(plot)
+					}
+				}
 			}
 			if prompt, _ := row[promptField].(string); strings.TrimSpace(prompt) == "" {
 				return fail("分镜缺少" + promptField)

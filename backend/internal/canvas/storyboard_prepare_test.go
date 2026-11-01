@@ -221,3 +221,39 @@ func TestPrepareStoryboardScriptOnlyCreation(t *testing.T) {
 		t.Fatal("已有分镜且不传 image/video 参数应被拒绝")
 	}
 }
+
+func TestPrepareStoryboardMinimalEssentialFieldsBackfill(t *testing.T) {
+	svc, id, _, revision := storyboardFixture(t)
+	summary, result, err := svc.PrepareUserCanvasStoryboard("owner", id, "", StoryboardPreparation{
+		Script: &StoryboardDraft{
+			Title: "精简分镜",
+			Rows: []StoryboardRowDraft{
+				{PlotDescription: strPtr("雨夜巷口主角撑伞回头"), VideoMotionPrompt: strPtr("镜头缓慢推近主角眼神")},
+				{ImageGenerationPrompt: strPtr("霓虹灯牌下黑衣人闪身入巷"), VideoMotionPrompt: strPtr("跟拍黑衣人背影消失")},
+			},
+		},
+		Image: map[string]any{"model": "image-model", "size": "9:16"},
+		Video: map[string]any{"model": "video-model", "generateAudio": "true"},
+	}, revision)
+	if err != nil {
+		t.Fatalf("只填核心字段应成功准备: %v", err)
+	}
+	if summary.Revision != revision+1 || len(result.Shots) != 2 {
+		t.Fatalf("准备结果不符预期: %#v %#v", summary, result)
+	}
+	rows := storyboardRowsOf(t, svc, id, result.ScriptNodeID)
+	if rows[0]["imageGenerationPrompt"] != "雨夜巷口主角撑伞回头" || rows[1]["plotDescription"] != "霓虹灯牌下黑衣人闪身入巷" {
+		t.Fatalf("缺失的 plotDescription / imageGenerationPrompt 应互为兜底: %#v", rows)
+	}
+	if _, _, err := svc.PrepareUserCanvasStoryboard("owner", id, "", StoryboardPreparation{
+		Script: &StoryboardDraft{
+			Title: "仅运镜分镜",
+			Rows: []StoryboardRowDraft{
+				{VideoMotionPrompt: strPtr("镜头缓慢拉远")},
+			},
+		},
+		Image: map[string]any{"model": "image-model", "size": "9:16"},
+	}, summary.Revision); err == nil {
+		t.Fatal("仅填 videoMotionPrompt 不应误作首帧画面提示词")
+	}
+}

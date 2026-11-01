@@ -36,7 +36,7 @@ description: 把一段短剧剧本或梗概，按「角色设定 → 分镜脚�
 
 ## 第 2 步：分镜脚本
 - 建一个分镜脚本节点（script 类型），标题「分镜脚本」，再往里追加分镜行。
-- 每一镜填写：剧情描述、景别、机位、镜头运动、台词、情绪、时长、首帧图片提示词（imageGenerationPrompt）和视频提示词（videoMotionPrompt）。
+- 每一镜只填核心字段：剧情描述（plotDescription）、首帧图片提示词（imageGenerationPrompt）、视频提示词（videoMotionPrompt），有对白时填台词（dialogue），有明确镜长需求时填时长（durationSeconds，默认 6 秒可省）；不要填写景别、机位、情绪等未在工具参数中列出的冗余字段。
 - 这一步不建图片节点，不提生成。
 
 ## 第 3 步：首帧图
@@ -1183,7 +1183,13 @@ export function createSimGo(options = {}) {
           nodeSeq += 1;
           nodeId = `node-${nodeSeq}`;
           const cap = NODE_CAPABILITIES.script;
-          const builtRows = scriptDraft.rows.map((draft, idx) => buildStoryboardRow(idx + 1, draft));
+          const builtRows = scriptDraft.rows.map((draft, idx) => {
+            const row = buildStoryboardRow(idx + 1, draft);
+            if (!String(row.plotDescription || '').trim()) {
+              row.plotDescription = String(row.imageGenerationPrompt || '').trim();
+            }
+            return row;
+          });
           rowIds = builtRows.map((r) => r.id);
           scriptNode = {
             id: nodeId,
@@ -1227,6 +1233,9 @@ export function createSimGo(options = {}) {
             if (!cfg) continue;
             if (row[`${kind}NodeId`]) {
               throw invalidArg('already_bound', `分镜已有${kind}节点，请修改原节点而不是重复创建`);
+            }
+            if (kind === 'image' && !String(row[promptField] || '').trim() && String(row.plotDescription || '').trim()) {
+              row[promptField] = String(row.plotDescription).trim();
             }
             const promptText = String(row[promptField] || '').trim();
             if (!promptText) throw invalidArg('missing_prompt', `分镜缺少${promptField}`);
@@ -2207,7 +2216,11 @@ export function createSimGo(options = {}) {
         }
       }
 
-      if (pathname === '/api/assistant/turns') {
+      if (
+        pathname === '/api/assistant/turns' ||
+        pathname === '/api/assistant/runtime/turns' ||
+        pathname === '/assistant/runtime/turns'
+      ) {
         if (req.method === 'POST') {
           const body = await readJsonBody(req);
           const rec = beginTurn(body);
@@ -2216,6 +2229,7 @@ export function createSimGo(options = {}) {
             canvasId: rec.canvasId,
             permissionMode: rec.permissionMode,
             open: rec.open,
+            sessionId: rec.sessionId,
             revisionBefore: rec.revisionBefore,
           });
           return;

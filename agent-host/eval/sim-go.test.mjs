@@ -12,6 +12,7 @@ import {
   extractModelRequestTrace,
   createCostMeter,
   computeScenarioMetrics,
+  buildEvalSummary,
   runEval,
 } from './run-eval.mjs';
 
@@ -563,6 +564,28 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
     const rejectedEvent = scenario.evaluate({ simGo, canvasId: 'canvas-s5', wakeResult: { eventAccepted: false, autoWoken: false } });
     expect(rejectedEvent.status).toBe('failed');
     expect(rejectedEvent.capabilityGap).toBeNull();
+    const summaryWithUnexpectedGap = buildEvalSummary(
+      [
+        {
+          scenarioId: 'post-generation-review',
+          expectedBaselinePass: true,
+          metrics: {
+            status: 'baseline_gap',
+            passed: false,
+            structuralCompletenessRate: 0.4,
+            unconfirmedGenerationCount: 0,
+            duplicateNodeCount: 0,
+            duplicateProposalCount: 0,
+            revisionConflicts: 0,
+            unrecoveredConflicts: 0,
+            turnCount: 1,
+          },
+        },
+      ],
+      { scenario: 'S5', modelMode: 'fake', runs: 1, maxRequests: 20, budgetCny: 10 },
+      { totalRequests: 1, totalInputTokens: 100, totalOutputTokens: 20, totalTokens: 120, totalCostCny: 0.001, abortedBudget: false },
+    );
+    expect(summaryWithUnexpectedGap.status).toBe('failed');
   });
 
   test('事件自动唤醒与用户复查分别计分，技能仅首轮激活后仍进入后续请求', async () => {
@@ -571,13 +594,13 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
       const { report, markdown } = await runEval({
         scenario: 'S5,S6,S7', model: 'fake', runs: 1, maxRequests: 20, budgetCny: 10, outDir,
       });
-      expect(report.status).toBe('baseline_gap');
+      expect(report.status).toBe('passed');
       const [auto, skill, userReview] = report.scenarios;
-      expect(auto.expectedBaselinePass).toBe(false);
-      expect(auto.wakeResult).toEqual({ autoWoken: false, eventAccepted: true });
-      expect(auto.metrics.status).toBe('baseline_gap');
+      expect(auto.expectedBaselinePass).toBe(true);
+      expect(auto.wakeResult).toEqual({ autoWoken: true, eventAccepted: true });
+      expect(auto.metrics.status).toBe('passed');
       expect(auto.metrics.turnCount).toBe(1);
-      expect(auto.metrics.mediaInspections).toBe(0);
+      expect(auto.metrics.mediaInspections).toBe(2);
       expect(skill.scenarioId).toBe('skill-across-turns');
       expect(skill.metrics.passed).toBe(true);
       expect(skill.requestEvidence.every((entry) => entry.activeSkillPresent)).toBe(true);
