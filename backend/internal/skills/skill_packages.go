@@ -166,11 +166,15 @@ func (s *Service) ensureDefaultAddedBuiltinSkills() error {
 			return err
 		}
 		if state == nil {
+			added := true
+			if existingMarket, mErr := s.repo.MarketSkill(userID, skill.ID); mErr == nil && existingMarket != nil {
+				added = false
+			}
 			state = &model.UserSkillState{
 				ID:                 kernel.NewID(),
 				UserID:             userID,
 				SkillID:            skill.ID,
-				Added:              true,
+				Added:              added,
 				InstalledVersionID: skill.CurrentVersionID,
 				AutoUpdate:         false,
 			}
