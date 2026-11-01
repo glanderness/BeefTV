@@ -133,7 +133,15 @@ export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId:
                           generationErrorCode: node.metadata?.generationErrorCode,
                           errorDetails: node.metadata?.errorDetails || (targetUnavailable ? explainGenerationError({ code: "result_target_unavailable" }).message : "生成结果已保留，请点击「继续取回」"),
                       }
-                    : { errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined })),
+                    : {
+                          ...(hasCompletedContent && (!task.outcome || task.outcome.phase === "running" || task.outcome.phase === "fetching")
+                              ? { taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" } as const }
+                              : {}),
+                          errorDetails: undefined,
+                          generationErrorCode: undefined,
+                          failedPromptFingerprint: undefined,
+                          failedInputFingerprint: undefined,
+                      })),
             },
         };
     });

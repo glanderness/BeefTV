@@ -240,3 +240,56 @@ func TestBindTaskOutputPreservesDistinctAssetsSharingResource(t *testing.T) {
 		t.Fatalf("secondary resource node assetId = %q, want empty", got)
 	}
 }
+
+func TestApplyGenerationBindMetadataSetsReadyTaskOutcomeAndHealsStaleRunning(t *testing.T) {
+	patch := TaskOutputBind{
+		TaskID:      "task-img-1",
+		TaskType:    "image",
+		MediaType:   "image",
+		EffectKey:   "attach-node:task-img-1:node-1:0",
+		AssetID:     "asset-1",
+		ResourceID:  "res-1",
+		StorageKey:  "resource:res-1",
+		Content:     "/api/resources/res-1/file",
+		MimeType:    "image/jpeg",
+		Bytes:       1024,
+		Width:       1024,
+		Height:      1024,
+		OutputIndex: 0,
+	}
+	meta := map[string]any{
+		"status":     "success",
+		"taskId":     "task-img-1",
+		"taskStatus": "succeeded",
+		"assetId":    "asset-1",
+		"storageKey": "resource:res-1",
+		"content":    "/api/resources/res-1/file",
+		"generationEffectKeys": []any{
+			"attach-node:task-img-1:node-1:0",
+		},
+		"taskOutcome": map[string]any{
+			"phase":      "running",
+			"regenerate": "blocked",
+			"reason":     "in_flight",
+		},
+		"taskOutcomeSource":        "local",
+		"generationFailure":        map[string]any{"version": 1},
+		"generationPreflightError": true,
+	}
+	if alreadyBound(meta, patch) {
+		t.Fatal("stale running taskOutcome should not be treated as alreadyBound")
+	}
+	applyGenerationBindMetadata(meta, patch)
+	if !alreadyBound(meta, patch) {
+		t.Fatal("bound node with ready taskOutcome should be alreadyBound")
+	}
+	outcome, ok := meta["taskOutcome"].(map[string]any)
+	if !ok || nodeString(outcome, "phase") != "ready" || nodeString(outcome, "regenerate") != "allowed" || nodeString(outcome, "reason") != "result_ready" {
+		t.Fatalf("unexpected taskOutcome after bind: %#v", meta["taskOutcome"])
+	}
+	for _, cleared := range []string{"taskOutcomeSource", "generationFailure", "generationPreflightError"} {
+		if _, exists := meta[cleared]; exists {
+			t.Fatalf("expected %s to be deleted after bind", cleared)
+		}
+	}
+}

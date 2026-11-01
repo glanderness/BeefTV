@@ -418,7 +418,18 @@ func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {
 	if patch.Storyboard != nil && nodeString(metadata, "status") != "success" {
 		return false
 	}
+	if hasNonReadyTaskOutcome(metadata["taskOutcome"]) {
+		return false
+	}
 	return nodeString(metadata, "status") == "success" && nodeString(metadata, "taskId") == strings.TrimSpace(patch.TaskID)
+}
+
+func hasNonReadyTaskOutcome(raw any) bool {
+	outcome, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	return nodeString(outcome, "phase") != "ready" || nodeString(outcome, "regenerate") != "allowed"
 }
 
 func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) {
@@ -476,6 +487,14 @@ func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) 
 	}
 	metadata["taskStatus"] = "succeeded"
 	metadata["taskProgress"] = 100
+	metadata["taskOutcome"] = map[string]any{
+		"phase":      "ready",
+		"regenerate": "allowed",
+		"reason":     "result_ready",
+	}
+	delete(metadata, "taskOutcomeSource")
+	delete(metadata, "generationFailure")
+	delete(metadata, "generationPreflightError")
 	metadata["taskStage"] = nil
 	metadata["errorDetails"] = nil
 	metadata["generationErrorCode"] = nil
