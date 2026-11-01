@@ -76,7 +76,7 @@ const contracts: VideoContract[] = [
         inlineMedia: true,
     },
     {
-        models: ["wan3.0-video"],
+        models: ["wan3.0-video", "wan3.0", "wan3"],
         allowSuffix: false,
         protocol: "newapi-channel-2",
         inlineMedia: false,

@@ -355,9 +355,15 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         if (/^dreamina-seedance-2-0-(?:fast|mini)(?:-|$)/.test(model.toLowerCase().split("/").pop() || "")) video.resolutions = ["480p", "720p"];
     }
     if (protocol === "newapi-channel-2") {
-        // APIMart 的 Seedance 2.0 Video Generations 协议支持参考视频/音频，
-        // 但不是火山方舟 Agent Plan，因此单独声明全模态参考能力。
-        video.operations.push("reference_to_video");
+        if (/^wan3(?:\.0)?(?:-video)?$/i.test(model.trim())) {
+            video.references.maxImages = 1;
+            video.references.maxVideos = 0;
+            video.references.maxAudios = 0;
+        } else {
+            // APIMart 的 Seedance 2.0 Video Generations 协议支持参考视频/音频，
+            // 但不是火山方舟 Agent Plan，因此单独声明全模态参考能力。
+            video.operations.push("reference_to_video");
+        }
     }
     if (protocol === "video-generations-json") {
         video.duration.default = 5;
@@ -440,7 +446,23 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
 // 官方文档写的下限只收紧、不放宽，所以旧安装里存下来的 1 秒输出、1.8 秒音频也会被改到文档值；
 // 管理员已经配得更严的数值保持不变。
 export function alignDocumentedVideoRouteLimits(video: VideoCapabilityConfig | undefined, protocol: ModelProtocol | undefined, modelName: string, channel?: { id?: string; baseUrl?: string }) {
-    if (!video || !isSeedance2Family(protocol, modelName)) return;
+    if (!video) return;
+    if (
+        protocol === "newapi-channel-2" &&
+        /^wan3(?:\.0)?(?:-video)?$/i.test(modelName.trim()) &&
+        video.operations.includes("reference_to_video") &&
+        video.references.maxImages === 9 &&
+        video.references.maxVideos === 3 &&
+        video.references.maxAudios === 3
+    ) {
+        video.operations = video.operations.filter((item) => item !== "reference_to_video");
+        if (!video.operations.includes(video.defaultOperation)) video.defaultOperation = video.operations[0] || "text_to_video";
+        video.references.maxImages = 1;
+        video.references.maxVideos = 0;
+        video.references.maxAudios = 0;
+        return;
+    }
+    if (!isSeedance2Family(protocol, modelName)) return;
     let host = "";
     try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
     const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) || channel?.id === "beefapi";

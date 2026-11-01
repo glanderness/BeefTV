@@ -106,7 +106,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const isWorkflowSource = sourceNode?.type === CanvasNodeType.Config && isCanvasWorkflowProvider(sourceNode.metadata);
     const hasConnectedMedia = connectedInputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio" || input.type === "character");
     if ((promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && (sourceNode?.type === CanvasNodeType.Config || isWorkflowSource)) || hasExplicitResourceMention) {
-        const includeConnectedMedia = isWorkflowSource || (promptOnly && hasConnectedMedia);
+        const includeConnectedMedia = isWorkflowSource || ((promptOnly || sourceNode?.type === CanvasNodeType.Config) && hasConnectedMedia);
         const context = buildComposerGenerationContext(
             mentionInputs,
             prompt,

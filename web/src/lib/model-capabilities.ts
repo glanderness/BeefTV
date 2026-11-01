@@ -204,7 +204,7 @@ export function modelCapabilityConfigFor(
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
     const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references, promptMaxUtf16Units: capabilityConfig.video.references.promptMaxUtf16Units ?? 0 } } : fallback.video)!;
     alignDocumentedVideoRouteLimits(video, protocol, modelName, channel);
-    const image = mergeConfiguredImageCapability(fallback.image!, capabilityConfig.image);
+    const image = upgradeGPTImageCapability(mergeConfiguredImageCapability(fallback.image!, capabilityConfig.image), protocol, modelName);
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 

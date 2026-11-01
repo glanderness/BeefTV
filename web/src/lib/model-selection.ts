@@ -2,7 +2,7 @@ import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageV
 import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { sanitizeVideoPriceQuote, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
-import { channelModelProfile, modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { channelModelProfile, filterModelsByCapability, modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
     textCount: number;
@@ -271,6 +271,68 @@ export function defaultImageParamsForModel(config: AiConfig, model: string): Pic
         quality: image.quality.default || "auto",
         transparentBackground: String(image.transparentBackground.default ?? false),
     };
+}
+
+export function resolveMaskEditModel(config: AiConfig, requestedModel?: string) {
+    const rawCandidates = [
+        requestedModel,
+        config.imageModel,
+        ...(config.imageModels || []),
+        ...selectableModelsByCapability(config, "image"),
+        config.model,
+        ...(config.models || []),
+    ].filter((item): item is string => Boolean(item?.trim()));
+    const imageCandidates = filterModelsByCapability(rawCandidates, "image", config.channels);
+    return (
+        imageCandidates.find((candidate) => modelCapabilityConfigFor(config, candidate).image?.references.maskSupported) ||
+        imageCandidates[0] ||
+        ""
+    );
+}
+
+export function normalizeMaskEditQuality(quality: string | undefined, size: string | undefined, supportedValues?: string[], defaultQuality = "auto") {
+    if (supportedValues && !supportedValues.length) return defaultQuality || "auto";
+    const aliasToStandard: Record<string, string> = { "1k": "low", "2k": "medium", "4k": "high" };
+    const aliasToTier: Record<string, string> = { low: "1k", medium: "2k", high: "4k" };
+    const resolveSupported = (candidate: string | undefined) => {
+        const lower = String(candidate || "").trim().toLowerCase();
+        if (!lower) return "";
+        if (!supportedValues?.length) return lower;
+        const exact = supportedValues.find((item) => item.toLowerCase() === lower);
+        if (exact) return exact;
+        const mapped = aliasToStandard[lower] || aliasToTier[lower];
+        if (mapped) {
+            const match = supportedValues.find((item) => item.toLowerCase() === mapped);
+            if (match) return match;
+        }
+        return "";
+    };
+    const value = String(quality || "").trim().toLowerCase();
+    if (value && value !== "auto" && value !== "any") return resolveSupported(value) || defaultQuality || "auto";
+    const match = String(size || "").trim().toLowerCase().match(/^(\d+)x(\d+)$/);
+    if (!match) return resolveSupported(quality || defaultQuality) || defaultQuality || "auto";
+    const pixels = Number(match[1]) * Number(match[2]);
+    const tier = pixels <= 2_000_000 ? "1k" : pixels <= 4_300_000 ? "2k" : pixels <= 8_294_400 ? "4k" : "";
+    return (tier && resolveSupported(tier)) || resolveSupported(quality || defaultQuality) || defaultQuality || "auto";
+}
+
+export function normalizeMaskEditSize(size: string | undefined, supportedValues: string[] | undefined, defaultSize: string, allowCustom = false) {
+    const raw = String(size || "").trim();
+    if (!raw) return defaultSize;
+    if (!supportedValues?.length || supportedValues.includes("*")) return raw;
+    const matched = supportedValues.find((item) => item.toLowerCase() === raw.toLowerCase());
+    if (matched) return matched;
+    if (allowCustom && /^\d+x\d+$/i.test(raw)) return raw;
+    return defaultSize;
+}
+
+export function initialMaskEditConfig(config: AiConfig): AiConfig {
+    const targetModel = resolveMaskEditModel(config, config.imageModel || config.model);
+    const defaults = defaultImageParamsForModel(config, targetModel);
+    const image = modelCapabilityConfigFor(config, targetModel).image;
+    const size = normalizeMaskEditSize(config.size, image?.size.values, defaults.size, image?.size.allowCustom);
+    const quality = normalizeMaskEditQuality(config.quality, config.size, image?.quality.supported ? image.quality.values : [], defaults.quality);
+    return { ...config, model: targetModel, imageModel: targetModel, size, quality };
 }
 
 export type ModelGenerationDefaults = Pick<AiConfig, "size" | "quality" | "transparentBackground" | "count" | "videoSeconds" | "vquality" | "videoGenerateAudio" | "videoWatermark">;

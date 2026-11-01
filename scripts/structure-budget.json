@@ -2,7 +2,6 @@
   "appLines": 9912,
   "largeFiles": {
     "backend/internal/handler/project.go": 1029,
-    "backend/internal/protocol/builtin.go": 1129,
     "backend/internal/protocol/manifest.go": 1653,
     "backend/internal/provider/workflow/mapping.go": 1049,
     "backend/internal/repository/project_mutate.go": 1348,

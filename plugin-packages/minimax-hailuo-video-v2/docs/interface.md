@@ -576,6 +576,12 @@
                 "$ref": "response.task_id"
               },
               {
+                "$ref": "response.data.task_id"
+              },
+              {
+                "$ref": "response.data.id"
+              },
+              {
                 "$ref": "response.id"
               },
               {
@@ -591,22 +597,31 @@
               {
                 "$ref": "response.status"
               },
+              {
+                "$ref": "response.data.status"
+              },
               "pending"
             ]
           },
           "message": {
             "$coalesce": [
               {
+                "$ref": "response.task.error.message"
+              },
+              {
                 "$ref": "response.task.message"
               },
               {
-                "$ref": "response.base_resp.status_msg"
+                "$ref": "response.error.message"
+              },
+              {
+                "$ref": "response.data.error.message"
               },
               {
                 "$ref": "response.message"
               },
               {
-                "$ref": "response.error.message"
+                "$ref": "response.base_resp.status_msg"
               }
             ]
           },
@@ -622,11 +637,21 @@
                 "$ref": "response.video_url"
               },
               {
+                "$ref": "response.data.video_url"
+              },
+              {
                 "$ref": "response.file.url"
+              },
+              {
+                "$ref": "response.file.download_url"
+              },
+              {
+                "$ref": "response.data.file.download_url"
               }
             ]
           },
           "errorPaths": [
+            "task.error.code",
             "base_resp.status_code",
             "error.code"
           ],

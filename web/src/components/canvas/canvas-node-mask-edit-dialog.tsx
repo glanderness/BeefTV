@@ -5,7 +5,7 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
+import { defaultImageParamsForModel, initialMaskEditConfig } from "@/lib/model-selection";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -35,7 +35,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     const [mode, setMode] = useState<DrawMode>("paint");
     const [error, setError] = useState("");
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [generationConfig, setGenerationConfig] = useState<AiConfig>(() => config);
+    const [generationConfig, setGenerationConfig] = useState<AiConfig>(() => initialMaskEditConfig(config));
     const [isSubmitting, setIsSubmitting] = useState(false);
     const theme = canvasThemes[useActiveTheme()];
 

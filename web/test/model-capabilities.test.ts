@@ -3,7 +3,7 @@ import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
 import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue, videoDurationAllowed, videoSupportsTaskTypeConstraints } from "../src/lib/model-capabilities.ts";
-import { modelCompatibilityError } from "../src/lib/model-selection.ts";
+import { initialMaskEditConfig, modelCompatibilityError, normalizeMaskEditQuality, normalizeMaskEditSize, resolveMaskEditModel } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
 
@@ -191,4 +191,94 @@ test("BeefAPI generic newapi Seedance accepts mixed image and video references w
         input: { textCount: 1, imageCount: 1, videoCount: 1, audioCount: 0, characterCount: 0 },
         videoSeconds: "5",
     }), "");
+});
+
+test("wan3.0-video on newapi-channel-2 restricts operations to image_to_video and 1 reference image", () => {
+    for (const modelName of ["wan3.0-video", "wan3.0", "wan3"]) {
+        const profile = defaultModelCapabilityConfig("newapi-channel-2", modelName).video!;
+        assert.deepEqual(profile.operations, ["text_to_video", "image_to_video"]);
+        assert.equal(profile.references.maxImages, 1);
+        assert.equal(profile.references.maxVideos, 0);
+        assert.equal(profile.references.maxAudios, 0);
+    }
+    const kling = defaultModelCapabilityConfig("newapi-channel-2", "kling-video-v3").video!;
+    assert.ok(kling.operations.includes("reference_to_video"));
+    assert.equal(kling.references.maxImages, 9);
+    assert.equal(kling.references.maxVideos, 3);
+    assert.equal(kling.references.maxAudios, 3);
+});
+
+test("moss-image-sft-1.0 uses URL response format and disables unsupported OpenAI image parameters", () => {
+    const profile = defaultModelCapabilityConfig("openai-image", "moss-image-sft-1.0").image!;
+    assert.equal(profile.responseFormat.supported, true);
+    assert.equal(profile.responseFormat.value, "url");
+    assert.equal(profile.quality.supported, false);
+    assert.equal(profile.outputFormat.supported, false);
+    assert.equal(profile.maxOutputs, 1);
+    assert.equal(profile.references.maxImages, 0);
+    assert.equal(profile.references.maskSupported, false);
+});
+
+test("mask edit model selection ignores text models and normalizes quality/size aliases across models", () => {
+    const config = {
+        model: "ch::gpt-5.4",
+        imageModel: "ch::doubao-seedream-5-0-260128",
+        size: "4:5",
+        quality: "2k",
+        models: ["ch::gpt-5.4", "ch::doubao-seedream-5-0-260128", "ch::gpt-image-2"],
+        imageModels: ["ch::doubao-seedream-5-0-260128", "ch::gpt-image-2"],
+        channels: [{
+            id: "ch",
+            name: "Custom",
+            baseUrl: "https://api.example.com",
+            apiKey: "key",
+            apiFormat: "openai",
+            models: ["gpt-5.4", "doubao-seedream-5-0-260128", "gpt-image-2"],
+        }],
+    } as AiConfig;
+    assert.equal(resolveMaskEditModel(config), "ch::gpt-image-2");
+    const initialized = initialMaskEditConfig(config);
+    assert.equal(initialized.model, "ch::gpt-image-2");
+    assert.equal(initialized.imageModel, "ch::gpt-image-2");
+    assert.equal(initialized.quality, "medium");
+    assert.equal(initialized.size, "1:1");
+
+    const customSizeInitialized = initialMaskEditConfig({ ...config, size: "1440x1440" });
+    assert.equal(customSizeInitialized.size, "1440x1440");
+
+    const noMaskConfig = {
+        ...config,
+        models: ["ch::gpt-5.4", "ch::doubao-seedream-5-0-260128"],
+        imageModels: ["ch::doubao-seedream-5-0-260128"],
+        channels: [{
+            id: "ch",
+            name: "Custom",
+            baseUrl: "https://api.example.com",
+            apiKey: "key",
+            apiFormat: "openai",
+            models: ["gpt-5.4", "doubao-seedream-5-0-260128"],
+        }],
+    } as AiConfig;
+    assert.equal(resolveMaskEditModel(noMaskConfig), "ch::doubao-seedream-5-0-260128");
+
+    const textOnlyConfig = {
+        ...config,
+        imageModel: "",
+        imageModels: [],
+        models: ["ch::gpt-5.4"],
+        channels: [{
+            id: "ch",
+            name: "Custom",
+            baseUrl: "https://api.example.com",
+            apiKey: "key",
+            apiFormat: "openai",
+            models: ["gpt-5.4"],
+        }],
+    } as AiConfig;
+    assert.equal(resolveMaskEditModel(textOnlyConfig), "");
+
+    assert.equal(normalizeMaskEditQuality("2k", "1024x1024", ["auto", "low", "medium", "high"], "auto"), "medium");
+    assert.equal(normalizeMaskEditQuality("medium", "1024x1024", ["1k", "2k", "4k"], "1k"), "2k");
+    assert.equal(normalizeMaskEditSize("1440x1440", ["1:1", "1024x1024"], "1:1", true), "1440x1440");
+    assert.equal(normalizeMaskEditSize("1440x1440", ["1:1", "1024x1024"], "1:1", false), "1:1");
 });

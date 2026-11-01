@@ -9,6 +9,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func videoDurationSupported(value *VideoCapabilityConfig) bool {
@@ -121,7 +122,21 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 	}
 	if protocol == string(model.ChannelInterfaceNewAPIChannel2) {
 		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
-		video.Operations = appendUniqueString(video.Operations, "reference_to_video")
+		if contract, ok := providerpreset.BeefAPIVideoContract(modelName); ok && contract.Protocol == protocol && contract.RequiresHTTPReferences && len(contract.Operations) > 0 {
+			video.Operations = append([]string(nil), contract.Operations...)
+			for kind, limit := range contract.MaxReferences {
+				switch kind {
+				case "image":
+					video.References.MaxImages = limit
+				case "video":
+					video.References.MaxVideos = limit
+				case "audio":
+					video.References.MaxAudios = limit
+				}
+			}
+		} else {
+			video.Operations = appendUniqueString(video.Operations, "reference_to_video")
+		}
 	}
 	if isSeedance2Family(protocol, modelName) {
 		if model.ChannelInterfaceType(protocol) == model.ChannelInterfaceNewAPIVideo {

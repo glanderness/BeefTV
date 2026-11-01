@@ -526,7 +526,7 @@ function isVideoModelName(model: string) {
         value.includes("animatediff") ||
         value.includes("ltx-video") ||
         value.includes("ltxvideo") ||
-        value.includes("minimax-video") ||
+        /minimax-(?:video|h3)/.test(value) ||
         value.includes("abab-video")
     );
 }

@@ -435,7 +435,7 @@ export function categoryFromProviderMessage(raw: string): GenerationErrorCategor
         return normalized.includes("arrearage") || normalized.includes("billing_hard_limit") ? "quota_upstream" : "quota_unknown";
     if (normalized.includes("rate limit") || normalized.includes("too many requests") || normalized.includes("throttl") || normalized.includes("频繁")) return "throttled";
     if (normalized.includes("context length") || normalized.includes("too many tokens") || normalized.includes("max_tokens") || (normalized.includes("长度") && (normalized.includes("最大") || normalized.includes("超出")))) return "context_too_long";
-    if (normalized.includes("model_not_found") || normalized.includes("model not found") || normalized.includes("模型不存在")) return "model_missing";
+    if (normalized.includes("model_not_found") || normalized.includes("model not found") || normalized.includes("模型不存在") || normalized.includes("405 method not allowed") || normalized.includes("method not allowed") || normalized.includes("http 405") || normalized.includes("status 405")) return "model_missing";
     if (normalized.includes("invalid api key") || normalized.includes("incorrect api key") || normalized.includes("authentication") || normalized.includes("unauthorized") || normalized.includes("鉴权失败")) return "auth";
     if (normalized.includes("permission") && (normalized.includes("denied") || normalized.includes("model") || normalized.includes("access"))) return "permission";
     if (normalized.includes("url error") || normalized.includes("failed to download") || normalized.includes("cannot fetch") || normalized.includes("invalid image url") || normalized.includes("无法读取")) return "input_inaccessible";
@@ -473,7 +473,7 @@ export function categoryFromHttpStatus(status: number): GenerationErrorCategory 
     if (status === 401) return "auth";
     if (status === 403) return "permission";
     if (status === 402) return "quota_unknown";
-    if (status === 404) return "model_missing";
+    if (status === 404 || status === 405 || status === 501) return "model_missing";
     if (status === 408 || status === 504 || status === 524) return "timeout";
     if (status === 409) return "invalid_params";
     if (status === 413) return "input_too_large";

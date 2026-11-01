@@ -228,6 +228,8 @@ describe("generation error classification", () => {
         expect(explainGenerationError({ code: "insufficient_user_quota" }).action).toContain("余额");
         expect(explainGenerationError({ code: "no_available_channel" }).category).toBe("provider_unavailable");
         expect(explainGenerationError({ code: "channel:invalid_key" }).category).toBe("provider_unavailable");
+        expect(explainGenerationError({ status: 405, message: "405 Method Not Allowed" }).category).toBe("model_missing");
+        expect(explainGenerationError({ status: 501, message: "Not Implemented" }).category).toBe("model_missing");
     });
 
     test("copy diagnostics validates context at the final boundary", () => {

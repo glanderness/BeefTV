@@ -12,7 +12,27 @@ import (
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
+func isMossImageModel(modelName string) bool {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return strings.HasPrefix(name, "moss-image")
+}
+
 func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapabilityConfig {
+	if isMossImageModel(modelName) {
+		return &ImageCapabilityConfig{
+			References:            ImageReferenceConfig{PromptMaxChars: 4000, MaxImages: 0, MaxImageBytes: 0, MaskSupported: false},
+			Size:                  ImageSizeConfig{Parameter: "size", Values: []string{"1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "1024x1024", "1024x768", "768x1024", "1360x1024", "1024x1360", "1280x720", "720x1280", "1536x1024", "1024x1536", "1824x1024", "1024x1824", "2048x2048"}, Default: "1:1", AllowCustom: true},
+			Quality:               ImageQualityConfig{Supported: false, Values: []string{}, Default: "auto"},
+			TransparentBackground: VideoBooleanConfig{Supported: false, Default: false},
+			SequentialGeneration:  VideoBooleanConfig{Supported: false, Default: false},
+			ResponseFormat:        ImageResponseFormat{Supported: true, Value: ImageResponseFormatURL},
+			OutputFormat:          ParameterSupport{Supported: false},
+			MaxOutputs:            1,
+		}
+	}
 	if family := providerpreset.SeedreamFamily(modelName); family != "" {
 		modern := family == "pro" || family == "flash"
 		sizes := []string{"2K", "4K"}
@@ -318,7 +338,7 @@ func validateImageCapabilityConfig(value *ImageCapabilityConfig) error {
 
 // Upgrade only the old built-in GPT image choices; keep other stored limits.
 func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, protocol string, modelName string, _ string) *ImageCapabilityConfig {
-	if providerpreset.SeedreamFamily(modelName) != "" {
+	if providerpreset.SeedreamFamily(modelName) != "" || isMossImageModel(modelName) {
 		return DefaultImageCapabilityConfig(protocol, modelName)
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
@@ -396,8 +416,13 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 			return kernel.BadAuthRequest(err.Error())
 		}
 	}
+	if !sourced && profile.Size.Parameter == "size" && profile.Size.AllowCustom && isMossImageModel(modelName) && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
+		if err := validateMossImageCustomSize(input.Config.Size); err != nil {
+			return kernel.BadAuthRequest(err.Error())
+		}
+	}
 	quality := strings.TrimSpace(input.Config.Quality)
-	if profile.Quality.Supported && quality != "" && !strings.EqualFold(quality, "auto") && !strings.EqualFold(quality, "any") && !containsCapabilityString(profile.Quality.Values, quality) {
+	if profile.Quality.Supported && quality != "" && !strings.EqualFold(quality, "auto") && !strings.EqualFold(quality, "any") && !imageQualityValueAllowed(profile.Quality.Values, quality) {
 		return kernel.BadAuthRequest("图片质量不在当前模型支持范围内")
 	}
 	if err := validateImagePresetSelection(profile, qualityForImageValidation(quality, profile.Quality.Default), kernel.FirstNonEmpty(input.Config.Size, profile.Size.Default)); err != nil {
@@ -447,6 +472,42 @@ func imageResolutionTier(quality string) string {
 	default:
 		return ""
 	}
+}
+
+func imageQualityValueAllowed(values []string, quality string) bool {
+	if containsCapabilityString(values, quality) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "1k":
+		return containsCapabilityString(values, "low")
+	case "2k":
+		return containsCapabilityString(values, "medium")
+	case "4k":
+		return containsCapabilityString(values, "high")
+	default:
+		return false
+	}
+}
+
+func validateMossImageCustomSize(value string) error {
+	value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "×", "x")))
+	if value == "" || value == "auto" {
+		return nil
+	}
+	parts := strings.Split(value, "x")
+	if len(parts) != 2 {
+		return errors.New("自定义图片尺寸请使用宽x高，例如 1024x1024")
+	}
+	width, widthErr := strconv.Atoi(parts[0])
+	height, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil || width < 256 || height < 256 || width > 2048 || height > 2048 {
+		return errors.New("图片尺寸宽高需在 256 到 2048px 之间")
+	}
+	if width%8 != 0 || height%8 != 0 {
+		return errors.New("图片尺寸宽高必须是 8 的倍数")
+	}
+	return nil
 }
 
 func validateGPTImage2CustomSize(value string) error {
