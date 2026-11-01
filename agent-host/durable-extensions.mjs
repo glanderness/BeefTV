@@ -236,7 +236,7 @@ export async function installDurableExtensions({
 
   const tools = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools()].map((tool) => defineTool({
     name: tool.name, description: tool.description + (tool.label === 'canvas.generation.propose'
-      ? '。先完成本阶段的计划更新，再提出生成提案；成功提案会结束本轮并等待用户确认。' : ''), parameters: tool.parameters,
+      ? '。成功提案会结束本轮；plan_update 与本调用同一次响应发出。' : ''), parameters: tool.parameters,
     replay: durableToolReplay(tool), executionMode: 'sequential',
     ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label) ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } } : {}),
     execute: async (args, api, context) => {
@@ -256,8 +256,10 @@ export async function installDurableExtensions({
         }
         // Official Durable ends only when every call in this response requests
         // termination. Mixed/failed rounds keep their normal model continuation.
+        // 提方案失败时它自己不请求结束，整轮仍按官方规则继续，所以同批计划更新请求结束是安全的。
         const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
-        return { ...result, output: content, ...(proposed ? { control: { ...result.control, terminate: true } } : {}) };
+        const planWithProposal = tool.label === 'plan.update' && result.isError !== true && (await state(entry))?.roundProposes === true;
+        return { ...result, output: content, ...(proposed || planWithProposal ? { control: { ...result.control, terminate: true } } : {}) };
       } finally { await persistEffects(entry); }
     },
   }));
@@ -267,7 +269,15 @@ export async function installDurableExtensions({
     name: 'beeftv.operations.v1',
     tools,
     hooks: [hook(GenerationTask, {
-      afterResponse: normalizeModelTransportError,
+      afterResponse: async (message, ...rest) => {
+        normalizeModelTransportError(message, ...rest);
+        // 本次响应是否带提方案调用：同批的 plan_update 也要请求结束本轮，否则官方 Durable 因为
+        // 「不是所有调用都请求结束」而多发一轮只为总结的请求。写进 Durable 文档而不是内存，
+        // 重启后从工具阶段接着跑时（不会再触发本钩子）仍然生效；每次响应都会重新写。
+        const proposes = Array.isArray(message?.content)
+          && message.content.some((part) => part?.type === 'toolCall' && part.name === 'canvas_generation_propose');
+        if (((await state(entry))?.roundProposes === true) !== proposes) await update(entry, (doc) => { doc.roundProposes = proposes; });
+      },
       beforeRequest: async (request, _runtime, context) => {
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
