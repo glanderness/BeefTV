@@ -21,7 +21,7 @@ import {
 import { buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
 import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-assets";
 import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
-import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
+import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds, syncBoundStoryboardNodesForRows } from "@/lib/canvas/canvas-storyboard-materializer";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -98,18 +98,14 @@ export function useCanvasStoryboard({
     }), [effectiveConfig, modal]);
 
     const updateScriptRows = useCallback((nodeId: string, updater: (rows: StoryboardRow[]) => StoryboardRow[]) => {
-        setNodes((current) => current.map((node) => node.id === nodeId ? {
-            ...node,
-            metadata: {
-                ...node.metadata,
-                storyboard: {
-                    rows: updater(node.metadata?.storyboard?.rows || []),
-                    visibleColumns: node.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
-                    referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [],
-                },
-            },
-        } : node));
-    }, [setNodes]);
+        setNodes((current) => {
+            const scriptNode = current.find((node) => node.id === nodeId);
+            if (!scriptNode) return current;
+            const previousRows = scriptNode.metadata?.storyboard?.rows || [];
+            const nextRows = updater(previousRows);
+            return syncBoundStoryboardNodesForRows(scriptNode, previousRows, nextRows, current, connectionsRef.current);
+        });
+    }, [connectionsRef, setNodes]);
 
     const replaceScriptRows = useCallback((nodeId: string, rows: StoryboardRow[]) => {
         const rowIds = new Set(rows.map((row) => `row:${row.id}`));

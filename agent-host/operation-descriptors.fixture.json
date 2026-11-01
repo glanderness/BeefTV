@@ -352,7 +352,7 @@
   },
   {
     "id": "canvas.node.configure",
-    "summary": "设置已有媒体节点的生成草稿参数；不生成、不扣费，不改任务或现有成品",
+    "summary": "设置已有媒体节点的提示词草稿与生成参数；不生成、不扣费，不改任务或现有成品",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -385,27 +385,27 @@
           "minProperties": 1,
           "properties": {
             "audioFormat": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 audio",
+              "description": "草稿参数；适用 audio",
               "type": "string"
             },
             "audioInstructions": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 audio",
+              "description": "草稿参数；适用 audio",
               "type": "string"
             },
             "audioPitch": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 audio",
+              "description": "草稿参数；适用 audio",
               "type": "string"
             },
             "audioSpeed": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 audio",
+              "description": "草稿参数；适用 audio",
               "type": "string"
             },
             "audioVoice": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 audio",
+              "description": "草稿参数；适用 audio",
               "type": "string"
             },
             "audioVolume": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 audio",
+              "description": "草稿参数；适用 audio",
               "type": "string"
             },
             "count": {
@@ -415,7 +415,7 @@
               "type": "integer"
             },
             "generateAudio": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 video",
+              "description": "草稿参数；适用 video",
               "enum": [
                 "true",
                 "false"
@@ -423,23 +423,27 @@
               "type": "string"
             },
             "model": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 image、video、audio",
+              "description": "草稿参数；适用 image、video、audio",
+              "type": "string"
+            },
+            "prompt": {
+              "description": "下次生成提示词草稿，不覆盖现有成品；适用 image、video、audio",
               "type": "string"
             },
             "quality": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 image",
+              "description": "草稿参数；适用 image",
               "type": "string"
             },
             "seconds": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 video",
+              "description": "草稿参数；适用 video",
               "type": "string"
             },
             "size": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 image、video",
+              "description": "草稿参数；适用 image、video",
               "type": "string"
             },
             "transparentBackground": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 image",
+              "description": "草稿参数；适用 image",
               "enum": [
                 "true",
                 "false"
@@ -447,11 +451,11 @@
               "type": "string"
             },
             "vquality": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 video",
+              "description": "草稿参数；适用 video",
               "type": "string"
             },
             "watermark": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力；适用 video",
+              "description": "草稿参数；适用 video",
               "enum": [
                 "true",
                 "false"
@@ -592,12 +596,15 @@
         "patch": {
           "properties": {
             "content": {
+              "description": "文本节点正文，或媒体节点下次生成使用的提示词草稿",
               "type": "string"
             },
             "prompt": {
+              "description": "外部 CLI/MCP 媒体节点下次生成提示词草稿别名（不覆盖历史提示词或成品；内置助手使用 content 或 canvas.node.configure）",
               "type": "string"
             },
             "title": {
+              "description": "节点名称",
               "type": "string"
             }
           },
@@ -706,7 +713,7 @@
   },
   {
     "id": "canvas.script.prepare",
-    "summary": "一次准备分镜与配置好的首帧/视频草稿；新作品直接传 script 正文，已有分镜传 nodeId/rowIds。绑定分镜、连接参考图并按镜头排布，不开始生成；已有绑定拒绝覆盖",
+    "summary": "一次准备分镜脚本与可选的首帧/视频草稿；新作品直接传 script 正文（省略 image/video 则只建分镜），已有分镜传 nodeId/rowIds。绑定分镜、连接参考图并按镜头排布，不开始生成；已有绑定拒绝覆盖",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -724,19 +731,19 @@
           "description": "本批节点共同生成参数；省略则不创建该类型。视频时长采用每行 durationSeconds，提示词直接采用分镜原文；视频必须明确是否生成声音",
           "properties": {
             "model": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             },
             "quality": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             },
             "size": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             },
             "transparentBackground": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             }
           },
@@ -771,7 +778,7 @@
         },
         "script": {
           "additionalProperties": false,
-          "description": "新作品可直接提交分镜正文，一次创建脚本、分镜行与配置好的首帧/视频节点；与 nodeId/rowIds 二选一，失败全部回滚",
+          "description": "新作品可直接提交分镜正文，一次创建脚本与分镜行（可选同时创建配置好的首帧/视频节点；省略 image/video 则只建分镜）；与 nodeId/rowIds 二选一，失败全部回滚",
           "properties": {
             "rows": {
               "items": {
@@ -884,7 +891,7 @@
           "description": "本批节点共同生成参数；省略则不创建该类型。视频时长采用每行 durationSeconds，提示词直接采用分镜原文；视频必须明确是否生成声音",
           "properties": {
             "generateAudio": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "enum": [
                 "true",
                 "false"
@@ -892,19 +899,19 @@
               "type": "string"
             },
             "model": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             },
             "size": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             },
             "vquality": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             },
             "watermark": {
-              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "description": "草稿参数",
               "type": "string"
             }
           },
@@ -976,7 +983,7 @@
   },
   {
     "id": "canvas.script.row.update",
-    "summary": "按行 ID 批量局部更新分镜行（只覆盖给出的字段，未知行整批拒绝）",
+    "summary": "按行 ID 批量局部更新分镜行（只覆盖给出的字段，自动同步已绑定且未单独手改的首帧/视频节点草稿，未知行整批拒绝）",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -997,7 +1004,7 @@
         },
         "patches": {
           "items": {
-            "description": "只覆盖给出的字段；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
+            "description": "只覆盖给出的字段；修改 imageGenerationPrompt/videoMotionPrompt 时会自动同步未单独手改的已绑定首帧/视频节点草稿；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
             "properties": {
               "audioEffects": {
                 "description": "音效要求",

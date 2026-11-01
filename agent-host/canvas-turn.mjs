@@ -122,6 +122,9 @@ export function collectTurnEffects(turn, opID, result, operationId) {
     case 'canvas.script.row.remove':
       // 行绑定会改写产出连线；回执里的连线增删与 Go 撤销用的变更摘要保持一致。
       if (result.nodeId) turn.updatedNodeIds.push(String(result.nodeId));
+      for (const syncedId of asStringList(result.syncedNodeIds)) {
+        if (!turn.updatedNodeIds.includes(syncedId)) turn.updatedNodeIds.push(syncedId);
+      }
       turn.createdEdgeIds.push(...asStringList(result.createdEdgeIds));
       turn.deletedEdgeIds=[...new Set([...(turn.deletedEdgeIds || []),...asStringList(result.deletedEdgeIds)])];
       break;

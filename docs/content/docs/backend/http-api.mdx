@@ -44,7 +44,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 若缺少可用传输方式，提交返回 HTTP 400、`reason=reference_media_requires_url`，不创建任务。`msg` 包含受影响素材的类型和序号；`details.requiredReferences` 提供 `{ kind, index, mask? }`，`kind` 为 `image/video/audio`，`index` 从 0 开始，遮罩为 `mask: true`。客户端仅替换这些素材，补齐后可再次提交；其他网络或上游错误不适用此规则。执行阶段上传失败保留原任务的失败记录，不调用模型。声音、水印等开关接受布尔值及其字符串形式，已有任务的同类参数也按相同规则读取。
 
-`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
+`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`，`targets` 回显每个目标节点的实际草稿提示词、模型与生成参数；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
 
 外部读写客户端的提议还返回 `nextAction`：由外部宿主审批后调用 `canvas.generation.submit`，提交 `canvasId`、1 至 8 个 `nodeIds`、`expectedRevision`、`expectedModelConfigRevision` 和稳定 `operationId`。两个版本分别来自提议的 `source.canvasRevision` 与 `source.modelConfigRevision`。此路径不依赖内置助手回合或确认卡，返回已受理的 `taskIds`、`nodeIds` 与画布新 `revision`；同键同参数回读原回执，过期版本、未就绪参考和已关联任务的目标拒绝。当前复用单节点单产物的制作准入；已有任务通过 `task.get` 和原任务恢复入口处理，不换键重复购买。历史只读凭据不能提交或回放写回执。
 
@@ -52,7 +52,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 获得同一原回合授权的官方 Pi 接续轮可用 `canvas.generation.submit` 执行已确认素材；未授权、输入变化或旧意图已停止时拒绝。宿主工具等待真实任务终态、资源保存及画布绑定后再交给模型继续，不用模型反复轮询。未知结果保留原任务身份；不自动重生成失败素材。授权约束精确素材计划，并非人民币金额硬封顶，报价未知时不能承诺满足金额预算。
 
-共享操作 `model.catalog` 可传 `capabilities:["image","video","audio"]` 一次读取所需类型，与单个 `capability` 二选一。`canvas.script.prepare` 的 `script:{title,rows}` 可直接创建新分镜和配置好的媒体草稿，与已有 `nodeId/rowIds` 二选一，最多 8 行，整批一次保存。`canvas.generation.submit` 可省略 `kind`，在同一已确认计划内提交独立的混合素材批次；同批不能依赖尚未产出的素材。内置宿主也等待免费 `canvas.timeline.render` 的原任务与资源保存，查询失败返回原任务号和 pending，不重新渲染；停止仍中断等待。
+共享操作 `model.catalog` 可传 `capabilities:["image","video","audio"]` 一次读取所需类型，与单个 `capability` 二选一。`canvas.script.prepare` 的 `script:{title,rows}` 可直接创建新分镜（省略 `image`/`video` 时仅建分镜脚本与行，提供 `image`/`video` 时一并创建配置好的媒体草稿），与已有 `nodeId/rowIds` 二选一，最多 8 行，整批一次保存。`canvas.generation.submit` 可省略 `kind`，在同一已确认计划内提交独立的混合素材批次；同批不能依赖尚未产出的素材。内置宿主也等待免费 `canvas.timeline.render` 的原任务与资源保存，查询失败返回原任务号和 pending，不重新渲染；停止仍中断等待。
 
 `model.catalog` 可用 `capability`（`text`、`image`、`video`、`audio`）只查询所需类型。桌面视频模型的 `videoPricing` 只投影已保存、通过格式校验的渠道目录报价，不包含连接地址或凭据；缺失表示价格未知。这不是实时计费保证，也不会自动执行预算上限。
 

@@ -44,7 +44,7 @@ func RegisterDefaultOps(r *Registry) {
 		Params:  json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}`),
 		Handler: opTaskGet})
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.node.update", Summary: "局部修改一个节点（只提交目标字段，其余数据保持原样，带 revision CAS）", Scope: ScopeCanvas,
-		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"expectedRevision":{"type":"integer"},"patch":{"type":"object","properties":{"title":{"type":"string"},"prompt":{"type":"string"},"content":{"type":"string"}}}},"required":["canvasId","nodeId","patch","expectedRevision"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"expectedRevision":{"type":"integer"},"patch":{"type":"object","properties":{"title":{"type":"string","description":"节点名称"},"prompt":{"type":"string","description":"外部 CLI/MCP 媒体节点下次生成提示词草稿别名（不覆盖历史提示词或成品；内置助手使用 content 或 canvas.node.configure）"},"content":{"type":"string","description":"文本节点正文，或媒体节点下次生成使用的提示词草稿"}}}},"required":["canvasId","nodeId","patch","expectedRevision"]}`),
 		Handler: opCanvasNodeUpdate})
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.nodes.create", Summary: "在画布上批量创建节点（整批校验，带 revision CAS）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"nodes":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"type":{"type":"string"},"prompt":{"type":"string"}},"required":["title","type"]}}},"required":["canvasId","nodes","expectedRevision"]}`),
@@ -56,7 +56,7 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.rows.append", Summary: "向分镜脚本节点批量追加分镜行（行 ID 与镜号由服务端分配，行结构对齐界面默认值）", Scope: ScopeCanvas,
 		Params:  storyboardRowsAppendSchema(),
 		Handler: opStoryboardRowsAppend})
-	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.row.update", Summary: "按行 ID 批量局部更新分镜行（只覆盖给出的字段，未知行整批拒绝）", Scope: ScopeCanvas,
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.row.update", Summary: "按行 ID 批量局部更新分镜行（只覆盖给出的字段，自动同步已绑定且未单独手改的首帧/视频节点草稿，未知行整批拒绝）", Scope: ScopeCanvas,
 		Params:  storyboardRowUpdateSchema(),
 		Handler: opStoryboardRowUpdate})
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.row.remove", Summary: "按行 ID 批量删除分镜行并重排镜号（未知行整批拒绝）", Scope: ScopeCanvas,
@@ -159,10 +159,35 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		return nil, err
 	}
 	proposalID := newProposalID()
+	targetsSummary := make([]map[string]any, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		node := owned[id]
+		meta := dependencyMetadata(node)
+		prompt := dependencyString(meta, "composerContent")
+		if prompt == "" {
+			prompt = dependencyString(meta, "prompt")
+		}
+		paramsMap := map[string]string{}
+		for _, key := range []string{"size", "quality", "count", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "videoStartFrameNodeId", "videoEndFrameNodeId", "videoMiddleFrameNodeId"} {
+			if v, ok := meta[key]; ok && v != nil && fmt.Sprint(v) != "" {
+				paramsMap[key] = fmt.Sprint(v)
+			}
+		}
+		targetsSummary = append(targetsSummary, map[string]any{
+			"nodeId":     id,
+			"title":      dependencyString(node, "title"),
+			"kind":       args.Kind,
+			"model":      resolved.Display,
+			"modelKey":   resolved.ModelKey,
+			"prompt":     prompt,
+			"parameters": paramsMap,
+		})
+	}
 	result := map[string]any{
 		"proposalId": proposalID, "kind": args.Kind, "nodeIds": nodeIDs,
 		"model": resolved.Display, "modelKey": resolved.ModelKey, "note": strings.TrimSpace(args.Note),
-		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
+		"targets": targetsSummary,
+		"source":  map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
 	}
 	var proposedTargets []GenerationTarget
 	if len(args.ProductionNodeIDs) > 0 {
@@ -434,6 +459,9 @@ func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 与 nodeId 必填")
+	}
+	if args.Patch.Prompt != nil && args.Patch.Content != nil && *args.Patch.Prompt != *args.Patch.Content {
+		return nil, InvalidArg("conflicting_patch_fields", "patch.prompt 与 patch.content 不能同时提交不同内容")
 	}
 	patch := map[string]any{}
 	if args.Patch.Title != nil {

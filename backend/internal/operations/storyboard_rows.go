@@ -76,7 +76,7 @@ func storyboardRowUpdateSchema() json.RawMessage {
 				return properties
 			}(),
 			"required":    []string{"rowId"},
-			"description": "只覆盖给出的字段；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
+			"description": "只覆盖给出的字段；修改 imageGenerationPrompt/videoMotionPrompt 时会自动同步未单独手改的已绑定首帧/视频节点草稿；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
 		},
 	}, []string{"patches"})
 }
@@ -130,7 +130,8 @@ func opStoryboardRowUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
 		return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "updated": update.Updated, "rowCount": len(docStoryboardRows(doc, args.NodeID)),
-			"createdEdgeIds": update.CreatedEdgeIDs, "deletedEdgeIds": update.DeletedEdgeIDs}
+			"createdEdgeIds": update.CreatedEdgeIDs, "deletedEdgeIds": update.DeletedEdgeIDs,
+			"syncedNodeIds": update.SyncedNodeIDs, "skippedNodeIds": update.SkippedNodeIDs}
 	})
 }
 
