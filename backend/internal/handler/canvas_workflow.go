@@ -3,14 +3,21 @@ package handler
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/app"
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"net/http"
 	"strconv"
 	"time"
 )
 
-func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
+type canvasWorkflowService interface {
+	workspaceOwners
+	runtimePolicies
+	CanvasWorkflowOperations() []cw.Operation
+	CanvasWorkflowTemplates() *cw.Templates
+	CanvasWorkflowRunService() *cw.Runs
+}
+
+func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc canvasWorkflowService) {
 	templates := svc.CanvasWorkflowTemplates()
 	runs := svc.CanvasWorkflowRunService()
 	// Every route resolves the current desktop owner; mutations additionally

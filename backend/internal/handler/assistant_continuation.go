@@ -2,12 +2,20 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
+	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantturns"
 	"net/http"
+	"strings"
 )
 
-func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard func(*gin.Context, bool) bool) {
+type assistantContinuationService interface {
+	workspaceOwners
+	ownerCredentialDirs
+	AssistantTurns() *assistantturns.Service
+}
+
+func registerAssistantContinuationRoutes(r gin.IRouter, svc assistantContinuationService, guard func(*gin.Context, bool) bool) {
 	r.POST("/assistant/continuations", func(c *gin.Context) {
 		if !guard(c, true) {
 			return
@@ -70,7 +78,7 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 		ok(c, gin.H{"cancelled": true})
 	})
 	r.POST("/assistant/runtime/continuations/:id/verify", func(c *gin.Context) {
-		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
+		if !isLoopbackRequest(c.Request) || !agentops.HostTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader(assistantHostTokenHeader))) {
 			c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "reason": "forbidden", "msg": "需要内置助手宿主身份"})
 			return
 		}

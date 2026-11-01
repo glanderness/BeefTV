@@ -160,6 +160,6 @@ func assistantIDSet(ids []string) map[string]bool {
 }
 
 // isAssistantHostRequest 判断请求是否由已鉴权的内置助手宿主发起。
-func isAssistantHostRequest(c *gin.Context, svc *app.Service) bool {
+func isAssistantHostRequest(c *gin.Context, svc ownerCredentialDirs) bool {
 	return agentops.HostTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader(assistantHostTokenHeader)))
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,15 +14,29 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/operations"
+	"infinite-canvas/backend/internal/skills"
 	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
 // agentOpsMaxBody 与画布 PUT 上限对齐：文档提交会带上整份画布，1MB 不够。
 const agentOpsMaxBody = 5 << 20
 
+type agentOpsService interface {
+	operations.DomainBinder
+	workspaceOwners
+	ownerCredentialDirs
+	AssistantTurns() *assistantturns.Service
+	SkillsDomain() *skills.Service
+	ValidateAgentProjectReference(userID, canvasID, kind, id string) error
+	ListGenerationOrders(userID, canvasID string) ([]operations.GenerationOrder, error)
+	ApproveGenerationOrder(userID, proposalID, approvedBy string) (any, error)
+}
+
 // RegisterAgentOpsRoutes 暴露统一操作层：CLI、MCP 与内置 pi 都调用同一组端点，
 // 不各自打开数据库或另起 worker。
-func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Store, clients *agentops.ClientRegistry) *agentops.Registry {
+func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.Store, clients *agentops.ClientRegistry) *agentops.Registry {
 	registry := agentops.NewRegistry(svc, store)
 	agentops.RegisterDefaultOps(registry)
 
@@ -41,7 +56,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			return
 		}
 		// 能力发现只按调用者身份过滤可见集合；内置宿主在回合之外没有画布范围。
-		scope, _, scopeErr := assistantScopeForRequest(c, svc, user.ID, isAssistantHostRequest(c, svc))
+		scope, _, scopeErr := agentOpsScopeForRequest(c, svc, user.ID)
 		if scopeErr != nil {
 			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
 			return
@@ -199,7 +214,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 		_ = clientLabel
 		// 回合归属只认内置宿主：外部客户端出示 turn 头会被明确拒绝，而不是静默忽略后
 		// 让一次外部写入被误当成助手的改动（撤销会因此抹掉外部修改）。
-		scope, turnID, scopeErr := assistantScopeForRequest(c, svc, user.ID, isAssistantHostRequest(c, svc))
+		scope, turnID, scopeErr := agentOpsScopeForRequest(c, svc, user.ID)
 		if scopeErr != nil {
 			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
 			return
@@ -223,11 +238,57 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 	return registry
 }
 
+func agentOpsScopeForRequest(c *gin.Context, svc agentOpsService, userID string) (*agentops.AssistantScope, string, error) {
+	if !agentops.HostTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader(assistantHostTokenHeader))) {
+		if strings.TrimSpace(c.GetHeader(assistantTurnHeader)) != "" {
+			return nil, "", errors.New("回合归属只能由内置助手宿主出示")
+		}
+		return nil, "", nil
+	}
+	turnID := strings.TrimSpace(c.GetHeader(assistantTurnHeader))
+	if turnID == "" {
+		return &agentops.AssistantScope{PermissionMode: "full-access"}, "", nil
+	}
+	if !app.ValidAssistantTurnID(turnID) {
+		return nil, "", errors.New("回合标识非法")
+	}
+	scope, ok, err := svc.AssistantTurns().ScopeForHost(userID, turnID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !ok {
+		return nil, "", errors.New("这一轮对话不存在、不属于当前工作区或已经结束")
+	}
+	return &agentops.AssistantScope{
+		PermissionMode: scope.PermissionMode,
+		CanvasID:       scope.CanvasID,
+		AssetIDs:       assistantIDSet(scope.AssetIDs),
+		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
+		TaskIDs:        assistantIDSet(scope.TaskIDs),
+		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins, scope.ActiveSkillPins),
+		SkillInstalled: func(pin skills.Pin) bool {
+			catalog, err := svc.SkillsDomain().AgentCatalog(userID)
+			if err != nil {
+				return false
+			}
+			for _, item := range catalog {
+				if item.Pin.Identity() == pin.Identity() {
+					return true
+				}
+			}
+			return false
+		},
+		ProjectReference: func(kind, id string) error {
+			return svc.ValidateAgentProjectReference(userID, scope.CanvasID, kind, id)
+		},
+	}, turnID, nil
+}
+
 // resolveCaller 决定本次调用的身份与能力模式。
 // 已登记的客户端：模式完全由服务端登记决定，请求体/请求头都不能自行提升或改变。
 // 内置助手宿主：凭自己那份后端注入的宿主凭据拿到读写；页面的 UI 会话凭据不在这里。
 // owner 通道是手工 UI 与本机直连的身份。
-func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (agentops.Caller, string, error) {
+func resolveCaller(c *gin.Context, svc ownerCredentialDirs, clients *agentops.ClientRegistry) (agentops.Caller, string, error) {
 	if isAssistantHostRequest(c, svc) {
 		return agentops.Caller{
 			Kind:         agentops.CallerAssistant,
@@ -297,7 +358,7 @@ func requireTrustedDesktopWritePrincipal(c *gin.Context, message string) bool {
 	return true
 }
 
-func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (bool, string, error) {
+func resolveClientMode(c *gin.Context, svc ownerCredentialDirs, clients *agentops.ClientRegistry) (bool, string, error) {
 	caller, label, err := resolveCaller(c, svc, clients)
 	return caller.ReadOnly, label, err
 }
