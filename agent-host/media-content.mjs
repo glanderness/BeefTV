@@ -234,7 +234,8 @@ export async function attachmentContent(body, turnId, opsRequest) {
       ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
     try {
       const overview = await opsRequest('POST','/ops/media.overview',{params:reference},undefined,turnId);
-      const data = overview.result.image?.view === 'preview' ? overview : await opsRequest('POST','/ops/media.inspect',{params:{...reference,
+      const mustUsePreview = overview.result.image?.view === 'preview' && overview.result.image?.inspectable !== true;
+      const data = mustUsePreview ? overview : await opsRequest('POST','/ops/media.inspect',{params:{...reference,
         expectedVersion:overview.result.source.version,mode:'frames'}},undefined,turnId);
       if (data.result.image) content.push({type:'text',text:JSON.stringify({image:data.result.image,note:data.result.note,source:data.result.source})});
       content.push(...data.result.content.filter(part=>part.type==='image').map(part=>({type:'image',data:part.data,mimeType:part.mimeType})));

@@ -53,6 +53,7 @@ type MediaImageRead struct {
 	Height         int             `json:"height"`
 	OriginalWidth  int             `json:"originalWidth"`
 	OriginalHeight int             `json:"originalHeight"`
+	Inspectable    bool            `json:"inspectable,omitempty"`
 	Crop           *MediaImageCrop `json:"crop,omitempty"`
 }
 
@@ -61,6 +62,13 @@ const mediaImageCropSchema = `{"type":"object","description":"图片局部原像
 // 3 MiB becomes 4 MiB of base64, below the SDK's default 4.5 MiB inline budget.
 // This bounds payload bytes without imposing a pixel limit on detail inspection.
 const maxInlineImageBytes int64 = 3 << 20
+
+// Overview only needs a compact preview; images exceeding 256 KiB are re-encoded
+// into a <=1600px JPEG preview so multi-image overview rounds do not bloat history.
+const (
+	maxOverviewImageBytes  int64 = 256 << 10
+	maxOverviewPreviewEdge       = 1600
+)
 
 func inlineImagePart(path, mime string, source MediaSource) (MediaPart, error) {
 	if stat, err := os.Stat(path); err == nil && stat.Size() > maxInlineImageBytes {
@@ -164,8 +172,8 @@ func scaleImagePreviewJPEG(source, target string) error {
 	}
 	b := decoded.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if w > 2048 || h > 2048 {
-		scale := math.Min(2048/float64(w), 2048/float64(h))
+	if w > maxOverviewPreviewEdge || h > maxOverviewPreviewEdge {
+		scale := math.Min(float64(maxOverviewPreviewEdge)/float64(w), float64(maxOverviewPreviewEdge)/float64(h))
 		w = max(1, int(math.Round(float64(w)*scale)))
 		h = max(1, int(math.Round(float64(h)*scale)))
 	}
@@ -175,7 +183,7 @@ func scaleImagePreviewJPEG(source, target string) error {
 	if err != nil {
 		return err
 	}
-	if err := jpeg.Encode(out, dst, &jpeg.Options{Quality: 82}); err != nil {
+	if err := jpeg.Encode(out, dst, &jpeg.Options{Quality: 78}); err != nil {
 		_ = out.Close()
 		return err
 	}
@@ -219,17 +227,33 @@ func (p preparedMedia) readImage(ctx context.Context, operation string, args med
 		}
 		info.View, info.Crop, mime = "crop", crop, "image/png"
 	}
-	part, err := inlineImagePart(input, mime, result.Source)
-	if err != nil && AsError(err).Reason == "media_part_too_large" && operation == "media.overview" {
+	overviewNeedsPreview := false
+	if operation == "media.overview" && args.ImageCrop == nil {
+		if stat, statErr := os.Stat(input); statErr == nil && stat.Size() > maxOverviewImageBytes && stat.Size() <= maxInlineImageBytes {
+			overviewNeedsPreview = true
+		}
+	}
+	var part MediaPart
+	if !overviewNeedsPreview {
+		part, err = inlineImagePart(input, mime, result.Source)
+	}
+	oversizeForInspect := err != nil && AsError(err).Reason == "media_part_too_large"
+	if overviewNeedsPreview || (oversizeForInspect && operation == "media.overview") {
 		// Only a labeled overview may shrink. Inspection always keeps original pixels.
 		input = filepath.Join(p.directory, "image-preview.jpg")
 		if previewErr := scaleImagePreviewJPEG(p.input, input); previewErr != nil {
-			if _, err := imageFFmpegCommand(ctx, "-nostdin", "-v", "error", "-i", p.input, "-frames:v", "1", "-vf", "scale=w='min(iw,2048)':h='min(ih,2048)':force_original_aspect_ratio=decrease", "-q:v", "8", "-pix_fmt", "yuvj420p", "-y", input); err != nil {
+			scaleFilter := fmt.Sprintf("scale=w='min(iw,%d)':h='min(ih,%d)':force_original_aspect_ratio=decrease", maxOverviewPreviewEdge, maxOverviewPreviewEdge)
+			if _, err := imageFFmpegCommand(ctx, "-nostdin", "-v", "error", "-i", p.input, "-frames:v", "1", "-vf", scaleFilter, "-q:v", "8", "-pix_fmt", "yuvj420p", "-y", input); err != nil {
 				return MediaResult{}, err
 			}
 		}
 		info.View = "preview"
-		result.Note = "这张图片超过单次读取大小，当前仅为概览。小字和纹理等细节请用 media.inspect 的 imageCrop 分区查看原始像素；不要根据概览猜测细节。"
+		info.Inspectable = !oversizeForInspect
+		if oversizeForInspect {
+			result.Note = "这张图片超过单次读取大小，当前仅为概览。小字和纹理等细节请用 media.inspect 的 imageCrop 分区查看原始像素；不要根据概览猜测细节。"
+		} else {
+			result.Note = "当前为概览缩略图。小字和纹理等细节请用 media.inspect（mode=frames 或 imageCrop）查看原始像素；不要根据概览猜测细节。"
+		}
 		part, err = inlineImagePart(input, "image/jpeg", result.Source)
 	}
 	if err != nil {

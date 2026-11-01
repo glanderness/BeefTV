@@ -125,6 +125,28 @@ test('a readable attached image reaches the model as image content', async () =>
   expect(content.filter(part => part.type === 'image')).toEqual([{ type: 'image', data: 'AAAA', mimeType: 'image/png' }]);
 });
 
+test('attachmentContent uses media.inspect when preview is marked inspectable and falls back to overview when oversize', async () => {
+  const callsInspectable = [];
+  const inspectableOps = async (_method, path) => {
+    callsInspectable.push(path);
+    return path === '/ops/media.overview'
+      ? { result: { source: { version: 'v1' }, image: { view: 'preview', inspectable: true, width: 900, height: 1600 }, content: [{ type: 'image', data: 'PREVIEW', mimeType: 'image/jpeg' }] } }
+      : { result: { source: { version: 'v1' }, image: { view: 'original', width: 1584, height: 2816 }, content: [{ type: 'image', data: 'ORIGINAL', mimeType: 'image/jpeg' }] } };
+  };
+  const inspectableContent = await attachmentContent({ canvasId: 'c1', attachments: [{ kind: 'image', nodeId: 'n1', resourceId: 'r1' }] }, 't1', inspectableOps);
+  expect(callsInspectable).toEqual(['/ops/media.overview', '/ops/media.inspect']);
+  expect(inspectableContent.filter(part => part.type === 'image')).toEqual([{ type: 'image', data: 'ORIGINAL', mimeType: 'image/jpeg' }]);
+
+  const callsOversize = [];
+  const oversizeOps = async (_method, path) => {
+    callsOversize.push(path);
+    return { result: { source: { version: 'v1' }, image: { view: 'preview', width: 1600, height: 1200 }, note: 'use imageCrop', content: [{ type: 'image', data: 'PREVIEW_ONLY', mimeType: 'image/jpeg' }] } };
+  };
+  const oversizeContent = await attachmentContent({ canvasId: 'c1', attachments: [{ kind: 'image', nodeId: 'n1', resourceId: 'r1' }] }, 't1', oversizeOps);
+  expect(callsOversize).toEqual(['/ops/media.overview']);
+  expect(oversizeContent.filter(part => part.type === 'image')).toEqual([{ type: 'image', data: 'PREVIEW_ONLY', mimeType: 'image/jpeg' }]);
+});
+
 test('Anthropic adapter strips cross-channel thinking signatures and ephemeral cache_control on dispatch', () => {
   const payload = {
     model: 'claude-opus-5-5',
