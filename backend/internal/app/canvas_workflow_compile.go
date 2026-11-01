@@ -6,127 +6,36 @@ import (
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
-	"infinite-canvas/backend/internal/repository"
 	localtask "infinite-canvas/backend/internal/task"
-	"infinite-canvas/backend/internal/workspace"
 )
 
-// Recipe types keep their historical names for tests. Stored JSON field names
-// are the exported Go names, unchanged from the previous private types.
-type workflowBinding = cw.Binding
-type workflowRecipe = cw.Recipe
-type workflowRecipes = cw.RecipesByNode
+type (
+	workflowBinding = cw.Binding
+	workflowRecipe  = cw.Recipe
+	workflowRecipes = cw.RecipesByNode
+)
 
-func workflowMediaField(kind string) string { return cw.MediaField(kind) }
-
-func (s *Service) compileHost() cw.CompileHost { return workflowCompileHost{s} }
-
+func (s *Service) compileHost() cw.CompileHost {
+	return cw.NewCompileHost(cw.CompileHostConfig{
+		Repo: s.repo, DataDir: s.dataDir, LocalMode: s.IsLocalMode(), ManagedCredRef: managedBeefAPIRef,
+		DecryptSetting: s.decryptSettingSecret, EncryptSetting: s.encryptSettingSecret,
+		DecryptTaskInput: s.decryptTaskInputJSON, ProtectTaskSecrets: s.protectTaskSecrets,
+		ManagedCredential:  func() (string, string, error) { k, b, _, _, err := s.lookupBeefAPICredential(); return k, b, err },
+		UpscaleAvailable:   func(name string) error { _, err := s.upscaleConfig(name); return err },
+		ValidateCapability: s.ValidateTaskCapability, ModelLookup: s.channelModelLookup(),
+		DecodeShape:        func(raw []byte) (modelcatalog.TaskInput, error) { var t canvasGenerationInput; err := json.Unmarshal(raw, &t); return taskInputFromCanvas(t), err },
+		OutputCount:        func(res, kind string) int { return len(localtask.CanonicalOutputs(res, kind)) },
+		ImageRetryBlocked:  func(t *model.Task) bool { return s.validateImageTaskRetry(t) != nil },
+		FailureBlocksRetry: persistedFailureBlocksRetry,
+	})
+}
 func (s *Service) compileCanvasWorkflow(user string, d cw.Definition, existing ...model.CanvasWorkflow) (workflowRecipes, map[string]bool, error) {
-	var saved *model.CanvasWorkflow
-	if len(existing) > 0 {
-		saved = &existing[0]
-	}
-	compiled, err := cw.Compile(s.compileHost(), user, d, saved)
-	if err != nil {
-		return nil, nil, err
-	}
-	return compiled.Recipes, compiled.References, nil
+	return cw.CompileRecipes(s.compileHost(), user, d, existing...)
 }
-
-func (s *Service) materializeCanvasWorkflowRequest(user, operation string, recipe workflowRecipe, nodes map[string]cw.Node, steps map[string]*cw.Step) (CreateTaskRequest, error) {
-	request, err := cw.Materialize(s.compileHost(), user, operation, recipe, nodes, steps)
-	return createTaskRequestFromRecipe(request), err
+func (s *Service) materializeCanvasWorkflowRequest(user, op string, recipe workflowRecipe, nodes map[string]cw.Node, steps map[string]*cw.Step) (CreateTaskRequest, error) {
+	req, err := cw.Materialize(s.compileHost(), user, op, recipe, nodes, steps)
+	return createTaskRequestFromRecipe(req), err
 }
-
-func createTaskRequestFromRecipe(request cw.RecipeRequest) CreateTaskRequest {
-	return CreateTaskRequest{
-		ProjectID:      request.ProjectID,
-		Type:           request.Type,
-		Operation:      request.Operation,
-		Prompt:         request.Prompt,
-		Provider:       request.Provider,
-		Model:          request.Model,
-		LogicalModelID: request.LogicalModelID,
-		Input:          request.Input,
-	}
-}
-
-// workflowCompileHost is the app side of recipe compilation: secrets, the
-// local provider snapshot, and the checks that stay next to task admission.
-type workflowCompileHost struct{ s *Service }
-
-func (h workflowCompileHost) DecryptSetting(value string) (string, error) {
-	return h.s.decryptSettingSecret(value)
-}
-func (h workflowCompileHost) EncryptSetting(value string) (string, error) {
-	return h.s.encryptSettingSecret(value)
-}
-func (h workflowCompileHost) DecryptTaskInput(raw string) (string, error) {
-	return h.s.decryptTaskInputJSON(raw)
-}
-func (h workflowCompileHost) ProtectTaskSecrets(value any) error {
-	return h.s.protectTaskSecrets(value)
-}
-func (h workflowCompileHost) ProviderConfig() (map[string]any, error) {
-	store, err := workspace.NewProviderConfig(h.s.dataDir)
-	if err != nil {
-		return nil, err
-	}
-	effective, _, err := store.LoadEffectiveModelConfig()
-	if err != nil {
-		return nil, workflowBad("本地模型配置不可读，请在设置中恢复配置后再运行工作流")
-	}
-	return effective.Config, nil
-}
-func (h workflowCompileHost) LocalMode() bool { return h.s.IsLocalMode() }
-func (h workflowCompileHost) ManagedCredential() (string, string, error) {
-	key, base, _, _, err := h.s.lookupBeefAPICredential()
-	return key, base, err
-}
-func (h workflowCompileHost) ManagedCredentialRef() string { return managedBeefAPIRef }
-func (h workflowCompileHost) UpscaleAvailable(name string) error {
-	_, err := h.s.upscaleConfig(name)
-	return err
-}
-func (h workflowCompileHost) ValidateProviderCapability(input map[string]any) error {
-	return h.s.ValidateTaskCapability(input)
-}
-func (h workflowCompileHost) ValidateTaskShape(input map[string]any) (string, bool, error) {
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return "", false, err
-	}
-	var taskInput canvasGenerationInput
-	if err = json.Unmarshal(encoded, &taskInput); err != nil {
-		return "", false, err
-	}
-	shape := taskInputFromCanvas(taskInput)
-	shape.DeferReferenceMetadata = true
-	validated, err := modelcatalog.ValidateConfiguredTask(shape, h.s.channelModelLookup())
-	if err != nil {
-		return "", false, err
-	}
-	_, ok := input["config"].(map[string]any)
-	return validated.Config.VQuality, ok, nil
-}
-func (h workflowCompileHost) SourceTask(user, id string) (*model.Task, error) {
-	return h.s.repo.TaskForUser(user, id)
-}
-func (h workflowCompileHost) Repository() *repository.Repository { return h.s.repo }
-
-func (h workflowCompileHost) OutputCount(resultJSON, taskType string) int {
-	return len(localtask.CanonicalOutputs(resultJSON, taskType))
-}
-func (h workflowCompileHost) ImageRetryBlocked(task *model.Task) bool {
-	return h.s.validateImageTaskRetry(task) != nil
-}
-func (h workflowCompileHost) ImageCreateAccepted(user, taskID string) (bool, error) {
-	receipt, err := h.s.repo.ImageCreateReceipt(user, taskID)
-	if err != nil {
-		return false, err
-	}
-	return receipt != nil && receipt.StatusCode < 300, nil
-}
-func (h workflowCompileHost) PersistedFailureBlocksRetry(message, stage string) bool {
-	return persistedFailureBlocksRetry(message, stage)
+func createTaskRequestFromRecipe(r cw.RecipeRequest) CreateTaskRequest {
+	return CreateTaskRequest{ProjectID: r.ProjectID, Type: r.Type, Operation: r.Operation, Prompt: r.Prompt, Provider: r.Provider, Model: r.Model, LogicalModelID: r.LogicalModelID, Input: r.Input}
 }
