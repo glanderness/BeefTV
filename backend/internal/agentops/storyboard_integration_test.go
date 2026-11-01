@@ -132,7 +132,7 @@ func TestStoryboardRowUpdateBindsOutputNodesAndUndoRestores(t *testing.T) {
 	if !reflect.DeepEqual(state.Change.UpdatedNodeIDs, []string{"n1"}) || !reflect.DeepEqual(state.Change.CreatedEdgeIDs, created) || !reflect.DeepEqual(state.Change.DeletedEdgeIDs, wantDeleted) {
 		t.Fatalf("change accounting: %+v", state.Change)
 	}
-	if _, err := h.service.UndoAssistantTurn(h.userID, h.canvasID, turn); err != nil {
+	if _, err := h.service.AssistantTurns().Undo(h.userID, h.canvasID, turn); err != nil {
 		t.Fatal(err)
 	}
 	restored := h.canvas(t)
@@ -203,7 +203,7 @@ func TestStoryboardOperationsReceiptReplayAndUndo(t *testing.T) {
 					t.Fatal("removed row left dangling edges or deleted unrelated edges")
 				}
 			}
-			if _, err := h.service.UndoAssistantTurn(h.userID, h.canvasID, turn); err != nil {
+			if _, err := h.service.AssistantTurns().Undo(h.userID, h.canvasID, turn); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(before["nodes"], h.canvas(t)["nodes"]) {

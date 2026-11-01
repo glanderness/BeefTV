@@ -72,7 +72,7 @@ func installedSkillLabels(svc *app.Service, userID string) func() []skills.Pin {
 			return pins
 		}
 		loaded = true
-		catalog, err := svc.AgentSkillCatalog(userID)
+		catalog, err := svc.SkillsDomain().AgentCatalog(userID)
 		if err != nil {
 			return nil
 		}

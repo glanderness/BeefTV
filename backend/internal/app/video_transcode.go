@@ -33,12 +33,6 @@ func (s *Service) maybeStartPlaybackTranscode(resource *model.Resource) {
 	s.playbackRuntime().MaybeStart(resource)
 }
 
-// OpenResourcePlaybackRange 打开浏览器兼容播放副本（本地 ffmpeg 转码的 H.264）。
-// 仅当资源为本地存储且副本 ready 时可用；否则返回 ErrPlaybackNotReady，调用方回退原件。
-func (s *Service) OpenResourcePlaybackRange(userID string, resourceID string) (*ResourceStream, error) {
-	return s.playbackRuntime().OpenRange(userID, resourceID)
-}
-
 // RecoverPlaybackTranscodes recovers interrupted claims without eagerly
 // converting the library. The browser requests a copy only when needed.
 func (s *Service) RecoverPlaybackTranscodes() {
@@ -54,8 +48,4 @@ func (s *Service) PrepareResourcePlayback(userID, resourceID string) (*model.Res
 		return nil, err
 	}
 	return s.Resource(userID, resourceID)
-}
-
-func (s *Service) ClearVideoPreviewCache(userID string) (int, error) {
-	return s.playbackRuntime().ClearCache(userID)
 }

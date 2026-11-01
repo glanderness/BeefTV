@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
 import { resolveImageUrl } from "@/services/image-storage";
 import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey } from "@/services/canvas-video-preview";
-import { captureUserScopeEpoch, getUserScopeGeneration, subscribeUserScope, userScopeEpochMatches } from "@/lib/user-scope";
 
 type ResolvedPreview = {
     identity: string;
@@ -20,19 +19,17 @@ function releaseRequest(request: PreviewRequest) {
 }
 
 const previewPromiseCache = new Map<string, Promise<string>>();
-subscribeUserScope(() => previewPromiseCache.clear());
 
 export function useResolvedCanvasResourceReferences(references: CanvasResourceReference[], options?: { projectId?: string; videoPreviewEnabled?: boolean }) {
     const projectId = options?.projectId;
     const videoPreviewEnabled = options?.videoPreviewEnabled;
-    const scopeGeneration = useSyncExternalStore(subscribeUserScope, getUserScopeGeneration, getUserScopeGeneration);
     const requests = useMemo(
         () => references.flatMap((reference) => {
             const identity = previewIdentity(reference, projectId);
             const decodeVideo = videoPreviewEnabled ?? reference.active;
-            return identity ? [{ reference, decodeVideo, identity: JSON.stringify([reference.id, scopeGeneration, identity, reference.kind === "video" && decodeVideo]) }] : [];
+            return identity ? [{ reference, decodeVideo, identity: JSON.stringify([reference.id, identity, reference.kind === "video" && decodeVideo]) }] : [];
         }),
-        [projectId, references, scopeGeneration, videoPreviewEnabled],
+        [projectId, references, videoPreviewEnabled],
     );
     const [resolvedById, setResolvedById] = useState<Record<string, ResolvedPreview>>({});
     const inFlight = useRef(new Map<string, PreviewRequest>());
@@ -49,12 +46,11 @@ export function useResolvedCanvasResourceReferences(references: CanvasResourceRe
             releaseRequest(request);
             inFlight.current.delete(key);
         }
-        const epoch = captureUserScopeEpoch();
         requests.forEach(({ reference, identity, decodeVideo }) => {
             if (inFlight.current.has(identity)) return;
             const request: PreviewRequest = { cancelled: false };
             inFlight.current.set(identity, request);
-            const isCurrent = () => !request.cancelled && userScopeEpochMatches(epoch);
+            const isCurrent = () => !request.cancelled;
             void (async () => {
                 let url = await resolveReferencePreview(reference, identity, projectId);
                 if (!isCurrent()) return;
@@ -82,15 +78,15 @@ export function useResolvedCanvasResourceReferences(references: CanvasResourceRe
         () => references.map((reference) => {
             const key = previewIdentity(reference, projectId);
             const decodeVideo = videoPreviewEnabled ?? reference.active;
-            const identity = key ? JSON.stringify([reference.id, scopeGeneration, key, reference.kind === "video" && decodeVideo]) : "";
+            const identity = key ? JSON.stringify([reference.id, key, reference.kind === "video" && decodeVideo]) : "";
             const resolved = identity ? resolvedById[reference.id] : undefined;
             const owned = resolved?.identity === identity && inFlight.current.get(identity) === resolved.owner && !resolved.owner.cancelled;
             if (owned) return resolved.url !== reference.previewUrl ? { ...reference, previewUrl: resolved.url } : reference;
             // Never render a derived URL without an active owner, including the
-            // first render after scrolling back or switching user scope.
+            // first render after scrolling back.
             return reference.videoPreviewSource && !reference.previewStorageKey && reference.previewUrl?.startsWith("blob:") ? { ...reference, previewUrl: undefined } : reference;
         }),
-        [projectId, references, resolvedById, scopeGeneration, videoPreviewEnabled],
+        [projectId, references, resolvedById, videoPreviewEnabled],
     );
 }
 

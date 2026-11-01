@@ -4,12 +4,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/providerpreset"
+	"infinite-canvas/backend/internal/modelcatalog"
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
@@ -20,35 +21,62 @@ func (s *Service) validateResolvedVideoCapabilityContext(ctx context.Context, in
 	if err := s.resolveVideoCapability(ctx, input); err != nil {
 		return err
 	}
-	if input.VideoCapability == nil {
+	if strings.TrimSpace(input.Config.ChannelID) == "" || input.VideoCapability == nil {
 		return nil
 	}
 	return validateVideoTask(input.VideoCapability, *input)
 }
 
 func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGenerationInput) error {
-	if isBeefAPIVideoConfig(ctx, input.Config) {
-		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
-			for _, ref := range []struct {
-				kind, label string
-				count       int
-			}{
-				{"image", "图片", len(input.ReferenceImages)}, {"video", "视频", len(input.ReferenceVideos)}, {"audio", "音频", len(input.ReferenceAudios)},
-			} {
-				if limit, bounded := contract.MaxReferences[ref.kind]; bounded && ref.count > limit {
-					if limit == 0 {
-						return BadAuthRequest(fmt.Sprintf("当前模型暂不支持参考%s，请移除此素材或选择支持该素材的模型", ref.label))
-					}
-					return BadAuthRequest(fmt.Sprintf("当前模型最多支持 %d 个参考%s，请移除多余素材后重新生成", limit, ref.label))
-				}
-			}
+	if input.Config.CredentialRef == managedBeefAPIRef {
+		body, err := s.ReadLocalModelConfig()
+		if err != nil {
+			return err
 		}
+		// Only the saved account catalog can authorize a managed submission;
+		// request-supplied versions and profiles are not trusted capabilities.
+		input.Config.VideoCapabilitiesVersion = nil
+		input.Config.CapabilityConfig = nil
+		for _, item := range modelcatalog.ParseLocalChannelModels(body) {
+			if item.ChannelID != "beefapi" || !item.Enabled || item.Model != input.Config.Model || item.VideoCapabilitiesVersion == nil || strings.TrimSpace(*item.VideoCapabilitiesVersion) == "" {
+				continue
+			}
+			config, _ := item.CapabilityConfig.(map[string]any)
+			rawVideo, _ := json.Marshal(config["video"])
+			video, valid := beefapi.NormalizeVersionedVideoCapability(rawVideo, *item.VideoCapabilitiesVersion)
+			if !valid {
+				continue
+			}
+			raw, err := json.Marshal(map[string]any{"version": 1, "video": video})
+			if err != nil {
+				return err
+			}
+			input.Config.CapabilityConfig, err = DecodeModelCapabilityConfig(string(raw))
+			if err != nil {
+				return err
+			}
+			input.Config.VideoCapabilitiesVersion = item.VideoCapabilitiesVersion
+			break
+		}
+		if input.Config.VideoCapabilitiesVersion == nil {
+			return nil
+		}
+	}
+	if input.Config.VideoCapabilitiesVersion != nil && strings.TrimSpace(*input.Config.VideoCapabilitiesVersion) != "" {
+		profile := input.Config.CapabilityConfig
+		if profile == nil || profile.Video == nil || modelcatalog.ValidateVideoCapabilityConfig(profile.Video) != nil {
+			input.VideoCapability = nil
+			return nil
+		}
+		input.VideoCapability = profile.Video
+		applyFixedVideoResolution(input, profile.Video)
+		return nil
 	}
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		profile := input.Config.CapabilityConfig
 		if profile == nil || profile.Video == nil {
-			seedance2 := isSeedance2Family(input.Config.InterfaceType, input.Config.Model)
+			seedance2 := modelcatalog.IsSeedance2Family(input.Config.InterfaceType, input.Config.Model)
 			if input.Config.InterfaceType != string(model.ChannelInterfaceAgnesVideo) && !seedance2 {
 				return nil
 			}
@@ -56,7 +84,7 @@ func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGener
 		}
 		normalized, err := NormalizeModelCapabilityConfigForModel("video", input.Config.InterfaceType, input.Config.Model, profile)
 		if err != nil || normalized == nil || normalized.Video == nil {
-			return errors.New("当前视频模型能力参数无效")
+			return nil
 		}
 		input.Config.CapabilityConfig = normalized
 		restoreBeefAPISeedanceAudioControl(ctx, input.Config, normalized.Video)

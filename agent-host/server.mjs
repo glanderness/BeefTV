@@ -9,7 +9,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId, publicDurableTurn } from './durable-session-owner.mjs';
-import { createDurableTextProjection } from './durable-stream-text.mjs';
+import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
@@ -17,7 +17,7 @@ import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { createLegacyHistory } from './session-owner.mjs';
-import { adaptMediaRequest, trustedMediaSources, mediaCapabilityContext } from './media-content.mjs';
+import { adaptMediaRequest, attachmentContent, trustedMediaSources, mediaCapabilityContext } from './media-content.mjs';
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
@@ -253,17 +253,17 @@ function emitDurable(entry, event) {
   const events = durableStreamEvents(event, entry.lifecycle);
   entry.lifecycle = durableLifecycleState(entry.lifecycle, event);
   if (event.type === 'plan') entry.livePlan = event.plan;
-  const text = entry.textProjection.accept(event);
-  for (const payload of [...(text ? [text] : []), ...events]) for (const listener of entry.listeners || []) listener(payload);
+  const projected = entry.turnProjection.accept(event);
+  for (const payload of [...projected, ...events]) for (const listener of entry.listeners || []) listener(payload);
 }
 function followDurable(entry, submission) {
   if (!entry.running) {
     entry.listeners = new Set();
     entry.lifecycle = null;
-    entry.textProjection = createDurableTextProjection();
+    entry.turnProjection = createDurableTurnProjection();
     entry.livePlan = entry.turn.plan ?? null;
     const ready = Promise.withResolvers();
-    entry.textProjectionReady = ready.promise;
+    entry.turnProjectionReady = ready.promise;
     entry.running = durable.wait(entry, submission, {onEvent:event=>{
       emitDurable(entry,event);
       if (event.type === 'snapshot') ready.resolve();
@@ -276,31 +276,15 @@ function followDurable(entry, submission) {
 }
 
 async function waitForDurableProjection(entry) {
-  if (entry.textProjection?.initialized || !entry.textProjectionReady) return;
+  if (entry.turnProjection?.initialized || !entry.turnProjectionReady) return;
   // Only wait for the initial official snapshot, never the model's completion.
   // On storage delay/failure omit streamed instead of publishing a false empty value.
   let timer;
   try {
-    await Promise.race([entry.textProjectionReady, new Promise(resolve => {
+    await Promise.race([entry.turnProjectionReady, new Promise(resolve => {
       timer = setTimeout(resolve, 1000);
     })]);
   } finally { clearTimeout(timer); }
-}
-
-async function attachmentContent(body, turnId) {
-  const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
-  for (const attachment of body.attachments || []) {
-    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。使用 media.inspect 读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
-    if (attachment.kind === 'image') {
-      const reference = {canvasId:body.canvasId,
-        ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
-      const overview = await ops.opsRequest('POST','/ops/media.overview',{params:reference},undefined,turnId);
-      const data = await ops.opsRequest('POST','/ops/media.inspect',{params:{...reference,
-        expectedVersion:overview.result.source.version,mode:'frames'}},undefined,turnId);
-      content.push(...data.result.content.filter(part=>part.type==='image').map(part=>({type:'image',data:part.data,mimeType:part.mimeType})));
-    }
-  }
-  return content;
 }
 
 function sendLine(res, payload) { res.write(JSON.stringify(payload) + '\n'); }
@@ -476,7 +460,11 @@ const server = http.createServer(async (req, res) => {
         await waitForDurableProjection(entry);
         const value = await durable.history(canvasId,sessionId);
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
-        if (value.active && entry.textProjection?.initialized) value.active.streamed = entry.textProjection.text;
+        if (value.active && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
+        // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
+        // 投影初始化之后思考是权威值：清空后必须写空数组，轮询才能撤掉上一次读到的旧思考；
+        // 没拿到初始投影时仍然省略字段，不把尚未观测到的状态当成确定空值。
+        if (value.active && entry.turnProjection?.initialized) value.active.reasoning = entry.turnProjection.reasoning;
         respond(res,200,value); return;
       }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
@@ -540,7 +528,7 @@ const server = http.createServer(async (req, res) => {
       }
       const pending = durable.beginPendingInput(entry);
       try {
-        const content = await attachmentContent(body,entry.turn.turnId);
+        const content = await attachmentContent(body,entry.turn.turnId,ops.opsRequest);
         await durable.supplement(entry,{requestId:body.requestId || crypto.randomUUID(),content,input:body});
         pending.resolve();
         respond(res,202,{accepted:true}); return;
@@ -587,7 +575,7 @@ const server = http.createServer(async (req, res) => {
         ? await durable.ensureSession(canvasId,chosen)
         : chosen ? await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen)
           : await durable.ensureSession(canvasId);
-      const content = await attachmentContent(body,turnId);
+      const content = await attachmentContent(body,turnId,ops.opsRequest);
       content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
       const submission = await durable.submit(entry,{...body,content,userText,revisionBefore,requestId});
       res.durableTurn = true;
@@ -602,7 +590,8 @@ const server = http.createServer(async (req, res) => {
       const listener = payload=>{ if (!res.destroyed) sendLine(res,payload); };
       entry.listeners.add(listener);
       // A repeated request re-attaches to a running turn: show its current progress first.
-      if (entry.textProjection.initialized) listener({ type: 'text_snapshot', text: entry.textProjection.text });
+      if (entry.turnProjection.initialized) listener({ type: 'text_snapshot', text: entry.turnProjection.text });
+      if (entry.turnProjection.reasoning.length) listener({ type: 'reasoning_snapshot', segments: entry.turnProjection.reasoning });
       listener({ type: 'plan', plan: entry.livePlan });
       if (entry.lifecycle) listener(entry.lifecycle);
       try {

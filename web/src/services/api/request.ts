@@ -1,6 +1,5 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
-import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
@@ -87,7 +86,7 @@ export async function request<T>(promise: Promise<{ data: BackendEnvelope<T>; st
 }
 
 function unwrapTransportError(error: unknown): never {
-    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError") || isUserScopeAbandonedError(error)) {
+    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError")) {
         throw error;
     }
     if (axios.isCancel(error) || (axios.isAxiosError(error) && error.code === axios.AxiosError.ERR_CANCELED)) {
@@ -149,24 +148,10 @@ function retryAfterMilliseconds(headers: unknown) {
     return Math.max(0, retryAt - Date.now());
 }
 
-export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL"> & {
-    expectedScope?: CapturedUserScope;
-};
+export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL">;
 
-function assertExpectedHttpScope(config?: { expectedScope?: CapturedUserScope }) {
-    if (config?.expectedScope) assertUserScope(config.expectedScope);
-}
-
-apiClient.interceptors.request.use((config) => {
-    assertExpectedHttpScope(config as HttpRequestConfig);
-    return config;
-});
-
-async function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
-    assertExpectedHttpScope(config);
-    const result = await request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
-    assertExpectedHttpScope(config);
-    return result;
+function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
+    return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
 }
 
 /**
@@ -179,12 +164,9 @@ export const http = {
     put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("put", url, data, config),
     patch: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("patch", url, data, config),
     delete: <T>(url: string, config?: HttpRequestConfig) => send<T>("delete", url, undefined, config),
-    async raw<T>(config: AxiosRequestConfig & { expectedScope?: CapturedUserScope }): Promise<AxiosResponse<T>> {
+    async raw<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
         try {
-            assertExpectedHttpScope(config);
-            const result = await apiClient.request<T>(config);
-            assertExpectedHttpScope(config);
-            return result;
+            return await apiClient.request<T>(config);
         } catch (error) {
             throw unwrapTransportError(error);
         }

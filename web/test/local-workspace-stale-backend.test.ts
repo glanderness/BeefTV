@@ -32,7 +32,6 @@ const assetStubPath = join(dir, "use-asset-store.ts");
 const modeStubPath = join(dir, "workspace-mode.ts");
 const resourcesStubPath = join(dir, "api-resources.ts");
 const userScopeStubPath = join(dir, "user-scope.ts");
-const userScopeGuardStubPath = join(dir, "user-scope-guard.ts");
 const canvasContentStubPath = join(dir, "canvas-content.ts");
 const rebaseStubPath = join(dir, "canvas-document-rebase.ts");
 
@@ -83,9 +82,8 @@ writeFileSync(historyPath, "export const useCanvasHistoryStore = { getState: () 
 writeFileSync(syncStubPath, "export const notifyCanvasRefresh = () => {};\n");
 writeFileSync(conflictStubPath, `
 export class CanvasBackendSubmitPausedError extends Error { constructor(message = "") { super(message); this.name = "CanvasBackendSubmitPausedError"; } }
-export class CanvasStaleScopeError extends Error { constructor(message = "") { super(message); this.name = "CanvasStaleScopeError"; } }
 export const isCanvasRevisionConflict = () => false;
-export const isCanvasSubmitControlError = (error) => error instanceof CanvasBackendSubmitPausedError || error instanceof CanvasStaleScopeError;
+export const isCanvasSubmitControlError = (error) => error instanceof CanvasBackendSubmitPausedError;
 export const canvasBackendSubmitPaused = () => false;
 export const pauseCanvasBackendSubmit = () => {};
 export const resumeCanvasBackendSubmit = () => {};
@@ -97,13 +95,7 @@ export const clearCanvasBackendSaveProgress = () => {};
 writeFileSync(assetStubPath, "export const useAssetStore = { getState: () => ({ assets: [] }) };\n");
 writeFileSync(modeStubPath, "export const isLocalWorkspaceMode = () => true;\n");
 writeFileSync(resourcesStubPath, "export const resourceIdFromStorageKey = () => '';\n");
-writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\nexport const getActiveUserScopeEpoch = () => 1;\n");
-writeFileSync(userScopeGuardStubPath, `
-export function captureUserScope(userScope = "guest", epoch = 1) { return { userScope, epoch }; }
-export function userScopeMatches() { return true; }
-export function assertUserScope() {}
-export function isUserScopeAbandonedError() { return false; }
-`);
+writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\n");
 writeFileSync(canvasContentStubPath, `
 export const sameCanvasDocument = (left, right) => {
   if (left === right) return true;
@@ -184,7 +176,6 @@ writeFileSync(join(dir, "repository.ts"), repositorySource
     .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetStubPath).href))
     .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modeStubPath).href))
     .replaceAll('"@/lib/user-scope"', JSON.stringify(pathToFileURL(userScopeStubPath).href))
-    .replaceAll('"@/lib/user-scope-guard"', JSON.stringify(pathToFileURL(userScopeGuardStubPath).href))
     .replace('"@/lib/canvas/canvas-content"', JSON.stringify(pathToFileURL(canvasContentStubPath).href))
     .replace('"@/lib/canvas/canvas-document-rebase"', JSON.stringify(pathToFileURL(rebaseStubPath).href))
     .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesStubPath).href)));

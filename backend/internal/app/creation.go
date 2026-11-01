@@ -53,14 +53,6 @@ func (s *Service) CreateCreationRun(userID string, req CreationRequest) (*Creati
 	return s.creationDomain().CreateRun(userID, toCreationCommand(req))
 }
 
-func (s *Service) GetCreationRun(userID, id string) (*CreationDetail, error) {
-	return s.creationDomain().Get(userID, id)
-}
-
-func (s *Service) ListCreationRuns(userID string) (map[string]any, error) {
-	return s.creationDomain().List(userID)
-}
-
 func (s *Service) ChangeCreationRun(userID, id, action string, req CreationRequest) (any, error) {
 	if action == "save" || action == "proposal-approve" || action == "proposal-invalidate" {
 		s.storageMu.Lock()

@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { buildStudioDigest, describeChangesSince, nodeState, snapshotOf } from './studio-digest.mjs';
+import {
+  buildStudioDigest,
+  describeChangesSince,
+  isTransientStudioTailMessage,
+   nodeState,
+  normalizeSystemHeaderMessages,
+  snapshotOf,
+  withCurrentStudio,
+} from './studio-digest.mjs';
 
 const media = (id, type, title, meta = {}) => ({ id, type, title, metadata: meta });
 const board = (rows) => ({ id: 'board-1', type: 'script', title: '13楼的外卖', metadata: { storyboard: { rows } } });
@@ -51,6 +59,15 @@ describe('buildStudioDigest', () => {
   test('空画布', () => {
     expect(buildStudioDigest({ revision: 0, nodes: [], connections: [] }).text).toContain('画布是空的');
   });
+  test('文本节点的身份与当前正文预览可见，长文仍需按版本读取原文', () => {
+    const { text } = buildStudioDigest({ revision: 23, nodes: [media('brief', 'text', '用户刚修改的要求', { content: '保持角色一致性。'.repeat(40) })] });
+    expect(text).toContain('brief');
+    expect(text).toContain('用户刚修改的要求');
+    expect(text).toContain('保持角色一致性');
+    expect(text).toContain('预览');
+    expect(text).toContain('canvas_get');
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(3600);
+  });
 });
 
 describe('describeChangesSince', () => {
@@ -81,5 +98,53 @@ describe('describeChangesSince', () => {
   test('列表过长时压缩成“等 N 个”', () => {
     const many = (suffix) => snapshotOf(Array.from({ length: 9 }, (_, i) => media(`n${i}`, 'text', `节点${i}`, { content: suffix })));
     expect(describeChangesSince(many('旧'), many('新'))).toContain('等 9 个');
+  });
+});
+
+describe('normalizeSystemHeaderMessages & withCurrentStudio', () => {
+  test('头部只保留 instructions 与 beeftv_skill_catalog，保留后续工具增量，且不丢弃以标签开头的真实用户消息', () => {
+    const toolDef = { name: 'extra_tool', description: 'extra', parameters: { type: 'object', properties: {} } };
+    const messages = [
+      {
+        role: 'system',
+        content: 'legacy prefix',
+        sections: {
+          beeftv_skill_catalog: 'CAT',
+          instructions: 'INSTR',
+          beeftv_studio: 'OLD_STUDIO',
+          unknown_sec: 'NOPE',
+        },
+      },
+      {
+        role: 'system',
+        content: 'mid convo text',
+        toolsAdded: [toolDef],
+        sections: { beeftv_plan: 'OLD_PLAN' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<beeftv_plan>\n用户自己贴的计划文本\n</beeftv_plan>' }],
+      },
+    ];
+
+    const once = withCurrentStudio(messages, '[制作现场｜画布版本 1｜本轮请求前的实际状态]\n概况：画布是空的。', {
+      planText: '当前制作计划：所有步骤已完成。',
+    });
+    expect(once[0].content).toBe('');
+    expect(Object.keys(once[0].sections)).toEqual(['instructions', 'beeftv_skill_catalog']);
+    expect(once[1].role).toBe('system');
+    expect(once[1].content).toBe('');
+    expect(once[1].sections).toBeUndefined();
+    expect(once[1].toolsAdded).toEqual([toolDef]);
+    // 真实用户消息即使以 <beeftv_plan> 开头也必须完整保留
+    expect(once[2].role).toBe('user');
+    expect(once[2].content[0].text).toContain('用户自己贴的计划文本');
+    expect(isTransientStudioTailMessage(once[3])).toBe(true);
+
+    // 再次叠加时只替换末尾生成的 transientStudioTail，不误删用户的消息
+    const twice = withCurrentStudio(once, '[制作现场｜画布版本 2｜本轮请求前的实际状态]\n概况：画布是空的。');
+    expect(twice.length).toBe(4);
+    expect(twice[2].content[0].text).toContain('用户自己贴的计划文本');
+    expect(twice[3].content[0].text).toContain('画布版本 2');
   });
 });

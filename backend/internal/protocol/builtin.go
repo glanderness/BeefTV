@@ -487,9 +487,6 @@ func buildAgnesV25Body(r GenerationRequest) (map[string]any, error) {
 		return nil, fmt.Errorf("Agnes 2.5 mode 必须是 text、keyframe 或 reference")
 	}
 	seconds := defaultInt(r.Duration, 5)
-	if seconds < 4 || seconds > 12 {
-		return nil, fmt.Errorf("Agnes 2.5 seconds 必须在 4 到 12 秒之间")
-	}
 	size, err := normalizeAgnesV25Resolution(defaultValue(r.Resolution, firstString(r.Extra, "size")))
 	if err != nil {
 		return nil, err

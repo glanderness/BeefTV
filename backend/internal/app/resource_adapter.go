@@ -4,68 +4,6 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-// resourceQuota and resourceLifecycle are typed adapters so the asset domain
-// does not receive Service method values as callbacks.
-type resourceQuota struct {
-	svc *Service
-}
-
-func (q resourceQuota) ReserveUpload(userID string, size int64, identity string) (string, error) {
-	if q.svc == nil {
-		return "", nil
-	}
-	return q.svc.reserveUserUploadQuotaFor(userID, size, identity)
-}
-
-func (q resourceQuota) ReserveChunked(userID string, size int64, identity string) (string, error) {
-	if q.svc == nil {
-		return "", nil
-	}
-	return q.svc.reserveChunkedUploadQuotaFor(userID, size, identity)
-}
-
-func (q resourceQuota) ReserveRetry(userID string, size int64, identity string) (string, error) {
-	if q.svc == nil {
-		return "", nil
-	}
-	return q.svc.reserveRetryUploadQuotaFor(userID, size, identity)
-}
-
-func (q resourceQuota) ReserveGenerated(userID string, size int64, identity string) (string, error) {
-	if q.svc == nil {
-		return "", nil
-	}
-	return q.svc.reserveGeneratedResourceQuotaFor(userID, size, identity)
-}
-
-func (q resourceQuota) ReserveGeneratedRetry(userID string, size int64, identity string) (string, error) {
-	if q.svc == nil {
-		return "", nil
-	}
-	return q.svc.reserveRetryGeneratedQuotaFor(userID, size, identity)
-}
-
-func (q resourceQuota) Release(userID string, day string, size int64, identity string) {
-	if q.svc == nil {
-		return
-	}
-	q.svc.releaseUserUploadQuotaFor(userID, day, size, identity)
-}
-
-func (q resourceQuota) ReleaseRetry(userID string, day string, size int64, identity string) {
-	if q.svc == nil {
-		return
-	}
-	q.svc.releaseRetryUploadQuotaFor(userID, day, size, identity)
-}
-
-func (q resourceQuota) Commit(userID string, size int64, identity string) {
-	if q.svc == nil {
-		return
-	}
-	q.svc.commitUserUploadQuotaFor(userID, size, identity)
-}
-
 type resourceLifecycle struct {
 	svc *Service
 }

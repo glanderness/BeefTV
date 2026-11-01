@@ -2,7 +2,6 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useResolvedCanvasResourceReferences } from "@/components/canvas/use-resolved-canvas-resource-references";
 import { acquireCanvasVideoPreview } from "@/services/canvas-video-preview";
-import { setActiveUserScope } from "@/lib/user-scope";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 
@@ -12,7 +11,6 @@ harness.pending = new Map();
 harness.revoked = [];
 const revoke = URL.revokeObjectURL.bind(URL);
 URL.revokeObjectURL = (url) => { harness.revoked.push(url); revoke(url); };
-harness.switchScope = setActiveUserScope;
 const held: ReturnType<typeof acquireCanvasVideoPreview>[] = [];
 harness.holdVideo = async (id: string) => {
     const lease = acquireCanvasVideoPreview({ metadata: { content: id } });

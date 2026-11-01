@@ -11,6 +11,9 @@ import (
 	localtask "infinite-canvas/backend/internal/task"
 )
 
+// Creation exposes the domain service to the HTTP composition layer.
+func (s *Service) Creation() *creation.Service { return s.creationDomain() }
+
 func (s *Service) creationDomain() *creation.Service {
 	return creation.New(s.repo, creation.Dependencies{
 		Tasks:   creationTasksAdapter{s},

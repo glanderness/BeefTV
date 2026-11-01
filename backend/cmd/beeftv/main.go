@@ -179,9 +179,13 @@ func (c *client) do(ctx context.Context, method, path string, body any) (json.Ra
 		return nil, &cliError{code: exitTransportFailure, reason: "transport_failed", msg: fmt.Sprintf("无法连接本地工作区 %s：%v", base, err)}
 	}
 	defer resp.Body.Close()
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	// 单段媒体最多 8 MiB，转成 base64 加上 JSON 约 11 MiB；上限要能放下一整段，超出时明确报错，不截断后再解析失败。
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxWorkspaceResponseBytes+1))
 	if readErr != nil {
 		return nil, &cliError{code: exitTransportFailure, reason: "read_failed", msg: readErr.Error()}
+	}
+	if len(raw) > maxWorkspaceResponseBytes {
+		return nil, &cliError{code: exitInternal, reason: "response_too_large", msg: "工作区返回的结果超过 24 MiB，请缩小媒体检查区间或减少检查模式"}
 	}
 	if resp.StatusCode == http.StatusOK {
 		var envelope struct {
@@ -272,6 +276,9 @@ func (c *client) listOpsCtx(ctx context.Context, readOnly bool) ([]opDescriptor,
 func (c *client) callOp(opID, requestID string, params json.RawMessage) (json.RawMessage, error) {
 	return c.callOpCtx(context.Background(), opID, requestID, params)
 }
+
+// maxWorkspaceResponseBytes bounds one workspace JSON response read by the CLI.
+const maxWorkspaceResponseBytes = 24 << 20
 
 func (c *client) callOpCtx(ctx context.Context, opID, requestID string, params json.RawMessage) (json.RawMessage, error) {
 	body := map[string]any{"opId": requestID, "params": json.RawMessage(params)}
@@ -391,8 +398,8 @@ func usage() {
   beeftv ops [--read-only] [--json]
   beeftv ops call <operation> --params '<json>' [--operation-id <id>] [--json]
   beeftv business discover
-  beeftv business call --tool <id> --params '<path/query/body json>'
-  beeftv business upload --file <path> [--target resource|skill|plugin] [--params '<json>']
+  beeftv business call --tool <id> --params '<path/query/body json>' [--operation-id <id>]
+  beeftv business upload --file <path> [--target resource|skill|plugin] [--params '<json>'] [--operation-id <id>]
   beeftv canvas get --canvas <id> [--json]
   beeftv canvas search [--query <q>] [--page N] [--page-size N] [--json]
   beeftv canvas node update --canvas <id> --node <id> --expected-revision N [--title T] [--prompt P] [--content C] --op-id <id>
@@ -402,7 +409,7 @@ func usage() {
   beeftv asset get --asset <id> [--json]
   beeftv task get --task <id> [--json]
   beeftv client register --label <label> [--kind codex|claude|cursor|other] [--mode read-only|read-write]
-  beeftv mcp serve [--read-only]
+  beeftv mcp serve [--read-only] [--all-business-tools]
 
 连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用，端口是动态的。
 BEEFTV_DATA_DIR 可以指向非默认数据目录。Windows 从用户目录下 .beeftv/runtime 读取对应
@@ -410,9 +417,12 @@ BEEFTV_DATA_DIR 可以指向非默认数据目录。Windows 从用户目录下 .
 
 凭据：在 BeefTV 的设置里新建一个客户端，把它给出的 BEEFTV_CLIENT_ID 与 BEEFTV_CLIENT_TOKEN
 填进环境变量即可，不需要桌面令牌。新连接默认开放全部业务工具，操作审批由外部 Agent 管理。
+MCP 默认只列出画布、素材、媒体与技能操作，底层业务接口通过 business.list 查找、business.call 调用；
+需要把每个底层接口单独列成工具时加 --all-business-tools（或设 BEEFTV_MCP_ALL_BUSINESS_TOOLS=1）。
 历史只读凭据继续保持只读；CLI 仍支持显式签发只读凭据。
 
-写操作必须带幂等键（CLI 的 --op-id，MCP 工具参数里的 operationId）：重试同一操作要复用同一个值。
+写操作必须带幂等键（CLI 的 --op-id / --operation-id，MCP 工具参数里的 operationId）：重试同一操作要复用同一个值。
+business call 提交生成（会扣费）时 --operation-id 必填，并作为任务的 clientOperationId。
 
 环境变量：BEEFTV_BASE_URL、BEEFTV_DATA_DIR、BEEFTV_CLIENT_ID、BEEFTV_CLIENT_TOKEN、
 BEEFTV_OWNER_TOKEN（owner 可信通道）、BEEFTV_DESKTOP_TOKEN（桌面自身调用）
@@ -692,6 +702,7 @@ func runMCP(c *client, args []string) error {
 	}
 	fs := flag.NewFlagSet("mcp serve", flag.ContinueOnError)
 	readOnly := fs.Bool("read-only", false, "只暴露只读工具")
+	allBusiness := fs.Bool("all-business-tools", os.Getenv("BEEFTV_MCP_ALL_BUSINESS_TOOLS") == "1", "把每个底层业务接口注册成单独的工具（默认只给 business.list / business.call 两个入口）")
 	if err := fs.Parse(args[1:]); err != nil {
 		return flagError(err)
 	}
@@ -715,13 +726,15 @@ func runMCP(c *client, args []string) error {
 		if !errors.As(businessErr, &unavailable) || unavailable.code != exitNotFound {
 			return businessErr
 		}
-	} else {
+	} else if *allBusiness {
 		registerBusinessMCP(server, c, business, *readOnly)
 		for _, tool := range business {
 			if !*readOnly || tool.ReadOnly {
 				registeredTools++
 			}
 		}
+	} else {
+		registeredTools += registerBusinessGateway(server, c, business, *readOnly)
 	}
 	for _, op := range ops {
 		descriptor := op
@@ -758,7 +771,7 @@ func runMCP(c *client, args []string) error {
 				if err != nil {
 					return toolError(err), nil
 				}
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(result)}}}, nil
+				return &mcp.CallToolResult{Content: opToolContent(result)}, nil
 			})
 	}
 	_, baseSource := resolveBaseURL()

@@ -31,6 +31,7 @@ export type CreationMessage = {
     attemptGroupId?: string;
     generationStage?: string;
     generationEffectKeys?: string[];
+    taskOutcome?: import("@/lib/task-outcome").TaskOutcome;
 };
 export type CreationConversationConflict = {
     revision: number;

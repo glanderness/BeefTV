@@ -3,6 +3,7 @@
 // 生成后画面复查（标注 wake-on-generation 能力缺口）、长对话多轮后技能规则保持。
 
 import http from 'node:http';
+import { isTransientStudioTailMessage } from '../studio-digest.mjs';
 
 function clone(val) {
   return val === undefined ? undefined : JSON.parse(JSON.stringify(val));
@@ -87,6 +88,7 @@ export function createFakeModelServer(options = {}) {
   const requests = [];
   const hooks = {
     onRequest: options.onRequest || null,
+    onResponse: options.onResponse || null,
   };
 
   let callSeq = 0;
@@ -170,8 +172,13 @@ export function createFakeModelServer(options = {}) {
         const hasImageAttachment =
           Array.isArray(messages[i].content) &&
           messages[i].content.some((p) => p && (p.type === 'image_url' || p.type === 'image'));
-        // 跳过媒体适配层追加的提示消息或 pi-ai 为图片工具结果追加的纯图片/附件用户消息
-        if (!txt || txt.startsWith('以下是前述工具返回的素材内容') || (hasImageAttachment && !txt.includes('BEEFTV_CONTEXT:'))) {
+        // 跳过媒体适配层追加的提示消息、末尾瞬态上下文（画布摘要/计划/压缩恢复技能）或纯图片附件用户消息
+        if (
+          !txt ||
+          txt.startsWith('以下是前述工具返回的素材内容') ||
+          isTransientStudioTailMessage(messages[i]) ||
+          (hasImageAttachment && !txt.includes('BEEFTV_CONTEXT:'))
+        ) {
           continue;
         }
         if (firstTurnUserIdx < 0) firstTurnUserIdx = i;
@@ -181,7 +188,9 @@ export function createFakeModelServer(options = {}) {
       }
     }
     const startIdx = lastUserIdx >= 0 ? lastUserIdx : 0;
-    const slice = messages.slice(startIdx);
+    const slice = messages
+      .slice(startIdx)
+      .filter((m) => !isTransientStudioTailMessage(m));
     const { toolResults } = parseToolMessages(slice);
     const allText = slice.map(extractMessageText).join('\n');
     const fullConversationText = messages.map(extractMessageText).join('\n');
@@ -190,8 +199,9 @@ export function createFakeModelServer(options = {}) {
 
   const server = http.createServer(async (req, res) => {
     try {
-      let raw = '';
-      for await (const chunk of req) raw += chunk;
+      const reqChunks = [];
+      for await (const chunk of req) reqChunks.push(Buffer.from(chunk));
+      const raw = Buffer.concat(reqChunks).toString('utf8');
       const body = raw ? JSON.parse(raw) : {};
       const reqIndex = requests.length + 1;
       requests.push({
@@ -205,6 +215,41 @@ export function createFakeModelServer(options = {}) {
 
       if (hooks.onRequest) {
         await hooks.onRequest({ reqIndex, body, req });
+      }
+
+      if (hooks.onResponse) {
+        let pendingStatus = 200;
+        let pendingHeaders = {};
+        const pendingChunks = [];
+        let capturedRespText = '';
+        const origWriteHead = res.writeHead.bind(res);
+        const origWrite = res.write.bind(res);
+        const origEnd = res.end.bind(res);
+        res.writeHead = (statusCode, headers) => {
+          pendingStatus = statusCode;
+          pendingHeaders = headers || {};
+          return res;
+        };
+        res.write = (chunk) => {
+          if (chunk) {
+            pendingChunks.push(chunk);
+            capturedRespText += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+          }
+          return true;
+        };
+        res.end = (chunk, ...rest) => {
+          if (chunk && typeof chunk !== 'function') {
+            pendingChunks.push(chunk);
+            capturedRespText += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+          }
+          res.writeHead = origWriteHead;
+          res.write = origWrite;
+          res.end = origEnd;
+          hooks.onResponse({ reqIndex, body, respText: capturedRespText });
+          origWriteHead(pendingStatus, pendingHeaders);
+          for (const c of pendingChunks) origWrite(c);
+          return origEnd(...rest);
+        };
       }
 
       const messages = body.messages || [];
@@ -798,8 +843,12 @@ export function createFakeModelServer(options = {}) {
         '已完成都市短剧雨夜寻踪开场的 2 镜头分镜脚本、2 个首帧图节点与 2 个视频生成节点，完成了分镜行绑定与首帧到视频的参考连线，并提出了首帧图生成提议。',
       );
     } catch (error) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: String(error?.message || error) } }));
+      res.writeHead(error?.reason === 'aborted_budget' ? 429 : 500, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: { message: String(error?.message || error), code: error?.reason || 'fake_model_error' },
+        }),
+      );
     }
   });
 
@@ -1434,7 +1483,7 @@ export const SCENARIOS = [
         {
           name: 'active_skill_present_in_every_turn_request',
           passed: new Set(requestEvidence.map((entry) => entry.turnId)).size === 4 && requestEvidence.every((entry) => entry.activeSkillPresent),
-          detail: `活动技能进入系统上下文=${requestEvidence.filter((entry) => entry.activeSkillPresent).length}/${requestEvidence.length} 次模型请求`,
+          detail: `活动技能进入非系统请求上下文=${requestEvidence.filter((entry) => entry.activeSkillPresent).length}/${requestEvidence.length} 次模型请求`,
         },
         {
           name: 'four_turns_completed_in_same_session',

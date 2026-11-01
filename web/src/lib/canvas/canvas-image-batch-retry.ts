@@ -109,7 +109,7 @@ export function markImageBatchRetrying(rootId: string, childIds: string[], nodes
                 ...(node.id === rootId ? { batchFailedCount: childIds.length } : {}),
                 errorDetails: undefined,
                 generationErrorCode: undefined,
-                resourceReloadAvailable: undefined,
+                taskOutcome: undefined,
                 failedPromptFingerprint: undefined,
                 failedInputFingerprint: undefined,
             },
@@ -126,7 +126,10 @@ export function restoreUnsubmittedImageBatchChild(current: CanvasNodeData, origi
             status: "error",
             errorDetails: original.metadata?.errorDetails || "重试请求未提交",
             generationErrorCode: original.metadata?.generationErrorCode,
-            resourceReloadAvailable: original.metadata?.resourceReloadAvailable,
+            taskOutcome: original.metadata?.taskOutcome,
+            // A locally derived outcome stays local; it is not a backend receipt.
+            taskOutcomeSource: original.metadata?.taskOutcomeSource,
+            generationFailure: original.metadata?.generationFailure,
             failedPromptFingerprint: original.metadata?.failedPromptFingerprint,
             failedInputFingerprint: original.metadata?.failedInputFingerprint,
         },
@@ -181,7 +184,9 @@ export function reconcileImageBatchRoot(root: CanvasNodeData, nodes: CanvasNodeD
         metadata.status = loading ? "loading" : failed ? "error" : "idle";
         metadata.errorDetails = failed?.metadata?.errorDetails;
         metadata.generationErrorCode = failed?.metadata?.generationErrorCode;
-        metadata.resourceReloadAvailable = failed?.metadata?.resourceReloadAvailable;
+        metadata.taskOutcome = failed?.metadata?.taskOutcome;
+        metadata.taskOutcomeSource = failed?.metadata?.taskOutcomeSource;
+        metadata.generationFailure = failed?.metadata?.generationFailure;
         metadata.failedPromptFingerprint = failed?.metadata?.failedPromptFingerprint;
         metadata.failedInputFingerprint = failed?.metadata?.failedInputFingerprint;
     }

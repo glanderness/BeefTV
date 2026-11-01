@@ -16,7 +16,7 @@ import (
 // session changes must stop a background continuation before taking its slot.
 func stopAssistantContinuationsForIntent(c *gin.Context, svc *app.Service, host *assistantruntime.Host, canvasID, sessionID string) bool {
 	userID := c.GetString("agentUserId")
-	rows, err := svc.StopAssistantContinuationsForIntent(userID, canvasID, sessionID)
+	rows, err := svc.AssistantTurns().StopContinuationsForIntent(userID, canvasID, sessionID)
 	if err != nil {
 		failService(c, err)
 		return false
@@ -36,7 +36,7 @@ func stopAssistantContinuationsForIntent(c *gin.Context, svc *app.Service, host 
 				decodeErr := json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(&result)
 				_ = response.Body.Close()
 				if response.StatusCode/100 == 2 && decodeErr == nil && result.Accepted && (result.State == "stopped" || result.State == "finished" || result.State == "pending") {
-					if err := svc.AcknowledgeAssistantContinuationStop(userID, row.ID); err != nil {
+					if err := svc.AssistantTurns().AcknowledgeContinuationStop(userID, row.ID); err != nil {
 						failService(c, err)
 						return false
 					}

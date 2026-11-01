@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"infinite-canvas/backend/internal/model"
-	localtask "infinite-canvas/backend/internal/task"
 )
 
 type ContinuationSubmission struct {
@@ -236,7 +235,7 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 		nodes[n.ID] = n.Metadata
 	}
 	ids, selected := []string{}, []string{}
-	waiting := false
+	waiting, targetChanged := false, false
 	for _, source := range sources {
 		manifest, ok := manifests[source]
 		if !ok {
@@ -273,63 +272,32 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 				return nil, nil, continuationError("task_mismatch")
 			}
 			ids = append(ids, task.ID)
-			if task.Status != "succeeded" && task.Status != "failed" && task.Status != "cancelled" {
-				waiting = true
-				continue
-			}
-			outputs := map[int]localtask.CanonicalOutput{}
-			if task.Status == "succeeded" {
-				var results []model.Result
-				if err = tx.Where("task_id = ? AND user_id = ? AND kind = ?", task.ID, row.UserID, localtask.ResultKindGenerationOutput).Find(&results).Error; err != nil {
-					return nil, nil, err
-				}
-				decoded, decodeErr := localtask.DecodeOutputResults(results)
-				if decodeErr != nil {
-					return nil, nil, decodeErr
-				}
-				for _, output := range decoded {
-					if _, duplicate := outputs[output.OutputIndex]; duplicate {
-						return ids, nil, continuationError("task_mismatch")
-					}
-					outputs[output.OutputIndex] = output
-				}
-				if len(outputs) != len(targets) {
-					waiting = true
-					continue
-				}
-			}
-			for index, nodeID := range targets {
+			inspection, err := InspectTaskTargetsInTx(tx, row.UserID, task, row.Kind, input.Metadata.NodeID, targets, func(nodeID string) (map[string]any, bool) {
 				meta, exists := nodes[nodeID]
-				if !exists || meta["taskId"] != task.ID {
-					return ids, nil, continuationError("target_changed")
+				return meta, exists
+			})
+			if err != nil {
+				var expected *Error
+				if errors.As(err, &expected) {
+					return ids, nil, err
 				}
-				if task.Status == "succeeded" {
-					key, _ := meta["storageKey"].(string)
-					output, present := outputs[index]
-					if !present || output.ResourceID == "" || output.MaterializationErrorCode != "" || !strings.HasPrefix(key, "resource:") || meta["status"] != "success" || meta["resourceReloadAvailable"] == true {
-						waiting = true
-						continue
-					}
-					// Delivery keeps the task's primary node on every canonical output.
-					// Native multi-image destinations are the immutable indexed outputNodeIds
-					// checked above, exactly as taskbinding.Bind resolves them.
-					if key != "resource:"+output.ResourceID || output.TargetBinding == nil || output.TargetBinding.NodeID != input.Metadata.NodeID || output.MediaType != row.Kind {
-						return ids, nil, continuationError("target_changed")
-					}
-					var resource model.Resource
-					if err = tx.First(&resource, "id = ? AND user_id = ? AND status = ?", strings.TrimPrefix(key, "resource:"), row.UserID, "ready").Error; err != nil {
-						if errors.Is(err, gorm.ErrRecordNotFound) {
-							return ids, nil, continuationError("waiting")
-						}
-						return nil, nil, err
-					}
-				}
-				selected = append(selected, nodeID)
+				return nil, nil, err
+			}
+			switch inspection.State {
+			case TargetBindingTargetChanged:
+				targetChanged = true
+			case TargetBindingWaiting:
+				waiting = true
+			case TargetBindingReady, TargetBindingFailed:
+				selected = append(selected, targets...)
 			}
 		}
 	}
 	if waiting {
 		return uniqueSorted(ids), nil, continuationError("waiting")
+	}
+	if targetChanged {
+		return uniqueSorted(ids), nil, continuationError("target_changed")
 	}
 	var admittedIDs []string
 	if row.TaskIDsJSON != "" {
@@ -402,9 +370,11 @@ func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *m
 			ready, err := prepare(tx, &row)
 			if err != nil {
 				var changed *Error
-				if errors.As(err, &changed) && changed.Reason == "continuation_intent_changed" {
-					if err := s.cancelContinuations(tx, row.UserID, row.CanvasID, row.SessionID, row.SourceTurnID, false); err != nil {
-						return err
+				if errors.As(err, &changed) && (changed.Reason == "continuation_intent_changed" || changed.Reason == "continuation_target_changed") {
+					if changed.Reason == "continuation_intent_changed" {
+						if err := s.cancelContinuations(tx, row.UserID, row.CanvasID, row.SessionID, row.SourceTurnID, false); err != nil {
+							return err
+						}
 					}
 					stopped = changed
 					return nil
