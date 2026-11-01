@@ -285,6 +285,7 @@ export function sanitizeServerImageCapability(value: unknown): ImageCapabilityCo
     if (!value || typeof value !== "object") return null;
     const image = value as ImageCapabilityConfig;
     if (!image.references || !image.size || !image.quality || !image.transparentBackground || !image.responseFormat || !image.outputFormat) return null;
+    if (image.sequentialGeneration !== undefined && (!image.sequentialGeneration || typeof image.sequentialGeneration.supported !== "boolean" || typeof image.sequentialGeneration.default !== "boolean")) return null;
     if (![image.references.promptMaxChars, image.references.maxImages, image.references.maxImageBytes].every((item) => Number.isInteger(item) && item >= 0) || !Number.isInteger(image.maxOutputs) || image.maxOutputs < 1) return null;
     if (!["none", "size", "aspect_ratio"].includes(image.size.parameter) || !Array.isArray(image.size.values) || !Array.isArray(image.quality.values)) return null;
     if (image.size.parameter !== "none" && (!image.size.default || (!image.size.allowCustom && !image.size.values.includes(image.size.default)))) return null;

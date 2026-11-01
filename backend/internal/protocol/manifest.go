@@ -467,9 +467,7 @@ func (a manifestAdapter) AgentAvailable() bool {
 }
 func (a manifestAdapter) ResultAvailable() bool { return a.manifest.ResultOperation != nil }
 func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (RequestSpec, error) {
-	if a.manifest.Metadata.ID == "volcengine-ark-seedance" || a.manifest.Metadata.ID == "volcengine-ark-video" || a.manifest.Metadata.ID == "volcengine-ark-agent-plan-video" || a.manifest.Metadata.ID == "seedance-videos-compatible" {
-		c.Request = NormalizeSeedanceTaskOptions(c.Request)
-	}
+	c.Request = applyManifestTaskOptions(a.manifest.Metadata.ID, c.Request)
 	if len(a.manifest.Contributes.Providers) == 0 {
 		return RequestSpec{}, fmt.Errorf("plugin %s does not provide a provider", a.manifest.Metadata.ID)
 	}
@@ -484,33 +482,7 @@ func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (Reque
 	if err != nil {
 		return RequestSpec{}, err
 	}
-	if a.manifest.Metadata.ID == "volcengine-ark-seedance" || a.manifest.Metadata.ID == "volcengine-ark-video" || a.manifest.Metadata.ID == "volcengine-ark-agent-plan-video" || a.manifest.Metadata.ID == "seedance-videos-compatible" {
-		if body, ok := spec.Body.(map[string]any); ok {
-			ApplySeedanceBodyFields(body, c.Request)
-		}
-	}
-	// Some NewAPI-compatible gateways validate the prompt under input.content
-	// even though the historical channel-1 contract used input.prompt. Keep the
-	// legacy field and add the canonical content alias for that shipped profile.
-	if a.manifest.Metadata.ID == "newapi-channel-1" && c.Request.Capability == CapabilityVideo {
-		if body, ok := spec.Body.(map[string]any); ok {
-			if input, ok := body["input"].(map[string]any); ok {
-				if _, exists := input["content"]; !exists {
-					if prompt, ok := input["prompt"]; ok && strings.TrimSpace(fmt.Sprint(prompt)) != "" {
-						input["content"] = []any{map[string]any{"type": "text", "text": fmt.Sprint(prompt)}}
-					}
-				}
-				if content, ok := input["content"]; ok {
-					// WhatsToken's gateway validates the ByteDance-compatible
-					// content array at the top level, while older NewAPI channels
-					// keep it under input. Send both projections during migration.
-					if _, exists := body["content"]; !exists {
-						body["content"] = content
-					}
-				}
-			}
-		}
-	}
+	applyManifestBodyFields(a.manifest.Metadata.ID, &spec, c.Request)
 	return spec, nil
 }
 func (a manifestAdapter) BuildAgent(_ context.Context, c AgentRequestContext) (RequestSpec, error) {
@@ -708,6 +680,7 @@ func (a manifestAdapter) parse(payload map[string]any, c PollContext) CreateResu
 			}
 		}
 	}
+	attachLastFrameMetadata(result.Videos, payload)
 	if status == StatusPending && (result.Text != "" || len(result.Images) > 0 || len(result.Videos) > 0 || len(result.Audios) > 0) {
 		status = StatusSucceeded
 	}
@@ -785,7 +758,7 @@ func manifestRequestVariables(bindings []ManifestVariable, request GenerationReq
 }
 
 func validateManifestRequest(rules []ManifestValidation, request GenerationRequest, variables ...map[string]any) error {
-	if len(rules) == 0 {
+	if draftTaskID, ok := request.Extra["draft_task_id"].(string); len(rules) == 0 || (ok && strings.TrimSpace(draftTaskID) != "") {
 		return nil
 	}
 	env := map[string]any{"request": manifestRequestValues(request)}

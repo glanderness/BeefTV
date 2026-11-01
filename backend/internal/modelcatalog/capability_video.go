@@ -111,7 +111,11 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 	}
 	if protocol == "video-generations-json" {
 		video.Duration.Default = 5
-		video.Resolutions = []string{"720p", "1080p"}
+		if isSeedance25Model(modelName) {
+			video.Resolutions = []string{"480p", "720p", "1080p"}
+		} else {
+			video.Resolutions = []string{"720p", "1080p"}
+		}
 		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
 		video.Operations = appendUniqueString(video.Operations, "reference_to_video")
 	}
@@ -140,6 +144,8 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 				video.Operations = appendUniqueString(video.Operations, "draft_to_final")
 			}
 			video.Operations = appendUniqueString(video.Operations, "audio_to_video")
+			video.Operations = appendUniqueString(appendUniqueString(video.Operations, "inpaint"), "extend")
+			video.Ratios = appendUniqueString(video.Ratios, "adaptive")
 			if video.Duration.Selection == "range" && video.Duration.Max < 30 {
 				video.Duration.Max = 30
 			}

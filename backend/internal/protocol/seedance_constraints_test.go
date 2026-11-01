@@ -128,3 +128,53 @@ func TestInstalledSeedancePluginsSupportDraftAndDraftToFinal(t *testing.T) {
 		}
 	}
 }
+
+func TestVendorNeutralBYOKProtocolsSupportBusinessActionsAndLastFramePoll(t *testing.T) {
+	for _, plugin := range []struct{ file, id string }{
+		{"newapi-media-task-v1.beeftv-plugin", "newapi-channel-1"},
+		{"newapi-video-generations-v1.beeftv-plugin", "newapi-channel-2"},
+		{"video-generations-json.beeftv-plugin", "video-generations-json"},
+	} {
+		a := officialPackageAdapter(t, plugin.file, plugin.id)
+		spec, err := a.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Capability:  CapabilityVideo,
+			Model:       "seedance-2.5",
+			Prompt:      "edit video",
+			Operation:   "inpaint",
+			AspectRatio: "16:9",
+			Duration:    5,
+			Videos:      []MediaReference{{URL: "https://example.com/ref.mp4"}},
+			Extra:       map[string]any{"draft": true, "return_last_frame": true},
+		}})
+		if err != nil {
+			t.Fatalf("%s BuildCreate failed: %v", plugin.id, err)
+		}
+		body := manifestTestBody(t, spec)
+		if body["draft"] != true || body["return_last_frame"] != true || body["omni_reference_task_type"] != "edit" {
+			t.Fatalf("%s missing vendor-neutral body fields: %#v", plugin.id, body)
+		}
+
+		finalSpec, err := a.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Capability: CapabilityVideo,
+			Model:      "seedance-2.5",
+			Operation:  "draft_to_final",
+			Resolution: "1080p",
+			Extra:      map[string]any{"draft_task_id": "cgt-draft-999"},
+		}})
+		if err != nil {
+			t.Fatalf("%s draft_to_final BuildCreate failed: %v", plugin.id, err)
+		}
+		finalBody := manifestTestBody(t, finalSpec)
+		if _, ok := finalBody["content"].([]any); !ok {
+			t.Fatalf("%s draft_to_final missing content: %#v", plugin.id, finalBody)
+		}
+
+		poll, err := a.ParsePoll(context.Background(), PollContext{TaskID: "t1"}, []byte(`{"status":"completed","video_url":"https://example.com/out.mp4","last_frame_url":"https://example.com/last.png","data":[{"url":"https://example.com/out.mp4"}]}`))
+		if err != nil || poll.Result == nil || len(poll.Result.Videos) == 0 {
+			t.Fatalf("%s ParsePoll failed: %+v err=%v", plugin.id, poll, err)
+		}
+		if poll.Result.Videos[0].Metadata["last_frame_url"] != "https://example.com/last.png" {
+			t.Fatalf("%s ParsePoll did not extract last_frame_url: %+v", plugin.id, poll.Result.Videos[0])
+		}
+	}
+}

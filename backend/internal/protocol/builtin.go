@@ -723,7 +723,7 @@ func asyncMediaAdapter(info Metadata, capability Capability, create func(Generat
 
 func asyncMediaAdapterWithPoll(info Metadata, capability Capability, create func(GenerationRequest) (RequestSpec, error), poll func(PollContext) (RequestSpec, error)) Adapter {
 	return builtinAdapter{
-		info: info, create: create, parseCreate: parseAsyncCreate, poll: poll,
+		info: info, create: wrapBuiltinCreate(info, capability, create), parseCreate: parseAsyncCreate, poll: poll,
 		parsePoll: func(c PollContext, payload map[string]any) (PollResult, error) {
 			return parseAsyncMediaPoll(c, payload, capability)
 		},
@@ -933,6 +933,7 @@ func parseAsyncMediaPoll(c PollContext, payload map[string]any, capability Capab
 	case CapabilityAudio:
 		result.Audios = references
 	case CapabilityVideo:
+		attachLastFrameMetadata(references, payload)
 		result.Videos = references
 	}
 	if status == StatusSucceeded && len(references) == 0 {

@@ -453,3 +453,33 @@ func TestSeedance25DraftAndDraftToFinalCapabilityAndValidation(t *testing.T) {
 		t.Fatal("expected missing videoDraftTaskId to be rejected")
 	}
 }
+
+func TestSeedance25VendorNeutralBYOKProtocolsExposeBusinessActions(t *testing.T) {
+	protocols := []string{
+		"volcengine-ark-video",
+		"volcengine-ark-agent-plan-video",
+		"newapi",
+		"openai-videos",
+		"newapi-channel-1",
+		"newapi-channel-2",
+		"video-generations-json",
+		"seedance-videos-compatible",
+		"full-video",
+	}
+	for _, proto := range protocols {
+		t.Run(proto, func(t *testing.T) {
+			video := DefaultModelCapabilityConfigForModel(proto, "seedance-2.5").Video
+			if !video.Draft.Supported || !video.ReturnLastFrame.Supported {
+				t.Fatalf("%s draft=%+v returnLastFrame=%+v", proto, video.Draft, video.ReturnLastFrame)
+			}
+			for _, op := range []string{"reference_to_video", "audio_to_video", "draft_to_final", "inpaint", "extend"} {
+				if !slices.Contains(video.Operations, op) {
+					t.Fatalf("%s missing operation %q in %v", proto, op, video.Operations)
+				}
+			}
+			if !slices.Contains(video.Ratios, "adaptive") {
+				t.Fatalf("%s missing adaptive ratio in %v", proto, video.Ratios)
+			}
+		})
+	}
+}

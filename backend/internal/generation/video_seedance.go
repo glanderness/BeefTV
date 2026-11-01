@@ -108,12 +108,18 @@ func SeedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 }
 
 func SeedanceLastFrameURL(state map[string]interface{}) string {
-	if url := stringField(state, "last_frame_url"); url != "" {
-		return url
-	}
-	if metadata, ok := state["metadata"].(map[string]interface{}); ok {
-		if url := stringField(metadata, "last_frame_url"); url != "" {
+	for _, key := range []string{"last_frame_url", "lastFrameUrl"} {
+		if url := stringField(state, key); url != "" {
 			return url
+		}
+	}
+	for _, containerKey := range []string{"metadata", "content", "data", "output", "result", "task"} {
+		if nested, ok := state[containerKey].(map[string]interface{}); ok {
+			for _, key := range []string{"last_frame_url", "lastFrameUrl"} {
+				if url := stringField(nested, key); url != "" {
+					return url
+				}
+			}
 		}
 	}
 	return ""

@@ -74,6 +74,17 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		if VideoRequestsReturnLastFrame(input) && VideoCapabilitySupportsReturnLastFrame(input) {
 			request.Extra["return_last_frame"] = true
 		}
+		if input.VideoCapability != nil && input.VideoCapability.TaskTypeConstraints {
+			request.Extra["taskTypeConstraints"] = true
+		}
+	}
+	if input.Mode == "image" && input.ImageCapability != nil && input.ImageCapability.SequentialGeneration.Supported {
+		if maxImages, err := strconv.Atoi(strings.TrimSpace(input.Config.SeedreamMaxImages)); err == nil && maxImages > 1 {
+			if maxImages > 15 {
+				maxImages = 15
+			}
+			request.Extra["sequential_image_generation_max"] = maxImages
+		}
 	}
 	request.Inputs = append(request.Inputs, request.Images...)
 	request.Inputs = append(request.Inputs, request.Videos...)
@@ -114,8 +125,12 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		}
 	}
 	applyImageResponseFormatOption(&request, input)
-	if input.Mode == "video" && usesSeedanceTaskOptions(input.Config) {
-		request = protocol.NormalizeSeedanceTaskOptions(request)
+	if input.Mode == "video" {
+		if usesSeedanceTaskOptions(input.Config) {
+			request = protocol.NormalizeSeedanceTaskOptions(request)
+		} else if request.Extra["draft"] == true || request.Extra["draft_task_id"] != nil {
+			request = protocol.NormalizeVideoDraftTaskOptions(request)
+		}
 	}
 	return request
 }

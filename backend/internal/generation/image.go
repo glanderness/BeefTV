@@ -133,6 +133,15 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		if key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
 			body[key] = value
 		}
+		if input.ImageCapability != nil && input.ImageCapability.SequentialGeneration.Supported {
+			if maxImages, err := strconv.Atoi(strings.TrimSpace(input.Config.SeedreamMaxImages)); err == nil && maxImages > 1 {
+				if maxImages > 15 {
+					maxImages = 15
+				}
+				body["sequential_image_generation"] = "auto"
+				body["sequential_image_generation_options"] = map[string]interface{}{"max_images": maxImages}
+			}
+		}
 		if err := PostJSON(ctx, input.Config, "/images/generations", body, &payload); err != nil {
 			return nil, err
 		}

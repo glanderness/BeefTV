@@ -375,3 +375,35 @@ test("Seedance 2.5 exposes draft and draft_to_final across managed and BYOK Ark 
     expect(metadata.videoEditOperation).toBe("draft_to_final");
     expect(metadata.videoDraftTaskId).toBe("cgt-draft-123");
 });
+
+test("Seedance 2.5 exposes vendor-neutral business actions across all BYOK video protocols", () => {
+    for (const protocol of [
+        "volcengine-ark-video",
+        "volcengine-ark-agent-plan-video",
+        "newapi",
+        "openai-videos",
+        "newapi-channel-1",
+        "newapi-channel-2",
+        "video-generations-json",
+        "seedance-videos-compatible",
+        "full-video",
+    ] as const) {
+        const profile = modelCapabilityConfigFor(
+            {
+                channels: [
+                    {
+                        id: "byok",
+                        baseUrl: "https://relay.example.com/v1",
+                        models: ["seedance-2.5"],
+                        modelProfiles: [{ model: "seedance-2.5", protocol }],
+                    },
+                ],
+            },
+            "byok::seedance-2.5",
+        ).video!;
+        expect(profile.draft).toEqual({ supported: true, default: false });
+        expect(profile.returnLastFrame).toEqual({ supported: true, default: false });
+        expect(profile.operations).toEqual(expect.arrayContaining(["reference_to_video", "audio_to_video", "draft_to_final", "inpaint", "extend"]));
+        expect(profile.ratios).toContain("adaptive");
+    }
+});
