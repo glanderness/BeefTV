@@ -325,6 +325,9 @@ func managedMediaClient(ctx context.Context, config Config) *beefapi.MediaClient
 		observer(loaded, total, phase)
 	}
 	client.Observe = func(req *http.Request, resp *http.Response, body []byte, err error) {
+		if runtime.ReferenceProgress != nil && strings.Contains(req.URL.Path, "/media/tasks") {
+			runtime.ReferenceProgress.ClearReference()
+		}
 		if runtime.Receipts == nil {
 			return
 		}

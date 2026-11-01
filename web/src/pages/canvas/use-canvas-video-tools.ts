@@ -366,11 +366,23 @@ export function useCanvasVideoTools({
                 extractingVideoFramesNodeIdRef.current = node.id;
                 setExtractingVideoFramesNodeId(node.id);
                 try {
-                    const resolved = await operation.wait(resolveImageUrl(node.metadata?.lastFrameStorageKey, node.metadata?.lastFrameUrl || ""));
-                    if (!resolved) throw new Error("上游尾帧读取失败");
-                    operation.run(() => progress.update("保存无损尾帧画面", 2));
-                    const uploaded = await operation.wait(uploadImage(resolved));
-                    const frameNodes = buildVideoFrameNodes(node, [{ timeMs, image: uploaded }], nodesRef.current);
+                    let uploaded: Awaited<ReturnType<typeof uploadImage>>;
+                    try {
+                        const resolved = await operation.wait(resolveImageUrl(node.metadata?.lastFrameStorageKey, node.metadata?.lastFrameUrl || ""));
+                        if (!resolved) throw new Error("上游尾帧读取失败");
+                        operation.run(() => progress.update("保存无损尾帧画面", 2));
+                        uploaded = await operation.wait(uploadImage(resolved));
+                    } catch {
+                        if (!operation.isCurrent()) return;
+                        operation.run(() => progress.done("改用视频画面解码提取尾帧"));
+                        extractingVideoFramesNodeIdRef.current = null;
+                        setExtractingVideoFramesNodeId(null);
+                        await extractVideoFrames(node, { timesMs: [timeMs] });
+                        return;
+                    }
+                    const fallbackDurationMs = Number(node.metadata?.seconds) > 0 ? Math.round(Number(node.metadata?.seconds) * 1000) : 0;
+                    const displayTimeMs = durationMs > 0 ? timeMs : fallbackDurationMs > 0 ? Math.max(0, fallbackDurationMs - 1) : 0;
+                    const frameNodes = buildVideoFrameNodes(node, [{ timeMs: displayTimeMs, image: uploaded }], nodesRef.current);
                     if (!frameNodes.length) throw new Error("无损尾帧节点创建失败");
                     const links = frameNodes.map((frameNode) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: frameNode.id }));
                     const nextNodes = [...nodesRef.current, ...frameNodes];
@@ -386,12 +398,11 @@ export function useCanvasVideoTools({
                     await operation.wait(persistMediaNodes(frameNodes, links, {}));
                     operation.run(() => progress.done("已提取上游无损尾帧并创建独立图片节点"));
                     message.success("已提取上游无损尾帧，新图片节点已生成在视频右侧");
-                } catch {
+                } catch (error) {
                     if (!operation.isCurrent()) return;
-                    extractingVideoFramesNodeIdRef.current = null;
-                    setExtractingVideoFramesNodeId(null);
-                    void extractVideoFrames(node, { timesMs: [timeMs] });
-                    return;
+                    const details = error instanceof Error ? error.message : "无损尾帧提取失败";
+                    operation.run(() => progress.fail(details));
+                    message.error(details);
                 } finally {
                     if (operation.isCurrent()) {
                         extractingVideoFramesNodeIdRef.current = null;

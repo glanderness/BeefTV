@@ -48,7 +48,13 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
             // Keep the browser-side path as a fallback for CORS-enabled HTTPS images.
         }
     }
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const blob = typeof input === "string"
+        ? await (async () => {
+              const response = await fetch(input, { credentials: isResourceUrl(input) ? "include" : "same-origin" });
+              if (!response.ok) throw new Error("图片读取失败");
+              return response.blob();
+          })()
+        : input;
     const previewUrl = URL.createObjectURL(blob);
     try {
         const meta = await readImageMeta(previewUrl);
