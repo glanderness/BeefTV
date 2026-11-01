@@ -4,7 +4,6 @@ import { useNavigate } from "react-router";
 
 import { appHref } from "@/lib/app-routing";
 import { canvasWorkspaceProjectId } from "@/lib/canvas/canvas-workspace-project";
-import { captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -32,7 +31,7 @@ export function useCanvasProjectMenu({ projectId, currentProject, canvasProjects
     const updateProject = useCanvasStore((state) => state.updateProject);
     const [titleDraft, setTitleDraft] = useState("");
     const [titleEditing, setTitleEditing] = useState(false);
-    const [deletingCanvas, setDeletingCanvas] = useState<{ id: string; scope: CapturedUserScope } | null>(null);
+    const [deletingCanvas, setDeletingCanvas] = useState<{ id: string } | null>(null);
 
     const duplicateCurrentProject = useCallback(async () => {
         if (!currentProject) return;
@@ -81,13 +80,12 @@ export function useCanvasProjectMenu({ projectId, currentProject, canvasProjects
         message.success("画布副本已创建");
     }, [canvasProjects, importCanvasProject, message, projectId, readLiveContent]);
 
-    const requestDeleteCanvas = useCallback((id: string) => setDeletingCanvas({ id, scope: captureUserScope() }), []);
+    const requestDeleteCanvas = useCallback((id: string) => setDeletingCanvas({ id }), []);
     const cancelDeleteCanvas = useCallback(() => setDeletingCanvas(null), []);
-    const confirmDeleteCanvas = useCallback(async (assertCurrent: () => void) => {
+    const confirmDeleteCanvas = useCallback(async () => {
         if (!deletingCanvas) return;
         if (deletingCanvas.id === projectId) await deleteCurrentProject();
         else await deleteWorkspaceCanvasProjects([deletingCanvas.id]);
-        assertCurrent();
         message.success("画布已删除");
     }, [deleteCurrentProject, deletingCanvas, message, projectId]);
     const deletingCanvasTitle = deletingCanvas ? canvasProjects.find((canvas) => canvas.id === deletingCanvas.id)?.title || "该画布" : "";

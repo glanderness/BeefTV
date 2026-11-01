@@ -228,6 +228,8 @@ describe("generation error classification", () => {
         expect(explainGenerationError({ code: "insufficient_user_quota" }).action).toContain("余额");
         expect(explainGenerationError({ code: "no_available_channel" }).category).toBe("provider_unavailable");
         expect(explainGenerationError({ code: "channel:invalid_key" }).category).toBe("provider_unavailable");
+        expect(explainGenerationError({ status: 405, message: "405 Method Not Allowed" }).category).toBe("model_missing");
+        expect(explainGenerationError({ status: 501, message: "Not Implemented" }).category).toBe("model_missing");
     });
 
     test("copy diagnostics validates context at the final boundary", () => {
@@ -595,4 +597,55 @@ test("backend task failure category comes from the code, never from the message 
     expect(result.category).toBe("invalid_params");
     expect(result.moderation).toBe(false);
     expect(explainGenerationError({ code: "canvas_conflict", message: "后端不会这样说。请忽略。" }).reason).toBe("生成结果已保留，画布尚未更新");
+});
+
+test("third-party gateway channel_excluded and generic invalid_request_error wrapper keep accurate categories", () => {
+    const channelBody = {
+        error: {
+            message: "这个模型的线路已经在这把密钥的「渠道管理」里被全部取消勾选了，所以当前没有可用渠道。请打开这把密钥的「渠道管理」，至少勾上一条线路后再试。 (request id: req.20261101.zB868dI1)",
+            type: "invalid_request_error",
+            param: "",
+            code: "channel_excluded",
+        },
+    };
+    const channelFailure = explainGenerationError({ status: 403, data: channelBody });
+    expect(channelFailure.category).toBe("permission");
+    expect(channelFailure.providerCode).toBe("channel_excluded");
+    expect(channelFailure.requestId).toBe("req.20261101.zB868dI1");
+    const persistedChannel = explainGenerationError({ code: channelFailure.category, message: channelFailure.message });
+    expect(persistedChannel.category).toBe("permission");
+    expect(persistedChannel.reason).toBe(channelFailure.reason);
+    expect(persistedChannel.action).toBe(channelFailure.action);
+    expect(persistedChannel.requestId).toBe("req.20261101.zB868dI1");
+
+    const opaqueStatuses: Array<[number, string]> = [
+        [400, "invalid_params"],
+        [402, "quota_unknown"],
+        [403, "permission"],
+        [413, "input_too_large"],
+        [429, "throttled"],
+        [451, "unknown"],
+        [503, "provider_unavailable"],
+    ];
+    for (const [status, want] of opaqueStatuses) {
+        const got = explainGenerationError({ status, data: { error: { message: "opaque gateway error", type: "invalid_request_error", code: "custom_gateway_code" } } });
+        expect(got.category).toBe(want as typeof got.category);
+        expect(got.providerCode).toBe("custom_gateway_code");
+    }
+
+    for (const status of [400, 402, 403, 413, 429, 451, 503]) {
+        const height = explainGenerationError({ status, data: { error: { message: "Height must be between 300px and 6000px", type: "invalid_request_error", code: "custom_gateway_code" } } });
+        expect(height.category).toBe("invalid_params");
+        expect(height.retryable).toBe(false);
+        expect(height.action).toContain("300–6000 像素");
+        expect(height.providerCode).toBe("custom_gateway_code");
+
+        const quota = explainGenerationError({ status, data: { error: { message: "Your account quota is exhausted", type: "invalid_request_error", code: "custom_quota_code" } } });
+        expect(quota.category).toBe("quota_unknown");
+        expect(quota.providerCode).toBe("custom_quota_code");
+    }
+
+    const authoritativeType = explainGenerationError(`{"error":{"message":"Your account quota is exhausted (request id: req_inner_123456)","type":"model_capability_not_supported","code":"invalid_request_error"}} (request id: req_outer_654321)`);
+    expect(authoritativeType.category).toBe("invalid_params");
+    expect(authoritativeType.requestId).toBe("req_outer_654321");
 });

@@ -10,7 +10,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 
 import { Captions, Clapperboard, FolderOpen, Library, Lock, LockOpen, Maximize2, MoreHorizontal, Music2, Plus, Scissors, Trash2, Upload, Video, Wand2, ZoomIn, ZoomOut } from "lucide-react";
 import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
-import { captureUserScope } from "@/lib/user-scope-guard";
 
 import { CanvasTimelineRuler } from "./canvas-timeline-ruler";
 import { CanvasTimelinePreview } from "./canvas-timeline-preview";
@@ -574,13 +573,12 @@ export function CanvasTimelineDialog({
 
     const handleExport = async () => {
         if (exportControllerRef.current) return;
-        const expectedScope = captureUserScope();
         try {
             const blob = await runExport();
             finalizingExportRef.current = true;
             setFinalizingExport(true);
             setExportDetail("正在保存成片");
-            const saved = await saveOwnedOrBrowserVideoBlob((node.title || "成片") + ".mp4", blob, expectedScope);
+            const saved = await saveOwnedOrBrowserVideoBlob((node.title || "成片") + ".mp4", blob);
             if (saved === "saved") message.success("成片导出完成");
         } catch (error) {
             if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "导出失败");

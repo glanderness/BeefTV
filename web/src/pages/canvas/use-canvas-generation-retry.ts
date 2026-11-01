@@ -5,7 +5,6 @@ import { App } from "antd";
 import { compileNodeGenerationReferences, buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildEmotionImageArtifacts, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import {
     buildAudioGenerationMetadata,
     buildGenerationConfig,
@@ -15,7 +14,6 @@ import {
     findRetrySourceNode,
     generationReferenceUrls,
     isGenerationCanceled,
-    canvasImageReferenceLimitError,
     resolveMetadataReferences,
     resolveStoredReferenceImages,
     runBackendCanvasGenerationTask,
@@ -105,7 +103,6 @@ export function useCanvasGenerationRetry({
                 if (retryingVideos.current.has(taskId)) return;
                 retryingVideos.current.add(taskId);
                 const requestProjectId = projectId;
-                const scope = captureUserScope();
                 const controller = startGenerationRequest(node.id, node.id);
                 setRunningNodeId(node.id);
                 try {
@@ -126,17 +123,17 @@ export function useCanvasGenerationRetry({
                         if (!confirmed) return;
                     }
                     const task = await retryStoredCanvasVideo(taskId, controller.signal, (update) => {
-                        if (projectIdRef.current === requestProjectId && userScopeMatches(scope)) bindGenerationTask(node.id, update);
+                        if (projectIdRef.current === requestProjectId) bindGenerationTask(node.id, update);
                     });
-                    if (projectIdRef.current === requestProjectId && userScopeMatches(scope) && !controller.signal.aborted) await applyGenerationTaskResult(node.id, task);
+                    if (projectIdRef.current === requestProjectId && !controller.signal.aborted) await applyGenerationTaskResult(node.id, task);
                 } catch (error) {
-                    if (!isGenerationCanceled(error) && projectIdRef.current === requestProjectId && userScopeMatches(scope)) {
+                    if (!isGenerationCanceled(error) && projectIdRef.current === requestProjectId) {
                         message.error(error instanceof Error ? error.message : "原视频任务重试失败");
                     }
                 } finally {
                     retryingVideos.current.delete(taskId);
                     finishGenerationRequest(node.id, controller);
-                    if (projectIdRef.current === requestProjectId && userScopeMatches(scope)) setRunningNodeId(null);
+                    if (projectIdRef.current === requestProjectId) setRunningNodeId(null);
                 }
                 return;
             }
@@ -262,13 +259,6 @@ export function useCanvasGenerationRetry({
                 return;
             }
             const retryImages = retryReferenceImages || [];
-            if (retryMode === "image") {
-                const referenceLimitError = canvasImageReferenceLimitError(generationConfig, retryImages);
-                if (referenceLimitError) {
-                    message.error(referenceLimitError);
-                    return;
-                }
-            }
             const storedVideoImages = node.type === CanvasNodeType.Video && !context?.referenceImages.length ? await resolveStoredReferenceImages(node.metadata?.references) : [];
             if (storedVideoImages === null) {
                 markMissingReferences(node.id, setNodes);
@@ -292,9 +282,8 @@ export function useCanvasGenerationRetry({
 
             setRunningNodeId(node.id);
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
-            const expectedScope = captureUserScope();
             const capturedProjectId = projectId;
-            const isCurrent = () => projectIdRef.current === capturedProjectId && !controller.signal.aborted && userScopeMatches(expectedScope);
+            const isCurrent = () => projectIdRef.current === capturedProjectId && !controller.signal.aborted;
             let submittedInput: CanvasGenerationFailureInput = { ...context, prompt: mediaPrompt };
             const runAndConsumeRetry = async (input: Parameters<typeof runBackendCanvasGenerationTask>[0]) => {
                 submittedInput = input;
@@ -328,7 +317,7 @@ export function useCanvasGenerationRetry({
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } } : item)));
                 const targetIds = nativeRetryTargets.length ? nativeRetryTargets.map((item) => item.id) : [node.id];
                 await runCanvasGenerationTaskToConsumer(
-                    { ...input, ...(nativeRetryTargets.length ? { config: { ...input.config, count: String(nativeOutputs) }, metadata: { ...input.metadata, outputNodeIds: targetIds } } : {}), ...retryContext, expectedScope },
+                    { ...input, ...(nativeRetryTargets.length ? { config: { ...input.config, count: String(nativeOutputs) }, metadata: { ...input.metadata, outputNodeIds: targetIds } } : {}), ...retryContext },
                     {
                         bindTask: (task) => targetIds.forEach((id) => bindGenerationTask(id, task)),
                         consumeTask: async (task) => { for (const id of targetIds) await applyGenerationTaskResult(id, task); },
@@ -369,6 +358,7 @@ export function useCanvasGenerationRetry({
                                           vquality: generationConfig.vquality,
                                           generateAudio: generationConfig.videoGenerateAudio,
                                           watermark: generationConfig.videoWatermark,
+                                          draft: generationConfig.videoDraft,
                                           ...videoGenerationMetadata,
                                           ...styleMetadata,
                                           ...skillMetadata,

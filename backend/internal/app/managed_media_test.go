@@ -73,6 +73,12 @@ func TestManagedImageOldLocalConclusionMustBeCheckedWithAPI(t *testing.T) {
 				if err != nil || gets != 1 || latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != localtask.RecoveryNoResult || latest.BeefBillingState == nil || *latest.BeefBillingState != "settled" {
 					t.Fatalf("API failure not retained: err=%v gets=%d task=%+v", err, gets, latest)
 				}
+			} else if state == "404" {
+				// 原请求已过保存期，用原 Key 仍查不到原编号：既不能补交也无法确认，
+				// 结论为「无法取回」（重新生成前确认），并留出间隔继续向 BeefAPI 复查。
+				if gets == 0 || latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != localtask.RecoveryUnrecoverable || latest.NextPollAt == nil || time.Until(*latest.NextPollAt) < 30*time.Minute {
+					t.Fatalf("missing expired submission not concluded: err=%v gets=%d task=%+v", err, gets, latest)
+				}
 			} else if err == nil || latest.RecoveryOutcome != nil || latest.NextPollAt == nil {
 				t.Fatalf("unknown task retained local terminal conclusion: err=%v task=%+v", err, latest)
 			}
@@ -399,5 +405,63 @@ func TestManagedLegacyFrozenImageRecoveryOnlyGET(t *testing.T) {
 	result, handled, err := svc.collectManagedImage(ctx, task, row)
 	if err != nil || !handled || posts != 0 || gets != 1 || result["imageLayers"].([]map[string]any)[0]["name"] != "original" {
 		t.Fatalf("err=%v handled=%v posts=%d gets=%d result=%#v", err, handled, posts, gets, result)
+	}
+}
+
+func TestManagedImageEndedTaskDoesNotEnterRecovery(t *testing.T) {
+	svc, _, task, _, _ := imageSubmissionFixture(t, false)
+	attempt, _ := svc.repo.LatestRouteAttempt(task.ID)
+	attempt.ChannelID = beefapi.ChannelID
+	if err := svc.repo.SaveRouteAttempt(attempt); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		err      error
+		deferred bool
+	}{
+		{"api reported failure", &beefapi.MediaTaskError{Code: "media_generation_failed", Category: "upstream", Message: "failed"}, false},
+		{"result unknown keeps recovery active", &beefapi.MediaTaskError{Code: "media_result_unknown", Category: "unknown", Message: "unknown"}, true},
+		{"delivery pending keeps recovery active", &beefapi.MediaTaskError{Code: "media_delivery_pending", Category: "pending", Message: "pending"}, true},
+		{"failed before sending", generation.RequestPreparationError{Cause: context.DeadlineExceeded}, false},
+		{"submission rejected", &beefapi.MediaHTTPError{StatusCode: http.StatusBadRequest}, false},
+		{"throttled", &beefapi.MediaHTTPError{StatusCode: http.StatusTooManyRequests}, true},
+		{"timed out", context.DeadlineExceeded, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := svc.shouldDeferImageRecovery(task, tc.err, false); got != tc.deferred {
+				t.Fatalf("defer=%v, want %v", got, tc.deferred)
+			}
+			if !tc.deferred {
+				info := routeFailureInfo(tc.err)
+				if !info.TerminalProviderFailure && !info.ExplicitRejection && !info.PreparationFailed {
+					t.Fatalf("ended error must not fall into submission_unknown route state: %+v", info)
+				}
+				candidate := task
+				candidate.Status = model.TaskStatusRunning
+				candidate.RecoveryOutcome = nil
+				if err := svc.repo.DB().Save(&candidate).Error; err != nil {
+					t.Fatal(err)
+				}
+				outcomeResult := executionFailureOutcome(svc.terminalCoordinator(), &candidate, tc.err, false, false, false)
+				if !outcomeResult.Applied || candidate.RecoveryOutcome == nil || *candidate.RecoveryOutcome != localtask.RecoveryNoResult || candidate.Stage != "任务失败" {
+					t.Fatalf("Applied=%v Stage=%q RecoveryOutcome=%v, want Applied=true Stage=任务失败 RecoveryOutcome=%q", outcomeResult.Applied, candidate.Stage, candidate.RecoveryOutcome, localtask.RecoveryNoResult)
+				}
+				failed := candidate
+				failed.LeaseOwner = ""
+				if err := svc.repo.FinishFailedImageRecovery(failed, candidate.RecoveryOutcome, nil); err != nil {
+					t.Fatal(err)
+				}
+				stored, err := svc.repo.Task(candidate.ID)
+				if err != nil || stored.RecoveryOutcome == nil || *stored.RecoveryOutcome != localtask.RecoveryNoResult {
+					t.Fatalf("stored RecoveryOutcome=%v err=%v", stored.RecoveryOutcome, err)
+				}
+				outcome := localtask.ComputeOutcome(*stored, "", localtask.OutcomeFacts{HasImageReceipt: true, DispatchState: "accepted"})
+				if outcome.Phase != "failed" || outcome.Reason != "no_result" {
+					t.Fatalf("outcome=%+v, want phase=failed reason=no_result", outcome)
+				}
+			}
+		})
 	}
 }

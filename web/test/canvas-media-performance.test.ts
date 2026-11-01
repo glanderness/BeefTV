@@ -13,7 +13,11 @@ import { detectVideoAudioTrack, detectVideoAudioTrackFromBlob, detectVideoAudioT
 
 const canvasNodeContentSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-content.tsx"), "utf8");
 const canvasAudioPlayerSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-audio-player.tsx"), "utf8");
-const canvasMentionSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-resource-mention-textarea.tsx"), "utf8");
+const canvasMentionSource = [
+    "../src/components/canvas/canvas-resource-mention-textarea.tsx",
+    "../src/components/canvas/canvas-mention-editable-dom.ts",
+    "../src/components/canvas/canvas-resource-mention-menu.tsx",
+].map((file) => readFileSync(resolve(import.meta.dir, file), "utf8")).join("\n");
 const canvasNodeSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node.tsx"), "utf8");
 const canvasVideoPreviewSource = readFileSync(resolve(import.meta.dir, "../src/services/canvas-video-preview.ts"), "utf8");
 const videoPlayerSource = readFileSync(resolve(import.meta.dir, "../src/components/video-player.tsx"), "utf8");

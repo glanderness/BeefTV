@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
 )
@@ -77,11 +76,26 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 
 	if input.Mode == "image" && runtime.Config != nil {
 		if err := runtime.Config.ApplyCapabilities(ctx, &input); err != nil {
+			if ResumedProviderRequestID(ctx) == "" {
+				return nil, RequestPreparationError{Cause: err}
+			}
 			return nil, err
 		}
 	}
 	if input.Mode == "image" && managedConnection(input.Config) {
 		return runManagedImageTask(ctx, input)
+	}
+	if input.Mode == "video" {
+		client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "video")
+		if err != nil {
+			return nil, err
+		}
+		if unified {
+			return runManagedVideoTask(ctx, client, input)
+		}
+		if client != nil {
+			ctx = context.WithValue(ctx, managedClientContextKey{}, client)
+		}
 	}
 
 	resumed := ResumedProviderRequestID(ctx) != ""
@@ -122,7 +136,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			return nil, err
 		}
 	}
-	if input.Mode == "video" && input.VideoCapability != nil && !resumed {
+	if input.Mode == "video" && strings.TrimSpace(input.Config.ChannelID) != "" && input.VideoCapability != nil && !resumed {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}
@@ -179,9 +193,6 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 			return nil, err
 		}
 	}
-	if err := modelcatalog.ValidateWorkflowProviderPromptLength(taskInputFromCanvas(input)); err != nil {
-		return nil, err
-	}
 	if err := mapWorkflowConfigError(workflow.ValidateConfig(input.Mode, workflowConfig(input.Config))); err != nil {
 		return nil, err
 	}
@@ -231,7 +242,7 @@ func applyCanvasTextStreaming(taskType string, input *Input) {
 }
 
 func validatePreparedInput(ctx context.Context, input Input) error {
-	if (input.Mode == "image" && managedConnection(input.Config)) || (input.Mode == "video" && (managedConnection(input.Config) || IsBeefAPIVideoConfig(ctx, input.Config))) {
+	if ((input.Mode == "image" || input.Mode == "video" || input.Mode == "audio") && managedConnection(input.Config)) || (input.Mode == "video" && IsBeefAPIVideoConfig(ctx, input.Config)) {
 		if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
 			return errors.New("后端生成任务缺少 Base URL、API Key 或模型名")
 		}
@@ -253,9 +264,6 @@ func validatePreparedInput(ctx context.Context, input Input) error {
 			return ProtocolPreparationError{Cause: err}
 		}
 		return err
-	}
-	if IsVolcengineJiMengProtocol(input.Config.InterfaceType) && strings.TrimSpace(input.Config.SecretKey) == "" {
-		return errors.New("即梦官方 API 缺少 Secret Key")
 	}
 	return nil
 }

@@ -23,6 +23,8 @@ export function buildCanvasGenerationRequirements(config: AiConfig, node: Canvas
         vquality: node?.metadata?.vquality ?? config.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio ?? config.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark ?? config.videoWatermark,
+        videoDraft: node?.metadata?.draft ?? config.videoDraft,
+        videoReturnLastFrame: node?.metadata?.returnLastFrame ?? config.videoReturnLastFrame,
         audioVoice: node?.metadata?.audioVoice ?? config.audioVoice,
         audioFormat: node?.metadata?.audioFormat ?? config.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed ?? config.audioSpeed,
@@ -82,6 +84,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                 : String(node?.metadata?.vquality ?? workflowParameterValue("vquality") ?? config.vquality ?? defaultConfig.vquality),
         videoGenerateAudio: node?.metadata?.generateAudio ?? config.videoGenerateAudio ?? defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark ?? config.videoWatermark ?? defaultConfig.videoWatermark,
+        videoDraft: node?.metadata?.draft ?? config.videoDraft ?? defaultConfig.videoDraft,
+        videoReturnLastFrame: node?.metadata?.returnLastFrame ?? config.videoReturnLastFrame ?? defaultConfig.videoReturnLastFrame,
         videoArkPrivateAssetUpload: node?.metadata?.arkPrivateAssetUpload ?? config.videoArkPrivateAssetUpload ?? defaultConfig.videoArkPrivateAssetUpload,
         ...resolveAudioSpeechSettings(preferredModel, {
             audioVoice: node?.metadata?.audioVoice ?? config.audioVoice,
@@ -161,6 +165,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         vquality: generationDefaults.vquality ?? requestedConfig.vquality,
         videoGenerateAudio: generationDefaults.videoGenerateAudio || requestedConfig.videoGenerateAudio,
         videoWatermark: generationDefaults.videoWatermark || requestedConfig.videoWatermark,
+        videoDraft: requestedConfig.videoDraft,
         videoArkPrivateAssetUpload: requestedConfig.videoArkPrivateAssetUpload,
         count: generationDefaults.count || requestedConfig.count,
     };

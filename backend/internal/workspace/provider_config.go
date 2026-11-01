@@ -709,6 +709,9 @@ func preserveSecrets(incoming, existing any) error {
 }
 
 func preserveSecretList(next, previous []any) error {
+	if !containsRedactedSecret(next) {
+		return nil
+	}
 	incoming := inspectArrayIdentity(next)
 	if incoming.invalid || incoming.duplicate {
 		return ErrInvalidProviderIdentity
@@ -741,6 +744,47 @@ func preserveSecretList(next, previous []any) error {
 		}
 	}
 	return nil
+}
+
+func containsRedactedSecret(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if strings.EqualFold(key, "headers") {
+				switch headers := child.(type) {
+				case []any:
+					for _, raw := range headers {
+						if header, ok := raw.(map[string]any); ok && isRedactedMarker(header["value"]) {
+							return true
+						}
+					}
+				case map[string]any:
+					for _, raw := range headers {
+						if isRedactedMarker(raw) {
+							return true
+						}
+					}
+				}
+				continue
+			}
+			if isSecretKey(key) && isRedactedMarker(child) {
+				return true
+			}
+			if containsRedactedSecret(child) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, child := range typed {
+			if containsRedactedSecret(child) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 type arrayIdentity struct {

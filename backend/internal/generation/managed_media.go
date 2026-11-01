@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -64,10 +65,24 @@ func runManagedImageTask(ctx context.Context, input Input) (map[string]any, erro
 	if len(refs) > 0 {
 		request.Operation = "edit"
 	}
+	return executeManagedMedia(ctx, client, request, refs)
+}
+
+func executeManagedMedia(ctx context.Context, client *beefapi.MediaClient, request beefapi.MediaRequest, refs []beefapi.LocalMediaReference) (map[string]any, error) {
+	runtime, _ := RuntimeFromContext(ctx)
+	if runtime.ManagedMedia == nil || request.TaskRef == "" {
+		return nil, RequestPreparationError{Cause: errors.New("媒体请求缺少持久化提交标识")}
+	}
 	result, err := client.Execute(ctx, request, refs)
 	if err != nil {
-		var terminal *beefapi.MediaTaskError
-		if errors.As(err, &terminal) {
+		var task *beefapi.MediaTaskError
+		if errors.As(err, &task) {
+			if !task.Pending() {
+				return nil, err
+			}
+			return nil, SubmissionUnknownError{Cause: err}
+		}
+		if beefapi.IsDefiniteMediaRejection(err) {
 			return nil, err
 		}
 		if sent, lookupErr := runtime.ManagedMedia.Sent(ctx); lookupErr == nil && sent {
@@ -77,6 +92,7 @@ func runManagedImageTask(ctx context.Context, input Input) (map[string]any, erro
 	}
 	return result, nil
 }
+
 func managedReference(media Media, role string) beefapi.LocalMediaReference {
 	return beefapi.LocalMediaReference{MediaReference: beefapi.MediaReference{Kind: "image", Role: role, URL: media.URL}, StorageKey: media.StorageKey, DataURL: media.DataURL, MIME: media.MimeType, Bytes: media.Bytes}
 }
@@ -93,11 +109,11 @@ func validateManagedImageReference(input *Input, size int64) error {
 func managedImageOptions(input Input) map[string]any {
 	config := input.Config
 	options := map[string]any{}
-	if config.Size != "" {
-		options["size"] = config.Size
+	if size := managedImageSize(input.ImageCapability, config.Size); size != "" {
+		options["size"] = size
 	}
-	if config.Quality != "" {
-		options["quality"] = config.Quality
+	if quality := managedImageQuality(input.ImageCapability, config.Quality); quality != "" {
+		options["quality"] = quality
 	}
 	if n, err := strconv.Atoi(config.Count); err == nil && n > 0 {
 		options["n"] = n
@@ -115,9 +131,11 @@ func managedImageOptions(input Input) map[string]any {
 	if config.SeedreamMode == "layers" {
 		options["layer_decomposition"] = true
 	}
-	if n, err := strconv.Atoi(config.SeedreamMaxImages); err == nil && n > 1 {
-		options["sequential_image_generation"] = "auto"
-		options["sequential_image_generation_options"] = map[string]any{"max_images": n}
+	if input.ImageCapability == nil || input.ImageCapability.SequentialGeneration.Supported {
+		if n := sequentialMaxImagesForInput(input); n > 1 {
+			options["sequential_image_generation"] = "auto"
+			options["sequential_image_generation_options"] = map[string]any{"max_images": n}
+		}
 	}
 	if config.SeedreamOptimize != "" {
 		options["optimize_prompt_options"] = map[string]any{"mode": config.SeedreamOptimize}
@@ -127,6 +145,147 @@ func managedImageOptions(input Input) map[string]any {
 	}
 	return options
 }
+
+// managedImageQuality 只发送模型目录声明支持的画质；不支持或不在可选值里时交给服务端默认值。
+func managedImageQuality(profile *ImageCapabilityConfig, raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.EqualFold(value, "auto") || !ImageQualitySupported(profile) {
+		return ""
+	}
+	if profile != nil && len(profile.Quality.Values) > 0 {
+		for _, allowed := range profile.Quality.Values {
+			if strings.EqualFold(allowed, value) {
+				return allowed
+			}
+		}
+		return ""
+	}
+	return value
+}
+
+// managedImageSize 把画布尺寸换成模型目录允许的值，不按模型名写规则：
+// 目录列出的值原样发送；画布比例（如 16:9）优先用目录预设，否则按旧换算表与目录默认尺寸中
+// 面积较大的一个换成同比例像素（宽高取 16 的倍数）；不允许自定义尺寸时取比例最接近的目录值。
+func managedImageSize(profile *ImageCapabilityConfig, raw string) string {
+	value := strings.TrimSpace(strings.ReplaceAll(raw, "×", "x"))
+	if value == "" || strings.EqualFold(value, "auto") {
+		return ""
+	}
+	if profile == nil {
+		if normalized := NormalizePixelSize(value); normalized != "" {
+			return normalized
+		}
+		return value
+	}
+	if profile.Size.Parameter == "aspect_ratio" {
+		return NormalizeImageAspectRatio(value)
+	}
+	ratioW, ratioH, isRatio := parseImageRatio(value)
+	pixelW, pixelH, isPixel := parseImagePixels(value)
+	if !isRatio {
+		for _, allowed := range profile.Size.Values {
+			if strings.EqualFold(allowed, value) {
+				return allowed
+			}
+		}
+	}
+	if !isRatio && !isPixel {
+		return ""
+	}
+	if isRatio {
+		defaultTier := strings.TrimSpace(profile.Size.Default)
+		for _, preset := range profile.Size.Presets {
+			if preset.Ratio == value && preset.Size != "" && (preset.Tier == "" || defaultTier == "" || strings.EqualFold(preset.Tier, defaultTier)) {
+				return preset.Size
+			}
+		}
+	}
+	if !profile.Size.AllowCustom {
+		if !isPixel {
+			pixelW, pixelH = ratioW, ratioH
+		}
+		return closestImageSize(profile.Size.Values, pixelW, pixelH, profile.Size.Default)
+	}
+	if isPixel {
+		return value
+	}
+	area := imageSizeArea(NormalizePixelSize(value))
+	if fallback := imageSizeArea(profile.Size.Default); fallback > area {
+		area = fallback
+	}
+	if area <= 0 {
+		area = 1024 * 1024
+	}
+	width := math.Sqrt(area * float64(ratioW) / float64(ratioH))
+	height := math.Sqrt(area * float64(ratioH) / float64(ratioW))
+	return strconv.Itoa(roundToSixteen(width)) + "x" + strconv.Itoa(roundToSixteen(height))
+}
+
+func parseImageRatio(value string) (int, int, bool) {
+	left, right, ok := strings.Cut(value, ":")
+	if !ok {
+		return 0, 0, false
+	}
+	w, wErr := strconv.Atoi(strings.TrimSpace(left))
+	h, hErr := strconv.Atoi(strings.TrimSpace(right))
+	return w, h, wErr == nil && hErr == nil && w > 0 && h > 0
+}
+
+func parseImagePixels(value string) (int, int, bool) {
+	left, right, ok := strings.Cut(strings.ToLower(value), "x")
+	if !ok {
+		return 0, 0, false
+	}
+	w, wErr := strconv.Atoi(strings.TrimSpace(left))
+	h, hErr := strconv.Atoi(strings.TrimSpace(right))
+	return w, h, wErr == nil && hErr == nil && w > 0 && h > 0
+}
+
+// imageSizeArea 读出像素尺寸（1024x1024）或档位（2K、1.5K 指长边 N×1024 的正方形）的面积。
+func imageSizeArea(value string) float64 {
+	value = strings.TrimSpace(value)
+	if w, h, ok := parseImagePixels(value); ok {
+		return float64(w * h)
+	}
+	if strings.HasSuffix(strings.ToUpper(value), "K") {
+		if n, err := strconv.ParseFloat(strings.TrimSuffix(strings.ToUpper(value), "K"), 64); err == nil && n > 0 {
+			side := n * 1024
+			return side * side
+		}
+	}
+	return 0
+}
+
+func roundToSixteen(value float64) int {
+	return max(16, int(math.Round(value/16))*16)
+}
+
+func closestImageSize(values []string, width, height int, fallback string) string {
+	best, bestDiff := "", math.MaxFloat64
+	want := math.Log(float64(width) / float64(height))
+	for _, candidate := range values {
+		w, h, ok := parseImagePixels(candidate)
+		if !ok {
+			continue
+		}
+		if diff := math.Abs(math.Log(float64(w)/float64(h)) - want); diff < bestDiff {
+			best, bestDiff = candidate, diff
+		}
+	}
+	if best == "" {
+		if trimmed := strings.TrimSpace(fallback); trimmed != "" {
+			if normalized := NormalizePixelSize(trimmed); normalized != "" {
+				return normalized
+			}
+			return trimmed
+		}
+		if len(values) > 0 {
+			return strings.TrimSpace(values[0])
+		}
+	}
+	return best
+}
+
 func managedMediaClient(ctx context.Context, config Config) *beefapi.MediaClient {
 	runtime, _ := RuntimeFromContext(ctx)
 	client := &beefapi.MediaClient{BaseURL: config.BaseURL, APIKey: config.APIKey, State: runtime.ManagedMedia, AllowHTTPTest: runtime.Endpoints.BeefAPIVideoBaseURL != ""}
@@ -166,6 +325,9 @@ func managedMediaClient(ctx context.Context, config Config) *beefapi.MediaClient
 		observer(loaded, total, phase)
 	}
 	client.Observe = func(req *http.Request, resp *http.Response, body []byte, err error) {
+		if runtime.ReferenceProgress != nil && strings.Contains(req.URL.Path, "/media/tasks") {
+			runtime.ReferenceProgress.ClearReference()
+		}
 		if runtime.Receipts == nil {
 			return
 		}

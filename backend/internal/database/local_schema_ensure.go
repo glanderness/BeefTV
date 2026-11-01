@@ -107,6 +107,15 @@ func ensureAgentOpRecordsTable(tx *gorm.DB) error {
 		if err := ensureSQLiteColumn(tx, "agent_op_records", "turn_id", "TEXT"); err != nil {
 			return err
 		}
+		if err := ensureSQLiteColumn(tx, "agent_op_records", "caller_kind", "TEXT"); err != nil {
+			return err
+		}
+		if err := ensureSQLiteColumn(tx, "agent_op_records", "client_id", "TEXT"); err != nil {
+			return err
+		}
+		if err := ensureSQLiteColumn(tx, "agent_op_records", "client_label", "TEXT"); err != nil {
+			return err
+		}
 		if err := ensureSQLiteColumn(tx, "agent_op_records", "created_at", "DATETIME"); err != nil {
 			return err
 		}
@@ -123,6 +132,9 @@ func ensureAgentOpRecordsTable(tx *gorm.DB) error {
 		status TEXT,
 		result_json TEXT,
 		turn_id TEXT,
+		caller_kind TEXT,
+		client_id TEXT,
+		client_label TEXT,
 		created_at DATETIME,
 		updated_at DATETIME,
 		PRIMARY KEY (user_id, op_id)

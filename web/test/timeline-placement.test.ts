@@ -57,4 +57,19 @@ describe("planClipMove 同轨让位", () => {
         const placement = planClipMove({ clipId: "first", trackId: "video", startMs: 0, durationMs: 4_000, clips: adjacent })!;
         expect([...placement.entries()]).toEqual([["first", 0]]);
     });
+
+    it("向右拖动首段越过后续片段中心点时，后续片段左移补位实现前后顺序交换", () => {
+        const clips = [clip("first", 0, 4_000), clip("second", 4_000, 4_000), clip("third", 8_000, 4_000)];
+        // 拖到 second 位置（中心点 6000 >= second 中心点 6000）：second 左移到 0，first 落位 4000，third 保持 8000
+        const swapSecond = planClipMove({ clipId: "first", trackId: "video", startMs: 4_000, durationMs: 4_000, clips })!;
+        expect(swapSecond.get("second")).toBe(0);
+        expect(swapSecond.get("first")).toBe(4_000);
+        expect(swapSecond.get("third") ?? 8_000).toBe(8_000);
+
+        // 继续拖到 third 位置（startMs = 8000）：second 左移到 0，third 左移到 4000，first 落位 8000
+        const swapThird = planClipMove({ clipId: "first", trackId: "video", startMs: 8_000, durationMs: 4_000, clips })!;
+        expect(swapThird.get("second")).toBe(0);
+        expect(swapThird.get("third")).toBe(4_000);
+        expect(swapThird.get("first")).toBe(8_000);
+    });
 });

@@ -815,8 +815,38 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     const cleanCanvasId = String(canvasId || '').trim();
     const cleanKind = String(kind || 'event').trim();
     const cleanMessage = String(message || '').trim();
+    const requestedSessionId = String(sessionId || '').trim();
     if (!cleanCanvasId || !cleanKind || !cleanMessage) throw fail('invalid_request');
-    const entry = await ensureSession(cleanCanvasId, String(sessionId || '').trim());
+    let currentSessionId = sessions.get(cleanCanvasId)?.sessionId || '';
+    if (!currentSessionId) {
+      try { currentSessionId = JSON.parse(fs.readFileSync(currentPath(cleanCanvasId), 'utf8')).sessionId || ''; }
+      catch (error) { if (error.code !== 'ENOENT') throw fail('session_pointer_failed'); }
+    }
+    if (requestedSessionId && isDurableSessionId(requestedSessionId) && requestedSessionId !== currentSessionId) {
+      return lock(cleanCanvasId, async () => {
+        const cached = sessions.get(cleanCanvasId);
+        const entry = cached?.sessionId === requestedSessionId ? cached : await open(cleanCanvasId, requestedSessionId);
+        try {
+          const submission = await entry.root.submit({
+            type: 'write',
+            requestId: `event:${requestId}`,
+            entry: {
+              kind: `beeftv.${cleanKind}`,
+              data,
+              model: [{
+                role: 'user',
+                content: [{ type: 'text', text: `<canvas_event kind="${cleanKind}">\n${cleanMessage}\n</canvas_event>` }],
+                timestamp: Date.now(),
+              }],
+            },
+          }, CTX);
+          return { accepted: true, sessionId: entry.sessionId, submissionId: submission.id, requestId: `event:${requestId}` };
+        } finally {
+          if (entry !== cached) await entry.harness.close(CTX);
+        }
+      });
+    }
+    const entry = await ensureSession(cleanCanvasId, requestedSessionId);
     return lock(cleanCanvasId, async () => {
       const submission = await entry.root.submit({
         type: 'write',

@@ -27,7 +27,7 @@ v16 `assistant-durable-session-binding` 追加 `durable_session_id` 与 `durable
 
 v17 `assistant-active-skill-context` 追加 `assistant_skill_contexts` 与 `assistant_skill_context_mutations`。上下文以 `(user_id, canvas_id, durable_session_id)` 为主键，只保存范围、revision、活动版本 pin 与生命周期，不保存另一份技能正文；变更回执再以 `request_id` 去重。恢复会话时按活动 pin 重新读安装文件，缺失或校验失败时停止本轮请求，不静默沿用历史正文。清除当前选择和开始独立任务是显式上下文变更。
 
-v18 `assistant-generation-continuations` 在既有 v17 活动技能上下文之后追加 `assistant_continuations`。一条用户确认记录固定原回合、提议、画布/会话/scope revision、原权限、全部提交 operationId/输出节点集合，以及接续 requestId/turnId；真实 task IDs 从原提交回读。认领与业务回合快照同事务提交，撤销/范围变化/停止使授权失效，不取消或重发收费媒体任务。结构检查包含完整字段、主键与 turnId 唯一索引；不改写旧表和历史 ledger。详见仓库 `docs/refactor/assistant-generation-continuation.md`。
+v18 `assistant-generation-continuations` 在既有 v17 活动技能上下文之后追加 `assistant_continuations`。一条用户确认记录固定原回合、提议、画布/会话/scope revision、原权限、全部提交 operationId/输出节点集合，以及接续 requestId/turnId；真实 task IDs 从原提交回读。认领与业务回合快照同事务提交，撤销/范围变化/停止使授权失效，不取消或重发收费媒体任务。结构检查包含完整字段、主键与 turnId 唯一索引；不改写旧表和历史 ledger。
 
 v19 `assistant-continuation-intent-fence` 为 `assistant_turns` 追加 `continuation_invalidated`，默认 false。停止、新用户输入或用户范围变化在取消已有回执的同事务标记旧源回合，阻止仍在准备中的旧确认稍后重新登记接续；普通回合保存不得清除此标记。宿主当前轮的正常 `skill_load` 不代表新用户意图，在同事务同步同用户、画布、会话和原 scope/version 下仍有效的接续回执；已取消或失效的记录不恢复。旧历史、未知列与迁移记录保留，缺列阻止 Ready。
 
@@ -80,22 +80,7 @@ go test -race ./internal/app -run 'TestImageSubmission|TestCreateTaskReplaysSame
 
 Agent 宿主在安装仓库锁定的依赖后，可从仓库根目录执行 `bun test agent-host/*.test.mjs`；其中运行探针使用真实 Node/pi SDK 和本机模型、操作端点替身。该结果不代表真实供应商、用户工作区或桌面安装链已经验收。任何真实升级都必须先停止所有工作区写入者，创建完整工作区备份（包括 SQLite、资源文件和设置加密密钥），验证备份可读取，再只对独立副本升级并核验结果。正式安装、发布及真实数据库迁移还需用户单独授权。
 
-回滚只允许停止新程序后，将升级前完整备份恢复到新的隔离目录，由与该备份版本匹配的二进制打开；不得把旧程序指向已升级数据库，不得删除 v8/v9 ledger、降低版本号或删列模拟回滚。升级后产生的新数据不在旧备份中，应保留升级后目录并由 owner 决定如何迁回。本实验没有执行任何真实数据备份、升级、回滚或应用安装。
-
-### Lucas 统一候选测试入口
-
-待测远端分支为 `codex/pr41-sr-repair-20260930`。从干净的独立 checkout 拉取该分支并记录完整 commit；不要把其他会话的未提交修改覆盖到候选。上面的 Go 命令可先验证合成数据迁移和 CLI/MCP 合同。前端可在已有依赖和 FFmpeg/Chromium 环境执行 `BEEFTV_NATIVE_FFMPEG_TEST=1 BEEFTV_BROWSER_WORKER_TEST=1 bun run test`（工作目录 `web`），启用真实媒体和浏览器 Worker 用例；缺少工具不得记作通过。
-
-人工桌面验收须另行取得按候选 commit 构建的完整包。先关闭所有使用源工作区的程序，复制整个工作区到备份目录，再从备份复制一个测试目录；保留未打开过的备份。启动候选时显式设置 `CANVAS_DESKTOP_DATA_DIR` 为测试目录的绝对路径，核对启动日志及工作区内容后再操作。不得省略此变量而误用默认工作区。Windows PowerShell 示例（路径必须替换为实际独立目录）：
-
-```powershell
-$env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
-& 'D:\BeefTV-tests\candidate-app\BeefTV.exe'
-```
-
-测试包应解压到新目录，保留 `BeefTV.exe`、`plugins`、`cli`、`agent-host` 完整布局，并按提供方的签名清单核对签名、大小及 SHA-256；本轮没有发布可下载包。旧 Windows 升级器不能直接接受这个布局，过渡升级器的本地方案在 `codex/product-windows-bridge-20260930`，尚未完成 Windows 真机验收或更新源部署。不要把新包只覆盖到旧目录、绕过验签或运行正式发布工作流来代替测试。
-
-人工检查画布与任务历史、失败诊断、重启后输出找回、CLI/MCP 操作回放、独立音轨和字幕成片、ZIP 在空工作区导入。生成类上游调用须另行获得预算授权。回滚时退出候选，把未升级的完整备份复制到另一个新目录，再使用匹配该备份的旧包显式指向该目录；禁止旧 Agent v6 或旧整合 v8 程序打开升级后的 v9 目录。
+回滚只允许停止新程序后，将升级前完整备份恢复到新的隔离目录，由与该备份版本匹配的二进制打开；不得把旧程序指向已升级数据库，不得删除 v8/v9 ledger、降低版本号或删列模拟回滚。升级后产生的新数据不在旧备份中，应保留升级后目录并由用户决定如何迁回。
 
 ### 桌面本地任务诊断
 
@@ -111,7 +96,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 实验 Agent 的 v3–v6 与正式版本使用过重叠编号，迁移执行器按最大已应用版本推进。图片恢复预览 v7 不创建 Agent 运行时结构。本分支通过 v8 追加迁移显式补齐 `agent_op_records`（包含 `turn_id` 及其索引）、`tasks.client_operation_id`、`tasks.client_operation_hash` 和 `(user_id, client_operation_id)` 唯一索引；不依赖旧 v3–v6 再次执行。历史 Agent v6 程序不能直接连接升级后的 v7/v8 数据库。
 
-本地完整重构候选以正式 v1.6.21 与 Agent 开发分支为整合起点，当前验收状态见仓库 `docs/refactor/progress.md`。原生桌面完整交互、Windows 真机升级和用户数据副本验收仍是新候选的发布门槛；旧候选或正式版的验收回执不能替代这些验证。历史候选及旧数据备份独立保留，更新开发分支不触发真实工作区迁移。
+本地完整重构候选以正式 v1.6.21 与 Agent 开发分支为整合起点。原生桌面完整交互、Windows 真机升级和用户数据副本验收仍是新候选的发布门槛；旧候选或正式版的验收回执不能替代这些验证。历史候选及旧数据备份独立保留，更新开发分支不触发真实工作区迁移。
 
 历史图片恢复预览 v7 拒绝同为 v7 但缺少 `image_submissions` 或 `tasks.failure_diagnostics` 的数据库；本候选通过追加 v8/v9 显式补齐这些历史结构，再以 v10 追加业务回合表，v11 追加创作对话表。同为当前版本但结构缺损仍拒绝 Ready，版本号本身不构成结构完备证明。不能改历史记录伪造兼容。回滚只能停止所有写入者后，恢复升级前完整工作区备份到独立目录，再用匹配该备份的旧二进制打开；禁止旧程序直接打开新数据库。
 
@@ -232,7 +217,7 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 | `creation_submissions` | 保存创作提案中每个生成项的请求、报价签名、审批和任务绑定 | `(run_id, item_key)` 与 `task_id` 分别唯一；相同提交只允许创建一个任务，过期、撤销或提案哈希不一致时拒绝执行 |
 | `tasks.creation_submission_id` | 将生成任务反向绑定到已批准的创作提交 | 字段可空以兼容普通任务和旧数据；非空值唯一，阻止同一提交产生多个任务 |
 | `tasks.client_operation_id` / `client_operation_hash` | 保存普通生成确认的稳定编号和原始请求 SHA-256 摘要 | 编号可空；`(user_id, client_operation_id)` 唯一。重放必须匹配完整原始生成请求，模型、参考素材或参数不同返回 409；摘要不对外返回。旧记录没有摘要时拒绝重放，不自动补单 |
-| `tasks.recovery_outcome` | 保存后台或手动恢复对失败生成任务记录的内部结论（`no_result` \| `unrecoverable`） | 仅由恢复流程在确认上游失败/未建单（`no_result`）或回执缺失/冲突/过保（`unrecoverable`）时写入；暂时性网络或读库错误保持为空以便下一轮继续取回。不直接对外暴露，仅通过 `task.ComputeOutcome` 投影为 `outcome` |
+| `tasks.recovery_outcome` | 保存后台或手动恢复对失败生成任务记录的内部结论（`no_result` \| `unrecoverable`）；成功任务上另存后台画布绑定扫描的私有标记（`canvas_bind:` 前缀，格式版本 4） | 恢复结论仅由恢复流程在确认上游失败/未建单（`no_result`）或回执缺失/冲突/过保（`unrecoverable`）时写入；暂时性网络或读库错误保持为空以便下一轮继续取回。画布绑定标记只在成功任务上写入，记录被拒的目标（节点已删除、节点已换任务时附带被拒那次读到的画布 revision），画布 revision 变化后重试，绑定成功或目标不再存在时清除；写入只替换空值或旧的 `canvas_bind:` 标记，不覆盖恢复结论，也不改 `updated_at`。两者都不直接对外暴露，恢复结论仅通过 `task.ComputeOutcome` 投影为 `outcome` |
 | `tasks.beef_usage_state` / `beef_billing_state` / `beef_reconcile_deadline` | 保存 BeefAPI 返回的本轮结算原值和核对截止时间 | 由提交与恢复流程写入，NULL 表示未读到结算事实；不直接对外暴露，仅通过 `task.ComputeOutcome` 投影为 `outcome`（`pending` 时暂不允许重新生成并返回截止时间） |
 | `tasks.image_job_id` | 保存 BeefAPI 图片任务编号，用于后台查询已提交图片的结果与结算 | 默认空串；只用于恢复查询，不用于重新提交 |
 | `workflow_template_versions` / `workflow_instances` / `workflow_step_instances` | 保存短剧生产模板和项目、章节实例 | 短剧分镜工作流 v2 顺序为剧情、资产、分镜、动作预演、视频、交付 |

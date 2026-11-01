@@ -1,10 +1,13 @@
 import { App, Button, Dropdown, Popover } from "antd";
-import { CheckCircle2, CircleAlert, CloudCheck, CloudOff, LoaderCircle, RefreshCw } from "lucide-react";
-import { useState, useSyncExternalStore } from "react";
+import { CheckCircle2, CircleAlert, CloudCheck, CloudOff, LoaderCircle, RefreshCw, Undo2 } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { ApiError } from "@/services/api/request";
 import { readAllCanvasSyncDrafts, readCanvasSyncDrafts, type CanvasSyncDraft } from "@/services/canvas-sync-drafts";
+import { fetchExternalCanvasWrites, subscribeExternalCanvasEvent, undoExternalCanvasWrite, type ExternalCanvasWrite } from "@/services/canvas-external-writes";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { acceptExternalCanvasRevision, pendingExternalCanvasRevision, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { acceptExternalCanvasRevision, pendingExternalCanvasRevision, refreshLocalCanvasProjectIfChanged, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { highlightAssistantNodes } from "./canvas-assistant-highlight";
 import { canvasExternalRevisionVersion, subscribeCanvasExternalRevision, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { canvasSyncProgressKey, useSyncProgressStore, type SyncProjectProgress } from "@/stores/use-sync-progress-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -63,6 +66,84 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { 
     const externalRevision = useSyncExternalStore(subscribeCanvasExternalRevision, canvasExternalRevisionVersion);
     const externalConflict = pendingExternalCanvasRevision(projectId);
     const [adopting, setAdopting] = useState(false);
+    const [externalWrites, setExternalWrites] = useState<ExternalCanvasWrite[]>([]);
+    const [externalWriteOpen, setExternalWriteOpen] = useState(false);
+    const [undoingOpId, setUndoingOpId] = useState<string | null>(null);
+    const highlightedOpIdsRef = useRef<Set<string>>(new Set());
+    const lastProjectIdRef = useRef<string>(projectId);
+
+    useEffect(() => {
+        if (lastProjectIdRef.current !== projectId) {
+            lastProjectIdRef.current = projectId;
+            setExternalWrites([]);
+            setExternalWriteOpen(false);
+        }
+        if (!localOnly || !projectId) {
+            setExternalWrites([]);
+            return;
+        }
+        let cancelled = false;
+        const loadWrites = () => {
+            void fetchExternalCanvasWrites(projectId)
+                .then((items) => {
+                    if (cancelled) return;
+                    setExternalWrites(items);
+                    const latest = items.find((item) => !item.undone);
+                    if (latest && !highlightedOpIdsRef.current.has(latest.opId)) {
+                        highlightedOpIdsRef.current.add(latest.opId);
+                        if (latest.changedNodeIds?.length && typeof document !== "undefined") {
+                            highlightAssistantNodes(document.body, latest.changedNodeIds);
+                        }
+                    }
+                })
+                .catch(() => {});
+        };
+        loadWrites();
+        const unsubscribe = subscribeExternalCanvasEvent((changedCanvasId) => {
+            if (changedCanvasId === projectId) loadWrites();
+        });
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
+    }, [localOnly, projectId, externalRevision]);
+
+    const latestExternalWrite = externalWrites.find((item) => !item.undone);
+    const handleUndoExternalWrite = async (write: ExternalCanvasWrite) => {
+        setUndoingOpId(write.opId);
+        let restoredNodeIds: string[] = write.changedNodeIds ?? [];
+        try {
+            try {
+                const result = await undoExternalCanvasWrite(projectId, write.opId);
+                if (result.restoredNodeIds?.length) {
+                    restoredNodeIds = result.restoredNodeIds;
+                }
+            } catch (error) {
+                if (!(error instanceof ApiError && error.reason === "already_undone")) {
+                    throw error;
+                }
+            }
+            setExternalWrites((current) =>
+                current.map((item) => (item.opId === write.opId ? { ...item, undone: true } : item)),
+            );
+            setExternalWriteOpen(false);
+            message.success(`已撤销 ${write.clientLabel} 的改动`);
+            void refreshLocalCanvasProjectIfChanged(projectId)
+                .then(() => {
+                    if (restoredNodeIds.length && typeof document !== "undefined") {
+                        highlightAssistantNodes(document.body, restoredNodeIds);
+                    }
+                })
+                .catch(() => {});
+            void fetchExternalCanvasWrites(projectId)
+                .then((refreshed) => setExternalWrites(refreshed))
+                .catch(() => {});
+        } catch (error) {
+            message.error(error instanceof Error && error.message ? error.message : "撤销外部改动失败，请重试");
+        } finally {
+            setUndoingOpId(null);
+        }
+    };
     const view = canvasSyncStatusView(localOnly, progress);
     const label = view.label;
     // 替换前会先把当前内容存成本地草稿；草稿没存成时不替换，并把原因告诉用户。
@@ -102,6 +183,66 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { 
                 >
                     <span className="canvas-sync-status-label text-xs">画布已在别处更新 · 使用最新版本</span>
                 </Button>
+            ) : null}
+            {latestExternalWrite ? (
+                <Popover
+                    trigger="click"
+                    placement="bottom"
+                    open={externalWriteOpen}
+                    onOpenChange={setExternalWriteOpen}
+                    content={
+                        <div className="max-w-80 space-y-2.5" data-canvas-no-zoom>
+                            <div className="space-y-1">
+                                <p className="text-xs font-medium">
+                                    外部改动来源：{latestExternalWrite.clientLabel}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    {latestExternalWrite.summary}（v{latestExternalWrite.revisionBefore} → v{latestExternalWrite.revisionAfter}）
+                                </p>
+                                {latestExternalWrite.modifiedNodes?.length ? (
+                                    <p className="text-xs text-muted-foreground">
+                                        涉及节点：{latestExternalWrite.modifiedNodes.map((node) => node.title || node.id).join("、")}
+                                    </p>
+                                ) : null}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {latestExternalWrite.changedNodeIds?.length ? (
+                                    <Button
+                                        size="small"
+                                        onClick={() => {
+                                            if (typeof document !== "undefined") {
+                                                highlightAssistantNodes(document.body, latestExternalWrite.changedNodeIds);
+                                            }
+                                        }}
+                                    >
+                                        定位改动节点
+                                    </Button>
+                                ) : null}
+                                <Button
+                                    size="small"
+                                    danger
+                                    icon={<Undo2 className="size-3.5" />}
+                                    loading={undoingOpId === latestExternalWrite.opId}
+                                    onClick={() => void handleUndoExternalWrite(latestExternalWrite)}
+                                >
+                                    撤销此次改动
+                                </Button>
+                            </div>
+                        </div>
+                    }
+                >
+                    <Button
+                        size="small"
+                        type="text"
+                        data-canvas-external-write-op={latestExternalWrite.opId}
+                        aria-label={`外部改动：${latestExternalWrite.clientLabel} ${latestExternalWrite.summary}`}
+                        icon={<Undo2 className="size-3.5" />}
+                    >
+                        <span className="canvas-sync-status-label text-xs">
+                            外部改动 · {latestExternalWrite.clientLabel}：{latestExternalWrite.summary}
+                        </span>
+                    </Button>
+                </Popover>
             ) : null}
             <Popover
                 trigger="click"

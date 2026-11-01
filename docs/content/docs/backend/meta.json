@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "local-development",
+    "external-agents",
     "beeftv-cli",
     "http-api",
     "storyboard-operations",

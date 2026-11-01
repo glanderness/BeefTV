@@ -12,18 +12,22 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/outbound"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
 
 var ErrUploadIncomplete = errors.New("参考素材未能确认，请重新提交")
 var ErrUploadRedirect = errors.New("参考素材上传不允许重定向")
+var uploadControlTimeout = 30 * time.Second
+var uploadCompleteTimeout = 90 * time.Second
 
 type UploadPart struct {
 	Number          int               `json:"number"`
@@ -115,7 +119,13 @@ func (c *MediaClient) uploadJSON(ctx context.Context, path string, body, out any
 		meta.Attempt = 1
 	}
 	ctx = withUploadMeta(ctx, stage, meta.Attempt)
-	req, err := c.request(ctx, http.MethodPost, path, body)
+	attemptTimeout := uploadControlTimeout
+	if stage == "complete" {
+		attemptTimeout = uploadCompleteTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
+	defer cancel()
+	req, err := c.request(reqCtx, http.MethodPost, path, body)
 	if err != nil {
 		return uploadError(ctx, err)
 	}
@@ -330,7 +340,7 @@ func retryUploadControl(err error) bool {
 	if errors.As(err, &dns) {
 		return dns.Timeout() || dns.Temporary()
 	}
-	return errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	return errors.As(err, &network) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func RetryUploadError(err error) bool { return retryUploadControl(err) }
@@ -462,6 +472,9 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if ref.StorageKey != "" {
+		ref.URL = ""
+	}
 	if ref.URL != "" && !strings.HasPrefix(ref.URL, "data:") {
 		// Forwarded references are validated and fetched by BeefAPI. Do not
 		// require this desktop's DNS/network route to fetch the same URL.
@@ -469,7 +482,20 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 		if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 			return "", errors.New("参考素材需要可访问的 HTTPS 链接")
 		}
-		return ref.URL, nil
+		if ref.Kind == "image" && ref.Role != "source" {
+			return ref.URL, nil
+		}
+		// Measured video/audio and upscale sources must be finalized by the
+		// upload-ticket validator.
+		body, mime, size, err := c.openRemoteReference(ctx, ref.URL, ref.MaxBytes)
+		if err != nil {
+			return "", err
+		}
+		defer body.Close()
+		copy := *c
+		copy.Open = func(context.Context, string) (io.ReadCloser, string, int64, error) { return body, mime, size, nil }
+		ref.URL, ref.StorageKey, ref.MIME = "", "remote-reference", mime
+		return copy.UploadReference(ctx, ref)
 	}
 	mime := ref.MIME
 	inline := ref.DataURL
@@ -550,9 +576,28 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 	if _, err := source.ReadAt(header, 0); err != nil && err != io.EOF {
 		return "", err
 	}
-	detected := http.DetectContentType(header)
+	detected := detectMediaContentType(header)
 	if strings.HasPrefix(detected, ref.Kind+"/") {
 		mime = detected
+	}
+	mime = normalizeReferenceMime(ref.Kind, mime)
+	if ref.Kind == "image" && isTranscodableImageMime(mime) {
+		pngData, transcodeErr := transcodeImageReferenceToPNG(ctx, source, size)
+		if transcodeErr != nil || len(pngData) == 0 {
+			label := strings.TrimSpace(ref.Role)
+			if label == "" {
+				label = "参考图片"
+			}
+			return "", fmt.Errorf("%s为 AVIF/HEIC 等暂不支持的格式，请转换为 PNG、JPEG 或 WebP 后重试", label)
+		}
+		source = bytes.NewReader(pngData)
+		size = int64(len(pngData))
+		if ref.MaxBytes > 0 && size > ref.MaxBytes {
+			return "", errors.New("参考素材超过当前模型文件大小限制")
+		}
+		digest.Reset()
+		_, _ = digest.Write(pngData)
+		mime = "image/png"
 	}
 	if !strings.HasPrefix(mime, ref.Kind+"/") {
 		return "", errors.New("参考素材格式与类型不一致")
@@ -578,4 +623,125 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 		c.ReferenceUploaded(ref, uploaded)
 	}
 	return uploaded.URL, nil
+}
+
+type mediaReferenceFile struct{ *os.File }
+
+func (f mediaReferenceFile) Close() error {
+	err := f.File.Close()
+	_ = os.Remove(f.Name())
+	return err
+}
+
+func (c *MediaClient) openRemoteReference(ctx context.Context, raw string, maxBytes int64) (mediaReferenceFile, string, int64, error) {
+	if maxBytes <= 0 {
+		return mediaReferenceFile{}, "", 0, errors.New("参考素材缺少下载大小限制")
+	}
+	ctx = c.networkContext(ctx)
+	if err := c.validURLContext(ctx, raw); err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	response, err := c.storageClient("参考素材重定向次数过多").Do(req)
+	if err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.ContentLength > maxBytes {
+		return mediaReferenceFile{}, "", 0, errors.New("参考素材无法下载或超过文件大小限制")
+	}
+	file, err := os.CreateTemp("", "beeftv-reference-*")
+	if err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	result := mediaReferenceFile{file}
+	size, err := io.Copy(file, io.LimitReader(mediaContextReader{ctx, response.Body}, maxBytes+1))
+	if err == nil && size > maxBytes {
+		err = errors.New("参考素材超过文件大小限制")
+	}
+	if err == nil && size == 0 {
+		err = errors.New("参考素材为空")
+	}
+	if err != nil {
+		_ = result.Close()
+		return mediaReferenceFile{}, "", 0, err
+	}
+	return result, response.Header.Get("Content-Type"), size, nil
+}
+
+func detectMediaContentType(header []byte) string {
+	if len(header) >= 4 && ((header[0] == 'I' && header[1] == 'I' && header[2] == '*' && header[3] == 0) || (header[0] == 'M' && header[1] == 'M' && header[2] == 0 && header[3] == '*')) {
+		return "image/tiff"
+	}
+	if len(header) >= 12 && string(header[4:8]) == "ftyp" {
+		switch string(header[8:12]) {
+		case "avif", "avis":
+			return "image/avif"
+		case "heic", "heix", "mif1", "msf1":
+			return "image/heic"
+		case "qt  ":
+			return "video/quicktime"
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(header), ";")[0]))
+}
+
+func normalizeReferenceMime(kind, raw string) string {
+	mime := strings.ToLower(strings.TrimSpace(raw))
+	if semi := strings.IndexByte(mime, ';'); semi >= 0 {
+		mime = strings.TrimSpace(mime[:semi])
+	}
+	if kind == "image" {
+		switch mime {
+		case "image/jpg", "image/pjpeg":
+			return "image/jpeg"
+		case "image/x-png":
+			return "image/png"
+		case "image/x-bmp":
+			return "image/bmp"
+		}
+	}
+	return mime
+}
+
+func isTranscodableImageMime(mime string) bool {
+	switch mime {
+	case "image/avif", "image/heic", "image/heif", "image/x-icon", "image/vnd.microsoft.icon":
+		return true
+	default:
+		return false
+	}
+}
+
+func transcodeImageReferenceToPNG(ctx context.Context, source io.ReaderAt, size int64) ([]byte, error) {
+	ffmpeg, err := mediatools.ResolveFFmpeg()
+	if err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp("", "beeftv-ref-img-*")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, io.NewSectionReader(source, 0, size)); err != nil {
+		_ = tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-v", "error",
+		"-i", tmpPath,
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "png",
+		"-",
+	)
+	mediatools.HideConsole(cmd)
+	return cmd.Output()
 }

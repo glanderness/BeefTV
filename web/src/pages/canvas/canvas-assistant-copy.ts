@@ -4,6 +4,7 @@ import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, A
 import { estimateVideoTargetPrice, seedancePortraitLabel, type VideoTargetPriceEstimate } from "@/lib/seedance-portrait";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData } from "@/types/canvas";
+import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 
 export type AssistantStatusAction = "model-settings" | "retry";
 
@@ -164,6 +165,48 @@ export type AssistantProductionProposalParts = {
     footer: string;
 };
 
+const PROPOSAL_PARAMETER_LABELS: Record<string, string> = {
+    size: "画幅",
+    quality: "质量",
+    vquality: "分辨率",
+    seconds: "时长（秒）",
+    generateAudio: "生成声音",
+    audioVoice: "音色",
+    audioSpeed: "语速",
+    audioFormat: "音频格式",
+    audioInstructions: "朗读指令",
+    transparentBackground: "透明背景",
+    watermark: "水印",
+    seedreamOutputFormat: "图片格式",
+    seedreamOptimize: "提示词优化",
+    seedreamWatermark: "图片水印",
+};
+
+/** 拆出普通生成单的逐项明细（提示词、模型、参数、参考与报价状态），供卡片折叠展开。 */
+export function assistantOrderTargetLines(proposal: AssistantGenerationProposal): string[] {
+    if (proposal.production) return [];
+    const targets = proposal.targets?.length ? proposal.targets : proposal.order?.targetViews || [];
+    if (!targets.length) return [];
+    return targets.map((t) => {
+        const params = Object.entries(t.parameters || {}).filter(([key]) => PROPOSAL_PARAMETER_LABELS[key]).map(([key, value]) => {
+            const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
+                : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
+                : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
+            return `${PROPOSAL_PARAMETER_LABELS[key]}：${display}`;
+        }).join(" · ");
+        const refs = (t.referenceNodeIds || []).map((id) => targets.find((item) => item.nodeId === id)?.title || "已有参考素材");
+        const pricingLine = t.pricing && t.pricing !== "unknown" ? "报价：按目录单价结算" : "报价：未知（按所选渠道实际标准计费）";
+        const modelLabel = t.model || t.modelKey?.split("::").pop() || proposal.model;
+        return [
+            `${t.title || t.nodeId} · ${modelLabel} · ${t.parameters?.count || "1"} 个`,
+            ...(params ? [params] : []),
+            ...(refs.length ? [`参考：${refs.join("、")}`] : []),
+            pricingLine,
+            `${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`,
+        ].join("\n");
+    });
+}
+
 /** 拆出整片方案的概览、逐项明细与确认提示，供卡片默认收起明细、按需展开。 */
 export function assistantProductionProposalParts(
     proposal: AssistantGenerationProposal,
@@ -175,7 +218,7 @@ export function assistantProductionProposalParts(
     const images = targets.filter(t => t.kind === "image").length;
     const videos = targets.filter(t => t.kind === "video");
     const audio = targets.filter(t => t.kind === "audio");
-    const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印",seedreamOutputFormat:"图片格式",seedreamOptimize:"提示词优化",seedreamWatermark:"图片水印"};
+    const labels = PROPOSAL_PARAMETER_LABELS;
     const videoEstimates = targets.map(t => t.kind === "video"
         ? estimateVideoTargetPrice(resolveModelVideoPricing(config, t.modelKey), t.parameters, t.referenceNodeIds.length)
         : null);
@@ -251,7 +294,7 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
     let complete = 0, failed = 0, pending = planned, retrieving = 0;
     for (const node of outputs.values()) {
         const meta = node.metadata || {};
-        const phase = (meta as typeof meta & { taskOutcome?: { phase?: string } }).taskOutcome?.phase;
+        const phase = authoritativeNodeOutcome(meta)?.phase;
         const bound = meta.status === "success" && Boolean(meta.content || meta.storageKey);
         if (phase === "running" || phase === "fetching" || phase === "retrievable") {
             pending++;

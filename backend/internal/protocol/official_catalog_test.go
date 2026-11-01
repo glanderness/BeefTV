@@ -38,7 +38,7 @@ func TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins(t *testing.T
 		if err != nil {
 			t.Fatalf("parse %s: %v", filepath.Base(path), err)
 		}
-		if pkg.Manifest.APIVersion != "beeftv.plugin/v2" {
+		if pkg.Manifest.APIVersion != "beeftv.plugin/v2" && pkg.Manifest.APIVersion != "beeftv.plugin/v3" {
 			t.Fatalf("%s apiVersion = %q", filepath.Base(path), pkg.Manifest.APIVersion)
 		}
 		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") {
@@ -299,6 +299,35 @@ func TestOfficialVideoProfilesPreserveExplicitMediaRoles(t *testing.T) {
 			test.assert(t, spec)
 		})
 	}
+}
+
+func TestOfficialVideoProfilesPassThroughCustomDuration(t *testing.T) {
+	t.Run("minimax-video", func(t *testing.T) {
+		adapter := officialPackageAdapter(t, "minimax-hailuo-video-v2.beeftv-plugin", "minimax-video")
+		spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Model: "MiniMax-H3", Prompt: "custom duration clip", Duration: 30, AspectRatio: "16:9", Resolution: "768P",
+		}})
+		if err != nil {
+			t.Fatalf("BuildCreate() error = %v", err)
+		}
+		body := manifestTestBody(t, spec)
+		if body["duration"] != float64(30) {
+			t.Fatalf("MiniMax duration = %#v, want 30", body["duration"])
+		}
+	})
+	t.Run("agnes-video", func(t *testing.T) {
+		adapter := officialPackageAdapter(t, "agnes-video-25.beeftv-plugin", "agnes-video")
+		spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Model: "agnes-video-2.5", Prompt: "custom duration clip", Duration: 30, AspectRatio: "16:9", Resolution: "720P",
+		}})
+		if err != nil {
+			t.Fatalf("BuildCreate() error = %v", err)
+		}
+		body := manifestTestBody(t, spec)
+		if body["seconds"] != "30" {
+			t.Fatalf("Agnes seconds = %#v, want \"30\"", body["seconds"])
+		}
+	})
 }
 
 func TestNewAPIChannel1AddsSeedanceContentAliasAndParsesDataURL(t *testing.T) {
@@ -599,24 +628,24 @@ func manifestTestBody(t *testing.T, spec RequestSpec) map[string]any {
 	return body
 }
 
-func TestOfficialArkSeedreamMapsAspectRatioToPixelSize(t *testing.T) {
+func TestOfficialArkOlderModelsKeepOriginalSizeMapping(t *testing.T) {
 	adapter := officialPackageAdapter(t, "volcengine-ark-seedream.beeftv-plugin", "volcengine-ark-image")
 	tests := []struct {
 		name, aspectRatio, wantSize string
 	}{
-		{name: "ratio maps to 2K pixels", aspectRatio: "1:1", wantSize: "2048x2048"},
+		{name: "square maps to pixels", aspectRatio: "1:1", wantSize: "2048x2048"},
 		{name: "landscape ratio", aspectRatio: "16:9", wantSize: "2560x1440"},
-		{name: "auto maps to 2k tier", aspectRatio: "auto", wantSize: "2k"},
-		{name: "pixel size passes through", aspectRatio: "1920x1080", wantSize: "1920x1080"},
+		{name: "auto preserves old tier", aspectRatio: "auto", wantSize: "2k"},
+		{name: "pixel size passes through", aspectRatio: "2560x1440", wantSize: "2560x1440"},
 		{name: "tier passes through", aspectRatio: "4k", wantSize: "4k"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-5-0-260128", Prompt: "circle", AspectRatio: tt.aspectRatio}})
+			create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-3-0-t2i", Prompt: "circle", AspectRatio: tt.aspectRatio}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if create.Path != "/api/v3/images/generations" {
+			if create.Path != "/images/generations" || create.DefaultPathPrefix != "/api/v3" {
 				t.Fatalf("Seedream create = %#v", create)
 			}
 			if body := manifestTestBody(t, create); body["size"] != tt.wantSize {
@@ -624,12 +653,12 @@ func TestOfficialArkSeedreamMapsAspectRatioToPixelSize(t *testing.T) {
 			}
 		})
 	}
-	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-5-0-260128", Prompt: "circle"}})
+	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-3-0-t2i", Prompt: "circle"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manifestTestBody(t, create)["size"]; ok {
-		t.Fatalf("Seedream must omit size when no ratio is requested")
+	if _, exists := manifestTestBody(t, create)["size"]; exists {
+		t.Fatalf("Older Ark models must omit an unselected size")
 	}
 }
 
@@ -952,7 +981,8 @@ func TestOfficialArkSeedreamParsesB64JSONAsDataURL(t *testing.T) {
 	} {
 		t.Run(tc.providerID, func(t *testing.T) {
 			adapter := officialPackageAdapter(t, tc.packageName, tc.providerID)
-			result, err := adapter.ParseCreate(context.Background(), []byte(`{"created":1,"data":[{"b64_json":"aW1hZ2U=","output_format":"jpeg","size":"1824x1024"}]}`))
+			const image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="
+			result, err := adapter.ParseCreate(context.Background(), []byte(`{"created":1,"data":[{"b64_json":"`+image+`","output_format":"png","size":"1824x1024"}]}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -960,9 +990,148 @@ func TestOfficialArkSeedreamParsesB64JSONAsDataURL(t *testing.T) {
 				t.Fatalf("result = %#v", result.Result)
 			}
 			dataURL := result.Result.Images[0].DataURL
-			if dataURL != "data:image/jpeg;base64,aW1hZ2U=" {
-				t.Fatalf("DataURL = %q, want jpeg data URL from b64_json + output_format", dataURL)
+			if dataURL != "data:image/png;base64,"+image {
+				t.Fatalf("DataURL = %q, want png data URL", dataURL)
 			}
 		})
+	}
+}
+
+func TestOfficialKlingVideoAndImageFollowOfficialContract(t *testing.T) {
+	videoAdapter := officialPackageAdapter(t, "kling-video.beeftv-plugin", "kling-video")
+	t2v, err := videoAdapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "kling-v2-master", Prompt: "镜头推进", Duration: 5, AspectRatio: "16:9",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t2vBody := manifestTestBody(t, t2v)
+	if t2v.Path != "/v1/videos/text2video" || t2vBody["model_name"] != "kling-v2-master" || t2vBody["duration"] != "5" || t2vBody["aspect_ratio"] != "16:9" {
+		t.Fatalf("Kling T2V = %#v, body = %#v", t2v, t2vBody)
+	}
+	i2v, err := videoAdapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "kling-v2-master", Prompt: "镜头推进", Duration: 10,
+		Images: []MediaReference{
+			{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 0},
+			{URL: "https://cdn.example/last.png", Role: "last_frame", Order: 1},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i2vBody := manifestTestBody(t, i2v)
+	if i2v.Path != "/v1/videos/image2video" || i2vBody["image"] != "https://cdn.example/first.png" || i2vBody["image_tail"] != "https://cdn.example/last.png" {
+		t.Fatalf("Kling I2V = %#v, body = %#v", i2v, i2vBody)
+	}
+	pollResult, err := videoAdapter.ParsePoll(context.Background(), PollContext{TaskID: "k-1"}, []byte(`{"code":0,"message":"SUCCEED","data":{"task_id":"k-1","task_status":"succeed","task_result":{"videos":[{"id":"v1","url":"https://cdn.example/kling.mp4","duration":"5"}]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pollResult.Status != StatusSucceeded || pollResult.Result == nil || len(pollResult.Result.Videos) != 1 || pollResult.Result.Videos[0].URL != "https://cdn.example/kling.mp4" {
+		t.Fatalf("Kling video poll result = %#v", pollResult)
+	}
+
+	imageAdapter := officialPackageAdapter(t, "kling-image.beeftv-plugin", "kling-image")
+	imgCreate, err := imageAdapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "kling-v2", Prompt: "电影感海报", ImageCount: 2, AspectRatio: "16:9",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgBody := manifestTestBody(t, imgCreate)
+	if imgCreate.Path != "/v1/images/generations" || imgBody["model_name"] != "kling-v2" || imgBody["n"] != float64(2) || imgBody["aspect_ratio"] != "16:9" {
+		t.Fatalf("Kling image create = %#v, body = %#v", imgCreate, imgBody)
+	}
+	imgPoll, err := imageAdapter.ParsePoll(context.Background(), PollContext{TaskID: "ki-1"}, []byte(`{"code":0,"message":"SUCCEED","data":{"task_id":"ki-1","task_status":"succeed","task_result":{"images":[{"index":0,"url":"https://cdn.example/kling.png"}]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imgPoll.Status != StatusSucceeded || imgPoll.Result == nil || len(imgPoll.Result.Images) != 1 || imgPoll.Result.Images[0].URL != "https://cdn.example/kling.png" {
+		t.Fatalf("Kling image poll result = %#v", imgPoll)
+	}
+}
+
+func TestAgnesVideoPluginsAllowLocalReferenceMediaAndMapUnassignedImage(t *testing.T) {
+	builtinMeta := agnesAdapter().Metadata()
+	if !builtinMeta.RequiresPublicMediaURLs || builtinMeta.MediaTransport["image"] != "inline" || builtinMeta.MediaTransport["video"] != "url" || builtinMeta.MediaTransport["audio"] != "url" {
+		t.Fatalf("builtin agnes-video media metadata = %#v", builtinMeta)
+	}
+	for _, pkg := range []struct {
+		file, id string
+	}{
+		{"agnes-video-25.beeftv-plugin", "agnes-video"},
+		{"agnes-video-v20.beeftv-plugin", "agnes-video-v20"},
+	} {
+		adapter := officialPackageAdapter(t, pkg.file, pkg.id)
+		meta := adapter.Metadata()
+		if !meta.RequiresPublicMediaURLs || meta.MediaTransport["image"] != "inline" || meta.MediaTransport["video"] != "url" || meta.MediaTransport["audio"] != "url" {
+			t.Fatalf("%s media metadata = %#v, want requiresPublicMediaUrls=true and inline image transport", pkg.file, meta)
+		}
+	}
+	v20 := officialPackageAdapter(t, "agnes-video-v20.beeftv-plugin", "agnes-video-v20")
+	spec, err := v20.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "agnes-video-v2.0", Prompt: "角色转身", Duration: 5, AspectRatio: "16:9", Resolution: "720p",
+		Images: []MediaReference{{DataURL: "data:image/png;base64,Zm9v"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := manifestTestBody(t, spec)
+	if body["image"] != "data:image/png;base64,Zm9v" {
+		t.Fatalf("agnes-video-v20 unassigned image = %#v, want data URL in image field", body["image"])
+	}
+}
+
+func TestNewAPIVideoGenerationsIncludesSingularAndArrayImageFields(t *testing.T) {
+	adapter := officialPackageAdapter(t, "newapi-video-generations-v1.beeftv-plugin", "newapi-channel-2")
+	spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "wan3.0-video", Prompt: "镜头拉远", Duration: 5, AspectRatio: "16:9", Resolution: "720p",
+		Images: []MediaReference{{URL: "https://cdn.example/frame1.png", Role: "first_frame"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := manifestTestBody(t, spec)
+	if body["image"] != "https://cdn.example/frame1.png" || body["image_url"] != "https://cdn.example/frame1.png" {
+		t.Fatalf("newapi-channel-2 singular image fields missing: %#v", body)
+	}
+	urls, _ := body["image_urls"].([]any)
+	if len(urls) != 1 || urls[0] != "https://cdn.example/frame1.png" {
+		t.Fatalf("newapi-channel-2 image_urls = %#v", body["image_urls"])
+	}
+}
+
+func TestMiniMaxHailuoVideoParsesNestedTaskErrorsAndDataFields(t *testing.T) {
+	adapter := officialPackageAdapter(t, "minimax-hailuo-video-v2.beeftv-plugin", "minimax-video")
+	created, err := adapter.ParseCreate(context.Background(), []byte(`{"data":{"task_id":"mm-task-1","status":"Preparing"}}`))
+	if err != nil || created.TaskID != "mm-task-1" || created.Status != StatusPending {
+		t.Fatalf("minimax nested data create = %#v, err = %v", created, err)
+	}
+	failed, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "mm-task-1"}, []byte(`{"task":{"id":"mm-task-1","status":"Fail","error":{"code":"invalid_parameter","message":"unsupported resolution"}}}`))
+	if err != nil || failed.Status != StatusFailed || failed.Message != "unsupported resolution" {
+		t.Fatalf("minimax nested task error poll = %#v, err = %v", failed, err)
+	}
+	builtinDone, err := parseAsyncMediaPoll(PollContext{TaskID: "mm-task-2"}, map[string]any{
+		"data": map[string]any{
+			"status": "Success",
+			"file": map[string]any{
+				"download_url": "https://cdn.example/mm.mp4",
+			},
+		},
+	}, CapabilityVideo)
+	if err != nil || builtinDone.Status != StatusSucceeded || builtinDone.Result == nil || len(builtinDone.Result.Videos) != 1 || builtinDone.Result.Videos[0].URL != "https://cdn.example/mm.mp4" {
+		t.Fatalf("parseAsyncMediaPoll nested file.download_url = %#v, err = %v", builtinDone, err)
+	}
+	builtinFailed, err := parseAsyncMediaPoll(PollContext{TaskID: "mm-task-3"}, map[string]any{
+		"task": map[string]any{
+			"status": "Fail",
+			"error": map[string]any{
+				"code":    "invalid_parameter",
+				"message": "bad input",
+			},
+		},
+	}, CapabilityVideo)
+	if err != nil || builtinFailed.Status != StatusFailed || builtinFailed.Message != "bad input" {
+		t.Fatalf("parseAsyncMediaPoll nested task.error = %#v, err = %v", builtinFailed, err)
 	}
 }

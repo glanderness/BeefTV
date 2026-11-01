@@ -37,7 +37,8 @@ export function shouldRefreshCanvasVirtualization(rendered: ViewportTransform, n
     if (rendered.x === next.x && rendered.y === next.y && rendered.k === next.k) return false;
     if (now - lastRefreshAt < CANVAS_VIRTUALIZATION_REFRESH_INTERVAL_MS) return false;
     if (!size) return true;
-    const margin = Math.max(0, renderedPaddingPx - CANVAS_REFRESH_SAFETY_PX) / rendered.k;
+    const safetyPx = next.k < rendered.k ? 0 : CANVAS_REFRESH_SAFETY_PX;
+    const margin = Math.max(0, renderedPaddingPx - safetyPx) / rendered.k;
     const coveredLeft = -rendered.x / rendered.k - margin;
     const coveredTop = -rendered.y / rendered.k - margin;
     const coveredRight = (size.width - rendered.x) / rendered.k + margin;

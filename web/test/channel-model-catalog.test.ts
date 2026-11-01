@@ -13,7 +13,6 @@ import { ChannelModelSettings } from "../src/pages/settings/channel-model-settin
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
 import { fetchChannelModels } from "../src/services/api/image";
 import { disconnectBeefAPIConnection } from "../src/services/api/beefapi-connection";
-import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 import { apiClient } from "../src/services/api/request";
 import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
 
@@ -120,24 +119,17 @@ function formEntries(body: unknown) {
 }
 
 describe("public channel model catalog", () => {
-    test("managed catalog drops delayed results after user or enterprise connection changes", async () => {
-        const originalScope = getActiveUserScope();
-        try {
-            for (const change of [() => { setActiveUserScope("catalog-other-user"); }, () => disconnectBeefAPIConnection()]) {
-                let release!: () => void;
-                apiClient.request = (async (request) => {
-                    if (request.url === "/beefapi/connection/models") await new Promise<void>((resolve) => { release = resolve; });
-                    return { status: 200, data: { code: 0, data: { models: [{ id: "seedance-2.0-portrait" }] }, msg: "" } };
-                }) as typeof apiClient.request;
-                const pending = fetchChannelModels(createModelChannel({ id: "beefapi", credentialRef: "beefapi-enterprise" }), true);
-                const outcome = pending.catch((error) => error);
-                await change();
-                release();
-                expect(await outcome).toMatchObject({ name: "UserScopeAbandonedError" });
-            }
-        } finally {
-            setActiveUserScope(originalScope);
-        }
+    test("managed catalog drops delayed results after the enterprise connection changes", async () => {
+        let release!: () => void;
+        apiClient.request = (async (request) => {
+            if (request.url === "/beefapi/connection/models") await new Promise<void>((resolve) => { release = resolve; });
+            return { status: 200, data: { code: 0, data: { models: [{ id: "seedance-2.0-portrait" }] }, msg: "" } };
+        }) as typeof apiClient.request;
+        const pending = fetchChannelModels(createModelChannel({ id: "beefapi", credentialRef: "beefapi-enterprise" }), true);
+        const outcome = pending.catch((error) => error);
+        await disconnectBeefAPIConnection();
+        release();
+        expect(await outcome).toMatchObject({ name: "BeefAPIConnectionChangedError" });
     });
     test("managed catalog refresh persists through the trusted endpoint without accepting client credentials or prices", async () => {
         const requests: Array<{ url?: string; data?: unknown }> = [];
@@ -569,6 +561,72 @@ describe("public channel model catalog", () => {
         expect(staleSnapshot.channels.some((channel) => channel.id === "default")).toBe(false);
         expect(selectableModelsByCapability(staleSnapshot, "image")).not.toContain("default::gpt-image-2");
         expect(selectableModelsByCapability(staleSnapshot, "image")).not.toContain("ghost-image");
+    });
+
+    test("preserves server-declared versioned image and video capabilities and pricing on custom channels", async () => {
+        const image = defaultModelCapabilityConfig("openai-image", "custom-img-pro").image!;
+        image.references.maxImages = 6;
+        image.references.maxImageBytes = 0;
+        image.quality = { supported: true, values: ["ultra"], default: "ultra" };
+        image.maxOutputs = 4;
+        image.fixedOutputs = 4;
+
+        const video = defaultModelCapabilityConfig("newapi", "custom-vid-pro").video!;
+        video.references.maxImages = 8;
+        video.references.maxVideos = 2;
+        video.references.maxAudios = 1;
+        video.resolutions = ["1080p"];
+        video.defaultResolution = "1080p";
+        const pricing = {
+            currency: "CNY" as const,
+            mode: "tokens" as const,
+            rates: { "1080p": { output: 50, reference_video: 30 } },
+        };
+
+        axios.request = (async () => ({
+            data: {
+                data: [
+                    {
+                        id: "custom-img-pro",
+                        display_name: "Custom Image Pro",
+                        model_type: "image",
+                        supported_endpoint_types: ["image-generation"],
+                        image_capabilities: image,
+                        image_capabilities_version: "gw-img-v1",
+                    },
+                    {
+                        id: "custom-vid-pro",
+                        display_name: "Custom Video Pro",
+                        supported_endpoint_types: ["openai-video"],
+                        video_capabilities: video,
+                        video_capabilities_version: "gw-vid-v1",
+                        video_pricing: pricing,
+                    },
+                ],
+            },
+        })) as typeof axios.request;
+
+        const channel = createModelChannel({
+            id: "custom-gw",
+            name: "Custom Gateway",
+            baseUrl: "https://gateway.example.com/v1",
+            apiKey: "synthetic-test-key",
+            models: [],
+        });
+
+        const discovered = await fetchChannelModels(channel);
+        const applied = applyFetchedChannelModelCatalog(channel, discovered);
+        const normalized = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [applied] } }).config;
+
+        expect(selectableModelsByCapability(normalized, "image")).toContain("custom-gw::custom-img-pro");
+        expect(selectableModelsByCapability(normalized, "video")).toContain("custom-gw::custom-vid-pro");
+        expect(modelCapabilityConfigFor(normalized, "custom-gw::custom-img-pro").image).toEqual(image);
+        expect(modelCapabilityConfigFor(normalized, "custom-gw::custom-vid-pro").video).toEqual(video);
+
+        const profiles = normalized.channels[0]!.modelProfiles!;
+        expect(profiles.find((p) => p.model === "custom-img-pro")?.imageCapabilitiesVersion).toBe("gw-img-v1");
+        expect(profiles.find((p) => p.model === "custom-vid-pro")?.videoCapabilitiesVersion).toBe("gw-vid-v1");
+        expect(profiles.find((p) => p.model === "custom-vid-pro")?.videoPricing).toEqual(pricing);
     });
 
 });

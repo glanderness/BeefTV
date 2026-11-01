@@ -1,6 +1,5 @@
 import { generationErrorMessage } from "@/lib/generation-error";
 import { GENERATION_RESULT_FETCH_STAGE } from "@/lib/generation-delivery-progress";
-import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { ApiError, http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { getDiagnosticTraceId, recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
@@ -178,7 +177,6 @@ const defaultGenerationTaskListDependencies: GenerationTaskListDependencies = {
 };
 
 export async function listGenerationTasks(limit = 30, options?: { projectId?: string; activeOnly?: boolean }, dependencies: GenerationTaskListDependencies = defaultGenerationTaskListDependencies, signal?: AbortSignal) {
-    const expected = captureUserScope();
     const observationRequest = beginTaskReferenceObservation();
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(10_000, Math.trunc(limit))) : 30;
@@ -201,9 +199,8 @@ export async function listGenerationTasks(limit = 30, options?: { projectId?: st
                 )) ?? [],
         }));
     const backendTasks = await collectGenerationTaskPages(backendPageReader, baseRequest, boundedLimit, signal);
-    assertUserScope(expected);
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    backendTasks.forEach(task => publishTaskReferenceProgress(task, expected, observationRequest));
+    backendTasks.forEach(task => publishTaskReferenceProgress(task, observationRequest));
     return backendTasks
         .filter((task) => !options?.projectId || task.projectId === options.projectId)
         .filter((task) => !options?.activeOnly || task.status === "queued" || task.status === "running")
@@ -227,13 +224,11 @@ async function collectGenerationTaskPages<T>(readPage: (request: GenerationTaskP
     return items.slice(0, limit);
 }
 
-export function queryGenerationTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
-    const expected = options?.expectedScope ?? captureUserScope();
+export function queryGenerationTask(id: string, options?: { signal?: AbortSignal }) {
     const observationRequest = beginTaskReferenceObservation();
-    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal, expectedScope: expected }).then(task => {
-        assertUserScope(expected);
+    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal }).then(task => {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        publishTaskReferenceProgress(task, expected, observationRequest);
+        publishTaskReferenceProgress(task, observationRequest);
         return task;
     });
 }
@@ -331,16 +326,16 @@ export function queryTaskTextReplay(id: string, after = 0) {
     return http.get<TaskTextReplay>(`/tasks/${encodeURIComponent(id)}/text-deltas`, { params: { after } });
 }
 
-export function retryGenerationTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+export function retryGenerationTask(id: string, options?: { signal?: AbortSignal }) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`, undefined, options);
 }
 
-export function recoverTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+export function recoverTask(id: string, options?: { signal?: AbortSignal }) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, options);
 }
 
-export function cancelGenerationTask(id: string, expectedScope = captureUserScope()) {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/cancel`, undefined, { expectedScope }).then((task) => {
+export function cancelGenerationTask(id: string) {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/cancel`).then((task) => {
         window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));
         return task;
     });
@@ -406,7 +401,6 @@ export type WaitForGenerationTaskOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
     useTextEvents?: boolean;
-    expectedScope?: CapturedUserScope;
 };
 
 export function shouldUseTaskTextEvents(options?: Pick<WaitForGenerationTaskOptions, "onTextDelta" | "useTextEvents">) {
@@ -428,14 +422,12 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             let task: GenerationTask;
             try {
-                task = await queryGenerationTask(id, { signal: options?.signal, expectedScope: options?.expectedScope });
-                if (options?.expectedScope) assertUserScope(options.expectedScope);
+                task = await queryGenerationTask(id, { signal: options?.signal });
                 lastTask = task;
                 lastQueryError = undefined;
                 consecutiveFailures = 0;
                 options?.onTaskUpdate?.(task);
             } catch (error) {
-                if (isUserScopeAbandonedError(error)) throw error;
                 lastQueryError = error;
                 consecutiveFailures += 1;
                 // 连续失败说明查询通道已不可用，继续轮询只会空转到整体超时；
@@ -490,14 +482,12 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     let fullText = lastTask?.textDraft || "";
     let lastStreamError: unknown;
     if (!lastTask) {
-        lastTask = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
-        if (options.expectedScope) assertUserScope(options.expectedScope);
+        lastTask = await queryGenerationTask(id, { signal: options.signal });
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        if (options.expectedScope) assertUserScope(options.expectedScope);
         let terminalReceived = false;
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
@@ -517,7 +507,6 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             const decoder = new TextDecoder();
             const parser = createTaskTextStreamParser();
             const onEvent = (event: TaskTextStreamEvent) => {
-                if (options.expectedScope) assertUserScope(options.expectedScope);
                 const payload = asTaskTextStreamRecord(event.data);
                 if (event.event === "delta") {
                     const sequence = numberValue(payload.sequence) || event.id || 0;
@@ -557,7 +546,6 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             try {
                 for (;;) {
                     const { done, value } = await reader.read();
-                    if (options.expectedScope) assertUserScope(options.expectedScope);
                     if (done) break;
                     consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
                 }
@@ -567,8 +555,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 reader.releaseLock();
             }
             if (terminalReceived) {
-                const completed = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
-                if (options.expectedScope) assertUserScope(options.expectedScope);
+                const completed = await queryGenerationTask(id, { signal: options.signal });
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
@@ -579,7 +566,6 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-            if (isUserScopeAbandonedError(error)) throw error;
             if (error instanceof TaskTextStreamFatalError) throw error;
             lastStreamError = error;
         }

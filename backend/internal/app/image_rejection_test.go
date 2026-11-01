@@ -52,7 +52,7 @@ func TestImageHTTPRejectionSurvivesExecutionAndTaskOutput(t *testing.T) {
 			if string(failure.Category) != tc.category || failure.Uncertain || attempt.DispatchState != "rejected_no_job" {
 				t.Fatalf("failure=%+v dispatch=%s", failure, attempt.DispatchState)
 			}
-			_ = s.terminalCoordinator().handleExecutionFailure(&task, result.err, false, false)
+			_ = s.terminalCoordinator().HandleExecutionFailure(&task, result.err, false, false)
 			stored, err := s.repo.Task(task.ID)
 			if err != nil {
 				t.Fatal(err)

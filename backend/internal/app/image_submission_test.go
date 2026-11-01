@@ -167,7 +167,7 @@ func TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse(t *testin
 	if err := s.validateImageTaskRetry(&task); err == nil {
 		t.Fatal("new key retry allowed")
 	}
-	if err := s.terminalCoordinator().handleExecutionFailure(&task, result.err, false, false); err == nil {
+	if err := s.terminalCoordinator().HandleExecutionFailure(&task, result.err, false, false); err == nil {
 		t.Fatal("missing terminal failure")
 	}
 	stored, err := s.repo.Task(task.ID)

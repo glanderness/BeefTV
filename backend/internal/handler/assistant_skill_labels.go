@@ -1,9 +1,12 @@
 package handler
 
 import (
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/skills"
 )
+
+type assistantSkillLabelService interface {
+	SkillsDomain() *skills.Service
+}
 
 // labelAssistantSkills fills skill display labels on host turn records from
 // the pins Go validated for that round. The host only echoes pin identity.
@@ -64,7 +67,7 @@ func labelAssistantSkills(turn map[string]any, pins []skills.Pin, installed func
 
 // installedSkillLabels lazily reads the caller's installed skills once per
 // response, only when an unlabeled pin needs a name.
-func installedSkillLabels(svc *app.Service, userID string) func() []skills.Pin {
+func installedSkillLabels(svc assistantSkillLabelService, userID string) func() []skills.Pin {
 	loaded := false
 	var pins []skills.Pin
 	return func() []skills.Pin {

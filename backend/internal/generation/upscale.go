@@ -62,6 +62,18 @@ var upscaleOwnedSource = regexp.MustCompile(`^resource:[A-Za-z0-9_-]{1,128}$`)
 // Preparation uses the existing owner-scoped media reader and gateway upload.
 // Resuming an accepted task never uploads again or calls the create endpoint.
 func PrepareUpscale(ctx context.Context, input Input) (Input, error) {
+	input, err := prepareOwnedUpscaleSource(ctx, input)
+	if err != nil {
+		return input, err
+	}
+	runtime, _ := RuntimeFromContext(ctx)
+	if err := PrepareBeefAPIVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, runtime.Call.UserID)); err != nil {
+		return input, err
+	}
+	return input, nil
+}
+
+func prepareOwnedUpscaleSource(ctx context.Context, input Input) (Input, error) {
 	input.ReferenceImages = append([]Media(nil), input.ReferenceImages...)
 	input.ReferenceVideos = append([]Media(nil), input.ReferenceVideos...)
 	if err := ValidateUpscaleInput(input); err != nil {
@@ -118,9 +130,6 @@ func PrepareUpscale(ctx context.Context, input Input) (Input, error) {
 	if estimatedBytes > deliveryLimit {
 		return input, fmt.Errorf("预计超分结果可能超过本机单个生成资源上限 %s，请降低放大倍数或调高资源上限后重试", formatStorageLimit(deliveryLimit))
 	}
-	if err := PrepareBeefAPIVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, runtime.Call.UserID)); err != nil {
-		return input, err
-	}
 	return input, nil
 }
 
@@ -167,6 +176,13 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	if !managedConnection(input.Config) && !IsBeefAPIVideoConfig(ctx, input.Config) {
 		return nil, RequestPreparationError{Cause: errors.New("AI 超分需要连接官方算力账号")}
 	}
+	client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "upscale")
+	if err != nil {
+		return nil, err
+	}
+	if unified {
+		return runManagedUpscaleTask(ctx, client, input)
+	}
 	id := ResumedProviderRequestID(ctx)
 	if id == "" {
 		prepared, err := PrepareUpscale(ctx, input)
@@ -193,6 +209,43 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 		result, _, err := QueryUpscaleResult(ctx, input, id)
 		return VideoPollOutcome{Done: result != nil, Result: result}, err
 	})
+}
+
+func runManagedUpscaleTask(ctx context.Context, client *beefapi.MediaClient, input Input) (map[string]any, error) {
+	runtime, _ := RuntimeFromContext(ctx)
+	if runtime.ManagedMedia == nil {
+		return nil, RequestPreparationError{Cause: errors.New("超分请求缺少持久化提交标识")}
+	}
+	sent, err := runtime.ManagedMedia.Sent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !sent {
+		input, err = prepareOwnedUpscaleSource(ctx, input)
+		if err != nil {
+			return nil, RequestPreparationError{Cause: err}
+		}
+	}
+	media := input.ReferenceImages
+	if input.Mode == "video" {
+		media = input.ReferenceVideos
+	}
+	ref := managedReference(media[0], "source")
+	ref.Kind = input.Mode
+	ref.MaxBytes = 30 << 20
+	if input.Mode == "video" {
+		ref.MaxBytes = 200 << 20
+	}
+	options := map[string]any{"upscale_factor": input.Upscale.Factor}
+	if input.Mode == "image" {
+		options["output_format"] = defaultString(input.Upscale.OutputFormat, "png")
+		options["face_enhancement"] = false
+	} else {
+		options["H264_output"] = true
+	}
+	request := beefapi.MediaRequest{TaskRef: SubmissionKeyFromContext(ctx), MediaType: "upscale", Model: input.Config.Model, Operation: "upscale", Options: options}
+	client.ExpectedOutputKind = input.Mode
+	return executeManagedMedia(ctx, client, request, []beefapi.LocalMediaReference{ref})
 }
 
 // BeefAPI owns provider recovery. Client recovery only queries the original task.
@@ -272,19 +325,26 @@ func QueryUpscaleResult(ctx context.Context, input Input, id string) (map[string
 	if !strings.HasPrefix(mime, "video/") {
 		return nil, status, VideoDownloadError{TaskID: id, Cause: errors.New("超分结果不是有效视频")}
 	}
-	if len(input.ReferenceVideos) != 1 {
-		return nil, status, errors.New("缺少原视频，无法检查音轨")
-	}
-	runtime, _ := RuntimeFromContext(ctx)
-	source, _, skip, err := ownedSeedanceMediaReader(ctx, runtime.Call.UserID)("video", Media{StorageKey: input.ReferenceVideos[0].StorageKey})
-	if err != nil || skip {
-		return nil, status, VideoDownloadError{TaskID: id, Cause: errors.New("原视频无法读取，暂时不能保留音轨")}
-	}
-	data, err = PreserveUpscaleAudio(ctx, source, data)
+	data, err = RestoreUpscaleSourceAudio(ctx, input, data)
 	if err != nil {
 		return nil, status, VideoDownloadError{TaskID: id, Cause: err}
 	}
 	return map[string]any{"mode": "video", "video": map[string]any{"dataUrl": DataURL("video/mp4", data), "mimeType": "video/mp4"}}, status, nil
+}
+
+func RestoreUpscaleSourceAudio(ctx context.Context, input Input, data []byte) ([]byte, error) {
+	if input.Upscale == nil || input.Mode != "video" {
+		return data, nil
+	}
+	if len(input.ReferenceVideos) != 1 {
+		return nil, errors.New("缺少原视频，无法检查音轨")
+	}
+	runtime, _ := RuntimeFromContext(ctx)
+	source, _, skip, err := ownedSeedanceMediaReader(ctx, runtime.Call.UserID)("video", Media{StorageKey: input.ReferenceVideos[0].StorageKey})
+	if err != nil || skip {
+		return nil, errors.New("原视频无法读取，暂时不能保留音轨")
+	}
+	return PreserveUpscaleAudio(ctx, source, data)
 }
 
 func CancelUpscale(ctx context.Context, config Config, id string) error {

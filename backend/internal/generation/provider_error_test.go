@@ -568,3 +568,49 @@ func TestWindowsSocketFailureIsActionable(t *testing.T) {
 		}
 	}
 }
+
+func TestThirdPartyGatewayChannelExcludedAndWrapperParity(t *testing.T) {
+	channelBody := `{"error":{"message":"这个模型的线路已经在这把密钥的「渠道管理」里被全部取消勾选了，所以当前没有可用渠道。请打开这把密钥的「渠道管理」，至少勾上一条线路后再试。 (request id: req.20261101.zB868dI1)","type":"invalid_request_error","param":"","code":"channel_excluded"}}`
+	channelFailure := generation.ClassifyHTTP(http.StatusForbidden, "403 Forbidden", channelBody)
+	if channelFailure.Category != generation.CategoryPermission || !channelFailure.FromCode || channelFailure.ProviderCode != "channel_excluded" || channelFailure.RequestID != "req.20261101.zB868dI1" {
+		t.Fatalf("channel_excluded misclassified: %+v", channelFailure)
+	}
+	reloadedChannel := generation.ClassifyText(channelFailure.UserMessage())
+	if reloadedChannel.Category != generation.CategoryPermission || reloadedChannel.Reason != channelFailure.Reason || reloadedChannel.Action != channelFailure.Action || reloadedChannel.RequestID != channelFailure.RequestID {
+		t.Fatalf("channel_excluded lost on persisted round-trip: %+v -> %+v", channelFailure, reloadedChannel)
+	}
+
+	// Generic OpenAI type wrapper with unrecognized gateway code falls back to HTTP status when message is opaque.
+	for status, want := range map[int]generation.FailureCategory{
+		http.StatusBadRequest:            generation.CategoryInvalidParams,
+		http.StatusPaymentRequired:       generation.CategoryQuotaUnknown,
+		http.StatusForbidden:             generation.CategoryPermission,
+		http.StatusRequestEntityTooLarge: generation.CategoryInputTooLarge,
+		http.StatusTooManyRequests:       generation.CategoryThrottled,
+		451:                              generation.CategoryUnknown,
+		http.StatusServiceUnavailable:    generation.CategoryProviderUnavailable,
+	} {
+		got := generation.ClassifyHTTP(status, "", `{"error":{"message":"opaque gateway error","type":"invalid_request_error","code":"custom_gateway_code"}}`)
+		if got.Category != want || got.ProviderCode != "custom_gateway_code" {
+			t.Fatalf("HTTP %d with generic type wrapper became %+v, want %s", status, got, want)
+		}
+	}
+
+	// Specific parameter-range advice or message category refinement wins over generic wrapper across statuses.
+	for _, status := range []int{400, 402, 403, 413, 429, 451, 503} {
+		height := generation.ClassifyHTTP(status, "", `{"error":{"message":"Height must be between 300px and 6000px","type":"invalid_request_error","code":"custom_gateway_code"}}`)
+		if height.Category != generation.CategoryInvalidParams || !height.FromCode || height.Retryable || !strings.Contains(height.Action, "300–6000 像素") || height.ProviderCode != "custom_gateway_code" {
+			t.Fatalf("HTTP %d height range lost: %+v", status, height)
+		}
+		quota := generation.ClassifyHTTP(status, "", `{"error":{"message":"Your account quota is exhausted","type":"invalid_request_error","code":"custom_quota_code"}}`)
+		if quota.Category != generation.CategoryQuotaUnknown || !quota.FromCode || quota.ProviderCode != "custom_quota_code" {
+			t.Fatalf("HTTP %d quota message lost: %+v", status, quota)
+		}
+	}
+
+	// A recognized non-generic type remains authoritative over message text even when code is generic.
+	authoritativeType := generation.ClassifyHTTP(http.StatusBadRequest, "", `{"error":{"message":"Your account quota is exhausted (request id: req_inner_123456)","type":"model_capability_not_supported","code":"invalid_request_error"}} (request id: req_outer_654321)`)
+	if authoritativeType.Category != generation.CategoryInvalidParams || !authoritativeType.FromCode || authoritativeType.RequestID != "req_outer_654321" {
+		t.Fatalf("authoritative type or outer request ID overwritten: %+v", authoritativeType)
+	}
+}

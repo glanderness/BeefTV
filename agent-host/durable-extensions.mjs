@@ -2,12 +2,12 @@
 // 与模型请求前后的钩子装配进官方 Durable Registry。
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { defineExtension, defineTool, GenerationTask, hook, section } from '@earendil-works/pi-durable';
-import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
+import { defineExtension, defineTool, GenerationTask, hook } from '@earendil-works/pi-durable';
 import { officialNativeHistory } from './native-history.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, loadPinnedSkills, loadedSkillRecord,
-  normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, createActiveSkillSection, guardSkillModelRequests } from './skill-resource.mjs';
+  normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, guardSkillModelRequests } from './skill-resource.mjs';
+import { missingSkillResources, restoredSkillMessage } from './active-skills.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
 import { withCurrentStudio } from './studio-digest.mjs';
 import { normalizeModelTransportError } from './model-transport-error.mjs';
@@ -186,7 +186,7 @@ export async function installDurableExtensions({
   function hostTools() {
     const items = [{
       name: 'plan_update', label: 'plan.update', readOnly: true, replay: 'safe',
-      description: '维护当前对话的创作制作计划（整体替换步骤清单；每完成一步及时更新状态）。',
+      description: '更新当前创作计划（整体替换步骤清单）',
       parameters: PLAN_UPDATE_PARAMETERS,
       execute: async (toolCallId, args) => {
         const started = Date.now();
@@ -210,7 +210,7 @@ export async function installDurableExtensions({
     if (skills) {
       items.push({
         name: 'skill_load', label: 'skill.load', readOnly: false, replay: 'safe',
-        description: '按技能目录里的 id 加载一个已安装技能的固定版本，并在当前会话持续使用；不修改画布。需要只检查文件时使用 skill_file。',
+        description: '按技能目录 id 加载已安装技能正文',
         parameters: SKILL_LOAD_PARAMETERS,
         execute: async (_toolCallId, args, signal) => {
           const id = String(args?.id || '').trim();
@@ -236,7 +236,7 @@ export async function installDurableExtensions({
 
   const tools = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools()].map((tool) => defineTool({
     name: tool.name, description: tool.description + (tool.label === 'canvas.generation.propose'
-      ? '。先完成本阶段的计划更新，再提出生成提案；成功提案会结束本轮并等待用户确认。' : ''), parameters: tool.parameters,
+      ? '。成功提案会结束本轮；plan_update 与本调用同一次响应发出。' : ''), parameters: tool.parameters,
     replay: durableToolReplay(tool), executionMode: 'sequential',
     ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label) ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } } : {}),
     execute: async (args, api, context) => {
@@ -256,24 +256,28 @@ export async function installDurableExtensions({
         }
         // Official Durable ends only when every call in this response requests
         // termination. Mixed/failed rounds keep their normal model continuation.
+        // 提方案失败时它自己不请求结束，整轮仍按官方规则继续，所以同批计划更新请求结束是安全的。
         const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
-        return { ...result, output: content, ...(proposed ? { control: { ...result.control, terminate: true } } : {}) };
+        const planWithProposal = tool.label === 'plan.update' && result.isError !== true && (await state(entry))?.roundProposes === true;
+        return { ...result, output: content, ...(proposed || planWithProposal ? { control: { ...result.control, terminate: true } } : {}) };
       } finally { await persistEffects(entry); }
     },
   }));
   entry.toolNames = tools.map((tool) => tool.name);
 
-  const operationSections = [
-    section('beeftv_plan', async () => renderPlanSection((await state(entry))?.plan)),
-    ...(typeof readCanvas === 'function' ? [section('beeftv_studio', async () => (await state(entry))?.studioDigestText || undefined)] : []),
-  ];
-
   const operationExtension = defineExtension({
     name: 'beeftv.operations.v1',
     tools,
-    sections: operationSections,
     hooks: [hook(GenerationTask, {
-      afterResponse: normalizeModelTransportError,
+      afterResponse: async (message, ...rest) => {
+        normalizeModelTransportError(message, ...rest);
+        // 本次响应是否带提方案调用：同批的 plan_update 也要请求结束本轮，否则官方 Durable 因为
+        // 「不是所有调用都请求结束」而多发一轮只为总结的请求。写进 Durable 文档而不是内存，
+        // 重启后从工具阶段接着跑时（不会再触发本钩子）仍然生效；每次响应都会重新写。
+        const proposes = Array.isArray(message?.content)
+          && message.content.some((part) => part?.type === 'toolCall' && part.name === 'canvas_generation_propose');
+        if (((await state(entry))?.roundProposes === true) !== proposes) await update(entry, (doc) => { doc.roundProposes = proposes; });
+      },
       beforeRequest: async (request, _runtime, context) => {
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
@@ -291,8 +295,6 @@ export async function installDurableExtensions({
           if (entry.budget) { entry.budget.nativeHistory = entry.nativeHistory; entry.budget.sessionId = entry.sessionId; }
           if (entry.generation.pendingInput?.state === 'pending') continue;
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-          let messages = typeof readCanvas === 'function'
-            ? withCurrentStudio(request.messages, [nativeDoc.studioDigestText, studioDiff].filter(Boolean).join('\n')) : request.messages;
           // Only a new decision with current evidence can release a conflict
           // fence. Tool reads and unrelated successful writes cannot release it.
           if (entry.turn.studioReadAvailable === true) entry.turn.canvasContextChanged = false;
@@ -300,11 +302,40 @@ export async function installDurableExtensions({
           // request before steering was queued. Overlay only missing durable user
           // inputs through the official request hook; the queue still owns their
           // transcript placement. This prevents replaying a stale prepared intent.
+          let baseMessages = request.messages;
           for (const input of active?.supplementContents || []) {
-            if (!JSON.stringify(messages).includes(supplementMarker(input.requestId))) {
-              messages = [...messages, { role: 'user', content: supplementContent(input.requestId, input.content), timestamp: Date.now() }];
+            if (!JSON.stringify(baseMessages).includes(supplementMarker(input.requestId))) {
+              baseMessages = [...baseMessages, { role: 'user', content: supplementContent(input.requestId, input.content), timestamp: Date.now() }];
             }
           }
+          let restoredSkillsText = '';
+          if (skills) {
+            const agent = await _runtime.agent(context);
+            const ref = agent.model;
+            const model = ref ? _runtime.models.getModel(ref.provider, ref.modelId) : undefined;
+            try {
+              const projection = await resolveActiveSkills(entry, ref, context.abortSignal);
+              const missing = missingSkillResources(baseMessages, projection.resources, model?.contextWindow);
+              if (missing.length > 0) {
+                restoredSkillsText = restoredSkillMessage(missing).content[0].text;
+              }
+            } catch (error) {
+              entry.generation.skillContextFailure = {
+                reason: error?.reason || 'skill_context_unavailable',
+                message: error?.message || '技能状态不可用',
+              };
+              throw error;
+            }
+          }
+          const studioDigest =
+            typeof readCanvas === 'function'
+              ? [nativeDoc.studioDigestText, studioDiff].filter(Boolean).join('\n')
+              : '';
+          const messages = withCurrentStudio(baseMessages, studioDigest, {
+            includeStudio: typeof readCanvas === 'function',
+            planText: renderPlanSection(nativeDoc?.plan) || '',
+            restoredSkillsText,
+          });
           entry.generation.modelEpoch = active?.intentEpoch || 0;
           await persistEffects(entry);
           if (entry.generation.pendingInput?.state === 'pending') continue;
@@ -391,7 +422,7 @@ export async function installDurableExtensions({
     if (entry.root) {
       await entry.root.configure({
         tools: selected,
-        instructions: `${SYSTEM_PROMPT}\n${mode === 'read-only' ? '只能读取工作区内容，不能修改或生成。' : mode === 'full-access' ? '可读取和修改本工作区的所有画布。付费生成必须等待用户确认。' : '仅修改当前画布；其他画布只读。'}`,
+        instructions: SYSTEM_PROMPT,
       }, CTX);
     }
   };
@@ -401,7 +432,6 @@ export async function installDurableExtensions({
       name: 'beeftv.skills.v1',
       sections: [
         createSkillCatalogSection({ readCatalog: (signal) => skills.readCatalog(entry, signal, entry.turn.turnId), cache: entry.skillCatalog }),
-        createActiveSkillSection((ref, signal) => resolveActiveSkills(entry, ref, signal)),
       ],
     }));
   }
@@ -413,9 +443,9 @@ export async function installDurableExtensions({
       await authorization(entry, entry.turn.turnId);
       const projection = await resolveActiveSkills(entry, { provider: model.provider, modelId: model.id }, signal);
       if (entry.generation.preparedRequests?.has(requestSignature(request.messages))) {
-        const shown = getCurrentSystemMessage(request.messages)?.sections?.beeftv_active_skills;
-        const expected = projection.text ? `<beeftv_active_skills>\n${projection.text}\n</beeftv_active_skills>` : undefined;
-        if (shown !== expected) throw fail('skill_context_changed');
+        if (missingSkillResources(request.messages, projection.resources, model?.contextWindow).length > 0) {
+          throw fail('skill_context_changed');
+        }
       }
     }, (error) => {
       entry.generation.skillContextFailure = { reason: error?.reason || 'skill_context_unavailable', message: error?.message || '技能状态不可用' };

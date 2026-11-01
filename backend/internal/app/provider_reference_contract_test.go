@@ -49,8 +49,8 @@ func TestWanLocalReferencesRemainOwnedForHTTPUpload(t *testing.T) {
 		t.Fatal("foreign media accepted")
 	}
 	input.ReferenceVideos = []providerMedia{{URL: "https://example.com/ref.mp4"}}
-	if err := svc.validateResolvedVideoCapability(&input); err == nil || !strings.Contains(err.Error(), "暂不支持参考视频") {
-		t.Fatalf("unsupported media silently accepted: %v", err)
+	if err := svc.validateResolvedVideoCapability(&input); err != nil {
+		t.Fatalf("custom channel should delegate reference validation to upstream: %v", err)
 	}
 	input.Config.Model = "wan4.0-video"
 	if !providerMediaHydrationPolicyFor(context.Background(), input).KeepLocal {

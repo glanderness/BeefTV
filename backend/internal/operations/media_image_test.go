@@ -3,13 +3,22 @@ package operations
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"golang.org/x/image/tiff"
+	"infinite-canvas/backend/internal/mediatools"
 )
 
 func imageDomain(data []byte) *mediaDomain {
@@ -162,5 +171,60 @@ func TestInvalidImageCropsNeverOpenResources(t *testing.T) {
 	}
 	if d.opens != 0 {
 		t.Fatal("invalid crop opened source bytes")
+	}
+}
+
+// 随包的 ffprobe 只带音视频解复用器；图片检查不能依赖它，也不该为常见图片调用 ffmpeg。
+func TestImageOverviewWorksWithoutImageCapableTools(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell stub")
+	}
+	stub := filepath.Join(t.TempDir(), "tool")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(mediatools.FFprobePathEnv, stub)
+	t.Setenv(mediatools.FFmpegPathEnv, "")
+	t.Setenv("PATH", "")
+	picture := image.NewPaletted(image.Rect(0, 0, 64, 48), color.Palette{color.Black, color.White})
+	for format, encode := range map[string]func(*bytes.Buffer) error{
+		"png":  func(b *bytes.Buffer) error { return png.Encode(b, picture) },
+		"gif":  func(b *bytes.Buffer) error { return gif.Encode(b, picture, nil) },
+		"tiff": func(b *bytes.Buffer) error { return tiff.Encode(b, picture, nil) },
+	} {
+		t.Run(format, func(t *testing.T) {
+			var encoded bytes.Buffer
+			if err := encode(&encoded); err != nil {
+				t.Fatal(err)
+			}
+			d := &mediaDomain{owner: "owner", data: encoded.Bytes(), mimeType: "image/" + format}
+			overview, err := mediaTestCall(t, d, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if overview.Image == nil || overview.Image.Width != 64 || overview.Image.Height != 48 || len(overview.Content) != 1 {
+				t.Fatalf("overview=%+v", overview.Image)
+			}
+		})
+	}
+	var genericPNG bytes.Buffer
+	if err := png.Encode(&genericPNG, picture); err != nil {
+		t.Fatal(err)
+	}
+	genericOverview, err := mediaTestCall(t, &mediaDomain{owner: "owner", data: genericPNG.Bytes(), mimeType: "application/octet-stream"}, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node"})
+	if err != nil || genericOverview.Image == nil || genericOverview.Image.Width != 64 || genericOverview.Image.Height != 48 {
+		t.Fatalf("generic-mime overview=%+v err=%v", genericOverview.Image, err)
+	}
+	avifHeader := []byte{0x00, 0x00, 0x00, 0x1c, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f', 0x00, 0x00, 0x00, 0x00}
+	if _, err := mediaTestCall(t, &mediaDomain{owner: "owner", data: avifHeader, mimeType: "image/avif"}, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node"}); err == nil || AsError(err).Reason != "media_format_unsupported" {
+		t.Fatalf("unsupported avif err=%v, want media_format_unsupported", err)
+	}
+	// Patch IHDR width/height to 8192x8192 (64M pixels > 32M limit) with a valid CRC so DecodeConfig succeeds and triggers the pixel cap before allocating pixel buffers.
+	hugePNG := append([]byte(nil), genericPNG.Bytes()...)
+	binary.BigEndian.PutUint32(hugePNG[16:20], 8192)
+	binary.BigEndian.PutUint32(hugePNG[20:24], 8192)
+	binary.BigEndian.PutUint32(hugePNG[29:33], crc32.ChecksumIEEE(hugePNG[12:29]))
+	if _, err := mediaTestCall(t, &mediaDomain{owner: "owner", data: hugePNG, mimeType: "image/png"}, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node"}); err == nil || AsError(err).Reason != "media_too_large" {
+		t.Fatalf("huge pixel image err=%v, want media_too_large", err)
 	}
 }

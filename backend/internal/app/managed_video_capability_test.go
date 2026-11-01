@@ -51,13 +51,19 @@ func TestManagedVideoUsesSavedAccountCapabilityInsteadOfRequest(t *testing.T) {
 		write(version, server)
 		input.Config.VideoCapabilitiesVersion = &forged
 		input.Config.CapabilityConfig = server
-		if err := validate(&input); err == nil || !strings.Contains(err.Error(), "刷新模型列表") {
-			t.Fatalf("missing current-account declaration accepted: %v", err)
+		if err := validate(&input); err != nil {
+			t.Fatalf("missing current-account declaration blocked execution: %v", err)
+		}
+		if input.Config.VideoCapabilitiesVersion != nil {
+			t.Fatalf("forged request version retained: %v", *input.Config.VideoCapabilitiesVersion)
 		}
 	}
 	write("invalid", map[string]any{"version": 1, "video": map[string]any{}})
-	if err := validate(&input); err == nil {
-		t.Fatal("invalid current-account declaration accepted")
+	if err := validate(&input); err != nil {
+		t.Fatalf("invalid current-account declaration blocked execution: %v", err)
+	}
+	if input.Config.VideoCapabilitiesVersion != nil {
+		t.Fatalf("invalid declaration retained version: %v", *input.Config.VideoCapabilitiesVersion)
 	}
 	write("server-v3", server)
 	if err := validate(&input); err != nil {
@@ -73,10 +79,13 @@ func TestManagedVideoCreateTaskUsesCurrentAccountCatalog(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer upstream.Close()
-	for _, tc := range []struct{ name, version, seconds, wantError string }{
-		{"legal server duration", "server-v1", "1", ""},
-		{"forged request version cannot widen duration", "server-v1", "9", "输出时长"},
-		{"missing directory", "", "1", "刷新模型列表"},
+	for _, tc := range []struct {
+		name, version, seconds string
+		wantVersion            string
+	}{
+		{"legal server duration", "server-v1", "1", "server-v1"},
+		{"forged request version cannot replace account declaration", "server-v1", "9", "server-v1"},
+		{"missing directory strips forged declaration without blocking", "", "1", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, db, _, _ := creationTestService(t)
@@ -92,29 +101,23 @@ func TestManagedVideoCreateTaskUsesCurrentAccountCatalog(t *testing.T) {
 			forged.Video.Duration = modelcatalog.VideoDurationConfig{Selection: "range", Min: 1, Max: 30, Step: 1, Default: 9}
 			request := CreateTaskRequest{Type: "canvas_video", Prompt: "local admission fixture", Model: modelName, Operation: "text_to_video", Input: map[string]any{"mode": "video", "prompt": "local admission fixture", "config": map[string]any{"channelId": "beefapi", "credentialRef": managedBeefAPIRef, "model": modelName, "interfaceType": "newapi", "videoSeconds": tc.seconds, "videoCapabilitiesVersion": "forged-request-version", "capabilityConfig": forged}}}
 			task, err := svc.CreateTask("user", request)
-			if tc.wantError != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
-					t.Fatalf("wanted %q, got %v", tc.wantError, err)
+			if err != nil || task == nil {
+				t.Fatalf("task rejected: %v", err)
+			}
+			var saved generation.Input
+			var stored model.Task
+			if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(stored.InputJSON), &saved); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantVersion == "" {
+				if saved.Config.VideoCapabilitiesVersion != nil || saved.Config.CapabilityConfig != nil {
+					t.Fatalf("forged declaration persisted when account catalog has no declaration: %+v", saved.Config)
 				}
-				var count int64
-				if err := db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 0 {
-					t.Fatalf("rejected task persisted: count=%d err=%v", count, err)
-				}
-			} else {
-				if err != nil || task == nil {
-					t.Fatalf("valid server declaration rejected: %v", err)
-				}
-				var saved generation.Input
-				var stored model.Task
-				if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
-					t.Fatal(err)
-				}
-				if err := json.Unmarshal([]byte(stored.InputJSON), &saved); err != nil {
-					t.Fatal(err)
-				}
-				if saved.Config.VideoCapabilitiesVersion == nil || *saved.Config.VideoCapabilitiesVersion != "server-v1" || saved.Config.CapabilityConfig == nil || saved.Config.CapabilityConfig.Video == nil || saved.Config.CapabilityConfig.Video.Duration.Max != 3 {
-					t.Fatal("task stored another declaration")
-				}
+			} else if saved.Config.VideoCapabilitiesVersion == nil || strings.TrimSpace(*saved.Config.VideoCapabilitiesVersion) != tc.wantVersion || saved.Config.CapabilityConfig == nil || saved.Config.CapabilityConfig.Video == nil || saved.Config.CapabilityConfig.Video.Duration.Max != 3 {
+				t.Fatal("task stored another declaration")
 			}
 			if upstreamCalls.Load() != 0 {
 				t.Fatal("admission contacted an upstream generation endpoint")

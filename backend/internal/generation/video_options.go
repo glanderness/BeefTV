@@ -121,6 +121,21 @@ func ImageTransparentBackgroundSupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.TransparentBackground.Supported
 }
 
+func sequentialMaxImagesForInput(input Input) int {
+	maxImages, err := strconv.Atoi(strings.TrimSpace(input.Config.SeedreamMaxImages))
+	if err != nil || maxImages <= 1 {
+		return 0
+	}
+	limit := 15
+	if remaining := limit - len(input.ReferenceImages); remaining < limit {
+		limit = remaining
+	}
+	if maxImages > limit {
+		maxImages = limit
+	}
+	return maxImages
+}
+
 func ImageSizeParameter(profile *ImageCapabilityConfig, value string) (string, string) {
 	if profile == nil {
 		return "size", NormalizePixelSize(value)

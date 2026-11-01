@@ -3,6 +3,7 @@ import { normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy } from "@/lib/ta
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { authoritativeNodeOutcome, nodeFailureExplanation } from "@/lib/canvas/canvas-node-failure-state";
 
 export function isDepthCaptureResultNode(node: CanvasNodeData) {
     return Boolean(node.metadata?.depthSourceNodeId) && (!node.metadata?.taskType || node.metadata.taskType === "depth_capture");
@@ -10,7 +11,7 @@ export function isDepthCaptureResultNode(node: CanvasNodeData) {
 
 export function canRecoverOrRetryDepthCapture(node: CanvasNodeData) {
     if (!isDepthCaptureResultNode(node)) return false;
-    const explicit = normalizeTaskOutcome(node.metadata?.taskOutcome);
+    const explicit = authoritativeNodeOutcome(node.metadata);
     if (explicit) return explicit.phase === "failed" || explicit.phase === "retrievable" || explicit.phase === "ready";
     return ["failed", "cancelled", "succeeded"].includes(node.metadata?.taskStatus || "");
 }
@@ -27,6 +28,7 @@ export function depthCaptureTaskMetadata(task: GenerationTask): CanvasNodeMetada
         taskId: task.id,
         taskType: task.type,
         taskOutcome: task.outcome,
+        taskOutcomeSource: undefined,
         taskStatus: task.status,
         taskStage: task.stage,
         taskProgress: task.progress,
@@ -70,16 +72,8 @@ export function depthCaptureWaitFailureMetadata(error: unknown, observed?: Gener
 }
 
 export function canvasNodeFailureExplanation(node: CanvasNodeData) {
-    const explicitOutcome = normalizeTaskOutcome(node.metadata?.taskOutcome);
-    const explanation = explainGenerationError(
-        { code: node.metadata?.generationErrorCode || node.metadata?.taskErrorCode, message: node.metadata?.errorDetails },
-        {
-            taskId: node.metadata?.taskId,
-            model: node.metadata?.model,
-            createdAt: node.metadata?.taskCreatedAt,
-            stage: explicitOutcome ? undefined : node.metadata?.taskStage,
-        },
-    );
+    const explicitOutcome = authoritativeNodeOutcome(node.metadata);
+    const explanation = nodeFailureExplanation(node.metadata);
     // This action opens saved history; it must never dispatch another generation.
     if (explanation.category === "result_target_unavailable") return { ...explanation, blockManualRetry: false };
     if (!canRecoverOrRetryDepthCapture(node)) {

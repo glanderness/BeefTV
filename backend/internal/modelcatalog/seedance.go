@@ -52,8 +52,12 @@ const (
 
 func isSeedance2Family(protocol, modelName string) bool {
 	normalizedProtocol := strings.TrimSpace(protocol)
-	if normalizedProtocol != "newapi-channel-2" && normalizedProtocol != "newapi" && normalizedProtocol != "openai" && normalizedProtocol != "openai-videos" && !model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(normalizedProtocol)) {
-		return false
+	switch normalizedProtocol {
+	case "newapi-channel-1", "newapi-channel-2", "newapi", "openai", "openai-videos", "video-generations-json", "seedance-videos-compatible", "full-video":
+	default:
+		if !model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(normalizedProtocol)) {
+			return false
+		}
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	return strings.Contains(name, "seedance-2")
@@ -261,6 +265,15 @@ func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) Vi
 func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput) error {
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
+	}
+	if videoTaskOperation(profile, input) == "draft_to_final" {
+		if metadataString(input.Metadata, "videoDraftTaskId") == "" {
+			return kernel.BadAuthRequest("高清成片需要关联已完成的有声样片任务 ID")
+		}
+		if len(input.ReferenceImages) > 0 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 {
+			return kernel.BadAuthRequest("样片转高清成片直接复用原样片设定，不能再附加参考图片、视频或音频")
+		}
+		return nil
 	}
 	profile = tightenedVideoCapability(input.Config, profile)
 	refs := videoReferencesForOperation(profile, metadataString(input.Metadata, "videoEditOperation"))

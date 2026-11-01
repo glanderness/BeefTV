@@ -266,3 +266,43 @@ test("the model-level protocol panel says where each of the two keys goes", asyn
         await page.screenshot({ path: `${shotDirectory}/07-model-protocol-credential-hint.png`, clip: { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 900) } });
     } finally { await page.close(); }
 }, 60000);
+
+test("reduced motion keeps manual and row type pickers selectable, and choosing one video protocol configures sibling video models", async () => {
+    const page = await browser.newPage({ viewport: { width: 1120, height: 900 }, deviceScaleFactor: 2, reducedMotion: "reduce" });
+    try {
+        await page.goto(server.url.toString() + "?scenario=compatible-seedance");
+        await page.getByText("选择你要使用的模型", { exact: true }).waitFor();
+
+        // 在减少动态效果（Windows 常见设置）下，手动输入 ID 的类型下拉仍可在视口内展开并选择。
+        await page.locator('input[aria-label="模型 ID"]').fill("doubao-seedance-2-0-mini-260615");
+        await page.locator(".model-service-manual .ant-select").click();
+        const popup = page.locator(".model-service-type-select-popup:not(.ant-select-dropdown-hidden)").last();
+        await popup.waitFor();
+        const box = (await popup.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.y).toBeGreaterThanOrEqual(0);
+        await popup.locator(".ant-select-item-option").filter({ hasText: "文本" }).click();
+        await page.locator(".model-service-manual button").click();
+
+        // 已添加列表里的模型也可以直接点行内类型下拉改成「视频」。
+        const miniRow = page.locator(".model-service-model").filter({ hasText: "doubao-seedance-2-0-mini-260615" });
+        await miniRow.waitFor();
+        expect(await miniRow.locator(".model-service-kind").textContent()).toBe("文本");
+        await miniRow.locator(".model-service-kind").click();
+        await page.locator(".model-service-type-select-popup:not(.ant-select-dropdown-hidden)").last().locator(".ant-select-item-option").filter({ hasText: "视频" }).click();
+        expect(await miniRow.locator(".model-service-kind").textContent()).toBe("视频");
+
+        // 点「保存并使用」时若缺请求协议，自动弹出协议配置框；选一次协议即同步给同渠道未配置的同能力视频模型。
+        await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+        await page.getByText("编辑模型使用配置").waitFor();
+        await page.getByText("Volcengine Ark Seedance", { exact: true }).click();
+        await page.getByRole("button", { name: /^完\s*成$/ }).click();
+        await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+        await waitForSaved(page, 1, "同渠道多个视频模型同步协议后保存");
+        expect((await savedOf(page))[0].profiles).toEqual([
+            { model: "doubao-seedance-2-0-260128", capability: "video" },
+            { model: "doubao-seedance-2-0-fast-260128", capability: "video" },
+            { model: "doubao-seedance-2-0-mini-260615", capability: "video" },
+        ]);
+    } finally { await page.close(); }
+}, 60000);

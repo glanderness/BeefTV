@@ -46,6 +46,9 @@
 .model-service-model strong { display:block; font-weight:500; font-size:13px; overflow-wrap:anywhere; }
 .model-service-model small { display:block; color:var(--muted-foreground); font-size:11px; }
 .model-service-kind { font-size:11px; color:var(--muted-foreground); white-space:nowrap; }
+.model-service-kind-wrap { display:inline-flex; align-items:center; flex-shrink:0; }
+.model-service-kind-wrap .ant-select-selector { padding-inline:6px !important; font-size:11px !important; color:var(--muted-foreground) !important; }
+.model-service-type-select-popup { z-index:var(--z-dialog-popover, 1150) !important; }
 .model-service-empty { display:grid; justify-items:center; text-align:center; padding:32px 12px; gap:8px; color:var(--muted-foreground); }
 .model-service-empty strong { font-size:13px; font-weight:500; color:var(--foreground); }
 .model-service-empty p { font-size:12px; margin:0; line-height:1.8; }

@@ -6002,22 +6002,22 @@ html:not(.dark) .creation-studio-control:hover,
     .model-default-option-check { background: color-mix(in srgb, var(--foreground) 7%, transparent); }
     .model-default-option-check.is-selected { background: var(--control-check-bg); color: var(--control-check-fg); }
 
-    .settings-page :where(.ant-input, .ant-input-affix-wrapper, .ant-select-selector, .ant-input-number, .ant-picker) {
+    .settings-page :where(.ant-input:not(.ant-input-affix-wrapper > .ant-input), .ant-input-affix-wrapper, .ant-select-selector, .ant-input-number, .ant-picker) { /* 带图标、清除按钮或密码切换的输入框由外框负责边框，里层输入保持 AntD 默认重置，否则会出现双层边框、比普通输入框高 12px */
         min-height: 34px;
         border-radius: var(--r-md) !important;
     }
 
-    .settings-page :where(.ant-input, .ant-input-affix-wrapper, .ant-select-selector) {
+    .settings-page :where(.ant-input:not(.ant-input-affix-wrapper > .ant-input), .ant-input-affix-wrapper, .ant-select-selector) {
         border-color: color-mix(in srgb, var(--foreground) 14%, transparent) !important;
         background: color-mix(in srgb, var(--foreground) 2.5%, transparent) !important;
         box-shadow: none !important;
     }
 
-    .settings-page :where(.ant-input:hover, .ant-input-affix-wrapper:hover, .ant-select-selector:hover) {
+    .settings-page :where(.ant-input:not(.ant-input-affix-wrapper > .ant-input):hover, .ant-input-affix-wrapper:hover, .ant-select-selector:hover) {
         border-color: color-mix(in srgb, var(--foreground) 24%, transparent) !important;
     }
 
-    .settings-page :where(.ant-input:focus, .ant-input-affix-wrapper-focused, .ant-select-focused .ant-select-selector) {
+    .settings-page :where(.ant-input:not(.ant-input-affix-wrapper > .ant-input):focus, .ant-input-affix-wrapper-focused, .ant-select-focused .ant-select-selector) {
         border-color: color-mix(in srgb, var(--workspace-accent) 46%, transparent) !important;
         box-shadow: 0 0 0 3px color-mix(in srgb, var(--workspace-accent) 10%, transparent) !important;
     }
@@ -11577,13 +11577,9 @@ html:not(.dark) .creation-studio-control:hover,
         }
     }
 
-    [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) {
-        animation: none !important;
-    }
-
-    [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) {
-        will-change: transform;
-    }
+    [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) { animation: none !important; }
+    .canvas-editor-shell[data-canvas-editor-panel-open="true"] :where(.canvas-connection-flow, .canvas-connection-comet) { animation: none !important; }
+    [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) { will-change: transform; }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, .canvas-node-toolbar > div, [data-canvas-node-panel], [data-canvas-node-panel] .canvas-floating-panel, [data-canvas-node-panel] .canvas-node-panel-placement-change) {
         animation-play-state: paused !important;
@@ -11600,9 +11596,10 @@ html:not(.dark) .creation-studio-control:hover,
 
     /* 平移、缩放期间每条连线只画一条单色主线：底衬描边、光晕、端点、流光都先不画。
        透明的点击路径不产生绘制，保留不动。 */
-    [data-canvas-viewport-interacting="true"] g[data-canvas-connection-id] > :not(.canvas-connection-line, [data-connection-id], defs) {
-        display: none;
-    }
+    [data-canvas-viewport-interacting="true"] g[data-canvas-connection-id] > :not(.canvas-connection-line, [data-connection-id], defs) { display: none; }
+
+    /* 缩放进入概览画布时，手势期间保留在 DOM 中的非固定卡片仅隐藏绘制与命中，避免 display: none 重建渲染树与合成层。 */
+    [data-canvas-lod-dom-hidden="true"] .node-element:not([data-node-lod-pinned="true"]) { visibility: hidden !important; pointer-events: none !important; }
 
     /* 节点状态徽章 success 淡出动画（对应 #97 决策2）*/
     @keyframes canvas-status-success-fade {

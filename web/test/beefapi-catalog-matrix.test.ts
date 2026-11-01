@@ -18,8 +18,7 @@ test("the fetched BeefAPI catalog routes every generation family after refresh a
         const capability = item.id.includes("image") ? "image" : /speech|music/.test(item.id) ? "audio" : /video|seedance|minimax-h3/.test(item.id) ? "video" : "text";
         const profile = profiles.find(p => p.model === item.id)!;
         if (capability === "video" && !profile?.videoCapabilitiesVersion) {
-            // Historical catalogs without declarations cannot supply new video controls.
-            if (profile?.capability === "video") expect(modelCapabilityConfigFor(config, `beefapi::${item.id}`).videoCapabilitiesUnavailable).toBe(true);
+            if (profile?.capability === "video") expect(modelCapabilityConfigFor(config, `beefapi::${item.id}`).videoCapabilitiesUnavailable).toBeUndefined();
             continue;
         }
         expect(profile.capability).toBe(capability);

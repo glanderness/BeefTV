@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } fr
 import { App } from "antd";
 import { nanoid } from "nanoid";
 
-import { generationBatchStatus, isGenerationSubmissionUncertainError } from "@/lib/canvas/canvas-generation-batch";
+import { generationBatchStatus } from "@/lib/canvas/canvas-generation-batch";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { buildGenerationConfig, createGenerationRetryContext, generationTaskMetadata, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { listGenerationTasks } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -124,9 +124,7 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
                                 taskId: node.metadata.taskId,
                                 errorDetails,
                                 errorCode,
-                                submissionUncertain:
-                                    errorCode === "submission_uncertain" ||
-                                    isGenerationSubmissionUncertainError(errorCode ? { code: errorCode, message: errorDetails } : new Error(errorDetails)),
+                                submissionUncertain: canvasNodeFailureView(node).batchSubmissionUncertain,
                             };
                         } else if (node.metadata?.taskId) {
                             const taskStatus = node.metadata.taskStatus;
@@ -250,7 +248,7 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
             const nodeById = new Map(nodesRef.current.map((node) => [node.id, node]));
             const blockedItems = failedItems.filter((item) => {
                 const node = nodeById.get(item.nodeId);
-                return item.submissionUncertain || isNodeRegenerateBlocked(node?.metadata);
+                return item.submissionUncertain || (node ? canvasNodeFailureView(node).regenerateBlocked : false);
             });
             const retryableItems = failedItems.filter((item) => !blockedItems.includes(item));
             if (blockedItems.length) message.warning(`${blockedItems.length} 个镜头需要先处理失败原因，请打开对应节点查看`);

@@ -205,6 +205,11 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	if err := assertLedgerImmutable(db, frozen); err != nil {
 		return err
 	}
+	if current >= 6 && db.Migrator().HasColumn("agent_op_records", "payload_hash") {
+		if err := ensureAgentOpRecordsTable(db); err != nil {
+			return fmt.Errorf("补齐 Agent 操作记录字段: %w", err)
+		}
+	}
 	if current >= 11 {
 		if err := ensureCreationConversationsIndexes(db); err != nil {
 			return fmt.Errorf("补齐创作对话索引: %w", err)
