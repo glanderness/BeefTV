@@ -1,5 +1,5 @@
 {
-  "appLines": 9896,
+  "appLines": 9912,
   "largeFiles": {
     "backend/internal/handler/project.go": 1029,
     "backend/internal/protocol/builtin.go": 1129,
@@ -19,10 +19,10 @@
     "web/src/pages/create/index.tsx": 1243,
     "web/src/services/local-workspace-repository.ts": 1165,
     "web/src/stores/use-config-store.ts": 1219,
-    "web/src/styles/globals.css": 21483,
+    "web/src/styles/globals.css": 21484,
     "web/src/styles/workspace-product.css": 1566
   },
   "modelLiterals": 591,
-  "handlersUsingAppService": 7,
+  "handlersUsingAppService": 6,
   "sourceTextTests": 141
 }

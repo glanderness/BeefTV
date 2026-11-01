@@ -200,7 +200,7 @@ func (h configHost) StructuredBatchQuota(userID, kind string, createdCount int, 
 }
 
 func (h configHost) AdmitStructuredQuota(usage repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error {
-	if h.cfg.ResourcePolicy == nil {
+	if h.cfg.ResourcePolicy == nil || h.cfg.Repo == nil {
 		return nil
 	}
 	policy, err := h.cfg.ResourcePolicy(h.cfg.Repo)

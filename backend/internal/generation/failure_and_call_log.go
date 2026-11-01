@@ -37,7 +37,7 @@ const (
 	ContentModerationRetryMessage   = "内容未通过安全审核，请修改提示词或参考图后重新生成；原任务不能直接重试"
 	SubmissionUncertainRetryMessage = "提交结果尚未确认，请先查询原任务，不要立即重新提交"
 	DownloadFailureRetryMessage     = "生成结果下载失败，请先重新加载或查询原任务，不要立即重新提交"
-	taskStageRequestNotSent         = "request_not_sent"
+	taskStageRequestNotSent         = "请求尚未提交"
 )
 
 type AnalyticsKey struct{}

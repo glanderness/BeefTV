@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -56,7 +55,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.
 			return
 		}
 		// 能力发现只按调用者身份过滤可见集合；内置宿主在回合之外没有画布范围。
-		scope, _, scopeErr := agentOpsScopeForRequest(c, svc, user.ID)
+		scope, _, scopeErr := assistantScopeForRequest(c, svc, user.ID, isAssistantHostRequest(c, svc))
 		if scopeErr != nil {
 			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
 			return
@@ -214,7 +213,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.
 		_ = clientLabel
 		// 回合归属只认内置宿主：外部客户端出示 turn 头会被明确拒绝，而不是静默忽略后
 		// 让一次外部写入被误当成助手的改动（撤销会因此抹掉外部修改）。
-		scope, turnID, scopeErr := agentOpsScopeForRequest(c, svc, user.ID)
+		scope, turnID, scopeErr := assistantScopeForRequest(c, svc, user.ID, isAssistantHostRequest(c, svc))
 		if scopeErr != nil {
 			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
 			return
@@ -236,52 +235,6 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.
 		ok(c, result)
 	})
 	return registry
-}
-
-func agentOpsScopeForRequest(c *gin.Context, svc agentOpsService, userID string) (*agentops.AssistantScope, string, error) {
-	if !agentops.HostTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader(assistantHostTokenHeader))) {
-		if strings.TrimSpace(c.GetHeader(assistantTurnHeader)) != "" {
-			return nil, "", errors.New("回合归属只能由内置助手宿主出示")
-		}
-		return nil, "", nil
-	}
-	turnID := strings.TrimSpace(c.GetHeader(assistantTurnHeader))
-	if turnID == "" {
-		return &agentops.AssistantScope{PermissionMode: "full-access"}, "", nil
-	}
-	if !app.ValidAssistantTurnID(turnID) {
-		return nil, "", errors.New("回合标识非法")
-	}
-	scope, ok, err := svc.AssistantTurns().ScopeForHost(userID, turnID)
-	if err != nil {
-		return nil, "", err
-	}
-	if !ok {
-		return nil, "", errors.New("这一轮对话不存在、不属于当前工作区或已经结束")
-	}
-	return &agentops.AssistantScope{
-		PermissionMode: scope.PermissionMode,
-		CanvasID:       scope.CanvasID,
-		AssetIDs:       assistantIDSet(scope.AssetIDs),
-		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
-		TaskIDs:        assistantIDSet(scope.TaskIDs),
-		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins, scope.ActiveSkillPins),
-		SkillInstalled: func(pin skills.Pin) bool {
-			catalog, err := svc.SkillsDomain().AgentCatalog(userID)
-			if err != nil {
-				return false
-			}
-			for _, item := range catalog {
-				if item.Pin.Identity() == pin.Identity() {
-					return true
-				}
-			}
-			return false
-		},
-		ProjectReference: func(kind, id string) error {
-			return svc.ValidateAgentProjectReference(userID, scope.CanvasID, kind, id)
-		},
-	}, turnID, nil
 }
 
 // resolveCaller 决定本次调用的身份与能力模式。

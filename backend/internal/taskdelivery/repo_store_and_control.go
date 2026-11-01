@@ -298,8 +298,8 @@ func PauseGenerationDownload(
 
 func ResumeGenerationDownload(
 	mu *sync.Mutex,
-	closed bool,
-	draining bool,
+	closed *bool,
+	isDraining func() bool,
 	repo *repository.Repository,
 	cancels map[string]context.CancelFunc,
 	attach func(*model.Task),
@@ -307,7 +307,7 @@ func ResumeGenerationDownload(
 ) (*model.Task, error) {
 	mu.Lock()
 	defer mu.Unlock()
-	if closed || draining {
+	if (closed != nil && *closed) || (isDraining != nil && isDraining()) {
 		return nil, &kernel.AppError{Status: kernel.CodeUnavailable, Code: kernel.CodeUnavailable, Message: localtask.DrainRetryMessage, Retryable: true}
 	}
 	for identity := range cancels {

@@ -9,8 +9,21 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/skills"
 )
+
+type assistantScopeService interface {
+	ownerCredentialDirs
+	AssistantTurns() *assistantturns.Service
+	SkillsDomain() *skills.Service
+	ValidateAgentProjectReference(userID, canvasID, kind, id string) error
+}
+
+type assistantReferenceService interface {
+	CanvasService() *canvas.Service
+}
 
 // 共享操作层上的助手身份与回合归属。
 //
@@ -35,7 +48,7 @@ type assistantReference struct {
 
 // normalizeAssistantReferences 校验界面请求的额外引用确实属于当前用户。
 // 对话入口用严格模式：任何一项非法都整轮拒绝，避免界面以为授权生效了却没有。
-func normalizeAssistantReferences(svc *app.Service, userID string, items []assistantReference) ([]assistantReference, error) {
+func normalizeAssistantReferences(svc assistantReferenceService, userID string, items []assistantReference) ([]assistantReference, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
@@ -88,7 +101,7 @@ func assistantTurnInput(selected []string, references []assistantReference) app.
 
 // assistantScopeForRequest 只在调用方是已鉴权内置宿主且出示了后端签发的 turnId 时
 // 返回受限范围。其他调用方（已登记客户端、owner 直连）返回 nil，保持原有工作区能力不变。
-func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, hostCall bool) (*agentops.AssistantScope, string, error) {
+func assistantScopeForRequest(c *gin.Context, svc assistantScopeService, userID string, hostCall bool) (*agentops.AssistantScope, string, error) {
 	if !hostCall {
 		if strings.TrimSpace(c.GetHeader(assistantTurnHeader)) != "" {
 			return nil, "", errors.New("回合归属只能由内置助手宿主出示")
@@ -138,7 +151,7 @@ func assistantSkillPinSet(groups ...[]skills.Pin) map[skills.Pin]bool {
 
 // assistantSkillInstalled is true only for the caller's currently installed
 // version of a skill, compared by exact identity.
-func assistantSkillInstalled(svc *app.Service, userID string, pin skills.Pin) bool {
+func assistantSkillInstalled(svc assistantScopeService, userID string, pin skills.Pin) bool {
 	catalog, err := svc.SkillsDomain().AgentCatalog(userID)
 	if err != nil {
 		return false

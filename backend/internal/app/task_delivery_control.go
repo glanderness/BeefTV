@@ -19,7 +19,7 @@ func (s *Service) pauseGenerationDownload(task model.Task, stage string) (*model
 }
 
 func (s *Service) resumeGenerationDownload(task model.Task) (*model.Task, error) {
-	return taskdelivery.ResumeGenerationDownload(&s.deliveryControlMu, s.deliveryClosed, s.IsDraining(), s.repo, s.deliveryCancels, s.attachTaskDelivery, task)
+	return taskdelivery.ResumeGenerationDownload(&s.deliveryControlMu, &s.deliveryClosed, s.IsDraining, s.repo, s.deliveryCancels, s.attachTaskDelivery, task)
 }
 
 func (s *Service) beginGenerationDownload(userID, identity string, timeout time.Duration) (context.Context, func(error), error) {
