@@ -91,8 +91,8 @@ func (s *Service) builtinMarketReleases() ([]skillhub.Release, map[string]*model
 					{
 						Scenario:       "漫剧小说拆解、参考图设定与分镜视频提示词画布全链路",
 						Target:         "beeftv",
-						RuntimeVersion: "v2.0.1",
-						Model:          "claude-opus-4-6",
+						RuntimeVersion: "v2.1.1",
+						Model:          "beeftv-agent",
 						Conclusion:     "已通过内置助手画布实测验收",
 						TestedAt:       publishedAt,
 					},
