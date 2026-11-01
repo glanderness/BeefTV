@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, canvasResourceReferenceInsertText, findCanvasResourceAutoLinkMatch, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, canvasResourceReferenceInsertText, findCanvasResourceAutoLinkMatch, referencedAssetIdsInPrompt, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { replaceCanvasReferenceToken, type CanvasReferenceAction, type CanvasReferenceIssue } from "@/lib/canvas/canvas-reference-issues";
 import {
     clamp,
@@ -55,12 +55,15 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     onReferenceActionHandled?: () => void;
 };
 
+const EMPTY_ISSUES: CanvasReferenceIssue[] = [];
+const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, nodeSectionLabel = "画布节点", referenceIssues = [], selectedAssetReferences = [], referenceAction, onReferenceActionHandled, ...props },
+    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, nodeSectionLabel = "画布节点", referenceIssues = EMPTY_ISSUES, selectedAssetReferences = EMPTY_REFERENCES, referenceAction, onReferenceActionHandled, ...props },
     forwardedRef,
 ) {
     const rawTheme = useActiveTheme();
-    const assets = usePersonalAssetLibrary();
+    const assets = usePersonalAssetLibrary(includeAssetLibrary);
     const theme = canvasThemes[rawTheme as keyof typeof canvasThemes] ?? canvasThemes.dark;
     const containerRef = useRef<HTMLDivElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -121,9 +124,13 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         };
     }, []);
     const canvasReferences = useResolvedCanvasResourceReferences(references);
-    const rawAssetReferences = useMemo(() => includeAssetLibrary
-        ? [...new Map([...buildAssetMentionReferences(assets), ...selectedAssetReferences].map((item) => [item.assetId, item])).values()].map((item) => ({ ...item, active: highlightLabels && value.includes(canvasResourceMentionToken(item)) }))
-        : [], [assets, selectedAssetReferences, includeAssetLibrary, highlightLabels, value]);
+    const activeAssetIdsKey = includeAssetLibrary && highlightLabels ? referencedAssetIdsInPrompt(value).join("\x00") : "";
+    const rawAssetReferences = useMemo(() => {
+        if (!includeAssetLibrary) return EMPTY_REFERENCES;
+        const activeIds = new Set(activeAssetIdsKey ? activeAssetIdsKey.split("\x00") : []);
+        return [...new Map([...buildAssetMentionReferences(assets), ...selectedAssetReferences].map((item) => [item.assetId, item])).values()]
+            .map((item) => ({ ...item, active: Boolean(item.assetId && activeIds.has(item.assetId)) }));
+    }, [activeAssetIdsKey, assets, includeAssetLibrary, selectedAssetReferences]);
     const assetReferences = useResolvedCanvasResourceReferences(rawAssetReferences);
     const activeCanvasReferences = useMemo(() => canvasReferences.filter((item) => item.active), [canvasReferences]);
     const availableReferences = useMemo(() => [...(onSelectReference ? canvasReferences : activeCanvasReferences), ...assetReferences], [onSelectReference, canvasReferences, activeCanvasReferences, assetReferences]);
@@ -177,16 +184,15 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         const anchor = useRichEditor ? editorRef.current : textareaRef.current;
         const suggestion = autoLinkSuggestionRef.current;
         if (!autoLinkMatch || !anchor || !suggestion) {
-            setAutoLinkPosition(null);
+            setAutoLinkPosition((current) => current === null ? current : null);
             return;
         }
         const updatePosition = () => {
             const caret = mentionCaretRect(anchor, autoLinkMatch.end);
             const bounds = suggestion.getBoundingClientRect();
-            setAutoLinkPosition({
-                left: clamp(caret.right + 8, 12, window.innerWidth - bounds.width - 12),
-                top: clamp(caret.bottom + 4, 12, window.innerHeight - bounds.height - 12),
-            });
+            const nextLeft = clamp(caret.right + 8, 12, window.innerWidth - bounds.width - 12);
+            const nextTop = clamp(caret.bottom + 4, 12, window.innerHeight - bounds.height - 12);
+            setAutoLinkPosition((current) => current && current.left === nextLeft && current.top === nextTop ? current : { left: nextLeft, top: nextTop });
         };
         updatePosition();
         const observer = new ResizeObserver(updatePosition);

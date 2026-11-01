@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { autoMentionCanvasResourceReferences, findCanvasResourceAutoLinkMatch, type CanvasResourceReference, applyCanvasConnectionPromptSync, buildAssetMentionReferences, buildCanvasNodeMentionReferenceMap, buildNodeMentionReferences, buildOrderedCanvasResourceReferences, canvasResourceMentionToken, canvasResourceReferenceInsertText, collectUpstreamVideoNodes, imageGenerationReferenceConnections, reorderCanvasResourceConnections, replaceCanvasMentionToken, replaceCanvasReferenceMentions } from "../src/lib/canvas/canvas-resource-references";
+import { autoMentionCanvasResourceReferences, findCanvasResourceAutoLinkMatch, isCanvasTextResourceNode, type CanvasResourceReference, applyCanvasConnectionPromptSync, buildAssetMentionReferences, buildCanvasNodeMentionReferenceMap, buildNodeMentionReferences, buildOrderedCanvasResourceReferences, canvasResourceMentionToken, canvasResourceReferenceInsertText, collectUpstreamVideoNodes, imageGenerationReferenceConnections, reorderCanvasResourceConnections, replaceCanvasMentionToken, replaceCanvasReferenceMentions } from "../src/lib/canvas/canvas-resource-references";
 import { bindCanvasNodeResourceAsset, bindMissingCanvasResourceAssets, canvasNodeToAsset, canvasNodesMissingResourceAssetBinding } from "../src/lib/canvas/canvas-node-asset";
 import { buildNodeGenerationInputs } from "../src/components/canvas/canvas-node-generation";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
@@ -404,6 +404,15 @@ describe("canvas resource mention slots", () => {
             title: "场景图",
             active: false,
         })).toBe("@[asset:asset-a]");
+    });
+
+    test("文本类资源判定覆盖 Text/Skill/Markdown/Svg/Html 并排除角色卡节点", () => {
+        for (const type of [CanvasNodeType.Text, CanvasNodeType.Skill, CanvasNodeType.Markdown, CanvasNodeType.Svg, CanvasNodeType.Html]) {
+            expect(isCanvasTextResourceNode({ ...textNode(type), type })).toBe(true);
+        }
+        expect(isCanvasTextResourceNode({ ...textNode("character"), metadata: { workflowKind: "character", characterAssetId: "char-1" } })).toBe(false);
+        expect(isCanvasTextResourceNode(imageNode("img"))).toBe(false);
+        expect(isCanvasTextResourceNode(videoNode("vid"))).toBe(false);
     });
 });
 

@@ -92,6 +92,28 @@ test("cloning reference arrays during typing keeps the visible lease alive", asy
     expect(await page.evaluate(() => (window as any).captures)).toEqual(["typing"]);
 });
 
+test("passing parent-resolved active video references into mention textarea reuses the active lease without re-capturing", async () => {
+    await mount();
+    await page.evaluate((references) => {
+        (window as any).captures = [];
+        (window as any).setReferences(references);
+        (window as any).showMenu(true);
+    }, [video("active-self", true), video("inactive-peer", false)]);
+    await page.waitForFunction(() => document.querySelector("#result")!.textContent!.includes("blob:"));
+    const src = await page.locator('#resolved-previews img[data-reference-id="active-self"]').getAttribute("src");
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).captures)).toEqual(["active-self"]);
+    // Latch the resolved reference array on the child textarea, then drop the parent lease.
+    // Because the child reused the parent lease (refcount === 1), dropping the parent lease
+    // immediately revokes the object URL even while the child remains mounted with the latched array.
+    await page.evaluate(() => {
+        (window as any).latchMenuReferences();
+        (window as any).setReferences([]);
+    });
+    await page.waitForFunction((url) => document.querySelector("#result")!.textContent === "[]" && (window as any).revoked.includes(url), src);
+    expect(await page.evaluate((url) => (window as any).revoked.includes(url), src)).toBe(true);
+});
+
 test("mention menu decodes only visible rows and releases them when closed", async () => {
     await mount();
     // A visible canvas node can hold the same poster while menu rows unmount.

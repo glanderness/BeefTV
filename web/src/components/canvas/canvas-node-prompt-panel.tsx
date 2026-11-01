@@ -98,6 +98,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const [presetOpen, setPresetOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
+    const [expandedModalRendered, setExpandedModalRendered] = useState(false);
     const [expandedModalSize, setExpandedModalSize] = useState<{ width: number; height: number } | null>(null);
     const expandedModalRef = useRef<HTMLDivElement>(null);
     const [promptContentHeight, setPromptContentHeight] = useState(() => estimatePromptContentHeight(savedPrompt, false));
@@ -111,7 +112,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const [referenceAction, setReferenceAction] = useState<CanvasReferenceAction | null>(null);
     const missingSubmissionIdentity = ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") && !node.metadata?.taskId && !node.metadata?.taskClientOperationId?.trim();
     const needsRecoverySection = missingSubmissionIdentity || (!isRunning && isNodeRegenerateBlocked(node.metadata));
-    const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill");
+    const activeReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill"), [resolvedMentionReferences]);
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, {
         textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
         imageCount: activeReferences.filter((item) => item.kind === "image").length,
@@ -132,9 +133,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
     const priceChannel = resolveModelChannel(config, config.model);
     const activeReferenceCount = activeReferences.length;
-    const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
+    const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
     const h3Model = isH3Model(config.model);
-    const videoReferenceInputs = activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]);
+    const videoReferenceInputs = useMemo(() => activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]), [activeReferences]);
     const hasVideoPromptTools = mode === "video" && !simpleMode && (videoFrameOptions.length > 0 || (h3Model && videoReferenceInputs.some((input) => input.type !== "text")));
     const renderVideoPromptTools = () => (
         <>
@@ -655,6 +656,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             <Modal
                 className="canvas-prompt-editor-modal"
                 open={expandedPromptOpen}
+                afterOpenChange={setExpandedModalRendered}
                 title={null}
                 footer={null}
                 centered
@@ -670,19 +672,21 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     body: { minHeight: 0, padding: 0 },
                 }}
             >
-                <div ref={expandedModalRef} className="relative flex min-h-0 flex-col" style={{ ...composerTokens, color: theme.node.text, maxHeight: `calc(100dvh - ${PROMPT_EDITOR_VIEWPORT_MARGIN}px)`, ...(expandedModalSize ? { height: expandedModalSize.height } : null) }}>
-                    <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
-                        <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
-                        {renderPromptEditor(true, Boolean(expandedModalSize))}
-                        {hasVideoPromptTools ? (
-                            <div className="canvas-node-composer-parameters shrink-0">
-                                {renderVideoPromptTools()}
-                            </div>
-                        ) : null}
-                        <div className="shrink-0">{renderComposerControls(true)}</div>
+                {expandedPromptOpen || expandedModalRendered ? (
+                    <div ref={expandedModalRef} className="relative flex min-h-0 flex-col" style={{ ...composerTokens, color: theme.node.text, maxHeight: `calc(100dvh - ${PROMPT_EDITOR_VIEWPORT_MARGIN}px)`, ...(expandedModalSize ? { height: expandedModalSize.height } : null) }}>
+                        <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
+                            <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
+                            {renderPromptEditor(true, Boolean(expandedModalSize))}
+                            {hasVideoPromptTools ? (
+                                <div className="canvas-node-composer-parameters shrink-0">
+                                    {renderVideoPromptTools()}
+                                </div>
+                            ) : null}
+                            <div className="shrink-0">{renderComposerControls(true)}</div>
+                        </div>
+                        <PromptModalResizeHandle size={expandedModalSize} measure={measureExpandedModalSize} onResize={setExpandedModalSize} accent={theme.node.muted} />
                     </div>
-                    <PromptModalResizeHandle size={expandedModalSize} measure={measureExpandedModalSize} onResize={setExpandedModalSize} accent={theme.node.muted} />
-                </div>
+                ) : null}
             </Modal>
 
             </div>

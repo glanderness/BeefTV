@@ -28,13 +28,16 @@ harness.probePool = async () => {
 function Harness() {
     const [references, setReferences] = useState<CanvasResourceReference[]>([]);
     const [showMenu, setShowMenu] = useState(false);
+    const [passResolvedToMenu, setPassResolvedToMenu] = useState(false);
+    const [latchedMenuReferences, setLatchedMenuReferences] = useState<CanvasResourceReference[] | null>(null);
     const [value, setValue] = useState("");
     const resolved = useResolvedCanvasResourceReferences(references);
     harness.setReferences = setReferences;
-    harness.showMenu = () => setShowMenu(true);
+    harness.showMenu = (useResolved = false) => { setLatchedMenuReferences(null); setPassResolvedToMenu(useResolved); setShowMenu(true); };
+    harness.latchMenuReferences = () => setLatchedMenuReferences(resolved);
     return <><pre id="result">{JSON.stringify(resolved.map(({ id, previewUrl }) => ({ id, previewUrl })))}</pre>
         <div id="resolved-previews">{resolved.map(reference => reference.previewUrl && <img key={reference.id} data-reference-id={reference.id} src={reference.previewUrl} />)}</div>
-        {showMenu && <CanvasResourceMentionTextarea value={value} onChange={setValue} references={references} onSelectReference={(reference) => reference} aria-label="引用编辑" />}</>;
+        {showMenu && <CanvasResourceMentionTextarea value={value} onChange={setValue} references={latchedMenuReferences ?? (passResolvedToMenu ? resolved : references)} onSelectReference={(reference) => reference} aria-label="引用编辑" />}</>;
 }
 
 createRoot(document.getElementById("root")!).render(<Harness />);
