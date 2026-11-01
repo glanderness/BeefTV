@@ -86,7 +86,17 @@ func TestManagedVideoCanonicalIntentHasNoModelTransportRules(t *testing.T) {
 }
 
 func TestManagedUnknownVideoCreatesOnceAndResumesOnlyGET(t *testing.T) {
-	creates, queries, downloads := 0, 0, 0
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	creates, queries, contentCalls, storageCalls := 0, 0, 0, 0
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		storageCalls++
+		if r.Header.Get("Authorization") != "" {
+			t.Error("gateway credential leaked to object storage on redirect")
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("original video"))
+	}))
+	defer storage.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer fixture" {
 			t.Error("missing API credential")
@@ -110,9 +120,14 @@ func TestManagedUnknownVideoCreatesOnceAndResumesOnlyGET(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "original", "status": "completed"})
 		case "/v1/videos/original/content":
-			downloads++
-			w.Header().Set("Content-Type", "video/mp4")
-			_, _ = w.Write([]byte("original video"))
+			contentCalls++
+			if contentCalls == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":{"message":"Video is being saved; retry later","type":"video_delivery_pending"}}`))
+				return
+			}
+			http.Redirect(w, r, storage.URL+"/video.mp4", http.StatusFound)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
@@ -129,8 +144,8 @@ func TestManagedUnknownVideoCreatesOnceAndResumesOnlyGET(t *testing.T) {
 			t.Fatalf("result=%v err=%v", result, err)
 		}
 	}
-	if creates != 1 || queries != 2 || downloads != 2 {
-		t.Fatalf("calls=%d/%d/%d", creates, queries, downloads)
+	if creates != 1 || queries != 2 || contentCalls != 3 || storageCalls != 2 {
+		t.Fatalf("calls=%d/%d/%d/%d", creates, queries, contentCalls, storageCalls)
 	}
 }
 

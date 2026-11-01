@@ -453,15 +453,15 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
                     };
                 }
                 if (outcome.reason === "result_unrecoverable") {
-                    const reason = "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次";
-                    const action = "确认后将创建新任务重新生成";
+                    const reason = "无法确认上次是否已扣费，可先到模型服务后台查看使用记录";
+                    const action = "重新生成可能会再扣一次，确认后创建新任务";
                     return {
                         badge: "结果无法取回",
                         reason,
                         action,
                         message: `${reason}。${action}。`,
                         confirmTitle: "确认重新生成？",
-                        confirmContent: "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次。",
+                        confirmContent: "无法确认上次是否已扣费，可先到模型服务后台查看使用记录。重新生成可能会再扣一次。",
                     };
                 }
                 const reason = "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次";

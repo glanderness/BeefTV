@@ -114,7 +114,17 @@ afterAll(async () => {
 });
 
 async function clearRichEditor(page: Page, input: ReturnType<Page["locator"]>) {
-    await input.fill("");
+    await input.evaluate((element) => {
+        if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+            const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set;
+            setter?.call(element, "");
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
+        }
+        element.replaceChildren();
+        element.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    });
+    await input.focus();
     await page.waitForTimeout(50);
 }
 
@@ -328,7 +338,7 @@ test("Scenario 8: Backspacing '@' automatically dismisses menu", async () => {
 test("returning to either editor before its blur timer expires keeps a new mention menu open", async () => {
     for (const name of ["rich-editor", "secondary-editor"]) {
         const input = page.getByRole("textbox", { name });
-        await input.fill("");
+        await clearRichEditor(page, input);
         await input.evaluate(element => (element as HTMLElement).blur());
         await input.focus();
         await input.pressSequentially("@");
@@ -337,7 +347,7 @@ test("returning to either editor before its blur timer expires keeps a new menti
         await page.waitForTimeout(200);
         expect(await menu.isVisible()).toBe(true);
         expect(await input.evaluate(element => document.activeElement === element)).toBe(true);
-        await input.fill("");
+        await clearRichEditor(page, input);
         await menu.waitFor({ state: "hidden", timeout: 5000 });
     }
 }, 15000);

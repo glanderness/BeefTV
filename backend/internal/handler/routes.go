@@ -224,7 +224,8 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 			failService(c, err)
 			return
 		}
-		task, err := requestTaskPort(c, svc).RecoverTask(c.Request.Context(), user.ID, c.Param("id"))
+		// 用户点「继续取回」：只有这个入口允许把 BeefAPI 没收到的托管原请求按原编号补交一次。
+		task, err := requestTaskPort(c, svc).RecoverTask(localtask.WithManualRecovery(c.Request.Context()), user.ID, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return

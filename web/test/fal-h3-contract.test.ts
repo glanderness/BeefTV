@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { expect, test } from "bun:test";
 import { beefAPIVideoContract } from "../src/lib/beefapi-video-contracts";
 import { portraitPriceLines, sanitizeVideoPriceQuote } from "../src/lib/seedance-portrait";
@@ -23,7 +24,10 @@ test("H3 2K price includes the first-five-reference-image allowance", () => {
 });
 
 test("assistant H3 guidance matches canvas frame selection", () => {
+    expect(SYSTEM_PROMPT).not.toContain("H3 系列");
+    const skills = JSON.parse(fs.readFileSync(new URL("../../backend/internal/skills/seed/skills.json", import.meta.url), "utf8")) as Array<{skill_id: string; instruction: string}>;
+    const producerSkill = skills.find((item) => item.skill_id === "14811816970252");
     for (const instruction of ["一张图作为首帧", "两张图作为首尾帧", "画幅随图片", "为各镜头生成", "不用于多素材参考模式"]) {
-        expect(SYSTEM_PROMPT).toContain(instruction);
+        expect(producerSkill?.instruction).toContain(instruction);
     }
 });

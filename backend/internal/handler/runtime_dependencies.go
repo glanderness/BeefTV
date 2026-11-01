@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/appearance"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
@@ -82,7 +81,16 @@ type serviceRuntimeAdapter struct {
 	recoverTask                 func(context.Context, string, string) (*model.Task, error)
 }
 
-func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
+type serviceRuntimeSource interface {
+	RequestCoordinator
+	ProviderConfig
+	localapp.AssetPort
+	localapp.ProjectPort
+	localapp.TaskPort
+	CreateLocalTask(string, localtask.CreateRequest) (*model.Task, error)
+}
+
+func newServiceRuntimeAdapter(value serviceRuntimeSource) serviceRuntimeAdapter {
 	return serviceRuntimeAdapter{
 		allowRequest: value.AllowRequest, requestRetryAfter: value.RequestRetryAfter,
 		readModelConfig: value.ReadLocalModelConfig, saveModelConfig: value.SaveLocalModelConfig,
@@ -145,28 +153,28 @@ func (a serviceRuntimeAdapter) RecoverTask(ctx context.Context, userID, id strin
 	return a.recoverTask(ctx, userID, id)
 }
 
-func requestAssetPort(c *gin.Context, fallback *app.Service) localapp.AssetPort {
+func requestAssetPort(c *gin.Context, fallback localapp.AssetPort) localapp.AssetPort {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Assets != nil {
 		return dependencies.Assets
 	}
-	return newServiceRuntimeAdapter(fallback)
+	return fallback
 }
 
-func requestProjectPort(c *gin.Context, fallback *app.Service) localapp.ProjectPort {
+func requestProjectPort(c *gin.Context, fallback serviceRuntimeSource) localapp.ProjectPort {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Projects != nil {
 		return dependencies.Projects
 	}
 	return newServiceRuntimeAdapter(fallback)
 }
 
-func requestTaskPort(c *gin.Context, fallback *app.Service) localapp.TaskPort {
+func requestTaskPort(c *gin.Context, fallback serviceRuntimeSource) localapp.TaskPort {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Tasks != nil {
 		return dependencies.Tasks
 	}
 	return newServiceRuntimeAdapter(fallback)
 }
 
-func requestGenerationPort(c *gin.Context, fallback *app.Service) localapp.GenerationPort {
+func requestGenerationPort(c *gin.Context, fallback serviceRuntimeSource) localapp.GenerationPort {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Generation != nil {
 		return dependencies.Generation
 	}
@@ -174,8 +182,7 @@ func requestGenerationPort(c *gin.Context, fallback *app.Service) localapp.Gener
 }
 
 // modelConfigFallback supplies the unversioned model-config read and write
-// when a request has no injected provider port. *app.Service keeps the
-// existing runtime adapter, including its versioned methods.
+// when a request has no injected provider port.
 type modelConfigFallback interface {
 	ReadLocalModelConfig() ([]byte, error)
 	SaveLocalModelConfig([]byte) error
@@ -185,7 +192,7 @@ func requestProviderConfig(c *gin.Context, fallback modelConfigFallback) Provide
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.ProviderConfig != nil {
 		return dependencies.ProviderConfig
 	}
-	if service, ok := fallback.(*app.Service); ok {
+	if service, ok := fallback.(serviceRuntimeSource); ok {
 		return newServiceRuntimeAdapter(service)
 	}
 	return modelConfigMethods{read: fallback.ReadLocalModelConfig, save: fallback.SaveLocalModelConfig}

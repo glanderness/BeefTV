@@ -105,8 +105,12 @@ func manifestView(raw []byte, metadata protocol.Metadata, source string) Manifes
 	if manifest.Metadata.ID == "" {
 		manifest.Metadata = metadata
 	}
+	apiVersion := manifest.APIVersion
+	if apiVersion == "" {
+		apiVersion = "beeftv.plugin/v1"
+	}
 	return ManifestView{
-		ID: metadata.ID, Name: metadata.Name, Version: metadata.Version, APIVersion: "beeftv.plugin/v1", Entry: manifest.Entry, Surfaces: manifest.Surfaces,
+		ID: metadata.ID, Name: metadata.Name, Version: metadata.Version, APIVersion: apiVersion, Entry: manifest.Entry, Surfaces: manifest.Surfaces,
 		Description: metadata.Description, Documentation: metadata.Documentation, Author: metadata.Vendor,
 		Permissions: manifest.Permissions, Trusted: IsBuiltInSource(source), Runtime: manifest.Runtime,
 		Configuration: manifest.Configuration, Contributes: manifest.Contributes,

@@ -142,7 +142,7 @@ test("folder cover export embeds canonical bytes and drops source resource ident
         expect(folder.coverDataUrl).toBeUndefined();
         expect(folder.coverMimeType).toBe("image/jpeg");
         expect(await archive.get(folder.coverPath)!.text()).toBe("cover bytes");
-        expect(read.mock.calls[0][0]).toMatchObject({ url: "/resources/old-cover/file?proxy=1", expectedScope: expect.any(Object) });
+        expect(read.mock.calls[0][0]).toMatchObject({ url: "/resources/old-cover/file?proxy=1" });
     } finally { read.mockRestore(); }
 });
 

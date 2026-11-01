@@ -653,6 +653,8 @@ add({
   create: jsonCreate("/v1/video/generations", {
     model: ref("request.model"), prompt: ref("request.prompt"), seconds: { $toString: ref("request.duration") },
     aspect_ratio: coalesce(ref("request.aspectRatio"), "16:9"), resolution: omit(ref("request.resolution")), generate_audio: ref("request.generateAudio"),
+    image: omit(coalesce(firstMediaFieldWithRoles("request.images", ["first_frame"], "value"), first(map({ $sortByOrder: ref("request.images") }, "media", ref("media.value"))))),
+    image_url: omit(coalesce(firstMediaFieldWithRoles("request.images", ["first_frame"], "value"), first(map({ $sortByOrder: ref("request.images") }, "media", ref("media.value"))))),
     image_urls: omit(map({ $sortByOrder: ref("request.images") }, "media", ref("media.value"))),
     video_urls: omit(map({ $sortByOrder: ref("request.videos") }, "media", ref("media.value"))),
     audio_urls: omit(map({ $sortByOrder: ref("request.audios") }, "media", ref("media.value")))
@@ -815,10 +817,10 @@ const agnesReferenceMode = { $or: [gt(len(agnesReferenceImages), 0), gt(len(ref(
 
 add({
   id: "agnes-video-25", providerId: "agnes-video", name: "Agnes Video 2.5 / 2.5 Flash", vendor: "Agnes AI", capability: "video",
+  mediaTransport: { image: "inline", video: "url", audio: "url" },
   baseUrl: "https://apihub.agnes-ai.com/v1", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   validations: [
     { assert: { $in: [ref("request.model"), ["agnes-video-2.5", "agnes-video-2.5-flash"]] }, message: "Agnes 2.5 插件仅支持 agnes-video-2.5 与 agnes-video-2.5-flash" },
-    { assert: { $and: [{ $gte: [ref("request.duration"), 4] }, { $lte: [ref("request.duration"), 12] }] }, message: "Agnes Video 2.5 时长必须在 4–12 秒之间" },
     { assert: { $in: [{ $upper: coalesce(ref("request.resolution"), "720P") }, ["720P", "960P", "2K"]] }, message: "Agnes Video 2.5 分辨率必须是 720P、960P 或 2K" },
     { assert: { $not: { $and: [gt(len(agnesFrameImages), 0), agnesReferenceMode] } }, message: "Agnes Video 2.5 不能同时混用首尾帧和角色、视频或音频参考素材" },
     { assert: { $or: [ne(ref("request.model"), "agnes-video-2.5-flash"), eq({ $upper: coalesce(ref("request.resolution"), "720P") }, "720P")] }, message: "Agnes Video 2.5 Flash 仅支持 720P" },
@@ -896,21 +898,24 @@ add({
   }
 });
 
+const agnesV20FrameImages = mediaWithRoles("request.images", ["first_frame", "last_frame", ""]);
+
 add({
   id: "agnes-video-v20", providerId: "agnes-video-v20", name: "Agnes Video V2.0", vendor: "Agnes AI", capability: "video",
+  mediaTransport: { image: "inline", video: "url", audio: "url" },
   baseUrl: "https://apihub.agnes-ai.com/v1", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   validations: [
     { assert: eq(ref("request.model"), "agnes-video-v2.0"), message: "Agnes Video V2.0 插件仅支持 agnes-video-v2.0" },
     { assert: eq(len(ref("request.videos")), 0), message: "Agnes Video V2.0 不支持参考视频" },
     { assert: eq(len(ref("request.audios")), 0), message: "Agnes Video V2.0 不支持参考音频" },
     { assert: eq(len(agnesReferenceImages), 0), message: "Agnes Video V2.0 不支持角色或风格参考图" },
-    { assert: { $lte: [len(agnesFrameImages), 2] }, message: "Agnes Video V2.0 最多支持首帧和尾帧各一张" }
+    { assert: { $lte: [len(agnesV20FrameImages), 2] }, message: "Agnes Video V2.0 最多支持首帧和尾帧各一张" }
   ],
   create: jsonCreate("/videos", {
     model: ref("request.model"), prompt: ref("request.prompt"), frame_rate: 24,
     num_frames: { $min: [441, { $add: [{ $ceilStep: [{ $multiply: [coalesce(ref("request.duration"), 5), 24] }, 8] }, 1] }] },
-    image: conditional(eq(len(agnesFrameImages), 1), firstMediaFieldWithRoles("request.images", ["first_frame", "last_frame"], "value")),
-    extra_body: conditional(gt(len(agnesFrameImages), 1), { image: map(agnesFrameImages, "media", ref("media.value")), mode: "keyframes" })
+    image: conditional(eq(len(agnesV20FrameImages), 1), firstMediaFieldWithRoles("request.images", ["first_frame", "last_frame", ""], "value")),
+    extra_body: conditional(gt(len(agnesV20FrameImages), 1), { image: map(agnesV20FrameImages, "media", ref("media.value")), mode: "keyframes" })
   }),
   poll: { method: "GET", path: "/agnesapi", originPath: true, query: { video_id: ref("taskId"), model_name: ref("request.model") } },
   response: asyncResponse("video", {

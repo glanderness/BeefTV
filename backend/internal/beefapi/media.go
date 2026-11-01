@@ -19,11 +19,25 @@ const MediaProtocolHeader = "X-BeefAPI-Media-Protocol"
 const MediaProtocolVersion = "managed-media-v1"
 
 type MediaDiscovery struct {
-	Version              string   `json:"version"`
-	SupportedMediaTypes  []string `json:"supported_media_types"`
-	TaskSubmitURL        string   `json:"task_submit_url"`
-	TaskQueryURLTemplate string   `json:"task_query_url_template"`
-	UploadsURL           string   `json:"uploads_url"`
+	Version              string                          `json:"version"`
+	SupportedMediaTypes  []string                        `json:"supported_media_types"`
+	TaskSubmitURL        string                          `json:"task_submit_url"`
+	TaskQueryURLTemplate string                          `json:"task_query_url_template"`
+	UploadsURL           string                          `json:"uploads_url"`
+	Models               map[string]MediaModelCapability `json:"-"`
+}
+
+type MediaCapability struct {
+	Operations     []string `json:"operations"`
+	Options        []string `json:"options"`
+	ReferenceKinds []string `json:"reference_kinds"`
+	MaxOutputs     int      `json:"max_outputs"`
+	PromptMaxChars int      `json:"prompt_max_chars,omitempty"`
+}
+
+type MediaModelCapability struct {
+	Version      string                     `json:"media_capabilities_version"`
+	Capabilities map[string]MediaCapability `json:"media_capabilities"`
 }
 type MediaReference struct {
 	Kind string `json:"kind"`
@@ -68,6 +82,55 @@ type MediaTaskError struct {
 
 func (e *MediaTaskError) Error() string { return e.Message }
 
+// Pending 表示 BeefAPI 还没有给出这次提交的结论（结果未确认或仍在保存），
+// 只能继续按同一个 task_ref 查询。其余任务错误都是 BeefAPI 对这次提交的最终结论。
+// 判断托管媒体错误是否终态只读这里，不在调用方另列错误码。
+func (e *MediaTaskError) Pending() bool {
+	return e.Code == "media_result_unknown" || e.Code == "media_delivery_pending"
+}
+
+// IsTerminalMediaTaskError 表示 BeefAPI 已对这次提交给出最终的失败结论。
+func IsTerminalMediaTaskError(err error) bool {
+	var task *MediaTaskError
+	return errors.As(err, &task) && !task.Pending()
+}
+
+// IsDefiniteMediaRejection 表示 BeefAPI 明确拒绝了这次请求：4xx，
+// 但超时、冲突、过早和限流除外（这几种只代表暂时没处理，原请求仍可能成立）。
+func IsDefiniteMediaRejection(err error) bool {
+	var httpErr *MediaHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
+}
+
+// MediaTaskMissingError 是查询原编号得到的 404：用这把 Key 查不到这个编号的提交记录。
+// BeefAPI 说明它不能单独证明「没提交过」（记录存在但当前不可见时也会返回 404），
+// 所以它不是 MediaHTTPError，不会被当成「明确被拒」。提交时的 404 仍是 MediaHTTPError。
+type MediaTaskMissingError struct {
+	Code      string
+	RequestID string
+}
+
+func (e *MediaTaskMissingError) Error() string { return "BeefTV 查不到这个编号的提交记录" }
+
+// IsMediaTaskNotFound 表示查询原编号时 BeefAPI 查不到这次提交。
+func IsMediaTaskNotFound(err error) bool {
+	var missing *MediaTaskMissingError
+	return errors.As(err, &missing)
+}
+
+// IsIdempotencyConflict 表示这个编号已被内容不同的另一次提交占用。
+func IsIdempotencyConflict(err error) bool {
+	var httpErr *MediaHTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict && httpErr.TaskError.Code == "idempotency_conflict"
+}
+
 type MediaTask struct {
 	TaskRef           string          `json:"task_ref"`
 	MediaType         string          `json:"media_type"`
@@ -97,20 +160,22 @@ type MediaProjectionPort interface {
 	Project(context.Context, MediaTask)
 }
 type MediaClient struct {
-	BaseURL           string
-	APIKey            string
-	Headers           http.Header
-	Client            *http.Client
-	AllowHTTPTest     bool
-	State             MediaStatePort
-	Open              func(context.Context, string) (io.ReadCloser, string, int64, error)
-	Progress          func(label string, loaded, total int64, phase string)
-	Observe           func(*http.Request, *http.Response, []byte, error)
-	StorageObserve    func(UploadObservation)
-	InspectReference  func(context.Context, LocalMediaReference, io.ReaderAt, int64, string) error
-	ReferenceUploaded func(LocalMediaReference, UploadedMedia)
-	Poll              func(context.Context) error
-	Project           func(context.Context, MediaTask)
+	BaseURL            string
+	APIKey             string
+	Headers            http.Header
+	Client             *http.Client
+	AllowHTTPTest      bool
+	State              MediaStatePort
+	Open               func(context.Context, string) (io.ReadCloser, string, int64, error)
+	Progress           func(label string, loaded, total int64, phase string)
+	Observe            func(*http.Request, *http.Response, []byte, error)
+	StorageObserve     func(UploadObservation)
+	InspectReference   func(context.Context, LocalMediaReference, io.ReaderAt, int64, string) error
+	ReferenceUploaded  func(LocalMediaReference, UploadedMedia)
+	Poll               func(context.Context) error
+	Project            func(context.Context, MediaTask)
+	ExpectedOutputKind string
+	discovery          *MediaDiscovery
 }
 
 func (c *MediaClient) endpoint(path string) (string, error) {
@@ -245,6 +310,9 @@ type MediaHTTPError struct {
 func (e *MediaHTTPError) Error() string { return e.TaskError.Message }
 
 func (c *MediaClient) Discover(ctx context.Context) (MediaDiscovery, error) {
+	if c.discovery != nil {
+		return *c.discovery, nil
+	}
 	req, err := c.request(ctx, http.MethodGet, "/models", nil)
 	if err != nil {
 		return MediaDiscovery{}, err
@@ -255,14 +323,23 @@ func (c *MediaClient) Discover(ctx context.Context) (MediaDiscovery, error) {
 	}
 	var payload struct {
 		MediaProtocol MediaDiscovery `json:"media_protocol"`
+		Data          []struct {
+			ID string `json:"id"`
+			MediaModelCapability
+		} `json:"data"`
 	}
 	if json.Unmarshal(data, &payload) != nil || header.Get(MediaProtocolHeader) != MediaProtocolVersion || payload.MediaProtocol.Version != MediaProtocolVersion {
-		return MediaDiscovery{}, errors.New("图片服务暂不支持当前媒体协议，本次尚未开始生成")
+		return MediaDiscovery{}, errors.New("模型服务暂不支持当前媒体协议，本次尚未开始生成")
 	}
 	d := payload.MediaProtocol
 	if d.TaskSubmitURL != "/v1/media/tasks" || d.TaskQueryURLTemplate != "/v1/media/tasks/{task_ref}" || d.UploadsURL != "/v1/media/uploads" {
 		return MediaDiscovery{}, errors.New("媒体服务任务接口声明无效，本次尚未开始生成")
 	}
+	d.Models = make(map[string]MediaModelCapability, len(payload.Data))
+	for _, model := range payload.Data {
+		d.Models[model.ID] = model.MediaModelCapability
+	}
+	c.discovery = &d
 	return d, nil
 }
 
@@ -291,6 +368,23 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 	}
 	if !supported {
 		return nil, errors.New("媒体服务尚未支持当前任务类型")
+	}
+	if request.MediaType == "audio" || request.MediaType == "upscale" {
+		model := d.Models[request.Model]
+		capability, ok := model.Capabilities[request.MediaType]
+		if !ok || model.Version == "" || capability.MaxOutputs != 1 || !mediaStringMember(capability.Operations, request.Operation) {
+			return nil, errors.New("当前模型尚未声明所选媒体操作，本次尚未提交")
+		}
+		for key := range request.Options {
+			if !mediaStringMember(capability.Options, key) {
+				return nil, fmt.Errorf("当前模型未声明参数 %s，本次尚未提交", key)
+			}
+		}
+		for _, ref := range refs {
+			if !mediaStringMember(capability.ReferenceKinds, ref.Kind) {
+				return nil, errors.New("当前模型不接受所选参考素材类型，本次尚未提交")
+			}
+		}
 	}
 	for _, ref := range refs {
 		link, err := c.UploadReference(ctx, ref)
@@ -328,11 +422,22 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 			if decodeErr == nil && task.Status == "failed" {
 				return nil, task.failure()
 			}
+		} else if IsDefiniteMediaRejection(sendErr) {
+			return nil, sendErr
 		}
 		// Any dispatched result, including 429 or a lost response, is observed by
 		// GET thereafter. Never automatically create another request/key here.
 	}
 	return c.Wait(ctx, request.TaskRef, request.MediaType, false)
+}
+
+func mediaStringMember(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeMediaTask(data []byte, ref, kind string) (MediaTask, error) {
@@ -342,6 +447,36 @@ func decodeMediaTask(data []byte, ref, kind string) (MediaTask, error) {
 	}
 	return task, nil
 }
+
+// Resubmit 把发出前冻结的原始提交请求原样再发一次：同一地址、同一请求头
+// （原 Key 与 Idempotency-Key）、同一请求体。BeefAPI 按编号去重，收到过就返回
+// 原任务，没收到才第一次执行，所以不会产生第二次付费生成。
+func (c *MediaClient) Resubmit(ctx context.Context, rawURL string, header http.Header, body []byte, ref, kind string) (MediaTask, error) {
+	if ref == "" || strings.TrimSpace(header.Get("Idempotency-Key")) != ref {
+		return MediaTask{}, errors.New("原请求的提交编号与任务不一致，不能补交")
+	}
+	ctx = c.networkContext(ctx)
+	if err := c.validURLContext(ctx, rawURL); err != nil {
+		return MediaTask{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return MediaTask{}, err
+	}
+	req.Header = header.Clone()
+	req.Header.Del("Content-Length")
+	req.GetBody = nil
+	data, _, err := c.send(req, 4<<20)
+	if err != nil {
+		return MediaTask{}, err
+	}
+	task, err := decodeMediaTask(data, ref, kind)
+	if err == nil && c.Project != nil {
+		c.Project(ctx, task)
+	}
+	return task, err
+}
+
 func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, error) {
 	if ref == "" {
 		return MediaTask{}, errors.New("媒体任务编号为空")
@@ -354,6 +489,9 @@ func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, e
 	q.Set("media_type", kind)
 	req.URL.RawQuery = q.Encode()
 	data, _, err := c.send(req, 4<<20)
+	if httpErr := (*MediaHTTPError)(nil); errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return MediaTask{}, &MediaTaskMissingError{Code: httpErr.TaskError.Code, RequestID: httpErr.RequestID}
+	}
 	if err != nil {
 		return MediaTask{}, err
 	}
@@ -364,8 +502,22 @@ func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, e
 	return task, err
 }
 func (c *MediaClient) Wait(ctx context.Context, ref, kind string, legacy bool) (map[string]any, error) {
+	return c.wait(ctx, ref, kind, legacy, false)
+}
+
+// Collect 与 Wait 相同，但 BeefAPI 查不到这个编号时立即返回 404，交给调用方处理。
+// 只给恢复路径用：那时原请求早已发出。刚发出请求时查不到可能是请求还在路上，
+// 所以生成过程仍用 Wait。
+func (c *MediaClient) Collect(ctx context.Context, ref, kind string, legacy bool) (map[string]any, error) {
+	return c.wait(ctx, ref, kind, legacy, true)
+}
+
+func (c *MediaClient) wait(ctx context.Context, ref, kind string, legacy, stopWhenMissing bool) (map[string]any, error) {
 	for {
 		task, err := c.Query(ctx, ref, kind)
+		if stopWhenMissing && IsMediaTaskNotFound(err) {
+			return nil, err
+		}
 		if err == nil {
 			switch task.Status {
 			case "completed":

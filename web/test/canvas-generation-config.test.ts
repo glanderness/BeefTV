@@ -18,7 +18,7 @@ function config(): AiConfig {
         const capabilityConfig = defaultModelCapabilityConfig();
         capabilityConfig.video!.operations = [operation];
         capabilityConfig.video!.references.maxImages = images;
-        return { ...model, capability: "video" as const, capabilityConfig };
+        return { ...model, capability: "video" as const, capabilityConfig, capabilitySource: "user" as const };
     });
     return { ...defaultConfig, channels: [{ id: "channel", name: "Test", baseUrl: "https://example.test", apiKey: "fixture", apiFormat: "openai", models: profiles.map(profile => profile.model), modelProfiles: profiles }], videoModel: "channel::cinema-text", videoSeconds: "10", videoGenerateAudio: "true", videoWatermark: "true" };
 }
@@ -78,7 +78,7 @@ for (const savedModel of [false, true]) {
                     const size = tier === "low" ? "1024x1024" : "4096x4096";
                     capabilityConfig.image!.size = { parameter: "size", values: [size], default: size, allowCustom: false };
                     capabilityConfig.video!.duration = { selection: "enum", values: [tier === "low" ? 5 : 10], default: tier === "low" ? 5 : 10 };
-                    return { model: `${mode}-${tier}`, displayName: "Same product", capability: mode, protocol: mode === "image" ? "openai-image" as const : "openai-videos" as const, capabilityConfig };
+                    return { model: `${mode}-${tier}`, displayName: "Same product", capability: mode, protocol: mode === "image" ? "openai-image" as const : "openai-videos" as const, capabilityConfig, capabilitySource: "user" as const };
                 });
                 const global = normalizeConfigSnapshot({ config: {
                     ...defaultConfig,

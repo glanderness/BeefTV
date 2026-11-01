@@ -157,6 +157,7 @@ func TestRecoverTaskRoutesOnlyFreeRecoveryAndNeverCreatesOrRetries(t *testing.T)
 			UserID:            "user-1",
 			Type:              "canvas_image",
 			Model:             "topaz-standard-v2",
+			InputJSON:         `{"mode":"image","upscale":{"factor":2}}`,
 			Status:            model.TaskStatusFailed,
 			ProviderRequestID: "prov-upscale-1",
 			RouteRun:          1,

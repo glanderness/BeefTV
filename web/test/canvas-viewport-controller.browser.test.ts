@@ -43,7 +43,13 @@ test("视口裁剪持续更新，倍率重排分段提交且手势结束保持�
             const rebase = probe();
             const before = document.querySelector("#node")!.getBoundingClientRect().toJSON();
             await wait(180);
-            return { initial, pan, smallZoom, midZoom, rebase, ended: probe(), before, after: document.querySelector("#node")!.getBoundingClientRect().toJSON() };
+            const ended = probe();
+            const after = document.querySelector("#node")!.getBoundingClientRect().toJSON();
+            wheel(0, 620, true);
+            await wait(80);
+            const zoomOutAboveLod = probe();
+            await wait(180);
+            return { initial, pan, smallZoom, midZoom, rebase, ended, zoomOutAboveLod, before, after };
         });
         expect(result.pan.virtualizationViewport.x).toBe(-30);
         expect(result.pan.viewport.x).toBe(0);
@@ -59,6 +65,10 @@ test("视口裁剪持续更新，倍率重排分段提交且手势结束保持�
         expect(result.rebase.virtualizationViewport).not.toBeNull();
         expect(result.ended.virtualizationViewport).toBeNull();
         expect(result.ended.viewport).toEqual(result.ended.live);
+        // 缩小超出预渲染边距时，视口裁剪在手势中途刷新以补齐新进入视野的卡片，同时不重绘已挂载节点。
+        expect(result.zoomOutAboveLod.live.k).toBeLessThan(1);
+        expect(result.zoomOutAboveLod.virtualizationViewport?.k).toBeCloseTo(result.zoomOutAboveLod.live.k, 4);
+        expect(result.zoomOutAboveLod.nodeRenders).toBe(result.ended.nodeRenders);
         expect(result.after.x).toBeCloseTo(result.before.x, 2);
         expect(result.after.y).toBeCloseTo(result.before.y, 2);
         expect(result.after.width).toBeCloseTo(result.before.width, 2);
@@ -89,6 +99,8 @@ test("视口裁剪持续更新，倍率重排分段提交且手势结束保持�
         expect(scoped.first.inverse.trim()).toBe("20");
         expect(scoped.first.unrelated.trim()).toBe("1");
         expect(scoped.lateInverse.trim()).toBe("20");
+        expect(scoped.lodPinnedInverse.trim()).toBe("12.5");
+        expect(scoped.lodUnpinnedInverse.trim()).toBe("20");
         expect(scoped.next.titleWidth).toBeCloseTo(100, 2);
         expect(scoped.next.inverse.trim()).toBe("10");
         expect(scoped.next.selectionInverse.trim()).toBe("10");

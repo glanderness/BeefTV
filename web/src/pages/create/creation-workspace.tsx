@@ -33,7 +33,7 @@ import { ASSET_CATEGORY_LABELS } from "@/lib/asset-category";
 import { formatShotOrdinal } from "@/lib/shot-label";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { buildImageResolutionOptions, formatImageResolutionSize, supportsImageResolutionPresets } from "@/lib/image-resolution-tiers";
-import { modelCapabilityConfigFor, normalizeVideoValue, videoDurationOptions, VIDEO_CAPABILITIES_UNAVAILABLE, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { normalizeVideoValue, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { resolveResourceUrl } from "@/services/api/resources";
@@ -410,7 +410,6 @@ export function CreationComposer(props: ComposerProps) {
     const [trackState, setTrackState] = useState({ canScrollLeft: false, canScrollRight: false, isExpanded: true, isDragging: false });
     const previousAttachmentCountRef = useRef(0);
     const interactionBusy = props.busy || props.referenceReplacementBusy;
-    const videoCapabilitiesUnavailable = props.mode === "video" && modelCapabilityConfigFor(props.config, props.model).videoCapabilitiesUnavailable;
     const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy;
     const priceChannel = resolveModelChannel(props.config, props.model);
     const canOptimizePrompt = Boolean(props.promptOptimizerProvider) && (props.mode === "image" || props.mode === "video");
@@ -428,11 +427,11 @@ export function CreationComposer(props: ComposerProps) {
             ? "描述画面、人物、场景、构图与风格"
             : "描述镜头内容、运动、光线与节奏";
     const emptyPlaceholder = "输入你的镜头、画面或故事。也可以添加参考图开始创作";
-    const imageReferencesSupported = props.imageProfile.references.maxImages > 0;
-    const referencesSupported = props.mode === "image" ? imageReferencesSupported : videoCapabilitiesUnavailable || props.mode !== "video" || props.videoProfile.operations.includes("image_to_video");
+    const imageReferencesSupported = props.referenceLimits.image === undefined || props.imageProfile.references.maxImages > 0;
+    const referencesSupported = props.mode === "image" ? imageReferencesSupported : props.mode !== "video" || props.videoProfile.operations.includes("image_to_video");
     const referenceCounts = useMemo(() => creationReferenceCounts(props.attachments), [props.attachments]);
     // 参考素材按官方文档分类型限量，只要还有任意一类没满就能继续添加。
-    const canAddMoreReferences = videoCapabilitiesUnavailable || (referencesSupported && creationReferenceKinds.some((kind) => creationReferenceHasRoom(props.referenceLimits, referenceCounts, kind)));
+    const canAddMoreReferences = referencesSupported && creationReferenceKinds.some((kind) => creationReferenceHasRoom(props.referenceLimits, referenceCounts, kind));
     const referenceLimitsLabel = creationReferenceLimitsLabel(props.referenceLimits);
     const addReferenceLabel = interactionBusy
         ? props.referenceReplacementBusy
@@ -609,7 +608,6 @@ export function CreationComposer(props: ComposerProps) {
             </div>
         </div>
         {props.notice ? <p className="creation-composer-notice" role="alert">{props.notice}</p> : null}
-        {videoCapabilitiesUnavailable && props.notice !== VIDEO_CAPABILITIES_UNAVAILABLE ? <p className="creation-composer-notice" role="status">{VIDEO_CAPABILITIES_UNAVAILABLE}</p> : null}
         <footer className="creation-chat-dock">
             <div className="creation-chat-controls">
                 {props.variant === "thread" ? <ModePicker mode={props.mode} onModeChange={props.onModeChange} /> : null}
@@ -633,8 +631,8 @@ export function CreationComposer(props: ComposerProps) {
                     </button>
                 </Tooltip> : null}
 				<ModelPicker config={props.config} value={props.model} onChange={props.onModelChange} capability={props.mode} requirements={props.modelRequirements} className="creation-model-picker" placeholder={`选择${modeLabels[props.mode]}模型`} variant="creation" />
-                {(props.mode === "video" && !videoCapabilitiesUnavailable && (props.videoProfile.ratios.length > 0 || props.videoProfile.resolutions.length > 0)) || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
-                {props.mode === "video" && !videoCapabilitiesUnavailable && props.videoProfile.durationSupported !== false ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
+                {(props.mode === "video" && (props.videoProfile.ratios.length > 0 || props.videoProfile.resolutions.length > 0)) || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
+                {props.mode === "video" && props.videoProfile.durationSupported !== false ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
                 {props.mode === "text" ? <>
                     <Tooltip title={interactionBusy ? "生成中，此开关将在下次发送时生效" : (props.textStreaming ? "流式输出已开启" : "流式输出已关闭")}><button type="button" className="creation-chat-control" aria-pressed={props.textStreaming} disabled={interactionBusy} onClick={() => props.setTextStreaming(!props.textStreaming)}><Waves /><span>流式</span></button></Tooltip>
                     <Tooltip title={interactionBusy ? "生成中，此开关将在下次发送时生效" : (props.textThinking ? "思考已开启，会展示模型返回的推理摘要" : "开启模型思考")}><button type="button" className="creation-chat-control" aria-pressed={props.textThinking} disabled={interactionBusy} onClick={() => props.setTextThinking(!props.textThinking)}><Brain /><span>思考</span></button></Tooltip>

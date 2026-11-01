@@ -6,19 +6,37 @@ import { newTurnAccumulator, resetTurnAccumulator } from './canvas-turn.mjs';
 import * as studio from './studio-digest.mjs';
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
 
-test('request overlay replaces checkpointed studio sections while preserving instructions, tools and history', () => {
+test('request overlay strips transient studio/plan from system sections, orders instructions first, and appends transient context at tail', () => {
   assert.equal(typeof studio.withCurrentStudio, 'function');
-  const history = [{ role: 'system', content: 'instructions', toolsAdded: [{ name: 'canvas_get' }], sections: { beeftv_plan: 'keep plan', beeftv_studio: 'revision 22' } },
-    { role: 'user', content: 'continue', timestamp: 1 }];
-  const messages = studio.withCurrentStudio(history, 'revision 23');
+  const history = [
+    {
+      role: 'system',
+      content: 'instructions',
+      toolsAdded: [{ name: 'canvas_get' }],
+      sections: {
+        beeftv_skill_catalog: '<beeftv_skill_catalog>\ncatalog\n</beeftv_skill_catalog>',
+        instructions: '<instructions>\nrules\n</instructions>',
+        beeftv_plan: 'keep plan',
+        beeftv_studio: 'revision 22',
+      },
+    },
+    { role: 'user', content: 'continue', timestamp: 1 },
+  ];
+  const messages = studio.withCurrentStudio(history, 'revision 23', { planText: 'keep plan' });
   const system = getCurrentSystemMessage(messages);
-  assert.equal(system.sections.beeftv_studio, '<beeftv_studio>\nrevision 23\n</beeftv_studio>');
-  assert.equal(system.sections.beeftv_plan, 'keep plan');
+  assert.deepEqual(Object.keys(system.sections), ['instructions', 'beeftv_skill_catalog']);
+  assert.equal(system.sections.beeftv_studio, undefined);
+  assert.equal(system.sections.beeftv_plan, undefined);
   assert.equal(system.toolsAdded[0].name, 'canvas_get');
   assert.equal(history[0].sections.beeftv_studio, 'revision 22');
   assert.equal(messages[1], history[1]);
+  assert.equal(messages.at(-1).role, 'user');
+  assert.match(messages.at(-1).content[0].text, /<beeftv_plan>\nkeep plan\n<\/beeftv_plan>/);
+  assert.match(messages.at(-1).content[0].text, /<beeftv_studio>\nrevision 23\n<\/beeftv_studio>/);
   assert.doesNotMatch(JSON.stringify(messages), /revision 22/);
-  assert.match(getCurrentSystemMessage(studio.withCurrentStudio(messages, '')).sections.beeftv_studio, /无法读取/);
+  const failedReadMessages = studio.withCurrentStudio(messages, '');
+  assert.equal(failedReadMessages.length, messages.length);
+  assert.match(failedReadMessages.at(-1).content[0].text, /无法读取/);
 });
 
 async function bridgeFixture(run, { readFailure = false, unknownOutcome = false } = {}) {

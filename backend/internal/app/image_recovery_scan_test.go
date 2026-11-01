@@ -3,13 +3,12 @@ package app
 import (
 	"context"
 	"fmt"
-	"testing"
-	"time"
-
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"testing"
+	"time"
 )
 
 func TestImageRecoveryScanCoversLegacyAndKeepsCursorPastContendedTasks(t *testing.T) {
@@ -52,8 +51,8 @@ func TestImageRecoveryScanCoversLegacyAndKeepsCursorPastContendedTasks(t *testin
 	if err := s.recoverFailedImages(context.Background(), 2); err != nil {
 		t.Fatal(err)
 	}
-	if s.imageRecoveryAfterID != "b" {
-		t.Fatalf("cursor=%s", s.imageRecoveryAfterID)
+	if s.mediaAttempts().ImageRecoveryCursor() != "b" {
+		t.Fatalf("cursor=%s", s.mediaAttempts().ImageRecoveryCursor())
 	}
 	if err := s.recoverFailedImages(context.Background(), 2); err != nil {
 		t.Fatal(err)

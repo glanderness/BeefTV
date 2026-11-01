@@ -4,13 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unicode/utf8"
-
 	"infinite-canvas/backend/internal/appearance"
 	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assistantturns"
@@ -19,6 +12,7 @@ import (
 	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/mediaattempt"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/operations"
@@ -33,6 +27,12 @@ import (
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/taskdelivery"
 	"infinite-canvas/backend/internal/textreplay"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
 )
 
 type Service struct {
@@ -46,9 +46,11 @@ type Service struct {
 	workerRuntimeMu          sync.Mutex
 	characterTaskMu          sync.Mutex
 	activeCancels            map[string]context.CancelFunc
-	pendingStorage           map[string]int64
+	fileQuotaService         *localasset.FileQuota
+	fileQuotaOnce            sync.Once
 	coordinator              *platform.Coordinator
 	platform                 *platform.Service
+	platformOnce             sync.Once
 	taskTerminalCoordinator  *taskTerminalCoordinator
 	taskRouteExecutor        *taskRouteExecutor
 	taskWorkerCoordinator    *taskWorkerCoordinator
@@ -103,8 +105,8 @@ type Service struct {
 	tasksOnce                sync.Once
 	workspaceOps             *operations.Registry
 	workspaceOpsMu           sync.Mutex
-	imageRecoveryActive      atomic.Bool
-	imageRecoveryAfterID     string
+	mediaAttemptService      *mediaattempt.Service
+	mediaAttemptOnce         sync.Once
 	videoRecoveryActive      atomic.Bool
 	videoRecoveryAfterID     string
 	bindAfterID              string
@@ -184,7 +186,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 		DataDir:      dataDir,
 		Repository:   localasset.NewRepository(repo),
 		Blobs:        localasset.NewFileStore(dataDir),
-		Quota:        resourceQuota{svc: service},
+		Quota:        service.fileQuota(),
 		Lifecycle:    resourceLifecycle{svc: service},
 		LocalStorage: localResourceStorage,
 	})

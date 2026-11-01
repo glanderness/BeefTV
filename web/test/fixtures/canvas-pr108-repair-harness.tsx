@@ -45,7 +45,6 @@ function Editor() {
         getCanvasCenter: () => ({ x: 0, y: 0 }), setNodes, setConnections: () => {},
         onNodesDeleted: (_ids, _next, removed) => harness.deleted.push({ projectId, tasks: removed.map(item => item.metadata?.taskId) }) });
     harness.switchCanvas = () => { setProjectId(value => value === "canvas-a" ? "canvas-b" : "canvas-a"); setNodes([node("task-b")]); };
-    harness.switchScope = () => { setActiveUserScope("owner-b"); setActiveUserScope("owner-a"); };
     return <><button onClick={() => ops.deleteNodes(new Set(["shared-node"]))}>delete-node</button><output data-testid="nodes">{nodes.map(item => item.metadata?.taskId).join(",")}</output><output data-testid="canvas">{projectId}</output></>;
 }
 function Versions() {

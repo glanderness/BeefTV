@@ -5,7 +5,6 @@ import { cancelIncompleteImageBatch } from "@/lib/canvas/canvas-image-batch-retr
 import { isolateCopiedNodeMetadata } from "@/lib/canvas/canvas-node-copy";
 import { prepareInPlaceMediaVersion } from "@/lib/canvas/canvas-media-versions";
 import { assistantProposalProgress } from "@/pages/canvas/canvas-assistant-copy";
-import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { canvasGenerationFailureMetadata, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
 import { canReloadCanvasNodeResource, isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
@@ -87,11 +86,12 @@ test("submission creates a stable operation ID without randomUUID in an HTTP Web
 });
 
 test("restoring a completed image retains recovery flags and cannot open a second paid generation", () => {
-    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" }, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请点击「继续取回」" } };
+    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, generationPreflightError: "旧的前置校验提示", taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" }, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请点击「继续取回」" } };
     const restored = canvasGenerationTaskNodes([target], target.id, task)[0];
     expect(restored.metadata).toMatchObject({ status: "error", taskStatus: "succeeded", generationErrorCode: "canvas_conflict" });
+    expect(restored.metadata?.generationPreflightError).toBeUndefined();
     expect(canReloadCanvasNodeResource(restored)).toBe(true);
-    expect(isCanvasNodeGenerating(restored)).toBe(true);
+    expect(isCanvasNodeGenerating(restored)).toBe(false);
     expect(isNodeRegenerateBlocked(restored.metadata)).toBe(true);
     const firstTerminal = canvasGenerationTaskNodes(project.nodes, input.nodeId, task)[0];
     expect(isCanvasNodeGenerating(firstTerminal)).toBe(true);
@@ -149,16 +149,15 @@ for (const [error, guidance] of [
 }
 
 test("a target deleted while saving stops before submission and is not recreated", async () => {
-    await expect(persistCanvasGenerationTarget({ ...input, expectedScope: captureUserScope() }, async () => {
+    await expect(persistCanvasGenerationTarget({ ...input }, async () => {
         useCanvasStore.setState({ projects: [{ ...project, nodes: [] }] });
     })).rejects.toThrow("生成节点已不存在");
     expect(useCanvasStore.getState().projects[0]?.nodes).toEqual([]);
 });
 
-test("abort and abandoned account saves cannot proceed to a paid task", async () => {
+test("abort and a canvas owner change during save cannot proceed to a paid task", async () => {
     const controller = new AbortController();
-    await expect(persistCanvasGenerationTarget({ ...input, signal: controller.signal, expectedScope: captureUserScope() }, async () => { controller.abort(); })).rejects.toMatchObject({ name: "AbortError" });
-    await expect(persistCanvasGenerationTarget({ ...input, expectedScope: captureUserScope() }, async () => { throw new UserScopeAbandonedError(); })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+    await expect(persistCanvasGenerationTarget({ ...input, signal: controller.signal }, async () => { controller.abort(); })).rejects.toMatchObject({ name: "AbortError" });
     const refNode = { id: "ref-image", type: CanvasNodeType.Image, title: "参考图", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "success" as const, storageKey: "resource:res-ref", content: "/api/resources/res-ref/file" } };
     useCanvasStore.setState({ projects: [{ ...structuredClone(project), nodes: [...project.nodes, refNode] }] });
     let current = true;
@@ -167,7 +166,6 @@ test("abort and abandoned account saves cannot proceed to a paid task", async ()
         persistCanvasGenerationTarget(
             {
                 ...input,
-                expectedScope: captureUserScope(),
                 isCurrent: () => current,
                 ensureNodeAsset: async () => {
                     current = false;
@@ -191,7 +189,6 @@ test("abort and abandoned account saves cannot proceed to a paid task", async ()
             {
                 ...input,
                 clientOperationId: "test-image-save-owner-change",
-                expectedScope: captureUserScope(),
                 ensureNodeAsset: async () => {
                     hookCurrent = false;
                     return { assetId: "asset-ref", created: false, linkedToProject: false, confirmed: true };
@@ -217,8 +214,8 @@ test("abort and abandoned account saves cannot proceed to a paid task", async ()
     expect(hookSubmissions).toBe(0);
 });
 
-test("account abandonment or cancellation during result consumption cannot report success", async () => {
-    for (const error of [new UserScopeAbandonedError(), new DOMException("Aborted", "AbortError")]) {
+test("cancellation during result consumption cannot report success", async () => {
+    for (const error of [new DOMException("Aborted", "AbortError")]) {
         let binds = 0;
         await expect(runCanvasGenerationTaskToConsumer(input, {
             prepareTarget: async () => undefined,

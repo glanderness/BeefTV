@@ -1,24 +1,33 @@
+import hashlib
 import importlib.util
+import io
 import unittest
 from pathlib import Path
+import urllib.request
 
 spec = importlib.util.spec_from_file_location("cnb", Path(__file__).with_name("mirror-desktop-cnb.py"))
 cnb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cnb)
 
 
-def release(version="v2.0.4"):
+def release(version="v2.0.4", include_zips=False):
+    assets = [{"name": f"BeefTV-{version}-{platform}{suffix}", "size": 100,
+               "state": "uploaded", "digest": "sha256:" + "a" * 64,
+               "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/{version}/BeefTV-{version}-{platform}{suffix}"}
+              for platform, suffix in cnb.PLATFORMS.items()]
+    if include_zips or cnb.version_tuple(version) >= (2, 1, 0):
+        assets += [{"name": f"BeefTV-{version}-{platform}.zip", "size": 200,
+                    "state": "uploaded", "digest": "sha256:" + "b" * 64,
+                    "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/{version}/BeefTV-{version}-{platform}.zip"}
+                   for platform in cnb.PLATFORMS]
     return {"tag_name": version, "html_url": f"https://github.com/glanderness/BeefTV/releases/tag/{version}",
-            "assets": [{"name": f"BeefTV-{version}-{platform}{suffix}", "size": 100,
-                        "state": "uploaded", "digest": "sha256:" + "a" * 64,
-                        "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/{version}/BeefTV-{version}-{platform}{suffix}"}
-                       for platform, suffix in cnb.PLATFORMS.items()]}
+            "assets": assets}
 
 
 def record(source):
     return {"schema": 1, "repository": cnb.REPO, "version": source["tag_name"], "source": source["html_url"],
             "verification": "anonymous-resume-sha256", "verifiedAt": "2026-10-24T00:00:00Z",
-            "assets": cnb.expected_installers(source, source["tag_name"])}
+            "assets": cnb.expected_assets(source, source["tag_name"])}
 
 
 class MirrorTest(unittest.TestCase):
@@ -89,6 +98,81 @@ class MirrorTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "timeout"):
             cnb.mirror("v2.0.4", "test", fetch, sleep, lambda: tick[0], timeout=30)
         self.assertEqual(len(starts), 1)
+
+    def test_v210_requires_and_verifies_updater_zips_with_anonymous_range_resume(self):
+        payload_bytes = b"BeefTV-v2.1.0-zip-content-" * 16
+        sha = hashlib.sha256(payload_bytes).hexdigest()
+        source = release("v2.1.0")
+        for asset in source["assets"]:
+            if asset["name"].endswith(".zip"):
+                asset["size"] = len(payload_bytes)
+                asset["digest"] = "sha256:" + sha
+        ready = record(source)
+        self.assertEqual(len(ready["assets"]), 8)
+        range_calls = []
+
+        class FakeResponse:
+            def __init__(self, data, status, content_range):
+                self._buf = io.BytesIO(data)
+                self.status = status
+                self.headers = {"Content-Range": content_range}
+
+            def read(self, n=-1):
+                return self._buf.read(n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_opener(req, timeout=180):
+            rng = req.headers.get("Range") or req.headers.get("range")
+            range_calls.append((req.full_url, rng))
+            prefix = len(payload_bytes) // 2
+            if rng == f"bytes=0-{prefix - 1}":
+                return FakeResponse(payload_bytes[:prefix], 206, f"bytes 0-{prefix - 1}/{len(payload_bytes)}")
+            if rng == f"bytes={prefix}-":
+                return FakeResponse(payload_bytes[prefix:], 206, f"bytes {prefix}-{len(payload_bytes) - 1}/{len(payload_bytes)}")
+            raise AssertionError(f"Unexpected Range {rng}")
+
+        def fetch(url, payload=None, token=None):
+            if url == cnb.START:
+                return {"success": True}
+            return source if url.startswith(cnb.GITHUB) else ready
+
+        cnb.mirror("v2.1.0", "test", fetch, lambda _: None,
+                   verify_zips=lambda v, zips: cnb.verify_cnb_zips(v, zips, opener=fake_opener))
+        self.assertEqual(len(range_calls), 8)  # 4 zips * 2 Range requests each
+
+        # Missing zip in record or corrupt zip bytes must fail
+        incomplete_record = {**ready, "assets": ready["assets"][:4]}
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            cnb.mirror("v2.1.0", "test",
+                       lambda url, *_: source if url.startswith(cnb.GITHUB) else {"success": True} if url == cnb.START else incomplete_record,
+                       lambda _: None)
+
+        bad_zips = [{**z, "sha256": "0" * 64} for z in cnb.expected_zips(source, "v2.1.0")]
+        with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
+            cnb.verify_cnb_zips("v2.1.0", bad_zips, opener=fake_opener)
+
+        # Also verify delta zips when present on the GitHub Release
+        delta_assets = []
+        for platform in cnb.PLATFORMS:
+            name = f"BeefTV-v2.1.0-{platform}-from-v2.0.6.delta.zip"
+            delta_assets.append({
+                "name": name, "state": "uploaded", "size": len(payload_bytes),
+                "digest": "sha256:" + sha,
+                "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/v2.1.0/{name}",
+            })
+        source_with_deltas = {**source, "assets": source["assets"] + delta_assets}
+        ready_with_deltas = {**ready, "assets": cnb.expected_assets(source_with_deltas, "v2.1.0")}
+        range_calls.clear()
+        cnb.mirror("v2.1.0", "test",
+                   lambda url, *_: source_with_deltas if url.startswith(cnb.GITHUB) else {"success": True} if url == cnb.START else ready_with_deltas,
+                   lambda _: None,
+                   verify_zips=lambda v, zips: cnb.verify_cnb_zips(v, zips, opener=fake_opener))
+        self.assertEqual(len(range_calls), 16)  # (4 full zips + 4 delta zips) * 2 Range requests each
 
 
 if __name__ == "__main__":

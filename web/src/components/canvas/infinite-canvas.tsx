@@ -28,6 +28,7 @@ type InfiniteCanvasProps = {
     onFileDragOver?: (event: React.DragEvent<HTMLDivElement>) => void;
     children: React.ReactNode;
     graphicsLayer?: React.ReactNode;
+    lodDomHidden?: boolean;
 };
 
 const CANVAS_WHEEL_IGNORE_SELECTOR = "[data-canvas-no-zoom],[data-canvas-wheel-scroll],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown";
@@ -46,7 +47,7 @@ type PinchState = {
     initialScale: number;
 };
 
-export function InfiniteCanvas({ interactive = true, containerRef, viewport, appearance, backgroundMode = "lines", wheelBehavior = "auto", onViewportChange, onViewportPreviewChange, onCanvasMouseDown, boxSelectEnabled = false, onCanvasDoubleClick, onCanvasDeselect, onContextMenu, onDrop, onFileDragEnter, onFileDragLeave, onFileDragOver, graphicsLayer, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ interactive = true, containerRef, viewport, appearance, backgroundMode = "lines", wheelBehavior = "auto", onViewportChange, onViewportPreviewChange, onCanvasMouseDown, boxSelectEnabled = false, onCanvasDoubleClick, onCanvasDeselect, onContextMenu, onDrop, onFileDragEnter, onFileDragLeave, onFileDragOver, graphicsLayer, lodDomHidden = false, children }: InfiniteCanvasProps) {
     const colorTheme = useActiveTheme();
     const resolvedAppearance = resolveCanvasAppearance(appearance, colorTheme);
     const panState = useRef({
@@ -89,6 +90,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         syncTimerRef.current = null;
         nextViewportRef.current = null;
         delete container?.dataset.canvasViewportInteracting;
+        delete container?.dataset.canvasViewportZooming;
         setIsPanning(false);
         setIsSpacePressed(false);
     }, [interactive, containerRef]);
@@ -116,6 +118,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
             delete containerRef.current?.dataset.canvasViewportInteracting;
+            delete containerRef.current?.dataset.canvasViewportZooming;
         },
         [containerRef],
     );
@@ -124,11 +127,13 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
 
     const scheduleViewportChange = useCallback(
         (next: ViewportTransform, commitAfterIdle = false) => {
+            const scaleChanged = Math.abs(next.k - scaleRef.current) > 1e-6;
             viewportRef.current = next;
             scaleRef.current = next.k;
             onViewportPreviewChange?.(next);
             const container = containerRef.current;
             if (container && container.dataset.canvasViewportInteracting !== "true") container.dataset.canvasViewportInteracting = "true";
+            if (container && scaleChanged && container.dataset.canvasViewportZooming !== "true") container.dataset.canvasViewportZooming = "true";
             nextViewportRef.current = next;
             if (!frameRef.current) frameRef.current = requestAnimationFrame((now) => {
                 frameRef.current = null;
@@ -140,12 +145,18 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             });
             if (!commitAfterIdle) return;
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-            syncTimerRef.current = setTimeout(() => {
+            const finishIdleGesture = () => {
+                if (frameRef.current !== null) {
+                    syncTimerRef.current = setTimeout(finishIdleGesture, 64);
+                    return;
+                }
                 interactingRef.current = false;
                 delete containerRef.current?.dataset.canvasViewportInteracting;
+                delete containerRef.current?.dataset.canvasViewportZooming;
                 syncViewport();
                 syncTimerRef.current = null;
-            }, 120);
+            };
+            syncTimerRef.current = setTimeout(finishIdleGesture, 120);
         },
         [containerRef, onViewportPreviewChange, syncViewport],
     );
@@ -372,6 +383,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 interactingRef.current = false;
                 if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
                 delete containerRef.current?.dataset.canvasViewportInteracting;
+                delete containerRef.current?.dataset.canvasViewportZooming;
                 syncViewport();
                 setIsPanning(false);
                 return;
@@ -388,6 +400,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             interactingRef.current = false;
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
             delete containerRef.current?.dataset.canvasViewportInteracting;
+            delete containerRef.current?.dataset.canvasViewportZooming;
             syncViewport();
             setIsPanning(false);
         };
@@ -431,6 +444,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         <div
             ref={containerRef}
             data-canvas-viewport
+            data-canvas-lod-dom-hidden={lodDomHidden ? "true" : undefined}
             data-canvas-space-pressed={isSpacePressed ? "true" : undefined}
             data-canvas-pan-state={isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
             className={`relative h-full w-full select-none overflow-hidden touch-none ${isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}

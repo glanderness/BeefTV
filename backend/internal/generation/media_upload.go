@@ -403,14 +403,33 @@ func ValidateBeefAPISeedanceMediaSize(kind string, size int64) error {
 }
 
 func CanonicalBeefAPISeedanceMime(kind string, declared string, data []byte) (string, error) {
-	if mime, ok := CanonicalBeefAPISeedanceDeclaredMime(kind, declared); ok {
-		return mime, nil
-	}
-	detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
+	detected := detectSeedanceMediaContentType(data)
 	if mime, ok := CanonicalBeefAPISeedanceDeclaredMime(kind, detected); ok {
 		return mime, nil
 	}
+	if detected != "image/avif" && detected != "image/heic" {
+		if mime, ok := CanonicalBeefAPISeedanceDeclaredMime(kind, declared); ok {
+			return mime, nil
+		}
+	}
 	return "", errBeefAPISeedanceUploadFormat
+}
+
+func detectSeedanceMediaContentType(data []byte) string {
+	if len(data) >= 4 && ((data[0] == 'I' && data[1] == 'I' && data[2] == '*' && data[3] == 0) || (data[0] == 'M' && data[1] == 'M' && data[2] == 0 && data[3] == '*')) {
+		return "image/tiff"
+	}
+	if len(data) >= 12 && string(data[4:8]) == "ftyp" {
+		switch string(data[8:12]) {
+		case "avif", "avis":
+			return "image/avif"
+		case "heic", "heix", "mif1", "msf1":
+			return "image/heic"
+		case "qt  ":
+			return "video/quicktime"
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
 }
 
 func CanonicalBeefAPISeedanceDeclaredMime(kind, raw string) (string, bool) {
@@ -423,8 +442,12 @@ func CanonicalBeefAPISeedanceDeclaredMime(kind, raw string) (string, bool) {
 		switch mime {
 		case "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/tiff":
 			return mime, true
-		case "image/jpg":
+		case "image/jpg", "image/pjpeg":
 			return "image/jpeg", true
+		case "image/x-png":
+			return "image/png", true
+		case "image/x-bmp":
+			return "image/bmp", true
 		}
 	case "video":
 		switch mime {

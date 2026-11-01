@@ -70,7 +70,7 @@ export type CanvasGenerationBatchStatus = "queued" | "running" | "partial_failed
 export type CanvasGenerationBatchItemStatus = "waiting" | "submitting" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type CanvasImageGenerationType = "generation" | "edit";
 export type CanvasWorkflowKind = "free" | "script" | "story_input" | "character" | "scene" | "storyboard" | "shot" | "final" | "styleboard" | "reference_set" | "reference_video" | "action_board" | "video_retake";
-export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "reference_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat";
+export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "reference_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat" | "draft_to_final";
 export type CanvasSkillCategory = "writing" | "storyboard" | "image" | "video" | "utility";
 export type CanvasSkillOutputMode = "text" | "json" | "image_prompt" | "workflow";
 export type StoryboardColumn =
@@ -290,6 +290,7 @@ export type CanvasNodeMetadata = {
     vquality?: string;
     generateAudio?: string;
     watermark?: string;
+    draft?: string;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
@@ -367,6 +368,8 @@ export type CanvasNodeMetadata = {
     taskId?: string;
     taskType?: string;
     taskOutcome?: import("@/lib/task-outcome").TaskOutcome;
+    taskOutcomeSource?: "local";
+    generationFailure?: import("@/lib/canvas/canvas-node-failure-state").CanvasFailureRecord;
     taskClientOperationId?: string;
     taskOutputIndex?: number;
     generationSubmissionState?: "submitting" | "unknown" | "accepted" | "rejected";
@@ -401,6 +404,10 @@ export type CanvasNodeMetadata = {
     };
     sessionId?: string;
     videoEditOperation?: CanvasVideoEditOperation;
+    videoDraftTaskId?: string;
+    returnLastFrame?: string;
+    lastFrameUrl?: string;
+    lastFrameStorageKey?: string;
     videoMergeSourceNodeIds?: string[];
     depthSourceNodeId?: string;
     arkPrivateAssetUpload?: string;

@@ -14,7 +14,6 @@ type EnsureCall = {
     category?: string;
     canvasId?: string;
     nodeId?: string;
-    hasExpectedScope: boolean;
     hasSignal: boolean;
 };
 
@@ -23,7 +22,6 @@ type HarnessWindow = Window & {
         writes: string[];
         toasts: string[];
         ensureCalls: EnsureCall[];
-        switchABA: () => Promise<void>;
         switchCanvas: () => void;
     };
 };
@@ -67,7 +65,6 @@ harnessWindow.__editorHarness = {
     writes: [],
     toasts: [],
     ensureCalls: [],
-    switchABA: async () => {},
     switchCanvas: () => {},
 };
 
@@ -101,12 +98,6 @@ function Harness() {
         setNodes,
     });
 
-    harnessWindow.__editorHarness!.switchABA = async () => {
-        await fetch("/harness/switch", { method: "POST" });
-        setActiveUserScope("owner-b");
-        setActiveUserScope("owner-a");
-        setTick((value) => value + 1);
-    };
     harnessWindow.__editorHarness!.switchCanvas = () => {
         setCanvasId("canvas-b");
     };
@@ -114,7 +105,6 @@ function Harness() {
     return (
         <>
             <div style={{ position: "fixed", top: 0, left: 0, zIndex: 11000, display: "flex", gap: 8, padding: 8 }}>
-                <button type="button" onClick={() => void harnessWindow.__editorHarness!.switchABA()}>switch-aba</button>
                 <button type="button" onClick={() => harnessWindow.__editorHarness!.switchCanvas()}>switch-canvas</button>
                 <button type="button" onClick={() => editor.handleConfigNodeChange("node-1", { assetCategory: "character" })}>set-category</button>
                 <button type="button" onClick={() => void editor.saveNodeAsset(nodesRef.current[0]!)}>save-asset</button>

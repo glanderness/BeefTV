@@ -1,10 +1,9 @@
 import { Grid } from "antd";
-import { useCallback, useEffect, useRef, useState, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createClientId } from "@/lib/client-id";
 import { ApiError } from "@/services/api/request";
-import { scopedLocalStorage, getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
-import { captureUserScope, userScopeMatches, assertUserScope } from "@/lib/user-scope-guard";
+import { scopedLocalStorage } from "@/lib/user-scope";
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { saveCanvasForAssistant } from "@/services/assistant-canvas-save";
@@ -203,11 +202,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const [handledProposals, setHandledProposals] = useState<Set<string>>(readStoredProposals);
     const [, forceRender] = useState(0);
 
-    const accountIdentity = useSyncExternalStore(subscribeUserScope, () => JSON.stringify([getActiveUserScope(), getActiveUserScopeEpoch()]), () => "");
-    const expectedScope = useMemo(() => captureUserScope(), [accountIdentity]);
-    const [permissionPreference, setPermissionPreference] = useState(() => ({ accountIdentity, mode: assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)) }));
-    const preferredPermissionMode = permissionPreference.accountIdentity === accountIdentity ? permissionPreference.mode : assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY));
-    const runPrefix = `${accountIdentity}:`;
+    const [preferredPermissionMode, setPreferredPermissionMode] = useState(() => assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)));
     const runsRef = useRef<Map<string, CanvasRun>>(new Map());
     const observedInterruptions = useRef(new Set<string>());
     const activeCanvasRef = useRef(canvasId);
@@ -216,56 +211,46 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     onCanvasChangedRef.current = onCanvasChanged;
 
     const runFor = useCallback((id: string): CanvasRun => {
-        const key = runPrefix + id;
-        const existing = runsRef.current.get(key);
+        const existing = runsRef.current.get(id);
         if (existing) return existing;
         const created = createRun();
-        runsRef.current.set(key, created);
+        runsRef.current.set(id, created);
         return created;
-    }, [runPrefix]);
+    }, []);
 
     const rerenderIfActive = useCallback((id: string) => {
-        if (userScopeMatches(expectedScope) && activeCanvasRef.current === id) forceRender((value) => value + 1);
-    }, [expectedScope]);
+        if (activeCanvasRef.current === id) forceRender((value) => value + 1);
+    }, []);
 
     const setPermissionMode = useCallback((mode: AssistantPermissionMode) => {
-        if (!userScopeMatches(expectedScope)) return;
         const run = runFor(activeCanvasRef.current);
         if (run.streaming || run.recovery || run.sessionBusy) return;
         const selected = assistantPermissionMode(mode);
         scopedLocalStorage.setItem(PERMISSION_STORAGE_KEY, selected);
-        setPermissionPreference({ accountIdentity, mode: selected });
-    }, [accountIdentity, expectedScope, runFor]);
+        setPreferredPermissionMode(selected);
+    }, [runFor]);
 
     useEffect(() => {
-        setStatus(null);
-        setStatusBusy(false);
-        setHandledProposals(readStoredProposals());
-        setOpenState(scopedLocalStorage.getItem(OPEN_STORAGE_KEY) !== "0");
-        setWidthState(clampAssistantWidth(Number(scopedLocalStorage.getItem(WIDTH_STORAGE_KEY)) || ASSISTANT_DEFAULT_WIDTH));
         return () => {
             for (const [key, run] of runsRef.current) {
-                if (!key.startsWith(runPrefix)) continue;
                 ++run.historyRequest;
                 // Detach the old browser observer; durable work is stopped only by explicit Stop.
                 run.controller?.abort();
                 runsRef.current.delete(key);
             }
         };
-    }, [runPrefix]);
+    }, []);
 
     const setOpen = useCallback((next: boolean) => {
-        if (!userScopeMatches(expectedScope)) return;
         setOpenState(next);
         scopedLocalStorage.setItem(OPEN_STORAGE_KEY, next ? "1" : "0");
-    }, [expectedScope]);
+    }, []);
 
     const setWidth = useCallback((next: number) => {
-        if (!userScopeMatches(expectedScope)) return;
         const clamped = clampAssistantWidth(next);
         setWidthState(clamped);
         scopedLocalStorage.setItem(WIDTH_STORAGE_KEY, String(clamped));
-    }, [expectedScope]);
+    }, []);
 
     // 状态只在面板打开时复查：关着的面板不该一直问后端。正在启动时节奏更快。
     const starting = status?.reason === "host_starting";
@@ -274,16 +259,15 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         let cancelled = false;
         const refresh = () => {
             getAgentHostStatus()
-                .then((value) => { if (!cancelled && userScopeMatches(expectedScope)) setStatus(value); })
-                .catch(() => { if (!cancelled && userScopeMatches(expectedScope)) setStatus({ available: false }); });
+                .then((value) => { if (!cancelled) setStatus(value); })
+                .catch(() => { if (!cancelled) setStatus({ available: false }); });
         };
         refresh();
         const timer = setInterval(refresh, starting ? 2000 : 15000);
         return () => { cancelled = true; clearInterval(timer); };
-    }, [open, starting, expectedScope]);
+    }, [open, starting]);
 
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
-        if (!userScopeMatches(expectedScope)) return false;
         const run = runFor(targetCanvas);
         const request = ++run.historyRequest;
         const planAtRequest = run.plan;
@@ -292,7 +276,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 listAssistantSessions(targetCanvas),
                 getAssistantHistory(targetCanvas, sessionId),
             ]);
-            if (!userScopeMatches(expectedScope) || request !== run.historyRequest) return false;
+            if (request !== run.historyRequest) return false;
             const nextSession = sessionId || history.sessionId || sessionList.currentSessionId || null;
             const known = new Set(history.turns.map((turn) => turn.turnId));
             const recent = nextSession === run.sessionId ? run.turns.filter((turn) => !known.has(turn.turnId)) : [];
@@ -338,7 +322,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
             for (const turn of history.turns) {
                 if (turn.undone) run.turnStatus[turn.turnId] = { undone: true };
-                const key = `${runPrefix}:${targetCanvas}:${nextSession}:${turn.turnId}`;
+                const key = `${targetCanvas}:${nextSession}:${turn.turnId}`;
                 if (turn.errorReason === "turn_interrupted" && !observedInterruptions.current.has(key)) {
                     observedInterruptions.current.add(key);
                     if (observedInterruptions.current.size > 500) observedInterruptions.current.delete(observedInterruptions.current.values().next().value!);
@@ -350,7 +334,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.historyHostUnavailable = false;
             return true;
         } catch (error) {
-            if (userScopeMatches(expectedScope) && request === run.historyRequest) {
+            if (request === run.historyRequest) {
                 run.historyHostUnavailable = error instanceof ApiError && (error.reason === "host_unreachable" || error.reason === "model_not_configured");
                 run.historyError = run.turns.length || run.pendingUserText || run.pendingAttachments.length || run.streamed || run.reasoning.length
                     ? "没能读取对话，已有内容仍然保留。请重新读取。" : "没能读取对话。请重新读取。";
@@ -359,7 +343,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         } finally {
             rerenderIfActive(targetCanvas);
         }
-    }, [rerenderIfActive, runFor, expectedScope]);
+    }, [rerenderIfActive, runFor]);
 
     // 打开面板或切画布时补齐这条画布的历史；已经载入过就不重复拉。
     useEffect(() => {
@@ -382,7 +366,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     }, [canvasId, loadHistory, open, runFor, status?.available]);
 
     const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode} = {}) => {
-        if (!userScopeMatches(expectedScope)) return;
         const message = text.trim();
         if (!message && !input.attachments?.length) return;
         // 发送时冻结归属：此后即使用户切到别的画布，结果也只写回这条记录。
@@ -437,60 +420,50 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rerenderIfActive(targetCanvas);
         try {
             if (workspaceCapabilities().local) {
-                await saveCanvasForAssistant(targetCanvas, expectedScope);
+                await saveCanvasForAssistant(targetCanvas);
                 await flushModelConfig();
                 const persistence = getModelConfigPersistenceState();
                 if (persistence.dirty || persistence.status === "error") throw new Error("助手模型还没保存成功，请稍后重试");
             }
             controller.signal.throwIfAborted();
             const ready = await waitForAssistant(controller.signal);
-            assertUserScope(expectedScope);
             setStatus(ready);
             if (!run.historyLoaded && !await loadHistory(targetCanvas)) throw new Error("对话还没读回来，请重新读取后再发送");
-            assertUserScope(expectedScope);
             if (!run.sessionId) run.sessionId = await createAssistantSession(targetCanvas);
-            assertUserScope(expectedScope);
             controller.signal.throwIfAborted();
             run.recovery = { sessionId: run.sessionId, knownTurnIds: run.turns.map((turn) => turn.turnId), text: message, selectedNodeIds: selectedSnapshot };
             run.dispatched = true;
             if (run.turns.at(-1)?.errorReason === "turn_interrupted") recordDiagnosticEvent({ category: "task", level: "info", code: "assistant_continue_requested", reason: "manual_followup", message: "用户在助手中断后发送了新的处理请求", requestId, canvasId: targetCanvas, assistantSessionId: run.sessionId || undefined, assistantTurnId: run.turns.at(-1)?.turnId });
             await streamAgentChat(targetCanvas, message, {
                 onSession: (sessionId) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     const current = runFor(targetCanvas);
                     current.sessionId = sessionId;
                     if (current.recovery) current.recovery.sessionId = sessionId;
                     rerenderIfActive(targetCanvas);
                 },
                 onDelta: (delta) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     const current = runFor(targetCanvas);
                     current.streamed += delta;
                     rerenderIfActive(targetCanvas);
                 },
                 onText: (text) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     runFor(targetCanvas).streamed = text;
                     rerenderIfActive(targetCanvas);
                 },
                 onReasoning: (segments) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     runFor(targetCanvas).reasoning = segments;
                     rerenderIfActive(targetCanvas);
                 },
                 onPlan: (plan) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     runFor(targetCanvas).plan = plan;
                     rerenderIfActive(targetCanvas);
                 },
                 onLifecycle: (event) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     const current = runFor(targetCanvas);
                     current.lifecycleNotice = assistantLifecycleText(event);
                     rerenderIfActive(targetCanvas);
                 },
                 onTurnEnd: (end) => {
-                    if (!userScopeMatches(expectedScope)) return;
                     const current = runFor(targetCanvas);
                     const turnId = end.turnId || `${targetCanvas}:${Date.now()}`;
                     const turn: AssistantTurn = {
@@ -545,7 +518,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 },
             }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode });
         } catch (streamError) {
-            if (!userScopeMatches(expectedScope)) return;
             if (controller.signal.aborted && !runFor(targetCanvas).dispatched) {
                 // 发出前点了停止：不论停在哪一步（就绪检查、读取对话），都按「没有发出」收尾。
                 markStoppedBeforeSend(runFor(targetCanvas));
@@ -584,24 +556,21 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             }
             rerenderIfActive(targetCanvas);
         } finally {
-            if (!userScopeMatches(expectedScope)) return;
             // A new message invalidates older source turns on the server, even
             // if admission later fails. Keep generation disabled until that
             // authoritative readback arrives; steer returns before this path.
             runFor(targetCanvas).historyLoaded = false;
             await loadHistory(targetCanvas, runFor(targetCanvas).sessionId ?? undefined);
-            if (!userScopeMatches(expectedScope)) return;
             const current = runFor(targetCanvas);
             current.streaming = current.backgroundActive;
             current.lifecycleNotice = null;
             current.controller = null;
             rerenderIfActive(targetCanvas);
         }
-    }, [loadHistory, rerenderIfActive, runFor, expectedScope, preferredPermissionMode]);
+    }, [loadHistory, rerenderIfActive, runFor, preferredPermissionMode]);
 
     // 停止只作用于当前正在查看的画布，不会取消别的画布。
     const stop = useCallback(async () => {
-        if (!userScopeMatches(expectedScope)) return;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
         const sending = Boolean(run.controller);
@@ -614,9 +583,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         try {
             const target = run.sessionId && run.requestId ? { sessionId: run.sessionId, requestId: run.requestId } : undefined;
             const state = await cancelAgentChat(targetCanvas, target);
-            if (!userScopeMatches(expectedScope)) return;
             await loadHistory(targetCanvas);
-            if (!userScopeMatches(expectedScope)) return;
             const current = runFor(targetCanvas);
             // The assistant had not started on it and history holds no receipt for it:
             // it will not run, so end the wait here instead of polling for a receipt.
@@ -626,11 +593,10 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 rerenderIfActive(targetCanvas);
             }
         } catch (cancelError) {
-            if (!userScopeMatches(expectedScope)) return;
             run.error = cancelError instanceof Error ? cancelError.message : String(cancelError);
             rerenderIfActive(targetCanvas);
         }
-    }, [loadHistory, rerenderIfActive, runFor, expectedScope]);
+    }, [loadHistory, rerenderIfActive, runFor]);
 
     const retryLast = useCallback(() => {
         const run = runFor(activeCanvasRef.current);
@@ -645,7 +611,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.pendingContinuationId = null;
         run.pendingSelectedNodeIds = [];
         rerenderIfActive(activeCanvasRef.current);
-    }, [rerenderIfActive, runFor, expectedScope]);
+    }, [rerenderIfActive, runFor]);
 
     /**
      * 展开或收起某个回合的思考区域。
@@ -654,15 +620,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
      * 用户展开后也不会被自动折回。`key` 用回合 id，进行中的那一轮用 ASSISTANT_LIVE_TURN_KEY。
      */
     const setReasoningOpen = useCallback((key: string, nextOpen: boolean) => {
-        if (!userScopeMatches(expectedScope)) return;
         const run = runFor(activeCanvasRef.current);
         if (run.reasoningOpen[key] === nextOpen) return;
         run.reasoningOpen = { ...run.reasoningOpen, [key]: nextOpen };
         rerenderIfActive(activeCanvasRef.current);
-    }, [expectedScope, rerenderIfActive, runFor]);
+    }, [rerenderIfActive, runFor]);
 
     const startNewSession = useCallback(async () => {
-        if (!userScopeMatches(expectedScope)) return;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
         if (run.streaming || run.sessionBusy) return;
@@ -671,7 +635,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rerenderIfActive(targetCanvas);
         try {
             const sessionId = await createAssistantSession(targetCanvas);
-            if (!userScopeMatches(expectedScope)) return;
             run.sessionId = sessionId;
             run.recovery = null;
             run.turns = [];
@@ -692,10 +655,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessionBusy = false;
             rerenderIfActive(targetCanvas);
         }
-    }, [loadHistory, rerenderIfActive, runFor, expectedScope]);
+    }, [loadHistory, rerenderIfActive, runFor]);
 
     const activateSession = useCallback(async (sessionId: string) => {
-        if (!userScopeMatches(expectedScope)) return;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
         if (run.streaming || run.sessionBusy) return;
@@ -704,7 +666,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rerenderIfActive(targetCanvas);
         try {
             const activated = await activateAssistantSession(targetCanvas, sessionId);
-            if (!activated || !userScopeMatches(expectedScope)) return;
+            if (!activated) return;
             // 激活成功但读取失败时阻止把旧显示当作新对话继续发送。
             run.historyLoaded = false;
             run.plan = null;
@@ -724,16 +686,14 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessionBusy = false;
             rerenderIfActive(targetCanvas);
         }
-    }, [loadHistory, rerenderIfActive, runFor, expectedScope]);
+    }, [loadHistory, rerenderIfActive, runFor]);
 
     const undoTurn = useCallback(async (turnId: string) => {
-        if (!userScopeMatches(expectedScope)) return;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
         run.turnStatus = { ...run.turnStatus, [turnId]: { undoing: true } };
         rerenderIfActive(targetCanvas);
         const result = await undoAssistantTurn(turnId, targetCanvas);
-        if (!userScopeMatches(expectedScope)) return;
         const next = runFor(targetCanvas);
         next.turnStatus = { ...next.turnStatus, [turnId]: result.ok ? { undone: true } : { undoFailure: result.failure } };
         rerenderIfActive(targetCanvas);
@@ -742,25 +702,22 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             const canvasIds = change?.canvasChanges?.length ? [...new Set(change.canvasChanges.map(item => item.canvasId))] : [targetCanvas];
             for (const id of canvasIds) onCanvasChangedRef.current?.(id, []);
         }
-    }, [rerenderIfActive, runFor, expectedScope]);
+    }, [rerenderIfActive, runFor]);
 
     const restartHost = useCallback(async () => {
-        if (!userScopeMatches(expectedScope)) return;
         setStatusBusy(true);
         try {
             await restartAgentHost();
-            if (!userScopeMatches(expectedScope)) return;
             const nextStatus = await getAgentHostStatus();
-            if (userScopeMatches(expectedScope)) setStatus(nextStatus);
+            setStatus(nextStatus);
         } catch {
-            if (userScopeMatches(expectedScope)) setStatus({ available: false, reason: "host_start_failed" });
+            setStatus({ available: false, reason: "host_start_failed" });
         } finally {
-            if (userScopeMatches(expectedScope)) setStatusBusy(false);
+            setStatusBusy(false);
         }
-    }, [expectedScope]);
+    }, []);
 
     const rememberProposal = useCallback((key: string) => {
-        if (!userScopeMatches(expectedScope)) return;
         setHandledProposals((current) => {
             if (current.has(key)) return current;
             const next = new Set(current);
@@ -769,7 +726,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             scopedLocalStorage.setItem(PROPOSAL_STORAGE_KEY, JSON.stringify(kept));
             return new Set(kept);
         });
-    }, [expectedScope]);
+    }, []);
     const markProposalHandled = useCallback((proposalId: string) => rememberProposal(proposalId), [rememberProposal]);
     const markProposalDismissed = useCallback((proposalId: string) => rememberProposal(dismissedProposalKey(proposalId)), [rememberProposal]);
 
@@ -783,7 +740,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setWidth,
         status,
         statusBusy,
-        modelBusy: statusBusy || [...runsRef.current.entries()].some(([key, item]) => key.startsWith(runPrefix) && (item.streaming || item.sessionBusy)),
+        modelBusy: statusBusy || [...runsRef.current.values()].some((item) => item.streaming || item.sessionBusy),
         sessions: run.sessions,
         sessionId: run.sessionId,
         turns: run.turns,

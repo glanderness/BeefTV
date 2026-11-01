@@ -107,11 +107,61 @@ export function planClipMove(args: PlanClipMoveArgs): Map<string, number> | null
     const others = clips.filter((clip) => clip.trackId === trackId && clip.id !== clipId).sort((a, b) => a.startMs - b.startMs);
 
     if (startMs > dragged.startMs) {
-        // 向右：被压到的片段顺次推到前一个的右缘之后。
-        let cursor = startMs + durationMs;
+        // 向右拖动：中心点已被被拖片段越过的后方片段左移让出前位（实现跨片段交换顺序），
+        // 尚未越过中心点的后方片段顺次推到被拖片段右缘之后。
+        const draggedCenter = startMs + durationMs / 2;
+        const leftGroup: TimelineClip[] = [];
+        const rightGroup: TimelineClip[] = [];
         for (const other of others) {
+            const otherCenter = other.startMs + other.durationMs / 2;
+            if (other.startMs < dragged.startMs || draggedCenter >= otherCenter) {
+                leftGroup.push(other);
+            } else {
+                rightGroup.push(other);
+            }
+        }
+
+        let effectiveStartMs = startMs;
+        const tempLeft = new Map<string, number>();
+        let leftCursor = effectiveStartMs;
+        let overflowLeft = false;
+        for (let index = leftGroup.length - 1; index >= 0; index--) {
+            const other = leftGroup[index];
             const endMs = other.startMs + other.durationMs;
-            if (endMs <= startMs) continue;
+            if (endMs <= leftCursor) {
+                leftCursor = other.startMs;
+                continue;
+            }
+            const nextStartMs = leftCursor - other.durationMs;
+            if (nextStartMs < 0) {
+                overflowLeft = true;
+                break;
+            }
+            tempLeft.set(other.id, nextStartMs);
+            leftCursor = nextStartMs;
+        }
+
+        if (overflowLeft) {
+            let forwardCursor = 0;
+            for (const other of leftGroup) {
+                const target = other.startMs < dragged.startMs && other.startMs >= forwardCursor ? other.startMs : forwardCursor;
+                if (target !== other.startMs) {
+                    moved.set(other.id, target);
+                }
+                forwardCursor = target + other.durationMs;
+            }
+            effectiveStartMs = Math.max(startMs, forwardCursor);
+            moved.set(clipId, effectiveStartMs);
+        } else {
+            for (const [id, pos] of tempLeft) {
+                moved.set(id, pos);
+            }
+        }
+
+        let cursor = effectiveStartMs + durationMs;
+        for (const other of rightGroup) {
+            const endMs = other.startMs + other.durationMs;
+            if (endMs <= effectiveStartMs) continue;
             if (other.startMs >= cursor) {
                 cursor = endMs;
                 continue;

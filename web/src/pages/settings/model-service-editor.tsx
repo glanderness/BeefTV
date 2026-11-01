@@ -8,6 +8,7 @@ import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, modelCatalogRequestURL, serviceConnectionError, serviceModelProfile, servicePresetFor, type ModelServicePresetId } from "@/lib/model-service-presets";
+import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { serviceCredentialGuide } from "@/lib/service-credentials";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
@@ -40,6 +41,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     // 视频类型被悄悄带到下一个文本模型上。
     const [manualCapability, setManualCapability] = useState<ModelCapability>();
     const [editingCapabilities, setEditingCapabilities] = useState(false);
+    const [focusModel, setFocusModel] = useState<{ model: string; token: number } | null>(null);
     const alive = useRef(true);
     const receipts = useModelConnectionTests((state) => state.receipts);
     // 凭证字段名跟着模型实际使用的协议走：AK/SK 签名和 Agent Plan 专属 Key
@@ -123,9 +125,43 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             }
         } finally { if (alive.current) setBusy(false); }
     };
+    const withSiblingProtocol = (channel: ModelChannel, profile: NonNullable<ModelChannel["modelProfiles"]>[number]): NonNullable<ModelChannel["modelProfiles"]>[number] => {
+        if (profile.protocol) return profile;
+        const selected = new Set(channel.models);
+        const siblingProtocols = [...new Set(
+            (channel.modelProfiles || [])
+                .filter((item) => item.model !== profile.model && selected.has(item.model) && item.capability === profile.capability && item.protocol && item.protocol !== "full-video")
+                .map((item) => item.protocol!),
+        )];
+        if (siblingProtocols.length !== 1) return profile;
+        const definition = protocols.find((item) => item.value === siblingProtocols[0] && item.capability === profile.capability && item.enabled !== false);
+        if (!definition) return profile;
+        return {
+            ...profile,
+            protocol: definition.value,
+            authType: definition.authType,
+            capabilitySource: undefined,
+            capabilityConfig:
+                profile.capability === "image" || profile.capability === "video"
+                    ? defaultModelCapabilityConfig(definition.value, profile.model)
+                    : profile.capabilityConfig,
+        };
+    };
+    const changeModelCapability = (id: string, capability: ModelCapability) => {
+        const existingItem = catalog.find((candidate) => candidate.id === id) || { id };
+        const nextItem: ChannelModelCatalogItem = { ...existingItem, modelType: capability };
+        const profile = withSiblingProtocol(draft, serviceModelProfile(draft, nextItem, protocols, capability));
+        setCatalog((current) => current.some((item) => item.id === id) ? current.map((item) => item.id === id ? nextItem : item) : [...current, nextItem]);
+        setDraft((current) => ({ ...current, modelProfiles: [...(current.modelProfiles || []).filter((p) => p.model !== id), profile] }));
+        if (draft.models.includes(id) && !profile.protocol) {
+            setNotice("请在高级模型设置中，为这个模型选择服务商要求的请求协议。");
+            setEditingCapabilities(true);
+        }
+        setError("");
+    };
     const toggleModel = (id: string, enabled: boolean) => {
         const item = catalog.find((candidate) => candidate.id === id) || { id };
-        const profile = serviceModelProfile(draft, item, protocols);
+        const profile = withSiblingProtocol(draft, serviceModelProfile(draft, item, protocols));
         setDraft((current) => ({ ...current, models: enabled ? [...new Set([...current.models, id])] : current.models.filter((model) => model !== id), modelProfiles: [...(current.modelProfiles || []).filter((p) => p.model !== id), profile] }));
         if (enabled && !profile.protocol) {
             setNotice("请在高级模型设置中，按服务商文档选择请求协议。视频接口的地址和格式可能不同。");
@@ -137,14 +173,17 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         const id = manualName.trim();
         if (!id) return;
         if (!manualCapability) { setError("请先选择模型类型，再点「添加」"); return; }
-        if (draft.models.includes(id)) { setError("这个模型已在列表中"); return; }
-        const profile = serviceModelProfile(draft, { id }, protocols, manualCapability);
+        const existingItem = catalog.find((candidate) => candidate.id === id);
+        const existingCapability = existingItem ? serviceModelProfile(draft, existingItem, protocols).capability : undefined;
+        if (draft.models.includes(id) && existingCapability === manualCapability) { setError("这个模型已在列表中"); return; }
+        const nextItem: ChannelModelCatalogItem = { ...(existingItem || { id }), modelType: manualCapability };
+        const profile = withSiblingProtocol(draft, serviceModelProfile(draft, nextItem, protocols, manualCapability));
         if (!profile.protocol) {
             setNotice("请在高级模型设置中，为这个模型选择服务商要求的请求协议。");
             setEditingCapabilities(true);
         }
-        setCatalog((current) => current.some((item) => item.id === id) ? current : [...current, { id, modelType: manualCapability }]);
-        setDraft((current) => ({ ...current, models: [...current.models, id], modelProfiles: [...(current.modelProfiles || []).filter((p) => p.model !== id), profile] }));
+        setCatalog((current) => current.some((item) => item.id === id) ? current.map((item) => item.id === id ? nextItem : item) : [...current, nextItem]);
+        setDraft((current) => ({ ...current, models: current.models.includes(id) ? current.models : [...current.models, id], modelProfiles: [...(current.modelProfiles || []).filter((p) => p.model !== id), profile] }));
         setManualName("");
         setManualCapability(undefined);
         setError("");
@@ -152,9 +191,14 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const save = async () => {
         if (!validateConnection()) { setStep(0); return; }
         if (!draft.models.length) { setError("请至少选择或添加一个模型"); return; }
-        const profiles = isTopazUpscaleChannel(draft) ? draft.modelProfiles || [] : draft.models.map((id) => serviceModelProfile(draft, catalog.find((item) => item.id === id) || { id }, protocols));
+        const profiles = isTopazUpscaleChannel(draft) ? draft.modelProfiles || [] : draft.models.map((id) => withSiblingProtocol(draft, serviceModelProfile(draft, catalog.find((item) => item.id === id) || { id }, protocols)));
         const missing = profiles.find((profile) => !profile.protocol);
-        if (missing) { setError(`${missing.model} 还需要选择请求协议，请打开高级模型设置`); setEditingCapabilities(true); return; }
+        if (missing) {
+            setError(`${missing.model} 还需要选择请求协议，请打开高级模型设置`);
+            setEditingCapabilities(true);
+            setFocusModel((current) => ({ model: missing.model, token: (current?.token || 0) + 1 }));
+            return;
+        }
         // 没单独配置协议的模型会在上面补成预设协议，所以凭证要按真正提交的 profiles 再查一次，
         // 否则「旧连接里的文本模型 + Agent Plan 视频模型」这种混用会被漏过去。
         if (!validateConnection(true, { ...draft, modelProfiles: profiles })) { setStep(0); return; }
@@ -226,11 +270,11 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                         const profile = serviceModelProfile(draft, item, protocols);
                         const receipt = currentModelConnectionReceipt(receipts, draft, item.id);
                         const displayName = seedancePortraitLabel(item.id) || item.displayName || item.id;
-                        return <label key={item.id} className="model-service-model"><Checkbox disabled={busy} checked={draft.models.includes(item.id)} onChange={(event) => toggleModel(item.id, event.target.checked)} /><span><strong>{displayName}</strong>{displayName !== item.id && <small>{item.id}</small>}</span><span className="model-service-kind">{CAPABILITY_LABELS[profile.capability]}</span><small title={receipt?.detail}>{receipt ? receipt.success ? "测试通过" : "测试失败" : "未测试"}</small></label>;
+                        return <label key={item.id} className="model-service-model"><Checkbox disabled={busy} checked={draft.models.includes(item.id)} onChange={(event) => toggleModel(item.id, event.target.checked)} /><span><strong>{displayName}</strong>{displayName !== item.id && <small>{item.id}</small>}</span><span className="model-service-kind-wrap" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}><Select aria-label={`${displayName} 模型类型`} className="model-service-kind" size="small" variant="borderless" popupMatchSelectWidth={false} classNames={{ popup: { root: "model-service-type-select-popup" } }} disabled={busy} value={profile.capability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} onChange={(nextCapability) => changeModelCapability(item.id, nextCapability)} /></span><small title={receipt?.detail}>{receipt ? receipt.success ? "测试通过" : "测试失败" : "未测试"}</small></label>;
                     }) : <div className="model-service-empty"><Search size={23} /><strong>{query ? "没有找到匹配的模型" : "添加你的第一个模型"}</strong><p>{query ? "换个关键词，或在下方手动添加。" : "读取服务商的模型目录，或填写准确的模型 ID。"}</p></div>}
                 </div>
-                <div className="model-service-manual"><Input aria-label="模型 ID" placeholder="手动输入模型 ID" value={manualName} disabled={busy} onChange={(event) => setManualName(event.target.value)} onPressEnter={addManual} /><Select aria-label="模型类型" placeholder="选择类型" value={manualCapability} disabled={busy} onChange={setManualCapability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} /><Button disabled={busy || protocolLoading || !manualName.trim()} onClick={addManual}>添加</Button></div>
-                {draft.models.length > 0 && <><button type="button" className="model-service-advanced" aria-expanded={editingCapabilities} onClick={() => setEditingCapabilities(!editingCapabilities)}><Settings2 size={15} />高级模型设置与测试<ChevronDown size={14} /></button>{editingCapabilities && <ChannelModelSettings draft channel={draft} onChange={(modelProfiles) => setDraft((current) => ({ ...current, modelProfiles }))} />}</>}
+                <div className="model-service-manual"><Input aria-label="模型 ID" placeholder="手动输入模型 ID" value={manualName} disabled={busy} onChange={(event) => setManualName(event.target.value)} onPressEnter={addManual} /><Select aria-label="模型类型" placeholder="选择类型" value={manualCapability} disabled={busy} popupMatchSelectWidth={false} classNames={{ popup: { root: "model-service-type-select-popup" } }} onChange={setManualCapability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} /><Button disabled={busy || protocolLoading || !manualName.trim()} onClick={addManual}>添加</Button></div>
+                {draft.models.length > 0 && <><button type="button" className="model-service-advanced" aria-expanded={editingCapabilities} onClick={() => setEditingCapabilities(!editingCapabilities)}><Settings2 size={15} />高级模型设置与测试<ChevronDown size={14} /></button>{editingCapabilities && <ChannelModelSettings draft channel={draft} focusModel={focusModel} onChange={(modelProfiles) => setDraft((current) => ({ ...current, modelProfiles }))} />}</>}
             </div>}
         </div>
         {/* 提示放在滚动区外面：表单长的时候，滚到底部才看到的错误等于没提示。 */}

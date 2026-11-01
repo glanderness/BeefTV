@@ -2,17 +2,47 @@ package generation
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"infinite-canvas/backend/internal/protocol"
 )
 
-// 评审 #265 问题 1：Ark 渠道改走通用插件后，图层拆分、图片格式、水印和提示词优化会静默丢失。
-// 本 PR 不带那处改动，国内 Pro 型号仍走 Seedream 专用请求体。这里加载仓库真实 Ark 插件
-// manifest，钉住即使插件已安装、能被解析，Seedream 型号也不会被它接走。
-func TestSeedreamDomesticProIgnoresInstalledArkPlugin(t *testing.T) {
+func TestSeedreamPluginPreservesReferencesAndSystemPrompt(t *testing.T) {
+	const inline = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="
+	body, err := seedreamPluginBody(t, Input{
+		Prompt:          "combine the references",
+		Config:          Config{Model: "seedream-4-0-250828", Size: "3840x2160", SystemPrompt: "keep the subject"},
+		ReferenceImages: []Media{{URL: "https://example.test/first.png"}, {DataURL: inline}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(body["image"], []any{"https://example.test/first.png", inline}) || body["prompt"] != "keep the subject\n\ncombine the references" || body["size"] != "3840x2160" || body["watermark"] != false || body["response_format"] != "url" {
+		t.Fatalf("body = %#v", body)
+	}
+	// The plugin owns per-model size validation, including aspect-ratio presets.
+	body, err = seedreamPluginBody(t, Input{Prompt: "vertical image", Config: Config{Model: "seedream-4-0-250828", Size: "9:16"}})
+	if err != nil || body["size"] != "1440x2560" {
+		t.Fatalf("body = %#v, err = %v", body, err)
+	}
+}
+
+func TestSeedreamInvalidOptionsAreUnsubmitted(t *testing.T) {
+	port := &captureImagePort{}
+	ctx := WithRuntime(context.Background(), Runtime{Images: port})
+	_, err := RunImageTask(ctx, Input{Mode: "image", Prompt: "fixture", Config: Config{Model: "doubao-seedream-5-0-pro-260628", InterfaceType: "volcengine-ark-image", BaseURL: "https://example.test", Size: "4K"}})
+	var preparation RequestPreparationError
+	if !errors.As(err, &preparation) || port.calls != 0 {
+		t.Fatalf("calls = %d, err = %v", port.calls, err)
+	}
+}
+
+// The installed package must preserve all previously supported image options.
+func TestSeedreamDomesticProUsesInstalledArkPlugin(t *testing.T) {
 	manifest, err := os.ReadFile(filepath.Join("..", "..", "..", "plugin-packages", "volcengine-ark-seedream", "manifest.json"))
 	if err != nil {
 		t.Fatalf("read ark plugin manifest: %v", err)
@@ -34,11 +64,11 @@ func TestSeedreamDomesticProIgnoresInstalledArkPlugin(t *testing.T) {
 		InterfaceType: "volcengine-ark-image", Size: "16:9", SeedreamMode: "layers",
 		SeedreamOutputFormat: "jpeg", SeedreamOptimize: "fast", SeedreamWatermark: "true",
 	}, ReferenceImages: []Media{{URL: "https://example.test/source.png"}}}
-	ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+	ctx := WithProtocolRegistry(offlineImageRuntime(port), registry)
 	if _, err := RunImageTask(ctx, input); err != nil {
 		t.Fatal(err)
 	}
-	// Ark 插件走 /api/v3/images/generations；Seedream 专用请求体走 /v1/images/generations。
+	// A bare third-party Ark gateway retains its existing /v1 endpoint.
 	if port.path != "/v1/images/generations" {
 		t.Fatalf("path=%q, want the seedream request body path", port.path)
 	}
@@ -53,7 +83,7 @@ func TestSeedreamDomesticProIgnoresInstalledArkPlugin(t *testing.T) {
 func TestSeedreamManagedReferencesUseOneJSONGeneration(t *testing.T) {
 	port := &captureImagePort{}
 	input := Input{Mode: "image", Prompt: "replace object <bbox>10 10 100 100</bbox>", Config: Config{Model: "dola-seedream-5-0-pro-260628", BaseURL: "https://beeftv.app", APIKey: "synthetic", InterfaceType: "openai-image", Size: "1.5K", SeedreamOutputFormat: "png", SeedreamOptimize: "fast"}, ReferenceImages: []Media{{DataURL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="}}}
-	result, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input)
+	result, err := RunImageTask(offlineImageRuntime(port), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,21 +100,24 @@ func TestSeedreamManagedReferencesUseOneJSONGeneration(t *testing.T) {
 
 func TestSeedreamGroupAndLayerOptionsStayInOneRequest(t *testing.T) {
 	input := Input{Prompt: "three matching views", Config: Config{Model: "seedream-4-5-251128", Size: "4K", SeedreamMaxImages: "3"}}
-	body, err := seedreamImageBody(input)
+	body, err := seedreamPluginBody(t, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if body["response_format"] != "url" || body["stream"] != true || body["sequential_image_generation"] != "auto" || body["sequential_image_generation_options"].(map[string]any)["max_images"] != 3 {
 		t.Fatalf("body=%#v", body)
 	}
+	if _, exists := body["output_format"]; exists {
+		t.Fatalf("Seedream 4.5 must not send output_format: body=%#v", body)
+	}
 	input.Config.Model = "dola-seedream-5-0-flash-260915"
 	input.Config.Size = "2K"
 	input.Config.SeedreamMode = "layers"
-	if _, err = seedreamImageBody(input); err == nil {
+	if _, err = seedreamPluginBody(t, input); err == nil {
 		t.Fatal("layers require a source image")
 	}
 	input.ReferenceImages = []Media{{URL: "https://example.test/source.png"}}
-	body, err = seedreamImageBody(input)
+	body, err = seedreamPluginBody(t, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,13 +142,18 @@ func TestSeedreamCustomGatewayKeepsConfiguredVersion(t *testing.T) {
 }
 
 func TestSeedreamStreamKeepsDeliveredImagesAfterPartialFailure(t *testing.T) {
-	data := []byte("data: {\"type\":\"image_generation.partial_succeeded\",\"image_index\":0,\"url\":\"https://example.test/0.png\",\"size\":\"2048x2048\"}\n\ndata: {\"type\":\"image_generation.partial_failed\",\"image_index\":1,\"error\":{\"message\":\"filtered\"}}\n\n")
-	payload, err := readSeedreamImageEvents(data)
-	if err != nil || len(payload.Data) != 1 {
-		t.Fatalf("payload=%#v err=%v", payload, err)
+	adapter := seedreamTestAdapter(t)
+	parser := adapter.(protocol.CreateResponseParser)
+	data := []byte("data: {\"type\":\"image_generation.partial_succeeded\",\"image_index\":0,\"url\":\"https://example.test/0.png\"}\n\ndata: {\"type\":\"image_generation.partial_failed\",\"image_index\":1,\"error\":{\"message\":\"filtered\"}}\n\n")
+	result, err := parser.ParseCreateResponse(context.Background(), data, "text/event-stream")
+	if err != nil || result.Result == nil || len(result.Result.Images) != 1 {
+		t.Fatalf("result=%#v err=%v", result, err)
 	}
-	if _, err = readSeedreamImageEvents([]byte("data: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n")); err == nil {
+	if _, err := parser.ParseCreateResponse(context.Background(), []byte("data: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n"), "text/event-stream"); err == nil {
 		t.Fatal("empty stream must fail")
+	}
+	if wrongType, err := parser.ParseCreateResponse(context.Background(), data, "application/json"); err != nil || wrongType.Result == nil || len(wrongType.Result.Images) != 1 {
+		t.Fatal("declared SSE result was lost when gateway mislabeled content type")
 	}
 }
 
@@ -128,7 +166,7 @@ func TestSeedreamDomesticProKeepsConfiguredOptionsOnArkChannel(t *testing.T) {
 		InterfaceType: "volcengine-ark-image", Size: "16:9", SeedreamMode: "layers",
 		SeedreamOutputFormat: "jpeg", SeedreamOptimize: "fast", SeedreamWatermark: "true",
 	}, ReferenceImages: []Media{{URL: "https://example.test/source.png"}}}
-	if _, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input); err != nil {
+	if _, err := RunImageTask(offlineImageRuntime(port), input); err != nil {
 		t.Fatal(err)
 	}
 	if port.calls != 1 {
@@ -148,21 +186,17 @@ func TestSeedreamDomesticProKeepsConfiguredOptionsOnArkChannel(t *testing.T) {
 
 // Agent Plan 图片协议是独立端点（/api/plan/v3/images/generations），只有声明式插件
 // 知道那个地址；国内 Seedream 型号名不能把 Agent Plan 渠道拐到官方 Ark 路径上。
-func TestSeedreamAgentPlanChannelKeepsItsOwnProtocol(t *testing.T) {
-	for _, item := range []struct {
-		name          string
-		model         string
-		interfaceType string
-		want          bool
-	}{
-		{name: "agent plan", model: "doubao-seedream-5-0-pro-260628", interfaceType: "volcengine-ark-agent-plan-image", want: false},
-		{name: "official ark", model: "doubao-seedream-5-0-pro-260628", interfaceType: "volcengine-ark-image", want: true},
-		{name: "custom gateway", model: "seedream-4-5-251128", interfaceType: "openai-image", want: true},
-		{name: "other model", model: "gpt-image-2", interfaceType: "volcengine-ark-agent-plan-image", want: false},
-	} {
-		input := Input{Config: Config{Model: item.model, InterfaceType: item.interfaceType}}
-		if got := usesSeedreamRequestBody(input); got != item.want {
-			t.Fatalf("%s: usesSeedreamRequestBody(%s, %s) = %v, want %v", item.name, item.model, item.interfaceType, got, item.want)
+func TestSeedreamPluginMissingNeverFallsBack(t *testing.T) {
+	registry, err := protocol.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, interfaceType := range []string{"volcengine-ark-image", "volcengine-ark-agent-plan-image", "openai-image"} {
+		port := &captureImagePort{}
+		ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+		_, err := RunImageTask(ctx, Input{Mode: "image", Prompt: "x", Config: Config{Model: "doubao-seedream-5-0-pro-260628", InterfaceType: interfaceType, BaseURL: "https://example.test", Size: "2K"}})
+		if err == nil || port.calls != 0 {
+			t.Fatalf("%s: calls=%d err=%v", interfaceType, port.calls, err)
 		}
 	}
 }
@@ -170,7 +204,7 @@ func TestSeedreamAgentPlanChannelKeepsItsOwnProtocol(t *testing.T) {
 func TestSeedreamDomesticFlashIsNotTreatedAsLite(t *testing.T) {
 	// Lite 会拒绝图层拆分与透明背景；国内 Flash 被当成 Lite 时这些能力会被误判。
 	input := Input{Prompt: "layers", Config: Config{Model: "doubao-seedream-5-0-flash-260915", Size: "1.5K", SeedreamMode: "layers"}, ReferenceImages: []Media{{URL: "https://example.test/source.png"}}}
-	body, err := seedreamImageBody(input)
+	body, err := seedreamPluginBody(t, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +212,7 @@ func TestSeedreamDomesticFlashIsNotTreatedAsLite(t *testing.T) {
 		t.Fatalf("body=%#v", body)
 	}
 	input.Config.Size = "4K"
-	if _, err := seedreamImageBody(input); err == nil {
+	if _, err := seedreamPluginBody(t, input); err == nil {
 		t.Fatal("flash must reject the 4K tier")
 	}
 }
@@ -195,7 +229,7 @@ func TestSeedreamRequestBodyFollowsPerModelSizeRules(t *testing.T) {
 		{model: "doubao-seedream-5-0-pro-260628", size: "4K", reject: true},
 		{model: "doubao-seedream-5-0-260128", size: "3K", want: "3K"},
 	} {
-		body, err := seedreamImageBody(Input{Prompt: "x", Config: Config{Model: item.model, Size: item.size}})
+		body, err := seedreamPluginBody(t, Input{Prompt: "x", Config: Config{Model: item.model, Size: item.size}})
 		if item.reject {
 			if err == nil {
 				t.Fatalf("%s %q should be rejected, body=%#v", item.model, item.size, body)
@@ -247,7 +281,7 @@ func TestSeedreamSizeFollowsGenerationSceneBeforeSending(t *testing.T) {
 		for i := 0; i < item.refs; i++ {
 			input.ReferenceImages = append(input.ReferenceImages, Media{URL: "https://example.test/source.png"})
 		}
-		if _, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input); err != nil {
+		if _, err := RunImageTask(offlineImageRuntime(port), input); err != nil {
 			if !item.reject {
 				t.Fatalf("%s: %v", item.name, err)
 			}
@@ -286,7 +320,7 @@ func TestSeedreamAgentPlanChannelSendsToPluginEndpoint(t *testing.T) {
 		Model: "doubao-seedream-5-0-pro-260628", BaseURL: "https://ark.cn-beijing.volces.com",
 		APIKey: "synthetic", InterfaceType: "volcengine-ark-agent-plan-image", Size: "2K",
 	}}
-	ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+	ctx := WithProtocolRegistry(offlineImageRuntime(port), registry)
 	if _, err := RunImageTask(ctx, input); err != nil {
 		t.Fatal(err)
 	}
@@ -296,4 +330,39 @@ func TestSeedreamAgentPlanChannelSendsToPluginEndpoint(t *testing.T) {
 	if port.body["size"] != "2K" {
 		t.Fatalf("size=%#v, want the configured tier", port.body["size"])
 	}
+}
+
+func seedreamTestAdapter(t *testing.T) protocol.Adapter {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "plugin-packages", "volcengine-ark-seedream", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapters, err := protocol.LoadInstalledProviders(data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := protocol.NewRegistry(adapters...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := registry.Resolve("volcengine-ark-image")
+	if !ok {
+		t.Fatal("installed provider missing")
+	}
+	return adapter
+}
+func seedreamPluginBody(t *testing.T, input Input) (map[string]any, error) {
+	t.Helper()
+	input.Mode = "image"
+	spec, err := seedreamTestAdapter(t).BuildCreate(context.Background(), protocol.RequestContext{Request: ProtocolRequestFromInput(input)})
+	if err != nil {
+		return nil, err
+	}
+	return ProtocolBodyObject(spec.Body), nil
+}
+
+// offlineImageRuntime 让测试不连外网：标记为已完成提交前的元数据探测，请求仍交给 port 检查。
+func offlineImageRuntime(port *captureImagePort) context.Context {
+	return WithImageReplayProtocol(WithRuntime(context.Background(), Runtime{Images: port}), ImageReplayProtocol)
 }

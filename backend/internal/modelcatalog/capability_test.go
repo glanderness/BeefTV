@@ -181,7 +181,7 @@ func TestSeedanceDoesNotInventACharacterCeiling(t *testing.T) {
 			t.Fatalf("%s prompt ceiling = %d", protocol, profile.References.PromptMaxChars)
 		}
 		for _, length := range []int{8101, 32001} {
-			if err := validateVideoPromptLength(strings.Repeat("镜", length), profile.References); err != nil {
+			if err := ValidateVideoTask(profile, TaskInput{Mode: "video", Prompt: strings.Repeat("镜", length), Config: TaskConfig{InterfaceType: protocol, Model: "seedance-2.0", VideoSeconds: "6", Size: "16:9", VQuality: "720p"}}); err != nil {
 				t.Fatalf("%s rejected %d characters: %v", protocol, length, err)
 			}
 		}

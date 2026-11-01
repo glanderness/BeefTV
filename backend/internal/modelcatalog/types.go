@@ -31,6 +31,7 @@ type ImageCapabilityConfig struct {
 	Size                  ImageSizeConfig      `json:"size"`
 	Quality               ImageQualityConfig   `json:"quality"`
 	TransparentBackground VideoBooleanConfig   `json:"transparentBackground"`
+	SequentialGeneration  VideoBooleanConfig   `json:"sequentialGeneration"`
 	ResponseFormat        ImageResponseFormat  `json:"responseFormat"`
 	OutputFormat          ParameterSupport     `json:"outputFormat"`
 	MaxOutputs            int                  `json:"maxOutputs"`
@@ -97,6 +98,8 @@ type VideoCapabilityConfig struct {
 	DefaultResolution   string                              `json:"defaultResolution"`
 	GenerateAudio       VideoBooleanConfig                  `json:"generateAudio"`
 	Watermark           VideoBooleanConfig                  `json:"watermark"`
+	Draft               VideoBooleanConfig                  `json:"draft"`
+	ReturnLastFrame     VideoBooleanConfig                  `json:"returnLastFrame"`
 	Operations          []string                            `json:"operations"`
 	DefaultOperation    string                              `json:"defaultOperation"`
 	TaskTypeConstraints bool                                `json:"taskTypeConstraints,omitempty"`

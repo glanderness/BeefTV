@@ -1,5 +1,4 @@
 import { nanoid } from "nanoid";
-import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateMediaInPlace } from "@/lib/canvas/canvas-generation-layout";
@@ -51,10 +50,8 @@ export async function executeVideoGeneration({
     const isExistingVideoNode = sourceNode?.type === CanvasNodeType.Video && Boolean(sourceNode.metadata?.content) && !reuseSourceNode;
     const videoId = reuseSourceNode ? nodeId : nanoid();
     if (onSubmissionPlan) {
-        const scope = captureUserScope();
         if (!clientOperationId) throw new Error("生成提交缺少确认标识");
         await onSubmissionPlan({ sourceNodeId: nodeId, submissions: [{ operationId: clientOperationId, outputNodeIds: [videoId] }] });
-        assertUserScope(scope);
         controller.signal.throwIfAborted();
         if (!(nodesRef?.current || canvasNodes).some(node => node.id === nodeId)) throw new Error("原节点已删除，未开始生成");
     }
@@ -83,6 +80,7 @@ export async function executeVideoGeneration({
             vquality: generationConfig.vquality,
             generateAudio: generationConfig.videoGenerateAudio,
             watermark: generationConfig.videoWatermark,
+            draft: generationConfig.videoDraft,
             references: generationReferenceUrls(generationContext),
             ...videoGenerationMetadata,
             ...styleMetadata,

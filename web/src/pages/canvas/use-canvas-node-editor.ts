@@ -10,7 +10,7 @@ import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/de
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import { applyBatchPrimaryImage, applyNodeConfigPatch } from "@/lib/canvas/canvas-project-domain";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import type { AssetCategory } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
@@ -178,10 +178,7 @@ export function useCanvasNodeEditor({
             if (node.id !== nodeId) return node;
             const previousPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
             const promptChanged = prompt !== previousPrompt;
-            const errorCode = node.metadata?.generationErrorCode || node.metadata?.taskErrorCode;
-            const moderationFailure =
-                node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE ||
-                isContentModerationError(errorCode ? { code: errorCode, message: node.metadata?.errorDetails } : node.metadata?.errorDetails);
+            const moderationFailure = canvasNodeFailureView(node).moderationResetOnPromptEdit;
             const metadata = moderationFailure && promptChanged
                 ? resetGenerationTaskMetadata(node.metadata, node.metadata?.content ? "success" : "idle")
                 : node.metadata;
@@ -201,7 +198,6 @@ export function useCanvasNodeEditor({
         });
         const result = await persistOwnedCanvasUploadNode({
             owner: guard.owner,
-            expectedScope: guard.expectedScope,
             getLiveCanvasId: () => canvasIdRef.current,
             getLiveLifetime: () => lifetime.current(),
             mounted: () => mountedRef.current,

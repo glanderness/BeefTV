@@ -64,7 +64,6 @@ useConfigStore.getState().replaceConfig(config);
 await recordConfirmedCanvasCommit(project);
 useCanvasStore.setState({ projects: [project], hydrated: true });
 const harness = (window as any).__customer = { settled: false, error: "", messages: [] as string[], controller: undefined as AbortController | undefined, nodes: project.nodes, blocked: [] as Promise<string>[], generate: noop, edit: noop, cancel: noop };
-(harness as any).switchScope = () => setActiveUserScope("another-synthetic-user");
 (harness as any).allowLongPrompt = () => {
     channel.modelProfiles![0].capabilityConfig!.video!.references.promptMaxChars = 0;
     useConfigStore.getState().replaceConfig({ ...config });

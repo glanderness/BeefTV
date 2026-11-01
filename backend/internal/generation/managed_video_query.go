@@ -10,7 +10,7 @@ import (
 // Only local result delivery remains in generation. The adapter owns BeefAPI
 // routes, task envelopes and query credentials, including historical endpoints.
 func QueryManagedLegacyVideo(ctx context.Context, input Input, id string) (map[string]any, string, BeefAPIVideoSettlement, error) {
-	return queryManagedLegacyVideoWithPolicy(ctx, input, id, DefaultVideoPollPolicy())
+	return queryManagedLegacyVideoWithPolicy(ctx, input, id, videoPollPolicyForConfig(ctx, input.Config, DefaultVideoPollPolicy()))
 }
 
 func queryManagedLegacyVideoWithPolicy(ctx context.Context, input Input, id string, policy VideoPollPolicy) (map[string]any, string, BeefAPIVideoSettlement, error) {
@@ -57,7 +57,7 @@ func queryManagedLegacyVideoWithPolicy(ctx context.Context, input Input, id stri
 			return nil, task.Status, settlement, limitErr
 		}
 		data, mime, err = RunVideoDownload(ctx, id, policy, func(ctx context.Context) ([]byte, string, error) {
-			data, mime, err := client.LegacyBinary(ctx, http.MethodGet, task.ContentPath, nil, limit)
+			data, mime, err := client.LegacyVideoContent(ctx, task.ContentPath, limit)
 			return data, mime, legacyMediaError(err)
 		})
 	}
@@ -65,5 +65,7 @@ func queryManagedLegacyVideoWithPolicy(ctx context.Context, input Input, id stri
 		return nil, task.Status, settlement, err
 	}
 	mime = NormalizedMediaMIMEType(mime, data)
-	return map[string]any{"mode": "video", "video": map[string]any{"dataUrl": DataURL(mime, data), "mimeType": mime}}, task.Status, settlement, nil
+	videoMap := map[string]any{"dataUrl": DataURL(mime, data), "mimeType": mime}
+	attachOptionalLastFrame(ctx, videoMap, task.LastFrameURL, client.AllowHTTPTest)
+	return map[string]any{"mode": "video", "video": videoMap}, task.Status, settlement, nil
 }

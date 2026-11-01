@@ -50,3 +50,27 @@ func TestReferenceUploadTLSDeadlineIsRecordedBeforeGeneration(t *testing.T) {
 		t.Fatalf("upload timeout confused with paid generation: %+v", failure)
 	}
 }
+
+func TestReferenceUpload400PrependsReferenceIndexAndSupportsTIFF(t *testing.T) {
+	mime, err := CanonicalBeefAPISeedanceMime("image", "application/octet-stream", []byte{'I', 'I', '*', 0, 8, 0, 0, 0})
+	if err != nil || mime != "image/tiff" {
+		t.Fatalf("TIFF detection = %q, %v", mime, err)
+	}
+	if _, err := CanonicalBeefAPISeedanceMime("image", "image/png", []byte{0, 0, 0, 28, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}); err == nil {
+		t.Fatal("raw AVIF masquerading as image/png was accepted without conversion")
+	}
+	cause := HTTPError{
+		StatusCode: 400,
+		Body:       `{"error":{"code":"invalid_media_format","message":"无法识别文件。图片用 PNG、JPEG、WebP、GIF、BMP 或 TIFF。视频用 MP4 或 MOV。音频用 MP3 或 WAV。"}}`,
+	}
+	uploadErr := &ReferenceUploadError{
+		Meta:       ReferenceUploadMeta{Kind: "image", Index: 3, Stage: "complete"},
+		HTTPStatus: 400,
+		RequestID:  "req-ref-3",
+		Cause:      cause,
+	}
+	failure := ClassifyError(uploadErr)
+	if !strings.HasPrefix(failure.Reason, "参考图片 3：") || !strings.HasPrefix(failure.ProviderMessage, "参考图片 3：无法识别文件") {
+		t.Fatalf("reason=%q message=%q, want prefix 参考图片 3：", failure.Reason, failure.ProviderMessage)
+	}
+}
