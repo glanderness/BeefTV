@@ -224,6 +224,8 @@ export type WorkflowStep = {
     position: number;
     status: "pending" | "ready" | "running" | "review" | "completed" | "failed" | "skipped" | string;
     error?: string;
+    /** 阶段产物快照（JSON 字符串）。成片阶段存放 timeline_render 的结果。 */
+    outputJson?: string;
     updatedAt: string;
 };
 
