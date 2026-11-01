@@ -55,12 +55,15 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     onReferenceActionHandled?: () => void;
 };
 
+const EMPTY_ISSUES: CanvasReferenceIssue[] = [];
+const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, nodeSectionLabel = "画布节点", referenceIssues = [], selectedAssetReferences = [], referenceAction, onReferenceActionHandled, ...props },
+    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, nodeSectionLabel = "画布节点", referenceIssues = EMPTY_ISSUES, selectedAssetReferences = EMPTY_REFERENCES, referenceAction, onReferenceActionHandled, ...props },
     forwardedRef,
 ) {
     const rawTheme = useActiveTheme();
-    const assets = usePersonalAssetLibrary();
+    const assets = usePersonalAssetLibrary(includeAssetLibrary);
     const theme = canvasThemes[rawTheme as keyof typeof canvasThemes] ?? canvasThemes.dark;
     const containerRef = useRef<HTMLDivElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -177,16 +180,15 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         const anchor = useRichEditor ? editorRef.current : textareaRef.current;
         const suggestion = autoLinkSuggestionRef.current;
         if (!autoLinkMatch || !anchor || !suggestion) {
-            setAutoLinkPosition(null);
+            setAutoLinkPosition((current) => current === null ? current : null);
             return;
         }
         const updatePosition = () => {
             const caret = mentionCaretRect(anchor, autoLinkMatch.end);
             const bounds = suggestion.getBoundingClientRect();
-            setAutoLinkPosition({
-                left: clamp(caret.right + 8, 12, window.innerWidth - bounds.width - 12),
-                top: clamp(caret.bottom + 4, 12, window.innerHeight - bounds.height - 12),
-            });
+            const nextLeft = clamp(caret.right + 8, 12, window.innerWidth - bounds.width - 12);
+            const nextTop = clamp(caret.bottom + 4, 12, window.innerHeight - bounds.height - 12);
+            setAutoLinkPosition((current) => current && current.left === nextLeft && current.top === nextTop ? current : { left: nextLeft, top: nextTop });
         };
         updatePosition();
         const observer = new ResizeObserver(updatePosition);

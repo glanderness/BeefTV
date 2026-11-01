@@ -9,10 +9,13 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { inspectNodeGenerationMentions } from "./canvas-node-generation";
 import "./canvas-reference-feedback.css";
 
+const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+const EMPTY_ISSUES: CanvasReferenceIssue[] = [];
+
 export function useCanvasReferenceCheck(nodeId: string, prompt: string, references: CanvasResourceReference[], nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const assets = useAssetStore((state) => state.assets);
     const selectedIds = useMemo(() => referencedAssetIdsInPrompt(prompt), [prompt]);
-    const missingIds = selectedIds.filter((id) => !assets.some((asset) => asset.id === id));
+    const missingIds = useMemo(() => selectedIds.filter((id) => !assets.some((asset) => asset.id === id)), [assets, selectedIds]);
     const lookup = useQuery({
         queryKey: ["canvas-explicit-reference-check", missingIds],
         enabled: missingIds.length > 0,
@@ -35,12 +38,19 @@ export function useCanvasReferenceCheck(nodeId: string, prompt: string, referenc
         },
     });
     const pending = missingIds.length > 0 && lookup.isPending;
-    const unchecked = missingIds.filter((id) => !lookup.data?.includes(id));
-    const selectedReferences = buildAssetMentionReferences(assets.filter((asset) => selectedIds.includes(asset.id)));
+    const selectedReferences = useMemo(
+        () => selectedIds.length ? buildAssetMentionReferences(assets.filter((asset) => selectedIds.includes(asset.id))) : EMPTY_REFERENCES,
+        [assets, selectedIds],
+    );
     const unresolvedTokens = useMemo(() => inspectNodeGenerationMentions(nodeId, nodes, connections, prompt, assets).unresolved, [nodeId, nodes, connections, prompt, assets]);
-    const unresolved = unresolvedTokens.filter((token) => !unchecked.some((id) => token === `@[asset:${id}]`));
+    const issues = useMemo(() => {
+        const unchecked = missingIds.filter((id) => !lookup.data?.includes(id));
+        const unresolved = unresolvedTokens.filter((token) => !unchecked.some((id) => token === `@[asset:${id}]`));
+        if (!unresolved.length) return EMPTY_ISSUES;
+        return canvasReferenceIssues(unresolved, [...references, ...selectedReferences], nodes);
+    }, [lookup.data, missingIds, nodes, references, selectedReferences, unresolvedTokens]);
     return {
-        issues: canvasReferenceIssues(unresolved, [...references, ...selectedReferences], nodes),
+        issues,
         selectedReferences,
         pending,
         checkFailed: missingIds.length > 0 && lookup.isError,

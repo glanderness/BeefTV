@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasNodePromptPanel } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -42,6 +43,14 @@ export function CanvasProjectNodePrompt({ node: panelNode, projectId, videoModel
     const { setGenerationHistoryOpen } = dialogs;
     const { handleRemoveNodeReference, handleReorderNodeReferences, handleReplaceNodeReference, handleReplaceNodeReferenceFiles } = referenceActions;
     const workspaceMode = "professional";
+    const activeMentionReferences = mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES;
+    const mentionReferences = useMemo(
+        () => [
+            ...activeMentionReferences,
+            ...buildCanvasResourceReferences(nodesRef.current, connectionsRef.current).filter((reference) => reference.kind === "text" && reference.nodeId !== panelNode.id && !activeMentionReferences.some((active) => active.nodeId === reference.nodeId)),
+        ],
+        [activeMentionReferences, connectionsRef, nodesRef, panelNode.id],
+    );
     if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
     return panelNode.type === CanvasNodeType.Config ? (
         <CanvasConfigComposer
@@ -64,10 +73,7 @@ export function CanvasProjectNodePrompt({ node: panelNode, projectId, videoModel
             referenceConnections={connectionsRef.current}
             onLocateReferenceNode={focusCanvasNode}
             isRunning={isCanvasNodeGenerating(panelNode, runningNodeId)}
-            mentionReferences={[
-                ...(mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES),
-                ...buildCanvasResourceReferences(nodesRef.current, connectionsRef.current).filter((reference) => reference.kind === "text" && reference.nodeId !== panelNode.id && !(mentionReferencesByNodeId.get(panelNode.id) || []).some((active) => active.nodeId === reference.nodeId)),
-            ]}
+            mentionReferences={mentionReferences}
             onAddReference={referenceActions.addTextReference}
             onPromptChange={handleNodePromptChange}
             onConfigChange={handleConfigNodeChange}

@@ -134,5 +134,27 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain("className=\"canvas-resource-mention-back\"");
         expect(component).toContain("event.composedPath");
     });
+
+    test("avoids duplicate video preview leases, idle reference churn, and background SVG animation while prompt panel is open", () => {
+        const resolvedReferencesHook = source("../src/components/canvas/use-resolved-canvas-resource-references.ts");
+        const referenceFeedback = source("../src/components/canvas/canvas-reference-feedback.tsx");
+        const personalAssetLibrary = source("../src/hooks/use-personal-asset-library.ts");
+        const projectNodePrompt = source("../src/pages/canvas/canvas-project-node-prompt.tsx");
+        const promptPanel = source("../src/components/canvas/canvas-node-prompt-panel.tsx");
+        const promptOptimizerDrawer = source("../src/components/canvas/canvas-prompt-optimizer-drawer.tsx");
+        const css = source("../src/styles/globals.css");
+
+        expect(resolvedReferencesHook).toContain("isActivelyLeasedReference(reference)");
+        expect(resolvedReferencesHook).toContain("withLeasedOwner(reference, resolved.url, resolved.owner)");
+        expect(resolvedReferencesHook).toContain("if (!storageKey && !decodeVideo) return \"\";");
+        expect(referenceFeedback).toContain("selectedIds.length ? buildAssetMentionReferences");
+        expect(referenceFeedback).toContain("if (!unresolved.length) return EMPTY_ISSUES;");
+        expect(personalAssetLibrary).not.toContain("refetchInterval");
+        expect(personalAssetLibrary).toContain("return query.data ?? EMPTY_ASSETS;");
+        expect(projectNodePrompt).toContain("const mentionReferences = useMemo(");
+        expect(promptPanel).toContain("{expandedPromptOpen ? (");
+        expect(promptOptimizerDrawer).toContain("content={open ? content : null}");
+        expect(css).toContain('.canvas-editor-shell[data-canvas-editor-panel-open="true"] :where(.canvas-connection-flow, .canvas-connection-comet) { animation: none !important; }');
+    });
 });
 

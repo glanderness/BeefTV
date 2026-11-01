@@ -11578,6 +11578,7 @@ html:not(.dark) .creation-studio-control:hover,
     }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) { animation: none !important; }
+    .canvas-editor-shell[data-canvas-editor-panel-open="true"] :where(.canvas-connection-flow, .canvas-connection-comet) { animation: none !important; }
     [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) { will-change: transform; }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, .canvas-node-toolbar > div, [data-canvas-node-panel], [data-canvas-node-panel] .canvas-floating-panel, [data-canvas-node-panel] .canvas-node-panel-placement-change) {

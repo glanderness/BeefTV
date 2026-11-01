@@ -758,7 +758,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
             autoAdjustOverflow
             motion={{ motionName: "" }}
             styles={{ root: popoverRootStyle }}
-            content={content}
+            content={open ? content : null}
             classNames={{ root: "canvas-prompt-optimizer-popover", container: "canvas-prompt-optimizer-popover-surface", content: "canvas-prompt-optimizer-popover-content" }}
         >
             {children}
