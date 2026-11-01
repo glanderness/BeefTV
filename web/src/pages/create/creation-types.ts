@@ -20,7 +20,10 @@ export type CreationMessage = {
     model?: string;
     resultUrls?: string[];
     error?: string;
+    generationErrorSummary?: string;
     generationErrorCode?: string;
+    generationProviderCode?: string;
+    taskFailureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
     generationOperation?: string;
     attachments?: CreationAttachment[];
     references?: CreationReference[];

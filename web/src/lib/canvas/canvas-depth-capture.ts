@@ -51,7 +51,7 @@ export function depthCaptureTaskMetadata(task: GenerationTask): CanvasNodeMetada
 export function depthCaptureWaitFailureMetadata(error: unknown, observed?: GenerationTask | string): CanvasNodeMetadata {
     const task = typeof observed === "object" ? observed : undefined;
     if (typeof observed === "string" || task?.status === "queued" || task?.status === "running") {
-        return { status: "loading", errorDetails: undefined, taskClientOperationTerminal: undefined, processingLabel: "暂时无法同步进度，请重新打开画布查看任务状态" };
+        return { status: "loading", errorDetails: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskClientOperationTerminal: undefined, processingLabel: "暂时无法同步进度，请重新打开画布查看任务状态" };
     }
     if (task?.status === "succeeded") {
         const cause = error instanceof CanvasGenerationDurableAckError ? error.cause : error;
@@ -68,7 +68,7 @@ export function depthCaptureWaitFailureMetadata(error: unknown, observed?: Gener
             },
         };
     }
-    return { status: "error", taskOutcome: task?.outcome, errorDetails: task?.error || (error instanceof Error ? error.message : typeof error === "string" ? error : "深度处理失败"), taskClientOperationTerminal: task?.status === "failed" || task?.status === "cancelled" };
+    return { status: "error", taskOutcome: task?.outcome, errorDetails: task?.error || (error instanceof Error ? error.message : typeof error === "string" ? error : "深度处理失败"), generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: task?.failureDiagnostics, taskClientOperationTerminal: task?.status === "failed" || task?.status === "cancelled" };
 }
 
 export function canvasNodeFailureExplanation(node: CanvasNodeData) {

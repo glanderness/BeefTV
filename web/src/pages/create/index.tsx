@@ -7,7 +7,7 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
-import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
+import { explainGenerationError, generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -689,7 +689,7 @@ export default function CreatePage() {
             boundTaskIds.add(task.id);
             activeGenerationTaskIdsRef.current.add(task.id);
             boundTasks.set(task.id, task);
-            updateOriginAssistant((item) => ({ ...item, taskOutcome: task.outcome, generationStage: task.stage, generationOperation: task.operation, generationErrorCode: task.errorCode, taskIds: Array.from(new Set([...(item.taskIds || []), task.id])), clientOperationId: task.clientOperationId, retryOf: task.retryOf, attemptGroupId: task.attemptGroupId }));
+            updateOriginAssistant((item) => ({ ...item, taskOutcome: task.outcome, taskFailureDiagnostics: task.failureDiagnostics ?? item.taskFailureDiagnostics, generationStage: task.stage, generationOperation: task.operation, generationErrorCode: task.errorCode, taskIds: Array.from(new Set([...(item.taskIds || []), task.id])), clientOperationId: task.clientOperationId, retryOf: task.retryOf, attemptGroupId: task.attemptGroupId }));
             if (abortRef.current === controller) {
                 abortRef.current = null;
                 setBusy(false);
@@ -844,10 +844,9 @@ export default function CreatePage() {
                 updateOriginAssistant((item) => ({ ...item, status: "cancelled", content: "已停止" }));
                 return;
             }
-            const taskErrorCode = Array.from(boundTasks.values()).find((task) => task.errorCode)?.errorCode;
-            const taskOutcome = Array.from(boundTasks.values()).find((task) => task.outcome)?.outcome;
-            const message = generationErrorMessage(taskErrorCode && error instanceof Error ? { code: taskErrorCode, message: error.message } : error);
-            updateOriginAssistant((item) => ({ ...item, status: "error", error: message, taskOutcome: taskOutcome ?? item.taskOutcome, generationErrorCode: item.generationErrorCode || taskErrorCode || generationErrorCode(error), generationOperation: item.generationOperation || (mode === "video" ? videoOperation : mode), createdAt: assistantMessage.createdAt, content: "生成失败" }));
+            const failedTask = Array.from(boundTasks.values()).find((task) => task.errorCode || task.failureDiagnostics || task.outcome);
+            const explained = explainGenerationError(failedTask?.errorCode && error instanceof Error ? { code: failedTask.errorCode, message: error.message } : error);
+            updateOriginAssistant((item) => ({ ...item, status: "error", error: explained.message, generationErrorSummary: explained.summary, generationProviderCode: explained.providerCode, taskFailureDiagnostics: failedTask?.failureDiagnostics, taskOutcome: failedTask?.outcome ?? item.taskOutcome, generationErrorCode: item.generationErrorCode || failedTask?.errorCode || (explained.category === "unknown" ? undefined : explained.errorCode), generationOperation: item.generationOperation || (mode === "video" ? videoOperation : mode), createdAt: assistantMessage.createdAt, content: "生成失败" }));
         } finally {
             for (const taskId of boundTaskIds) activeGenerationTaskIdsRef.current.delete(taskId);
             requestLifecycle.release();

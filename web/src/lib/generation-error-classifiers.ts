@@ -215,9 +215,15 @@ export const HTML_BODY = /^\s*(?:<!doctype|<html|<head|<body)/i;
 export const LOCAL_DATABASE_ERROR = /(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I\/O error)(?:\b|$)/i;
 const HTTP_STATUS = /(?:HTTP\s+|status(?:[_\s]+code)?\s*[:：=]?\s*)(\d{3})\b/i;
 const WRAPPED_HTTP_STATUS = /Request failed with status code\s+(\d{3})/i;
-const URL_PATTERN = /(?:https?:\/\/|data:[a-z0-9.+-]+\/[^;]+;base64,)[^\s"'<>]+/gi;
-const SECRET_PATTERN = /(?:api[_-]?key|secret[_-]?key|access[_-]?token|authorization|bearer|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,})[^\s,;]*/gi;
-const PROMPT_ECHO = /((?:prompt|input|query)\s*[=:：]\s*)(?:"[^"]{0,400}"|'[^']{0,400}'|\S{1,400})/gi;
+const URL_PATTERN = /(?:https?:\/\/|file:\/\/|data:[a-z0-9.+-]+\/[^;]+;base64,)[^\s"'<>]+/gi;
+const SECRET_PATTERN = /(?:[a-z0-9_-]*(?:api[_-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?key|client[_-]?secret|private[_-]?key|api[_-]?secret|access[_-]?token|refresh[_-]?token)|authorization|bearer|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,})[^\s,;]*/gi;
+const PROMPT_KEY = String.raw`(?:(?:choices|messages|message|delta|parts|input|prompt|contents?|system[_-]?instruction)(?:(?:\.\d+|\[\d+\]|\.[a-z0-9_]+)+)?|(?:(?:user|system)[_-]?)?prompt(?:[_-]?text)?|input(?:[_-]?text)?|query|content|text|提示词|输入内容)`;
+const PROMPT_ECHO = new RegExp(String.raw`(["']?${PROMPT_KEY}["']?\s*[=:：]\s*)(?:"[^"]{0,400}"|'[^']{0,400}'|\S{1,400})`, "gi");
+const CREDENTIAL_TAIL = /(?:^(?:invalid|missing|bad|expired|unauthorized|error)\s*[:：]?\s*)?["']?(?:(?:invalid|missing|bad|expired|unauthorized|aws|oss|cos|qiniu|x|goog|openai|anthropic|gemini|azure|bearer|auth|session|access|refresh|client|private|secret|api|app|service|signing)[\s_-]+)*(?:[a-z0-9_-]*(?:key(?:[\s_-]?id)?|secret|token|password|passwd|credential|signature)|authorization|proxy-authorization|cookie|set-cookie)["']?\s*[=:：][\s\S]*/i;
+const UNSTRUCTURED_PROMPT_TAIL = new RegExp(
+    String.raw`(?:(?:^(?:bad\s+request|invalid\s+request|error)\s*[:：]\s*)?\{?\s*)?(?:["']?(?:[a-z0-9_]+(?:\.\d+|\[\d+\]|\.)+)*${PROMPT_KEY}["']?\s*[=:：]|(?:(?:invalid\s+value\s+)?(?:for|parameter|param|field)\s+["']?${PROMPT_KEY}["']?(?:\s*[:=：]|\s+(?:contains|is)\b)?|\b(?:the\s+)?["']?${PROMPT_KEY}["']?\s+(?:field|parameter|param)\s+(?:contains|is|was)\b)|\{[^{}]*"(?:text|content|prompt|input|messages|query)"\s*:[\s\S]*)[\s\S]*`,
+    "i",
+);
 const SIGNED_QUERY = /(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+/gi;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/;
 const UNSAFE_ID = /secret|token|password|apikey|api-key|bearer|sk-/i;
@@ -526,11 +532,11 @@ export function sanitizeProviderCode(value: string) {
 
 export function sanitizeProviderText(value: string) {
     let text = value.trim();
-    text = text.replace(/(?:[a-z]:[\\/]|\\\\|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)[^\r\n:"'<>]+/gi, "[路径已隐藏]");
-    if (!text || HTML_BODY.test(text)) return "";
+    text = text.replace(/(?:file:\/\/[^\r\n"'<>]+|(?<![a-z])[a-z]:[\\/][^\r\n:"'<>]+|\\\\[^\r\n:"'<>]+|(?<![A-Za-z0-9._-])\/+(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc|data|app|workspace|usr|proc|sys|dev|lib|bin|sbin)\/[^\r\n:"'<>]+)/gi, "[路径已隐藏]");
+    if (!text || HTML_BODY.test(text) || /<\/?[a-z!][^>]*>/i.test(text)) return "";
     // Unstructured messages may echo whole headers or prompts; discard the suffix,
     // since a whitespace-based token matcher cannot know where a secret ends.
-    text = text.replace(/(?:authorization|cookie|set-cookie|api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password|prompt|input|query)\s*[=:：][\s\S]*/i, "[已隐藏]");
+    text = text.replace(CREDENTIAL_TAIL, "").replace(UNSTRUCTURED_PROMPT_TAIL, "[已隐藏]");
     text = text.replace(URL_PATTERN, "").replace(SIGNED_QUERY, "").replace(SECRET_PATTERN, "").replace(PROMPT_ECHO, "$1[已隐藏]");
     text = text.replace(/\s+/g, " ").trim();
     if (text.startsWith("{") || text.startsWith("[") || text.startsWith("<")) return "";
@@ -611,17 +617,32 @@ export function containsInfrastructureDetails(value: string) {
     return /(?:接口请求失败|Request failed with status code|https?:\/\/|\b(?:GET|POST|PUT|PATCH|DELETE)\s+["']?|Bad Gateway|Service Unavailable|Gateway Timeout|upstream_error)/i.test(value);
 }
 
-export function providerPayloadMessage(payload: unknown): string {
-    if (typeof payload === "string") return payload.trim();
+export function providerPayloadMessage(payload: unknown, depth = 0): string {
+    if (depth > 5) return "";
+    if (typeof payload === "string") {
+        const trimmed = payload.trim();
+        if (trimmed.startsWith("{") || /^(?:接口请求失败|请求失败|upstream_error|http\s*\d{3})[^A-Za-z0-9{]*\{/i.test(trimmed)) {
+            const extracted = extractProviderFields(trimmed).message;
+            if (extracted) return extracted;
+        }
+        return trimmed;
+    }
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
     const record = payload as Record<string, unknown>;
     if (record.error && typeof record.error === "object") {
-        const nested = providerPayloadMessage(record.error);
+        const nested = providerPayloadMessage(record.error, depth + 1);
         if (nested) return nested;
     }
     for (const key of ["message", "msg", "detail"] as const) {
         const value = record[key];
-        if (typeof value === "string" && value.trim()) return value.trim();
+        if (typeof value === "string" && value.trim()) return providerPayloadMessage(value, depth + 1);
     }
-    return typeof record.error === "string" ? record.error.trim() : "";
+    for (const key of ["data", "body", "response"] as const) {
+        const value = record[key];
+        if (value && (typeof value === "object" || typeof value === "string")) {
+            const nested = providerPayloadMessage(value, depth + 1);
+            if (nested) return nested;
+        }
+    }
+    return typeof record.error === "string" ? providerPayloadMessage(record.error, depth + 1) : "";
 }
