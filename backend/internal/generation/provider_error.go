@@ -218,6 +218,11 @@ func ClassifyHTTP(status int, statusText string, body string) Failure {
 		failure.Reason = ""
 		failure.Action = ""
 	}
+	if !failure.FromCode && failure.Category == CategoryInvalidParams && status >= 400 && status != http.StatusBadRequest && status != http.StatusConflict && status != http.StatusUnprocessableEntity {
+		failure.Category = CategoryUnknown
+		failure.Reason = ""
+		failure.Action = ""
+	}
 	if failure.Category == CategoryUnknown && !failure.FromCode {
 		if category, ok := categoryFromHTTPStatus(status); ok {
 			failure.Category = category
@@ -404,7 +409,7 @@ func ClassifyText(raw string) Failure {
 	}
 	if copy, ok := persistedTaskConstraintCopy(raw); ok {
 		requestID, taskID := persistedReferenceIDs(raw)
-		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
+		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID, FromCode: true})
 	}
 	failure := Failure{Category: CategoryUnknown}
 	text := strings.TrimSpace(raw)
@@ -417,7 +422,7 @@ func ClassifyText(raw string) Failure {
 	}
 	if copy, ok := referenceDurationCopy(text); ok {
 		requestID, taskID := persistedReferenceIDs(text)
-		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
+		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID, FromCode: true})
 	}
 	if copy, ok := referenceMediaConstraintCopy(text); ok {
 		requestID, taskID := persistedReferenceIDs(text)
@@ -425,7 +430,7 @@ func ClassifyText(raw string) Failure {
 		if copy.Action != "" && (strings.Contains(copy.Reason, "过大") || strings.Contains(copy.Action, "压缩")) {
 			category = CategoryInputTooLarge
 		}
-		return normalizeFailure(Failure{Category: category, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
+		return normalizeFailure(Failure{Category: category, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID, FromCode: true})
 	}
 	if htmlBodyPattern.MatchString(text) {
 		if status := extractExplicitHTTPStatus(text); status != 0 {
@@ -462,7 +467,7 @@ func ClassifyText(raw string) Failure {
 			return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: fields.RequestID, TaskID: fields.TaskID, ProviderCode: fields.Code, Structured: true, FromCode: true})
 		}
 		if copy, ok := referenceDurationCopy(fields.Message); ok {
-			return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: fields.RequestID, TaskID: fields.TaskID})
+			return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: fields.RequestID, TaskID: fields.TaskID, ProviderCode: sanitizeProviderCode(fields.Code), Structured: true, FromCode: true})
 		}
 		failure.Structured = true
 		failure.ProviderCode = sanitizeProviderCode(fields.Code)
@@ -472,12 +477,16 @@ func ClassifyText(raw string) Failure {
 		failure.TaskID = sanitizeDebugID(fields.TaskID)
 		if category, ok := categoryFromProviderCode(fields.Code, fields.Type, fields.Status); ok {
 			failure.Category = category
-			failure.FromCode = true
+			_, codeOrStatusKnown := categoryFromProviderCode(fields.Code, fields.Status)
+			failure.FromCode = codeOrStatusKnown || !genericProviderCode(fields.Type)
 			refineInvalidParams(&failure, fields)
 			specializeModeration(&failure, fields)
 			specializeThinkingToolChoice(&failure, fields)
 			specializeDurationRange(&failure, fields)
 			specializeMediaConstraints(&failure, fields)
+			if failure.Category != CategoryInvalidParams || failure.Reason != "" {
+				failure.FromCode = true
+			}
 			return normalizeFailure(failure)
 		}
 		if category, ok := categoryFromProviderMessage(fields.Message + " " + fields.Type + " " + fields.Status); ok {
@@ -486,6 +495,9 @@ func ClassifyText(raw string) Failure {
 			specializeThinkingToolChoice(&failure, fields)
 			specializeDurationRange(&failure, fields)
 			specializeMediaConstraints(&failure, fields)
+			if failure.Reason != "" {
+				failure.FromCode = true
+			}
 			return normalizeFailure(failure)
 		}
 		// JSON request echoes and debug fields are never classification input.
@@ -503,6 +515,7 @@ func ClassifyText(raw string) Failure {
 	if matched := matchPersistedCategory(text); matched != CategoryUnknown {
 		failure.Category = matched
 		failure.FromCode = true
+		failure.RequestID, failure.TaskID = persistedReferenceIDs(text)
 		if matched == CategoryTimeout || matched == CategoryDownloadFailed || matched == CategorySubmissionUncertain {
 			failure.Uncertain = true
 		}
@@ -515,10 +528,16 @@ func ClassifyText(raw string) Failure {
 	if category, ok := categoryFromProviderMessage(text); ok {
 		failure.Category = category
 		failure.Structured = true
+		if copy, ok := taskConstraintCopy(text); ok {
+			failure.Reason, failure.Action = copy.Reason, copy.Action
+		}
 		specializeModeration(&failure, extractedFields{Message: text})
 		specializeThinkingToolChoice(&failure, extractedFields{Message: text})
 		specializeDurationRange(&failure, extractedFields{Message: text})
 		specializeMediaConstraints(&failure, extractedFields{Message: text})
+		if failure.Reason != "" {
+			failure.FromCode = true
+		}
 		if status := extractExplicitHTTPStatus(text); status != 0 {
 			failure.HTTPStatus = status
 		}
