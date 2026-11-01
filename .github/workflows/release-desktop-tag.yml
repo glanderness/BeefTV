@@ -3,7 +3,7 @@ name: Release desktop from tag
 on:
   push:
     tags:
-      - 'v*'
+      - 'aihubkit-v*'
 
 permissions:
   contents: read
@@ -33,6 +33,7 @@ jobs:
     uses: ./.github/workflows/desktop-installers.yml
     with:
       standalone-release: true
+      release-tag: ${{ github.ref_name }}
 
   sources:
     name: Package corresponding WASM source
@@ -51,10 +52,9 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
       - name: Verify binary and collect source bundle
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python scripts/package-wasm-sources.py --version "$RELEASE_TAG" --binary-dir web/node_modules/@ffmpeg/core/dist/esm
+          APP_VERSION="$(tr -d '[:space:]' < VERSION)"
+          python scripts/package-wasm-sources.py --version "$APP_VERSION" --binary-dir web/node_modules/@ffmpeg/core/dist/esm
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-tag-wasm-source

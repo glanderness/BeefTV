@@ -12,13 +12,13 @@
 
 ## GitHub tag 自动发布安装包
 
-`.github/workflows/release-desktop-tag.yml` 在推送 `v*` 标签后触发，适用于当前仓库及 Fork。标签必须是稳定版本 `vMAJOR.MINOR.PATCH`，与该提交的根目录 `VERSION` 完全一致，且 `CHANGELOG.md` 中有对应的非空 `## vMAJOR.MINOR.PATCH` 条目；不符合时在构建前失败。
+`.github/workflows/release-desktop-tag.yml` 在推送 `aihubkit-v*` 标签后触发。GitHub 标签使用独立命名空间 `aihubkit-vMAJOR.MINOR.PATCH`，根目录 `VERSION` 使用对应的标准应用版本 `vMAJOR.MINOR.PATCH`，二者的数字部分必须完全一致；`CHANGELOG.md` 还必须有对应的非空 `## vMAJOR.MINOR.PATCH` 条目。不符合时在构建前失败。这个命名规则避免与 Fork 继承的上游历史标签冲突，aihubkit 版本可独立演进。
 
-准备好版本提交后，推送该提交及对应标签。例如 `VERSION` 为 `v2.0.6` 时：
+准备好版本提交后，推送该提交及对应标签。例如首版 `VERSION` 为 `v1.0.0` 时：
 
 ```bash
-git tag v2.0.6
-git push origin v2.0.6
+git tag aihubkit-v1.0.0
+git push origin aihubkit-v1.0.0
 ```
 
 标签所指的提交必须已包含此工作流及其调用的脚本。Fork 需要启用 GitHub Actions，仓库或组织策略须允许工作流使用 `contents: write` 创建 Release。不需要配置 R2、COS、CNB 或自动更新签名密钥，发布使用 GitHub 自带的 `GITHUB_TOKEN`。

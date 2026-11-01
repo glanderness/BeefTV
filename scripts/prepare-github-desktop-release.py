@@ -15,12 +15,13 @@ TARGETS = {
 
 
 def release_notes(tag, version, changelog):
-    if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
-        raise ValueError('Desktop installers require a stable tag: vMAJOR.MINOR.PATCH')
-    if tag != version.strip():
+    if not re.fullmatch(r'aihubkit-v[0-9]+\.[0-9]+\.[0-9]+', tag):
+        raise ValueError('Desktop installers require an independent tag: aihubkit-vMAJOR.MINOR.PATCH')
+    app_version = tag.removeprefix('aihubkit-')
+    if app_version != version.strip():
         raise ValueError(f'Tag {tag} does not match VERSION={version.strip()}')
     lines = changelog.splitlines()
-    heading = f'## {tag}'
+    heading = f'## {app_version}'
     if heading not in lines:
         raise ValueError(f'CHANGELOG.md is missing {heading}')
     body = []
@@ -37,13 +38,13 @@ def release_notes(tag, version, changelog):
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows x64 | `BeefTV-{tag}-windows-amd64-setup.exe` |
-| Ubuntu 24.04 x64 | `BeefTV-{tag}-linux-amd64.deb` |
-| macOS Apple Silicon | `BeefTV-{tag}-darwin-arm64.dmg` |
-| macOS Intel | `BeefTV-{tag}-darwin-amd64.dmg` |
+| Windows x64 | `BeefTV-{app_version}-windows-amd64-setup.exe` |
+| Ubuntu 24.04 x64 | `BeefTV-{app_version}-linux-amd64.deb` |
+| macOS Apple Silicon | `BeefTV-{app_version}-darwin-arm64.dmg` |
+| macOS Intel | `BeefTV-{app_version}-darwin-amd64.dmg` |
 
 Windows 运行 Setup；macOS 打开 DMG 并拖入 Applications；Ubuntu 运行
-`sudo apt install ./BeefTV-{tag}-linux-amd64.deb`。
+`sudo apt install ./BeefTV-{app_version}-linux-amd64.deb`。
 ZIP 用于便携运行，解压时保留全部文件。安装包包含前端、后端、CLI、助手运行时和官方插件，用户无需安装 Go、Bun 或 Node.js。
 
 Windows 缺少 WebView2 时需按提示安装。Linux DEB 会通过 apt 安装系统依赖。
@@ -55,11 +56,12 @@ Windows 未做 Authenticode 签名；macOS 使用 ad hoc 签名，未做 Apple �
 
 
 def prepare_assets(directory, tag):
-    expected = {f'BeefTV-{tag}-{target}{suffix}' for target, suffix in TARGETS.items()}
-    expected |= {f'BeefTV-{tag}-{target}.zip' for target in TARGETS}
-    expected |= {f'BeefTV-{tag}-ffprobe-{target}-sources.tar.gz'
+    app_version = tag.removeprefix('aihubkit-')
+    expected = {f'BeefTV-{app_version}-{target}{suffix}' for target, suffix in TARGETS.items()}
+    expected |= {f'BeefTV-{app_version}-{target}.zip' for target in TARGETS}
+    expected |= {f'BeefTV-{app_version}-ffprobe-{target}-sources.tar.gz'
                  for target in TARGETS if target.startswith('darwin-')}
-    expected.add(f'BeefTV-{tag}-ffmpeg-wasm-sources.tar.gz')
+    expected.add(f'BeefTV-{app_version}-ffmpeg-wasm-sources.tar.gz')
     for name in sorted(expected):
         path = directory / name
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:

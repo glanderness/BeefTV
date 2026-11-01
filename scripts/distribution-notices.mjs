@@ -7,7 +7,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const escapeHTML = (text) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-export function distributionNotices({ root = repo, version, platform = "web", heavyMedia = true, sourcesDir = resolve(root, "dist"), repository = process.env.GITHUB_REPOSITORY || "glanderness/BeefTV" }) {
+export function distributionNotices({ root = repo, version, platform = "web", heavyMedia = true, sourcesDir = resolve(root, "dist"), repository = process.env.GITHUB_REPOSITORY || "glanderness/BeefTV", releaseTag = process.env.BEEFTV_RELEASE_TAG || version }) {
     if (!/^v?\d+\.\d+\.\d+(?:[.-][\w.-]+)?$/.test(version)) throw new Error("Invalid distribution version");
     version = `v${version.replace(/^v/, "")}`;
     if (!["web", "darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"].includes(platform)) throw new Error("Invalid distribution platform");
@@ -46,7 +46,7 @@ export function distributionNotices({ root = repo, version, platform = "web", he
             }
         }
         return { ...component, source: bytes ? { name, size: bytes.length, sha256: sha256(bytes),
-            url: `https://github.com/${repository}/releases/download/${version}/${name}` } : null };
+            url: `https://github.com/${repository}/releases/download/${releaseTag}/${name}` } : null };
     });
     const index = { schema: 1, version, platform, components };
     files.set("sources.json", Buffer.from(JSON.stringify(index, null, 2) + "\n"));

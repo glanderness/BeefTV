@@ -53,12 +53,12 @@ test("macOS source download names and hashes match the generated packet", (t) =>
     mkdirSync(resolve(root, "dist"));
     const name = "BeefTV-v1.7.28-ffprobe-darwin-arm64-sources.tar.gz";
     writeFileSync(resolve(root, "dist", name), "source-packet");
-    const files = distributionNotices({ root, version: "v1.7.28", platform: "darwin-arm64", repository: "example/BeefTV" });
+    const files = distributionNotices({ root, version: "v1.7.28", platform: "darwin-arm64", repository: "example/BeefTV", releaseTag: "aihubkit-v1.7.28" });
     const source = JSON.parse(files.get("sources.json")).components[1].source;
     assert.equal(source.name, name);
     assert.equal(source.size, 13);
     assert.equal(source.sha256, createHash("sha256").update("source-packet").digest("hex"));
-    assert.equal(source.url, `https://github.com/example/BeefTV/releases/download/v1.7.28/${name}`);
+    assert.equal(source.url, `https://github.com/example/BeefTV/releases/download/aihubkit-v1.7.28/${name}`);
     assert.ok(files.get("index.html").toString().includes(source.url));
 });
 
@@ -69,10 +69,10 @@ test("WASM source links require the matching published core", (t) => {
     mkdirSync(resolve(root, "dist"));
     const name = "BeefTV-v1.7.27-ffmpeg-wasm-sources.tar.gz";
     writeFileSync(resolve(root, "dist", name), "source-packet");
-    const files = distributionNotices({ root, version: "v1.7.27", repository: "example/BeefTV" });
+    const files = distributionNotices({ root, version: "v1.7.27", repository: "example/BeefTV", releaseTag: "aihubkit-v1.7.27" });
     assert.equal(JSON.parse(files.get("sources.json")).components[0].source.name, name);
     assert.equal(JSON.parse(files.get("sources.json")).components[0].source.url,
-        `https://github.com/example/BeefTV/releases/download/v1.7.27/${name}`);
+        `https://github.com/example/BeefTV/releases/download/aihubkit-v1.7.27/${name}`);
     assert.ok(files.get("index.html").toString().includes(name));
     writeFileSync(resolve(root, "web/node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm"), "changed core");
     assert.throws(() => distributionNotices({ root, version: "v1.7.27" }), /does not match/);

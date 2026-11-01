@@ -26,6 +26,10 @@ on:
         description: Prepare downloadable archives without the official updater
         type: boolean
         default: false
+      release-tag:
+        description: GitHub tag that will host standalone release source bundles
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -117,6 +121,7 @@ jobs:
           BEEFTV_SKIP_LOCAL_VERIFY: '1'
           BEEFTV_WAILS_PLATFORM: ${{ matrix.target }}
           BEEFTV_UPDATER_PUBLIC_KEY: ${{ !inputs.standalone-release && vars.BEEFTV_UPDATER_PUBLIC_KEY || '' }}
+          BEEFTV_RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           sh plugin-packages/build-packages.sh
           ./scripts/build-beeftv-release.sh
@@ -125,6 +130,7 @@ jobs:
         env:
           CGO_ENABLED: '1'
           BEEFTV_UPDATER_PUBLIC_KEY: ${{ !inputs.standalone-release && vars.BEEFTV_UPDATER_PUBLIC_KEY || '' }}
+          BEEFTV_RELEASE_TAG: ${{ inputs.release-tag }}
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1
       - name: Package native installer

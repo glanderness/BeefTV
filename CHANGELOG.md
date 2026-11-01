@@ -4,6 +4,11 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+## v1.0.0
+
+- 发布 aihubkit 独立版本线的首个桌面版本，版本号从 `v1.0.0` 开始，与上游 BeefTV 的版本号独立演进。
+- 本版基于上游 BeefTV `v2.0.5`，提供 Windows x64、Ubuntu 24.04 x64、macOS Apple Silicon 和 Intel 安装包及便携包。
+
 ## v2.0.5
 
 - 内置助手支持查看模型返回的可读思考，默认折叠，与工具进度和回复正文分开；复制回复仍只复制正文。正文继续随模型返回逐段显示。
