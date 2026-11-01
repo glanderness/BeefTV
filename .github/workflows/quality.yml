@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: quality-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -134,9 +134,11 @@ jobs:
       - name: Install native media test dependencies
         run: |
           bash ../scripts/configure-ubuntu-apt.sh
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk
-          fc-cache -f
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null || ! fc-list ':lang=zh-cn' | grep -q .; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-noto-cjk
+            fc-cache -f
+          fi
           fc-match ':lang=zh-cn'
           ffmpeg -version
           ffprobe -version
