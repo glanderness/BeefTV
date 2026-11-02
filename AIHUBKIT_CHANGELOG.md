@@ -4,6 +4,12 @@ All notable public changes to the aihubkit distribution of BeefTV are documented
 
 ## Unreleased
 
+## v1.0.4
+
+- 延续 v1.0.3 的 aihubkit 账号体系、平台模型和通用临时文件存储能力。
+- 将 aihubkit 与官方 BeefTV 的版本文件及发布流程完全分离，方便持续同步官方更新。
+- 完善 Windows、Linux、macOS Intel 与 Apple Silicon 的全平台自动构建和发布流程。
+
 ## v1.0.3
 
 - 接入 aihubkit 账号体系：桌面端启动后先登录，支持注册、账号隔离、额度与消费记录，并可从账号分组导入平台模型。
