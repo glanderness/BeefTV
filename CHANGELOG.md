@@ -4,7 +4,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
-## v1.0.2
+## v1.0.3
 
 - 接入 aihubkit 账号体系：桌面端启动后先登录，支持注册、账号隔离、额度与消费记录，并可从账号分组导入平台模型。
 - 接入 aihubkit 通用临时文件存储：图片、视频、音频等参考素材在生成前自动上传并转换为公网 URL，无需用户额外配置 S3 存储桶。
