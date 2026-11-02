@@ -133,13 +133,17 @@ export default function PluginsPage() {
             setBackendPlugins(result.plugins || []);
             setPluginStates(result.states || {});
             for (const item of result.plugins || []) {
-                ensurePlugin(item.manifest);
-                const effective = result.states?.[item.manifest.id]?.effectiveEnabled ?? (item.status === "enabled");
-                setEnabled(item.manifest.id, effective);
-                if (effective && (item.clientUrl || item.manifest.client)) {
-                    void loadAndActivateClientPlugin(item.manifest.id, { clientUrl: item.clientUrl, manifest: item.manifest });
+                const manifest = {
+                    ...item.manifest,
+                    trusted: item.manifest.trusted ?? (item.source === "official" || item.source === "bundled" || item.source === "system"),
+                };
+                ensurePlugin(manifest);
+                const effective = result.states?.[manifest.id]?.effectiveEnabled ?? (item.status === "enabled");
+                setEnabled(manifest.id, effective);
+                if (effective && (item.clientUrl || manifest.client)) {
+                    void loadAndActivateClientPlugin(manifest.id, { clientUrl: item.clientUrl, manifest });
                 } else if (!effective) {
-                    deactivateClientPlugin(item.manifest.id);
+                    deactivateClientPlugin(manifest.id);
                 }
             }
         } catch (error) {
@@ -209,7 +213,10 @@ export default function PluginsPage() {
     const categoryCounts = useMemo(() => {
         const visiblePlugins = registeredPlugins.filter((plugin) => {
             if (localRuntime && plugin.manifest.id === RUNNINGHUB_PLUGIN_ID) return false;
-            return user?.role === "admin" || features.systemPluginsVisibleToUsers || isOfficialApplicationPluginId(plugin.manifest.id);
+            const isApplicationPlugin =
+                backendPluginById.get(plugin.manifest.id)?.management.kind === "application" ||
+                isOfficialApplicationPluginId(plugin.manifest.id);
+            return user?.role === "admin" || features.systemPluginsVisibleToUsers || isApplicationPlugin;
         });
         const counts: Record<string, number> = { all: visiblePlugins.length, text: 0, image: 0, video: 0, audio: 0, other: 0 };
         for (const plugin of visiblePlugins) {
@@ -225,11 +232,13 @@ export default function PluginsPage() {
     const settingsInstallation = settingsPlugin ? installations.find((item) => item.manifest.id === settingsPlugin.manifest.id) : undefined;
     const detailsPlugin = detailsPluginId ? registeredPlugins.find((plugin) => plugin.manifest.id === detailsPluginId) : undefined;
 
+    const hasCustomAppSettings = (plugin: RegisteredPlugin) =>
+        appSettingsEntries.some((entry) => entry.pluginId === plugin.manifest.id);
     const hasPluginConfiguration = (plugin: RegisteredPlugin) =>
         Boolean(plugin.manifest.configuration?.fields?.length) ||
-        appSettingsEntries.some((entry) => entry.pluginId === plugin.manifest.id);
+        hasCustomAppSettings(plugin);
     const canConfigurePlugin = (plugin: RegisteredPlugin) =>
-        localRuntime
+        localRuntime || hasCustomAppSettings(plugin)
             ? hasPluginConfiguration(plugin)
             : Boolean(pluginStates[plugin.manifest.id]?.canConfigure) &&
               (hasPluginConfiguration(plugin) || plugin.manifest.id === RUNNINGHUB_PLUGIN_ID);
@@ -882,7 +891,7 @@ function providerCapabilitiesFor(manifest: PluginManifest | PluginManifestV2) {
 
 function pluginMatchesCategory(manifest: PluginManifest | PluginManifestV2, category: string) {
     const providerCapabilities = providerCapabilitiesFor(manifest);
-    if (category === "other") return providerCapabilities.length === 0;
+    if (category === "other") return providerCapabilities.length === 0 || Boolean(manifest.client);
     return providerCapabilities.includes(category as "text" | "image" | "video" | "audio");
 }
 

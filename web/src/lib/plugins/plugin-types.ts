@@ -138,7 +138,9 @@ export type PluginPermission =
     | "ai.text"
     | "media.read"
     | "usage.read"
-    | "external.open";
+    | "external.open"
+    | "ui.slot"
+    | "settings.write";
 
 export type PluginManifest = {
     apiVersion: typeof PLUGIN_API_VERSION;
@@ -746,6 +748,11 @@ export type BeefTVPluginHost = {
     };
     assets: {
         list: () => Asset[];
+    };
+    channels?: {
+        list: () => Array<Record<string, unknown>>;
+        upsert: (channel: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        fetchCatalog?: (params: { baseUrl: string; apiKey: string; apiFormat?: string }) => Promise<{ models: string[] }>;
     };
 };
 

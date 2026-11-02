@@ -46,6 +46,19 @@ const EMBEDDED_FALLBACK_PLUGINS = [
     localSource: "plugin-packages/beeftv-plugin-sticky-note",
   },
   {
+    id: "beeftv-plugin-ll2",
+    packageName: "beeftv-plugin-ll2",
+    name: "LL2 算力与视频渠道",
+    version: "1.0.0",
+    description:
+      "内置 LL2 (DMC) 算力与视频渠道插件，支持填写 API Key 一键同步 DeepSeek V4.1、Seedance 2.0、Vidu Q3、MiniMax H3、Super Vega 1.0 与 Auto HD 超分模型。",
+    author: "BeefTV",
+    category: "模型渠道",
+    recommended: true,
+    tags: ["BYOK", "视频协议", "官方内置"],
+    localSource: "plugin-packages/beeftv-plugin-ll2",
+  },
+  {
     id: "beeftv-plugin-aihubkit-video",
     packageName: "beeftv-plugin-aihubkit-video",
     name: "AIHubKit 视频渠道",
