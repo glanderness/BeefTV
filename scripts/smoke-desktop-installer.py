@@ -167,7 +167,8 @@ def probe_self_test():
         payload = root / 'fixture-payload'
         payload.mkdir()
         (payload / 'BeefTV.exe').write_bytes(b'installer fixture payload')
-        version = (Path(__file__).resolve().parent.parent / 'VERSION').read_text().strip()
+        version = os.environ.get('BEEFTV_RELEASE_VERSION') or \
+            (Path(__file__).resolve().parent.parent / 'VERSION').read_text().strip()
         installer = root / 'fixture-output' / f'BeefTV-{version}-windows-amd64-setup.exe'
         subprocess.run(['python', str(Path(__file__).with_name('package-desktop-installer.py')), '--platform', 'windows-amd64',
                         '--input', str(payload), '--output-dir', str(installer.parent)], check=True, timeout=90)

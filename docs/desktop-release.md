@@ -2,7 +2,7 @@
 
 公开发布还须核对[媒体组件的许可与源码交付](media-source-distribution.md)。流水线会附带许可文件和 macOS ffprobe 源码包；预构建组件的完整源码材料仍需分发者落实，不能把构建成功视为已完成全部许可义务。
 
-生产桌面包使用仓库根目录的 `VERSION` 作为唯一版本源。发布脚本会把版本号、当前 Git 提交和 UTC 构建时间同时注入前端与 Go 后端，并生成不依赖 Vite 开发服务器的 Wails 应用包。
+官方生产桌面包使用仓库根目录的 `VERSION` 作为版本源。发布脚本会把版本号、当前 Git 提交和 UTC 构建时间同时注入前端与 Go 后端，并生成不依赖 Vite 开发服务器的 Wails 应用包。aihubkit 独立发行使用 `AIHUBKIT_VERSION`，由 tag 工作流通过 `BEEFTV_RELEASE_VERSION` 传给同一套通用构建脚本，不修改官方版本文件。
 
 带自动更新的生产包还要注入更新源地址和 Ed25519 公钥。密钥、草稿发布、签名清单和回滚语义见下方「桌面自动更新」。`v1.5.2` 及以前的安装包不含更新器，不能靠补发清单给已经装好的二进制补上自动更新。
 
@@ -12,13 +12,13 @@
 
 ## GitHub tag 自动发布安装包
 
-`.github/workflows/release-desktop-tag.yml` 在推送 `aihubkit-v*` 标签后触发。GitHub 标签使用独立命名空间 `aihubkit-vMAJOR.MINOR.PATCH`，根目录 `VERSION` 使用对应的标准应用版本 `vMAJOR.MINOR.PATCH`，二者的数字部分必须完全一致；`CHANGELOG.md` 还必须有对应的非空 `## vMAJOR.MINOR.PATCH` 条目。不符合时在构建前失败。这个命名规则避免与 Fork 继承的上游历史标签冲突，aihubkit 版本可独立演进。
+`.github/workflows/release-desktop-tag.yml` 在推送 `aihubkit-v*` 标签后触发。GitHub 标签使用独立命名空间 `aihubkit-vMAJOR.MINOR.PATCH`，数字部分必须与 `AIHUBKIT_VERSION=vMAJOR.MINOR.PATCH` 一致；`AIHUBKIT_CHANGELOG.md` 还必须有对应的非空 `## vMAJOR.MINOR.PATCH` 条目。不符合时在构建前失败。官方 `VERSION` 和 `CHANGELOG.md` 始终与上游保持一致，不参与 aihubkit 版本演进。
 
-准备好版本提交后，推送该提交及对应标签。例如当前首版 `VERSION` 为 `v1.0.1` 时：
+准备好版本提交后，推送该提交及对应标签。例如 `AIHUBKIT_VERSION` 为 `v1.0.3` 时：
 
 ```bash
-git tag aihubkit-v1.0.1
-git push origin aihubkit-v1.0.1
+git tag aihubkit-v1.0.3
+git push origin aihubkit-v1.0.3
 ```
 
 标签所指的提交必须已包含此工作流及其调用的脚本。Fork 需要启用 GitHub Actions，仓库或组织策略须允许工作流使用 `contents: write` 创建 Release。不需要配置 R2、COS、CNB 或自动更新签名密钥，发布使用 GitHub 自带的 `GITHUB_TOKEN`。
@@ -59,6 +59,7 @@ BEEFTV_GO_DIR=/tmp/beeftv-go.rpIfVN/go ./scripts/build-beeftv-release.sh
 | `BEEFTV_UPDATER_PUBLIC_KEY` | 注入更新源公钥；缺省则更新器保持关闭 |
 | `BEEFTV_UPDATER_FEED_URL` | 可选，默认官方 `desktop-update-v2.json` 地址（`v2.0.6` 及更早版本使用 `desktop-update.json`） |
 | `BEEFTV_WAILS_PLATFORM` | 可选，例如 `darwin/arm64` 或 `darwin/amd64` |
+| `BEEFTV_RELEASE_VERSION` | 可选的通用构建版本覆盖；未设置时仍读取官方 `VERSION`，aihubkit tag 工作流自动传入 `AIHUBKIT_VERSION` |
 | `BEEFTV_SKIP_LOCAL_VERIFY` | 设为 `1` 时跳过本地门禁；发布流水线的校验作业会跑门禁 |
 | `BEEFTV_EXTRA_LDFLAGS` | 追加到 Wails `-ldflags` |
 
@@ -73,7 +74,7 @@ backend/cmd/desktop/build/bin/BeefTV.app/Contents/Resources/plugin-packages/*.be
 
 - `backend/cmd/desktop/build/bin/BeefTV.app` 存在；
 - Wails 将 `frontend/dist` 编译进应用二进制；应用包内应存在 `Contents/MacOS/BeefTV`，并由构建日志确认完成 `Compiling frontend` 与 `Packaging application`；
-- macOS `Info.plist` 的 `CFBundleShortVersionString` 和 `CFBundleVersion` 与根目录 `VERSION`（去掉 `v` 前缀）一致；
+- macOS `Info.plist` 的 `CFBundleShortVersionString` 和 `CFBundleVersion` 与本次选定的发布版本（默认 `VERSION`，aihubkit 发版为 `AIHUBKIT_VERSION`）一致；
 - `/api/health/live` 与 `/api/system/version` 返回的版本信息来自同一份发布元数据；
 - 发布启动不需要 `127.0.0.1:3000` 的 Vite 开发服务器。
 

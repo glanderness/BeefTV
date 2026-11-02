@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
+VERSION_FILE = ROOT / 'AIHUBKIT_VERSION'
+CHANGELOG_FILE = ROOT / 'AIHUBKIT_CHANGELOG.md'
 TARGETS = {
     'windows-amd64': '-setup.exe',
     'linux-amd64': '.deb',
@@ -19,11 +21,11 @@ def release_notes(tag, version, changelog):
         raise ValueError('Desktop installers require an independent tag: aihubkit-vMAJOR.MINOR.PATCH')
     app_version = tag.removeprefix('aihubkit-')
     if app_version != version.strip():
-        raise ValueError(f'Tag {tag} does not match VERSION={version.strip()}')
+        raise ValueError(f'Tag {tag} does not match AIHUBKIT_VERSION={version.strip()}')
     lines = changelog.splitlines()
     heading = f'## {app_version}'
     if heading not in lines:
-        raise ValueError(f'CHANGELOG.md is missing {heading}')
+        raise ValueError(f'AIHUBKIT_CHANGELOG.md is missing {heading}')
     body = []
     for line in lines[lines.index(heading) + 1:]:
         if line.startswith('## '):
@@ -31,7 +33,7 @@ def release_notes(tag, version, changelog):
         body.append(line)
     changes = '\n'.join(body).strip()
     if not changes:
-        raise ValueError(f'CHANGELOG.md has no release notes for {tag}')
+        raise ValueError(f'AIHUBKIT_CHANGELOG.md has no release notes for {tag}')
     return f'''{changes}
 
 ## 下载与安装
@@ -83,8 +85,8 @@ def main():
     parser.add_argument('--notes', required=True, type=Path)
     parser.add_argument('--assets-dir', type=Path)
     args = parser.parse_args()
-    notes = release_notes(args.tag, (ROOT / 'VERSION').read_text(),
-                          (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'))
+    notes = release_notes(args.tag, VERSION_FILE.read_text(),
+                          CHANGELOG_FILE.read_text(encoding='utf-8'))
     if args.assets_dir:
         prepare_assets(args.assets_dir, args.tag)
     args.notes.write_text(notes, encoding='utf-8')

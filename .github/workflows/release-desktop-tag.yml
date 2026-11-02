@@ -17,15 +17,21 @@ jobs:
     name: Validate release tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      release-version: ${{ steps.release-metadata.outputs.release_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Check tag, VERSION and changelog
+      - name: Check tag, aihubkit version and changelog
+        id: release-metadata
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: python scripts/prepare-github-desktop-release.py --tag "$RELEASE_TAG" --notes "$RUNNER_TEMP/release-notes.md"
+        run: |
+          python scripts/prepare-github-desktop-release.py --tag "$RELEASE_TAG" --notes "$RUNNER_TEMP/release-notes.md"
+          release_version="$(tr -d '[:space:]' < AIHUBKIT_VERSION)"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build and install all supported desktop targets
@@ -34,6 +40,7 @@ jobs:
     with:
       standalone-release: true
       release-tag: ${{ github.ref_name }}
+      release-version: ${{ needs.preflight.outputs.release-version }}
 
   sources:
     name: Package corresponding WASM source
@@ -52,9 +59,10 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
       - name: Verify binary and collect source bundle
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.release-version }}
         run: |
-          APP_VERSION="$(tr -d '[:space:]' < VERSION)"
-          python scripts/package-wasm-sources.py --version "$APP_VERSION" --binary-dir web/node_modules/@ffmpeg/core/dist/esm
+          python scripts/package-wasm-sources.py --version "$RELEASE_VERSION" --binary-dir web/node_modules/@ffmpeg/core/dist/esm
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-tag-wasm-source

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Wrap the existing release payload; updater ZIPs remain unchanged."""
 import argparse
+import os
 from pathlib import Path
 import re
 import shutil
@@ -79,7 +80,8 @@ def package(version, platform, payload, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default=(ROOT / 'VERSION').read_text().strip())
+    parser.add_argument('--version', default=os.environ.get('BEEFTV_RELEASE_VERSION') or
+                        (ROOT / 'VERSION').read_text().strip())
     parser.add_argument('--platform', choices=SUFFIXES, required=True)
     parser.add_argument('--input', type=Path)
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'dist')

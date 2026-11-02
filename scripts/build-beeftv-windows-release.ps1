@@ -268,12 +268,16 @@ function Invoke-PluginPackageBuild {
     }
 }
 
-if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
-    throw "VERSION file is required"
+if ([string]::IsNullOrWhiteSpace($env:BEEFTV_RELEASE_VERSION)) {
+    if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+        throw "VERSION file is required when BEEFTV_RELEASE_VERSION is not set"
+    }
+    $versionValue = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+} else {
+    $versionValue = $env:BEEFTV_RELEASE_VERSION.Trim()
 }
-$versionValue = (Get-Content -LiteralPath $versionFile -Raw).Trim()
 if ($versionValue -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
-    throw "Invalid VERSION: $versionValue"
+    throw "Invalid release version: $versionValue"
 }
 
 $failures = New-Object System.Collections.Generic.List[string]

@@ -23,14 +23,14 @@ if [[ "$AGENT_TARGET" == darwin/* && -n "${BEEFTV_FFMPEG_RUNTIME:-}" ]]; then
 fi
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
 
-if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
-  echo "VERSION file is required" >&2
+if [[ -z "${BEEFTV_RELEASE_VERSION:-}" && ! -f "$ROOT_DIR/VERSION" ]]; then
+  echo "VERSION file is required when BEEFTV_RELEASE_VERSION is not set" >&2
   exit 1
 fi
 
-VERSION_VALUE="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
+VERSION_VALUE="${BEEFTV_RELEASE_VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
 if [[ ! "$VERSION_VALUE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-  echo "Invalid VERSION: $VERSION_VALUE" >&2
+  echo "Invalid release version: $VERSION_VALUE" >&2
   exit 1
 fi
 

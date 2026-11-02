@@ -82,7 +82,7 @@ describe("desktop release build contract", () => {
         const version = readFileSync(resolve(root, "VERSION"), "utf8").trim();
 
         expect(version).toMatch(/^v\d+\.\d+\.\d+/);
-        expect(script).toContain('VERSION_VALUE="$(tr -d');
+        expect(script).toContain('VERSION_VALUE="${BEEFTV_RELEASE_VERSION:-$(tr -d');
         expect(script).toContain('CANVAS_BUILD_VERSION="$VERSION_VALUE"');
         expect(script).toContain("buildinfo.Version=$VERSION_VALUE");
         expect(script).toContain("buildinfo.Commit=$COMMIT_VALUE");
@@ -94,6 +94,22 @@ describe("desktop release build contract", () => {
         expect(script).toContain("wails@v2.16.0 build");
         expect(script).toContain("Contents/Resources/plugin-packages");
         expect(script).toContain('"$ROOT_DIR/plugin-packages/"*.beeftv-plugin');
+    });
+
+    test("keeps aihubkit release metadata separate from upstream release files", () => {
+        const version = readFileSync(resolve(root, "AIHUBKIT_VERSION"), "utf8").trim();
+        const changelog = readFileSync(resolve(root, "AIHUBKIT_CHANGELOG.md"), "utf8");
+        const tagWorkflow = readFileSync(resolve(root, ".github/workflows/release-desktop-tag.yml"), "utf8");
+        const installerWorkflow = readFileSync(resolve(root, ".github/workflows/desktop-installers.yml"), "utf8");
+        const releaseScript = readFileSync(resolve(root, "scripts/prepare-github-desktop-release.py"), "utf8");
+
+        expect(version).toMatch(/^v\d+\.\d+\.\d+$/);
+        expect(changelog).toContain(`## ${version}`);
+        expect(tagWorkflow).toContain("< AIHUBKIT_VERSION");
+        expect(tagWorkflow).toContain("release-version: ${{ needs.preflight.outputs.release-version }}");
+        expect(installerWorkflow).toContain("BEEFTV_RELEASE_VERSION: ${{ inputs.release-version }}");
+        expect(releaseScript).toContain("ROOT / 'AIHUBKIT_VERSION'");
+        expect(releaseScript).toContain("ROOT / 'AIHUBKIT_CHANGELOG.md'");
     });
 
     test("keeps every source file required by the local release gate", () => {

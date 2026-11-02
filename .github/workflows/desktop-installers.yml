@@ -30,6 +30,10 @@ on:
         description: GitHub tag that will host standalone release source bundles
         type: string
         default: ''
+      release-version:
+        description: Optional application version override for a standalone distribution
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -42,6 +46,8 @@ jobs:
     name: Installer (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    env:
+      BEEFTV_RELEASE_VERSION: ${{ inputs.release-version }}
     strategy:
       fail-fast: false
       matrix:
@@ -147,7 +153,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
+          version="${BEEFTV_RELEASE_VERSION:-$(tr -d '[:space:]' < VERSION)}"
           platform='${{ matrix.platform }}'
           payload='backend/cmd/desktop/build/bin'
           suffix='-setup.exe'
@@ -172,7 +178,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
+          version="${BEEFTV_RELEASE_VERSION:-$(tr -d '[:space:]' < VERSION)}"
           platform='${{ matrix.platform }}'
           payload='cmd/desktop/build/bin'
           if [[ "$platform" == darwin-* ]]; then payload="$payload/BeefTV.app"; fi
