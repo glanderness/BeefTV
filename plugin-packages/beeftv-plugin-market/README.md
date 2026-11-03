@@ -1,6 +1,6 @@
 # BeefTV 插件市场（`beeftv-plugin-market`）
 
-`beeftv-plugin-market` 是随 BeefTV 桌面包预装的唯一官方市场插件，本身通过 `pluginCenter.section` 插槽挂载在插件中心左侧的「插件市场」栏。
+`beeftv-plugin-market` 随 BeefTV 桌面包预装并默认启用，通过 `pluginCenter.section` 插槽挂载在插件中心左侧的「插件市场」栏；同时桌面包在 `agent-host/bundled-plugins/` 下随包带上 `beeftv-plugin-sticky-note` 和 `beeftv-plugin-ecommerce-hero` 两个示例插件（默认不安装，可在市场里一键安装）。
 
 ## 功能特性
 

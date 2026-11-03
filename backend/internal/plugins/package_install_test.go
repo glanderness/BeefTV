@@ -506,3 +506,212 @@ func TestBuiltinLL2PluginPreinstalledAndRegistersProviders(t *testing.T) {
 	}
 }
 
+func readBundledPluginManifestForTest(t *testing.T, repoPluginPackages string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(repoPluginPackages, "bundled-plugin-dirs.txt"))
+	if err != nil {
+		t.Fatalf("read bundled-plugin-dirs.txt: %v", err)
+	}
+	var names []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if idx := strings.IndexByte(line, '#'); idx >= 0 {
+			line = line[:idx]
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	return names
+}
+
+func copyTreeForTest(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy %s -> %s: %v", src, dst, err)
+	}
+}
+
+func TestBundledPluginDirsManifestAndDesktopAgentHostResolution(t *testing.T) {
+	repoPluginPackages, err := filepath.Abs(filepath.Join("..", "..", "..", "plugin-packages"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := readBundledPluginManifestForTest(t, repoPluginPackages)
+	registryRaw, err := os.ReadFile(filepath.Join(repoPluginPackages, "beeftv-plugin-market", "registry.json"))
+	if err != nil {
+		t.Fatalf("read curated registry.json: %v", err)
+	}
+	var curatedManifest struct {
+		Plugins []struct {
+			PackageName string `json:"packageName"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(registryRaw, &curatedManifest); err != nil || len(curatedManifest.Plugins) == 0 {
+		t.Fatalf("invalid curated registry.json: %v", err)
+	}
+	var sampleNames []string
+	wantNames := map[string]bool{
+		"beeftv-plugin-market": false,
+		"beeftv-plugin-ll2":    false,
+	}
+	for _, p := range curatedManifest.Plugins {
+		sampleNames = append(sampleNames, p.PackageName)
+		wantNames[p.PackageName] = false
+	}
+	for _, name := range names {
+		if name == "beeftv-plugin-slot-test" {
+			t.Fatal("bundled-plugin-dirs.txt must not include dev self-test plugin beeftv-plugin-slot-test")
+		}
+		if _, ok := wantNames[name]; ok {
+			wantNames[name] = true
+		}
+		if _, err := protocol.ParsePluginPackageDir(filepath.Join(repoPluginPackages, name)); err != nil {
+			t.Fatalf("bundled plugin %s invalid: %v", name, err)
+		}
+	}
+	for name, seen := range wantNames {
+		if !seen {
+			t.Fatalf("bundled-plugin-dirs.txt missing required directory %s (got %v)", name, names)
+		}
+	}
+
+	for _, tc := range []struct {
+		gp        string
+		execRel   string
+		agentHost string
+		nodeRel   string
+	}{
+		{gp: "windows", execRel: "BeefTV.exe", agentHost: "agent-host", nodeRel: filepath.Join("runtime", "node.exe")},
+		{gp: "linux", execRel: "BeefTV", agentHost: "agent-host", nodeRel: filepath.Join("runtime", "bin", "node")},
+		{gp: "darwin", execRel: filepath.Join("BeefTV.app", "Contents", "MacOS", "BeefTV"), agentHost: filepath.Join("BeefTV.app", "Contents", "Resources", "agent-host"), nodeRel: filepath.Join("runtime", "bin", "node")},
+	} {
+		t.Run(tc.gp, func(t *testing.T) {
+			bundleRoot := t.TempDir()
+			execPath := filepath.Join(bundleRoot, tc.execRel)
+			if err := os.MkdirAll(filepath.Dir(execPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(execPath, []byte("exe"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			agentHostDir := filepath.Join(bundleRoot, tc.agentHost)
+			for _, hostFile := range []string{"server.mjs", tc.nodeRel} {
+				full := filepath.Join(agentHostDir, hostFile)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte("fixture"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bundledPluginsRoot := filepath.Join(agentHostDir, "bundled-plugins")
+			for _, name := range names {
+				copyTreeForTest(t, filepath.Join(repoPluginPackages, name), filepath.Join(bundledPluginsRoot, name))
+			}
+
+			// Simulate a desktop install where plugin-packages contains only flat *.beeftv-plugin files.
+			flatOfficialDir := t.TempDir()
+			entries, err := os.ReadDir(repoPluginPackages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			copiedArchive := false
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasSuffix(entry.Name(), protocol.PluginPackageExtension) {
+					data, err := os.ReadFile(filepath.Join(repoPluginPackages, entry.Name()))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(flatOfficialDir, entry.Name()), data, 0o644); err != nil {
+						t.Fatal(err)
+					}
+					copiedArchive = true
+					break
+				}
+			}
+			if !copiedArchive {
+				t.Fatal("no *.beeftv-plugin archive found in plugin-packages")
+			}
+			t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", flatOfficialDir)
+
+			prevExec, prevGOOS := runtimeExecutable, runtimeGOOS
+			runtimeExecutable = func() (string, error) { return execPath, nil }
+			runtimeGOOS = tc.gp
+			t.Cleanup(func() {
+				runtimeExecutable = prevExec
+				runtimeGOOS = prevGOOS
+			})
+
+			if _, ok := BundledSampleDir("beeftv-plugin-slot-test"); ok {
+				t.Fatal("beeftv-plugin-slot-test must not resolve in desktop bundle")
+			}
+
+			dataDir := t.TempDir()
+			rt, err := NewRuntime(dataDir)
+			if err != nil {
+				t.Fatalf("NewRuntime: %v", err)
+			}
+			defer capability.BuiltinRegistry().ResetPluginDescriptors()
+			svc := New(rt, nil)
+			svc.SetPackageFetcher(copyPackageFetcher)
+
+			for _, builtinID := range []string{"beeftv-plugin-market", "beeftv-plugin-ll2"} {
+				builtinView, found := ByID(svc.List(), builtinID)
+				if !found {
+					t.Fatalf("%s was not loaded from agent-host/bundled-plugins", builtinID)
+				}
+				if builtinView.Status != StatusEnabled || builtinView.Source != OriginOfficial {
+					t.Fatalf("unexpected %s view: %+v", builtinID, builtinView)
+				}
+				clientFile, contentType, err := svc.ResolvePackageFile(builtinID, "client/index.js")
+				if err != nil {
+					t.Fatalf("ResolvePackageFile for %s failed: %v", builtinID, err)
+				}
+				if !strings.HasPrefix(clientFile, bundledPluginsRoot) || !strings.Contains(contentType, "javascript") {
+					t.Fatalf("unexpected resolved %s file %s (%s)", builtinID, clientFile, contentType)
+				}
+			}
+
+			// Cancel context so readCuratedRegistry immediately uses the bundled offline registry.json.
+			offlineCtx, cancel := context.WithCancel(context.Background())
+			cancel()
+			curated := loadCuratedRegistryItems(offlineCtx, "", map[string]View{})
+			bundledByName := map[string]bool{}
+			for _, item := range curated {
+				bundledByName[item.PackageName] = item.Bundled
+			}
+			for _, sample := range sampleNames {
+				if !bundledByName[sample] {
+					t.Fatalf("curated registry item %s was not marked Bundled=true (curated=%+v)", sample, curated)
+				}
+				installed, err := svc.InstallPackage(sample, "")
+				if err != nil {
+					t.Fatalf("InstallPackage(%s) from bundled dir failed: %v", sample, err)
+				}
+				if installed.Status != StatusEnabled || installed.PackageSpec != sample {
+					t.Fatalf("unexpected installed sample %s: %+v", sample, installed)
+				}
+			}
+		})
+	}
+}
+

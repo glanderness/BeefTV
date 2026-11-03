@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
 )
@@ -353,19 +354,43 @@ func (c *Runtime) cleanupUninstalledPackageDir(previous map[string]Record, next 
 	}
 }
 
-// BundledSampleDir resolves the name of a sample package shipped in
-// plugin-packages. It is the only place that decides what counts as bundled.
+const bundledPluginsSubdir = "bundled-plugins"
+
+var (
+	runtimeExecutable = os.Executable
+	runtimeGOOS       = goruntime.GOOS
+)
+
+// BundledSampleDir resolves a plugin package directory shipped with BeefTV.
+// Desktop bundles place these directories under agent-host/bundled-plugins so
+// Windows in-app updaters from v2.0.6–v2.1.3 continue to see only regular
+// *.beeftv-plugin files inside plugin-packages; Docker and repo development
+// fall back to officialPluginPackageDir().
 func BundledSampleDir(name string) (string, bool) {
+	executable, _ := runtimeExecutable()
+	return bundledPluginPackageDir(name, executable, runtimeGOOS)
+}
+
+func bundledPluginPackageDir(name, executable, goos string) (string, bool) {
 	if name == "" || strings.ContainsAny(name, `/\.@`) {
 		return "", false
 	}
-	officialDir, err := officialPluginPackageDir()
-	if err != nil {
-		return "", false
+	for _, root := range bundledPluginSearchRoots(executable, goos) {
+		dir := filepath.Join(root, name)
+		if info, err := os.Stat(filepath.Join(dir, "package.json")); err == nil && info.Mode().IsRegular() {
+			return dir, true
+		}
 	}
-	dir := filepath.Join(officialDir, name)
-	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
-		return "", false
+	return "", false
+}
+
+func bundledPluginSearchRoots(executable, goos string) []string {
+	var roots []string
+	if cfg := assistantruntime.BundledConfig(executable, goos); len(cfg.HostArgs) > 0 {
+		roots = append(roots, filepath.Join(filepath.Dir(cfg.HostArgs[0]), bundledPluginsSubdir))
 	}
-	return dir, true
+	if officialDir, err := officialPluginPackageDir(); err == nil && officialDir != "" {
+		roots = append(roots, officialDir)
+	}
+	return roots
 }

@@ -34,12 +34,9 @@ func (c *Runtime) ResolvePackageFile(id string, filePath string) (string, string
 	c.mu.RUnlock()
 	pkgDir := strings.TrimSpace(record.PackageDir)
 	if !ok || pkgDir == "" {
-		if officialDir, err := officialPluginPackageDir(); err == nil && trimmedID != "" && !strings.ContainsAny(trimmedID, `/\..`) {
-			candidate := filepath.Join(officialDir, trimmedID)
-			if info, statErr := os.Stat(filepath.Join(candidate, "package.json")); statErr == nil && !info.IsDir() {
-				pkgDir = candidate
-				ok = true
-			}
+		if candidate, found := BundledSampleDir(trimmedID); found {
+			pkgDir = candidate
+			ok = true
 		}
 	}
 	if !ok {
@@ -178,11 +175,11 @@ func readCuratedRegistry(ctx context.Context) []byte {
 			}
 		}
 	}
-	officialDir, err := officialPluginPackageDir()
-	if err != nil {
+	marketDir, ok := BundledSampleDir("beeftv-plugin-market")
+	if !ok {
 		return nil
 	}
-	raw, _ := os.ReadFile(filepath.Join(officialDir, "beeftv-plugin-market", "registry.json"))
+	raw, _ := os.ReadFile(filepath.Join(marketDir, "registry.json"))
 	return raw
 }
 
