@@ -47,6 +47,30 @@ function defaultManifestFor(pluginId: string): PluginManifest | PluginManifestV2
     return { apiVersion: PLUGIN_API_VERSION, id: pluginId, name: pluginId, version: "", description: "", permissions: [], contributes: {} };
 }
 
+const READ_ONLY_OPS = new Set([
+    "canvas.get",
+    "canvas.search",
+    "asset.list",
+    "asset.get",
+    "task.get",
+    "canvas.generation.propose",
+    "model.catalog",
+    "generation.estimate",
+    "media.overview",
+    "media.inspect",
+    "media.check",
+    "media.review",
+    "skill.catalog",
+    "skill.get",
+    "skill.file",
+    "skill.market.search",
+    "skill.market.get",
+    "skill.market.file",
+    "skill.publish.status",
+    "project.media.search",
+    "project.canvas.search",
+]);
+
 export function createBeefTVPluginHost(pluginId: string, manifest?: PluginManifest | PluginManifestV2): BeefTVPluginHost {
     const notify = (msg: string, level: "info" | "success" | "warning" | "error" = "info") => {
         void import("antd").then(({ message }) => message[level](msg));
@@ -87,8 +111,52 @@ export function createBeefTVPluginHost(pluginId: string, manifest?: PluginManife
             requestInstallPlugin: requestPluginInstall,
         },
         ops: {
-            call: async <T = unknown>(op: string, params?: Record<string, unknown>) =>
-                (await executeWorkspaceOperation<T>(op, { params: params ?? {} })).result,
+            call: async <T = unknown>(op: string, params?: Record<string, unknown>) => {
+                const rawParams = { ...(params ?? {}) };
+                const explicitOpId = typeof rawParams.opId === "string" ? rawParams.opId.trim() : "";
+                if ("opId" in rawParams) delete rawParams.opId;
+                const isReadOnly = READ_ONLY_OPS.has(op);
+                const opId = isReadOnly
+                    ? undefined
+                    : explicitOpId ||
+                      (typeof rawParams.operationId === "string" && rawParams.operationId.trim()
+                          ? undefined
+                          : `plugin-${pluginId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+                const targetCanvasId = typeof rawParams.canvasId === "string" ? rawParams.canvasId.trim() : "";
+                let result: T;
+                try {
+                    const res = await executeWorkspaceOperation<T>(op, { ...(opId ? { opId } : {}), params: rawParams });
+                    result = res.result;
+                } catch (err) {
+                    const isInitialCommit =
+                        op === "canvas.document.commit" &&
+                        rawParams.expectedRevision === 0 &&
+                        Boolean(targetCanvasId) &&
+                        Boolean(rawParams.document && typeof rawParams.document === "object");
+                    const isNotFound =
+                        (typeof (err as { status?: number })?.status === "number" && (err as { status: number }).status === 404) ||
+                        String((err as Error)?.message || "").includes("画布不存在");
+                    if (!isInitialCommit || !isNotFound) throw err;
+                    const created = await http.put<{
+                        project?: { id?: string; revision?: number; title?: string; updatedAt?: string };
+                    }>(`/canvas-projects/${encodeURIComponent(targetCanvasId)}`, {
+                        project: rawParams.document,
+                    });
+                    const docObj = rawParams.document as { title?: string; updatedAt?: string };
+                    result = {
+                        canvasId: created?.project?.id || targetCanvasId,
+                        revision: created?.project?.revision ?? 1,
+                        title: created?.project?.title ?? docObj.title ?? "",
+                        updatedAt: created?.project?.updatedAt ?? docObj.updatedAt ?? new Date().toISOString(),
+                    } as unknown as T;
+                }
+                if (!isReadOnly && targetCanvasId) {
+                    void import("@/services/local-workspace-repository").then(({ refreshLocalCanvasProjectIfChanged }) =>
+                        refreshLocalCanvasProjectIfChanged(targetCanvasId),
+                    );
+                }
+                return result;
+            },
         },
         context: {
             getCanvasId: currentCanvasId,
@@ -121,7 +189,9 @@ export function createBeefTVPluginHost(pluginId: string, manifest?: PluginManife
                 const isPluginOwnedId =
                     Boolean(targetId) &&
                     targetId !== "beefapi" &&
-                    (targetId === `${allowedPrefix}-channel` || targetId.startsWith(`${pluginId}:`));
+                    (targetId === allowedPrefix ||
+                        targetId === `${allowedPrefix}-channel` ||
+                        targetId.startsWith(`${pluginId}:`));
                 if (!isPluginOwnedId) {
                     throw new Error(`插件 ${pluginId} 仅允许写入自身命名空间下的模型渠道`);
                 }

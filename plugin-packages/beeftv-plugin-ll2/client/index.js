@@ -1,9 +1,9 @@
 // BeefTV 内置插件：LL2 (DMC) 算力与视频渠道（beeftv-plugin-ll2）
 // 通过 app.settings 插槽提供一键 BYOK 配置面板，将 LL2 API Key 与预置协议模型一键同步至宿主「设置 -> 模型服务」。
 
-const DEFAULT_BASE_URL = "https://api.ll2.cn";
-const LL2_CHANNEL_ID = "ll2";
-const LL2_CHANNEL_NAME = "LL2 (DMC)";
+export const DEFAULT_BASE_URL = "https://api.ll2.cn";
+export const LL2_CHANNEL_ID = "ll2";
+export const LL2_CHANNEL_NAME = "LL2 (DMC)";
 
 const DEFAULT_VIDEO_REFERENCES = {
   promptMaxChars: 2000,
@@ -126,7 +126,7 @@ export const LL2_PRESET_MODELS = [
       video: {
         references: {
           ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 7,
+          maxImages: 2,
           maxVideos: 0,
           maxAudios: 0,
         },
@@ -137,7 +137,7 @@ export const LL2_PRESET_MODELS = [
         defaultResolution: "720p",
         generateAudio: { supported: true, default: true },
         watermark: { supported: true, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
+        operations: ["text_to_video", "image_to_video"],
         defaultOperation: "text_to_video",
       },
     },
@@ -154,7 +154,7 @@ export const LL2_PRESET_MODELS = [
       video: {
         references: {
           ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 7,
+          maxImages: 2,
           maxVideos: 0,
           maxAudios: 0,
         },
@@ -165,7 +165,7 @@ export const LL2_PRESET_MODELS = [
         defaultResolution: "720p",
         generateAudio: { supported: true, default: true },
         watermark: { supported: true, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
+        operations: ["text_to_video", "image_to_video"],
         defaultOperation: "text_to_video",
       },
     },
@@ -265,7 +265,7 @@ export const LL2_PRESET_MODELS = [
     endpoint: "POST /hd/tasks",
     defaultOptions: {
       testVideoUrl:
-        "https://h3-gz-public-1483601991.cos.ap-guangzhou.myqcloud.com/outputs/f1303d6f8190c0dbc697b30b65c0eae1b648d4efa166e81689b4af735dbf6a6d.mp4",
+        "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20241115/cqqkru/1.mp4",
     },
     capabilityConfig: {
       version: 1,
@@ -282,7 +282,7 @@ export const LL2_PRESET_MODELS = [
         duration: { selection: "enum", values: [5], default: 5 },
         ratios: [],
         defaultRatio: "",
-        resolutions: ["720p", "1080p", "2k", "4k"],
+        resolutions: ["1080p", "2k", "4k"],
         defaultResolution: "1080p",
         generateAudio: { supported: false, default: false },
         watermark: { supported: false, default: false },
@@ -300,6 +300,50 @@ function getReact(host) {
     return window.__BEEFTV_REACT__ || window.React || null;
   }
   return null;
+}
+
+export function upgradeLL2ModelProfile(profile) {
+  if (!profile || typeof profile !== "object") return profile;
+  if (!String(profile.protocol || "").startsWith("ll2-")) return profile;
+  const preset = LL2_PRESET_MODELS.find((item) => item.model === profile.model);
+  if (!preset) return profile;
+  let next = profile;
+  if (preset.defaultOptions?.testVideoUrl) {
+    const currentUrl = String(next.defaultOptions?.testVideoUrl || "");
+    if (!currentUrl || currentUrl.includes("cos.ap-guangzhou.myqcloud.com")) {
+      next = {
+        ...next,
+        defaultOptions: {
+          ...(next.defaultOptions || {}),
+          ...preset.defaultOptions,
+        },
+      };
+    }
+  }
+  const presetRes = preset.capabilityConfig?.video?.resolutions;
+  const currentRes = next.capabilityConfig?.video?.resolutions;
+  if (Array.isArray(presetRes) && Array.isArray(currentRes)) {
+    const validSet = new Set(presetRes);
+    if (currentRes.some((r) => !validSet.has(r))) {
+      const filtered = currentRes.filter((r) => validSet.has(r));
+      const resolutions = filtered.length > 0 ? filtered : [...presetRes];
+      const defaultResolution = validSet.has(next.capabilityConfig.video.defaultResolution)
+        ? next.capabilityConfig.video.defaultResolution
+        : preset.capabilityConfig.video.defaultResolution;
+      next = {
+        ...next,
+        capabilityConfig: {
+          ...next.capabilityConfig,
+          video: {
+            ...next.capabilityConfig.video,
+            resolutions,
+            defaultResolution,
+          },
+        },
+      };
+    }
+  }
+  return next;
 }
 
 export function buildLL2ModelChannel({ apiKey, baseUrl, selectedModels }) {
@@ -376,6 +420,9 @@ function createLL2SettingsPanel(host) {
     const [catalogChecking, setCatalogChecking] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
     const [onlineModels, setOnlineModels] = React.useState([]);
+    const [synced, setSynced] = React.useState(
+      Boolean(existingChannel?.hasApiKey || existingChannel?.apiKey),
+    );
     const [statusMessage, setStatusMessage] = React.useState(
       existingChannel?.hasApiKey || existingChannel?.apiKey
         ? `已连接「${existingChannel.name}」渠道（已启用 ${existingChannel.models?.length || 0} 个模型）`
@@ -472,6 +519,7 @@ function createLL2SettingsPanel(host) {
           throw new Error("当前宿主版本不支持同步模型渠道");
         }
         await host.channels.upsert(channel);
+        setSynced(true);
         setStatusMessage(
           `已将「${LL2_CHANNEL_NAME}」与 ${channel.models.length} 个模型同步至「设置 -> 模型服务」！`,
         );
@@ -838,25 +886,27 @@ function createLL2SettingsPanel(host) {
               },
             },
             h("span", null, statusMessage),
-            h(
-              "button",
-              {
-                type: "button",
-                onClick: () => host?.ui?.navigate?.("/settings"),
-                style: {
-                  padding: "4px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid rgba(16, 185, 129, 0.4)",
-                  background: "rgba(16, 185, 129, 0.12)",
-                  color: "#047857",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                },
-              },
-              "前往模型服务查看与测试 →",
-            ),
+            synced
+              ? h(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => host?.ui?.navigate?.("/settings?section=channels"),
+                    style: {
+                      padding: "4px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid rgba(16, 185, 129, 0.4)",
+                      background: "rgba(16, 185, 129, 0.12)",
+                      color: "#047857",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    },
+                  },
+                  "前往模型服务查看与测试 →",
+                )
+              : null,
           )
         : null,
 

@@ -192,6 +192,10 @@ func validateDraftValue(name, value string) error {
 		if !strings.Contains("|mp3|wav|pcm|flac|aac|opus|ogg|m4a|", "|"+value+"|") {
 			return invalid()
 		}
+	case "videoEditOperation":
+		if !strings.Contains("|text_to_video|image_to_video|reference_to_video|extend|inpaint|replace_element|camera_motion|style_transfer|audio_to_video|compare_versions|concat|draft_to_final|", "|"+value+"|") {
+			return invalid()
+		}
 	case "size", "quality", "vquality", "audioVoice":
 		if strings.TrimSpace(value) == "" {
 			return invalid()

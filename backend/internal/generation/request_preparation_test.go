@@ -2,9 +2,14 @@ package generation
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"io"
+	"net"
+	"net/url"
 	"testing"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/protocol"
 )
 
@@ -17,5 +22,23 @@ func TestMultipartPreparationCannotBeAnUncertainPaidSubmission(t *testing.T) {
 	classified := ClassifyError(UncertainVideoSubmission(context.Background(), err))
 	if classified.Uncertain || classified.Category == CategorySubmissionUncertain {
 		t.Fatalf("unsent POST classified as paid uncertainty: %#v", classified)
+	}
+}
+
+func TestManagedDiscoveryTransportFailureClassifiesAsRequestNotSent(t *testing.T) {
+	for _, cause := range []error{
+		io.EOF,
+		&url.Error{Op: "Get", URL: "https://enterprise.beefapi.com/v1/models", Err: x509.UnknownAuthorityError{}},
+		&net.DNSError{Err: "no such host", Name: "enterprise.beefapi.com"},
+	} {
+		err := RequestPreparationError{Cause: beefapi.MediaDiscoveryTransportError{Cause: cause}}
+		var preparation RequestPreparationError
+		if !errors.As(err, &preparation) || !beefapi.IsDiscoveryTransportError(err) || !SafeRouteRejection(err) {
+			t.Fatalf("expected unsent preparation error for %T: %#v", cause, err)
+		}
+		classified := ClassifyError(UncertainVideoSubmission(context.Background(), err))
+		if classified.Uncertain || classified.Category != CategoryRequestNotSent || classified.BlocksAutomaticRetry() {
+			t.Fatalf("discovery transport error %T misclassified: %#v", cause, classified)
+		}
 	}
 }

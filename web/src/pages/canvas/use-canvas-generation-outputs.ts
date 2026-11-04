@@ -23,5 +23,5 @@ export function useCanvasGenerationOutputs(nodesRef: RefObject<CanvasNodeData[]>
  return useMemo(() => ({ ...base,
  addGenerationOutputs: (node: CanvasNodeData, outputs: GenerationOutput[], signal?: AbortSignal) => applyGenerationOutputs(node, outputs, false, signal),
  selectGenerationOutput: (node: CanvasNodeData, output: GenerationOutput, signal?: AbortSignal) => applyGenerationOutputs(node, [output], true, signal),
- }), [applyGenerationOutputs, base.upload, base.duplicate, base.delete, base.download, base.updateMetadata, base.updateNode, base.updateMediaNode, base.openArtCritique, base.addPanoramaCaptureNode, base.startUpscaleBatch, base.recoverUpscaleResult]);
+ }), [applyGenerationOutputs, base.upload, base.duplicate, base.deleteNode, base.download, base.updateMetadata, base.updateNode, base.updateMediaNode, base.resizeNode, base.openVideoSegment, base.openArtCritique, base.addPanoramaCaptureNode, base.startUpscaleBatch, base.recoverUpscaleResult]);
 }
