@@ -45,7 +45,7 @@ func TestV14PermissionMigrationPreservesOpenTurnAndUnknownColumns(t *testing.T) 
 	}
 	var after []localSchemaMigration
 	db.Order("version").Find(&after)
-	if len(after) != len(before)+2 {
+	if len(after) != len(canonicalLocalMigrations()) {
 		t.Fatal("ledger count")
 	}
 	for i, v := range before {

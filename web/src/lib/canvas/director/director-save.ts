@@ -53,6 +53,7 @@ export type DirectorSaveCoordinatorOptions = {
 
 export interface DirectorSaveCoordinator {
     getSnapshot: () => DirectorSaveSnapshot;
+    hasActiveSave: () => boolean;
     edit: (scene: DirectorScene) => boolean;
     flushLatest: () => Promise<boolean>;
     retry: () => Promise<boolean>;
@@ -438,6 +439,7 @@ export function createDirectorSaveCoordinator(options: DirectorSaveCoordinatorOp
 
     return {
         getSnapshot,
+        hasActiveSave: () => inFlightFlush !== null || debounceHandle !== null,
         edit,
         flushLatest,
         retry,

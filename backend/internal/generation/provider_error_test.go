@@ -10,13 +10,25 @@ import (
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 )
+
+func TestNoAvailableChannelIsNotUserRateLimiting(t *testing.T) {
+	for _, message := range []string{"暂无可用渠道", "分组 Gemini 下模型 gemini-3.7-flash 无可用渠道（distributor）"} {
+		body, _ := json.Marshal(map[string]any{"error": map[string]any{"code": "upstream_crowded", "message": message}})
+		failure := generation.ClassifyHTTP(503, "", string(body))
+		if failure.Category != generation.CategoryProviderUnavailable {
+			t.Fatalf("no channel misclassified: %#v", failure)
+		}
+	}
+}
 
 func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
 	for _, message := range []string{
 		"不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址",
-		"不允许访问保留地址或特殊用途地址", "外部服务域名解析失败",
+		"不允许访问保留地址或特殊用途地址", "不允许访问链路本地、未指定或组播地址",
+		"外部服务域名解析失败",
 	} {
 		raw := message + "。HTTP 400。排查编号：任务 job-outbound · 请求 req-outbound。"
 		for _, failure := range []generation.Failure{
@@ -28,7 +40,11 @@ func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
 			if strings.Contains(failure.Action, "CANVAS_ALLOW_PRIVATE_UPSTREAMS") {
 				t.Fatalf("unsafe global bypass advice: %+v", failure)
 			}
-			if strings.Contains(message, "不允许") && (!strings.Contains(failure.Action, "管理员") || !strings.Contains(failure.Action, "仅将该主机")) {
+			if strings.Contains(message, "链路本地、未指定") {
+				if !strings.Contains(failure.Action, "允许列表也不能放行") || strings.Contains(failure.Action, "仅将该主机") {
+					t.Fatalf("metadata block should not suggest an allowlist bypass: %+v", failure)
+				}
+			} else if strings.Contains(message, "不允许") && (!strings.Contains(failure.Action, "管理员") || !strings.Contains(failure.Action, "仅将该主机")) {
 				t.Fatalf("missing bounded administrator guidance: %+v", failure)
 			}
 			if strings.Contains(message, "解析失败") && !strings.Contains(failure.Action, "域名是否正确") {
@@ -334,8 +350,8 @@ func TestBeefAPIErrorCodeInventory(t *testing.T) {
 	if err := json.Unmarshal(data, &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != 51 {
-		t.Fatalf("BeefAPI error code inventory has %d entries, want 51", len(inventory))
+	if len(inventory) != 53 {
+		t.Fatalf("BeefAPI error code inventory has %d entries, want 53", len(inventory))
 	}
 	for code, category := range inventory {
 		t.Run(code, func(t *testing.T) {
@@ -358,7 +374,7 @@ func TestCanonicalCategoriesRoundTripAndRetryPolicy(t *testing.T) {
 		generation.CategoryInvalidParams, generation.CategoryContextTooLong,
 		generation.CategoryInputInaccessible, generation.CategoryInputTooLarge, generation.CategoryModelMissing,
 		generation.CategoryThrottled, generation.CategoryConcurrency, generation.CategoryProviderUnavailable,
-		generation.CategoryNetwork, generation.CategoryTimeout, generation.CategorySubmissionUncertain,
+		generation.CategoryNetwork, generation.CategoryRequestNotSent, generation.CategoryTimeout, generation.CategorySubmissionUncertain,
 		generation.CategoryAsyncFailed, generation.CategoryCancelled, generation.CategoryPartialSuccess,
 		generation.CategoryDownloadFailed, generation.CategoryResultsMissing,
 		generation.CategoryMalformedResponse, generation.CategoryUnknown,
@@ -374,7 +390,7 @@ func TestCanonicalCategoriesRoundTripAndRetryPolicy(t *testing.T) {
 			if persisted.Category != category {
 				t.Errorf("persisted category = %s, want %s", persisted.Category, category)
 			}
-			allowAutomaticRetry := category == generation.CategoryThrottled || category == generation.CategoryConcurrency || category == generation.CategoryProviderUnavailable || category == generation.CategoryCancelled
+			allowAutomaticRetry := category == generation.CategoryThrottled || category == generation.CategoryConcurrency || category == generation.CategoryProviderUnavailable || category == generation.CategoryCancelled || category == generation.CategoryRequestNotSent
 			if coded.BlocksAutomaticRetry() == allowAutomaticRetry {
 				t.Errorf("automatic retry block = %v, allowed = %v", coded.BlocksAutomaticRetry(), allowAutomaticRetry)
 			}
@@ -468,6 +484,9 @@ func TestReferenceDurationAdviceSurvivesPersistence(t *testing.T) {
 		"第 1 段参考音频时长为 16.00 秒，需要 不超过 15 秒；请裁剪或更换这段素材后再提交",
 		"第 1 张参考图高度为 216 像素，需要 至少 300 像素；请调整尺寸或更换后再提交",
 		"第 2 段参考音频时长为 0.90 秒，需要 2–30 秒；请裁剪或更换这段素材后再提交",
+		"第 2 段参考音频时长为 0.90 秒，需要改到 2–30 秒；请换一段更长的音频后再提交",
+		"参考音频「配音.wav」时长为 0.90 秒，需要改到 2 秒以上；请换一段更长的音频后再提交",
+		"输出时长为 3 秒，当前模型只支持 4–15 秒；请改成 4–15 秒后再提交",
 		"参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 1.8–30.2 秒后重新提交。",
 	} {
 		failure := generation.ClassifyText(text)
@@ -548,5 +567,94 @@ func TestWindowsSocketFailureIsActionable(t *testing.T) {
 		if failure.Category != generation.CategoryNetwork || strings.Contains(failure.UserMessage(), "wsarecv") || strings.Contains(failure.UserMessage(), "secret") {
 			t.Fatalf("failure=%+v message=%s", failure, failure.UserMessage())
 		}
+	}
+}
+
+func TestThirdPartyGatewayChannelExcludedAndWrapperParity(t *testing.T) {
+	channelBody := `{"error":{"message":"这个模型的线路已经在这把密钥的「渠道管理」里被全部取消勾选了，所以当前没有可用渠道。请打开这把密钥的「渠道管理」，至少勾上一条线路后再试。 (request id: req.20261101.zB868dI1)","type":"invalid_request_error","param":"","code":"channel_excluded"}}`
+	channelFailure := generation.ClassifyHTTP(http.StatusForbidden, "403 Forbidden", channelBody)
+	if channelFailure.Category != generation.CategoryPermission || !channelFailure.FromCode || channelFailure.ProviderCode != "channel_excluded" || channelFailure.RequestID != "req.20261101.zB868dI1" {
+		t.Fatalf("channel_excluded misclassified: %+v", channelFailure)
+	}
+	reloadedChannel := generation.ClassifyText(channelFailure.UserMessage())
+	if reloadedChannel.Category != generation.CategoryPermission || reloadedChannel.Reason != channelFailure.Reason || reloadedChannel.Action != channelFailure.Action || reloadedChannel.RequestID != channelFailure.RequestID {
+		t.Fatalf("channel_excluded lost on persisted round-trip: %+v -> %+v", channelFailure, reloadedChannel)
+	}
+
+	// Generic OpenAI type wrapper with unrecognized gateway code falls back to HTTP status when message is opaque.
+	for status, want := range map[int]generation.FailureCategory{
+		http.StatusBadRequest:            generation.CategoryInvalidParams,
+		http.StatusPaymentRequired:       generation.CategoryQuotaUnknown,
+		http.StatusForbidden:             generation.CategoryPermission,
+		http.StatusRequestEntityTooLarge: generation.CategoryInputTooLarge,
+		http.StatusTooManyRequests:       generation.CategoryThrottled,
+		451:                              generation.CategoryUnknown,
+		http.StatusServiceUnavailable:    generation.CategoryProviderUnavailable,
+	} {
+		got := generation.ClassifyHTTP(status, "", `{"error":{"message":"opaque gateway error","type":"invalid_request_error","code":"custom_gateway_code"}}`)
+		if got.Category != want || got.ProviderCode != "custom_gateway_code" {
+			t.Fatalf("HTTP %d with generic type wrapper became %+v, want %s", status, got, want)
+		}
+	}
+
+	// Specific parameter-range advice or message category refinement wins over generic wrapper across statuses.
+	for _, status := range []int{400, 402, 403, 413, 429, 451, 503} {
+		height := generation.ClassifyHTTP(status, "", `{"error":{"message":"Height must be between 300px and 6000px","type":"invalid_request_error","code":"custom_gateway_code"}}`)
+		if height.Category != generation.CategoryInvalidParams || !height.FromCode || height.Retryable || !strings.Contains(height.Action, "300–6000 像素") || height.ProviderCode != "custom_gateway_code" {
+			t.Fatalf("HTTP %d height range lost: %+v", status, height)
+		}
+		quota := generation.ClassifyHTTP(status, "", `{"error":{"message":"Your account quota is exhausted","type":"invalid_request_error","code":"custom_quota_code"}}`)
+		if quota.Category != generation.CategoryQuotaUnknown || !quota.FromCode || quota.ProviderCode != "custom_quota_code" {
+			t.Fatalf("HTTP %d quota message lost: %+v", status, quota)
+		}
+	}
+
+	// A recognized non-generic type remains authoritative over message text even when code is generic.
+	authoritativeType := generation.ClassifyHTTP(http.StatusBadRequest, "", `{"error":{"message":"Your account quota is exhausted (request id: req_inner_123456)","type":"model_capability_not_supported","code":"invalid_request_error"}} (request id: req_outer_654321)`)
+	if authoritativeType.Category != generation.CategoryInvalidParams || !authoritativeType.FromCode || authoritativeType.RequestID != "req_outer_654321" {
+		t.Fatalf("authoritative type or outer request ID overwritten: %+v", authoritativeType)
+	}
+}
+
+func TestClassifyManagedMediaTaskErrorRefinesSanitizedMessage(t *testing.T) {
+	modErr := &beefapi.MediaTaskError{
+		TaskID:  "med_mod_123456",
+		Code:    "media_generation_failed",
+		Message: "OutputVideoSensitiveContentDetected: The output video may contain sensitive information.",
+	}
+	modFailure := generation.ClassifyError(modErr)
+	if modFailure.Category != generation.CategoryModerationOutput || modFailure.TaskID != "med_mod_123456" {
+		t.Fatalf("moderation media task error misclassified: %+v", modFailure)
+	}
+
+	heightErr := &beefapi.MediaTaskError{
+		TaskID:  "med_height_123456",
+		Code:    "media_submission_rejected",
+		Message: "Height must be between 300px and 6000px",
+	}
+	heightFailure := generation.ClassifyError(heightErr)
+	if heightFailure.Category != generation.CategoryInvalidParams || !strings.Contains(heightFailure.Action, "300–6000 像素") || heightFailure.TaskID != "med_height_123456" {
+		t.Fatalf("height media task error lost range guidance: %+v", heightFailure)
+	}
+
+	chineseErr := &beefapi.MediaTaskError{
+		TaskID:  "med_cn_123456",
+		Code:    "media_submission_rejected",
+		Message: "第 1 张参考图高度为 200 像素，需要 300–6000 像素；请调整尺寸或更换后再提交",
+	}
+	chineseFailure := generation.ClassifyError(chineseErr)
+	if chineseFailure.Category != generation.CategoryInvalidParams || !strings.Contains(chineseFailure.Reason, "第 1 张参考图") || chineseFailure.TaskID != "med_cn_123456" {
+		t.Fatalf("chinese media task error lost message: %+v", chineseFailure)
+	}
+
+	fallbackErr := &beefapi.MediaTaskError{
+		TaskID:   "med_fallback_123456",
+		Code:     "media_task_failed",
+		Category: "unknown",
+		Message:  "OutputVideoSensitiveContentDetected: The output video may contain sensitive information.",
+	}
+	fallbackFailure := generation.ClassifyError(fallbackErr)
+	if fallbackFailure.Category != generation.CategoryModerationOutput || fallbackFailure.Uncertain || fallbackFailure.TaskID != "med_fallback_123456" {
+		t.Fatalf("non-pending unknown category fallback misclassified as uncertain: %+v", fallbackFailure)
 	}
 }

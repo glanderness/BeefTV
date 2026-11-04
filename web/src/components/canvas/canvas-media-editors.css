@@ -1,4 +1,4 @@
-/* Shared editing workspace: dark neutral surfaces and explicit action hierarchy. */
+/* Shared editor defaults; the timeline supplies its active canvas theme. */
 .canvas-subtitle-dialog,
 .canvas-timeline-dialog {
     --editor-bg: #101112;
@@ -6,6 +6,8 @@
     --editor-line: #303236;
     --editor-text: #eceeef;
     --editor-muted: #9b9fa6;
+    --editor-button-bg: #202225;
+    --editor-button-line: #36393e;
 }
 :is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-content,
 :is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-header {
@@ -102,7 +104,7 @@
 }
 .canvas-timeline-dialog [data-timeline-clip-id] {
     background: #303339 !important;
-    color: var(--editor-text) !important;
+    color: var(--editor-clip-text, var(--editor-text)) !important;
     border-color: #484d55 !important;
 }
 .canvas-timeline-dialog [data-timeline-clip-kind="audio"] {
@@ -116,8 +118,8 @@
     border-color: #c4c8d0 !important;
 }
 :is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-btn:not(.ant-btn-primary):not(.ant-btn-dangerous) {
-    background: #202225;
-    border-color: #36393e;
+    background: var(--editor-button-bg);
+    border-color: var(--editor-button-line);
     color: var(--editor-text);
     box-shadow: none;
 }

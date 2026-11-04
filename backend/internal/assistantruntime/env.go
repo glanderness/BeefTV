@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/assistant"
+	"infinite-canvas/backend/internal/desktopnet"
 )
 
 type childPin struct {
@@ -18,7 +19,7 @@ type childPin struct {
 }
 
 func (h *Host) buildEnv(provider assistant.Provider, pin childPin) []string {
-	env := filterInheritedEnv(h.environ())
+	env := desktopnet.NodeProxyEnvironment(filterInheritedEnv(h.environ()), provider.BaseURL)
 	set := func(key, value string) {
 		env = setEnvValue(env, key, value)
 	}
@@ -96,7 +97,7 @@ func agentTunableKey(upper string) bool {
 		"BEEFTV_AGENT_TURN_TIMEOUT_MS", "BEEFTV_AGENT_MAX_REQUESTS_PER_TURN",
 		"BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN", "BEEFTV_AGENT_TOTAL_REQUEST_BUDGET",
 		"BEEFTV_AGENT_ALLOWED_ORIGIN", "BEEFTV_AGENT_READ_ONLY",
-		"BEEFTV_AGENT_MAX_REQUESTS":
+		"BEEFTV_AGENT_MAX_REQUESTS", "BEEFTV_AGENT_THINKING":
 		return true
 	}
 	return false

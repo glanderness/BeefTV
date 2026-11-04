@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { ProjectPreview } from "@/components/canvas/canvas-project-card";
 import { LibraryCardShell } from "@/components/canvas/library-card-shell";
+import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasLibrarySummary } from "@/services/api/workspace-data";
 import { hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
@@ -16,6 +17,7 @@ type CanvasFolderCardProps = {
     folders?: Array<{ id: string; name: string }>;
     onMoveToFolder?: (folderId?: string) => void;
     onDuplicate?: () => Promise<void>;
+    onExport?: () => void | Promise<void>;
     onDelete?: () => void;
     onClick: () => void;
     onPrefetch?: () => void;
@@ -23,7 +25,7 @@ type CanvasFolderCardProps = {
 };
 
 /** 画布库中的文件夹封面：单一卡片表面承载预览和信息，避免相邻卡片互相侵入。 */
-export function CanvasFolderCard({ project, projectName, folders = [], onMoveToFolder, onDuplicate, onDelete, onClick, onPrefetch, opening = false }: CanvasFolderCardProps) {
+export function CanvasFolderCard({ project, projectName, folders = [], onMoveToFolder, onDuplicate, onExport, onDelete, onClick, onPrefetch, opening = false }: CanvasFolderCardProps) {
     const { message } = App.useApp();
     const renameProject = useCanvasStore((state) => state.renameProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
@@ -40,7 +42,42 @@ export function CanvasFolderCard({ project, projectName, folders = [], onMoveToF
     const [coverUrl, setCoverUrl] = useState<string>();
 
     useEffect(() => {
-        try { setCoverUrl(localStorage.getItem(`beeftv-project-cover:${project.id}`) || undefined); } catch { /* private browsing */ }
+        let active = true;
+        const coverKey = `beeftv-project-cover:${project.id}`;
+        const storage = localForageStorageForScope();
+        void Promise.resolve(storage.getItem(coverKey))
+            .then((indexedCover) => {
+                if (indexedCover) {
+                    if (active) setCoverUrl(indexedCover);
+                    return;
+                }
+                let legacyCover: string | null = null;
+                try {
+                    legacyCover = localStorage.getItem(coverKey);
+                } catch {
+                    /* private browsing */
+                }
+                if (legacyCover) {
+                    if (active) setCoverUrl(legacyCover);
+                    void Promise.resolve(storage.setItem(coverKey, legacyCover))
+                        .then(() => {
+                            try { localStorage.removeItem(coverKey); } catch { /* ignore */ }
+                        })
+                        .catch(() => { /* ignore */ });
+                } else if (active) {
+                    setCoverUrl(undefined);
+                }
+            })
+            .catch(() => {
+                try {
+                    if (active) setCoverUrl(localStorage.getItem(coverKey) || undefined);
+                } catch {
+                    /* private browsing */
+                }
+            });
+        return () => {
+            active = false;
+        };
     }, [project.id]);
 
     const changeCover = (event: ChangeEvent<HTMLInputElement>) => {
@@ -59,8 +96,15 @@ export function CanvasFolderCard({ project, projectName, folders = [], onMoveToF
                 canvas.height = Math.max(1, Math.round(image.height * scale));
                 canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
                 const dataUrl = canvas.toDataURL("image/jpeg", 0.84);
+                const coverKey = `beeftv-project-cover:${project.id}`;
                 setCoverUrl(dataUrl);
-                try { localStorage.setItem(`beeftv-project-cover:${project.id}`, dataUrl); } catch { /* quota */ }
+                void Promise.resolve(localForageStorageForScope().setItem(coverKey, dataUrl))
+                    .then(() => {
+                        try { localStorage.removeItem(coverKey); } catch { /* ignore */ }
+                    })
+                    .catch(() => {
+                        try { localStorage.setItem(coverKey, dataUrl); } catch { /* quota */ }
+                    });
                 message.success("项目封面已更新");
             };
             image.src = String(reader.result);
@@ -133,6 +177,7 @@ export function CanvasFolderCard({ project, projectName, folders = [], onMoveToF
                             { key: "rename", label: "重命名", onClick: () => startEditing(project.id, project.title) },
                             { key: "cover", label: "修改封面", onClick: () => coverInputRef.current?.click() },
                             { key: "duplicate", label: "创建副本", onClick: () => void onDuplicate?.() },
+                            ...(onExport ? [{ key: "export", label: "导出项目", onClick: () => void onExport() }] : []),
                             { key: "move", label: "移动至文件夹", children: [{ key: "root", label: "未分类", onClick: () => onMoveToFolder?.(undefined) }, ...folders.map((folder) => ({ key: folder.id, label: folder.name, onClick: () => onMoveToFolder?.(folder.id) }))] },
                             { type: "divider" },
                             { key: "delete", danger: true, label: "删除项目", onClick: () => onDelete?.() },

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -196,6 +197,115 @@ func TestUpdateUserCanvasStoryboardRowsPartialPatch(t *testing.T) {
 	}
 }
 
+// 绑定后本行同类产出只剩一条指向绑定节点的连线；另一类产出、其他行、素材引用和
+// 指向已删除节点的连线保持原样；回执列出的连线增删与文档实际变化一致。
+func TestUpdateUserCanvasStoryboardRowsBindKeepsOneOutputPerKind(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	created, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
+		"id":"canvas-bind","revision":0,"title":"分镜",
+		"nodes":[
+			{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"r1","shotNumber":1,"imageNodeId":"img-a"},{"id":"r2","shotNumber":2,"imageNodeId":"img-a"}]}}},
+			{"id":"img-a","type":"image"},{"id":"img-b","type":"image"},{"id":"vid","type":"video"},{"id":"txt","type":"text"},
+			{"id":"board","type":"image","metadata":{"workflowKind":"action_board"}}
+		],"connections":[
+			{"id":"drag","fromNodeId":"script","toNodeId":"img-a","fromHandleId":"row:r1"},
+			{"id":"gen","fromNodeId":"script","toNodeId":"img-b","fromHandleId":"row:r1","relation":"storyboard-output","storyboardRowId":"r1"},
+			{"id":"dup","fromNodeId":"script","toNodeId":"img-b","fromHandleId":"row:r1"},
+			{"id":"video-out","fromNodeId":"script","toNodeId":"vid","fromHandleId":"row:r1"},
+			{"id":"orphan","fromNodeId":"script","toNodeId":"gone","fromHandleId":"row:r1"},
+			{"id":"text-out","fromNodeId":"script","toNodeId":"txt","fromHandleId":"row:r1"},
+			{"id":"other-row","fromNodeId":"script","toNodeId":"img-a","fromHandleId":"row:r2"},
+			{"id":"ref","fromNodeId":"txt","toNodeId":"img-a","relation":"storyboard-asset-reference","storyboardRowId":"r1"},
+			{"id":"action-board","fromNodeId":"script","toNodeId":"board","fromHandleId":"row:r1"}
+		]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, update, err := svc.UpdateUserCanvasStoryboardRows("owner", "canvas-bind", "script", []StoryboardRowPatch{{RowID: "r1", ImageNodeID: strPtr("img-b")}}, created.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(update.CreatedEdgeIDs) != 0 || strings.Join(update.DeletedEdgeIDs, ",") != "drag,dup" {
+		t.Fatalf("edge receipt = %#v", update)
+	}
+	ids := func() string {
+		raw, err := svc.UserCanvasProject("owner", "canvas-bind")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Connections []struct {
+				ID string `json:"id"`
+			} `json:"connections"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(doc.Connections))
+		for _, edge := range doc.Connections {
+			out = append(out, edge.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(); got != "gen,video-out,orphan,text-out,other-row,ref,action-board" {
+		t.Fatalf("connections = %s", got)
+	}
+	rows := storyboardRowsOf(t, svc, "canvas-bind", "script")
+	if rows[0]["imageNodeId"] != "img-b" || rows[1]["imageNodeId"] != "img-a" {
+		t.Fatalf("rows = %#v", rows)
+	}
+
+	_, update, err = svc.UpdateUserCanvasStoryboardRows("owner", "canvas-bind", "script", []StoryboardRowPatch{{RowID: "r1", ImageNodeID: strPtr("")}}, summary.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(update.DeletedEdgeIDs, ",") != "gen" || len(update.CreatedEdgeIDs) != 0 {
+		t.Fatalf("unbind receipt = %#v", update)
+	}
+	if got := ids(); got != "video-out,orphan,text-out,other-row,ref,action-board" {
+		t.Fatalf("connections after unbind = %s", got)
+	}
+	if _, exists := storyboardRowsOf(t, svc, "canvas-bind", "script")[0]["imageNodeId"]; exists {
+		t.Fatal("unbind left imageNodeId")
+	}
+}
+
+// 绑定目标无效或 revision 过期时整批拒绝，画布和 revision 都不变。
+func TestUpdateUserCanvasStoryboardRowsRejectsInvalidBindingWithoutWrite(t *testing.T) {
+	svc, canvasID, nodeID, revision := storyboardFixture(t)
+	summary, created, err := svc.AppendUserCanvasStoryboardRows("owner", canvasID, nodeID, []StoryboardRowDraft{{}, {}}, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.UserCanvasProject("owner", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		patches  []StoryboardRowPatch
+		revision int64
+		status   int
+	}{
+		"wrong type": {[]StoryboardRowPatch{{RowID: created[0].ID, VideoNodeID: strPtr("txt")}}, summary.Revision, http.StatusBadRequest},
+		"missing":    {[]StoryboardRowPatch{{RowID: created[0].ID, ImageNodeID: strPtr("ghost")}}, summary.Revision, http.StatusNotFound},
+		"batch":      {[]StoryboardRowPatch{{RowID: created[1].ID, StoryboardRowDraft: StoryboardRowDraft{Dialogue: strPtr("x")}}, {RowID: created[0].ID, ImageNodeID: strPtr("script")}}, summary.Revision, http.StatusBadRequest},
+		"stale":      {[]StoryboardRowPatch{{RowID: created[0].ID, ImageNodeID: strPtr("")}}, revision, http.StatusConflict},
+	} {
+		_, _, err := svc.UpdateUserCanvasStoryboardRows("owner", canvasID, nodeID, test.patches, test.revision)
+		var appError *kernel.AppError
+		if !errors.As(err, &appError) || appError.Status != test.status {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		after, err := svc.UserCanvasProject("owner", canvasID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("%s wrote canvas", name)
+		}
+	}
+}
+
 // 空 patch（一个字段都没给）必须拒绝，避免静默推进 revision。
 func TestUpdateUserCanvasStoryboardRowsRejectsEmptyPatch(t *testing.T) {
 	svc, canvasID, nodeID, revision := storyboardFixture(t)
@@ -257,5 +367,62 @@ func TestStoryboardRowsRejectOversizedBatch(t *testing.T) {
 	drafts := make([]StoryboardRowDraft, maxStoryboardRowsPerCall+1)
 	if _, _, err := svc.AppendUserCanvasStoryboardRows("owner", canvasID, nodeID, drafts, revision); err == nil {
 		t.Fatal("超上限批次应被拒绝")
+	}
+}
+
+func TestUpdateUserCanvasStoryboardRowsAutoSyncsBoundNodeDrafts(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	created, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
+		"id":"canvas-sync","revision":0,"title":"分镜同步",
+		"nodes":[
+			{"id":"script","type":"script","metadata":{"storyboard":{"rows":[
+				{"id":"r1","shotNumber":1,"imageGenerationPrompt":"旧首帧1","videoMotionPrompt":"旧视频1","imageNodeId":"img-1","videoNodeId":"vid-1"},
+				{"id":"r2","shotNumber":2,"plotDescription":"旧剧情2","imageGenerationPrompt":"","videoMotionPrompt":"旧视频2","imageNodeId":"img-2","videoNodeId":"vid-2"}
+			]}}},
+			{"id":"img-1","type":"image","metadata":{"content":"","taskId":"task-1","prompt":"已提交首帧1","composerContent":"参考资产：@角色1\n旧首帧1","status":"success"}},
+			{"id":"vid-1","type":"video","metadata":{"content":"","prompt":"旧视频1","composerContent":"用户单独手改过的视频草稿","status":"idle"}},
+			{"id":"img-2","type":"image","metadata":{"content":"","storageKey":"canvas/image/r2.png","prompt":"已提交首帧2","composerContent":"旧剧情2","status":"success"}},
+			{"id":"vid-2","type":"video","metadata":{"content":"","prompt":"旧视频2","composerContent":"旧视频2","status":"idle"}}
+		],"connections":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, update, err := svc.UpdateUserCanvasStoryboardRows("owner", "canvas-sync", "script", []StoryboardRowPatch{
+		{
+			RowID: "r1",
+			StoryboardRowDraft: StoryboardRowDraft{
+				ImageGenerationPrompt: strPtr("新首帧1：雨夜特写"),
+				VideoMotionPrompt:     strPtr("新视频1：缓慢拉远"),
+			},
+		},
+		{
+			RowID: "r2",
+			StoryboardRowDraft: StoryboardRowDraft{
+				ImageGenerationPrompt: strPtr("新首帧2：剧情回退同步"),
+				VideoMotionPrompt:     strPtr("新视频2：推镜"),
+			},
+		},
+	}, created.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(update.SyncedNodeIDs, ",") != "img-1,img-2,vid-2" || strings.Join(update.SkippedNodeIDs, ",") != "vid-1" {
+		t.Fatalf("synced/skipped receipt = %#v", update)
+	}
+	doc, err := svc.loadCanvasDoc("owner", "canvas-sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgMeta := findCanvasNode(doc, "img-1")["metadata"].(map[string]any)
+	if imgMeta["composerContent"] != "参考资产：@角色1\n新首帧1：雨夜特写" || imgMeta["prompt"] != "已提交首帧1" {
+		t.Fatalf("带参考资产前缀的首帧草稿应保留前缀并保留历史提示词: %#v", imgMeta)
+	}
+	img2Meta := findCanvasNode(doc, "img-2")["metadata"].(map[string]any)
+	if img2Meta["composerContent"] != "新首帧2：剧情回退同步" || img2Meta["prompt"] != "已提交首帧2" {
+		t.Fatalf("plotDescription 回退与仅含 storageKey 的节点应同步草稿并保留历史提示词: %#v", img2Meta)
+	}
+	vidMeta := findCanvasNode(doc, "vid-1")["metadata"].(map[string]any)
+	if vidMeta["composerContent"] != "用户单独手改过的视频草稿" {
+		t.Fatalf("单独手改过的视频草稿不应被覆盖: %#v", vidMeta)
 	}
 }

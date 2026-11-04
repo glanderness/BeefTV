@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/app"
 	"net/http"
 	"sort"
 	"strings"
@@ -36,7 +35,20 @@ func externalBusiness(c *gin.Context) (externalBusinessPrincipal, bool) {
 	return p, ok
 }
 
-func businessPathAllowed(p string) bool {
+func businessRouteAllowed(method, p string) bool {
+	// Public market reads are ordinary discovery. Publishing grants, private
+	// drafts and the two confirmation actions remain on the desktop UI path.
+	if p == "/skills/market" || strings.HasPrefix(p, "/skills/market/") {
+		if method != http.MethodGet {
+			return false
+		}
+		switch p {
+		case "/skills/market/search", "/skills/market/catalog", "/skills/market/releases/:skillId/:releaseId", "/skills/market/versions/:skillId":
+			return true
+		default:
+			return false
+		}
+	}
 	for _, prefix := range []string{"/assets", "/asset-folders", "/resources", "/canvas-projects", "/canvas-folders", "/projects", "/project-folders", "/voice-profiles", "/style-profiles", "/tasks", "/timeline", "/depth-captures", "/creation-runs", "/creation-conversations", "/skills", "/plugins", "/runninghub", "/settings/prompt-templates"} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return true
@@ -49,7 +61,7 @@ func NewBusinessCatalog(routes gin.RoutesInfo) *BusinessCatalog {
 	c := &BusinessCatalog{}
 	for _, route := range routes {
 		p := strings.TrimPrefix(route.Path, "/api")
-		if !strings.HasPrefix(route.Path, "/api/") || !businessPathAllowed(p) {
+		if !strings.HasPrefix(route.Path, "/api/") || !businessRouteAllowed(route.Method, p) {
 			continue
 		}
 		readOnly := route.Method == http.MethodGet || p == "/timeline/render-plan"
@@ -110,11 +122,11 @@ func (c *BusinessCatalog) Match(method, p string) (BusinessTool, bool) {
 	return BusinessTool{}, false
 }
 
-func RegisterBusinessDiscovery(api *gin.RouterGroup, catalog *BusinessCatalog, svc *app.Service) {
+func RegisterBusinessDiscovery(api *gin.RouterGroup, catalog *BusinessCatalog, owners ownerCredentialDirs) {
 	api.GET("/business/tools", func(c *gin.Context) {
 		principal, authorized := externalBusiness(c)
 		if !authorized {
-			if c.GetHeader("X-Beeftv-Client") != "" || !requireOwner(c, svc) {
+			if c.GetHeader("X-Beeftv-Client") != "" || !requireOwner(c, owners) {
 				return
 			}
 		}

@@ -1,14 +1,12 @@
 package app
 
 import (
-	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/prompts"
 )
 
 type (
 	PromptTemplateVariable         = prompts.PromptTemplateVariable
 	PromptOperationDefinition      = prompts.PromptOperationDefinition
-	PromptTemplateRequest          = prompts.PromptTemplateRequest
 	UserPromptCustomizationRequest = prompts.UserPromptCustomizationRequest
 	UserPromptPreference           = prompts.UserPromptPreference
 	CompiledPrompt                 = prompts.CompiledPrompt
@@ -28,96 +26,21 @@ const (
 	promptOperationSkillDraft           = prompts.OperationSkillDraft
 )
 
-type promptAdminGate struct {
-	requireAdmin func(*model.User) error
-	appendAudit  func(*model.User, string, string, string, string, any) error
-}
-
-func (g promptAdminGate) RequireAdmin(user *model.User) error {
-	if g.requireAdmin == nil {
-		return nil
-	}
-	return g.requireAdmin(user)
-}
-
-func (g promptAdminGate) AppendAudit(actor *model.User, action, targetType, targetID, summary string, metadata any) error {
-	if g.appendAudit == nil {
-		return nil
-	}
-	return g.appendAudit(actor, action, targetType, targetID, summary, metadata)
-}
-
-func newPromptAdminGate(service *Service) promptAdminGate {
-	if service == nil {
-		return promptAdminGate{}
-	}
-	return promptAdminGate{requireAdmin: service.RequireAdmin, appendAudit: service.appendAdminAudit}
-}
+// PromptService exposes the domain service to the HTTP composition layer.
+func (s *Service) PromptService() *prompts.Service { return s.promptDomain() }
 
 func (s *Service) promptDomain() *prompts.Service {
 	if s == nil {
-		return prompts.New(nil, nil)
+		return prompts.New(nil)
 	}
 	if s.prompts != nil {
 		return s.prompts
 	}
-	return prompts.New(s.repo, newPromptAdminGate(s))
-}
-
-func (s *Service) ListStyleProfiles(userID string) ([]model.StyleProfile, error) {
-	return s.promptDomain().ListStyleProfiles(userID)
-}
-
-func (s *Service) CreateStyleProfile(userID string, req StyleProfileRequest) (model.StyleProfile, error) {
-	return s.promptDomain().CreateStyleProfile(userID, req)
-}
-
-func (s *Service) UpdateStyleProfile(userID string, id string, req StyleProfileRequest) (model.StyleProfile, error) {
-	return s.promptDomain().UpdateStyleProfile(userID, id, req)
-}
-
-func (s *Service) SetStyleProfileFavorite(userID string, id string, favorite bool) error {
-	return s.promptDomain().SetStyleProfileFavorite(userID, id, favorite)
-}
-
-func (s *Service) TouchStyleProfile(userID string, id string) error {
-	return s.promptDomain().TouchStyleProfile(userID, id)
-}
-
-func (s *Service) DeleteStyleProfile(userID string, id string) error {
-	return s.promptDomain().DeleteStyleProfile(userID, id)
+	return prompts.New(s.repo)
 }
 
 func (s *Service) EnsureDefaultPromptTemplates() error {
 	return s.promptDomain().EnsureDefaultPromptTemplates()
-}
-
-func (s *Service) AdminPromptTemplates(actor *model.User) ([]model.PromptTemplate, []PromptOperationDefinition, error) {
-	return s.promptDomain().AdminPromptTemplates(actor)
-}
-
-func (s *Service) CreatePromptTemplate(actor *model.User, req PromptTemplateRequest) (*model.PromptTemplate, error) {
-	return s.promptDomain().CreatePromptTemplate(actor, req)
-}
-
-func (s *Service) UpdatePromptTemplate(actor *model.User, id string, req PromptTemplateRequest) (*model.PromptTemplate, error) {
-	return s.promptDomain().UpdatePromptTemplate(actor, id, req)
-}
-
-func (s *Service) DeletePromptTemplate(actor *model.User, id string) error {
-	return s.promptDomain().DeletePromptTemplate(actor, id)
-}
-
-func (s *Service) UserPromptPreferences(user *model.User) ([]UserPromptPreference, error) {
-	return s.promptDomain().UserPromptPreferences(user)
-}
-
-func (s *Service) UpdateUserPromptCustomization(user *model.User, operation string, req UserPromptCustomizationRequest) (*model.UserPromptCustomization, error) {
-	return s.promptDomain().UpdateUserPromptCustomization(user, operation, req)
-}
-
-func (s *Service) ResetUserPromptCustomization(user *model.User, operation string) error {
-	return s.promptDomain().ResetUserPromptCustomization(user, operation)
 }
 
 func (s *Service) compilePrompt(userID string, operation string, values map[string]string) (CompiledPrompt, error) {

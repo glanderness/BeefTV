@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 16
+const CurrentSchemaVersion int64 = 28
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -59,8 +59,11 @@ func LocalModels() []any {
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
 		&model.AssistantTurn{},
+		&model.AssistantContinuation{},
+		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
 		&model.CanvasLibraryFolder{}, &model.CanvasDrawing{},
+		&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowResource{}, &model.CanvasWorkflowRevision{},
 		&model.PromptTemplate{}, &model.UserPromptCustomization{},
 		&model.Task{}, &model.CreationRun{}, &model.CreationSubmission{}, &model.TaskTextDelta{}, &model.TaskLog{}, &model.Result{},
 	}
@@ -90,6 +93,55 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 14, name: "assistant-skill-version-pins", apply: migrateAssistantSkillPins},
 		{version: 15, name: "assistant-permission-and-canvas-snapshots", apply: migrateAssistantPermissions},
 		{version: 16, name: "assistant-durable-session-binding", apply: migrateAssistantSessions},
+		{version: 17, name: "assistant-active-skill-context", apply: migrateAssistantSkillContexts},
+		{version: 18, name: "assistant-generation-continuations", apply: migrateAssistantContinuations},
+		{version: 19, name: "assistant-continuation-intent-fence", apply: migrateAssistantContinuationIntentFence},
+		{version: 20, name: "assistant-production-authorization", apply: migrateAssistantProductionAuthorization},
+		{version: 21, name: "skill-market-release-metadata", apply: migrateSkillMarketReleaseMetadata},
+		{version: 22, name: "canvas-reusable-workflows", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowResource{})
+		}},
+		{version: 23, name: "canvas-workflow-source-snapshots", apply: func(tx *gorm.DB) error { return ensureSQLiteColumn(tx, "tasks", "workflow_source_cipher", "TEXT") }},
+		{version: 24, name: "canvas-workflow-immutable-revisions", apply: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowRevision{}); err != nil {
+				return err
+			}
+			return tx.Exec("INSERT OR IGNORE INTO canvas_workflow_revisions (template_id, revision, user_id, name, description, definition_json, recipe_cipher) SELECT id, 1, user_id, name, description, definition_json, recipe_cipher FROM canvas_workflows").Error
+		}},
+		// Preview builds assigned v17-v19 to workflow migrations before main
+		// used those versions for assistant context and continuation schema. Keep
+		// the historical ledger intact and reconcile the idempotent assistant
+		// structures under a new version so upgraded preview databases become
+		// compatible with current main.
+		{version: 25, name: "reconcile-preview-assistant-schema", apply: func(tx *gorm.DB) error {
+			if err := migrateAssistantSkillContexts(tx); err != nil {
+				return err
+			}
+			if err := migrateAssistantContinuations(tx); err != nil {
+				return err
+			}
+			return migrateAssistantContinuationIntentFence(tx)
+		}},
+		{version: 26, name: "task-recovery-outcome", apply: func(tx *gorm.DB) error {
+			return ensureSQLiteColumn(tx, "tasks", "recovery_outcome", "TEXT")
+		}},
+		// v26 已随 v2.0.5 发布，已升级的库不会再执行它；结算原值列必须放在新版本里。
+		{version: 27, name: "task-beefapi-settlement", apply: func(tx *gorm.DB) error {
+			for _, col := range []struct{ name, def string }{
+				{"beef_usage_state", "TEXT"},
+				{"beef_billing_state", "TEXT"},
+				{"beef_reconcile_deadline", "TEXT"},
+				{"image_job_id", "TEXT NOT NULL DEFAULT ''"},
+			} {
+				if err := ensureSQLiteColumn(tx, "tasks", col.name, col.def); err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
+		{version: 28, name: "managed-media-query-identity", apply: func(tx *gorm.DB) error {
+			return ensureSQLiteColumn(tx, "image_submissions", "query_cipher", "TEXT")
+		}},
 	}
 }
 
@@ -152,6 +204,11 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	}
 	if err := assertLedgerImmutable(db, frozen); err != nil {
 		return err
+	}
+	if current >= 6 && db.Migrator().HasColumn("agent_op_records", "payload_hash") {
+		if err := ensureAgentOpRecordsTable(db); err != nil {
+			return fmt.Errorf("补齐 Agent 操作记录字段: %w", err)
+		}
 	}
 	if current >= 11 {
 		if err := ensureCreationConversationsIndexes(db); err != nil {
@@ -384,7 +441,10 @@ func migrateLegacyCreationSubmissions(db *gorm.DB) error {
 }
 
 func RequireLocalSchema(db *gorm.DB) error {
-	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}} {
+	if !db.Migrator().HasTable(&model.AssistantContinuation{}) {
+		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
+	}
+	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}, &model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{}} {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 		}
@@ -398,6 +458,19 @@ func RequireLocalSchema(db *gorm.DB) error {
 	}
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
+	}
+	for _, col := range []string{"recovery_outcome", "beef_usage_state", "beef_billing_state", "beef_reconcile_deadline", "image_job_id"} {
+		if has, err := sqliteHasColumn(db, "tasks", col); err != nil {
+			return err
+		} else if !has {
+			return fmt.Errorf("本地任务结构缺失列 %s", col)
+		}
+	}
+	if err := requireAssistantContinuations(db); err != nil {
+		return err
+	}
+	if err := requireAssistantContinuationIntentFence(db); err != nil {
+		return err
 	}
 	return requireReconciledSchema(db)
 }
@@ -482,7 +555,40 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 16 {
-		return requireAssistantSessions(db)
+		if err := requireAssistantSessions(db); err != nil {
+			return err
+		}
+	}
+	if version >= 20 {
+		if err := requireAssistantProductionAuthorization(db); err != nil {
+			return err
+		}
+	}
+	if version >= 21 {
+		if err := requireSkillMarketReleaseMetadata(db); err != nil {
+			return err
+		}
+	}
+	if version >= 22 {
+		for _, table := range []any{&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowResource{}} {
+			if !db.Migrator().HasTable(table) {
+				return fmt.Errorf("本地可复用工作流表缺失，请启用自动迁移")
+			}
+		}
+	}
+	if version >= 23 {
+		exists, err := sqliteHasColumn(db, "tasks", "workflow_source_cipher")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("本地任务工作流来源快照列缺失，请启用自动迁移")
+		}
+	}
+	if version >= 24 {
+		if !db.Migrator().HasTable(&model.CanvasWorkflowRevision{}) || !db.Migrator().HasColumn(&model.CanvasWorkflow{}, "revision") || !db.Migrator().HasColumn(&model.CanvasWorkflowRun{}, "template_revision") {
+			return fmt.Errorf("本地工作流版本结构缺失，请启用自动迁移")
+		}
 	}
 	return nil
 }

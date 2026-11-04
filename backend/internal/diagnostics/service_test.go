@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -14,6 +15,65 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestExportRecordsKeepFailureEvidenceAndLocalReason(t *testing.T) {
+	row := sanitizeTask(model.Task{ID: "task-disk", FailureDiagnostics: &model.TaskFailureDiagnostics{
+		Source: "local_result", Stage: "本地结果处理", ExecutionResult: "completed", RequestID: "req-12345678", ProviderTaskID: "task_12345678",
+		Summary: `write C:\Users\private\video: There is not enough space on the disk`,
+	}})
+	body, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, expected := range []string{"failureDiagnostics", "local_result", "req-12345678", "task_12345678", "not enough space on the disk"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing %s: %s", expected, text)
+		}
+	}
+	if strings.Contains(text, "private") {
+		t.Fatal("private path leaked")
+	}
+	event := sanitizeClientEvent(ClientEvent{Reason: "local_credential_failed", RequestID: "req-credential-test", Message: "工作区密钥文件不存在"})
+	if event.Reason != "local_credential_failed" || event.RequestID != "req-credential-test" || event.Message != "工作区密钥文件不存在" {
+		t.Fatalf("lost admission evidence: %#v", event)
+	}
+}
+
+func TestExportIncludesIndependentEnvironmentEvidence(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:diagnostics-environment?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.TaskLog{}, &model.ApiCallLog{}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	svc := New(Dependencies{DataDir: dir, Store: repository.New(db)})
+	var req ExportRequest
+	if err := json.Unmarshal([]byte(`{"runtime":{"capabilities":{"secureRandom":true,"storageWritable":false,"secret":"never-export-me"}}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := svc.Export("user-1", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := readTestZIP(t, bundle.Data)
+	if !strings.Contains(files["context/environment.json"], `"catalog"`) || !strings.Contains(files["context/environment.json"], `"storage-write"`) {
+		t.Fatal("missing native evidence")
+	}
+	if !strings.Contains(files["context/runtime.json"], `"storageWritable": false`) {
+		t.Fatal("missing client capability")
+	}
+	if strings.Contains(files["context/runtime.json"], `"h264"`) {
+		t.Fatal("uncollected capability was inferred false")
+	}
+	for _, contents := range files {
+		if strings.Contains(contents, dir) || strings.Contains(contents, "never-export-me") {
+			t.Fatal("environment leaked unapproved fields")
+		}
+	}
+}
 
 func TestExportRedactsSensitiveValuesFromFixture(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:diagnostics-test?mode=memory&cache=shared"), &gorm.Config{})

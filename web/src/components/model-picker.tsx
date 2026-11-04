@@ -78,7 +78,7 @@ export function ModelPicker({
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
     const current = additionalOptions.has(storedCurrent) ? storedCurrent : options.includes(resolvedCurrent) ? resolvedCurrent : "";
     const portrait = seedancePortraitModel(current || storedCurrent);
-    const portraitQuote = seedancePortraitLabel(current) && current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
+    const portraitQuote = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
     const priceLines = portraitPriceLines(portraitQuote);
     const creationVariant = variant === "creation";
     const additionalCurrent = additionalOptions.get(current);

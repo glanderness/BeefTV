@@ -1,5 +1,5 @@
 import { http, ApiError } from "@/services/api/request";
-import type { ClientDiagnosticEvent } from "./client-diagnostics";
+import type { ClientDiagnosticEvent, ClientDiagnosticCoverage } from "./client-diagnostics";
 import { saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
 
 export type DiagnosticExportInput = {
@@ -14,17 +14,26 @@ export type DiagnosticExportInput = {
         browser?: string;
         os?: string;
         timezone?: string;
+        capabilities?: { secureRandom: boolean; randomUUID: boolean; structuredClone: boolean; indexedDB: boolean; storageWritable?: boolean; storageTimedOut?: boolean; webGL: boolean; h264: boolean; hevc: boolean };
     };
     clientEvents: ClientDiagnosticEvent[];
+    clientCoverage?: ClientDiagnosticCoverage;
 };
 
 export type DiagnosticPreview = {
+    canvasBindingCount?: number;
+	updateLog?: { status: "available" | "missing" | "unreadable"; lines: number; truncated: boolean };
     clientEventLimit: number;
     taskCount: number;
     taskLogCount: number;
     apiCallCount: number;
     estimatedBytes: number;
     willTruncate: boolean;
+    assistantTurnCount?: number;
+    assistantEvidenceCount?: number;
+    backendEventCount?: number;
+    resourcesCount?: number;
+    collectors?: Record<string, { status: "complete" | "partial" | "unavailable" | "failed" | "truncated"; records: number; omittedAtLeast?: number; limit?: number; from?: string; to?: string; scope?: string; reason?: string }>;
 };
 
 export type DiagnosticDownload = {

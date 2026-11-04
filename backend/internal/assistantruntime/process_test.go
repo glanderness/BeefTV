@@ -214,6 +214,9 @@ func TestHostStopReapsOwnChild(t *testing.T) {
 	if err := host.StopContext(context.Background()); err != nil {
 		t.Fatalf("无自有宿主时钩子应为 no-op，实际 %v", err)
 	}
+	if launched, err := host.Ensure(fixtureProvider(), "http://127.0.0.1:18090/api", "desktop-shell-token", true); err == nil || launched || host.Running() {
+		t.Fatalf("应用退出期间的状态查询不得重启宿主：launched=%v err=%v", launched, err)
+	}
 }
 
 func TestHostRestartReplacesChild(t *testing.T) {

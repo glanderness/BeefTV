@@ -4,10 +4,16 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/creation"
 )
 
-func RegisterCreationRoutes(r *gin.RouterGroup, svc *app.Service) {
+type creationRouteService interface {
+	workspaceOwners
+	Creation() *creation.Service
+}
+
+func RegisterCreationRoutes(r *gin.RouterGroup, svc creationRouteService) {
 	read := func(action string) gin.HandlerFunc {
 		return func(c *gin.Context) {
 			user, err := currentUser(c, svc)
@@ -18,11 +24,11 @@ func RegisterCreationRoutes(r *gin.RouterGroup, svc *app.Service) {
 			var value any
 			switch action {
 			case "list":
-				value, err = svc.ListCreationRuns(user.ID)
+				value, err = svc.Creation().List(user.ID)
 			case "get":
-				value, err = svc.GetCreationRun(user.ID, c.Param("id"))
+				value, err = svc.Creation().Get(user.ID, c.Param("id"))
 			case "snapshot":
-				value, err = svc.CreationCanvasSnapshot(user.ID, c.Param("id"))
+				value, err = svc.Creation().CanvasSnapshot(user.ID, c.Param("id"))
 			}
 			if err != nil {
 				failService(c, err)
@@ -41,30 +47,13 @@ func RegisterCreationRoutes(r *gin.RouterGroup, svc *app.Service) {
 				failService(c, err)
 				return
 			}
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
-			var req app.CreationRequest
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max(int64(agentOpsMaxBody), canvas.EffectiveRequestMaxBodyBytes()))
+			var req creation.Command
 			if err = c.ShouldBindJSON(&req); err != nil {
 				fail(c, http.StatusBadRequest, err)
 				return
 			}
-			var value any
-			id := c.Param("id")
-			switch action {
-			case "create":
-				value, err = svc.CreateCreationRun(user.ID, req)
-			case "prepare":
-				value, err = svc.PrepareCreationSubmission(user.ID, id, req)
-			case "approve":
-				value, err = svc.ApproveCreationSubmissions(user.ID, id, req)
-			case "execute":
-				value, err = svc.ExecuteCreationSubmission(user.ID, id, req)
-			case "canvas":
-				value, err = svc.CreateRunCanvas(user.ID, id, req)
-			case "commit":
-				value, err = svc.CommitCreationCanvas(user.ID, id, req)
-			default:
-				value, err = svc.ChangeCreationRun(user.ID, id, action, req)
-			}
+			value, err := svc.Creation().Dispatch(user.ID, c.Param("id"), action, req)
 			if err != nil {
 				failService(c, err)
 				return

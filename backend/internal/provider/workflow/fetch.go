@@ -80,3 +80,27 @@ func parseWorkflowPrompt(raw any, required bool) (map[string]any, error) {
 	}
 	return workflowJSON, nil
 }
+
+func (c *Client) FetchSettingsApp(ctx context.Context, config Config, req FetchRequest) (map[string]any, error) {
+	webappID := strings.TrimSpace(req.WebappID)
+	root := runningHubRootURL(config.BaseURL)
+	var response map[string]any
+	if err := c.PostJSONTarget(ctx, config, root+"/api/webapp/apiCallDemo", map[string]any{
+		"apiKey":   runningHubAPIKey(config),
+		"webappId": webappID,
+	}, &response); err != nil {
+		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%w", err)
+	}
+	if code, valid := runningHubPayloadCode(response); valid && code != 0 {
+		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%s", runningHubFailureMessage(response))
+	}
+	rawData, _ := response["data"].(map[string]any)
+	if rawData == nil {
+		return nil, fmt.Errorf("RunningHub App 参数响应缺少 data")
+	}
+	nodes, valid := rawData["nodeInfoList"].([]any)
+	if !valid {
+		return nil, fmt.Errorf("RunningHub App 参数响应缺少有效的 nodeInfoList")
+	}
+	return map[string]any{"kind": "app", "webappId": webappID, "workflowId": webappID, "title": firstNonEmpty(req.Title, webappID), "fields": CollectAppFields(nodes, req.Capability)}, nil
+}

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/depthruntime"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -73,6 +75,23 @@ func testVideo() *model.Resource {
 	}
 }
 
+func TestProcessRetainsWorkerExitReasonAfterLongProgressMeter(t *testing.T) {
+	tasks := &fakeTasks{}
+	message := strings.Repeat("\r 0 0 0 0 Time Time Current", 150) + "\ncurl: (28) Connection timed out\n模型补下载失败"
+	svc := New(Deps{
+		GOOS: "darwin", GOARCH: "arm64", Media: &fakeMedia{resource: testVideo(), body: []byte("mp4")}, Tasks: tasks, Installer: fakeInstaller{},
+		Run: func(context.Context, string, string, string, string, string, string, func(string)) error {
+			return errors.New(message)
+		},
+	})
+	if err := svc.Process(context.Background(), &model.Task{ID: "t1", UserID: "user-1", InputJSON: `{"resourceId":"res-1"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if tasks.failStage != stageFailed || !strings.Contains(tasks.failMsg, "curl: (28)") || !strings.HasSuffix(tasks.failMsg, "模型补下载失败") || len([]rune(tasks.failMsg)) > 801 {
+		t.Fatalf("failure summary = %q", tasks.failMsg)
+	}
+}
+
 func TestProcessRejectsUnsupportedPlatform(t *testing.T) {
 	tasks := &fakeTasks{}
 	svc := New(Deps{
@@ -128,6 +147,9 @@ func TestProcessSavesSinglePreview(t *testing.T) {
 	tasks := &fakeTasks{}
 	media := &fakeMedia{resource: testVideo(), body: []byte("mp4-bytes")}
 	svc := New(Deps{
+		ProbeOutput: func(context.Context, string) (mediatools.MediaMetadata, error) {
+			return mediatools.MediaMetadata{HasVideo: true, Width: 1080, Height: 1920, DurationMs: 2967}, nil
+		},
 		GOOS: "darwin", GOARCH: "arm64",
 		Media:     media,
 		Tasks:     tasks,
@@ -161,7 +183,7 @@ func TestProcessSavesSinglePreview(t *testing.T) {
 	if tasks.result == nil || tasks.result.ResourceID != "out-1" || tasks.result.Device != "mps" {
 		t.Fatalf("result = %+v", tasks.result)
 	}
-	if media.saved == nil || media.saved.Width != 1920 {
+	if media.saved == nil || media.saved.Width != 1080 || media.saved.Height != 1920 || media.saved.DurationMs != 2967 || tasks.result.Width != 1080 || tasks.result.Height != 1920 {
 		t.Fatalf("saved = %+v", media.saved)
 	}
 	joined := strings.Join(tasks.stages, ",")
@@ -174,6 +196,9 @@ func TestProcessFallsBackOnceFromCUDADeviceFailure(t *testing.T) {
 	tasks := &fakeTasks{}
 	runs := 0
 	svc := New(Deps{
+		ProbeOutput: func(context.Context, string) (mediatools.MediaMetadata, error) {
+			return mediatools.MediaMetadata{HasVideo: true, Width: 1920, Height: 1080, DurationMs: 3000}, nil
+		},
 		GOOS: "windows", GOARCH: "amd64",
 		Media:     &fakeMedia{resource: testVideo(), body: []byte("mp4")},
 		Tasks:     tasks,
@@ -423,5 +448,43 @@ func TestProcessCancelDuringDeviceProbeDoesNotFailTask(t *testing.T) {
 	}
 	if tasks.failStage != "" {
 		t.Fatalf("canceled probe wrote fail stage %s", tasks.failStage)
+	}
+}
+
+func TestProcessConforms24FPSPreviewTo30FPS(t *testing.T) {
+	ffmpeg, err := mediatools.ResolveFFmpeg()
+	if err != nil {
+		t.Skip(err)
+	}
+	if _, err := mediatools.ResolveFFprobe(); err != nil {
+		t.Skip(err)
+	}
+	tasks := &fakeTasks{}
+	media := &fakeMedia{resource: testVideo(), body: []byte("mp4-bytes")}
+	svc := New(Deps{
+		GOOS: "darwin", GOARCH: "arm64",
+		Media:     media,
+		Tasks:     tasks,
+		Installer: fakeInstaller{},
+		Stat:      func(string) error { return nil },
+		Getenv: func(key string) string {
+			switch key {
+			case pythonEnv, toolDirEnv, runtimeEnv:
+				return "override"
+			default:
+				return ""
+			}
+		},
+		Run: func(ctx context.Context, python, toolDir, modelRuntime, device, inputPath, outputDir string, onLine func(string)) error {
+			preview := filepath.Join(outputDir, "clip_depth_preview.mp4")
+			cmd := exec.CommandContext(ctx, ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=24:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", preview)
+			return cmd.Run()
+		},
+	})
+	if err := svc.Process(context.Background(), &model.Task{ID: "t-fps", UserID: "user-1", InputJSON: `{"resourceId":"res-1"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if tasks.result == nil || tasks.result.FPS < 29.95 {
+		t.Fatalf("result = %+v, want >= 30fps", tasks.result)
 	}
 }

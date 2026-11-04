@@ -5,19 +5,16 @@ import { beginCanvasHydration,finishCanvasHydration } from "./canvas-hydration-h
 import { commitCanvasDocument } from "@/services/api/operations";
 import { restoreCanvasHistory } from "@/services/api/workspace-data";
 import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
-import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, CanvasStaleScopeError, handleRejectedCanvasBackendSave, isCanvasRevisionConflict, isCanvasSubmitControlError, pauseCanvasBackendSubmit, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
+import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, clearCanvasBackendSaveProgress, handleRejectedCanvasBackendSave, isCanvasRevisionConflict, isCanvasSubmitControlError, pauseCanvasBackendSubmit, preserveCanvasConflictDraft, resumeCanvasBackendSubmit, setCanvasBackendSaveProgress } from "@/services/canvas-revision-conflict";
 import { CanvasJournalError, clearCanvasOperationJournal, clearCanvasPendingProjection, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
-import { canvasUnconfirmedReason, canvasUnconfirmedDiagnostic, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
+import { canvasUnconfirmedReason, canvasUnconfirmedDiagnostic, revertUnchangedCanvasDocumentPatch, type CanvasDocumentPersistPatch, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 
-export type { CapturedUserScope } from "@/lib/user-scope-guard";
-
-export { CanvasBackendSubmitPausedError, CanvasStaleScopeError } from "@/services/canvas-revision-conflict";
+export { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-conflict";
 
 export class CanvasProjectionError extends Error {
     override cause?: unknown;
@@ -49,7 +46,6 @@ function incompleteCanvasProjection(id: string, scope: string, identity: string 
 
 type LocalCanvasContent = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>;
 type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "revision">;
-type CanvasDocumentPersistPatch = Partial<Pick<CanvasProject, "nodes" | "connections" | "timeline" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "title" | "folderId" | "directorScenes">>;
 
 const backendSaveTails = new Map<string, Promise<void>>();
 const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -77,23 +73,6 @@ const serverConfirmedCanvasSnapshots = new Map<string, CanvasProject>();
 
 function saveKey(scope: string, id: string) {
     return `${scope}\0${id}`;
-}
-
-function resolveDispatchGuard(scope?: string, expectedScope?: CapturedUserScope): CapturedUserScope {
-    return expectedScope ?? captureUserScope(scope ?? getActiveUserScope());
-}
-
-function matchesDispatchGuard(expected: CapturedUserScope) {
-    return userScopeMatches(expected);
-}
-
-function assertDispatchGuard(expected: CapturedUserScope, message?: string) {
-    if (!userScopeMatches(expected)) throw new CanvasStaleScopeError(message);
-}
-
-function rethrowIfAbandoned(error: unknown, message?: string): never | void {
-    if (error instanceof CanvasStaleScopeError) throw error;
-    if (isUserScopeAbandonedError(error)) throw new CanvasStaleScopeError(message);
 }
 
 function recordServerConfirmedCanvas(project: CanvasProject | undefined, scope: string) {
@@ -133,15 +112,21 @@ function canvasSubmitBlocked(id: string, scope: string) {
     return canvasBackendSubmitPaused(id, scope) || Boolean(canvasExternalRevisionConflict(scope, id));
 }
 
-function throwIfCanvasNotWritable(id: string, expected: CapturedUserScope) {
-    const scope = expected.userScope;
+/** 把保存链的真实状态发布到同步进度：排队、提交中、已被接受或失败。冲突暂停不被覆盖。 */
+function publishCanvasSaveProgress(id: string, scope: string, failed = false) {
+    const key = saveKey(scope, id);
+    if (backendSaveTails.has(key)) setCanvasBackendSaveProgress(id, scope, "saving");
+    else if (backendSaveTimers.has(key)) setCanvasBackendSaveProgress(id, scope, "pending");
+    else setCanvasBackendSaveProgress(id, scope, failed ? "error" : "done");
+}
+
+function throwIfCanvasNotWritable(id: string, scope: string) {
     if (canvasDeleting.has(saveKey(scope, id))) {
         throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
     }
     if (canvasSubmitBlocked(id, scope)) {
         throw new CanvasBackendSubmitPausedError();
     }
-    assertDispatchGuard(expected);
 }
 
 /**
@@ -199,10 +184,8 @@ function alignLiveAfterConfirmedRemote(input: {
     remote: CanvasProject;
     base: CanvasProject | null;
     hadLive: boolean;
-    expected: CapturedUserScope;
     onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void;
 }): CanvasProject | undefined {
-    if (!matchesDispatchGuard(input.expected)) return undefined;
     if (canvasDeleting.has(saveKey(input.scope, input.id))) return undefined;
     const live = openLocalCanvasProject(input.id);
     if (!live) {
@@ -215,7 +198,10 @@ function alignLiveAfterConfirmedRemote(input: {
         const decision = applyExternalCanvasRevision(input.remote, {
             scope: input.scope,
             hasUnsyncedEdits: false,
-            onApplied: (project, previous) => invokeProjectionListener(input.onApplied, project, previous),
+            onApplied: (project, previous) => {
+                resumeCanvasBackendSubmit(input.id, input.scope);
+                invokeProjectionListener(input.onApplied, project, previous);
+            },
         });
         return decision.kind === "apply" ? decision.project : live;
     }
@@ -237,25 +223,23 @@ function alignLiveAfterConfirmedRemote(input: {
     return rebased.project;
 }
 
-async function persistProjectedCanvas(id: string, scope: string, identity: string | undefined, options: { throwOnFailure: boolean }, expected: CapturedUserScope) {
-    if (!identity || !matchesDispatchGuard(expected) || !openLocalCanvasProject(id)) return;
+async function persistProjectedCanvas(id: string, scope: string, identity: string | undefined, options: { throwOnFailure: boolean }) {
+    if (!identity || !openLocalCanvasProject(id)) return;
     try {
         await projectionStoreFlush();
-        if (!matchesDispatchGuard(expected)) throw new CanvasStaleScopeError();
         await clearCanvasPendingProjection(id, scope, identity);
     } catch (error) {
-        if (error instanceof CanvasProjectionError || error instanceof CanvasStaleScopeError) throw error;
-        rethrowIfAbandoned(error);
+        if (error instanceof CanvasProjectionError) throw error;
         if (!options.throwOnFailure) return;
         throw incompleteCanvasProjection(id, scope, identity, error);
     }
 }
 
-async function replayPendingCanvasProjection(id: string, scope: string, expected: CapturedUserScope, options: { throwOnFailure: boolean } = { throwOnFailure: false }) {
+async function replayPendingCanvasProjection(id: string, scope: string, options: { throwOnFailure: boolean } = { throwOnFailure: false }) {
     const journal = peekCanvasOperationJournal(id, scope) ?? await loadCanvasOperationJournal(id, scope);
     const pending = journal.pendingProjection;
     if (!pending) return openLocalCanvasProject(id) ?? undefined;
-    if (!matchesDispatchGuard(expected) || canvasDeleting.has(saveKey(scope, id))) return undefined;
+    if (canvasDeleting.has(saveKey(scope, id))) return undefined;
     const live = openLocalCanvasProject(id);
     if (!live) return undefined;
     alignLiveAfterConfirmedRemote({
@@ -264,23 +248,22 @@ async function replayPendingCanvasProjection(id: string, scope: string, expected
         remote: pending.remote,
         base: pending.base,
         hadLive: true,
-        expected,
     });
-    await persistProjectedCanvas(id, scope, pending.identity, options, expected);
+    await persistProjectedCanvas(id, scope, pending.identity, options);
     return openLocalCanvasProject(id) ?? undefined;
 }
 
 /**
- * 桌面本地：已提交真相是服务端 revision。干净缓存采用后端；未确认草稿相对已记录基线保留。
+ * 桌面本地：已提交真相是服务端 revision；仅当本地 revision 高于已记录基线（或无基线时高于后端且内容不同）才保留本地草稿。
  */
 export function selectPreferredCanvasProject(local: CanvasProject | null | undefined, backend: CanvasProject, scope = getActiveUserScope()) {
     if (!local) return backend;
     const recorded = canvasDocumentBase(local.id, scope);
     if (recorded) {
-        if (sameCanvasDocument(local, recorded.snapshot) || sameCanvasDocument(local, backend)) return backend;
+        if ((local.revision ?? 0) <= recorded.revision || sameCanvasDocument(local, recorded.snapshot) || sameCanvasDocument(local, backend)) return backend;
         return local;
     }
-    if (sameCanvasDocument(local, backend)) return backend;
+    if ((local.revision ?? 0) < (backend.revision ?? 0) || sameCanvasDocument(local, backend)) return backend;
     return local;
 }
 
@@ -300,23 +283,93 @@ export function holdExternalCanvasRevisionForEditor(project: CanvasProject, scop
     pauseForExternalCandidate(project.id, candidate, scope);
 }
 
+/** 不改任何状态，只判断本地相对已确认基线的改动能否和服务端改动三路合并。 */
+function remoteRebaseConflicts(base: CanvasProject | null, live: CanvasProject, remote: CanvasProject) {
+    if (sameCanvasDocument(live, remote)) return false;
+    if (!base) return true;
+    if (sameCanvasDocument(live, base)) return false;
+    const settled = settleInFlightGenerationOverlay({ base, local: live, remote });
+    return rebaseCanvasDocumentThreeWay({ base, local: settled, remote }).conflict;
+}
+
+type RemoteReconcileOutcome =
+    | { kind: "stale" | "held" | "deferred" | "skipped" }
+    | { kind: "applied"; project: CanvasProject | undefined; unconfirmed: boolean };
+
+/**
+ * 在投影锁内把一份更新的服务端文档并进本地。调用方必须已持有该画布的投影锁。
+ *
+ * - 不比已确认版本新：忽略（读取可能早于本机提交回执）。
+ * - 已处于冲突暂停：只更新候选，等用户决定。
+ * - 日记里有结果未知的在途提交：先不合并，必须用原 operationId 重放拿到真实回执。
+ * - 本地和服务端改的是不同字段：按已确认基线三路合并，两边都保留；本地改动仍算未确认，
+ *   由下一次提交带着新的 expectedRevision 写回。
+ * - 同一字段两边都改过，或没有可用基线：本地内容和日记都不动，服务端文档留作候选并暂停自动提交。
+ */
+async function reconcileRemoteCanvasUnlocked(input: {
+    id: string;
+    remote: CanvasProject;
+    hadLive: boolean;
+    onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void;
+}): Promise<RemoteReconcileOutcome> {
+    const { id, remote } = input;
+    const scope = getActiveUserScope();
+    if (canvasDeleting.has(saveKey(scope, id))) return { kind: "skipped" };
+    const journal = peekCanvasOperationJournal(id, scope);
+    if (journal?.confirmedSnapshot && typeof remote.revision === "number" && remote.revision <= journal.confirmedRevision) return { kind: "stale" };
+    if (canvasSubmitBlocked(id, scope)) {
+        pauseForExternalCandidate(id, remote, scope);
+        return { kind: "held" };
+    }
+    if (journal?.inFlight) return { kind: "deferred" };
+    const base = journal?.pendingProjection?.base
+        ?? journal?.confirmedSnapshot
+        ?? canvasDocumentBase(id, scope)?.snapshot
+        ?? null;
+    const live = openLocalCanvasProject(id);
+    if (live && remoteRebaseConflicts(base, live, remote)) {
+        pauseForExternalCandidate(id, remote, scope);
+        return { kind: "held" };
+    }
+    let confirmed;
+    try {
+        confirmed = await confirmRemoteDocument(remote, scope);
+    } catch {
+        return { kind: "skipped" };
+    }
+    if ((remote.revision ?? 0) < confirmed.confirmedRevision) return { kind: "stale" };
+    if (input.hadLive && !openLocalCanvasProject(id)) return { kind: "skipped" };
+    const project = alignLiveAfterConfirmedRemote({
+        id,
+        scope,
+        remote,
+        base,
+        hadLive: input.hadLive,
+        onApplied: input.onApplied,
+    });
+    await persistProjectedCanvas(id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false });
+    // 等待日记写入期间用户可能又改了同一字段：合并时会转成冲突暂停。
+    if (canvasSubmitBlocked(id, scope)) return { kind: "held" };
+    const current = openLocalCanvasProject(id);
+    const confirmedSnapshot = confirmed.confirmedSnapshot ?? remote;
+    return { kind: "applied", project, unconfirmed: Boolean(current && !sameCanvasDocument(current, confirmedSnapshot)) };
+}
+
 async function applyBackendCanvasRead(
     local: CanvasProject | null | undefined,
     backend: CanvasProject,
-    expected: CapturedUserScope,
     hadLiveAtStart = Boolean(local),
 ) {
-    const scope = expected.userScope;
+    const scope = getActiveUserScope();
     return withCanvasProjection(scope, backend.id, async () => {
-        await replayPendingCanvasProjection(backend.id, scope, expected);
-        const liveNow = matchesDispatchGuard(expected) ? openLocalCanvasProject(backend.id) : undefined;
+        await replayPendingCanvasProjection(backend.id, scope);
+        const liveNow = openLocalCanvasProject(backend.id);
         const currentLocal = liveNow ?? local;
         const hadLive = Boolean(liveNow) || hadLiveAtStart;
-        if (!matchesDispatchGuard(expected)) return currentLocal ?? local ?? backend;
         const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
         traceCanvasGraph("repository.read.select", { local: currentLocal, backend, base: canvasDocumentBase(backend.id, scope)?.snapshot, chosen });
-        if (!currentLocal || chosen === backend || sameCanvasDocument(chosen, backend)) {
-            const journal = peekCanvasOperationJournal(backend.id, scope);
+        const journal = peekCanvasOperationJournal(backend.id, scope);
+        if (!currentLocal || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
             const base = journal?.pendingProjection?.base
                 ?? journal?.confirmedSnapshot
                 ?? canvasDocumentBase(backend.id, scope)?.snapshot
@@ -324,8 +377,7 @@ async function applyBackendCanvasRead(
             let confirmed;
             try {
                 confirmed = await confirmRemoteDocument(backend, scope);
-            } catch (error) {
-                rethrowIfAbandoned(error);
+            } catch {
                 return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
             }
             if ((backend.revision ?? 0) < confirmed.confirmedRevision) {
@@ -337,9 +389,8 @@ async function applyBackendCanvasRead(
                 remote: backend,
                 base,
                 hadLive,
-                expected,
             });
-            await persistProjectedCanvas(backend.id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false }, expected);
+            await persistProjectedCanvas(backend.id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false });
             if (hadLive && !openLocalCanvasProject(backend.id)) {
                 return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
             }
@@ -349,13 +400,18 @@ async function applyBackendCanvasRead(
         const serverMoved = !recorded
             || (backend.revision ?? 0) !== recorded.revision
             || !sameCanvasDocument(backend, recorded.snapshot);
-        if (serverMoved) pauseForExternalCandidate(currentLocal.id, backend, scope);
+        if (serverMoved) {
+            // 本地有未确认编辑而服务端也变了：能三路合并就两边都保留，真冲突才留候选并暂停。
+            const outcome = await reconcileRemoteCanvasUnlocked({ id: backend.id, remote: backend, hadLive });
+            if (outcome.kind === "applied") return outcome.project ?? openLocalCanvasProject(backend.id) ?? currentLocal;
+        }
+        const unsettled = openLocalCanvasProject(backend.id) ?? currentLocal;
         const settled = settleInFlightGenerationOverlay({
-            base: recorded?.snapshot ?? backend,
-            local: currentLocal,
+            base: canvasDocumentBase(backend.id, scope)?.snapshot ?? backend,
+            local: unsettled,
             remote: backend,
         });
-        if (settled !== currentLocal) applyLiveCanvasProject(backend.id, settled, false);
+        if (settled !== unsettled) applyLiveCanvasProject(backend.id, settled, false);
         return settled;
     });
 }
@@ -367,7 +423,6 @@ async function applyBackendCanvasRead(
  * the offline cache, so a stopped backend never prevents opening a project.
  */
 export function beginLocalCanvasProject(title: string, projectId?: string, initialContent?: LocalCanvasContent, workspaceProjectId?: string) {
-    const expected = captureUserScope();
     const id = useCanvasStore.getState().createProject(title, projectId, workspaceProjectId);
     if (initialContent) useCanvasStore.getState().updateProject(id, initialContent);
     // The in-memory project is already usable. Do not make navigation depend
@@ -376,7 +431,7 @@ export function beginLocalCanvasProject(title: string, projectId?: string, initi
     // Desktop restarts hydrate from the co-packaged Go repository. Creating a
     // project only in IndexedDB leaves the runtime returning 404 and allows its
     // detached-resource cleanup to delete media that the canvas still uses.
-    const saved = syncLocalCanvasProject(id, expected);
+    const saved = syncLocalCanvasProject(id);
     // IndexedDB is an offline cache, not the desktop source of truth. A stuck
     // WebKit storage transaction must never block navigation after the Go
     // repository has durably accepted the project.
@@ -393,29 +448,35 @@ export async function createLocalCanvasProject(title: string, projectId?: string
 }
 
 /** Serialize writes per canvas so optimistic revisions cannot race each other. */
-function syncLocalCanvasProject(id: string, expected: CapturedUserScope): Promise<void> {
-    const scope = expected.userScope;
+function syncLocalCanvasProject(id: string): Promise<void> {
+    const scope = getActiveUserScope();
     const key = saveKey(scope, id);
+    const existingTimer = backendSaveTimers.get(key);
+    if (existingTimer) {
+        clearTimeout(existingTimer);
+        backendSaveTimers.delete(key);
+    }
     const previous = backendSaveTails.get(key) || Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
         if (canvasDeleting.has(key)) throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
-        assertDispatchGuard(expected);
-        await commitLiveCanvasDocument(id, expected);
+        await commitLiveCanvasDocument(id);
     });
     const tail = next.finally(() => {
         if (backendSaveTails.get(key) === tail) backendSaveTails.delete(key);
     });
     backendSaveTails.set(key, tail);
+    publishCanvasSaveProgress(id, scope);
+    // 先于调用方的 await 注册：调用方恢复执行时进度已经是这次提交的真实结果。
+    void tail.then(() => publishCanvasSaveProgress(id, scope), () => publishCanvasSaveProgress(id, scope, true));
     return tail;
 }
 
-async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, saved: CanvasSaveSummary, expected: CapturedUserScope, ackOperationId?: string) {
-    const scope = expected.userScope;
+async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, saved: CanvasSaveSummary, ackOperationId?: string) {
+    const scope = getActiveUserScope();
     const confirmed = saved.revision != null ? { ...submitted, revision: saved.revision, updatedAt: saved.updatedAt ?? submitted.updatedAt } : submitted;
     const pendingExternal = canvasExternalRevisionConflict(scope, id);
     const journal = await recordConfirmedCanvasCommit(confirmed, scope, ackOperationId ? { ackOperationId } : {});
     recordServerConfirmedCanvas(journal.confirmedSnapshot ?? confirmed, scope);
-    if (!matchesDispatchGuard(expected)) return;
     useCanvasStore.setState((state) => ({
         projects: state.projects.map((current) => current.id === id
             ? {
@@ -432,7 +493,7 @@ async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, sav
     if (pending) {
         const savedRevision = saved.revision ?? confirmed.revision ?? 0;
         if (pending.revision > savedRevision) return;
-        await persistProjectedCanvas(id, scope, pending.identity, { throwOnFailure: true }, expected);
+        await persistProjectedCanvas(id, scope, pending.identity, { throwOnFailure: true });
         return;
     }
     void flushCanvasStorePersistence().catch((error) => {
@@ -440,19 +501,17 @@ async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, sav
     });
 }
 
-async function putCanvasProjectToBackend(id: string, project: CanvasProject, endpoint: string, projectForSave: CanvasProject, expected: CapturedUserScope) {
-    assertDispatchGuard(expected);
+async function putCanvasProjectToBackend(id: string, project: CanvasProject, endpoint: string, projectForSave: CanvasProject) {
     try {
         const response = await http.put<{ project: CanvasSaveSummary }>(
             endpoint,
             { project: projectForSave },
-            { expectedScope: expected },
+            {},
         );
         if (!response.project || response.project.id !== id) throw new Error("画布保存回执无效，修改仍保留在本地，请重试");
         return response.project;
     } catch (error) {
-        rethrowIfAbandoned(error);
-        await handleRejectedCanvasBackendSave(id, project, error, expected.userScope);
+        await handleRejectedCanvasBackendSave(id, project, error, getActiveUserScope());
         throw error;
     }
 }
@@ -463,23 +522,21 @@ function isInitialCanvasCreate(project: CanvasProject, scope: string) {
     return (project.revision ?? 0) === 0;
 }
 
-async function commitLiveCanvasDocument(id: string, expected: CapturedUserScope) {
-    const scope = expected.userScope;
-    return withCanvasProjection(scope, id, () => commitLiveCanvasDocumentUnlocked(id, expected));
+async function commitLiveCanvasDocument(id: string) {
+    return withCanvasProjection(getActiveUserScope(), id, () => commitLiveCanvasDocumentUnlocked(id));
 }
 
-async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUserScope) {
-    const scope = expected.userScope;
-    await replayPendingCanvasProjection(id, scope, expected, { throwOnFailure: true });
+async function commitLiveCanvasDocumentUnlocked(id: string) {
+    const scope = getActiveUserScope();
+    await replayPendingCanvasProjection(id, scope, { throwOnFailure: true });
     const journal = await loadCanvasOperationJournal(id, scope);
+    // 一次提交过程最多因 revision 过时读取并合并一次服务端最新内容；再被拒就暂停。
+    let rebaseAllowed = true;
     let sent = false;
     if (journal.inFlight) {
-        await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload, expected);
+        const outcome = await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload, rebaseAllowed);
+        if (outcome === "rebased") rebaseAllowed = false;
         sent = true;
-    }
-    if (!matchesDispatchGuard(expected)) {
-        if (sent) return;
-        throw new CanvasStaleScopeError();
     }
     if (canvasDeleting.has(saveKey(scope, id)) || canvasSubmitBlocked(id, scope)) {
         const live = openLocalCanvasProject(id);
@@ -487,18 +544,25 @@ async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUs
         if (sent && live && current?.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, live) && !current.inFlight) return;
         throw new CanvasBackendSubmitPausedError(canvasDeleting.has(saveKey(scope, id)) ? "画布正在删除，未提交" : "画布有未处理的外部改动，本次未提交");
     }
+    const outcome = await queueAndSendLiveCanvasDocument(id, peekCanvasOperationJournal(id, scope)?.confirmedSnapshot ?? null, rebaseAllowed);
+    if (outcome !== "rebased") return;
+    // 合并干净：带着新的 expectedRevision 重试一次，这次不再允许合并。
+    await queueAndSendLiveCanvasDocument(id, peekCanvasOperationJournal(id, scope)?.confirmedSnapshot ?? null, false);
+}
+
+async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProject | null, rebaseAllowed: boolean): Promise<CanvasCommitOutcome | undefined> {
+    const scope = getActiveUserScope();
     const project = openLocalCanvasProject(id);
-    if (!project) return;
-    const confirmed = journal.confirmedSnapshot;
+    if (!project) return undefined;
     const settled = confirmed
         ? settleInFlightGenerationOverlay({ base: confirmed, local: project, remote: confirmed })
         : project;
     if (settled !== project) applyLiveCanvasProject(id, settled, false);
     if (isInitialCanvasCreate(settled, scope)) {
-        const saved = await putCanvasProjectToBackend(id, settled, `/canvas-projects/${encodeURIComponent(id)}`, settled, expected);
-        if (!saved) return;
-        await applyAcceptedCanvasSave(id, settled, saved, expected);
-        return;
+        const saved = await putCanvasProjectToBackend(id, settled, `/canvas-projects/${encodeURIComponent(id)}`, settled);
+        if (!saved) return undefined;
+        await applyAcceptedCanvasSave(id, settled, saved);
+        return "accepted";
     }
     const queued = await updateCanvasOperationJournal(id, scope, (current) => {
         if (current.inFlight) return;
@@ -518,22 +582,49 @@ async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUs
             },
         };
     });
-    if (!queued.inFlight) return;
-    throwIfCanvasNotWritable(id, expected);
-    await sendCanvasDocumentCommit(id, queued.inFlight.operationId, queued.inFlight.payload, expected);
+    if (!queued.inFlight) return undefined;
+    throwIfCanvasNotWritable(id, scope);
+    return sendCanvasDocumentCommit(id, queued.inFlight.operationId, queued.inFlight.payload, rebaseAllowed);
 }
 
-async function sendCanvasDocumentCommit(id: string, operationId: string, payload: { canvasId: string; expectedRevision: number; document: CanvasProject }, expected: CapturedUserScope) {
-    traceCanvasGraph("repository.submit", { document: payload.document, confirmed: canvasDocumentBase(id, expected.userScope)?.snapshot });
-    const scope = expected.userScope;
-    assertDispatchGuard(expected);
+type CanvasCommitOutcome = "accepted" | "rebased";
+
+/**
+ * 被 revision 过时拒绝后读一次服务端最新文档并尝试三路合并。
+ * 只有读到比被拒的 expectedRevision 更新的版本、且合并干净时返回 true，
+ * 调用方据此带新的 expectedRevision 重试一次；读到的版本没有前进时重试必然再被拒，直接暂停。
+ */
+async function rebaseAfterRejectedCanvasCommit(id: string, rejectedRevision: number) {
+    let remote: CanvasProject;
+    try {
+        remote = await readLocalCanvasProjectFromBackend(id);
+    } catch {
+        return false;
+    }
+    if (remote.id !== id || typeof remote.revision !== "number" || remote.revision <= rejectedRevision) return false;
+    const outcome = await reconcileRemoteCanvasUnlocked({
+        id,
+        remote,
+        hadLive: true,
+        onApplied: notifyCanvasRefresh,
+    });
+    return outcome.kind === "applied";
+}
+
+async function sendCanvasDocumentCommit(
+    id: string,
+    operationId: string,
+    payload: { canvasId: string; expectedRevision: number; document: CanvasProject },
+    rebaseAllowed = false,
+): Promise<CanvasCommitOutcome> {
+    traceCanvasGraph("repository.submit", { document: payload.document, confirmed: canvasDocumentBase(id, getActiveUserScope())?.snapshot });
+    const scope = getActiveUserScope();
     try {
         const result = await commitCanvasDocument({
             operationId,
             canvasId: payload.canvasId,
             expectedRevision: payload.expectedRevision,
             document: payload.document as unknown as Record<string, unknown>,
-            expectedScope: expected,
         });
         const saved: CanvasSaveSummary = {
             id,
@@ -542,14 +633,15 @@ async function sendCanvasDocumentCommit(id: string, operationId: string, payload
             updatedAt: result.result?.updatedAt ?? payload.document.updatedAt,
             revision: result.revision || result.result?.revision,
         };
-        await applyAcceptedCanvasSave(id, payload.document, saved, expected, operationId);
+        await applyAcceptedCanvasSave(id, payload.document, saved, operationId);
+        return "accepted";
     } catch (error) {
-        rethrowIfAbandoned(error);
         if (isCanvasRevisionConflict(error)) {
             await updateCanvasOperationJournal(id, scope, (current) => {
                 if (!current.inFlight) return;
                 return { ...current, inFlight: null };
             });
+            if (rebaseAllowed && await rebaseAfterRejectedCanvasCommit(id, payload.expectedRevision)) return "rebased";
             await handleRejectedCanvasBackendSave(id, payload.document, error, scope);
             throw error;
         }
@@ -570,55 +662,8 @@ function shouldKeepCanvasCommitIdentity(error: unknown) {
     return error.status === undefined && error.code === undefined;
 }
 
-export function syncLocalCanvasProjectToBackend(id: string, expectedScope?: CapturedUserScope): Promise<void> {
-    return syncLocalCanvasProject(id, expectedScope ?? captureUserScope());
-}
-
-function sameDocumentValue(left: unknown, right: unknown) {
-    return left === right || JSON.stringify(left) === JSON.stringify(right);
-}
-
-function revertUnchangedCanvasNodes(
-    previous: CanvasProject["nodes"],
-    attempted: CanvasProject["nodes"],
-    live: CanvasProject["nodes"],
-): CanvasProject["nodes"] {
-    if (sameDocumentValue(live, attempted)) return previous;
-    const previousById = new Map(previous.map((node) => [node.id, node]));
-    const attemptedById = new Map(attempted.map((node) => [node.id, node]));
-    const reverted: CanvasProject["nodes"] = [];
-    for (const node of live) {
-        const before = previousById.get(node.id);
-        const optimistic = attemptedById.get(node.id);
-        if (!before && optimistic) {
-            if (sameDocumentValue(node, optimistic)) continue;
-            reverted.push(node);
-            continue;
-        }
-        if (before && optimistic) {
-            reverted.push(sameDocumentValue(node, optimistic) ? before : node);
-            continue;
-        }
-        reverted.push(node);
-    }
-    return reverted;
-}
-
-function revertUnchangedCanvasDocumentPatch(current: CanvasProject, previous: CanvasProject, patch: CanvasDocumentPersistPatch): CanvasProject {
-    const next: CanvasProject = { ...current };
-    (Object.keys(patch) as Array<keyof CanvasDocumentPersistPatch>).forEach((key) => {
-        if (key === "nodes") {
-            if (!patch.nodes) return;
-            next.nodes = revertUnchangedCanvasNodes(previous.nodes, patch.nodes, current.nodes);
-            return;
-        }
-        const attempted = patch[key];
-        if (attempted === undefined) return;
-        if (sameDocumentValue(current[key], attempted)) {
-            (next as Record<string, unknown>)[key] = previous[key];
-        }
-    });
-    return next;
+export function syncLocalCanvasProjectToBackend(id: string): Promise<void> {
+    return syncLocalCanvasProject(id);
 }
 
 /**
@@ -628,24 +673,22 @@ function revertUnchangedCanvasDocumentPatch(current: CanvasProject, previous: Ca
  * Network-unknown keeps the live patch and the same operationId. Stale revision
  * keeps the local draft. Other failures revert patch fields that nobody else changed.
  */
-export async function persistCanvasDocument(id: string, patch: CanvasDocumentPersistPatch, expectedScope?: CapturedUserScope) {
-    const expected = expectedScope ?? captureUserScope();
-    const scope = expected.userScope;
-    assertDispatchGuard(expected);
+export async function persistCanvasDocument(id: string, patch: CanvasDocumentPersistPatch) {
+    const scope = getActiveUserScope();
     const localMode = isLocalWorkspaceMode();
     const previous = useCanvasStore.getState().openProject(id);
     useCanvasStore.getState().updateProject(id, patch);
     const attempted = useCanvasStore.getState().openProject(id);
     try {
         if (localMode) {
-            await syncLocalCanvasProject(id, expected);
+            await syncLocalCanvasProject(id);
             return;
         }
         await flushCanvasStorePersistence();
     } catch (error) {
         if (isCanvasSubmitControlError(error)) throw error;
         if (localMode && (shouldKeepCanvasCommitIdentity(error) || isCanvasRevisionConflict(error))) throw error;
-        if (previous && matchesDispatchGuard(expected)) {
+        if (previous) {
             await updateCanvasOperationJournal(id, scope, (current) => {
                 if (!current.inFlight) return;
                 return { ...current, inFlight: null };
@@ -673,23 +716,33 @@ export async function persistCanvasTimeline(id: string, timeline: NonNullable<Ca
  * 当前 live：本地删除与未冲突编辑保留，未改动的服务端字段（含生成媒体）采纳。
  * 这里只更新 store/journal；编辑器节点由 bind 调用方在 isCurrent 时 setNodes(adopted.nodes)，不 notifyCanvasRefresh。
  */
-export async function adoptServerConfirmedGenerationPatch(project: CanvasProject, scope?: string, expectedScope?: CapturedUserScope): Promise<CanvasProject | undefined> {
-    const expected = resolveDispatchGuard(scope, expectedScope);
-    const journalScope = expected.userScope;
+export async function adoptServerConfirmedGenerationPatch(project: CanvasProject): Promise<CanvasProject | undefined> {
+    const journalScope = getActiveUserScope();
     return withCanvasProjection(journalScope, project.id, async () => {
         const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
             ? project.revision
             : -1;
         const journal = await loadCanvasOperationJournal(project.id, journalScope);
-        if (!matchesDispatchGuard(expected) || canvasDeleting.has(saveKey(journalScope, project.id))) return undefined;
+        if (canvasDeleting.has(saveKey(journalScope, project.id))) return undefined;
         if (incomingRevision < 0 || incomingRevision < journal.confirmedRevision) {
             return openLocalCanvasProject(project.id) ?? undefined;
         }
         if (incomingRevision === journal.confirmedRevision && journal.confirmedSnapshot && sameCanvasDocument(journal.confirmedSnapshot, project)) {
             if (journal.pendingProjection) {
-                return replayPendingCanvasProjection(project.id, journalScope, expected, { throwOnFailure: true });
+                return replayPendingCanvasProjection(project.id, journalScope, { throwOnFailure: true });
             }
-            return openLocalCanvasProject(project.id) ?? undefined;
+            const live = openLocalCanvasProject(project.id);
+            if (!live) return undefined;
+            // 同一份绑定回执也可能晚于编辑器的 loading/error 状态：
+            // 版本没变仍须结算同任务结果，不解除已有冲突或覆盖用户编辑。
+            const settled = settleInFlightGenerationOverlay({ base: journal.confirmedSnapshot, local: live, remote: project });
+            if (settled !== live) {
+                applyLiveCanvasProject(project.id, settled, false);
+                void flushCanvasStorePersistence().catch((error) => {
+                    console.error("画布本地缓存写入失败，生成结果已保存到桌面数据库", { id: project.id, error });
+                });
+            }
+            return settled;
         }
         const liveAtStart = openLocalCanvasProject(project.id);
         const existed = Boolean(liveAtStart);
@@ -705,7 +758,7 @@ export async function adoptServerConfirmedGenerationPatch(project: CanvasProject
         } catch (error) {
             throw incompleteCanvasProjection(project.id, journalScope, journal.pendingProjection?.identity, error);
         }
-        if (!matchesDispatchGuard(expected) || canvasDeleting.has(saveKey(journalScope, project.id))) return undefined;
+        if (canvasDeleting.has(saveKey(journalScope, project.id))) return undefined;
         if (incomingRevision < confirmed.confirmedRevision) {
             return openLocalCanvasProject(project.id) ?? undefined;
         }
@@ -715,28 +768,31 @@ export async function adoptServerConfirmedGenerationPatch(project: CanvasProject
             remote: project,
             base,
             hadLive: existed,
-            expected,
         });
-        if (!matchesDispatchGuard(expected) || !openLocalCanvasProject(project.id)) return undefined;
-        await persistProjectedCanvas(project.id, journalScope, confirmed.pendingProjection?.identity, { throwOnFailure: true }, expected);
+        if (!openLocalCanvasProject(project.id)) return undefined;
+        await persistProjectedCanvas(project.id, journalScope, confirmed.pendingProjection?.identity, { throwOnFailure: true });
         return aligned ?? openLocalCanvasProject(project.id) ?? undefined;
     });
 }
 
 export function scheduleLocalCanvasBackendSync(id: string) {
-    const expected = captureUserScope();
-    const key = saveKey(expected.userScope, id);
+    const scope = getActiveUserScope();
+    const key = saveKey(scope, id);
     if (canvasDeleting.has(key)) return;
     const existing = backendSaveTimers.get(key);
     if (existing) clearTimeout(existing);
     backendSaveTimers.set(key, setTimeout(() => {
         backendSaveTimers.delete(key);
-        if (canvasDeleting.has(key) || !matchesDispatchGuard(expected)) return;
-        void syncLocalCanvasProject(id, expected).catch((error) => {
+        if (canvasDeleting.has(key)) {
+            publishCanvasSaveProgress(id, scope, true);
+            return;
+        }
+        void syncLocalCanvasProject(id).catch((error) => {
             if (isCanvasSubmitControlError(error)) return;
             console.error("画布后端持久化失败，等待下次编辑重试", { id, error });
         });
     }, 500));
+    publishCanvasSaveProgress(id, scope);
 }
 
 export function resetLocalCanvasBackendSaveState() {
@@ -759,43 +815,38 @@ export function openLocalCanvasProject(id: string) {
  * fallback so a stopped backend never prevents the UI from opening.
  */
 export async function hydrateLocalCanvasProjectsFromBackend() {
-    const expected = captureUserScope();
-    const scope = expected.userScope;
+    const scope = getActiveUserScope();
     const attempt=beginCanvasHydration();
     let failure="";
     try {
         const response = await http.get<{ projects: Array<Pick<CanvasProject, "id">> }>("/canvas-projects", {
             params: { page: 1, pageSize: 500, sort: "updated" },
-            expectedScope: expected,
         });
         const summaries = Array.isArray(response.projects) ? response.projects : [];
         if (summaries.length === 0) return false;
         const projects = (await Promise.all(summaries.map(async (summary) => {
-            const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`, { expectedScope: expected });
+            const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`);
             if (!detail.project) throw new Error("项目内容未返回");
             return detail.project;
         }))).filter((project): project is CanvasProject => Boolean(project));
         if (projects.length === 0) return false;
-        if (!matchesDispatchGuard(expected)) return false;
         const current = useCanvasStore.getState().projects;
         const byId = new Map(current.map((project) => [project.id, project]));
         const existedIds = new Set(current.map((project) => project.id));
         for (const project of projects) {
-            if (!matchesDispatchGuard(expected)) return false;
             try {
                 await loadCanvasOperationJournal(project.id, scope);
-                await replayPendingCanvasProjection(project.id, scope, expected);
+                await replayPendingCanvasProjection(project.id, scope);
             } catch (error) {
                 if (!(error instanceof CanvasJournalError) && !(error instanceof CanvasProjectionError)) throw error;
             }
-            const applied = await applyBackendCanvasRead(byId.get(project.id), project, expected, existedIds.has(project.id));
+            const applied = await applyBackendCanvasRead(byId.get(project.id), project, existedIds.has(project.id));
             if (existedIds.has(project.id) && !openLocalCanvasProject(project.id)) {
                 byId.delete(project.id);
                 continue;
             }
             byId.set(project.id, applied);
         }
-        if (!matchesDispatchGuard(expected)) return false;
         // A user may create a canvas while this older backend snapshot is
         // loading. Keep projects added after `byId` was captured.
         useCanvasStore.setState((state) => ({ projects: [
@@ -805,8 +856,7 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
         await flushCanvasStorePersistence();
         return true;
     } catch (error) {
-        if (isUserScopeAbandonedError(error) || error instanceof CanvasStaleScopeError) return false;
-        if (matchesDispatchGuard(expected)) failure="项目暂时无法读取，现有数据已保留。请重试或在设置中导出问题记录。";
+        failure="项目暂时无法读取，现有数据已保留。请重试或在设置中导出问题记录。";
         return false;
     } finally {
         finishCanvasHydration(attempt,failure);
@@ -814,38 +864,34 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
 }
 
 /** Read the durable document without adopting it or hiding errors behind local state. */
-export async function readLocalCanvasProjectFromBackend(id: string, expectedScope?: CapturedUserScope): Promise<CanvasProject> {
-    const expected = expectedScope ?? captureUserScope();
-    const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`, { expectedScope: expected });
+export async function readLocalCanvasProjectFromBackend(id: string): Promise<CanvasProject> {
+    const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`);
     if (!response.project) throw new Error("画布读取失败，请重试");
     return response.project;
 }
 
-export async function openLocalCanvasProjectFromBackend(id: string, expectedScope?: CapturedUserScope) {
-    const expected = expectedScope ?? captureUserScope();
-    const scope = expected.userScope;
+export async function openLocalCanvasProjectFromBackend(id: string) {
+    const scope = getActiveUserScope();
     const existed = Boolean(openLocalCanvasProject(id));
     try {
         try {
             await loadCanvasOperationJournal(id, scope);
-            await replayPendingCanvasProjection(id, scope, expected);
+            await replayPendingCanvasProjection(id, scope);
         } catch (error) {
             if (!(error instanceof CanvasJournalError) && !(error instanceof CanvasProjectionError)) throw error;
         }
-        const backendProject = await readLocalCanvasProjectFromBackend(id, expected);
+        const backendProject = await readLocalCanvasProjectFromBackend(id);
         if (!backendProject) return openLocalCanvasProject(id);
-        const project = await applyBackendCanvasRead(openLocalCanvasProject(id), backendProject, expected, existed);
-        if (!matchesDispatchGuard(expected)) return openLocalCanvasProject(id);
+        const project = await applyBackendCanvasRead(openLocalCanvasProject(id), backendProject, existed);
         if (existed && !openLocalCanvasProject(id)) return openLocalCanvasProject(id);
-        useCanvasStore.setState((state) => ({
-            projects: state.projects.some((item) => item.id === id)
-                ? state.projects.map((item) => item.id === id ? project : item)
-                : [...state.projects, project],
-        }));
+        // 读取结果已在投影锁内落到本地，这里只补上缺失的画布，不再整份覆盖：
+        // 等待期间编辑器可能已经把新的编辑并进本地文档，整份覆盖会把它们冲掉。
+        if (!openLocalCanvasProject(id)) {
+            useCanvasStore.setState((state) => state.projects.some((item) => item.id === id) ? state : { projects: [...state.projects, project] });
+        }
         await flushCanvasStorePersistence();
-        return project;
-    } catch (error) {
-        if (isUserScopeAbandonedError(error) || error instanceof CanvasStaleScopeError) return openLocalCanvasProject(id);
+        return openLocalCanvasProject(id) ?? project;
+    } catch {
         return openLocalCanvasProject(id);
     }
 }
@@ -870,33 +916,27 @@ function restoreDidNotApply() {
 export async function restoreLocalCanvasProjectFromHistory(
     id: string,
     historyRestore: { snapshotId: string; revision: number },
-    expectedScope?: CapturedUserScope,
 ): Promise<CanvasProject> {
-    const expected = expectedScope ?? captureUserScope();
     const canvasId = id.trim();
     if (!canvasId) throw new Error("画布不存在或无权访问");
     const { snapshotId, revision } = restoreHistoryRequestError(historyRestore.snapshotId, historyRestore.revision);
-    assertDispatchGuard(expected, "账号已切换，未恢复画布");
-    return withCanvasProjection(expected.userScope, canvasId, () => restoreLocalCanvasProjectFromHistoryUnlocked(canvasId, snapshotId, revision, expected));
+    return withCanvasProjection(getActiveUserScope(), canvasId, () => restoreLocalCanvasProjectFromHistoryUnlocked(canvasId, snapshotId, revision));
 }
 
 async function restoreLocalCanvasProjectFromHistoryUnlocked(
     id: string,
     snapshotId: string,
     revision: number,
-    expected: CapturedUserScope,
 ): Promise<CanvasProject> {
-    const scope = expected.userScope;
+    const scope = getActiveUserScope();
     if (canvasDeleting.has(saveKey(scope, id))) {
         throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
     }
-    assertDispatchGuard(expected, "账号已切换，未恢复画布");
     let receipt;
     try {
-        const response = await restoreCanvasHistory(id, snapshotId, revision, { expectedScope: expected });
+        const response = await restoreCanvasHistory(id, snapshotId, revision);
         receipt = response?.project;
     } catch (error) {
-        rethrowIfAbandoned(error, "账号已切换，未恢复画布");
         if (isCanvasRevisionConflict(error)) {
             throw new Error("当前画布已有更新，这次没有恢复。请重新打开版本记录后再试。");
         }
@@ -907,12 +947,10 @@ async function restoreLocalCanvasProjectFromHistoryUnlocked(
     if (typeof restoredRevision !== "number" || !Number.isInteger(restoredRevision) || restoredRevision <= revision) {
         throw restoreDidNotApply();
     }
-    assertDispatchGuard(expected, "账号已切换，未恢复画布");
-    const backendProject = await readLocalCanvasProjectFromBackend(id, expected);
+    const backendProject = await readLocalCanvasProjectFromBackend(id);
     if (backendProject.id !== id || (backendProject.revision ?? 0) !== restoredRevision) {
         throw new Error("恢复后没有读到新版本，请重试。");
     }
-    assertDispatchGuard(expected, "账号已切换，未恢复画布");
     await updateCanvasOperationJournal(id, scope, (current) => ({
         ...current,
         confirmedRevision: restoredRevision,
@@ -920,13 +958,11 @@ async function restoreLocalCanvasProjectFromHistoryUnlocked(
         inFlight: null,
         pendingProjection: null,
     }));
-    assertDispatchGuard(expected, "账号已切换，未恢复画布");
     recordServerConfirmedCanvas(backendProject, scope);
     clearCanvasExternalRevisionConflict(scope, id);
     resumeCanvasBackendSubmit(id, scope);
     applyLiveCanvasProject(id, backendProject, true);
     await projectionStoreFlush();
-    assertDispatchGuard(expected, "账号已切换，未恢复画布");
     const live = openLocalCanvasProject(id);
     if (!live || (live.revision ?? 0) !== restoredRevision) throw restoreDidNotApply();
     return live;
@@ -936,72 +972,42 @@ async function restoreLocalCanvasProjectFromHistoryUnlocked(
  * 外部写入（内置助手回合、CLI/MCP 操作）后把服务端内容投影到本地编辑器。
  *
  * 与 `openLocalCanvasProjectFromBackend` 的区别：这里不假设本地一定服从服务端。
- * 有服务端尚未确认的编辑时保留本地内容、把远端留作候选并记录冲突；只有确认
- * 本地没有这类编辑时才应用外部 revision。
+ * 有服务端尚未确认的编辑时，按已确认基线三路合并：改的是不同字段就两边都保留，
+ * 并排一次提交把本地改动带着新 revision 写回；同一字段两边都改过才保留本地内容、
+ * 把远端留作候选并暂停自动提交。
  *
- * 「是否有未确认编辑」在 GET 返回之后、应用之前同步重算一次：等待网络期间用户
- * 仍可能继续编辑，用请求发出时的判断会漏掉这些新编辑。
+ * 合并判断在 GET 返回之后、投影锁之内进行：等待网络期间用户仍可能继续编辑，
+ * 用请求发出时的判断会漏掉这些新编辑。
  */
-export async function refreshLocalCanvasProjectIfChanged(id: string, expectedScope?: CapturedUserScope) {
-    const expected = expectedScope ?? captureUserScope();
-    const scope = expected.userScope;
+export async function refreshLocalCanvasProjectIfChanged(id: string) {
+    const scope = getActiveUserScope();
     const existed = Boolean(openLocalCanvasProject(id));
     try {
         try {
             await loadCanvasOperationJournal(id, scope);
-            await replayPendingCanvasProjection(id, scope, expected);
+            await replayPendingCanvasProjection(id, scope);
         } catch (error) {
             if (!(error instanceof CanvasJournalError)) throw error;
             return undefined;
         }
-        const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`, { expectedScope: expected });
+        const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`);
         const remote = response.project;
         if (!remote) return undefined;
-        if (!matchesDispatchGuard(expected)) return undefined;
         if (existed && !openLocalCanvasProject(id)) return undefined;
         return withCanvasProjection(scope, id, async () => {
-            if (!matchesDispatchGuard(expected)) return undefined;
-            const journal = peekCanvasOperationJournal(id, scope);
-            // 读取可能早于本机提交回执；在同一投影锁内对照已确认版本，
-            // 相同或更旧的快照不能把尚未自动保存的编辑标成外部冲突。
-            if (journal?.confirmedSnapshot && typeof remote.revision === "number" && remote.revision <= journal.confirmedRevision) return undefined;
-            if (hasUnconfirmedCanvasEdits(id) || canvasSubmitBlocked(id, scope)) {
-                pauseForExternalCandidate(id, remote, scope);
-                return undefined;
-            }
-            const base = journal?.pendingProjection?.base
-                ?? journal?.confirmedSnapshot
-                ?? canvasDocumentBase(id, scope)?.snapshot
-                ?? null;
-            const hadLive = Boolean(openLocalCanvasProject(id)) || existed;
-            let confirmed;
-            try {
-                confirmed = await confirmRemoteDocument(remote, scope);
-            } catch (error) {
-                rethrowIfAbandoned(error);
-                return undefined;
-            }
-            if ((remote.revision ?? 0) < confirmed.confirmedRevision) {
-                return openLocalCanvasProject(id);
-            }
             if (existed && !openLocalCanvasProject(id)) return undefined;
-            const aligned = alignLiveAfterConfirmedRemote({
+            // 读取可能早于本机提交回执：在同一投影锁内对照已确认版本，相同或更旧的快照直接忽略。
+            const outcome = await reconcileRemoteCanvasUnlocked({
                 id,
-                scope,
                 remote,
-                base,
-                hadLive,
-                expected,
-                onApplied: (project, previous) => {
-                    if (!matchesDispatchGuard(expected)) return;
-                    notifyCanvasRefresh(project, previous);
-                },
+                hadLive: Boolean(openLocalCanvasProject(id)) || existed,
+                onApplied: notifyCanvasRefresh,
             });
-            await persistProjectedCanvas(id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false }, expected);
-            return aligned;
+            // 合并后仍有本地改动，或在途提交等待重放：排一次提交，不必等用户下一次编辑。
+            if (outcome.kind === "deferred" || (outcome.kind === "applied" && outcome.unconfirmed)) scheduleLocalCanvasBackendSync(id);
+            return outcome.kind === "applied" ? outcome.project : undefined;
         });
-    } catch (error) {
-        if (isUserScopeAbandonedError(error) || error instanceof CanvasStaleScopeError) return undefined;
+    } catch {
         return undefined;
     }
 }
@@ -1011,23 +1017,31 @@ export async function refreshLocalCanvasProjectIfChanged(id: string, expectedSco
  *
  * 候选本身就是服务端已确认的内容，因此这里只把它落到本地并更新基线，
  * 不再回写一次服务端（回写只会平白推进 revision，甚至在服务端又变化时被拒）。
+ * 替换前先把本地内容存成草稿；草稿没存成就不替换。
+ * 提交被拒但还没有候选时，先读一次服务端最新内容作为候选。
  */
 export async function acceptExternalCanvasRevision(id: string) {
-    const expected = captureUserScope();
-    const scope = expected.userScope;
+    return withCanvasProjection(getActiveUserScope(), id, () => acceptExternalCanvasRevisionUnlocked(id));
+}
+
+async function acceptExternalCanvasRevisionUnlocked(id: string) {
+    const scope = getActiveUserScope();
+    if (!canvasExternalRevisionConflict(scope, id) && canvasBackendSubmitPaused(id, scope) && openLocalCanvasProject(id)) {
+        const remote = await readLocalCanvasProjectFromBackend(id);
+        if (remote.id === id && openLocalCanvasProject(id)) applyExternalCanvasRevision(remote, { hasUnsyncedEdits: true, scope });
+    }
     const conflict = canvasExternalRevisionConflict(scope, id);
     if (!conflict) return undefined;
     const candidate = conflict.candidate;
+    const live = openLocalCanvasProject(id);
+    if (live && !sameCanvasDocument(live, candidate)) {
+        await preserveCanvasConflictDraft(id, live, scope, { required: true });
+    }
     const journal = await recordConfirmedCanvasCommit(candidate, scope, { unflushedProjection: true });
     await updateCanvasOperationJournal(id, scope, (current) => {
         if (!current.inFlight) return;
         return { ...current, inFlight: null };
     });
-    if (!matchesDispatchGuard(expected)) {
-        clearCanvasExternalRevisionConflict(scope, id);
-        resumeCanvasBackendSubmit(id, scope);
-        return undefined;
-    }
     recordServerConfirmedCanvas(journal.confirmedSnapshot ?? candidate, scope);
     const decision = acceptCanvasExternalRevisionCandidate(id, {
         scope,
@@ -1037,7 +1051,7 @@ export async function acceptExternalCanvasRevision(id: string) {
     });
     if (!decision || decision.kind !== "apply") return undefined;
     resumeCanvasBackendSubmit(id, scope);
-    await persistProjectedCanvas(id, scope, journal.pendingProjection?.identity, { throwOnFailure: false }, expected);
+    await persistProjectedCanvas(id, scope, journal.pendingProjection?.identity, { throwOnFailure: false });
     return decision.project;
 }
 
@@ -1050,6 +1064,32 @@ export async function flushLocalWorkspace() {
     await flushCanvasStorePersistence();
 }
 
+export async function flushLocalCanvasBackendSaves(): Promise<void> {
+    const scope = getActiveUserScope();
+    const prefix = `${scope}\0`;
+    for (const [key, timer] of [...backendSaveTimers.entries()]) {
+        if (!key.startsWith(prefix)) continue;
+        clearTimeout(timer);
+        backendSaveTimers.delete(key);
+        const id = key.slice(prefix.length);
+        if (canvasDeleting.has(key)) {
+            publishCanvasSaveProgress(id, scope, true);
+            continue;
+        }
+        void syncLocalCanvasProject(id).catch(() => undefined);
+    }
+    const tails = [...backendSaveTails.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, tail]) => tail);
+    if (tails.length > 0) {
+        const results = await Promise.allSettled(tails);
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected" && !isCanvasSubmitControlError(failed.reason)) {
+            throw failed.reason;
+        }
+    }
+}
+
 async function waitForCanvasBackendIdle(id: string, scope: string) {
     const key = saveKey(scope, id);
     const timer = backendSaveTimers.get(key);
@@ -1059,11 +1099,12 @@ async function waitForCanvasBackendIdle(id: string, scope: string) {
     }
     const tail = backendSaveTails.get(key);
     if (tail) await tail.catch(() => undefined);
+    // 被取消的排队提交不会再发出：删除失败时如实显示为未保存。
+    if (timer) publishCanvasSaveProgress(id, scope, true);
 }
 
 export async function deleteLocalCanvasProjects(ids: readonly string[]) {
-    const expected = captureUserScope();
-    const scope = expected.userScope;
+    const scope = getActiveUserScope();
     const selected = [...new Set(ids)];
     const snapshots = selected
         .map((id) => useCanvasStore.getState().openProject(id))
@@ -1071,28 +1112,25 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
     for (const id of selected) canvasDeleting.add(saveKey(scope, id));
     try {
         await Promise.all(selected.map((id) => waitForCanvasBackendIdle(id, scope)));
-        assertDispatchGuard(expected, "账号已切换，未删除画布");
         const deleted: string[] = [];
         const failures: unknown[] = [];
         for (const id of selected) {
-            assertDispatchGuard(expected, "账号已切换，未删除画布");
             try {
-                await http.delete(`/canvas-projects/${encodeURIComponent(id)}`, { expectedScope: expected });
+                await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
                 await clearCanvasOperationJournal(id, scope);
                 clearCanvasDocumentBase(id, scope);
                 serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
+                clearCanvasBackendSaveProgress(id, scope);
                 deleted.push(id);
             } catch (error) {
-                rethrowIfAbandoned(error, "账号已切换，未删除画布");
                 console.error("画布后端删除失败", { id, error });
                 failures.push(error);
-                if (matchesDispatchGuard(expected) && !useCanvasStore.getState().openProject(id)) {
+                if (!useCanvasStore.getState().openProject(id)) {
                     const snapshot = snapshots.find((item) => item.id === id);
                     if (snapshot) useCanvasStore.getState().restoreProject(snapshot);
                 }
             }
         }
-        assertDispatchGuard(expected, "账号已切换，未删除画布");
         if (deleted.length) {
             useCanvasStore.getState().deleteProjects(deleted);
             const removed = snapshots.filter((item) => deleted.includes(item.id));

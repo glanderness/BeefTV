@@ -2,10 +2,7 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"strings"
-
-	"infinite-canvas/backend/internal/provider/workflow"
 )
 
 func (s *Service) FetchRunningHubWorkflowInfo(ctx context.Context, req RunningHubWorkflowFetchRequest) (map[string]any, error) {
@@ -29,26 +26,7 @@ func (s *Service) FetchRunningHubAppInfo(ctx context.Context, req RunningHubWork
 	if err != nil {
 		return nil, err
 	}
-	root := runningHubRootURL(config.BaseURL)
-	var response map[string]any
-	if err := s.runningHubJSON(ctx, config, root+"/api/webapp/apiCallDemo", map[string]any{
-		"apiKey":   runningHubAPIKey(config),
-		"webappId": webappID,
-	}, &response); err != nil {
-		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%w", err)
-	}
-	if code, valid := runningHubPayloadCode(response); valid && code != 0 {
-		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%s", runningHubFailureMessage(response))
-	}
-	rawData, _ := response["data"].(map[string]any)
-	if rawData == nil {
-		return nil, fmt.Errorf("RunningHub App 参数响应缺少 data")
-	}
-	nodes, valid := rawData["nodeInfoList"].([]any)
-	if !valid {
-		return nil, fmt.Errorf("RunningHub App 参数响应缺少有效的 nodeInfoList")
-	}
-	return map[string]any{"kind": "app", "webappId": webappID, "workflowId": webappID, "title": firstNonEmptyString(req.Title, webappID), "fields": workflow.CollectAppFields(nodes, req.Capability)}, nil
+	return s.workflowClient(nil).FetchSettingsApp(ctx, workflowConfigFromProvider(config), req)
 }
 
 func runningHubManagementConfig(req RunningHubWorkflowFetchRequest) (providerConfig, error) {

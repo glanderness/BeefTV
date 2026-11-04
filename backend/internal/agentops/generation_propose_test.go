@@ -1,12 +1,14 @@
 package agentops_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/workspace"
 )
 
@@ -72,6 +74,15 @@ func (h *harness) setNodeModel(t *testing.T, nodeID, model string) {
 func TestGenerationProposeIsReadOnlyAndReportsCanvasDefaultModel(t *testing.T) {
 	h := newHarness(t)
 	writeGenerationModels(t, h.dataDir)
+	// This test proposes independent targets; the shared harness's n1 -> n2
+	// edge is an unfinished media dependency, tested separately below.
+	doc := h.canvas(t)
+	doc["connections"] = []any{}
+	raw, _ := json.Marshal(doc)
+	if _, err := h.service.UpsertUserCanvasProject(h.userID, raw); err != nil {
+		t.Fatal(err)
+	}
+	h.revision = int64(h.canvas(t)["revision"].(float64))
 
 	descriptor, found := h.registry.Descriptor("canvas.generation.propose")
 	if !found {
@@ -115,6 +126,56 @@ func TestGenerationProposeIsReadOnlyAndReportsCanvasDefaultModel(t *testing.T) {
 	canvas, _ := after.Result.(map[string]any)["canvas"].(map[string]any)
 	if got, _ := canvas["revision"].(float64); int64(got) != h.revision {
 		t.Fatalf("提议不应推进画布版本：%d → %v", h.revision, canvas["revision"])
+	}
+}
+
+func TestGenerationProposeRejectsDependenciesWithoutMutationOrTasks(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	for _, state := range []string{"empty", "running", "ready"} {
+		t.Run(state, func(t *testing.T) {
+			h.patchNode(t, "n1", func(node map[string]any) {
+				meta := node["metadata"].(map[string]any)
+				if state != "empty" {
+					meta["content"] = "local-reference"
+				}
+				if state == "running" {
+					meta["taskStatus"] = "running"
+				}
+				if state == "ready" {
+					meta["taskStatus"] = "succeeded"
+				}
+			})
+			before, err := h.service.UserCanvasProject(h.userID, h.canvasID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ids := range [][]string{{"n1", "n2"}, {"n2"}, {"n1"}} {
+				_, err := h.run(t, "canvas.generation.propose", "", map[string]any{"canvasId": h.canvasID, "nodeIds": ids, "kind": "image"}, false)
+				blocked := len(ids) == 2 || (ids[0] == "n2" && state != "ready")
+				if blocked {
+					if err == nil || operations.AsError(err).Reason != "generation_dependencies_not_ready" {
+						t.Fatalf("targets=%v state=%s: expected dependency rejection, got %v", ids, state, err)
+					}
+				} else if err != nil {
+					t.Fatalf("targets=%v state=%s: %v", ids, state, err)
+				}
+			}
+			after, err := h.service.UserCanvasProject(h.userID, h.canvasID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("proposal validation changed the canvas")
+			}
+			tasks, err := h.service.Tasks(h.userID, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tasks) != 0 {
+				t.Fatalf("proposal created paid tasks: %#v", tasks)
+			}
+		})
 	}
 }
 

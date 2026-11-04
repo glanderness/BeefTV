@@ -54,8 +54,8 @@ func TestMixedWorkflowDeliveryKeepsFilesOutsideMediaLibrary(t *testing.T) {
 			t.Fatal("file must be an owned downloadable resource")
 		}
 	}
-	intents := canvasBindTargets(task, localtask.CanvasBindingIntents(task.ID, stored))
-	if len(intents) != 1 || intents[0].outputIndex != 1 {
+	intents := localtask.CanvasBindTargets(task, localtask.CanvasBindingIntents(task.ID, stored))
+	if len(intents) != 1 || intents[0].OutputIndex != 1 {
 		t.Fatalf("bindings=%#v", intents)
 	}
 	var count int64

@@ -19,6 +19,26 @@ func testDescriptor() Descriptor {
 	}
 }
 
+func TestUpscaleProcessingConnections(t *testing.T) {
+	r := BuiltinRegistry()
+	for _, edge := range [][2]string{{"image", "upscale"}, {"video", "upscale"}, {"upscale", "image"}, {"upscale", "video"}} {
+		if err := r.ValidateReferenceConnection(edge[0], edge[1]); err != nil {
+			t.Fatalf("valid processing edge %v: %v", edge, err)
+		}
+	}
+	for _, edge := range [][2]string{{"text", "upscale"}, {"audio", "upscale"}, {"upscale", "text"}, {"upscale", "audio"}, {"upscale", "upscale"}} {
+		if err := r.ValidateReferenceConnection(edge[0], edge[1]); err == nil {
+			t.Fatalf("invalid processing edge accepted: %v", edge)
+		}
+	}
+	if r.MaxReferenceInputCount("upscale") != 0 {
+		t.Fatal("upscale must allow multiple inputs")
+	}
+	if d, ok := r.Resolve("upscale"); !ok || d.GenerationMode != "" || d.Connection.CanReference {
+		t.Fatal("processor must not masquerade as a media generator or reference")
+	}
+}
+
 func TestRegistryNormalizesAndProtectsDescriptors(t *testing.T) {
 	input := testDescriptor()
 	registry, err := NewRegistry([]Descriptor{input})
@@ -283,5 +303,33 @@ func TestRegistryResolveUnknownTypeFailsClosed(t *testing.T) {
 	}
 	if _, ok := registry.ResolveGenerationMode("table"); ok {
 		t.Fatal("unknown generation mode resolved")
+	}
+}
+
+func TestRegistryDynamicPluginDescriptors(t *testing.T) {
+	registry := SharedRegistry()
+	defer registry.ResetPluginDescriptors()
+
+	err := registry.SetPluginDescriptors("storyboard-grid", []Descriptor{
+		{
+			Type:          "storyboard-grid",
+			Label:         "分镜九宫格",
+			DefaultWidth:  520,
+			DefaultHeight: 420,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SetPluginDescriptors failed: %v", err)
+	}
+	resolved, ok := registry.Resolve("storyboard-grid")
+	if !ok || resolved.Label != "分镜九宫格" || resolved.DefaultWidth != 520 || resolved.DefaultHeight != 420 {
+		t.Fatalf("resolved plugin descriptor = %#v, ok=%v", resolved, ok)
+	}
+	if err := registry.SetPluginDescriptors("other-plugin", []Descriptor{{Type: "text", Label: "冲突"}}); err == nil {
+		t.Fatal("expected collision with built-in type to fail")
+	}
+	registry.RemovePluginDescriptors("storyboard-grid")
+	if _, ok := registry.Resolve("storyboard-grid"); ok {
+		t.Fatal("expected storyboard-grid to be removed after RemovePluginDescriptors")
 	}
 }

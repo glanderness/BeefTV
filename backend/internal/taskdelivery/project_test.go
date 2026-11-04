@@ -36,6 +36,21 @@ func TestProjectNeverReadyOnUnreadableRecords(t *testing.T) {
 	}
 }
 
+func TestProjectKeepsDeliveryStageUntilEveryOutputIsReady(t *testing.T) {
+	for _, unreadable := range []bool{false, true} {
+		task := model.Task{Status: model.TaskStatusSucceeded, Stage: "delivery_timed_out", Type: "canvas_image", ResultJSON: `{"images":[{"resourceId":"r1"},{"resourceId":"r2"}]}`}
+		stored := []localtask.CanonicalOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializedAssetID: "asset-1"}}
+		var loadErr error
+		if unreadable {
+			loadErr = errors.New("unreadable")
+		}
+		proj := Project(task, stored, loadErr, false)
+		if proj.Stage != task.Stage || proj.ResultState == localtask.ResultStateReady {
+			t.Fatalf("incomplete delivery reported complete: %+v", proj)
+		}
+	}
+}
+
 func TestDecodeStoredOutputsFailsOnCorruptPayload(t *testing.T) {
 	_, err := DecodeStoredOutputs([]model.Result{{ID: "result-1", TaskID: "task-1", Kind: localtask.ResultKindGenerationOutput, Payload: "{"}})
 	if err == nil {
@@ -50,5 +65,41 @@ func TestDecodeStoredOutputsFailsOnCorruptPayload(t *testing.T) {
 	}
 	if len(byTask["task-ok"]) != 1 || byTask["task-ok"][0].ResourceID != "r1" {
 		t.Fatalf("healthy task lost: %#v", byTask)
+	}
+}
+
+func TestProjectWithFactsReflectsRecoveryOutcomeForVideoAndUpscale(t *testing.T) {
+	noResult := localtask.RecoveryNoResult
+	unrecoverable := localtask.RecoveryUnrecoverable
+
+	videoPending := model.Task{
+		ID:                "vid-pending",
+		Type:              "canvas_video",
+		Status:            model.TaskStatusFailed,
+		ProviderRequestID: "req-1",
+	}
+	proj := ProjectWithFacts(videoPending, nil, nil, false, localtask.OutcomeFacts{})
+	if proj.Outcome.Phase != "retrievable" || proj.Outcome.Reason != "provider_result_pending" {
+		t.Fatalf("expected retrievable video outcome, got %+v", proj.Outcome)
+	}
+
+	videoNoResult := videoPending
+	videoNoResult.RecoveryOutcome = &noResult
+	proj = ProjectWithFacts(videoNoResult, nil, nil, false, localtask.OutcomeFacts{})
+	if proj.Outcome.Phase != "failed" || proj.Outcome.Reason != "no_result" || proj.Outcome.Regenerate != "confirm" {
+		t.Fatalf("expected no_result failed video outcome, got %+v", proj.Outcome)
+	}
+
+	upscaleUnrecoverable := model.Task{
+		ID:                "upscale-unrecoverable",
+		Type:              "canvas_image",
+		Model:             "topaz-standard-v2",
+		Status:            model.TaskStatusFailed,
+		ProviderRequestID: "req-2",
+		RecoveryOutcome:   &unrecoverable,
+	}
+	proj = ProjectWithFacts(upscaleUnrecoverable, nil, nil, false, localtask.OutcomeFacts{})
+	if proj.Outcome.Phase != "failed" || proj.Outcome.Reason != "result_unrecoverable" || proj.Outcome.Regenerate != "confirm" {
+		t.Fatalf("expected result_unrecoverable failed upscale outcome, got %+v", proj.Outcome)
 	}
 }

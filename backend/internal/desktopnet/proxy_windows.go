@@ -30,5 +30,7 @@ func readSystemProxy() systemProxySettings {
 		}
 	}()
 	// PAC/WPAD are not static proxy endpoints; never treat a script URL as one.
-	return parseWindowsProxy(windows.UTF16PtrToString(config.Proxy), windows.UTF16PtrToString(config.Bypass))
+	settings := parseWindowsProxy(windows.UTF16PtrToString(config.Proxy), windows.UTF16PtrToString(config.Bypass))
+	settings.autoConfig = config.AutoDetect != 0 || windows.UTF16PtrToString(config.AutoConfigURL) != ""
+	return settings
 }

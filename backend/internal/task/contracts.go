@@ -132,9 +132,11 @@ type Summary struct {
 	CreatedAt                 time.Time                     `json:"createdAt"`
 	UpdatedAt                 time.Time                     `json:"updatedAt"`
 	ClientContext             *ClientContext                `json:"clientContext,omitempty"`
+	Outcome                   *Outcome                      `json:"outcome,omitempty"`
 	ResultState               string                        `json:"resultState,omitempty"`
 	Outputs                   []CanonicalOutput             `json:"outputs,omitempty"`
 	Delivery                  *model.TaskDeliveryProgress   `json:"delivery,omitempty"`
+	ReferenceProgress         *model.TaskReferenceProgress  `json:"referenceProgress,omitempty"`
 }
 
 type ClientContext struct {

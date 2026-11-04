@@ -12,7 +12,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
+
+var errDownloadStalled = errors.New("下载源长时间没有响应，请检查网络后继续下载")
 
 type Artifact struct {
 	URLs         []string       `json:"urls"`
@@ -49,11 +52,32 @@ func Download(ctx context.Context, artifact Artifact, target string, report func
 		return downloadParts(ctx, artifact, target, report)
 	}
 	temporary := target + ".download"
+	// Cancellation can leave all bytes present before the final hash finishes.
+	// Verify that cache before sending a Range request that would start past EOF.
+	if info, err := os.Stat(temporary); err == nil && info.Size() == artifact.Size {
+		if err := verifyFileContext(ctx, temporary, artifact); err == nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return publishVerifiedDownload(temporary, target)
+		} else if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := os.Remove(temporary); err != nil {
+			return fmt.Errorf("清理损坏的组件缓存失败: %w", err)
+		}
+	}
 	var lastErr error
 	for _, source := range artifact.URLs {
 		for attempt := 0; attempt < 3; attempt++ {
 			if err := downloadSource(ctx, source, temporary, artifact.Size, report); err != nil {
 				lastErr = err
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if errors.Is(err, errDownloadStalled) {
+					break
+				}
 				continue
 			}
 			if err := verifyFileContext(ctx, temporary, artifact); err != nil {
@@ -161,6 +185,12 @@ func publishVerifiedDownload(source, target string) error {
 }
 
 func downloadSource(ctx context.Context, source string, temporary string, total int64, report func(Progress)) error {
+	return downloadSourceWithIdleTimeout(ctx, source, temporary, total, report, 30*time.Second)
+}
+
+func downloadSourceWithIdleTimeout(ctx context.Context, source string, temporary string, total int64, report func(Progress), idleTimeout time.Duration) error {
+	sourceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var offset int64
 	if info, err := os.Stat(temporary); err == nil {
 		offset = info.Size()
@@ -168,7 +198,7 @@ func downloadSource(ctx context.Context, source string, temporary string, total 
 			offset = 0
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	req, err := http.NewRequestWithContext(sourceCtx, http.MethodGet, source, nil)
 	if err != nil {
 		return err
 	}
@@ -197,9 +227,14 @@ func downloadSource(ctx context.Context, source string, temporary string, total 
 	defer file.Close()
 	written := offset
 	buffer := make([]byte, 256*1024)
+	// A live connection may stop delivering bytes without closing. Cancel only
+	// this source so the verified mirror can resume the existing partial file.
+	idle := time.AfterFunc(idleTimeout, cancel)
+	defer idle.Stop()
 	for {
 		count, readErr := response.Body.Read(buffer)
 		if count > 0 {
+			idle.Reset(idleTimeout)
 			if _, err := file.Write(buffer[:count]); err != nil {
 				return err
 			}
@@ -212,6 +247,9 @@ func downloadSource(ctx context.Context, source string, temporary string, total 
 			break
 		}
 		if readErr != nil {
+			if ctx.Err() == nil && sourceCtx.Err() != nil {
+				return errDownloadStalled
+			}
 			return readErr
 		}
 	}

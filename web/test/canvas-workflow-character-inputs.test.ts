@@ -82,7 +82,7 @@ test("普通模型继续按原策略追加角色主图和补充视图", async ()
     try {
         const { nodes, connections, target } = fixture(false);
         const context = buildNodeGenerationContext(target.id, nodes, connections, "生成视频", [], true);
-        const hydrated = await hydrateNodeGenerationContext(context, "canvas", "project", "video");
+        const hydrated = await hydrateNodeGenerationContext(context, "canvas", "project", "video", false, true, { maxImages: 9 });
         expect(context.workflowImageSlots).toBeUndefined();
         expect(hydrated.referenceImages.map((image) => image.storageKey)).toEqual(["resource:image-b", "resource:character-a-primary", "resource:character-c-primary", "resource:character-a-front", "resource:character-a-side", "resource:character-c-front", "resource:character-c-side"]);
     } finally { restore(); }

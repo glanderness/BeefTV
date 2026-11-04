@@ -24,12 +24,17 @@ type Manifest struct {
 
 type EnsureOptions struct {
 	ManifestURL      string
+	ManifestMirrors  []string
 	DataDir          string
 	Platform         string
 	Variant          string
 	TrustedPublicKey ed25519.PublicKey
 	Progress         func(component string, progress Progress)
 	FallbackManifest *Manifest
+	// Offline forbids manifest requests and component downloads during capture.
+	Offline bool
+	// ApprovedPlan bounds the user's confirmed download and temporary-space budget.
+	ApprovedPlan *Plan
 }
 
 type Installation struct {
@@ -77,6 +82,9 @@ func runtimeLayout(dataDir, platform, variant string) (runtimePaths, error) {
 }
 
 func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
+	if options.Offline {
+		return Inspect(ctx, options.DataDir, options.Platform, options.Variant)
+	}
 	select {
 	case installationSlot <- struct{}{}:
 		defer func() { <-installationSlot }()
@@ -91,40 +99,29 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		return Installation{}, err
 	}
 	windows := options.Platform == "windows-amd64"
-	manifest, err := fetchManifest(ctx, options.ManifestURL, windows, options.TrustedPublicKey)
+	manifest, runtimeArtifact, err := loadArtifacts(ctx, options)
 	if err != nil {
-		if windows || options.FallbackManifest == nil {
-			return Installation{}, err
-		}
-		manifest = *options.FallbackManifest
-	}
-	if (windows && manifest.Version != 2) || (!windows && manifest.Version != 1) {
-		return Installation{}, fmt.Errorf("不支持的深度组件清单版本 %d", manifest.Version)
-	}
-	runtimeArtifact := manifest.Runtime
-	if windows {
-		var ok bool
-		runtimeArtifact, ok = manifest.Runtimes[options.Platform+"/"+options.Variant]
-		if !ok {
-			return Installation{}, errors.New("深度组件清单缺少对应的 Windows 运行包")
-		}
-		if runtimeArtifact.Files <= 0 || runtimeArtifact.ExpandedSize <= 0 {
-			return Installation{}, errors.New("Windows 深度组件清单缺少解压体积或文件数")
-		}
+		return Installation{}, err
 	}
 	runtimeRoot := paths.Root
 	modelRuntime := filepath.Join(options.DataDir, "models", "video-depth-anything-small", "v1")
 	python := paths.Python
-	bundledPython := paths.BundledPython
 	toolDir := paths.ToolDir
 	modelPath := filepath.Join(modelRuntime, "checkpoints", "video_depth_anything_vits.pth")
 	archivePath := paths.Archive
-	pythonReady := pathExecutable(python) && pathExecutable(bundledPython)
-	if windows {
-		pythonReady = pathRegular(python)
+	runtimeReady := installedRuntime(paths, options.Platform)
+	archiveReady := runtimeReady || verifyFileContext(ctx, archivePath, runtimeArtifact) == nil
+	plan, err := installationPlan(options.DataDir, runtimeArtifact, manifest.Model, archiveReady, verifyFileContext(ctx, modelPath, manifest.Model) == nil, runtimeReady)
+	if err != nil {
+		return Installation{}, fmt.Errorf("无法读取组件目录的可用空间: %w", err)
 	}
-	archiveReady := verifyFileContext(ctx, archivePath, runtimeArtifact) == nil
-	if !archiveReady || !pythonReady || !pathExists(filepath.Join(toolDir, "depth_capture")) {
+	if approved := options.ApprovedPlan; approved != nil && (plan.DownloadBytes > approved.DownloadBytes || plan.RequiredBytes > approved.RequiredBytes) {
+		return Installation{}, errors.New("组件下载信息已变化，请重新检查大小和空间后再确认下载")
+	}
+	if plan.RequiredBytes > 0 && plan.FreeBytes < uint64(plan.RequiredBytes) {
+		return Installation{}, fmt.Errorf("磁盘空间不足，请先在设置中更换存储目录或释放空间：需预留 %.1f GB，当前可用 %.1f GB", float64(plan.RequiredBytes)/(1<<30), float64(plan.FreeBytes)/(1<<30))
+	}
+	if !runtimeReady {
 		if !archiveReady {
 			if err := Download(ctx, runtimeArtifact, archivePath, componentProgress(options.Progress, "runtime")); err != nil {
 				return Installation{}, err
@@ -141,6 +138,9 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		maxExpanded := int64(3 << 30)
 		if windows {
 			maxExpanded = 12 << 30
+		}
+		if options.Progress != nil {
+			options.Progress("extracting", Progress{})
 		}
 		if err := extractRuntimeArchiveContext(ctx, archivePath, stage, runtimeArtifact, maxExpanded); err != nil {
 			return Installation{}, err
@@ -175,6 +175,13 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		if err := Download(ctx, manifest.Model, modelPath, componentProgress(options.Progress, "model")); err != nil {
 			return Installation{}, err
 		}
+	}
+	receipt, err := json.Marshal(Artifact{Size: manifest.Model.Size, SHA256: manifest.Model.SHA256})
+	if err != nil {
+		return Installation{}, err
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, ".installation.json"), receipt, 0600); err != nil {
+		return Installation{}, err
 	}
 	return Installation{Python: python, ToolDir: toolDir, ModelRuntime: modelRuntime}, nil
 }
@@ -252,6 +259,28 @@ func fetchManifest(ctx context.Context, rawURL string, signed bool, public ed255
 		return manifest, nil
 	}
 	return Manifest{}, fmt.Errorf("获取深度组件清单失败: %w", lastErr)
+}
+
+func fetchManifestSources(ctx context.Context, options EnsureOptions) (Manifest, error) {
+	sources := append([]string{options.ManifestURL}, options.ManifestMirrors...)
+	var lastErr error
+	for _, source := range sources {
+		attemptCtx := ctx
+		cancel := func() {}
+		if len(sources) > 1 {
+			attemptCtx, cancel = context.WithTimeout(ctx, 6*time.Second)
+		}
+		manifest, err := fetchManifest(attemptCtx, source, options.Platform == "windows-amd64", options.TrustedPublicKey)
+		cancel()
+		if err == nil {
+			return manifest, nil
+		}
+		if ctx.Err() != nil {
+			return Manifest{}, ctx.Err()
+		}
+		lastErr = err
+	}
+	return Manifest{}, lastErr
 }
 
 func extractRuntimeArchive(path string, destination string, artifact Artifact, maxExpanded int64) error {

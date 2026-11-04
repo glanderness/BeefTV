@@ -42,6 +42,9 @@ func unavailable() error {
 }
 
 func localStorageFailed(cause error) error {
+	if full := kernel.DiskFullError(cause); full != nil {
+		return full
+	}
 	return &kernel.AppError{
 		Status:  kernel.CodeInternal,
 		Code:    kernel.CodeInternal,

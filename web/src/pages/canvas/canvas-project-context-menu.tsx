@@ -1,4 +1,5 @@
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
+import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type CanvasWorkspaceMode, type ContextMenuState, type Position } from "@/types/canvas";
 
 type CanvasAssetCategory = NonNullable<NonNullable<CanvasNodeData["metadata"]>["assetCategory"]>;
@@ -111,7 +112,7 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
                 if (menu.type === "node") props.onSetAssetCategory(menu.nodeId, category);
             }}
             onToggleFrame={() => {
-                if (node?.type === CanvasNodeType.Frame) props.onToggleFrame(node);
+                if (node && isFrameNode(node)) props.onToggleFrame(node);
             }}
             onSpreadSelection={props.onSpreadSelection}
             onCopySelection={props.onCopySelection}

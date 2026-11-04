@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/bootstrap"
+	"infinite-canvas/backend/internal/desktopstorage"
+	"infinite-canvas/backend/internal/model"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -25,16 +27,19 @@ type DesktopRuntimeConfig struct {
 }
 
 type DesktopApp struct {
-	mu              sync.RWMutex
-	migrationMu     sync.Mutex
-	migrating       bool
-	migrationCancel context.CancelFunc
-	closing         bool
-	storageRoot     string
-	dataDir         string
-	wailsCtx        context.Context
-	chooseSavePath  func(ctx context.Context, fileName string) (string, error)
-	copyOwnedMedia  func(resourceID, destPath string) error
+	mu                      sync.RWMutex
+	migrationMu             sync.Mutex
+	migrating               bool
+	migrationCancel         context.CancelFunc
+	migrationProgress       desktopstorage.Progress
+	referenceUploadProgress model.TaskReferenceProgress
+	closing                 bool
+	storageRoot             string
+	dataDir                 string
+	wailsCtx                context.Context
+	pendingSkillLink        string
+	chooseSavePath          func(ctx context.Context, fileName string) (string, error)
+	copyOwnedMedia          func(resourceID, destPath string) error
 }
 
 // Wails reflects every field type reachable from a bound object. Keeping the
@@ -168,6 +173,20 @@ func (a *DesktopApp) SaveOwnedArtifact(fileName string, data []byte) (bool, erro
 	})
 }
 
+func (a *DesktopApp) SaveOwnedArchive(fileName string, entries []bootstrap.OwnedArchiveEntry) (bool, error) {
+	return a.saveToChosenPath(fileName, func(path string) error {
+		runtime := a.runtime()
+		if runtime == nil {
+			return errors.New("本地后端尚未就绪")
+		}
+		ctx, err := a.dialogContext()
+		if err != nil {
+			return err
+		}
+		return runtime.WriteOwnedArchiveTo(ctx, entries, path)
+	})
+}
+
 func (a *DesktopApp) saveToChosenPath(fileName string, write func(path string) error) (bool, error) {
 	ctx, err := a.dialogContext()
 	if err != nil {
@@ -245,7 +264,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.wailsCtx = ctx
 	a.mu.Unlock()
-	if err := a.start(ctx); err != nil {
+	if err := prepareDesktopApp(a); err != nil {
 		log.Printf("启动本地后端失败: %v", err)
 		wailsruntime.LogErrorf(ctx, "启动本地后端失败: %v", err)
 		wailsruntime.Quit(ctx)

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { App, ConfigProvider, theme } from "antd";
-import { createReferenceLinkResolver } from "../../src/pages/canvas/canvas-reference-links";
+import { createReferenceLinkResolver } from "../../src/components/generation-reference-links";
 
 function Harness() {
     const { modal } = App.useApp();

@@ -29,6 +29,9 @@ func TestTaskDeliveryPortRecordsUnderTaskIdentityAndClears(t *testing.T) {
 		t.Fatalf("progress not projected: %#v", got)
 	}
 	output := got.Outputs[0]
+	if output.UpdatedAt <= 0 {
+		t.Fatal("download snapshot has no sampling timestamp")
+	}
 	if output.OutputIndex != 0 || output.DownloadedBytes != 512 || output.TotalBytes != 2048 || output.State != "downloading" {
 		t.Fatalf("unexpected projection: %+v", output)
 	}
@@ -56,7 +59,8 @@ func TestVideoDeliveryStreamIsVisibleOnWorkspaceTask(t *testing.T) {
 	const taskID = "workspace-video"
 	const providerID = "provider-video"
 	now := time.Now()
-	task := model.Task{ID: taskID, UserID: "local", Type: "canvas_video", Status: model.TaskStatusRunning, Stage: "正在取回生成结果", CreatedAt: now, UpdatedAt: now}
+	expires := now.Add(time.Minute)
+	task := model.Task{ID: taskID, UserID: "local", Type: "canvas_video", Status: model.TaskStatusRunning, Stage: "正在取回生成结果", LeaseOwner: "delivery-fixture", LeaseExpiresAt: &expires, CreatedAt: now, UpdatedAt: now}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +93,7 @@ func TestVideoDeliveryStreamIsVisibleOnWorkspaceTask(t *testing.T) {
 	}))
 	defer server.Close()
 	ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
-	ctx = generation.WithRuntime(ctx, generation.Runtime{Delivery: appTaskDeliveryPort{service: svc, taskID: taskID}})
+	ctx = generation.WithRuntime(ctx, generation.Runtime{Delivery: appTaskDeliveryPort{service: svc, taskID: taskID}, Stages: appTaskStagePort{service: svc, task: task}})
 	policy := generation.DefaultVideoPollPolicy()
 	sawWaiting := false
 	policy.Sleep = func(_ context.Context, delay time.Duration) error {
@@ -133,6 +137,13 @@ func TestVideoDeliveryStreamIsVisibleOnWorkspaceTask(t *testing.T) {
 			}
 			if svc.deliveryProgressRegistry().forTask(taskID) != nil {
 				t.Fatal("progress not cleared")
+			}
+			var phases []model.TaskLog
+			if err := db.Where("task_id = ? AND payload LIKE ?", taskID, `{"phase":"result_transfer_%"}`).Order("created_at").Find(&phases).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(phases) < 2 || phases[0].Payload != `{"phase":"result_transfer_start"}` || phases[len(phases)-1].Payload != `{"phase":"result_transfer_end"}` {
+				t.Fatalf("transfer timing boundaries missing: %+v", phases)
 			}
 			return
 		case <-ticker.C:

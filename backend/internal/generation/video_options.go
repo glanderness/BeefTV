@@ -2,6 +2,7 @@ package generation
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -29,17 +30,39 @@ func IsSeedanceVideoConfig(config Config) bool {
 	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "doubao-seedance") || IsArkPlanVideoConfig(config)
 }
 
+// Empty interface types use the legacy hand-written Seedance task path.
+// Explicit third-party protocols own their image roles and parameter shape.
+func usesSeedanceTaskOptions(config Config) bool {
+	return strings.TrimSpace(config.InterfaceType) == "" ||
+		model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) ||
+		config.InterfaceType == "seedance-videos-compatible"
+}
+
 func IsBeefAPIVideoConfig(ctx context.Context, config Config) bool {
 	if testBase := beefAPITestBaseURL(ctx); testBase != "" {
 		got := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
 		want := strings.TrimRight(testBase, "/")
 		return got == want || strings.HasPrefix(got, want+"/")
 	}
-	return providerpreset.IsBeefAPIEndpoint(config.BaseURL)
+	if providerpreset.IsBeefAPIEndpoint(config.BaseURL) {
+		return true
+	}
+	// The domestic gateway uses the same video wire contract. This only selects
+	// the request format; hosted-account credential ownership stays unchanged.
+	u, err := url.Parse(strings.TrimSpace(config.BaseURL))
+	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Hostname(), "beefapi.com") && u.User == nil && (u.Port() == "" || u.Port() == "443")
 }
 
 func IsBeefAPISeedancePreuploadConfig(ctx context.Context, config Config) bool {
 	return IsBeefAPIVideoConfig(ctx, config) && IsSeedanceVideoConfig(config)
+}
+
+func requiresBeefAPIHTTPReferences(ctx context.Context, config Config) bool {
+	if UpscaleMediaType(config.Model) != "" {
+		return IsBeefAPIVideoConfig(ctx, config)
+	}
+	contract, ok := providerpreset.BeefAPIVideoContract(config.Model)
+	return ok && contract.RequiresHTTPReferences && IsBeefAPIVideoConfig(ctx, config)
 }
 
 func IsGrokVideoConfig(config Config) bool {
@@ -81,12 +104,36 @@ func ImageParameterSupported(profile *ImageCapabilityConfig, parameter string) b
 	return profile.OutputFormat.Supported
 }
 
+// ImageResponseFormatValue 返回图片接口应发送的 response_format 取值。
+// 渠道没有显式选择时沿用 b64_json，保持既有行为不变。
+func ImageResponseFormatValue(profile *ImageCapabilityConfig) string {
+	if profile != nil && strings.EqualFold(strings.TrimSpace(profile.ResponseFormat.Value), modelcatalog.ImageResponseFormatURL) {
+		return modelcatalog.ImageResponseFormatURL
+	}
+	return modelcatalog.ImageResponseFormatBase64
+}
+
 func ImageQualitySupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.Quality.Supported
 }
 
 func ImageTransparentBackgroundSupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.TransparentBackground.Supported
+}
+
+func sequentialMaxImagesForInput(input Input) int {
+	maxImages, err := strconv.Atoi(strings.TrimSpace(input.Config.SeedreamMaxImages))
+	if err != nil || maxImages <= 1 {
+		return 0
+	}
+	limit := 15
+	if remaining := limit - len(input.ReferenceImages); remaining < limit {
+		limit = remaining
+	}
+	if maxImages > limit {
+		maxImages = limit
+	}
+	return maxImages
 }
 
 func ImageSizeParameter(profile *ImageCapabilityConfig, value string) (string, string) {

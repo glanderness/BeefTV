@@ -8,21 +8,44 @@ import (
 )
 
 func registerCanvasTimelineOps(r *Registry) {
-	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.timeline.update", Summary: "修改当前画布时间线（裁剪、顺序、音量、字幕；仅用已关联素材，带 revision CAS）", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer","minimum":0},"timeline":{"type":"object","description":"时间线 v2；时间均为毫秒。所有可见 video/image 片段按 startMs 播放且不可重叠（跨轨也一样）；空隙补黑。音频、字幕可与视觉重叠。仅使用当前画布已关联的素材或已保存时间线中的资源。","properties":{"version":{"type":"integer","enum":[2]},"durationMs":{"type":"integer","minimum":0},"tracks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","audio","subtitle","text","image"]},"visible":{"type":"boolean"},"muted":{"type":"boolean"}},"required":["id","kind"]}},"clips":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio","subtitle"]},"nodeId":{"type":"string","description":"媒体片段对应当前画布节点；字幕无需 nodeId"},"directMedia":{"type":"object","description":"也可引用当前画布已关联的资源；不能传路径或任意 URL","properties":{"id":{"type":"string"},"assetId":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio"]},"storageKey":{"type":"string","description":"resource:资源ID"}},"required":["id","kind","storageKey"]},"trackId":{"type":"string"},"startMs":{"type":"integer","minimum":0},"durationMs":{"type":"integer","minimum":1,"description":"播放及裁剪长度；sourceStartMs + durationMs 不得超过素材时长（静态图片除外）"},"sourceStartMs":{"type":"integer","minimum":0,"description":"媒体裁剪起点；默认 0"},"volume":{"type":"number","minimum":0,"description":"默认 1；0 为静音"},"fadeInMs":{"type":"integer","minimum":0,"description":"音频淡入时长；不改变画面"},"fadeOutMs":{"type":"integer","minimum":0,"description":"音频淡出时长；不改变画面"},"text":{"type":"string","description":"字幕内容；仅 kind=subtitle 使用"}},"required":["id","kind","trackId","startMs","durationMs"]}}},"required":["version","tracks","clips","durationMs"]}},"required":["canvasId","expectedRevision","timeline"]}`), Handler: opCanvasTimelineUpdate})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.timeline.update", Summary: "修改画布时间线或用 refreshNodeIds 局部刷新节点素材", Scope: ScopeCanvas,
+		Params: timelineUpdateSchema(json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"timeline":{"type":"object","description":"时间线 v2（毫秒）；可见 video/image 不可重叠","properties":{"version":{"type":"integer","enum":[2]},"durationMs":{"type":"integer"},"tracks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","audio","subtitle","text","image"]},"visible":{"type":"boolean"},"muted":{"type":"boolean"}},"required":["id","kind"]}},"clips":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio","subtitle"]},"nodeId":{"type":"string"},"trackId":{"type":"string"},"startMs":{"type":"integer"},"durationMs":{"type":"integer"},"sourceStartMs":{"type":"integer"},"volume":{"type":"number"},"fadeInMs":{"type":"integer"},"fadeOutMs":{"type":"integer"},"text":{"type":"string"}},"required":["id","kind","trackId","startMs","durationMs"]}},"output":{"type":["object","null"],"properties":{"width":{"type":"integer"},"height":{"type":"integer"},"fps":{"type":"integer"},"burnSubtitles":{"type":"boolean"}}}},"required":["version","tracks","clips","durationMs"]}},"required":["canvasId","expectedRevision","timeline"]}`)), Handler: opCanvasTimelineUpdate})
+}
+
+func timelineUpdateSchema(raw json.RawMessage) json.RawMessage {
+	var schema map[string]any
+	_ = json.Unmarshal(raw, &schema)
+	schema["properties"].(map[string]any)["refreshNodeIds"] = map[string]any{
+		"type":        "array",
+		"items":       map[string]any{"type": "string"},
+		"description": "仅刷新指定节点素材引用（与 timeline 二选一）",
+	}
+	schema["required"] = []string{"canvasId", "expectedRevision"}
+	schema["oneOf"] = []any{
+		map[string]any{"required": []string{"timeline"}},
+		map[string]any{"required": []string{"refreshNodeIds"}},
+	}
+	encoded, _ := json.Marshal(schema)
+	return encoded
 }
 
 func opCanvasTimelineUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
-		CanvasID         string          `json:"canvasId"`
-		ExpectedRevision *int64          `json:"expectedRevision"`
-		Timeline         editing.Project `json:"timeline"`
+		CanvasID         string           `json:"canvasId"`
+		ExpectedRevision *int64           `json:"expectedRevision"`
+		Timeline         *editing.Project `json:"timeline"`
+		RefreshNodeIDs   []string         `json:"refreshNodeIds"`
 	}
 	if err := decodeParams(params, &args); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(args.CanvasID) == "" || args.ExpectedRevision == nil || *args.ExpectedRevision < 0 {
-		return nil, InvalidArg("invalid_params", "canvasId、expectedRevision 和 timeline 必填")
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(params, &fields)
+	_, hasTimeline := fields["timeline"]
+	_, hasRefresh := fields["refreshNodeIds"]
+	if strings.TrimSpace(args.CanvasID) == "" || args.ExpectedRevision == nil || *args.ExpectedRevision < 0 ||
+		hasTimeline == hasRefresh || (args.Timeline == nil) == (args.RefreshNodeIDs == nil) {
+		return nil, InvalidArg("invalid_params", "需要 canvasId、expectedRevision，且 timeline 与 refreshNodeIds 二选一")
 	}
 	raw, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID)
 	if err != nil {
@@ -36,11 +59,38 @@ func opCanvasTimelineUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	if revision != *args.ExpectedRevision {
 		return nil, Conflict("revision_conflict", "画布已经变化，请重新读取", map[string]any{"currentRevision": revision})
 	}
-	sources, err := timelineSources(ctx, doc, &args.Timeline)
+	if args.RefreshNodeIDs != nil {
+		if err := refreshTimelineSources(ctx, doc, args.RefreshNodeIDs); err != nil {
+			return nil, err
+		}
+		return commitTimelineUpdate(ctx, args.CanvasID, *args.ExpectedRevision, doc)
+	}
+	if args.Timeline.Output == nil {
+		var requested struct {
+			Timeline map[string]json.RawMessage `json:"timeline"`
+		}
+		if err = json.Unmarshal(params, &requested); err != nil {
+			return nil, InvalidArg("invalid_params", "timeline 必须是对象")
+		}
+		// An edit may replace tracks and clips without restating project output.
+		// Explicit null clears the setting; omission retains only valid output.
+		if _, present := requested.Timeline["output"]; !present {
+			var saved struct {
+				Output *editing.Options `json:"output"`
+			}
+			previous, marshalErr := json.Marshal(doc["timeline"])
+			if marshalErr == nil && json.Unmarshal(previous, &saved) == nil && saved.Output != nil {
+				if _, outputErr := editing.NormalizeOptions(*saved.Output); outputErr == nil {
+					args.Timeline.Output = saved.Output
+				}
+			}
+		}
+	}
+	sources, err := timelineSources(ctx, doc, args.Timeline)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = editing.Compile(args.Timeline, sources, editing.DefaultOptions()); err != nil {
+	if _, err = editing.Compile(*args.Timeline, sources, editing.Options{}); err != nil {
 		return nil, InvalidArg("invalid_timeline", err.Error())
 	}
 	// Encode the typed timeline; unknown fields can never introduce paths or URLs.
@@ -53,15 +103,75 @@ func opCanvasTimelineUpdate(ctx *Context, params json.RawMessage) (any, error) {
 		return nil, AsError(err)
 	}
 	doc["timeline"] = value
+	return commitTimelineUpdate(ctx, args.CanvasID, *args.ExpectedRevision, doc)
+}
+
+func commitTimelineUpdate(ctx *Context, canvasID string, revision int64, doc map[string]any) (any, error) {
 	encoded, err := json.Marshal(doc)
 	if err != nil {
 		return nil, AsError(err)
 	}
-	summary, _, err := ctx.Domain.CommitUserCanvasDocument(ctx.UserID, args.CanvasID, *args.ExpectedRevision, encoded)
+	summary, _, err := ctx.Domain.CommitUserCanvasDocument(ctx.UserID, canvasID, revision, encoded)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
-	return map[string]any{"canvasId": args.CanvasID, "revision": summary.Revision, "timelineUpdated": true}, nil
+	return map[string]any{"canvasId": canvasID, "revision": summary.Revision, "timelineUpdated": true}, nil
+}
+
+// Validate using the same ownership and render rules as a full edit, but write
+// only the selected media references back into the original document.
+func refreshTimelineSources(ctx *Context, doc map[string]any, nodeIDs []string) error {
+	if len(nodeIDs) == 0 || len(nodeIDs) > 50 {
+		return InvalidArg("invalid_params", "refreshNodeIds 需要1至50个不同节点")
+	}
+	selected := map[string]bool{}
+	for _, id := range nodeIDs {
+		if strings.TrimSpace(id) == "" || selected[id] {
+			return InvalidArg("invalid_params", "refreshNodeIds 不能包含空节点或重复节点")
+		}
+		selected[id] = true
+	}
+	rawTimeline, ok := doc["timeline"].(map[string]any)
+	if !ok {
+		return InvalidArg("invalid_timeline", "当前画布没有可更新的时间线")
+	}
+	rawClips, ok := rawTimeline["clips"].([]any)
+	if !ok {
+		return InvalidArg("invalid_timeline", "当前时间线缺少片段")
+	}
+	raw, err := json.Marshal(rawTimeline)
+	var project editing.Project
+	if err != nil || json.Unmarshal(raw, &project) != nil {
+		return InvalidArg("invalid_timeline", "当前时间线无法读取")
+	}
+	found := map[string]bool{}
+	for i := range project.Clips {
+		clip := &project.Clips[i]
+		if selected[clip.NodeID] && clip.Kind != editing.KindSubtitle {
+			clip.DirectMedia = nil
+			found[clip.NodeID] = true
+		}
+	}
+	if len(found) != len(selected) {
+		return InvalidArg("timeline_node_not_used", "指定节点没有对应的媒体片段，未修改时间线")
+	}
+	sources, err := timelineSources(ctx, doc, &project)
+	if err != nil {
+		return err
+	}
+	if _, err := editing.Compile(project, sources, editing.Options{}); err != nil {
+		return InvalidArg("invalid_timeline", err.Error())
+	}
+	for i, clip := range project.Clips {
+		if selected[clip.NodeID] && clip.Kind != editing.KindSubtitle {
+			rawClip, ok := rawClips[i].(map[string]any)
+			if !ok {
+				return InvalidArg("invalid_timeline", "时间线片段无法读取")
+			}
+			rawClip["directMedia"] = clip.DirectMedia
+		}
+	}
+	return nil
 }
 
 func timelineSources(ctx *Context, doc map[string]any, project *editing.Project) ([]editing.SourceMeta, error) {

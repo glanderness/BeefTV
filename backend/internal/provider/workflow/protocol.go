@@ -126,37 +126,50 @@ func runningHubTaskID(payload map[string]any) string {
 	return ""
 }
 
+type runningHubOutput struct {
+	NodeID string
+	URL    string
+	ID     string
+	Field  string
+	Owner  string
+}
+
 func runningHubOutputURLs(value interface{}) []string {
 	outputs := runningHubOutputs(value)
-	urls := make([]string, 0, len(outputs))
-	for _, output := range outputs {
-		urls = append(urls, output.URL)
+	urls := make([]string, len(outputs))
+	for i, output := range outputs {
+		urls[i] = output.URL
 	}
 	return urls
 }
 
-type workflowOutput struct {
-	URL    string
-	NodeID string
-}
-
-// Keep provider order and origin metadata; a workflow may emit several media kinds.
-func runningHubOutputs(value interface{}) []workflowOutput {
-	result := make([]workflowOutput, 0)
-	var visit func(interface{}, string)
-	visit = func(current interface{}, nodeID string) {
+func runningHubOutputs(value interface{}) []runningHubOutput {
+	result := make([]runningHubOutput, 0)
+	seen := map[string]bool{}
+	var visit func(interface{}, string, string, string, string, string)
+	visit = func(current interface{}, path, field, id, owner, nodeID string) {
 		switch item := current.(type) {
 		case string:
-			if strings.HasPrefix(item, "http://") || strings.HasPrefix(item, "https://") || strings.HasPrefix(item, "data:") || (strings.HasPrefix(item, "/") && !strings.HasPrefix(item, "//")) || runningHubRelativeOutputPath(item) {
-				result = append(result, workflowOutput{URL: item, NodeID: nodeID})
+			item = strings.TrimSpace(item)
+			if runningHubIsOutputURL(item) {
+				if key := nodeID + ":" + item; !seen[key] {
+					seen[key] = true
+					result = append(result, runningHubOutput{URL: item, ID: id, Field: field, Owner: owner, NodeID: nodeID})
+				}
 			}
 		case []interface{}:
-			for _, child := range item {
-				visit(child, nodeID)
+			for index, child := range item {
+				visit(child, path+"/"+strconv.Itoa(index), field, id, owner, nodeID)
 			}
 		case map[string]interface{}:
-			if id := stringValue(item["nodeId"]); id != "" {
-				nodeID = id
+			if value := stringValue(item["nodeId"]); value != "" {
+				nodeID = value
+			}
+			if value := stringValue(item["node_id"]); value != "" {
+				nodeID = value
+			}
+			if outputID := runningHubOutputID(item); outputID != "" {
+				id, field, owner = outputID, "", path
 			}
 			keys := make([]string, 0, len(item))
 			for key := range item {
@@ -164,27 +177,140 @@ func runningHubOutputs(value interface{}) []workflowOutput {
 			}
 			sort.Strings(keys)
 			for _, preferred := range []string{"fileUrl", "file_url", "url", "downloadUrl", "download_url", "src", "output", "outputs", "results", "files", "data", "images", "videos", "audio", "audios", "result"} {
-				visit(item[preferred], nodeID)
-				// 精确键优先，其他旧拼写按原键排序，兼容网关且不依赖 map 遍历顺序。
+				ordered := []string{preferred}
 				for _, key := range keys {
 					if key != preferred && strings.EqualFold(strings.TrimSpace(key), preferred) {
-						visit(item[key], nodeID)
+						ordered = append(ordered, key)
 					}
+				}
+				for _, key := range ordered {
+					visit(item[key], path+"/"+key, field+"/"+strings.ToLower(strings.TrimSpace(key)), id, owner, nodeID)
 				}
 			}
 		}
 	}
-	visit(value, "")
-	seen := map[string]bool{}
-	deduped := make([]workflowOutput, 0, len(result))
-	for _, item := range result {
-		identity := item.NodeID + ":" + item.URL
-		if !seen[identity] {
-			seen[identity] = true
-			deduped = append(deduped, item)
+	visit(value, "", "", "", "", "")
+	return result
+}
+
+func runningHubOutputField(key string) bool {
+	switch key {
+	case "fileurl", "file_url", "url", "downloadurl", "download_url", "src", "output", "outputs", "results", "files", "data", "images", "videos", "audio", "audios", "result":
+		return true
+	}
+	return false
+}
+
+func runningHubOutputID(item map[string]interface{}) string {
+	for _, key := range []string{"outputId", "outputID", "output_id", "fileId", "fileID", "file_id", "id"} {
+		// A status envelope's generic id belongs to the task, not its outputs.
+		if key == "id" && !runningHubHasOutputURL(item) {
+			continue
+		}
+		if value := stringValue(item[key]); value != "" {
+			return value
 		}
 	}
-	return deduped
+	return ""
+}
+
+func runningHubHasOutputURL(item map[string]interface{}) bool {
+	for key := range item {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "fileurl", "file_url", "url", "downloadurl", "download_url", "src":
+			if value, ok := item[key].(string); ok && runningHubIsOutputURL(strings.TrimSpace(value)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func runningHubIsOutputURL(value string) bool {
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "data:") || (strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//")) || runningHubRelativeOutputPath(value)
+}
+
+func validateRunningHubQueryTaskID(response map[string]any, taskID string) error {
+	objects := []map[string]any{response}
+	if data, ok := response["data"].(map[string]any); ok {
+		objects = append(objects, data)
+	}
+	for _, object := range objects {
+		for _, key := range []string{"taskId", "task_id", "taskID", "id"} {
+			if key == "id" && runningHubHasOutputURL(object) {
+				if _, status := runningHubDirectCode(object); !status {
+					continue
+				}
+			}
+			if id := stringValue(object[key]); id != "" && id != taskID {
+				return errors.New("RunningHub 查询返回了其他任务的状态")
+			}
+		}
+	}
+	return nil
+}
+
+func matchRunningHubOutput(original runningHubOutput, fresh []runningHubOutput) (runningHubOutput, error) {
+	matched := make([]runningHubOutput, 0, 1)
+	owners := map[string]bool{}
+	for _, output := range fresh {
+		if original.ID != "" {
+			if output.ID == original.ID {
+				owners[output.Owner] = true
+			}
+			if output.ID == original.ID && output.Field == original.Field {
+				matched = append(matched, output)
+			}
+		} else if output.URL == original.URL && output.Field == original.Field {
+			matched = append(matched, output)
+		}
+	}
+	if original.ID == "" && len(matched) == 0 {
+		// Legacy signed URLs retain the asset path. Never substitute the new
+		// array index if that path is missing or shared by different outputs.
+		locator := runningHubOutputLocator(original.URL)
+		for _, output := range fresh {
+			if locator != "" && runningHubOutputLocator(output.URL) == locator {
+				matched = append(matched, output)
+			}
+		}
+		if len(matched) == 1 && matched[0].Field != original.Field {
+			matched = nil
+		}
+	}
+	if len(matched) != 1 || len(owners) > 1 {
+		return runningHubOutput{}, errors.New("原工作流任务没有返回唯一对应的产物")
+	}
+	return matched[0], nil
+}
+
+func runningHubOutputLocator(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" || parsed.Path == "" || !isPublicMediaURL(rawURL) {
+		return ""
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return ""
+	}
+	// Only comparison ignores signing metadata; the actual request keeps the
+	// original query spelling. Resource selectors such as asset/id must stay.
+	for key := range query {
+		name := strings.ToLower(key)
+		switch name {
+		case "signature", "sign", "sig", "expires", "expiry", "exp", "policy", "key-pair-id", "awsaccesskeyid", "q-sign-algorithm", "q-ak", "q-sign-time", "q-key-time", "q-header-list", "q-url-param-list", "q-signature":
+			query.Del(key)
+		default:
+			if strings.HasPrefix(name, "x-amz-") || strings.HasPrefix(name, "x-goog-") || strings.HasPrefix(name, "x-tos-") {
+				query.Del(key)
+			}
+		}
+	}
+	locator := strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host) + parsed.EscapedPath()
+	if encoded := query.Encode(); encoded != "" {
+		locator += "?" + encoded
+	}
+	return locator
 }
 
 func runningHubRelativeOutputPath(value string) bool {

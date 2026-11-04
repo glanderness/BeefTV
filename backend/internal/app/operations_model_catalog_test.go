@@ -2,13 +2,91 @@ package app
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/operations"
 )
+
+func TestAgentModelCatalogBeefAPIVideoContractAndAudioPayload(t *testing.T) {
+	for _, tc := range []struct {
+		name, baseURL                     string
+		configured, audioDefault, sourced bool
+	}{
+		{name: "missing profile", baseURL: "https://beeftv.app"},
+		{name: "saved false", baseURL: "https://enterprise.beefapi.com/v1", configured: true},
+		{name: "saved true", baseURL: "https://enterprise.beefapi.com/v1", configured: true, audioDefault: true},
+		{name: "custom endpoint", baseURL: "https://custom.example", configured: true},
+		{name: "versioned gateway contract", baseURL: "https://enterprise.beefapi.com/v1", configured: true, sourced: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newModelCatalogTestService(t)
+			svc.mode = serviceModeLocal
+			profile := map[string]any{"model": "kling-video-v3", "capability": "video", "protocol": "newapi"}
+			if tc.configured {
+				config := modelcatalog.DefaultModelCapabilityConfigForModel("newapi", "kling-video-v3")
+				config.Video.GenerateAudio.Default = tc.audioDefault
+				profile["capabilityConfig"] = config
+			}
+			if tc.sourced {
+				profile["videoCapabilitiesVersion"] = "gateway-v2"
+			}
+			channelID := "beefapi"
+			if tc.name == "custom endpoint" {
+				channelID = "custom"
+			}
+			body, _ := json.Marshal(map[string]any{"channels": []any{map[string]any{"id": channelID, "baseUrl": tc.baseURL, "models": []string{"kling-video-v3"}, "modelProfiles": []any{profile}}}})
+			if err := svc.SaveLocalModelConfig(body); err != nil {
+				t.Fatal(err)
+			}
+			registry := operations.NewRegistry(svc, operations.NewStore(svc.repo.DB()))
+			operations.RegisterDefaultOps(registry)
+			result, err := registry.Execute(operations.Request{Op: "model.catalog", UserID: "desktop-owner", Caller: operations.ManualCaller(true), Params: json.RawMessage(`{"capability":"video"}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire, _ := json.Marshal(result.Result)
+			var catalog modelcatalog.CatalogResponse
+			if err := json.Unmarshal(wire, &catalog); err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.Channels) != 1 || len(catalog.Channels[0].Models) != 1 {
+				t.Fatalf("catalog=%#v", catalog)
+			}
+			raw, _ := json.Marshal(catalog.Channels[0].Models[0].CapabilityConfig)
+			var config modelcatalog.ModelCapabilityConfig
+			if err := json.Unmarshal(raw, &config); err != nil {
+				t.Fatal(err)
+			}
+			video := config.Video
+			if video == nil || video.GenerateAudio.Default != tc.audioDefault {
+				t.Fatalf("audio choice changed: %#v", video)
+			}
+			if tc.sourced || tc.name == "custom endpoint" {
+				if video.GenerateAudio.Supported || video.Duration.Min != 1 || video.References.MaxImages != 9 {
+					t.Fatalf("overwrote independent contract: %#v", video)
+				}
+				return
+			}
+			if !video.GenerateAudio.Supported || video.Duration.Min != 3 || video.Duration.Max != 15 || video.Duration.Default != 5 || len(video.Resolutions) != 1 || video.Resolutions[0] != "720p" || len(video.Ratios) != 3 || video.References.MaxImages != 1 || video.References.MaxVideos != 0 || video.References.MaxAudios != 0 {
+				t.Fatalf("does not match generation contract: %#v", video)
+			}
+			for _, audio := range []bool{video.GenerateAudio.Default, true, false} {
+				payload, err := generation.BeefAPIVideoRequestBody(generation.Input{Mode: "video", Prompt: "synthetic scene", Config: generation.Config{Model: "kling-video-v3", VideoSeconds: strconv.Itoa(video.Duration.Default), VQuality: video.DefaultResolution, Size: video.DefaultRatio, VideoGenerateAudio: strconv.FormatBool(audio)}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if payload["metadata"].(map[string]any)["generate_audio"] != audio {
+					t.Fatalf("lost selected audio=%v: %#v", audio, payload)
+				}
+			}
+		})
+	}
+}
 
 func TestAgentModelCatalogDesktopUsesActualSnapshotWithoutCredentials(t *testing.T) {
 	svc, _ := newModelCatalogTestService(t)
@@ -120,5 +198,52 @@ func TestAgentModelCatalogPreservesDesktopGenerationProfiles(t *testing.T) {
 	}
 	if gotImage.Image == nil || gotImage.Image.References.MaxImages != 7 || gotImage.Image.Size.Default != image.Image.Size.Default {
 		t.Fatalf("lost desktop image contract: %#v", gotImage.Image)
+	}
+}
+
+func TestAgentCatalogFiltersCapabilityAndExposesOnlyValidatedQuote(t *testing.T) {
+	svc, _ := newModelCatalogTestService(t)
+	svc.mode = serviceModeLocal
+	body := []byte(`{"channels":[{"id":"beefapi","enabled":true,"models":["text-model","video-model","unknown-price"],"modelProfiles":[{"model":"text-model","capability":"text","protocol":"chat-completion"},{"model":"video-model","capability":"video","protocol":"openai-videos","videoPricing":{"currency":"CNY","mode":"seconds","rates":{"720p":{"output":0.25,"reference_video":0,"apiKey":"private-rate"}},"token":"private-quote"}},{"model":"unknown-price","capability":"video","protocol":"openai-videos","videoPricing":{"currency":"USD","mode":"seconds","rates":{"720p":{"output":1,"reference_video":0}}}}]}]}`)
+	if err := svc.SaveLocalModelConfig(body); err != nil {
+		t.Fatal(err)
+	}
+	registry := operations.NewRegistry(svc, operations.NewStore(svc.repo.DB()))
+	operations.RegisterDefaultOps(registry)
+	read := func(params string) modelcatalog.CatalogResponse {
+		t.Helper()
+		result, err := registry.Execute(operations.Request{Op: "model.catalog", UserID: "desktop-owner", Caller: operations.ManualCaller(true), Params: json.RawMessage(params)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := json.Marshal(result.Result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(wire), "private-") {
+			t.Fatalf("quote leaked unknown fields: %s", wire)
+		}
+		var catalog modelcatalog.CatalogResponse
+		if err := json.Unmarshal(wire, &catalog); err != nil {
+			t.Fatal(err)
+		}
+		return catalog
+	}
+	video := read(`{"capability":"video"}`)
+	if len(video.Channels) != 1 || len(video.Channels[0].Models) != 2 {
+		t.Fatalf("video catalog: %#v", video)
+	}
+	models := video.Channels[0].Models
+	if models[0].VideoPricing["currency"] != "CNY" || models[1].VideoPricing != nil {
+		t.Fatalf("quotes: %#v", models)
+	}
+	if got := read(`{"capability":"image"}`); len(got.Channels) != 0 || got.Channels == nil || got.Models == nil {
+		t.Fatalf("empty catalog: %#v", got)
+	}
+	if got := read(`{}`); len(got.Channels[0].Models) != 3 {
+		t.Fatalf("filter mutated source: %#v", got)
+	}
+	if _, err := registry.Execute(operations.Request{Op: "model.catalog", UserID: "desktop-owner", Caller: operations.ManualCaller(true), Params: json.RawMessage(`{"capability":"other"}`)}); err == nil {
+		t.Fatal("unknown capability accepted")
 	}
 }

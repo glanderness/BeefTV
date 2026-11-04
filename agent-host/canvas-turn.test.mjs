@@ -34,6 +34,18 @@ describe("本轮画布变更", () => {
         });
     });
 
+    test("分镜行写入记脚本节点，绑定改写的产出连线进入变更摘要", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 3);
+        collectTurnEffects(turn, "canvas.script.rows.append", { canvasId: "c1", revision: 4, nodeId: "script", created: [{ id: "shot-1", shotNumber: 1 }] }, "append-op");
+        collectTurnEffects(turn, "canvas.script.row.update", { canvasId: "c1", revision: 5, nodeId: "script",
+            createdEdgeIds: ["edge-img", "edge-vid"], deletedEdgeIds: ["edge-old"] }, "bind-op");
+        collectTurnEffects(turn, "canvas.script.row.update", { canvasId: "c1", revision: 6, nodeId: "script",
+            createdEdgeIds: [], deletedEdgeIds: ["edge-vid"], syncedNodeIds: ["img-1"] }, "unbind-op");
+        expect(turnChange(turn)).toEqual({ revisionBefore: 3, revisionAfter: 6,
+            createdNodeIds: [], updatedNodeIds: ["script", "img-1"], createdEdgeIds: ["edge-img", "edge-vid"],
+            deletedEdgeIds: ["edge-old", "edge-vid"], operationIds: ["append-op", "bind-op", "unbind-op"] });
+    });
+
     test("未落盘的当前会话按空历史读取，别的会话仍然缺失", () => {
         expect(unflushedSessionHistory("s1", "s1")).toEqual({ sessionId: "s1", turns: [] });
         expect(unflushedSessionHistory("", "s1")).toEqual({ sessionId: null, turns: [] });
@@ -141,7 +153,8 @@ describe("付费生成提议", () => {
 
     test("系统提示词必须禁止宣称已生成，并指向提议工具", () => {
         expect(SYSTEM_PROMPT).toContain("canvas_generation_propose");
-        expect(SYSTEM_PROMPT).toContain("不能直接开始付费图片或视频生成");
+        expect(SYSTEM_PROMPT).toContain("只有用户实际确认过的制作方案才能付费生成");
+        expect(SYSTEM_PROMPT).toContain("canvas_generation_submit");
     });
 
     test("系统提示词用 content 改可编辑提示词，未改字段不要提交", () => {
@@ -179,9 +192,12 @@ describe("供应商定义", () => {
         expect(registration.apiKey).toBe("$BEEFTV_AGENT_API_KEY");
         expect(registration.api).toBe("anthropic-messages");
         expect(registration.baseUrl).toBe("https://enterprise.example.com");
-        expect(registration.models).toEqual([{ id: "claude-fable-5", name: "claude-fable-5", reasoning: false,
+        expect(registration.models).toEqual([{ id: "claude-fable-5", name: "claude-fable-5", reasoning: true,
             input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 200000, maxTokens: 4096 }]);
+        for (const api of ["openai-completions", "openai-responses"]) {
+            expect(providerRegistration({ api, baseUrl: "https://relay.example.com/v1", modelId: "m", maxTokens: 16384, contextWindow: 200000 }).models[0].reasoning).toBe(false);
+        }
     });
 
     test("宿主不再硬编码 OpenAI 目录，模型与协议只来自后端下发的环境变量", () => {

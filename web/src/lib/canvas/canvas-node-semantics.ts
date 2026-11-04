@@ -16,7 +16,7 @@ export function isCanvasMediaNode(node: CanvasNodeData | null | undefined): bool
     return node?.type === CanvasNodeType.Image || node?.type === CanvasNodeType.Video || node?.type === CanvasNodeType.Audio;
 }
 
-function hasMediaResource(node: CanvasNodeData): boolean {
+export function hasMediaResource(node: CanvasNodeData): boolean {
     return Boolean(node.metadata?.content || node.metadata?.storageKey || node.metadata?.previewContent || node.metadata?.fileUpload);
 }
 
@@ -78,16 +78,13 @@ export function canvasMediaNodeSemanticLabel(node: CanvasNodeData | null | undef
 }
 
 export function canOpenCanvasNodePromptPanel(node: CanvasNodeData | null | undefined): boolean {
-    if (!node) return false;
+    if (!node || node.metadata?.reusableWorkflow || node.metadata?.workflowSlot) return false;
     if (isCanvasMediaNode(node)) {
         return canvasMediaNodeRole(node) === "generator"
             || (canvasMediaNodeOrigin(node) === "generated" && (node.metadata?.workflowProvider === "runninghub" || Boolean((node.metadata?.composerContent || node.metadata?.prompt)?.trim())));
     }
-    return node.type !== CanvasNodeType.Script
-        && node.type !== CanvasNodeType.Drawing
-        && node.type !== CanvasNodeType.Panorama
-        && node.type !== CanvasNodeType.Director
-        && node.type !== "art-critique";
+    // Generation is opt-in; viewers and containers never inherit a composer.
+    return node.type === CanvasNodeType.Config || node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Skill;
 }
 
 /** Adds durable semantics to legacy media nodes without mutating the loaded snapshot. */

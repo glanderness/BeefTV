@@ -42,21 +42,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./internal/app -run 'Test.*Depth|TestChooseDepthDevice' -count=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Find FFmpeg and FFprobe
-        shell: pwsh
+      - name: Package pinned FFmpeg and FFprobe
+        shell: powershell
         run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg -y --no-progress
-            if ($LASTEXITCODE -ne 0) { throw "无法安装 FFmpeg 测试依赖" }
-            Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-            refreshenv
-          }
-          # Chocolatey's PATH commands are shims, not relocatable executables.
-          $binaryDir = Join-Path $env:ChocolateyInstall "lib\ffmpeg\tools\ffmpeg\bin"
-          if (-not (Test-Path (Join-Path $binaryDir "ffmpeg.exe")) -or -not (Test-Path (Join-Path $binaryDir "ffprobe.exe"))) {
-            throw "找不到 Chocolatey 安装的实际 FFmpeg/FFprobe 二进制文件"
-          }
-          "DEPTH_FFMPEG_DIR=$binaryDir" >> $env:GITHUB_ENV
+          ./scripts/package-media-runtime-windows.ps1 -Destination ./build/media-runtime
+          "DEPTH_FFMPEG_DIR=$((Resolve-Path ./build/media-runtime).Path)" >> $env:GITHUB_ENV
+      - name: Check media checksum rejection
+        shell: powershell
+        run: ./scripts/test-media-runtime-integrity-windows.ps1 -Runtime ./build/media-runtime
       - name: Build and relocate ${{ matrix.variant }} runtime
         shell: powershell
         run: ./scripts/build-depth-runtime-windows.ps1 -Variant ${{ matrix.variant }} -FFmpegDir $env:DEPTH_FFMPEG_DIR -OutputDir ./build/depth-runtime
@@ -91,6 +84,12 @@ jobs:
           & (Join-Path $unpacked ".python\python.exe") -m unittest discover -s ./tools/depth-capture/tests -v
           if ($LASTEXITCODE -ne 0) { throw "Windows Python 单元测试失败" }
           ./scripts/test-depth-runtime-windows.ps1 -Variant cpu -RuntimeRoot $unpacked -ModelRuntime (Split-Path $modelDir)
+      - name: Store verified runtime metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: depth-media-receipt-${{ matrix.variant }}
+          path: build/depth-runtime/*.json
+          if-no-files-found: error
       - name: Store verified runtime packages
         if: inputs.store_packages
         uses: actions/upload-artifact@v4

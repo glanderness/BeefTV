@@ -1,6 +1,66 @@
 package modelcatalog
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestResolveAssistantAudioGenerationModel(t *testing.T) {
+	var snapshot AssistantConfigSnapshot
+	if err := json.Unmarshal([]byte(`{"audioModel":"beefapi::speech-default","channels":[{"id":"beefapi","enabled":true,"models":["speech-default","speech-other","speech-protocol"],"modelAliases":{"old-voice":"speech-other"},"modelProfiles":[{"model":"speech-default","capability":"audio"},{"model":"speech-other","capability":"audio"},{"model":"speech-protocol","protocol":"openai-audio"}]}]}`), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, selected, want string
+		fromNode             bool
+	}{
+		{name: "saved audio default", want: "speech-default"},
+		{name: "explicit audio", selected: "beefapi::speech-other", want: "speech-other", fromNode: true},
+		{name: "unqualified audio", selected: "speech-other", want: "speech-other", fromNode: true},
+		{name: "alias audio", selected: "old-voice", want: "speech-other", fromNode: true},
+		{name: "audio protocol", selected: "speech-protocol", want: "speech-protocol", fromNode: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			choice := ResolveAssistantGenerationModel(snapshot, "audio", test.selected)
+			if choice.KindMismatch || choice.FromNode != test.fromNode || choice.ModelKey != "beefapi::"+test.want || choice.Display != test.want {
+				t.Fatalf("audio selection: %#v", choice)
+			}
+		})
+	}
+}
+
+func TestResolveAssistantGenerationModelRejectsAudioKindMismatch(t *testing.T) {
+	var snapshot AssistantConfigSnapshot
+	if err := json.Unmarshal([]byte(`{"imageModel":"beefapi::image","videoModel":"beefapi::video","audioModel":"beefapi::speech","channels":[{"id":"beefapi","enabled":true,"models":["image","video","speech","extra-speech"],"modelProfiles":[{"model":"image","capability":"image"},{"model":"video","capability":"video"},{"model":"speech","capability":"audio"},{"model":"extra-speech","capability":"audio"}]}]}`), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ kind, selected string }{
+		{"audio", "image"}, {"audio", "video"}, {"image", "speech"}, {"video", "speech"},
+		{"image", "extra-speech"}, {"video", "extra-speech"},
+	} {
+		t.Run(test.kind+"/"+test.selected, func(t *testing.T) {
+			choice := ResolveAssistantGenerationModel(snapshot, test.kind, test.selected)
+			if !choice.KindMismatch || choice.ModelKey != "" {
+				t.Fatalf("cross-kind selection must not generate: %#v", choice)
+			}
+		})
+	}
+}
+
+func TestResolveAssistantAudioModelUnavailableDoesNotUsePaidDefault(t *testing.T) {
+	var snapshot AssistantConfigSnapshot
+	if err := json.Unmarshal([]byte(`{"audioModel":"on::speech","channels":[{"id":"on","enabled":true,"models":["speech","mystery"],"modelProfiles":[{"model":"speech","capability":"audio"},{"model":"removed","capability":"audio"},{"model":"mystery"}]},{"id":"off","enabled":false,"models":["speech"],"modelProfiles":[{"model":"speech","capability":"audio"}]}]}`), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, selected := range []string{"on::missing", "on::removed", "off::speech", "on::mystery", "missing"} {
+		t.Run(selected, func(t *testing.T) {
+			choice := ResolveAssistantGenerationModel(snapshot, "audio", selected)
+			if choice.ModelKey != "" || choice.FromNode || choice.KindMismatch {
+				t.Fatalf("unavailable explicit audio selection must not fall back: %#v", choice)
+			}
+		})
+	}
+}
 
 func TestResolveAssistantGenerationModelPrefersNodeOverride(t *testing.T) {
 	snapshot := AssistantConfigSnapshot{

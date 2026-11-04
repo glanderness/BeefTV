@@ -1,4 +1,3 @@
-import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import type { GenerationTask, GenerationTaskDeliveryProgress, GenerationTaskOutput } from "@/services/api/task-center";
 import { CanvasGenerationMaterializationError } from "./canvas-generation-errors";
 
@@ -6,15 +5,13 @@ const MATERIALIZATION_BUDGET_MS = 15 * 60 * 1000;
 const PERMANENT_ERROR_CODES = new Set(["resource_foreign", "asset_foreign", "unsupported_result_shape"]);
 
 export type SleepWithSignal = (ms: number, signal?: AbortSignal) => Promise<void>;
-export type RefreshGenerationTask = (taskId: string, options: { signal?: AbortSignal; expectedScope: CapturedUserScope }) => Promise<GenerationTask>;
+export type RefreshGenerationTask = (taskId: string, options: { signal?: AbortSignal }) => Promise<GenerationTask>;
 
 export type CanvasGenerationOutputDeliveryState = {
     task: GenerationTask;
     outputIndices: number[];
     signal?: AbortSignal;
-    expectedScope: CapturedUserScope;
     isCurrent: () => boolean;
-    liveScope: () => CapturedUserScope;
     refreshTask: RefreshGenerationTask;
     sleep: SleepWithSignal;
     now: () => number;
@@ -57,7 +54,6 @@ export async function waitForMaterializedGenerationOutputs(state: CanvasGenerati
     const assertActive = () => {
         if (state.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
         if (!state.isCurrent()) throw new DOMException("The canvas operation was abandoned", "AbortError");
-        assertUserScope(state.expectedScope, state.liveScope());
     };
     try {
         for (;;) {
@@ -84,7 +80,7 @@ export async function waitForMaterializedGenerationOutputs(state: CanvasGenerati
             await state.sleep([1000, 2000, 3000, 5000][Math.min(attempt, 3)], state.signal);
             assertActive();
             attempt += 1;
-            task = await state.refreshTask(task.id, { signal: state.signal, expectedScope: state.expectedScope });
+            task = await state.refreshTask(task.id, { signal: state.signal });
             skipCheck = false;
         }
     } finally {

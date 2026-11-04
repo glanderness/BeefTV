@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"infinite-canvas/backend/internal/depthruntime"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -16,8 +17,6 @@ const (
 	Provider        = "local"
 	ModelID         = "video-depth-anything-small"
 	MaxDurationMs   = int64(15_100)
-	OutputWidth     = 1920
-	OutputHeight    = 1080
 	OutputName      = "depth-action-reference.mp4"
 
 	pythonEnv   = "BEEFTV_DEPTH_PYTHON"
@@ -25,8 +24,11 @@ const (
 	runtimeEnv  = "BEEFTV_DEPTH_RUNTIME"
 	manifestEnv = "BEEFTV_DEPTH_MANIFEST_URL"
 
-	defaultManifestURL        = "https://github.com/glanderness/BeefTV/releases/download/v1.5.5/depth-runtime-manifest.json"
-	defaultWindowsManifestURL = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/depth-runtime-manifest.v2.json"
+	componentCOSBase          = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/"
+	componentR2Base           = "https://updates.beefapi.com/beeftv/components/depth-runtime-v2/"
+	componentGHBase           = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-mirrors-v1/"
+	defaultManifestURL        = componentCOSBase + "depth-runtime-manifest.json"
+	defaultWindowsManifestURL = componentCOSBase + "depth-runtime-manifest.v2.json"
 )
 
 // CreateRequest is the HTTP create body. Handler keeps the app alias.
@@ -88,6 +90,7 @@ type CUDAProbe func(ctx context.Context, python, toolDir, modelRuntime string) e
 type CommandRun func(ctx context.Context, python, toolDir, modelRuntime, device, inputPath, outputDir string, onLine func(string)) error
 
 type Deps struct {
+	ProbeOutput                    func(context.Context, string) (mediatools.MediaMetadata, error)
 	DataDir                        string
 	Media                          Media
 	Tasks                          Tasks

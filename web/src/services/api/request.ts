@@ -1,6 +1,5 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
-import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
@@ -9,6 +8,7 @@ export type BackendEnvelope<T> = {
     data: T;
     msg: string;
     reason?: string;
+    details?: Record<string, unknown>;
 };
 
 /**
@@ -20,17 +20,21 @@ export class ApiError extends Error {
     readonly status?: number;
     readonly code?: number;
     readonly reason?: string;
+    readonly details?: Record<string, unknown>;
+    readonly requestId?: string;
     readonly retryable: boolean;
     readonly retryAfterMs?: number;
     readonly cause?: unknown;
 
-    constructor(message: string, options: { status?: number; code?: number; reason?: string; retryable?: boolean; retryAfterMs?: number; cause?: unknown } = {}) {
+    constructor(message: string, options: { status?: number; code?: number; reason?: string; details?: Record<string, unknown>; requestId?: string; retryable?: boolean; retryAfterMs?: number; cause?: unknown } = {}) {
         super(message);
         this.name = "ApiError";
         this.status = options.status;
         this.code = options.code;
         this.reason = options.reason;
-        this.retryable = options.retryable ?? isRetryableStatus(options.status ?? options.code);
+        this.details = options.details;
+        this.requestId = options.requestId;
+        this.retryable = options.reason === "local_credential_failed" || options.reason === "local_disk_full" ? false : options.retryable ?? isRetryableStatus(options.status ?? options.code);
         this.retryAfterMs = options.retryAfterMs;
         this.cause = options.cause;
     }
@@ -69,6 +73,8 @@ export async function request<T>(promise: Promise<{ data: BackendEnvelope<T>; st
                 status: response.status,
                 code: response.data.code,
                 reason: response.data.reason,
+                details: response.data.details,
+                requestId: responseRequestId(response.headers),
                 retryable: isRetryableStatus(response.status) || isRetryableStatus(response.data.code),
                 retryAfterMs: retryAfterMilliseconds(response.headers),
             });
@@ -80,7 +86,7 @@ export async function request<T>(promise: Promise<{ data: BackendEnvelope<T>; st
 }
 
 function unwrapTransportError(error: unknown): never {
-    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError") || isUserScopeAbandonedError(error)) {
+    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError")) {
         throw error;
     }
     if (axios.isCancel(error) || (axios.isAxiosError(error) && error.code === axios.AxiosError.ERR_CANCELED)) {
@@ -93,12 +99,21 @@ function unwrapTransportError(error: unknown): never {
             status,
             code,
             reason: error.response?.data?.reason,
+            details: error.response?.data?.details,
+            requestId: responseRequestId(error.response?.headers),
             retryable: isRetryableStatus(status) || isRetryableStatus(code),
             retryAfterMs: retryAfterMilliseconds(error.response?.headers),
             cause: error,
         });
     }
     throw error;
+}
+
+function responseRequestId(headers: unknown): string | undefined {
+    if (!headers || typeof headers !== "object") return undefined;
+    const bag = headers as { get?: (name: string) => unknown; [key: string]: unknown };
+    const value = bag.get?.("x-request-id") ?? bag["x-request-id"] ?? bag["X-Request-ID"];
+    return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/.test(value) ? value : undefined;
 }
 
 function transportFailureMessage(status?: number, fallback?: string) {
@@ -133,24 +148,18 @@ function retryAfterMilliseconds(headers: unknown) {
     return Math.max(0, retryAt - Date.now());
 }
 
-export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL"> & {
-    expectedScope?: CapturedUserScope;
-};
+export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL">;
 
-function assertExpectedHttpScope(config?: { expectedScope?: CapturedUserScope }) {
-    if (config?.expectedScope) assertUserScope(config.expectedScope);
+const HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS = 180_000;
+
+function isHeavyCanvasDocumentWrite(method: string, url: string) {
+    if (method === "get" || method === "delete") return false;
+    return url === "/ops/canvas.document.commit" || /^\/canvas-projects\/[^/?#]+$/.test(url);
 }
 
-apiClient.interceptors.request.use((config) => {
-    assertExpectedHttpScope(config as HttpRequestConfig);
-    return config;
-});
-
-async function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
-    assertExpectedHttpScope(config);
-    const result = await request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
-    assertExpectedHttpScope(config);
-    return result;
+function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
+    const timeout = config?.timeout ?? (isHeavyCanvasDocumentWrite(method, url) ? HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS : undefined);
+    return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...(timeout !== undefined ? { timeout } : {}), ...config }));
 }
 
 /**
@@ -163,12 +172,9 @@ export const http = {
     put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("put", url, data, config),
     patch: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("patch", url, data, config),
     delete: <T>(url: string, config?: HttpRequestConfig) => send<T>("delete", url, undefined, config),
-    async raw<T>(config: AxiosRequestConfig & { expectedScope?: CapturedUserScope }): Promise<AxiosResponse<T>> {
+    async raw<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
         try {
-            assertExpectedHttpScope(config);
-            const result = await apiClient.request<T>(config);
-            assertExpectedHttpScope(config);
-            return result;
+            return await apiClient.request<T>(config);
         } catch (error) {
             throw unwrapTransportError(error);
         }

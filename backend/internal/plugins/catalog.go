@@ -21,9 +21,18 @@ type ProviderCatalogItem struct {
 	Poll              string                      `json:"poll,omitempty"`
 	ContentType       string                      `json:"contentType,omitempty"`
 	BaseURL           string                      `json:"baseUrl,omitempty"`
+	AuthType          string                      `json:"authType,omitempty"`
 	Enabled           bool                        `json:"enabled"`
 	UnavailableReason string                      `json:"unavailableReason,omitempty"`
 	Workflows         []protocol.ManifestWorkflow `json:"workflows,omitempty"`
+	// Retired marks a protocol this release no longer ships but that stays
+	// executable for configuration saved before the removal. Consumers must not
+	// offer it for a new selection while keeping saved choices intact.
+	//
+	// RetiredReason is also filled for a plugin whose upgrade this startup
+	// deferred, which stays selectable because the release still ships it.
+	Retired       bool   `json:"retired,omitempty"`
+	RetiredReason string `json:"retiredReason,omitempty"`
 }
 
 // ProviderCatalog projects provider and workflow contributions from this
@@ -41,8 +50,11 @@ func (s *Service) ProviderCatalog(scope, capability string, includeUnavailable b
 			item := ProviderCatalogItem{
 				ID: provider.ID, Version: plugin.Manifest.Version, Name: provider.Label, Vendor: plugin.Manifest.Author,
 				Categories: provider.Capabilities, Scopes: provider.Scopes, BaseURL: provider.BaseURL,
-				Enabled: plugin.Status == StatusEnabled, UnavailableReason: plugin.Error,
-				Workflows: workflowsForProvider(plugin.Manifest.Contributes.Workflows, provider.ID),
+				AuthType: provider.Auth.Type,
+				Enabled:  plugin.Status == StatusEnabled, UnavailableReason: plugin.Error,
+				Workflows:     workflowsForProvider(plugin.Manifest.Contributes.Workflows, provider.ID),
+				Retired:       plugin.Retention != nil && plugin.Retention.Retired,
+				RetiredReason: retentionReason(plugin.Retention),
 			}
 			item.Create, item.Poll, item.ContentType = operationSummary(provider.Create), operationSummaryPtr(provider.Poll), provider.Create.ContentType
 			if registry != nil {
@@ -72,7 +84,7 @@ func (s *Service) ForUser(actor *model.User, systemPluginsVisible bool) []View {
 	}
 	filtered := make([]View, 0, len(items))
 	for _, item := range items {
-		if item.Management.ActivationScope == ScopeUser {
+		if item.Management.ActivationScope == ScopeUser || item.Source == OriginPackage || item.PackageDir != "" {
 			filtered = append(filtered, item)
 		}
 	}
@@ -118,4 +130,11 @@ func operationSummaryPtr(operation *protocol.ManifestOperation) string {
 		return ""
 	}
 	return operationSummary(*operation)
+}
+
+func retentionReason(note *RetentionView) string {
+	if note == nil {
+		return ""
+	}
+	return strings.Join(note.Reasons, "；")
 }

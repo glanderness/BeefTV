@@ -86,6 +86,31 @@ func TestRefreshCatalogPersistsTrustedPortraitPricesAcrossRestart(t *testing.T) 
 	}
 }
 
+func TestSameAccountRefreshRemovesUnavailableModels(t *testing.T) {
+	store, err := workspace.NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := []CatalogModel{{ID: "grok-imagine-video-1.5", ModelType: "video"}, {ID: "seedance-2.0-fast", ModelType: "video"}}
+	if err := applyCatalog(store, first, "42", "42", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range [][]CatalogModel{{first[1]}, {}} {
+		if err := applyCatalog(store, next, "42", "42", ""); err != nil {
+			t.Fatal(err)
+		}
+		current, _, err := store.LoadEffectiveModelConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		channel := findChannel(current.Config["channels"].([]any), ChannelID)
+		ids := mergeModelIDs(channel["models"], nil)
+		if len(ids) != len(next) || refreshTestProfile(channel, "grok-imagine-video-1.5") != nil {
+			t.Fatalf("refresh kept unavailable models: %v", ids)
+		}
+	}
+}
+
 func TestRefreshCatalogRejectsDisconnectedErrorsAndCancelledReads(t *testing.T) {
 	svc, store, _ := testService(t, &fakeEnterprise{})
 	if _, err := svc.RefreshCatalog(context.Background()); err == nil {

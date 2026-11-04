@@ -1,7 +1,6 @@
 // 内置创作助手：浏览器只与同源 Go 代理通信，宿主/owner/模型凭据都不进入页面。
 // 三个端点的真实路径都在 /api/assistant/* 下；写错路径会让面板永远拿不到回复。
 import { ApiError, apiBaseURL, http } from "./request";
-import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 /** 后端给出的不可用原因（穷举，见契约 A1）；未知值一律走兜底文案。 */
 export type AssistantUnavailableReason =
@@ -32,6 +31,18 @@ export type AgentHostStatus = {
     health?: { raw?: string };
 };
 
+/**
+ * 模型思考过程的一个可读片段。
+ *
+ * 宿主只投影可读纯文本：签名、加密占位、工具参数和上游原始报文都不在这里。
+ * 一个回合的思考会被模型拆成多段（中间夹工具调用），`status` 表示这一段是否还在生成。
+ */
+export type AssistantReasoningSegment = {
+    id: string;
+    text: string;
+    status: "streaming" | "done";
+};
+
 export type AgentToolCall = {
     toolCallId?: string;
     tool: string;
@@ -39,6 +50,19 @@ export type AgentToolCall = {
     isError?: boolean;
     error?: string;
     replayed?: boolean;
+    /** Whitelisted successful media result, not model prose or tool arguments. */
+    mediaFacts?: AssistantMediaFacts;
+    mediaEvidence?: AssistantMediaFacts[];
+};
+
+export type AssistantMediaFacts = {
+    source: { resourceId: string; version: string; startMs: number; endMs: number; nodeId?: string };
+    mode: "frames" | "video" | "audio" | "check";
+    durationMs: number;
+    hasAudio: boolean;
+    silenceIntervals?: { startMs: number; endMs: number }[];
+    meanDb?: number;
+    peakDb?: number;
 };
 
 /** 一个回合真正落到画布上的改动；没写任何东西时后端给 null。 */
@@ -57,28 +81,104 @@ export type AssistantTurnChange = {
 
 export type AssistantCanvasChange = Omit<AssistantTurnChange, "canvasChanges"> & { canvasId: string; operationIds: string[] };
 
-/** 付费生成提议：后端只登记，不生成、不扣费，执行发生在画布既有生成链路。 */
+export type GenerationOrderTargetView = {
+    nodeId: string;
+    title: string;
+    kind: "image" | "video" | "audio";
+    model?: string;
+    modelKey: string;
+    pricing?: unknown;
+    prompt: string;
+    parameters: Record<string, string>;
+    metadata?: Record<string, unknown>;
+    referenceNodeIds: string[];
+};
+
+export type GenerationOrder = {
+    orderId: string;
+    proposalId: string;
+    canvasId: string;
+    canvasRevision: number;
+    modelConfigRevision: number;
+    callerKind: "manual" | "assistant" | "external";
+    callerClient?: string;
+    approvalMode: "ask" | "caller" | "auto";
+    status: "pending" | "approved" | "submitted" | "rejected";
+    approvedBy?: string;
+    approvedAt?: string;
+    kind: "image" | "video" | "audio";
+    model: string;
+    modelKey: string;
+    pricing?: unknown;
+    note?: string;
+    nodeIds: string[];
+    productionNodeIds?: string[];
+    targetViews?: GenerationOrderTargetView[];
+    sourceTurnId?: string;
+    taskIds?: string[];
+    continuationId?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+/** 付费生成提议（生成单）：后端只登记，不生成、不扣费，批准后统一按生成单执行。 */
 export type AssistantGenerationProposal = {
     proposalId: string;
-    kind: "image" | "video";
+    orderId?: string;
+    kind: "image" | "video" | "audio";
     nodeIds: string[];
     model: string;
     modelKey: string;
+    pricing?: unknown;
+    approvalMode?: "ask" | "caller" | "auto";
+    status?: "pending" | "approved" | "submitted" | "rejected";
     note?: string;
+    targets?: GenerationOrderTargetView[];
+    order?: GenerationOrder;
+    production?: { targets: { nodeId: string; title: string; kind: "image" | "video" | "audio"; modelKey: string; prompt: string; parameters: Record<string,string>; metadata?: Record<string, unknown>; referenceNodeIds: string[] }[] };
     source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
 };
 
+export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
+    return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposal.proposalId)}/production`, {
+        canvasId, kind: proposal.kind, nodeIds: proposal.nodeIds, targets: proposal.production?.targets, continuePlan,
+    }, await uiSessionConfig());
+}
+
+export async function listGenerationOrders(canvasId: string) {
+    return http.get<{ orders: GenerationOrder[] }>(`/assistant/generation-orders?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
+}
+
+export async function approveGenerationOrder(proposalId: string) {
+    return http.post<{ taskIds: string[]; continuationId?: string; order?: GenerationOrder }>(`/assistant/generation-orders/${encodeURIComponent(proposalId)}/approve`, {}, await uiSessionConfig());
+}
+
+export type AssistantPlan = {
+    goal: string;
+    items: { id: string; title: string; status: "todo" | "doing" | "done" | "needs_user" | "blocked"; note?: string }[];
+    done: number;
+    total: number;
+    updatedAt: string;
+};
+
 export type AgentTurnEnd = {
+    /** Backend projection of the source turn's durable intent fence. */
+    proposalsInvalidated?: boolean;
     type: "turn_end";
     turnId?: string;
+    /** Go-confirmed generation continuation identity, never inferred from text. */
+    continuationId?: string;
     /** 宿主本回合实际使用的会话；旧 JSONL 会话首次发消息会交接给新的 Durable 会话，界面据此更新。 */
     sessionId?: string;
     permissionMode?: AssistantPermissionMode;
     reply: string;
     toolCalls: AgentToolCall[];
+    /** 本回合模型返回的思考片段；宿主总是写这个字段（没有可读思考时是空数组），旧记录可能没有。 */
+    reasoning?: AssistantReasoningSegment[];
     change?: AssistantTurnChange | null;
     proposals?: AssistantGenerationProposal[];
     outputs?: AssistantTurnOutput[];
+    plan?: AssistantPlan | null;
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
@@ -91,15 +191,20 @@ export type AgentTurnEnd = {
 };
 
 export type AssistantTurn = {
+    proposalsInvalidated?: boolean;
     turnId: string;
+    continuationId?: string;
     permissionMode?: AssistantPermissionMode;
     userText: string;
     selectedNodeIds: string[];
     reply: string;
     toolCalls: AgentToolCall[];
+    /** 与 AgentTurnEnd.reasoning 同形；旧记录没有这个字段，没有可读思考的回合是空数组。 */
+    reasoning?: AssistantReasoningSegment[];
     change: AssistantTurnChange | null;
     proposals: AssistantGenerationProposal[];
     outputs?: AssistantTurnOutput[];
+    plan?: AssistantPlan | null;
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
@@ -111,7 +216,8 @@ export type AssistantTurn = {
 };
 
 /** Trusted render receipts in creation order; task/resource access still uses owned APIs. */
-export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevision?: number };
+export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevision?: number }
+    | { kind: "project"; resourceId: string; fileName: string; sourceRevision?: number };
 
 export type AssistantSessionSummary = {
     sessionId: string;
@@ -127,14 +233,19 @@ export type AssistantSessionList = {
 
 export type AssistantHistory = {
     sessionId: string;
+    plan?: AssistantPlan | null;
     turns: (AssistantTurn & { undone?: boolean })[];
-    active?: { turnId: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
-        references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running" } | null;
+    active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
+        references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
+        /** 正在进行的回合此刻的进度（例如模型重试），只用于展示，结束后不再返回。 */
+        lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null; streamed?: string;
+        /** 正在进行回合的思考片段，与流式推送的 reasoning_snapshot 同形。 */
+        reasoning?: AssistantReasoningSegment[] } | null;
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
-let uiSession: { token: string; expiresAt: number; scope: CapturedUserScope } | null = null;
-let uiSessionPending: { promise: Promise<string>; scope: CapturedUserScope } | null = null;
+let uiSession: { token: string; expiresAt: number } | null = null;
+let uiSessionPending: { promise: Promise<string> } | null = null;
 let uiSessionGeneration = 0;
 
 /**
@@ -223,7 +334,7 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
     if (sessionId) query.set("sessionId", sessionId);
     const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
-    return { sessionId: data.sessionId || sessionId || "", active: data.active, turns: data.turns.map((turn) => ({
+    return { sessionId: data.sessionId || sessionId || "", active: data.active, plan: data.plan ?? null, turns: data.turns.map((turn) => ({
         ...turn,
         error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
     })) };
@@ -247,6 +358,27 @@ export async function undoAssistantTurn(turnId: string, canvasId: string): Promi
     }
 }
 
+/** 已撤销的一轮不再开始生成；这是后端给出的唯一判定，界面隐藏按钮只是提示。 */
+export const ASSISTANT_PROPOSAL_UNDONE_TEXT = "这一轮已撤销，不会生成。";
+export const ASSISTANT_PROPOSAL_INVALIDATED_TEXT = "已失效，请让助手重新提出生成方案。";
+
+/**
+ * 开始生成前由后端确认生成建议所属的一轮仍然有效。
+ * 返回 null 表示可以继续；否则返回给用户看的一句话，不会提交任何生成。
+ */
+export async function confirmAssistantProposalRunnable(turnId: string, proposalId: string, canvasId: string): Promise<string | null> {
+    try {
+        await http.post<{ runnable: boolean }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposalId)}/run`, { canvasId }, await uiSessionConfig());
+        return null;
+    } catch (error) {
+        const reason = error instanceof ApiError ? error.reason : undefined;
+        if (reason === "turn_undone") return ASSISTANT_PROPOSAL_UNDONE_TEXT;
+        if (reason === "continuation_intent_changed") return ASSISTANT_PROPOSAL_INVALIDATED_TEXT;
+        if (reason === "turn_not_found") return "找不到这一轮对话，未提交生成。请让助手重新提出方案。";
+        return "无法确认这项生成是否还能进行，未提交生成。请检查连接后重试。";
+    }
+}
+
 export function assistantUndoFailure(error: unknown): AssistantUndoFailure {
     const reason = error instanceof ApiError ? error.reason : undefined;
     switch (reason) {
@@ -262,12 +394,11 @@ export function assistantUndoFailure(error: unknown): AssistantUndoFailure {
 }
 
 export async function ensureAgentUiSession(): Promise<string> {
-    const scope = captureUserScope();
-    if (uiSession && userScopeMatches(uiSession.scope, scope) && Date.now() + 30_000 < uiSession.expiresAt) return uiSession.token;
-    if (uiSessionPending && userScopeMatches(uiSessionPending.scope, scope)) return uiSessionPending.promise;
+    if (uiSession && Date.now() + 30_000 < uiSession.expiresAt) return uiSession.token;
+    if (uiSessionPending) return uiSessionPending.promise;
     const generation = ++uiSessionGeneration;
-    const promise = issueAgentUiSession(scope, generation);
-    uiSessionPending = { promise, scope };
+    const promise = issueAgentUiSession(generation);
+    uiSessionPending = { promise };
     try {
         return await promise;
     } finally {
@@ -275,7 +406,7 @@ export async function ensureAgentUiSession(): Promise<string> {
     }
 }
 
-async function issueAgentUiSession(scope: CapturedUserScope, generation: number): Promise<string> {
+async function issueAgentUiSession(generation: number): Promise<string> {
     let data: { token?: string; expiresAt?: string };
     try {
         data = await http.post<{ token: string; expiresAt: string }>("/assistant/ui-session", {});
@@ -287,11 +418,10 @@ async function issueAgentUiSession(scope: CapturedUserScope, generation: number)
         throw new Error(agentAssistantFailureText(undefined, "创作助手暂时不可用，请稍后再试"));
     }
     if (!data?.token) throw new Error("创作助手暂时不可用，请稍后再试");
-    assertUserScope(scope);
     if (generation !== uiSessionGeneration) throw new Error("当前页面会话已更新，请重新发送");
     // Invalid/missing expiry is never cached; the server remains the authority on validity.
     const expiresAt = Date.parse(data.expiresAt ?? "");
-    uiSession = Number.isFinite(expiresAt) ? { token: data.token, expiresAt, scope } : null;
+    uiSession = Number.isFinite(expiresAt) ? { token: data.token, expiresAt } : null;
     return data.token;
 }
 
@@ -303,7 +433,10 @@ export function resetAgentUiSession() {
 
 export type AgentLifecycleEvent = {
     type: "lifecycle";
-    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end";
+    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end" | "business";
+    stage?: "processing" | "downloading" | "saving" | "saved" | "binding" | "rendering" | "exporting" | "checking" | "observation_unavailable";
+    saved?: number;
+    total?: number;
     toolName?: string;
     reason?: string;
     aborted?: boolean;
@@ -316,6 +449,10 @@ export type AgentLifecycleEvent = {
 export type StreamHandlers = {
     onSession?: (sessionId: string) => void;
     onDelta?: (delta: string) => void;
+    onText?: (text: string) => void;
+    /** 整段替换本回合的思考片段；宿主每次给的都是当前完整状态。 */
+    onReasoning?: (segments: AssistantReasoningSegment[]) => void;
+    onPlan?: (plan: AssistantPlan | null) => void;
     onTurnEnd?: (end: AgentTurnEnd) => void;
     onLifecycle?: (event: AgentLifecycleEvent) => void;
 };
@@ -355,6 +492,7 @@ export type AssistantAttachment = {
 function attachmentRequestValue({ resourceId, kind, name, mimeType, bytes, purpose, start, end, durationMs, nodeId, assetId }: AssistantAttachment): AssistantAttachment {
     return { resourceId, kind, name, mimeType, bytes, purpose, start, end, durationMs, nodeId, assetId };
 }
+/** skillName/version 是后端在选定时记下的显示名；缺失表示技能已不可识别，界面不得退回显示标识。 */
 export type AssistantSkillSelection = { skillId: string; versionId: string; contentHash: string; skillName?: string; version?: string };
 export type AssistantSupplementInput = { message: string; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[] };
 
@@ -366,6 +504,8 @@ export type AgentChatRequest = {
     references?: AgentChatReference[];
     /** 只发当前会话；后端发现它已不是该画布的当前会话会整回合拒绝。 */
     sessionId?: string;
+    /** 这次发送自己的标识：停止只指向它；同一标识重发不会再执行一次。 */
+    requestId?: string;
     attachments?: AssistantAttachment[];
     skills?: AssistantSkillSelection[];
 };
@@ -375,6 +515,14 @@ export class AgentTurnFailedError extends Error {
     constructor(readonly reason?: string | null) {
         super(agentAssistantFailureText(reason ?? undefined, "这一回合没有完成，请再试一次"));
         this.name = "AgentTurnFailedError";
+    }
+}
+
+/** 宿主明确说明只是这条观察流断开（observer_error），回合仍由宿主持有：应改为读取结果，而不是报失败。 */
+export class AgentStreamDetachedError extends Error {
+    constructor(readonly reason: string) {
+        super(AGENT_STREAM_INCOMPLETE_MESSAGE);
+        this.name = "AgentStreamDetachedError";
     }
 }
 
@@ -393,12 +541,10 @@ export async function streamAgentChat(
     handlers: StreamHandlers,
     request: AgentChatRequest = {},
 ): Promise<void> {
-    const { signal, selectedNodeIds = [], references = [], sessionId, attachments = [], skills = [] } = request;
-    const scope = captureUserScope();
+    const { signal, selectedNodeIds = [], references = [], sessionId, requestId, attachments = [], skills = [] } = request;
     let token: string;
     try {
         token = await ensureAgentUiSession();
-        assertUserScope(scope);
     } catch (error) {
         throw new AgentChatNotAdmittedError(error instanceof Error ? error.message : "消息未发送，请重试");
     }
@@ -406,6 +552,7 @@ export async function streamAgentChat(
     const body: Record<string, unknown> = { canvasId, message, selectedNodeIds, permissionMode: assistantPermissionMode(request.permissionMode) };
     if (references.length) body.references = references;
     if (sessionId) body.sessionId = sessionId;
+    if (requestId) body.requestId = requestId;
     if (attachments.length) body.attachments = attachments.map(attachmentRequestValue);
     if (skills.length) body.skills = skills.map(({ skillId, versionId, contentHash }) => ({ skillId, versionId, contentHash }));
     const response = await fetch(`${apiBaseURL}/assistant/chat`, {
@@ -426,7 +573,7 @@ export async function streamAgentChat(
         throw new Error(message);
     }
     const result = await readAgentTurnStream(response.body, handlers, signal);
-    if (!result.settled) throw new Error(AGENT_STREAM_INCOMPLETE_MESSAGE);
+    if (!result.settled) throw result.detached !== null ? new AgentStreamDetachedError(result.detached) : new Error(AGENT_STREAM_INCOMPLETE_MESSAGE);
     if (result.turnEnd && !result.turnEnd.cancelled && result.turnEnd.error) {
         // 上游错误可能包含请求细节，控制台同样不记录原文。
         console.error("创作助手回合失败", { canvasId });
@@ -446,13 +593,14 @@ async function readAgentTurnStream(
     body: ReadableStream<Uint8Array>,
     handlers: StreamHandlers,
     signal?: AbortSignal,
-): Promise<{ settled: boolean; turnEnd: AgentTurnEnd | null; malformedLine: string | null }> {
+): Promise<{ settled: boolean; turnEnd: AgentTurnEnd | null; malformedLine: string | null; detached: string | null }> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let settled = false;
     let turnEnd: AgentTurnEnd | null = null;
     let malformedLine: string | null = null;
+    let detached: string | null = null;
 
     const handleLine = (line: string) => {
         const trimmed = line.trim();
@@ -472,11 +620,27 @@ async function readAgentTurnStream(
             handlers.onDelta?.(payload.delta);
             return;
         }
+        if (payload.type === "text_snapshot" && typeof payload.text === "string") {
+            handlers.onText?.(payload.text);
+            return;
+        }
+        if (payload.type === "reasoning_snapshot" && Array.isArray(payload.segments)) {
+            handlers.onReasoning?.(payload.segments as AssistantReasoningSegment[]);
+            return;
+        }
+        if (payload.type === "plan") {
+            handlers.onPlan?.(payload.plan as AssistantPlan | null);
+            return;
+        }
         if (payload.type === "lifecycle") {
             handlers.onLifecycle?.(payload as unknown as AgentLifecycleEvent);
             return;
         }
         if (payload.type === "agent_end") {
+            return;
+        }
+        if (payload.type === "observer_error") {
+            detached = typeof payload.reason === "string" && payload.reason ? payload.reason : "interrupted";
             return;
         }
         if (payload.type === "turn_end") {
@@ -505,30 +669,38 @@ async function readAgentTurnStream(
     }
     if (malformedLine !== null) throw new Error(AGENT_STREAM_INCOMPLETE_MESSAGE);
     if (signal?.aborted && !settled) throw new DOMException("请求已取消", "AbortError");
-    return { settled, turnEnd, malformedLine };
+    return { settled, turnEnd, malformedLine, detached };
 }
 
 /**
- * 请求停止当前画布正在进行的回合。
+ * 停止的结果：stopped 正在执行，已停下；finished 已经结束；
+ * pending 助手还没开始处理它，之后到达也不会执行。
+ */
+export type AgentCancelState = "stopped" | "finished" | "pending";
+
+/**
+ * 请求停止一次发送；不带 target 时停止当前画布正在进行的回合。
  *
  * 停止失败必须如实抛出：只 await fetch 会把 404/5xx 当成「已停止」，
  * 让界面显示与真实运行状态不一致。
  */
-export async function cancelAgentChat(canvasId: string): Promise<void> {
+export async function cancelAgentChat(canvasId: string, target?: { sessionId: string; requestId: string }): Promise<AgentCancelState | undefined> {
     const token = await ensureAgentUiSession();
     const response = await fetch(`${apiBaseURL}/assistant/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
-        body: JSON.stringify({ canvasId }),
+        body: JSON.stringify(target ? { canvasId, sessionId: target.sessionId, requestId: target.requestId } : { canvasId }),
     });
     const text = await response.text().catch(() => "");
-    let payload: { code?: number; reason?: string } | null = null;
-    try { payload = JSON.parse(text) as { code?: number; reason?: string }; } catch { payload = null; }
+    type CancelPayload = { code?: number; reason?: string; data?: { state?: AgentCancelState } };
+    let payload: CancelPayload | null = null;
+    try { payload = JSON.parse(text) as CancelPayload; } catch { payload = null; }
     if (response.status === 403 && uiSession?.token === token) resetAgentUiSession();
     const businessFailed = payload !== null && typeof payload.code === "number" && payload.code !== 0;
     if (!response.ok || businessFailed) {
         throw new Error(agentAssistantFailureText(payload?.reason, "停止失败，请再试一次"));
     }
+    return payload?.data?.state;
 }
 
 /** 补充已有回合，新增素材仍由后端校验授权，不创建新生成请求。 */

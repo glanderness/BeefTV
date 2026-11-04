@@ -197,6 +197,9 @@ func pathExists(path string) bool {
 }
 
 func (e *Engine) prepareAndStartHelper(ctx context.Context, staged *stagedUpdate) error {
+	started := time.Now()
+	defer func() { e.logf("install preparation elapsed=%s", time.Since(started).Round(time.Millisecond)) }()
+	e.setPhase("verifying")
 	target, err := e.locate()
 	if err != nil {
 		return err
@@ -239,14 +242,45 @@ func (e *Engine) prepareAndStartHelper(ctx context.Context, staged *stagedUpdate
 		return err
 	}
 	hash := sha256.New()
-	n, copyErr := io.Copy(hash, io.LimitReader(archive, staged.artifact.Size+1))
+	n, copyErr := io.Copy(hash, io.LimitReader(contextReader{ctx, archive}, staged.artifact.Size+1))
 	_ = archive.Close()
+	if ctx.Err() != nil {
+		return ErrPreparationTimeout
+	}
 	if copyErr != nil || n != staged.artifact.Size || !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), staged.artifact.SHA256) {
 		return ErrTampered
 	}
 	payloadPath := filepath.Join(workDir, "payload")
-	if err := extractSecureZip(staged.archive, payloadPath, defaultExtractLimits()); err != nil {
+	e.setPhase("extracting")
+	progressFn := func(completed, total int) {
+		e.set(func(state *UpdateState) { state.CompletedFiles, state.TotalFiles = completed, total })
+	}
+	if staged.isDelta {
+		if err := applyDeltaZipWithProgress(ctx, staged.archive, target.Path, staged.platform, payloadPath, defaultExtractLimits(), progressFn); err != nil {
+			if ctx.Err() != nil {
+				return ErrPreparationTimeout
+			}
+			_ = os.RemoveAll(payloadPath)
+			if fallbackErr := e.fallbackExtractFullArchive(ctx, staged, payloadPath, progressFn); fallbackErr != nil {
+				if ctx.Err() != nil {
+					return ErrPreparationTimeout
+				}
+				e.logf("delta apply failed (%v) and full archive fallback failed: %v", err, fallbackErr)
+				return fallbackErr
+			}
+		}
+	} else if err := extractSecureZipWithProgress(ctx, staged.archive, payloadPath, defaultExtractLimits(), progressFn); err != nil {
+		if ctx.Err() != nil {
+			return ErrPreparationTimeout
+		}
 		return err
+	}
+	e.setPhase("preparing")
+	if err := validateExtractedLayout(payloadPath, staged.platform); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidArchive, err)
+	}
+	if ctx.Err() != nil {
+		return ErrPreparationTimeout
 	}
 	req := HelperRequest{
 		DataDir:        e.dataDir,
@@ -386,4 +420,19 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+func (e *Engine) fallbackExtractFullArchive(ctx context.Context, staged *stagedUpdate, payloadPath string, progress func(int, int)) error {
+	e.mu.Lock()
+	verified := e.verified
+	e.mu.Unlock()
+	if verified == nil || verified.payload.Version != staged.version || len(verified.artifact.CandidateURLs()) == 0 {
+		return fmt.Errorf("no full archive fallback available")
+	}
+	e.logf("delta apply failed during install; downloading full archive for %s", staged.version)
+	fullZip := filepath.Join(filepath.Dir(staged.archive), "update.zip")
+	if err := e.downloadArchive(ctx, verified.artifact, fullZip); err != nil {
+		return err
+	}
+	return extractSecureZipWithProgress(ctx, fullZip, payloadPath, defaultExtractLimits(), progress)
 }

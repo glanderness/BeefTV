@@ -200,3 +200,27 @@ describe("rebaseInsertedCanvasNode", () => {
         expect(rebaseInsertedCanvasNode([imageNode("keep")], inserted).map((node) => node.id)).toEqual(["keep", "target"]);
     });
 });
+
+
+test("Midjourney history inserts all four indexed images and preserves concurrent nodes", async () => {
+    const task = { id: "mj-history", type: "canvas_image", model: "beefapi::midjourney-v8.2", prompt: "red cube", status: "succeeded" } as GenerationTask;
+    const indices: number[] = [];
+    let persisted: CanvasNodeData[] = [];
+    const result = await insertCanvasGenerationHistoryTask({
+        task, projectId: "canvas-mj", center: { x: 0, y: 0 }, nodes: [], assets: [],
+        readLiveNodes: () => [imageNode("concurrent")],
+        persist: async (nodes) => { persisted = nodes; },
+        ensureAsset: async (node) => ({ assetId: `asset-${node.metadata?.taskOutputIndex}` }),
+        applyResult: async (nodes, _task, nodeId) => {
+            const node = nodes.find((node) => node.id === nodeId)!;
+            const index = node.metadata?.taskOutputIndex ?? -1;
+            indices.push(index);
+            const updated = { ...node, metadata: { ...node.metadata, content: `/api/resources/mj-${index}/file`, storageKey: `resource:mj-${index}`, status: "success" as const } };
+            return { nodes: [updated], node: updated, updated: true, nodeId: updated.id };
+        },
+    });
+    expect(indices).toEqual([0, 1, 2, 3]);
+    expect(persisted).toHaveLength(5);
+    expect(result.nextNodes).toEqual(persisted);
+    expect(persisted.slice(1).map((node) => node.metadata?.assetId)).toEqual(["asset-0", "asset-1", "asset-2", "asset-3"]);
+});

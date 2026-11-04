@@ -1,21 +1,17 @@
 package app
 
 import (
-	"fmt"
-	"strings"
+	"context"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/playback"
 	"infinite-canvas/backend/internal/taskdelivery"
 )
 
 func (s *Service) persistTaskGeneratedMediaResult(task model.Task, result map[string]interface{}) (map[string]interface{}, error) {
-	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.UserID) == "" {
-		return nil, fmt.Errorf("生成结果缺少任务身份")
-	}
-	return s.generatedMediaIngestor().IngestResult(task.UserID, result, taskdelivery.IngestOptions{
-		EnforceQuota: true, IdentityPrefix: task.ID + ":inline",
-	})
+	return taskdelivery.PersistTaskGeneratedMediaResult(s.generatedMediaIngestor(), task, result, func(t model.Task) func(string) {
+		_, finish := s.SupportTrace().Start(taskSupportContext(context.Background(), t), "generation.persist", taskSupportFields(t))
+		return finish
+	}, supportFailureReason)
 }
 
 func (s *Service) persistGeneratedMediaResult(userID string, result map[string]interface{}) (map[string]interface{}, error) {
@@ -27,10 +23,7 @@ func (s *Service) persistLegacyGeneratedMediaResult(userID string, result map[st
 }
 
 func (s *Service) persistGeneratedMediaResultMode(userID string, result map[string]interface{}, skipInvalidDataURL bool, enforceQuota bool) (map[string]interface{}, error) {
-	return s.generatedMediaIngestor().IngestResult(userID, result, taskdelivery.IngestOptions{
-		SkipInvalidDataURL: skipInvalidDataURL,
-		EnforceQuota:       enforceQuota,
-	})
+	return s.generatedMediaIngestor().IngestResult(userID, result, taskdelivery.IngestOptions{SkipInvalidDataURL: skipInvalidDataURL, EnforceQuota: enforceQuota})
 }
 
 func (s *Service) persistGeneratedMediaValue(userID string, value interface{}) (interface{}, error) {
@@ -38,11 +31,7 @@ func (s *Service) persistGeneratedMediaValue(userID string, value interface{}) (
 }
 
 func (s *Service) generatedMediaIngestor() *taskdelivery.Ingestor {
-	return taskdelivery.NewIngestor(taskdelivery.IngestDeps{
-		Store:      taskdelivery.NewAssetInlineStore(s.resourceDomain()),
-		MaxBytes:   s.generatedMediaMaxBytes,
-		ProbeVideo: playback.ProbeGeneratedVideoMedia,
-	})
+	return taskdelivery.NewServiceIngestor(s.resourceDomain(), s.generatedMediaMaxBytes)
 }
 
 func (s *Service) generatedMediaMaxBytes() (int64, error) {
@@ -54,16 +43,5 @@ func (s *Service) generatedMediaMaxBytes() (int64, error) {
 }
 
 func (s *Service) decodeDataURL(value string) (string, []byte, error) {
-	mimeType, data, err := taskdelivery.DecodeInlineDataURL(value)
-	if err != nil {
-		return "", nil, err
-	}
-	limit, err := s.generatedMediaMaxBytes()
-	if err != nil {
-		return "", nil, err
-	}
-	if limit > 0 && int64(len(data)) > limit {
-		return "", nil, fmt.Errorf("单个生成资源超过 %dMB", limit>>20)
-	}
-	return mimeType, data, nil
+	return taskdelivery.DecodeDataURLWithLimit(value, s.generatedMediaMaxBytes)
 }

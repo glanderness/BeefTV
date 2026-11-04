@@ -92,6 +92,20 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 		return snapshot, err
 	}
 	snapshot.Direct = append(snapshot.Direct, history...)
+	exports, err := r.ProjectExportResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Direct = append(snapshot.Direct, exports...)
+	if r.db.Migrator().HasTable(&model.CanvasWorkflowResource{}) {
+		var refs []model.CanvasWorkflowResource
+		if err := r.db.Where("user_id = ? AND resource_id IN ?", userID, resourceIDs).Find(&refs).Error; err != nil {
+			return snapshot, err
+		}
+		for _, ref := range refs {
+			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "可复用工作流", ID: ref.OwnerID, Title: "工作流模板或运行结果", ResourceID: ref.ResourceID})
+		}
+	}
 
 	var assets []model.Asset
 	assetQuery := r.db.Where("user_id = ? AND id <> ?", userID, excludingAssetID)
@@ -447,7 +461,24 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 	if err := guardCanvasLibraryResourceReferences(tx, userID, resourceIDs); err != nil {
 		return err
 	}
+	if err := guardCanvasWorkflowResourceReferences(tx, userID, resourceIDs); err != nil {
+		return err
+	}
 	return guardTaskResourceReferences(tx, userID, resourceIDs, true)
+}
+
+func guardCanvasWorkflowResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {
+	if len(resourceIDs) == 0 || !tx.Migrator().HasTable(&model.CanvasWorkflowResource{}) {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&model.CanvasWorkflowResource{}).Where("user_id = ? AND resource_id IN ?", userID, resourceIDs).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrResourceCleanupStillReferenced
+	}
+	return nil
 }
 
 func guardCanvasLibraryResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {

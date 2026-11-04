@@ -67,14 +67,18 @@
 .app-workspace-sidebar-utility-row:not(.is-collapsed) > .app-workspace-theme-action {
     grid-column: 5;
     justify-self: center;
+    align-self: start;
+    margin-top: 2px;
 }
 
 .app-workspace-update {
+    position: relative;
     display: flex;
     min-width: 0;
     flex: 1;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
 }
 
 .app-workspace-update.is-collapsed {
@@ -251,17 +255,27 @@
 }
 
 .app-workspace-update-status {
+    grid-column: 1 / -1;
     position: relative;
     display: flex;
     min-width: 0;
     min-height: 36px;
-    flex: 1;
+    flex: 1 0 100%;
     flex-direction: column;
     justify-content: center;
     gap: 1px;
     padding: 4px 8px 7px;
     color: var(--user-ink, var(--foreground));
     cursor: default;
+    box-sizing: border-box;
+}
+
+.app-workspace-update-popover .ant-popover-container {
+    width: 208px;
+    max-width: calc(100vw - 24px);
+    padding: 4px;
+    background: var(--popover);
+    color: var(--foreground);
 }
 
 .app-workspace-update-status-title {
@@ -271,6 +285,22 @@
     gap: 5px;
     font-size: var(--fs-caption);
     line-height: 16px;
+}
+
+.app-workspace-update-diagnostics {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 3px 0;
+    color: var(--user-accent, var(--primary));
+    font-size: var(--fs-caption);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.app-workspace-update-diagnostics:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
 }
 
 .app-workspace-update-status-name {
@@ -287,13 +317,12 @@
 }
 
 .app-workspace-update-status-detail {
-    overflow: hidden;
     color: var(--user-ink-muted, var(--muted-foreground));
     font-size: var(--fs-label);
     font-variant-numeric: tabular-nums;
     line-height: 14px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
 }
 
 .app-workspace-update-status.is-action {
@@ -323,11 +352,8 @@
 }
 
 .app-workspace-update-status.is-paused .app-workspace-update-status-detail {
-    display: -webkit-box;
     white-space: normal;
     text-wrap: balance;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
 }
 
 .app-workspace-update-status .app-workspace-update-progress-bar {

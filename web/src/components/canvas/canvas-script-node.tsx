@@ -11,6 +11,7 @@ import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resour
 import { StoryboardAssetsCell } from "@/components/canvas/storyboard-assets-cell";
 import { ModelPicker } from "@/components/model-picker";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
+import { resolveStoryboardVisibleColumns, storyboardContentColumn, STORYBOARD_CONTENT_COLUMNS, type StoryboardContentColumn } from "@/lib/canvas/canvas-storyboard-columns";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { pipelineStatusLabel, type CanvasStoryboardPipelineProgress, type StoryboardPipelineStage } from "@/lib/canvas/canvas-storyboard-progress";
 import { generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
@@ -40,18 +41,6 @@ const STORYBOARD_PROMPT_MIN_HEIGHT = 40;
 const STORYBOARD_PROMPT_MAX_HEIGHT = 116;
 const SCRIPT_GRID_TEMPLATE = "64px 76px minmax(300px, 1.55fr) minmax(220px, 1fr) 180px";
 const EMPTY_STORYBOARD_ROWS: StoryboardRow[] = [];
-const DEFAULT_STORYBOARD_COLUMNS: StoryboardColumn[] = ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"];
-const LEGACY_STORYBOARD_COLUMNS: StoryboardColumn[] = ["shotNumber", "durationSeconds", "plotDescription", "dialogue"];
-const PREVIOUS_DEFAULT_STORYBOARD_COLUMNS: StoryboardColumn[] = ["shotNumber", "plotDescription", "videoMotionPrompt", "dialogue"];
-
-function resolveStoryboardVisibleColumns(columns?: StoryboardColumn[]) {
-    const isLegacyDefault = columns?.length === LEGACY_STORYBOARD_COLUMNS.length && LEGACY_STORYBOARD_COLUMNS.every((column) => columns.includes(column));
-    const isPreviousDefault = columns?.length === PREVIOUS_DEFAULT_STORYBOARD_COLUMNS.length && PREVIOUS_DEFAULT_STORYBOARD_COLUMNS.every((column) => columns.includes(column));
-    if (!columns?.length || isLegacyDefault || isPreviousDefault) {
-        return DEFAULT_STORYBOARD_COLUMNS;
-    }
-    return columns;
-}
 
 const columnOptions: Array<{ label: string; value: StoryboardColumn }> = [
     { label: "序号", value: "shotNumber" },
@@ -141,11 +130,14 @@ export function CanvasScriptNodeContent({
     const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
     const simpleMode = workspaceMode === "simple";
     const rows = node.metadata?.storyboard?.rows || [];
+    const [selectedContent, setSelectedContent] = useState<{ nodeId: string; column: StoryboardContentColumn } | null>(null);
+    const contentColumn = selectedContent?.nodeId === node.id ? selectedContent.column : storyboardContentColumn(rows);
     const [prompt, setPrompt] = useState(node.metadata?.composerContent || "");
     const [scrollTop, setScrollTop] = useState(0);
     const composerHeightChangeRef = useRef(onComposerHeightChange);
-    const reportedComposerHeightRef = useRef<number | null>(null);
     const composerHeight = node.metadata?.storyboardComposerHeight || STORYBOARD_COMPOSER_MIN_HEIGHT;
+    // Mounting an unchanged default layout must not save a new canvas revision.
+    const reportedComposerHeightRef = useRef(composerHeight);
     const tableHeight = storyboardTableHeight(node.height, composerHeight);
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
     const shotDuration = node.metadata?.storyboardShotDuration || "auto";
@@ -167,13 +159,14 @@ export function CanvasScriptNodeContent({
               errorCode: node.metadata.taskErrorCode,
           }
         : null;
+    const nodeErrorCode = node.metadata?.generationErrorCode || node.metadata?.taskErrorCode;
     const taskFeedback =
         node.metadata?.status === "loading"
             ? displayTask
                 ? `${generationTaskStageLabel(displayTask)}${generationTaskShowsProgress(displayTask) && typeof node.metadata.taskProgress === "number" ? ` · ${node.metadata.taskProgress}%` : ""}`
                 : "正在创建任务"
             : node.metadata?.status === "error"
-              ? generationErrorMessage(node.metadata.errorDetails)
+              ? generationErrorMessage(nodeErrorCode ? { code: nodeErrorCode, message: node.metadata.errorDetails } : node.metadata.errorDetails)
               : "";
     const [batchDetailsOpen, setBatchDetailsOpen] = useState(false);
     const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -297,7 +290,18 @@ export function CanvasScriptNodeContent({
                     序号
                 </HeaderCell>
                 <HeaderCell borderColor={theme.node.stroke} align="center">时长</HeaderCell>
-                <HeaderCell borderColor={theme.node.stroke}>视频提示词</HeaderCell>
+                <HeaderCell borderColor={theme.node.stroke}>
+                    <select
+                        aria-label="分镜内容列"
+                        className="min-w-0 bg-transparent text-xs outline-none focus-visible:ring-1"
+                        value={contentColumn}
+                        onChange={(event) => setSelectedContent({ nodeId: node.id, column: event.target.value as StoryboardContentColumn })}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                    >
+                        {STORYBOARD_CONTENT_COLUMNS.map(column => <option key={column.value} value={column.value}>{column.label}</option>)}
+                    </select>
+                </HeaderCell>
                 <HeaderCell borderColor={theme.node.stroke}>台词/旁白</HeaderCell>
                 <span className="px-3">关联资产</span>
             </div>
@@ -344,7 +348,7 @@ export function CanvasScriptNodeContent({
                                 ) : null}
                             </div>
                             <CompactDurationInput value={row.durationSeconds} borderColor={theme.node.stroke} onChange={(durationSeconds) => onUpdateRow(row.id, { durationSeconds })} />
-                            <CompactInput value={row.videoMotionPrompt} placeholder="描述视频运动、镜头和动作" onChange={(value) => onUpdateRow(row.id, { videoMotionPrompt: value })} borderColor={theme.node.stroke} />
+                            <CompactInput value={row[contentColumn]} placeholder={contentColumn === "videoMotionPrompt" ? "描述视频运动、镜头和动作" : contentColumn === "imageGenerationPrompt" ? "描述首帧画面" : "描述这一镜发生的事"} onChange={(value) => onUpdateRow(row.id, { [contentColumn]: value })} borderColor={theme.node.stroke} />
                             <CompactInput value={row.dialogue} placeholder="台词或旁白" onChange={(value) => onUpdateRow(row.id, { dialogue: value })} borderColor={theme.node.stroke} />
                             <div className="flex h-full min-w-0 items-center px-3">
                                 <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
@@ -546,11 +550,12 @@ function GenerationBatchDetails({ batch, rows, onRetryItem }: { batch: CanvasGen
             </div>
             <div className="thin-scrollbar max-h-72 overflow-y-auto">
                 {batch.items.map((item) => {
-                    const requiresPromptChange = isContentModerationError(item.errorDetails);
+                    const itemErrorInput = item.errorCode ? { code: item.errorCode, message: item.errorDetails } : item.errorDetails;
+                    const requiresPromptChange = isContentModerationError(itemErrorInput);
                     return (
                         <div key={item.id} className="flex min-h-9 items-center gap-2 border-t border-foreground/10 py-1.5 first:border-t-0">
                             <span className="w-14 shrink-0 text-xs font-medium">镜头 {shotByRowId.get(item.rowId) || "--"}</span>
-                            <span className="min-w-0 flex-1 truncate text-xs text-foreground/60" title={item.errorDetails ? generationErrorMessage(item.errorDetails) : undefined}>
+                            <span className="min-w-0 flex-1 truncate text-xs text-foreground/60" title={item.errorDetails ? generationErrorMessage(itemErrorInput) : undefined}>
                                 {generationBatchItemLabel(item)}
                                 {item.retryCount ? ` · 重试 ${item.retryCount}` : ""}
                             </span>
@@ -587,7 +592,7 @@ function generationBatchSummary(batch: CanvasGenerationBatch) {
 
 function generationBatchItemLabel(item: CanvasGenerationBatchItem) {
     if (item.submissionUncertain) return "状态待确认";
-    if (isContentModerationError(item.errorDetails)) return "审核未通过，需修改提示词";
+    if (isContentModerationError(item.errorCode ? { code: item.errorCode, message: item.errorDetails } : item.errorDetails)) return "审核未通过，需修改提示词";
     const labels: Record<CanvasGenerationBatchItemStatus, string> = { waiting: "等待", submitting: "提交中", queued: "排队", running: "生成中", succeeded: "成功", failed: "失败", cancelled: "已停止" };
     return labels[item.status];
 }
@@ -624,7 +629,7 @@ export function CanvasScriptEditor({
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const rows = node?.metadata?.storyboard?.rows || EMPTY_STORYBOARD_ROWS;
-    const visibleColumns = resolveStoryboardVisibleColumns(node?.metadata?.storyboard?.visibleColumns);
+    const visibleColumns = resolveStoryboardVisibleColumns(node?.metadata?.storyboard?.visibleColumns, rows, node?.metadata?.storyboardVisibleColumnsCustomized);
     const videoInputMode = node?.metadata?.storyboardVideoInputMode || "direct";
     const nodeById = useMemo(() => new Map(nodes.map((item) => [item.id, item])), [nodes]);
     const filteredRows = useMemo(() => {
@@ -674,7 +679,7 @@ export function CanvasScriptEditor({
                 option.value === "shotNumber" ? (
                     <span className="font-semibold">{row.shotNumber}</span>
                 ) : option.value === "durationSeconds" ? (
-                    <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
+                    <InputNumber className="w-full" min={1} max={60} value={row.durationSeconds} suffix="s" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
                 ) : option.value === "assets" ? (
                     <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
                 ) : option.value === "shotSize" ? (

@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/taskruntime"
 )
@@ -76,8 +77,7 @@ func (p appTaskPolicy) WorkerConcurrency(ctx context.Context) (int, error) {
 func (p appTaskPolicy) ExecutionTimeout(_ context.Context, taskType string) (time.Duration, error) {
 	policyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	reader := &Service{repo: p.service.repo.WithContext(policyCtx)}
-	policy, err := reader.RuntimePolicy()
+	policy, err := p.service.runtimePolicyWithRepo(p.service.repo.WithContext(policyCtx))
 	if err != nil {
 		return 0, err
 	}
@@ -111,7 +111,12 @@ func newAppTaskRuntime(w *taskWorkerCoordinator) *taskruntime.Runtime {
 		Cancels:     appCancelRegistry{service: s},
 		Logger:      log.Printf,
 		OnExecError: func(task *model.Task, err error) {
-			_ = s.log(task.UserID, task.ID, "error", "后台任务处理失败", err.Error())
+			if latest, readErr := s.repo.Task(task.ID); readErr == nil && latest.Status == model.TaskStatusSucceeded {
+				// Completion already records delivery/registration errors. Do not
+				// describe a recoverable download as a failed generation.
+				return
+			}
+			_ = s.log(task.UserID, task.ID, "error", "后台任务处理失败", generation.DiagnosticSummary(err.Error()))
 		},
 		Config: taskruntime.Config{
 			WorkerID: s.workerID,

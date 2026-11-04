@@ -12,7 +12,7 @@ BeefTV 是单用户、本地优先的桌面应用。项目、画布、素材和�
 
 RunningHub 设置由 `web/src/pages/settings/runninghub-settings-pane.tsx` 管理，与普通模型渠道分开。参数读取经过 `handler/runninghub.go` 的本地身份和插件校验，再进入 `app/runninghub_management.go` 与 `provider/workflow`；画布选择由 `generation-workflow-execution.ts` 解析，生成沿用持久任务入口。参考素材经 `generation/media.go` 的归属校验与字节读取，再由 `provider/workflow/client.go` 用工作流 Key 上传并映射 `fileName`。本机 ComfyUI 服务尚未接通。
 
-正式视频节点在 `ModelPicker` 的附加分组中选择 RunningHub 条目，`canvas-workflow-controls.tsx` 将映射后的分辨率、比例、时长放进原有底栏，其余字段与素材检查放进参数弹层。`workflow-video-controls.ts` 提供供应商无关的字段识别、具体字段映射、摘要和默认值规则；设置页的 `workflow-video-controls-editor.tsx` 保存每个条目的映射与显示开关。`canvas-workflow-inputs.ts` 核对素材槽位和参数。工作流产物由 `provider/workflow` 保留为完整 `outputs` 数组，`taskdelivery` 逐项写入资源与媒体素材，`taskbinding` 核验资源并回填主输出及结果集合。前端 `generation-outputs.ts` 与 `canvas-generation-outputs.ts` 定义供应商无关的结果引用、主输出选择与展开规则，`canvas-generation-results.tsx` 提供预览和添加到画布操作。
+正式视频节点在 `ModelPicker` 的附加分组中选择 RunningHub 条目，`canvas-workflow-controls.tsx` 将映射后的分辨率、比例、时长放进原有底栏，其余字段与素材检查放进参数弹层。`workflow-video-controls.ts` 提供供应商无关的字段识别、具体字段映射、摘要和默认值规则；设置页的 `workflow-video-controls-editor.tsx` 保存每个条目的映射与显示开关。`canvas-workflow-inputs.ts` 核对素材槽位和参数。工作流产物由 `provider/workflow` 保留为完整 `outputs` 数组，`taskdelivery` 逐项写入资源与媒体素材，`taskbinding` 核验资源并回填主输出及结果集合；`task/canvas_bind_recovery.go` 选择匹配节点类型的主输出，普通多图仍复用主线节点分配规则。既有画布工作流编排继续归属 `canvasworkflow`，不向 `app` 添加业务实现。前端 `generation-outputs.ts` 与 `canvas-generation-outputs.ts` 定义供应商无关的结果引用、主输出选择与展开规则，`canvas-generation-results.tsx` 提供预览和添加到画布操作。
 
 `canvas-connection-policy.ts` 根据目标节点的工作流渠道跳过普通模型容量检查，保留节点输入类型检查。`canvas-node-generation.ts` 在生成上下文中保留工作流的图片与角色卡混排槽位，解析时每张角色卡只物化一张主参考图，再按原槽位顺序组装任务输入；普通模型仍按容量追加角色多视图。角色卡没有参考图时明确拒绝提交，不压缩后续槽位。
 
@@ -20,7 +20,7 @@ RunningHub 设置由 `web/src/pages/settings/runninghub-settings-pane.tsx` 管�
 
 `generation-output-media.ts` 通过共享鉴权客户端读取输出字节，并按运行环境选择浏览器 Blob 下载或 Wails 的 owner 资源保存接口；音频预览在结果面板管理取消、账号切换和 Blob URL 释放。展开输出复用 `canvas-generation-layout.ts` 的空位计算，避免分次添加时覆盖已有节点。
 
-`services/canvas-generation-outputs.ts` 在添加媒体或选择主输出前查询任务交付记录，按输出索引核对资源并取得对应素材 ID；`canvas-generation-outputs.ts` 同时写入素材与资源引用，随后沿用普通画布保存流程。`app/workflow_adapter.go` 将上游排队、运行和下载状态交给租约约束的生成阶段端口，不修改任务进度或终态；`provider/workflow/client.go` 在读取产物前记录下载阶段。
+`services/canvas-generation-outputs.ts` 在添加媒体或选择主输出前查询任务交付记录，按输出索引核对资源并取得对应素材 ID；`canvas-generation-outputs.ts` 同时写入素材与资源引用，随后沿用普通画布保存流程。`app/workflow_adapter.go` 仅装配回执端口，由 `generation/workflow_stage.go` 将上游排队、运行和下载状态交给租约约束的生成阶段端口，不修改任务进度或终态；`provider/workflow/client.go` 在读取产物前记录下载阶段。
 
 设置页私有的 `runninghub-metadata-request.ts` 在请求存续期间订阅站点、Key 和账号变化，立即取消旧请求并在写回前复核身份；订阅在取消或完成后释放。`provider/workflow/protocol.go` 按固定顺序识别规范化的输出字段。`task.CanonicalOutputs` 保留主线的 `taskType` 参数，深度捕获任务使用独立结果结构，工作流任务使用多输出数组；交付、恢复和绑定继续共用现有任务机制。
 
@@ -43,17 +43,23 @@ Wails / local dev
 | 工作区 | `backend/internal/workspace` | 本地身份、模型配置快照；ZIP 导入导出不在此包 |
 | 任务域 | `backend/internal/task` | 本地任务命令、列表读模型、生命周期，以及本机 ffmpeg/转写/深度捕捉的准入 |
 | 生成结果交付 | `backend/internal/taskdelivery` | 第一段把生成 dataURL/字节写入本地资源并改写 ResultJSON；第二段在任务成功后物化素材。不发起新的上游生成。远端产物经 `outbound.DownloadResumable` 断点续传下载：无总超时，只有头部与空闲超时，半成品在 `<data>/cache/artifact-downloads` 下按身份复用 |
+| 生成结果绑定 | `backend/internal/taskbinding` | 将已交付产物绑定到原先指定的画布节点；多张图片按创建前记录的 `outputNodeIds` 与输出序号逐项核对，不新建上游任务 |
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
+| Seedream 图片结果 | `backend/internal/generation/image_seedream.go` | 专用协议请求 URL，保留原来的组图、图层和透明 PNG 参数；BeefAPI 可经 CF 转存到 COS。返回的 URL 下载成原始图片后交给本地资源保存，仍接受旧 Base64 响应。媒体下载只在同 origin 携带供应商请求头，跨 origin 重定向后清除且不恢复；Agent Plan 插件与通用图片协议不受此默认值影响 |
+| 视频结果取回 | `backend/internal/generation/video_delivery.go` | 所有视频入口共用下载重试、10 秒无进展检测和原任务结果刷新；BeefAPI 取备用存储，自接供应商只查询自己的原任务。认证由所选协议提供，跨域媒体请求清除供应商凭据 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
 | 模型目录 | `backend/internal/modelcatalog` | 能力合同、渠道目录校验/解析/合并与 BeefAPI/WhatsToken overlay；出站 HTTP 仍走 outbound |
-| 协议插件 | `backend/internal/plugins` | registry、安装/启用和渠道设置用的 provider 能力目录；live 快照按 Runtime 隔离 |
+| 插件注册与能力 | `backend/internal/plugins`、`agent-host/plugin-packages.mjs` | 唯一插件登记表（`plugin_registry`：含 `OriginPackage` `"package"`、`PackageDir`、`PackageSpec`）、安装/启停、静态文件隔离、provider 能力目录，以及把已启用插件的 `canvasNodes` 注入共享的 `capability.BuiltinRegistry()`；宿主侧经 `agent-host/plugin-packages.mjs` 复用 pi 官方 `DefaultPackageManager` 与 `discoverAndLoadExtensions` 加载插件工具 |
 | Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |
 | 数据 | `backend/internal/database`, `repository` | SQLite schema、迁移和持久化 |
+| 支持诊断 | `backend/internal/diagnostics`、`supporttrace`、`assistantdiagnostics` | schema 3 脱敏 ZIP、各来源完整性、本地 OTel 记录、只读官方助手元数据及离线阶段分析；不参与生成、重试或恢复决策 |
 | 剪辑语义计划 | `backend/internal/editing` | 版本化时间线渲染计划：选择、顺序、空隙、裁剪、音量、字幕与输出宽高/帧率/采样率。不依赖 `internal/app`，不接受本地路径或 ffmpeg 参数 |
 | 视频预览与工具 | `backend/internal/playback`、`backend/internal/mediatools` | 按需 H.264 预览、单任务转码、用户预览缓存清理；播放和剪辑共用随包 FFmpeg 解析，显式路径优先于随包工具，最后查 PATH |
 | HTTP | `backend/internal/handler` | 本地 `/api` 合同、输入限制和响应封装 |
 | 企业连接 | `backend/internal/beefapi` | 设备授权、本机密钥和连接状态 |
-| 本机 MCP | `backend/cmd/beeftv` | `beeftv mcp serve` 使用官方 MCP SDK，经 `/api/ops` 访问本机工作区 |
+| 本机 MCP | `backend/cmd/beeftv` | `beeftv mcp serve` 使用官方 MCP SDK，经 `/api/ops` 访问本机工作区；底层业务接口默认经 `business.list` / `business.call` 两个入口调用（`business.go`），媒体读取结果按 MCP 图片、音频内容返回（`mcp_content.go`） |
+| 远程 Skill 市场 | `backend/internal/skillhub`、`skillhubcli` | `beeftv skills` 直接访问统一市场，不发现或连接本地运行时；共享版本清单、完整性校验与专用投稿授权 |
+| 内置 Skill 接入 | `backend/internal/skills/market*.go`、`operations/skill*.go`、`assistantturns/skill_context.go` | Go 管理本地安装、确切版本、活动上下文和投稿确认；模型只获得查询、草稿和准备操作 |
 | 桌面更新发布 | `backend/cmd/update-release` | 生成更新密钥、打包 zip、签署 `desktop-update.json` |
 | 前端 | `web/src` | React 画布、项目、素材、模型配置与插件 UI |
 

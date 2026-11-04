@@ -41,7 +41,7 @@ func validateChannelModelTierCapabilities(tiers []model.ChannelModelVariant, raw
 		if config.Video.Duration.Selection == "enum" && !durationSupported[tier.VideoSeconds] {
 			return kernel.BadAuthRequest(fmt.Sprintf("变体时长 %d 秒不在该视频模型支持范围内", tier.VideoSeconds))
 		}
-		if config.Video.Duration.Selection == "range" && (tier.VideoSeconds < config.Video.Duration.Min || tier.VideoSeconds > config.Video.Duration.Max || (config.Video.Duration.Step > 0 && (tier.VideoSeconds-config.Video.Duration.Min)%config.Video.Duration.Step != 0)) {
+		if config.Video.Duration.Selection == "range" && !videoDurationAllowed(config.Video.Duration, tier.VideoSeconds) {
 			return kernel.BadAuthRequest(fmt.Sprintf("变体时长 %d 秒不在该视频模型支持范围内", tier.VideoSeconds))
 		}
 	}

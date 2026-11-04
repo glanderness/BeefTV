@@ -32,8 +32,9 @@ import { aceternityMotion } from "@/lib/aceternity-motion";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
-import { isCanvasFolderNode } from "@/lib/canvas/canvas-frame";
+import { isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { resolveAddNodeMenuCommands, type AddNodeMenuContext } from "@/lib/canvas/tool-registry";
+import { usePluginSlot } from "@/lib/plugins/slot-registry";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { cn } from "@/lib/utils";
@@ -162,7 +163,7 @@ export function CanvasNodeContextMenu({
     const isVideo = node?.type === CanvasNodeType.Video;
     const isMedia = isImage || isVideo;
     const isAudio = node?.type === CanvasNodeType.Audio;
-    const isFrame = node?.type === CanvasNodeType.Frame;
+    const isFrame = isFrameNode(node);
     const isFolder = isCanvasFolderNode(node);
     const hasNodeContent = isText ? Boolean(nodeContent.trim()) : Boolean(nodeContent);
     const canSaveAsset = Boolean(node && !isCharacterReference && (isText ? hasNodeContent : hasNodeContent && (isImage || isVideo || isAudio)));
@@ -172,6 +173,18 @@ export function CanvasNodeContextMenu({
     const assetCategory = node ? canvasNodeAssetCategory(node) : "other";
     const hasMultiSelection = selectedCount >= 2;
     const position = getContextMenuPosition(menu, hasMultiSelection);
+    const pluginContextMenuEntries = usePluginSlot("canvas.contextMenu");
+    const pluginContextTarget = menu.type === "canvas" ? "canvas" : hasMultiSelection ? "selection" : "node";
+    const pluginContextMenuCtx = {
+        target: pluginContextTarget as "canvas" | "node" | "selection",
+        node: node ?? null,
+        selectedNodeIds: node ? [node.id] : [],
+        selectedNodes: node ? [node] : [],
+        position: { x: menu.x, y: menu.y },
+    };
+    const visiblePluginMenuItems = pluginContextMenuEntries.filter((entry) =>
+        entry.payload.when ? entry.payload.when(pluginContextMenuCtx) : true,
+    );
 
     return (
         <>
@@ -288,6 +301,21 @@ export function CanvasNodeContextMenu({
                             <MenuButton icon={<Trash2 className="size-4" />} label="删除连接" danger onClick={() => runAction(onDelete)} />
                         </>
                     )}
+                    {!categoryOpen && visiblePluginMenuItems.length > 0 ? (
+                        <>
+                            <MenuDivider />
+                            <MenuSection label="插件扩展" />
+                            {visiblePluginMenuItems.map((entry) => (
+                                <MenuButton
+                                    key={entry.entryId}
+                                    icon={entry.payload.icon ?? <Plus className="size-4" />}
+                                    label={entry.payload.label}
+                                    shortcut={entry.payload.shortcut}
+                                    onClick={() => runAction(() => void entry.payload.onSelect(pluginContextMenuCtx))}
+                                />
+                            ))}
+                        </>
+                    ) : null}
                 </div>
             </SpotlightSurface>
 
@@ -533,6 +561,6 @@ function nodeTypeLabel(node?: CanvasNodeData | null) {
     if (node.type === CanvasNodeType.Video) return "视频节点";
     if (node.type === CanvasNodeType.Audio) return "音频节点";
     if (node.type === CanvasNodeType.Drawing) return "绘图节点";
-    if (node.type === CanvasNodeType.Frame) return isCanvasFolderNode(node) ? "文件夹" : "背板";
+    if (isFrameNode(node)) return node.type === CanvasNodeType.Workflow ? "工作流" : isCanvasFolderNode(node) ? "文件夹" : "背板";
     return "生成配置节点";
 }

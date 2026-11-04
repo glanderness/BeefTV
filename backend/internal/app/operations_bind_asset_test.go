@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/png"
 	"infinite-canvas/backend/internal/agentops"
@@ -10,6 +11,77 @@ import (
 	"infinite-canvas/backend/internal/operations"
 	"testing"
 )
+
+func TestBindAssetProjectAuthorizationDoesNotHoldSQLiteConnection(t *testing.T) {
+	svc, canvasID, _ := newAssistantTurnService(t)
+	db := svc.repo.DB()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Match the desktop connection pool. A project resolver uses the service's
+	// normal connection and must not be called inside a write transaction.
+	sqlDB.SetMaxOpenConns(1)
+	for _, row := range []any{
+		&model.Project{ID: "p1", UserID: "local", Name: "Binding", Status: model.ProjectStatusActive},
+		&model.Resource{ID: "reference-resource", UserID: "local", Kind: "image", MimeType: "image/png", Status: model.ResourceStatusReady},
+		&model.Asset{ID: "linked", UserID: "local", Kind: "image", PayloadJSON: `{"resourceId":"reference-resource"}`},
+		&model.ProjectAssetLink{ID: "link", ProjectID: "p1", AssetID: "linked"},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := json.Marshal(map[string]any{"id": canvasID, "title": "Binding", "revision": canvasRevisionOf(t, svc, canvasID), "nodes": []any{
+		map[string]any{"id": "reference", "type": "image", "metadata": map[string]any{}},
+	}, "connections": []any{}})
+	if _, err := svc.UpsertUserCanvasProject("local", raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", canvasID).Update("project_id", "p1").Error; err != nil {
+		t.Fatal(err)
+	}
+	calledInsideTransaction := false
+	scope := &agentops.AssistantScope{CanvasID: canvasID, ProjectReference: func(kind, id string) error {
+		if sqlDB.Stats().InUse != 0 {
+			calledInsideTransaction = true
+			// Detect the native deadlock without leaving a blocked goroutine.
+			return errors.New("project authorization holds the only SQLite connection")
+		}
+		return svc.ValidateAgentProjectReference("local", canvasID, kind, id)
+	}}
+	registry := operations.NewRegistry(svc, operations.NewStore(db))
+	operations.RegisterDefaultOps(registry)
+	revision := canvasRevisionOf(t, svc, canvasID)
+	run := func(assetID, opID string) (operations.Result, error) {
+		params, _ := json.Marshal(map[string]any{"canvasId": canvasID, "nodeId": "reference",
+			"assetId": assetID, "expectedRevision": revision})
+		return registry.Execute(operations.Request{UserID: "local", Op: "canvas.node.bind_asset",
+			OpID: opID, Params: params, Caller: operations.AssistantCaller(scope, false)})
+	}
+	if _, err := run("unrelated", "deny-unrelated"); err == nil || operations.AsError(err).Reason != "scope_denied" {
+		t.Fatalf("unrelated binding should be denied: %v", err)
+	}
+	if calledInsideTransaction {
+		t.Fatal("project authorization ran while the write transaction held the only SQLite connection")
+	}
+	if canvasRevisionOf(t, svc, canvasID) != revision {
+		t.Fatal("denied binding changed the canvas")
+	}
+	result, err := run("linked", "bind-project-reference")
+	if err != nil || result.Revision != revision+1 {
+		t.Fatalf("linked project asset did not bind: %+v %v", result, err)
+	}
+	if err := db.Where("id = ?", "link").Delete(&model.ProjectAssetLink{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("linked", "bind-project-reference"); err == nil || operations.AsError(err).Reason != "scope_denied" {
+		t.Fatalf("revocation must deny even an existing receipt: %v", err)
+	}
+	if calledInsideTransaction {
+		t.Fatal("project authorization entered a write transaction")
+	}
+}
 
 func TestBindAssetRealCanvasRegistryPermissionsReplayAndUndo(t *testing.T) {
 	svc, canvasID, _ := newAssistantTurnService(t)
@@ -139,7 +211,7 @@ func TestBindAssetRealCanvasRegistryPermissionsReplayAndUndo(t *testing.T) {
 	if err := svc.FinalizeAssistantTurn("abcdef0123456789abcdef0123456789"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UndoAssistantTurn("local", canvasID, "abcdef0123456789abcdef0123456789"); err != nil {
+	if _, err := svc.AssistantTurns().Undo("local", canvasID, "abcdef0123456789abcdef0123456789"); err != nil {
 		t.Fatal(err)
 	}
 	restored, _ := svc.UserCanvasProject("local", canvasID)

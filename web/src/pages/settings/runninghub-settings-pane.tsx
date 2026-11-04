@@ -179,7 +179,7 @@ export function RunningHubSettingsPane() {
                 title: title.trim(),
                 capability,
             };
-            const result = kind === "app" ? await fetchRunningHubApp({ ...fetchConfig, webappId: id }, controller.signal, request.expectedScope) : await fetchRunningHubWorkflow({ ...fetchConfig, workflowId: id }, controller.signal, request.expectedScope);
+            const result = kind === "app" ? await fetchRunningHubApp({ ...fetchConfig, webappId: id }, controller.signal) : await fetchRunningHubWorkflow({ ...fetchConfig, workflowId: id }, controller.signal);
             if (!request.isCurrent()) return;
             const existing = useConfigStore.getState().config.runningHub.workflows.find((workflow) => workflowEntryKey(workflow) === `${kind}:${id}`);
             const item: RunningHubWorkflow = {

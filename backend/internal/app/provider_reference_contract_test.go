@@ -11,10 +11,10 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func TestWanLocalReferencesUseVerifiedInlineContract(t *testing.T) {
+func TestWanLocalReferencesRemainOwnedForHTTPUpload(t *testing.T) {
 	input := canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: "https://enterprise.beefapi.com", InterfaceType: "newapi-channel-2", Model: "wan3.0-video"}, ReferenceImages: []providerMedia{{DataURL: testGeminiReferenceImageDataURL}}}
 	policy := providerMediaHydrationPolicyFor(context.Background(), input)
-	if policy.RequireURL || !policy.PreferHTTPS {
+	if policy.RequireURL || !policy.KeepLocal {
 		t.Fatalf("Wan local media blocked: %#v", policy)
 	}
 	svc := newResourceTestService(t)
@@ -39,26 +39,27 @@ func TestWanLocalReferencesUseVerifiedInlineContract(t *testing.T) {
 	if err := svc.hydrateGenerationMedia("user-1", &input, policy); err != nil {
 		t.Fatal(err)
 	}
-	body := officialVideoCreateBody(t, input)
-	if body["image_urls"].([]any)[0] != testGeminiReferenceImageDataURL {
-		t.Fatal("inline image lost before wire request")
+	// The provider uploader reads owned bytes next; hydration must not turn
+	// this local reference into an inline value rejected by Wan's HTTP contract.
+	if media := input.ReferenceImages[0]; media.StorageKey != "resource:wan-reference" || media.DataURL != "" {
+		t.Fatalf("local reference changed before upload: %#v", media)
 	}
 	foreign := canvasGenerationInput{ReferenceImages: []providerMedia{{StorageKey: "resource:wan-reference"}}}
 	if err := svc.hydrateGenerationMedia("another-user", &foreign, policy); err == nil {
 		t.Fatal("foreign media accepted")
 	}
 	input.ReferenceVideos = []providerMedia{{URL: "https://example.com/ref.mp4"}}
-	if err := svc.validateResolvedVideoCapability(&input); err == nil || !strings.Contains(err.Error(), "暂不支持参考视频") {
-		t.Fatalf("unsupported media silently accepted: %v", err)
+	if err := svc.validateResolvedVideoCapability(&input); err != nil {
+		t.Fatalf("custom channel should delegate reference validation to upstream: %v", err)
 	}
 	input.Config.Model = "wan4.0-video"
-	if !providerMediaHydrationPolicyFor(context.Background(), input).RequireURL {
-		t.Fatal("unknown model inherited inline support")
+	if !providerMediaHydrationPolicyFor(context.Background(), input).KeepLocal {
+		t.Fatal("new built-in model did not inherit the same upload protocol")
 	}
 	input.Config.Model = "wan3.0-video"
 	input.Config.BaseURL = "https://another.example/enterprise.beefapi.com"
 	if !providerMediaHydrationPolicyFor(context.Background(), input).RequireURL {
-		t.Fatal("untrusted endpoint inherited inline support")
+		t.Fatal("untrusted endpoint inherited built-in upload support")
 	}
 }
 
@@ -103,7 +104,7 @@ func TestSavedBeefAPISeedanceAudioControl(t *testing.T) {
 				}
 				if isBeefAPIVideoConfig(context.Background(), input.Config) {
 					body, err := beefAPIVideoRequestBody(input)
-					if err != nil || body["generate_audio"] != false {
+					if err != nil || body["metadata"].(map[string]any)["generate_audio"] != false {
 						t.Fatalf("explicit false lost: %#v, %v", body, err)
 					}
 				}

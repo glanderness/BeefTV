@@ -25,6 +25,14 @@ import (
 // Real uploaded media, Go SQLite ownership, default shipped Durable host and
 // intercepted loopback requests. No paid models or production user data.
 func TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure(t *testing.T) {
+	testNativeHistoryHost(t, false)
+}
+
+func TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure(t *testing.T) {
+	testNativeHistoryHost(t, true)
+}
+
+func testNativeHistoryHost(t *testing.T, failAfterMedia bool) {
 	env := newAssistantTestEnv(t, nil)
 	owner, err := env.service.LocalWorkspaceOwner()
 	if err != nil {
@@ -125,7 +133,7 @@ func TestNativeHistoryRealDefaultHostCanvasScopeAndSDKDeterministicFailure(t *te
 		env.router.ServeHTTP(w, r)
 	}))
 	defer backend.Close()
-	config, err := json.Marshal(map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID, "turnId": turnID, "nextTurnId": nextTurnID, "invalidTurnId": invalidTurnID, "hostToken": assistantTestHostToken, "image": attachments["image"], "audio": attachments["audio"], "video": attachments["video"]})
+	config, err := json.Marshal(map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID, "turnId": turnID, "nextTurnId": nextTurnID, "invalidTurnId": invalidTurnID, "hostToken": assistantTestHostToken, "image": attachments["image"], "audio": attachments["audio"], "video": attachments["video"], "failAfterMedia": failAfterMedia})
 	if err != nil {
 		t.Fatal(err)
 	}

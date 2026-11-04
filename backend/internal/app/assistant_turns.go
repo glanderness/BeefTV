@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/operations"
+	"infinite-canvas/backend/internal/supporttrace"
 
 	"gorm.io/gorm"
 )
@@ -17,6 +19,7 @@ const (
 	AssistantTurnReasonNoChange      = assistantturns.ReasonNoChange
 	AssistantTurnReasonAlreadyUndone = assistantturns.ReasonAlreadyUndone
 	AssistantTurnReasonCanvasChanged = assistantturns.ReasonCanvasChanged
+	AssistantTurnReasonUndone        = assistantturns.ReasonUndone
 )
 
 type (
@@ -43,6 +46,9 @@ func (s *Service) assistantTurnDir() string {
 	return filepath.Join(s.dataDir, "assistant-turns")
 }
 
+// AssistantTurns exposes the domain service to the HTTP composition layer.
+func (s *Service) AssistantTurns() *assistantturns.Service { return s.assistantTurnsOrInit() }
+
 func (s *Service) assistantTurnsOrInit() *assistantturns.Service {
 	if s == nil {
 		return nil
@@ -54,31 +60,25 @@ func (s *Service) assistantTurnsOrInit() *assistantturns.Service {
 }
 
 func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string, input AssistantTurnInput) (int64, error) {
-	return s.assistantTurnsOrInit().Begin(userID, canvasID, turnID, input)
-}
-
-func (s *Service) AssistantTurnScopeForHost(userID, turnID string) (AssistantTurnScope, bool, error) {
-	return s.assistantTurnsOrInit().ScopeForHost(userID, turnID)
+	revision, err := s.assistantTurnsOrInit().Begin(userID, canvasID, turnID, input)
+	if err == nil {
+		s.SupportTrace().Event(context.Background(), "assistant.turn", supporttrace.Fields{UserID: userID, CanvasID: canvasID, TurnID: turnID, Reason: "turn_opened"})
+	}
+	return revision, err
 }
 
 func (s *Service) FinalizeAssistantTurn(turnID string) error {
-	return s.assistantTurnsOrInit().Finalize(turnID)
-}
-
-func (s *Service) AssistantTurnRuntimeState(userID, turnID string) (*assistantturns.RuntimeState, error) {
-	return s.assistantTurnsOrInit().RuntimeState(userID, turnID)
-}
-
-func (s *Service) ExtendAssistantTurn(userID, canvasID, turnID string, input AssistantTurnInput) error {
-	return s.assistantTurnsOrInit().Extend(userID, canvasID, turnID, input)
+	err := s.assistantTurnsOrInit().Finalize(turnID)
+	if err == nil && s.repo != nil {
+		if row, readErr := s.repo.AssistantTurnByID(nil, turnID); readErr == nil {
+			s.SupportTrace().Event(context.Background(), "assistant.turn", supporttrace.Fields{UserID: row.UserID, CanvasID: row.CanvasID, TurnID: turnID, SessionID: row.DurableSessionID, Reason: "turn_settled"})
+		}
+	}
+	return err
 }
 
 func (s *Service) AssistantTurnUndone(userID, canvasID, turnID string) bool {
 	return s.assistantTurnsOrInit().Undone(userID, canvasID, turnID)
-}
-
-func (s *Service) UndoAssistantTurn(userID, canvasID, turnID string) (int64, error) {
-	return s.assistantTurnsOrInit().Undo(userID, canvasID, turnID)
 }
 
 // VerifyOpenAssistantTurnInTx is the operation-transaction contract for Lead

@@ -38,6 +38,12 @@ function RouteReceipt() {
 }
 
 Object.assign(window, { exportFixture: {
+    seedBlockingExport() {
+        const project = fixtureProject("blocked-export");
+        project.timeline!.clips[0]!.directMedia!.storageKey = "resource:blocked-export";
+        useCanvasStore.setState({ projects: [project] });
+        return project;
+    },
     async export() {
         await setMediaBlob("audio:fixture:voice", new Blob(["unique archive bytes"], { type: "audio/wav" }));
         await exportCanvasProjects([fixtureProject("first"), fixtureProject("second")]);

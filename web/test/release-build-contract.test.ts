@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runIsolatedPool } from "../scripts/run-test-suite.mjs";
 
 const root = resolve(import.meta.dir, "../..");
 
@@ -32,6 +33,31 @@ describe("desktop release build contract", () => {
         const testRunner = readFileSync(resolve(root, "web/scripts/run-test-suite.mjs"), "utf8");
         expect(testRunner).toContain('source.includes("globalThis")');
         expect(testRunner).toContain("for (const file of isolated) run([file])");
+    });
+
+    test("runs isolated files one per invocation with bounded concurrency and stops scheduling after failure", async () => {
+        const seen: string[] = [];
+        let active = 0;
+        let maxActive = 0;
+        const okCode = await runIsolatedPool(["a.test.ts", "b.test.ts", "c.test.ts", "d.test.ts"], 2, async (file) => {
+            active++;
+            maxActive = Math.max(maxActive, active);
+            seen.push(file);
+            await new Promise((r) => setTimeout(r, 5));
+            active--;
+            return 0;
+        });
+        expect(okCode).toBe(0);
+        expect(seen.sort()).toEqual(["a.test.ts", "b.test.ts", "c.test.ts", "d.test.ts"]);
+        expect(maxActive).toBeLessThanOrEqual(2);
+
+        const afterFail: string[] = [];
+        const failCode = await runIsolatedPool(["1.test.ts", "2.test.ts", "3.test.ts"], 1, async (file) => {
+            afterFail.push(file);
+            return file === "1.test.ts" ? 7 : 0;
+        });
+        expect(failCode).toBe(7);
+        expect(afterFail).toEqual(["1.test.ts"]);
     });
 
     test("keeps published deployment aligned with binaries present in public source", () => {

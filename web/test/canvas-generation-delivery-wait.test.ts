@@ -95,19 +95,21 @@ describe("bindBackendCanvasGenerationResult waits for delivery", () => {
 
         let refreshes = 0;
         let bindCalls = 0;
+        const phases: string[] = [];
         let caught: unknown;
         try {
             await applyLikeCaller({
                 canvasId: "canvas-1",
                 nodeId: "node-1",
                 task: pendingTask,
+                onPhaseChange: phase => phases.push(phase),
                 isCurrent: () => true,
                 nodesRef,
                 setNodes: (value) => {
                     nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
                 },
                 runtime: {
-                    hydrateOutputs: async () => undefined,
+                    hydrateOutputs: async () => { expect(phases).toEqual(["fetching", "saving"]); },
                     persistDocument: async () => undefined,
                     bindOutput: async (input) => {
                         bindCalls += 1;
@@ -117,6 +119,7 @@ describe("bindBackendCanvasGenerationResult waits for delivery", () => {
                     captureScope: () => identity,
                     liveScope: () => identity,
                     refreshTask: async () => {
+                        expect(phases).toEqual(["fetching"]);
                         refreshes += 1;
                         return deliveredTask;
                     },
@@ -144,11 +147,13 @@ describe("bindBackendCanvasGenerationResult waits for delivery", () => {
         const deliveredTask = mediaTask({ outputs: [{ outputIndex: 0, mediaType: "image", materializedAssetId: "generation_abc" }] });
         let refreshes = 0;
         let bindCalls = 0;
+        const phases: string[] = [];
 
         await applyLikeCaller({
             canvasId: "canvas-1",
             nodeId: "node-1",
             task: deliveredTask,
+            onPhaseChange: phase => phases.push(phase),
             isCurrent: () => true,
             nodesRef,
             setNodes: (value) => {
@@ -176,6 +181,7 @@ describe("bindBackendCanvasGenerationResult waits for delivery", () => {
 
         expect(refreshes).toBeGreaterThanOrEqual(1);
         expect(bindCalls).toBe(2);
+        expect(phases).toEqual(["saving", "fetching", "saving"]);
     });
 
     test.each(["output_not_ready", "resource_not_ready"])("stops repeated %s rejections even when the output claims a materialized asset", async (reason) => {
@@ -272,4 +278,22 @@ describe("bindBackendCanvasGenerationResult waits for delivery", () => {
 
         expect(published).toEqual([1_000_000, 2_000_000, 3_000_000, undefined, undefined]);
     });
+});
+
+
+test("missing logical output fails immediately without aliasing a sparse output or polling", async () => {
+    const identity = captured("user-a", 1);
+    let calls = 0;
+    const task = mediaTask({ outputs: [{ outputIndex: 3, mediaType: "image", materializedAssetId: "fourth" }] });
+    const caught = await bindBackendCanvasGenerationResult({
+        canvasId: "missing-index", nodeId: "second", task, outputIndex: 0,
+        isCurrent: () => true, nodesRef: { current: [] }, setNodes: () => undefined,
+        runtime: { captureScope: () => identity, liveScope: () => identity,
+            refreshTask: async () => { calls++; return task; },
+            hydrateOutputs: async () => { calls++; },
+            bindOutput: async () => { calls++; throw new Error("must not bind another image"); },
+        },
+    }).catch((error) => error);
+    expect(caught.code).toBe("results_missing");
+    expect(calls).toBe(0);
 });

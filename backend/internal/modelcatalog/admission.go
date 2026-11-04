@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+)
+
+const (
+	managedChannelID             = "beefapi"
+	managedCredentialRef         = "beefapi-enterprise"
+	defaultManagedAssistantModel = "deepseek-v4.1-flash"
 )
 
 // TaskSelectRequest is the typed admission input. App supplies the live
@@ -217,6 +222,9 @@ func ApplyChannelCapabilityDefaults(config map[string]any, capability string, pr
 		}
 		if profile.Image.Quality.Supported {
 			setDefault("quality", profile.Image.Quality.Default)
+			if value := strings.ToLower(strings.TrimSpace(fmt.Sprint(config["quality"]))); (value == "auto" || value == "any") && !containsCapabilityString(profile.Image.Quality.Values, "auto") {
+				config["quality"] = profile.Image.Quality.Default
+			}
 		}
 		setDefault("transparentBackground", profile.Image.TransparentBackground.Default)
 		setDefault("count", 1)
@@ -263,7 +271,7 @@ func TaskInputUsesCustomChannel(input map[string]any) bool {
 	baseURL, _ := config["baseUrl"].(string)
 	apiKey, _ := config["apiKey"].(string)
 	credentialRef, _ := config["credentialRef"].(string)
-	if strings.EqualFold(strings.TrimSpace(credentialRef), beefapi.CredentialRef) || strings.TrimSpace(channelID) == beefapi.ChannelID {
+	if strings.EqualFold(strings.TrimSpace(credentialRef), managedCredentialRef) || strings.TrimSpace(channelID) == managedChannelID {
 		return strings.TrimSpace(baseURL) != "" && strings.TrimSpace(apiKey) != ""
 	}
 	if strings.TrimSpace(channelID) != "" || SystemChannelIDFromBaseURL(baseURL) != "" {

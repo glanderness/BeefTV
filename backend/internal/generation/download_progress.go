@@ -64,6 +64,7 @@ type videoDownloadReporter struct {
 	port       DeliveryProgressPort
 	attempt    int
 	downloaded int64
+	total      int64
 	rate       outbound.ProgressRate
 }
 
@@ -71,7 +72,7 @@ func newVideoDownloadReporter(port DeliveryProgressPort) *videoDownloadReporter 
 	if port == nil {
 		return nil
 	}
-	return &videoDownloadReporter{port: port}
+	return &videoDownloadReporter{port: port, total: -1}
 }
 
 func (r *videoDownloadReporter) report(state string, downloaded, total int64) {
@@ -81,6 +82,7 @@ func (r *videoDownloadReporter) report(state string, downloaded, total int64) {
 		r.rate = outbound.ProgressRate{}
 	}
 	r.downloaded = downloaded
+	r.total = total
 	now := time.Now()
 	r.rate.Observe(now, downloaded)
 	r.port.ReportDelivery(outbound.ResumableProgress{
@@ -100,27 +102,24 @@ func (r *videoDownloadReporter) beginAttempt(ctx context.Context, attempt int) c
 	}
 	r.attempt = attempt
 	r.rate = outbound.ProgressRate{}
-	r.downloaded = 0
-	r.report("downloading", 0, -1)
+	r.report("downloading", r.downloaded, r.total)
 	return withDownloadObserver(ctx, func(downloaded, total int64) {
 		r.report("downloading", downloaded, total)
 	})
 }
 
-// These downloads restart from zero. Only an explicit pending response means
-// the provider is still preparing the file; transport failures mean retrying.
+// The next response validates whether retained bytes can be resumed.
 func (r *videoDownloadReporter) waitForRetry(nextAttempt int, pending bool) {
 	if r == nil {
 		return
 	}
 	r.attempt = nextAttempt
 	r.rate = outbound.ProgressRate{}
-	r.downloaded = 0
 	state := "retrying"
 	if pending {
 		state = "waiting"
 	}
-	r.report(state, 0, -1)
+	r.report(state, r.downloaded, r.total)
 }
 
 func (r *videoDownloadReporter) clear() {

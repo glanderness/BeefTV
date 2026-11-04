@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/workspace"
 
 	"github.com/pkg/browser"
@@ -227,7 +228,7 @@ func (s *Service) Resolve() (Credential, error) {
 	}
 	apiKey, err := decryptSecret(s.dataDir, state.EncryptedAPIKey)
 	if err != nil {
-		return Credential{}, errStore
+		return Credential{}, &kernel.AppError{Status: 500, Code: 500, Reason: "local_credential_failed", Message: "本地算力凭据读取失败。" + credentialFailureDetail(err) + "。请检查工作区数据目录并重新连接算力账号；不要删除工作区密钥", Cause: err}
 	}
 	if strings.TrimSpace(apiKey) == "" {
 		return Credential{}, errNotConnected
@@ -241,6 +242,22 @@ func (s *Service) Resolve() (Credential, error) {
 		baseURL = state.AuthorizationOrigin
 	}
 	return Credential{APIKey: apiKey, BaseURL: baseURL, AccountID: accountID, TokenID: state.TokenID, KeyName: state.KeyName}, nil
+}
+
+// Only allowlisted causes leave the credential boundary; never copy a key or path.
+func credentialFailureDetail(err error) string {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "工作区密钥文件不存在"
+	case errors.Is(err, os.ErrPermission):
+		return "没有读取工作区密钥文件的权限"
+	}
+	switch err.Error() {
+	case "工作区密钥长度无效", "本地密钥密文格式无效", "本地密钥密文长度无效", "本地密钥解密失败，请检查工作区密钥":
+		return err.Error()
+	default:
+		return "读取工作区密钥文件失败"
+	}
 }
 
 func (s *Service) MarkRevoked() {
@@ -823,6 +840,10 @@ func (s *Service) verifyRemote() {
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		s.MarkRevoked()
+		return
+	}
+	if status >= 200 && status < 300 {
+		_, _ = s.RefreshCatalog(s.lifecycle)
 	}
 }
 

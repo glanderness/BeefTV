@@ -1,9 +1,5 @@
 package model
 
-import (
-	"time"
-)
-
 type TaskStatus string
 type ProviderCancelStatus string
 type UserRole string
@@ -21,18 +17,6 @@ type AssetVersionStatus string
 type WorkflowStatus string
 type WorkflowStepStatus string
 
-// AdminAuditEvent 只允许追加，用于还原管理员写操作，禁止作为可编辑业务状态使用。
-type AdminAuditEvent struct {
-	ID           string    `json:"id" gorm:"primaryKey;size:36"`
-	ActorUserID  string    `json:"actorUserId" gorm:"index;size:36"`
-	Action       string    `json:"action" gorm:"index;size:80"`
-	TargetType   string    `json:"targetType" gorm:"index;size:40"`
-	TargetID     string    `json:"targetId" gorm:"index;size:160"`
-	Summary      string    `json:"summary" gorm:"size:500"`
-	MetadataJSON string    `json:"metadataJson" gorm:"type:text"`
-	CreatedAt    time.Time `json:"createdAt" gorm:"index"`
-}
-
 const (
 	TaskStatusQueued    TaskStatus = "queued"
 	TaskStatusRunning   TaskStatus = "running"
@@ -43,6 +27,11 @@ const (
 	// 前端直连模型流式生成，把增量 POST 到 /tasks/:id/text-deltas 存档，
 	// 完成后调用 /tasks/:id/text-replay-complete 归并为最终正文。
 	TaskStatusTextReplay TaskStatus = "text_replay"
+
+	// CanvasBindRecoveryPrefix marks the background scanner's private canvas
+	// bind marker in tasks.recovery_outcome. The same column holds media
+	// recovery conclusions (no_result / unrecoverable) for failed tasks.
+	CanvasBindRecoveryPrefix = "canvas_bind:"
 
 	UserRoleAdmin UserRole = "admin"
 	UserRoleUser  UserRole = "user"

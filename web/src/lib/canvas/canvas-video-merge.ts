@@ -3,7 +3,7 @@ import { assertUsableSegmentOutput } from "./canvas-video-segment-args";
 import { prewarmFFmpeg, withFFmpegLease, type CanvasFFmpegProgress } from "./canvas-ffmpeg-session";
 
 export type MergeVideoInput = { id: string; url?: string; storageKey?: string };
-export type MergeVideoProgress = CanvasFFmpegProgress;
+export type MergeVideoProgress = CanvasFFmpegProgress | { phase: "saving" | "binding" | "done"; progress: number };
 
 // ffmpeg 只在用户明确合并视频时加载，避免把 wasm 和 worker 放进画布首屏包体。
 export async function loadFFmpeg(onProgress?: (progress: MergeVideoProgress) => void) {

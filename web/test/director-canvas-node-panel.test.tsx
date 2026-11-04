@@ -33,11 +33,11 @@ describe("导演台画布节点", () => {
         expect(markup).not.toContain("对象</span>");
     });
 
-    test("已有封面保持完整比例，并通过独立按钮打开导演台", () => {
+    test("已有封面裁剪铺满节点，并通过独立按钮打开导演台", () => {
         const withPreview = { ...node, metadata: { ...node.metadata, directorPreviewNodeId: "image-1" } };
         const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={withPreview} scene={scene} readNodeContent={() => "https://example.test/cover.png"} onOpen={() => {}} />);
         expect(markup).toContain('src="https://example.test/cover.png"');
-        expect(markup).toContain("object-contain");
+        expect(markup).toContain("object-cover");
         expect(markup).toContain("打开导演台");
         expect(markup).toContain('data-director-open="preview"');
         expect(markup).toContain('aria-label="打开导演台"');
@@ -46,7 +46,7 @@ describe("导演台画布节点", () => {
         expect(markup).toContain("px-6 py-4 text-base font-semibold");
         expect(markup).toContain("size-8");
         expect(markup).not.toContain("scale(var(--canvas-live-inverse-scale");
-        expect(markup).not.toContain('class="group relative aspect-square');
+        expect(markup).not.toContain("aspect-square");
     });
 
     test("默认导演台画布尺寸适度放大", () => {
@@ -69,7 +69,7 @@ describe("导演台画布节点", () => {
 
     test("导演节点不被通用视频节点外壳包成第二张灰色卡片", () => {
         const markup = renderToStaticMarkup(<CanvasNode
-            data={node} scale={1} isSelected={false} isRelated={false} isFocusRelated={false}
+            data={{ ...node, width: 720 }} scale={1} isSelected={false} isRelated={false} isFocusRelated={false}
             isConnectionTarget={false} showImageInfo={false}
             onMouseDown={() => {}} onHoverStart={() => {}} onHoverEnd={() => {}}
             onConnectStart={() => {}} onResize={() => {}} onContentChange={() => {}}
@@ -81,7 +81,8 @@ describe("导演台画布节点", () => {
         expect(shell).toContain("border:0");
         expect(shell).toContain("box-shadow:none");
         const header = markup.match(/class="canvas-node-external-header[^\"]*"[^>]*style="([^"]*)"/)?.[1];
-        expect(header).toContain("left:0;");
+        expect(header).toContain("--canvas-node-width:720px;");
+        expect(header).not.toContain("left:");
         expect(markup).toContain('data-node-header-icon="director"');
     });
 });

@@ -6,6 +6,16 @@ const MAX_PART_BYTES = 8 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MIME = new Set(['image/jpeg', 'image/png', 'video/mp4', 'audio/wav']);
 
+function supportsNativeMedia({ api, modelId }) {
+  return api === 'openai-completions' && /^gemini-/i.test(modelId);
+}
+
+export function mediaCapabilityContext(model) {
+  return supportsNativeMedia(model)
+    ? '[本轮媒体能力：可请求 frames 静态画面、video 连续视频和 audio 音频；结论以实际成功读取的内容为准。]'
+    : '[本轮媒体能力：主模型可查看 frames 静态画面及客观检测，不能直接接收 video/audio。连续视频及音轨用 media_review mode=video，独立音频用 media_review mode=audio，交给单独配置的审片模型检查；先读取 overview 取得版本。它返回模型观察而非主模型亲自看过或听过。若未配置或读取失败，明确未检查，仍可完成无需这些判断的剪辑与渲染。]';
+}
+
 function validatePart(part) {
   if (!MIME.has(part?.mimeType) || typeof part.data !== 'string' ||
       !/^[A-Za-z0-9+/]+={0,2}$/.test(part.data) || part.data.length > MAX_PART_BYTES * 4 / 3 + 4) {
@@ -22,7 +32,7 @@ export function mediaToolResult(data, operation, { api, modelId, nativePartStore
   if (!operation.startsWith('media.')) return { content: [{ type: 'text', text: JSON.stringify(data) }] };
   const parts = data?.result?.content || [];
   const native = parts.some((p) => p.type === 'media');
-  if (native && (api !== 'openai-completions' || !/^gemini-/i.test(modelId))) {
+  if (native && !supportsNativeMedia({ api, modelId })) {
     throw new Error('media_input_unsupported: 当前模型连接不能读取原生音视频，请使用画面检查或多模态 Gemini 连接');
   }
   const { content: ignored, ...result } = data.result;
@@ -39,6 +49,62 @@ export function mediaToolResult(data, operation, { api, modelId, nativePartStore
     } else throw new Error('invalid_media_content');
   }
   return { content };
+}
+
+// Public facts are a bounded projection of a successful Go result. Call only
+// after mediaToolResult validates/converts the content; arguments are not proof.
+export function mediaFacts(result, operation) {
+  if (!['media.overview', 'media.inspect', 'media.check'].includes(operation)) return undefined;
+  const source = result?.source;
+  const time = value => Number.isSafeInteger(value) && value >= 0;
+  if (!source || typeof source.resourceId !== 'string' || typeof source.version !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(source.resourceId) || !/^[a-f0-9]{64}$/.test(source.version) ||
+      !time(result.durationMs) || result.durationMs === 0 || !time(source.startMs) || !time(source.endMs) || source.endMs <= source.startMs || source.endMs > result.durationMs || typeof result.hasAudio !== 'boolean') return undefined;
+  const parts = result.content;
+  if (!Array.isArray(parts)) return undefined;
+  let mode;
+  if (operation === 'media.check' && parts.length === 0) mode = 'check';
+  else if (parts.length && parts.every(part => part.type === 'image' && part.mimeType?.startsWith('image/'))) mode = 'frames';
+  else if (operation === 'media.inspect' && parts.length === 1 && parts[0].type === 'media') {
+    mode = { 'audio/wav': 'audio', 'video/mp4': 'video' }[parts[0].mimeType];
+  }
+  if (!mode || parts.some(part => part.source?.resourceId !== source.resourceId || part.source?.version !== source.version ||
+      !time(part.source.startMs) || !time(part.source.endMs) || part.source.startMs < source.startMs || part.source.endMs > source.endMs || part.source.endMs < part.source.startMs ||
+      (mode !== 'frames' && (part.source.startMs !== source.startMs || part.source.endMs !== source.endMs)))) return undefined;
+  const node = typeof source.nodeId === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(source.nodeId) ? { nodeId: source.nodeId } : {};
+  const facts = { source: { resourceId: source.resourceId, version: source.version, startMs: source.startMs, endMs: source.endMs, ...node },
+    mode, durationMs: result.durationMs, hasAudio: result.hasAudio };
+  if (mode === 'check') {
+    for (const key of ['meanDb', 'peakDb']) if (typeof result[key] === 'number' && Number.isFinite(result[key])) facts[key] = result[key];
+    if (Array.isArray(result.silenceIntervals) && result.silenceIntervals.length <= 5000 && result.silenceIntervals.every(interval =>
+      time(interval?.startMs) && time(interval?.endMs) && interval.startMs >= source.startMs && interval.endMs <= source.endMs && interval.endMs > interval.startMs)) {
+      facts.silenceIntervals = result.silenceIntervals.map(({ startMs, endMs }) => ({ startMs, endMs }));
+    }
+  }
+  return facts;
+}
+
+// A bundle reports only modes backed by validated content from one snapshot.
+// Keep separate public facts: frames never become proof of video or audio.
+export function mediaEvidence(result, operation) {
+  if (result?.evidence === undefined) return undefined;
+  const modes = result.evidence;
+  const invalid = () => { throw new Error('invalid_media_evidence'); };
+  if (operation !== 'media.overview' || !Array.isArray(modes) || modes.length < 1 || modes.length > 4 ||
+      new Set(modes).size !== modes.length || modes.some(mode => !['frames', 'video', 'audio', 'check'].includes(mode)) ||
+      !modes.some(mode => mode !== 'check') || !Array.isArray(result.content) ||
+      result.source?.endMs - result.source?.startMs > 15000) return invalid();
+  const partMode = part => part?.type === 'image' && part.mimeType?.startsWith('image/') ? 'frames'
+    : part?.type === 'media' ? { 'audio/wav': 'audio', 'video/mp4': 'video' }[part.mimeType] : undefined;
+  if (result.content.some(part => !modes.includes(partMode(part)) ||
+      ['canvasId', 'nodeId', 'assetId'].some(key => part.source?.[key] !== result.source?.[key]))) return invalid();
+  return modes.map(mode => {
+    if (mode === 'check' && result.hasAudio && (result.silenceDetection?.noiseDb !== -35 ||
+        result.silenceDetection?.minimumDurationMs !== 120 || result.silenceDetection?.timestampKind !== 'source_time')) return invalid();
+    const facts = mediaFacts({ ...result, content: mode === 'check' ? [] : result.content.filter(part => partMode(part) === mode) },
+      mode === 'check' ? 'media.check' : 'media.inspect');
+    if (!facts || facts.mode !== mode) return invalid();
+    return facts;
+  });
 }
 
 // Only backend-produced tool results are eligible. History stays in order:
@@ -72,8 +138,52 @@ export function trustedMediaSources(payload, { api, modelId, nativePartStore }) 
   }
   return sources;
 }
+function stripCacheControl(item) {
+  if (!item || typeof item !== 'object' || !('cache_control' in item)) return item;
+  const { cache_control: _ignored, ...rest } = item;
+  return rest;
+}
+
+// 多通道 Anthropic/Bedrock 网关在跨步工具调用时会把请求分发到不同上游节点：
+// 历史 assistant 消息里的 thinking 签名属于前一个节点，原样重发会触发 Invalid signature in thinking block；
+// 同时跨节点 ephemeral cache_control 会触发代理层虚报 9x cache_read_input_tokens 导致提前 compaction。
+// 这里在派发边界把历史 thinking 块转为普通 text（实时流与 SQLite 已在接收端完整落盘），并移除跨通道 cache_control。
+function adaptAnthropicRequest(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const next = { ...payload };
+  if (Array.isArray(payload.system)) {
+    next.system = payload.system.map(stripCacheControl);
+  }
+  if (Array.isArray(payload.tools)) {
+    next.tools = payload.tools.map(stripCacheControl);
+  }
+  if (Array.isArray(payload.messages)) {
+    next.messages = payload.messages.flatMap((message) => {
+      if (!message || typeof message !== 'object' || !Array.isArray(message.content)) return [message];
+      if (message.role === 'assistant') {
+        const blocks = [];
+        for (const rawBlock of message.content) {
+          const block = stripCacheControl(rawBlock);
+          if (block?.type === 'redacted_thinking') continue;
+          if (block?.type === 'thinking') {
+            if (typeof block.thinking === 'string' && block.thinking.trim().length > 0) {
+              blocks.push({ type: 'text', text: block.thinking });
+            }
+            continue;
+          }
+          blocks.push(block);
+        }
+        return blocks.length > 0 ? [{ ...message, content: blocks }] : [];
+      }
+      return [{ ...message, content: message.content.map(stripCacheControl) }];
+    });
+  }
+  return next;
+}
+
 export function adaptMediaRequest(payload, { api, modelId, nativePartStore }, extra = {}) {
   nativePartStore ||= extra.nativePartStore || (typeof extra.read === 'function' ? extra : undefined);
+  if (api === 'anthropic-messages') return adaptAnthropicRequest(payload);
   if (api !== 'openai-completions') return payload;
   const toolNames = new Map();
   const messages = [];
@@ -103,10 +213,36 @@ export function adaptMediaRequest(payload, { api, modelId, nativePartStore }, ex
       bytes += validatePart(part);
       if (bytes > MAX_REQUEST_BYTES) throw new Error('media_request_too_large');
       pending.push({ type: 'text', text: JSON.stringify({ source: part.source }) });
-      pending.push({ type: 'image_url', image_url: { url: `data:${part.mimeType};base64,${part.data}` } });
+      pending.push(part.mimeType === 'audio/wav'
+        ? { type: 'input_audio', input_audio: { data: part.data, format: 'wav' } }
+        : { type: 'image_url', image_url: { url: `data:${part.mimeType};base64,${part.data}` } });
     }
     messages.push({ ...message, content: kept.join('\n') });
   }
   flush();
   return { ...payload, messages };
+}
+
+// 用户附带的图片先读成画面再交给模型。素材本身读不出来时（格式、大小、解码等 media_* 原因），
+// 明确告诉模型这张图没有看到，整轮对话继续；鉴权、权限等其他错误照常抛出。
+export async function attachmentContent(body, turnId, opsRequest) {
+  const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
+  for (const attachment of body.attachments || []) {
+    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。使用 media.inspect 读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
+    if (attachment.kind !== 'image') continue;
+    const reference = {canvasId:body.canvasId,
+      ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
+    try {
+      const overview = await opsRequest('POST','/ops/media.overview',{params:reference},undefined,turnId);
+      const mustUsePreview = overview.result.image?.view === 'preview' && overview.result.image?.inspectable !== true;
+      const data = mustUsePreview ? overview : await opsRequest('POST','/ops/media.inspect',{params:{...reference,
+        expectedVersion:overview.result.source.version,mode:'frames'}},undefined,turnId);
+      if (data.result.image) content.push({type:'text',text:JSON.stringify({image:data.result.image,note:data.result.note,source:data.result.source})});
+      content.push(...data.result.content.filter(part=>part.type==='image').map(part=>({type:'image',data:part.data,mimeType:part.mimeType})));
+    } catch (error) {
+      if (!String(error?.reason || '').startsWith('media_')) throw error;
+      content.push({type:'text',text:`这张图片没有读取成功（${error.reason}）。不要根据文件名或描述猜测画面内容；告诉用户这张图没有看到，可以换成 PNG 或 JPEG 后重新发送。`});
+    }
+  }
+  return content;
 }

@@ -51,6 +51,10 @@ func TestTimelineUpdatePreservesOtherFieldsAndRejectsUnauthorizedSources(t *test
 	d := &timelineDomain{doc: initial}
 	ctx := &Context{UserID: "owner", Domain: d}
 	args := map[string]any{"canvasId": "canvas", "expectedRevision": 4, "timeline": map[string]any{"version": 2, "durationMs": 2000, "tracks": []any{map[string]any{"id": "v", "kind": "video", "muted": true}}, "clips": []any{map[string]any{"id": "clip", "kind": "video", "nodeId": "node", "trackId": "v", "startMs": 0, "durationMs": 2000, "sourceStartMs": 1000, "volume": 0}}}}
+	inputTimeline := args["timeline"].(map[string]any)
+	inputTimeline["output"] = map[string]any{"width": 720, "height": 1280, "fps": 24}
+	inputTimeline["tracks"].([]any)[0].(map[string]any)["label"] = "主画面"
+	inputTimeline["tracks"].([]any)[0].(map[string]any)["order"] = 4
 	raw, _ := json.Marshal(args)
 	result, err := opCanvasTimelineUpdate(ctx, raw)
 	if err != nil {
@@ -70,9 +74,12 @@ func TestTimelineUpdatePreservesOtherFieldsAndRejectsUnauthorizedSources(t *test
 	if savedTimeline.Clips[0].NodeID != "node" || savedTimeline.Clips[0].DirectMedia.StorageKey != "resource:media" {
 		t.Fatalf("missing canonical source: %+v", savedTimeline.Clips[0])
 	}
-	plan, err := editing.Compile(savedTimeline, nil, editing.DefaultOptions())
+	plan, err := editing.Compile(savedTimeline, nil, editing.Options{})
 	if err != nil || plan.Segments[0].SourceID != "media" {
 		t.Fatalf("native render source incorrect: %+v %v", plan, err)
+	}
+	if plan.Output.Width != 720 || plan.Output.Height != 1280 || savedTimeline.Tracks[0].Label != "主画面" || savedTimeline.Tracks[0].Order == nil || *savedTimeline.Tracks[0].Order != 4 {
+		t.Fatalf("saved timeline lost editable output or tracks: %s", savedRaw)
 	}
 	delete(after, "timeline")
 	after["revision"] = before["revision"]

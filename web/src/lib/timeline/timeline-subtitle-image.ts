@@ -6,7 +6,11 @@ export async function rasterizeTimelineSubtitle(text: string, width: number, hei
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("无法创建字幕图像");
-    const fontSize = Math.max(16, Math.round(height / 24));
+    // Same output geometry as native editing/native.go; preserve explicit lines.
+    const fontSize = Math.max(1, Math.round(Math.min(height / 24, width / 18)));
+    const marginX = Math.max(1, Math.round(width * 0.08));
+    const marginY = Math.max(1, Math.round(height * 0.07));
+    const lineWidth = Math.max(1, width - 2 * marginX);
     ctx.font = `${fontSize}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -14,7 +18,7 @@ export async function rasterizeTimelineSubtitle(text: string, width: number, hei
     for (const paragraph of text.split(/\r?\n/)) {
         let line = "";
         for (const char of paragraph) {
-            if (line && ctx.measureText(line + char).width > width * 0.9) { lines.push(line); line = ""; }
+            if (line && ctx.measureText(line + char).width > lineWidth) { lines.push(line); line = ""; }
             line += char;
         }
         lines.push(line);
@@ -25,7 +29,7 @@ export async function rasterizeTimelineSubtitle(text: string, width: number, hei
     ctx.lineWidth = Math.max(2, fontSize / 12);
     ctx.lineJoin = "round";
     lines.forEach((line, index) => {
-        const y = height * 0.93 - (lines.length - index - 1) * fontSize * 1.35;
+        const y = height - marginY - (lines.length - index - 1) * fontSize * 1.35;
         ctx.strokeText(line, width / 2, y);
         ctx.fillText(line, width / 2, y);
     });

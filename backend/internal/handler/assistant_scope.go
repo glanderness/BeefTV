@@ -9,8 +9,21 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/skills"
 )
+
+type assistantScopeService interface {
+	ownerCredentialDirs
+	AssistantTurns() *assistantturns.Service
+	SkillsDomain() *skills.Service
+	ValidateAgentProjectReference(userID, canvasID, kind, id string) error
+}
+
+type assistantReferenceService interface {
+	CanvasService() *canvas.Service
+}
 
 // 共享操作层上的助手身份与回合归属。
 //
@@ -35,7 +48,7 @@ type assistantReference struct {
 
 // normalizeAssistantReferences 校验界面请求的额外引用确实属于当前用户。
 // 对话入口用严格模式：任何一项非法都整轮拒绝，避免界面以为授权生效了却没有。
-func normalizeAssistantReferences(svc *app.Service, userID string, items []assistantReference) ([]assistantReference, error) {
+func normalizeAssistantReferences(svc assistantReferenceService, userID string, items []assistantReference) ([]assistantReference, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
@@ -56,11 +69,11 @@ func normalizeAssistantReferences(svc *app.Service, userID string, items []assis
 		}
 		switch kind {
 		case "asset":
-			if _, err := svc.UserAsset(userID, id); err != nil {
+			if _, err := svc.CanvasService().UserAsset(userID, id); err != nil {
 				return nil, errors.New("引用的素材不存在或不属于当前工作区")
 			}
 		case "canvas":
-			if _, err := svc.UserCanvasProject(userID, id); err != nil {
+			if _, err := svc.CanvasService().UserCanvasProject(userID, id); err != nil {
 				return nil, errors.New("引用的画布不存在或不属于当前工作区")
 			}
 		default:
@@ -88,7 +101,7 @@ func assistantTurnInput(selected []string, references []assistantReference) app.
 
 // assistantScopeForRequest 只在调用方是已鉴权内置宿主且出示了后端签发的 turnId 时
 // 返回受限范围。其他调用方（已登记客户端、owner 直连）返回 nil，保持原有工作区能力不变。
-func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, hostCall bool) (*agentops.AssistantScope, string, error) {
+func assistantScopeForRequest(c *gin.Context, svc assistantScopeService, userID string, hostCall bool) (*agentops.AssistantScope, string, error) {
 	if !hostCall {
 		if strings.TrimSpace(c.GetHeader(assistantTurnHeader)) != "" {
 			return nil, "", errors.New("回合归属只能由内置助手宿主出示")
@@ -103,7 +116,7 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 	if !app.ValidAssistantTurnID(turnID) {
 		return nil, "", errors.New("回合标识非法")
 	}
-	scope, ok, err := svc.AssistantTurnScopeForHost(userID, turnID)
+	scope, ok, err := svc.AssistantTurns().ScopeForHost(userID, turnID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -116,19 +129,39 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 		AssetIDs:       assistantIDSet(scope.AssetIDs),
 		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
 		TaskIDs:        assistantIDSet(scope.TaskIDs),
-		SkillPins:      assistantSkillPinSet(scope.SkillPins),
+		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins, scope.ActiveSkillPins),
+		SkillInstalled: func(pin skills.Pin) bool {
+			return assistantSkillInstalled(svc, userID, pin)
+		},
 		ProjectReference: func(kind, id string) error {
 			return svc.ValidateAgentProjectReference(userID, scope.CanvasID, kind, id)
 		},
 	}, turnID, nil
 }
 
-func assistantSkillPinSet(pins []skills.Pin) map[string]skills.Pin {
-	result := map[string]skills.Pin{}
-	for _, pin := range pins {
-		result[pin.SkillID] = pin
+func assistantSkillPinSet(groups ...[]skills.Pin) map[skills.Pin]bool {
+	result := map[skills.Pin]bool{}
+	for _, pins := range groups {
+		for _, pin := range pins {
+			result[pin.Identity()] = true
+		}
 	}
 	return result
+}
+
+// assistantSkillInstalled is true only for the caller's currently installed
+// version of a skill, compared by exact identity.
+func assistantSkillInstalled(svc assistantScopeService, userID string, pin skills.Pin) bool {
+	catalog, err := svc.SkillsDomain().AgentCatalog(userID)
+	if err != nil {
+		return false
+	}
+	for _, item := range catalog {
+		if item.Pin.Identity() == pin.Identity() {
+			return true
+		}
+	}
+	return false
 }
 
 func assistantIDSet(ids []string) map[string]bool {
@@ -140,6 +173,6 @@ func assistantIDSet(ids []string) map[string]bool {
 }
 
 // isAssistantHostRequest 判断请求是否由已鉴权的内置助手宿主发起。
-func isAssistantHostRequest(c *gin.Context, svc *app.Service) bool {
+func isAssistantHostRequest(c *gin.Context, svc ownerCredentialDirs) bool {
 	return agentops.HostTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader(assistantHostTokenHeader)))
 }

@@ -18,7 +18,9 @@ func hasNVIDIACandidate(ctx context.Context, goos string) bool {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(probeCtx, "nvidia-smi", "-L").Output()
+	command := exec.CommandContext(probeCtx, "nvidia-smi", "-L")
+	configureDepthCommand(command)
+	output, err := command.Output()
 	return err == nil && strings.TrimSpace(string(output)) != ""
 }
 
@@ -63,7 +65,7 @@ func runCommand(ctx context.Context, python, toolDir, modelRuntime, device, inpu
 	}
 	command := exec.CommandContext(ctx, python, "-m", "depth_capture", inputPath,
 		"--output-dir", outputDir, "--runtime-dir", modelRuntime, "--device", device,
-		"--input-size", "280", "--max-resolution", "960", "--output-resolution", "1920x1080",
+		"--input-size", "280", "--max-resolution", "960", "--output-resolution", "source",
 		"--max-seconds", "15", "--low-percentile", "2", "--high-percentile", "98", "--gamma", "1.25")
 	command.Dir = toolDir
 	command.Env = WorkerEnvForPlatform(toolDir, goos)

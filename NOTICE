@@ -1,8 +1,19 @@
 BeefTV
 Copyright (C) 2026 BeefTV contributors
 
-BeefTV is distributed under the MIT License. The complete license text is
-provided in LICENSE.
+BeefTV uses scoped licensing. New original material first introduced under
+the BeefTV Source Available License 1.0 is governed by Part A of LICENSE
+only to the extent its copyright holders can license it under those terms.
+Previously MIT-licensed material remains under MIT, whose complete original
+text and copyright notices are preserved in Part B of LICENSE.
+
+The transition begins with the commit introducing Part A. All previously
+MIT-licensed material is excluded from the new restrictions, including the
+existing material in commits a96baf082f478901ed558c91a80bc29dfade523c and
+2327ee2d80282b10dd8bef0f26b48990d46f5c3b. These examples do not limit the
+preservation of other historical MIT grants. In mixed files, new eligible
+original additions and historical portions retain their respective terms.
+There is no retroactive restriction on existing MIT permissions.
 
 Project scope
 -------------
@@ -28,7 +39,8 @@ The upstream project is maintained under the basketikun account. Upstream
 authors and contributors retain copyright in their respective contributions.
 The upstream project was relicensed to MIT in commit
 890ba95858bbb13496d23978003716656109abb2. Its copyright and permission notice
-are preserved in LICENSE.
+are preserved in Part B of LICENSE. The new source-available restrictions do
+not replace the upstream license or the upstream authors' rights.
 
 BeefTV changes
 --------------
@@ -47,5 +59,13 @@ FFmpeg.wasm, Excalidraw, MediaPipe, React, Gin, GORM, and SQLite bindings.
 Provider and product names are used only to identify compatible protocols or
 services and do not imply affiliation or endorsement.
 
-See THIRD_PARTY_NOTICES.md for the audited dependency and bundled-asset
-inventory distributed with the public source snapshot.
+GPL-governed material and material whose distribution must use an
+incompatible license are outside Part A. An exclusion alone does not resolve
+the licensing of a combined work; distributors must comply with all
+applicable terms and must not distribute incompatible combinations without
+the necessary compatible permissions.
+
+See THIRD_PARTY_NOTICES.md for dependency and bundled-asset notices. This
+inventory and its name-coverage audit are not a complete compatibility or
+corresponding-source audit. See docs/content/docs/overview/licensing.mdx for
+the practical scope of the source-available policy.

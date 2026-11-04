@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { createClientId } from "@/lib/client-id";
-import { explainGenerationError } from "@/lib/generation-error";
+import { explainGenerationError, preserveGenerationFailure } from "@/lib/generation-error";
 import { channelRequest } from "@/services/api/custom-channel-relay";
 import { isSystemProxyBaseUrl } from "@/stores/use-config-store";
 
@@ -19,6 +19,7 @@ export class ChannelResponseError extends Error {
     constructor(payload: unknown, status?: number) {
         const explanation = explainGenerationError(status ? { status, data: payload } : payload);
         super(explanation.message);
+        preserveGenerationFailure(this, explanation);
         this.name = "ChannelResponseError";
         this.code = explanation.providerCode || explanation.errorCode;
         this.status = status;
@@ -73,10 +74,12 @@ export async function normalizeChannelFailure(error: unknown): Promise<never> {
     throw new ChannelResponseError(payload, error.response?.status);
 }
 
-async function channelResponse<T>(request: Promise<{ data: T; status: number }>): Promise<T> {
+async function channelResponse<T>(request: Promise<{ data: T; status: number }>, acceptEventStream = false): Promise<T> {
     try {
         const response = await request;
-        if (response.data instanceof Blob) await assertChannelBlob(response.data);
+        if (response.data instanceof Blob) {
+            if (!(acceptEventStream && response.data.type.startsWith("text/event-stream"))) await assertChannelBlob(response.data);
+        }
         else assertChannelPayload(response.data, response.status);
         return response.data;
     } catch (error) {
@@ -93,6 +96,7 @@ export type ChannelTransportConfig = Parameters<typeof channelRequest>[0] & {
 export type ChannelCallOptions = {
     signal?: AbortSignal;
     headers?: Record<string, string>;
+    acceptEventStream?: boolean;
 };
 
 export type ChannelTransport = {
@@ -126,7 +130,7 @@ export function createChannelTransport(config: ChannelTransportConfig, scene?: C
                 withCredentials: request.credentials === "include",
                 signal: options?.signal,
                 responseType: options?.responseType,
-            }),
+            }), options?.acceptEventStream,
         );
     };
 

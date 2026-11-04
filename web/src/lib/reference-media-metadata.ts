@@ -31,8 +31,13 @@ async function readDuration(media: ReferenceAudio | ReferenceVideo, resourceId: 
         return await Promise.race([
             (async () => {
                 if (resourceId) {
-                    const resource = await getResource(resourceId);
-                    if (Number.isFinite(resource.durationMs) && (resource.durationMs || 0) > 0 && (!media.type.startsWith("video/") || (resource.width && resource.height))) return { durationMs: resource.durationMs, width: resource.width, height: resource.height };
+                    try {
+                        const resource = await getResource(resourceId, { params: { metadata: "ensure" }, signal: controller.signal, timeout: 10_000 });
+                        if (Number.isFinite(resource.durationMs) && (resource.durationMs || 0) > 0 && (!media.type.startsWith("video/") || (resource.width && resource.height))) return { durationMs: resource.durationMs, width: resource.width, height: resource.height };
+                    } catch {
+                        // Runtimes without a usable native probe retain the bounded browser path.
+                        if (controller.signal.aborted) return undefined;
+                    }
                 }
                 if (controller.signal.aborted) return undefined;
                 let blob = storageKey ? await getMediaBlob(storageKey) : null;

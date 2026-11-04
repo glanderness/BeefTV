@@ -42,15 +42,49 @@ type Task struct {
 	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
 	Error                     string                  `json:"error"`
 	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"-"`
+	RecoveryOutcome           *string                 `json:"-" gorm:"type:text"`
+	Outcome                   *TaskOutcome            `json:"outcome,omitempty" gorm:"-"`
 	ResultState               string                  `json:"resultState,omitempty" gorm:"-"`
 	Outputs                   []TaskOutput            `json:"outputs,omitempty" gorm:"-"`
 	Delivery                  *TaskDeliveryProgress   `json:"delivery,omitempty" gorm:"-"`
+	ReferenceProgress         *TaskReferenceProgress  `json:"referenceProgress,omitempty" gorm:"-"`
 	FailureDiagnostics        *TaskFailureDiagnostics `json:"failureDiagnostics,omitempty" gorm:"serializer:json;type:text"`
 	Attempts                  int                     `json:"attempts"`
 	StartedAt                 *time.Time              `json:"startedAt"`
 	CompletedAt               *time.Time              `json:"completedAt"`
 	CreatedAt                 time.Time               `json:"createdAt" gorm:"index:idx_tasks_user_created,priority:2;index:idx_tasks_status_created,priority:2;index:idx_tasks_claim,priority:3;index:idx_tasks_user_project_created,priority:3"`
 	UpdatedAt                 time.Time               `json:"updatedAt"`
+
+	// WorkflowSourceCipher retains the canonical successful command privately,
+	// before public completion projections remove media and provider settings.
+	WorkflowSourceCipher string `json:"-" gorm:"type:text"`
+
+	// BeefAPI 扣费与异步结算原值，仅内部持久化与 Outcome 投影读取。
+	BeefUsageState        *string `json:"-" gorm:"column:beef_usage_state;size:64"`
+	BeefBillingState      *string `json:"-" gorm:"column:beef_billing_state;size:64"`
+	BeefReconcileDeadline *string `json:"-" gorm:"column:beef_reconcile_deadline;size:128"`
+	ImageJobID            string  `json:"-" gorm:"column:image_job_id;size:191"`
+}
+
+func (t Task) ProviderUsageState() string {
+	if t.BeefUsageState == nil {
+		return ""
+	}
+	return *t.BeefUsageState
+}
+
+func (t Task) ProviderBillingState() string {
+	if t.BeefBillingState == nil {
+		return ""
+	}
+	return *t.BeefBillingState
+}
+
+func (t Task) ProviderReconcileDeadline() string {
+	if t.BeefReconcileDeadline == nil {
+		return ""
+	}
+	return *t.BeefReconcileDeadline
 }
 
 // TaskFailureDiagnostics contains bounded, redacted evidence, never request bodies.
@@ -69,6 +103,8 @@ type TaskFailureDiagnostics struct {
 	ProviderTaskID  string                `json:"providerTaskId,omitempty"`
 	Param           string                `json:"param,omitempty"`
 	Stage           string                `json:"stage,omitempty"`
+	FailedOperation string                `json:"failedOperation,omitempty"`
+	TransportPhase  string                `json:"transportPhase,omitempty"`
 	CapturedAt      string                `json:"capturedAt,omitempty"`
 }
 
@@ -76,6 +112,9 @@ type TaskRequestEvidence struct {
 	Operation             string `json:"operation"`
 	Method                string `json:"method"`
 	Dispatched            bool   `json:"dispatched"`
+	TransportPhase        string `json:"transportPhase,omitempty"`
+	TransportRoute        string `json:"transportRoute,omitempty"`
+	Attempt               int    `json:"attempt,omitempty"`
 	Outcome               string `json:"outcome"`
 	HTTPStatus            int    `json:"httpStatus,omitempty"`
 	RequestID             string `json:"requestId,omitempty"`
@@ -159,6 +198,14 @@ type TaskOutput struct {
 	TargetBinding            *TaskOutputTarget `json:"targetBinding,omitempty"`
 }
 
+// TaskOutcome 只由任务读投影计算，不是数据库列。
+type TaskOutcome struct {
+	Phase             string `json:"phase"`
+	Regenerate        string `json:"regenerate"`
+	Reason            string `json:"reason"`
+	ReconcileDeadline string `json:"reconcileDeadline,omitempty"`
+}
+
 type TaskOutputTarget struct {
 	NodeID         string `json:"nodeId,omitempty"`
 	MessageID      string `json:"messageId,omitempty"`
@@ -172,10 +219,22 @@ type TaskDeliveryProgress struct {
 	Outputs []TaskDeliveryOutputProgress `json:"outputs"`
 }
 
+// Observations only; never contains an upstream URL, upload ticket or local path.
+type TaskReferenceProgress struct {
+	Label          string `json:"label"`
+	Phase          string `json:"phase"`
+	LoadedBytes    int64  `json:"loadedBytes"`
+	TotalBytes     int64  `json:"totalBytes"`
+	BytesPerSecond int64  `json:"bytesPerSecond"`
+	StartedAt      int64  `json:"startedAt"`
+	UpdatedAt      int64  `json:"updatedAt"`
+}
+
 type TaskDeliveryOutputProgress struct {
 	OutputIndex     int    `json:"outputIndex"`
 	DownloadedBytes int64  `json:"downloadedBytes"`
 	TotalBytes      int64  `json:"totalBytes"`
 	BytesPerSecond  int64  `json:"bytesPerSecond"`
+	UpdatedAt       int64  `json:"updatedAt"`
 	State           string `json:"state"`
 }

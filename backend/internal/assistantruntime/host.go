@@ -34,6 +34,7 @@ type Host struct {
 	opts      Options
 	proc      *supervisor
 	lifecycle sync.Mutex
+	closed    bool
 }
 
 func New(opts Options) *Host {
@@ -179,12 +180,14 @@ func (h *Host) Stop() error {
 // 只对它自己启动过的进程生效（未启动时是 no-op），不会去清理外接宿主或别人的 PID；
 // 宿主不可达/已退出时返回 nil，避免把关闭流程拖成失败。
 // 超时仍等到 stop 结束才释放生命周期锁，避免 Ensure/Restart 在回收中途再拉起进程。
+// 关闭后不再接受启动；用户手动停止后仍需重启的场景使用 Stop。
 func (h *Host) StopContext(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
+	h.closed = true
 	if !h.proc.running() {
 		return nil
 	}
@@ -235,6 +238,9 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 }
 
 func (h *Host) startOwned(config HostConfig, provider assistant.Provider, opsURL, desktopToken string) error {
+	if h.closed {
+		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	}
 	return h.proc.startOwned(config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD string) []string {
 		return h.buildEnv(provider, childPin{
 			Port:       port,

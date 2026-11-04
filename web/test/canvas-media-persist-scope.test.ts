@@ -11,7 +11,6 @@ import {
 import { recoverOwnedDepthCaptureNode, recoverOwnedDepthCaptureNodes } from "@/lib/canvas/canvas-depth-recover";
 import { beginLocalExecutorSession, isLocalExecutorSessionStop } from "@/lib/plugins/builtin/editor/local-executor-session";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
-import { captureUserScope, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -103,7 +102,6 @@ function persistDeps(overrides: Partial<PersistOwnedCanvasMediaNodesDeps> & Pick
 describe("persistOwnedCanvasMediaNodes interior ownership", () => {
     test("project switch while ensure is awaiting does not overlay live nodes, setNodes, or ack save", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const entered = deferred();
         const gate = deferred();
         let liveProject = "proj-a";
@@ -115,7 +113,6 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
             const pending = persistOwnedCanvasMediaNodes({
                 canvasId: "proj-a",
                 mediaNodes: [media],
-                expectedScope,
             }, persistDeps({
                 ensureCanvasNodeAsset: async () => {
                     entered.resolve();
@@ -139,41 +136,8 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
         }
     });
 
-    test("A to B to A while ensure is awaiting does not write the original canvas", async () => {
-        const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
-        const entered = deferred();
-        const gate = deferred();
-        const updates: unknown[] = [];
-        try {
-            const pending = persistOwnedCanvasMediaNodes({
-                canvasId: "proj-a",
-                mediaNodes: [imageNode("media-1")],
-                expectedScope,
-            }, persistDeps({
-                ensureCanvasNodeAsset: async () => {
-                    entered.resolve();
-                    await gate.promise;
-                    return { assetId: "asset-1", created: true, linkedToProject: true, confirmed: true };
-                },
-                getLiveProjectId: () => "proj-a",
-                getLiveNodes: () => [imageNode("live-a")],
-                updateProject: (_id, patch) => { updates.push(patch); },
-            }));
-            await entered.promise;
-            setActiveUserScope("owner-b");
-            setActiveUserScope("owner-a");
-            gate.resolve();
-            await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
-            expect(updates).toEqual([]);
-        } finally {
-            restore();
-        }
-    });
-
     test("unconfirmed asset result does not updateProject, flush, or ack save", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         let flushed = 0;
         let synced = 0;
         let readBack = 0;
@@ -183,7 +147,6 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
             await expect(persistOwnedCanvasMediaNodes({
                 canvasId: "proj-a",
                 mediaNodes: [imageNode("media-1")],
-                expectedScope,
             }, persistDeps({
                 ensureCanvasNodeAsset: async () => ({ assetId: "draft-1", created: true, linkedToProject: false, confirmed: false }),
                 getLiveProjectId: () => "proj-a",
@@ -210,7 +173,6 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
 
     test("ordinary ensure error after project switch does not warn", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const entered = deferred();
         const gate = deferred();
         let liveProject = "proj-a";
@@ -220,7 +182,6 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
             const pending = persistOwnedCanvasMediaNodes({
                 canvasId: "proj-a",
                 mediaNodes: [imageNode("media-1")],
-                expectedScope,
             }, persistDeps({
                 ensureCanvasNodeAsset: async () => {
                     entered.resolve();
@@ -243,21 +204,16 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
         }
     });
 
-    test("ordinary flush error after project switch or A to B to A does not toast", async () => {
+    test("ordinary flush error after project switch does not toast", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const switchEntered = deferred();
         const switchGate = deferred();
-        const abaEntered = deferred();
-        const abaGate = deferred();
         let liveProject = "proj-a";
         const switchErrors: string[] = [];
-        const abaErrors: string[] = [];
         try {
             const switched = persistOwnedCanvasMediaNodes({
                 canvasId: "proj-a",
                 mediaNodes: [imageNode("media-1")],
-                expectedScope,
             }, persistDeps({
                 ensureCanvasNodeAsset: async () => ({ assetId: "asset-1", created: true, linkedToProject: true, confirmed: true }),
                 getLiveProjectId: () => liveProject,
@@ -275,27 +231,6 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
             await expect(switched).rejects.toMatchObject({ name: "AbortError" });
             expect(switchErrors).toEqual([]);
 
-            const aba = persistOwnedCanvasMediaNodes({
-                canvasId: "proj-a",
-                mediaNodes: [imageNode("media-2")],
-                expectedScope,
-            }, persistDeps({
-                ensureCanvasNodeAsset: async () => ({ assetId: "asset-2", created: true, linkedToProject: true, confirmed: true }),
-                getLiveProjectId: () => "proj-a",
-                getLiveNodes: () => [],
-                flushPersistence: async () => {
-                    abaEntered.resolve();
-                    await abaGate.promise;
-                    throw new Error("flush failed");
-                },
-                error: (text) => { abaErrors.push(text); },
-            }));
-            await abaEntered.promise;
-            setActiveUserScope("owner-b");
-            setActiveUserScope("owner-a");
-            abaGate.resolve();
-            await expect(aba).rejects.toBeInstanceOf(UserScopeAbandonedError);
-            expect(abaErrors).toEqual([]);
         } finally {
             restore();
         }
@@ -303,13 +238,11 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
 
     test("ordinary flush error on the original session still reports save failure", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const errors: string[] = [];
         try {
             await expect(persistOwnedCanvasMediaNodes({
                 canvasId: "proj-a",
                 mediaNodes: [imageNode("media-1")],
-                expectedScope,
             }, persistDeps({
                 ensureCanvasNodeAsset: async () => ({ assetId: "asset-1", created: true, linkedToProject: true, confirmed: true }),
                 getLiveProjectId: () => "proj-a",
@@ -325,36 +258,34 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
         }
     });
 
-    test("open, flush, and sync receive the captured expectedScope", async () => {
+    test("open, flush, and sync run when the canvas is not loaded yet", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const media = imageNode("media-1");
         let exists = false;
-        const opened: CapturedUserScope[] = [];
-        const flushed: CapturedUserScope[] = [];
-        const synced: CapturedUserScope[] = [];
+        const opened: string[] = [];
+        let flushed = 0;
+        const synced: string[] = [];
         try {
             await persistOwnedCanvasMediaNodes({
                 canvasId: "proj-a",
                 mediaNodes: [media],
-                expectedScope,
             }, persistDeps({
                 ensureCanvasNodeAsset: async () => ({ assetId: "asset-1", created: true, linkedToProject: true, confirmed: true }),
                 getLiveProjectId: () => "proj-a",
                 getLiveNodes: () => [],
                 hasProject: () => exists,
-                openProject: async (_id, scope) => {
-                    opened.push(scope);
+                openProject: async (id) => {
+                    opened.push(id);
                     exists = true;
                 },
-                flushPersistence: async (scope) => { flushed.push(scope); },
+                flushPersistence: async () => { flushed += 1; },
                 isLocalWorkspace: () => true,
-                syncSnapshot: async (_id, _patch, scope) => { synced.push(scope); },
+                syncSnapshot: async (id) => { synced.push(id); },
                 readSavedProject: async () => ({ nodes: [{ ...media, metadata: { ...media.metadata, assetId: "asset-1" } }] }),
             }));
-            expect(opened).toEqual([expectedScope]);
-            expect(flushed).toEqual([expectedScope]);
-            expect(synced).toEqual([expectedScope]);
+            expect(opened).toEqual(["proj-a"]);
+            expect(flushed).toBe(1);
+            expect(synced).toEqual(["proj-a"]);
         } finally {
             restore();
         }
@@ -364,7 +295,6 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
 describe("recoverOwnedDepthCaptureNodes ownership", () => {
     test("recovery completion after project switch does not persist, write replacement nodes, or cancel the task", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const pollEntered = deferred();
         const pollGate = deferred();
         let liveProject = "proj-a";
@@ -395,7 +325,6 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
                 const session = beginLocalExecutorSession("proj-a", {
                     controller,
                     getLiveProjectId: () => liveProject,
-                    expectedScope,
                 });
                 const pending = recoverOwnedDepthCaptureNode({
                     node,
@@ -424,7 +353,6 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
 
     test("recoverOwnedDepthCaptureNodes aborts observation on the caller signal without cancelling the durable task", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const pollEntered = deferred();
         const pollGate = deferred();
         const signal = new AbortController();
@@ -448,7 +376,6 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
             }, async () => {
                 recoverOwnedDepthCaptureNodes({
                     signal: signal.signal,
-                    expectedScope,
                     projectId: "proj-a",
                     getLiveProjectId: () => "proj-a",
                     observers,
@@ -471,7 +398,6 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
 
     test("ordinary binding error after project switch does not write failed metadata", async () => {
         const restore = switchScope("owner-a");
-        const expectedScope = captureUserScope();
         const lookupEntered = deferred();
         const lookupGate = deferred();
         let liveProject = "proj-a";
@@ -498,7 +424,6 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
                 const session = beginLocalExecutorSession("proj-a", {
                     controller,
                     getLiveProjectId: () => liveProject,
-                    expectedScope,
                 });
                 const pending = recoverOwnedDepthCaptureNode({
                     node,
@@ -528,6 +453,34 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
 });
 
 describe("owned canvas persist and recover callbacks", () => {
+    test("reopening a stale failure restores running state then records the real local failure", async () => {
+        const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+        Object.defineProperty(globalThis, "window", { configurable: true, value: { setTimeout: (callback: () => void) => { queueMicrotask(callback); return 0; }, clearTimeout: () => {} } });
+        const restore = switchScope("owner-a");
+        const node = depthNode("depth-1", { status: "error", errorDetails: "任务执行超时，请稍后重试" });
+        const nodesRef = { current: [node] };
+        const states: string[] = [];
+        let queries = 0;
+        try {
+            await withAdapter(async config => {
+                expect(config.method).toBe("get");
+                expect(config.url).toBe("/tasks/depth-task");
+                queries++;
+                return envelope(generationTask({ id: "depth-task", provider: "local", model: "video-depth-anything-small", status: queries === 1 ? "running" : "failed", stage: queries === 1 ? "分析视频" : "深度处理失败", error: queries === 1 ? undefined : "curl: (28) Connection timed out" }));
+            }, async () => {
+                await recoverOwnedDepthCaptureNode({ node, nodesRef,
+                    session: beginLocalExecutorSession("proj-a", { controller: new AbortController(), getLiveProjectId: () => "proj-a" }),
+                    setNodes: updater => { nodesRef.current = updater(nodesRef.current); states.push(nodesRef.current[0]?.metadata?.status || ""); },
+                }, async () => { throw new Error("failed task must not bind"); });
+                expect(states).toContain("loading");
+                expect(nodesRef.current[0]?.metadata).toMatchObject({ status: "error", taskId: "depth-task", taskStatus: "failed", taskStage: "深度处理失败", taskProvider: "local", errorDetails: "curl: (28) Connection timed out", taskClientOperationTerminal: true });
+            });
+        } finally {
+            restore();
+            if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+            else Reflect.deleteProperty(globalThis, "window");
+        }
+    });
     test("reopening after an attachment failure retries the same task, preserving concurrent edits", async () => {
         const restore = switchScope("owner-a");
         const node = depthNode("depth-1");
@@ -587,16 +540,18 @@ describe("owned canvas persist and recover callbacks", () => {
     });
     test("canvas media tools persist and recover through the owned helpers", () => {
         const here = dirname(fileURLToPath(import.meta.url));
-        const tools = readFileSync(join(here, "../src/pages/canvas/use-canvas-media-tools.ts"), "utf8");
+        const tools = [
+            readFileSync(join(here, "../src/pages/canvas/use-canvas-media-tools.ts"), "utf8"),
+            readFileSync(join(here, "../src/pages/canvas/use-canvas-video-tools.ts"), "utf8"),
+        ].join("\n");
         expect(tools).toContain("persistOwnedCanvasMediaNodes(");
         expect(tools).toContain("recoverOwnedDepthCaptureNodes(");
         expect(tools).toContain("taskClientOperationInput");
         expect(tools).toContain("taskClientOperationTerminal");
         expect(tools).toContain("nextLocalExecutorClientOperationId(");
         expect(tools).toContain("localExecutorFrozenInputKey([\"depth_capture\"");
-        expect(tools).toContain("openLocalCanvasProjectFromBackend(id, expectedScope)");
-        expect(tools).toContain("syncLocalCanvasSnapshot(id, patch, expectedScope)");
-        expect(tools).toContain("assertUserScope(expectedScope)");
+        expect(tools).toContain("openLocalCanvasProjectFromBackend(id)");
+        expect(tools).toContain("syncLocalCanvasSnapshot(id, patch)");
         const exportSource = readFileSync(join(here, "../src/lib/plugins/builtin/editor/editor-export.tsx"), "utf8");
         expect(exportSource).toContain("nextLocalExecutorClientOperationId(submitIntentRef.current, frozenInputKey)");
         const transcription = readFileSync(join(here, "../src/lib/plugins/builtin/editor/editor-transcription.tsx"), "utf8");

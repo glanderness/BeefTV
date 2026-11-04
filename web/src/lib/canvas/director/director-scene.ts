@@ -6,6 +6,8 @@ import { DIRECTOR_DEFAULT_GROUND } from "@/lib/canvas/director/director-ground";
 import { DIRECTOR_QUATERNIUS_MALE_URL } from "@/lib/canvas/director/director-actor-assets";
 import { DIRECTOR_DEFAULT_STAGE_TRANSFORM } from "@/lib/canvas/director/director-stage-transform";
 
+export { directorPoseChainBones, resolveDirectorPoseTargets, resolveDirectorTwoBoneJoint } from "@/lib/canvas/director/director-pose-solving";
+
 export const DIRECTOR_DEFAULT_ACTOR_URL = DIRECTOR_QUATERNIUS_MALE_URL;
 export const DIRECTOR_ACTOR_COLORS = ["#4f8ef7", "#202329", "#2f7de1", "#d84949", "#dfae3f", "#34a276"] as const;
 
@@ -215,7 +217,7 @@ export const DIRECTOR_KEYFRAME_EPSILON = 0.001;
 export function upsertDirectorKeyframe(keyframes: DirectorKeyframe[], time: number, transform: DirectorTransform) {
     const current = keyframes.find((item) => Math.abs(item.time - time) < DIRECTOR_KEYFRAME_EPSILON);
     const next = current ? keyframes.map((item) => (item.id === current.id ? { ...item, transform } : item)) : [...keyframes, { id: nanoid(), time, transform }];
-    return next.toSorted((a, b) => a.time - b.time);
+    return next.sort((a, b) => a.time - b.time);
 }
 
 export function upsertDirectorBoneKeyframe(tracks: DirectorBoneTrack[], bone: DirectorHumanoidBone, time: number, rotation: DirectorQuat) {
@@ -227,7 +229,7 @@ export function upsertDirectorBoneKeyframe(tracks: DirectorBoneTrack[], bone: Di
 function upsertBoneKeyframe(keyframes: DirectorBoneKeyframe[], time: number, rotation: DirectorQuat) {
     const current = keyframes.find((item) => Math.abs(item.time - time) < DIRECTOR_KEYFRAME_EPSILON);
     const next = current ? keyframes.map((item) => item.id === current.id ? { ...item, rotation } : item) : [...keyframes, { id: nanoid(), time, rotation }];
-    return next.toSorted((a, b) => a.time - b.time);
+    return next.sort((a, b) => a.time - b.time);
 }
 
 /** 按 id 删除对象 transform 关键帧；id 不存在时返回原数组引用。 */
@@ -355,7 +357,7 @@ export function finiteDirectorTransformKeyframes(keyframes: DirectorKeyframe[]) 
 
 /** 按时间顺序累计 Transform 关键帧路径长度；非法时间或坐标段忽略，不污染界面统计。 */
 export function directorTransformPathLength(keyframes: DirectorKeyframe[]) {
-    const sorted = keyframes.filter((keyframe) => keyframe.positionKeyed !== false).toSorted((left, right) => left.time - right.time);
+    const sorted = keyframes.filter((keyframe) => keyframe.positionKeyed !== false).sort((left, right) => left.time - right.time);
     let length = 0;
     for (let index = 1; index < sorted.length; index += 1) {
         const previousTime = sorted[index - 1].time;

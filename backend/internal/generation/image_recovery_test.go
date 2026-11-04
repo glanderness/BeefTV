@@ -26,6 +26,7 @@ func (p taggedImagePort) Intercept(*http.Request) (bool, []byte, string, error) 
 }
 
 func beefAPIImageRequest(ctx context.Context) *http.Request {
+	ctx = WithImageReplayProtocol(ctx, ImageReplayProtocol)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://beefapi.com/v1/images/generations", strings.NewReader(`{"prompt":"draw"}`))
 	if err != nil {
 		panic(err)
@@ -52,7 +53,7 @@ func TestDoBinaryRecoverableImageMissingOwnerSendsZeroHTTP(t *testing.T) {
 }
 
 func TestBeefTVImageSubmissionKeepsRecoveryOwner(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(WithImageReplayProtocol(context.Background(), ImageReplayProtocol))
 	cancel()
 	for _, path := range []string{"/v1/images/generations", "/v1/images/edits"} {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://beeftv.app"+path, strings.NewReader(`{}`))

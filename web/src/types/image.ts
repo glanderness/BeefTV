@@ -2,6 +2,7 @@ import type { CanvasColorGrade } from "@/lib/canvas/canvas-color-grade";
 
 export type ReferenceImage = {
     id: string;
+    sourceNodeId?: string;
     name: string;
     type: string;
     dataUrl: string;

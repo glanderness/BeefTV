@@ -7,13 +7,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -88,6 +92,9 @@ func TestMediaResourceLocatorsUseStrictOwnedReferences(t *testing.T) {
 		`{"metadata":{"storageKey":"resource:resource"}}`,
 		`{"metadata":{"content":"resource:resource"}}`,
 		`{"data":{"storageKey":"resource:resource"}}`,
+		`{"metadata":{"content":"/api/resources/resource/file"}}`,
+		`{"metadata":{"content":"http://127.0.0.1:8080/api/resources/resource/file?download=1#preview"}}`,
+		`{"metadata":{"content":"wails://wails.localhost/api/resources/resource/file"}}`,
 	} {
 		var target any
 		_ = json.Unmarshal([]byte(raw), &target)
@@ -103,6 +110,54 @@ func TestMediaResourceLocatorsUseStrictOwnedReferences(t *testing.T) {
 		if len(ids) != 0 {
 			t.Fatalf("accepted unsafe locator %q", value)
 		}
+	}
+}
+
+func TestNativeImageURLLocatorsPreserveContentAndOwnership(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 32, 24))); err != nil {
+		t.Fatal(err)
+	}
+	d := &mediaDomain{
+		owner: "owner", data: encoded.Bytes(), mimeType: "image/png",
+		document:     json.RawMessage(`{"nodes":[{"id":"node","type":"image","metadata":{"content":"/api/resources/resource/file","assetId":"asset"}}]}`),
+		assetPayload: `{"data":{"content":"/api/resources/resource/file"}}`,
+	}
+	for _, target := range []mediaArgs{
+		{CanvasID: "canvas", NodeID: "node"},
+		{CanvasID: "canvas", NodeID: "node", ResourceID: "resource"},
+		{CanvasID: "canvas", AssetID: "asset"},
+	} {
+		overview, err := mediaTestCall(t, d, "media.overview", target)
+		if err != nil {
+			t.Fatalf("overview %+v: %v", target, err)
+		}
+		target.ExpectedVersion, target.Mode = overview.Source.Version, "frames"
+		inspected, err := mediaTestCall(t, d, "media.inspect", target)
+		if err != nil {
+			t.Fatalf("inspect %+v: %v", target, err)
+		}
+		for _, result := range []MediaResult{overview, inspected} {
+			if result.Source.ResourceID != "resource" || result.Source.Version == "" || len(result.Content) != 1 {
+				t.Fatalf("missing image evidence: %+v", result)
+			}
+			part := result.Content[0]
+			data, err := base64.StdEncoding.DecodeString(part.Data)
+			if err != nil || part.Type != "image" || part.MimeType != "image/png" || !bytes.Equal(data, encoded.Bytes()) {
+				t.Fatal("URL locator did not return actual image bytes")
+			}
+		}
+	}
+	opens := d.opens
+	if _, err := mediaTestCall(t, d, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node", ResourceID: "foreign"}); AsError(err).Reason != "media_not_referenced" {
+		t.Fatalf("unreferenced resource accepted: %v", err)
+	}
+	d.document = json.RawMessage(`{"nodes":[{"id":"node","metadata":{"content":"/api/resources/foreign/file"}}]}`)
+	if _, err := mediaTestCall(t, d, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node"}); AsError(err).Reason != "foreign_resource" {
+		t.Fatalf("foreign resource URL accepted: %v", err)
+	}
+	if d.opens != opens {
+		t.Fatal("unauthorized URL reference opened media bytes")
 	}
 }
 
@@ -358,6 +413,94 @@ func TestNativeMediaCleanNegative(t *testing.T) {
 	}
 }
 
+func TestNativeMediaOverviewEvidenceUsesOneOwnedSnapshot(t *testing.T) {
+	d := &mediaDomain{owner: "owner", data: nativeMediaFixture(t, true, true)}
+	start, end := int64(250), int64(1750)
+	result, err := mediaTestCall(t, d, "media.overview", mediaArgs{CanvasID: "canvas", NodeID: "node",
+		Evidence: &mediaEvidenceRequest{StartMs: &start, EndMs: &end, Modes: []string{"frames", "video", "audio"}, Checks: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.opens != 1 || strings.Join(result.Evidence, ",") != "frames,video,audio,check" || len(result.Content) != 6 {
+		t.Fatalf("snapshot/evidence: opens=%d modes=%v parts=%d", d.opens, result.Evidence, len(result.Content))
+	}
+	sum := sha256.Sum256(d.data)
+	if result.Source.Version != hex.EncodeToString(sum[:]) || result.Source.StartMs != start || result.Source.EndMs != end {
+		t.Fatalf("wrong source snapshot: %+v", result.Source)
+	}
+	if len(result.BlackIntervals) != 1 || result.BlackIntervals[0].StartMs < 450 || result.BlackIntervals[0].EndMs > 1100 || result.MeanDB == nil || result.SilenceDetection == nil {
+		t.Fatalf("objective checks missing: %+v", result)
+	}
+	seen := map[string]int{}
+	for _, part := range result.Content {
+		data, err := base64.StdEncoding.DecodeString(part.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		if part.Source.Version != result.Source.Version || part.Source.ResourceID != result.Source.ResourceID || part.SHA256 != hex.EncodeToString(digest[:]) {
+			t.Fatal("evidence did not retain actual bytes and one source version")
+		}
+		seen[part.MimeType]++
+		if part.Type == "image" {
+			if part.Source.StartMs < start || part.Source.EndMs > end || part.Source.TimestampKind != "requested_seek" {
+				t.Fatal("frame outside requested interval")
+			}
+			continue
+		}
+		if part.Source.StartMs != start || part.Source.EndMs != end {
+			t.Fatal("native interval changed")
+		}
+		path := filepath.Join(t.TempDir(), "native")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		facts, err := editing.Probe(context.Background(), path)
+		if err != nil || !facts.HasAudio || facts.DurationMs < 1450 || facts.DurationMs > 1550 || (part.MimeType == "video/mp4" && !facts.HasVideo) {
+			t.Fatalf("not real bounded native media: %s %+v %v", part.MimeType, facts, err)
+		}
+	}
+	if seen["image/jpeg"] != 4 || seen["audio/wav"] != 1 || seen["video/mp4"] != 1 {
+		t.Fatalf("requested evidence missing: %v", seen)
+	}
+}
+
+func TestMediaEvidenceRejectsInvalidRequestsBeforeOpeningSource(t *testing.T) {
+	d := &mediaDomain{owner: "owner"}
+	for _, raw := range []string{
+		`{"evidence":{"endMs":1000,"modes":["audio"]}}`,
+		`{"evidence":{"startMs":0,"endMs":1000}}`,
+		`{"evidence":{"startMs":0,"endMs":1000,"modes":["audio","audio"]}}`,
+		`{"evidence":{"startMs":0,"endMs":1000,"modes":["summary"]}}`,
+		`{"evidence":{"startMs":0,"endMs":15001,"modes":["audio"]}}`,
+		`{"evidence":{"startMs":-1,"endMs":1000,"modes":["audio"]}}`,
+	} {
+		var args map[string]any
+		_ = json.Unmarshal([]byte(raw), &args)
+		args["canvasId"], args["nodeId"] = "canvas", "node"
+		params, _ := json.Marshal(args)
+		if result, err := runMedia(&Context{Context: context.Background(), UserID: "owner", Domain: d}, "media.overview", params); err == nil || result != nil {
+			t.Fatalf("accepted invalid evidence: %s", raw)
+		}
+	}
+	if d.opens != 0 {
+		t.Fatal("invalid requests opened source bytes")
+	}
+	raw := json.RawMessage(`{"canvasId":"canvas","nodeId":"node","expectedVersion":"hash","evidence":{"startMs":0,"endMs":1000,"modes":["audio"]}}`)
+	if _, err := runMedia(&Context{Context: context.Background(), UserID: "owner", Domain: d}, "media.inspect", raw); AsError(err).Reason != "invalid_media_evidence" {
+		t.Fatalf("evidence widened inspect contract: %v", err)
+	}
+}
+
+func TestNativeMediaEvidenceNeverReturnsPartialSuccess(t *testing.T) {
+	d := &mediaDomain{owner: "owner", data: nativeMediaFixture(t, false, false)}
+	raw := json.RawMessage(`{"canvasId":"canvas","nodeId":"node","evidence":{"startMs":0,"endMs":1000,"modes":["frames","audio"],"checks":true}}`)
+	result, err := runMedia(&Context{Context: context.Background(), UserID: "owner", Domain: d}, "media.overview", raw)
+	if result != nil || AsError(err).Reason != "media_no_audio" || d.opens != 1 {
+		t.Fatalf("partial success or repeated read: %v %v opens=%d", result, err, d.opens)
+	}
+}
+
 func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 	r := NewRegistry(nil, nil)
 	registerMediaOps(r)
@@ -368,6 +511,7 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		}
 		seen[descriptor.Summary] = true
 		var schema struct {
+			Required   []string `json:"required"`
 			Properties map[string]struct {
 				Description string   `json:"description"`
 				Enum        []string `json:"enum"`
@@ -375,6 +519,15 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		}
 		if err := json.Unmarshal(descriptor.Params, &schema); err != nil {
 			t.Fatal(err)
+		}
+		if slices.Contains(schema.Required, "expectedVersion") != (descriptor.ID != "media.overview") {
+			t.Fatalf("%s discovery does not match the required media version", descriptor.ID)
+		}
+		if descriptor.ID == "media.review" {
+			if !slices.Contains(schema.Required, "question") || descriptor.Replay != "unsafe" {
+				t.Fatal("review must require a question and avoid replaying external charges")
+			}
+			continue
 		}
 		mode := schema.Properties["mode"]
 		for _, word := range []string{"frames", "静态", "video", "连续", "audio", "声音"} {
@@ -400,7 +553,7 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 3 {
+	if len(seen) != 4 {
 		t.Fatal("incomplete media discovery")
 	}
 }

@@ -2,11 +2,45 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestGenerationDownloadCacheUsesOwningTaskAcrossRuntimeRebind(t *testing.T) {
+	svc := &Service{dataDir: t.TempDir()}
+	meta := generation.CallMeta{UserID: "owner", TaskID: "local-task"}
+	ctx := svc.bindGenerationRuntime(context.Background(), meta)
+	runtime, _ := generation.RuntimeFromContext(ctx)
+	if runtime.DownloadCache == nil {
+		t.Fatal("missing task download cache")
+	}
+	first := runtime.DownloadCache.PartialPath()
+	if filepath.Dir(first) != filepath.Join(svc.dataDir, "cache", "artifact-downloads") {
+		t.Fatal("cache escaped workspace")
+	}
+	ctx = svc.enrichGenerationRuntime(ctx, generation.CallMeta{ProviderRequestID: "upstream-task", RequestKind: "download"})
+	runtime, _ = generation.RuntimeFromContext(ctx)
+	if runtime.DownloadCache.PartialPath() != first {
+		t.Fatal("provider identity changed the local cache")
+	}
+	other := appTaskDownloadCachePort{service: svc, userID: "other-owner", taskID: "local-task"}
+	if other.PartialPath() == first {
+		t.Fatal("owners share partial bytes")
+	}
+	changed := svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: "other-owner", TaskID: "local-task"})
+	changedRuntime, _ := generation.RuntimeFromContext(changed)
+	if changedRuntime.DownloadCache.PartialPath() == first {
+		t.Fatal("runtime rebind retained another owner's cache")
+	}
+	anonymous := svc.bindGenerationRuntime(ctx, generation.CallMeta{})
+	anonymousRuntime, _ := generation.RuntimeFromContext(anonymous)
+	if anonymousRuntime.DownloadCache != nil {
+		t.Fatal("unowned request inherited task bytes")
+	}
+}
 
 func TestBindGenerationRuntimeReplacesFullProviderMetadata(t *testing.T) {
 	svc := &Service{}

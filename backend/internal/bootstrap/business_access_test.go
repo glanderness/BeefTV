@@ -29,6 +29,18 @@ func TestExternalBusinessRealUploadRenderAndIsolation(t *testing.T) {
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		return h.call(requestOptions{method: method, path: path, body: body, clientID: reg.ID, clientToken: token})
 	}
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/search" || r.Header.Get("Authorization") != "" {
+			t.Error("public market query changed scope or received credentials", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[],"total":0,"page":1,"pageSize":20,"target":"beeftv"}}`))
+	}))
+	defer market.Close()
+	t.Setenv("BEEFTV_SKILLHUB_URL", market.URL)
+	if response := call("GET", "/skills/market/search?q=storyboard", ""); response.Code != 200 {
+		t.Fatal("public market read rejected", response.Code, response.Body.String())
+	}
 	listing := call("GET", "/business/tools", "")
 	if listing.Code != 200 {
 		t.Fatal(listing.Code, listing.Body.String())
@@ -98,9 +110,14 @@ func TestExternalBusinessRealUploadRenderAndIsolation(t *testing.T) {
 	if move.Code != 200 {
 		t.Fatal(move.Code, move.Body.String())
 	}
-	for _, endpoint := range []string{"/agent-clients", "/assistant/host/config", "/assistant/runtime/turns/abc", "/ops/clients"} {
+	for _, endpoint := range []string{"/agent-clients", "/assistant/host/config", "/assistant/runtime/turns/abc", "/ops/clients", "/skills/market/authorization", "/skills/market/publish-plans", "/skills/market/submissions"} {
 		if out := call("GET", endpoint, ""); out.Code != http.StatusForbidden {
 			t.Fatalf("credential/runtime management exposed %s: %d", endpoint, out.Code)
+		}
+	}
+	for _, endpoint := range []string{"/skills/market/authorization/start", "/skills/market/publish-plans/forged/upload", "/skills/market/publish-plans/forged/submit", "/business/market/publish"} {
+		if out := call("POST", endpoint, `{"confirmed":true}`); out.Code != http.StatusForbidden {
+			t.Fatalf("publishing confirmation exposed %s: %d", endpoint, out.Code)
 		}
 	}
 	foreign := model.Resource{ID: "foreign-business-resource", UserID: "foreign-owner", ObjectKey: "not-a-real-file", Status: model.ResourceStatusReady, MimeType: "image/png"}

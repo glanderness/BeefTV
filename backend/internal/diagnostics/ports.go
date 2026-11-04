@@ -11,6 +11,7 @@ type Store interface {
 	DiagnosticTasks(userID string, from time.Time, to time.Time, taskID string, projectID string) ([]model.Task, error)
 	DiagnosticTaskLogs(userID string, from time.Time, to time.Time, taskID string, projectID string) ([]model.TaskLog, error)
 	DiagnosticAPICallLogs(userID string, from time.Time, to time.Time, taskID string, projectID string) ([]model.ApiCallLog, error)
+	CanvasProjectForUser(userID string, id string) (*model.CanvasProject, error)
 }
 
 // ModelConfigProvider exposes the local workspace provider snapshot so the

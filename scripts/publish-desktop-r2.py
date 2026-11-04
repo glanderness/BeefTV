@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish signed desktop releases with AWS CLI v2 and the existing verifier.
+"""Publish signed desktop releases to R2, with a legacy COS feed bridge.
 
 stage uploads immutable version objects; activate requires a published GitHub
 release and atomically changes latest after public verification. Credentials stay
@@ -9,6 +9,7 @@ in AWS environment variables. No bucket configuration or permissions are changed
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -17,19 +18,23 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import urllib.error
 from urllib.parse import urlsplit
+import uuid
+from desktop_cos_store import COSStore, PublishError, fingerprint
 
 PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
 PREFIX = "beeftv"
 LATEST = f"{PREFIX}/desktop-update.json"
+LATEST_V2 = f"{PREFIX}/desktop-update-v2.json"
 IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-store, max-age=0"
 MAX_MANIFEST = 2 * 1024 * 1024
 GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
-
-
-class PublishError(Exception):
-    pass
+COS_PUBLIC_BASE = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv"
+R2_PUBLIC_BASE = "https://updates.beefapi.com/beeftv"
+CNB_PUBLIC_BASE = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download"
+PROBE_BYTES = 1024
 
 
 def version_tuple(version):
@@ -41,19 +46,11 @@ def version_tuple(version):
 def run(command):
     try:
         return subprocess.run(command, capture_output=True, text=True, timeout=600,
-                              env={**os.environ, "AWS_PAGER": "", "AWS_EC2_METADATA_DISABLED": "true"})
+                              env={**os.environ, "AWS_PAGER": "", "AWS_EC2_METADATA_DISABLED": "true",
+                                   "AWS_REQUEST_CHECKSUM_CALCULATION": "when_required",
+                                   "AWS_RESPONSE_CHECKSUM_VALIDATION": "when_required"})
     except (OSError, subprocess.TimeoutExpired):
         raise PublishError("Required release command unavailable or timed out") from None
-
-
-def fingerprint(path):
-    digest = hashlib.sha256()
-    size = 0
-    with Path(path).open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-            size += len(chunk)
-    return size, digest.hexdigest()
 
 
 def signed_payload(path, verifier):
@@ -76,18 +73,19 @@ class S3:
     def __init__(self, endpoint, bucket):
         self.base = ["aws", "--endpoint-url", endpoint, "--region", "auto", "s3api"]
         self.bucket = bucket
+        self.provider = "r2"
 
     def get(self, key, destination):
         head = run(self.base + ["head-object", "--bucket", self.bucket, "--key", key])
         if head.returncode:
             if re.search(r"\((404|NoSuchKey|NotFound)\)", head.stderr):
                 return None
-            raise PublishError(f"Cannot inspect R2 object: {key}")
+            raise PublishError(f"Cannot inspect release object: {key}")
         etag = json.loads(head.stdout)["ETag"]
         result = run(self.base + ["get-object", "--bucket", self.bucket, "--key", key,
                                   "--if-match", etag, str(destination)])
         if result.returncode:
-            raise PublishError(f"Cannot read stable R2 object: {key}")
+            raise PublishError(f"Cannot read stable release object: {key}")
         return etag
 
     def put(self, key, source, cache_control, etag=None):
@@ -98,32 +96,154 @@ class S3:
         if result.returncode:
             if re.search(r"\((412|PreconditionFailed|ConditionalRequestConflict)\)", result.stderr):
                 return False
-            raise PublishError(f"R2 conditional upload failed: {key}")
+            raise PublishError(f"Conditional release upload failed: {key}")
         return True
+
+    def delete_probe(self, key):
+        if not key.startswith(f"{PREFIX}/.publication-probes/"):
+            raise PublishError("Refusing to delete a release object")
+        if run(self.base + ["delete-object", "--bucket", self.bucket, "--key", key]).returncode:
+            raise PublishError("Conditional-write probe cleanup failed")
+
+    def check_conditions(self):
+        """Detect S3 implementations that ignore conditional PUT headers."""
+        key = f"{PREFIX}/.publication-probes/{uuid.uuid4().hex}"
+        with tempfile.TemporaryDirectory(prefix="beeftv-store-probe-") as directory:
+            first, second, readback = (Path(directory) / name for name in ("first", "second", "readback"))
+            first.write_bytes(b"BeefTV conditional-write probe A")
+            second.write_bytes(b"BeefTV conditional-write probe B")
+            try:
+                if not self.put(key, first, REVALIDATE):
+                    raise PublishError("Cannot create conditional-write probe")
+                etag = self.get(key, readback)
+                if etag is None or fingerprint(readback) != fingerprint(first):
+                    raise PublishError("Conditional-write probe readback failed")
+                if self.put(key, second, REVALIDATE):
+                    raise PublishError("Storage ignores If-None-Match; publication is blocked")
+                if self.put(key, second, REVALIDATE, etag='"beeftv-invalid-etag"'):
+                    raise PublishError("Storage ignores If-Match; activation is blocked")
+                if self.get(key, readback) != etag or fingerprint(readback) != fingerprint(first):
+                    raise PublishError("Rejected conditional writes changed stored bytes")
+                if not self.put(key, second, REVALIDATE, etag=etag):
+                    raise PublishError("Storage rejects valid If-Match; activation is blocked")
+                if self.get(key, readback) is None or fingerprint(readback) != fingerprint(second):
+                    raise PublishError("Conditional replacement readback failed")
+                # A stale ETag must still be rejected after a successful replace.
+                if self.put(key, first, REVALIDATE, etag=etag):
+                    raise PublishError("Storage accepts stale If-Match; activation is blocked")
+                if self.get(key, readback) is None or fingerprint(readback) != fingerprint(second):
+                    raise PublishError("Rejected stale write changed stored bytes")
+            finally:
+                failure = sys.exc_info()[1]
+                try:
+                    self.delete_probe(key)
+                except PublishError:
+                    if failure is not None:
+                        raise PublishError(f"{failure}; conditional-write probe cleanup also failed") from None
+                    raise
 
 
 class PublicHTTP:
-    def __init__(self, opener=urllib.request.urlopen):
+    def __init__(self, opener=urllib.request.urlopen, verified=None):
         self.opener = opener
+        self.verified = verified
 
     def check(self, url, expected_size, expected_hash, *, version):
         version_tuple(version)
         digest = hashlib.sha256()
         size = 0
+        prefix = b""
+        # Mutable feeds are always read in full, even if a receipt names them.
+        reusable = expected_size > PROBE_BYTES and not urlsplit(url).path.endswith(".json")
+        prior = self.verified.get(url) if reusable and self.verified is not None else None
         try:
-            request = urllib.request.Request(url, headers={"Cache-Control": "no-cache", "User-Agent": f"BeefTV-Desktop-Updater/{version}"})
+            headers = {"Cache-Control": "no-cache", "User-Agent": f"BeefTV-Desktop-Updater/{version}"}
+            if prior is not None:
+                if (not isinstance(prior, dict) or prior.get("size") != expected_size
+                        or prior.get("sha256") != expected_hash
+                        or not isinstance(prior.get("etag"), str)
+                        or not re.fullmatch(r'"[^"\x00-\x20\x7f]+"', prior.get("etag", ""))
+                        or not isinstance(prior.get("prefixSHA256"), str)
+                        or not re.fullmatch(r"[a-f0-9]{64}", prior.get("prefixSHA256", ""))):
+                    raise PublishError("Public verification receipt does not match this asset")
+                # Prove the endpoint enforces the precondition, rather than
+                # accepting an implementation that echoes the supplied ETag.
+                mismatch = '"beeftv-mismatch-' + uuid.uuid4().hex + '"'
+                rejection = urllib.request.Request(url, headers={**headers, "Range": "bytes=0-0", "If-Match": mismatch})
+                try:
+                    with self.opener(rejection, timeout=60):
+                        raise PublishError("Public endpoint accepted a mismatched ETag")
+                except urllib.error.HTTPError as error:
+                    error.close()
+                    if error.code != 412:
+                        raise PublishError("Public endpoint did not confirm its ETag precondition") from None
+                headers.update({"Range": f"bytes=0-{PROBE_BYTES - 1}", "If-Match": prior["etag"]})
+            request = urllib.request.Request(url, headers=headers)
             with self.opener(request, timeout=60) as response:
+                if prior is not None:
+                    if (response.status != 206 or response.headers.get("ETag") != prior["etag"]
+                            or response.headers.get("Content-Range") != f"bytes 0-{PROBE_BYTES - 1}/{expected_size}"
+                            or response.headers.get("Content-Length") != str(PROBE_BYTES)):
+                        raise PublishError("Previously verified public object changed or rejected its range probe")
+                    data = response.read(PROBE_BYTES + 1)
+                    if len(data) != PROBE_BYTES or hashlib.sha256(data).hexdigest() != prior["prefixSHA256"]:
+                        raise PublishError("Previously verified public object probe differs")
+                    return
                 if response.status != 200:
                     raise PublishError("Public object did not return HTTP 200")
+                etag = response.headers.get("ETag", "")
                 while chunk := response.read(1024 * 1024):
+                    if len(prefix) < PROBE_BYTES:
+                        prefix += chunk[:PROBE_BYTES - len(prefix)]
                     size += len(chunk)
                     if size > expected_size:
                         raise PublishError("Public object size mismatch")
                     digest.update(chunk)
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             raise PublishError("Public object readback failed") from None
         if size != expected_size or digest.hexdigest() != expected_hash:
             raise PublishError("Public object size/hash mismatch")
+        if reusable and self.verified is not None and re.fullmatch(r'"[^"\x00-\x20\x7f]+"', etag):
+            self.verified[url] = {"size": size, "sha256": expected_hash, "etag": etag,
+                                  "prefixSHA256": hashlib.sha256(prefix).hexdigest()}
+
+
+def verification_binding(manifest, args):
+    owner = {name: os.environ.get(name, "") for name in
+             ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB")}
+    if not all(owner.values()):
+        raise PublishError("Verification receipts require the same GitHub run, attempt and job")
+    return {"schema": 1, "manifestSHA256": fingerprint(manifest)[1], "owner": owner,
+            "provider": args.provider, "endpoint": args.endpoint_url, "region": args.region,
+            "bucket": args.bucket, "publicBase": args.public_base}
+
+
+def read_verification_receipt(path, binding):
+    if not path.exists():
+        return {}  # A fresh invocation without proof must perform full checks.
+    if path.stat().st_size > MAX_MANIFEST:
+        raise PublishError("Public verification receipt is too large")
+    try:
+        receipt = json.loads(path.read_bytes())
+    except (ValueError, UnicodeError):
+        raise PublishError("Public verification receipt is not valid JSON") from None
+    if (not isinstance(receipt, dict) or any(receipt.get(k) != v for k, v in binding.items())
+            or not isinstance(receipt.get("objects"), dict)):
+        raise PublishError("Public verification receipt belongs to different release inputs or job")
+    return receipt["objects"]
+
+
+def write_verification_receipt(path, binding, objects):
+    # This local proof is never uploaded or shared across jobs. Publish it only
+    # after the entire stage succeeds; failed stages leave no usable receipt.
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+        temporary = Path(output.name)
+        try:
+            json.dump({**binding, "objects": objects}, output)
+            output.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def require_github_release(payload, manifest, public):
@@ -146,19 +266,54 @@ def require_github_release(payload, manifest, public):
     public.check(GITHUB_LATEST_FEED, *fingerprint(manifest), version=payload["version"])
 
 
+def require_terminal_publisher(original_lock):
+    try:
+        document = json.loads(original_lock)
+        owner = document["owner"]
+        repository, run_id, attempt = (owner[name] for name in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"))
+        if (repository != "glanderness/BeefTV" or not re.fullmatch(r"[1-9][0-9]*", run_id)
+                or not re.fullmatch(r"[1-9][0-9]*", attempt)
+                or not re.fullmatch(r"[a-zA-Z0-9_-]+", owner.get("GITHUB_JOB", ""))):
+            raise PublishError("Recovery requires the original official GitHub publisher identity")
+    except (ValueError, KeyError, TypeError):
+        raise PublishError("Recovery requires the original GitHub publisher document") from None
+    result = run(["gh", "api", f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}"])
+    if result.returncode:
+        raise PublishError("Cannot confirm the original GitHub publisher has ended")
+    try:
+        metadata = json.loads(result.stdout)
+        if (not isinstance(metadata, dict) or metadata.get("status") != "completed"
+                or metadata.get("id") != int(run_id) or metadata.get("run_attempt") != int(attempt)
+                or not isinstance(metadata.get("repository"), dict)
+                or metadata["repository"].get("full_name") != repository):
+            raise PublishError("Original GitHub publisher is not confirmed terminal")
+    except (ValueError, TypeError):
+        raise PublishError("Invalid original GitHub publisher status") from None
+
+
+def recovery_document(path):
+    if path.stat().st_size > 8192:
+        raise PublishError("Recovery document is too large")
+    return path.read_bytes()
+
+
 class Publisher:
-    def __init__(self, store, public, verifier, public_base, release_check=require_github_release):
+    def __init__(self, store, public, verifier, public_base, release_check=require_github_release,
+                 feed_public_base=None):
         self.store, self.public, self.verifier = store, public, verifier
         self.public_base = public_base.rstrip("/")
+        self.feed_public_base = (feed_public_base or public_base).rstrip("/")
         self.release_check = release_check
 
     def load(self, manifest):
         payload = signed_payload(manifest, self.verifier)
+        if payload.get("schema") != 1:
+            raise PublishError("Legacy manifest must use schema 1")
         if set(payload["platforms"]) != PLATFORMS:
             raise PublishError("Manifest must contain exactly all four desktop platforms")
         for platform, asset in payload["platforms"].items():
             name = f"BeefTV-{payload['version']}-{platform}.zip"
-            if asset["url"] != f"{self.public_base}/{payload['version']}/{name}":
+            if "urls" in asset or "deltas" in asset or asset.get("url") != f"{self.public_base}/{payload['version']}/{name}":
                 raise PublishError("Manifest asset URL does not match immutable public version path")
             if type(asset["size"]) is not int or not 0 < asset["size"] <= 2 << 30:
                 raise PublishError("Invalid desktop archive size")
@@ -166,9 +321,49 @@ class Publisher:
                 raise PublishError("Invalid desktop archive hash")
         return payload
 
+    def load_v2(self, manifest):
+        payload = signed_payload(manifest, self.verifier)
+        if payload.get("schema") != 2 or set(payload["platforms"]) != PLATFORMS:
+            raise PublishError("Manifest v2 must use schema 2 and contain all four desktop platforms")
+        target_vtuple = version_tuple(payload["version"])
+        url_counts = set()
+        delta_key_sets = set()
+        for platform, asset in payload["platforms"].items():
+            name = f"BeefTV-{payload['version']}-{platform}.zip"
+            r2_url = f"{self.public_base}/{payload['version']}/{name}"
+            cnb_url = f"{CNB_PUBLIC_BASE}/{payload['version']}/{name}"
+            urls = asset.get("urls")
+            if "url" in asset or urls not in ([r2_url], [cnb_url, r2_url]):
+                raise PublishError("Manifest v2 asset URLs must be [r2] or [cnb, r2]")
+            url_counts.add(len(urls))
+            if type(asset["size"]) is not int or not 0 < asset["size"] <= 2 << 30:
+                raise PublishError("Invalid desktop archive size")
+            if not re.fullmatch(r"[a-f0-9]{64}", asset["sha256"]):
+                raise PublishError("Invalid desktop archive hash")
+            deltas = asset.get("deltas") or {}
+            if not isinstance(deltas, dict):
+                raise PublishError("Manifest v2 deltas must be an object")
+            delta_key_sets.add(frozenset(deltas.keys()))
+            for from_ver, delta in deltas.items():
+                if version_tuple(from_ver) >= target_vtuple or not isinstance(delta, dict):
+                    raise PublishError("Manifest v2 delta fromVersion must be an older stable version")
+                d_name = f"BeefTV-{payload['version']}-{platform}-from-{from_ver}.delta.zip"
+                d_r2_url = f"{self.public_base}/{payload['version']}/{d_name}"
+                d_cnb_url = f"{CNB_PUBLIC_BASE}/{payload['version']}/{d_name}"
+                expected_d_urls = [d_r2_url] if len(urls) == 1 else [d_cnb_url, d_r2_url]
+                if delta.get("urls") != expected_d_urls:
+                    raise PublishError("Manifest v2 delta URLs must match platform source set")
+                if type(delta.get("size")) is not int or not 0 < delta["size"] <= asset["size"]:
+                    raise PublishError("Invalid desktop delta archive size")
+                if not re.fullmatch(r"[a-f0-9]{64}", str(delta.get("sha256", ""))):
+                    raise PublishError("Invalid desktop delta archive hash")
+        if len(url_counts) != 1 or len(delta_key_sets) != 1:
+            raise PublishError("Manifest v2 platforms must all share the same source and delta set")
+        return payload
+
     def immutable_put(self, key, source):
         expected = fingerprint(source)
-        with tempfile.TemporaryDirectory(prefix="beeftv-r2-check-") as directory:
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-check-") as directory:
             previous = Path(directory) / "object"
             etag = self.store.get(key, previous)
             if etag is None:
@@ -201,7 +396,7 @@ class Publisher:
             self.public.check(f"{self.public_base}/{payload['version']}/{source.name}",
                               *fingerprint(source), version=payload['version'])
 
-    def stage(self, manifest, assets_dir, with_installers=False):
+    def stage(self, manifest, assets_dir, with_installers=False, manifest_v2=None):
         payload = self.load(manifest)
         sources = []
         for platform, asset in payload["platforms"].items():
@@ -210,21 +405,40 @@ class Publisher:
             if not source.is_file() or fingerprint(source) != (asset["size"], asset["sha256"]):
                 raise PublishError(f"Local archive missing or size/hash mismatch: {name}")
             sources.append((f"{PREFIX}/{payload['version']}/{name}", source))
+        delta_sources = []
+        if manifest_v2 is not None:
+            v2_payload = self.load_v2(manifest_v2)
+            if v2_payload["version"] != payload["version"] or v2_payload["commit"] != payload["commit"]:
+                raise PublishError("Staged manifest v2 metadata does not match manifest v1")
+            for platform, asset in v2_payload["platforms"].items():
+                for from_ver, delta in (asset.get("deltas") or {}).items():
+                    d_name = f"BeefTV-{payload['version']}-{platform}-from-{from_ver}.delta.zip"
+                    d_source = Path(assets_dir) / d_name
+                    if not d_source.is_file() or fingerprint(d_source) != (delta["size"], delta["sha256"]):
+                        raise PublishError(f"Local delta archive missing or size/hash mismatch: {d_name}")
+                    delta_sources.append((f"{PREFIX}/{payload['version']}/{d_name}", d_source, delta))
         installers = self.installer_sources(payload, assets_dir) if with_installers else []
-        for key, source in sources + installers:
+        for key, source in sources + [(k, s) for k, s, _ in delta_sources] + installers:
             self.immutable_put(key, source)
         self.check_installers(payload, installers)
+        for _, d_source, delta in delta_sources:
+            self.public.check(f"{self.public_base}/{payload['version']}/{d_source.name}",
+                              delta["size"], delta["sha256"], version=payload["version"])
         self.immutable_put(f"{PREFIX}/{payload['version']}/desktop-update.json", manifest)
         self.public_check(payload, manifest)
         return payload["version"]
 
-    def activate(self, manifest, installer_dir=None):
+    def activate(self, manifest, installer_dir=None, *, require_active_source=False):
         payload = self.load(manifest)
         if installer_dir is not None:
             self.check_installers(payload, self.installer_sources(payload, installer_dir))
         self.release_check(payload, manifest, self.public)
         self.public_check(payload, manifest)
-        with tempfile.TemporaryDirectory(prefix="beeftv-r2-latest-") as directory:
+        if require_active_source:
+            # A bridge may only follow the already activated canonical feed.
+            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest),
+                              version=payload["version"])
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-latest-") as directory:
             previous = Path(directory) / "previous.json"
             etag = self.store.get(LATEST, previous)
             if etag is not None:
@@ -234,7 +448,7 @@ class Publisher:
                 if version_tuple(old["version"]) == version_tuple(payload["version"]):
                     if fingerprint(previous) != fingerprint(manifest):
                         raise PublishError("Same latest version has different signed content")
-                    self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
+                    self.public.check(f"{self.feed_public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
                     return payload["version"]
                 backup = f"{PREFIX}/latest-backups/{old['version']}-{fingerprint(previous)[1]}.json"
                 self.immutable_put(backup, previous)
@@ -244,45 +458,211 @@ class Publisher:
             current = Path(directory) / "current.json"
             if self.store.get(LATEST, current) is None or fingerprint(current) != fingerprint(manifest):
                 raise PublishError("Latest storage readback mismatch")
-            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
+            self.public.check(f"{self.feed_public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
         return payload["version"]
+
+    def activate_v2(self, manifest):
+        if getattr(self.store, "provider", "r2") != "r2" or self.feed_public_base != R2_PUBLIC_BASE:
+            raise PublishError("Manifest v2 publication is only supported on canonical R2")
+        payload = self.load_v2(manifest)
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-latest-v2-") as directory:
+            active_v1 = Path(directory) / "active-v1.json"
+            if self.store.get(LATEST, active_v1) is None:
+                raise PublishError("R2 canonical v1 feed must be active before publishing v2 feed")
+            v1_payload = self.load(active_v1)
+            if (v1_payload["version"] != payload["version"] or v1_payload["commit"] != payload["commit"]
+                    or v1_payload["notes"] != payload["notes"]):
+                raise PublishError("Manifest v2 metadata does not match active R2 v1 feed")
+            for platform, asset in payload["platforms"].items():
+                v1_asset = v1_payload["platforms"][platform]
+                if (asset["size"], asset["sha256"]) != (v1_asset["size"], v1_asset["sha256"]):
+                    raise PublishError(f"Manifest v2 digest/size mismatch against active v1 feed: {platform}")
+            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(active_v1),
+                              version=payload["version"])
+            for asset in payload["platforms"].values():
+                for url in asset["urls"]:
+                    self.public.check(url, asset["size"], asset["sha256"], version=payload["version"])
+                for delta in (asset.get("deltas") or {}).values():
+                    for url in delta["urls"]:
+                        self.public.check(url, delta["size"], delta["sha256"], version=payload["version"])
+            has_domestic = any(len(a["urls"]) == 2 for a in payload["platforms"].values())
+            version_manifest_name = "desktop-update-v2.json" if has_domestic else "desktop-update-v2-r2.json"
+            self.immutable_put(f"{PREFIX}/{payload['version']}/{version_manifest_name}", manifest)
+            self.public.check(f"{self.public_base}/{payload['version']}/{version_manifest_name}",
+                              *fingerprint(manifest), version=payload["version"])
+            previous = Path(directory) / "previous-v2.json"
+            etag = self.store.get(LATEST_V2, previous)
+            if etag is not None:
+                old = self.load_v2(previous)
+                if version_tuple(old["version"]) > version_tuple(payload["version"]):
+                    raise PublishError("Refusing to downgrade latest v2 feed")
+                if version_tuple(old["version"]) == version_tuple(payload["version"]):
+                    if fingerprint(previous) == fingerprint(manifest):
+                        self.public.check(f"{self.feed_public_base}/desktop-update-v2.json",
+                                          *fingerprint(manifest), version=payload["version"])
+                        return payload["version"]
+                    old_has_domestic = any(len(a["urls"]) == 2 for a in old["platforms"].values())
+                    if old_has_domestic or not has_domestic:
+                        raise PublishError("Same latest v2 version has conflicting signed content")
+                    for platform, asset in payload["platforms"].items():
+                        old_deltas = old["platforms"][platform].get("deltas") or {}
+                        new_deltas = asset.get("deltas") or {}
+                        if {k: (v["size"], v["sha256"]) for k, v in old_deltas.items()} != {k: (v["size"], v["sha256"]) for k, v in new_deltas.items()}:
+                            raise PublishError(f"Same latest v2 version has conflicting delta digests: {platform}")
+                backup = f"{PREFIX}/latest-v2-backups/{old['version']}-{fingerprint(previous)[1]}.json"
+                self.immutable_put(backup, previous)
+            if not self.store.put(LATEST_V2, manifest, REVALIDATE, etag=etag):
+                raise PublishError("Latest v2 feed changed concurrently; verify and rerun activation")
+            current = Path(directory) / "current-v2.json"
+            if self.store.get(LATEST_V2, current) is None or fingerprint(current) != fingerprint(manifest):
+                raise PublishError("Latest v2 storage readback mismatch")
+            self.public.check(f"{self.feed_public_base}/desktop-update-v2.json",
+                              *fingerprint(manifest), version=payload["version"])
+        return payload["version"]
+
+    def resume(self, manifest, original_lock, original_claim, *, confirm_no_inflight=False,
+               confirm_writers_frozen=False, confirm_no_unlock_attempt=False, installer_dir=None,
+               require_active_source=False):
+        if (getattr(self.store, "provider", None) != "cos" or not confirm_no_inflight
+                or not confirm_writers_frozen or not confirm_no_unlock_attempt):
+            raise PublishError("COS recovery requires explicit confirmation: all writers frozen, no in-flight PUT and no prior unlock attempt")
+        payload = self.load(manifest)
+        require_terminal_publisher(original_lock)
+        if installer_dir is not None:
+            self.check_installers(payload, self.installer_sources(payload, installer_dir))
+        self.release_check(payload, manifest, self.public)
+        self.public_check(payload, manifest)
+        if require_active_source:
+            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest),
+                              version=payload["version"])
+        # The store validates live lock/claim bytes after external checks, then
+        # completes only this already claimed signed envelope under its old nonce.
+        self.store.resume(LATEST, manifest, original_lock, original_claim)
+        self.public.check(f"{self.feed_public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
+        return payload["version"]
+
+
+def storage_config(provider, endpoint, region, bucket, public_base):
+    for url in (endpoint, public_base):
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or parsed.port is not None):
+            raise PublishError("Release endpoint and public base must be plain HTTPS URLs")
+    if provider == "r2":
+        if not re.fullmatch(r"https://[a-f0-9]{32}\.r2\.cloudflarestorage\.com/?", endpoint) or region != "auto":
+            raise PublishError("R2 credentials require an account R2 endpoint and auto region")
+    elif provider == "cos":
+        if (not re.fullmatch(r"ap-[a-z]+(?:-[a-z]+)?", region)
+                or endpoint.rstrip("/") != f"https://cos.{region}.myqcloud.com"
+                or not re.fullmatch(r"[a-z0-9][a-z0-9-]*-[0-9]+", bucket)):
+            raise PublishError("COS credentials require a matching regional COS endpoint and bucket with APPID")
+        if public_base.rstrip("/") != f"https://{bucket}.cos.{region}.myqcloud.com/{PREFIX}":
+            raise PublishError("COS releases require their direct bucket public base")
+    else:
+        raise PublishError("Unsupported release storage provider")
+    return COSStore(bucket, region) if provider == "cos" else S3(endpoint, bucket)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["stage", "activate"])
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("command", choices=["check-store", "stage", "activate", "activate-v2", "bridge-cos", "resume", "resume-cos-bridge"])
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--manifest-v2", type=Path, help="Optional schema-2 manifest whose delta archives should be staged with stage")
     parser.add_argument("--assets-dir", type=Path)
     parser.add_argument("--with-installers", action="store_true")
-    parser.add_argument("--verifier", type=Path, required=True, help="Binary built from backend/cmd/update-release")
+    parser.add_argument("--verification-receipt", type=Path,
+                        help="Same-job stage proof for bounded activation probes; never reuse across runs")
+    parser.add_argument("--lock-document", type=Path, help="Exact original COS publisher lock document for resume")
+    parser.add_argument("--claim-document", type=Path, help="Exact original COS ETag claim document for resume")
+    parser.add_argument("--confirm-no-inflight-put", action="store_true", help="Operator confirmed original remote PUT requests have ended; required for resume")
+    parser.add_argument("--confirm-writers-frozen", action="store_true", help="Operator froze every feed writer and confirmed no successor publication; required for resume")
+    parser.add_argument("--confirm-no-unlock-attempt", action="store_true", help="Original publisher logs prove no lock DELETE was ever sent; required for resume")
+    parser.add_argument("--verifier", type=Path, help="Binary built from backend/cmd/update-release")
+    parser.add_argument("--provider", choices=["cos", "r2"], default="r2")
     parser.add_argument("--endpoint-url", required=True)
-    parser.add_argument("--bucket", default="beeftv-releases")
-    parser.add_argument("--public-base", default="https://updates.beefapi.com/beeftv")
+    parser.add_argument("--region")
+    parser.add_argument("--bucket")
+    parser.add_argument("--public-base")
     args = parser.parse_args()
+    args.region = args.region or ("auto" if args.provider == "r2" else "ap-guangzhou")
+    args.bucket = args.bucket or ("beeftv-releases" if args.provider == "r2" else "beeftv-components-1481187348")
+    args.public_base = args.public_base or (R2_PUBLIC_BASE if args.provider == "r2" else COS_PUBLIC_BASE)
     try:
-        if not re.fullmatch(r"https://[a-f0-9]{32}\.r2\.cloudflarestorage\.com/?", args.endpoint_url):
-            raise PublishError("S3 credentials may only be used with an account R2 endpoint")
-        for url in (args.endpoint_url, args.public_base):
-            parsed = urlsplit(url)
-            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-                raise PublishError("Release endpoint and public base must be plain HTTPS URLs")
-        publisher = Publisher(S3(args.endpoint_url, args.bucket), PublicHTTP(), args.verifier.resolve(), args.public_base)
+        if args.verification_receipt and args.command not in ("stage", "activate"):
+            raise PublishError("Verification receipts are only supported for stage and activate")
+        if args.command == "activate-v2" and (args.provider != "r2" or args.with_installers):
+            raise PublishError("activate-v2 requires R2 provider and no installer staging")
+        store = storage_config(args.provider, args.endpoint_url, args.region, args.bucket, args.public_base)
+        if args.command != "check-store" and (args.manifest is None or args.verifier is None):
+            raise PublishError("Publication requires --manifest and --verifier")
+        is_bridge = args.command in ("bridge-cos", "resume-cos-bridge")
+        if args.command in ("resume", "resume-cos-bridge") and (args.provider != "cos" or args.lock_document is None
+                or args.claim_document is None or not args.confirm_no_inflight_put
+                or not args.confirm_writers_frozen or not args.confirm_no_unlock_attempt):
+            raise PublishError("Resume requires COS, original lock/claim documents and all three recovery confirmations")
+        if is_bridge and (args.provider != "cos" or args.with_installers
+                or args.public_base.rstrip("/") != COS_PUBLIC_BASE):
+            raise PublishError("Bridge requires the original COS feed destination and no installer staging")
+        # COS proves native forbid-overwrite for immutable objects and locks;
+        # legacy R2 proves its native conditional PUT headers. Never assume S3
+        # compatibility supplies either primitive.
+        store.check_conditions()
+        if args.command == "check-store":
+            print("Release storage conditional writes verified")
+            return 0
         # Snapshot the verified envelope so a changed local file cannot be activated.
-        with tempfile.TemporaryDirectory(prefix="beeftv-r2-manifest-") as directory:
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-manifest-") as directory:
             manifest = Path(directory) / "desktop-update.json"
             if args.manifest.stat().st_size > MAX_MANIFEST:
                 raise PublishError("Manifest is too large")
             manifest.write_bytes(args.manifest.read_bytes())
+            manifest_v2 = None
+            if args.manifest_v2 is not None:
+                if args.command != "stage":
+                    raise PublishError("--manifest-v2 is only supported for stage")
+                if args.manifest_v2.stat().st_size > MAX_MANIFEST:
+                    raise PublishError("Manifest v2 is too large")
+                manifest_v2 = Path(directory) / "desktop-update-v2.json"
+                manifest_v2.write_bytes(args.manifest_v2.read_bytes())
+            binding, verified = None, None
+            if args.verification_receipt:
+                binding = verification_binding(manifest, args)
+                if args.command == "stage":
+                    args.verification_receipt.unlink(missing_ok=True)
+                    verified = {}
+                else:
+                    verified = read_verification_receipt(args.verification_receipt, binding)
+            # The R2 custom-domain cache can ignore If-Match on a cache hit.
+            # Only COS can reuse HTTP proofs; R2 always rehashes full responses.
+            public = PublicHTTP(verified=verified if args.provider == "cos" else None)
+            publisher = Publisher(store, public, args.verifier.resolve(),
+                                  R2_PUBLIC_BASE if is_bridge else args.public_base,
+                                  feed_public_base=args.public_base)
             assets_dir = args.assets_dir or args.manifest.parent
-            version = (publisher.stage(manifest, assets_dir, args.with_installers)
-                       if args.command == "stage" else publisher.activate(manifest, assets_dir if args.with_installers else None))
+            if args.command == "stage":
+                version = publisher.stage(manifest, assets_dir, args.with_installers, manifest_v2=manifest_v2)
+                if args.verification_receipt:
+                    write_verification_receipt(args.verification_receipt, binding, verified)
+            elif args.command in ("resume", "resume-cos-bridge"):
+                version = publisher.resume(manifest, recovery_document(args.lock_document), recovery_document(args.claim_document),
+                                           confirm_no_inflight=args.confirm_no_inflight_put,
+                                           confirm_writers_frozen=args.confirm_writers_frozen,
+                                           confirm_no_unlock_attempt=args.confirm_no_unlock_attempt,
+                                           installer_dir=assets_dir if args.with_installers else None,
+                                           require_active_source=is_bridge)
+            elif args.command == "bridge-cos":
+                version = publisher.activate(manifest, require_active_source=True)
+            elif args.command == "activate-v2":
+                version = publisher.activate_v2(manifest)
+            else:
+                version = publisher.activate(manifest, assets_dir if args.with_installers else None)
         print(f"{args.command} verified: {version}")
     except PublishError as error:
-        print(f"Desktop R2 publication failed: {error}", file=sys.stderr)
+        print(f"Desktop publication failed: {error}", file=sys.stderr)
         return 1
     except (OSError, ValueError, KeyError, TypeError):
         # Never include subprocess stderr, request headers or credential-bearing URLs.
-        print("Desktop R2 publication failed; latest was not verified. Inspect release inputs and storage state before retrying.", file=sys.stderr)
+        print("Desktop publication failed; latest was not verified. Inspect release inputs and storage state before retrying.", file=sys.stderr)
         return 1
     return 0
 

@@ -1,13 +1,13 @@
 // Bound SSE inactivity on real text/tool progress, without aborting the official
 // agent's signal or adding a retry loop.
 //
-// 为什么不改用 pi 自己的空闲超时（钉选 1.0.4）：
+// 为什么不改用 pi 自己的空闲超时（钉选 1.2.0）：
 // - pi-ai 把 timeoutMs 交给 OpenAI SDK 的 `timeout`（pi-ai/dist/api/openai-completions.js:194），
 //   而 SDK 在 fetch 解析出响应头后立刻 clearTimeout（openai/client.js:996 setTimeout、
 //   :1023 finally clearTimeout）——只覆盖到响应头，不约束流正文的空闲。
 // - pi-coding-agent 另有 undici bodyTimeout/headersTimeout 级别的 httpIdleTimeoutMs
-//   （dist/core/http-dispatcher.js:68-84，docs/settings.md:123），但它只在 CLI/RPC 入口安装
-//   （cli/setup.js、rpc-entry.js、modes/interactive/interactive-mode.js:1558），本宿主的
+//   （dist/core/http-dispatcher.js:77-81，docs/settings.md:125），但它只在 CLI/RPC 入口安装
+//   （cli/setup.js、rpc-entry.js、modes/interactive/interactive-mode.js:1562），本宿主的
 //   Durable 路径不会安装它；即便安装，undici bodyTimeout 按「每收到一段 body 就重置」，
 //   SSE 心跳（`: ping`）同样算一段，识别不出「只有心跳、没有内容」。
 // 因此保留本实现：只有实际文本/工具进展才重置计时（Durable 路径经 globalThis.fetch 包装生效）。
@@ -47,10 +47,11 @@ function meaningful(protocol, data) {
   }
   if (event.type === 'message_stop') return true;
   if (event.type === 'message_delta') return !!event.delta?.stop_reason;
-  if (event.type === 'content_block_start') return text(event.content_block?.text) || text(event.content_block?.thinking) ||
+  if (event.type === 'content_block_start') return text(event.content_block?.text) || text(event.content_block?.thinking) || text(event.content_block?.data) ||
     (event.content_block?.type === 'tool_use' && (text(event.content_block.name) || text(event.content_block.id)));
   if (event.type !== 'content_block_delta') return false;
-  return text(event.delta?.text) || text(event.delta?.thinking) || text(event.delta?.partial_json);
+  // Thinking text and its closing signature are model progress, as text is.
+  return text(event.delta?.text) || text(event.delta?.thinking) || text(event.delta?.signature) || text(event.delta?.partial_json);
 }
 
 // Observe complete SSE records, forwarding the original bytes unchanged. A
@@ -79,6 +80,21 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
   const protocol = protocolFor(input, options);
   if (!protocol) return transport(input, options);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid model stream idle timeout');
+  if (protocol === 'anthropic' && typeof options.body === 'string' && options.body.includes('"tools"')) {
+    const beta = 'fine-grained-tool-streaming-2025-05-14';
+    if (options.headers instanceof Headers) {
+      const headers = new Headers(options.headers);
+      const cur = headers.get('anthropic-beta') || '';
+      if (!cur.includes(beta)) headers.set('anthropic-beta', cur ? `${cur},${beta}` : beta);
+      options = { ...options, headers };
+    } else if (options.headers && typeof options.headers === 'object') {
+      const headers = { ...options.headers };
+      const key = Object.keys(headers).find(k => k.toLowerCase() === 'anthropic-beta') || 'anthropic-beta';
+      const cur = String(headers[key] || '').trim();
+      if (!cur.includes(beta)) headers[key] = cur ? `${cur},${beta}` : beta;
+      options = { ...options, headers };
+    }
+  }
   const local = new AbortController();
   const signals = [options.signal, input instanceof Request ? input.signal : null].filter(Boolean);
   const caller = signals.length ? AbortSignal.any(signals) : null;
@@ -98,13 +114,30 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
     timer.unref?.();
   };
   const observe = observer(protocol, arm);
+  let syntheticCacheRead = 0;
+  const normalizeChunk = chunk => {
+    if (protocol !== 'anthropic') return chunk;
+    const raw = new TextDecoder().decode(chunk);
+    if (!raw.includes('"cache_read_input_tokens"')) return chunk;
+    const crMatch = raw.match(/"cache_read_input_tokens"\s*:\s*(\d+)/);
+    if (!crMatch) return chunk;
+    const cr = Number(crMatch[1]);
+    const cwMatch = raw.match(/"cache_creation_input_tokens"\s*:\s*(\d+)/);
+    const cw = cwMatch ? Number(cwMatch[1]) : 0;
+    if ((cw > 500 && Math.abs(cr - 9 * cw) <= 32) || (syntheticCacheRead > 0 && cr === syntheticCacheRead)) {
+      syntheticCacheRead = cr;
+      return new TextEncoder().encode(raw.replace(/"cache_read_input_tokens"\s*:\s*\d+/g, '"cache_read_input_tokens":0'));
+    }
+    return chunk;
+  };
   const body = new ReadableStream({
     start(value) { controller = value; caller?.addEventListener('abort', onAbort, {once: true}); if (caller?.aborted) onAbort(); else arm(); },
     async pull() {
       try {
         const next = await reader.read(); if (finished) return;
         if (next.done) { finished = true; cleanup(); controller.close(); return; }
-        observe(next.value); controller.enqueue(next.value);
+        const chunk = normalizeChunk(next.value);
+        observe(chunk); controller.enqueue(chunk);
       } catch (error) { terminate(error); }
     },
     cancel(reason) { if (finished) return; finished = true; cleanup(); const cancelled = reader.cancel(reason).catch(() => {}); local.abort(reason); return cancelled; },

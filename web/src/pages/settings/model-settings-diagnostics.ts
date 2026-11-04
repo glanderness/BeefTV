@@ -7,6 +7,7 @@ import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics
 // Only structural facts are recorded: counts, timings, element tags/classes.
 
 export type ModelPickerSnapshot = {
+    pickerId: string;
     title: string;
     optionCount: number;
     hasValue: boolean;
@@ -18,6 +19,7 @@ export type ModelPickerSnapshot = {
 const OPEN_CHECK_DELAY_MS = 600;
 const POPUP_SETTLE_MS = 450;
 const POPUP_SELECTOR = ".model-default-select-popup";
+const openChecks = new Map<string, number>();
 
 type PendingPress = { title: string; startedAt: number; opened: boolean };
 let pendingPress: PendingPress | undefined;
@@ -38,7 +40,8 @@ function visibleOverlayCount(doc: Document, selector: string) {
 }
 
 function surroundings(doc: Document) {
-    return `弹窗 ${visibleOverlayCount(doc, ".ant-modal-wrap")} 个，焦点 ${describeDiagnosticElement(doc.activeElement)}`;
+    const reducedMotion = doc.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return `弹窗 ${visibleOverlayCount(doc, ".ant-modal-wrap")} 个，焦点 ${describeDiagnosticElement(doc.activeElement)}，减少动态效果 ${reducedMotion === undefined ? "未知" : reducedMotion ? "开启" : "关闭"}`;
 }
 
 function snapshotText(snapshot: ModelPickerSnapshot) {
@@ -67,6 +70,8 @@ export function recordModelPickerPress(snapshot: ModelPickerSnapshot, point: { x
 }
 
 export function recordModelPickerOpenChange(snapshot: ModelPickerSnapshot, open: boolean, doc: Document = document) {
+    window.clearTimeout(openChecks.get(snapshot.pickerId));
+    openChecks.delete(snapshot.pickerId);
     const press = pendingPress?.title === snapshot.title ? pendingPress : undefined;
     if (!open) {
         recordDiagnosticEvent({ level: "info", category: "action", code: "MODEL_PICKER_CLOSE", message: `${snapshot.title} 已收起，${surroundings(doc)}` });
@@ -75,19 +80,27 @@ export function recordModelPickerOpenChange(snapshot: ModelPickerSnapshot, open:
     if (press) press.opened = true;
     const delay = press ? performance.now() - press.startedAt : undefined;
     // Check after the open animation: the popup fades in from opacity 0.
-    window.setTimeout(
+    const timer = window.setTimeout(
         () => {
-            const popup = Array.from(doc.querySelectorAll<HTMLElement>(POPUP_SELECTOR)).find((element) => !element.classList.contains("ant-select-dropdown-hidden"));
+            openChecks.delete(snapshot.pickerId);
+            const popup = doc.querySelector<HTMLElement>(`${POPUP_SELECTOR}-${snapshot.pickerId}`) ?? undefined;
+            const visible = popup && popupVisible(doc, popup);
+            const trigger = doc.querySelector<HTMLElement>(`[data-model-picker-id="${snapshot.pickerId}"]`);
+            const triggerRect = trigger?.getBoundingClientRect();
+            const popupRect = popup?.getBoundingClientRect();
+            const gap = triggerRect && popupRect ? Math.min(Math.abs(popupRect.top - triggerRect.bottom), Math.abs(triggerRect.top - popupRect.bottom)) : undefined;
+            const misaligned = visible && triggerRect && popupRect && gap !== undefined && (gap > 16 || popupRect.right <= triggerRect.left || popupRect.left >= triggerRect.right);
             recordDiagnosticEvent({
-                level: popup && popupVisible(doc, popup) ? "info" : "warning",
+                level: visible && !misaligned ? "info" : "warning",
                 category: "action",
-                code: popup && popupVisible(doc, popup) ? "MODEL_PICKER_OPEN" : "MODEL_PICKER_POPUP_HIDDEN",
-                message: `${snapshot.title} 展开：${snapshotText(snapshot)}，${describePopup(doc, popup)}，${surroundings(doc)}`,
+                code: !visible ? "MODEL_PICKER_POPUP_HIDDEN" : misaligned ? "MODEL_PICKER_POPUP_MISALIGNED" : "MODEL_PICKER_OPEN",
+                message: `${snapshot.title} 展开：${snapshotText(snapshot)}，${describePopup(doc, popup)}${triggerRect && gap !== undefined ? `，选择框位于 (${Math.round(triggerRect.left)}, ${Math.round(triggerRect.top)})，菜单间距 ${Math.round(gap)}px${misaligned ? "，菜单位置偏离选择框" : ""}` : ""}，${surroundings(doc)}`,
                 durationMs: delay,
             });
         },
         POPUP_SETTLE_MS,
     );
+    openChecks.set(snapshot.pickerId, timer);
 }
 
 export function recordModelPickerChange(snapshot: ModelPickerSnapshot) {
@@ -97,7 +110,12 @@ export function recordModelPickerChange(snapshot: ModelPickerSnapshot) {
 function popupVisible(doc: Document, popup: HTMLElement) {
     const rect = popup.getBoundingClientRect();
     const style = doc.defaultView?.getComputedStyle(popup);
-    return rect.width > 0 && rect.height > 0 && (!style || (style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0.05));
+    return rect.width > 0 && rect.height > 0 && popupInViewport(doc, rect) && (!style || (style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0.05));
+}
+
+function popupInViewport(doc: Document, rect: DOMRect) {
+    const view = doc.defaultView;
+    return !view || (rect.bottom > 0 && rect.right > 0 && rect.top < view.innerHeight && rect.left < view.innerWidth);
 }
 
 function describePopup(doc: Document, popup: HTMLElement | undefined) {
@@ -106,9 +124,13 @@ function describePopup(doc: Document, popup: HTMLElement | undefined) {
     const style = doc.defaultView?.getComputedStyle(popup);
     const items = popup.querySelectorAll(".ant-select-item-option").length;
     const view = doc.defaultView;
-    const inViewport = view ? rect.bottom > 0 && rect.right > 0 && rect.top < view.innerHeight && rect.left < view.innerWidth : true;
-    const center = doc.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 16));
-    const covered = center && !popup.contains(center) ? `被 ${describeDiagnosticElement(center)} 遮挡` : "未被遮挡";
+    const inViewport = popupInViewport(doc, rect);
+    const left = Math.max(0, rect.left);
+    const right = Math.min(view?.innerWidth ?? rect.right, rect.right);
+    const top = Math.max(0, rect.top);
+    const bottom = Math.min(view?.innerHeight ?? rect.bottom, rect.bottom);
+    const center = inViewport ? doc.elementFromPoint((left + right) / 2, top + Math.min((bottom - top) / 2, 16)) : null;
+    const covered = !inViewport ? "窗口外，无法检测遮挡" : !center ? "无法检测遮挡" : !popup.contains(center) ? `被 ${describeDiagnosticElement(center)} 遮挡` : "未被遮挡";
     return `弹层 ${Math.round(rect.width)}×${Math.round(rect.height)} 位于 (${Math.round(rect.left)}, ${Math.round(rect.top)})，${inViewport ? "在窗口内" : "在窗口外"}，透明度 ${style?.opacity ?? "?"}，层级 ${style?.zIndex ?? "?"}，已渲染选项 ${items} 个，${covered}`;
 }
 

@@ -3,6 +3,7 @@ package task
 import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"strings"
 )
 
 func (s *Service) Get(userID, id string) (*model.Task, error) {
@@ -15,6 +16,30 @@ func (s *Service) Get(userID, id string) (*model.Task, error) {
 	task, err := s.store.TaskForUser(userID, id)
 	if err != nil {
 		return nil, err
+	}
+	s.hydrateProviderRequestID(task)
+	return presentTask(s.deps.Present, *task)
+}
+
+// FindOperation recovers an admission receipt without reconstructing its inputs.
+func (s *Service) FindOperation(userID, projectID, operationID string) (*model.Task, error) {
+	projectID = strings.TrimSpace(projectID)
+	key, err := ClientOperationID(map[string]any{"metadata": map[string]any{"clientOperationId": operationID}})
+	if err != nil {
+		return nil, err
+	}
+	if projectID == "" || key == "" {
+		return nil, kernel.BadAuthRequest("查询生成任务需要画布和提交标识")
+	}
+	if s.store == nil {
+		return nil, unavailable()
+	}
+	task, err := s.store.TaskByClientOperation(userID, key)
+	if err != nil {
+		return nil, err
+	}
+	if task == nil || task.ProjectID != projectID {
+		return nil, kernel.NotFound("尚未找到这次提交的任务")
 	}
 	s.hydrateProviderRequestID(task)
 	return presentTask(s.deps.Present, *task)

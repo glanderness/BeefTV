@@ -332,6 +332,14 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 }
 
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
+	return r.retryTask(userID, prepared, limit, nil)
+}
+
+func (r *Repository) RetryTaskWithExpectedInput(userID string, prepared *model.Task, limit int, expectedInputJSON string) (*model.Task, error) {
+	return r.retryTask(userID, prepared, limit, &expectedInputJSON)
+}
+
+func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, expectedInputJSON *string) (*model.Task, error) {
 	var task model.Task
 	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
@@ -348,13 +356,17 @@ func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (
 			return err
 		}
 		updates := map[string]any{
-			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
+			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "recovery_outcome": nil, "beef_usage_state": nil, "beef_billing_state": nil, "beef_reconcile_deadline": nil, "image_job_id": "", "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "provider_cancel_status": "", "provider_cancel_error": "", "provider_cancel_attempts": 0,
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil, "route_run": gorm.Expr("route_run + ?", 1),
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID, "channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,
 			"model": prepared.Model, "provider": prepared.Provider, "lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
 		}
-		updated := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND status IN ?", prepared.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}).Updates(updates)
+		query := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND status IN ?", prepared.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
+		if expectedInputJSON != nil {
+			query = query.Where("input_json = ? AND provider_request_id = ? AND poll_stage = ? AND next_poll_at IS NULL", *expectedInputJSON, "", "")
+		}
+		updated := query.Updates(updates)
 		if updated.Error != nil {
 			return updated.Error
 		}

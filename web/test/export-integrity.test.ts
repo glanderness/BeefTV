@@ -2,12 +2,16 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { unzipSync } from "fflate";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
+import { getClientDiagnosticSnapshot, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
+import { installLocalForageStoreFactoryForTests } from "@/lib/localforage-storage";
 
 const blobs = new Map<string, Blob>();
 const unreadable = new Set<string>();
+const blockedReads = new Map<string, Promise<Blob | undefined>>();
 const restored = new Map<string, Blob>();
 const drawings = new Map<string, { version: 1; drawingId: string; snapshot: object; revision: number; updatedAt: string; shapeCount: number; pageCount: number }>();
 const getBlob = async (key: string) => {
+    if (blockedReads.has(key)) return blockedReads.get(key);
     if (unreadable.has(key)) throw new Error("fixture disk read error");
     return blobs.get(key);
 };
@@ -15,13 +19,16 @@ const setBlob = async (key: string, blob: Blob) => { restored.set(key, blob); };
 mock.module("@/services/file-storage", () => ({ getMediaBlob: getBlob, setMediaBlob: setBlob }));
 mock.module("@/services/image-storage", () => ({ getImageBlob: getBlob, setImageBlob: setBlob }));
 mock.module("@/lib/canvas/canvas-drawing-storage", () => ({
-    loadCanvasDrawing: async (_projectId: string, drawingId: string) => drawings.get(drawingId) ?? null,
+    loadCanvasDrawing: async (_projectId: string, drawingId: string) => {
+        if (unreadable.has(drawingId)) throw new Error("drawing disk read error");
+        return drawings.get(drawingId) ?? null;
+    },
     loadCanvasDrawingPreview: async () => null,
     loadCanvasDrawingRender: async () => null,
 }));
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 
-const { exportCanvasProjects, openCanvasArchive } = await import("@/lib/canvas/canvas-export");
+const { exportCanvasProjects, exportCanvasProjectsByIds, openCanvasArchive } = await import("@/lib/canvas/canvas-export");
 const { exportAssets, readAssetPackage } = await import("@/pages/assets/asset-transfer");
 const { createZip, readZip } = await import("@/lib/zip");
 const { archiveFileExtension, ExportIntegrityError } = await import("@/lib/export-integrity");
@@ -29,12 +36,22 @@ const { reportOwnedMediaSave } = await import("@/services/desktop-media-save");
 const { http } = await import("@/services/api/request");
 const originalWindow = globalThis.window;
 const saved: { name: string; data: string }[] = [];
+const diagnosticRecords = new Map<string, unknown>();
 let acceptSave = true;
 
 beforeEach(() => {
+    // This shell fixture has a window but no IndexedDB. Preserve diagnostic
+    // writes with an async memory store; swallowing ready()'s missing-driver
+    // error would leave localforage repeatedly waiting for an installed method.
+    installLocalForageStoreFactoryForTests(storeName => ({
+        ready: async () => {},
+        getItem: async (key: string) => diagnosticRecords.get(`${storeName}:${key}`) ?? null,
+        setItem: async (key: string, value: unknown) => { diagnosticRecords.set(`${storeName}:${key}`, value); return value; },
+    }) as LocalForage);
     blobs.clear();
     restored.clear();
     unreadable.clear();
+    blockedReads.clear();
     drawings.clear();
     saved.length = 0;
     acceptSave = true;
@@ -48,7 +65,13 @@ beforeEach(() => {
         },
     });
 });
-afterEach(() => { globalThis.window = originalWindow; });
+afterEach(async () => {
+    try { await getClientDiagnosticSnapshot(); }
+    finally {
+        globalThis.window = originalWindow;
+        installLocalForageStoreFactoryForTests();
+    }
+});
 
 function project(keys: string[]): CanvasProject {
     return {
@@ -58,6 +81,36 @@ function project(keys: string[]): CanvasProject {
         })), edges: [],
     } as unknown as CanvasProject;
 }
+
+test("a stalled media read reports progress and cancellation prevents any later archive save", async () => {
+    let finishRead!: (blob: Blob) => void;
+    blockedReads.set("video:blocked", new Promise<Blob>((resolve) => { finishRead = resolve; }));
+    const controller = new AbortController();
+    const phases: string[] = [];
+    const exporting = exportCanvasProjects([project(["video:blocked"])], "取消测试", { signal: controller.signal, onProgress: (progress) => phases.push(progress.phase) });
+    expect(phases).toEqual(["media"]);
+    controller.abort();
+    await expect(exporting).rejects.toHaveProperty("name", "AbortError");
+    finishRead(new Blob(["late video"]));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(saved).toEqual([]);
+    expect(phases).toEqual(["media"]);
+});
+
+test("per-file export progress cannot evict a real bind failure", async () => {
+    setDiagnosticUserScope("export-retention");
+    recordDiagnosticEvent({ category: "task", level: "error", code: "retained-bind-failure", message: "绑定失败" });
+    const keys = Array.from({ length: 600 }, (_, index) => `video:retention-${index}`);
+    for (const key of keys) blobs.set(key, new Blob(["x"]));
+    await exportCanvasProjects([project(keys)]);
+    const { events, coverage } = await getClientDiagnosticSnapshot();
+    expect(coverage.persisted).toBe(true);
+    expect(coverage.writeErrorCount).toBe(0);
+    expect([...diagnosticRecords.values()].some(value => String(value).includes("retained-bind-failure"))).toBe(true);
+    expect(events.some(event => event.code === "retained-bind-failure")).toBe(true);
+    expect(events.filter(event => event.code?.startsWith("canvas_export_")).length).toBeLessThanOrEqual(4);
+});
 
 function mediaAsset(key?: string): Asset {
     return {
@@ -92,7 +145,7 @@ test("folder cover export embeds canonical bytes and drops source resource ident
         expect(folder.coverDataUrl).toBeUndefined();
         expect(folder.coverMimeType).toBe("image/jpeg");
         expect(await archive.get(folder.coverPath)!.text()).toBe("cover bytes");
-        expect(read.mock.calls[0][0]).toMatchObject({ url: "/resources/old-cover/file?proxy=1", expectedScope: expect.any(Object) });
+        expect(read.mock.calls[0][0]).toMatchObject({ url: "/resources/old-cover/file?proxy=1" });
     } finally { read.mockRestore(); }
 });
 
@@ -116,11 +169,16 @@ test("missing and empty blobs are all reported before saving an archive", async 
 });
 
 test("missing drawing document blocks current-canvas backup but can be excluded for history", async () => {
-    const canvas = project([]);
+    const canvas = { ...project([]), folderId: "unexported-folder" };
     canvas.nodes = [{ id: "drawing", type: "drawing", title: "分镜手稿", metadata: { drawingId: "sketch" } }] as CanvasProject["nodes"];
     await expect(exportCanvasProjects([canvas])).rejects.toThrow("画板 分镜手稿");
     expect(saved).toHaveLength(0);
     expect(await exportCanvasProjects([canvas], "历史", { includeLocalDrawings: false })).toBe("saved");
+    const archiveFile = new File([Buffer.from(saved[0].data, "base64")], "history.zip");
+    const opened = await openCanvasArchive(archiveFile);
+    expect(opened.data.projects).toHaveLength(1);
+    expect(opened.data.projects[0].drawingDocuments).toBeUndefined();
+    expect(opened.data.projects[0].project.folderId).toBeUndefined();
 });
 
 test("asset archive refuses missing files, including a missing media reference", async () => {
@@ -285,4 +343,41 @@ test("malformed asset archive fails before writing partial media; duplicate ZIP 
     await expect(readAssetPackage(new File([archive], "broken.zip"))).rejects.toThrow("b.wav");
     expect(restored.size).toBe(0);
     await expect(createZip([{ name: "same", data: "A" }, { name: "same", data: "B" }])).rejects.toThrow("重名文件");
+});
+
+test("allowMissingMedia exports valid media and produces a restorable archive while reporting skipped files", async () => {
+    blobs.set("video:ok", new Blob(["valid-video"], { type: "video/mp4" }));
+    unreadable.add("video:broken");
+    unreadable.add("corrupt-drawing");
+    const canvas = project(["video:ok", "resource:missing-id", "video:broken"]);
+    canvas.nodes.push({ id: "missing-drawing", type: "drawing", title: "丢失画板", metadata: { drawingId: "gone" } } as CanvasProject["nodes"][number]);
+    canvas.nodes.push({ id: "corrupt-drawing-node", type: "drawing", title: "损坏画板", metadata: { drawingId: "corrupt-drawing" } } as CanvasProject["nodes"][number]);
+    const skipped: Array<{ owner: string; reference: string }> = [];
+    expect(await exportCanvasProjects([canvas], "容错备份", {
+        allowMissingMedia: true,
+        onSkippedFiles: (items) => skipped.push(...items),
+    })).toBe("saved");
+    expect(skipped).toHaveLength(4);
+    expect(skipped.some((item) => item.reference.includes("损坏画板（读取失败）"))).toBe(true);
+    expect(saved).toHaveLength(1);
+    const archiveFile = new File([Buffer.from(saved[0].data, "base64")], "resilient.zip");
+    const opened = await openCanvasArchive(archiveFile);
+    expect(opened.data.projects).toHaveLength(1);
+    expect(opened.data.projects[0].files.map((item) => item.storageKey)).toEqual(["video:ok"]);
+    expect(opened.data.skippedFiles).toHaveLength(4);
+});
+
+test("exportCanvasProjectsByIds rejects when any requested canvas fails to load and defaults to strict integrity", async () => {
+    blobs.set("video:ok", new Blob(["valid-video"], { type: "video/mp4" }));
+    const valid = project(["video:ok"]);
+    await expect(
+        exportCanvasProjectsByIds(["valid-id", "missing-id"], (id) => (id === "valid-id" ? valid : undefined), { allowMissingMedia: true }),
+    ).rejects.toThrow("画布不存在，无法导出");
+    expect(saved).toHaveLength(0);
+
+    const brokenMedia = project(["video:missing"]);
+    await expect(
+        exportCanvasProjectsByIds(["broken-id"], () => brokenMedia),
+    ).rejects.toThrow(ExportIntegrityError);
+    expect(saved).toHaveLength(0);
 });

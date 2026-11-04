@@ -3,6 +3,7 @@ package editing
 import (
 	"fmt"
 	"infinite-canvas/backend/internal/mediatools"
+	"math"
 	"strings"
 )
 
@@ -84,8 +85,18 @@ func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string
 	}
 	filters = append(filters, fmt.Sprintf("%samix=inputs=%d:duration=first:normalize=0,atrim=duration=%.3f[aout]", mix, len(plan.Audio)+1, float64(plan.DurationMs)/1000))
 	if plan.Output.BurnSubtitles && plan.SubtitleSRT != "" {
-		// 固定相对文件名避免工作目录/字幕文本进入滤镜表达式。
-		filters = append(filters, fmt.Sprintf("[vbase]subtitles=filename=%s[vout]", SubtitleFileName))
+		// SRT has no canvas geometry. Override libass's virtual canvas as well
+		// as font/margins, otherwise portrait captions inherit landscape scaling.
+		// Match the browser's logical height/24 size, capped for portrait width.
+		// ASS's old 16/288 default scales by 4/3 relative to that CSS size.
+		// Keep these defaults with timeline-subtitle-image.ts; text is unchanged.
+		textSize := math.Min(float64(height)/24, float64(width)/18)
+		fontSize := max(1, int(math.Round(textSize*4/3)))
+		marginX := max(1, int(math.Round(float64(width)*0.08)))
+		marginY := max(1, int(math.Round(float64(height)*0.07)))
+		style := fmt.Sprintf("PlayResX=%d,PlayResY=%d,FontSize=%d,MarginL=%d,MarginR=%d,MarginV=%d,Outline=%.2f,Shadow=0,Alignment=2,WrapStyle=0", width, height, fontSize, marginX, marginX, marginY, max(1, textSize/24))
+		// Only fixed names and computed numbers enter this filter, never text/paths.
+		filters = append(filters, fmt.Sprintf("[vbase]subtitles=filename=%s:force_style='%s'[vout]", SubtitleFileName, style))
 	} else {
 		filters = append(filters, "[vbase]null[vout]")
 	}

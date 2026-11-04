@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -30,6 +31,7 @@ type TaskPort interface {
 	CreateTimelineRenderTask(string, localtask.TimelineRenderCreateRequest) (*model.Task, error)
 	CreateTimelineTranscriptionTask(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error)
 	CreateDepthCaptureTask(string, localtask.DepthCaptureCreateRequest) (*model.Task, error)
+	RecoverTask(context.Context, string, string) (*model.Task, error)
 }
 
 type GenerationPort interface {
@@ -39,6 +41,10 @@ type GenerationPort interface {
 type ProviderConfigPort interface {
 	ReadLocalModelConfig() ([]byte, error)
 	SaveLocalModelConfig([]byte) error
+}
+
+type ModelCapabilityPort interface {
+	NormalizeModelCapabilityDraft(modelcatalog.ModelCapabilityDraft) (*modelcatalog.ModelCapabilityConfig, error)
 }
 
 type Lifecycle interface {

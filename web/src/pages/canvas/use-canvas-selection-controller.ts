@@ -4,10 +4,15 @@ import { applyCanvasNodeDragPreview, applyCanvasNodeSelectionPreview, applyCanva
 import { calculateNodeAlignment, createNodeAlignmentContext, sameStringSet, type NodeAlignmentContext } from "@/lib/canvas/canvas-project-domain";
 import { applyFrameDrop, buildCanvasFrameDropIndex, findFrameDropTargetFromIndex, getFrameChildIds, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { applyCanvasSelectionStrategy, canvasSelectionHitsBounds, createCanvasSelectionBounds, createCanvasSelectionSpatialIndexCache, resolveCanvasSelectionHitMode, resolveCanvasSelectionPreviewDelta, resolveCanvasSelectionStrategy } from "@/lib/canvas/canvas-selection";
+import { canExportWorkflowResult, workflowAtPoint } from "@/lib/canvas/reusable-workflow-instance";
+import { canvasNodeResourceId } from "@/lib/canvas/canvas-resource-id";
 import { canvasNodeBounds } from "@/lib/canvas/canvas-spatial-index";
 import type { CanvasNodeData, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasSelectionControllerOptions = {
+    pageUi: CanvasPageUiStoreHook;
+    projectId: string;
     containerRef: RefObject<HTMLDivElement | null>;
     nodesRef: { current: CanvasNodeData[] };
     viewportRef: { current: ViewportTransform };
@@ -15,8 +20,6 @@ type UseCanvasSelectionControllerOptions = {
     historyPausedRef: { current: boolean };
     screenToCanvas: (clientX: number, clientY: number) => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     cancelPendingConnectionCreate: () => void;
     onCanvasSelectionStart: () => void;
     onNodeInteractionStart: (selectionModifier: boolean) => void;
@@ -25,6 +28,8 @@ type UseCanvasSelectionControllerOptions = {
     onNodeDragEnd?: (nodeId: string) => void;
     onBatchConnectionTarget?: (event: ReactMouseEvent | ReactPointerEvent, nodeId: string) => boolean;
     onLinkedFolderDrop?: (folder: CanvasNodeData, nodes: CanvasNodeData[]) => void;
+    onNodeDrop?: (nodeIds: string[], point: Position) => boolean;
+    onNodeDropTarget?: (nodeIds: string[], point: Position) => string | undefined;
     onDeselect: () => void;
     snapToGrid?: boolean;
 };
@@ -65,6 +70,8 @@ function snapCanvasOffsetToGrid(offset: Position, anchor: { x: number; y: number
 }
 
 export function useCanvasSelectionController({
+    pageUi,
+    projectId,
     containerRef,
     nodesRef,
     viewportRef,
@@ -72,8 +79,6 @@ export function useCanvasSelectionController({
     historyPausedRef,
     screenToCanvas,
     setNodes,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
     cancelPendingConnectionCreate,
     onCanvasSelectionStart,
     onNodeInteractionStart,
@@ -82,6 +87,8 @@ export function useCanvasSelectionController({
     onNodeDragEnd,
     onBatchConnectionTarget,
     onLinkedFolderDrop,
+    onNodeDrop,
+    onNodeDropTarget,
     onDeselect,
     snapToGrid = false,
 }: UseCanvasSelectionControllerOptions) {
@@ -102,6 +109,7 @@ export function useCanvasSelectionController({
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
     const [frameDropTargetId, setFrameDropTargetId] = useState<string | null>(null);
     const [isNodeDragging, setIsNodeDragging] = useState(false);
+    const [nodeDropTargetId, setNodeDropTargetId] = useState<string | undefined>();
     const [dragPreview, setDragPreview] = useState<{ x: number; y: number; nodeIds: Set<string> } | null>(null);
     const [alignmentGuides, setAlignmentGuides] = useState<{ vertical?: number; horizontal?: number }>({});
 
@@ -122,18 +130,18 @@ export function useCanvasSelectionController({
         const restoredSelection = new Set(initialSelection);
         if (sameStringSet(restoredSelection, selectedNodeIdsRef.current)) return;
         selectedNodeIdsRef.current = restoredSelection;
-        setSelectedNodeIds(restoredSelection);
-    }, [resetSelectionBox, selectedNodeIdsRef, setSelectedNodeIds]);
+        pageUi.getState().setSelectedNodeIds(restoredSelection);
+    }, [pageUi, projectId, resetSelectionBox, selectedNodeIdsRef]);
 
     const deselectCanvas = useCallback(() => {
         cancelPendingConnectionCreate();
         cancelSelectionBox();
         const emptySelection = new Set<string>();
         selectedNodeIdsRef.current = emptySelection;
-        setSelectedNodeIds(emptySelection);
-        setSelectedConnectionId(null);
+        pageUi.getState().setSelectedNodeIds(emptySelection);
+        pageUi.getState().setSelectedConnectionId(null);
         onDeselect();
-    }, [cancelPendingConnectionCreate, cancelSelectionBox, onDeselect, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, cancelPendingConnectionCreate, cancelSelectionBox, onDeselect, selectedNodeIdsRef]);
 
     const handleCanvasMouseDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
         cancelPendingConnectionCreate();
@@ -153,8 +161,8 @@ export function useCanvasSelectionController({
         };
         selectionGestureRef.current = { phase: "pending", initialSelection, selection: nextSelectionBox };
         selectionSpatialIndexCacheRef.current.get(nodesRef.current);
-        setSelectedConnectionId(null);
-    }, [cancelPendingConnectionCreate, nodesRef, onCanvasSelectionStart, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId]);
+        pageUi.getState().setSelectedConnectionId(null);
+    }, [pageUi, projectId, cancelPendingConnectionCreate, nodesRef, onCanvasSelectionStart, screenToCanvas, selectedNodeIdsRef]);
 
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent | ReactPointerEvent, nodeId: string) => {
         event.stopPropagation();
@@ -163,7 +171,7 @@ export function useCanvasSelectionController({
         // Paint order is session-local UI state. Update it once at the start
         // of a real node interaction so dragging also survives deselection.
         onNodeBringToFront?.(nodeId);
-        setSelectedConnectionId(null);
+        pageUi.getState().setSelectedConnectionId(null);
         const currentNodes = nodesRef.current;
         const nextSelected = new Set(selectedNodeIdsRef.current);
         const isSubtractClick = event.altKey;
@@ -181,7 +189,7 @@ export function useCanvasSelectionController({
         }
 
         selectedNodeIdsRef.current = nextSelected;
-        setSelectedNodeIds(nextSelected);
+        pageUi.getState().setSelectedNodeIds(nextSelected);
         if (isSelectionModifier && !nextSelected.has(nodeId)) {
             dragRef.current = { ...EMPTY_DRAG_STATE, openPanelOnClick: false };
             return;
@@ -221,7 +229,7 @@ export function useCanvasSelectionController({
         setAlignmentGuides({});
         setDragPreview({ x: 0, y: 0, nodeIds: draggedRenderNodeIdSet });
         applyCanvasNodeDragPreview(containerRef.current, { x: 0, y: 0, nodeIds: draggedRenderNodeIdSet });
-    }, [containerRef, historyPausedRef, nodesRef, onBatchConnectionTarget, onNodeBringToFront, onNodeClick, onNodeInteractionStart, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, containerRef, historyPausedRef, nodesRef, onBatchConnectionTarget, onNodeBringToFront, onNodeClick, onNodeInteractionStart, selectedNodeIdsRef]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (dragFrameRef.current) {
@@ -248,7 +256,8 @@ export function useCanvasSelectionController({
         setIsNodeDragging(false);
         setDragPreview(null);
         setAlignmentGuides({});
-        if (dragRef.current.hasMoved) {
+        const consumed = dragRef.current.hasMoved && clientX != null && clientY != null && onNodeDrop?.(dragRef.current.draggedNodeIds, screenToCanvas(clientX, clientY));
+        if (dragRef.current.hasMoved && !consumed) {
             const draggedNodeIds = new Set(dragRef.current.draggedNodeIds);
             const positioned = clientX == null || clientY == null ? nodesRef.current : nodesRef.current.map((node) => {
                 const initial = initialById.get(node.id);
@@ -263,6 +272,7 @@ export function useCanvasSelectionController({
             if (clickedNodeId) onNodeDragEnd?.(clickedNodeId);
         }
         setFrameDropTargetId(null);
+        setNodeDropTargetId(undefined);
         alignmentContextRef.current = null;
         draggedNodesRef.current = [];
         dragRef.current = { ...EMPTY_DRAG_STATE };
@@ -270,7 +280,7 @@ export function useCanvasSelectionController({
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             if (clickedNode) onNodeClick(clickedNode);
         }
-    }, [historyPausedRef, nodesRef, onLinkedFolderDrop, onNodeClick, onNodeDragEnd, setNodes, snapToGrid, viewportRef]);
+    }, [historyPausedRef, nodesRef, onLinkedFolderDrop, onNodeClick, onNodeDragEnd, onNodeDrop, screenToCanvas, setNodes, snapToGrid, viewportRef]);
 
     const handleNodeDragMove = useCallback((event: MouseEvent | PointerEvent) => {
         if (!dragRef.current.isDraggingNode) return;
@@ -287,8 +297,16 @@ export function useCanvasSelectionController({
                 lastFrameDropCheckRef.current = now;
                 const draggedNodeIds = new Set(dragRef.current.draggedNodeIds);
                 setFrameDropTargetId(findFrameDropTargetFromIndex(frameDropIndexRef.current, draggedNodesRef.current, draggedNodeIds, latest));
+                setNodeDropTargetId(onNodeDropTarget?.(dragRef.current.draggedNodeIds, screenToCanvas(event.clientX, event.clientY)));
             }
+            const source = dragRef.current.draggedNodeIds.length === 1 ? nodesRef.current.find(node => node.id === dragRef.current.draggedNodeIds[0]) : undefined;
+            const point = screenToCanvas(event.clientX, event.clientY);
+            const compact = source && dragRef.current.hasMoved && (canExportWorkflowResult(source, nodesRef.current)
+                || canvasNodeResourceId(source) && workflowAtPoint(nodesRef.current, point))
+                ? { nodeId: source.id, x: point.x + 12 / viewportRef.current.k, y: point.y + 12 / viewportRef.current.k,
+                    scale: Math.min(1, 120 / (source.width * viewportRef.current.k), 90 / (source.height * viewportRef.current.k)) } : undefined;
             applyCanvasNodeDragPreview(containerRef.current, {
+                compact,
                 x: latest.x,
                 y: latest.y,
                 nodeIds: dragRef.current.draggedRenderNodeIdSet,
@@ -297,7 +315,7 @@ export function useCanvasSelectionController({
             setAlignmentGuides((current) => current.vertical === nextGuides.vertical && current.horizontal === nextGuides.horizontal ? current : nextGuides);
             dragFrameRef.current = null;
         });
-    }, [containerRef, viewportRef]);
+    }, [containerRef, nodesRef, viewportRef, onNodeDropTarget, screenToCanvas]);
 
     const updateSelectionPreview = useCallback((world: Position, commit: boolean) => {
         let gesture = selectionGestureRef.current;
@@ -328,10 +346,10 @@ export function useCanvasSelectionController({
         const nextSelected = applyCanvasSelectionStrategy(gesture.initialSelection, hitNodeIds, selection.strategy);
         if (!sameStringSet(nextSelected, selectedNodeIdsRef.current)) {
             selectedNodeIdsRef.current = nextSelected;
-            setSelectedNodeIds(nextSelected);
+            pageUi.getState().setSelectedNodeIds(nextSelected);
         }
         return true;
-    }, [containerRef, nodesRef, selectedNodeIdsRef, setSelectedNodeIds, viewportRef]);
+    }, [pageUi, projectId, containerRef, nodesRef, selectedNodeIdsRef, viewportRef]);
 
     const handlePointerMove = useCallback((event: PointerEvent) => {
         if (dragRef.current.isDraggingNode) {
@@ -406,6 +424,7 @@ export function useCanvasSelectionController({
         deselectCanvas,
         dragPreview,
         frameDropTargetId,
+        nodeDropTargetId,
         handleCanvasMouseDown,
         handleNodeMouseDown,
         isNodeDragging,

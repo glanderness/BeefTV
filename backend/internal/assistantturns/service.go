@@ -207,18 +207,22 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 	if rec.UserID != userID || rec.Undone || rec.effectiveState() != StateOpen {
 		return Scope{}, false, nil
 	}
+	if err := s.continuationTurnAllowed(s.store.DB(), turnID); err != nil {
+		return Scope{}, false, err
+	}
 	taskIDs := append([]string{}, rec.AssociatedTaskIDs...)
 	receipts, err := s.store.SucceededByTurn(nil, rec.UserID, rec.TurnID)
 	if err != nil {
 		return Scope{}, false, err
 	}
 	for _, receipt := range receipts {
-		if receipt.Op != "canvas.timeline.render" {
+		if receipt.Op != "canvas.timeline.render" && receipt.Op != "canvas.generation.submit" {
 			continue
 		}
 		var result struct {
-			CanvasID string `json:"canvasId"`
-			TaskID   string `json:"taskId"`
+			CanvasID string   `json:"canvasId"`
+			TaskID   string   `json:"taskId"`
+			TaskIDs  []string `json:"taskIds"`
 		}
 		if json.Unmarshal([]byte(receipt.ResultJSON), &result) != nil {
 			return Scope{}, false, errors.New("本地渲染回执损坏")
@@ -226,15 +230,73 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 		if (result.CanvasID == rec.CanvasID || Mode(rec.PermissionMode) == PermissionFullAccess) && strings.TrimSpace(result.TaskID) != "" {
 			taskIDs = append(taskIDs, result.TaskID)
 		}
+		if result.CanvasID == rec.CanvasID {
+			taskIDs = append(taskIDs, result.TaskIDs...)
+		}
+	}
+	sessionPins, err := s.sessionSkillPins(rec)
+	if err != nil {
+		return Scope{}, false, err
+	}
+	// Active pins authorize exact resources on a continued round without
+	// confusing the historical transcript union with the current selection.
+	activePins := []skills.Pin{}
+	if rec.DurableSessionID != "" {
+		var contextRow model.AssistantSkillContext
+		queryErr := s.store.DB().Where(&model.AssistantSkillContext{UserID: userID, CanvasID: rec.CanvasID, DurableSessionID: rec.DurableSessionID}).First(&contextRow).Error
+		if queryErr == nil {
+			current, decodeErr := contextProjection(contextRow)
+			if decodeErr != nil {
+				return Scope{}, false, decodeErr
+			}
+			if current.Lifecycle != "active" {
+				return Scope{}, false, contextError("skill_scope_reset_pending", "独立任务正在准备")
+			}
+			activePins = current.ActivePins
+		} else if !errors.Is(queryErr, gorm.ErrRecordNotFound) {
+			return Scope{}, false, queryErr
+		}
 	}
 	return Scope{
-		PermissionMode: Mode(rec.PermissionMode),
-		CanvasID:       rec.CanvasID,
-		AssetIDs:       uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
-		CanvasIDs:      uniqueSorted(rec.ReferencedCanvasIDs),
-		TaskIDs:        uniqueSorted(taskIDs),
-		SkillPins:      SortedSkillPins(rec.SkillPins),
+		PermissionMode:   Mode(rec.PermissionMode),
+		CanvasID:         rec.CanvasID,
+		AssetIDs:         uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
+		CanvasIDs:        uniqueSorted(rec.ReferencedCanvasIDs),
+		TaskIDs:          uniqueSorted(taskIDs),
+		SkillPins:        SortedSkillPins(rec.SkillPins),
+		ActiveSkillPins:  activePins,
+		SessionSkillPins: sessionPins,
 	}, true, nil
+}
+
+// sessionSkillPins returns the exact pins of other rounds bound to the same
+// Durable conversation and owner. Undone rounds still count: their skill text
+// remains in the conversation transcript.
+func (s *Service) sessionSkillPins(rec Record) ([]skills.Pin, error) {
+	if strings.TrimSpace(rec.DurableSessionID) == "" || s.store.DB() == nil {
+		return nil, nil
+	}
+	var rows []model.AssistantTurn
+	if err := s.store.DB().Select("turn_id", "skill_pins_json").
+		Where("user_id = ? AND durable_session_id = ? AND turn_id <> ? AND skill_pins_json <> ''", rec.UserID, rec.DurableSessionID, rec.TurnID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	seen := map[skills.Pin]bool{}
+	pins := []skills.Pin{}
+	for _, row := range rows {
+		var stored []skills.Pin
+		if json.Unmarshal([]byte(row.SkillPinsJSON), &stored) != nil {
+			return nil, errCorruptStored()
+		}
+		for _, pin := range stored {
+			if identity := pin.Identity(); !seen[identity] {
+				seen[identity] = true
+				pins = append(pins, pin)
+			}
+		}
+	}
+	return SortedSkillPins(pins), nil
 }
 
 // Finalize settles an open round from this round's succeeded receipts.
@@ -295,7 +357,10 @@ func (s *Service) Finalize(turnID string) error {
 			rec.Document = nil
 			rec.CanvasSnapshots = nil
 		}
-		return s.persist(tx, rec)
+		if err := s.persist(tx, rec); err != nil {
+			return err
+		}
+		return tx.Model(&model.AssistantContinuation{}).Where("turn_id = ? AND state IN ?", rec.TurnID, []string{"claimed", "running"}).Update("state", "done").Error
 	})
 }
 
@@ -336,7 +401,37 @@ func (s *Service) History(userID, canvasID, turnID string) (*HistoryState, error
 			return nil, err
 		}
 	}
-	return &HistoryState{Change: change, Undone: rec.Undone, PermissionMode: Mode(rec.PermissionMode)}, nil
+	return &HistoryState{Change: change, Undone: rec.Undone, ContinuationInvalidated: rec.ContinuationInvalidated, PermissionMode: Mode(rec.PermissionMode), SkillPins: SortedSkillPins(rec.SkillPins)}, nil
+}
+
+// CheckProposalRunnable is the server gate before a generation the round
+// suggested is started. Undo and a changed intent both invalidate unstarted
+// proposals, even when automatic continuation is disabled. Missing or foreign
+// rounds read as not found.
+func (s *Service) CheckProposalRunnable(userID, canvasID, turnID string) error {
+	if err := requireActor(userID, canvasID); err != nil {
+		return err
+	}
+	if NormalizeTurnID(turnID) == "" {
+		return errNotFound()
+	}
+	rec, err := s.load(nil, turnID)
+	if err != nil {
+		if isMissing(err) {
+			return errNotFound()
+		}
+		return err
+	}
+	if rec.UserID != userID || rec.CanvasID != canvasID {
+		return errNotFound()
+	}
+	if rec.Undone {
+		return &Error{Reason: ReasonUndone, Message: "这一轮已撤销，不会生成。"}
+	}
+	if rec.ContinuationInvalidated {
+		return continuationError("intent_changed")
+	}
+	return nil
 }
 
 // Undone reports whether the owner-scoped round carries a durable undo marker.

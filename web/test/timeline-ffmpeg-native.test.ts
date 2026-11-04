@@ -98,6 +98,27 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: share
             writeFileSync(join(dir, "subtitle.png"), Buffer.from(png as number[]));
             const glyphs = await page.evaluate(async () => [Array.from(await (window as any).rasterize("中文", 320, 180)), Array.from(await (window as any).rasterize("测试", 320, 180))]);
             expect(glyphs[0]).not.toEqual(glyphs[1]);
+            const bounds = await page.evaluate(async () => {
+                const bytes = new Uint8Array(await (window as any).rasterize("新的一天，从一口热面包开始。", 720, 1280));
+                const picture = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+                const canvas = document.createElement("canvas"); canvas.width = 720; canvas.height = 1280;
+                const ctx = canvas.getContext("2d")!; ctx.drawImage(picture, 0, 0); picture.close();
+                const pixels = ctx.getImageData(0, 0, 720, 1280).data;
+                let minX = 720, maxX = 0, minY = 1280, maxY = 0, count = 0;
+                for (let y = 0; y < 1280; y++) for (let x = 0; x < 720; x++) {
+                    const i = (y * 720 + x) * 4;
+                    if (pixels[i] > 180 && pixels[i + 1] > 180 && pixels[i + 2] > 180 && pixels[i + 3] > 180) {
+                        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                        minY = Math.min(minY, y); maxY = Math.max(maxY, y); count++;
+                    }
+                }
+                return { minX, maxX, minY, maxY, count };
+            });
+            expect(bounds.count).toBeGreaterThan(100);
+            expect(bounds.minX).toBeGreaterThanOrEqual(36);
+            expect(bounds.maxX).toBeLessThan(684);
+            expect(bounds.minY).toBeGreaterThan(640);
+            expect(bounds.maxY).toBeLessThan(1244);
         } finally { await browser.close(); }
         await render("browser-fonts.mp4", canonical, ["subtitle.png"]);
         expect(frame("browser-fonts.mp4").some((value, index) => Math.abs(value - withoutText[index]) > 80)).toBe(true);

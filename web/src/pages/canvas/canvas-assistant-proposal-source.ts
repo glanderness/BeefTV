@@ -5,7 +5,8 @@ import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics
 import { getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { effectiveConfigForCustomChannels, useConfigStore } from "@/stores/use-config-store";
+import { effectiveConfigForCustomChannels, normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
+import { localWorkspaceConfig } from "@/lib/user-session";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -27,6 +28,7 @@ export function readAssistantProposalSourceState(projectId: string, nodes: Canva
         canvasRevision: project?.revision ?? -1,
         modelConfigRevision: persistence.revision,
         canvasHasUnconfirmedEdits: hasUnconfirmedCanvasEdits(projectId),
+        canvasUnconfirmedReason: getUnconfirmedCanvasDiagnostic(projectId)?.reason,
         modelConfigHasUnconfirmedEdits: modelConfigHasUnconfirmedEdits({ modelConfigDirty: persistence.dirty, modelConfigStatus: persistence.status }),
         nodes,
         connections,
@@ -42,6 +44,7 @@ export async function readPersistedAssistantProposalSource(projectId: string) {
         canvasId: canvas.id,
         canvasRevision: canvas.revision ?? -1,
         modelConfigRevision: config.revision,
+        config: effectiveConfigForCustomChannels(localWorkspaceConfig(normalizeConfigSnapshot({ config: config.config }).config), useUserStore.getState().features.customChannelsEnabled),
         nodes: canvas.nodes,
         connections: canvas.connections,
     };

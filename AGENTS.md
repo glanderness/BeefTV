@@ -11,7 +11,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 | 单元 | 技术栈 | 入口 | 责任 |
 | --- | --- | --- | --- |
 | `web/` | Vite、React 19、TypeScript、React Router、Ant Design、Tailwind、Zustand、TanStack Query | `web/src/application.tsx`、`web/src/router.tsx` | 工作区 UI、画布交互、浏览器缓存、API 调用和模型协议适配 |
-| `backend/` | Go 1.25、Gin、GORM、SQLite | `backend/cmd/desktop`、`backend/cmd/server` | 本地工作区 API、持久化任务、资源和外部模型协议适配 |
+| `backend/` | Go 1.26、Gin、GORM、SQLite | `backend/cmd/desktop`、`backend/cmd/server` | 本地工作区 API、持久化任务、资源和外部模型协议适配 |
 | `docs/` | Next.js、Fumadocs、MDX | `docs/content/docs/` | 面向用户和开发者的专题文档；构建配置见 `docs/source.config.ts` |
 
 根目录脚本负责 Wails 与本地开发验证。主线不依赖 PostgreSQL、Redis、登录或多租户部署。
@@ -82,8 +82,8 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 ### 数据、缓存和写路径
 
-- 画布、项目、任务、素材和大 JSON 使用带用户 scope 的 `localforage`；`localStorage` 只保存小型配置、当前 scope 或 UI 偏好。
-- 用户切换时隔离 React Query、localforage 和资源缓存；不能让账号之间串数据。
+- 画布、项目、任务、素材和大 JSON 使用按工作区命名空间区分的 `localforage`；`localStorage` 只保存小型配置、当前命名空间或 UI 偏好。命名空间（`getActiveUserScope` / `scopedStorageKey`）只用于区分本地存储，改动会让用户读不到已有数据。
+- BeefTV 不管账号：每个后端进程只服务一个本地工作区，运行中不会切换。账号、登录、钱包、余额和扣费归 BeefAPI；BeefTV 只记当前 BeefAPI 连接，切换连接时刷新模型能力目录。不要为"异步操作期间切换账号"加保护或测试；异步写回只需核对画布、项目、节点是否仍是原目标。
 - 后端不可用时的本地缓存是降级，不代表服务端已保存。UI 必须区分“本地缓存成功”和“服务端持久化成功”。
 - 生成、激活、审批、权限、删除、上传、配额、账务和密钥相关操作属于强校验写路径；不使用空 ID、默认用户、默认权限或默认额度兜底。
 - 素材删除必须先检查项目、画布、任务和其他业务引用；有引用则保留并返回来源，无引用才清理物理对象。物理删除失败不得删除素材记录。
@@ -92,7 +92,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 - Gin 接口统一返回 `{ code, data, msg, reason }`；失败时 HTTP status 和业务 `code` 都应表达真实失败，不把所有错误包装成 200。机器可读原因放在 `reason`，见 `docs/content/docs/backend/http-api.mdx`。
 - 所有对象读取、更新、删除都在 service 校验当前用户和资源归属；管理员权限在 service 校验，不依赖前端隐藏按钮。
-- 默认拒绝本机、私网和链路本地上游。可信开发主机只能通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行；不要设置“允许全部私网”来绕过 SSRF 防护。
+- 默认开放本机回环（`localhost` / `127.0.0.1` / `::1`）和局域网私网模型上游，仅拦截链路本地（`169.254.0.0/16` 等）、未指定与多播地址；需要严格公网隔离的部署可显式设置 `CANVAS_ALLOW_PRIVATE_UPSTREAMS=false` 并通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行。
 - 用户 API Key 保存在浏览器本地，任务创建时可能提交给自部署后端；只在可信部署和 HTTPS 下使用真实密钥。日志、错误上报、URL、localStorage 和持久任务正文不得写入敏感 URL、Cookie 或 API Key。
 - 生产必须配置明确的 `CANVAS_CORS_ORIGINS`，保持 HTTPS，限制数据库、备份、数据目录和 `.settings-key` 权限；默认关闭公开注册。
 - 数据库字段或表变化时同步更新 `docs/content/docs/backend/backend-database.mdx`，不能只改 GORM model。
@@ -123,7 +123,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
 - 后端：`cd backend && go test ./...`；涉及资源、任务或权限时补对应集成/冒烟路径。
-- 旧内置 Agent 已从产品运行面退场：`/agent/*` 路由不再注册，通用任务创建、任务重试和任务 Worker 拒绝 `cloud_agent`、`cloud_agent_step`、`agent_memory_compact`，旧轮次与记忆压缩调度保持停用，历史数据保留。当前分支的替换内核采用 `agent-host/` 中钉选的官方 pi SDK，Go 管理运行时、业务轮次及操作授权；React 使用 `/api/assistant/*`。宿主只有 Durable 一套执行运行时：旧 JSONL 会话只读历史，在旧会话里发新消息会以交接说明开一条新的 Durable 会话，不恢复旧 SDK 的 create/prompt/replace/abort 执行路径。按 `docs/refactor/pi-official-reuse.md` 核对官方 API 与实际接入路径，不能恢复旧入口或另建模型会话循环。零模型宿主验证、真实业务操作、付费模型验收与正式发布分别记证据。
+- 旧内置 Agent 已从产品运行面退场：`/agent/*` 路由不再注册，通用任务创建、任务重试和任务 Worker 拒绝 `cloud_agent`、`cloud_agent_step`、`agent_memory_compact`，旧轮次与记忆压缩调度保持停用，历史数据保留。当前分支的替换内核采用 `agent-host/` 中钉选的官方 pi SDK，Go 管理运行时、业务轮次及操作授权；React 使用 `/api/assistant/*`。宿主只有 Durable 一套执行运行时：旧 JSONL 会话只读历史，在旧会话里发新消息会以交接说明开一条新的 Durable 会话，不恢复旧 SDK 的 create/prompt/replace/abort 执行路径。核对官方 API 与实际接入路径，不能恢复旧入口或另建模型会话循环；零模型宿主验证、真实业务操作、付费模型验收与正式发布分别记证据。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
 - UI 变更能浏览器验证时，检查关键路由、明暗主题、滚动、弹窗、空态和核心交互；不能验证时说明替代依据，不把静态阅读或 `git diff` 写成运行验证。
 
@@ -132,10 +132,25 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 ## 9. 文档与交付
 
 - 根 `README.md` 只保留项目定位、能力概览、快速开始、部署、安全和文档入口；详细专题写入 `docs/content/docs/`。
+- `README.md` 是根 README 的中文准稿；每次修改 `README.md` 时，同步更新 `README.en.md`，并在两个文件顶部保留语言切换链接。
 - 功能与代码地图分别维护在 `docs/content/docs/overview/features.mdx`、`docs/content/docs/backend/code-map.mdx`。尚未确认的实现状态保留在任务或拉取请求中，不写入公开产品文档。
 - API、数据表、SSE、资源存储、部署或安全边界变化时同步对应专题文档；不要只改代码和根 README。
-- 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号或机器敏感路径。命令、端口、环境变量必须以当前脚本和 Compose 为准。
+- 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号、机器敏感路径、会话编号、飞书表编号、内部授权记录、预算金额、线上日志编号或客户与内部人名；提交说明和 PR 描述里也不写这些内容。命令、端口、环境变量必须以当前脚本和 Compose 为准。
 - Git 提交说明使用 `<type>(<scope>): <业务模块> - <变更摘要>`，`type` 为 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`。
-- 交叉 review：改动涉及前端 UI、交互或用户可见功能（含文案、设置项、安装与更新体验）的 PR，开出后由发起人在飞书团队群通知另一位协作者 review，附 PR 链接、改动要点和截图或录屏；对方在 PR 上 approve 或在飞书明确回复可以合并后再合并。纯后端或内部改动在 PR 描述里写明影响范围即可。AI 代理默认不合并 PR、不发版；项目负责人对某个 PR 明确授权时才可合并该 PR，授权不延伸到其他 PR 或发版，用户可见功能的 PR 仍须先完成交叉 review。通知内容只写已验证的事实，不附密钥、诊断包原文或本机路径。
+- 团队协作流程（交叉 review、付费授权、预算与合并/发版审批）另见团队私有工作约定，不在公开仓库维护。AI 代理默认不直接合并 PR 或发版。
 
 交付前至少检查：改动是否聚焦、调用方和类型是否同步、错误/权限/数据归属是否完整、必要文档是否同步、验证是否如实说明、是否留下密钥或本地数据。
+
+## 10. 防止屎山
+
+重构后的结构靠下面几条守住，修 bug 和加功能时同样适用。
+
+- 同一个结论只在一处计算。任务能否重试、能否取回只读后端 `task.outcome`，前端不另行推断或补写；模型能力、协议、扣费结论和错误归类归 BeefAPI。
+- 不新增按模型名写的规则。BeefAPI 内置渠道的差异交给 BeefAPI；自带 Key 的第三方渠道写成协议插件（`plugin-packages/`）。
+- 新代码不放进 `backend/internal/app`，放到对应领域包；新包不得 import `internal/app`。
+- 已发布的数据库迁移版本不改，只追加新版本。
+- 测试测行为，不读源码文字做断言。
+- 修 bug 前先查这条规则写在几处；有多处就先合成一处再修。
+- 文件超过约 800 行且最近常改、常修时，在本次改动里按职责拆开；不为拆而拆。
+- `node scripts/structure-budget.mjs` 记录几项结构数字：`internal/app` 行数、超过 1000 行的文件（含 CSS）、源码里写死的模型和厂商名、直接依赖 `*app.Service` 的 handler、读源码文字的测试。CI 只允许它们变小；确需变大时在 PR 说明里写清理由，再运行 `--update`。
+- 每周花半小时铲屎：运行 `node scripts/structure-budget.mjs --hotspots 7` 看近 7 天修 bug 最集中的文件，挑一处拆开或合并规则，再运行 `--update` 收紧基线；发版前关掉已经过时的 PR。

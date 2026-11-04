@@ -32,7 +32,6 @@ const assetStubPath = join(dir, "use-asset-store.ts");
 const modeStubPath = join(dir, "workspace-mode.ts");
 const resourcesStubPath = join(dir, "api-resources.ts");
 const userScopeStubPath = join(dir, "user-scope.ts");
-const userScopeGuardStubPath = join(dir, "user-scope-guard.ts");
 const canvasContentStubPath = join(dir, "canvas-content.ts");
 const rebaseStubPath = join(dir, "canvas-document-rebase.ts");
 
@@ -83,24 +82,20 @@ writeFileSync(historyPath, "export const useCanvasHistoryStore = { getState: () 
 writeFileSync(syncStubPath, "export const notifyCanvasRefresh = () => {};\n");
 writeFileSync(conflictStubPath, `
 export class CanvasBackendSubmitPausedError extends Error { constructor(message = "") { super(message); this.name = "CanvasBackendSubmitPausedError"; } }
-export class CanvasStaleScopeError extends Error { constructor(message = "") { super(message); this.name = "CanvasStaleScopeError"; } }
 export const isCanvasRevisionConflict = () => false;
-export const isCanvasSubmitControlError = (error) => error instanceof CanvasBackendSubmitPausedError || error instanceof CanvasStaleScopeError;
+export const isCanvasSubmitControlError = (error) => error instanceof CanvasBackendSubmitPausedError;
 export const canvasBackendSubmitPaused = () => false;
 export const pauseCanvasBackendSubmit = () => {};
 export const resumeCanvasBackendSubmit = () => {};
 export const handleRejectedCanvasBackendSave = async () => false;
+export const preserveCanvasConflictDraft = async () => {};
+export const setCanvasBackendSaveProgress = () => {};
+export const clearCanvasBackendSaveProgress = () => {};
 `);
 writeFileSync(assetStubPath, "export const useAssetStore = { getState: () => ({ assets: [] }) };\n");
 writeFileSync(modeStubPath, "export const isLocalWorkspaceMode = () => true;\n");
 writeFileSync(resourcesStubPath, "export const resourceIdFromStorageKey = () => '';\n");
-writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\nexport const getActiveUserScopeEpoch = () => 1;\n");
-writeFileSync(userScopeGuardStubPath, `
-export function captureUserScope(userScope = "guest", epoch = 1) { return { userScope, epoch }; }
-export function userScopeMatches() { return true; }
-export function assertUserScope() {}
-export function isUserScopeAbandonedError() { return false; }
-`);
+writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\n");
 writeFileSync(canvasContentStubPath, `
 export const sameCanvasDocument = (left, right) => {
   if (left === right) return true;
@@ -181,7 +176,6 @@ writeFileSync(join(dir, "repository.ts"), repositorySource
     .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetStubPath).href))
     .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modeStubPath).href))
     .replaceAll('"@/lib/user-scope"', JSON.stringify(pathToFileURL(userScopeStubPath).href))
-    .replaceAll('"@/lib/user-scope-guard"', JSON.stringify(pathToFileURL(userScopeGuardStubPath).href))
     .replace('"@/lib/canvas/canvas-content"', JSON.stringify(pathToFileURL(canvasContentStubPath).href))
     .replace('"@/lib/canvas/canvas-document-rebase"', JSON.stringify(pathToFileURL(rebaseStubPath).href))
     .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesStubPath).href)));
@@ -189,6 +183,7 @@ writeFileSync(join(dir, "repository.ts"), repositorySource
 const repository: typeof import("../src/services/local-workspace-repository") = await import(join(dir, "repository.ts"));
 const store = await import(storePath);
 const request = await import(requestPath);
+const journal = await import(journalPath);
 
 const project = (overrides: Partial<Project> = {}): Project => ({
     id: "canvas-a",
@@ -210,6 +205,7 @@ const project = (overrides: Partial<Project> = {}): Project => ({
 beforeEach(() => {
     store.resetProjects([]);
     request.setRemoteProject(undefined);
+    journal.resetCanvasOperationJournalMemory();
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -235,7 +231,12 @@ describe("local workspace stale backend protection", () => {
         store.recordCanvasDocumentBase(project({ nodes: [] }));
         request.setRemoteProject(remote);
 
-        expect(await repository.openLocalCanvasProjectFromBackend(local.id)).toEqual(local);
+        // revision 规则：本地 revision 未超过已记录基线时 read 采用后端进行对账，
+        // 本地独有的草稿节点经三方对账保留，文档 revision/updatedAt 对齐服务端；
+        // 过期缓存不会再无条件压过后端新版本。
+        const opened = await repository.openLocalCanvasProjectFromBackend(local.id);
+        expect(opened?.nodes).toEqual([{ id: "kept-node" }]);
+        expect(opened?.revision).toBe(2);
         expect(store.projects[0].nodes).toEqual([{ id: "kept-node" }]);
     });
 

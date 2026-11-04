@@ -17,6 +17,15 @@ func TestTaskFailureDiagnosticsPreserveLocalConstraint(t *testing.T) {
 	}
 }
 
+func TestTaskFailureDiagnosticsDiskFullStage(t *testing.T) {
+	task := &model.Task{ID: "task_12345678", Stage: "处理中"}
+	captureTaskFailureDiagnostics(task, errors.New("生成内容写入资源存储失败：write local resource: no space left on device"), "local_result")
+	d := task.FailureDiagnostics
+	if d == nil || d.Source != "local_result" || d.Stage != "保存生成结果（磁盘空间不足）" || !strings.Contains(d.Summary, "no space left on device") {
+		t.Fatalf("lost storage stage: %#v", d)
+	}
+}
+
 func TestTaskFailureDiagnosticsPreserveHTTPHeaderAndRedact(t *testing.T) {
 	task := &model.Task{ID: "task-http", Stage: "正在生成"}
 	err := providerHTTPError{StatusCode: 400, RequestID: "req-header-123", Body: `{"error":{"code":"invalid_size","param":"size","message":"size must be 1024x1024; Authorization: Bearer PRIVATE credential"}}`}
@@ -35,7 +44,7 @@ func TestTaskTerminalPersistsDiagnosticBeforeReplacingError(t *testing.T) {
 	repo := &taskTerminalRepositoryStub{task: task}
 	c := newTaskTerminalCoordinatorForTest(repo, &taskTerminalReplayStub{}, &taskTerminalLoggerStub{}, &taskTerminalOutputStub{})
 	err := errors.New("cannot save /Users/private-name/image.png")
-	if got := c.handleExecutionFailure(task, err, true, false); !errors.Is(got, err) {
+	if got := c.HandleExecutionFailure(task, err, true, false); !errors.Is(got, err) {
 		t.Fatal(got)
 	}
 	if task.FailureDiagnostics == nil || task.FailureDiagnostics.Source != "local_result" || strings.Contains(task.FailureDiagnostics.Summary, "private-name") {

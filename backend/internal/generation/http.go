@@ -14,6 +14,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 const (
@@ -28,6 +29,7 @@ var ErrVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 
 
 type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
+type providerDownloadContext struct{}
 
 func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
 	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
@@ -55,6 +57,10 @@ func PostJSON(ctx context.Context, config Config, path string, body interface{},
 }
 
 func PostJSONWithSubmissionKey(ctx context.Context, config Config, path string, body interface{}, target interface{}) error {
+	return postJSONWithSubmissionKey(ctx, config, path, body, target, nil)
+}
+
+func postJSONWithSubmissionKey(ctx context.Context, config Config, path string, body interface{}, target interface{}, classify func(error) error) error {
 	req, err := newJSONRequest(ctx, http.MethodPost, APIURL(config.BaseURL, path), config, body)
 	if err != nil {
 		return err
@@ -63,7 +69,11 @@ func PostJSONWithSubmissionKey(ctx context.Context, config Config, path string, 
 		req.Header.Set("Idempotency-Key", key)
 	}
 	req.GetBody = nil
-	return UncertainVideoSubmission(ctx, DoJSON(req, target))
+	err = DoJSON(req, target)
+	if classify != nil {
+		err = classify(err)
+	}
+	return UncertainVideoSubmission(ctx, err)
 }
 
 func GetJSON(ctx context.Context, config Config, path string, target interface{}) error {
@@ -73,6 +83,7 @@ func GetJSON(ctx context.Context, config Config, path string, target interface{}
 	}
 	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	outbound.ApplyOutboundHeaders(req, config.Headers)
+	applyBeefAPIVideoDeliveryHeader(ctx, config, req)
 	return DoJSON(req, target)
 }
 
@@ -116,13 +127,20 @@ func GetExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 }
 
 func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+	ctx = context.WithValue(ctx, providerDownloadContext{}, true)
 	downloadURL := ProviderDownloadURL(config.BaseURL, rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
 	if SameProviderOrigin(config.BaseURL, downloadURL) {
-		ApplyAuth(req, config)
+		if auth, ok := ctx.Value(videoProtocolAuthContext{}).(protocol.ManifestAuth); ok {
+			if err := ApplyProtocolAuth(req, config, auth); err != nil {
+				return nil, "", err
+			}
+		} else {
+			ApplyAuth(req, config)
+		}
 		outbound.ApplyOutboundHeaders(req, config.Headers)
 	}
 	return DoBinary(req)
@@ -230,6 +248,11 @@ func DoJSON(req *http.Request, target interface{}) error {
 }
 
 func DoBinary(req *http.Request) ([]byte, string, error) {
+	var protocolErr error
+	req, protocolErr = NegotiateImageReplay(req)
+	if protocolErr != nil {
+		return nil, "", protocolErr
+	}
 	if RecoverableImageEndpoint(req) {
 		runtime, ok := RuntimeFromContext(req.Context())
 		if !ok || runtime.Images == nil {
@@ -251,20 +274,30 @@ func DoBinary(req *http.Request) ([]byte, string, error) {
 }
 
 func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
+	if partial, _ := req.Context().Value(videoDownloadPartialContext{}).(string); partial != "" && req.Method == http.MethodGet && onChunk == nil {
+		return getResumableVideoBinary(req, partial)
+	}
 	return doBinaryWithAdmission(req, onChunk, nil)
 }
 
 // DoBinaryWithDispatchAdmission fences a paid send after local preflight and
 // channel admission, immediately before transport can make its outcome unknown.
 func DoBinaryWithDispatchAdmission(req *http.Request, admit func() error) ([]byte, string, error) {
+	// 冻结图片提交的幂等合同只属于原端点；重定向不能把 POST 带到未核实的渠道。
+	req = req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true))
 	return doBinaryWithAdmission(req, nil, admit)
 }
 
 func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admit func() error) (responseData []byte, responseMime string, resultErr error) {
 	startedAt := time.Now()
+	trace := &transportTrace{}
+	req = trace.attach(req)
 	observation := TransportObservation{Request: req, StartedAt: startedAt, ResponseLimitBytes: MaxResponseBytes}
 	defer func() {
-		observation.Body = responseData
+		observation.Dispatched, observation.TransportPhase = trace.result(resultErr)
+		if len(observation.Body) == 0 {
+			observation.Body = responseData
+		}
 		observation.Err = resultErr
 		if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Receipts != nil {
 			runtime.Receipts.Observe(observation)
@@ -307,11 +340,37 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		}
 		defer release()
 	}
-	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
+	videoIdleTimeout, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration)
+	credentials, _ := req.Context().Value(videoCredentialContext{}).(videoProviderCredentials)
+	if videoIdleTimeout > 0 && !SameProviderOrigin(credentials.Origin, req.URL.String()) {
+		stripVideoCredentialQuery(req.URL, credentials.Values)
+	}
+	if _, err := outbound.ValidateOutboundURLContext(req.Context(), req.URL.String()); err != nil {
 		return nil, "", err
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
+	if videoIdleTimeout > 0 {
+		client = videoDownloadHTTPClient(req, requestTimeout)
+	} else if download, _ := req.Context().Value(providerDownloadContext{}).(bool); download {
+		checkRedirect := client.CheckRedirect
+		leftOrigin := false
+		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+			if err := checkRedirect(next, via); err != nil {
+				return err
+			}
+			if !SameProviderOrigin(req.URL.String(), next.URL.String()) {
+				leftOrigin = true
+			}
+			// Go may copy custom headers (and same-host Authorization) to a CDN.
+			// Never restore provider headers after leaving, even on a return hop.
+			if leftOrigin {
+				next.Header = make(http.Header)
+				outbound.ApplyDefaultOutboundHeaders(next)
+			}
+			return nil
+		}
+	}
 	if noRedirect, _ := req.Context().Value(binaryNoRedirectContext{}).(bool); noRedirect {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
@@ -323,19 +382,39 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			return nil, "", err
 		}
 	}
-	observation.Dispatched = true
+	var videoIdleTimer *time.Timer
+	if videoIdleTimeout > 0 {
+		// Start after slot admission: local queueing is not a stalled transfer.
+		parentCtx := req.Context()
+		downloadCtx, cancel := context.WithCancelCause(parentCtx)
+		videoIdleTimer = time.AfterFunc(videoIdleTimeout, func() { cancel(context.DeadlineExceeded) })
+		req = req.WithContext(downloadCtx)
+		defer func() {
+			videoIdleTimer.Stop()
+			if resultErr != nil && errors.Is(context.Cause(downloadCtx), context.DeadlineExceeded) && parentCtx.Err() == nil {
+				resultErr = context.DeadlineExceeded
+			}
+			cancel(nil)
+		}()
+	}
+	observation.TransportRoute = outbound.RequestNetworkRoute(req, client.Transport)
 	resp, err := client.Do(req)
+	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {
 		if usesGenerationCircuit {
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
 		}
+		if !observation.Dispatched && resp == nil && (req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodPatch) {
+			return nil, "", RequestNotSentError{Cause: err}
+		}
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	observation.Headers = resp.Header.Clone()
 	observation.HTTPStatus = resp.StatusCode
 	observation.StatusCode = resp.StatusCode
 	observation.DeclaredResponseBytes = resp.ContentLength
-	observation.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"))
+	observation.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"), resp.Header.Get("X-Oneapi-Request-Id"))
 	if resp.ContentLength > responseLimit {
 		observation.Outcome = "response_limit"
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -354,6 +433,9 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		readCount, readErr := reader.Read(chunk)
 		observation.ReceivedBytes += int64(readCount)
 		if readCount > 0 {
+			if videoIdleTimer != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				videoIdleTimer.Reset(videoIdleTimeout)
+			}
 			if int64(buffered.Len()+readCount) > responseLimit {
 				observation.Outcome = "response_limit"
 				return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -371,6 +453,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		}
 	}
 	data := buffered.Bytes()
+	observation.Body = data
 	if int64(len(data)) > responseLimit {
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 	}
@@ -379,7 +462,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
 		httpErr := HTTPError{
-			RequestID:           firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")),
+			RequestID:           observation.RequestID,
 			StatusCode:          resp.StatusCode,
 			Status:              resp.Status,
 			Body:                string(data),
@@ -387,6 +470,12 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			IdempotencyReplayed: strings.EqualFold(resp.Header.Get("Idempotency-Replayed"), "true"),
 		}
 		observation.StatusCode = resp.StatusCode
+		if gatewayReferenceNotSubmitted(req, resp, data) {
+			return nil, "", RequestPreparationError{Cause: httpErr}
+		}
+		if videoIdleTimeout > 0 && !SameProviderOrigin(req.URL.String(), resp.Request.URL.String()) && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return nil, "", videoBackupLinkExpiredError{cause: httpErr}
+		}
 		return nil, "", httpErr
 	}
 	observation.StatusCode = resp.StatusCode

@@ -360,7 +360,7 @@ function MainTrackLabel({ name, kind, pathExists, expanded, hasDetails, menuOpen
 }
 
 function CameraTrackLabel({ label, value, keys, currentTime, onSelect, onSeek, onToggle, dataChannel }: { label: string; value: string; keys: TrackKey[]; currentTime: number; onSelect?: () => void; onSeek: (time: number) => void; onToggle?: () => void; dataChannel?: "position" | "rotation" | "scale" }) {
-    const times = keys.map((key) => key.time).toSorted((a, b) => a - b);
+    const times = keys.map((key) => key.time).sort((a, b) => a - b);
     const previous = times.filter((time) => time < currentTime - DIRECTOR_KEYFRAME_EPSILON).at(-1);
     const next = times.find((time) => time > currentTime + DIRECTOR_KEYFRAME_EPSILON);
     const keyed = times.some((time) => Math.abs(time - currentTime) < DIRECTOR_KEYFRAME_EPSILON);

@@ -9,7 +9,16 @@ import (
 )
 
 func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPolicy {
+	if managedConnection(input.Config) && (input.Mode == "image" || input.Mode == "video") {
+		return MediaHydrationPolicy{KeepLocal: true}
+	}
+	if input.Mode == "video" && IsBeefAPIVideoConfig(ctx, input.Config) {
+		return MediaHydrationPolicy{KeepLocal: true}
+	}
 	if input.Config.InterfaceType == "full-video" {
+		return MediaHydrationPolicy{KeepLocal: true}
+	}
+	if requiresBeefAPIHTTPReferences(ctx, input.Config) {
 		return MediaHydrationPolicy{KeepLocal: true}
 	}
 	policy := MediaHydrationPolicy{PreferURL: PrefersMediaURLs(input.Config.InterfaceType, input)}
@@ -38,6 +47,40 @@ func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPol
 	if input.Mode == "image" && input.Mask != nil {
 		policy.RequireURL = false
 		policy.PreferURL = false
+	}
+	return policy
+}
+
+// One protocol can accept inline images while requiring URLs for video/audio.
+// Explicit custom-channel choices override that protocol's default only.
+func mediaPolicyForKind(ctx context.Context, input Input, kind string, policy MediaHydrationPolicy) MediaHydrationPolicy {
+	if policy.KeepLocal {
+		return policy // Provider-owned upload flows must retain their local bytes.
+	}
+	if kind == "mask" {
+		if input.Mode == "image" && strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceOpenAIImage) {
+			return MediaHydrationPolicy{} // OpenAI Images sends the mask as multipart bytes.
+		}
+		kind = "image"
+	}
+	transport := ""
+	if adapter, ok := ProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
+		transport = adapter.Metadata().MediaTransport[kind]
+	}
+	if input.Config.ChannelID == "" {
+		if override := input.Config.ReferenceMediaTransport[kind]; override != "" && override != "auto" {
+			transport = override
+		}
+	}
+	switch transport {
+	case "inline":
+		policy.RequireURL, policy.PreferURL, policy.PreferHTTPS = false, false, false
+	case "url", "link":
+		policy.RequireURL, policy.PreferURL, policy.PreferHTTPS = true, true, false
+		policy.ManualURL = transport == "link"
+	}
+	if kind == "video" && isBytePlusVideoInput(input) {
+		policy.RequireURL, policy.PreferURL, policy.PreferHTTPS = true, true, false
 	}
 	return policy
 }

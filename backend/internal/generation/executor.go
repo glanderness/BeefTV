@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
 )
@@ -18,7 +17,7 @@ import (
 func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	runtime, _ := RuntimeFromContext(ctx)
 	userID := strings.TrimSpace(runtime.Call.UserID)
-	if strings.TrimSpace(input.Mode) == "" && strings.HasPrefix(runtime.Call.TaskType, "video_") {
+	if strings.TrimSpace(input.Mode) == "" && (runtime.Call.TaskType == "canvas_video" || strings.HasPrefix(runtime.Call.TaskType, "video_")) {
 		input.Mode = "video"
 	}
 
@@ -43,6 +42,12 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		return nil, errors.New("无法解析系统渠道配置")
 	}
 	applyCanvasTextStreaming(runtime.Call.TaskType, &input)
+	if input.Upscale != nil {
+		if err := requireTaskRuntime(ctx); err != nil {
+			return nil, err
+		}
+		return RunUpscaleTask(ctx, input)
+	}
 
 	if workflow.IsProviderInterface(input.Config.InterfaceType) {
 		return executeWorkflow(ctx, runtime, userID, input)
@@ -70,7 +75,25 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 
 	if input.Mode == "image" && runtime.Config != nil {
 		if err := runtime.Config.ApplyCapabilities(ctx, &input); err != nil {
+			if ResumedProviderRequestID(ctx) == "" {
+				return nil, RequestPreparationError{Cause: err}
+			}
 			return nil, err
+		}
+	}
+	if input.Mode == "image" && managedConnection(input.Config) {
+		return runManagedImageTask(ctx, input)
+	}
+	if input.Mode == "video" {
+		client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "video")
+		if err != nil {
+			return nil, err
+		}
+		if unified {
+			return runManagedVideoTask(ctx, client, input)
+		}
+		if client != nil {
+			ctx = context.WithValue(ctx, managedClientContextKey{}, client)
 		}
 	}
 
@@ -85,10 +108,12 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 				return nil, err
 			}
 		}
-		if input.Mode == "video" {
+		if input.Mode == "video" || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 {
 			if err := HydrateVideoReferenceMetadata(ctx, userID, &input); err != nil {
-				return nil, err
+				return nil, RequestPreparationError{Cause: err}
 			}
+		}
+		if input.Mode == "video" {
 			if runtime.Config != nil {
 				if err := runtime.Config.ApplyCapabilities(ctx, &input); err != nil {
 					return nil, err
@@ -103,14 +128,14 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 				return nil, err
 			}
 		}
-		if err := PrepareBeefAPISeedanceReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
+		if err := PrepareBeefAPIVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
 			return nil, err
 		}
 		if err := prepareFullVideoReferences(ctx, &input, ownedFullVideoMediaReader(ctx, userID)); err != nil {
 			return nil, err
 		}
 	}
-	if input.Mode == "video" && input.VideoCapability != nil && !resumed {
+	if input.Mode == "video" && strings.TrimSpace(input.Config.ChannelID) != "" && input.VideoCapability != nil && !resumed {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}
@@ -124,6 +149,11 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	}
 
 	if preparing {
+		if runtime.ReferenceProgress != nil {
+			runtime.ReferenceProgress.ClearReference()
+		}
+	}
+	if preparing || (input.Mode == "video" && !resumed) {
 		if err := setExecutionStage(ctx, runtime, "正在提交生成任务"); err != nil {
 			return nil, err
 		}
@@ -162,9 +192,6 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 			return nil, err
 		}
 	}
-	if err := modelcatalog.ValidateWorkflowProviderPromptLength(taskInputFromCanvas(input)); err != nil {
-		return nil, err
-	}
 	if err := mapWorkflowConfigError(workflow.ValidateConfig(input.Mode, workflowConfig(input.Config))); err != nil {
 		return nil, err
 	}
@@ -182,7 +209,7 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 	if runtime.Workflow == nil {
 		return nil, errors.New("无法执行工作流任务，请重试")
 	}
-	if preparing {
+	if preparing || (input.Mode == "video" && ResumedProviderRequestID(ctx) == "") {
 		if err := setExecutionStage(ctx, runtime, "正在提交生成任务"); err != nil {
 			return nil, err
 		}
@@ -214,6 +241,12 @@ func applyCanvasTextStreaming(taskType string, input *Input) {
 }
 
 func validatePreparedInput(ctx context.Context, input Input) error {
+	if ((input.Mode == "image" || input.Mode == "video" || input.Mode == "audio") && managedConnection(input.Config)) || (input.Mode == "video" && IsBeefAPIVideoConfig(ctx, input.Config)) {
+		if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
+			return errors.New("后端生成任务缺少 Base URL、API Key 或模型名")
+		}
+		return nil
+	}
 	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiImage) {
 		_, hasDeclarativeAgent := agentProtocolAdapterForContext(ctx, input.Config.InterfaceType)
 		if input.AgentRequests == nil || !hasDeclarativeAgent {
@@ -224,10 +257,12 @@ func validatePreparedInput(ctx context.Context, input Input) error {
 		return errors.New("后端生成任务缺少 Base URL、API Key 或模型名")
 	}
 	if err := validateInterfaceForContext(ctx, input.Mode, input.Config.InterfaceType); err != nil {
+		// This local check precedes the create request. A resumed provider task,
+		// however, already has submission evidence that must not be erased.
+		if ResumedProviderRequestID(ctx) == "" {
+			return ProtocolPreparationError{Cause: err}
+		}
 		return err
-	}
-	if IsVolcengineJiMengProtocol(input.Config.InterfaceType) && strings.TrimSpace(input.Config.SecretKey) == "" {
-		return errors.New("即梦官方 API 缺少 Secret Key")
 	}
 	return nil
 }

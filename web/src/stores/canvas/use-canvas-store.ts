@@ -6,11 +6,9 @@ import { sameCanvasContent, sameCanvasDocument } from "@/lib/canvas/canvas-conte
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { decideExternalCanvasRevision } from "@/lib/canvas/canvas-external-revision";
-import { useThemeStore } from "@/stores/use-theme-store";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
-import { scopedLocalStorage } from "@/lib/user-scope";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
@@ -115,7 +113,11 @@ function writeCanvasFolders(folders: CanvasFolder[]) {
             ...folder,
             coverDataUrl: folder.coverDataUrl?.startsWith("data:") ? undefined : folder.coverDataUrl,
         }));
-    scopedLocalStorage.setItem(CANVAS_FOLDERS_KEY, JSON.stringify(persistable));
+    try {
+        scopedLocalStorage.setItem(CANVAS_FOLDERS_KEY, JSON.stringify(persistable));
+    } catch {
+        // Pending folder intents and covers live in IndexedDB (canvas_folder_pending).
+    }
 }
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
@@ -598,7 +600,9 @@ function ordinaryCanvasProjectSnapshot(scope: string, project: CanvasProject, du
         nodes.push({ ...node, metadata });
     }
     const chatSessions: CanvasAssistantSession[] = [];
-    for (const session of project.chatSessions) {
+    // Backend-created canvases may omit assistant sessions. Treat the missing
+    // optional collection like an empty one, as document hydration does.
+    for (const session of project.chatSessions || []) {
         const durableSession = durableSessions.get(session.id);
         const durableKeys = durableSession?.generationEffectKeys;
         if (durableProject && hasUnconfirmedGenerationKey(session.generationEffectKeys, durableKeys)) {
@@ -725,6 +729,12 @@ export async function flushCanvasStorePersistence() {
     }
 }
 
+export function hasActiveCanvasStorePersistence() {
+    // Failed queues remain retryable, but only a timer or storage tail can
+    // still perform IO without another explicit save request.
+    return canvasStorageTails.size > 0 || canvasSaveTimers.size > 0;
+}
+
 export const useCanvasStore = create<CanvasStore>()(
     persist(
         (set, get) => ({
@@ -747,7 +757,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     connections: [],
                     chatSessions: [],
                     activeChatId: null,
-                    appearance: appearanceDefault?.appearance ?? { mode: useThemeStore.getState().theme },
+                    appearance: appearanceDefault?.appearance ?? { mode: "follow" },
                     backgroundMode: appearanceDefault?.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
                     showImageInfo: false,
                     viewport: initialViewport,
@@ -828,8 +838,8 @@ export const useCanvasStore = create<CanvasStore>()(
             }),
             deleteProjects: (ids) =>
                 set((state) => {
-                    const projects = state.projects.filter((project) => !ids.includes(project.id));
-                    return { projects };
+                    ids.forEach((id) => { void localForageStorageForScope().removeItem(`beeftv-project-cover:${id}`); try { window.localStorage.removeItem(`beeftv-project-cover:${id}`); } catch { /* ignore */ } });
+                    return { projects: state.projects.filter((project) => !ids.includes(project.id)) };
                 }),
             restoreProject: (project) => set((state) => {
                 if (state.projects.some((item) => item.id === project.id)) return state;
@@ -850,6 +860,32 @@ export const useCanvasStore = create<CanvasStore>()(
         {
             name: CANVAS_STORE_KEY,
             storage: canvasStorage,
+            merge: (persisted, current) => {
+                const persistedState = (persisted ?? {}) as Partial<CanvasStore>;
+                const cachedProjects = persistedState.projects;
+                if (!Array.isArray(cachedProjects) || cachedProjects.length === 0 || current.projects.length === 0) {
+                    return { ...current, ...persistedState };
+                }
+                // revision 护栏：IndexedDB rehydrate 可能晚于后端读取完成。缓存里 revision
+                // 低于内存中已应用后端 revision 的画布是过期缓存（例如画布随后被 agent API
+                // 改写），不得把刚加载的正确状态拉回旧版本；丢弃过期缓存条目并采用后端内容。
+                const appliedById = new Map(current.projects.map((project) => [project.id, project]));
+                const seen = new Set<string>();
+                const projects: CanvasProject[] = [];
+                for (const project of cachedProjects) {
+                    if (seen.has(project.id)) continue;
+                    seen.add(project.id);
+                    const applied = appliedById.get(project.id);
+                    projects.push(applied && (project.revision ?? 0) < (applied.revision ?? 0) ? applied : project);
+                }
+                for (const project of current.projects) {
+                    if (!seen.has(project.id)) {
+                        seen.add(project.id);
+                        projects.push(project);
+                    }
+                }
+                return { ...current, ...persistedState, projects };
+            },
             partialize: (state) =>
                 ({
                     projects: state.projects,

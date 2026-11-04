@@ -55,6 +55,12 @@ func TestPluginViewIncludesDocumentationForEveryOfficialProtocol(t *testing.T) {
 			expectedCount++
 		}
 	}
+	// The plugin market and built-in LL2 channel plugin ship next to the protocol packages as preinstalled npm-format packages.
+	for _, builtinDir := range []string{"beeftv-plugin-market", "beeftv-plugin-ll2"} {
+		if _, err := os.Stat(filepath.Join("..", "..", "..", "plugin-packages", builtinDir, "package.json")); err == nil {
+			expectedCount++
+		}
+	}
 	if len(plugins) != expectedCount {
 		t.Fatalf("plugin views = %d, unique local packages plus bundled plugins = %d", len(plugins), expectedCount)
 	}
@@ -141,6 +147,46 @@ func TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation(t *testing.T
 	t.Fatal("refreshed OpenAI Images plugin is missing")
 }
 
+func TestPluginRuntimeUpgradesInstalledWanMediaTransport(t *testing.T) {
+	packageData, err := os.ReadFile(filepath.Join("..", "..", "..", "plugin-packages", "dashscope-wan-video.beeftv-plugin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := protocol.ParsePluginPackage(packageData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := pkg.Manifest
+	stale.Metadata.Version = "2.0.0"
+	stale.Metadata.MediaTransport = nil
+	stale.Contributes.Providers[0].MediaTransport = nil
+	staleRaw, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := json.Marshal([]pluginRegistryRecord{{ID: "dashscope-wan-video", Raw: staleRaw, Source: PluginOriginOfficial, FileName: "dashscope-wan-video.beeftv-plugin", PackageSHA256: "stale"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "plugin_registry.json"), records, 0600); err != nil {
+		t.Fatal(err)
+	}
+	center, err := newPluginRuntime(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{pluginRuntime: center}
+	adapter, ok := svc.protocolRegistry().Resolve("dashscope-wan-video")
+	if !ok {
+		t.Fatal("installed Wan provider missing")
+	}
+	metadata := adapter.Metadata()
+	if metadata.Version != "2.0.1" || metadata.MediaTransport["image"] != "inline" || metadata.MediaTransport["audio"] != "url" {
+		t.Fatalf("installed provider retained stale transport: %#v", metadata)
+	}
+}
+
 func TestBundledWorkflowPluginsControlAvailability(t *testing.T) {
 	center, err := newPluginRuntime(t.TempDir())
 	if err != nil {
@@ -172,7 +218,7 @@ func TestBundledProviderCatalogExposesUpstreamOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := (&Service{pluginRuntime: center}).PluginProviderCatalog(string(protocol.SurfaceAdminSystemChannel), string(protocol.CapabilityVideo), false)
+	catalog := (&Service{pluginRuntime: center}).PluginDomain().ProviderCatalog(string(protocol.SurfaceAdminSystemChannel), string(protocol.CapabilityVideo), false)
 	for _, item := range catalog {
 		if item.ID != "xai-video" {
 			continue
@@ -325,7 +371,7 @@ func TestAutoDLPluginPackageLoadsAsOfficialRuntime(t *testing.T) {
 	if !center.registrySnapshot().IsCapability("autodl-comfyui", protocol.CapabilityVideo) {
 		t.Fatal("AutoDL package provider was not registered")
 	}
-	catalog := (&Service{pluginRuntime: center}).PluginProviderCatalog(string(protocol.SurfaceAdminSystemChannel), string(protocol.CapabilityVideo), false)
+	catalog := (&Service{pluginRuntime: center}).PluginDomain().ProviderCatalog(string(protocol.SurfaceAdminSystemChannel), string(protocol.CapabilityVideo), false)
 	var autoDL *PluginProviderCatalogItem
 	for index := range catalog {
 		if catalog[index].ID == "autodl-comfyui" {
@@ -449,7 +495,7 @@ func TestDeclarativeProtocolPollRecoversFromTransientGatewayFailure(t *testing.T
 	}
 }
 
-func TestDeclarativeProtocolRetriesResultDownloadWithoutRepolling(t *testing.T) {
+func TestDeclarativeProtocolRetriesResultDownloadByQueryingOriginalTask(t *testing.T) {
 	allowLoopbackProviderTest(t)
 	adapter, err := protocol.LoadManifest([]byte(`{
 		"apiVersion":"beeftv.plugin/v1",
@@ -461,13 +507,21 @@ func TestDeclarativeProtocolRetriesResultDownloadWithoutRepolling(t *testing.T) 
 	}
 	pollCalls := 0
 	downloadCalls := 0
+	createCalls := 0
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/tasks":
+			if r.Method != http.MethodPost {
+				t.Errorf("generation method = %s", r.Method)
+			}
+			createCalls++
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"provider-task-1","status":"pending"}`))
 		case "/v1/tasks/provider-task-1":
+			if r.Method != http.MethodGet {
+				t.Errorf("original task query method = %s", r.Method)
+			}
 			pollCalls++
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"provider-task-1","status":"succeeded","video_url":"` + server.URL + `/media.mp4"}`))
@@ -491,8 +545,8 @@ func TestDeclarativeProtocolRetriesResultDownloadWithoutRepolling(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result["mode"] != "video" || pollCalls != 1 || downloadCalls != 2 {
-		t.Fatalf("result = %#v, poll calls = %d, download calls = %d", result, pollCalls, downloadCalls)
+	if result["mode"] != "video" || createCalls != 1 || pollCalls != 2 || downloadCalls != 2 {
+		t.Fatalf("result = %#v, create calls = %d, poll calls = %d, download calls = %d", result, createCalls, pollCalls, downloadCalls)
 	}
 }
 

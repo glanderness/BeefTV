@@ -111,6 +111,16 @@ processTest('crash recovery rejects authority changing frozen read-only to full-
  const crash=await run(directory,'permission-crash');assertCheckpointKill(crash,directory,'permission-crash');
  const recovered=await run(directory,'permission-upgrade');assert.equal(recovered.code,0,recovered.output);
 });
+test('history projection keeps the curated reasoning view and still drops provider blocks', () => {
+  const reasoning = [{ id: 'entry:0', text: '先读画布。', status: 'done' }];
+  const projected = publicDurableTurn({ turnId: 't', reply: '正文', reasoning,
+    content: [{ type: 'thinking', thinking: 'raw', thinkingSignature: 'signature-secret' }], effects: {} });
+  assert.deepEqual(projected.reasoning, reasoning);
+  assert(!JSON.stringify(projected).includes('signature-secret'));
+  assert(!('content' in projected));
+  // 没有思考的回合不写空字段，界面据此不生成空抽屉。
+  assert(!('reasoning' in publicDurableTurn({ turnId: 't', reply: '正文' })));
+});
 test('history projection excludes native media bytes and replay defaults unknown writes to unsafe', () => {
   const projected = publicDurableTurn({ turnId: 't', userText: 'read', content: [{ type: 'image', data: 'large-native-image' }],
     log: [{ data: 'secret' }], result: {}, effects: {}, supplementContents: [{ content: 'raw' }],
@@ -119,6 +129,21 @@ test('history projection excludes native media bytes and replay defaults unknown
   assert.equal(projected.status, 'running'); assert.equal(projected.supplementInputs[0].message, '');
   assert.equal(durableToolReplay({ label: 'canvas.nodes.create', replay: 'safe' }), 'safe');
   assert.equal(durableToolReplay({ label: 'future.paid.submit' }), 'unsafe');
+});
+test('public provider failures hide upstream detail while retaining internal diagnostics and budget reasons', () => {
+  const detail = '503 upstream https://example.invalid/private?signature=synthetic-secret';
+  for (const errorReason of ['model_error', 'provider_error']) {
+    const internal = { error: detail, errorReason, cancelled: false, reply: '', turnId: 'failed-turn' };
+    const visible = publicDurableTurn(internal);
+    assert.equal(visible.error, '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。');
+    assert.equal(visible.errorReason, errorReason);
+    assert.equal(visible.cancelled, false);
+    assert.equal(internal.error, detail, 'projection must not overwrite diagnostic records');
+    assert(!JSON.stringify(visible).includes('synthetic-secret'));
+  }
+  const budget = { error: 'local budget is exhausted', errorReason: 'turn_request_budget_exhausted' };
+  assert.deepEqual(publicDurableTurn(budget), budget);
+  assert.equal(publicDurableTurn({ cancelled: true, error: null }).error, null);
 });
 const run = (directory, phase) => new Promise((resolve, reject) => {
   const child = spawn(process.execPath, [worker, directory, phase], { stdio: ['ignore', 'pipe', 'pipe'] });

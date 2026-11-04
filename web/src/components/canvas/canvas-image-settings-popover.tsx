@@ -5,9 +5,11 @@ import { Button } from "antd";
 
 import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
 import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
+import { seedreamFamily } from "@/lib/seedream-image";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -30,10 +32,13 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const profile = modelCapabilityConfigFor(config, config.model || config.imageModel).image!;
     const normalized = normalizeImageValue(profile, config);
+    const seedream = seedreamFamily(config.model || config.imageModel);
     const summaryParts = [
-        ...(profile.size.parameter !== "none" ? [imageSizeLabel(normalized.size)] : []),
+        ...(seedream && config.seedreamMode === "layers" ? ["图层拆分"] : []),
+        ...(profile.size.parameter !== "none" ? [imageSizeLabel(normalized.size, profile)] : []),
         ...(profile.quality.supported ? [imageQualityLabel(normalized.quality)] : []),
-        ...(showCount && profile.maxOutputs > 1 ? [`${normalized.count} 张`] : []),
+        ...(seedream && seedream !== "pro" && seedream !== "flash" && Number(config.seedreamMaxImages) > 1 ? [`每批最多 ${config.seedreamMaxImages} 张`] : []),
+        ...(showCount && profile.maxOutputs > 1 ? [`${normalized.count} ${seedream ? "批" : "张"}`] : []),
         ...(profile.transparentBackground.supported && normalized.transparentBackground === "true" ? ["透明"] : []),
     ];
     const summary = summaryOverride || summaryParts.join(" · ");
@@ -66,7 +71,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} showCount={showCount} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal layer={canvasPopoverLayer(buttonRef.current)} buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} showCount={showCount} onConfigChange={onConfigChange} /> : null;
 
     if (!hasSettings) return null;
 
@@ -83,6 +88,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
 }
 
 function ImageSettingsPortal({
+    layer,
     buttonRect,
     panelRef,
     placement,
@@ -91,6 +97,7 @@ function ImageSettingsPortal({
     showCount,
     onConfigChange,
 }: {
+    layer: number | string;
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasImageSettingsPopoverProps["placement"];
@@ -108,7 +115,7 @@ function ImageSettingsPortal({
     const topPlacement = placement?.startsWith("top");
     const style = {
         position: "fixed",
-        zIndex: "var(--z-dialog-popover)",
+        zIndex: layer,
         width,
         left: Math.max(margin, Math.min(window.innerWidth - width - margin, left)),
         ...(topPlacement ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, buttonRect.top - margin * 2) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, window.innerHeight - buttonRect.bottom - margin * 2) }),

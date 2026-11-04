@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { canvasUnconfirmedDiagnostic, canvasUnconfirmedReason, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -87,7 +88,7 @@ test("diagnostic collection and logger failures never replace the original canva
         }
         if (writes !== 1) throw new Error("logger failure branch not exercised");
     `;
-    const result = Bun.spawnSync([process.execPath, "-e", script], { cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe" });
+    const result = Bun.spawnSync([process.execPath, "-e", script], { cwd: fileURLToPath(new URL("..", import.meta.url)), stdout: "pipe", stderr: "pipe" });
     expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(0);
 });
 

@@ -1,6 +1,7 @@
 package asset
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -199,6 +200,7 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	applyRecoveredMetadata(resource, artifact, kind)
 	resource.ETag = etag
 	if alreadyConsumed {
+		_ = s.probeMediaMetadata(context.Background(), resource)
 		resource.Status = model.ResourceStatusReady
 		resource.Error = ""
 		if err := s.repo.SaveResource(resource); err != nil {

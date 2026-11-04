@@ -24,10 +24,12 @@ export function useDesktopUpdate(controller: DesktopUpdateController = getShared
         state: snapshot.state,
         persistBusy: snapshot.persistBusy,
         actionBusy: snapshot.actionBusy,
+        canForceInstall: snapshot.canForceInstall,
         runtime: snapshot.runtime,
         check: controller.check,
         download: controller.download,
         install: controller.install,
+        forceInstall: controller.forceInstall,
         downloadAndInstall: controller.downloadAndInstall,
         retry: controller.retry,
     };

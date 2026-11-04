@@ -1,6 +1,9 @@
 package depthcapture
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	ErrCUDADevice    = errors.New("CUDA 设备或模型前向不可用")
@@ -31,3 +34,13 @@ const (
 	stageOutput      = "输出校验失败"
 	stageSave        = "保存结果失败"
 )
+
+func workerFailureSummary(message string) string {
+	// curl's progress meter can fill the whole diagnostic budget before its
+	// error. The tail contains the exit reason and Python's final exception.
+	runes := []rune(strings.TrimSpace(message))
+	if len(runes) > 800 {
+		return "…" + string(runes[len(runes)-800:])
+	}
+	return string(runes)
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -25,22 +26,44 @@ func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasPr
 }
 
 func SaveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, items []model.Asset, reason string) error {
-	snapshot, resourceIDs, err := buildCanvasSnapshot(before, *after, reason)
-	if err != nil {
-		return err
+	cutoff := after.UpdatedAt.Add(-canvasHistoryInterval)
+	force := reason == "before_restore"
+	var snapshot *model.CanvasSnapshot
+	var resourceIDs []string
+	if before != nil {
+		capture, err := repo.ShouldCaptureCanvasSnapshot(after.ID, before.Revision, cutoff, force)
+		if err != nil {
+			return err
+		}
+		if capture {
+			snapshot, resourceIDs, err = buildCanvasSnapshot(before, *after, reason)
+			if err != nil {
+				return err
+			}
+			if !force && len(resourceIDs) > 0 {
+				resourceIDs, err = repo.ReadyResourceIDs(resourceIDs)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 	var restoredIDs []string
-	if reason == "before_restore" {
+	if force {
 		refs := map[string]struct{}{}
 		if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, refs); err != nil {
 			return err
 		}
 		restoredIDs = assets.SortedIDs(refs)
 	}
-	if len(items) > 0 {
-		return repo.SaveAssetsAndCanvasWithSnapshot(items, after, snapshot, resourceIDs, restoredIDs, after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore")
+	historyLimit := canvasHistoryLimit
+	if before != nil && len(before.PayloadJSON) > (8<<20) {
+		historyLimit = max(1, min(canvasHistoryLimit, (128<<20)/len(before.PayloadJSON)))
 	}
-	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, restoredIDs, after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore")
+	if len(items) > 0 {
+		return repo.SaveAssetsAndCanvasWithSnapshot(items, after, snapshot, resourceIDs, restoredIDs, cutoff, historyLimit, force)
+	}
+	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, restoredIDs, cutoff, historyLimit, force)
 }
 
 func canvasRevisionConflict() error {
@@ -118,27 +141,41 @@ func (s *Service) RestoreCanvasHistory(userID string, canvasID, snapshotID strin
 }
 
 func canvasHistoryContent(project model.CanvasProject) ([]byte, error) {
+	document, err := prepareCanvasHistoryDocument(project)
+	return document.content, err
+}
+
+type canvasHistoryDocument struct {
+	raw     json.RawMessage
+	decoded map[string]any
+	content []byte
+}
+
+func prepareCanvasHistoryDocument(project model.CanvasProject) (canvasHistoryDocument, error) {
 	raw, err := canvasProjectPayload(project)
 	if err != nil {
-		return nil, err
+		return canvasHistoryDocument{}, err
 	}
 	var payload map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, err
+		return canvasHistoryDocument{}, err
 	}
+	// Keep references in fields excluded from content-change comparison.
+	contentFields := maps.Clone(payload)
 	for _, key := range []string{"revision", "updatedAt", "createdAt", "viewport", "remoteContentHash"} {
-		delete(payload, key)
+		delete(contentFields, key)
 	}
-	return json.Marshal(payload)
+	content, err := json.Marshal(contentFields)
+	return canvasHistoryDocument{raw: raw, decoded: payload, content: content}, err
 }
 
 func buildCanvasSnapshot(before *model.CanvasProject, after model.CanvasProject, reason string) (*model.CanvasSnapshot, []string, error) {
 	if before == nil {
 		return nil, nil, nil
 	}
-	oldContent, err := canvasHistoryContent(*before)
+	previous, err := prepareCanvasHistoryDocument(*before)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -146,13 +183,10 @@ func buildCanvasSnapshot(before *model.CanvasProject, after model.CanvasProject,
 	if err != nil {
 		return nil, nil, err
 	}
-	if reason != "before_restore" && bytes.Equal(oldContent, newContent) {
+	if reason != "before_restore" && bytes.Equal(previous.content, newContent) {
 		return nil, nil, nil
 	}
-	raw, err := canvasProjectPayload(*before)
-	if err != nil {
-		return nil, nil, err
-	}
+	raw := previous.raw
 	var counts struct {
 		Nodes       []json.RawMessage
 		Connections []json.RawMessage
@@ -161,7 +195,7 @@ func buildCanvasSnapshot(before *model.CanvasProject, after model.CanvasProject,
 		return nil, nil, err
 	}
 	resources := map[string]struct{}{}
-	if err := assets.CollectOwnedDocumentReferences(string(raw), resources); err != nil {
+	if err := assets.CollectOwnedDocumentReferencesFromDecoded(string(raw), previous.decoded, resources); err != nil {
 		return nil, nil, err
 	}
 	return &model.CanvasSnapshot{

@@ -8,14 +8,17 @@ import (
 )
 
 type LocalChannelModel struct {
-	ChannelID        string
-	BaseURL          string
-	Enabled          bool
-	Model            string
-	DisplayName      string
-	Capability       string
-	Protocol         string
-	CapabilityConfig any
+	ChannelID                string
+	BaseURL                  string
+	Enabled                  bool
+	Model                    string
+	DisplayName              string
+	Capability               string
+	Protocol                 string
+	CapabilityConfig         any
+	ImageCapabilitiesVersion *string
+	VideoCapabilitiesVersion *string
+	VideoPricing             json.RawMessage
 }
 
 func ParseLocalChannelModels(body []byte) []LocalChannelModel {
@@ -29,11 +32,14 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 			Enabled       *bool    `json:"enabled"`
 			Models        []string `json:"models"`
 			ModelProfiles []struct {
-				Model            string          `json:"model"`
-				DisplayName      string          `json:"displayName"`
-				Capability       string          `json:"capability"`
-				Protocol         string          `json:"protocol"`
-				CapabilityConfig json.RawMessage `json:"capabilityConfig"`
+				Model                    string          `json:"model"`
+				DisplayName              string          `json:"displayName"`
+				Capability               string          `json:"capability"`
+				Protocol                 string          `json:"protocol"`
+				CapabilityConfig         json.RawMessage `json:"capabilityConfig"`
+				ImageCapabilitiesVersion *string         `json:"imageCapabilitiesVersion"`
+				VideoCapabilitiesVersion *string         `json:"videoCapabilitiesVersion"`
+				VideoPricing             json.RawMessage `json:"videoPricing"`
 			} `json:"modelProfiles"`
 		} `json:"channels"`
 	}
@@ -52,6 +58,9 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 				ChannelID: channel.ID, BaseURL: channel.BaseURL, Enabled: enabled,
 				Model: profile.Model, DisplayName: strings.TrimSpace(profile.DisplayName),
 				Capability: profile.Capability, Protocol: profile.Protocol,
+				VideoPricing:             profile.VideoPricing,
+				VideoCapabilitiesVersion: profile.VideoCapabilitiesVersion,
+				ImageCapabilitiesVersion: profile.ImageCapabilitiesVersion,
 			}
 			if len(profile.CapabilityConfig) > 0 {
 				var value any

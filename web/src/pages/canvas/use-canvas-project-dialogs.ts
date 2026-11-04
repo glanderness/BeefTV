@@ -1,4 +1,7 @@
 import { useCallback, useRef, useState } from "react";
+import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 export type CanvasProjectDialogIds = {
     textEditorNodeId: string | null;
@@ -7,7 +10,6 @@ export type CanvasProjectDialogIds = {
     infoNodeId: string | null;
     subtitleNodeId: string | null;
     timelineNodeId: string | null;
-    superResolveNodeId: string | null;
     previewNodeId: string | null;
     scriptEditorNodeId: string | null;
     artCritiqueNodeId: string | null;
@@ -21,7 +23,6 @@ export const CANVAS_DELETE_DIALOG_ID_KEYS = [
     "drawingNodeId",
     "infoNodeId",
     "subtitleNodeId",
-    "superResolveNodeId",
     "previewNodeId",
     "scriptEditorNodeId",
     "artCritiqueNodeId",
@@ -42,7 +43,8 @@ export function clearDeletedCanvasDialogIds<T extends Record<(typeof CANVAS_DELE
     return changed ? next : ids;
 }
 
-export function useCanvasProjectDialogs() {
+export function useCanvasProjectDialogs(pageUi: CanvasPageUiStoreHook) {
+    const { setSelectedNodeIds, setSelectedConnectionId, setContextMenu, setDialogNodeId, setToolbarNodeId } = pageUi.getState();
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [generationHistoryOpen, setGenerationHistoryOpen] = useState(false);
     const [tapNowImportOpen, setTapNowImportOpen] = useState(false);
@@ -55,7 +57,6 @@ export function useCanvasProjectDialogs() {
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [subtitleNodeId, setSubtitleNodeId] = useState<string | null>(null);
     const [timelineNodeId, setTimelineNodeId] = useState<string | null>(null);
-    const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [scriptEditorNodeId, setScriptEditorNodeId] = useState<string | null>(null);
     const [artCritiqueNodeId, setArtCritiqueNodeId] = useState<string | null>(null);
@@ -64,6 +65,39 @@ export function useCanvasProjectDialogs() {
     const [directorNodeId, setDirectorNodeId] = useState<string | null>(null);
     const [versionCompareRootId, setVersionCompareRootId] = useState<string | null>(null);
 
+    const openTextNodeEditor = useCallback((node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Text) return;
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        setContextMenu(null);
+        setDialogNodeId(null);
+        setToolbarNodeId(null);
+        if (node.metadata?.workflowKind === "character" && node.metadata.characterAssetId) {
+            setCharacterReferenceNodeId(node.id);
+            return;
+        }
+        setTextEditorNodeId(node.id);
+    }, [setSelectedNodeIds, setSelectedConnectionId, setContextMenu, setDialogNodeId, setToolbarNodeId]);
+
+    const openDrawingNode = useCallback((node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Drawing) return;
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        setContextMenu(null);
+        setDialogNodeId(null);
+        setToolbarNodeId(null);
+        setDrawingNodeId(node.id);
+    }, [setSelectedNodeIds, setSelectedConnectionId, setContextMenu, setDialogNodeId, setToolbarNodeId]);
+
+    const openArtCritique = useCallback((node: CanvasNodeData) => {
+        if (node.type !== ART_CRITIQUE_NODE_TYPE) return;
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        setContextMenu(null);
+        setDialogNodeId(null);
+        setToolbarNodeId(null);
+        setArtCritiqueNodeId(node.id);
+    }, [setSelectedNodeIds, setSelectedConnectionId, setContextMenu, setDialogNodeId, setToolbarNodeId]);
     const clearDeletedNodeIds = useCallback((removedIds: Set<string>) => {
         const clearDeletedId = (current: string | null) => (current && removedIds.has(current) ? null : current);
         setTextEditorNodeId(clearDeletedId);
@@ -71,7 +105,6 @@ export function useCanvasProjectDialogs() {
         setDrawingNodeId(clearDeletedId);
         setInfoNodeId(clearDeletedId);
         setSubtitleNodeId(clearDeletedId);
-        setSuperResolveNodeId(clearDeletedId);
         setPreviewNodeId(clearDeletedId);
         setScriptEditorNodeId(clearDeletedId);
         setArtCritiqueNodeId(clearDeletedId);
@@ -90,6 +123,7 @@ export function useCanvasProjectDialogs() {
     }, []);
 
     return {
+        openTextNodeEditor, openDrawingNode, openArtCritique,
         clearConfirmOpen,
         setClearConfirmOpen,
         generationHistoryOpen,
@@ -114,8 +148,6 @@ export function useCanvasProjectDialogs() {
         setSubtitleNodeId,
         timelineNodeId,
         setTimelineNodeId,
-        superResolveNodeId,
-        setSuperResolveNodeId,
         previewNodeId,
         setPreviewNodeId,
         scriptEditorNodeId,

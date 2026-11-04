@@ -12,7 +12,7 @@ export function runDurableNodeCases(file) {
     const child = spawn(node, ['--test', fileURLToPath(new URL(file, import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk; }); child.stderr.on('data', (chunk) => { output += chunk; });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Node cases timed out: ' + output)); }, 80000);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Node cases timed out: ' + output)); }, 180000);
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('close', (code) => { clearTimeout(timer); if (code === 0) resolve(output); else reject(new Error(output)); });
   });

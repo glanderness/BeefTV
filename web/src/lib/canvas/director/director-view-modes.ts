@@ -230,7 +230,7 @@ export function resolveDirectorCameraInspectorRotation(scene: DirectorScene, cam
 }
 
 function interpolateDirectorCameraTrack<K extends "target" | "fov">(keyframes: DirectorKeyframe[], time: number, track: K, fallback: NonNullable<DirectorKeyframe[K]>): NonNullable<DirectorKeyframe[K]> {
-    const keys = keyframes.filter((key) => key[track] !== undefined).toSorted((a, b) => a.time - b.time);
+    const keys = keyframes.filter((key) => key[track] !== undefined).sort((a, b) => a.time - b.time);
     if (!keys.length) return fallback;
     const previous = [...keys].reverse().find((key) => key.time <= time) || keys[0];
     const next = keys.find((key) => key.time >= time) || keys.at(-1)!;

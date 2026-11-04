@@ -8,21 +8,21 @@ WORKDIR /src
 COPY plugin-packages ./plugin-packages
 RUN ./plugin-packages/build-packages.sh
 
-FROM golang:1.25-alpine AS backend-build
+FROM golang:1.26-alpine AS backend-build
 
 ARG GOPROXY=https://proxy.golang.org,direct
-ARG BUILD_VERSION
-ARG BUILD_COMMIT=unknown
-ARG BUILD_TIME=unknown
 ENV GOPROXY=$GOPROXY
 
 RUN apk add --no-cache build-base
 
 WORKDIR /src/backend
-COPY VERSION /src/VERSION
 COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY VERSION /src/VERSION
 COPY backend ./
+ARG BUILD_VERSION
+ARG BUILD_COMMIT=unknown
+ARG BUILD_TIME=unknown
 RUN --mount=type=cache,target=/root/.cache/go-build set -eu; \
     version="${BUILD_VERSION:-$(tr -d '\r\n' </src/VERSION)}"; \
     ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${version} -X infinite-canvas/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X infinite-canvas/backend/internal/buildinfo.BuildTime=${BUILD_TIME}"; \
@@ -36,7 +36,10 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 
 WORKDIR /app
 ENV GIN_MODE=release
-ENV CANVAS_BACKEND_ADDR=:8080
+# Loopback inside the container. Compose sets CANVAS_BACKEND_ADDR=:8080 so other
+# containers can reach the API. Do not publish 8080 on all host interfaces:
+# the server profile has no launch token.
+ENV CANVAS_BACKEND_ADDR=127.0.0.1:8080
 ENV CANVAS_BACKEND_DATA_DIR=/data
 
 RUN mkdir -p /data && chown -R app:app /data

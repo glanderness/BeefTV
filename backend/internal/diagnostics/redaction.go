@@ -4,13 +4,19 @@ import (
 	"net/url"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
 
 func sanitizeClientEvent(event ClientEvent) clientEventRecord {
 	return clientEventRecord{
-		ID: sanitizeIdentifier(event.ID), Timestamp: redactText(event.Timestamp, 80), Level: redactText(event.Level, 24), Category: redactText(event.Category, 32),
+		LaunchID: sanitizeIdentifier(event.LaunchID), SessionID: sanitizeIdentifier(event.SessionID), SpanID: sanitizeIdentifier(event.SpanID),
+		ClientOperationID: sanitizeOperationID(event.ClientOperationID), NodeID: sanitizeIdentifier(event.NodeID),
+		AssistantSessionID: sanitizeIdentifier(event.AssistantSessionID), AssistantTurnID: sanitizeIdentifier(event.AssistantTurnID), Media: sanitizeMedia(event.Media),
+		CanvasBinding: sanitizeCanvasBinding(event.CanvasBinding),
+		Reason:        sanitizeIdentifier(event.Reason),
+		ID:            sanitizeIdentifier(event.ID), Timestamp: redactText(event.Timestamp, 80), Level: redactText(event.Level, 24), Category: redactText(event.Category, 32),
 		Code: redactText(event.Code, 120), Message: redactText(event.Message, maxEventText), Route: sanitizePath(event.Route),
 		DurationMs: boundedInt64(event.DurationMs, 0, 86_400_000), HTTPStatus: boundedInt(event.HTTPStatus, 0, 599),
 		RequestID: sanitizeIdentifier(event.RequestID), TraceID: sanitizeIdentifier(event.TraceID), TaskID: sanitizeIdentifier(event.TaskID), ProjectID: sanitizeIdentifier(event.ProjectID), CanvasID: sanitizeIdentifier(event.CanvasID),
@@ -19,13 +25,22 @@ func sanitizeClientEvent(event ClientEvent) clientEventRecord {
 }
 
 func sanitizeTask(task model.Task) taskRecord {
-	return taskRecord{
-		ID: task.ID, TraceID: sanitizeIdentifier(task.TraceID), RequestID: sanitizeIdentifier(task.RequestID), ProjectID: sanitizeIdentifier(task.ProjectID),
+	record := taskRecord{
+		FailureDiagnostics: generation.SanitizeTaskDiagnostics(task.FailureDiagnostics),
+		ID:                 task.ID, TraceID: sanitizeIdentifier(task.TraceID), RequestID: sanitizeIdentifier(task.RequestID), ProjectID: sanitizeIdentifier(task.ProjectID),
 		Type: redactText(task.Type, 80), Status: redactText(string(task.Status), 32), Stage: redactText(task.Stage, 160), Progress: boundedInt(task.Progress, 0, 100),
 		Operation: redactText(task.Operation, 120), Provider: redactText(task.Provider, 120), Model: redactText(task.Model, 160), LogicalModelID: sanitizeIdentifier(task.LogicalModelID),
 		ProviderRequestID: sanitizeIdentifier(task.ProviderRequestID), Error: redactText(task.Error, maxEventText), Attempts: boundedInt(task.Attempts, 0, 100),
 		StartedAt: task.StartedAt, CompletedAt: task.CompletedAt, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
 	}
+	if task.ClientOperationID != nil {
+		record.ClientOperationID = sanitizeOperationID(*task.ClientOperationID)
+	}
+	record.OutputNodeIDs = taskNodeIDs(task)
+	if len(record.OutputNodeIDs) == 1 {
+		record.NodeID = record.OutputNodeIDs[0]
+	}
+	return record
 }
 
 func sanitizeTaskLog(taskLog model.TaskLog) taskLogRecord {

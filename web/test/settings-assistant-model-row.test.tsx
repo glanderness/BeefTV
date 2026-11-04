@@ -22,7 +22,7 @@ function configWithTextChannel(overrides: Partial<AiConfig> = {}): AiConfig {
 function assistantSelection(config: AiConfig) {
     const markup = renderToStaticMarkup(<ModelDefaultGrid config={config} onChange={() => {}} />);
     const start = markup.indexOf('id="default-assistant-title"');
-    const end = markup.indexOf('id="default-audio-title"');
+    const end = markup.indexOf('id="default-multimodal-title"');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     return markup.slice(start, end).match(/class="ant-select-content[^"]*" title="([^"]*)"/)?.[1];

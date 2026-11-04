@@ -1,14 +1,37 @@
 package app
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 )
+
+func TestGeneratedMediaIngestDiskFullReturnsStructuredFailure(t *testing.T) {
+	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "ingest-full.db"), t.TempDir())
+	defer closeDB(t, db)
+	if err := db.Callback().Create().Before("gorm:create").Register("test:resource-disk-full", func(tx *gorm.DB) {
+		if tx.Statement.Table == "resources" {
+			tx.AddError(syscall.ENOSPC)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.persistTaskGeneratedMediaResult(model.Task{ID: "task-full", UserID: "user-1"}, map[string]interface{}{
+		"image": map[string]interface{}{"dataUrl": tinyPNGDataURL},
+	})
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Reason != "local_disk_full" || !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("ingest failure lost disk-full evidence: %v", err)
+	}
+}
 
 func TestGeneratedMediaIngestFailureDoesNotCompleteBindOrPost(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ingest-fail.db")

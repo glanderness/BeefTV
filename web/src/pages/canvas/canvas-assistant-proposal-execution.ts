@@ -1,4 +1,5 @@
 import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { ApiError } from "@/services/api/request";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
@@ -11,7 +12,11 @@ type ProposalExecution = {
     nodes: CanvasNodeData[];
     claims: Set<string>;
     isHandled: boolean;
+    /** 后端确认这一轮仍有效；返回的文案表示拒绝，不会提交任何生成。 */
+    confirmRunnable?: () => Promise<string | null>;
     prepare: () => Promise<ConfirmedGenerationInputs>;
+    /** 优先走后端统一生成单确认；返回 null 时回退到页面多输出生成器。 */
+    confirmOrder?: (confirmedInputs: ConfirmedGenerationInputs) => Promise<{ taskIds: string[]; continuationId?: string } | null>;
     generate: (nodeId: string, mode: "image" | "video", prompt: string, options?: CanvasNodeGenerationOptions) => Promise<unknown>;
     markHandled: (proposalId: string) => void;
     notify: (content: string) => void;
@@ -37,7 +42,9 @@ export function buildConfirmedGenerationConfig(
     return result;
 }
 
-export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, prepare, generate, markHandled, notify, stillOwns }: ProposalExecution) {
+export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, confirmRunnable, prepare, confirmOrder, generate, markHandled, notify, stillOwns }: ProposalExecution) {
+    const kind = proposal.kind;
+    if (kind === "audio" && !confirmOrder) { notify("请将配音加入完整制作方案后确认。"); return; }
     if (isHandled || claims.has(proposal.proposalId)) {
         notify("这项提案已提交或正在提交，请在任务列表查看进度。");
         return;
@@ -57,6 +64,11 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
     let receivedTask = false;
     const started = new Set<string>();
     try {
+        const rejection = confirmRunnable ? await confirmRunnable() : null;
+        if (rejection) {
+            notify(rejection);
+            return;
+        }
         let confirmedInputs: ConfirmedGenerationInputs;
         try {
             confirmedInputs = await prepare();
@@ -65,7 +77,9 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
                 notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
                 return;
             }
-            notify(error instanceof AssistantProposalBlockedError ? ASSISTANT_PROPOSAL_BLOCKED_TEXT[error.reason] : "无法核对提案的最新内容，请检查连接后重试。");
+            notify(error instanceof AssistantProposalBlockedError ? ASSISTANT_PROPOSAL_BLOCKED_TEXT[error.reason]
+                : error instanceof ApiError && error.reason === "continuation_intent_changed" ? "要求已更新，请让助手重新提出生成方案。"
+                : "无法核对提案的最新内容，请检查连接后重试。");
             return;
         }
         if (stillOwns && !stillOwns()) {
@@ -77,9 +91,41 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
             notify(ASSISTANT_PROPOSAL_BLOCKED_TEXT.canvas_changed);
             return;
         }
+        if (confirmOrder) {
+            try {
+                const orderResult = await confirmOrder(confirmedInputs);
+                if (orderResult !== null) {
+                    if (stillOwns && !stillOwns()) {
+                        notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
+                        return;
+                    }
+                    if (orderResult.taskIds?.length) {
+                        receivedTask = true;
+                        markHandled(proposal.proposalId);
+                    } else {
+                        notify("未确认有生成任务开始。请检查节点提示和任务列表，再让助手重新提出生成方案。");
+                    }
+                    return;
+                }
+            } catch (error) {
+                if (stillOwns && !stillOwns()) {
+                    notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
+                    return;
+                }
+                notify(error instanceof AssistantProposalBlockedError ? ASSISTANT_PROPOSAL_BLOCKED_TEXT[error.reason]
+                    : error instanceof ApiError && error.reason === "continuation_intent_changed" ? "要求已更新，请让助手重新提出生成方案。"
+                    : error instanceof ApiError && error.message ? error.message
+                    : "暂未确认生成是否开始，请重试确认同一生成单，不会重复提交已接受的素材。");
+                return;
+            }
+        }
+        if (kind === "audio") {
+            notify("请将配音加入完整制作方案后确认。");
+            return;
+        }
         await Promise.allSettled(confirmedTargets.map(async (node) => {
             if (!node) return;
-            await generate(node.id, proposal.kind, node.metadata?.composerContent ?? node.metadata?.prompt ?? "", {
+            await generate(node.id, kind, node.metadata?.composerContent ?? node.metadata?.prompt ?? "", {
                 confirmedModelKey: modelKey,
                 confirmedInputs,
                 clientOperationId: `proposal:${proposal.proposalId}:${node.id}`,

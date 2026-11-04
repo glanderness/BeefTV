@@ -112,7 +112,7 @@ describe("助手前端接线", () => {
         expect(project).toContain("runAssistantProposal");
         expect(project).toContain("useCanvasAssistantProposal");
         expect(proposal).toContain("const generateForThisRun = handleGenerateNodeRef.current");
-        expect(proposal).toContain("generate: generateForThisRun");
+        expect(proposal).toMatch(/generate:\s*(?:generateForThisRun\b|\([^)]*\)\s*=>\s*generateForThisRun\()/);
         expect(proposal).toContain("stillOwns: () => lifetime.matches(owner, projectIdRef.current)");
         expect(proposal).toContain("prepareAssistantProposalSnapshot");
         expect(proposal).toContain("executeAssistantProposal");

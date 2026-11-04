@@ -33,14 +33,15 @@ def package(version, platform, payload, output):
             (stage / 'Applications').symlink_to('/Applications')
             shutil.copy2(ROOT / 'docs/desktop-install.md', stage / 'Installation.txt')
             subprocess.run(['hdiutil', 'create', '-volname', 'BeefTV', '-srcfolder', str(stage),
-                            '-format', 'UDZO', '-ov', str(output)], check=True)
+                            '-fs', 'HFS+', '-nospotlight', '-format', 'UDZO', '-verbose', '-ov', str(output)], check=True)
     elif platform == 'windows-amd64':
         compiler = shutil.which('makensis') or r'C:\Program Files (x86)\NSIS\makensis.exe'
         with tempfile.TemporaryDirectory(prefix='beeftv-nsis-') as directory:
             manifest = Path(directory) / 'installed-root-files.txt'
             manifest.write_text(''.join(path.name + '\n' for path in sorted(payload.iterdir()) if path.is_file()), encoding='utf-8')
-            subprocess.run([compiler, f'/DPAYLOAD={payload}', f'/DOUTPUT={output}', f'/DROOTFILES={manifest}',
-                            f'/DVERSION={version[1:]}', str(ROOT / 'scripts/installers/windows.nsi')], check=True)
+            subprocess.run([compiler, '-INPUTCHARSET', 'UTF8', f'-DPAYLOAD={payload}', f'-DOUTPUT={output}',
+                            f'-DROOTFILES={manifest}', f'-DVERSION={version[1:]}',
+                            str(ROOT / 'scripts/installers/windows.nsi')], check=True)
     else:
         with tempfile.TemporaryDirectory(prefix='beeftv-deb-') as directory:
             stage = Path(directory)
@@ -60,7 +61,7 @@ def package(version, platform, payload, output):
             applications.mkdir(parents=True)
             (applications / 'beeftv.desktop').write_text(
                 '[Desktop Entry]\nType=Application\nName=BeefTV\n'
-                'Exec=/opt/beeftv/BeefTV-linux/BeefTV\nIcon=beeftv\n'
+                'Exec=/opt/beeftv/BeefTV-linux/BeefTV %u\nIcon=beeftv\nMimeType=x-scheme-handler/beeftv;\n'
                 'Terminal=false\nCategories=Graphics;AudioVideo;\nStartupWMClass=BeefTV\n')
             icons = stage / 'usr/share/pixmaps'
             icons.mkdir(parents=True)

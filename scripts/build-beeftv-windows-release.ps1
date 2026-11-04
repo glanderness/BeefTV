@@ -369,6 +369,7 @@ if ([string]::IsNullOrWhiteSpace($env:CANVAS_BUILD_TIME)) {
     $env:CANVAS_BUILD_TIME = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
 $env:CANVAS_BUILD_VERSION = $versionValue
+$env:BEEFTV_DIST_PLATFORM = "windows-amd64"
 $ldflags = "-X infinite-canvas/backend/internal/buildinfo.Version=$versionValue -X infinite-canvas/backend/internal/buildinfo.Commit=$commitValue -X infinite-canvas/backend/internal/buildinfo.BuildTime=$($env:CANVAS_BUILD_TIME)"
 if (-not [string]::IsNullOrWhiteSpace($env:BEEFTV_UPDATER_PUBLIC_KEY)) {
     Write-Step "Injecting desktop updater FeedURL and PublicKey ldflags"
@@ -439,6 +440,8 @@ Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "sc
 
 # Keep media inside the sidecar tree accepted by already released updaters.
 & (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "agent-host\media-runtime")
+& (Join-Path $repoRoot "scripts\test-media-runtime-windows.ps1") -Runtime (Join-Path $binDir "agent-host\media-runtime")
+Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\distribution-notices.mjs"), "windows-amd64", (Join-Path $binDir "agent-host\licenses"), $versionValue) -FailureMessage "License packaging failed" | Out-Null
 
 # The beeftv CLI ships with the app. External agents (Codex, Claude Code,
 # Cursor) connect through it with their own client credential, so the installed

@@ -21,7 +21,7 @@ func TestDesktopCORSAllowsModelRelayPreflight(t *testing.T) {
 		t.Run(origin, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodOptions, "/api/ai/custom", nil)
 			request.Header.Set("Origin", origin)
-			requested := []string{"authorization", "content-type", "x-desktop-token", "x-canvas-upstream-url", "x-canvas-upstream-format", "x-canvas-upstream-base-url", "x-canvas-upstream-headers"}
+			requested := []string{"authorization", "content-type", "traceparent", "x-canvas-trace-id", "x-desktop-token", "x-canvas-upstream-url", "x-canvas-upstream-format", "x-canvas-upstream-base-url", "x-canvas-upstream-headers"}
 			request.Header.Set("Access-Control-Request-Method", "POST")
 			request.Header.Set("Access-Control-Request-Headers", strings.Join(requested, ","))
 			response := httptest.NewRecorder()

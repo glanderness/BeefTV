@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,9 +21,12 @@ import (
 	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/eagle"
 	canvasHandler "infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/localapp"
+	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/plugins"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/runtimeinfo"
 	httptransport "infinite-canvas/backend/internal/transport/http"
@@ -51,7 +55,7 @@ type Runtime struct {
 	started          atomic.Bool
 	closed           atomic.Bool
 	closeOnce        sync.Once
-	background       sync.WaitGroup
+	backgroundDone   chan struct{}
 	closeErr         error
 }
 
@@ -106,6 +110,12 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	}
 
 	repo := repository.New(db)
+	if cfg.Profile == ProfileDesktop {
+		if err := repo.PauseDepthCapturesAfterRestart(context.Background()); err != nil {
+			cleanupDB()
+			return nil, err
+		}
+	}
 	svc := app.NewLocal(repo, cfg.DataDir)
 	cleanupService := func() {
 		_ = svc.Close()
@@ -115,6 +125,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		cleanupService()
 		return nil, err
 	}
+	wirePluginPackages(svc)
 	providerConfig, configErr := workspace.NewProviderConfig(cfg.DataDir)
 	if configErr != nil {
 		cleanupService()
@@ -135,12 +146,17 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 			}
 			models := make([]beefapi.CatalogModel, 0, len(items))
 			for _, item := range items {
+				imageVersion := ""
+				if item.ImageCapabilitiesVersion != nil {
+					imageVersion = *item.ImageCapabilitiesVersion
+				}
 				version := ""
 				if item.VideoCapabilitiesVersion != nil {
 					version = *item.VideoCapabilitiesVersion
 				}
 				models = append(models, beefapi.CatalogModel{
 					ID: item.ID, DisplayName: item.DisplayName, ModelType: item.ModelType, SupportedEndpointTypes: item.SupportedEndpointTypes,
+					ImageCapabilities: item.ImageCapabilities, ImageCapabilitiesVersion: imageVersion,
 					VideoCapabilities: item.VideoCapabilities, VideoCapabilitiesVersion: version,
 					VideoPricing: item.VideoPricing,
 				})
@@ -159,7 +175,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	taskService := svc.TaskService()
 	localRoot, err := localapp.New(localapp.Options{
 		Workspace: workspace.NewService(repo), Projects: projectService, Assets: assetService, Tasks: taskService,
-		Generation: taskService, ProviderConfig: providerConfig, Lifecycle: localKernel,
+		Generation: taskService, ProviderConfig: providerConfig, ModelCapability: modelcatalog.NewCapabilityNormalizer(), Lifecycle: localKernel,
 	})
 	if err != nil {
 		cleanupService()
@@ -208,12 +224,14 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	// 本机可信凭据在组合根生成：owner 凭据与宿主凭据只在本机数据目录，0600。
 	agentops.EnsureAgentCredentials(svc.DataDir())
 	assistantHost := assistantruntime.New(assistantruntime.OptionsFromService(svc))
+	svc.SetAssistantContinuationSubmitter(canvasHandler.AssistantContinuationSubmitter(svc, assistantHost))
 	api := router.Group("/api")
 	status := newSystemStatus(db, svc, true)
 	registerSystemStatusRoutes(api, status)
 	canvasHandler.RegisterDesktopCanvasAPIWithDependencies(api, svc, canvasHandler.RuntimeDependencies{
 		RequestCoordinator: localKernel,
 		ProviderConfig:     localRoot.ProviderConfig,
+		ModelCapability:    localRoot.ModelCapability,
 		Assets:             localRoot.Assets,
 		Projects:           localRoot.Projects,
 		Tasks:              localRoot.Tasks,
@@ -275,6 +293,10 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 				router.ServeHTTP(w, r)
 				return
 			}
+			if r.Header.Get("X-Beeftv-Client") == "" && agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(r.Header.Get("X-Beeftv-Owner"))) && canvasHandler.IsLocalBusinessRequest(r) {
+				router.ServeHTTP(w, r)
+				return
+			}
 		}
 		if r.Header.Get("X-Beeftv-Client") != "" {
 			if launchToken != "" && r.Header.Get("X-Desktop-Token") != launchToken {
@@ -302,6 +324,15 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		assistantHost:    assistantHost,
 		serveErr:         make(chan error, 1),
 	}, nil
+}
+
+// wirePluginPackages connects installed plugin packages to the skill catalog
+// and installs them with the npm shipped in the desktop runtime.
+func wirePluginPackages(svc *app.Service) {
+	executable, _ := os.Executable()
+	domain := svc.PluginDomain()
+	domain.SetPackageFetcher(plugins.NpmPackageFetcher(assistantruntime.BundledNpmCommand(executable, goruntime.GOOS)))
+	domain.SetSkillSyncHook(svc.SkillsDomain().ApplyPluginSkills)
 }
 
 func initializeService(svc *app.Service) error {
@@ -337,15 +368,20 @@ func (r *Runtime) Start() error {
 		return err
 	}
 	r.listener = listener
-	r.httpServer = &http.Server{Handler: r.handler, ReadHeaderTimeout: 10 * time.Second}
+	httpContext, cancelHTTP := context.WithCancel(context.Background())
+	r.httpServer = &http.Server{Handler: r.handler, ReadHeaderTimeout: 10 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return httpContext }}
+	// Shutdown waits for streams but does not cancel them. Its callback runs
+	// after Durable releases its invocations while the ops listener is alive.
+	r.httpServer.RegisterOnShutdown(cancelHTTP)
 	if r.localApp != nil {
 		r.localApp.Start()
 	} else {
 		r.service.StartWorker()
 	}
-	r.background.Add(1)
+	r.backgroundDone = make(chan struct{})
 	go func() {
-		defer r.background.Done()
+		defer close(r.backgroundDone)
 		r.service.RecoverPlaybackTranscodes()
 	}()
 	// The assistant loads its operation catalog from this server before becoming
@@ -408,6 +444,12 @@ func (r *Runtime) Errors() <-chan error {
 	return r.serveErr
 }
 
+func (r *Runtime) DepthComponents() *depthcapture.Service { return r.service.DepthComponents() }
+
+func (r *Runtime) PrepareStorageMigration(ctx context.Context) (func(), error) {
+	return r.service.PrepareStorageMigration(ctx)
+}
+
 func (r *Runtime) Close(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -415,10 +457,20 @@ func (r *Runtime) Close(ctx context.Context) error {
 	r.closeOnce.Do(func() {
 		r.closed.Store(true)
 		r.status.beginDrain()
+		var failures []error
+		// Durable must release its invocations while Go authorization and ops
+		// are still reachable; closing HTTP first turns Quit into fetch errors.
+		if r.assistantHost != nil {
+			if err := r.assistantHost.StopContext(ctx); err != nil {
+				failures = append(failures, err)
+			}
+		}
 		if r.beefAPI != nil {
 			r.beefAPI.Close()
 		}
-		var failures []error
+		if err := r.DepthComponents().CloseComponents(ctx); err != nil {
+			failures = append(failures, fmt.Errorf("暂停组件下载：%w", err))
+		}
 		// 干净退出先撤掉运行时地址：留着会让下一次发现连到一个已经不在的端口。
 		if r.cfg.Profile == ProfileDesktop {
 			if err := runtimeinfo.Remove(r.cfg.DataDir); err != nil {
@@ -444,21 +496,15 @@ func (r *Runtime) Close(ctx context.Context) error {
 			failures = append(failures, fmt.Errorf("等待后台任务退出：%w", workerErr))
 		}
 		cancel()
-		backgroundDone := make(chan struct{})
-		go func() {
-			r.background.Wait()
-			close(backgroundDone)
-		}()
-		select {
-		case <-backgroundDone:
-		case <-ctx.Done():
-			failures = append(failures, fmt.Errorf("等待初始化任务退出：%w", ctx.Err()))
-		}
-		// 本进程启动的内置宿主子进程必须跟着一起退出：否则后端重启后旧宿主会占着端口，
-		// 让状态查询显示「可用」但其实是上一个进程的实例。只清理本进程启动过的 PID。
-		if r.assistantHost != nil {
-			if err := r.assistantHost.StopContext(ctx); err != nil {
-				failures = append(failures, err)
+		if r.backgroundDone != nil {
+			select {
+			case <-r.backgroundDone:
+			default:
+				select {
+				case <-r.backgroundDone:
+				case <-ctx.Done():
+					failures = append(failures, fmt.Errorf("等待初始化任务退出：%w", ctx.Err()))
+				}
 			}
 		}
 		var serviceErr error
@@ -491,7 +537,7 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
 		}
-		c.Header("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Desktop-Token, X-Beeftv-UI-Bootstrap, X-Beeftv-Ui-Session, X-Canvas-Trace-ID, X-Idempotency-Key, X-Canvas-Scene, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL, X-Canvas-Upstream-Headers")
+		c.Header("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, Traceparent, X-Desktop-Token, X-Beeftv-UI-Bootstrap, X-Beeftv-Ui-Session, X-Canvas-Trace-ID, X-Idempotency-Key, X-Canvas-Scene, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL, X-Canvas-Upstream-Headers")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID, X-Canvas-Trace-ID, X-Diagnostic-Bundle-ID, X-Diagnostic-Schema-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
@@ -502,17 +548,26 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// isOpsEntryPath 只认操作层的两个入口：GET /api/ops 与 POST /api/ops/<op>。
-// /api/ops/clients 是凭据签发，不在豁免范围；带子路径的形态也一律不算。
+// isOpsEntryPath 只认操作层入口：GET /api/ops、GET /api/ops/orders、GET /api/ops/external-writes、
+// POST /api/ops/<op>、POST /api/ops/orders/<proposalId>/approve 与 POST /api/ops/external-writes/<opId>/undo。
+// /api/ops/clients 是凭据签发，不在豁免范围。
 func isOpsEntryPath(r *http.Request) bool {
 	path := r.URL.Path
-	if r.Method == http.MethodGet && path == "/api/ops" {
+	if r.Method == http.MethodGet && (path == "/api/ops" || path == "/api/ops/orders" || path == "/api/ops/external-writes") {
 		return true
 	}
 	if r.Method != http.MethodPost || !strings.HasPrefix(path, "/api/ops/") {
 		return false
 	}
 	op := strings.TrimPrefix(path, "/api/ops/")
+	if strings.HasPrefix(op, "orders/") && strings.HasSuffix(op, "/approve") {
+		proposalID := strings.TrimSuffix(strings.TrimPrefix(op, "orders/"), "/approve")
+		return proposalID != "" && !strings.Contains(proposalID, "/")
+	}
+	if strings.HasPrefix(op, "external-writes/") && strings.HasSuffix(op, "/undo") {
+		opID := strings.TrimSuffix(strings.TrimPrefix(op, "external-writes/"), "/undo")
+		return opID != "" && !strings.Contains(opID, "/")
+	}
 	return op != "" && op != "clients" && !strings.Contains(op, "/")
 }
 

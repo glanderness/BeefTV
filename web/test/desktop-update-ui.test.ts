@@ -32,7 +32,9 @@ describe("desktop update UI contract", () => {
         expect(update).toContain("AppChangelogButton");
         expect(update).toContain("showVersion");
         expect(update).toContain("updater.downloadAndInstall()");
-        expect(update).not.toContain("AppModal");
+        expect(update).toContain("AppModal");
+        expect(update).toContain("仍然更新");
+        expect(update).toContain("尚未保存的修改可能丢失");
         expect(update).toContain("updater.check()");
         expect(update).toContain('aria-live="polite"');
         expect(update).toContain("desktopUpdateDetailLabel");

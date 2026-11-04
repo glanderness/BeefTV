@@ -4,10 +4,12 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -61,6 +63,9 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 	}
 	python, toolDir, modelRuntime := cudaPython, cudaToolDir, cudaModelRuntime
 	if choice.Device != "cuda" {
+		if s.goos == "windows" && choice.Device == "cpu" {
+			s.requireCPUComponents()
+		}
 		python, toolDir, modelRuntime, err = s.resolveRuntime(ctx, task, platform, choice.Variant)
 	}
 	if err != nil {
@@ -111,6 +116,7 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		}
 	})
 	if ShouldRetryOnCPU(runErr, ctx.Err(), 0) && choice.Device == "cuda" {
+		s.requireCPUComponents()
 		choice = DeviceChoice{Variant: "cpu", Device: "cpu", FallbackReason: runErr.Error()}
 		if err := s.progress(task, "CUDA 设备故障，改用 CPU（可能耗时较长）", 15); err != nil {
 			return err
@@ -138,7 +144,7 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return s.fail(task, stageFailed, s.truncate(runErr.Error(), 800))
+		return s.fail(task, stageFailed, workerFailureSummary(runErr.Error()))
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -150,7 +156,26 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 	if err := s.progress(task, "保存到素材库", 92); err != nil {
 		return err
 	}
-	file, err := os.Open(matches[0])
+	preview := matches[0]
+	if previewInfo, statErr := os.Stat(preview); statErr != nil {
+		return s.failUnlessCanceled(ctx, task, stageOutput, ErrOpenPreview.Error())
+	} else if previewInfo.Size() <= 0 {
+		return s.failUnlessCanceled(ctx, task, stageOutput, ErrEmptyPreview.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	facts, err := s.probeOutput(ctx, preview)
+	if err != nil || !facts.HasVideo || facts.Width <= 0 || facts.Height <= 0 || facts.DurationMs <= 0 {
+		return s.failUnlessCanceled(ctx, task, stageOutput, "无法读取深度结果视频的实际尺寸和时长")
+	}
+	// 补帧会替换预览文件；Windows 不允许替换仍被打开的文件，所以补帧完成后才打开。
+	if facts.FPS > 0 && facts.FPS < 29.95 && ensureMinimumPreviewFPS(ctx, preview, s.configure) == nil {
+		if conformed, probeErr := s.probeOutput(ctx, preview); probeErr == nil && conformed.HasVideo && conformed.Width > 0 && conformed.Height > 0 && conformed.DurationMs > 0 {
+			facts = conformed
+		}
+	}
+	file, err := os.Open(preview)
 	if err != nil {
 		return s.failUnlessCanceled(ctx, task, stageOutput, ErrOpenPreview.Error())
 	}
@@ -159,10 +184,7 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 	if err != nil || info.Size() <= 0 {
 		return s.failUnlessCanceled(ctx, task, stageOutput, ErrEmptyPreview.Error())
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	stored, err := s.media.SaveVideo(task.UserID, OutputName, info.Size(), OutputWidth, OutputHeight, resource.DurationMs, file, "depth:"+task.ID)
+	stored, err := s.media.SaveVideo(task.UserID, OutputName, info.Size(), facts.Width, facts.Height, facts.DurationMs, file, "depth:"+task.ID)
 	if err != nil {
 		return s.failUnlessCanceled(ctx, task, stageSave, err.Error())
 	}
@@ -171,8 +193,9 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		FileName:       OutputName,
 		Size:           stored.Size,
 		DurationMs:     stored.DurationMs,
-		Width:          OutputWidth,
-		Height:         OutputHeight,
+		Width:          stored.Width,
+		Height:         stored.Height,
+		FPS:            facts.FPS,
 		Device:         choice.Device,
 		FallbackReason: choice.FallbackReason,
 		RuntimeVersion: "v1",
@@ -185,4 +208,34 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		return nil
 	}
 	return s.tasks.Complete(task, result)
+}
+
+func ensureMinimumPreviewFPS(ctx context.Context, previewPath string, configure func(*exec.Cmd)) error {
+	ffmpeg, err := mediatools.ResolveFFmpeg()
+	if err != nil {
+		return err
+	}
+	conformedPath := previewPath + ".30fps.mp4"
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-i", previewPath,
+		"-r", "30",
+		"-an", "-c:v", "libx264", "-crf", "18",
+		"-pix_fmt", "yuv420p", "-movflags", "+faststart",
+		conformedPath,
+	)
+	if configure != nil {
+		configure(cmd)
+	} else {
+		configureDepthCommand(cmd)
+	}
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(conformedPath)
+		return err
+	}
+	if err := os.Rename(conformedPath, previewPath); err != nil {
+		_ = os.Remove(conformedPath)
+		return err
+	}
+	return nil
 }

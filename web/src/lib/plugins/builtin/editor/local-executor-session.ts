@@ -1,4 +1,4 @@
-import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { createClientId } from "@/lib/client-id";
 import { createDepthCaptureTask, type DepthCaptureResult } from "@/services/api/depth-capture";
 import { getResource, type RemoteResource } from "@/services/api/resources";
 import { waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
@@ -16,7 +16,6 @@ import type { TimelineProject } from "@/types/timeline";
  * signal so a late completion cannot write to a replacement panel.
  */
 export type LocalExecutorSession = {
-    expectedScope: CapturedUserScope;
     projectId: string;
     controller: AbortController;
     getLiveProjectId: () => string;
@@ -38,11 +37,9 @@ export function beginLocalExecutorSession(
     options: {
         controller: AbortController;
         getLiveProjectId: () => string;
-        expectedScope?: CapturedUserScope;
     },
 ): LocalExecutorSession {
     return {
-        expectedScope: options.expectedScope ?? captureUserScope(),
         projectId,
         controller: options.controller,
         getLiveProjectId: options.getLiveProjectId,
@@ -51,7 +48,6 @@ export function beginLocalExecutorSession(
 
 export function assertLocalExecutorSession(session: LocalExecutorSession) {
     if (session.controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-    assertUserScope(session.expectedScope);
     if (session.getLiveProjectId() !== session.projectId) {
         session.controller.abort();
         throw new DOMException("Aborted", "AbortError");
@@ -59,7 +55,7 @@ export function assertLocalExecutorSession(session: LocalExecutorSession) {
 }
 
 export function isLocalExecutorSessionStop(error: unknown) {
-    return isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError");
+    return (error instanceof Error && error.name === "AbortError");
 }
 
 export function nextLocalExecutorClientOperationId(
@@ -74,7 +70,7 @@ export function nextLocalExecutorClientOperationId(
     ) {
         return previous.clientOperationId;
     }
-    return crypto.randomUUID();
+    return createClientId();
 }
 
 export function localExecutorIntentAfterSubmit(
@@ -126,7 +122,6 @@ export async function observeLocalExecutorTask(
         intervalMs: options.intervalMs,
         timeoutMs: options.timeoutMs,
         signal: session.controller.signal,
-        expectedScope: session.expectedScope,
         onTaskUpdate: (task) => {
             assertLocalExecutorSession(session);
             options.onTaskUpdate?.(task);
@@ -149,7 +144,7 @@ export async function runOwnedTimelineRender(input: {
     assertLocalExecutorSession(input.session);
     const created = await createTimelineRenderTask(
         { projectId: input.projectId, timeline: input.timeline, clientOperationId: input.clientOperationId },
-        { signal: input.session.controller.signal, expectedScope: input.session.expectedScope },
+        { signal: input.session.controller.signal },
     );
     assertLocalExecutorSession(input.session);
     input.onCreated?.(created);
@@ -186,7 +181,7 @@ export async function runOwnedTimelineTranscription(input: {
             model: input.model,
             clientOperationId: input.clientOperationId,
         },
-        { signal: input.session.controller.signal, expectedScope: input.session.expectedScope },
+        { signal: input.session.controller.signal },
     );
     assertLocalExecutorSession(input.session);
     input.onCreated?.(created);
@@ -215,7 +210,7 @@ export async function runOwnedDepthCapture(input: {
     assertLocalExecutorSession(input.session);
     const created = await createDepthCaptureTask(
         { projectId: input.projectId, nodeId: input.nodeId, resourceId: input.resourceId, clientOperationId: input.clientOperationId },
-        { signal: input.session.controller.signal, expectedScope: input.session.expectedScope },
+        { signal: input.session.controller.signal },
     );
     assertLocalExecutorSession(input.session);
     await input.onCreated?.(created);
@@ -230,7 +225,6 @@ export async function runOwnedDepthCapture(input: {
     assertLocalExecutorSession(input.session);
     const resource = await getResource(capture.resourceId, {
         signal: input.session.controller.signal,
-        expectedScope: input.session.expectedScope,
     });
     assertLocalExecutorSession(input.session);
     return { task, resource, capture };

@@ -1,19 +1,20 @@
+import { observeStorageNamespaceTask } from "@/lib/storage-namespace-task";
 import type { GenerationOutput } from "@/lib/generation-outputs";
 import { mediaFileExtension } from "@/lib/canvas/canvas-media-download";
-import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { getResourceBlob, ownedResourceIdFromMediaRef, resourceStorageKey } from "@/services/api/resources";
 import { getMediaBlob } from "@/services/file-storage";
 import { downloadOwnedOrBrowserMedia, isWailsNativeShell, saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
 
 export async function readGenerationOutputBlob(output: GenerationOutput, signal?: AbortSignal): Promise<Blob> {
     signal?.throwIfAborted();
-    const expectedScope = captureUserScope();
+    const namespace = observeStorageNamespaceTask();
+    try {
     const fallback = output.dataUrl || output.url || "";
     const resourceId = ownedResourceIdFromMediaRef(output.storageKey, fallback);
     let blob: Blob | null;
     if (resourceId) {
         // Protected resources must never fall back to a raw URL after an auth failure.
-        blob = await getResourceBlob(resourceStorageKey(resourceId), { signal, expectedScope });
+        blob = await getResourceBlob(resourceStorageKey(resourceId), { signal });
     } else if (output.storageKey) {
         blob = await getMediaBlob(output.storageKey);
     } else {
@@ -22,15 +23,17 @@ export async function readGenerationOutputBlob(output: GenerationOutput, signal?
         if (!response.ok) throw new Error("输出文件读取失败，请重新读取");
         blob = await response.blob();
     }
-    assertUserScope(expectedScope);
+    namespace.assertCurrent();
     signal?.throwIfAborted();
     if (!blob) throw new Error("输出文件读取失败，请重新读取");
     return blob;
+    } finally { namespace.dispose(); }
 }
 
 export async function downloadGenerationOutput(output: GenerationOutput, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    const expectedScope = captureUserScope();
+    const namespace = observeStorageNamespaceTask();
+    try {
     const fallback = output.dataUrl || output.url || "";
     const extension = mediaFileExtension(output.mimeType, fallback) || "bin";
     const fileName = `output-${output.outputIndex + 1}.${extension}`;
@@ -38,7 +41,8 @@ export async function downloadGenerationOutput(output: GenerationOutput, signal?
         return downloadOwnedOrBrowserMedia({ fileName, resourceId: ownedResourceIdFromMediaRef(output.storageKey, fallback) });
     }
     const blob = await readGenerationOutputBlob(output, signal);
-    assertUserScope(expectedScope);
     signal?.throwIfAborted();
+    namespace.assertCurrent();
     return saveOwnedOrBrowserBlob(fileName, blob);
+    } finally { namespace.dispose(); }
 }

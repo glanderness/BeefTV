@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { App } from "antd";
@@ -9,8 +10,6 @@ import { configureApiRuntime } from "@/services/api/request";
 import { hydrateModelConfig } from "@/services/model-config-repository";
 import { resourceFileUrl, resourceStorageKey } from "@/services/api/resources";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { captureUserScope } from "@/lib/user-scope-guard";
-import { setActiveUserScope } from "@/lib/user-scope";
 import { appQueryClient } from "@/lib/query-client";
 import { assetLibraryQueryKey } from "@/components/assets/asset-view-session";
 import { isNativeDesktopRuntime } from "@/lib/runtime-mode";
@@ -19,17 +18,16 @@ import "@/pages/canvas/canvas-assistant-sidebar.css";
 
 configureApiRuntime(location.origin + "/api", "synthetic-desktop-preview");
 await hydrateModelConfig();
-const initialAssetQuery = assetLibraryQueryKey(captureUserScope(), "fixture");
+const initialAssetQuery = assetLibraryQueryKey("fixture");
 const changedCanvases: string[] = [], locatedNodes: string[][] = [];
 appQueryClient.setQueryData(initialAssetQuery, { total: 0 });
 Object.assign(window, { assistantInputFixture: {
     assets: () => useAssetStore.getState().assets.map(asset => ({ id: asset.id, title: asset.title, kind: asset.kind, data: asset.data })),
-    draft: () => readAssistantInputDraft("input-canvas", captureUserScope()),
+    draft: () => readAssistantInputDraft("input-canvas"),
     nativeLocal: isNativeDesktopRuntime,
     libraryInvalidated: () => appQueryClient.getQueryState(initialAssetQuery)?.isInvalidated,
     changedCanvases: () => [...changedCanvases],
     locatedNodes: () => [...locatedNodes],
-    switchScope: async (scope = "other-workspace") => { await fetch("/test/asset-scope", { method: "POST", body: JSON.stringify({ scope }) }); setActiveUserScope(scope); useAssetStore.setState({ assets: [] }); },
 } });
 function Harness() {
     const [externalOpen, setExternalOpen] = useState(false);
@@ -41,4 +39,4 @@ function Harness() {
         {externalOpen ? <AgentConnectPanel kind="codex" onClose={() => setExternalOpen(false)} onConfigured={() => {}} verifiedClientIds={[]} onBusyChange={() => {}} /> : null}
     </App>;
 }
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<MemoryRouter><QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider></MemoryRouter>);

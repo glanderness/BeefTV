@@ -66,8 +66,8 @@ func (immediatePoller) Poll(ctx context.Context, _ string, _ PollPolicy, query f
 	}
 }
 
-func (immediatePoller) Download(ctx context.Context, _ string, _ PollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error) {
-	return download(ctx)
+func (immediatePoller) Download(ctx context.Context, _ string, _ PollPolicy, source BinarySource, _ func(context.Context) (BinarySource, error)) ([]byte, string, error) {
+	return source.Read(ctx)
 }
 
 type cancelSleep struct{ DefaultTimePolicy }

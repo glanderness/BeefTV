@@ -40,6 +40,13 @@ func TestBundledWindowsHEVCWithoutSystemFFmpeg(t *testing.T) {
 	if ProbeCodec(dst) != CodecH264 {
 		t.Fatal("preview is not H.264")
 	}
+	if path, err := exec.LookPath("ffprobe"); err == nil {
+		t.Fatalf("global FFprobe leaked into acceptance: %s", path)
+	}
+	facts, err := mediatools.ProbeLocal(context.Background(), dst)
+	if err != nil || facts.Width != 64 || facts.Height != 48 || facts.DurationMs <= 0 {
+		t.Fatalf("bundled FFprobe: %+v %v", facts, err)
+	}
 	after, _ := os.ReadFile(src)
 	if sha256.Sum256(original) != sha256.Sum256(after) {
 		t.Fatal("original modified")

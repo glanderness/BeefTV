@@ -1,5 +1,7 @@
 {
   "local_storage_failed": "local_storage",
+  "image_reference_upload_failed": "provider_unavailable",
+  "reference_media_upload_failed": "provider_unavailable",
   "ContentSecurityDetectionError": "provider_unavailable",
   "AccountOverdueError": "quota_upstream",
   "OperationDenied.ServiceOverdue": "quota_upstream",

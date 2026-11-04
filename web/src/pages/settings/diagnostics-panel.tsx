@@ -4,9 +4,11 @@ import { Download, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBundle, type DiagnosticExportInput, type DiagnosticPreview } from "@/services/diagnostics/diagnostics-api";
-import { getClientDiagnosticEvents, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
+import { getClientDiagnosticSnapshot, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
 import { clearVideoPreviewCache } from "@/services/api/resources";
 import { AppModal } from "@/components/ui/product/app-modal";
+import { getDesktopAppBinding } from "@/services/desktop-runtime";
+import { EnvironmentChecks } from "./environment-checks";
 
 type DiagnosticsPanelProps = {
     taskId?: string;
@@ -33,12 +35,14 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     const [exporting, setExporting] = useState(false);
     const [bundleId, setBundleId] = useState("");
     const [clearingPreviews, setClearingPreviews] = useState(false);
+	const openUpdateLogs = getDesktopAppBinding()?.OpenUpdateLogDirectory;
+	const [updateLogError, setUpdateLogError] = useState("");
 
     useEffect(() => {
         if (!open) return;
         let cancelled = false;
         setLoadingPreview(true);
-        void previewDiagnosticBundle(buildInput(range, undefined, taskId, projectId))
+        void buildInput(range, undefined, taskId, projectId).then(previewDiagnosticBundle)
             .then((result) => {
                 if (!cancelled) setPreview(result);
             })
@@ -56,7 +60,7 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     const handleExport = async () => {
         setExporting(true);
         try {
-            const download = await exportDiagnosticBundle(buildInput(range, description, taskId, projectId));
+            const download = await exportDiagnosticBundle(await buildInput(range, description, taskId, projectId));
             const saved = await downloadDiagnosticBundle(download);
             if (saved !== "saved") return;
             setBundleId(download.bundleId);
@@ -87,6 +91,7 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
             )}
         >
             <div className="max-h-[calc(100dvh-180px)] space-y-5 overflow-y-auto pt-4">
+                {open ? <EnvironmentChecks /> : null}
                 <div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <span className="text-sm font-medium">日志范围</span>
@@ -102,9 +107,20 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
                         />
                     </div>
                     <p className="mt-3 text-xs leading-5 text-foreground/55" aria-live="polite">
-                        {loadingPreview ? "正在读取日志…" : preview ? `包含 ${preview.taskCount} 个任务、${preview.apiCallCount} 次模型调用及前端日志。` : "暂时无法读取记录数量，可继续尝试导出。"}
+                        {loadingPreview ? "正在读取日志…" : preview ? `包含 ${preview.taskCount} 个生成任务、${preview.apiCallCount} 次媒体请求${preview.assistantTurnCount === undefined ? "" : `、${preview.assistantTurnCount} 轮助手记录`}及前端日志。` : "暂时无法读取记录数量，可继续尝试导出。"}
                     </p>
+                    {preview && (preview.willTruncate || Object.values(preview.collectors || {}).some(collector => collector.status !== "complete")) ? <p className="mt-1 text-xs leading-5 text-foreground/55" role="status">部分记录缺失或已达保留上限，诊断包会注明缺失范围；无法保证还原全部经过。</p> : null}
                 </div>
+                {openUpdateLogs ? <div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-medium">应用更新日志</p>
+                        <Button onClick={() => { setUpdateLogError(""); void openUpdateLogs().catch(() => setUpdateLogError("无法打开日志文件夹，请在存储设置中查看当前目录。")); }}>打开日志文件夹</Button>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-foreground/55">{preview?.updateLog?.status === "available" ? `诊断包将包含 ${preview.updateLog.lines} 条更新记录。` : preview?.updateLog?.status === "unreadable" ? "部分更新日志无法读取，其他信息仍可导出。" : preview?.updateLog?.status === "missing" ? "未找到更新日志，其他信息仍可导出。" : "请选择覆盖更新失败时间的日志范围。"}</p>
+                    {preview?.updateLog?.truncated ? <p className="mt-1 text-xs leading-5 text-foreground/55">日志较多，仅包含最近的部分更新记录。</p> : null}
+                    <p className="mt-1 text-xs leading-5 text-foreground/55">日志位于当前数据目录，文件名为 update.log。</p>
+                    {updateLogError ? <p className="mt-1 text-xs leading-5 text-destructive" role="alert">{updateLogError}</p> : null}
+                </div> : null}
                 <div>
                     <label className="mb-3 block text-sm font-medium" htmlFor="diagnostic-description">
                         问题描述 <span className="ml-1 text-xs font-normal text-foreground/55">可选</span>
@@ -135,9 +151,10 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     );
 }
 
-function buildInput(range: DiagnosticRange, description: string | undefined, taskId?: string, projectId?: string): DiagnosticExportInput {
+async function buildInput(range: DiagnosticRange, description: string | undefined, taskId?: string, projectId?: string): Promise<DiagnosticExportInput> {
     const to = new Date();
     const from = new Date(to.getTime() - rangeMilliseconds(range));
+    const snapshot = await getClientDiagnosticSnapshot({ from, to });
     return {
         from: from.toISOString(),
         to: to.toISOString(),
@@ -145,7 +162,8 @@ function buildInput(range: DiagnosticRange, description: string | undefined, tas
         projectId: projectId || undefined,
         description: description || undefined,
         runtime: getDiagnosticRuntime(),
-        clientEvents: getClientDiagnosticEvents({ from, to }),
+        clientEvents: snapshot.events,
+        clientCoverage: snapshot.coverage,
     };
 }
 

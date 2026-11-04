@@ -8,7 +8,10 @@ export async function officialNativeHistory(entry, doc, context) {
     if(!turn.turnId || !turn.requestId || (!turn.submissionId && turn!==doc.active)) continue;
     const submission=await entry.harness.commit(tx=>turn.submissionId ? tx.submission(turn.submissionId) : tx.submissionByRequest(entry.root.id,turn.requestId),context);
     if(!submission || submission.conversationId!==entry.root.id || submission.requestId!==turn.requestId || submission.entry===undefined) continue;
-    if(turn!==doc.active && submission.status!=='done') continue;
+    // A failed/stopped generation can still have committed media tool results.
+    // Keep its entry boundary and provenance; Go separately checks undo, scope
+    // and the exact resource version before any historical bytes are dispatched.
+    if(turn!==doc.active && !['done','unanswered'].includes(submission.status)) continue;
     rounds.push({turnId:turn.turnId,entryId:submission.entry,historical:turn!==doc.active});
   }
   rounds.sort((a,b)=>a.entryId-b.entryId);

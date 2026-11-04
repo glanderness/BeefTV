@@ -1,13 +1,15 @@
 import type { Dispatch, SetStateAction } from "react";
 import { nanoid } from "nanoid";
+import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 
 import { getNodeSpec } from "@/constant/canvas";
-import { applyGenerationTaskResultToNodes, generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
+import { applyGenerationTaskResultToNodes, applyMaterializedGenerationTaskResultToNodes, generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
-import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
+import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -17,6 +19,7 @@ import { CanvasOwnerAbandonedError, canvasOwnerCanPersist, canvasOwnerEpochMatch
 const NODE_STATUS_SUCCESS = "success" as const;
 
 export type CanvasNodeRetryPlan =
+    | { kind: "history" }
     | { kind: "depth" }
     | { kind: "script"; prompt: string }
     | { kind: "script-empty" }
@@ -26,7 +29,8 @@ export type CanvasNodeRetryPlan =
     | { kind: "single" };
 
 export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[]): CanvasNodeRetryPlan {
-    if (node.metadata?.depthSourceNodeId) return { kind: "depth" };
+    if (canvasNodeFailureView(node).recoveryRoute === "history") return { kind: "history" };
+    if (isDepthCaptureResultNode(node)) return { kind: "depth" };
     if (node.type === CanvasNodeType.Script) {
         const prompt = (node.metadata?.composerContent || node.metadata?.prompt || "").trim();
         return prompt ? { kind: "script", prompt } : { kind: "script-empty" };
@@ -42,7 +46,11 @@ export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[
 }
 
 export function selectRetryableImageBatchChildren(children: CanvasNodeData[]) {
-    const retryable = children.filter((child) => !shouldBlockAutomaticRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
+    // 批量重试没有逐个确认：需要确认（可能再次扣费）的子节点只能单独重新生成。
+    const retryable = children.filter((child) => {
+        const view = canvasNodeFailureView(child);
+        return !view.regenerateBlocked && !view.regenerateConfirm;
+    });
     return { retryable, blocked: retryable.length < children.length };
 }
 
@@ -154,37 +162,47 @@ export async function insertCanvasGenerationHistoryTask(input: {
     applyResult?: typeof applyGenerationTaskResultToNodes;
     readLiveNodes: () => CanvasNodeData[];
     canContinueWrite?: () => boolean;
-}): Promise<{ node: CanvasNodeData; nextNodes: CanvasNodeData[]; abandoned?: boolean }> {
+}): Promise<{ node: CanvasNodeData; nextNodes: CanvasNodeData[]; insertedNodes?: CanvasNodeData[]; abandoned?: boolean }> {
     const mode = generationTaskMode(input.task);
     const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
-    const node = createCanvasNode(nodeType, input.center, {
-        prompt: input.task.prompt,
-        composerContent: input.task.prompt,
-        status: "loading",
-        taskId: input.task.id,
-        taskStatus: input.task.status,
-        taskStage: input.task.stage,
-        taskProvider: input.task.provider,
-        taskCreatedAt: input.task.createdAt,
-        taskCompletedAt: input.task.completedAt,
-        model: input.task.model,
-    });
-    node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
-    const applied = await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
-    if (!applied.node) throw new Error("生成结果无法定位到画布节点");
-    if (input.canContinueWrite && !input.canContinueWrite()) return { node: applied.node, nextNodes: [], abandoned: true };
-    const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, async (item) => {
-        if (input.canContinueWrite && !input.canContinueWrite()) throw new CanvasOwnerAbandonedError();
-        return input.ensureAsset(item);
-    });
-    const inserted = bound[0];
-    if (!inserted || canvasNodesMissingResourceAssetBinding(bound).length) {
-        throw new Error("生成结果尚未进入素材库，无法插入画布");
+    const declaredOutputs = input.task.outputs?.length ? Math.max(...input.task.outputs.map((item) => (item.outputIndex ?? 0) + 1), input.task.outputs.length) : 0;
+    const count = mode === "image" ? (beefAPIImageContract(input.task.model || "")?.fixedOutputs || declaredOutputs || 1) : 1;
+    const insertedNodes: CanvasNodeData[] = [];
+    for (let index = 0; index < count; index++) {
+        const node = createCanvasNode(nodeType, { x: input.center.x + (index % 2) * 400, y: input.center.y + Math.floor(index / 2) * 400 }, {
+            prompt: input.task.prompt,
+            composerContent: input.task.prompt,
+            status: "loading",
+            taskId: input.task.id,
+            taskStatus: input.task.status,
+            taskStage: input.task.stage,
+            taskProvider: input.task.provider,
+            taskCreatedAt: input.task.createdAt,
+            taskCompletedAt: input.task.completedAt,
+            model: input.task.model,
+            ...(count > 1 ? { taskOutputIndex: index } : {}),
+        });
+        node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
+        const output = input.task.outputs?.find((output) => output.outputIndex === index && output.materializedAssetId);
+        const applied = output && !input.applyResult
+            ? await applyMaterializedGenerationTaskResultToNodes([node], input.task, output, `history:${input.task.id}:${node.id}:${index}`, node.id)
+            : await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
+        if (!applied.node) throw new Error("生成结果无法定位到画布节点");
+        if (input.canContinueWrite && !input.canContinueWrite()) return { node: applied.node, nextNodes: [], abandoned: true };
+        const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, async (item) => {
+            if (input.canContinueWrite && !input.canContinueWrite()) throw new CanvasOwnerAbandonedError();
+            return input.ensureAsset(item);
+        });
+        const inserted = bound[0];
+        if (!inserted || canvasNodesMissingResourceAssetBinding(bound).length) {
+            throw new Error("生成结果尚未进入素材库，无法插入画布");
+        }
+        if (input.canContinueWrite && !input.canContinueWrite()) return { node: inserted, nextNodes: [], abandoned: true };
+        insertedNodes.push(inserted);
     }
-    if (input.canContinueWrite && !input.canContinueWrite()) return { node: inserted, nextNodes: [], abandoned: true };
-    const nextNodes = rebaseInsertedCanvasNode(input.readLiveNodes(), inserted);
+    const nextNodes = insertedNodes.reduce((nodes, inserted) => rebaseInsertedCanvasNode(nodes, inserted), input.readLiveNodes());
     await input.persist(nextNodes);
-    return { node: inserted, nextNodes };
+    return { node: insertedNodes[0], nextNodes, insertedNodes };
 }
 
 export async function runOwnedCanvasHistoryInsert(input: {
@@ -202,7 +220,7 @@ export async function runOwnedCanvasHistoryInsert(input: {
     ensureAsset: (node: CanvasNodeData) => Promise<{ assetId: string }>;
     applyResult?: typeof applyGenerationTaskResultToNodes;
     readLiveNodes: () => CanvasNodeData[];
-    onCommit: (node: CanvasNodeData) => void;
+    onCommit: (node: CanvasNodeData, insertedNodes: CanvasNodeData[]) => void;
 }): Promise<"committed" | "abandoned"> {
     const liveUser = () => input.getLiveUserScope?.();
     const liveLifetime = () => input.getLiveLifetime?.();
@@ -218,7 +236,7 @@ export async function runOwnedCanvasHistoryInsert(input: {
         });
         if (result.abandoned) return "abandoned";
         if (!canvasOwnerEpochMatches(input.owner, input.getLiveCanvasId(), liveUser(), liveLifetime())) return "abandoned";
-        input.onCommit(result.node);
+        input.onCommit(result.node, result.insertedNodes || [result.node]);
         return "committed";
     } catch (error) {
         if (error instanceof CanvasOwnerAbandonedError) return "abandoned";

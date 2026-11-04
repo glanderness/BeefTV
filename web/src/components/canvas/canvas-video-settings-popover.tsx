@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
 import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
 import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue } from "@/lib/model-capabilities";
+import { isVideoResolutionMatch } from "@/lib/video-generation-options";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
-import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
+import type { VideoSettingsConstraints } from "@/lib/video-settings-constraints";
 
 type CanvasVideoSettingsPopoverProps = {
-    taskConstraints?: SeedanceSettingsConstraints;
+    children?: ReactNode;
+    taskConstraints?: VideoSettingsConstraints;
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     buttonClassName?: string;
@@ -19,21 +22,24 @@ type CanvasVideoSettingsPopoverProps = {
     summaryOverride?: string;
 };
 
-export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft", summaryOverride, taskConstraints }: CanvasVideoSettingsPopoverProps) {
+export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft", summaryOverride, taskConstraints, children }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useActiveTheme()];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-    const videoProfile = modelCapabilityConfigFor(config, config.model).video;
+    const capabilityConfig = modelCapabilityConfigFor(config, config.model);
+    const videoProfile = capabilityConfig.video;
     const resolutionSupported = Boolean(videoProfile?.resolutions.length);
     const sizeSupported = Boolean(videoProfile?.ratios.length);
     const resolution = videoProfile ? resolveVideoResolutionValue(videoProfile, config.vquality) : "";
     const size = videoProfile ? resolveVideoRatioValue(videoProfile, config.size) : "";
+    const draftActive = Boolean(videoProfile?.draft?.supported && config.videoDraft === "true" && (!resolution || isVideoResolutionMatch(resolution, "480p")));
     const summary = [
         ...(resolutionSupported ? [videoResolutionLabel(resolution)] : []),
+        ...(draftActive ? ["样片"] : []),
         ...(sizeSupported ? [taskConstraints?.ratioLabel || videoSizeLabel(size)] : []),
-        taskConstraints?.durationLocked ? "随原视频时长" : videoSecondsLabel(config.videoSeconds),
+        taskConstraints?.durationLocked ? "随原视频时长" : videoSecondsLabel(config.videoSeconds, videoProfile),
     ].join(" · ");
     const displaySummary = summaryOverride || summary;
 
@@ -44,6 +50,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
             const target = event.target;
             if (!(target instanceof Node)) return;
             if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+            if (target instanceof Element && target.closest(".canvas-h3-option-popup")) return;
             setOpen(false);
         };
 
@@ -58,7 +65,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} taskConstraints={taskConstraints} /> : null;
+    const panel = open && buttonRect ? <VideoSettingsPortal layer={canvasPopoverLayer(buttonRef.current)} buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} taskConstraints={taskConstraints}>{children}</VideoSettingsPortal> : null;
 
     return (
         <>
@@ -73,6 +80,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
 }
 
 function VideoSettingsPortal({
+    layer,
     buttonRect,
     panelRef,
     placement,
@@ -80,8 +88,11 @@ function VideoSettingsPortal({
     config,
     onConfigChange,
     taskConstraints,
+    children,
 }: {
-    taskConstraints?: SeedanceSettingsConstraints;
+    layer: number | string;
+    children?: ReactNode;
+    taskConstraints?: VideoSettingsConstraints;
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasVideoSettingsPopoverProps["placement"];
@@ -102,7 +113,7 @@ function VideoSettingsPortal({
     const placeAbove = topPlacement ? topSpace >= estimatedHeight || topSpace >= bottomSpace : bottomSpace < estimatedHeight && topSpace > bottomSpace;
     const style = {
         position: "fixed",
-        zIndex: "var(--z-dialog-popover)",
+        zIndex: layer,
         width,
         left: Math.max(margin, Math.min(window.innerWidth - width - margin, left)),
         ...(placeAbove ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, topSpace) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, bottomSpace) }),
@@ -125,6 +136,7 @@ function VideoSettingsPortal({
             onClick={(event) => event.stopPropagation()}
         >
             <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-3" taskConstraints={taskConstraints} />
+            {children ? <div className="mt-3">{children}</div> : null}
         </div>,
         document.body,
     );

@@ -9,7 +9,10 @@ import (
 	"infinite-canvas/backend/internal/workspace"
 )
 
-const DefaultManagedAssistantModel = "gpt-6-astra"
+// DefaultManagedAssistantModel 是 BeefAPI 连接授权后写入的助手模型：按 10-26
+// 会议结论改用成本最低的 DeepSeek Flash，跑通助手的基础流程。它只用于初始化，
+// 已经保存过助手模型的用户不会被改写（见 SaveCatalogWithAssistantDefault）。
+const DefaultManagedAssistantModel = "deepseek-v4.1-flash"
 
 func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string) error {
 	if store == nil {
@@ -26,6 +29,26 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 	channels, _ := config["channels"].([]any)
 	replaced := false
 	replaceModels := previousAccountID != "" && nextAccountID != "" && previousAccountID != nextAccountID
+	previousVideos := map[string]bool{}
+	if !replaceModels {
+		for _, raw := range channels {
+			channel, _ := raw.(map[string]any)
+			if channel["id"] != ChannelID {
+				continue
+			}
+			profiles, _ := channel["modelProfiles"].([]any)
+			for _, raw := range profiles {
+				profile, _ := raw.(map[string]any)
+				version, _ := profile["videoCapabilitiesVersion"].(string)
+				config, _ := profile["capabilityConfig"].(map[string]any)
+				video, _ := json.Marshal(config["video"])
+				if _, valid := NormalizeVersionedVideoCapability(video, version); valid {
+					id, _ := profile["model"].(string)
+					previousVideos[id] = true
+				}
+			}
+		}
+	}
 	nextModels := make([]any, 0, len(models))
 	nextProfiles := make([]any, 0, len(models))
 	for _, model := range models {
@@ -41,6 +64,11 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			profile["displayName"] = model.DisplayName
 		}
 		capability, protocol := catalogCapabilityAndProtocol(model)
+		if previousVideos[model.ID] && (model.ModelType == "" || model.ModelType == "video") {
+			// A partial refresh cannot reclassify an established video as chat
+			// merely because this response omitted its media declaration.
+			capability, protocol = "video", "openai-videos"
+		}
 		if catalogClearsGeneration(model) {
 			profile["capability"] = ""
 			profile["protocol"] = ""
@@ -52,10 +80,21 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 				profile["protocol"] = protocol
 			}
 			if capability == "video" {
-				if video, ok := NormalizeCatalogVideoCapability(model.VideoCapabilities); ok {
+				if video, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
 					profile["capabilityConfig"] = map[string]any{"version": 1, "video": video}
-					profile["videoCapabilitiesVersion"] = model.VideoCapabilitiesVersion
+					profile["videoCapabilitiesVersion"] = strings.TrimSpace(model.VideoCapabilitiesVersion)
 				}
+			}
+			if capability == "image" {
+				// A partial/older directory must not replace the last valid server
+				// declaration with local model defaults. A valid new version replaces it.
+				if image, ok := NormalizeCatalogImageCapability(model.ImageCapabilities); ok && model.ImageCapabilitiesVersion != "" {
+					profile["capabilityConfig"] = map[string]any{"version": 1, "image": image}
+					profile["imageCapabilitiesVersion"] = model.ImageCapabilitiesVersion
+				}
+			}
+			if len(model.MediaCapabilities) > 0 && model.MediaCapabilitiesVersion != "" {
+				profile["mediaCapabilities"], profile["mediaCapabilitiesVersion"] = model.MediaCapabilities, model.MediaCapabilitiesVersion
 			}
 		}
 		nextProfiles = append(nextProfiles, profile)
@@ -69,11 +108,22 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			channel["models"] = nextModels
 			channel["modelProfiles"] = nextProfiles
 		} else {
-			// Paid portrait availability and prices belong to the current catalog.
-			// Retain other legacy/custom entries under the existing merge contract.
-			channel["models"], channel["modelProfiles"] = withoutPortraitCatalogEntries(channel["models"], channel["modelProfiles"])
-			channel["models"] = mergeModelIDs(channel["models"], nextModels)
-			channel["modelProfiles"] = mergeProfiles(channel["modelProfiles"], nextProfiles)
+			// Availability belongs to the current account's catalog. Preserve
+			// overrides only for models that are still present in that catalog.
+			channel["models"] = nextModels
+			available := make(map[string]bool, len(models))
+			for _, model := range models {
+				available[model.ID] = true
+			}
+			profiles := make([]any, 0, len(models))
+			for _, raw := range mergeProfiles(channel["modelProfiles"], nextProfiles) {
+				profile, _ := raw.(map[string]any)
+				id, _ := profile["model"].(string)
+				if available[id] {
+					profiles = append(profiles, raw)
+				}
+			}
+			channel["modelProfiles"] = profiles
 		}
 		channel["apiKey"] = ""
 		channel["credentialRef"] = CredentialRef
@@ -161,6 +211,15 @@ func catalogProtocol(model CatalogModel) string {
 }
 
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
+	if audio, ok := model.MediaCapabilities["audio"]; ok && model.MediaCapabilitiesVersion != "" && len(audio.Operations) > 0 {
+		return "audio", "openai-audio"
+	}
+	if _, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
+		return "video", "openai-videos"
+	}
+	if contract, ok := providerpreset.BeefAPIImageContract(model.ID); ok {
+		return "image", contract.Protocol
+	}
 	if contract, ok := providerpreset.BeefAPIVideoContract(model.ID); ok {
 		return "video", contract.Protocol
 	}
@@ -479,26 +538,4 @@ func findChannel(channels []any, id string) map[string]any {
 		}
 	}
 	return nil
-}
-
-func withoutPortraitCatalogEntries(models, profiles any) ([]any, []any) {
-	isPortrait := func(id string) bool { return id == "seedance-2.0-portrait" || id == "seedance-2.5-portrait" }
-	keptModels := make([]any, 0)
-	for _, raw := range mergeModelIDs(models, nil) {
-		id, _ := raw.(string)
-		if !isPortrait(id) {
-			keptModels = append(keptModels, raw)
-		}
-	}
-	keptProfiles := make([]any, 0)
-	if items, ok := profiles.([]any); ok {
-		for _, raw := range items {
-			profile, _ := raw.(map[string]any)
-			id, _ := profile["model"].(string)
-			if !isPortrait(id) {
-				keptProfiles = append(keptProfiles, raw)
-			}
-		}
-	}
-	return keptModels, keptProfiles
 }

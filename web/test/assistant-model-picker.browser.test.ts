@@ -5,7 +5,7 @@ import { createModelChannel, defaultConfig } from "@/stores/use-config-store";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
-const ids = ["gpt-6-astra", "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3", "qwen3.8-flash"];
+const ids = ["gpt-6-astra", "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3", "qwen3.8-flash", "wand-vega-vl-1.0-flash"];
 const initial = { ...defaultConfig, assistantModel: "beefapi::claude-opus-5-5", channels: [createModelChannel({ id: "beefapi", pinned: true, enabled: true, models: ids, modelProfiles: ids.map(model => ({ model, capability: "text", protocol: "chat-completion" })) })] };
 let saved = structuredClone(initial);
 let writes = 0;
@@ -56,6 +56,34 @@ beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
 afterAll(async () => { release?.(); await browser?.close(); server?.stop(true); });
+
+test("default multimodal selection and explicit off persist without changing the main model", async () => {
+    connectionState = "connected"; catalogReadFailures = 0;
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    page.setDefaultTimeout(6000);
+    page.on("pageerror", error => console.error("multimodal picker page error:", error.message));
+    try {
+        await page.goto(new URL("/defaults", server.url).toString());
+        const row = page.locator('section[aria-labelledby="default-multimodal-title"]');
+        const picker = row.getByRole("combobox", { name: "默认多模态模型" });
+        await picker.click();
+        await page.locator('.ant-select-item-option-content').filter({ hasText: /^wand-vega-vl-1.0-flash/ }).click();
+        await page.waitForTimeout(100);
+        expect(saved.mediaReviewModel).toBe("beefapi::wand-vega-vl-1.0-flash");
+        expect(saved.assistantModel).toBe("beefapi::claude-opus-5-5");
+        await page.reload();
+        expect(await row.innerText()).toContain("wand-vega-vl-1.0-flash");
+        await picker.click();
+        await page.locator('.ant-select-item-option-content').filter({ hasText: /^不使用独立多模态模型$/ }).click();
+        await page.waitForTimeout(100);
+        expect(saved.mediaReviewModel).toBe("");
+        await page.reload();
+        expect(await row.innerText()).toContain("不使用独立多模态模型");
+    } catch (error) {
+        console.error("multimodal picker body:", (await page.locator("body").innerText()).slice(0, 1500));
+        throw error;
+    } finally { await page.close(); }
+}, 30000);
 
 test("connected account can disconnect and expose the authorization action again", async () => {
     connectionState = "connected"; catalogReadFailures = 0; disconnectCalls = 0;

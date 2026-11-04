@@ -40,6 +40,7 @@ type ChunkedUploadSessionInfo struct {
 	UploadID   string
 	ChunkSize  int
 	ChunkCount int
+	Received   []int
 }
 
 type chunkedUploadSession struct {
@@ -132,6 +133,22 @@ func (sess *chunkedUploadSession) hasAllChunks() bool {
 	return true
 }
 
+func (sess *chunkedUploadSession) info() ChunkedUploadSessionInfo {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	info := ChunkedUploadSessionInfo{UploadID: sess.ID, ChunkSize: ChunkUploadSize, ChunkCount: sess.ChunkCount, Received: []int{}}
+	for index := 0; index < sess.ChunkCount; index++ {
+		if sess.complete != nil {
+			info.Received = append(info.Received, index)
+		} else if sess.Dir != "" {
+			if stat, err := os.Stat(sess.chunkPath(index)); err == nil && stat.Mode().IsRegular() && stat.Size() == sess.chunkSizeAt(index) {
+				info.Received = append(info.Received, index)
+			}
+		}
+	}
+	return info
+}
+
 func (sess *chunkedUploadSession) matchesRequest(req ChunkedUploadStart) bool {
 	if sess == nil {
 		return false
@@ -184,7 +201,7 @@ func (s *Service) StartChunkedUpload(userID string, req ChunkedUploadStart) (Chu
 			if !existing.matchesRequest(req) {
 				return ChunkedUploadSessionInfo{}, UploadConflict()
 			}
-			return ChunkedUploadSessionInfo{UploadID: existing.ID, ChunkSize: ChunkUploadSize, ChunkCount: existing.ChunkCount}, nil
+			return existing.info(), nil
 		}
 		existing, err := s.resourceForUploadKey(userID, &identity)
 		if err != nil {
@@ -196,7 +213,7 @@ func (s *Service) StartChunkedUpload(userID string, req ChunkedUploadStart) (Chu
 			}
 			if existing.Status == model.ResourceStatusReady {
 				stub := s.rememberCompletedLocked(userID, identity, existing, req)
-				return ChunkedUploadSessionInfo{UploadID: stub.ID, ChunkSize: ChunkUploadSize, ChunkCount: stub.ChunkCount}, nil
+				return stub.info(), nil
 			}
 		}
 	}
@@ -255,7 +272,7 @@ func (s *Service) StartChunkedUpload(userID string, req ChunkedUploadStart) (Chu
 		}
 	}
 	s.sessions[sessionID] = sess
-	return ChunkedUploadSessionInfo{UploadID: sessionID, ChunkSize: ChunkUploadSize, ChunkCount: chunkCount}, nil
+	return sess.info(), nil
 }
 
 func (s *Service) PutChunkedUpload(userID, uploadID string, index int, body io.Reader) error {

@@ -51,14 +51,7 @@ func (s *Service) InstallPluginForAdmin(actor *model.User, data []byte, fileName
 	if err != nil {
 		return PluginView{}, mapPluginAccessError(err)
 	}
-	if err := s.appendAdminAudit(actor, "plugin.install", "plugin", plugin.Manifest.ID, "安装自定义插件", map[string]any{"fileName": fileName, "sha256": plugin.SHA256}); err != nil {
-		return PluginView{}, err
-	}
 	return plugin, nil
-}
-
-func (s *Service) PluginPackage(id string) ([]byte, string, error) {
-	return s.pluginDomain().Package(id)
 }
 
 func (s *Service) SetPluginEnabled(id string, enabled bool) (PluginView, error) {
@@ -73,8 +66,5 @@ func (s *Service) UninstallPluginForAdmin(actor *model.User, id string) error {
 	if err := s.RequireAdmin(actor); err != nil {
 		return err
 	}
-	if err := s.pluginDomain().UninstallUploaded(id); err != nil {
-		return mapPluginAccessError(err)
-	}
-	return s.appendAdminAudit(actor, "plugin.uninstall", "plugin", id, "卸载自定义插件", nil)
+	return mapPluginAccessError(s.pluginDomain().UninstallUploaded(id))
 }

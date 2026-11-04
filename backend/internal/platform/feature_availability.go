@@ -55,6 +55,13 @@ func DefaultFeatureAvailability() FeatureAvailability {
 }
 
 func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
+	if s != nil && s.localMode {
+		return publicFeatureAvailability(nil, DefaultFeatureAvailability()), nil
+	}
+	return s.hostedFeatureAvailability()
+}
+
+func (s *Service) hostedFeatureAvailability() (*PublicFeatureAvailability, error) {
 	setting, value, err := s.readFeatureAvailability()
 	if err != nil {
 		return nil, err
@@ -62,39 +69,15 @@ func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
 	return publicFeatureAvailability(setting, value), nil
 }
 
-func (s *Service) AdminFeatureAvailability(actor *model.User) (*PublicFeatureAvailability, error) {
-	if err := s.requireAdmin(actor); err != nil {
-		return nil, err
-	}
-	return s.FeatureAvailability()
-}
-
-func (s *Service) UpdateFeatureAvailability(actor *model.User, value FeatureAvailability) (*PublicFeatureAvailability, error) {
-	if err := s.requireAdmin(actor); err != nil {
-		return nil, err
-	}
-	current, before, err := s.readFeatureAvailability()
-	if err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	setting := model.SystemSetting{Key: featureAvailabilitySettingKey, ValueJSON: string(encoded), UpdatedBy: actor.ID}
-	if current != nil {
-		setting.CreatedAt = current.CreatedAt
-	}
-	if err := s.repo.SaveSystemSetting(&setting); err != nil {
-		return nil, err
-	}
-	if err := s.appendAdminAudit(actor, "feature_availability.update", "system_setting", featureAvailabilitySettingKey, "更新功能开放配置", map[string]any{"before": before, "after": value}); err != nil {
-		return nil, err
-	}
-	return publicFeatureAvailability(&setting, value), nil
-}
-
 func (s *Service) FeatureEnabled(feature string) (bool, error) {
+	if s != nil && s.localMode {
+		switch feature {
+		case FeatureFrontendModels:
+			return false, nil
+		case FeatureShortDrama, FeatureTaskCenter, FeatureCustomChannels, FeaturePluginCenter, FeatureSystemPlugins, FeatureTimelineTranscription:
+			return true, nil
+		}
+	}
 	_, value, err := s.readFeatureAvailability()
 	if err != nil {
 		return false, err
@@ -126,6 +109,9 @@ func (s *Service) RequireFeature(feature string) error {
 	}
 	if enabled {
 		return nil
+	}
+	if s != nil && s.localMode {
+		return kernel.Forbidden("当前工作区未开放此功能")
 	}
 	switch feature {
 	case FeatureShortDrama:

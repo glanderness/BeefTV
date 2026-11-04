@@ -7,7 +7,7 @@ import path from 'node:path';
 import {ModelRuntime} from '@earendil-works/pi-coding-agent';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {BACKGROUND_CONTEXT} from '@earendil-works/chord/context';
-import {createDurableSessionStore} from './durable-session-owner.mjs';
+import {createDurableSessionStore, durableStreamEvents} from './durable-session-owner.mjs';
 import {fetchModelWithProgressIdle, DEFAULT_MODEL_STREAM_IDLE_MS} from './model-stream-idle.mjs';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const event = data => `data: ${JSON.stringify(data)}\n\n`;
@@ -40,6 +40,7 @@ for(const [path,body,progress,empty,terminal] of [
   ['/chat/completions',{messages:[],stream:true},{choices:[{delta:{reasoning_content:'thinking',tool_calls:[{function:{arguments:'{"x":'}}]}}]}, {choices:[{delta:{role:'assistant'}}]}, {choices:[{delta:{},finish_reason:'stop'}]}],
   ['/responses',{input:[],stream:true},{type:'response.function_call_arguments.delta',delta:'value'}, {type:'response.created'}, {type:'response.completed'}],
   ['/messages',{messages:[],stream:true},{type:'content_block_delta',delta:{type:'thinking_delta',thinking:'think'}},{type:'ping'},{type:'message_stop'}],
+  ['/messages',{messages:[],stream:true},{type:'content_block_delta',delta:{type:'signature_delta',signature:'sig'}},{type:'ping'},{type:'message_stop'}],
 ]) test(`actual ${path} progress permits a stream longer than total timeout`,async t=>{
   const f=await fixture(t,res=>{let count=0;res.write(event(empty));const timer=setInterval(()=>{if(count++<5)res.write(event(progress));else{clearInterval(timer);res.end(event(terminal));}},40);res.on('close',()=>clearInterval(timer));});
   const req=request(path,body);const begin=Date.now(); const result=await read(await fetchModelWithProgressIdle(f.url+path,req.options,{timeoutMs:120}));
@@ -90,8 +91,15 @@ test('official Durable retries idle body with partial retained, one completed to
     res.writeHead(200,{'content-type':'text/event-stream'});
     const frame=(delta,finish_reason=null)=>res.write(event({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]}));
     if(calls===1){frame({role:'assistant',tool_calls:[{index:0,id:'one-stable-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{}'}}]});frame({},'tool_calls');res.end('data: [DONE]\n\n');}
-    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'retained current partial'});const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
-    else {assert.equal(calls,3);assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'completed after official retry'});frame({},'stop');res.end('data: [DONE]\n\n');}
+    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'retained current partial'});frame({tool_calls:[{index:0,id:'unfinished-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{"unfinished":'}}]});const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
+    else {
+      assert(calls===3 || calls===4);
+      const wireCalls=payload.messages.flatMap(message=>message.tool_calls || []).map(call=>call.id);
+      const wireResults=payload.messages.filter(message=>message.role==='tool').map(message=>message.tool_call_id);
+      assert.deepEqual(wireCalls,['one-stable-tool']);
+      assert.deepEqual(wireResults,wireCalls,'retry and reopen must not send an orphan result for a partial call');
+      frame({role:'assistant',content:'completed after official retry'});frame({},'stop');res.end('data: [DONE]\n\n');
+    }
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const realFetch=globalThis.fetch;
@@ -105,8 +113,32 @@ test('official Durable retries idle body with partial retained, one completed to
     authorizeTurn:async()=>({turnId:'idle-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:1,baseDelayMs:1}}});
   store=makeStore();const entry=await store.ensureSession('canvas');
   const submission=await store.submit(entry,{turnId:'idle-turn',permissionMode:'canvas',content:'write once then summarize',userText:'write once then summarize',revisionBefore:1});
-  const record=await store.wait(entry,submission);assert.equal(record.reply,'completed after official retry');assert.equal(record.error,null);assert.equal(calls,3);assert.equal(toolIds.length,1);
+  const events=[];const record=await store.wait(entry,submission,{onEvent:event=>{events.push(event);}});
+  assert.equal(record.reply,'completed after official retry');assert.equal(record.error,null);assert.equal(calls,3);assert.equal(toolIds.length,1);
+  // The official retry reaches the panel as classified progress, never as the upstream error text.
+  assert(events.some(event=>event.type==='auto_retry_start'&&/idle timeout/.test(event.errorMessage)));
+  const progress=events.flatMap(durableStreamEvents).filter(line=>line.type==='lifecycle'&&line.phase.startsWith('retry'));
+  assert.deepEqual(progress,[{type:'lifecycle',phase:'retry',attempt:1,reason:'timeout'},{type:'lifecycle',phase:'retry_end',attempt:1}]);
+  assert(!JSON.stringify(progress).includes('idle'));
   const view=await entry.root.context(BACKGROUND_CONTEXT);const errors=view.entries.flatMap(item=>item.model||[]).filter(message=>message.role==='assistant'&&message.stopReason==='error');
   assert(errors.some(message=>JSON.stringify(message.content).includes('retained current partial')&&/idle timeout/.test(message.errorMessage)));
+  assert(errors.some(message=>message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool')),'the regression must retain an actual partial call in the audit transcript');
+  assert(!view.messages.some(message=>message.toolCallId==='unfinished-tool'||(Array.isArray(message.content)&&message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool'))),'official context excludes the failed call');
   const sessionId=entry.sessionId;await store.disposeAll();store=makeStore();const history=await store.history('canvas',sessionId);assert.equal(history.turns[0].reply,record.reply);assert.equal(calls,3);assert.equal(toolIds.length,1);
+  const reopened=await store.ensureSession('canvas',sessionId);
+  const next=await store.submit(reopened,{turnId:'idle-turn-2',permissionMode:'canvas',content:'summarize the preserved result',userText:'summarize the preserved result',revisionBefore:1});
+  assert.equal((await store.wait(reopened,next)).error,null);assert.equal(calls,4);assert.equal(toolIds.length,1);
+});
+test('Anthropic SSE normalizes synthetic 9x cache_read_input_tokens proxy inflation while preserving genuine cache counts',async t=>{
+  const f=await fixture(t,res=>{
+    res.write(event({type:'message_start',message:{id:'msg_1',usage:{input_tokens:24,cache_creation_input_tokens:21896,cache_read_input_tokens:197066,output_tokens:1}}}));
+    res.write(event({type:'content_block_delta',delta:{type:'text_delta',text:'ok'}}));
+    res.write(event({type:'message_delta',delta:{stop_reason:'end_turn'},usage:{cache_read_input_tokens:197066,output_tokens:12}}));
+    res.end(event({type:'message_stop'}));
+  });
+  const result=await read(await fetchModelWithProgressIdle(f.url+'/messages',request('/messages',{stream:true,messages:[]}).options,{timeoutMs:500}));
+  assert(!result.error);
+  assert(result.text.includes('"cache_creation_input_tokens":21896'));
+  assert(result.text.includes('"cache_read_input_tokens":0'));
+  assert(!result.text.includes('197066'));
 });

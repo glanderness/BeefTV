@@ -163,3 +163,21 @@ func TestTaskOutputResourceReadsPersistedMedia(t *testing.T) {
 		t.Fatalf("unexpected task output resource: id=%q mediaType=%q", id, mediaType)
 	}
 }
+
+func TestHistoricalVODParameterFailureProjection(t *testing.T) {
+	original := model.Task{Type: "canvas_image", Status: model.TaskStatusFailed, Stage: "submission_unknown", Error: "图片结果尚未确认", FailureDiagnostics: &model.TaskFailureDiagnostics{ProviderCode: "vod_image_invalid_params", HTTPStatus: 400, Requests: []model.TaskRequestEvidence{{Dispatched: true, Outcome: "http_error", HTTPStatus: 400, ProviderCode: "vod_image_invalid_params"}}}}
+	got := taskForOutput(original)
+	if got.ErrorCode != "invalid_params" || got.Stage == "submission_unknown" {
+		t.Fatalf("not corrected: %+v", got)
+	}
+	if taskSummaryForOutput(original).ErrorCode != "invalid_params" {
+		t.Fatal("list differs from detail")
+	}
+	if original.Stage != "submission_unknown" || original.FailureDiagnostics.Summary != "" {
+		t.Fatal("history mutated")
+	}
+	original.FailureDiagnostics.Requests = append(original.FailureDiagnostics.Requests, model.TaskRequestEvidence{Outcome: "transport_error"})
+	if taskForOutput(original).Stage != "submission_unknown" {
+		t.Fatal("earlier unknown submission discarded")
+	}
+}

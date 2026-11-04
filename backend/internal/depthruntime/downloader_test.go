@@ -4,13 +4,156 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
+
+func TestIdleDownloadPreservesPartialAndDistinguishesCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "20")
+		_, _ = w.Write([]byte("prefix"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	for _, cancelled := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		path := filepath.Join(t.TempDir(), "partial")
+		err := downloadSourceWithIdleTimeout(ctx, server.URL, path, 20, func(Progress) {
+			if cancelled {
+				cancel()
+			}
+		}, 40*time.Millisecond)
+		cancel()
+		if cancelled && (!errors.Is(err, context.Canceled) || errors.Is(err, errDownloadStalled)) {
+			t.Fatalf("user cancellation = %v", err)
+		}
+		if !cancelled && !errors.Is(err, errDownloadStalled) {
+			t.Fatalf("idle error = %v", err)
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil || string(data) != "prefix" {
+			t.Fatalf("partial = %q, %v", data, readErr)
+		}
+	}
+}
+
+type mirrorRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f mirrorRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type stalledMirrorBody struct{ prefix bool }
+
+func (b *stalledMirrorBody) Read(p []byte) (int, error) {
+	if !b.prefix {
+		b.prefix = true
+		return copy(p, "prefix"), nil
+	}
+	return 0, errDownloadStalled
+}
+func (*stalledMirrorBody) Close() error { return nil }
+
+func TestResumePublishesCompleteTemporaryFileAfterVerificationCancellation(t *testing.T) {
+	payload := []byte("complete download paused before verification")
+	hash := sha256.Sum256(payload)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Range") != "" {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	artifact := Artifact{URLs: []string{server.URL}, Size: int64(len(payload)), SHA256: hex.EncodeToString(hash[:])}
+	target := filepath.Join(t.TempDir(), "runtime.zip")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := Download(ctx, artifact, target, func(progress Progress) {
+		if progress.Downloaded == artifact.Size {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("pause = %v", err)
+	}
+	if err := Download(context.Background(), artifact, target, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("complete cache caused %d requests", requests)
+	}
+	if err := verifyFile(target, artifact); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompleteCorruptTemporaryFileRestartsWithoutEOFRange(t *testing.T) {
+	payload := []byte("correct")
+	hash := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "" {
+			t.Errorf("corrupt cache resumed with %s", r.Header.Get("Range"))
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	target := filepath.Join(t.TempDir(), "model")
+	if err := os.WriteFile(target+".download", []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A previous quarantine must not block recovery of this invalid cache.
+	if err := os.Mkdir(target+".corrupt", 0700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := Artifact{URLs: []string{server.URL}, Size: int64(len(payload)), SHA256: hex.EncodeToString(hash[:])}
+	if err := Download(context.Background(), artifact, target, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFile(target, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(target + ".corrupt"); err != nil || !info.IsDir() {
+		t.Fatalf("previous quarantine changed: %v", err)
+	}
+}
+
+func TestStalledDownloadSwitchesMirrorOnceAndResumesVerifiedBytes(t *testing.T) {
+	original := downloadClient
+	t.Cleanup(func() { downloadClient = original })
+	primaryCalls, backupCalls := 0, 0
+	downloadClient = &http.Client{Transport: mirrorRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "primary.invalid" {
+			primaryCalls++
+			return &http.Response{StatusCode: 200, Body: &stalledMirrorBody{}, Header: make(http.Header)}, nil
+		}
+		backupCalls++
+		if r.Header.Get("Range") != "bytes=6-" {
+			t.Errorf("mirror resume = %q", r.Header.Get("Range"))
+		}
+		return &http.Response{StatusCode: 206, Body: io.NopCloser(strings.NewReader(" verified")), Header: make(http.Header)}, nil
+	})}
+	data := []byte("prefix verified")
+	hash := sha256.Sum256(data)
+	target := filepath.Join(t.TempDir(), "model")
+	err := Download(context.Background(), Artifact{URLs: []string{"https://primary.invalid/model", "https://backup.invalid/model"}, Size: int64(len(data)), SHA256: hex.EncodeToString(hash[:])}, target, nil)
+	if err != nil || primaryCalls != 1 || backupCalls != 1 {
+		t.Fatalf("download=%v calls=%d/%d", err, primaryCalls, backupCalls)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != string(data) {
+		t.Fatalf("published = %q", got)
+	}
+}
 
 func TestDownloadFallsBackAndPublishesOnlyVerifiedFile(t *testing.T) {
 	payload := []byte("verified depth model")

@@ -1,22 +1,26 @@
+import { createClientId } from "@/lib/client-id";
 import { Button, Dropdown, Tooltip } from "antd";
 import { History, MessageSquarePlus, X, ArrowUpRight } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { assetLibraryQueryKey, assetPickerQueryKey } from "@/components/assets/asset-view-session";
 import { appQueryClient } from "@/lib/query-client";
 import { referencedAssetIdsInPrompt, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import type { AssistantAttachment, AssistantGenerationProposal, AssistantSkillSelection } from "@/services/api/agent-assistant";
+import type { AssistantAttachment, AssistantGenerationProposal, AssistantSkillSelection, AssistantPlan } from "@/services/api/agent-assistant";
+import type { CanvasNodeData } from "@/types/canvas";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
-import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
-import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment } from "@/services/assistant-attachments";
+import { AssistantPublicationEntry } from "@/pages/skills/assistant-publication-entry";
+import { Link } from "react-router";
+import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment, type AssistantInputDraft } from "@/services/assistant-attachments";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
-import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_STARTER_PROMPTS, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_CHECK_RESULTS_PROMPT, ASSISTANT_STARTER_PROMPTS, appendAssistantDraft, assistantSkillLabel, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
 import { CanvasAssistantComposer } from "./canvas-assistant-composer";
 import { CanvasAssistantReply, CanvasAssistantTurnView, CanvasAssistantUserMessage } from "./canvas-assistant-turn";
-import { ASSISTANT_MAX_WIDTH, ASSISTANT_MIN_WIDTH, type CanvasAssistantController } from "./use-canvas-assistant";
+import { AssistantReasoning } from "@/components/ai/message-reasoning";
+import { usePluginSlot } from "@/lib/plugins/slot-registry";
+import { ASSISTANT_LIVE_TURN_KEY, ASSISTANT_MAX_WIDTH, ASSISTANT_MIN_WIDTH, type CanvasAssistantController } from "./use-canvas-assistant";
 import "./canvas-assistant-sidebar.css";
 
 type Props = {
@@ -27,11 +31,27 @@ type Props = {
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
     onLocateNodes: (nodeIds: string[]) => void;
-    onRunProposal: (proposal: AssistantGenerationProposal) => void;
+    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
     onOpenModelSettings: () => void;
     proposalFeedback?: Record<string, string>;
     runningProposalIds?: ReadonlySet<string>;
+    nodes?: CanvasNodeData[];
+    continuation?: { pending: boolean; notice: string; stop: () => Promise<void>; refresh: () => void };
 };
+
+const PLAN_STATUS_TEXT: Record<AssistantPlan["items"][number]["status"], string> = { todo: "待做", doing: "进行中", done: "已完成", needs_user: "等待确认", blocked: "需要处理" };
+
+export function CanvasAssistantPlan({ plan }: { plan: AssistantPlan | null | undefined }) {
+    if (!plan?.items.length) return null;
+    return <details className="canvas-assistant-card canvas-assistant-plan" open aria-label="当前制作计划">
+        <summary>步骤进度 · {plan.items.filter(item => item.status === "done").length}/{plan.items.length}</summary>
+        {plan.goal ? <p>{plan.goal}</p> : null}
+        <ol>{plan.items.map(item => <li key={item.id}>
+            <span>{item.title}</span><span className="canvas-assistant-meta">{PLAN_STATUS_TEXT[item.status]}</span>
+            {item.note ? <span className="canvas-assistant-meta canvas-assistant-plan-note">{item.note}</span> : null}
+        </li>)}</ol>
+    </details>;
+}
 
 export function CanvasAssistantSidebar(props: Props) {
     const { assistant, dockable, readOnly, selectedNodeIds, references, onLocateNodes, onRunProposal, onOpenModelSettings } = props;
@@ -54,63 +74,62 @@ export function CanvasAssistantSidebar(props: Props) {
     const [skillsLoading, setSkillsLoading] = useState(false);
     const [skillsError, setSkillsError] = useState("");
     const inputGeneration = useRef(0);
-    const inputScope = useRef(captureUserScope());
-    const accountEpoch = useSyncExternalStore(subscribeUserScope, () => `${getActiveUserScope()}:${getActiveUserScopeEpoch()}`, () => "");
-    const draftIdentity = JSON.stringify([assistant.canvasId, accountEpoch]);
+    const draftIdentity = assistant.canvasId;
     const [selectionAttached, setSelectionAttached] = useState(true);
+    const [resultSelection, setResultSelection] = useState<AssistantInputDraft["resultSelection"]>(null);
+    const resultNodeIds = assistant.sessionId && resultSelection?.sessionId === assistant.sessionId ? resultSelection.nodeIds : [];
     const logRef = useRef<HTMLDivElement | null>(null);
     const sidebarRef = useRef<HTMLDivElement | null>(null);
     const followLatestRef = useRef(true);
     const mediaReferences = references.filter(item => ["image", "video", "audio"].includes(item.kind));
 
     useEffect(() => {
-        const generation = ++inputGeneration.current, expected = captureUserScope(); inputScope.current = expected;
-        setDraftLoaded(false); setLoadedDraftIdentity(null); setDraft(""); setAttachments([]); setSelectedSkills([]); setUploads([]); setInputError(""); setAvailableSkills([]); setSkillsOpen(false); setSkillInstallOpen(false); setReferencePickerOpen(false);
-        void readAssistantInputDraft(assistant.canvasId, expected).then(saved => {
-            if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
-            if (saved) { setDraft(saved.text || ""); setAttachments(saved.attachments || []); setSelectedSkills(saved.skills || []); }
+        const generation = ++inputGeneration.current;
+        setDraftLoaded(false); setLoadedDraftIdentity(null); setDraft(""); setAttachments([]); setSelectedSkills([]); setResultSelection(null); setUploads([]); setInputError(""); setAvailableSkills([]); setSkillsOpen(false); setSkillInstallOpen(false); setReferencePickerOpen(false);
+        void readAssistantInputDraft(assistant.canvasId).then(saved => {
+            if (generation !== inputGeneration.current) return;
+            if (saved) { setDraft(saved.text || ""); setAttachments(saved.attachments || []); setSelectedSkills(saved.skills || []); setResultSelection(saved.resultSelection ?? null); }
             setDraftLoaded(true);
             setLoadedDraftIdentity(draftIdentity);
         }).catch(() => { if (generation === inputGeneration.current) { setInputError("暂时无法读取未发送的素材，请重新添加。"); setDraftLoaded(true); } });
-    }, [assistant.canvasId, accountEpoch, draftIdentity, draftReadAttempt]);
+    }, [assistant.canvasId, draftIdentity, draftReadAttempt]);
 
     useEffect(() => {
         if (!draftLoaded || loadedDraftIdentity !== draftIdentity) return;
         const generation = inputGeneration.current;
         const version = ++draftWriteVersion.current;
-        void saveAssistantInputDraft(assistant.canvasId, { text: draft, attachments, skills: selectedSkills }, inputScope.current)
+        void saveAssistantInputDraft(assistant.canvasId, { text: draft, attachments, skills: selectedSkills, resultSelection })
             .catch(() => { if (generation === inputGeneration.current && version === draftWriteVersion.current) setInputError("未发送内容暂时无法保存，请保持窗口打开。"); });
-    }, [assistant.canvasId, attachments, draft, draftIdentity, draftLoaded, loadedDraftIdentity, selectedSkills]);
+    }, [assistant.canvasId, attachments, draft, draftIdentity, draftLoaded, loadedDraftIdentity, selectedSkills, resultSelection]);
 
     const upload = useCallback(async (id: string, file: File) => {
-        const generation = inputGeneration.current, expected = inputScope.current;
+        const generation = inputGeneration.current;
         setUploads(items => items.map(item => item.id === id ? { ...item, busy: true, error: undefined } : item));
         try {
-            const attachment = await uploadAssistantAttachment(file, expected, id);
-            if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
-            void appQueryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(expected) });
-            void appQueryClient.invalidateQueries({ queryKey: assetPickerQueryKey(expected) });
+            const attachment = await uploadAssistantAttachment(file, id);
+            if (generation !== inputGeneration.current) return;
+            void appQueryClient.invalidateQueries({ queryKey: assetLibraryQueryKey() });
+            void appQueryClient.invalidateQueries({ queryKey: assetPickerQueryKey() });
             setAttachments(items => [...items, attachment]); setUploads(items => items.filter(item => item.id !== id));
         } catch (error) {
-            if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
+            if (generation !== inputGeneration.current) return;
             setUploads(items => items.map(item => item.id === id ? { ...item, busy: false, error: error instanceof Error ? error.message : "上传没有完成" } : item));
         }
     }, []);
 
     const addFiles = useCallback((files: File[]) => {
-        if (readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity || !userScopeMatches(inputScope.current)) return;
+        if (readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity) return;
         if (attachmentCount.current + files.length > 8) { setInputError("一次最多添加 8 份参考素材"); return; }
         setInputError("");
         attachmentCount.current += files.length;
-        const entries = files.map(file => ({ id: crypto.randomUUID(), file, busy: true }));
+        const entries = files.map(file => ({ id: createClientId(), file, busy: true }));
         setUploads(items => [...items, ...entries]);
         entries.forEach(item => void upload(item.id, item.file));
     }, [attachments.length, draftIdentity, draftLoaded, loadedDraftIdentity, readOnly, upload, uploads.length]);
 
     const loadSkills = useCallback(async () => {
-        const expected = inputScope.current;
         setSkillsLoading(true); setSkillsError("");
-        try { const data = await listAddedSkills(); if (userScopeMatches(expected)) setAvailableSkills(data.skills.filter(skill => skill.status === 1 && skill.isAdded)); }
+        try { const data = await listAddedSkills(); setAvailableSkills(data.skills.filter(skill => skill.status === 1 && skill.isAdded)); }
         catch { setSkillsError("没有读到已安装技能，请重试。"); }
         finally { setSkillsLoading(false); }
     }, []);
@@ -124,19 +143,25 @@ export function CanvasAssistantSidebar(props: Props) {
     useLayoutEffect(() => {
         const node = logRef.current;
         if (node && followLatestRef.current) node.scrollTop = node.scrollHeight;
-    }, [turnCount, assistant.streamed, assistant.pendingUserText, assistant.lifecycleNotice, props.proposalFeedback]);
+    }, [turnCount, assistant.streamed, assistant.reasoning, assistant.pendingUserText, assistant.lifecycleNotice, props.proposalFeedback]);
 
     const notice = assistant.status && !assistant.status.available && assistant.status.reason !== "host_starting" ? assistantStatusNotice(assistant.status.reason) : null;
     const inputReady = draftLoaded && loadedDraftIdentity === draftIdentity;
     const composerDisabled = readOnly || !inputReady;
     const composerReason = readOnly ? "这个画布是只读的，不能让助手改动。" : !draftLoaded ? "正在读取未发送内容…" : loadedDraftIdentity !== draftIdentity ? "未能读取草稿，请重新读取后继续。" : undefined;
-    const attachedIds = selectionAttached ? selectedNodeIds : [];
+    const attachedIds = [...new Set([...(selectionAttached ? selectedNodeIds : []), ...resultNodeIds])];
+    const prepareResultCheck = useCallback((nodeIds: string[]) => {
+        if (!inputReady || readOnly || assistant.streaming || assistant.sessionBusy || !assistant.sessionId) return;
+        setDraft(current => appendAssistantDraft(current, ASSISTANT_CHECK_RESULTS_PROMPT));
+        setResultSelection(current => ({ sessionId: assistant.sessionId!, nodeIds: [...new Set([...(current?.sessionId === assistant.sessionId ? current.nodeIds : []), ...nodeIds])] }));
+    }, [assistant.sessionId, assistant.sessionBusy, assistant.streaming, inputReady, readOnly]);
 
     const send = useCallback(() => {
         const text = draft;
-        if ((!text.trim() && !attachments.length) || readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity || !userScopeMatches(inputScope.current) || uploads.length || attachments.some(item => attachmentRangeError(item)) || assistant.awaitingReceipt || assistant.sessionBusy || assistant.supplementBusy || (assistant.streaming && !assistant.canSupplement)) return;
+        if ((!text.trim() && !attachments.length) || readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity || uploads.length || attachments.some(item => attachmentRangeError(item)) || assistant.awaitingReceipt || assistant.sessionBusy || assistant.supplementBusy || (assistant.streaming && !assistant.canSupplement)) return;
         followLatestRef.current = true;
         setDraft("");
+        setResultSelection(null);
         setAttachments([]); setSelectedSkills([]);
         // @ 引用到的素材库素材由界面按用户原文推导后交给后端校验归属：
         // 模型不能自己声明要读哪些素材。
@@ -166,10 +191,24 @@ export function CanvasAssistantSidebar(props: Props) {
           }))
         : [{ key: "empty", label: "还没有别的对话", disabled: true }];
 
+    const sidePanelEntries = usePluginSlot("canvas.sidePanel");
+    const [activeSidePanelId, setActiveSidePanelId] = useState<string>("assistant");
+    const activePluginPanel = sidePanelEntries.find((entry) => entry.payload.id === activeSidePanelId);
+    const ActivePluginPanelComp = activePluginPanel?.payload.component;
+
     const content = (
         <div className="canvas-assistant-panel" data-canvas-no-zoom>
             <header className="canvas-assistant-header">
-                <div className="canvas-assistant-heading"><h2>BeefTV Agent</h2></div>
+                <div className="canvas-assistant-heading">
+                    <h2>BeefTV Agent</h2>
+                    {assistant.streaming ? (
+                        <span className="canvas-assistant-live-badge" aria-hidden="true">
+                            <span className="canvas-assistant-live-dot" />
+                            工作中
+                        </span>
+                    ) : null}
+                </div>
+                <Link to="/skills" className="canvas-assistant-meta" aria-label="打开技能市场和我的投稿">技能</Link>
                 <Tooltip title="新对话">
                     <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming || assistant.sessionBusy} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
                 </Tooltip>
@@ -181,6 +220,35 @@ export function CanvasAssistantSidebar(props: Props) {
                 </Tooltip>
             </header>
 
+            {sidePanelEntries.length > 0 ? (
+                <div className="flex items-center gap-1 border-b border-[var(--border)] px-3 py-1.5 text-xs">
+                    <button
+                        type="button"
+                        className={`rounded-md px-2 py-1 font-medium ${!activePluginPanel ? "bg-[var(--muted)] text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}`}
+                        onClick={() => setActiveSidePanelId("assistant")}
+                    >
+                        创作助手
+                    </button>
+                    {sidePanelEntries.map((entry) => (
+                        <button
+                            key={entry.entryId}
+                            type="button"
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium ${activePluginPanel?.entryId === entry.entryId ? "bg-[var(--muted)] text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}`}
+                            onClick={() => setActiveSidePanelId(entry.payload.id)}
+                        >
+                            {entry.payload.icon}
+                            <span>{entry.payload.title}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : null}
+
+            {ActivePluginPanelComp ? (
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                    <ActivePluginPanelComp canvasId={assistant.canvasId ?? undefined} selectedNodeIds={selectedNodeIds} />
+                </div>
+            ) : (
+                <>
             {notice ? (
                 <div className="canvas-assistant-notice" role="status">
                     <span>{notice.text}</span>
@@ -209,37 +277,63 @@ export function CanvasAssistantSidebar(props: Props) {
                     <CanvasAssistantTurnView
                         key={turn.turnId}
                         turn={turn}
+                        canvasId={assistant.canvasId}
+                        sessionId={assistant.sessionId}
                         status={assistant.turnStatus[turn.turnId]}
                         handledProposals={assistant.handledProposals}
                         proposalFeedback={props.proposalFeedback}
                         runningProposalIds={props.runningProposalIds}
+                        generationDisabled={assistant.streaming || assistant.sessionBusy || assistant.awaitingReceipt || !assistant.historyLoaded || Boolean(assistant.historyError)}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
                         onRunProposal={onRunProposal}
                         onDismissProposal={assistant.markProposalDismissed}
-                        onContinue={!readOnly && !assistant.streaming && !assistant.sessionBusy && turn.turnId === assistant.turns.at(-1)?.turnId ? () => setDraft(ASSISTANT_CONTINUE_PROMPT) : undefined}
+                        nodes={props.nodes}
+                        onCheckResults={!readOnly && inputReady && !assistant.streaming && !assistant.sessionBusy ? prepareResultCheck : undefined}
+                        onContinue={!readOnly && inputReady && !assistant.streaming && !assistant.sessionBusy && turn.turnId === assistant.turns.at(-1)?.turnId ? () => setDraft(current => appendAssistantDraft(current, ASSISTANT_CONTINUE_PROMPT)) : undefined}
+                        reasoningOpen={assistant.reasoningOpen[turn.turnId]}
+                        onReasoningOpenChange={(open) => assistant.setReasoningOpen(turn.turnId, open)}
                     />
                 ))}
 
+                <CanvasAssistantPlan plan={assistant.plan} />
+                <AssistantPublicationEntry canvasId={assistant.canvasId} turnCount={assistant.turns.length} running={assistant.streaming} />
+                {props.continuation?.notice ? <div className="canvas-assistant-card" aria-label="自动继续状态">
+                    <span role="status">{props.continuation.notice}</span>
+                    <div className="canvas-assistant-card-actions">
+                        {props.continuation.pending ? <Button size="small" onClick={() => void props.continuation?.stop()}>停止自动继续</Button> : null}
+                        <Button size="small" onClick={props.continuation.refresh}>重新读取</Button>
+                    </div>
+                </div> : assistant.plan?.items.some(item => item.status !== "done") ? <p className="canvas-assistant-meta">确认过的素材会自动制作并继续原计划；需要新增素材时，会先向你确认。</p> : null}
+
                 {assistant.pendingUserText || assistant.pendingAttachments.length ? (
                     <div className="canvas-assistant-turn">
-                        <CanvasAssistantUserMessage text={assistant.pendingUserText || ""} selectedCount={assistant.pendingSelectedNodeIds.length} />
+                        <CanvasAssistantUserMessage text={assistant.pendingUserText || ""} selectedCount={assistant.pendingSelectedNodeIds.length} continuationId={assistant.pendingContinuationId} />
                         <CanvasAssistantAttachments attachments={assistant.pendingAttachments} />
                         {assistant.awaitingReceipt ? <p className="canvas-assistant-meta" role="status">正在读取这次处理的最终结果，已有内容仍然保留。</p> : null}
-                        {assistant.pendingSkills.map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}</span>)}
-                        {assistant.supplements.map((item, index) => <div key={index}>
+                        {assistant.pendingSkills.map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
+                        {/* 正在生成的思考与下面的正文分开显示，默认折叠。 */}
+                        <AssistantReasoning segments={assistant.reasoning} open={assistant.reasoningOpen[ASSISTANT_LIVE_TURN_KEY] === true} onOpenChange={(open) => assistant.setReasoningOpen(ASSISTANT_LIVE_TURN_KEY, open)} />
+                        {assistantVisibleReply(assistant.streamed || "") ? <CanvasAssistantReply text={assistant.streamed} /> : null}
+                        {assistant.supplements.map((item, index) => <div key={index} className="canvas-assistant-supplement">
                             <CanvasAssistantUserMessage text={item.text} selectedCount={0} />
                             <CanvasAssistantAttachments attachments={item.attachments || []} />
                             <p className="canvas-assistant-meta" role="status">{item.status === "accepted" ? "助手已收到补充要求。" : item.status === "sending" ? "正在发送补充要求…" : "未能确认收到补充要求。请查看最新回复后再决定是否发送。"}</p>
                         </div>)}
-                        {assistantVisibleReply(assistant.streamed || "") ? <CanvasAssistantReply text={assistant.streamed} /> : null}
-                        {assistant.streaming && (assistant.lifecycleNotice || !assistantVisibleReply(assistant.streamed || "")) ? (
-                            <p className="canvas-assistant-meta">{assistant.lifecycleNotice || "助手正在处理…"}</p>
+                        {assistant.streaming ? (
+                            <div className="canvas-assistant-working" role="status" aria-live="polite">
+                                <span className="canvas-assistant-working-dots" aria-hidden="true">
+                                    <span />
+                                    <span />
+                                    <span />
+                                </span>
+                                <span className="canvas-assistant-working-text">{assistant.lifecycleNotice || "助手正在处理…"}</span>
+                            </div>
                         ) : null}
                     </div>
                 ) : null}
 
-                {!assistant.pendingUserText && !assistant.pendingAttachments.length ? assistant.supplements.filter(item => item.status !== "accepted").map((item, index) => <div key={`unconfirmed:${index}`}>
+                {!assistant.pendingUserText && !assistant.pendingAttachments.length ? assistant.supplements.filter(item => item.status !== "accepted").map((item, index) => <div key={`unconfirmed:${index}`} className="canvas-assistant-supplement">
                     <CanvasAssistantUserMessage text={item.text} selectedCount={0} />
                     <p className="canvas-assistant-meta" role="status">{item.status === "sending" ? "正在确认补充要求是否收到…" : "未能确认收到补充要求。请查看最新回复后再决定是否发送。"}</p>
                 </div>) : null}
@@ -268,9 +362,9 @@ export function CanvasAssistantSidebar(props: Props) {
                 disabled={composerDisabled}
                 disabledReason={composerReason}
                 references={references}
-                selectedCount={selectedNodeIds.length}
-                selectionAttached={selectionAttached}
-                onDetachSelection={() => setSelectionAttached(false)}
+                selectedCount={attachedIds.length}
+                selectionAttached={attachedIds.length > 0}
+                onDetachSelection={() => { setSelectionAttached(false); setResultSelection(null); }}
                 modelBusy={assistant.modelBusy}
                 canSupplement={assistant.canSupplement}
                 supplementBusy={assistant.supplementBusy}
@@ -291,7 +385,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 </>}
             />
             <SkillInstallModal open={skillInstallOpen} onClose={() => setSkillInstallOpen(false)} onInstalled={skill => {
-                if (skillInstallGeneration !== inputGeneration.current || !userScopeMatches(inputScope.current)) return;
+                if (skillInstallGeneration !== inputGeneration.current) return;
                 setSkillInstallOpen(false);
                 if (!skill.versionId || !/^[a-f0-9]{64}$/i.test(skill.contentHash)) {
                     setInputError("技能已安装，但没有读到可用版本，请重新读取技能。");
@@ -302,6 +396,8 @@ export function CanvasAssistantSidebar(props: Props) {
                 setSkillsOpen(true);
                 void loadSkills();
             }} />
+                </>
+            )}
         </div>
     );
 

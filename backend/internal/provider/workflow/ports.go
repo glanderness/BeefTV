@@ -78,12 +78,21 @@ type PollOutcome struct {
 	Result map[string]interface{}
 }
 
+// BinarySource is one result read, with the original provider origin retained
+// separately from an expiring media URL. Renewal queries the existing task.
+type BinarySource struct {
+	ProviderURL      string
+	URL              string
+	Read             func(context.Context) ([]byte, string, error)
+	CredentialValues []string
+}
+
 // VideoPoller composes the shared provider video poll/download retry loop.
 // This domain owns RunningHub status mapping; the provider worker owns the
 // generic transient-retry policy implementation.
 type VideoPoller interface {
 	Poll(ctx context.Context, taskID string, policy PollPolicy, query func(context.Context) (PollOutcome, error)) (map[string]interface{}, error)
-	Download(ctx context.Context, taskID string, policy PollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error)
+	Download(ctx context.Context, taskID string, policy PollPolicy, source BinarySource, renew func(context.Context) (BinarySource, error)) ([]byte, string, error)
 }
 
 // StatusError preserves HTTP status and body so upload-auth detection can

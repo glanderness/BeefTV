@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { chromium, type Browser, type Page } from "playwright";
 
 import { CanvasNodeContent } from "@/components/canvas/canvas-node-content";
+import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasVideoCropEditor } from "@/components/canvas/canvas-video-crop-dialog";
 import { CanvasImageCropEditor } from "@/components/canvas/canvas-node-crop-dialog";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -28,6 +29,8 @@ const layout = `
         #node { position: relative; display: flex; align-items: center; justify-content: center; width: 700px; height: 400px; overflow: visible; }
         .absolute { position: absolute; }
         .relative { position: relative; }
+        .h-full { height: 100%; }
+        .w-full { width: 100%; }
         .inset-0 { inset: 0; }
         .left-1\\/2 { left: 50%; }
         .bottom-3 { bottom: 12px; }
@@ -39,6 +42,7 @@ const layout = `
         .h-11 { height: 44px; }
         .flex { display: flex; }
         .items-center { align-items: center; }
+        .justify-center { justify-content: center; }
         .grid { display: grid; }
         .place-items-center { place-items: center; }
         .gap-2 { gap: 8px; }
@@ -68,6 +72,24 @@ async function setZoom(zoom: number) {
         world.style.setProperty("--canvas-live-scale", String(scale));
         world.style.setProperty("--canvas-live-inverse-scale", String(1 / scale));
     }, zoom);
+}
+
+for (const scale of [0.5, 0.35, 0.349, 0.25, 0.1, 0.05]) {
+    test(`asset names remain available at ${scale * 100}% zoom, including grouped assets`, async () => {
+        const noop = () => {};
+        const nodes: CanvasNodeData[] = [
+            { id: "image", type: CanvasNodeType.Image, title: "主角正面参考", position: { x: 0, y: 0 }, width: 320, height: 240 },
+            { id: "grouped-video", parentId: "group", type: CanvasNodeType.Video, title: "第一场雨夜街道镜头", position: { x: 400, y: 0 }, width: 320, height: 240 },
+            { id: "grouped-image", parentId: "group", type: CanvasNodeType.Image, title: "第二场室内参考", position: { x: 800, y: 0 }, width: 320, height: 240 },
+        ];
+        const markup = renderToStaticMarkup(<>{nodes.map((data) => <CanvasNode key={data.id} data={data} scale={scale} isSelected={false} isRelated={false} isFocusRelated={false} isConnectionTarget={false} onMouseDown={noop} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onResize={noop} onTitleChange={noop} onContentChange={noop} onContextMenu={noop} />)}</>);
+        await page.setContent(`${layout}<div id="world">${markup}</div>`);
+        await setZoom(scale);
+        for (const node of nodes) {
+            expect(await page.getByRole("button", { name: `编辑节点名称：${node.title}`, exact: true }).count()).toBe(1);
+            expect(await page.locator(".canvas-node-external-header").getByText(node.title, { exact: true }).count()).toBe(1);
+        }
+    });
 }
 
 test("video crop controls stay legible and clickable at 20% zoom", async () => {
@@ -142,6 +164,22 @@ test("failed node notice stays readable without overflowing its node at 20% zoom
     });
     expect(scroll.totalHeight).toBeGreaterThan(scroll.visibleHeight);
     expect(scroll.top).toBeGreaterThan(0);
+});
+
+test("batch root failure is centered inside the card at different zoom levels", async () => {
+    const node = { id: "batch-root", type: CanvasNodeType.Image, title: "Midjourney", position: { x: 0, y: 0 }, width: 700, height: 400, metadata: { status: "error", isBatchRoot: true, generationErrorCode: "submission_uncertain", taskId: "original-task" } } as CanvasNodeData;
+    const markup = renderToStaticMarkup(<CanvasNodeContent node={node} theme={canvasThemes.dark} isEditingContent={false} textareaRef={createRef<HTMLTextAreaElement>()} isBatchRoot batchCount={4} batchExpanded batchOpening={false} batchRecovering={false} onContentChange={() => {}} onStopEditing={() => {}} mentionReferences={[]} onOpenTaskDetails={() => {}} />);
+    for (const zoom of [0.2, 0.68, 1, 1.5]) {
+        await page.setContent(`${layout}<div id="world"><div id="node">${markup}</div></div>`);
+        await setZoom(zoom);
+        const card = await page.locator("#node").boundingBox();
+        const notice = await page.locator(".canvas-node-error-content").boundingBox();
+        expect(notice!.x).toBeGreaterThanOrEqual(card!.x - 1);
+        expect(notice!.y).toBeGreaterThanOrEqual(card!.y - 1);
+        expect(notice!.x + notice!.width).toBeLessThanOrEqual(card!.x + card!.width + 1);
+        expect(notice!.y + notice!.height).toBeLessThanOrEqual(card!.y + card!.height + 1);
+        expect(await page.getByRole("button", { name: "查看原任务" }).count()).toBe(1);
+    }
 });
 
 test("crop toolbar remains inside a narrow viewport at 20% zoom", async () => {

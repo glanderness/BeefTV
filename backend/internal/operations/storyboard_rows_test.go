@@ -30,10 +30,11 @@ func (p *storyboardProbe) AppendUserCanvasStoryboardRows(_ string, _ string, _ s
 	return canvas.UserDataSummary{Revision: 6}, created, nil
 }
 
-func (p *storyboardProbe) UpdateUserCanvasStoryboardRows(_ string, _ string, _ string, patches []canvas.StoryboardRowPatch, _ int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+func (p *storyboardProbe) UpdateUserCanvasStoryboardRows(_ string, _ string, _ string, patches []canvas.StoryboardRowPatch, _ int64) (canvas.UserDataSummary, canvas.StoryboardRowUpdate, error) {
 	p.updated = patches
 	p.revision = 7
-	return canvas.UserDataSummary{Revision: 7}, []canvas.StoryboardRowIdentity{{ID: "shot-1", ShotNumber: 1}}, nil
+	return canvas.UserDataSummary{Revision: 7}, canvas.StoryboardRowUpdate{Updated: []canvas.StoryboardRowIdentity{{ID: "shot-1", ShotNumber: 1}},
+		CreatedEdgeIDs: []string{"edge-new"}, DeletedEdgeIDs: []string{"edge-old"}}, nil
 }
 
 func (p *storyboardProbe) RemoveUserCanvasStoryboardRows(_ string, _ string, _ string, rowIDs []string, _ int64) (canvas.UserDataSummary, int, error) {
@@ -107,6 +108,50 @@ func TestOpStoryboardRowUpdateForwardsPatches(t *testing.T) {
 	payload := result.(map[string]any)
 	if payload["revision"] != int64(7) {
 		t.Fatalf("回执 revision = %#v", payload["revision"])
+	}
+}
+
+// 绑定字段只在 update 上：nil 不改、空串解绑都要原样到达领域，回执带上领域给出的连线增删。
+func TestOpStoryboardRowUpdateForwardsBindingsAndEdgeReceipt(t *testing.T) {
+	probe := &storyboardProbe{}
+	result, err := opStoryboardRowUpdate(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"canvasId":"c1","nodeId":"script","expectedRevision":6,"patches":[
+			{"rowId":"shot-1","imageNodeId":"img-1","videoNodeId":""},{"rowId":"shot-2","dialogue":"x"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := probe.updated[0], probe.updated[1]
+	if first.ImageNodeID == nil || *first.ImageNodeID != "img-1" || first.VideoNodeID == nil || *first.VideoNodeID != "" {
+		t.Fatalf("binding forward = %#v", first)
+	}
+	if second.ImageNodeID != nil || second.VideoNodeID != nil {
+		t.Fatalf("omitted binding must stay nil: %#v", second)
+	}
+	payload := result.(map[string]any)
+	if created, _ := payload["createdEdgeIds"].([]string); len(created) != 1 || created[0] != "edge-new" {
+		t.Fatalf("createdEdgeIds = %#v", payload["createdEdgeIds"])
+	}
+	if deleted, _ := payload["deletedEdgeIds"].([]string); len(deleted) != 1 || deleted[0] != "edge-old" {
+		t.Fatalf("deletedEdgeIds = %#v", payload["deletedEdgeIds"])
+	}
+	if _, err := opStoryboardRowsAppend(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"canvasId":"c1","nodeId":"script","expectedRevision":5,"rows":[{"imageNodeId":"img-1"}]}`)); err == nil {
+		t.Fatal("append must not accept output bindings")
+	}
+	var update, appendSchema struct {
+		Properties map[string]struct {
+			Items struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal(storyboardRowUpdateSchema(), &update) != nil || json.Unmarshal(storyboardRowsAppendSchema(), &appendSchema) != nil {
+		t.Fatal("schema decode")
+	}
+	for _, field := range []string{"imageNodeId", "videoNodeId"} {
+		if update.Properties["patches"].Items.Properties[field] == nil || appendSchema.Properties["rows"].Items.Properties[field] != nil {
+			t.Fatalf("%s schema: update=%v append=%v", field, update.Properties["patches"].Items.Properties[field], appendSchema.Properties["rows"].Items.Properties[field])
+		}
 	}
 }
 

@@ -93,14 +93,14 @@ func mergeBuiltinProviderPresets(config map[string]any) (map[string]any, error) 
 	mergedChannels := make([]any, 0, len(order))
 	for _, id := range order {
 		if channel := channels[id]; channel != nil {
-			mergedChannels = append(mergedChannels, overlayHostedBeefAPIVideoProfiles(channel))
+			mergedChannels = append(mergedChannels, overlayHostedBeefAPIMediaProfiles(channel))
 		}
 	}
 	result["channels"] = mergedChannels
 	return result, nil
 }
 
-func overlayHostedBeefAPIVideoProfiles(channel map[string]any) map[string]any {
+func overlayHostedBeefAPIMediaProfiles(channel map[string]any) map[string]any {
 	baseURL, _ := channel["baseUrl"].(string)
 	profiles, _ := channel["modelProfiles"].([]any)
 	seen := map[string]bool{}
@@ -116,7 +116,11 @@ func overlayHostedBeefAPIVideoProfiles(channel map[string]any) map[string]any {
 			continue
 		}
 		seen[model] = true
-		if capability, protocol, ok := providerpreset.HostedBeefAPIVideoProfile(baseURL, model); ok {
+		if version, _ := profile["videoCapabilitiesVersion"].(string); strings.TrimSpace(version) != "" && declaredVideoProfile(profile) {
+			next = append(next, profile)
+			continue
+		}
+		if capability, protocol, ok := hostedBeefAPIMediaProfile(baseURL, model); ok {
 			overlaid := cloneProfileMap(profile)
 			overlaid["capability"] = capability
 			overlaid["protocol"] = protocol
@@ -129,7 +133,7 @@ func overlayHostedBeefAPIVideoProfiles(channel map[string]any) map[string]any {
 		if seen[model] {
 			continue
 		}
-		capability, protocol, ok := providerpreset.HostedBeefAPIVideoProfile(baseURL, model)
+		capability, protocol, ok := hostedBeefAPIMediaProfile(baseURL, model)
 		if !ok {
 			continue
 		}
@@ -137,6 +141,46 @@ func overlayHostedBeefAPIVideoProfiles(channel map[string]any) map[string]any {
 	}
 	channel["modelProfiles"] = next
 	return channel
+}
+
+// This storage overlay only recognizes complete declarations. Capability
+// validation before submission still belongs to the generation boundary.
+func declaredVideoProfile(profile map[string]any) bool {
+	config, _ := profile["capabilityConfig"].(map[string]any)
+	video, _ := config["video"].(map[string]any)
+	refs, _ := video["references"].(map[string]any)
+	duration, _ := video["duration"].(map[string]any)
+	operations, _ := video["operations"].([]any)
+	if profile["capability"] != "video" || refs == nil || duration == nil || len(operations) == 0 {
+		return false
+	}
+	for _, key := range []string{"maxImages", "maxVideos", "maxAudios"} {
+		if number, ok := refs[key].(float64); !ok || number < 0 {
+			return false
+		}
+	}
+	if duration["selection"] != "range" && duration["selection"] != "enum" {
+		return false
+	}
+	for _, key := range []string{"generateAudio", "watermark"} {
+		control, _ := video[key].(map[string]any)
+		if _, ok := control["supported"].(bool); !ok {
+			return false
+		}
+		if _, ok := control["default"].(bool); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func hostedBeefAPIMediaProfile(baseURL, model string) (string, string, bool) {
+	if providerpreset.IsBeefAPIEndpoint(baseURL) {
+		if contract, ok := providerpreset.BeefAPIImageContract(model); ok {
+			return "image", contract.Protocol, true
+		}
+	}
+	return providerpreset.HostedBeefAPIVideoProfile(baseURL, model)
 }
 
 func cloneProfileMap(profile map[string]any) map[string]any {

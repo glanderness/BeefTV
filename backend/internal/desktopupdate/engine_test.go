@@ -127,6 +127,10 @@ func TestCheckDownloadInstallHappyPath(t *testing.T) {
 	if state.Status != StatusReady || state.DownloadedBytes != state.TotalBytes || state.TotalBytes == 0 {
 		t.Fatalf("%+v", state)
 	}
+	entries, err := os.ReadDir(filepath.Dir(engine.staged.archive))
+	if err != nil || len(entries) != 1 || entries[0].Name() != "update.zip" {
+		t.Fatalf("download must keep only archive, without redundant extraction: %v %v", entries, err)
+	}
 	if err := engine.InstallUpdate(context.Background()); err != nil {
 		t.Fatal(err)
 	}

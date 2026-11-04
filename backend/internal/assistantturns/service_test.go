@@ -868,3 +868,51 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+// Row binding receipts declare the output edges they rewired; undo restores the row and edges.
+func TestStoryboardRowUpdateReceiptEdgesReconstructAndUndo(t *testing.T) {
+	fx := openTurnFixture(t)
+	doc := fx.readCanvas(t)
+	at := map[string]any{"x": 0, "y": 0}
+	doc["nodes"] = []any{
+		map[string]any{"id": "script", "type": "script", "title": "分镜", "position": at, "metadata": map[string]any{"storyboard": map[string]any{"rows": []any{
+			map[string]any{"id": "shot-1", "imageNodeId": "old"}, map[string]any{"id": "shot-2", "dialogue": "keep"}}}}},
+		map[string]any{"id": "old", "type": "image", "title": "old", "position": at},
+		map[string]any{"id": "new", "type": "image", "title": "new", "position": at},
+	}
+	doc["connections"] = []any{
+		map[string]any{"id": "out-old", "fromNodeId": "script", "toNodeId": "old", "fromHandleId": "row:shot-1", "relation": "storyboard-output", "storyboardRowId": "shot-1"},
+		map[string]any{"id": "keep", "fromNodeId": "old", "toNodeId": "new"},
+	}
+	fx.writeCanvas(t, doc)
+	before := fx.readCanvas(t)
+	turnID := "abcdabcd12345678"
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	doc = fx.readCanvas(t)
+	script := doc["nodes"].([]any)[0].(map[string]any)
+	script["metadata"].(map[string]any)["storyboard"].(map[string]any)["rows"].([]any)[0].(map[string]any)["imageNodeId"] = "new"
+	doc["connections"] = []any{doc["connections"].([]any)[1],
+		map[string]any{"id": "out-new", "fromNodeId": "script", "toNodeId": "new", "fromHandleId": "row:shot-1", "relation": "storyboard-output", "storyboardRowId": "shot-1"}}
+	revision := fx.writeCanvas(t, doc)
+	fx.receipt(t, turnID, "bind-row", "canvas.script.row.update", map[string]any{"canvasId": fx.canvasID, "nodeId": "script", "revision": revision,
+		"createdEdgeIds": []string{"out-new"}, "deletedEdgeIds": []string{"out-old"}})
+	if err := fx.turns.Finalize(turnID); err != nil {
+		t.Fatal(err)
+	}
+	state, err := fx.turns.History(fx.userID, fx.canvasID, turnID)
+	if err != nil || state == nil || state.Change == nil {
+		t.Fatalf("history: %+v %v", state, err)
+	}
+	if !reflect.DeepEqual(state.Change.UpdatedNodeIDs, []string{"script"}) || !reflect.DeepEqual(state.Change.CreatedEdgeIDs, []string{"out-new"}) || !reflect.DeepEqual(state.Change.DeletedEdgeIDs, []string{"out-old"}) {
+		t.Fatalf("change: %+v", state.Change)
+	}
+	if _, err := fx.turns.Undo(fx.userID, fx.canvasID, turnID); err != nil {
+		t.Fatal(err)
+	}
+	restored := fx.readCanvas(t)
+	if !reflect.DeepEqual(restored["nodes"], before["nodes"]) || !reflect.DeepEqual(restored["connections"], before["connections"]) {
+		t.Fatalf("undo restore: %#v", restored)
+	}
+}

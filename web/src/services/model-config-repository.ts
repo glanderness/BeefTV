@@ -50,7 +50,7 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
     const runDrain = async () => {
         const write = async (config: AiConfig, revision: number) => {
             const result = await dependencies.write(config, revision);
-            if (!result.saved || !Number.isSafeInteger(result.revision) || result.revision <= revision) {
+            if (!result.saved || !Number.isSafeInteger(result.revision) || result.revision < revision) {
                 throw new Error("模型配置保存未得到确认，请重试");
             }
             return result;

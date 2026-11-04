@@ -16,15 +16,16 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 		return nil
 	}
 	groups := [][]Media{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
-	for _, group := range groups {
+	for kind, group := range groups {
+		groupPolicy := mediaPolicyForKind(ctx, *input, []string{"image", "video", "audio"}[kind], policy)
 		for index := range group {
-			if err := HydrateOne(ctx, userID, &group[index], policy); err != nil {
-				return err
+			if err := HydrateOne(ctx, userID, &group[index], groupPolicy); err != nil {
+				return fmt.Errorf("%s %d：%w", []string{"参考图片", "参考视频", "参考音频"}[kind], index+1, err)
 			}
 		}
 	}
 	if input.Mask != nil {
-		return HydrateOne(ctx, userID, input.Mask, policy)
+		return HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "mask", policy))
 	}
 	return nil
 }
@@ -59,6 +60,21 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 		media.DataURL = ""
 		applyResourceMetadata(media, resource)
 		return nil
+	}
+	if runtime.Resources.LocalMode() && policy.RequireURL && !policy.ManualURL && runtime.ReferenceStorage != nil {
+		enabled, err := runtime.ReferenceStorage.Enabled()
+		if err != nil {
+			return RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
+		}
+		if enabled {
+			link, err := runtime.ReferenceStorage.Upload(ctx, userID, resourceID)
+			if err != nil {
+				return RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
+			}
+			media.URL, media.DataURL = link, ""
+			applyResourceMetadata(media, resource)
+			return nil
+		}
 	}
 	if policy.PreferHTTPS {
 		if httpsURL, err := runtime.Resources.HTTPSPublicURL(resource, time.Now().Add(ResourceURLTTL)); err == nil {

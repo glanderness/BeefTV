@@ -14,6 +14,13 @@ if [[ "$AGENT_TARGET" == linux/* && ( "$HOST_OS" != linux || "$AGENT_TARGET" != 
   echo "Linux releases require a native Linux x64 host" >&2
   exit 1
 fi
+# A clean build host has no installed BeefTV. Only an explicitly supplied
+# encoder is a required input; the native probe packet is built below.
+if [[ "$AGENT_TARGET" == darwin/* && -n "${BEEFTV_FFMPEG_RUNTIME:-}" ]]; then
+  [[ -x "$BEEFTV_FFMPEG_RUNTIME" ]] || { echo "Explicit encoder is not executable: $BEEFTV_FFMPEG_RUNTIME" >&2; exit 1; }
+  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$BEEFTV_FFMPEG_RUNTIME")/ffmpeg.LICENSE}"
+  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
+fi
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
 
 if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
@@ -46,6 +53,7 @@ fi
 COMMIT_VALUE="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME_VALUE="${CANVAS_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 export CANVAS_BUILD_VERSION="$VERSION_VALUE"
+export BEEFTV_DIST_PLATFORM="${AGENT_TARGET/\//-}"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
 
 LDFLAGS="-X infinite-canvas/backend/internal/buildinfo.Version=$VERSION_VALUE -X infinite-canvas/backend/internal/buildinfo.Commit=$COMMIT_VALUE -X infinite-canvas/backend/internal/buildinfo.BuildTime=$BUILD_TIME_VALUE"
@@ -82,6 +90,21 @@ fi
 
 echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 
+# The frontend embeds the source index, so the native packet must exist before
+# Wails builds it. Keep the runtime outside Wails' -clean output directory.
+if [[ "$AGENT_TARGET" == darwin/* ]]; then
+  MEDIA_RUNTIME_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/beeftv-release-media.XXXXXX")"
+  trap 'rm -rf "$MEDIA_RUNTIME_STAGE"' EXIT
+  if [[ -n "${BEEFTV_MEDIA_RUNTIME:-}" ]]; then
+    bun -e 'const fs=require("fs"),crypto=require("crypto");const [root,target]=process.argv.slice(1);const m=JSON.parse(fs.readFileSync(root+"/manifest.json","utf8"));if(m.target!==target||crypto.createHash("sha256").update(fs.readFileSync(root+"/ffprobe")).digest("hex")!==m.probeSHA256)throw Error("Media runtime target or checksum mismatch")' "$BEEFTV_MEDIA_RUNTIME" "$AGENT_TARGET"
+    cp -R "$BEEFTV_MEDIA_RUNTIME" "$MEDIA_RUNTIME_STAGE/media-runtime"
+  else
+    bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
+      "$MEDIA_RUNTIME_STAGE/media-runtime" "" \
+      "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+  fi
+fi
+
 mkdir -p "$DESKTOP_DIR/build"
 cp "$ROOT_DIR/assets/app-icon.png" "$DESKTOP_DIR/build/appicon.png"
 
@@ -109,8 +132,14 @@ if [[ "$AGENT_TARGET" == linux/amd64 ]]; then
   mkdir -p "$LINUX_BUNDLE/plugin-packages" "$LINUX_BUNDLE/cli"
   mv "$DESKTOP_DIR/build/bin/BeefTV" "$LINUX_BUNDLE/BeefTV"
   cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$LINUX_BUNDLE/plugin-packages/"
+  for builtin_dir in beeftv-plugin-market beeftv-plugin-ll2 beeftv-plugin-sticky-note beeftv-plugin-ecommerce-hero; do
+    if [[ -d "$ROOT_DIR/plugin-packages/$builtin_dir" ]]; then
+      cp -R "$ROOT_DIR/plugin-packages/$builtin_dir" "$LINUX_BUNDLE/plugin-packages/"
+    fi
+  done
   cp "$ROOT_DIR/docs/linux-install.md" "$LINUX_BUNDLE/README.md"
   bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" "$LINUX_BUNDLE/agent-host"
+  bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" "$LINUX_BUNDLE/agent-host/licenses" "$VERSION_VALUE"
   (
     cd "$ROOT_DIR/backend"
     go build -trimpath -ldflags "$LDFLAGS" -o "$LINUX_BUNDLE/cli/beeftv" ./cmd/beeftv
@@ -126,9 +155,39 @@ APP_BUNDLE="$DESKTOP_DIR/build/bin/BeefTV.app"
 PLUGIN_RESOURCE_DIR="$APP_BUNDLE/Contents/Resources/plugin-packages"
 mkdir -p "$PLUGIN_RESOURCE_DIR"
 cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$PLUGIN_RESOURCE_DIR/"
+for builtin_dir in beeftv-plugin-market beeftv-plugin-ll2 beeftv-plugin-sticky-note beeftv-plugin-ecommerce-hero; do
+  if [[ -d "$ROOT_DIR/plugin-packages/$builtin_dir" ]]; then
+    cp -R "$ROOT_DIR/plugin-packages/$builtin_dir" "$PLUGIN_RESOURCE_DIR/"
+  fi
+done
 
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
   "$APP_BUNDLE/Contents/Resources/agent-host"
+cp -R "$MEDIA_RUNTIME_STAGE/media-runtime" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
+bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" \
+  "$APP_BUNDLE/Contents/Resources/agent-host/licenses" "$VERSION_VALUE"
+# Reuse the explicitly supplied (or already installed) encoder, including its
+# license. The native workflow adapter must not rely on a Finder-launched PATH.
+ENCODER_SOURCE="${BEEFTV_FFMPEG_RUNTIME:-/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg}"
+if [[ -x "$ENCODER_SOURCE" ]]; then
+  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$ENCODER_SOURCE")/ffmpeg.LICENSE}"
+  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
+  ENCODER_ARCH="${AGENT_TARGET##*/}"
+  [[ "$ENCODER_ARCH" != amd64 ]] || ENCODER_ARCH=x86_64
+  file "$ENCODER_SOURCE" | grep -q "$ENCODER_ARCH" || { echo "Wrong encoder architecture" >&2; exit 1; }
+  otool -L "$ENCODER_SOURCE" | tail -n +2 | while read -r dylib _; do
+    case "$dylib" in /usr/lib/*|/System/Library/*) ;; *) echo "Non-system encoder dependency: $dylib" >&2; exit 1 ;; esac
+  done
+  ENCODER_DEST="$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
+  cp "$ENCODER_SOURCE" "$ENCODER_DEST/ffmpeg"
+  cp "$ENCODER_LICENSE" "$ENCODER_DEST/ffmpeg.LICENSE"
+  if [[ -f "$(dirname "$ENCODER_SOURCE")/ffmpeg.README" ]]; then cp "$(dirname "$ENCODER_SOURCE")/ffmpeg.README" "$ENCODER_DEST/ffmpeg.README"; fi
+  chmod 755 "$ENCODER_DEST/ffmpeg"
+  codesign --force --sign - "$ENCODER_DEST/ffmpeg"
+fi
+if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
+  bash "$ROOT_DIR/scripts/test-media-runtime-macos.sh" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
+fi
 
 # The beeftv CLI ships inside the bundle. External agents (Codex, Claude Code,
 # Cursor) connect through it with their own client credential, so the installed
@@ -163,6 +222,7 @@ fi
 APP_PLIST="$APP_BUNDLE/Contents/Info.plist"
 if [[ -f "$APP_PLIST" ]] && command -v plutil >/dev/null 2>&1; then
   MACOS_VERSION="${VERSION_VALUE#v}"
+  MACOS_VERSION="${MACOS_VERSION%%-*}"
   plutil -replace CFBundleShortVersionString -string "$MACOS_VERSION" "$APP_PLIST"
   plutil -replace CFBundleVersion -string "$MACOS_VERSION" "$APP_PLIST"
 fi

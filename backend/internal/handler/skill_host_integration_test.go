@@ -56,12 +56,18 @@ func TestSelectedSkillsActualHostBusinessFlows(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer req.MultipartForm.RemoveAll()
-			installed, e := env.service.InstallSkillUpload(owner.ID, "zip", req.MultipartForm.File["file"][0], app.SkillInstallRequest{IsPrivate: true})
+			installed, e := env.service.SkillsDomain().InstallSkillUpload(owner.ID, "zip", req.MultipartForm.File["file"][0], app.SkillInstallRequest{IsPrivate: true})
 			if e != nil {
 				t.Fatal(e)
 			}
 			pin := skills.Pin{SkillID: installed.SkillID, VersionID: installed.VersionID, ContentHash: installed.ContentHash}
 			env.beginTurn(t, turnID, app.AssistantTurnInput{SkillPins: []skills.Pin{pin}})
+			const continueTurnID = "112233aabbccdd45"
+			const reselectTurnID = "112233aabbccdd46"
+			const freshTurnID = "112233aabbccdd47"
+			env.beginTurn(t, continueTurnID, app.AssistantTurnInput{})
+			env.beginTurn(t, reselectTurnID, app.AssistantTurnInput{SkillPins: []skills.Pin{pin}})
+			env.beginTurn(t, freshTurnID, app.AssistantTurnInput{})
 			backend := httptest.NewServer(env.router)
 			defer backend.Close()
 			root, err := filepath.Abs("../../..")
@@ -69,7 +75,7 @@ func TestSelectedSkillsActualHostBusinessFlows(t *testing.T) {
 				t.Fatal(err)
 			}
 			directory := t.TempDir()
-			config, err := json.Marshal(map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID, "turnId": turnID, "hostToken": assistantTestHostToken, "pin": pin, "instruction": tc.instruction, "path": tc.path, "reference": tc.reference, "titles": tc.titles, "script": tc.script})
+			config, err := json.Marshal(map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID, "turnId": turnID, "continueTurnId": continueTurnID, "reselectTurnId": reselectTurnID, "freshTurnId": freshTurnID, "hostToken": assistantTestHostToken, "pin": pin, "instruction": tc.instruction, "path": tc.path, "reference": tc.reference, "titles": tc.titles, "script": tc.script})
 			if err != nil {
 				t.Fatal(err)
 			}

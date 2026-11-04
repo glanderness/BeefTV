@@ -1,6 +1,7 @@
 import { AudioLines, Captions, Clapperboard, Download, FolderPlus, Images, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Scissors, Settings2, Trash2, Unlock, Upload, UserRound, Video, WandSparkles } from "lucide-react";
 
-import { explainGenerationError } from "@/lib/generation-error";
+import { canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { registerToolbarTools, type ToolContext, type ToolDefinition } from "@/lib/canvas/tool-registry";
 import { CanvasNodeType } from "@/types/canvas";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
@@ -22,10 +23,12 @@ function isEditableText(ctx: ToolContext) { return isText(ctx) && !isCharacterRe
 function canOpenDialog(ctx: ToolContext) { return isEditableText(ctx) || ((isImage(ctx) || isVideo(ctx) || isAudio(ctx)) && canOpenCanvasNodePromptPanel(ctx.node)); }
 function simpleMode(ctx: ToolContext) { return ctx.workspaceMode === "simple"; }
 function isImageBatchRoot(ctx: ToolContext) { return isImage(ctx) && Boolean(ctx.nodeMetadata?.isBatchRoot && ctx.nodeMetadata.batchChildIds?.length); }
+function opensSavedHistory(ctx: ToolContext) { return Boolean(ctx.node && canvasNodeFailureView(ctx.node).explanation.category === "result_target_unavailable"); }
 function canRetry(ctx: ToolContext) {
     if (ctx.nodeMetadata?.fileUpload) return false;
-    const explanation = explainGenerationError(ctx.nodeMetadata?.errorDetails || ctx.nodeMetadata?.generationErrorCode, { stage: ctx.nodeMetadata?.taskStage });
-    const blocked = explanation.uncertain || explanation.category === "download_failed";
+    if (opensSavedHistory(ctx)) return ctx.nodeMetadata?.status === "error";
+    if (ctx.node && canRecoverOrRetryDepthCapture(ctx.node)) return ctx.nodeMetadata?.status === "error";
+    const blocked = Boolean(ctx.node && canvasNodeFailureView(ctx.node).regenerateBlocked);
     const batchHasFailures = isImageBatchRoot(ctx) && (ctx.nodeMetadata?.batchFailedCount || (ctx.nodeMetadata?.status === "error" ? 1 : 0)) > 0;
     return (ctx.nodeMetadata?.status === "error" || (batchHasFailures && ctx.nodeMetadata?.status !== "loading")) && !blocked;
 }
@@ -66,8 +69,8 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         id: "retry",
         toolbar: "node-hover",
         category: "node-state",
-        label: (ctx) => isImageBatchRoot(ctx) ? "重试批次中的失败图片" : "重新生成",
-        displayLabel: (ctx) => isImageBatchRoot(ctx) ? "重试失败项" : "重试",
+        label: (ctx) => opensSavedHistory(ctx) ? "从生成历史取回原结果" : ctx.node && canRecoverOrRetryDepthCapture(ctx.node) && ctx.nodeMetadata?.taskStatus === "succeeded" ? "恢复原任务的深度视频" : isImageBatchRoot(ctx) ? "重试批次中的失败图片" : "重新生成",
+        displayLabel: (ctx) => opensSavedHistory(ctx) ? "生成历史" : ctx.node && canRecoverOrRetryDepthCapture(ctx.node) && ctx.nodeMetadata?.taskStatus === "succeeded" ? "恢复结果" : isImageBatchRoot(ctx) ? "重试失败项" : "重试",
         icon: <RefreshCw className="size-3.5" />,
         defaultVisible: true,
         defaultOrder: 30,
@@ -77,6 +80,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "extractFrames",
+        workflow: { operationId: "video.frame", outputType: "image" },
         toolbar: "node-hover",
         category: "node-state",
         label: (ctx) => ctx.extractingVideoFrames ? "正在截取关键帧" : "截取当前帧、首帧或尾帧",
@@ -91,6 +95,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "extractAudio",
+        workflow: { operationId: "video.audio", outputType: "audio" },
         toolbar: "node-hover",
         category: "node-state",
         label: (ctx) => ctx.extractingAudio ? "正在分离音视频" : "从视频中分离音频并生成独立音频节点",
@@ -105,6 +110,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "trimRegenerate",
+        workflow: { operationId: "video.trim", outputType: "video" },
         toolbar: "node-hover",
         category: "node-state",
         label: (ctx) => ctx.trimmingVideo ? "正在剪辑视频" : "剪辑一个或多个视频片段",
@@ -119,6 +125,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "cropVideo",
+        workflow: { operationId: "video.crop", outputType: "video" },
         toolbar: "node-hover",
         category: "node-state",
         label: "裁切视频画面",
@@ -135,6 +142,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "depthCapture",
+        workflow: { operationId: "video.depth", outputType: "video" },
         toolbar: "node-hover",
         category: "node-state",
         label: "生成近白远黑的深度动作参考视频",
@@ -283,6 +291,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "subtitles",
+        workflow: { mode: "manual", reason: "字幕编辑需要人工确认，完成后可作为固定素材输入" },
         toolbar: "node-hover",
         category: "node-state",
         label: "编辑字幕",
@@ -296,6 +305,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "timeline",
+        workflow: { mode: "manual", reason: "时间线是交互编辑器，可将导出结果作为输入，自动拼接使用视频合并" },
         toolbar: "node-hover",
         category: "node-state",
         label: "时间线编辑",
@@ -304,8 +314,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         defaultVisible: true,
         defaultOrder: 148,
         nodeToolbar: { group: "workspace", order: 30, section: "项目剪辑", description: "打开项目时间线，定位到当前素材" },
-        // Keep the video editing entry hidden until the editing workflow is ready.
-        applicable: hasAudio,
+        applicable: (ctx) => hasVideo(ctx) || hasAudio(ctx),
         run: (ctx) => ctx.handlers.onNodeTimeline(ctx.node!),
     },
     {

@@ -14,6 +14,7 @@ import { usePluginStore } from "@/stores/use-plugin-store";
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 
 import { StorageSettingsPane } from "./storage-settings-pane";
+import { DepthComponentsPanel } from "@/components/depth-components-panel";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
@@ -44,6 +45,7 @@ export default function SettingsPage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const shouldPromptContinue = searchParams.get("continue") === "1";
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
+    const hasDepthComponents = Boolean(getDesktopAppBinding()?.DepthComponentStatus);
     useLayoutEffect(() => {
         document.body.classList.add("app-user-overlays");
         return () => document.body.classList.remove("app-user-overlays");
@@ -108,6 +110,12 @@ export default function SettingsPage() {
                 <div className="storage-settings-sections">
                     <StorageSettingsPane />
                     <ReferenceStoragePane />
+                    {hasDepthComponents ? (
+                        <section className="settings-section storage-settings-block space-y-4" aria-label="深度捕捉组件">
+                            <div className="settings-pane-header"><h2>深度捕捉组件</h2></div>
+                            <DepthComponentsPanel />
+                        </section>
+                    ) : null}
                 </div>
             </SettingsPane>
         ),

@@ -67,6 +67,8 @@
 
 同步 /v1/audio/speech 返回原始音频流，由 binaryPayload 包装为统一音频结果。
 
+MiniMax Music 通过企业接口生成时，输出固定为 MP3，默认 44.1 kHz、256 kbps。较慢的生成请求使用 SSE 心跳等待结果；只有收到完成事件并取得有效音频后，任务才成功。中断、错误事件或非音频响应均按失败处理，不自动重发生成。
+
 <!-- BEEFTV_PLUGIN_MANIFEST_START -->
 ## Manifest 完整接口定义
 
@@ -74,10 +76,10 @@
 
 ```json
 {
-  "apiVersion": "beeftv.plugin/v2",
+  "apiVersion": "beeftv.plugin/v3",
   "id": "openai-audio",
   "name": "OpenAI Audio Speech",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "BeefTV Contributors",
   "description": "OpenAI Audio Speech 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -151,26 +153,79 @@
               "$ref": "request.prompt"
             },
             "voice": {
-              "$coalesce": [
-                {
-                  "$ref": "request.extra.audioVoice"
-                },
-                {
-                  "$ref": "request.providerOptions.openai-audio.voice"
-                },
-                "alloy"
-              ]
+              "$omitEmpty": {
+                "$if": {
+                  "condition": {
+                    "$ref": "vars.music"
+                  },
+                  "then": null,
+                  "else": {
+                    "$if": {
+                      "condition": {
+                        "$and": [
+                          {
+                            "$ref": "vars.speech"
+                          },
+                          {
+                            "$in": [
+                              {
+                                "$lower": {
+                                  "$ref": "vars.voice"
+                                }
+                              },
+                              [
+                                "",
+                                "中文",
+                                "alloy",
+                                "ash",
+                                "ballad",
+                                "coral",
+                                "echo",
+                                "fable",
+                                "nova",
+                                "onyx",
+                                "sage",
+                                "shimmer",
+                                "verse",
+                                "marin",
+                                "cedar"
+                              ]
+                            ]
+                          }
+                        ]
+                      },
+                      "then": "male-qn-qingse",
+                      "else": {
+                        "$coalesce": [
+                          {
+                            "$ref": "vars.voice"
+                          },
+                          "alloy"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
             },
             "response_format": {
-              "$coalesce": [
-                {
-                  "$ref": "request.extra.audioFormat"
+              "$if": {
+                "condition": {
+                  "$ref": "vars.music"
                 },
-                {
-                  "$ref": "request.providerOptions.openai-audio.response_format"
-                },
-                "mp3"
-              ]
+                "then": "mp3",
+                "else": {
+                  "$coalesce": [
+                    {
+                      "$ref": "request.extra.audioFormat"
+                    },
+                    {
+                      "$ref": "request.providerOptions.openai-audio.response_format"
+                    },
+                    "mp3"
+                  ]
+                }
+              }
             },
             "speed": {
               "$coalesce": [
@@ -211,6 +266,30 @@
                   }
                 ]
               }
+            },
+            "metadata": {
+              "$omitEmpty": {
+                "$if": {
+                  "condition": {
+                    "$ref": "vars.music"
+                  },
+                  "then": {
+                    "audio_setting": {
+                      "sample_rate": 44100,
+                      "bitrate": 256000,
+                      "format": "mp3"
+                    }
+                  },
+                  "else": {
+                    "$ref": "request.extra.audioMetadata"
+                  }
+                }
+              }
+            },
+            "stream_format": {
+              "$omitEmpty": {
+                "$ref": "request.extra.audioStreamFormat"
+              }
             }
           }
         },
@@ -224,7 +303,76 @@
           "messagePaths": [
             "error.message"
           ]
-        }
+        },
+        "variables": [
+          {
+            "name": "model",
+            "value": {
+              "$lower": {
+                "$last": {
+                  "$split": [
+                    {
+                      "$ref": "request.model"
+                    },
+                    "::"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "name": "music",
+            "value": {
+              "$gt": [
+                {
+                  "$len": {
+                    "$split": [
+                      {
+                        "$ref": "vars.model"
+                      },
+                      "minimax-music-"
+                    ]
+                  }
+                },
+                1
+              ]
+            }
+          },
+          {
+            "name": "speech",
+            "value": {
+              "$gt": [
+                {
+                  "$len": {
+                    "$split": [
+                      {
+                        "$ref": "vars.model"
+                      },
+                      "minimax-speech"
+                    ]
+                  }
+                },
+                1
+              ]
+            }
+          },
+          {
+            "name": "voice",
+            "value": {
+              "$trim": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.extra.audioVoice"
+                  },
+                  {
+                    "$ref": "request.providerOptions.openai-audio.voice"
+                  },
+                  ""
+                ]
+              }
+            }
+          }
+        ]
       }
     ]
   }

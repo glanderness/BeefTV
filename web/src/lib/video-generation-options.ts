@@ -66,6 +66,17 @@ export function videoResolutionComparisonKey(value: string | number | undefined)
     return /^\d+$/.test(normalized) ? `${normalized}p` : normalized.toLowerCase();
 }
 
+/** Sort display tiers without changing request values or moving opaque provider options. */
+export function sortVideoResolutionOptions(values: readonly string[]): string[] {
+    const ranked = values.map((value) => ({
+        value,
+        tier: /^(?:\d+p?|[24]k)$/i.test(value.trim()) ? Number(normalizeVideoResolution(value)) : undefined,
+    }));
+    const ordered = ranked.filter((item) => item.tier !== undefined).sort((a, b) => a.tier! - b.tier!);
+    let index = 0;
+    return ranked.map((item) => item.tier === undefined ? item.value : ordered[index++].value);
+}
+
 export function formatVideoResolutionLabel(value: string | number | undefined) {
     const raw = String(value || "").trim();
     if (!raw) return "";

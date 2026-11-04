@@ -15,12 +15,20 @@ import (
 
 type appResourcePort struct{ service *Service }
 
+func (p appResourcePort) EnsureMetadata(ctx context.Context, userID, resourceID string) (generation.ResourceInfo, error) {
+	resource, err := p.service.resourceDomain().EnsureMediaMetadata(ctx, userID, resourceID)
+	if err != nil {
+		return generation.ResourceInfo{}, err
+	}
+	return generation.ResourceInfoFromModel(userID, resource), nil
+}
+
 func (p appResourcePort) Lookup(userID, resourceID string) (generation.ResourceInfo, error) {
 	resource, err := p.service.repo.ResourceForUser(userID, resourceID)
 	if err != nil {
 		return generation.ResourceInfo{}, err
 	}
-	return resourceInfoFromModel(userID, resource), nil
+	return generation.ResourceInfoFromModel(userID, resource), nil
 }
 
 func (p appResourcePort) Open(userID, resourceID string) (generation.ResourceInfo, io.ReadCloser, error) {
@@ -28,7 +36,7 @@ func (p appResourcePort) Open(userID, resourceID string) (generation.ResourceInf
 	if err != nil {
 		return generation.ResourceInfo{}, nil, err
 	}
-	return resourceInfoFromModel(userID, resource), body, nil
+	return generation.ResourceInfoFromModel(userID, resource), body, nil
 }
 
 func (p appResourcePort) PublicURL(info generation.ResourceInfo, expiresAt time.Time) (string, error) {
@@ -92,17 +100,21 @@ type appTaskStagePort struct {
 }
 
 func (p appTaskStagePort) SetStage(ctx context.Context, stage string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return p.service.repo.WithContext(ctx).UpdateTaskStageForLease(p.task.ID, p.task.LeaseOwner, stage)
+	return generation.SetTaskStage(ctx, p.service.repo, p.service.log, p.task, stage)
 }
 
-// appTaskDeliveryPort mirrors in-generation result downloads into the same
-// task delivery projection that post-success artifact delivery uses.
 type appTaskDeliveryPort struct {
 	service *Service
 	taskID  string
+}
+
+type appTaskDownloadCachePort struct {
+	service        *Service
+	userID, taskID string
+}
+
+func (p appTaskDownloadCachePort) PartialPath() string {
+	return (generationDeliveryMediaAdapter{service: p.service}).artifactDownloadPartialPath(p.userID, p.taskID+":provider")
 }
 
 func (p appTaskDeliveryPort) ReportDelivery(progress outbound.ResumableProgress) {
@@ -120,74 +132,42 @@ func (p appTaskDeliveryPort) ClearDelivery() {
 		return
 	}
 	p.service.deliveryProgressRegistry().clear(taskID + ":0")
+	generation.LogTaskPhase(p.service.repo, p.service.log, taskID, "result_transfer_end")
 }
 
 func (p appReceiptPort) Observe(observation generation.TransportObservation) {
-	if observation.Request == nil {
+	if p.service == nil {
+		generation.ObserveTransportReceipt(observation, nil, nil, nil)
 		return
 	}
-	evidence := model.TaskRequestEvidence{
-		StartedAt:             observation.StartedAt.Format(time.RFC3339Nano),
-		ResponseLimitBytes:    observation.ResponseLimitBytes,
-		Dispatched:            observation.Dispatched,
-		HTTPStatus:            observation.HTTPStatus,
-		DeclaredResponseBytes: observation.DeclaredResponseBytes,
-		ReceivedBytes:         observation.ReceivedBytes,
-		RequestID:             observation.RequestID,
-		Outcome:               observation.Outcome,
-	}
-	recordTaskRequestEvidence(observation.Request, evidence, observation.Body, observation.Err)
-	recordProviderRequest(p.service, observation.Request, observation.StartedAt, observation.StatusCode, observation.Body, observation.Err)
+	generation.ObserveTransportReceipt(observation, p.service.repo, func(ctx context.Context) (model.Task, bool) {
+		t, ok := ctx.Value(imageTaskContext{}).(model.Task)
+		return t, ok
+	}, p.service.LogAPICall)
 }
 
 func (p appReceiptPort) NotifyPoll(ctx context.Context, event string, err error) {
-	if p.service == nil || p.service.repo == nil {
-		return
+	if p.service != nil {
+		generation.NotifyPollReceipt(ctx, p.service.repo, p.service.log, event, err)
 	}
-	call := canonicalCallMeta(ctx)
-	if strings.TrimSpace(call.TaskID) == "" {
-		return
-	}
-	message := "上游视频查询暂时异常，将继续轮询原任务"
-	level := "warn"
-	payload := ""
-	if err != nil {
-		payload = err.Error()
-	}
-	if videoPollEvent(event) == videoPollEventRecovered {
-		message = "上游视频查询已恢复"
-		level = "info"
-	}
-	_ = p.service.log(call.UserID, call.TaskID, level, message, payload)
 }
 
 func (p appReceiptPort) SyncProgress(taskID string, body []byte) {
-	if p.service == nil {
-		return
+	if p.service != nil {
+		p.service.syncProviderTaskProgress(taskID, body)
 	}
-	p.service.syncProviderTaskProgress(taskID, body)
 }
 
 type appImagePort struct{ service *Service }
 
 func (p appImagePort) Intercept(req *http.Request) (bool, []byte, string, error) {
-	if !generation.RecoverableImageEndpoint(req) {
-		return false, nil, "", nil
-	}
-	if p.service == nil {
-		return true, nil, "", imageRecoveryError{generation.ErrImageOwnerMissing}
-	}
-	row, handled, err := prepareImageSubmission(p.service, req)
-	if err != nil {
-		return true, nil, "", imageRecoveryError{err}
-	}
-	if !handled {
-		data, mimeType, sendErr := generation.DoBinaryWithConsumer(req, nil)
-		return true, data, mimeType, sendErr
-	}
-	task := req.Context().Value(imageTaskContext{}).(model.Task)
-	data, mimeType, sendErr := p.service.sendImageSubmission(req.Context(), task, row)
-	return true, data, mimeType, sendErr
+	return generation.InterceptImageRequest(req, p.service != nil, func(r *http.Request) (*model.ImageSubmission, bool, error) {
+		return prepareImageSubmission(p.service, r)
+	}, func(ctx context.Context) model.Task {
+		return ctx.Value(imageTaskContext{}).(model.Task)
+	}, func(ctx context.Context, task model.Task, row *model.ImageSubmission) ([]byte, string, error) {
+		return p.service.sendImageSubmission(ctx, task, row)
+	})
 }
 
 type appPromptPort struct{ service *Service }
@@ -220,23 +200,7 @@ func (p appConfigPort) ApplyCapabilities(ctx context.Context, input *generation.
 	if p.service == nil || input == nil {
 		return nil
 	}
-	switch input.Mode {
-	case "image":
-		return p.service.validateResolvedImageCapability(input)
-	case "video":
-		if isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
-			if err := p.service.resolveVideoCapability(ctx, input); err != nil {
-				return err
-			}
-			if input.VideoCapability != nil {
-				return validateVideoTaskParameters(input.VideoCapability, *input)
-			}
-			return nil
-		}
-		return p.service.validateResolvedVideoCapabilityContext(ctx, input)
-	default:
-		return nil
-	}
+	return generation.ApplyStandardCapabilities(ctx, p.service.repo, p.service.ReadLocalModelConfig, input)
 }
 
 func (p appConfigPort) RequireWorkflow(interfaceType string) error {
@@ -274,24 +238,6 @@ func (appMediaProbe) ProbeSeedance2Video(config generation.Config, index int, me
 	return applySeedance2VideoProbe(config, index, media, data)
 }
 
-func resourceInfoFromModel(userID string, resource *model.Resource) generation.ResourceInfo {
-	if resource == nil {
-		return generation.ResourceInfo{UserID: userID}
-	}
-	return generation.ResourceInfo{
-		UserID:     userID,
-		ID:         resource.ID,
-		Status:     string(resource.Status),
-		Kind:       resource.Kind,
-		MimeType:   resource.MimeType,
-		Provider:   resource.Provider,
-		Size:       resource.Size,
-		Width:      resource.Width,
-		Height:     resource.Height,
-		DurationMs: resource.DurationMs,
-	}
-}
-
 func (s *Service) bindGenerationRuntime(ctx context.Context, meta generation.CallMeta) context.Context {
 	return s.applyGenerationRuntime(ctx, meta, true)
 }
@@ -310,31 +256,34 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		return bindRequestReceipts(ctx)
 	}
 	runtime := generation.Runtime{
-		Resources: appResourcePort{service: s},
-		Limits:    appLimitsPort{service: s},
-		Receipts:  appReceiptPort{service: s},
-		Images:    appImagePort{service: s},
-		Workflow:  appWorkflowPort{service: s},
-		Prompt:    appPromptPort{service: s},
-		Config:    appConfigPort{service: s},
-		Style:     appStylePort{service: s},
-		Probe:     appMediaProbe{},
-		Call:      meta,
+		ReferenceStorage: s.newReferenceStoragePort(),
+		Resources:        appResourcePort{service: s},
+		Limits:           appLimitsPort{service: s},
+		Receipts:         appReceiptPort{service: s},
+		Images:           appImagePort{service: s},
+		ManagedMedia:     s.mediaAttempts().ManagedPort(),
+		Workflow:         appWorkflowPort{service: s},
+		Prompt:           appPromptPort{service: s},
+		Config:           appConfigPort{service: s},
+		Style:            appStylePort{service: s},
+		Probe:            appMediaProbe{},
+		Call:             meta,
 	}
 	if existing, ok := generation.RuntimeFromContext(ctx); ok {
 		runtime.Endpoints = existing.Endpoints
 		runtime.Stages = existing.Stages
 		runtime.Delivery = existing.Delivery
+		runtime.ReferenceProgress = existing.ReferenceProgress
 		if !replaceCall {
 			runtime.Call = generation.IdentityCallMeta(existing.Call, meta)
 		}
 	}
+	if s.dataDir != "" && runtime.Call.UserID != "" && runtime.Call.TaskID != "" {
+		runtime.DownloadCache = appTaskDownloadCachePort{service: s, userID: runtime.Call.UserID, taskID: runtime.Call.TaskID}
+	}
 	return generation.WithRuntime(ctx, runtime)
 }
 
-// bindRequestReceipts attaches a receipts port so DoJSON/DoBinary can record
-// sanitized HTTP evidence. It never looks up Service from a process map.
-// API call logs still require a Service already bound on this runtime.
 func bindRequestReceipts(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -345,31 +294,9 @@ func bindRequestReceipts(ctx context.Context) context.Context {
 	}
 	if metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok {
 		if strings.TrimSpace(runtime.Call.UserID) == "" && strings.TrimSpace(runtime.Call.TaskID) == "" {
-			runtime.Call = generationCallMeta(metadata)
+			runtime.Call = metadata
 		}
 	}
-	// Missing receipts may be intentional (WithoutCallAccounting). Restore only
-	// the context diagnostic recorder; never recover accounting authority from
-	// unrelated ports. Normal task/admin entrypoints bind their Service explicitly.
 	runtime.Receipts = appReceiptPort{}
 	return generation.WithRuntime(ctx, runtime)
-}
-
-func generationCallMeta(metadata providerAnalyticsContext) generation.CallMeta {
-	return generation.CallMeta{
-		UserID:            metadata.UserID,
-		TaskID:            metadata.TaskID,
-		ProjectID:         metadata.ProjectID,
-		TaskType:          metadata.TaskType,
-		TraceID:           metadata.TraceID,
-		RequestID:         metadata.RequestID,
-		Capability:        metadata.Capability,
-		Operation:         metadata.Operation,
-		ChannelID:         metadata.ChannelID,
-		Model:             metadata.Model,
-		VideoSeconds:      metadata.VideoSeconds,
-		RequestKind:       metadata.RequestKind,
-		ProviderRequestID: metadata.ProviderRequestID,
-		ConcurrencyLimit:  metadata.ConcurrencyLimit,
-	}
 }

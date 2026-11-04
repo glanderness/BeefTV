@@ -5,10 +5,14 @@ import (
 	"errors"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"infinite-canvas/backend/internal/repository"
+	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -143,7 +147,14 @@ func TestCanvasProjectPersistsTimelineRoundTrip(t *testing.T) {
 
 func newCanvasHistoryTestService(t *testing.T) *Service {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "canvas.db")), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "canvas.db")), &gorm.Config{
+		Logger: logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+			SlowThreshold:             time.Second,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			ParameterizedQueries:      true,
+		}),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +162,7 @@ func newCanvasHistoryTestService(t *testing.T) *Service {
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.CanvasUnitLink{},
 		&model.Resource{}, &model.Asset{}, &model.AssetVersion{}, &model.AssetRepresentation{}, &model.AssetFolder{},
 		&model.CanvasLibraryFolder{}, &model.CanvasDrawing{},
+		&model.AgentOpRecord{},
 		&model.Task{}, &model.TaskLog{}, &model.Result{}, &model.TaskTextDelta{}, &model.ApiCallLog{},
 		&model.CreationRun{}, &model.CreationSubmission{},
 		&model.Project{}, &model.StyleProfile{}, &model.VoiceProfile{},
@@ -158,6 +170,7 @@ func newCanvasHistoryTestService(t *testing.T) *Service {
 		&model.ProjectAssetCandidate{}, &model.ProjectAssetLink{},
 		&model.WorkflowInstance{}, &model.WorkflowStepInstance{},
 		&model.CharacterVoiceBinding{}, &model.ArkPrivateAssetBinding{},
+		&model.SystemSetting{},
 	); err != nil {
 		t.Fatal(err)
 	}

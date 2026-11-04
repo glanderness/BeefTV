@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/depthcapture"
@@ -30,6 +32,8 @@ func (s *Service) depthCaptureRuntime() *depthcapture.Service {
 	})
 	return s.depthCapture
 }
+
+func (s *Service) DepthComponents() *depthcapture.Service { return s.depthCaptureRuntime() }
 
 func (w *taskWorkerCoordinator) processDepthCapture(task *model.Task, ctx context.Context) error {
 	if w == nil || w.service == nil {
@@ -71,6 +75,17 @@ func (t depthTasks) Fail(task *model.Task, stage, message string) error {
 	if t.w == nil {
 		return nil
 	}
+	// The safe diagnostic/display budget keeps the first 240 runes. Select
+	// the exit-cause tail before sanitizing so a progress meter cannot win.
+	diagnosticMessage := strings.TrimSpace(message)
+	runes := []rune(diagnosticMessage)
+	if len(runes) > 239 {
+		diagnosticMessage = "…" + string(runes[len(runes)-239:])
+	}
+	captureTaskFailureDiagnostics(task, errors.New(diagnosticMessage), "local_result")
+	task.FailureDiagnostics.Stage = stage
+	task.FailureDiagnostics.RequestID = task.RequestID
+	task.FailureDiagnostics.ExecutionResult = "failed"
 	return t.w.failTimelineTask(task, stage, message)
 }
 

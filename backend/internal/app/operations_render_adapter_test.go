@@ -100,7 +100,7 @@ func TestCanvasRenderAtomicAdmissionReplayAndNativeOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	taskID := first.Result.(map[string]any)["taskId"].(string)
-	scope, ok, err := svc.AssistantTurnScopeForHost("owner", turnID)
+	scope, ok, err := svc.AssistantTurns().ScopeForHost("owner", turnID)
 	if err != nil || !ok || len(scope.TaskIDs) != 1 || scope.TaskIDs[0] != taskID {
 		t.Fatalf("render receipt not in trusted taskscope: %+v %v", scope, err)
 	}
@@ -181,6 +181,41 @@ func TestCanvasRenderAtomicAdmissionReplayAndNativeOutput(t *testing.T) {
 	if len(delivered) != 1 || delivered[0].ResourceID == "" || delivered[0].MaterializedAssetID == "" {
 		t.Fatalf("render not delivered: %s", queryOutputs)
 	}
+	// Reconstruct the host's current scope from the real turn and project
+	// membership for each read, rather than granting the rendered asset in a fixture.
+	readMedia := func(t *testing.T, params map[string]any) (operations.Result, error) {
+		t.Helper()
+		current, open, scopeErr := svc.AssistantTurns().ScopeForHost("owner", turnID)
+		if scopeErr != nil || !open {
+			t.Fatalf("render turn no longer open: %v", scopeErr)
+		}
+		mediaScope := &agentops.AssistantScope{CanvasID: current.CanvasID, PermissionMode: current.PermissionMode, AssetIDs: map[string]bool{},
+			ProjectReference: func(kind, id string) error {
+				return svc.ValidateAgentProjectReference("owner", current.CanvasID, kind, id)
+			}}
+		for _, id := range current.AssetIDs {
+			mediaScope.AssetIDs[id] = true
+		}
+		encoded, marshalErr := json.Marshal(params)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return registry.Execute(operations.Request{Context: context.Background(), UserID: "owner", Caller: operations.AssistantCaller(mediaScope, false), TurnID: turnID, Op: "media.overview", Params: encoded})
+	}
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+	}{
+		{"unbound rendered asset cannot grant media access", map[string]any{"canvasId": "canvas", "assetId": delivered[0].MaterializedAssetID}},
+		{"bare rendered resource cannot grant media access", map[string]any{"canvasId": "canvas", "resourceId": delivered[0].ResourceID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := readMedia(t, tc.params)
+			if err == nil || operations.AsError(err).Reason != "scope_denied" {
+				t.Fatalf("unbound output must remain scope_denied: %v", err)
+			}
+		})
+	}
 	// The adapter ignores caller-provided internal flags and only permits a
 	// succeeded local render owned by this user and this canvas.
 	session := &operationSession{canvas: svc.canvasDomain(), service: svc, repo: svc.repo}
@@ -215,10 +250,50 @@ func TestCanvasRenderAtomicAdmissionReplayAndNativeOutput(t *testing.T) {
 	if bound.Result.(map[string]any)["bindingStatus"] != "bound" {
 		t.Fatal("preview not bound")
 	}
+	t.Run("bound render can be inspected in the same turn", func(t *testing.T) {
+		view, err := readMedia(t, map[string]any{"canvasId": "canvas", "nodeId": previewID})
+		if err != nil {
+			t.Fatalf("cannot inspect the bound local render: %v", err)
+		}
+		encoded, err := json.Marshal(view.Result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var overview operations.MediaResult
+		if err := json.Unmarshal(encoded, &overview); err != nil {
+			t.Fatal(err)
+		}
+		if overview.Source.CanvasID != "canvas" || overview.Source.NodeID != previewID || overview.Source.ResourceID != delivered[0].ResourceID || overview.Source.Version == "" {
+			t.Fatalf("overview must identify this rendered output: %+v", overview.Source)
+		}
+		if !overview.HasVideo || overview.DurationMs < 900 || overview.DurationMs > 1100 || len(overview.Content) == 0 {
+			t.Fatalf("actual rendered media was not read: video=%v duration=%d frames=%d", overview.HasVideo, overview.DurationMs, len(overview.Content))
+		}
+		for _, part := range overview.Content {
+			if part.Data == "" || part.Source.ResourceID != delivered[0].ResourceID || part.Source.Version != overview.Source.Version {
+				t.Fatal("preview frames must come from the bound resource version")
+			}
+		}
+	})
+	for _, tc := range []struct {
+		name, reason string
+		params       map[string]any
+	}{
+		{"binding does not allow another canvas", "scope_denied", map[string]any{"canvasId": "other-canvas", "nodeId": previewID}},
+		{"binding does not allow an unlinked owned resource", "media_not_referenced", map[string]any{"canvasId": "canvas", "nodeId": previewID, "resourceId": resource.ID}},
+		{"binding does not allow a missing node", "node_not_in_canvas", map[string]any{"canvasId": "canvas", "nodeId": "missing-node", "resourceId": delivered[0].ResourceID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := readMedia(t, tc.params)
+			if err == nil || operations.AsError(err).Reason != tc.reason {
+				t.Fatalf("expected %s, got %v", tc.reason, err)
+			}
+		})
+	}
 	if err := svc.FinalizeAssistantTurn(turnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UndoAssistantTurn("owner", "canvas", turnID); err != nil {
+	if _, err := svc.AssistantTurns().Undo("owner", "canvas", turnID); err != nil {
 		t.Fatalf("render/edit/bind undo failed: %v", err)
 	}
 	restored, err := svc.UserCanvasProject("owner", "canvas")

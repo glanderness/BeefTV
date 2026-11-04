@@ -40,6 +40,30 @@ func TestPortraitQuoteRejectsInvalidRates(t *testing.T) {
 	}
 }
 
+func TestVideoReferenceInvoiceQuoteSurvivesCatalogRefresh(t *testing.T) {
+	store, err := workspace.NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := CatalogModel{ID: "minimax-h3-max-turbo", VideoPricing: json.RawMessage(`{"currency":"CNY","mode":"seconds","rates":{"768p":{"output":0.25,"reference_video":0}},"reference_invoice":{"usd_cny":7.2,"reserve_usd":5,"token":"private"}}`)}
+	if err := applyCatalog(store, []CatalogModel{item}, "", "42", ""); err != nil {
+		t.Fatal(err)
+	}
+	price := catalogProfile(t, store, item.ID)["videoPricing"].(map[string]any)
+	invoice, ok := price["reference_invoice"].(map[string]any)
+	if !ok || invoice["usd_cny"] != 7.2 || invoice["reserve_usd"] != float64(5) || len(invoice) != 2 {
+		t.Fatalf("invoice quote lost: %#v", price)
+	}
+	for _, raw := range []string{
+		`{"currency":"CNY","mode":"seconds","rates":{"768p":{"output":0.25,"reference_video":0}},"reference_invoice":{"usd_cny":7.2,"reserve_usd":0}}`,
+		`{"currency":"CNY","mode":"tokens","rates":{"720p":{"output":20,"reference_video":12}},"reference_invoice":{"usd_cny":7.2,"reserve_usd":5}}`,
+	} {
+		if _, ok := NormalizeCatalogVideoPricing(json.RawMessage(raw)); ok {
+			t.Fatalf("accepted invalid invoice: %s", raw)
+		}
+	}
+}
+
 func TestPortraitRemovedFromCatalogDoesNotRetainQuoteOrAvailability(t *testing.T) {
 	store, err := workspace.NewProviderConfig(t.TempDir())
 	if err != nil {

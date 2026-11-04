@@ -162,6 +162,9 @@ func networkSentinel(err error) error {
 
 // Distinguish actionable local installation failures from transfer failures.
 func publicInstallError(err error) string {
+	if errors.Is(err, ErrPreparationTimeout) {
+		return ErrPreparationTimeout.Error()
+	}
 	if errors.Is(err, os.ErrPermission) {
 		return "无法写入应用安装目录，请检查目录权限后重试安装。"
 	}

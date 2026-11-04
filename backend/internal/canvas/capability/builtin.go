@@ -1,11 +1,29 @@
 package capability
 
+import "sync"
+
 const (
 	maxAgentNodeTitleRunes   = 240
 	maxAgentNodeContentRunes = 16000
 )
 
+var (
+	sharedRegistryOnce sync.Once
+	sharedRegistry     *Registry
+)
+
 func BuiltinRegistry() *Registry {
+	sharedRegistryOnce.Do(func() {
+		sharedRegistry = newBuiltinRegistry()
+	})
+	return sharedRegistry
+}
+
+func SharedRegistry() *Registry {
+	return BuiltinRegistry()
+}
+
+func newBuiltinRegistry() *Registry {
 	registry, err := NewRegistry([]Descriptor{
 		{
 			Type: "text", Version: "1", Label: "文本", DefaultWidth: 340, DefaultHeight: 240,
@@ -31,11 +49,19 @@ func BuiltinRegistry() *Registry {
 			PatchFields: editableNodeFields("metadata.content", "Markdown 正文", "Markdown 正文"),
 		},
 		generatedMediaDescriptor("image", "3", "图片", 720, 405, "image", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "upscale-result"},
 		}),
 		generatedMediaDescriptor("video", "3", "视频", 720, 405, "video", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio", "upscale-result"},
 		}),
+		{
+			Type: "upscale", Version: "1", Label: "AI超分", DefaultWidth: 420, DefaultHeight: 240,
+			Purpose:   "批量处理左侧图片与视频，在右侧独立媒体节点交付结果。",
+			InputKind: "upscale-result", Connection: ConnectionPolicy{CanSource: true, CanTarget: true, AcceptedInputKinds: []string{"image", "video"}},
+			CanUpdate: true, SummaryFields: []string{"upscale", "upscaleBatch"}, DetailFields: []string{"upscale", "upscaleBatch"},
+			PatchFields:    map[string]PatchField{"title": {Path: "title", Kind: patchKindString, Label: "节点名称", Order: 10, Description: "超分处理节点名称", MaxRunes: maxAgentNodeTitleRunes}},
+			CreateMetadata: func(string) map[string]any { return map[string]any{"status": "idle"} },
+		},
 		generatedMediaDescriptor("audio", "3", "音频", 340, 120, "audio", ConnectionPolicy{
 			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text"},
 		}),
@@ -112,7 +138,11 @@ func generatedMediaDescriptor(nodeType, version, label string, width, height flo
 }
 
 func generatedDraftFields(kind string) map[string]PatchField {
-	fields := editableNodeFields("metadata.composerContent", "下一版提示词", "下次生成使用的提示词草稿；不覆盖已提交提示词或媒体结果")
+	fields := editableNodeFields("metadata.composerContent", "下一版提示词", "下次生成提示词草稿，不覆盖现有成品")
+	fields["prompt"] = PatchField{
+		Path: "metadata.composerContent", Kind: patchKindString, Label: "生成提示词草稿", Order: 25,
+		Description: "下次生成提示词草稿，不覆盖现有成品", MaxRunes: maxAgentNodeContentRunes,
+	}
 	names := []string{"model"}
 	switch kind {
 	case "image":
@@ -129,7 +159,7 @@ func generatedDraftFields(kind string) map[string]PatchField {
 			max = 4096
 		}
 		fields[name] = PatchField{Path: "metadata." + name, Kind: patchKindString, Label: name, Order: 40 + index,
-			Description: "下次生成使用的草稿参数；提交生成时仍会校验模型能力", MaxRunes: max}
+			Description: "草稿参数", MaxRunes: max}
 	}
 	return fields
 }

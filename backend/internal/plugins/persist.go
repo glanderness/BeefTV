@@ -191,6 +191,20 @@ func (c *Runtime) discardBlobIfUnreferenced(name string) {
 	_ = os.Remove(filepath.Join(c.packageDir, name))
 }
 
+// build re-materializes the registry and re-applies the startup retention
+// notes. Every rebuild path (startup, install, enable/disable, uninstall) goes
+// through here: retention is derived state that is never persisted, so a rebuild
+// that skipped it would silently turn a retired protocol back into a selectable
+// one after an unrelated plugin change.
+func (c *Runtime) build(stored []RegistryRecord) (map[string]Record, *protocol.Registry, error) {
+	plugins, registry, err := materializeRecords(stored)
+	if err != nil {
+		return nil, nil, err
+	}
+	applyRetention(plugins, c.retained)
+	return plugins, registry, nil
+}
+
 func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.Registry, error) {
 	plugins := make(map[string]Record, len(stored))
 	for _, storedRecord := range stored {
@@ -216,7 +230,22 @@ func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.R
 		if packageSHA256 == "" && strings.TrimSpace(storedRecord.PackagePath) == "" {
 			packageSHA256 = pluginHash(data)
 		}
-		plugins[metadata.ID] = Record{Raw: append([]byte(nil), data...), Metadata: metadata, Source: storedRecord.Source, FileName: storedRecord.FileName, PackagePath: storedRecord.PackagePath, PackageSHA256: packageSHA256, SHA256: packageSHA256, InstalledAt: storedRecord.InstalledAt, UpdatedAt: storedRecord.UpdatedAt, Status: StatusInvalid}
+		plugins[metadata.ID] = Record{
+			Raw:           append([]byte(nil), data...),
+			Metadata:      metadata,
+			Source:        storedRecord.Source,
+			FileName:      storedRecord.FileName,
+			PackagePath:   storedRecord.PackagePath,
+			PackageSHA256: packageSHA256,
+			PackageDir:    storedRecord.PackageDir,
+			PackageSpec:   storedRecord.PackageSpec,
+			SkillDirs:     cloneStringSlice(storedRecord.SkillDirs),
+			SHA256:        packageSHA256,
+			InstalledAt:   storedRecord.InstalledAt,
+			UpdatedAt:     storedRecord.UpdatedAt,
+			Status:        StatusInvalid,
+			Error:         strings.TrimSpace(storedRecord.LoadError),
+		}
 	}
 	registry, err := protocol.NewRegistry()
 	if err != nil {
@@ -235,6 +264,11 @@ func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.R
 			record.Metadata.UnavailableReason = loadErr.Error()
 			record.Error = loadErr.Error()
 			_ = registry.Register(protocol.UnavailableAdapter{Info: record.Metadata})
+			plugins[id] = record
+			continue
+		}
+		if record.Error != "" {
+			record.Status = StatusInvalid
 			plugins[id] = record
 			continue
 		}
@@ -363,7 +397,7 @@ func validateAuthorityRecord(record RegistryRecord) error {
 
 func validateRecordSource(source string) error {
 	switch strings.TrimSpace(source) {
-	case OriginOfficial, OriginSystem, OriginUploaded, "bundled":
+	case OriginOfficial, OriginSystem, OriginUploaded, OriginPackage, "bundled":
 		return nil
 	case "":
 		return fmt.Errorf("缺少来源")
@@ -424,6 +458,7 @@ func cloneRegistryRecords(records []RegistryRecord) []RegistryRecord {
 		if record.Raw != nil {
 			out[i].Raw = append(json.RawMessage(nil), record.Raw...)
 		}
+		out[i].SkillDirs = cloneStringSlice(record.SkillDirs)
 	}
 	return out
 }
@@ -451,5 +486,21 @@ func registryRecordContentChanged(prev, next RegistryRecord) bool {
 		prev.Source != next.Source ||
 		prev.FileName != next.FileName ||
 		prev.PackagePath != next.PackagePath ||
-		prev.PackageSHA256 != next.PackageSHA256
+		prev.PackageSHA256 != next.PackageSHA256 ||
+		prev.PackageDir != next.PackageDir ||
+		prev.PackageSpec != next.PackageSpec ||
+		prev.LoadError != next.LoadError ||
+		!stringSlicesEqual(prev.SkillDirs, next.SkillDirs)
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

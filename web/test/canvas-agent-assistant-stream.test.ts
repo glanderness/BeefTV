@@ -15,12 +15,13 @@ let previousFetch: typeof fetch;
 let previousBaseURL: string;
 let previousDesktopToken: unknown, previousBootstrapToken: unknown;
 let httpGetSpy: ReturnType<typeof spyOn>, httpPostSpy: ReturnType<typeof spyOn>;
-const { setActiveUserScope } = await import("@/lib/user-scope");
 const {
     AgentChatNotAdmittedError,
+    AgentStreamDetachedError,
     AGENT_STREAM_INCOMPLETE_MESSAGE,
     assistantUndoFailure,
     cancelAgentChat,
+    confirmAssistantProposalRunnable,
     steerAgentChat,
     ensureAgentUiSession,
     resetAgentUiSession,
@@ -91,6 +92,15 @@ afterEach(() => {
 const TURN_END = JSON.stringify({ type: "turn_end", reply: "完成", toolCalls: [], error: null, cancelled: false });
 
 describe("创作助手回合流边界", () => {
+    test("已失效的生成确认返回明确提示，普通可用提案不受影响", async () => {
+        // Establish the UI session before replacing the proposal endpoint response.
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: "ui-token", expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
+        await ensureAgentUiSession();
+        httpPostSpy.mockRejectedValueOnce(new ApiError("internal detail", { status: 409, reason: "continuation_intent_changed" }));
+        expect(await confirmAssistantProposalRunnable("old", "gp-old", "canvas")).toBe("已失效，请让助手重新提出生成方案。");
+        httpPostSpy.mockResolvedValueOnce({ runnable: true } as never);
+        expect(await confirmAssistantProposalRunnable("current", "gp-current", "canvas")).toBeNull();
+    });
     test("交接会话身份在 observer_error 和断流前交给界面，不能冒充回合完成", async () => {
         let sessionId = "legacy-session";
         let ended = false;
@@ -104,6 +114,21 @@ describe("创作助手回合流边界", () => {
         })).rejects.toThrow(AGENT_STREAM_INCOMPLETE_MESSAGE);
         expect(sessionId).toBe("durable:successor");
         expect(ended).toBe(false);
+    });
+    test("observer_error 说明只是观察断开，界面据此改为读取结果，而不是当成断流失败", async () => {
+        chatResponse = () => chatResponseOf([
+            JSON.stringify({ type: "session", sessionId: "durable:s1" }) + "\n",
+            JSON.stringify({ type: "text_delta", delta: "已开始" }) + "\n",
+            JSON.stringify({ type: "observer_error", reason: "interrupted" }) + "\n",
+        ]);
+        const error = await streamAgentChat("c1", "继续", {}).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(AgentStreamDetachedError);
+        expect((error as InstanceType<typeof AgentStreamDetachedError>).reason).toBe("interrupted");
+        expect((error as Error).message).toBe(AGENT_STREAM_INCOMPLETE_MESSAGE);
+        chatResponse = () => chatResponseOf([JSON.stringify({ type: "text_delta", delta: "半截" }) + "\n"]);
+        const cut = await streamAgentChat("c1", "继续", {}).catch((caught: unknown) => caught);
+        expect(cut).toBeInstanceOf(Error);
+        expect(cut).not.toBeInstanceOf(AgentStreamDetachedError);
     });
     test("运行中补充只发文字和当前会话，不创建新回合或附加素材", async () => {
         await steerAgentChat("c1", "s1", "结尾换成蛋糕");
@@ -137,22 +162,6 @@ describe("创作助手回合流边界", () => {
             expect(requests.filter(item => item.url.includes("/assistant/steer"))).toHaveLength(1);
         }
     });
-    test("身份切换后不会复用凭据，旧签发也不能跨身份回写", async () => {
-        let issued = 0;
-        sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
-        try {
-            setActiveUserScope("a");
-            expect(await ensureAgentUiSession()).toBe("token-1");
-            setActiveUserScope("b");
-            const stale = ensureAgentUiSession().catch((error: Error) => error);
-            setActiveUserScope("a");
-            expect(await ensureAgentUiSession()).toBe("token-3");
-            expect(await stale).toBeInstanceOf(Error);
-            expect((await stale as Error).message).toContain("账号已切换");
-            expect(await ensureAgentUiSession()).toBe("token-3");
-        } finally { setActiveUserScope(null); }
-    });
-
     test("临近30分钟过期前续签，并发调用共用一次签发", async () => {
         let now = Date.parse("2026-10-02T00:00:00Z");
         const clock = spyOn(Date, "now").mockImplementation(() => now);
@@ -263,6 +272,25 @@ describe("创作助手回合流边界", () => {
         expect(reply).toBe("完成");
     });
 
+    test("文字快照替换旧片段，计划在 turn_end 前立即交付且可清空", async () => {
+        const plan = { goal: "生成并检查首帧", items: [{ id: "s1", title: "首帧", status: "doing" }], done: 0, total: 1, updatedAt: "now" };
+        chatResponse = () => chatResponseOf([
+            JSON.stringify({ type: "text_snapshot", text: "开头中段" }) + "\n",
+            JSON.stringify({ type: "plan", plan }) + "\n",
+            JSON.stringify({ type: "text_snapshot", text: "开头中段尾部" }) + "\n",
+            JSON.stringify({ type: "plan", plan: null }) + "\n", TURN_END,
+        ]);
+        const observed: unknown[] = [];
+        let text = "";
+        await streamAgentChat("c1", "hi", {
+            onText: value => { text = value; },
+            onPlan: value => observed.push(value),
+            onTurnEnd: () => observed.push("end"),
+        });
+        expect(text).toBe("开头中段尾部");
+        expect(observed).toEqual([plan, null, "end"]);
+    });
+
     test("流结束但没有最终回合事件 → 显式未完成错误，不当成功", async () => {
         chatResponse = () => chatResponseOf([`${JSON.stringify({ type: "text_delta", delta: "半截" })}\n`]);
 
@@ -327,6 +355,18 @@ describe("创作助手回合流边界", () => {
 
     test("停止成功时不抛错", async () => {
         await expect(cancelAgentChat("c1")).resolves.toBeUndefined();
+    });
+
+    test("停止指向这一次发送：带上会话和请求标识，并读回这条请求的停止结果", async () => {
+        cancelResponse = () => new Response(JSON.stringify({ code: 0, data: { accepted: true, state: "pending" } }), { status: 200 });
+        await expect(cancelAgentChat("c1", { sessionId: "durable:s1", requestId: "req-1" })).resolves.toBe("pending");
+        expect(JSON.parse(requests.at(-1)!.body)).toEqual({ canvasId: "c1", sessionId: "durable:s1", requestId: "req-1" });
+    });
+
+    test("每次发送都带上自己的请求标识", async () => {
+        chatResponse = () => chatResponseOf([TURN_END + "\n"]);
+        await streamAgentChat("c1", "hi", {}, { requestId: "req-2" });
+        expect(JSON.parse(requests.find((request) => request.url.endsWith("/chat"))!.body).requestId).toBe("req-2");
     });
 
     test("最终回合带回 turnId、改动清单与生成提议", async () => {

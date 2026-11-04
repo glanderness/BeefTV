@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
+
 import type { NodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -8,13 +10,11 @@ import type { SkillRuntimeMetadata } from "@/services/skill-runtime";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 export type CanvasGenerationExecutorDependencies = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     startGenerationRequest: (targetNodeId: string, originNodeId: string, runningId?: string, controller?: AbortController) => AbortController;
     finishGenerationRequest: (targetNodeId: string, controller: AbortController) => void;
     bindGenerationTask: (targetNodeId: string, task: GenerationTask) => void;
@@ -39,5 +39,6 @@ export type CanvasGenerationExecution = CanvasGenerationExecutorDependencies & {
     taskContext?: { conversationId?: string; messageId?: string };
     retryContext?: { retryOf: string; attemptGroupId: string; clientOperationId: string };
     clientOperationId?: string;
+    onSubmissionPlan?: (manifest: import("@/services/api/assistant-continuation").AssistantSubmissionManifest) => Promise<void>;
     registerPendingNodeIds: (nodeIds: string[]) => void;
 };

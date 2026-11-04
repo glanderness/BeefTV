@@ -6,18 +6,25 @@ import { scopedLocalStorage } from "@/lib/user-scope";
 export type CreationModePreference = "text" | "image" | "video";
 
 export type CreationImagePreferences = {
+    model?: string;
     ratio?: string;
     quality?: string;
     count?: string;
+    transparentBackground?: string;
 };
 
 export type CreationVideoPreferences = {
+    model?: string;
     ratio?: string;
     seconds?: string;
     videoQuality?: string;
+    generateAudio?: string;
+    watermark?: string;
+    draft?: string;
 };
 
 export type CreationComposerPreferences = {
+    promptFontSize?: number;
     mode?: CreationModePreference;
     image?: CreationImagePreferences;
     video?: CreationVideoPreferences;
@@ -27,11 +34,19 @@ type CreationPreferencesStore = {
     hydrated: boolean;
     preferences: CreationComposerPreferences;
     rememberMode: (mode: CreationModePreference) => void;
+    rememberPromptFontSize: (fontSize: number) => void;
     rememberImageSettings: (settings: CreationImagePreferences) => void;
     rememberVideoSettings: (settings: CreationVideoPreferences) => void;
 };
 
 export const CREATION_PREFERENCES_STORE_KEY = "open_ai_canvas:creation_preferences";
+export const DEFAULT_PROMPT_FONT_SIZE = 14;
+export const MIN_PROMPT_FONT_SIZE = 12;
+export const MAX_PROMPT_FONT_SIZE = 28;
+
+function normalizePromptFontSize(value: number) {
+    return Math.min(MAX_PROMPT_FONT_SIZE, Math.max(MIN_PROMPT_FONT_SIZE, Math.round(value)));
+}
 
 function nonEmptyString(value: unknown): value is string {
     return typeof value === "string" && Boolean(value.trim());
@@ -41,9 +56,11 @@ function normalizeImagePreferences(value: unknown): CreationImagePreferences | u
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const raw = value as Record<string, unknown>;
     const preferences = {
+        ...(nonEmptyString(raw.model) ? { model: raw.model } : {}),
         ...(nonEmptyString(raw.ratio) ? { ratio: raw.ratio } : {}),
         ...(nonEmptyString(raw.quality) ? { quality: raw.quality } : {}),
         ...(nonEmptyString(raw.count) ? { count: raw.count } : {}),
+        ...(nonEmptyString(raw.transparentBackground) ? { transparentBackground: raw.transparentBackground } : {}),
     };
     return Object.keys(preferences).length ? preferences : undefined;
 }
@@ -52,9 +69,13 @@ function normalizeVideoPreferences(value: unknown): CreationVideoPreferences | u
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const raw = value as Record<string, unknown>;
     const preferences = {
+        ...(nonEmptyString(raw.model) ? { model: raw.model } : {}),
         ...(nonEmptyString(raw.ratio) ? { ratio: raw.ratio } : {}),
         ...(nonEmptyString(raw.seconds) ? { seconds: raw.seconds } : {}),
         ...(nonEmptyString(raw.videoQuality) ? { videoQuality: raw.videoQuality } : {}),
+        ...(nonEmptyString(raw.generateAudio) ? { generateAudio: raw.generateAudio } : {}),
+        ...(nonEmptyString(raw.watermark) ? { watermark: raw.watermark } : {}),
+        ...(nonEmptyString(raw.draft) ? { draft: raw.draft } : {}),
     };
     return Object.keys(preferences).length ? preferences : undefined;
 }
@@ -65,6 +86,7 @@ export function normalizeCreationComposerPreferences(value: unknown): CreationCo
     const image = normalizeImagePreferences(raw.image);
     const video = normalizeVideoPreferences(raw.video);
     return {
+        ...(typeof raw.promptFontSize === "number" && Number.isFinite(raw.promptFontSize) ? { promptFontSize: normalizePromptFontSize(raw.promptFontSize) } : {}),
         ...(raw.mode === "text" || raw.mode === "image" || raw.mode === "video" ? { mode: raw.mode } : {}),
         ...(image ? { image } : {}),
         ...(video ? { video } : {}),
@@ -77,6 +99,9 @@ export const useCreationPreferencesStore = create<CreationPreferencesStore>()(
             hydrated: false,
             preferences: {},
             rememberMode: (mode) => set((state) => ({ preferences: { ...state.preferences, mode } })),
+            rememberPromptFontSize: (fontSize) => {
+                if (Number.isFinite(fontSize)) set((state) => ({ preferences: { ...state.preferences, promptFontSize: normalizePromptFontSize(fontSize) } }));
+            },
             rememberImageSettings: (settings) => set((state) => ({ preferences: { ...state.preferences, image: { ...state.preferences.image, ...settings } } })),
             rememberVideoSettings: (settings) => set((state) => ({ preferences: { ...state.preferences, video: { ...state.preferences.video, ...settings } } })),
         }),

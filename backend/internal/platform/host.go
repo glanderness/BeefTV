@@ -3,8 +3,6 @@ package platform
 import (
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -12,17 +10,11 @@ const TaskWorkerConcurrency = 3
 
 // Host 由组合根注入，避免 platform → app 回环。
 type Host interface {
-	RequireAdmin(user *model.User) error
-	AppendAudit(actor *model.User, action, targetType, targetID, summary string, metadata any) error
 	ChannelConcurrencyLimit(channelID string) (int, error)
 }
 
 type nopHost struct{}
 
-func (nopHost) RequireAdmin(*model.User) error { return nil }
-func (nopHost) AppendAudit(*model.User, string, string, string, string, any) error {
-	return nil
-}
 func (nopHost) ChannelConcurrencyLimit(string) (int, error) {
 	return 0, nil
 }
@@ -59,16 +51,39 @@ func newService(repo *repository.Repository, coordinator *Coordinator, host Host
 	}
 }
 
-func (s *Service) requireAdmin(user *model.User) error {
-	if s == nil || s.host == nil {
-		return kernel.Unauthorized("请先登录")
-	}
-	return s.host.RequireAdmin(user)
+type HostConfig struct {
+	Repo *repository.Repository
 }
 
-func (s *Service) appendAdminAudit(actor *model.User, action, targetType, targetID, summary string, metadata any) error {
-	if s == nil || s.host == nil {
-		return nil
+type configHost struct {
+	cfg HostConfig
+}
+
+func NewHost(cfg HostConfig) Host {
+	return configHost{cfg: cfg}
+}
+
+func (h configHost) ChannelConcurrencyLimit(channelID string) (int, error) {
+	if h.cfg.Repo == nil {
+		return 0, nil
 	}
-	return s.host.AppendAudit(actor, action, targetType, targetID, summary, metadata)
+	channel, err := h.cfg.Repo.SystemChannel(channelID)
+	if err != nil {
+		return 0, err
+	}
+	return channel.ConcurrencyLimit, nil
+}
+
+func NewForMode(repo *repository.Repository, coordinator *Coordinator, host Host, localMode bool) *Service {
+	if localMode {
+		return NewLocal(repo, coordinator, host)
+	}
+	return New(repo, coordinator, host)
+}
+
+func RuntimePolicyWithRepo(repo *repository.Repository, localMode bool) (RuntimePolicySetting, error) {
+	if localMode {
+		return SelfUseRuntimePolicy(), nil
+	}
+	return New(repo, nil, nil).RuntimePolicy()
 }

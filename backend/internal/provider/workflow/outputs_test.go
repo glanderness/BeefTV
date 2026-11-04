@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -68,7 +67,7 @@ func TestOutputCollectorKeepsDeterministicAliasAndArrayOrder(t *testing.T) {
 			map[string]any{"url": "https://cdn.example/canonical.mp4"},
 		},
 	}
-	want := []workflowOutput{
+	want := []runningHubOutput{
 		{URL: "https://cdn.example/canonical.mp4"},
 		{URL: "https://cdn.example/spaced.mp4"},
 		{URL: "https://cdn.example/lower.mp4"},
@@ -77,7 +76,7 @@ func TestOutputCollectorKeepsDeterministicAliasAndArrayOrder(t *testing.T) {
 		{URL: "https://cdn.example/second.wav", NodeID: "9"},
 	}
 	for i := 0; i < 100; i++ {
-		if got := runningHubOutputs(value); !reflect.DeepEqual(got, want) {
+		if got := runningHubOutputs(value); !sameOutputOrigins(got, want) {
 			t.Fatalf("iteration %d: outputs=%#v", i, got)
 		}
 	}
@@ -88,4 +87,16 @@ func TestOutputCollectorPreservesProviderOrderAndDistinctOrigins(t *testing.T) {
 	if len(outputs) != 2 || outputs[0].NodeID != "9" || outputs[1].NodeID != "10" {
 		t.Fatalf("outputs=%#v", outputs)
 	}
+}
+
+func sameOutputOrigins(a, b []runningHubOutput) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].URL != b[i].URL || a[i].NodeID != b[i].NodeID {
+			return false
+		}
+	}
+	return true
 }

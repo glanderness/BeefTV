@@ -55,7 +55,7 @@ func newAdmissionRepo(t *testing.T) (*Repository, *gorm.DB) {
 		&model.Resource{}, &model.UserDailyUploadUsage{}, &model.UserUploadReservation{},
 		&model.Asset{}, &model.CanvasProject{},
 		&model.AssetRepresentation{}, &model.VoiceProfile{}, &model.ShotArtifact{},
-		&model.ArkPrivateAssetBinding{}, &model.ResourceDeletionJob{},
+		&model.ArkPrivateAssetBinding{}, &model.ResourceDeletionJob{}, &model.AgentOpRecord{},
 	); err != nil {
 		t.Fatal(err)
 	}

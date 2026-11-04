@@ -1,13 +1,15 @@
-import { useLayoutEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ConfigProvider } from "antd";
 
 import { AppWorkspaceShell } from "@/components/layout/app-top-nav";
 import { FirstCreationGuide } from "@/components/onboarding/first-creation-guide";
+import { WorkspaceOperationProgress } from "@/components/layout/workspace-operation-progress";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
 import { getWorkspaceAntThemeConfig } from "@/lib/app-theme";
 import { useWorkspaceButtonFeedback } from "@/hooks/use-workspace-button-feedback";
+import { syncPluginsFromBackend } from "@/services/plugin-sync";
 import "@/styles/workspace-product.css";
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
@@ -17,6 +19,11 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const productWorkspace = !/^\/canvas\/[^/]+(?:\/|$)/.test(pathname);
     useWorkspaceButtonFeedback(productWorkspace);
+
+    useEffect(() => {
+        // A failed read keeps the plugins remembered in this browser.
+        void syncPluginsFromBackend().catch(() => undefined);
+    }, []);
 
     useLayoutEffect(() => {
         // Ant Design 浮层挂载在 body，必须用路由级标记隔离用户工作台与画布编辑器、运营后台。
@@ -35,6 +42,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             <div className={cn("app-user-workspace h-dvh overflow-hidden text-foreground", spatialWorkbench && "app-spatial-workspace", productWorkspace && "app-product-workspace", pathname === "/" && "app-home-route")}>
                 <AppWorkspaceShell>{children}</AppWorkspaceShell>
                 <FirstCreationGuide />
+                <WorkspaceOperationProgress />
             </div>
         </ConfigProvider>
     );

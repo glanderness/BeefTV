@@ -225,6 +225,39 @@ func TestChunkedUploadStartConflictsOnIdempotencyMismatch(t *testing.T) {
 	}
 }
 
+func TestChunkedUploadResumeReportsOnlyCompleteOwnedChunks(t *testing.T) {
+	svc, _, _ := newTestDomain(t)
+	req := ChunkedUploadStart{FileName: "video.bin", Kind: "file", Size: ChunkUploadSize + 8, IdempotencyKey: "resume"}
+	session, err := svc.StartChunkedUpload("user-1", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.PutChunkedUpload("user-1", session.UploadID, 0, bytes.NewReader(make([]byte, ChunkUploadSize))); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.PutChunkedUpload("user-1", session.UploadID, 1, bytes.NewReader([]byte("short"))); err == nil {
+		t.Fatal("accepted incomplete chunk")
+	}
+	resumed, err := svc.StartChunkedUpload("user-1", req)
+	if err != nil || resumed.UploadID != session.UploadID || len(resumed.Received) != 1 || resumed.Received[0] != 0 {
+		t.Fatalf("resume=%+v err=%v", resumed, err)
+	}
+	other, err := svc.StartChunkedUpload("user-2", req)
+	if err != nil || other.UploadID == session.UploadID || len(other.Received) != 0 {
+		t.Fatalf("owner leaked: %+v err=%v", other, err)
+	}
+	if err := svc.PutChunkedUpload("user-1", session.UploadID, 1, bytes.NewReader([]byte("complete"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CompleteChunkedUpload("user-1", session.UploadID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := svc.StartChunkedUpload("user-1", req)
+	if err != nil || len(completed.Received) != 2 {
+		t.Fatalf("completed=%+v err=%v", completed, err)
+	}
+}
+
 func TestChunkedUploadCompletedStubConflictsOnIdempotencyMismatch(t *testing.T) {
 	svc, _, _ := newTestDomain(t)
 	body := []byte("payload")

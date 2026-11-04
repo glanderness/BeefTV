@@ -14,22 +14,127 @@ import (
 type systemProxySettings struct {
 	config        httpproxy.Config
 	excludeSimple bool
+	autoConfig    bool
+}
+
+// ConfigurationStatus returns no proxy addresses, bypass hosts or credentials.
+func ConfigurationStatus() struct {
+	Mode           string
+	AutoConfigOnly bool
+} {
+	status := struct {
+		Mode           string
+		AutoConfigOnly bool
+	}{Mode: "direct"}
+	if ExplicitProxyConfigured() {
+		status.Mode = "environment"
+		return status
+	}
+	system := readSystemProxy()
+	if system.config.HTTPProxy != "" || system.config.HTTPSProxy != "" {
+		status.Mode = "system"
+	} else {
+		status.AutoConfigOnly = system.autoConfig
+	}
+	return status
 }
 
 // Desktop launchers do not inherit shell proxy variables. Read system settings
 // on each request so retry also works after the user changes their proxy.
 func Proxy(req *http.Request) (*url.URL, error) {
-	config := httpproxy.FromEnvironment()
+	config := environmentProxyConfig()
 	if ExplicitProxyConfigured() {
 		return config.ProxyFunc()(req.URL)
 	}
 	return proxyWithSystem(req.URL, *config, readSystemProxy())
 }
 
+// A local/private proxy is trusted as a user-selected egress, never as a
+// target URL exemption. Outbound callers must still validate target addresses.
+func ConfiguredProxyAddress(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	config := *environmentProxyConfig()
+	if !ExplicitProxyConfigured() {
+		config = readSystemProxy().config
+	}
+	for _, raw := range []string{config.HTTPProxy, config.HTTPSProxy} {
+		if raw == "" {
+			continue
+		}
+		if !strings.Contains(raw, "://") {
+			raw = "http://" + raw
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		proxyPort := u.Port()
+		if proxyPort == "" {
+			switch u.Scheme {
+			case "https":
+				proxyPort = "443"
+			case "socks5", "socks5h":
+				proxyPort = "1080"
+			default:
+				proxyPort = "80"
+			}
+		}
+		if port == proxyPort && strings.EqualFold(strings.Trim(u.Hostname(), "[]."), strings.Trim(host, "[].")) {
+			return true
+		}
+	}
+	return false
+}
+
+// HTTPSProxyEnvironment carries desktop proxy selection to HTTPS-only child
+// downloaders, including redirect hosts and the system bypass list.
+func HTTPSProxyEnvironment() []string {
+	config := environmentProxyConfig()
+	if !ExplicitProxyConfigured() {
+		system := readSystemProxy()
+		config.HTTPSProxy = system.config.HTTPSProxy
+		config.NoProxy = strings.Trim(config.NoProxy+","+system.config.NoProxy, ",")
+	}
+	bypass := strings.Split(config.NoProxy, ",")
+	for i, host := range bypass {
+		bypass[i] = strings.TrimSpace(host)
+		if strings.HasPrefix(bypass[i], "*.") {
+			bypass[i] = bypass[i][1:]
+		}
+	}
+	noProxy := strings.Join(bypass, ",")
+	return []string{"HTTPS_PROXY=" + config.HTTPSProxy, "https_proxy=" + config.HTTPSProxy, "NO_PROXY=" + noProxy, "no_proxy=" + noProxy, "ALL_PROXY=", "all_proxy="}
+}
+
+// golang.org/x/net v0.58.0+ flipped httpproxy.FromEnvironment to prefer
+// lowercase environment variables (golang/go#79656). Keep desktopnet's
+// uppercase-first precedence consistent with NodeProxyEnvironment and
+// child downloader tests.
+func environmentProxyConfig() *httpproxy.Config {
+	return &httpproxy.Config{
+		HTTPProxy:  firstNonEmptyEnv("HTTP_PROXY", "http_proxy"),
+		HTTPSProxy: firstNonEmptyEnv("HTTPS_PROXY", "https_proxy"),
+		NoProxy:    firstNonEmptyEnv("NO_PROXY", "no_proxy"),
+		CGI:        os.Getenv("REQUEST_METHOD") != "",
+	}
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // Explicit environment configuration must never be bypassed automatically.
 func ExplicitProxyConfigured() bool {
 	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
-		if _, explicit := os.LookupEnv(name); explicit {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return true
 		}
 	}
@@ -107,5 +212,6 @@ func parseMacProxy(output string) systemProxySettings {
 	return systemProxySettings{
 		config:        httpproxy.Config{HTTPProxy: address("HTTP"), HTTPSProxy: address("HTTPS"), NoProxy: strings.Join(bypass, ",")},
 		excludeSimple: values["ExcludeSimpleHostnames"] == "1",
+		autoConfig:    values["ProxyAutoConfigEnable"] == "1" || values["ProxyAutoDiscoveryEnable"] == "1",
 	}
 }

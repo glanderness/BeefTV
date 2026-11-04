@@ -66,6 +66,8 @@ func OfficialDeclarativeVideoInterface(interfaceType string) (string, bool) {
 		return "Novita", true
 	case string(model.ChannelInterfaceNewAPIChannel2):
 		return "NewAPI Video Generations", true
+	case "video-generations-json":
+		return "视频生成 JSON", true
 	case string(model.ChannelInterfaceNewAPIChannel1):
 		return "NewAPI 媒体任务", true
 	case string(model.ChannelInterfaceXAIVideo):
@@ -153,7 +155,21 @@ func LoadOfficialFallbackRegistry() *protocol.Registry {
 		}
 		adapters := make([]protocol.Adapter, 0, len(entries))
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), protocol.PluginPackageExtension) {
+			if entry.IsDir() {
+				if entry.Name() == "beeftv-plugin-ll2" {
+					pkg, err := protocol.ParsePluginPackageDir(filepath.Join(directory, entry.Name()))
+					if err != nil {
+						return
+					}
+					providers, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil)
+					if err != nil {
+						return
+					}
+					adapters = append(adapters, providers...)
+				}
+				continue
+			}
+			if !strings.HasSuffix(strings.ToLower(entry.Name()), protocol.PluginPackageExtension) {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Join(directory, entry.Name()))

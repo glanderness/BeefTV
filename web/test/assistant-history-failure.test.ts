@@ -36,5 +36,5 @@ test("C05: malformed history is distinguished from genuine zero turns", async ()
     response = {};
     await expect(getAssistantHistory("a")).rejects.toThrow();
     response = { sessionId: "s1", turns: [] };
-    expect(await getAssistantHistory("a")).toEqual(response);
+    expect(await getAssistantHistory("a")).toEqual({ sessionId: "s1", turns: [], active: undefined, plan: null });
 });

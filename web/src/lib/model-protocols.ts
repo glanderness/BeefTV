@@ -3,7 +3,7 @@ import type { ModelChannel } from "@/stores/use-config-store";
 export type ModelProtocol = string;
 export type ProtocolCapability = "text" | "image" | "video" | "audio";
 export type ModelProtocolWorkflow = { id: string; label: string; providerId: string; capability: ProtocolCapability; parameters: Array<{ name: string; type: string; required?: boolean; description?: string; values?: string[]; mapping?: string }>; defaults?: Record<string, string | number | boolean> };
-export type ModelProtocolDefinition = { value: ModelProtocol; label: string; vendor?: string; capability: ProtocolCapability; create: string; contentType: string; poll?: string; media: string; enabled?: boolean; baseUrl?: string; workflows?: ModelProtocolWorkflow[] };
+export type ModelProtocolDefinition = { value: ModelProtocol; label: string; vendor?: string; capability: ProtocolCapability; create: string; contentType: string; poll?: string; media: string; enabled?: boolean; baseUrl?: string; authType?: string; workflows?: ModelProtocolWorkflow[] };
 
 export function protocolGroups(protocols: ModelProtocolDefinition[]) {
     return (["text", "image", "video", "audio"] as ProtocolCapability[]).map((capability) => ({ label: { text: "文本", image: "图片", video: "视频", audio: "音频" }[capability], options: protocols.filter((item) => item.capability === capability && item.enabled !== false).map((item) => ({ label: `${item.label} · ${item.create.replace(/^POST /, "")}`, value: item.value })) }));
@@ -20,6 +20,7 @@ const BUILTIN_PROTOCOL_CAPABILITIES: Record<ModelProtocol, ProtocolCapability> =
     "claude-api": "text",
     "gemini-generate-content": "text",
     "openai-image": "image",
+    "openai-videos": "video",
     "gemini-image": "image",
     "grok-image": "image",
     "volcengine-ark-image": "image",
@@ -28,6 +29,7 @@ const BUILTIN_PROTOCOL_CAPABILITIES: Record<ModelProtocol, ProtocolCapability> =
     newapi: "video",
     "newapi-channel-1": "video",
     "newapi-channel-2": "video",
+    "video-generations-json": "video",
     "xai-video": "video",
     "volcengine-ark-video": "video",
     "volcengine-ark-agent-plan-video": "video",
@@ -55,6 +57,21 @@ export function protocolForModelCatalog(_endpointTypes: string[] = []): ModelPro
     // A provider catalog cannot invent a protocol ID. The channel's selected
     // plugin or an explicit model configuration must supply it.
     return undefined;
+}
+export function protocolForBeefAPICatalog(endpointTypes: string[] = []): ModelProtocol | undefined {
+    // Only explicit wire contracts map to host protocol IDs; generic "openai"
+    // metadata cannot replace a user's configured protocol.
+    const endpoints = endpointTypes.map((value) => value.trim().toLowerCase());
+    const mappings: Array<[string, string[]]> = [
+        ["openai-image", ["image-generation", "images", "images.generations"]],
+        ["openai-videos", ["openai-video", "videos", "videos.generations"]],
+        ["openai-audio", ["audio.speech", "audio-speech"]],
+        ["openai-response", ["openai-response", "openai-response-compact", "responses"]],
+        ["claude-api", ["anthropic", "messages"]],
+        ["gemini-generate-content", ["gemini"]],
+        ["chat-completion", ["chat.completions", "chat-completions"]],
+    ];
+    return mappings.find(([, aliases]) => aliases.some((alias) => endpoints.includes(alias)))?.[0];
 }
 export function modelProtocolSummary(value: string | undefined, definitions: ModelProtocolDefinition[] = []) { const protocol = modelProtocolDefinition(value, definitions); return protocol ? [protocol.create, protocol.contentType, protocol.poll, protocol.media].filter(Boolean).join(" · ") : "当前协议未安装或尚未选择。"; }
 export function normalizeModelProtocol(value: unknown): ModelProtocol | undefined {
@@ -109,7 +126,7 @@ export function inferProtocolCapabilityFromModel(model: string): ProtocolCapabil
         lower.includes("veo") ||
         lower.includes("kling") ||
         lower.includes("seedance") ||
-        lower.includes("minimax-video") ||
+        /minimax-(?:video|h3)/.test(lower) ||
         lower.includes("hailuo") ||
         lower.includes("pika") ||
         lower.includes("runway") ||
@@ -151,7 +168,7 @@ export function ensureModelProfilesWithUiDefaults(
         const current = byModel.get(model);
         if (current?.protocol && current.capability) return { ...current, capability: current.capability, protocol: current.protocol };
         const capability = current?.capability || modelProtocolCapability(current?.protocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
-        const protocol = current?.protocol || (usesOpenAICompatibleProtocolDefault(apiFormat) ? defaultProtocolForCapability(capability, availableProtocols) : undefined);
+        const protocol = current?.protocol || (capability !== "video" && usesOpenAICompatibleProtocolDefault(apiFormat) ? defaultProtocolForCapability(capability, availableProtocols) : undefined);
         return { ...current, model, capability, protocol };
     });
 }

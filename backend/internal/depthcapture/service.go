@@ -5,30 +5,37 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 
 	"infinite-canvas/backend/internal/depthruntime"
-	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
 // Service owns depth capture execution. Create-time quota and activity stay
 // in the application composition layer.
 type Service struct {
-	dataDir    string
-	media      Media
-	tasks      Tasks
-	installer  Installer
-	windowsKey string
-	goos       string
-	goarch     string
-	nvidia     NVIDIACheck
-	cudaProbe  CUDAProbe
-	run        CommandRun
-	getenv     func(string) string
-	stat       func(name string) error
-	mkdirTemp  func(dir, pattern string) (string, error)
-	configure  func(*exec.Cmd)
-	truncate   func(string, int) string
+	probeOutput          func(context.Context, string) (mediatools.MediaMetadata, error)
+	dataDir              string
+	media                Media
+	tasks                Tasks
+	installer            Installer
+	windowsKey           string
+	goos                 string
+	goarch               string
+	nvidia               NVIDIACheck
+	cudaProbe            CUDAProbe
+	run                  CommandRun
+	getenv               func(string) string
+	stat                 func(name string) error
+	mkdirTemp            func(dir, pattern string) (string, error)
+	configure            func(*exec.Cmd)
+	componentMu          sync.Mutex
+	componentState       ComponentState
+	componentCancel      context.CancelFunc
+	componentDone        chan struct{}
+	componentClosed      bool
+	componentFallbackCPU bool
 }
 
 func New(deps Deps) *Service {
@@ -78,21 +85,24 @@ func New(deps Deps) *Service {
 		}
 	}
 	s := &Service{
-		dataDir:    deps.DataDir,
-		media:      deps.Media,
-		tasks:      deps.Tasks,
-		installer:  deps.Installer,
-		windowsKey: deps.WindowsManifestPublicKeyBase64,
-		goos:       goos,
-		goarch:     goarch,
-		nvidia:     nvidia,
-		cudaProbe:  cudaProbe,
-		run:        run,
-		getenv:     getenv,
-		stat:       stat,
-		mkdirTemp:  mkdirTemp,
-		configure:  configure,
-		truncate:   kernel.TruncateRunes,
+		probeOutput: deps.ProbeOutput,
+		dataDir:     deps.DataDir,
+		media:       deps.Media,
+		tasks:       deps.Tasks,
+		installer:   deps.Installer,
+		windowsKey:  deps.WindowsManifestPublicKeyBase64,
+		goos:        goos,
+		goarch:      goarch,
+		nvidia:      nvidia,
+		cudaProbe:   cudaProbe,
+		run:         run,
+		getenv:      getenv,
+		stat:        stat,
+		mkdirTemp:   mkdirTemp,
+		configure:   configure,
+	}
+	if s.probeOutput == nil {
+		s.probeOutput = mediatools.ProbeLocal
 	}
 	return s
 }

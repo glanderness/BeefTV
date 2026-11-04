@@ -49,8 +49,9 @@ func TestFetchChannelModelCatalogRejectsCredentialsWithoutNetwork(t *testing.T) 
 	}); err == nil || !strings.Contains(err.Error(), "API Key") {
 		t.Fatalf("missing BeefAPI credential error = %v", err)
 	}
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
 	if _, err := svc.FetchChannelModelCatalog(ctx, actor, ChannelModelsRequest{BaseURL: "http://127.0.0.1/v1", APIKey: "k"}); err == nil {
-		t.Fatal("loopback catalog fetch accepted")
+		t.Fatal("loopback catalog fetch accepted when private upstreams disabled")
 	} else {
 		var auth *AuthError
 		if !errors.As(err, &auth) {
@@ -59,13 +60,14 @@ func TestFetchChannelModelCatalogRejectsCredentialsWithoutNetwork(t *testing.T) 
 	}
 }
 
-func TestFetchChannelModelCatalogGeminiLoopbackDoesNotLeaveTheHost(t *testing.T) {
+func TestFetchChannelModelCatalogGeminiLoopbackDoesNotLeaveTheHostWhenDisabled(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
 	svc := &Service{}
 	_, err := svc.FetchChannelModelCatalog(context.Background(), &model.User{ID: "user-1"}, ChannelModelsRequest{
 		BaseURL: "http://127.0.0.1", APIKey: "k", APIFormat: "gemini",
 	})
 	if err == nil {
-		t.Fatal("gemini loopback catalog fetch accepted")
+		t.Fatal("gemini loopback catalog fetch accepted when private upstreams disabled")
 	}
 	var auth *AuthError
 	if !errors.As(err, &auth) {

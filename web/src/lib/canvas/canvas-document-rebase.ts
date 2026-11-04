@@ -34,6 +34,14 @@ function mergeField(base: unknown, local: unknown, remote: unknown, conflict: { 
     return local;
 }
 
+function hasDefinedProperty(object: Record<string, unknown>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(object, key) && object[key] !== undefined;
+}
+
+function isClearedProperty(object: Record<string, unknown>, key: string): boolean {
+    return !hasDefinedProperty(object, key) || object[key] === null;
+}
+
 function mergeObject(
     base: Record<string, unknown>,
     local: Record<string, unknown>,
@@ -43,18 +51,19 @@ function mergeObject(
     const merged: Record<string, unknown> = {};
     for (const key of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])) {
         if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
-        const baseHas = Object.prototype.hasOwnProperty.call(base, key);
-        const localHas = Object.prototype.hasOwnProperty.call(local, key);
-        const remoteHas = Object.prototype.hasOwnProperty.call(remote, key);
+        const baseHas = hasDefinedProperty(base, key);
+        const localHas = hasDefinedProperty(local, key);
+        const remoteHas = hasDefinedProperty(remote, key);
         if (!localHas && baseHas) {
-            if (remoteHas && !equal(remote[key], base[key])) conflict.value = true;
+            if (remoteHas && !isClearedProperty(remote, key) && !equal(remote[key], base[key])) conflict.value = true;
             continue;
         }
         if (!localHas) {
-            if (remoteHas) merged[key] = remote[key];
+            if (remoteHas && !isClearedProperty(remote, key)) merged[key] = remote[key];
             continue;
         }
         if (!remoteHas) {
+            if (isClearedProperty(local, key)) continue;
             if (baseHas && !equal(local[key], base[key])) {
                 conflict.value = true;
                 merged[key] = local[key];
@@ -86,10 +95,24 @@ const GENERATION_BIND_METADATA_KEYS = [
     "resultOrigin",
     "generationEffectKeys",
     "status",
+    "taskType",
+    "taskClientOperationId",
+    "generationSubmissionState",
+    "retryOf",
+    "attemptGroupId",
+    "taskProvider",
+    "taskOutcome",
     "taskStatus",
     "taskProgress",
     "taskStage",
+    "taskCreatedAt",
+    "taskStartedAt",
     "taskCompletedAt",
+    "taskDurationMs",
+    "taskErrorCode",
+    "taskProviderRequestId",
+    "taskOfficialStatus",
+    "taskReceiptRecorded",
     "taskUpdatedAt",
 ] as const;
 
@@ -97,6 +120,11 @@ const GENERATION_ERROR_METADATA_KEYS = [
     "errorDetails",
     "generationErrorCode",
     "generationErrorSummary",
+    "generationProviderCode",
+    "taskFailureDiagnostics",
+    "generationFailure",
+    "generationPreflightError",
+    "taskOutcomeSource",
     "resourceReloadAvailable",
     "failedPromptFingerprint",
     "failedInputFingerprint",
@@ -118,9 +146,19 @@ function nonemptyMediaRef(value: unknown): value is string {
     return typeof value === "string" && value.trim().length > 0;
 }
 
+function hasInFlightTaskOutcome(value: unknown) {
+    if (!isPlainObject(value)) return false;
+    return value.phase === "running" || value.phase === "fetching";
+}
+
 function isInFlightGenerationOverlay(node: CanvasNodeData) {
     const status = node.metadata?.status;
-    return status === "loading" || status === "error";
+    if (status === "loading" || status === "error") return true;
+    return (
+        status === "success"
+        && (!node.metadata?.taskStatus || node.metadata.taskStatus === "succeeded")
+        && hasInFlightTaskOutcome(node.metadata?.taskOutcome)
+    );
 }
 
 function remoteHasBoundGenerationResult(node: CanvasNodeData | undefined) {
@@ -170,7 +208,7 @@ export function settleInFlightGenerationOverlay(input: {
                 }
                 continue;
             }
-            if (Object.prototype.hasOwnProperty.call(remoteMeta, key) && remoteMeta[key] !== undefined) {
+            if (Object.prototype.hasOwnProperty.call(remoteMeta, key) && remoteMeta[key] !== undefined && remoteMeta[key] !== null) {
                 (metadata as Record<string, unknown>)[key] = remoteMeta[key];
             } else {
                 delete (metadata as Record<string, unknown>)[key];
@@ -178,6 +216,9 @@ export function settleInFlightGenerationOverlay(input: {
         }
         for (const key of GENERATION_ERROR_METADATA_KEYS) {
             delete (metadata as Record<string, unknown>)[key];
+        }
+        if (!isPlainObject(metadata.taskOutcome) || hasInFlightTaskOutcome(metadata.taskOutcome)) {
+            metadata.taskOutcome = { phase: "ready", regenerate: "allowed", reason: "result_ready" };
         }
         changed = true;
         return { ...localNode, metadata };
@@ -187,9 +228,66 @@ export function settleInFlightGenerationOverlay(input: {
 
 // 节点级 createdAt/updatedAt 由编辑器在打开和编辑时补写，服务端写入的节点常常没有；
 // 它们不是用户编辑，远端删掉的节点不能只因为这两个字段不同就被留下。
+function stripNodeTimestamps(node: CanvasNodeData | undefined): Record<string, unknown> {
+    if (!node) return {};
+    const { createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = node;
+    return rest as unknown as Record<string, unknown>;
+}
+
 function sameNodeIgnoringTimestamps(left: CanvasNodeData, right: CanvasNodeData) {
-    const strip = ({ createdAt: _createdAt, updatedAt: _updatedAt, ...rest }: CanvasNodeData) => rest;
-    return equal(strip(left), strip(right));
+    return equal(stripNodeTimestamps(left), stripNodeTimestamps(right));
+}
+
+const IN_FLIGHT_POLL_TELEMETRY_KEYS = [
+    "taskProgress",
+    "taskStage",
+    "taskUpdatedAt",
+    "taskDurationMs",
+    "taskStartedAt",
+    "taskProviderRequestId",
+    "taskOfficialStatus",
+    "taskReceiptRecorded",
+] as const;
+
+function mergeCanvasNodeItem(
+    baseItem: CanvasNodeData | undefined,
+    localItem: CanvasNodeData,
+    remoteItem: CanvasNodeData,
+    conflict: { value: boolean },
+): CanvasNodeData {
+    let remoteNormalized = remoteItem;
+    const taskId = nodeTaskId(localItem);
+    if (
+        taskId &&
+        nodeTaskId(remoteItem) === taskId &&
+        localItem.metadata?.status === "loading" &&
+        remoteItem.metadata?.status === "loading" &&
+        localItem.metadata?.taskStatus === remoteItem.metadata?.taskStatus
+    ) {
+        const alignedMeta: Record<string, unknown> = { ...(remoteItem.metadata || {}) };
+        const localMeta = (localItem.metadata || {}) as Record<string, unknown>;
+        for (const key of IN_FLIGHT_POLL_TELEMETRY_KEYS) {
+            if (hasDefinedProperty(localMeta, key)) {
+                alignedMeta[key] = localMeta[key];
+            } else {
+                delete alignedMeta[key];
+            }
+        }
+        remoteNormalized = { ...remoteItem, metadata: alignedMeta as CanvasNodeData["metadata"] };
+    }
+    const merged = mergeObject(
+        stripNodeTimestamps(baseItem),
+        stripNodeTimestamps(localItem),
+        stripNodeTimestamps(remoteNormalized),
+        conflict,
+    ) as unknown as CanvasNodeData;
+    const createdAt = localItem.createdAt || remoteItem.createdAt || baseItem?.createdAt;
+    const updatedAt = localItem.updatedAt || remoteItem.updatedAt || baseItem?.updatedAt;
+    return {
+        ...merged,
+        ...(createdAt ? { createdAt } : {}),
+        ...(updatedAt ? { updatedAt } : {}),
+    };
 }
 
 function mergeEntityList<T extends { id: string }>(
@@ -198,6 +296,7 @@ function mergeEntityList<T extends { id: string }>(
     remote: T[] | undefined,
     conflict: { value: boolean },
     sameAsBase: (local: T, base: T) => boolean = equal,
+    mergeItem?: (baseItem: T | undefined, localItem: T, remoteItem: T, conflict: { value: boolean }) => T,
 ): T[] {
     const baseItems = Array.isArray(base) ? base : [];
     const localItems = Array.isArray(local) ? local : [];
@@ -215,7 +314,7 @@ function mergeEntityList<T extends { id: string }>(
         const localItem = localById.get(id);
         const remoteItem = remoteById.get(id);
         if (baseItem && !localItem) {
-            if (remoteItem && !equal(remoteItem, baseItem)) conflict.value = true;
+            if (remoteItem && !sameAsBase(remoteItem, baseItem)) conflict.value = true;
             return;
         }
         if (baseItem && !remoteItem) {
@@ -226,12 +325,16 @@ function mergeEntityList<T extends { id: string }>(
             return;
         }
         if (localItem && remoteItem) {
-            result.push(mergeObject(
-                (baseItem || {}) as unknown as Record<string, unknown>,
-                localItem as unknown as Record<string, unknown>,
-                remoteItem as unknown as Record<string, unknown>,
-                conflict,
-            ) as unknown as T);
+            result.push(
+                mergeItem
+                    ? mergeItem(baseItem, localItem, remoteItem, conflict)
+                    : (mergeObject(
+                          (baseItem || {}) as unknown as Record<string, unknown>,
+                          localItem as unknown as Record<string, unknown>,
+                          remoteItem as unknown as Record<string, unknown>,
+                          conflict,
+                      ) as unknown as T),
+            );
             return;
         }
         if (localItem) {
@@ -269,7 +372,7 @@ export function rebaseCanvasDocumentThreeWay(input: {
         ...generic,
         id: input.local.id,
         title: (generic.title as string | undefined) ?? input.local.title,
-        nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict, sameNodeIgnoringTimestamps),
+        nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict, sameNodeIgnoringTimestamps, mergeCanvasNodeItem),
         connections: mergeEntityList<CanvasConnection>(input.base.connections, input.local.connections, input.remote.connections, conflict),
         chatSessions: mergeEntityList(input.base.chatSessions, input.local.chatSessions, input.remote.chatSessions, conflict),
         viewport: input.local.viewport || input.remote.viewport,

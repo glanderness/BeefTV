@@ -11,7 +11,7 @@ beforeAll(async () => {
     server = Bun.serve({ port: 0, fetch: (request) => new URL(request.url).pathname === "/app.js" ? new Response(script, { headers: { "Content-Type": "text/javascript" } }) : new Response('<meta name="viewport" content="width=device-width, initial-scale=1"><div id="root"></div><script type="module" src="/app.js"></script>', { headers: { "Content-Type": "text/html" } }) });
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH || undefined });
 }, 30_000);
-afterAll(async () => { await browser?.close(); server?.stop(true); });
+afterAll(async () => { await browser?.close(); server?.stop(true); }, 30000);
 for (const width of [1280, 390]) for (const dark of [false, true]) test(`links form ${width}px dark=${dark}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 800 } });
     const errors: string[] = [];

@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { bindBackendCanvasGenerationResult, CanvasBindFlushError, CanvasBindProjectionAdoptionError } from "@/services/canvas-generation-consumer";
-import { UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { ApiError } from "@/services/api/request";
 import { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-conflict";
 import type { CanvasTaskBindReceipt } from "@/services/api/operations";
@@ -12,7 +11,8 @@ import { hydrateBackendGeneratedAsset, hydrateBackendGeneratedOutputs } from "@/
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
-import type { Asset } from "@/stores/use-asset-store";
+import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { getClientDiagnosticEvents, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
 
 const generationSource = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-generation.ts"), "utf8");
 const consumerSource = readFileSync(resolve(import.meta.dir, "../src/services/canvas-generation-consumer.ts"), "utf8");
@@ -72,6 +72,32 @@ function succeededTask(): GenerationTask {
     };
 }
 
+test("normal output readiness retries emit one request and retain the earlier real failure", async () => {
+    setDiagnosticUserScope("bind-readiness-retention");
+    recordDiagnosticEvent({ category: "task", level: "error", code: "retained-conflict", message: "绑定冲突" });
+    const node = canvasNode("node-1", "目标", { taskId: "task-1" });
+    const project = canvasProject("canvas-1", [node], 4);
+    useCanvasStore.setState({ projects: [project] });
+    let attempts = 0;
+    await bindBackendCanvasGenerationResult({
+        canvasId: project.id, nodeId: node.id, task: succeededTask(), nodesRef: { current: [node] }, setNodes: () => {}, isCurrent: () => true,
+        runtime: {
+            hydrateOutputs: async () => undefined, persistDocument: async () => undefined,
+            now: () => 0, sleep: async () => undefined,
+            refreshTask: async () => succeededTask(), adoptConfirmedProjection: async () => project,
+            bindOutput: async (input) => {
+                if (++attempts <= 600) throw new ApiError("仍在保存", { status: 409, reason: "output_not_ready" });
+                return { op: "canvas.task.bind", opId: input.operationId, replayed: false, result: { bindingStatus: "bound", canvas: project, revision: 4 } };
+            },
+        },
+    });
+    const events = getClientDiagnosticEvents();
+    expect(attempts).toBe(601);
+    expect(events.filter(event => event.code === "generation_bind_requested")).toHaveLength(1);
+    expect(events.filter(event => event.code === "generation_bind_refused")).toHaveLength(0);
+    expect(events.some(event => event.code === "retained-conflict")).toBe(true);
+});
+
 describe("backend canvas bind cutover", () => {
     test("use-canvas-generation binds succeeded backend tasks without snapshot doublewrite", () => {
         const applyStart = generationSource.indexOf("const applyGenerationTaskResult = useCallback(");
@@ -92,26 +118,24 @@ describe("backend canvas bind cutover", () => {
 
     test("bind helper flushes the journal then binds generation fields only", () => {
         const bindStart = consumerSource.indexOf("export async function bindBackendCanvasGenerationResult");
-        const bindEnd = consumerSource.indexOf("function assertBindDispatchScope", bindStart);
+        const bindEnd = consumerSource.indexOf("async function defaultAdoptConfirmedProjection", bindStart);
         const bind = consumerSource.slice(bindStart, bindEnd);
         expect(bind).toContain("persistDocument");
         expect(bind).toContain("bindOutput");
         expect(bind).toContain("adoptConfirmedProjection");
         expect(bind).toContain("CanvasBindFlushError");
-        expect(bind).toContain("expectedScope");
-        expect(bind).toContain("capturedScope");
-        expect(bind).toContain("persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections }, capturedScope)");
+        expect(bind).toContain("persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections })");
         expect(bind).toContain("isCanvasRevisionConflict");
         expect(bind).toContain("CanvasBackendSubmitPausedError");
-        expect(bind).toContain("adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope)");
+        expect(bind).toContain("adoptConfirmedProjection(canonical)");
         expect(bind).not.toContain("overlayBoundGenerationOnLiveCanvas");
         expect(bind).not.toContain("overlayGenerationReceiptOnNode");
         expect(bind).not.toContain("recordConfirmedBindProjection");
         expect(bind).not.toContain("persistCanvasGenerationEffect");
         expect(bind).not.toContain("applyExternalCanvasRevision");
         expect(consumerSource).not.toContain("overlayBoundGenerationOnLiveCanvas");
-        expect(consumerSource).toContain("persistCanvasDocument as PersistCanvasDocumentWithScope");
-        expect(consumerSource).toContain("adopt(project, captured.userScope, captured)");
+        expect(consumerSource).toContain("runtime.persistDocument ?? persistCanvasDocument");
+        expect(consumerSource).toContain("return adopt(project);");
     });
 
     test("message consumers hydrate backend outputs instead of rematerializing", () => {
@@ -133,7 +157,6 @@ test("late bind after switching canvases never projects the old graph into the n
     const nodesRef = { current: [replacement] };
     let current = true;
     let uiWrites = 0;
-    const identity = captured("user-a", 1);
     await bindBackendCanvasGenerationResult({
         canvasId: "canvas-1", nodeId: oldNode.id, task: succeededTask(), nodesRef,
         isCurrent: () => current, setNodes: () => { uiWrites++; },
@@ -145,7 +168,6 @@ test("late bind after switching canvases never projects the old graph into the n
                     result: { applied: true, bindingStatus: "bound", canvasId: "canvas-1", nodeId: oldNode.id, taskId: "task-1", canvas: server, revision: 4 } };
             },
             adoptConfirmedProjection: async () => server,
-            captureScope: () => identity, liveScope: () => identity,
         },
     });
     expect(uiWrites).toBe(0);
@@ -211,10 +233,6 @@ describe("hydrateBackendGeneratedAsset", () => {
     });
 });
 
-function captured(userScope: string, epoch: number): CapturedUserScope {
-    return { userScope, epoch };
-}
-
 function bindReceipt(project: CanvasProject, nodeId: string, extra: Partial<CanvasTaskBindReceipt> = {}): CanvasTaskBindReceipt {
     const node = project.nodes.find((item) => item.id === nodeId);
     return {
@@ -251,7 +269,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         const setNodesLog: CanvasNodeData[][] = [];
         const order: string[] = [];
         let adopted: CanvasProject | undefined;
-        const identity = captured("user-a", 1);
 
         await bindBackendCanvasGenerationResult({
             canvasId: "canvas-1",
@@ -285,8 +302,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                     useCanvasStore.setState({ projects: [project] });
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
@@ -317,7 +332,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         useCanvasStore.setState({ projects: [original, next] });
         const nodesRef = { current: [originalNode] };
         let liveCurrent = true;
-        const identity = captured("user-a", 1);
 
         await bindBackendCanvasGenerationResult({
             canvasId: "canvas-1",
@@ -351,8 +365,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                     }));
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
@@ -374,7 +386,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         useCanvasStore.setState({ projects: [canvasProject("canvas-1", [bound])] });
         const nodesRef = { current: [bound] };
         let adopted = 0;
-        const identity = captured("user-a", 1);
 
         await expect(
             bindBackendCanvasGenerationResult({
@@ -396,8 +407,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                         adopted += 1;
                         return undefined;
                     },
-                    captureScope: () => identity,
-                    liveScope: () => identity,
                 },
             }),
         ).rejects.toThrow("绑定失败");
@@ -413,7 +422,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         const nodesRef = { current: [bound] };
         let boundCalls = 0;
         let adopted = 0;
-        const identity = captured("user-a", 1);
 
         await expect(
             bindBackendCanvasGenerationResult({
@@ -438,8 +446,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                         adopted += 1;
                         return undefined;
                     },
-                    captureScope: () => identity,
-                    liveScope: () => identity,
                 },
             }),
         ).rejects.toBeInstanceOf(CanvasBindFlushError);
@@ -463,7 +469,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         useCanvasStore.setState({ projects: [live] });
         const nodesRef = { current: [bound, camp, lake] };
         const order: string[] = [];
-        const identity = captured("user-a", 1);
 
         await bindBackendCanvasGenerationResult({
             canvasId: "canvas-1",
@@ -495,8 +500,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                     useCanvasStore.setState({ projects: [project] });
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
@@ -519,7 +522,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         ], 11);
         useCanvasStore.setState({ projects: [live] });
         const nodesRef = { current: [bound, sibling] };
-        const identity = captured("user-a", 1);
         let boundCalls = 0;
 
         await bindBackendCanvasGenerationResult({
@@ -550,110 +552,12 @@ describe("bindBackendCanvasGenerationResult", () => {
                     useCanvasStore.setState({ projects: [project] });
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
         expect(boundCalls).toBe(1);
         expect(nodesRef.current.find((item) => item.id === "node-1")?.metadata?.status).toBe("success");
         expect(nodesRef.current.find((item) => item.id === "node-2")?.title).toBe("Agent 新镜头");
-    });
-
-    test("account switch after a deferred await does not write the next user canvas", async () => {
-        const originalNode = canvasNode("node-1", "原用户节点", { taskId: "task-1", status: "loading" });
-        const nextNode = canvasNode("node-next", "下一账号草稿", { status: "idle", prompt: "不可覆盖" });
-        useCanvasStore.setState({
-            projects: [canvasProject("canvas-1", [originalNode]), canvasProject("canvas-2", [nextNode])],
-        });
-        const nodesRef = { current: [originalNode] };
-        let live = captured("user-a", 1);
-        let adopted = 0;
-
-        await expect(
-            bindBackendCanvasGenerationResult({
-                canvasId: "canvas-1",
-                nodeId: "node-1",
-                task: succeededTask(),
-                isCurrent: () => live.userScope === "user-a",
-                nodesRef,
-                setNodes: (value) => {
-                    nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
-                },
-                runtime: {
-                    hydrateOutputs: async () => undefined,
-                    persistDocument: async () => undefined,
-                    bindOutput: async (input) => {
-                        live = captured("user-b", 2);
-                        nodesRef.current = [nextNode];
-                        return {
-                            op: "canvas.task.bind",
-                            opId: input.operationId,
-                            replayed: false,
-                            revision: 4,
-                            result: bindReceipt(canvasProject("canvas-1", [originalNode], 4), "node-1"),
-                        };
-                    },
-                    adoptConfirmedProjection: async () => {
-                        adopted += 1;
-                        return undefined;
-                    },
-                    captureScope: () => captured("user-a", 1),
-                    liveScope: () => live,
-                },
-            }),
-        ).rejects.toBeInstanceOf(UserScopeAbandonedError);
-
-        expect(adopted).toBe(0);
-        expect(nodesRef.current[0]?.title).toBe("下一账号草稿");
-        expect(nodesRef.current[0]?.metadata?.prompt).toBe("不可覆盖");
-        expect(useCanvasStore.getState().projects.find((project) => project.id === "canvas-2")?.nodes[0]?.metadata?.prompt).toBe("不可覆盖");
-        expect(useCanvasStore.getState().projects.find((project) => project.id === "canvas-1")?.nodes[0]?.metadata?.status).toBe("loading");
-    });
-
-    test("A to B to A late response does not overlay under the reused account string", async () => {
-        const originalNode = canvasNode("node-1", "原世代节点", { taskId: "task-1", status: "loading" });
-        useCanvasStore.setState({ projects: [canvasProject("canvas-1", [originalNode])] });
-        const nodesRef = { current: [originalNode] };
-        let live = captured("user-a", 1);
-        let adopted = 0;
-
-        await expect(
-            bindBackendCanvasGenerationResult({
-                canvasId: "canvas-1",
-                nodeId: "node-1",
-                task: succeededTask(),
-                isCurrent: () => true,
-                nodesRef,
-                setNodes: (value) => {
-                    nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
-                },
-                runtime: {
-                    hydrateOutputs: async () => undefined,
-                    persistDocument: async () => undefined,
-                    bindOutput: async (input) => {
-                        live = captured("user-a", 3);
-                        return {
-                            op: "canvas.task.bind",
-                            opId: input.operationId,
-                            replayed: false,
-                            revision: 4,
-                            result: bindReceipt(canvasProject("canvas-1", [originalNode], 4), "node-1"),
-                        };
-                    },
-                    adoptConfirmedProjection: async () => {
-                        adopted += 1;
-                        return undefined;
-                    },
-                    captureScope: () => captured("user-a", 1),
-                    liveScope: () => live,
-                },
-            }),
-        ).rejects.toBeInstanceOf(UserScopeAbandonedError);
-
-        expect(adopted).toBe(0);
-        expect(nodesRef.current[0]?.metadata?.status).toBe("loading");
-        expect(useCanvasStore.getState().projects[0]?.nodes[0]?.metadata?.content).toBeUndefined();
     });
 
     test("replay of an old bind does not overlay generation onto a newer-task node", async () => {
@@ -668,7 +572,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         const live = canvasProject("canvas-1", [newer], 8);
         useCanvasStore.setState({ projects: [live] });
         const nodesRef = { current: [newer] };
-        const identity = captured("user-a", 1);
         const adopted: CanvasProject[] = [];
 
         await bindBackendCanvasGenerationResult({
@@ -704,8 +607,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                     useCanvasStore.setState({ projects: [project] });
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
@@ -722,7 +623,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         const server = canvasProject("canvas-1", [], 5);
         useCanvasStore.setState({ projects: [live] });
         const nodesRef = { current: [stale] };
-        const identity = captured("user-a", 1);
 
         await bindBackendCanvasGenerationResult({
             canvasId: "canvas-1",
@@ -757,8 +657,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                     useCanvasStore.setState({ projects: [project] });
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
@@ -766,58 +664,10 @@ describe("bindBackendCanvasGenerationResult", () => {
         expect(useCanvasStore.getState().projects[0]?.nodes).toHaveLength(0);
     });
 
-    test("passes the same captured scope object through persist bind and adopt", async () => {
-        const bound = canvasNode("node-1", "手工标题", { taskId: "task-1", status: "loading" });
-        const live = canvasProject("canvas-1", [bound], 3);
-        const server = canvasProject("canvas-1", [{ ...bound, metadata: { ...bound.metadata, status: "success", content: "/api/resources/res-1/file" } }], 4);
-        useCanvasStore.setState({ projects: [live] });
-        const nodesRef = { current: [bound] };
-        const identity = captured("user-a", 1);
-        const seen: unknown[] = [];
-
-        await bindBackendCanvasGenerationResult({
-            canvasId: "canvas-1",
-            nodeId: "node-1",
-            task: succeededTask(),
-            isCurrent: () => true,
-            nodesRef,
-            setNodes: (value) => {
-                nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
-            },
-            runtime: {
-                hydrateOutputs: async () => undefined,
-                persistDocument: async (_id, _patch, scope) => {
-                    seen.push(scope);
-                },
-                bindOutput: async (input) => {
-                    expect(input.expectedScope).toBe(identity);
-                    return {
-                        op: "canvas.task.bind",
-                        opId: input.operationId,
-                        replayed: false,
-                        revision: 4,
-                        result: bindReceipt(server, "node-1"),
-                    };
-                },
-                adoptConfirmedProjection: async (_project, _scope, scope) => {
-                    seen.push(scope);
-                    return server;
-                },
-                captureScope: () => identity,
-                liveScope: () => identity,
-            },
-        });
-
-        expect(seen).toHaveLength(2);
-        expect(seen[0]).toBe(identity);
-        expect(seen[1]).toBe(identity);
-    });
-
     test("missing receipt canvas throws instead of confirming a local snapshot revision", async () => {
         const bound = canvasNode("node-1", "手工标题", { taskId: "task-1", status: "loading" });
         useCanvasStore.setState({ projects: [canvasProject("canvas-1", [bound], 3)] });
         const nodesRef = { current: [bound] };
-        const identity = captured("user-a", 1);
         let adopted = 0;
 
         await expect(
@@ -844,8 +694,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                         adopted += 1;
                         return undefined;
                     },
-                    captureScope: () => identity,
-                    liveScope: () => identity,
                 },
             }),
         ).rejects.toBeInstanceOf(CanvasBindProjectionAdoptionError);
@@ -860,7 +708,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         const live = canvasProject("canvas-1", [edited], 6);
         useCanvasStore.setState({ projects: [live] });
         const nodesRef = { current: [edited] };
-        const identity = captured("user-a", 1);
 
         await bindBackendCanvasGenerationResult({
             canvasId: "canvas-1",
@@ -889,8 +736,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                     useCanvasStore.setState({ projects: [project] });
                     return project;
                 },
-                captureScope: () => identity,
-                liveScope: () => identity,
             },
         });
 
@@ -909,7 +754,6 @@ describe("bindBackendCanvasGenerationResult", () => {
         ], 5);
         useCanvasStore.setState({ projects: [live] });
         const nodesRef = { current: [bound] };
-        const identity = captured("user-a", 1);
         const adopted: CanvasProject[] = [];
         let crash = true;
 
@@ -932,8 +776,6 @@ describe("bindBackendCanvasGenerationResult", () => {
                 useCanvasStore.setState({ projects: [project] });
                 return project;
             },
-            captureScope: () => identity,
-            liveScope: () => identity,
         };
 
         await expect(
@@ -965,5 +807,299 @@ describe("bindBackendCanvasGenerationResult", () => {
         });
         expect(nodesRef.current.find((item) => item.id === "node-remote")?.title).toBe("别人刚加的镜头");
         expect(useCanvasStore.getState().projects[0]?.nodes.find((item) => item.id === "node-remote")?.metadata?.prompt).toBe("远程编辑");
+    });
+
+    test("self-heals unbound reference media and batch roots when flush hits canvas media asset guard error", async () => {
+        const target = canvasNode("node-target", "生成目标", { taskId: "task-1", status: "loading", prompt: "猫" });
+        const unboundRef = canvasNode("node-ref", "参考图", {
+            status: "success",
+            content: "/api/resources/res-ref/file",
+            storageKey: "resource:res-ref",
+        });
+        const batchPrimary = canvasNode("node-batch-child", "子图", {
+            status: "success",
+            content: "/api/resources/res-batch/file",
+            storageKey: "resource:res-batch",
+            assetId: "asset-batch",
+            batchRootId: "node-batch-root",
+        });
+        const batchRoot = canvasNode("node-batch-root", "组图根", {
+            status: "success",
+            content: "/api/resources/res-batch/file",
+            storageKey: "resource:res-batch",
+            isBatchRoot: true,
+            primaryImageId: "node-batch-child",
+        });
+        const live = canvasProject("canvas-1", [target, unboundRef, batchPrimary, batchRoot], 3);
+        const server = canvasProject("canvas-1", [
+            { ...target, metadata: { ...target.metadata, status: "success", content: "/api/resources/res-1/file", storageKey: "resource:res-1", assetId: "generation_abc" } },
+            { ...unboundRef, metadata: { ...unboundRef.metadata, assetId: "asset-ref-healed" } },
+            batchPrimary,
+            { ...batchRoot, metadata: { ...batchRoot.metadata, assetId: "asset-batch" } },
+        ], 4);
+        useCanvasStore.setState({ projects: [live] });
+        const nodesRef = { current: [target, unboundRef, batchPrimary, batchRoot] };
+        const ensuredNodeIds: string[] = [];
+        let persistAttempts = 0;
+
+        await bindBackendCanvasGenerationResult({
+            canvasId: "canvas-1",
+            nodeId: "node-target",
+            task: succeededTask(),
+            isCurrent: () => true,
+            nodesRef,
+            setNodes: (value) => {
+                nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+            },
+            runtime: {
+                hydrateOutputs: async () => undefined,
+                ensureNodeAsset: async ({ node }) => {
+                    ensuredNodeIds.push(node.id);
+                    return {
+                        assetId: node.id === "node-ref" ? "asset-ref-healed" : "asset-batch",
+                        created: true,
+                        linkedToProject: false,
+                        confirmed: true,
+                    };
+                },
+                persistDocument: async (_id, patch) => {
+                    persistAttempts += 1;
+                    const batchRootNode = patch.nodes?.find((item) => item.id === "node-batch-root");
+                    expect(batchRootNode?.metadata?.assetId).toBe("asset-batch");
+                    const refNode = patch.nodes?.find((item) => item.id === "node-ref");
+                    if (persistAttempts === 1) {
+                        expect(refNode?.metadata?.assetId).toBeUndefined();
+                        throw new ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
+                    }
+                    expect(refNode?.metadata?.assetId).toBe("asset-ref-healed");
+                },
+                bindOutput: async (input) => ({
+                    op: "canvas.task.bind",
+                    opId: input.operationId,
+                    replayed: false,
+                    revision: 4,
+                    result: bindReceipt(server, "node-target", { effectKey: input.operationId }),
+                }),
+                adoptConfirmedProjection: async (project) => {
+                    useCanvasStore.setState({ projects: [project] });
+                    return project;
+                },
+            },
+        });
+
+        expect(persistAttempts).toBe(2);
+        expect(ensuredNodeIds).toContain("node-ref");
+        expect(nodesRef.current.find((item) => item.id === "node-target")?.metadata?.status).toBe("success");
+        expect(nodesRef.current.find((item) => item.id === "node-ref")?.metadata?.assetId).toBe("asset-ref-healed");
+        expect(nodesRef.current.find((item) => item.id === "node-batch-root")?.metadata?.assetId).toBe("asset-batch");
+    });
+
+    test("preserves distinct assetIds on nodes sharing a resource and clears mismatched assetId on open canvas when ensure returns empty", async () => {
+        useAssetStore.setState({
+            assets: [
+                {
+                    id: "asset-wrong",
+                    kind: "image",
+                    title: "错误关联素材",
+                    coverUrl: "/api/resources/res-other/file",
+                    tags: [],
+                    createdAt: "2026-09-24T00:00:00.000Z",
+                    updatedAt: "2026-09-24T00:00:00.000Z",
+                    data: {
+                        dataUrl: "/api/resources/res-other/file",
+                        storageKey: "resource:res-other",
+                        width: 100,
+                        height: 100,
+                        bytes: 10,
+                        mimeType: "image/png",
+                    },
+                },
+            ],
+        });
+        const target = canvasNode("node-target", "目标节点", { taskId: "task-1", status: "loading" });
+        const copyA = canvasNode("node-copy-a", "副本A", {
+            status: "success",
+            content: "/api/resources/res-shared/file",
+            storageKey: "resource:res-shared",
+            assetId: "asset-copy-a",
+        });
+        const copyB = canvasNode("node-copy-b", "副本B", {
+            status: "success",
+            content: "/api/resources/res-shared/file",
+            storageKey: "resource:res-shared",
+            assetId: "asset-copy-b",
+        });
+        const mismatched = canvasNode("node-mismatched", "错配节点", {
+            status: "success",
+            content: "/api/resources/res-unensured/file",
+            storageKey: "resource:res-unensured",
+            assetId: "asset-wrong",
+        });
+        const live = canvasProject("canvas-1", [target, copyA, copyB, mismatched], 3);
+        const server = canvasProject("canvas-1", [
+            { ...target, metadata: { ...target.metadata, status: "success", content: "/api/resources/res-1/file", storageKey: "resource:res-1", assetId: "generation_abc" } },
+            copyA,
+            copyB,
+            { ...mismatched, metadata: { ...mismatched.metadata, assetId: undefined } },
+        ], 4);
+        useCanvasStore.setState({ projects: [live] });
+        const nodesRef = { current: [target, copyA, copyB, mismatched] };
+        let persistAttempts = 0;
+
+        await bindBackendCanvasGenerationResult({
+            canvasId: "canvas-1",
+            nodeId: "node-target",
+            task: succeededTask(),
+            isCurrent: () => true,
+            nodesRef,
+            setNodes: (value) => {
+                nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+            },
+            runtime: {
+                hydrateOutputs: async () => undefined,
+                ensureNodeAsset: async ({ node }) => ({
+                    assetId: node.id === "node-mismatched" ? "" : (node.metadata?.assetId || ""),
+                    created: false,
+                    linkedToProject: false,
+                    confirmed: node.id !== "node-mismatched",
+                }),
+                persistDocument: async (_id, patch) => {
+                    persistAttempts += 1;
+                    if (persistAttempts === 1) {
+                        throw new ApiError("画布媒体与素材库记录不一致，请重新同步", { status: 400 });
+                    }
+                    expect(patch.nodes?.find((item) => item.id === "node-copy-a")?.metadata?.assetId).toBe("asset-copy-a");
+                    expect(patch.nodes?.find((item) => item.id === "node-copy-b")?.metadata?.assetId).toBe("asset-copy-b");
+                    expect(patch.nodes?.find((item) => item.id === "node-mismatched")?.metadata?.assetId).toBeUndefined();
+                },
+                bindOutput: async (input) => ({
+                    op: "canvas.task.bind",
+                    opId: input.operationId,
+                    replayed: false,
+                    revision: 4,
+                    result: bindReceipt(server, "node-target", { effectKey: input.operationId }),
+                }),
+                adoptConfirmedProjection: async (project) => {
+                    useCanvasStore.setState({ projects: [project] });
+                    return project;
+                },
+            },
+        });
+
+        expect(persistAttempts).toBe(2);
+        expect(nodesRef.current.find((item) => item.id === "node-copy-a")?.metadata?.assetId).toBe("asset-copy-a");
+        expect(nodesRef.current.find((item) => item.id === "node-copy-b")?.metadata?.assetId).toBe("asset-copy-b");
+        expect(nodesRef.current.find((item) => item.id === "node-mismatched")?.metadata?.assetId).toBeUndefined();
+    });
+
+    test("keeps declared assetId when local asset row is missing or has no readable resourceId yet, and aborts heal cleanly if canvas unmounts mid-heal", async () => {
+        useAssetStore.setState({
+            assets: [
+                {
+                    id: "asset-no-res-id",
+                    kind: "image",
+                    title: "尚未解析资源ID的素材",
+                    coverUrl: "blob:http://localhost/local-preview",
+                    tags: [],
+                    createdAt: "2026-09-24T00:00:00.000Z",
+                    updatedAt: "2026-09-24T00:00:00.000Z",
+                    data: {
+                        dataUrl: "blob:http://localhost/local-preview",
+                        width: 100,
+                        height: 100,
+                        bytes: 10,
+                        mimeType: "image/png",
+                    },
+                },
+            ],
+        });
+        const target = canvasNode("node-target", "目标节点", { taskId: "task-1", status: "loading" });
+        const missingRowNode = canvasNode("node-missing-row", "远端已确认但本地未水合", {
+            status: "success",
+            content: "/api/resources/res-missing-row/file",
+            storageKey: "resource:res-missing-row",
+            assetId: "asset-server-only",
+        });
+        const noResIdNode = canvasNode("node-no-res-id", "本地无资源ID素材", {
+            status: "success",
+            content: "/api/resources/res-no-res-id/file",
+            storageKey: "resource:res-no-res-id",
+            assetId: "asset-no-res-id",
+        });
+        const live = canvasProject("canvas-1", [target, missingRowNode, noResIdNode], 3);
+        const server = canvasProject("canvas-1", [
+            { ...target, metadata: { ...target.metadata, status: "success", content: "/api/resources/res-1/file", storageKey: "resource:res-1", assetId: "generation_abc" } },
+            missingRowNode,
+            noResIdNode,
+        ], 4);
+        useCanvasStore.setState({ projects: [live] });
+        const nodesRef = { current: [target, missingRowNode, noResIdNode] };
+        let persistAttempts = 0;
+        let currentMounted = true;
+        const observedExplicitIds: Array<string | undefined> = [];
+
+        let bindAttempts = 0;
+
+        await expect(
+            bindBackendCanvasGenerationResult({
+                canvasId: "canvas-1",
+                nodeId: "node-target",
+                task: succeededTask(),
+                isCurrent: () => currentMounted,
+                nodesRef,
+                setNodes: (value) => {
+                    nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+                },
+                runtime: {
+                    hydrateOutputs: async () => undefined,
+                    ensureNodeAsset: async ({ node }) => {
+                        observedExplicitIds.push(node.metadata?.assetId);
+                        if (node.id === "node-missing-row") {
+                            currentMounted = false;
+                            return {
+                                assetId: "asset-server-only-updated",
+                                created: false,
+                                linkedToProject: false,
+                                confirmed: true,
+                            };
+                        }
+                        return {
+                            assetId: node.metadata?.assetId || "fallback-id",
+                            created: false,
+                            linkedToProject: false,
+                            confirmed: true,
+                        };
+                    },
+                    persistDocument: async () => {
+                        persistAttempts += 1;
+                        if (persistAttempts === 1) {
+                            throw new ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
+                        }
+                    },
+                    bindOutput: async (input) => {
+                        bindAttempts += 1;
+                        return {
+                            op: "canvas.task.bind",
+                            opId: input.operationId,
+                            replayed: false,
+                            revision: 4,
+                            result: bindReceipt(server, "node-target", { effectKey: input.operationId }),
+                        };
+                    },
+                    adoptConfirmedProjection: async (project) => {
+                        useCanvasStore.setState({ projects: [project] });
+                        return project;
+                    },
+                },
+            }),
+        ).rejects.toMatchObject({ name: "AbortError" });
+
+        expect(persistAttempts).toBe(1);
+        expect(bindAttempts).toBe(0);
+        expect(observedExplicitIds).toEqual(["asset-server-only"]);
+        expect(nodesRef.current.find((item) => item.id === "node-missing-row")?.metadata?.assetId).toBe("asset-server-only");
+        expect(nodesRef.current.find((item) => item.id === "node-no-res-id")?.metadata?.assetId).toBe("asset-no-res-id");
+        expect(useCanvasStore.getState().projects[0]?.nodes.find((item) => item.id === "node-missing-row")?.metadata?.assetId).toBe("asset-server-only");
+        expect(useCanvasStore.getState().projects[0]?.nodes.find((item) => item.id === "node-no-res-id")?.metadata?.assetId).toBe("asset-no-res-id");
     });
 });

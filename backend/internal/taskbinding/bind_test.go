@@ -235,3 +235,27 @@ func isBindReason(err error, reason string) bool {
 	var bindErr *Error
 	return errors.As(err, &bindErr) && bindErr.Reason == reason && strings.TrimSpace(bindErr.Message) != ""
 }
+
+func TestBindImageOutputsRequireFrozenDestinationAtEachIndex(t *testing.T) {
+	nodes := []string{"first", "second", "third", "fourth"}
+	for index, nodeID := range nodes {
+		task := testImageTask()
+		task.InputJSON = `{"metadata":{"source":"canvas","nodeId":"first","outputNodeIds":["first","second","third","fourth"]}}`
+		ports := &fakePorts{
+			task:     task,
+			outputs:  []localtask.CanonicalOutput{{OutputIndex: index, MediaType: "image", MaterializedAssetID: "asset", ResourceID: "resource"}},
+			resource: &model.Resource{ID: "resource", UserID: "user-1", Status: model.ResourceStatusReady, Kind: "image"},
+			asset:    testAsset("asset", "user-1", "resource"),
+		}
+		if _, err := Bind(ports, "user-1", Request{CanvasID: "canvas-1", TaskID: "task-1", NodeID: nodes[(index+1)%4], OutputIndex: index}); !isBindReason(err, "node_mismatch") {
+			t.Fatalf("wrong destination for output %d accepted: %v", index, err)
+		}
+		receipt, err := Bind(ports, "user-1", Request{CanvasID: "canvas-1", TaskID: "task-1", NodeID: nodeID, OutputIndex: index})
+		if err != nil || receipt.NodeID != nodeID || receipt.OutputIndex != index || ports.binds != 1 {
+			t.Fatalf("output %d destination %q: receipt=%#v err=%v", index, nodeID, receipt, err)
+		}
+		if _, err := Bind(ports, "user-1", Request{CanvasID: "canvas-1", TaskID: "task-1", NodeID: nodeID, OutputIndex: 4}); !isBindReason(err, "node_mismatch") {
+			t.Fatalf("undeclared output destination accepted: %v", err)
+		}
+	}
+}

@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: quality-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -29,7 +29,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify migration with real Windows file locks
         working-directory: backend
-        run: go test ./internal/desktopstorage -count=1 -v
+        run: go test ./internal/environment ./internal/desktopstorage -count=1 -v
       - uses: msys2/setup-msys2@v2
         id: storage-msys2
         with:
@@ -43,6 +43,13 @@ jobs:
       - name: Verify open desktop migration and rollback
         working-directory: backend
         run: go test ./cmd/desktop -run 'TestWindowsOpenDesktopMigratesWithBusyScratch|TestNativeMigration' -count=1 -v
+      - name: Verify diagnostic persistence and offline analysis on Windows
+        working-directory: backend
+        run: |
+          go test ./internal/supporttrace ./internal/diagnostics ./internal/assistantdiagnostics -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./cmd/beeftv -run '^TestOfflineDiagnostics' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   released-windows-upgrades:
     if: github.event_name == 'workflow_dispatch'
@@ -69,15 +76,36 @@ jobs:
           name: released-windows-upgrade-evidence
           path: upgrade-evidence/
 
+  structure-budget:
+    name: Structure budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Structure numbers may only shrink
+        run: |
+          node --test scripts/structure-budget.test.mjs
+          node scripts/structure-budget.mjs
+
   release-publisher:
     name: Release publisher checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Test immutable publication and activation
         run: |
+          sh scripts/audit-public-docs.sh
+          node --test scripts/configure-ubuntu-apt.test.mjs
+          node --test scripts/verify-real-generation-release.test.mjs
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+          python3 -m unittest discover -s scripts -p 'test_mirror_desktop_cnb.py'
+          node --test scripts/distribution-notices.test.mjs
+          python3 -m unittest discover -s scripts -p 'test_package_macos_media_source.py'
+          python3 -m unittest discover -s scripts -p 'test_package_wasm_sources.py'
+          python3 -m unittest discover -s scripts -p 'test_desktop_cos_store.py'
           python3 -m unittest discover -s scripts -p 'test_smoke_desktop_installer.py'
 
   backend:
@@ -96,7 +124,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.15.0'
+          node-version: '24.22.1'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -105,9 +133,12 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk
-          fc-cache -f
+          bash ../scripts/configure-ubuntu-apt.sh
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null || ! fc-list ':lang=zh-cn' | grep -q .; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-noto-cjk
+            fc-cache -f
+          fi
           fc-match ':lang=zh-cn'
           ffmpeg -version
           ffprobe -version
@@ -115,10 +146,18 @@ jobs:
         run: sh ../plugin-packages/build-packages.sh
       - name: Run Go tests
         run: go test ./...
+      - name: Verify real production timing report
+        working-directory: agent-host/eval
+        run: python3 -m unittest report_production_test.py
+      - name: Verify agent-host request efficiency gate
+        working-directory: agent-host
+        run: |
+          bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs
+          bun eval/request-efficiency-gate.mjs
 
   web:
     name: Web checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -132,8 +171,11 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          bash ../scripts/configure-ubuntu-apt.sh
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
           ffmpeg -version
           ffprobe -version
       - name: Lint retired Ant Design APIs
@@ -146,6 +188,13 @@ jobs:
         run: |
           bunx playwright install --with-deps chromium
           bun run test
+      - name: Preserve environment check screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-check-screenshots-${{ github.sha }}
+          path: output/environment-check/*.png
+          if-no-files-found: warn
 
   database-platforms:
     if: github.event_name == 'workflow_dispatch'

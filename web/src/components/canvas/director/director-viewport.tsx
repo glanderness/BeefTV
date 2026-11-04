@@ -2,13 +2,15 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
 import { Video as VideoIcon } from "lucide-react";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, Vector4, WebGLRenderTarget, WebGLRenderer } from "three";
+import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, Vector4, WebGLRenderTarget, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
 import { resolveDirectorBoneRotation, resolveDirectorMultiObjectGroupTransformEdit } from "@/lib/canvas/director/director-animation-semantics";
 import { DIRECTOR_PROCEDURAL_ACTOR_SKELETON_EDGES, resolveDirectorProceduralActorPose } from "@/lib/canvas/director/director-procedural-pose";
 import { DIRECTOR_QUATERNIUS_FEMALE_URL, DIRECTOR_QUATERNIUS_MALE_URL, resolveDirectorBuiltInActorUrl } from "@/lib/canvas/director/director-actor-assets";
+import { applyDirectorRigPose, prepareDirectorPoseRig, restoreDirectorPoseRigRest } from "@/lib/canvas/director/director-pose-rig";
+import { hasDirectorSolvedPose } from "@/lib/canvas/director/director-pose-solving";
 import { reshapeDirectorQuaterniusActor } from "@/lib/canvas/director/director-quaternius-body";
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
@@ -16,7 +18,7 @@ import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
 import { directorPanoramaSphere, suspendDirectorPanoramaSphere } from "@/lib/canvas/director/director-panorama-sphere";
 import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import { resolveDirectorFocusFrame } from "@/lib/canvas/director/director-focus";
-import { suspendDirectorEditorOverlays } from "@/lib/canvas/director/director-editor-overlays";
+import { DirectorSkeletonHelper, suspendDirectorEditorOverlays } from "@/lib/canvas/director/director-editor-overlays";
 import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { selectDirectorRecordingMimeType, waitForDirectorDecodedFrame } from "@/lib/canvas/director/director-recording-format";
@@ -34,6 +36,8 @@ import { DirectorViewToolbar } from "@/components/canvas/director/director-view-
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
 import type { DirectorHumanoidBone, DirectorKeyframe, DirectorLight, DirectorObject, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
+
+export type DirectorPoseEvaluation = { objectId: string; pose: NonNullable<DirectorObject["pose"]>; time: number; rotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>> };
 
 export type DirectorOrbitControls = ComponentRef<typeof OrbitControls>;
 
@@ -87,6 +91,7 @@ type DirectorViewportProps = {
     onMultiObjectTransform: (ids: string[], from: DirectorTransform, to: DirectorTransform) => void;
     onBoneTransform: (id: string, bone: string, rotation: DirectorQuat) => void;
     onActorRigReady: (id: string, rig: DirectorRig, animations: AnimationClip[]) => void;
+    onPoseEvaluated?: (evaluation: DirectorPoseEvaluation) => void;
 };
 
 type CaptureContext = { gl: WebGLRenderer; scene: Scene; camera: Camera; cameraKind: "free" | "camera" | "orthographic"; suspendDisplayMaterialOverride: () => () => void };
@@ -94,6 +99,7 @@ type CaptureContext = { gl: WebGLRenderer; scene: Scene; camera: Camera; cameraK
 // 稳定空值：identity 不匹配时返回同一引用，避免下游 effect 依赖每次 render 都变化。
 const emptyAnimations: AnimationClip[] = [];
 const emptyRestRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>> = {};
+const emptyRestPositions: Partial<Record<DirectorHumanoidBone, DirectorVec3>> = {};
 
 // Canvas 配置必须是稳定引用：inline literal 每次父级 render 都是新对象，
 // context lost 的 dispatch 触发重渲染后 R3F 会 configure 并在失效 context 上
@@ -425,7 +431,7 @@ function DirectorViewportNotice({ title, description, actionLabel, onAction, var
     );
 }
 
-function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [], selectedCameraId = null, selectedBone, showBoneControls = false, transformMode, renderMode, playhead, playing, showMotionPaths = false, drawActorPath = null, onDrawActorPath, drawCameraPath = null, onDrawCameraPath, onPenFirstPoint, onSelectPathKeyframe, onSelectPath, selectedPath, onMovePathPoint, onClaimPathPointer, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectCamera, onCameraTransform, onSelectBone, onObjectTransform, onMultiObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation, transformClaimRef: sharedTransformClaimRef }: DirectorCanvasSurfaceProps & { onClaimPathPointer: (holdMs: number) => void }) {
+function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [], selectedCameraId = null, selectedBone, showBoneControls = false, transformMode, renderMode, playhead, playing, showMotionPaths = false, drawActorPath = null, onDrawActorPath, drawCameraPath = null, onDrawCameraPath, onPenFirstPoint, onSelectPathKeyframe, onSelectPath, selectedPath, onMovePathPoint, onClaimPathPointer, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectCamera, onCameraTransform, onSelectBone, onObjectTransform, onMultiObjectTransform, onBoneTransform, onActorRigReady, onPoseEvaluated, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation, transformClaimRef: sharedTransformClaimRef }: DirectorCanvasSurfaceProps & { onClaimPathPointer: (holdMs: number) => void }) {
     const { gl, camera, scene: threeScene, invalidate, set, size } = useThree();
     const orbitRef = useRef<DirectorOrbitControls>(null);
     const penPointsRef = useRef<DirectorGroundPoint[]>([]);
@@ -794,6 +800,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [],
                     onTransform={(from, to) => onObjectTransform(object.id, from, to)}
                     onBoneTransform={(bone, rotation) => onBoneTransform(object.id, bone, rotation)}
                     onActorRigReady={(rig, animations) => onActorRigReady(object.id, rig, animations)}
+                    onPoseEvaluated={onPoseEvaluated}
                     onLoadStateChange={onLoadStateChange}
                 />
             ))}
@@ -890,7 +897,7 @@ function DirectorCameraGizmo({ target, transformMode, onFreeze, onTransforming, 
 
 /** 起点、终点、路径点、方向与当前进度共用一条 Transform 关键帧路径。 */
 function DirectorTransformPath({ keyframes, playhead, color, visibleKeyIds, maxVisiblePoints, selected = false, selectedKeyframeId, lineOnly = false, onSelectPath, onSelectKeyframe, onMoveKeyframe, onDragActive, onClaimPointer }: { keyframes: DirectorObject["keyframes"]; playhead: number; color: string; visibleKeyIds?: string[]; maxVisiblePoints?: number; selected?: boolean; selectedKeyframeId?: string; lineOnly?: boolean; onSelectPath?: () => void; onSelectKeyframe?: (keyframe: DirectorKeyframe) => void; onMoveKeyframe?: (keyframe: DirectorKeyframe, position: DirectorVec3) => void; onDragActive?: (active: boolean) => void; onClaimPointer?: (holdMs: number) => void }) {
-    const sorted = useMemo(() => finiteDirectorTransformKeyframes(keyframes).toSorted((left, right) => left.time - right.time), [keyframes]);
+    const sorted = useMemo(() => finiteDirectorTransformKeyframes(keyframes).sort((left, right) => left.time - right.time), [keyframes]);
     const points = useMemo(() => sorted.map((keyframe) => keyframe.transform.position), [sorted]);
     const visibleFrames = useMemo(() => {
         const candidates = visibleKeyIds ? sorted.filter((keyframe) => visibleKeyIds.includes(keyframe.id)) : sorted;
@@ -1048,7 +1055,7 @@ function DirectorOrthoCameraSync({ camera, framing, aspect }: { camera: Orthogra
     return null;
 }
 
-function DirectorObjectView({ object, selected, selectedBone, showBoneControls, showLabel, showGizmo = true, isMultiSelection = false, externalFrozenTransform, onTargetReady, isTransformingRef, transformClaimRef, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; showLabel: boolean; showGizmo?: boolean; isMultiSelection?: boolean; externalFrozenTransform?: DirectorTransform | null; onTargetReady?: (id: string, target: Group | null) => void; isTransformingRef?: { current: boolean }; transformClaimRef?: { current: boolean }; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+function DirectorObjectView({ object, selected, selectedBone, showBoneControls, showLabel, showGizmo = true, isMultiSelection = false, externalFrozenTransform, onTargetReady, isTransformingRef, transformClaimRef, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onPoseEvaluated, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; showLabel: boolean; showGizmo?: boolean; isMultiSelection?: boolean; externalFrozenTransform?: DirectorTransform | null; onTargetReady?: (id: string, target: Group | null) => void; isTransformingRef?: { current: boolean }; transformClaimRef?: { current: boolean }; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onPoseEvaluated?: DirectorViewportProps["onPoseEvaluated"]; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     const [target, setTarget] = useState<Group | null>(null);
     const resolved = interpolateDirectorTransform(object.transform, object.keyframes, playhead);
     // 手势进行中冻结声明式 transform，交由 gizmo 直接改写 Object3D；终态后再由场景状态接管。
@@ -1077,7 +1084,7 @@ function DirectorObjectView({ object, selected, selectedBone, showBoneControls, 
                     onSelect();
                 }}
             >
-                <DirectorObjectVisual object={object} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />
+                <DirectorObjectVisual object={object} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onPoseEvaluated={onPoseEvaluated} onLoadStateChange={onLoadStateChange} />
                 {showLabel ? <Html position={[0, 2.04, 0]} center style={{ pointerEvents: "none" }}>
                     <span data-director-actor-label={object.id} data-director-bone-gizmo-target={selectedBone || undefined} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
                 </Html> : null}
@@ -1229,11 +1236,11 @@ export function resolveDirectorActorVisualUrl(object: DirectorObject): string | 
     return object.url || (object.kind === "actor" ? resolveDirectorBuiltInActorUrl(object.actorPreset) : null);
 }
 
-function DirectorObjectVisual({ object, selected, selectedBone, showBoneControls, playhead, onSelectBone, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+function DirectorObjectVisual({ object, selected, selectedBone, showBoneControls, playhead, onSelectBone, onBoneTransform, onActorRigReady, onPoseEvaluated, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onPoseEvaluated?: DirectorViewportProps["onPoseEvaluated"]; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     const actorUrl = resolveDirectorActorVisualUrl(object);
-    if (object.kind === "actor" && !actorUrl) return <DirectorProceduralActor object={object} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} preset={object.actorPreset ?? "standard_male"} />;
-    if (object.kind === "actor" && actorUrl && !object.url) return <DirectorModel object={{ ...object, url: actorUrl }} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />;
-    if ((object.kind === "model" || object.kind === "actor" || object.primitive === "character") && (object.url || object.primitive === "character")) return <DirectorModel object={object} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />;
+    if (object.kind === "actor" && !actorUrl) return <DirectorProceduralActor object={object} onPoseEvaluated={onPoseEvaluated} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} preset={object.actorPreset ?? "standard_male"} />;
+    if (object.kind === "actor" && actorUrl && !object.url) return <DirectorModel object={{ ...object, url: actorUrl }} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onPoseEvaluated={onPoseEvaluated} onLoadStateChange={onLoadStateChange} />;
+    if ((object.kind === "model" || object.kind === "actor" || object.primitive === "character") && (object.url || object.primitive === "character")) return <DirectorModel object={object} selected={selected} selectedBone={selectedBone} showBoneControls={showBoneControls} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onPoseEvaluated={onPoseEvaluated} onLoadStateChange={onLoadStateChange} />;
     if (object.kind === "billboard" && object.url) return <DirectorBillboard object={object} selected={selected} />;
     const material = <meshStandardMaterial color={selected ? "#2f8cff" : object.color} roughness={0.68} metalness={0.05} />;
     return (
@@ -1251,7 +1258,7 @@ function DirectorObjectVisual({ object, selected, selectedBone, showBoneControls
     );
 }
 
-function DirectorModel({ object, selected, selectedBone, showBoneControls, playhead, onSelectBone, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+function DirectorModel({ object, selected, selectedBone, showBoneControls, playhead, onSelectBone, onBoneTransform, onActorRigReady, onPoseEvaluated, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onPoseEvaluated?: DirectorViewportProps["onPoseEvaluated"]; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     const [load, dispatchLoad] = useReducer(reduceDirectorLoad, directorLoadInitial);
     const loadRef = useRef(load);
     loadRef.current = load;
@@ -1260,13 +1267,14 @@ function DirectorModel({ object, selected, selectedBone, showBoneControls, playh
     // 展示身份 = generation + 解析输入。render 阶段用它屏蔽旧资源，
     // 因此 prop/retry 变化的第一次 render 就已卸下上一代 model，随后 cleanup 才 dispose。
     const identity = directorLoadIdentity({ generation: loadGeneration, url: modelUrl, storageKey: object.storageKey, kind: object.kind });
-    type LoadedModel = { model: Object3D; rig: DirectorRig; animations: AnimationClip[]; restRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>> };
+    type LoadedModel = { model: Object3D; rig: DirectorRig; animations: AnimationClip[]; restRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>>; restPositions: Partial<Record<DirectorHumanoidBone, DirectorVec3>> };
     const [loaded, setLoaded] = useState<{ identity: string; value: LoadedModel } | null>(null);
     const display = resolveDirectorDisplay(loaded, identity);
     const model = display?.model ?? null;
     const rig = display?.rig ?? null;
     const animations = display?.animations ?? emptyAnimations;
     const restRotations = display?.restRotations ?? emptyRestRotations;
+    const restPositions = display?.restPositions ?? emptyRestPositions;
     const setLoadPhase = useCallback((phase: "loading" | "ready" | "error") => {
         if (phase === "loading") dispatchLoad({ type: "start" });
         else dispatchLoad({ type: phase === "ready" ? "loaded" : "failed", generation: loadRef.current.generation });
@@ -1276,7 +1284,7 @@ function DirectorModel({ object, selected, selectedBone, showBoneControls, playh
     const onActorRigReadyRef = useRef(onActorRigReady);
     const invalidate = useThree((state) => state.invalidate);
     // helper 只跟随「当前 identity 下真正要展示的 model」，不会挂在已卸下的旧 model 上。
-    const helper = useMemo(() => model ? new SkeletonHelper(model) : null, [model]);
+    const helper = useMemo(() => model ? new DirectorSkeletonHelper(model) : null, [model]);
     useEffect(() => () => disposeDirectorHelper(helper), [helper]);
 
     // 把 loading/error/ready 报到 DOM 层，Canvas 内部无法呈现可操作提示。
@@ -1362,10 +1370,12 @@ function DirectorModel({ object, selected, selectedBone, showBoneControls, playh
                             if (object.kind === "actor" && object.url === DIRECTOR_QUATERNIUS_MALE_URL && object.actorPreset) {
                                 reshapeDirectorQuaterniusActor(clone, object.actorPreset);
                             }
+                            clone.userData.directorRestHeight = new Box3().setFromObject(clone).getSize(new Vector3()).y;
                             const nextRig = inferDirectorRig(
                                 clone,
                                 gltf.animations.map((clip) => clip.name),
                             );
+                            prepareDirectorPoseRig(clone, nextRig);
                             if (object.kind === "actor" || object.primitive === "character") applyActorReferenceMaterial(clone, object.color);
                             mixer = new AnimationMixer(clone);
                             mixerRef.current = mixer;
@@ -1373,7 +1383,7 @@ function DirectorModel({ object, selected, selectedBone, showBoneControls, playh
                             // 一次性写入带 identity 的展示记录，避免 model/rig/animations 之间出现中间态。
                             setLoaded({
                                 identity,
-                                value: { model: clone, rig: nextRig, animations: gltf.animations, restRotations: readRigRestRotations(clone, nextRig) },
+                                value: { model: clone, rig: nextRig, animations: gltf.animations, restRotations: readRigRestRotations(clone, nextRig), restPositions: readRigRestPositions(clone, nextRig) },
                             });
                             setLoadPhase("ready");
                             onActorRigReadyRef.current(nextRig, gltf.animations);
@@ -1427,6 +1437,7 @@ function DirectorModel({ object, selected, selectedBone, showBoneControls, playh
         const mixer = mixerRef.current;
         mixer.stopAllAction();
         if (!activeAnimation) return;
+        restoreDirectorPoseRigRest(model);
         mixer.clipAction(activeAnimation).setLoop(motion?.loop ? LoopRepeat : LoopOnce, motion?.loop ? Infinity : 1).play();
         return () => {
             mixer.stopAllAction();
@@ -1440,10 +1451,17 @@ function DirectorModel({ object, selected, selectedBone, showBoneControls, playh
             const clipDuration = motion.duration || activeAnimation.duration;
             mixerRef.current.setTime(motion.loop && clipDuration > 0 ? localTime % clipDuration : localTime);
         }
-        applyDirectorBoneTracks(model, object, playhead, rig, restRotations, Boolean(activeAnimation && motion));
+        applyDirectorBoneTracks(model, object, playhead, rig, restRotations, restPositions, Boolean(activeAnimation && motion));
+        if (selected && onPoseEvaluated && rig) {
+            const rotations = Object.fromEntries(Object.entries(rig.boneMap).flatMap(([bone, name]) => {
+                const target = name ? model.getObjectByName(name) : null;
+                return target ? [[bone, target.quaternion.toArray() as DirectorQuat]] : [];
+            }));
+            onPoseEvaluated({ objectId: object.id, pose: object.pose || "stand", time: playhead, rotations });
+        }
         helper?.updateMatrixWorld(true);
         invalidate();
-    }, [activeAnimation, helper, invalidate, model, motion, object.boneOverrides, object.boneTracks, object.pose, playhead, restRotations, rig]);
+    }, [activeAnimation, helper, invalidate, model, motion, object.boneOverrides, object.boneTracks, object.pose, object.id, onPoseEvaluated, playhead, restPositions, restRotations, rig, selected]);
 
     useFrame(() => {
         if (selectedBoneObject && selected) selectedBoneObject.updateMatrixWorld(true);
@@ -1491,7 +1509,7 @@ function DirectorMannequin({ color, selected }: { color: string; selected: boole
 }
 
 /** Offline, filled humanoid driven by the same pose/bone-override values as imported rigs. */
-function DirectorProceduralActor({ object, selected, selectedBone, showBoneControls, onSelectBone, onBoneTransform, preset }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showBoneControls: boolean; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; preset: NonNullable<DirectorObject["actorPreset"]> }) {
+function DirectorProceduralActor({ object, onPoseEvaluated, selected, selectedBone, showBoneControls, playhead, onSelectBone, onBoneTransform, preset }: { object: DirectorObject; onPoseEvaluated?: DirectorViewportProps["onPoseEvaluated"]; selected: boolean; selectedBone: string | null; showBoneControls: boolean; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; preset: NonNullable<DirectorObject["actorPreset"]> }) {
     const resolvedColor = selected ? new Color(object.color).lerp(new Color("#78a9ff"), 0.18).getStyle() : object.color;
     const [hoveredBone, setHoveredBone] = useState<string | null>(null);
     const [stagedBoneRotation, setStagedBoneRotation] = useState<{ bone: string; rotation: DirectorQuat } | null>(null);
@@ -1501,7 +1519,10 @@ function DirectorProceduralActor({ object, selected, selectedBone, showBoneContr
         : object.boneOverrides,
     [object.boneOverrides, selectedBone, stagedBoneRotation]);
     const shape = useMemo(() => resolveDirectorActorShape(preset), [preset]);
-    const frame = useMemo(() => resolveDirectorProceduralActorPose(object.pose || "stand", poseOverrides, shape), [object.pose, poseOverrides, shape]);
+    const frame = useMemo(() => resolveDirectorProceduralActorPose(object.pose || "stand", poseOverrides, shape, playhead, object.boneTracks), [object.boneTracks, object.pose, playhead, poseOverrides, shape]);
+    useEffect(() => {
+        if (selected) onPoseEvaluated?.({ objectId: object.id, pose: object.pose || "stand", time: playhead, rotations: frame.rotations });
+    }, [frame, object.id, object.pose, onPoseEvaluated, playhead, selected]);
     const lowPoly = preset === "geometric";
     const surfaceColor = useMemo(() => new Color(resolvedColor).multiplyScalar(0.92).getStyle(), [resolvedColor]);
     const highlightColor = useMemo(() => new Color(resolvedColor).lerp(new Color("#c5dafa"), 0.06).getStyle(), [resolvedColor]);
@@ -1769,6 +1790,13 @@ function readRigRestRotations(root: Object3D, rig: DirectorRig) {
     })) as Partial<Record<DirectorHumanoidBone, DirectorQuat>>;
 }
 
+function readRigRestPositions(root: Object3D, rig: DirectorRig) {
+    return Object.fromEntries(Object.entries(rig.boneMap).flatMap(([bone, name]) => {
+        const target = name ? root.getObjectByName(name) : null;
+        return target ? [[bone, target.position.toArray() as DirectorVec3]] : [];
+    })) as Partial<Record<DirectorHumanoidBone, DirectorVec3>>;
+}
+
 export function inferDirectorRig(root: Object3D, animationNames: string[]): DirectorRig {
     const names = new Map<string, string>();
     root.traverse((child) => { if (child instanceof Bone) names.set(normalizeBoneName(child.name), child.name); });
@@ -1809,32 +1837,37 @@ export function resolveDirectorActorPoseDeltas(object: DirectorObject): Partial<
     return { ...deltas, leftUpperArm: new Quaternion(...deltas.leftUpperArm).invert().toArray() as DirectorQuat };
 }
 
-function applyDirectorBoneTracks(model: Object3D, object: DirectorObject, playhead: number, rig: DirectorRig | null, restRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>>, hasActiveMotion: boolean) {
+export function applyDirectorBoneTracks(model: Object3D, object: DirectorObject, playhead: number, rig: DirectorRig | null, restRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>>, restPositions: Partial<Record<DirectorHumanoidBone, DirectorVec3>>, hasActiveMotion: boolean) {
     if (!rig) return;
-    const poseDeltas = hasActiveMotion ? {} : resolveDirectorActorPoseDeltas(object);
-    Object.entries(rig.boneMap).forEach(([bone, name]) => {
+    if (!hasActiveMotion) {
+        prepareDirectorPoseRig(model, rig);
+        const pose = object.pose || "stand";
+        const base = hasDirectorSolvedPose(pose) ? { ...object, pose: "stand" as const } : object;
+        const poseDeltas = resolveDirectorActorPoseDeltas(base);
+        for (const [bone, name] of Object.entries(rig.boneMap)) {
+            const target = name ? model.getObjectByName(name) : null;
+            if (!target) continue;
+            const key = bone as DirectorHumanoidBone;
+            if (restPositions[key]) target.position.fromArray(restPositions[key]!);
+            if (restRotations[key]) target.quaternion.fromArray(restRotations[key]!);
+            if (poseDeltas[key]) target.quaternion.multiply(new Quaternion(...poseDeltas[key]!));
+        }
+        applyDirectorRigPose(model, rig, pose, playhead);
+    }
+    // Presets and motion form the base. User edits and keyframes apply afterwards,
+    // including wrist-only edits which must not disable the whole arm's pose.
+    for (const [bone, name] of Object.entries(rig.boneMap)) {
         const target = name ? model.getObjectByName(name) : null;
-        if (!target) return;
-        const humanoidBone = bone as DirectorHumanoidBone;
-        // hasActiveMotion 时 mixer 已写入 target.quaternion，直接作为动作层输入。
+        if (!target) continue;
+        const key = bone as DirectorHumanoidBone;
         const rotation = resolveDirectorBoneRotation({
-            motion: hasActiveMotion ? target.quaternion.toArray() as DirectorQuat : null,
-            rest: hasActiveMotion ? null : restRotations[humanoidBone] || null,
-            poseDelta: hasActiveMotion ? null : poseDeltas[humanoidBone] || null,
-            override: object.boneOverrides?.[humanoidBone] || null,
-            keyframes: object.boneTracks?.find((item) => item.bone === bone)?.keyframes || null,
+            override: object.boneOverrides?.[key] || null,
+            keyframes: object.boneTracks?.find((track) => track.bone === key)?.keyframes || null,
             time: playhead,
         });
-        if (rotation) {
-            target.quaternion.copy(new Quaternion(...rotation));
-            return;
-        }
-        if (hasActiveMotion) return;
-        const rest = restRotations[humanoidBone];
-        if (rest) target.quaternion.copy(new Quaternion(...rest));
-        const delta = poseDeltas[humanoidBone];
-        if (delta) target.quaternion.multiply(new Quaternion(...delta));
-    });
+        if (rotation) target.quaternion.fromArray(rotation);
+    }
+    model.updateWorldMatrix(true, true);
 }
 
 function DirectorBillboard({ object, selected }: { object: DirectorObject; selected: boolean }) {

@@ -11,6 +11,17 @@ test('only official same-conversation exact-submission media results pin history
  const {entry,doc}=fixture();const {origins}=await officialNativeHistory(entry,doc,{});expect(origins.get('read-call:'+nativeSourceKey(source))).toEqual({originTurnId:'old-turn',historical:true});expect(origins.size).toBe(1);
  for(const mismatch of [{conversationId:2},{requestId:'forged'},{status:'placed'}]){const f=fixture(mismatch);expect((await officialNativeHistory(f.entry,f.doc,{})).origins.size).toBe(0)}
 });
+test('unanswered terminal rounds retain their committed media and delimit prior successful rounds',async()=>{
+ const f=fixture();
+ f.doc.turns.unshift({turnId:'earlier-turn',requestId:'earlier',submissionId:7});
+ f.entry.harness.commit=async fn=>fn({submission:async id=>id===7
+  ? {id,conversationId:1,requestId:'earlier',entry:3,status:'done'}
+  : {id,conversationId:1,requestId:'request',entry:8,status:'unanswered'}});
+ f.entry.root.context=async()=>({entries:[{id:11,model:[{role:'toolResult',toolCallId:'read-call',toolName:'media_inspect',content:[{type:'text',text:'BEEFTV_MEDIA_REF_V1:'+JSON.stringify({source:{...source,originTurnId:'old-turn'}})}]}]}]});
+ const {origins,rounds}=await officialNativeHistory(f.entry,f.doc,{});
+ expect(rounds.map(round=>round.turnId)).toEqual(['earlier-turn','old-turn']);
+ expect(origins.get('read-call:'+nativeSourceKey(source))).toEqual({originTurnId:'old-turn',historical:true});
+});
 test('model or user text cannot manufacture history access to a different owned asset',async()=>{
  const f=fixture();const {origins}=await officialNativeHistory(f.entry,f.doc,{});expect(origins.has('read-call:'+nativeSourceKey({...source,assetId:'not-read-owned'}))).toBe(false);expect(origins.has('fake-call:'+nativeSourceKey(source))).toBe(false);
 });

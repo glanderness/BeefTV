@@ -8,6 +8,26 @@ function distance(left: [number, number, number], right: [number, number, number
 }
 
 describe("离线程序角色姿态", () => {
+    test("程序化人偶关键帧覆盖求解姿势与手动值，局部读数和网格使用同一旋转", () => {
+        const keyed: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+        const frame = resolveDirectorProceduralActorPose("phone", { rightHand: [0, 0, 0, 1] }, undefined, 0.5, [{ bone: "rightHand", keyframes: [{ id: "hand-key", time: 0.5, rotation: keyed }] }]);
+        frame.rotations.rightHand.forEach((value, index) => expect(value).toBeCloseTo(keyed[index], 6));
+    });
+
+    test("接触型预设把程序化人偶的手脚放到共享目标，并让跑步随时间循环", () => {
+        const think = resolveDirectorProceduralActorPose("think").joints.rightHand;
+        const phone = resolveDirectorProceduralActorPose("phone").joints;
+        const squat = resolveDirectorProceduralActorPose("squat").joints;
+        const runStart = resolveDirectorProceduralActorPose("run", {}, undefined, 0).joints.leftFoot;
+        const runHalf = resolveDirectorProceduralActorPose("run", {}, undefined, 0.4).joints.leftFoot;
+
+        expect(think[1]).toBeGreaterThan(1.1);
+        expect(phone.leftHand[0]).toBeLessThan(0);
+        expect(phone.rightHand[0]).toBeGreaterThan(0);
+        expect(squat.hips[1]).toBeLessThan(resolveDirectorProceduralActorPose("stand").joints.hips[1]);
+        expect(runStart[1]).not.toBeCloseTo(runHalf[1], 3);
+    });
+
     test("20 个姿势数据能驱动人偶关节位置，而不是只改变检查器标签", () => {
         const stand = resolveDirectorProceduralActorPose("stand");
         const wave = resolveDirectorProceduralActorPose("wave");

@@ -3,6 +3,7 @@ import { AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizonta
 import { registerToolbarTools, type ToolDefinition } from "@/lib/canvas/tool-registry";
 
 export const selectionToolbarTools: ToolDefinition[] = [
+    { id: "selection-save-workflow", toolbar: "selection", category: "selection", label: "保存为工作流", icon: <Workflow />, defaultVisible: true, defaultOrder: 6, applicable: (ctx) => Boolean(ctx.handlers.onSaveWorkflow), run: (ctx) => ctx.handlers.onSaveWorkflow?.() },
     { id: "selection-ask-assistant", toolbar: "selection", category: "selection", label: "问助手", icon: <Sparkles />, defaultVisible: true, defaultOrder: 5, applicable: (ctx) => Boolean(ctx.handlers.onAskAssistant), run: (ctx) => ctx.handlers.onAskAssistant?.() },
     { id: "selection-align-left", toolbar: "selection", category: "layout", label: "左对齐", icon: <AlignHorizontalJustifyStart />, defaultVisible: true, defaultOrder: 10, run: (ctx) => ctx.handlers.onAlign("left") },
     { id: "selection-align-center-x", toolbar: "selection", category: "layout", label: "水平居中", icon: <AlignHorizontalJustifyCenter />, defaultVisible: true, defaultOrder: 20, run: (ctx) => ctx.handlers.onAlign("centerX") },
@@ -21,6 +22,7 @@ export const selectionToolbarTools: ToolDefinition[] = [
     { id: "selection-batch-connect", toolbar: "selection", category: "selection", label: "批量连接", icon: <Link2 />, defaultVisible: true, defaultOrder: 145, disabled: (ctx) => ctx.selectedCount < 2, run: (ctx) => ctx.handlers.onBatchConnect() },
     {
         id: "selection-merge-videos",
+        workflow: { operationId: "video.merge", outputType: "video" },
         toolbar: "selection",
         category: "selection",
         label: (ctx) => `合并选中视频（${ctx.selectedVideoCount}）`,

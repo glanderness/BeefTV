@@ -114,6 +114,8 @@ func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 		{endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "openai-videos"},
 		{endpoints: []string{"openai", "image-generation"}, wantCap: "image", wantProto: "openai-image"},
 		{id: "gpt-5.6-sol", endpoints: []string{"openai"}, wantCap: "text", wantProto: "chat-completion"},
+		{id: "hy-image-v3", endpoints: []string{"openai"}, wantCap: "image", wantProto: "openai-image"},
+		{id: "hy-image-v3", wantCap: "image", wantProto: "openai-image"},
 		{id: "minimax-speech-2.8-hd", endpoints: []string{"openai"}, wantCap: "audio", wantProto: "openai-audio"},
 		{id: "minimax-speech-2.8-turbo", endpoints: []string{"openai"}, wantCap: "audio", wantProto: "openai-audio"},
 		{id: "minimax-music-v3.0", endpoints: []string{"openai"}, wantCap: "audio", wantProto: "openai-audio"},

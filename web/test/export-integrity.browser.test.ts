@@ -33,6 +33,41 @@ beforeAll(async () => {
 
 afterAll(async () => { await browser?.close(); server?.stop(true); if (directory) rmSync(directory, { recursive: true, force: true }); });
 
+test("the actual library export shows a stalled file, suppresses duplicate clicks and cancels without saving", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let requests = 0;
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    try {
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "测试缺失导出" }).waitFor();
+        const project = await page.evaluate(() => (window as any).exportFixture.seedBlockingExport());
+        await page.route("**/api/canvas-projects/blocked-export", (route) => route.fulfill({ json: { code: 0, data: { project: { ...project, revision: 1 } } } }));
+        await page.route("**/api/resources/blocked-export/file*", async (route) => {
+            requests++;
+            await gate;
+            await route.fulfill({ status: 200, contentType: "audio/wav", body: "late media bytes" });
+        });
+        await page.getByRole("checkbox", { name: "选择 测试 blocked-export" }).check();
+        const downloadStarted = page.waitForRequest((request) => request.url().includes("/resources/blocked-export/file"));
+        await page.getByRole("button", { name: "导出", exact: true }).click();
+        await page.getByRole("status").filter({ hasText: "正在读取文件 0/1" }).waitFor();
+        await downloadStarted;
+        await page.getByRole("button", { name: "导出", exact: true }).evaluate((button: HTMLButtonElement) => button.click());
+        await page.getByRole("checkbox", { name: "选择 测试 blocked-export" }).uncheck();
+        await page.getByRole("status").filter({ hasText: "正在读取文件 0/1" }).waitFor();
+        await page.getByRole("button", { name: "取消导出", exact: true }).click();
+        await page.getByRole("button", { name: "取消导出", exact: true }).waitFor({ state: "detached" });
+        release();
+        expect(requests).toBe(1);
+        expect((await page.evaluate(() => (window as any).exportFixture.snapshot())).archive).toBe("");
+        expect(errors).toEqual([]);
+    } finally { release(); await context.close(); }
+}, 20_000);
+
 test("ZIP from real browser storage imports through CanvasPage into a fresh browser workspace", async () => {
     const source = await browser.newContext();
     const target = await browser.newContext();

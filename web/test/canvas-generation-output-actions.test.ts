@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
 import type { GenerationOutput } from "@/lib/generation-outputs";
-import { captureUserScope } from "@/lib/user-scope-guard";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { apiClient } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -19,7 +18,7 @@ const task: GenerationTask = { id: "owned-task", type: "video", status: "succeed
 
 test("result actions read canonical delivery through the shared task API and preserve cancellation", async () => {
     const controller = new AbortController();
-    const expectedScope = captureUserScope();
+    const expectedScope = getActiveUserScope();
     let requests = 0;
     apiClient.defaults.adapter = async (config) => {
         requests++;
@@ -27,29 +26,29 @@ test("result actions read canonical delivery through the shared task API and pre
         expect(config.signal).toBe(controller.signal);
         return { data: { code: 0, data: task }, status: 200, statusText: "OK", headers: {}, config };
     };
-    const [resolved] = await resolveCanvasGenerationOutputs(task.id, [{ ...output, assetId: "wrong-parent-asset" }], expectedScope, controller.signal);
+    const [resolved] = await resolveCanvasGenerationOutputs(task.id, [{ ...output, assetId: "wrong-parent-asset" }], controller.signal);
     expect(resolved.assetId).toBe("owned-video-asset");
     expect(requests).toBe(1);
     controller.abort();
-    await expect(resolveCanvasGenerationOutputs(task.id, [output], expectedScope, controller.signal)).rejects.toBeTruthy();
+    await expect(resolveCanvasGenerationOutputs(task.id, [output], controller.signal)).rejects.toBeTruthy();
     expect(requests).toBe(1);
 });
 
-test("switching accounts A to B to A abandons the pending result action", async () => {
-    const captured = captureUserScope();
+test("switching namespaces A to B to A abandons the pending result action", async () => {
+    const captured = getActiveUserScope();
     apiClient.defaults.adapter = async (config) => {
         setActiveUserScope("other-output-owner");
-        setActiveUserScope(captured.userScope);
+        setActiveUserScope(captured);
         return { data: { code: 0, data: task }, status: 200, statusText: "OK", headers: {}, config };
     };
-    await expect(resolveCanvasGenerationOutputs(task.id, [output], captured)).rejects.toMatchObject({ name: "UserScopeAbandonedError" });
+    await expect(resolveCanvasGenerationOutputs(task.id, [output])).rejects.toMatchObject({ name: "AbortError" });
 });
 
 test("a failed task query or mismatched task cannot produce a canvas output", async () => {
     apiClient.defaults.adapter = async (config) => ({ data: { code: 403, reason: "forbidden", msg: "not owned" }, status: 403, statusText: "Forbidden", headers: {}, config });
-    await expect(resolveCanvasGenerationOutputs(task.id, [output], captureUserScope())).rejects.toThrow("not owned");
+    await expect(resolveCanvasGenerationOutputs(task.id, [output])).rejects.toThrow("not owned");
     apiClient.defaults.adapter = async (config) => ({ data: { code: 0, data: { ...task, id: "other-task" } }, status: 200, statusText: "OK", headers: {}, config });
-    await expect(resolveCanvasGenerationOutputs(task.id, [output], captureUserScope())).rejects.toThrow("任务不匹配");
+    await expect(resolveCanvasGenerationOutputs(task.id, [output])).rejects.toThrow("任务不匹配");
 });
 
 test("adding multiple outputs waits for every selected asset while an already delivered primary remains ready", async () => {
@@ -69,26 +68,26 @@ test("adding multiple outputs waits for every selected asset while an already de
         const next = { ...pending, outputs: pending.outputs.map((item) => ({ ...item, materializedAssetId: item.outputIndex === 1 && reads >= 2 ? "video-asset" : item.outputIndex === 2 && reads >= 3 ? "audio-asset" : item.materializedAssetId })) };
         return { data: { code: 0, data: next }, status: 200, statusText: "OK", headers: {}, config };
     };
-    const resolved = await resolveCanvasGenerationOutputs(task.id, [output, audio], captureUserScope(), undefined, { sleep: async () => undefined });
+    const resolved = await resolveCanvasGenerationOutputs(task.id, [output, audio], undefined, { sleep: async () => undefined });
     expect(reads).toBe(3);
     expect(resolved.map((item) => item.assetId)).toEqual(["video-asset", "audio-asset"]);
     expect(useGenerationDeliveryProgress.getState().byTask[task.id]).toBeUndefined();
 });
 
-test("expanded output waiting stops on cancellation or account changes before another task read", async () => {
-    for (const interrupt of ["cancel", "account"] as const) {
-        const expectedScope = captureUserScope();
+test("expanded output waiting stops on cancellation or namespace changes before another task read", async () => {
+    for (const interrupt of ["cancel", "namespace"] as const) {
+        const expectedScope = getActiveUserScope();
         const controller = new AbortController();
         let reads = 0;
         apiClient.defaults.adapter = async (config) => {
             reads++;
             return { data: { code: 0, data: { ...task, outputs: [{ outputIndex: 1, mediaType: "video", resourceId: "video" }] } }, status: 200, statusText: "OK", headers: {}, config };
         };
-        const waiting = resolveCanvasGenerationOutputs(task.id, [output], expectedScope, controller.signal, { sleep: async () => {
+        const waiting = resolveCanvasGenerationOutputs(task.id, [output], controller.signal, { sleep: async () => {
             if (interrupt === "cancel") controller.abort();
-            else { setActiveUserScope("other-output-owner"); setActiveUserScope(expectedScope.userScope); }
+            else { setActiveUserScope("other-output-owner"); setActiveUserScope(expectedScope); }
         } });
-        await expect(waiting).rejects.toMatchObject({ name: interrupt === "cancel" ? "AbortError" : "UserScopeAbandonedError" });
+        await expect(waiting).rejects.toMatchObject({ name: interrupt === "cancel" ? "AbortError" : "AbortError" });
         expect(reads).toBe(1);
         expect(useGenerationDeliveryProgress.getState().byTask[task.id]).toBeUndefined();
     }
@@ -96,14 +95,14 @@ test("expanded output waiting stops on cancellation or account changes before an
 
 test("expanded output waiting is bounded and stops paused or permanently failed delivery", async () => {
     for (const reason of ["delivery_paused", "delivery_timed_out", "resource_foreign", "deadline"]) {
-        const captured = captureUserScope();
+        const captured = getActiveUserScope();
         let reads = 0;
         let time = 0;
         apiClient.defaults.adapter = async (config) => {
             reads++;
             return { data: { code: 0, data: { ...task, outputs: [{ outputIndex: 1, mediaType: "video", resourceId: "video", materializationErrorCode: reason === "deadline" ? "" : reason }] } }, status: 200, statusText: "OK", headers: {}, config };
         };
-        await expect(resolveCanvasGenerationOutputs(task.id, [output], captured, undefined, { sleep: async () => { time += 15 * 60 * 1000; }, now: () => time })).rejects.toMatchObject({ name: "CanvasGenerationMaterializationError" });
+        await expect(resolveCanvasGenerationOutputs(task.id, [output], undefined, { sleep: async () => { time += 15 * 60 * 1000; }, now: () => time })).rejects.toMatchObject({ name: "CanvasGenerationMaterializationError" });
         expect(reads).toBe(reason === "deadline" ? 2 : 1);
         expect(useGenerationDeliveryProgress.getState().byTask[task.id]).toBeUndefined();
     }

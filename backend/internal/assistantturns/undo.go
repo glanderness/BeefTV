@@ -37,6 +37,9 @@ func (s *Service) lockOpenTurn(tx *gorm.DB, userID, turnID, canvasID string) (Re
 	if rec.UserID != userID || (rec.CanvasID != canvasID && Mode(rec.PermissionMode) != PermissionFullAccess) || rec.Undone || rec.effectiveState() != StateOpen {
 		return Record{}, &Error{Reason: ReasonNotOpen, Message: "这一轮不存在或已结束"}
 	}
+	if err := s.continuationTurnAllowed(tx, id); err != nil {
+		return Record{}, err
+	}
 	result := tx.Model(&model.AssistantTurn{}).
 		Where("turn_id = ? AND user_id = ? AND state = ? AND undone = ?", id, userID, StateOpen, false).
 		Update("updated_at", s.now())
@@ -184,7 +187,7 @@ func (s *Service) Undo(userID, canvasID, turnID string) (int64, error) {
 		if err := s.persist(tx, rec); err != nil {
 			return err
 		}
-		return nil
+		return s.cancelContinuations(tx, userID, canvasID, "", turnID, false)
 	})
 	if err != nil {
 		return 0, err

@@ -44,7 +44,7 @@ test("auth failures never retry a protected output with bare fetch", async () =>
     expect(fetched).toBe(false);
 });
 
-test("closing preview and changing owner abandon pending output reads", async () => {
+test("closing preview and changing workspace namespace abandon pending output reads", async () => {
     const controller = new AbortController();
     apiClient.defaults.adapter = async (config) => {
         controller.abort();
@@ -55,7 +55,7 @@ test("closing preview and changing owner abandon pending output reads", async ()
         setActiveUserScope("different-output-owner");
         return { data: new Blob(["old audio"]), status: 200, statusText: "OK", headers: {}, config };
     };
-    await expect(readGenerationOutputBlob(output)).rejects.toMatchObject({ name: "UserScopeAbandonedError" });
+    await expect(readGenerationOutputBlob(output)).rejects.toMatchObject({ name: "AbortError" });
 });
 
 test("all desktop outputs save owned resources through Wails and preserve cancel", async () => {

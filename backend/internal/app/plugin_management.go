@@ -52,10 +52,6 @@ func (s *Service) PluginsForUser(actor *model.User) ([]PluginView, error) {
 	return s.pluginDomain().ForUser(actor, visible), nil
 }
 
-func (s *Service) PluginStatesForUser(actor *model.User) (map[string]PluginStateView, error) {
-	return s.pluginDomain().StatesForUser(actor)
-}
-
 func (s *Service) SetUserPluginEnabled(actor *model.User, pluginID string, enabled bool) (PluginStateView, error) {
 	state, err := s.pluginDomain().SetUserEnabled(actor, pluginID, enabled)
 	return state, mapPluginAccessError(err)
@@ -72,12 +68,8 @@ func (s *Service) SetPluginPlatformAvailability(actor *model.User, pluginID stri
 	if err := s.RequireAdmin(actor); err != nil {
 		return AdminPluginStateView{}, err
 	}
-	_, policy, err := s.pluginDomain().SetPlatformAvailability(actor, pluginID, available)
-	if err != nil {
+	if _, _, err := s.pluginDomain().SetPlatformAvailability(actor, pluginID, available); err != nil {
 		return AdminPluginStateView{}, mapPluginAccessError(err)
-	}
-	if err := s.appendAdminAudit(actor, "plugin.availability.update", "plugin", pluginID, "更新插件平台可用状态", map[string]any{"available": available, "kind": policy.Kind, "origin": policy.Origin}); err != nil {
-		return AdminPluginStateView{}, err
 	}
 	states, err := s.AdminPluginStates(actor)
 	if err != nil {

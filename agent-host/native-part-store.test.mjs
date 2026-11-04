@@ -29,7 +29,9 @@ test('native bytes persist atomically, reopen and stay outside official token es
     const sources = trustedMediaSources(transcript(content), { ...model, nativePartStore: reopened }); expect(sources).toEqual([part.source]);
     const payload = adaptMediaRequest(transcript(content), { ...model, nativePartStore: reopened });
     expect(adaptMediaRequest(transcript(content), model, reopened)).toEqual(payload);
-    expect(payload.messages.at(-1).content.at(-1).image_url.url).toBe(`data:audio/wav;base64,${part.data}`);
+    expect(payload.messages.at(-1).content.at(-1)).toEqual({
+      type: 'input_audio', input_audio: { data: part.data, format: 'wav' },
+    });
     expect(adaptMediaRequest(payload, model)).toEqual(payload);
     if (process.platform !== 'win32') { expect(fs.statSync(directory).mode & 0o777).toBe(0o700); expect(fs.statSync(path.join(directory, part.sha256+'.bin')).mode & 0o777).toBe(0o600); }
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }

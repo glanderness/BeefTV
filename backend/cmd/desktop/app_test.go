@@ -17,10 +17,12 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/bootstrap"
+
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
-// This catches desktop-shell regressions where Wails opens before the local
-// backend has a usable loopback URL and ephemeral launch token.
+// The local backend must expose a usable loopback URL and ephemeral launch
+// token before the frontend can make its first authenticated API request.
 func TestDesktopAppStartsRuntimeOnLoopback(t *testing.T) {
 	app := newDesktopApp(t.TempDir())
 	if err := app.start(context.Background()); err != nil {
@@ -149,15 +151,22 @@ func TestDesktopStartupHookStartsRuntimeBeforeFrontendBootstrap(t *testing.T) {
 	app.shutdown(context.Background())
 }
 
-func TestPrepareDesktopAppStartsRuntimeBeforeWailsMainLoop(t *testing.T) {
+func TestPrepareDesktopAppStartsRuntimeAndClearsPreviousStartupError(t *testing.T) {
 	app := newDesktopApp(t.TempDir())
+	startupErrorPath := filepath.Join(app.dataDir, "startup-error.log")
+	if err := os.WriteFile(startupErrorPath, []byte("previous startup error\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := prepareDesktopApp(app); err != nil {
 		t.Fatal(err)
 	}
 	defer app.stop(context.Background())
 	config := app.RuntimeConfig()
 	if config.BaseURL == "" || config.LaunchToken == "" {
-		t.Fatalf("desktop app was not ready before Wails main loop: %#v", config)
+		t.Fatalf("desktop app did not prepare the runtime: %#v", config)
+	}
+	if _, err := os.Stat(startupErrorPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful startup retained previous error: %v", err)
 	}
 }
 
@@ -168,8 +177,22 @@ func TestDesktopAppBoundMethodsStayTiny(t *testing.T) {
 		names = append(names, typ.Method(i).Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "DownloadUpdate", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "ReferenceStorageSettings", "RuntimeConfig", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StorageSettings", "UpdateStatus", "UploadReferenceMedia"}) {
+	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "ConsumeSkillLink", "DepthComponentStatus", "DownloadDepthComponents", "DownloadUpdate", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "OpenSkillMarketURL", "OpenUpdateLogDirectory", "PauseDepthComponentDownload", "ReferenceStorageSettings", "ReferenceUploadStatus", "RuntimeConfig", "SaveOwnedArchive", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StorageMigrationStatus", "StorageSettings", "TestReferenceStorage", "UpdateStatus", "UploadReferenceMedia"}) {
 		t.Fatalf("bound methods = %v", names)
+	}
+}
+
+func TestDesktopAppOptionsUseDarkNativeChrome(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	opts := desktopAppOptions(app)
+	if opts.BackgroundColour == nil || opts.BackgroundColour.R != 13 || opts.BackgroundColour.G != 15 || opts.BackgroundColour.B != 18 || opts.BackgroundColour.A != 255 {
+		t.Fatalf("background colour = %#v, want dark workspace surface", opts.BackgroundColour)
+	}
+	if opts.Windows == nil || opts.Windows.Theme != windows.Dark || opts.Windows.CustomTheme == nil {
+		t.Fatalf("windows options = %#v, want dark native titlebar theme", opts.Windows)
+	}
+	if opts.Windows.CustomTheme.DarkModeTitleBar != windows.RGB(13, 15, 18) || opts.Windows.CustomTheme.DarkModeTitleBarInactive != windows.RGB(13, 15, 18) {
+		t.Fatalf("windows custom titlebar = %#v, want #0d0f12", opts.Windows.CustomTheme)
 	}
 }
 

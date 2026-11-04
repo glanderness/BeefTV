@@ -39,6 +39,17 @@ func HydrateVideoReferenceMetadata(ctx context.Context, userID string, input *In
 			if resource.Status != "ready" {
 				return errors.New("任务参考资源尚未上传完成")
 			}
+			if (resource.Kind == "audio" && resource.DurationMs <= 0) ||
+				(resource.Kind == "video" && (resource.DurationMs <= 0 || resource.Width <= 0 || resource.Height <= 0)) {
+				metadata, ok := runtime.Resources.(ResourceMetadataPort)
+				if !ok {
+					return errors.New("参考素材缺少时长或尺寸，媒体检查服务不可用")
+				}
+				resource, err = metadata.EnsureMetadata(ctx, userID, resource.ID)
+				if err != nil {
+					return fmt.Errorf("检查参考素材失败：%w", err)
+				}
+			}
 			if resource.DurationMs > 0 {
 				media.DurationMs = resource.DurationMs
 			}
@@ -65,7 +76,7 @@ func HydrateVideoReferenceMetadata(ctx context.Context, userID string, input *In
 			}
 		}
 	}
-	if modelcatalog.IsSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !IsBeefAPISeedancePreuploadConfig(ctx, input.Config) {
+	if modelcatalog.IsSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !managedConnection(input.Config) && !IsBeefAPISeedancePreuploadConfig(ctx, input.Config) {
 		for i := range input.ReferenceVideos {
 			media := &input.ReferenceVideos[i]
 			var data []byte

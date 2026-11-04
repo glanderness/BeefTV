@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { App, Button, Input, Switch } from "antd";
+import { Alert, App, Button, Input, Switch } from "antd";
 import { getDesktopAppBinding, type ReferenceStorageConfig } from "@/services/desktop-runtime";
 
 const fields = [
-    ["endpoint", "S3 端点", "https://…"],
-    ["bucket", "存储桶名称", "例如 beeftv-media"],
-    ["region", "区域", "R2 使用 auto；S3 使用存储桶所在区域"],
+    ["endpoint", "S3 端点", "例如 https://cos.ap-guangzhou.myqcloud.com 或 R2 S3 地址"],
+    ["bucket", "存储桶名称", "例如 beeftv-media（腾讯云含 -APPID）"],
+    ["region", "区域", "R2 填 auto；COS 如 ap-guangzhou；OSS 如 cn-hangzhou"],
     ["accessKeyId", "Access Key ID", ""],
-    ["publicBaseURL", "存储桶公网地址", "https://media.example.com"],
+    ["publicBaseURL", "存储桶公网地址", "例如 https://media.example.com 或存储桶公网默认域名"],
 ] as const;
 
 export function ReferenceStoragePane() {
@@ -18,6 +18,7 @@ export function ReferenceStoragePane() {
     const [busy, setBusy] = useState(false);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(false);
+    const [testResult, setTestResult] = useState<{ success: boolean; detail: string } | null>(null);
     useEffect(() => {
         let active = true;
         void binding
@@ -36,15 +37,22 @@ export function ReferenceStoragePane() {
         };
     }, [binding]);
     if (!binding?.SaveReferenceStorage) return null;
-    const save = async () => {
+    const save = async (test = false) => {
         setBusy(true);
+        setTestResult(null);
         try {
             const value = await binding.SaveReferenceStorage!({ ...config, secretAccessKey: secret });
             setConfig(value);
+            setLoadError(false);
             setSecret("");
-            message.success("对象存储配置已保存");
+            if (test) {
+                await binding.TestReferenceStorage!();
+                setTestResult({ success: true, detail: "上传、公开读取和测试文件清理均已通过" });
+            } else message.success("对象存储配置已保存");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : String(error));
+            const detail = error instanceof Error ? error.message : String(error);
+            if (test) setTestResult({ success: false, detail });
+            else message.error(detail);
         } finally {
             setBusy(false);
         }
@@ -58,14 +66,14 @@ export function ReferenceStoragePane() {
             </div>
             <label className="flex items-center justify-between gap-4 text-sm">
                 <span>生成时上传需要公网地址的参考素材</span>
-                <Switch checked={config.enabled} disabled={loadError || busy} onChange={(enabled) => setConfig((value) => ({ ...value, enabled }))} />
+                <Switch checked={config.enabled} disabled={busy || loading} onChange={(enabled) => { setTestResult(null); setConfig((value) => ({ ...value, enabled })); }} />
             </label>
             <p className="text-sm leading-6 text-foreground/60">启用后，需要在线素材的渠道会使用上传后的链接。原始素材仍保存在本机；存储及流量由你的存储服务计费。</p>
             <div className="grid min-w-0 gap-4 md:grid-cols-2">
                 {fields.map(([key, label, placeholder]) => (
                     <label key={key} className="block min-w-0 space-y-2 text-sm">
                         <span>{label}</span>
-                        <Input aria-label={label} value={config[key]} placeholder={placeholder} disabled={busy || loadError} autoComplete="off" onChange={(event) => setConfig((value) => ({ ...value, [key]: event.target.value }))} />
+                        <Input aria-label={label} value={config[key]} placeholder={placeholder} disabled={busy || loading} autoComplete="off" onChange={(event) => { setTestResult(null); setConfig((value) => ({ ...value, [key]: event.target.value })); }} />
                     </label>
                 ))}
                 <label className="block min-w-0 space-y-2 text-sm">
@@ -75,19 +83,22 @@ export function ReferenceStoragePane() {
                         value={secret}
                         autoComplete="new-password"
                         placeholder={config.hasSecret ? "已保存，留空保持" : "请输入访问密钥"}
-                        disabled={busy || loadError}
-                        onChange={(event) => setSecret(event.target.value)}
+                        disabled={busy || loading}
+                        onChange={(event) => { setTestResult(null); setSecret(event.target.value); }}
                     />
                 </label>
             </div>
             {loadError ? (
                 <p role="alert" className="text-sm text-destructive">
-                    已有配置暂时无法读取，请先导出问题记录，避免覆盖。
+                    已有对象存储配置无法读取（如本机密钥已重置），可直接保存关闭对象存储，或重新填写完整配置与 Secret Key 后保存覆盖。
                 </p>
             ) : null}
-            <Button onClick={save} loading={busy} disabled={loading || loadError}>
-                保存对象存储配置
-            </Button>
+            {testResult && <Alert showIcon type={testResult.success ? "success" : "error"} title={testResult.success ? "存储测试通过" : "存储测试未通过"} description={testResult.detail} />}
+            <div className="flex flex-wrap gap-3">
+                <Button onClick={() => void save()} loading={busy} disabled={loading}>保存对象存储配置</Button>
+                {binding.TestReferenceStorage && <Button onClick={() => void save(true)} loading={busy} disabled={loading || !config.enabled}>保存并测试上传</Button>}
+            </div>
+            <p className="text-sm leading-6 text-foreground/60">支持 S3 兼容存储。测试会上传一张小图片，检查公开读取后删除；存储服务可能收取少量请求费用。</p>
         </section>
     );
 }

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { serveEmptyHostState } from './skill-context-fixture.mjs';
 const root = path.resolve(process.argv[2] || '.');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-budget-'));
 const token = 'synthetic-budget-token';
@@ -27,6 +28,7 @@ const provider = createServer(async (req, res) => {
 });
 const ops = createServer((req, res) => {
   res.setHeader('content-type', 'application/json');
+  if(serveEmptyHostState(req,res))return;
   if (req.url.startsWith('/api/assistant/runtime/turns/')) {
     const turnId = decodeURIComponent(req.url.split('/')[5] || '');
     res.end(JSON.stringify({ code: 0, data: { turnId, canvasId: turnCanvas.get(turnId) || 'test', permissionMode: 'canvas', open: true } }));
@@ -50,12 +52,14 @@ async function start(dir, limit) {
     BEEFTV_AGENT_TOTAL_REQUEST_BUDGET: String(limit), BEEFTV_AGENT_MAX_REQUESTS_PER_TURN: '1',
   }});
   child.stdout.on('data', data => { log += data; }); child.stderr.on('data', data => { log += data; });
-  for (let i = 0; i < 150; i++) {
+  // Match assistantruntime's production ready deadline, including SDK import time.
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
     if (child.exitCode !== null) throw Error(log);
     try { if ((await fetch(base + '/health', { signal: AbortSignal.timeout(200) })).ok) return; } catch {}
     await delay(100);
   }
-  throw Error('Host did not start: ' + log);
+  throw Error('Host did not start within 20s: ' + log);
 }
 async function chat(canvasId = 'test') {
   const turnId = `budget-${++turnSeq}`;

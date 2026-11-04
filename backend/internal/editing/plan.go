@@ -37,10 +37,12 @@ const (
 
 // Project is the TimelineProject v2 snapshot shared with the frontend.
 type Project struct {
-	Version    int     `json:"version"`
-	Tracks     []Track `json:"tracks"`
-	Clips      []Clip  `json:"clips"`
-	DurationMs int64   `json:"durationMs"`
+	Version    int      `json:"version"`
+	Tracks     []Track  `json:"tracks"`
+	Clips      []Clip   `json:"clips"`
+	DurationMs int64    `json:"durationMs"`
+	Output     *Options `json:"output,omitempty"`
+	UpdatedAt  string   `json:"updatedAt,omitempty"`
 }
 
 type Track struct {
@@ -48,22 +50,27 @@ type Track struct {
 	Kind    string `json:"kind"`
 	Visible *bool  `json:"visible"`
 	Muted   bool   `json:"muted"`
+	Label   string `json:"label,omitempty"`
+	Order   *int   `json:"order,omitempty"`
+	Locked  bool   `json:"locked,omitempty"`
 }
 
 type Clip struct {
-	ID               string       `json:"id"`
-	Kind             string       `json:"kind"`
-	NodeID           string       `json:"nodeId"`
-	TrackID          string       `json:"trackId"`
-	StartMs          int64        `json:"startMs"`
-	DurationMs       int64        `json:"durationMs"`
-	SourceStartMs    int64        `json:"sourceStartMs"`
-	SourceDurationMs int64        `json:"sourceDurationMs"`
-	Volume           float64      `json:"volume"`
-	FadeInMs         int64        `json:"fadeInMs"`
-	FadeOutMs        int64        `json:"fadeOutMs"`
-	Text             string       `json:"text"`
-	DirectMedia      *DirectMedia `json:"directMedia"`
+	ID                 string       `json:"id"`
+	Kind               string       `json:"kind"`
+	NodeID             string       `json:"nodeId"`
+	TrackID            string       `json:"trackId"`
+	StartMs            int64        `json:"startMs"`
+	DurationMs         int64        `json:"durationMs"`
+	SourceStartMs      int64        `json:"sourceStartMs"`
+	SourceDurationMs   int64        `json:"sourceDurationMs"`
+	Volume             float64      `json:"volume"`
+	FadeInMs           int64        `json:"fadeInMs"`
+	FadeOutMs          int64        `json:"fadeOutMs"`
+	Text               string       `json:"text"`
+	DirectMedia        *DirectMedia `json:"directMedia"`
+	Title              string       `json:"title,omitempty"`
+	SubtitleEntryIndex *int         `json:"subtitleEntryIndex,omitempty"`
 }
 
 // Volume 缺省为 1；显式的 0 必须保留为静音。

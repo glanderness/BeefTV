@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { serviceConnectionError, serviceModelProfile, modelCatalogRequestURL } from "../src/lib/model-service-presets";
+import { MODEL_SERVICE_PRESETS, serviceConnectionError, serviceModelProfile, modelCatalogRequestURL } from "../src/lib/model-service-presets";
 import { modelConnectionResultDetail, testChannelModelConnection } from "../src/lib/model-connection-test";
 import { applyFetchedChannelModelCatalog, modelConfigChannelStatusLabel } from "../src/pages/settings/channel-settings-pane";
 import { backendProviderConfig } from "../src/services/api/generation-task";
@@ -12,6 +12,17 @@ const protocols = [
     ["chat-completion", "text"], ["gemini-generate-content", "text"], ["gemini-image", "image"],
     ["volcengine-ark-video", "video"], ["newapi", "video"],
 ].map(([value, capability]) => ({ value, capability, enabled: true } as ModelProtocolDefinition));
+
+test("BytePlus import selects Ark without changing third-party or saved protocols", () => {
+    const item = { id: "dreamina-seedance-2-0-fast-260128" };
+    const channel = createModelChannel({ baseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3" });
+    expect(serviceModelProfile(channel, item, protocols)).toMatchObject({ protocol: "volcengine-ark-video", capabilityConfig: { video: { resolutions: ["480p", "720p"] } } });
+    for (const baseUrl of ["https://ark.ap-southeast.bytepluses.com.example.com/api/v3", "https://other.example.com/v1"]) {
+        expect(serviceModelProfile({ ...channel, baseUrl }, item, protocols).protocol).toBeUndefined();
+    }
+    const saved = { model: item.id, capability: "video" as const, protocol: "newapi" as const };
+    expect(serviceModelProfile({ ...channel, modelProfiles: [saved] }, item, protocols)).toEqual(saved);
+});
 
 test("persisted boolean video options are normalized without turning false back on", () => {
     const channel = createModelChannel({ id: "custom", models: ["seedance-2.0-mini"], modelProfiles: [{ model: "seedance-2.0-mini", capability: "video", protocol: "newapi" }] });
@@ -61,7 +72,32 @@ test("native provider models use installed native adapters and never invent a mi
     const regionalArk = { ...ark, baseUrl: "https://ark.cn-shanghai.volces.com/api/v3" };
     expect(serviceModelProfile(regionalArk, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("volcengine-ark-video");
     const unrelated = { ...ark, baseUrl: "https://ark.cn-shanghai.volces.com.example.org/api/v3" };
-    expect(serviceModelProfile(unrelated, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("newapi");
+    expect(serviceModelProfile(unrelated, { id: "endpoint-abc" }, protocols, "video").protocol).toBeUndefined();
+});
+
+test("external video protocols require an explicit contract and keep user selections", () => {
+    const channel = createModelChannel({ baseUrl: "https://www.whatstoken.ai/v1" });
+    const installed = [...protocols, { value: "video-generations-json", capability: "video", enabled: true } as ModelProtocolDefinition];
+    for (const id of ["seedance-2.5", "sora-2", "veo-video", "opaque"]) {
+        expect(serviceModelProfile(channel, { id }, installed, "video").protocol).toBeUndefined();
+    }
+    expect(serviceModelProfile(channel, { id: "seedance-2.5", supportedEndpointTypes: ["openai"] }, installed).protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "seedance-2.5", supportedEndpointTypes: [" video-generations-json "] }, installed).protocol).toBe("video-generations-json");
+    expect(serviceModelProfile(channel, { id: "seedance-2.5", supportedEndpointTypes: ["video-generations-json"] }, protocols).protocol).toBeUndefined();
+    const configured = { ...channel, modelProfiles: [{ model: "seedance-2.5", capability: "video" as const, protocol: "volcengine-ark-video" }] };
+    expect(serviceModelProfile(configured, { id: "seedance-2.5" }, installed).protocol).toBe("volcengine-ark-video");
+    expect(serviceModelProfile({ ...channel, baseUrl: "https://api.openai.com/v1" }, { id: "sora-2" }, installed).protocol).toBe("newapi");
+});
+
+test("saving a model inherits an enabled channel protocol of the same capability without mutating its draft", () => {
+    const channel = createModelChannel({ baseUrl: "https://video.example.com/v1", interfaceType: "video-generations-json", modelProfiles: [{ model: "seedance-2.5", capability: "video" }] });
+    const installed = [...protocols, { value: "video-generations-json", capability: "video", enabled: true } as ModelProtocolDefinition];
+    expect(serviceModelProfile(channel, { id: "seedance-2.5" }, installed).protocol).toBe("video-generations-json");
+    expect(channel.modelProfiles?.[0]?.protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "seedance-2.5" }, protocols).protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "seedance-2.5" }, installed.map((p) => ({ ...p, enabled: false }))).protocol).toBeUndefined();
+    expect(serviceModelProfile({ ...channel, interfaceType: "chat-completion" }, { id: "seedance-2.5" }, installed).protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "sd-native-full-2.5" }, installed).protocol).toBe("video-generations-json");
 });
 
 test("refresh keeps selected/manual models and user capability limits", () => {
@@ -79,9 +115,26 @@ test("connection validation rejects full endpoints and embedded credentials", ()
     expect(serviceConnectionError({ ...channel, baseUrl: "https://api.example.com/v1/chat/completions" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, baseUrl: "https://secret@api.example.com" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "https://assets.example.com" })).toBe("");
-    for (const referenceAssetOrigin of ["http://assets.example.com", "https://assets.example.com/path", "https://user@assets.example.com", "https://assets.example.com?key=value"]) {
+    expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "http://10.0.0.8:9000" })).toBe("");
+    expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "https://assets.example.com:444" })).toBe("");
+    for (const referenceAssetOrigin of ["https://assets.example.com/path", "https://user@assets.example.com", "https://assets.example.com?key=value", "http://assets.example.com#sig"]) {
         expect(serviceConnectionError({ ...channel, referenceAssetOrigin })).not.toBe("");
     }
+});
+
+test("API key is optional only when every selected protocol auth is none", () => {
+    const channel = createModelChannel({ baseUrl: "http://127.0.0.1:11434", apiKey: "", models: ["llama3"], modelProfiles: [{ model: "llama3", capability: "text", protocol: "ollama-chat", authType: "none" }] });
+    const ollama = { value: "ollama-chat", capability: "text", enabled: true, authType: "none" } as ModelProtocolDefinition;
+    const bearer = { value: "ollama-chat", capability: "text", enabled: true, authType: "bearer" } as ModelProtocolDefinition;
+    expect(serviceConnectionError(channel)).toBe("");
+    expect(serviceConnectionError(channel, { protocols: [ollama] })).toBe("");
+    expect(serviceConnectionError(channel, { protocols: [bearer] })).not.toBe("");
+    expect(serviceConnectionError({ ...channel, apiKey: "" }, { requireCredential: false })).toBe("");
+    expect(serviceConnectionError(createModelChannel({ baseUrl: "https://api.example.com/v1", apiKey: "" }))).toBe("请填写 API Key");
+    expect(serviceConnectionError(createModelChannel({ baseUrl: "https://api.example.com/v1", apiKey: "" }), { requireCredential: false })).toBe("");
+    const mixed = createModelChannel({ baseUrl: "http://127.0.0.1:11434", apiKey: "", models: ["llama3", "gpt"], modelProfiles: [{ model: "llama3", capability: "text", protocol: "ollama-chat", authType: "none" }, { model: "gpt", capability: "text", protocol: "chat-completion" }] });
+    expect(serviceConnectionError(mixed, { protocols: [ollama, ...protocols] })).toBe("请填写 API Key");
+    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 尚未测试");
 });
 
 test("explicit asset origin survives channel creation and generation request assembly", () => {
@@ -132,4 +185,15 @@ test("video test uses configured range defaults and ranks K resolutions above or
         expect(config.vquality).toBe("768P");
         return { video: { storageKey: "fixture", dataUrl: "" } };
     });
+});
+
+test("official OpenAI and Gemini presets stop advertising discontinued video APIs", () => {
+    const presets = new Map(MODEL_SERVICE_PRESETS.map((preset) => [preset.id, preset.subtitle]));
+    for (const id of ["openai", "gemini"]) {
+        const subtitle = presets.get(id as "openai" | "gemini") || "";
+        expect(subtitle).toContain("已停用");
+        expect(subtitle).not.toMatch(/·\s*(Veo\s*)?视频\s*$/);
+    }
+    expect(presets.get("compatible")).toContain("中转");
+    expect(presets.get("ark")).toContain("Seedance 视频");
 });

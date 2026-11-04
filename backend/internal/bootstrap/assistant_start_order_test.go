@@ -60,4 +60,21 @@ func TestAssistantFirstLaunchCanReadRuntimeOperations(t *testing.T) {
 	if raw, err := os.ReadFile(filepath.Join(dataDir, "agent-requests.jsonl")); err == nil && len(raw) > 0 {
 		t.Fatal("startup made a model request")
 	}
+	// The same dependency order must hold on exit: the official host releases
+	// its running invocations before HTTP/ops disappears beneath it.
+	hostRunningAtHTTPShutdown := make(chan bool, 1)
+	r.httpServer.RegisterOnShutdown(func() { hostRunningAtHTTPShutdown <- r.assistantHost.Running() })
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := r.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case running := <-hostRunningAtHTTPShutdown:
+		if running {
+			t.Fatal("HTTP closed before the official assistant host stopped")
+		}
+	case <-ctx.Done():
+		t.Fatal("HTTP shutdown callback did not complete")
+	}
 }

@@ -81,7 +81,13 @@ func mediaFilename(media Media, mimeType string) string {
 	if base == "" {
 		base = "reference"
 	}
-	extensions, _ := mime.ExtensionsByType(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	// The system MIME database may list .m2a before .mp3. Audio endpoints
+	// commonly validate the filename extension even when audio/mpeg is correct.
+	if mediaType == "audio/mpeg" {
+		return "reference-" + base + ".mp3"
+	}
+	extensions, _ := mime.ExtensionsByType(mediaType)
 	extension := ".bin"
 	if len(extensions) > 0 {
 		extension = extensions[0]
@@ -120,20 +126,22 @@ func taskInputFromCanvas(input Input) modelcatalog.TaskInput {
 		ReferenceAudios: taskMediaListFromProvider(input.ReferenceAudios),
 		Metadata:        input.Metadata,
 		Config: modelcatalog.TaskConfig{
-			ChannelID:           input.Config.ChannelID,
-			ChannelModelKey:     input.Config.ChannelModelKey,
-			Model:               input.Config.Model,
-			InterfaceType:       input.Config.InterfaceType,
-			APIFormat:           input.Config.APIFormat,
-			BaseURL:             input.Config.BaseURL,
-			Size:                input.Config.Size,
-			Quality:             input.Config.Quality,
-			Count:               input.Config.Count,
-			VideoSeconds:        input.Config.VideoSeconds,
-			VQuality:            input.Config.VQuality,
-			CapabilityConfig:    input.Config.CapabilityConfig,
-			SystemPrompt:        input.Config.SystemPrompt,
-			ComposedPromptBytes: len(WithSystemPrompt(input.Config, input.Prompt)),
+			ImageCapabilitiesVersion: input.Config.ImageCapabilitiesVersion,
+			VideoCapabilitiesVersion: input.Config.VideoCapabilitiesVersion,
+			ChannelID:                input.Config.ChannelID,
+			ChannelModelKey:          input.Config.ChannelModelKey,
+			Model:                    input.Config.Model,
+			InterfaceType:            input.Config.InterfaceType,
+			APIFormat:                input.Config.APIFormat,
+			BaseURL:                  input.Config.BaseURL,
+			Size:                     input.Config.Size,
+			Quality:                  input.Config.Quality,
+			Count:                    input.Config.Count,
+			VideoSeconds:             input.Config.VideoSeconds,
+			VQuality:                 input.Config.VQuality,
+			CapabilityConfig:         input.Config.CapabilityConfig,
+			SystemPrompt:             input.Config.SystemPrompt,
+			ComposedPromptBytes:      len(WithSystemPrompt(input.Config, input.Prompt)),
 		},
 	}
 	if input.Mask != nil {

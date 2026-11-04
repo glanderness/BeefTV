@@ -40,6 +40,9 @@ func videoResolutionNameRequest(profile *VideoCapabilityConfig, value string) st
 	if requested == "2160" || requested == "2160p" {
 		candidates = append(candidates, "4k")
 	}
+	if requested == "1440" || requested == "1440p" {
+		candidates = append(candidates, "2k")
+	}
 	for _, supported := range profile.Resolutions {
 		for _, candidate := range candidates {
 			if strings.EqualFold(strings.TrimSpace(supported), candidate) {

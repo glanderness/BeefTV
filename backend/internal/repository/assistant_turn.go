@@ -50,7 +50,9 @@ func (r *Repository) SaveAssistantTurn(tx *gorm.DB, row *model.AssistantTurn) er
 	if db == nil {
 		return errors.New("助手回合存储不可用")
 	}
-	return db.Save(row).Error
+	// Only explicit intent invalidation writes this monotonic fence. A delayed
+	// settlement or replay must not restore a previously cancelled source intent.
+	return db.Omit("ContinuationInvalidated", "GenerationAuthorizationJSON").Save(row).Error
 }
 
 func (r *Repository) CompactAssistantTurnDocuments(tx *gorm.DB, turnIDs []string) error {

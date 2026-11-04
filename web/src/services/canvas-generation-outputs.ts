@@ -1,5 +1,5 @@
+import { observeStorageNamespaceTask } from "@/lib/storage-namespace-task";
 import type { GenerationOutput } from "@/lib/generation-outputs";
-import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { parseBackendGenerationResult } from "@/services/api/generation-task";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { sleepWithSignal, waitForMaterializedGenerationOutputs, type SleepWithSignal } from "./canvas-generation-output-delivery";
@@ -21,10 +21,11 @@ export function materializedCanvasGenerationOutputs(task: GenerationTask, select
     });
 }
 
-export async function resolveCanvasGenerationOutputs(taskId: string, selected: GenerationOutput[], expectedScope: CapturedUserScope, signal?: AbortSignal, runtime: { sleep?: SleepWithSignal; now?: () => number } = {}) {
-    assertUserScope(expectedScope);
-    let task = await queryGenerationTask(taskId, { expectedScope, signal });
-    assertUserScope(expectedScope);
+export async function resolveCanvasGenerationOutputs(taskId: string, selected: GenerationOutput[], signal?: AbortSignal, runtime: { sleep?: SleepWithSignal; now?: () => number } = {}) {
+    const namespace = observeStorageNamespaceTask();
+    try {
+    let task = await queryGenerationTask(taskId, { signal });
+    namespace.assertCurrent();
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (task.id !== taskId) throw new Error("生成任务不匹配，请刷新结果后重试");
     if (task.status !== "succeeded") throw new Error("生成任务尚未完成，请稍后重试");
@@ -36,10 +37,12 @@ export async function resolveCanvasGenerationOutputs(taskId: string, selected: G
     }
     const now = runtime.now ?? Date.now;
     task = await waitForMaterializedGenerationOutputs({
-        task, outputIndices: selectedMedia.map((item) => item.outputIndex), signal, expectedScope,
-        isCurrent: () => !signal?.aborted, liveScope: captureUserScope,
+        task, outputIndices: selectedMedia.map((item) => item.outputIndex), signal,
+        isCurrent: () => !signal?.aborted && namespace.isCurrent(),
         refreshTask: queryGenerationTask, sleep: runtime.sleep ?? sleepWithSignal,
         now, startedAt: now(), publishDeliveryProgress: publishGenerationDeliveryProgress,
     });
+    namespace.assertCurrent();
     return materializedCanvasGenerationOutputs(task, selected);
+    } finally { namespace.dispose(); }
 }

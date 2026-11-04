@@ -1,8 +1,11 @@
-import { Quaternion, Vector3 } from "three";
+import { Bone, Group, Quaternion, Vector3 } from "three";
 
+import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-animation-semantics";
 import { directorPoseBoneDeltas } from "@/lib/canvas/director/director-scene";
+import { hasDirectorSolvedPose } from "@/lib/canvas/director/director-pose-solving";
+import { applyDirectorRigPose, prepareDirectorPoseRig } from "@/lib/canvas/director/director-pose-rig";
 import type { DirectorActorShape } from "@/lib/canvas/director/director-actor-presets";
-import type { DirectorHumanoidBone, DirectorPose, DirectorQuat, DirectorVec3 } from "@/types/director";
+import type { DirectorHumanoidBone, DirectorObject, DirectorPose, DirectorQuat, DirectorRig, DirectorVec3 } from "@/types/director";
 
 type JointDefinition = { bone: DirectorHumanoidBone; parent: DirectorHumanoidBone | null; offset: DirectorVec3 };
 
@@ -34,27 +37,20 @@ export const DIRECTOR_PROCEDURAL_ACTOR_BONES = JOINTS.map(({ bone }) => bone);
 export const DIRECTOR_PROCEDURAL_ACTOR_SKELETON_EDGES = JOINTS.flatMap(({ bone, parent }) => parent ? [[parent, bone] as const] : []);
 
 /** Evaluate the lightweight local mannequin from the same pose and bone-override data as imported rigs. */
-export function resolveDirectorProceduralActorPose(pose: DirectorPose, overrides: Partial<Record<DirectorHumanoidBone, DirectorQuat>> = {}, shape?: DirectorActorShape) {
-    const poseDeltas = { ...directorPoseBoneDeltas(pose) };
-    // This mannequin's rest geometry already has naturally hanging arms. The external Soldier
-    // rig's shared "stand" delta is designed to lower T-posed arms, so strip that baseline from
-    // every pose before applying only pose-specific arm motion to this different rest geometry.
+export function resolveDirectorProceduralActorPose(pose: DirectorPose, overrides: Partial<Record<DirectorHumanoidBone, DirectorQuat>> = {}, shape?: DirectorActorShape, timeSeconds = 0, tracks: DirectorObject["boneTracks"] = []) {
+    const poseDeltas = { ...directorPoseBoneDeltas(hasDirectorSolvedPose(pose) ? "stand" : pose) };
+    // This mannequin already rests with hanging arms; imported rigs rest in T pose.
     const soldierStand = directorPoseBoneDeltas("stand");
     for (const bone of ["leftUpperArm", "rightUpperArm"] as const) {
         const poseRotation = poseDeltas[bone];
         const standRotation = soldierStand[bone];
         if (poseRotation && standRotation && poseRotation.every((value, index) => Math.abs(value - standRotation[index]) < 1e-6)) delete poseDeltas[bone];
     }
-    const joints = {} as Record<DirectorHumanoidBone, DirectorVec3>;
-    const rotations = {} as Record<DirectorHumanoidBone, DirectorQuat>;
-    const worldRotations = {} as Record<DirectorHumanoidBone, Quaternion>;
-    const identity: DirectorQuat = [0, 0, 0, 1];
-
-    JOINTS.forEach(({ bone, parent, offset }) => {
-        const rotation = overrides[bone] || poseDeltas[bone] || identity;
-        const localRotation = new Quaternion(...rotation);
-        const parentRotation = parent ? worldRotations[parent] : new Quaternion();
-        const parentPosition = parent ? new Vector3(...joints[parent]) : new Vector3();
+    const model = new Group();
+    const bones = {} as Record<DirectorHumanoidBone, Bone>;
+    for (const { bone, parent, offset } of JOINTS) {
+        const node = new Bone();
+        node.name = bone;
         const adjustedOffset = [...offset] as DirectorVec3;
         if (shape) {
             if (bone === "hips") adjustedOffset[1] *= shape.legLength;
@@ -68,16 +64,33 @@ export function resolveDirectorProceduralActorPose(pose: DirectorPose, overrides
                 if (bone.includes("Foot")) adjustedOffset[2] *= shape.footLength;
             }
         }
-        const position = parentPosition.add(new Vector3(...adjustedOffset).applyQuaternion(parentRotation));
-        const worldRotation = parentRotation.clone().multiply(localRotation);
-        joints[bone] = position.toArray() as DirectorVec3;
-        rotations[bone] = rotation;
-        worldRotations[bone] = worldRotation;
-    });
-
-    return {
-        joints,
-        rotations,
-        worldRotations: Object.fromEntries(Object.entries(worldRotations).map(([bone, rotation]) => [bone, rotation.toArray() as DirectorQuat])) as Record<DirectorHumanoidBone, DirectorQuat>,
+        node.position.fromArray(adjustedOffset);
+        bones[bone] = node;
+        (parent ? bones[parent] : model).add(node);
+    }
+    model.updateWorldMatrix(true, true);
+    const rig: DirectorRig = {
+        status: "ready", animationNames: [],
+        boneMap: Object.fromEntries(JOINTS.map(({ bone }) => [bone, bone])),
     };
+    const height = bones.head.getWorldPosition(new Vector3()).y + 0.02 * (shape?.head || 1);
+    prepareDirectorPoseRig(model, rig, height);
+    for (const { bone } of JOINTS) {
+        if (poseDeltas[bone]) bones[bone].quaternion.fromArray(poseDeltas[bone]!);
+    }
+    applyDirectorRigPose(model, rig, pose, timeSeconds);
+    for (const { bone } of JOINTS) {
+        const rotation = resolveDirectorBoneRotation({ override: overrides[bone], keyframes: tracks?.find((track) => track.bone === bone)?.keyframes, time: timeSeconds });
+        if (rotation) bones[bone].quaternion.fromArray(rotation);
+    }
+    model.updateWorldMatrix(true, true);
+    const joints = {} as Record<DirectorHumanoidBone, DirectorVec3>;
+    const rotations = {} as Record<DirectorHumanoidBone, DirectorQuat>;
+    const worldRotations = {} as Record<DirectorHumanoidBone, DirectorQuat>;
+    for (const { bone } of JOINTS) {
+        joints[bone] = bones[bone].getWorldPosition(new Vector3()).toArray() as DirectorVec3;
+        rotations[bone] = bones[bone].quaternion.toArray() as DirectorQuat;
+        worldRotations[bone] = bones[bone].getWorldQuaternion(new Quaternion()).toArray() as DirectorQuat;
+    }
+    return { joints, rotations, worldRotations };
 }

@@ -14,11 +14,7 @@ foreach ($tool in @("uv", "git")) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "构建缺少 $tool" }
 }
 $ffmpegSource = (Resolve-Path -LiteralPath $FFmpegDir).Path
-foreach ($binary in @("ffmpeg.exe", "ffprobe.exe")) {
-    if (-not (Test-Path -LiteralPath (Join-Path $ffmpegSource $binary) -PathType Leaf)) {
-        throw "构建缺少 $binary；必须显式提供可验证的 FFmpeg 发行包目录"
-    }
-}
+$media = & (Join-Path $PSScriptRoot "assert-media-runtime-windows.ps1") -Runtime $ffmpegSource
 
 $commit = "4f5ae23172ba60fd7bc11ef671cca678842c7072"
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -40,7 +36,7 @@ try {
     $packages = @(
         "torch==2.8.0", "torchvision==0.23.0", "numpy==2.1.3",
         "opencv-python==4.10.0.84", "pillow==11.1.0", "matplotlib==3.10.0",
-        "imageio==2.37.0", "imageio-ffmpeg==0.6.0", "easydict==1.13",
+        "imageio==2.37.0", "easydict==1.13",
         "einops==0.8.1", "tqdm==4.67.1"
     )
     & uv pip install --python $python --target $sitePackages --torch-backend=$backend @packages
@@ -51,8 +47,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot "tools\depth-capture\depth_capture") -Destination $workerDir -Recurse
     $bin = Join-Path $runtime "bin"
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
-    foreach ($binary in @("ffmpeg.exe", "ffprobe.exe")) {
-        Copy-Item -LiteralPath (Join-Path $ffmpegSource $binary) -Destination $bin
+    foreach ($file in @("ffmpeg.exe", "ffprobe.exe", "LICENSE.txt", "LICENSE", "README.txt", "manifest.json")) {
+        Copy-Item -LiteralPath (Join-Path $ffmpegSource $file) -Destination $bin
     }
 
     $sourceRepo = Join-Path $scratch "vda-source"
@@ -83,6 +79,8 @@ try {
     $archivePath = Join-Path $destination $name
     if (Test-Path -LiteralPath $archivePath) { throw "目标运行包已存在，拒绝覆盖: $archivePath" }
     [System.IO.Compression.ZipFile]::CreateFromDirectory($relocated, $archivePath)
+    # Verify the final ZIP, including its receipt, before computing or publishing metadata.
+    $media = & (Join-Path $PSScriptRoot "assert-media-runtime-windows.ps1") -DepthArchive $archivePath
     $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
     try {
         $count = $archive.Entries.Count
@@ -95,6 +93,7 @@ try {
         sha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         files = $count
         expandedSize = $expandedSize
+        mediaRuntime = $media
     }
     if ($artifact.size -ge 2GB) {
         # GitHub Release assets must each be smaller than 2 GiB. Keep the complete

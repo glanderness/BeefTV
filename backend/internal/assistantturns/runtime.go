@@ -2,17 +2,19 @@ package assistantturns
 
 import (
 	"encoding/json"
+	"errors"
 	"gorm.io/gorm"
 )
 
 // RuntimeState rechecks current ownership before a persisted host resumes.
 // Reading a historical transcript never grants permission to resume writes.
 type RuntimeState struct {
-	PermissionMode string `json:"permissionMode"`
-	TurnID         string `json:"turnId"`
-	CanvasID       string `json:"canvasId"`
-	Open           bool   `json:"open"`
-	Revision       int64  `json:"revision"`
+	PermissionMode      string `json:"permissionMode"`
+	TurnID              string `json:"turnId"`
+	CanvasID            string `json:"canvasId"`
+	Open                bool   `json:"open"`
+	Revision            int64  `json:"revision"`
+	ContinuationRevoked bool   `json:"continuationRevoked,omitempty"`
 }
 
 func (s *Service) RuntimeState(userID, turnID string) (*RuntimeState, error) {
@@ -23,6 +25,15 @@ func (s *Service) RuntimeState(userID, turnID string) (*RuntimeState, error) {
 	if rec.UserID != userID || userID == "" {
 		return nil, errNotFound()
 	}
+	revoked := false
+	if err := s.continuationTurnAllowed(s.store.DB(), turnID); err != nil {
+		var typed *Error
+		if errors.As(err, &typed) && (typed.Reason == "continuation_cancelled" || typed.Reason == "continuation_scope_changed") {
+			revoked = true
+		} else {
+			return nil, err
+		}
+	}
 	raw, err := s.canvas.BoundTo(nil).UserCanvasProject(userID, rec.CanvasID)
 	if err != nil {
 		return nil, err
@@ -32,8 +43,9 @@ func (s *Service) RuntimeState(userID, turnID string) (*RuntimeState, error) {
 		return nil, err
 	}
 	return &RuntimeState{TurnID: rec.TurnID, CanvasID: rec.CanvasID, PermissionMode: Mode(rec.PermissionMode),
-		Open:     !rec.Undone && rec.effectiveState() == StateOpen,
-		Revision: DocumentRevision(doc)}, nil
+		Open:                !revoked && !rec.Undone && rec.effectiveState() == StateOpen,
+		ContinuationRevoked: revoked,
+		Revision:            DocumentRevision(doc)}, nil
 }
 
 // Extend authorizes only references already verified by the HTTP boundary.
@@ -56,7 +68,7 @@ func (s *Service) Extend(userID, canvasID, turnID string, input Input) error {
 			found := false
 			for _, existing := range rec.SkillPins {
 				if existing.SkillID == pin.SkillID {
-					if existing != pin {
+					if existing.Identity() != pin.Identity() {
 						return &Error{Reason: "skill_version_conflict", Message: "执行中不能替换同一技能的版本，请在新对话中选择"}
 					}
 					found = true

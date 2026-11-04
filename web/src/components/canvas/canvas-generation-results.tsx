@@ -4,7 +4,7 @@ import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
-import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
+import { getActiveUserScope, onStorageNamespaceChange } from "@/lib/user-scope";
 import { downloadGenerationOutput, readGenerationOutputBlob } from "@/services/generation-output-media";
 import { isWailsNativeShell } from "@/services/desktop-media-save";
 import type { GenerationOutput } from "@/lib/generation-outputs";
@@ -97,9 +97,9 @@ function OutputDownload({ output }: { output: GenerationOutput }) {
 function OutputAudioPreview({ output }: { output: GenerationOutput }) {
     const [state, setState] = useState({ identity: "", url: "", loading: true, error: "" });
     const [retry, setRetry] = useState(0);
-    const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
+    const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScope);
     const identity = JSON.stringify([output.storageKey, output.dataUrl, output.url, scopeEpoch]);
-    useEffect(() => subscribeUserScope((epoch) => setScopeEpoch(epoch.generation)), []);
+    useEffect(() => onStorageNamespaceChange(() => setScopeEpoch(getActiveUserScope())), []);
     useEffect(() => {
         const controller = new AbortController();
         let ownedUrl = "";

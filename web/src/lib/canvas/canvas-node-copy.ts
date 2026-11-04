@@ -65,6 +65,9 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     delete metadata.versionOfNodeId;
     delete metadata.versionLabel;
     delete metadata.versionPrimary;
+    delete metadata.upscaleBatch;
+    if (metadata.upscale) metadata.upscale = structuredClone(metadata.upscale);
+    metadata.generatedFromProcessingNodeId = remapOwnedNodeId(node.metadata?.generatedFromProcessingNodeId, idMap);
 
     metadata.copiedFromNodeId = node.id;
     if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) {
@@ -77,6 +80,8 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         .filter((nodeId): nodeId is string => Boolean(nodeId));
     metadata.videoStartFrameNodeId = remapReferenceId(node.metadata?.videoStartFrameNodeId, idMap);
     metadata.videoEndFrameNodeId = remapReferenceId(node.metadata?.videoEndFrameNodeId, idMap);
+    metadata.videoMiddleFrameNodeId = remapReferenceId(node.metadata?.videoMiddleFrameNodeId, idMap);
+    metadata.videoReferenceOrder = remapReferenceIds(node.metadata?.videoReferenceOrder,idMap);
     metadata.directorPreviewNodeId = remapOwnedNodeId(node.metadata?.directorPreviewNodeId, idMap);
     metadata.directorDepthNodeId = remapOwnedNodeId(node.metadata?.directorDepthNodeId, idMap);
     metadata.directorNormalNodeId = remapOwnedNodeId(node.metadata?.directorNormalNodeId, idMap);

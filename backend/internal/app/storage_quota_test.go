@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -10,6 +11,41 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestSaveTaskCompletionDiskFullPreservesOriginalTask(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.Asset{}, &model.CanvasProject{}, &model.Task{}, &model.TaskLog{}, &model.Result{}, &model.ApiCallLog{}, &model.TaskTextDelta{}); err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "task-full", UserID: "user-1", Status: model.TaskStatusFailed, InputJSON: `{"mode":"video"}`}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("database or disk is full")
+	if err := db.Callback().Update().Before("gorm:update").Register("test:task-disk-full", func(tx *gorm.DB) {
+		if tx.Statement.Table == "tasks" {
+			tx.AddError(cause)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	err = svc.saveTaskCompletionWithinStorageQuota(&task, []byte(`{"ok":true}`), nil, false)
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Reason != "local_disk_full" || !errors.Is(err, cause) || strings.Contains(appErr.Message, "尚未提交") {
+		t.Fatalf("completion failure = %v", err)
+	}
+	var saved model.Task
+	if err := db.First(&saved, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusFailed || saved.Status != model.TaskStatusFailed || saved.ResultJSON != "" {
+		t.Fatalf("failed recovery changed task: memory=%s saved=%#v", task.Status, saved)
+	}
+}
 
 func TestValidateStructuredStorageQuotaRejectsBytesAndCounts(t *testing.T) {
 	policy := defaultRuntimePolicy().Resource

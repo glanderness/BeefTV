@@ -271,7 +271,9 @@ describe("DirectorSaveCoordinator", () => {
             h.editedScene({ title: "a" });
             h.editedScene({ title: "b" });
             expect(h.scheduler.size()).toBe(1);
+            expect(h.coord.hasActiveSave()).toBe(true);
             await h.flushMicrotasks();
+            expect(h.coord.hasActiveSave()).toBe(false);
             expect(h.requests).toHaveLength(1);
             expect(h.requests[0]?.scene.title).toBe("b");
         });

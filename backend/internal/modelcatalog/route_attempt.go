@@ -389,7 +389,7 @@ func FinishRouteAttempt(store RouteStore, attempt *model.RouteAttempt, task *mod
 		if task != nil && task.Type == "canvas_image" && info.ImageThrottle {
 			attempt.FailureCode = "image_throttled"
 		}
-		if attempt.ProviderRequestID != "" {
+		if attempt.ProviderRequestID != "" || info.TerminalProviderFailure {
 			attempt.DispatchState = "accepted"
 		} else if SafeRouteRejection(info) {
 			attempt.DispatchState = "rejected_no_job"

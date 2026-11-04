@@ -4,12 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
-	"sync"
-	"time"
-	"unicode/utf8"
-
 	"infinite-canvas/backend/internal/appearance"
 	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assistantturns"
@@ -18,6 +12,7 @@ import (
 	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/mediaattempt"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/operations"
@@ -28,12 +23,21 @@ import (
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
+	"infinite-canvas/backend/internal/supporttrace"
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/taskdelivery"
 	"infinite-canvas/backend/internal/textreplay"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
 )
 
 type Service struct {
+	canvasWorkflowMu         sync.Mutex
+	canvasWorkflowLoop       bool
 	repo                     *repository.Repository
 	dataDir                  string
 	mode                     serviceMode
@@ -42,9 +46,11 @@ type Service struct {
 	workerRuntimeMu          sync.Mutex
 	characterTaskMu          sync.Mutex
 	activeCancels            map[string]context.CancelFunc
-	pendingStorage           map[string]int64
+	fileQuotaService         *localasset.FileQuota
+	fileQuotaOnce            sync.Once
 	coordinator              *platform.Coordinator
 	platform                 *platform.Service
+	platformOnce             sync.Once
 	taskTerminalCoordinator  *taskTerminalCoordinator
 	taskRouteExecutor        *taskRouteExecutor
 	taskWorkerCoordinator    *taskWorkerCoordinator
@@ -69,12 +75,17 @@ type Service struct {
 	projects                 *localproject.Service
 	canvas                   *canvas.Service
 	assistantTurns           *assistantturns.Service
+	continuationBackground   assistantContinuationBackground
 	assets                   *localasset.Service
 	assetsOnce               sync.Once
 	appearance               *appearance.Service
 	appearanceOnce           sync.Once
 	diagnostics              *diagnostics.Service
 	diagnosticsOnce          sync.Once
+	supportTraceOnce         sync.Once
+	supportTraceRecorder     *supporttrace.Recorder
+	supportTraceErr          error
+	supportTraceClosed       atomic.Bool
 	playback                 *playback.Service
 	playbackOnce             sync.Once
 	depthCapture             *depthcapture.Service
@@ -85,6 +96,7 @@ type Service struct {
 	deliveryMu               sync.Mutex
 	deliveryProgress         *deliveryProgressRegistry
 	deliveryProgressOnce     sync.Once
+	referenceProgress        sync.Map
 	deliveryControlMu        sync.Mutex
 	deliveryCancels          map[string]context.CancelFunc
 	deliveryDeadlines        map[string]time.Time
@@ -93,6 +105,10 @@ type Service struct {
 	tasksOnce                sync.Once
 	workspaceOps             *operations.Registry
 	workspaceOpsMu           sync.Mutex
+	mediaAttemptService      *mediaattempt.Service
+	mediaAttemptOnce         sync.Once
+	videoRecoveryActive      atomic.Bool
+	videoRecoveryAfterID     string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -154,7 +170,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	if repo == nil {
 		pluginRuntimeErr = fmt.Errorf("插件状态存储未初始化")
 	} else {
-		pluginRuntime, pluginRuntimeErr = newPluginRuntimeWithStore(dataDir, plugins.NewRepositoryStore(repo))
+		pluginRuntime, pluginRuntimeErr = newPluginRuntimeWithReferences(dataDir, plugins.NewRepositoryStore(repo), newPluginReferences(dataDir, repo))
 	}
 	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute}
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
@@ -162,7 +178,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.taskWorkerCoordinator = newTaskWorkerCoordinator(service)
 	service.taskLifecycleCoordinator = newTaskLifecycleCoordinator(service)
 	service.skills = skills.New(service.repo, service.dataDir, service.runWorkerLoop)
-	service.prompts = prompts.New(service.repo, newPromptAdminGate(service))
+	service.prompts = prompts.New(service.repo)
 	service.projects = localproject.New(repo, localproject.Dependencies{})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
@@ -170,7 +186,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 		DataDir:      dataDir,
 		Repository:   localasset.NewRepository(repo),
 		Blobs:        localasset.NewFileStore(dataDir),
-		Quota:        resourceQuota{svc: service},
+		Quota:        service.fileQuota(),
 		Lifecycle:    resourceLifecycle{svc: service},
 		LocalStorage: localResourceStorage,
 	})
@@ -239,6 +255,10 @@ func (s *Service) Task(userID string, id string) (*model.Task, error) {
 	return s.taskDomain().Get(userID, id)
 }
 
+func (s *Service) TaskByClientOperation(userID, projectID, operationID string) (*model.Task, error) {
+	return s.taskDomain().FindOperation(userID, projectID, operationID)
+}
+
 func (s *Service) hydrateTaskProviderRequestID(task *model.Task) {
 	if task == nil || task.ProviderRequestID != "" {
 		return
@@ -262,6 +282,19 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 	if latest.ProviderRequestID != "" {
 		task.ProviderRequestID = latest.ProviderRequestID
 	}
+	if latest.ImageJobID != "" {
+		task.ImageJobID = latest.ImageJobID
+	}
+	if latest.BeefUsageState != nil {
+		task.BeefUsageState = latest.BeefUsageState
+	}
+	if latest.BeefBillingState != nil {
+		task.BeefBillingState = latest.BeefBillingState
+	}
+	if latest.BeefReconcileDeadline != nil {
+		task.BeefReconcileDeadline = latest.BeefReconcileDeadline
+	}
+	task.Stage, task.Progress = latest.Stage, latest.Progress
 	task.PollStage = latest.PollStage
 	task.NextPollAt = latest.NextPollAt
 	task.ProviderCancelStatus = latest.ProviderCancelStatus
@@ -277,8 +310,13 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if s.IsDraining() {
 		return s.taskDomain().Retry(userID, id)
 	}
-	if task, err := s.repo.TaskForUser(userID, id); err == nil && task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
-		return s.resumeGenerationDownload(*task)
+	if task, err := s.repo.TaskForUser(userID, id); err == nil {
+		if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+			return s.resumeGenerationDownload(*task)
+		}
+		if restored, handled, err := s.recoverAcceptedImage(*task); handled {
+			return restored, err
+		}
 	}
 	return s.taskDomain().Retry(userID, id)
 }
@@ -377,6 +415,13 @@ func (s *Service) cancelActiveTask(id string) {
 	if cancel != nil {
 		cancel()
 	}
+	s.deliveryControlMu.Lock()
+	for identity, stop := range s.deliveryCancels {
+		if strings.HasPrefix(identity, id+":") {
+			stop()
+		}
+	}
+	s.deliveryControlMu.Unlock()
 }
 
 func nodeOp(id string, nodeType string, title string, x int, y int, workflowKind string, content string) map[string]any {
@@ -419,4 +464,8 @@ func defaultString(value string, fallback string) string {
 
 func newID() string {
 	return kernel.NewID()
+}
+
+func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Task, error) {
+	return s.taskDomain().RecoverTask(ctx, userID, id)
 }

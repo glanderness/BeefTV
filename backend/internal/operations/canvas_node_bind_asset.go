@@ -6,8 +6,8 @@ import (
 )
 
 func registerCanvasNodeBindAsset(r *Registry) {
-	r.Register(Op{AssistantCanvas: true, ID: "canvas.node.bind_asset", Summary: "把已上传的素材库图片/视频/音频绑定到已有同类型参考节点；写入真实资源与素材身份，不生成不付费，再用 edge.create 连接生成节点", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string","description":"可省略；素材包含多个资源时必填，只能选择该素材已有资源"},"expectedRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeId","assetId","expectedRevision"]}`), Handler: opCanvasNodeBindAsset})
+	r.Register(Op{AssistantCanvas: true, ID: "canvas.node.bind_asset", Summary: "把素材库素材绑定到同类型节点", Scope: ScopeCanvas,
+		Params: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeId","assetId","expectedRevision"]}`), Handler: opCanvasNodeBindAsset})
 }
 
 func opCanvasNodeBindAsset(ctx *Context, raw json.RawMessage) (any, error) {
@@ -23,15 +23,6 @@ func opCanvasNodeBindAsset(ctx *Context, raw json.RawMessage) (any, error) {
 	}
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" || strings.TrimSpace(args.AssetID) == "" || args.ExpectedRevision == nil || *args.ExpectedRevision < 0 {
 		return nil, InvalidArg("invalid_params", "画布、节点、素材和当前版本必填")
-	}
-	// Binding is also an asset read: canvas mode cannot turn a guessed owned ID
-	// into a new authorization. The scope resolver rechecks project membership.
-	if ctx.Caller.Scope != nil {
-		p, _ := json.Marshal(map[string]string{"assetId": args.AssetID})
-		read := assetGetOperation()
-		if err := ctx.Caller.Scope.Allows(&read, p); err != nil {
-			return nil, err
-		}
 	}
 	asset, err := ctx.Domain.OwnedAsset(ctx.UserID, args.AssetID)
 	if err != nil {

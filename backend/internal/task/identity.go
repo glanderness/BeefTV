@@ -113,7 +113,7 @@ func ValidateType(taskType string) error {
 
 func ValidateLocalExecutorType(taskType string) error {
 	switch taskType {
-	case model.TaskTypeTimelineTranscription, model.TaskTypeTimelineRender, model.TaskTypeDepthCapture:
+	case model.TaskTypeTimelineTranscription, model.TaskTypeTimelineRender, model.TaskTypeDepthCapture, model.TaskTypeCanvasMediaTransform:
 		return nil
 	}
 	if taskType == "" {

@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,6 +38,23 @@ func agentHostClient(timeout time.Duration) *http.Client {
 	}}
 }
 
+// assistantChatHeaderTimeout 只限制等宿主开始回应的时间：此前宿主要读取附件并确认回合归属。
+const assistantChatHeaderTimeout = 10 * time.Minute
+
+// assistantChatClient 不设整体超时：http.Client.Timeout 也会截断响应体，而 NDJSON 流要持续到
+// 官方回合结束（含模型自动重试与退避）。浏览器离开不取消上游，宿主进程结束时连接随之关闭。
+func assistantChatClient(headerTimeout time.Duration) *http.Client {
+	client := agentHostClient(0)
+	client.Transport = http.DefaultTransport
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = headerTimeout
+		client.Transport = clone
+	}
+	// 自定义 RoundTripper 可能承担审计或测试拦截，保留其行为与超时策略。
+	return client
+}
+
 // newTurnID 是一轮对话的稳定标识：按轮撤销与历史都用它对齐。
 func newTurnID() string {
 	buf := make([]byte, 12)
@@ -49,7 +67,7 @@ func newTurnID() string {
 // RegisterAgentProxyRoutes 让浏览器通过同源后端使用内置创作助手：
 // 页面只发业务消息，宿主凭据由后端注入；宿主不可用时返回明确状态而不是空回复。
 func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops.ClientRegistry, ui *uiSessionStore, host *assistantruntime.Host) {
-	client := agentHostClient(10 * time.Minute)
+	client := assistantChatClient(assistantChatHeaderTimeout)
 	registerAssistantRuntimeRoutes(r, svc)
 
 	guard := func(c *gin.Context, requireWrite bool) bool {
@@ -211,9 +229,11 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		if strings.HasPrefix(path, "/history?") {
 			if history, ok := decoded.(map[string]any); ok {
+				installed := installedSkillLabels(svc, c.GetString("agentUserId"))
 				turns, _ := history["turns"].([]any)
 				for _, value := range turns {
 					if turn, ok := value.(map[string]any); ok {
+						delete(turn, "proposalsInvalidated")
 						turnID, _ := turn["turnId"].(string)
 						outputs, err := svc.AssistantTurnOutputs(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
 						if err != nil {
@@ -226,12 +246,29 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 							failService(c, err)
 							return
 						}
+						var pins []skills.Pin
 						if state != nil {
+							turn["proposalsInvalidated"] = state.ContinuationInvalidated
 							turn["undone"] = state.Undone
 							turn["change"] = state.Change
 							turn["permissionMode"] = state.PermissionMode
+							pins = state.SkillPins
 						}
+						labelAssistantSkills(turn, pins, installed)
 					}
+				}
+				if active, ok := history["active"].(map[string]any); ok {
+					turnID, _ := active["turnId"].(string)
+					state, err := svc.ReadAssistantTurnHistoryState(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
+					if err != nil {
+						failService(c, err)
+						return
+					}
+					var pins []skills.Pin
+					if state != nil {
+						pins = state.SkillPins
+					}
+					labelAssistantSkills(active, pins, installed)
 				}
 			}
 		}
@@ -244,7 +281,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 必填"))
 			return nil, false
 		}
-		raw, err := svc.UserCanvasProject(c.GetString("agentUserId"), canvasID)
+		raw, err := svc.CanvasService().UserCanvasProject(c.GetString("agentUserId"), canvasID)
 		if err != nil {
 			fail(c, http.StatusNotFound, app.BadAuthRequest("画布不存在或不属于当前工作区"))
 			return nil, false
@@ -252,6 +289,8 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		return raw, true
 	}
 
+	registerAssistantSkillContextRoutes(r, svc, guard, hostJSON)
+	registerAssistantContinuationRoutes(r, svc, guard)
 	r.GET("/assistant/sessions", func(c *gin.Context) {
 		if !guard(c, false) {
 			return
@@ -276,6 +315,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, "") {
+			return
+		}
 		hostJSON(c, http.MethodPost, "/sessions", body)
 	})
 
@@ -291,6 +333,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, "") {
 			return
 		}
 		hostJSON(c, http.MethodPost, "/sessions/activate", body)
@@ -324,7 +369,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		revision, err := svc.UndoAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
+		revision, err := svc.AssistantTurns().Undo(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
 		if err != nil {
 			var turnErr *app.AssistantTurnError
 			if errors.As(err, &turnErr) {
@@ -339,6 +384,115 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		ok(c, gin.H{"revision": revision})
+	})
+
+	// 生成建议在画布既有生成链路执行；开始前先由这里确认所属的一轮还有效，
+	// 已撤销的一轮不能再开始付费生成。
+	r.POST("/assistant/turns/:turnId/proposals/:proposalId/run", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		_, payload, valid := readAssistantBody(c, struct {
+			CanvasID string `json:"canvasId"`
+		}{})
+		if !valid {
+			return
+		}
+		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成建议标识无效"))
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if err := svc.AssistantTurns().CheckProposalRunnable(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId")); err != nil {
+			var turnErr *app.AssistantTurnError
+			if errors.As(err, &turnErr) {
+				status := http.StatusConflict
+				if turnErr.Reason == app.AssistantTurnReasonNotFound {
+					status = http.StatusNotFound
+				}
+				c.JSON(status, gin.H{"code": status, "reason": turnErr.Reason, "msg": turnErr.Error()})
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"runnable": true})
+	})
+
+	r.POST("/assistant/turns/:turnId/proposals/:proposalId/production", func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" || isAssistantHostRequest(c, svc) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "agent_token_cannot_approve",
+				"msg":    "Agent 自身的凭据不能批准生成单，请使用工作区 owner 凭据或在 BeefTV 界面确认",
+			})
+			return
+		}
+		if !guard(c, true) {
+			return
+		}
+		_, payload, valid := readAssistantBody(c, app.AssistantProductionConfirmation{})
+		if !valid {
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成建议标识无效"))
+			return
+		}
+		payload.ProposalID = c.Param("proposalId")
+		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
+		if err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
+	r.GET("/assistant/generation-orders", func(c *gin.Context) {
+		if !guard(c, false) {
+			return
+		}
+		canvasID := strings.TrimSpace(c.Query("canvasId"))
+		if canvasID != "" {
+			if _, allowed := requireOwnedCanvas(c, canvasID); !allowed {
+				return
+			}
+		}
+		orders, err := svc.ListGenerationOrders(c.GetString("agentUserId"), canvasID)
+		if err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, gin.H{"orders": orders})
+	})
+
+	r.POST("/assistant/generation-orders/:proposalId/approve", func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" || isAssistantHostRequest(c, svc) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":   http.StatusForbidden,
+				"reason": "agent_token_cannot_approve",
+				"msg":    "Agent 自身的凭据不能批准生成单，请使用工作区 owner 凭据或在 BeefTV 界面确认",
+			})
+			return
+		}
+		if !guard(c, true) {
+			return
+		}
+		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成单标识无效"))
+			return
+		}
+		result, err := svc.ApproveGenerationOrder(c.GetString("agentUserId"), c.Param("proposalId"), "ui")
+		if err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, result)
 	})
 
 	r.POST("/assistant/chat", func(c *gin.Context) {
@@ -367,6 +521,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			Message         string                    `json:"message"`
 			SelectedNodeIDs []string                  `json:"selectedNodeIds"`
 			SessionID       string                    `json:"sessionId"`
+			RequestID       *string                   `json:"requestId"`
 			References      []assistantReference      `json:"references"`
 			Attachments     []app.AssistantAttachment `json:"attachments"`
 			Skills          []skills.Pin              `json:"skills"`
@@ -375,8 +530,18 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 message 必填"))
 			return
 		}
+		// requestId 只是这次发送的停止与重发键，由宿主按会话去重；回合身份与授权仍由下面生成的 turnId 决定。
+		if payload.RequestID != nil && !assistantRequestIDPattern.MatchString(*payload.RequestID) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("requestId 无效"))
+			return
+		}
 		canvasRaw, allowed := requireOwnedCanvas(c, payload.CanvasID)
 		if !allowed {
+			return
+		}
+		// Automatic continuation turns are started only by the backend worker.
+		// A client-supplied continuationId is never read here.
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, payload.SessionID) {
 			return
 		}
 		if !assistantturns.ValidMode(payload.PermissionMode) {
@@ -456,6 +621,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			var trusted map[string]any
 			_ = json.Unmarshal(forwarded, &trusted)
 			trusted["permissionMode"] = input.PermissionMode
+			// Display identity comes only from the backend worker's claimed receipt;
+			// never forward a client key ignored by struct decoding.
+			delete(trusted, "continuationId")
 			forwarded, err = json.Marshal(trusted)
 		}
 		if err != nil {
@@ -531,13 +699,40 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if !guard(c, true) {
 			return
 		}
-		body, payload, valid := readAssistantBody(c, struct {
-			CanvasID string `json:"canvasId"`
+		_, payload, valid := readAssistantBody(c, struct {
+			CanvasID  string  `json:"canvasId"`
+			SessionID *string `json:"sessionId"`
+			RequestID *string `json:"requestId"`
 		}{})
 		if !valid {
 			return
 		}
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		// 停止指向一次具体发送：会话与请求标识必须成对且格式有效，宿主再核对会话属于这块画布。
+		// 只转发校验过的字段；不带这两个字段的旧调用仍按画布停止当前回合。
+		target := map[string]string{"canvasId": payload.CanvasID}
+		cancelSession := ""
+		if payload.SessionID != nil {
+			cancelSession = *payload.SessionID
+		}
+		if payload.SessionID != nil || payload.RequestID != nil {
+			if payload.SessionID == nil || payload.RequestID == nil ||
+				!assistantSessionIDPattern.MatchString(*payload.SessionID) || !assistantRequestIDPattern.MatchString(*payload.RequestID) {
+				fail(c, http.StatusBadRequest, app.BadAuthRequest("sessionId 与 requestId 无效"))
+				return
+			}
+			target["sessionId"] = *payload.SessionID
+			target["requestId"] = *payload.RequestID
+		}
+		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
+			failService(c, err)
+			return
+		}
+		body, err := json.Marshal(target)
+		if err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))
 			return
 		}
 		hostJSON(c, http.MethodPost, "/cancel", body)
@@ -605,7 +800,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 				fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("助手尚未就绪"))
 				return
 			}
-			response, err := client.Do(request)
+			response, err := agentHostClient(30 * time.Second).Do(request)
 			if err != nil {
 				fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("无法确认正在执行的任务"))
 				return
@@ -623,7 +818,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			}
 			input := assistantTurnInput(nil, refs)
 			input.SkillPins = pins
-			if err := svc.ExtendAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
+			if err := svc.AssistantTurns().Extend(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
 				failService(c, err)
 				return
 			}
@@ -631,6 +826,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		hostJSON(c, http.MethodPost, "/steer", body)
 	})
 }
+
+var assistantProposalIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+
+// assistantRequestIDPattern 是浏览器为每次发送生成的请求标识；不含冒号，不会与补充消息的内部键混淆。
+var assistantRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+// assistantSessionIDPattern 覆盖 durable:<uuid> 与旧会话标识；归属由宿主按画布目录核对。
+var assistantSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_:-]{1,128}$`)
 
 func assistantTerminalLine(line []byte, turnID string) bool {
 	var event struct {
@@ -684,4 +887,24 @@ func settleAssistantTurn(turnID string, svc *app.Service) {
 	if err := svc.FinalizeAssistantTurn(turnID); err != nil {
 		log.Printf("assistant_turn_settle_failed turn=%q error_type=%T", turnID, err)
 	}
+}
+
+// failAssistantProposal 投影确认生成方案时的失败：回合不存在或已变化（404/409）、
+// 方案已变化、已撤销或参数无效（操作层 409/412/400）都不是服务内部错误。
+func failAssistantProposal(c *gin.Context, err error) {
+	var turnErr *app.AssistantTurnError
+	if errors.As(err, &turnErr) {
+		status := http.StatusConflict
+		if turnErr.Reason == app.AssistantTurnReasonNotFound {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"code": status, "reason": turnErr.Reason, "msg": turnErr.Error()})
+		return
+	}
+	var opErr *agentops.Error
+	if errors.As(err, &opErr) {
+		failAgentOps(c, err)
+		return
+	}
+	failService(c, err)
 }

@@ -968,15 +968,6 @@ func workflowFieldsBindPrompt(fields []Field) bool {
 	return false
 }
 
-func isWorkflowPromptSource(source string) bool {
-	switch strings.ReplaceAll(strings.ReplaceAll(source, "_", ""), "-", "") {
-	case "prompt", "text", "positiveprompt", "positive":
-		return true
-	default:
-		return false
-	}
-}
-
 func upsertRunningHubNodeInfo(items []map[string]any, overrides []map[string]any) []map[string]any {
 	for _, override := range overrides {
 		nodeID := strings.TrimSpace(stringValue(override["nodeId"]))

@@ -24,10 +24,15 @@ type Runtime struct {
 	mu                    sync.RWMutex
 	mutationMu            sync.Mutex
 	store                 Store
+	dataDir               string
 	registryPath          string
 	packageDir            string
 	plugins               map[string]Record
 	registry              *protocol.Registry
+	references            ReferenceSource
+	retained              map[string]*RetentionView
+	skillSyncHook         func(pluginID string, pluginName string, version string, skillDirs []string, enabled bool)
+	packageFetcher        PackageFetcher
 	testBeforeMutation    func()
 	testFailCommit        func() error
 	testFailWriteRegistry func() error
@@ -36,17 +41,28 @@ type Runtime struct {
 }
 
 func NewRuntime(dataDir string) (*Runtime, error) {
-	return newRuntime(dataDir, nil)
+	return newRuntime(dataDir, nil, nil)
 }
 
 func NewRuntimeWithStore(dataDir string, store Store) (*Runtime, error) {
 	if store == nil {
 		return nil, fmt.Errorf("插件状态存储未初始化")
 	}
-	return newRuntime(dataDir, store)
+	return newRuntime(dataDir, store, nil)
 }
 
-func newRuntime(dataDir string, store Store) (*Runtime, error) {
+// NewRuntimeWithReferences wires the startup audit that keeps an official
+// plugin alive while saved configuration or unfinished tasks still execute with
+// it. Without a source the runtime keeps dropping removed built-ins, which is
+// only safe for callers that own their registry outright.
+func NewRuntimeWithReferences(dataDir string, store Store, references ReferenceSource) (*Runtime, error) {
+	if store == nil {
+		return nil, fmt.Errorf("插件状态存储未初始化")
+	}
+	return newRuntime(dataDir, store, references)
+}
+
+func newRuntime(dataDir string, store Store, references ReferenceSource) (*Runtime, error) {
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
 		return nil, errors.New("plugin data directory is empty")
@@ -65,9 +81,11 @@ func newRuntime(dataDir string, store Store) (*Runtime, error) {
 	}
 	center := &Runtime{
 		store:        store,
+		dataDir:      dataDir,
 		registryPath: filepath.Join(dataDir, "plugin_registry.json"),
 		packageDir:   packageDir,
 		plugins:      make(map[string]Record),
+		references:   references,
 	}
 	if err := center.open(); err != nil {
 		return nil, err
@@ -90,7 +108,7 @@ func (c *Runtime) open() error {
 	if err != nil {
 		return err
 	}
-	plugins, registry, err := materializeRecords(next)
+	plugins, registry, err := c.build(next)
 	if err != nil {
 		return err
 	}
@@ -194,9 +212,15 @@ func (c *Runtime) restoreLive(snap liveSnapshot) {
 
 func (c *Runtime) publishLive(plugins map[string]Record, registry *protocol.Registry) {
 	c.mu.Lock()
+	previous := c.plugins
 	c.plugins = plugins
 	c.registry = registry
+	hook := c.skillSyncHook
 	c.mu.Unlock()
+	syncPluginCanvasCapabilities(plugins)
+	if hook != nil {
+		dispatchPluginSkillSync(hook, previous, plugins)
+	}
 }
 
 func (c *Runtime) failNextCommit(err error) {

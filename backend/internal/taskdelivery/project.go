@@ -8,11 +8,22 @@ import (
 type Projection struct {
 	Outputs     []localtask.CanonicalOutput
 	ResultState string
+	Outcome     localtask.Outcome
+	Stage       string
 	Err         error
 }
 
 func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error, failedRetryBlocked bool) Projection {
-	binding := localtask.TargetBindingFromInput(task.InputJSON)
+	return ProjectWithFacts(task, stored, loadErr, failedRetryBlocked, localtask.OutcomeFacts{})
+}
+
+func ProjectWithFacts(task model.Task, stored []localtask.CanonicalOutput, loadErr error, failedRetryBlocked bool, facts localtask.OutcomeFacts) (projection Projection) {
+	defer func() {
+		if loadErr != nil {
+			facts.Unreadable = true
+		}
+		projection.Outcome = localtask.ComputeOutcome(task, projection.ResultState, facts)
+	}()
 	parsed, _ := localtask.InspectResultJSON(task.ResultJSON, task.Type)
 	if loadErr != nil {
 		outputs := parsed
@@ -22,9 +33,9 @@ func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error,
 		for i := range outputs {
 			outputs[i].MaterializedAssetID = ""
 			outputs[i].MaterializationErrorCode = localtask.MaterializeErrorDeliveryUnreadable
-			outputs[i] = localtask.BindOutput(outputs[i], task.ID, binding)
+			outputs[i] = localtask.BindOutput(outputs[i], task.ID, localtask.OutputBinding(task, outputs[i].OutputIndex))
 		}
-		return Projection{Outputs: outputs, ResultState: localtask.ResultStateFailedRetryable, Err: loadErr}
+		return Projection{Outputs: outputs, ResultState: localtask.ResultStateFailedRetryable, Stage: task.Stage, Err: loadErr}
 	}
 	if len(parsed) == 0 {
 		parsed = stored
@@ -41,11 +52,21 @@ func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error,
 		if output.MaterializedAssetID == "" && (task.Stage == "delivery_paused" || task.Stage == "delivery_timed_out") {
 			output.MaterializationErrorCode = task.Stage
 		}
-		merged = append(merged, localtask.BindOutput(output, task.ID, binding))
+		merged = append(merged, localtask.BindOutput(output, task.ID, localtask.OutputBinding(task, output.OutputIndex)))
+	}
+	state := localtask.ResultState(task.Status, merged, failedRetryBlocked)
+	stage := task.Stage
+	// Ready outputs are authoritative even when an older delivery left a stale stage.
+	if task.Status == model.TaskStatusSucceeded && state == localtask.ResultStateReady && len(merged) > 0 {
+		switch stage {
+		case "正在取回结果", "delivery_paused", "delivery_timed_out":
+			stage = "生成完成"
+		}
 	}
 	return Projection{
 		Outputs:     merged,
-		ResultState: localtask.ResultState(task.Status, merged, failedRetryBlocked),
+		ResultState: state,
+		Stage:       stage,
 	}
 }
 

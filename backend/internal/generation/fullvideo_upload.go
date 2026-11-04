@@ -106,8 +106,9 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 			sum := sha256.Sum256(data)
 			digest := hex.EncodeToString(sum[:])
 			var receipt fullvideoUpload
+			uploadCtx, reporter := beginReferenceProgress(ctx, referenceMediaLabel(group.kind, i), int64(len(data)))
 			call := func(method, path, contentType string, body any) error {
-				raw, e := ExecuteProtocolRequest(WithRequestKind(ctx, "media_upload"), input.Config, protocol.RequestSpec{Method: method, Path: path, ContentType: contentType, Body: body, Auth: protocol.ManifestAuth{Type: "bearer", Field: "apiKey"}})
+				raw, e := ExecuteProtocolRequest(WithRequestKind(uploadCtx, "media_upload"), input.Config, protocol.RequestSpec{Method: method, Path: path, ContentType: contentType, Body: body, Auth: protocol.ManifestAuth{Type: "bearer", Field: "apiKey"}})
 				if e != nil {
 					return e
 				}
@@ -139,13 +140,16 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 				}
 				for start, n := 0, 0; start < len(data); start, n = start+receipt.ChunkSize, n+1 {
 					if received[n] {
+						reporter.resumeAt(int64(min(start+receipt.ChunkSize, len(data))))
 						continue
 					}
 					end := min(start+receipt.ChunkSize, len(data))
 					if err = call("PUT", fmt.Sprintf("%s/chunks/%d", path, n), "application/octet-stream", data[start:end]); err != nil {
 						return err
 					}
+					reporter.report("transferring", int64(end))
 				}
+				reporter.report("processing", int64(len(data)))
 				if err = call("POST", path+"/complete", "application/json", map[string]any{}); err != nil {
 					return err
 				}
@@ -188,16 +192,23 @@ func validFullVideoUploadID(id string) bool {
 func trustedFullVideoAssetSource(baseURL, sourceURL, assetOrigin string) bool {
 	base, baseErr := url.Parse(baseURL)
 	source, sourceErr := url.Parse(sourceURL)
-	if baseErr != nil || sourceErr != nil || source.Scheme != "https" || source.User != nil || source.Fragment != "" || !strings.HasPrefix(source.Path, "/v1/media/assets/") {
+	if baseErr != nil || sourceErr != nil || source.User != nil || source.Fragment != "" || !strings.HasPrefix(source.Path, "/v1/media/assets/") {
 		return false
 	}
-	if source.Host == base.Host {
+	if source.Host == base.Host && (source.Scheme == "https" || (source.Scheme == "http" && base.Scheme == "http")) {
 		return true
 	}
 	// Cross-origin assets require an exact origin explicitly configured by the
 	// user. The host never sends the API credential to that asset origin.
+	// An empty origin stays same-host only. A receipt cannot name an arbitrary LAN URL.
 	allowed, err := url.Parse(strings.TrimSpace(assetOrigin))
-	return err == nil && allowed.Scheme == "https" && allowed.Host != "" && allowed.User == nil && allowed.RawQuery == "" && allowed.Fragment == "" && (allowed.Path == "" || allowed.Path == "/") && (allowed.Port() == "" || allowed.Port() == "443") && source.Host == allowed.Host
+	if err != nil || allowed.Scheme == "" || allowed.Host == "" || allowed.User != nil || allowed.RawQuery != "" || allowed.Fragment != "" || (allowed.Path != "" && allowed.Path != "/") || source.Scheme != allowed.Scheme || source.Host != allowed.Host {
+		return false
+	}
+	if allowed.Scheme == "https" && (allowed.Port() == "" || allowed.Port() == "443") {
+		return true
+	}
+	return (allowed.Scheme == "http" || allowed.Scheme == "https") && outbound.HostAllowsLocalHTTP(context.Background(), allowed.Hostname())
 }
 
 func fullvideoFullModel(name string) bool {
