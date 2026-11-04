@@ -13,8 +13,9 @@ export type ProviderCancelStatus = "requested" | "confirmed" | "uncertain";
 export type GenerationTaskResultState = "NOT_AVAILABLE" | "PENDING_MATERIALIZATION" | "MATERIALIZING" | "READY" | "FAILED_RETRYABLE" | "FAILED_PERMANENT";
 export type GenerationTaskOutput = {
     outputIndex: number;
-    mediaType: "image" | "video" | "audio";
+    mediaType: "image" | "video" | "audio" | "file";
     providerArtifactRef?: string;
+    resourceId?: string;
     materializedAssetId?: string;
     materializationErrorCode?: string;
 };

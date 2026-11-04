@@ -19,10 +19,7 @@ type runningHubWorkflows interface {
 }
 
 // RegisterRunningHubRoutes 是独立工作流 Provider 的管理代理，不复用 ModelChannel。
-func RegisterRunningHubRoutes(r *gin.RouterGroup, workflows runningHubWorkflows, hostedProfile ...bool) {
-	if len(hostedProfile) > 0 && !hostedProfile[0] {
-		return
-	}
+func RegisterRunningHubRoutes(r *gin.RouterGroup, workflows runningHubWorkflows) {
 	fetch := func(c *gin.Context, isApp bool) {
 		user, err := currentUser(c, workflows)
 		if err != nil {

@@ -2,6 +2,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Comp
 import { AlertCircle, BookOpenCheck, Download, Image as ImageIcon, LoaderCircle, Music2, Pencil, Play, RefreshCw, Video } from "lucide-react";
 
 import { VideoPlayer } from "@/components/video-player";
+import { CanvasGenerationResults } from "./canvas-generation-results";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
@@ -174,7 +175,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
 
     if (pluginDefinition) return <PluginCanvasNodeContent {...props} schema={pluginDefinition.schema} />;
     const Renderer = nodeContentRenderers[props.node.type];
-    return Renderer ? <Renderer {...props} /> : <UnknownNodeContent theme={props.theme} />;
+    return Renderer ? <div className="relative h-full w-full"><Renderer {...props} />{!props.node.metadata?.content && props.node.metadata?.outputParameterWarning ? <p className="absolute left-2 right-2 top-2 text-xs" style={{color:props.theme.node.muted}}>{props.node.metadata.outputParameterWarning}</p> : null}<CanvasGenerationResults node={props.node} /></div> : <UnknownNodeContent theme={props.theme} />;
 }
 
 function PluginCanvasNodeContent({ node, theme, schema }: CanvasNodeContentProps & { schema: Record<string, unknown> }) {

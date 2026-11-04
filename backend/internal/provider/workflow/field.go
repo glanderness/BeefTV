@@ -281,3 +281,12 @@ func workflowFieldRawBool(raw map[string]json.RawMessage, fallback bool, keys ..
 	}
 	return fallback
 }
+
+func isWorkflowPromptSource(source string) bool {
+	switch strings.ReplaceAll(strings.ReplaceAll(source, "_", ""), "-", "") {
+	case "prompt", "text", "positiveprompt", "positive":
+		return true
+	default:
+		return false
+	}
+}

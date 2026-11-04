@@ -11,14 +11,6 @@ import (
 	"strings"
 )
 
-func runningHubWorkflowFailureMessage(response map[string]any) string {
-	message := runningHubFailureMessage(response)
-	normalized := strings.ToLower(message)
-	if strings.Contains(message, "企业版余额不足") || (strings.Contains(normalized, "enterprise") && strings.Contains(normalized, "balance")) {
-		return message + "；工作流提交固定使用积分 API Key，请确认提交 Key 不是企业级素材上传 Key"
-	}
-	return message
-}
 func runningHubUploadAuthFailure(err error) string {
 	var httpErr StatusError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnauthorized {
@@ -27,10 +19,10 @@ func runningHubUploadAuthFailure(err error) string {
 	if !strings.Contains(strings.ToLower(httpErr.Body), "apikey verification failed") {
 		return ""
 	}
-	return "RunningHub 参考素材上传接口认证失败（HTTP 401）：ApiKey verification failed。请确认“素材上传 API Key（企业级）”有效，并且它与 Base URL 属于同一个 RunningHub 站点"
+	return "RunningHub 参考素材上传接口认证失败（HTTP 401）：ApiKey verification failed。请确认“消费级 API Key”有效，并且它与 Base URL 属于同一个 RunningHub 站点"
 }
 
-// RunningHub 工作流的管理、提交和轮询固定使用积分 API Key；企业级 Key 仅由上传接口单独读取。
+// Workflow metadata, media upload, submission and polling share one credential.
 func runningHubAPIKey(config Config) string {
 	return strings.TrimSpace(config.APIKey)
 }
@@ -135,10 +127,11 @@ func runningHubTaskID(payload map[string]any) string {
 }
 
 type runningHubOutput struct {
-	URL   string
-	ID    string
-	Field string
-	Owner string
+	NodeID string
+	URL    string
+	ID     string
+	Field  string
+	Owner  string
 }
 
 func runningHubOutputURLs(value interface{}) []string {
@@ -153,22 +146,28 @@ func runningHubOutputURLs(value interface{}) []string {
 func runningHubOutputs(value interface{}) []runningHubOutput {
 	result := make([]runningHubOutput, 0)
 	seen := map[string]bool{}
-	var visit func(interface{}, string, string, string, string)
-	visit = func(current interface{}, path, field, id, owner string) {
+	var visit func(interface{}, string, string, string, string, string)
+	visit = func(current interface{}, path, field, id, owner, nodeID string) {
 		switch item := current.(type) {
 		case string:
 			item = strings.TrimSpace(item)
 			if runningHubIsOutputURL(item) {
-				if !seen[item] {
-					seen[item] = true
-					result = append(result, runningHubOutput{URL: item, ID: id, Field: field, Owner: owner})
+				if key := nodeID + ":" + item; !seen[key] {
+					seen[key] = true
+					result = append(result, runningHubOutput{URL: item, ID: id, Field: field, Owner: owner, NodeID: nodeID})
 				}
 			}
 		case []interface{}:
 			for index, child := range item {
-				visit(child, path+"/"+strconv.Itoa(index), field, id, owner)
+				visit(child, path+"/"+strconv.Itoa(index), field, id, owner, nodeID)
 			}
 		case map[string]interface{}:
+			if value := stringValue(item["nodeId"]); value != "" {
+				nodeID = value
+			}
+			if value := stringValue(item["node_id"]); value != "" {
+				nodeID = value
+			}
 			if outputID := runningHubOutputID(item); outputID != "" {
 				id, field, owner = outputID, "", path
 			}
@@ -177,15 +176,20 @@ func runningHubOutputs(value interface{}) []runningHubOutput {
 				keys = append(keys, key)
 			}
 			sort.Strings(keys)
-			for _, key := range keys {
-				lowerKey := strings.ToLower(strings.TrimSpace(key))
-				if runningHubOutputField(lowerKey) {
-					visit(item[key], path+"/"+key, field+"/"+lowerKey, id, owner)
+			for _, preferred := range []string{"fileUrl", "file_url", "url", "downloadUrl", "download_url", "src", "output", "outputs", "results", "files", "data", "images", "videos", "audio", "audios", "result"} {
+				ordered := []string{preferred}
+				for _, key := range keys {
+					if key != preferred && strings.EqualFold(strings.TrimSpace(key), preferred) {
+						ordered = append(ordered, key)
+					}
+				}
+				for _, key := range ordered {
+					visit(item[key], path+"/"+key, field+"/"+strings.ToLower(strings.TrimSpace(key)), id, owner, nodeID)
 				}
 			}
 		}
 	}
-	visit(value, "", "", "", "")
+	visit(value, "", "", "", "", "")
 	return result
 }
 

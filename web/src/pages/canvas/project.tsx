@@ -10,6 +10,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useCanvasGenerationOutputs } from "./use-canvas-generation-outputs";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { nanoid } from "nanoid";
@@ -968,8 +969,7 @@ function InfiniteCanvasPage() {
     const duplicateNodeFromContent = useCallback((node: CanvasNodeData) => duplicateNode(node.id), [duplicateNode]);
     const deleteNodeFromContent = useCallback((node: CanvasNodeData) => deleteNodes(new Set([node.id])), [deleteNodes]);
     const { updateNodeFromContent, updateMediaNodeFromContent, updateNodeMetadataFromContent } = document;
-    const canvasNodeActions = useMemo<CanvasNodeActionContextValue>(
-        () => ({
+    const canvasNodeActions = useCanvasGenerationOutputs(nodesRef, setNodes, {
             upload: replaceCanvasNodeMedia,
             download: downloadNodeImage,
             duplicate: duplicateNodeFromContent,
@@ -981,9 +981,7 @@ function InfiniteCanvasPage() {
             addPanoramaCaptureNode,
             startUpscaleBatch,
             recoverUpscaleResult: recoverAIUpscale,
-        }),
-        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent, startUpscaleBatch, recoverAIUpscale],
-    );
+    });
     const styles = useCanvasStyleWorkflow({
         pageUi,
         canvasId: projectId,

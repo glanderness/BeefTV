@@ -244,7 +244,7 @@ func DecodeInlineDataURL(value string) (string, []byte, error) {
 
 func inlineMediaValue(item map[string]interface{}) string {
 	for _, key := range []string{"dataUrl", "content", "url", "coverUrl"} {
-		if text, ok := item[key].(string); ok && (strings.HasPrefix(text, "data:image/") || strings.HasPrefix(text, "data:video/") || strings.HasPrefix(text, "data:audio/")) {
+		if text, ok := item[key].(string); ok && (strings.HasPrefix(text, "data:image/") || strings.HasPrefix(text, "data:video/") || strings.HasPrefix(text, "data:audio/") || (item["mediaType"] == "file" && strings.HasPrefix(text, "data:"))) {
 			return text
 		}
 	}

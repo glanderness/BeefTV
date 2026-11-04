@@ -1,3 +1,5 @@
+import { workflowFieldRange, workflowSchemaWithSavedMetadata, type WorkflowVideoControls } from "@/lib/workflow-field-schema";
+export type { WorkflowVideoControlKey, WorkflowVideoControls } from "@/lib/workflow-field-schema";
 import { useMemo } from "react";
 import type { MediaCapabilities } from "@/lib/media-capabilities";
 import { create } from "zustand";
@@ -289,30 +291,15 @@ export function mergeWorkflowFieldMappings(current: unknown, incoming: unknown, 
         if (field.min === undefined && previous.min !== undefined) merged.min = previous.min;
         if (field.max === undefined && previous.max !== undefined) merged.max = previous.max;
         if (field.step === undefined && previous.step !== undefined) merged.step = previous.step;
-        // 首次获得角色信息时采用服务端的内部参数默认值；之后才保留用户明确的启用选择。
-        if (field.role === "internal" && previous.role !== "internal") merged.enabled = field.enabled;
         if (field.safeToOverride === false) merged.enabled = false;
         return merged;
     });
 }
 
 function normalizeSavedWorkflowFields(workflow: { fields?: unknown; workflowJson?: Record<string, unknown> }, capability: RunningHubCapability) {
-    const schemaFields = workflowVideoFieldsFromJson(workflow.workflowJson);
-    return schemaFields.length ? mergeWorkflowFieldMappings(workflow.fields, schemaFields, capability) : normalizeWorkflowFieldMappings(workflow.fields, capability);
-}
-
-function workflowFieldRange(value: unknown) {
-    const candidates: Record<string, unknown>[] = [];
-    const add = (item: unknown) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) return;
-        const record = item as Record<string, unknown>;
-        candidates.push(record);
-        add(record.range);
-    };
-    add(value);
-    if (Array.isArray(value)) value.forEach(add);
-    const read = (keys: string[]) => candidates.map((item) => keys.map((key) => item[key]).find((candidate) => candidate !== undefined)).find((candidate) => candidate !== undefined);
-    return { min: read(["min", "minValue", "min_value"]), max: read(["max", "maxValue", "max_value"]), step: read(["step", "stepValue", "step_value"]) };
+    const savedFields = normalizeWorkflowFieldMappings(workflow.fields, capability);
+    const schemaFields = workflowSchemaWithSavedMetadata(workflow.workflowJson, savedFields);
+    return schemaFields.length ? mergeWorkflowFieldMappings(savedFields, schemaFields, capability) : savedFields;
 }
 
 export type RunningHubWorkflow = {
@@ -325,6 +312,7 @@ export type RunningHubWorkflow = {
     fields?: WorkflowFieldMapping[];
     workflowJson?: Record<string, unknown>;
     optionalImageMode?: string;
+    videoControls?: WorkflowVideoControls;
     raw?: Record<string, unknown>;
 };
 

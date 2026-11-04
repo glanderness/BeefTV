@@ -47,7 +47,7 @@ func (s *Service) fenceWorkflowSubmission(ctx context.Context, input workflow.In
 	return out
 }
 func (s *Service) uploadRunningHubMedia(ctx context.Context, root string, config providerConfig, media providerMedia) (string, error) {
-	return s.workflowClient(nil).UploadMedia(ctx, root, workflowConfigFromProvider(config), workflowMedia(media), s.IsLocalMode())
+	return s.workflowClient(nil).UploadMedia(ctx, root, workflowConfigFromProvider(config), workflowMedia(media))
 }
 func (s *Service) runningHubJSON(ctx context.Context, config providerConfig, endpoint string, body any, target *map[string]any) error {
 	return s.workflowClient(nil).PostJSONTarget(ctx, workflowConfigFromProvider(config), endpoint, body, target)

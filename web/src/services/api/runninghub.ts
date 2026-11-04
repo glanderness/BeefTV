@@ -5,12 +5,12 @@ export type RunningHubWorkflowFetchResult = RunningHubWorkflow & { kind: "workfl
 
 type FetchRequest = Pick<RunningHubConfig, "baseUrl" | "apiKey" | "walletApiKey" | "useWallet"> & { workflowId?: string; webappId?: string; title?: string; capability: RunningHubConfig["capability"] };
 
-export function fetchRunningHubWorkflow(config: FetchRequest) {
-    return http.post<RunningHubWorkflowFetchResult>("/runninghub/workflow-info", runningHubFetchPayload(config));
+export function fetchRunningHubWorkflow(config: FetchRequest, signal?: AbortSignal) {
+    return http.post<RunningHubWorkflowFetchResult>("/runninghub/workflow-info", runningHubFetchPayload(config), { signal, timeout: 30_000 });
 }
 
-export function fetchRunningHubApp(config: FetchRequest) {
-    return http.post<RunningHubWorkflowFetchResult>("/runninghub/app-info", runningHubFetchPayload(config));
+export function fetchRunningHubApp(config: FetchRequest, signal?: AbortSignal) {
+    return http.post<RunningHubWorkflowFetchResult>("/runninghub/app-info", runningHubFetchPayload(config), { signal, timeout: 30_000 });
 }
 
 function runningHubFetchPayload(config: FetchRequest) {

@@ -56,6 +56,7 @@ export function configuredModelDisplayName(config: AiConfig, value: string) {
 
 // Shared by selection and paid submission, including retries and batch jobs.
 export function portraitGenerationError(config: AiConfig, model: string, resolution?: string) {
+    if ((config.taskWorkflowProvider || "model") !== "model") return "";
     if (!seedancePortraitModel(model)) return "";
     if (!normalizeModelOptionValue(model, config.channels)) return "真人素材版当前不可用，请刷新模型列表或重新选择模型";
     const channel = resolveModelChannel(config, model);

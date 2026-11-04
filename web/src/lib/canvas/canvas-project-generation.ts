@@ -16,6 +16,7 @@ import { repairOverlappingImageBatches } from "@/lib/canvas/canvas-generation-la
 import { interruptFileUpload } from "@/lib/canvas/canvas-file-upload";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
+import { workflowParameterDefaults } from "@/lib/workflow-video-controls";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
@@ -446,7 +447,7 @@ export function buildVideoGenerationMetadata(
           ? h3VideoOperation(effectiveModel, { imageCount: context?.referenceImages.length || 0, videoCount: context?.referenceVideos.length || 0, audioCount: context?.referenceAudios.length || 0 }, metadata?.videoEditOperation)
           : resolveVideoEditOperation(node, context);
     // 工作流视频与非 H3 Max 的全模态参考生成不消费首尾帧/中间帧槽位，不再把历史帧选择当成硬约束或透传给后端。
-    const workflowVideo = node?.type === CanvasNodeType.Config && (config?.taskWorkflowProvider === "runninghub" || isCanvasWorkflowProvider(metadata));
+    const workflowVideo = config?.taskWorkflowProvider === "runninghub" || isCanvasWorkflowProvider(metadata);
     const h3Max = isH3MaxModel(effectiveModel);
     const ignoreFrameSelection = workflowVideo || videoEditOperation === "draft_to_final" || (videoEditOperation === "reference_to_video" && !h3Max);
     const connectedImages = context?.referenceImages || [];

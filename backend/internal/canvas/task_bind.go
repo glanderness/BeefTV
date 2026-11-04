@@ -3,6 +3,7 @@ package canvas
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -16,6 +17,8 @@ const bindRevisionAttempts = 4
 // TaskOutputBind is the generation-field overlay applied to an existing node.
 // Title, position and unrelated metadata stay on the node.
 type TaskOutputBind struct {
+	CollectionOnly    bool
+	GenerationOutputs []any
 	// Set only by the transaction-bound composition root after local render ownership validation.
 	AllowEmptyVideo bool `json:"-"`
 	// Trusted admission identity for a pending video saved before the task response.
@@ -443,6 +446,23 @@ func hasStaleGenerationOutcome(metadata map[string]any) bool {
 }
 
 func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) {
+	if len(patch.GenerationOutputs) > 0 {
+		metadata["generationOutputs"] = patch.GenerationOutputs
+		metadata["generationOutputTaskId"] = patch.TaskID
+		if patch.CollectionOnly {
+			for _, key := range []string{"primaryOutputId", "content", "storageKey", "assetId", "mimeType", "naturalWidth", "naturalHeight", "durationMs", "videoPreview"} {
+				delete(metadata, key)
+			}
+			metadata["outputParameterWarning"] = "工作流未返回当前节点类型的媒体，请在结果列表中预览或添加其他输出"
+		} else {
+			metadata["primaryOutputId"] = fmt.Sprintf("output:%d", patch.OutputIndex)
+			delete(metadata, "outputParameterWarning")
+		}
+	} else {
+		delete(metadata, "generationOutputs")
+		delete(metadata, "generationOutputTaskId")
+		delete(metadata, "primaryOutputId")
+	}
 	// Preparation keeps the previous video playable. Its previews and measured
 	// properties belong to that media, so replace them only when the new output binds.
 	if patch.MediaType == "video" && ((patch.StorageKey != "" && patch.StorageKey != nodeString(metadata, "storageKey")) ||

@@ -7,6 +7,7 @@ import { workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKe
 import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
 import { mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { resolveCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
+import { workflowParameterDefaults } from "@/lib/workflow-video-controls";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
@@ -46,19 +47,20 @@ export function resolvedCanvasGenerationRequirements(config: AiConfig, node: Can
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, requirements?: ModelRequirements): AiConfig {
     // 只有独立 Config 节点读取工作流元数据；普通图片/视频/音频节点始终按基础模型生成。
-    const workflowProvider = mode !== "text" && node?.type === CanvasNodeType.Config && resolveCanvasWorkflowProvider(node.metadata) === "runninghub" ? "runninghub" : "model";
+    const workflowProvider = mode !== "text" && resolveCanvasWorkflowProvider(node?.metadata) === "runninghub" ? "runninghub" : "model";
     const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const storedModel = resolveCanvasGenerationModel(config, node?.metadata?.model, mode);
     const preferredModel = storedModel || resolveCanvasGenerationModel(config, defaultModel, mode) || fallbackModel;
     // 先合并节点上的实时选择，再做兼容性匹配。否则路由只看到全局默认值，节点改过的时长、分辨率或布尔能力无法参与分流。
-    const workflowParameters = node?.metadata?.workflowParameters || {};
+    let workflowParameters = node?.metadata?.workflowParameters || {};
     const runningHubWorkflowId = node?.metadata?.runningHubWorkflowId?.trim() || config.runningHub.workflowId.trim();
     const selectedRunningHubWorkflow =
         workflowProvider === "runninghub"
             ? config.runningHub.workflows.find((item) => item.workflowId.trim() === runningHubWorkflowId && (!node?.metadata?.runningHubWorkflowKind || (item.kind === "app" ? "app" : "workflow") === node.metadata.runningHubWorkflowKind))
             : undefined;
     const selectedWorkflowFields = workflowProvider === "runninghub" ? (selectedRunningHubWorkflow?.fields?.length ? selectedRunningHubWorkflow.fields : workflowVideoFieldsFromJson(selectedRunningHubWorkflow?.workflowJson)) : [];
+    if (workflowProvider === "runninghub" && mode === "video") workflowParameters = { ...workflowParameters, ...workflowParameterDefaults(selectedWorkflowFields, workflowParameters) };
     const workflowOutputSize = workflowProvider === "model" ? "" : workflowOutputSizeValue(selectedWorkflowFields, workflowParameters);
     const workflowParameterValue = (source: string) => {
         const value = workflowParameters[`source:${source}`];
@@ -103,7 +105,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const liveOptions = modelRequestOptions(requestedConfig, mode);
     const baseRequirements = requirements?.capability ? { ...requirements, options: { ...liveOptions, ...(requirements.options || {}) } } : { capability: mode, options: liveOptions };
     if (mode === "video" && isH3Model(preferredModel) && requirements?.input) baseRequirements.videoOperation = h3VideoOperation(preferredModel, requirements.input, node?.metadata?.videoEditOperation);
-    const model = workflowProvider === "model" ? resolveCompatibleModel(config, preferredModel, imageSize ? { ...baseRequirements, imageSize } : baseRequirements) || preferredModel : preferredModel;
+    const model = workflowProvider === "model" ? resolveCompatibleModel(config, preferredModel, imageSize ? { ...baseRequirements, imageSize } : baseRequirements) || preferredModel : runningHubWorkflowId;
     const generationDefaults: Partial<ModelGenerationDefaults> =
         workflowProvider === "model"
             ? resolveModelGenerationDefaults(
@@ -270,7 +272,7 @@ function applyWorkflowParameterValues(fields: WorkflowFieldMapping[] | undefined
             source: "",
             sourceAutomatic: false,
             sourceFromUpstream: false,
-            randomEnabled: hasRandom ? values[randomKey] === true : hasValue ? false : field.randomEnabled,
+            randomEnabled: hasRandom ? values[randomKey] === true : field.randomEnabled,
         };
     });
 }

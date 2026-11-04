@@ -8,6 +8,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 )
 
 func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
@@ -45,9 +46,6 @@ func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	taskType := strings.TrimSpace(req.Type)
-	if prompt == "" && !allowsEmptyPrompt(taskType, req.Input) {
-		return nil, kernel.BadAuthRequest(PromptRequiredMessage)
-	}
 	if err := ValidateType(taskType); err != nil {
 		return nil, kernel.BadAuthRequest(err.Error())
 	}
@@ -74,6 +72,9 @@ func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
 	}
 	if selected.Input != nil {
 		normalizedInput = selected.Input
+	}
+	if prompt == "" && !modelcatalog.TaskInputUsesWorkflowProvider(normalizedInput) && !allowsEmptyPrompt(taskType, normalizedInput) {
+		return nil, kernel.BadAuthRequest(PromptRequiredMessage)
 	}
 	if strings.HasPrefix(taskType, "video_") {
 		if !s.deps.Catalog.HasExecutableVideoConfig(normalizedInput) {

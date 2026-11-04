@@ -32,6 +32,8 @@ backend\cmd\desktop\build\bin\BeefTV.exe
 
 脚本会为本次开发会话生成一个临时桌面令牌，并让 Vite 代理自动转发到同一个 Go 后端；生产包仍使用随机令牌和动态 loopback 端口。
 
+启动前会检查前端 `3000` 和后端监听端口是否被占用，按锁文件安装前端依赖，并等待 Vite 就绪后再打开桌面窗口。前端启动失败或等待超时会停止启动，避免出现空白窗口。默认开发数据目录是仓库下的 `.local/project-workbench-debug`；可通过 `CANVAS_DESKTOP_DATA_DIR` 指定其他独立目录。
+
 前端检查：
 
 ```bash

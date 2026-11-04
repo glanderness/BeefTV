@@ -1,3 +1,6 @@
+import { primaryGenerationOutput } from "@/lib/generation-outputs";
+import { parseBackendGenerationResult } from "@/services/api/generation-task";
+import { sleepWithSignal, waitForMaterializedGenerationOutputs } from "./canvas-generation-output-delivery";
 import type { Dispatch, SetStateAction } from "react";
 import { CanvasGenerationDurableAckError, CanvasGenerationMaterializationError, CanvasGenerationOutputMissingError } from "./canvas-generation-errors";
 export { CanvasGenerationDurableAckError, CanvasGenerationMaterializationError, CanvasGenerationOutputMissingError, CanvasGenerationTargetSaveError } from "./canvas-generation-errors";
@@ -84,37 +87,6 @@ export type BindBackendCanvasGenerationRuntime = {
     publishDeliveryProgress?: (taskId: string, progress: GenerationTaskDeliveryProgress | undefined) => void;
 };
 
-// Delivery downloads the remote artifact after the task is already succeeded.
-// While that runs the output has no materialized asset id, so binding would be
-// refused with output_not_ready. Wait for the delivered output instead of
-// reporting the transient state as a canvas conflict.
-const GENERATION_MATERIALIZATION_BUDGET_MS = 15 * 60 * 1000;
-
-const PERMANENT_MATERIALIZATION_ERROR_CODES = new Set(["resource_foreign", "asset_foreign", "unsupported_result_shape"]);
-
-function materializationPollDelay(attempt: number) {
-    const schedule = [1000, 2000, 3000, 5000];
-    return schedule[Math.min(attempt, schedule.length - 1)];
-}
-
-function sleepWithSignal(ms: number, signal?: AbortSignal) {
-    return new Promise<void>((resolve, reject) => {
-        if (signal?.aborted) {
-            reject(new DOMException("The operation was aborted", "AbortError"));
-            return;
-        }
-        const onAbort = () => {
-            clearTimeout(timer);
-            reject(new DOMException("The operation was aborted", "AbortError"));
-        };
-        const timer = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        signal?.addEventListener("abort", onAbort, { once: true });
-    });
-}
-
 function isMediaGenerationTask(task: GenerationTask) {
     return task.type !== "canvas_text" && task.type !== "text_replay";
 }
@@ -125,16 +97,6 @@ function generationTaskOutput(task: GenerationTask, outputIndex: number): Genera
 
 function generationTaskOutputMaterialized(task: GenerationTask, outputIndex: number) {
     return Boolean(generationTaskOutput(task, outputIndex)?.materializedAssetId);
-}
-
-function generationTaskOutputPermanentlyFailed(task: GenerationTask, outputIndex: number) {
-    if (task.resultState === "FAILED_PERMANENT") return true;
-    const code = generationTaskOutput(task, outputIndex)?.materializationErrorCode;
-    return Boolean(code && PERMANENT_MATERIALIZATION_ERROR_CODES.has(code));
-}
-
-function generationTaskDeliveryProgress(task: GenerationTask, outputIndex: number): GenerationTaskDeliveryProgress | undefined {
-    return task.delivery?.outputs.find((output) => output.outputIndex === outputIndex);
 }
 
 function isOutputNotReadyError(error: unknown) {
@@ -156,50 +118,7 @@ async function waitForMaterializedGenerationOutput(
     },
     forceRefresh = false,
 ): Promise<GenerationTask> {
-    let task = state.task;
-    try {
-        return await pollMaterializedGenerationOutput(state, forceRefresh, (next) => {
-            task = next;
-            state.publishDeliveryProgress(task.id, generationTaskDeliveryProgress(task, state.outputIndex));
-        });
-    } finally {
-        state.publishDeliveryProgress(task.id, undefined);
-    }
-}
-
-async function pollMaterializedGenerationOutput(
-    state: Parameters<typeof waitForMaterializedGenerationOutput>[0],
-    forceRefresh: boolean,
-    observe: (task: GenerationTask) => void,
-): Promise<GenerationTask> {
-    let task = state.task;
-    let attempt = 0;
-    let skipCheck = forceRefresh;
-    observe(task);
-    for (;;) {
-        if (state.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-        if (!state.isCurrent()) throw new DOMException("The canvas operation was abandoned", "AbortError");
-        // A materialized ID can outlive its resource. Repeated bind refusals
-        // share this deadline even when the task still reports that ID.
-        if (state.now() - state.startedAt >= GENERATION_MATERIALIZATION_BUDGET_MS) throw new CanvasGenerationMaterializationError(new Error("生成结果取回或写入画布超时，请继续取回"));
-        if (!skipCheck) {
-            if (generationTaskOutputMaterialized(task, state.outputIndex)) return task;
-            const deliveryCode = generationTaskOutput(task, outputIndexFromState(state))?.materializationErrorCode || task.stage;
-            if (deliveryCode === "delivery_paused" || deliveryCode === "delivery_timed_out") {
-                throw new CanvasGenerationMaterializationError(new Error(deliveryCode === "delivery_paused" ? "已停止取回，可继续取回原结果" : "结果取回超时，可继续取回原结果"));
-            }
-            if (generationTaskOutputPermanentlyFailed(task, state.outputIndex)) throw new CanvasGenerationMaterializationError(new Error(task.resultState || task.error || "生成结果下载失败"));
-        }
-        await state.sleep(materializationPollDelay(attempt), state.signal);
-        attempt += 1;
-        task = await state.refreshTask(task.id, { signal: state.signal });
-        observe(task);
-        skipCheck = false;
-    }
-}
-
-function outputIndexFromState(state: { outputIndex: number }) {
-    return state.outputIndex;
+    return waitForMaterializedGenerationOutputs({ ...state, outputIndices: [state.outputIndex] }, forceRefresh);
 }
 
 export async function bindBackendCanvasGenerationResult(input: {
@@ -218,7 +137,10 @@ export async function bindBackendCanvasGenerationResult(input: {
     if (input.task.status !== "succeeded") throw new Error("只有成功的任务才能绑定到画布");
     const runtime = input.runtime ?? {};
     const capturedCanvasId = input.canvasId;
-    const outputIndex = input.outputIndex ?? 0;
+    const node = input.nodesRef.current.find(item => item.id === input.nodeId);
+    const outputs = input.outputIndex === undefined && input.task.resultJson ? parseBackendGenerationResult(input.task).outputs || [] : [];
+    const chosen = outputs.find(item => item.id === node?.metadata?.primaryOutputId);
+    const outputIndex = input.outputIndex ?? chosen?.outputIndex ?? primaryGenerationOutput(outputs, node?.type || input.task.type.replace(/^canvas_/, ""))?.outputIndex ?? 0;
     const hydrateOutputs = runtime.hydrateOutputs ?? hydrateBackendGeneratedOutputs;
     const persistDocument = runtime.persistDocument ?? persistCanvasDocument;
     const bindOutput = runtime.bindOutput ?? bindCanvasTaskOutput;

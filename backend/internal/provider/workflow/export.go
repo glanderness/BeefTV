@@ -3,7 +3,7 @@ package workflow
 // RootURL normalizes a configured RunningHub base URL to the OpenAPI root.
 func RootURL(value string) string { return runningHubRootURL(value) }
 
-// APIKey is the credit-key used for workflow submit/poll (not the upload key).
+// APIKey is the credential shared by workflow metadata, upload and execution.
 func APIKey(config Config) string { return runningHubAPIKey(config) }
 
 func PayloadCode(payload map[string]any) (int, bool) { return runningHubPayloadCode(payload) }

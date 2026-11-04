@@ -8,6 +8,11 @@ import { modelCapabilityConfigFor, videoReferencesForOperation } from "@/lib/mod
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
+import { CanvasWorkflowControls } from "./canvas-workflow-controls";
+import { normalizeRunningHubCapability } from "@/stores/use-config-store";
+import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
+import { canvasWorkflowInputError } from "@/lib/canvas/canvas-workflow-inputs";
+import { resolveGenerationWorkflowExecution } from "@/lib/generation-workflow-execution";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -128,6 +133,20 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         characterCount: activeReferences.filter((item) => item.kind === "character").length,
     });
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
+    const workflowActive = config.taskWorkflowProvider === "runninghub";
+    const workflowStatuses = usePluginStore((state) => state.runtimeStatuses);
+    const videoWorkflows = mode === "video" && (workflowActive || workflowProviderPluginEnabled(workflowStatuses, "runninghub")) ? globalConfig.runningHub.workflows.filter((item) => normalizeRunningHubCapability(item.capability, normalizeRunningHubCapability(globalConfig.runningHub.capability)) === "video") : [];
+    const workflowOptionValue = (item: (typeof videoWorkflows)[number]) => `workflow:runninghub:${item.kind === "app" ? "app" : "workflow"}:${item.workflowId}`;
+    const selectedWorkflow = videoWorkflows.find((item) => item.workflowId === node.metadata?.runningHubWorkflowId && (item.kind === "app" ? "app" : "workflow") === (node.metadata?.runningHubWorkflowKind || "workflow"));
+    const workflowGroups = mode === "video" && (workflowActive || workflowProviderPluginEnabled(workflowStatuses, "runninghub")) ? [{key:"workflow:runninghub",label:"RunningHub",options:videoWorkflows.map((item) => ({value:workflowOptionValue(item),label:item.title || item.workflowId}))}] : [];
+    let workflowError = "";
+    if (workflowActive) {
+        try {
+            if (!node.metadata?.runningHubWorkflowId) throw new Error("请选择视频工作流或 AI 应用");
+            const execution = resolveGenerationWorkflowExecution(config, mode);
+            workflowError = canvasWorkflowInputError(execution?.workflowFields || [], activeReferences, node.metadata?.workflowParameters || {});
+        } catch (error) { workflowError = error instanceof Error ? error.message : "工作流配置不可用"; }
+    }
     const availableModels = selectableModelsByCapability(config, mode);
     const resolvedRequirements: ModelRequirements = {
         ...requirements,
@@ -169,7 +188,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const videoReferenceInputs = useMemo(() => activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]), [activeReferences]);
     const h3SelectedFrames = [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, node.metadata?.videoMiddleFrameNodeId];
     const hasH3ReferenceOrder = isH3MaxFamilyModel(config.model) && videoReferenceInputs.some((input) => ["image", "character", "video", "audio"].includes(input.type) && !h3SelectedFrames.includes(input.nodeId));
-    const hasVideoPromptTools = mode === "video" && !simpleMode && ((h3Max && videoFrameOptions.length > 0) || hasH3ReferenceOrder);
+    const hasVideoPromptTools = mode === "video" && !workflowActive && !simpleMode && ((h3Max && videoFrameOptions.length > 0) || hasH3ReferenceOrder);
     const renderVideoPromptTools = () => (
         <>
             {h3Max && videoFrameOptions.length > 0 ? (
@@ -211,7 +230,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const isSubmitDisabled = !isRunning && (Boolean(workflowError) || !workflowActive && !prompt.trim());
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -275,7 +294,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return false;
+        if ((!text && !workflowActive) || workflowError || isRunning) return false;
         if (referenceCheck.issues.length) {
             setReferenceAction({ type: "locate", token: referenceCheck.issues[0].token, key: Date.now() });
             return false;
@@ -422,7 +441,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     };
 
     const renderComposerControls = (expanded: boolean) =>
-        simpleMode ? (
+        simpleMode && mode !== "video" ? (
             <div className="canvas-node-composer-footer">
                 <span className="min-w-0 truncate px-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
@@ -441,15 +460,21 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         ) : (
             <div className="canvas-node-composer-footer">
                 <div className={expanded ? "min-w-0 flex-1" : "canvas-node-composer-model"}>
-                    {availableModels.length ? (
+                    {availableModels.length || workflowGroups.length ? (
                         <ModelPicker
                             className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
                             fullWidth
                             config={config}
-                            value={config.model}
+                            value={workflowActive ? selectedWorkflow ? workflowOptionValue(selectedWorkflow) : "" : config.model}
+                            placeholder={workflowActive ? "选择 RunningHub 工作流" : "选择模型"}
+                            additionalGroups={workflowGroups}
                             onChange={(model) => {
-                                const patch = mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model };
-                                if (mode === "image" || mode === "video") {
+                                const workflow = videoWorkflows.find((item) => workflowOptionValue(item) === model);
+                                if (workflow && workflow === selectedWorkflow) return;
+                                const patch: CanvasNodeMetadata = workflow
+                                    ? { model: undefined, workflowProvider: "runninghub", runningHubWorkflowId: workflow.workflowId, runningHubWorkflowKind: workflow.kind === "app" ? "app" : "workflow", workflowParameters: {}, videoStartFrameNodeId: undefined, videoEndFrameNodeId: undefined }
+                                    : { model, workflowProvider: "model", runningHubWorkflowId: undefined, runningHubWorkflowKind: undefined, workflowParameters: {}, ...(mode === "image" ? defaultImageParamsForModel(config, model) : {}) };
+                                if (!workflow && (mode === "image" || mode === "video")) {
                                     const nextConfig = buildNodeConfig(globalConfig, { ...node, metadata: { ...node.metadata, ...patch } }, mode, { ...requirements, options: undefined });
                                     if (mode === "image") rememberImageSettings({ model: nextConfig.model, ratio: nextConfig.size, quality: nextConfig.quality, count: nextConfig.count, transparentBackground: nextConfig.transparentBackground });
                                     else rememberVideoSettings({ model: nextConfig.model, ratio: nextConfig.size, seconds: nextConfig.videoSeconds, videoQuality: nextConfig.vquality, generateAudio: nextConfig.videoGenerateAudio, watermark: nextConfig.videoWatermark });
@@ -517,7 +542,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                             />
                         </>
-                    ) : mode === "video" ? (
+                    ) : mode === "video" && workflowActive ? <CanvasWorkflowControls node={node} config={globalConfig} theme={theme} references={activeReferences} onConfigChange={onConfigChange} /> : mode === "video" ? (
                         <>
                             <CanvasCameraControlPopover
                                 cameraControl={node.metadata?.cameraControl}
@@ -733,6 +758,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 </div>
             ) : null}
 
+            {workflowError ? <p role="status" className="px-2 text-xs" style={{ color: theme.accent.danger }}>{workflowError}</p> : null}
             {renderComposerControls(false)}
 
             <Modal

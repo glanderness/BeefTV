@@ -32,10 +32,6 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		}
 		input.Prompt = compiled
 	}
-	if strings.TrimSpace(input.Prompt) == "" && !(input.Mode == "video" && strings.TrimSpace(metadataString(input.Metadata, "videoDraftTaskId")) != "") {
-		return nil, errors.New("prompt is required")
-	}
-
 	if runtime.Config != nil {
 		config, err := runtime.Config.Resolve(input.Config)
 		if err != nil {
@@ -55,6 +51,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 
 	if workflow.IsProviderInterface(input.Config.InterfaceType) {
 		return executeWorkflow(ctx, runtime, userID, input)
+	}
+	if strings.TrimSpace(input.Prompt) == "" {
+		return nil, errors.New("prompt is required")
 	}
 
 	if input.Mode == "image" && input.Metadata != nil && strings.TrimSpace(metadataString(input.Metadata, "styleProfileJson")) != "" {
@@ -305,7 +304,6 @@ func workflowConfig(config Config) workflow.Config {
 		WebappID:              config.WebappID,
 		WorkflowJSON:          config.WorkflowJSON,
 		WorkflowFields:        config.WorkflowFields,
-		RunningHubUploadKey:   config.RunningHubUploadKey,
 	}
 }
 

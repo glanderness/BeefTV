@@ -9,7 +9,7 @@ import (
 )
 
 // FetchSettingsWorkflow loads settings-page workflow JSON. Empty prompt is a
-// valid empty schema, not a parse error. Payload code is not treated as failure.
+// valid empty schema. Settings metadata is validated by schema, including gateways with nonzero codes.
 func (c *Client) FetchSettingsWorkflow(ctx context.Context, config Config, req FetchRequest) (map[string]any, error) {
 	exec := c.prepared()
 	if exec.Requests == nil {
@@ -31,6 +31,9 @@ func (c *Client) FetchSettingsWorkflow(ctx context.Context, config Config, req F
 	if data == nil {
 		return nil, errors.New("RunningHub 工作流参数响应缺少 data")
 	}
+	if _, exists := data["prompt"]; !exists {
+		return nil, errors.New("RunningHub 工作流参数响应缺少 prompt")
+	}
 	workflowJSON, err := parseWorkflowPrompt(data["prompt"], false)
 	if err != nil {
 		return nil, err
@@ -41,7 +44,6 @@ func (c *Client) FetchSettingsWorkflow(ctx context.Context, config Config, req F
 		"title":        firstNonEmpty(req.Title, workflowID),
 		"fields":       CollectFields(workflowJSON, req.Capability),
 		"workflowJson": workflowJSON,
-		"raw":          response,
 	}, nil
 }
 
@@ -70,6 +72,35 @@ func parseWorkflowPrompt(raw any, required bool) (map[string]any, error) {
 		}
 	} else if prompt, ok := raw.(map[string]any); ok {
 		workflowJSON = prompt
+	} else if _, ok := raw.(string); !ok {
+		return nil, errors.New("RunningHub 工作流参数格式无效")
+	}
+	if workflowJSON == nil {
+		return nil, errors.New("RunningHub 工作流参数格式无效")
 	}
 	return workflowJSON, nil
+}
+
+func (c *Client) FetchSettingsApp(ctx context.Context, config Config, req FetchRequest) (map[string]any, error) {
+	webappID := strings.TrimSpace(req.WebappID)
+	root := runningHubRootURL(config.BaseURL)
+	var response map[string]any
+	if err := c.PostJSONTarget(ctx, config, root+"/api/webapp/apiCallDemo", map[string]any{
+		"apiKey":   runningHubAPIKey(config),
+		"webappId": webappID,
+	}, &response); err != nil {
+		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%w", err)
+	}
+	if code, valid := runningHubPayloadCode(response); valid && code != 0 {
+		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%s", runningHubFailureMessage(response))
+	}
+	rawData, _ := response["data"].(map[string]any)
+	if rawData == nil {
+		return nil, fmt.Errorf("RunningHub App 参数响应缺少 data")
+	}
+	nodes, valid := rawData["nodeInfoList"].([]any)
+	if !valid {
+		return nil, fmt.Errorf("RunningHub App 参数响应缺少有效的 nodeInfoList")
+	}
+	return map[string]any{"kind": "app", "webappId": webappID, "workflowId": webappID, "title": firstNonEmpty(req.Title, webappID), "fields": CollectAppFields(nodes, req.Capability)}, nil
 }

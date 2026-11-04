@@ -128,6 +128,10 @@ export default function PluginsPage() {
     }, []);
 
     const reloadBackendPlugins = async () => {
+        if (localRuntime) {
+            setBackendPlugins([]);
+            return;
+        }
         setBackendPluginsLoading(true);
         try {
             const result = await syncPluginsFromBackend();

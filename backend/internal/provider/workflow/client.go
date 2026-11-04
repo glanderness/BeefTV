@@ -79,9 +79,6 @@ func (c *Client) RunRunningHub(ctx context.Context, input Input) (map[string]int
 }
 
 func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]interface{}, error) {
-	if input.LocalWorkspace && (len(input.ReferenceImages) > 0 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 || input.Mask != nil) {
-		return nil, errors.New("本地工作区不支持将参考素材上传到 RunningHub")
-	}
 	if err := c.requireActor(ctx, input.Config.InterfaceType); err != nil {
 		return nil, err
 	}
@@ -121,14 +118,14 @@ func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]int
 	}
 	files := map[string]string{}
 	for _, media := range append(append(append([]Media{}, input.ReferenceImages...), input.ReferenceVideos...), input.ReferenceAudios...) {
-		name, err := c.UploadMedia(ctx, root, input.Config, media, input.LocalWorkspace)
+		name, err := c.UploadMedia(ctx, root, input.Config, media)
 		if err != nil {
 			return nil, err
 		}
 		files[media.ID] = name
 	}
 	if input.Mask != nil {
-		name, err := c.UploadMedia(ctx, root, input.Config, *input.Mask, input.LocalWorkspace)
+		name, err := c.UploadMedia(ctx, root, input.Config, *input.Mask)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +155,7 @@ func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]int
 	}
 	code, validCode := runningHubPayloadCode(submitted)
 	if validCode && code != 0 {
-		return nil, fmt.Errorf("RunningHub 工作流提交失败：%s", runningHubWorkflowFailureMessage(submitted))
+		return nil, fmt.Errorf("RunningHub 工作流提交失败：%s", runningHubFailureMessage(submitted))
 	}
 	taskID := runningHubTaskID(submitted)
 	if taskID == "" {
@@ -193,10 +190,11 @@ func (c *Client) FetchWorkflowJSON(ctx context.Context, root string, config Conf
 }
 
 // UploadMedia uploads one reference file. Local workspace always rejects.
-func (c *Client) UploadMedia(ctx context.Context, root string, config Config, media Media, localWorkspace bool) (string, error) {
+func (c *Client) UploadMedia(ctx context.Context, root string, config Config, media Media) (string, error) {
 	c = c.prepared()
-	if localWorkspace {
-		return "", errors.New("本地工作区不支持将素材上传到 RunningHub")
+	apiKey := runningHubAPIKey(config)
+	if apiKey == "" {
+		return "", errors.New("RunningHub 参考素材上传缺少消费级 API Key")
 	}
 	if c.Media == nil {
 		return "", errors.New("工作流缺少受保护的素材读取端口")
@@ -217,12 +215,6 @@ func (c *Client) UploadMedia(ctx context.Context, root string, config Config, me
 	}
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	apiKey := strings.TrimSpace(config.RunningHubUploadKey)
-	if apiKey == "" {
-		return "", errors.New("RunningHub 参考素材上传需要企业级 API Key，请在 RunningHub 设置中填写“素材上传 API Key（企业级）”")
-	}
-	_ = writer.WriteField("apiKey", apiKey)
-	_ = writer.WriteField("fileType", "input")
 	filename := mediaFilename(media, mimeType)
 	header := make(textproto.MIMEHeader)
 	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": filename}))
@@ -237,11 +229,20 @@ func (c *Client) UploadMedia(ctx context.Context, root string, config Config, me
 	if err := writer.Close(); err != nil {
 		return "", err
 	}
+	// Upload and task submission use the same credential, regardless of any
+	// stale Authorization header retained in a custom channel configuration.
+	headers := make([]outbound.OutboundHeader, 0, len(config.Headers)+1)
+	for _, header := range config.Headers {
+		if !strings.EqualFold(header.Name, "Authorization") {
+			headers = append(headers, header)
+		}
+	}
+	headers = append(headers, outbound.OutboundHeader{Name: "Authorization", Value: "Bearer " + apiKey})
 	data, _, err := c.execute(ctx, Request{
 		Kind:        "upload",
 		Method:      http.MethodPost,
-		URL:         root + "/task/openapi/upload",
-		Headers:     config.Headers,
+		URL:         root + "/openapi/v2/media/upload/binary",
+		Headers:     headers,
 		ContentType: writer.FormDataContentType(),
 		Body:        body.Bytes(),
 	})
@@ -256,10 +257,6 @@ func (c *Client) UploadMedia(ctx context.Context, root string, config Config, me
 		return "", errors.New("RunningHub 上传响应不是有效 JSON")
 	}
 	code, validCode := runningHubPayloadCode(rawResponse)
-	if !validCode {
-		validCode = runningHubFileName(rawResponse) != ""
-		code = 0
-	}
 	if !validCode || code != 0 {
 		return "", fmt.Errorf("RunningHub 上传素材失败：%s", runningHubFailureMessage(rawResponse))
 	}
@@ -377,8 +374,8 @@ func (c *Client) queryVideoOutputs(ctx context.Context, config Config, root, tas
 		resolved := make([]runningHubOutput, 0, len(outputs))
 		for _, output := range outputs {
 			output.URL = resolveRunningHubOutputURL(root, output.URL)
-			if !seen[output.URL] {
-				seen[output.URL] = true
+			if key := output.NodeID + ":" + output.URL; !seen[key] {
+				seen[key] = true
 				resolved = append(resolved, output)
 			}
 		}
@@ -404,8 +401,12 @@ func (c *Client) pollLegacy(ctx context.Context, config Config, root string, tas
 			return nil, err
 		}
 		if stage == "succeeded" {
+			result, err := c.downloadOutputs(ctx, outputs, taskID, nil, &config, root)
+			if err != nil {
+				return nil, err
+			}
 			c.updateReceipt(ctx, taskID, "succeeded", nil)
-			return c.downloadOutputs(ctx, outputs, "", nil, nil, "")
+			return result, nil
 		}
 		next := c.Time.Now().Add(interval)
 		c.updateReceipt(ctx, taskID, stage, &next)
@@ -427,8 +428,30 @@ func (c *Client) DownloadOutputs(ctx context.Context, urls []string, taskID stri
 
 func (c *Client) downloadOutputs(ctx context.Context, outputs []runningHubOutput, taskID string, policy *PollPolicy, config *Config, root string) (map[string]interface{}, error) {
 	c = c.prepared()
-	images := make([]map[string]interface{}, 0)
-	var video, audio map[string]interface{}
+	if taskID != "" {
+		c.updateReceipt(ctx, taskID, "downloading", nil)
+	}
+	artifacts := make([]map[string]interface{}, 0, len(outputs))
+	appendArtifact := func(output runningHubOutput, mimeType string, data []byte) {
+		value, _ := workflowOutputValue(mimeType, data).(map[string]interface{})
+		if value == nil {
+			return
+		}
+		kind := "file"
+		for _, candidate := range []string{"image", "video", "audio"} {
+			if strings.HasPrefix(mimeType, candidate+"/") {
+				kind = candidate
+				break
+			}
+		}
+		value["mediaType"] = kind
+		value["outputIndex"] = len(artifacts)
+		value["id"] = fmt.Sprintf("output:%d", len(artifacts))
+		if output.NodeID != "" {
+			value["sourceNodeId"] = output.NodeID
+		}
+		artifacts = append(artifacts, value)
+	}
 	for _, output := range outputs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -439,18 +462,7 @@ func (c *Client) downloadOutputs(ctx context.Context, outputs []runningHubOutput
 			if err != nil {
 				return nil, err
 			}
-			if item := workflowOutputValue(mimeType, data); item != nil {
-				switch value := item.(type) {
-				case map[string]interface{}:
-					if strings.HasPrefix(mimeType, "image/") {
-						images = append(images, value)
-					} else if strings.HasPrefix(mimeType, "video/") {
-						video = value
-					} else if strings.HasPrefix(mimeType, "audio/") {
-						audio = value
-					}
-				}
-			}
+			appendArtifact(output, mimeType, data)
 			continue
 		}
 		if !isPublicMediaURL(rawURL) {
@@ -488,36 +500,12 @@ func (c *Client) downloadOutputs(ctx context.Context, outputs []runningHubOutput
 		if err != nil {
 			return nil, fmt.Errorf("下载 RunningHub 产物失败：%w", err)
 		}
-		item := workflowOutputValue(mimeType, data)
-		if item == nil {
-			continue
-		}
-		value := item.(map[string]interface{})
-		switch {
-		case strings.HasPrefix(mimeType, "image/"):
-			images = append(images, value)
-		case strings.HasPrefix(mimeType, "video/"):
-			video = value
-		case strings.HasPrefix(mimeType, "audio/"):
-			audio = value
-		}
+		appendArtifact(output, mimeType, data)
 	}
-	result := map[string]interface{}{"mode": "image"}
-	if len(images) > 0 {
-		result["images"] = images
-	}
-	if video != nil {
-		result["mode"] = "video"
-		result["video"] = video
-	}
-	if audio != nil {
-		result["mode"] = "audio"
-		result["audio"] = audio
-	}
-	if len(images) == 0 && video == nil && audio == nil {
+	if len(artifacts) == 0 {
 		return nil, errors.New("RunningHub 返回的产物类型不受支持")
 	}
-	return result, nil
+	return map[string]interface{}{"mode": artifacts[0]["mediaType"], "outputs": artifacts}, nil
 }
 
 func (c *Client) videoSource(config *Config, root, rawURL string) BinarySource {

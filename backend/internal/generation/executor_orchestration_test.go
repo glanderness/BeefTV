@@ -16,6 +16,36 @@ import (
 
 type stubWorkflowPort struct{ calls atomic.Int32 }
 
+type rejectingWorkflowPromptPort struct {
+	prompt string
+	err    error
+}
+
+func (p *rejectingWorkflowPromptPort) Execute(_ context.Context, input Input) (map[string]interface{}, error) {
+	p.prompt = input.Prompt
+	return nil, p.err
+}
+
+func TestWorkflowEmptyPromptReachesProviderAndPreservesFailure(t *testing.T) {
+	for _, mode := range []string{"image", "video", "audio"} {
+		t.Run(mode, func(t *testing.T) {
+			providerErr := errors.New("workflow upstream rejected the input")
+			port := &rejectingWorkflowPromptPort{err: providerErr}
+			ctx := WithRuntime(context.Background(), taskRuntime(func(runtime *Runtime) { runtime.Workflow = port }))
+			_, err := Execute(ctx, Input{Mode: mode, Config: Config{InterfaceType: "runninghub-workflow-" + mode, BaseURL: "https://www.runninghub.cn", APIKey: "test-key", WorkflowID: "workflow-id"}})
+			if !errors.Is(err, providerErr) || port.prompt != "" {
+				t.Fatalf("empty prompt was blocked or replaced: err=%v prompt=%q", err, port.prompt)
+			}
+		})
+	}
+	for _, mode := range []string{"text", "image", "video", "audio"} {
+		_, err := Execute(context.Background(), Input{Mode: mode, Prompt: "  "})
+		if err == nil || !strings.Contains(err.Error(), "prompt is required") {
+			t.Fatalf("ordinary %s empty prompt error = %v", mode, err)
+		}
+	}
+}
+
 func (s *stubWorkflowPort) Execute(ctx context.Context, input Input) (map[string]interface{}, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

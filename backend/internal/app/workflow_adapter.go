@@ -11,7 +11,8 @@ import (
 
 func (s *Service) workflowReceiptConfig() workflow.ReceiptConfig {
 	return workflow.ReceiptConfig{
-		HasService: s != nil, HasRepo: s != nil && s.repo != nil,
+		DisplayStage: generation.UpdateWorkflowDisplayStage,
+ HasService: s != nil, HasRepo: s != nil && s.repo != nil,
 		TaskIdentity:     func(ctx context.Context) (string, string, bool) { m, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext); return m.UserID, m.TaskID, ok },
 		CheckTaskForUser: func(u, id string) error { _, err := s.repo.TaskForUser(u, id); return err },
 		UpdateTaskState:  func(id, reqID, stage string, next *time.Time) error { return s.repo.UpdateTaskProviderState(id, reqID, stage, next) },
@@ -47,7 +48,7 @@ func downloadWorkflowVideo(ctx context.Context, taskID string, p workflow.PollPo
 	return data, generation.NormalizedMediaMIMEType(mime, data), err
 }
 func workflowConfigFromProvider(c providerConfig) workflow.Config {
-	return workflow.Config{InterfaceType: c.InterfaceType, BaseURL: c.BaseURL, APIKey: c.APIKey, Headers: c.Headers, Model: c.Model, Size: c.Size, Quality: c.Quality, TransparentBackground: c.TransparentBackground, Count: c.Count, VideoSeconds: c.VideoSeconds, VQuality: c.VQuality, VideoGenerateAudio: c.VideoGenerateAudio, VideoWatermark: c.VideoWatermark, AudioVoice: c.AudioVoice, AudioFormat: c.AudioFormat, AudioSpeed: c.AudioSpeed, AudioInstructions: c.AudioInstructions, SystemPrompt: c.SystemPrompt, WorkflowID: c.WorkflowID, WebappID: c.WebappID, WorkflowJSON: c.WorkflowJSON, WorkflowFields: c.WorkflowFields, RunningHubUploadKey: c.RunningHubUploadKey}
+	return workflow.Config{InterfaceType: c.InterfaceType, BaseURL: c.BaseURL, APIKey: c.APIKey, Headers: c.Headers, Model: c.Model, Size: c.Size, Quality: c.Quality, TransparentBackground: c.TransparentBackground, Count: c.Count, VideoSeconds: c.VideoSeconds, VQuality: c.VQuality, VideoGenerateAudio: c.VideoGenerateAudio, VideoWatermark: c.VideoWatermark, AudioVoice: c.AudioVoice, AudioFormat: c.AudioFormat, AudioSpeed: c.AudioSpeed, AudioInstructions: c.AudioInstructions, SystemPrompt: c.SystemPrompt, WorkflowID: c.WorkflowID, WebappID: c.WebappID, WorkflowJSON: c.WorkflowJSON, WorkflowFields: c.WorkflowFields, }
 }
 func (s *Service) workflowInputFromCanvas(ctx context.Context, in canvasGenerationInput) workflow.Input {
 	var mask *workflow.Media
@@ -70,3 +71,5 @@ func (workflowRequestExecutor) Execute(ctx context.Context, req workflow.Request
 func (p workflowPlugins) EnsureEnabled(ctx context.Context, iface string) error                                      { return p.service.workflowClient(nil).Plugins.EnsureEnabled(ctx, iface) }
 func (r workflowReceipt) Ready(ctx context.Context) error                                                            { return r.service.workflowClient(nil).Receipt.Ready(ctx) }
 func (r workflowReceipt) RecordAccepted(ctx context.Context, id, stage string, next *time.Time) error                { return r.service.workflowClient(nil).Receipt.RecordAccepted(ctx, id, stage, next) }
+
+func (r workflowReceipt) UpdateStage(ctx context.Context, id, stage string, next *time.Time) error { return r.service.workflowClient(nil).Receipt.UpdateStage(ctx, id, stage, next) }

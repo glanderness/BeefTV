@@ -63,14 +63,14 @@ func TestRunningHubOutputFieldsAreStableAndDistinctURLsSurvive(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"images":[{"fileUrl":"https://media.example/image.png"}],"videos":[{"outputId":"movie","fileUrl":"https://media.example/a.mp4","downloadUrl":"https://media.example/b.mp4","url":"https://media.example/a.mp4"}]}`), &body); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"https://media.example/image.png", "https://media.example/b.mp4", "https://media.example/a.mp4"}
+	want := []string{"https://media.example/image.png", "https://media.example/a.mp4", "https://media.example/b.mp4"}
 	for i := 0; i < 100; i++ {
 		if got := OutputURLs(body); !reflect.DeepEqual(got, want) {
 			t.Fatalf("output ordering/dedup changed: %v", got)
 		}
 	}
 	outputs := runningHubOutputs(body)
-	if outputs[1].ID != "movie" || outputs[2].ID != "movie" || outputs[1].Field != "/downloadurl" || outputs[2].Field != "/fileurl" || outputs[1].Owner != "/videos/0" {
+	if outputs[1].ID != "movie" || outputs[2].ID != "movie" || outputs[1].Field != "/fileurl" || outputs[2].Field != "/downloadurl" || outputs[1].Owner != "/videos/0" {
 		t.Fatalf("output identity lost: %#v", outputs)
 	}
 }
@@ -103,14 +103,14 @@ func TestRunningHubRenewalMatchesReorderedOutputIDsAcrossMedia(t *testing.T) {
 		return mp4, "application/octet-stream", nil
 	}}
 	result, stage, err := productionClient(exec, renewOutputPoller{}).QueryVideo(context.Background(), outputRecoveryConfig(), "https://workflow.example", "original")
-	if err != nil || stage != "succeeded" || result["mode"] != "video" {
+	if err != nil || stage != "succeeded" || result["mode"] != "image" {
 		t.Fatalf("stage=%s result=%v err=%v", stage, result, err)
 	}
 	want := []string{"https://media.example/picture.png", "https://media.example/old-a.mp4", "https://media.example/new-a.mp4", "https://media.example/old-b.mp4", "https://media.example/new-b.mp4"}
-	if !reflect.DeepEqual(reads, want) || queries != 3 || len(result["images"].([]map[string]interface{})) != 1 {
+	if !reflect.DeepEqual(reads, want) || queries != 3 || len(result["outputs"].([]map[string]interface{})) != 3 {
 		t.Fatalf("reads=%v queries=%d", reads, queries)
 	}
-	video := result["video"].(map[string]interface{})
+	video := result["outputs"].([]map[string]interface{})[1]
 	mimeType, data, err := decodeDataURL(video["dataUrl"].(string))
 	if err != nil || mimeType != "video/mp4" || !bytes.Equal(data, mp4) {
 		t.Fatal("recovered video bytes or MIME differ")
@@ -213,14 +213,14 @@ func TestRunningHubRenewalKeepsDistinctAliasURLsAndActualMIME(t *testing.T) {
 		return mp4, "application/octet-stream", nil
 	}}
 	result, _, err := productionClient(exec, renewOutputPoller{}).QueryVideo(context.Background(), outputRecoveryConfig(), "https://workflow.example", "original")
-	if err != nil || result["mode"] != "video" || len(result["images"].([]map[string]interface{})) != 1 {
+	if err != nil || len(result["outputs"].([]map[string]interface{})) != 2 {
 		t.Fatalf("result=%v err=%v", result, err)
 	}
-	want := []string{"https://media.example/old-image.mp4", "https://media.example/image.png?signature=new", "https://media.example/old-video.png", "https://media.example/video.mp4?signature=new"}
+	want := []string{"https://media.example/old-video.png", "https://media.example/video.mp4?signature=new", "https://media.example/old-image.mp4", "https://media.example/image.png?signature=new"}
 	if !reflect.DeepEqual(reads, want) || queries != 3 {
 		t.Fatalf("alias identity changed: %v queries=%d", reads, queries)
 	}
-	if result["images"].([]map[string]interface{})[0]["mimeType"] != "image/png" || result["video"].(map[string]interface{})["mimeType"] != "video/mp4" {
+	if result["outputs"].([]map[string]interface{})[1]["mimeType"] != "image/png" || result["outputs"].([]map[string]interface{})[0]["mimeType"] != "video/mp4" {
 		t.Fatal("MIME was taken from the expired URL instead of actual bytes/source")
 	}
 }

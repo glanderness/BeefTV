@@ -44,6 +44,7 @@ export type ResolvedCharacterVoice = {
 
 export type NodeGenerationContext = {
     prompt: string;
+    workflowImageSlots?: Array<{ image: ReferenceImage } | { character: CharacterGenerationReference }>;
     characterReferenceBindings?: CharacterReferenceBinding[];
     boundMediaMentions?: BoundMediaMention[];
     imageReferenceTableReferences?: CanvasImageTableReference[];
@@ -103,9 +104,9 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const storyboardInputs = getConnectedStoryboardRows(nodeId, nodes, connections);
     assertResolvableGenerationMentions(prompt, mentionInputs);
     const hasExplicitResourceMention = hasResolvableGenerationMention(prompt, mentionInputs);
-    const isWorkflowSource = sourceNode?.type === CanvasNodeType.Config && isCanvasWorkflowProvider(sourceNode.metadata);
+    const isWorkflowSource = isCanvasWorkflowProvider(sourceNode?.metadata);
     const hasConnectedMedia = connectedInputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio" || input.type === "character");
-    if ((promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && (sourceNode?.type === CanvasNodeType.Config || isWorkflowSource)) || hasExplicitResourceMention) {
+    if (isWorkflowSource || (promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && (sourceNode?.type === CanvasNodeType.Config || isWorkflowSource)) || hasExplicitResourceMention) {
         const includeConnectedMedia = isWorkflowSource || ((promptOnly || sourceNode?.type === CanvasNodeType.Config) && hasConnectedMedia);
         const context = buildComposerGenerationContext(
             mentionInputs,
@@ -116,6 +117,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
             includeConnectedMedia,
             connectedInputs,
             options.preserveMediaBindings,
+            isWorkflowSource,
         );
         const tableReferences = generationImageTableReferences(context.referenceImages, mentionInputs);
         if (options.preserveMediaBindings) context.imageReferenceTableReferences = tableReferences;
@@ -214,6 +216,7 @@ function buildComposerGenerationContext(
     includeConnectedMedia = false,
     workflowMediaInputs: NodeGenerationInput[] = [],
     preserveMediaBindings = false,
+    preserveWorkflowSlots = false,
 ): NodeGenerationContext {
     const normalizedPrompt = preserveMediaBindings ? prompt : normalizeGenerationNodeMentionTokens(prompt, inputs);
     const slotInputByToken = new Map(generationSlotEntries(inputs).map(({ token, input }) => [token, input]));
@@ -262,8 +265,15 @@ function buildComposerGenerationContext(
     }
 
     nextPrompt += normalizedPrompt.slice(lastIndex);
+    if (preserveWorkflowSlots) {
+        workflowMediaInputs.forEach((input) => {
+            if (input.type !== "text" || labelByNodeId.has(input.nodeId) || !input.text?.trim()) return;
+            textBlocks.push(input.text.trim());
+            labelByNodeId.set(input.nodeId, generationLabel("text", counts.text++));
+        });
+    }
     // 显式 @文本 引用是用户写进输入框的内容，必须内联真实文本；promptOnly 只拦自动上游文本。
-    if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
+    if (textBlocks.length) nextPrompt = [nextPrompt.trim(), ...textBlocks].filter(Boolean).join("\n\n");
     if (preserveMediaBindings) {
         // Explicitly quoted text can itself contain selected media tokens.
         for (const match of nextPrompt.matchAll(/@\[(node|asset):([^\]]+)\]/gu)) {
@@ -323,6 +333,7 @@ function buildComposerGenerationContext(
 
     return {
         prompt: nextPrompt,
+        ...(preserveWorkflowSlots ? { workflowImageSlots: selectedInputs.flatMap((input): NonNullable<NodeGenerationContext["workflowImageSlots"]> => input.image ? [{ image: input.image }] : input.character ? [{ character: input.character }] : []) } : {}),
         referenceImages,
         referenceVideos,
         referenceAudios,
@@ -572,13 +583,15 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     const details = await Promise.all(context.characterReferences.map((reference) => getProjectCharacter(domainProjectId, reference.assetId)));
     // 没有可信的能力声明时不知道上游能收几张图：只带每个角色的一张主参考图，补充视图交给用户自己连线，
     // 避免自动塞进用户没选过的素材把请求撑爆。有声明时才按剩余容量补充正/侧/背面。
-    const remainingBudget = referenceLimits ? Math.max(0, referenceLimits.maxImages - referenceImages.length) : 0;
+    const workflowSlots = context.workflowImageSlots;
+    const remainingBudget = workflowSlots ? Infinity : referenceLimits ? Math.max(0, referenceLimits.maxImages - referenceImages.length) : 0;
     const selected = details.flatMap((detail, index) => {
         const representation = preferredCharacterRepresentation(detail.character.representations);
+        if (workflowSlots && !representation) throw new Error(`角色卡“${detail.asset.title}”没有可用的主参考图，请先完善角色素材`);
         return representation ? [{ ...representation, sourceNodeId: context.characterReferences[index]!.nodeId }] : [];
     });
     const usedResourceIds = new Set(selected.map((item) => item.resourceId));
-    const supplements = details.flatMap((detail, index) => detail.character.representations.filter((item) => {
+    const supplements = workflowSlots ? [] : details.flatMap((detail, index) => detail.character.representations.filter((item) => {
         if (!["front", "side", "back", "turnaround_sheet"].includes(item.role) || usedResourceIds.has(item.resourceId)) return false;
         usedResourceIds.add(item.resourceId);
         return true;
@@ -591,7 +604,15 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
         dataUrl: "",
         storageKey: resourceStorageKey(representation.resourceId),
     } satisfies ReferenceImage));
-    referenceImages = [...referenceImages, ...characterImages];
+    if (workflowSlots) {
+        const byId = new Map(referenceImages.map(image => [image.id, image]));
+        const byNode = new Map(characterImages.map(image => [image.sourceNodeId, image]));
+        referenceImages = workflowSlots.map(slot => {
+            const image = "image" in slot ? byId.get(slot.image.id) : byNode.get(slot.character.nodeId);
+            if (!image) throw new Error("工作流图片槽位无法解析，请检查连接的图片或角色卡");
+            return image;
+        });
+    } else referenceImages = [...referenceImages, ...characterImages];
     const characterBlocks = details.map((detail) => compileCharacterReferencePrompt(detail.asset.title, detail.character.definition));
     const resolvedCharacterVersions = details.map((detail) => ({ assetId: detail.asset.id, versionId: detail.character.versionId }));
     const resolvedCharacterVoices = details.flatMap((detail): ResolvedCharacterVoice[] => {
@@ -618,14 +639,14 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     const usedAudioResourceIds = new Set(context.referenceAudios.map((audio) => resourceIdFromStorageKey(audio.storageKey)).filter(Boolean));
     const voiceSamples: ResolvedCharacterVoice[] = [];
     // 视频模型接收声音样本；独立配音任务仍通过 voiceKey 选音色，不能把两种协议混用。
-    if (mode === "video" && includeCharacterVoiceSamples) {
+    if (mode === "video" && includeCharacterVoiceSamples && !workflowSlots) {
         resolvedCharacterVoices.forEach((voice) => {
             if (!voice.sampleResourceId || usedAudioResourceIds.has(voice.sampleResourceId)) return;
             usedAudioResourceIds.add(voice.sampleResourceId);
             voiceSamples.push(voice);
         });
     }
-    const maxAudios = referenceLimits?.maxAudios ?? 3;
+    const maxAudios = workflowSlots ? Infinity : referenceLimits?.maxAudios ?? 3;
     if (context.referenceAudios.length + voiceSamples.length > maxAudios) throw new Error(`当前模型参考音频容量不足：已连接 ${context.referenceAudios.length} 个音频，角色声音样本还需要 ${voiceSamples.length} 个名额`);
     const characterVoiceAudios = await Promise.all(voiceSamples.map(async (voice) => {
         const resource = await getResource(voice.sampleResourceId!);

@@ -91,7 +91,7 @@ func TestRunningHubVideoRenewalOnlyQueriesOriginalOutputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	video := result["video"].(map[string]interface{})
+	video := result["outputs"].([]map[string]interface{})[0]
 	mimeType, data, err := decodeProviderDataURL(video["dataUrl"].(string))
 	if err != nil || mimeType != "video/mp4" || !bytes.Equal(data, payload) || polls != 3 || mediaReads != 2 || creates != 0 {
 		t.Fatalf("mime=%s bytes=%d polls=%d media=%d creates=%d err=%v", mimeType, len(data), polls, mediaReads, creates, err)

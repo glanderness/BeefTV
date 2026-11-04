@@ -196,7 +196,7 @@ func (d *Deliverer) deliverOne(tx Store, task model.Task, output localtask.Canon
 		}
 		return d.commitRecorded(tx, output, item, resourceErrorCode(resourceErr))
 	}
-	if localtask.HasWorkflowOutputIntent(task.InputJSON) {
+	if output.MediaType == "file" || localtask.HasWorkflowOutputIntent(task.InputJSON) {
 		return tx.CommitOwned(item)
 	}
 	assetID := localtask.MaterializedAssetID(task.ID, output.OutputIndex)

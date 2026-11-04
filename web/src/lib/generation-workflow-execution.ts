@@ -1,8 +1,13 @@
-import { normalizeRunningHubCapability, type AiConfig, type RunningHubCapability, type RunningHubWorkflowKind, type WorkflowFieldMapping } from "@/stores/use-config-store";
+import { normalizeRunningHubCapability, type AiConfig, type RunningHubConfig, type RunningHubCapability, type RunningHubWorkflowKind, type WorkflowFieldMapping } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 
 export type GenerationWorkflowMode = "text" | "image" | "video" | "audio";
+
+export function isRunningHubReady(config: RunningHubConfig, statuses: Record<string, string>) {
+    return Boolean(config.enabled && workflowProviderPluginEnabled(statuses, "runninghub") && config.baseUrl.trim() && config.apiKey.trim() && config.workflowId.trim()
+        && config.workflows.some((item) => item.workflowId.trim() === config.workflowId.trim() && (item.kind === "app" ? "app" : "workflow") === config.selectedKind));
+}
 
 export type GenerationWorkflowExecution = {
 	provider: "runninghub";
@@ -28,10 +33,10 @@ export function resolveGenerationWorkflowExecution(config: AiConfig, mode: Gener
         const runningHub = config.runningHub;
         const workflowId = runningHub.workflowId.trim();
         const kind = runningHub.selectedKind === "app" ? "app" : "workflow";
-        // RunningHub 工作流的参数拉取、提交和轮询固定使用积分 API Key；企业级 Key 只用于素材上传。
+        // 参数拉取、素材上传、提交和轮询共用当前工作流 Key。
         const apiKey = runningHub.apiKey;
         if (!runningHub.enabled || !runningHub.baseUrl.trim() || !apiKey.trim() || !workflowId) {
-            throw new Error("RunningHub 工作流配置不完整，请填写积分 API Key 并选择已保存条目");
+            throw new Error("RunningHub 工作流配置不完整，请填写消费级 API Key 并选择已保存条目");
         }
         const workflow = runningHub.workflows.find((item) => item.workflowId.trim() === workflowId && (item.kind === "app" ? "app" : "workflow") === kind);
         if (!workflow) throw new Error("当前 RunningHub 工作流条目不存在，请重新选择已保存条目");

@@ -13,6 +13,7 @@ import (
 )
 
 type ReceiptConfig struct {
+	DisplayStage     func(context.Context, string)
 	HasService       bool
 	HasRepo          bool
 	TaskIdentity     func(ctx context.Context) (userID, taskID string, ok bool)
@@ -162,14 +163,26 @@ func (r configReceipt) RecordAccepted(ctx context.Context, requestID, stage stri
 	if !r.cfg.HasService {
 		return errors.New("工作流缺少受理回执端口")
 	}
-	return RecordAcceptedState(ctx, r.cfg, requestID, stage, nextPollAt)
+	if err := RecordAcceptedState(ctx, r.cfg, requestID, stage, nextPollAt); err != nil {
+		return err
+	}
+	if r.cfg.DisplayStage != nil {
+		r.cfg.DisplayStage(ctx, stage)
+	}
+	return nil
 }
 
 func (r configReceipt) UpdateStage(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error {
 	if !r.cfg.HasService {
 		return errors.New("工作流缺少受理回执端口")
 	}
-	return UpdateTaskStage(ctx, r.cfg, requestID, stage, nextPollAt)
+	if err := UpdateTaskStage(ctx, r.cfg, requestID, stage, nextPollAt); err != nil {
+		return err
+	}
+	if r.cfg.DisplayStage != nil {
+		r.cfg.DisplayStage(ctx, stage)
+	}
+	return nil
 }
 
 func RecordAcceptedState(ctx context.Context, cfg ReceiptConfig, requestID, stage string, nextPollAt *time.Time) error {
@@ -243,7 +256,7 @@ func NewInput(mode, prompt string, cfg Config, images, videos, audios []Media, m
 	in := Input{
 		Mode: mode, Prompt: prompt, Config: cfg,
 		ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
-		ResumedRequestID: resumedID, LocalWorkspace: local,
+		ResumedRequestID: resumedID,
 	}
 	if mask != nil {
 		cp := *mask

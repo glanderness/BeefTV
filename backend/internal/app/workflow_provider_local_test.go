@@ -1,8 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +21,7 @@ import (
 	"infinite-canvas/backend/internal/provider/workflow"
 )
 
-func TestRunningHubWorkflowRejectsMediaUploadInLocalMode(t *testing.T) {
+func TestLocalRunningHubMediaStillRequiresPaidTaskContext(t *testing.T) {
 	svc := &Service{mode: serviceModeLocal}
 	input := canvasGenerationInput{
 		Mode: "video",
@@ -28,19 +32,120 @@ func TestRunningHubWorkflowRejectsMediaUploadInLocalMode(t *testing.T) {
 		ReferenceImages: []providerMedia{{ID: "ref-1", DataURL: "data:image/png;base64,AAAA"}},
 	}
 	_, err := svc.runRunningHubWorkflow(context.Background(), input)
-	if err == nil || !strings.Contains(err.Error(), "本地工作区") {
-		t.Fatalf("local RunningHub media upload error = %v, want local-workspace rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "本地任务回执上下文") {
+		t.Fatalf("local RunningHub media upload error = %v, want task-context rejection", err)
 	}
 }
 
-func TestUploadRunningHubMediaRejectsLocalMode(t *testing.T) {
+func TestLocalRunningHubMediaUsesSharedKey(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/openapi/v2/media/upload/binary" || r.Header.Get("Authorization") != "Bearer consumer-key" {
+			t.Error("unexpected upload endpoint or credential")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"fileName":"openapi/input.png"}}`))
+	}))
+	t.Cleanup(server.Close)
 	svc := &Service{mode: serviceModeLocal}
-	_, err := svc.uploadRunningHubMedia(context.Background(), "https://example.com", providerConfig{}, providerMedia{
+	name, err := svc.uploadRunningHubMedia(context.Background(), server.URL, providerConfig{APIKey: "consumer-key", RunningHubUploadKey: "unused-enterprise-key"}, providerMedia{
 		ID:      "ref-1",
 		DataURL: "data:image/png;base64,AAAA",
 	})
-	if err == nil || !strings.Contains(err.Error(), "本地工作区") {
-		t.Fatalf("local RunningHub upload error = %v, want local-workspace rejection", err)
+	if err != nil || name != "openapi/input.png" {
+		t.Fatalf("local RunningHub upload = %q %v", name, err)
+	}
+}
+
+func TestLocalRunningHubOwnedResourceUploadAndExecution(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	base, task := workflowPaidTaskFixture(t)
+	svc := NewLocal(base.repo, t.TempDir())
+	t.Cleanup(func() { _ = svc.Close() })
+	if _, err := svc.pluginRuntime.setEnabled(WorkflowPluginRunningHub, true); err != nil {
+		t.Fatal(err)
+	}
+	var source bytes.Buffer
+	if err := png.Encode(&source, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := svc.UploadLocalResourceFile(task.UserID, "input.png", int64(source.Len()), "image", 8, 8, 0, bytes.NewReader(source.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploaded, created atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/openapi/v2/media/upload/binary":
+			uploaded.Add(1)
+			if r.Header.Get("Authorization") != "Bearer consumer-key" {
+				t.Error("upload credential mismatch")
+			}
+			file, _, err := r.FormFile("file")
+			if err != nil {
+				t.Error(err)
+				http.Error(w, "missing file", 400)
+				return
+			}
+			data, _ := io.ReadAll(file)
+			file.Close()
+			if !bytes.Equal(data, source.Bytes()) {
+				t.Error("owned resource bytes changed")
+			}
+			_, _ = io.WriteString(w, `{"code":0,"data":{"fileName":"openapi/owned.png","download_url":"https://temporary.example/input.png"}}`)
+		case "/task/openapi/create":
+			created.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			if body["apiKey"] != "consumer-key" || uploaded.Load() != 1 {
+				t.Error("create credential or upload ordering mismatch")
+			}
+			nodes, _ := body["nodeInfoList"].([]any)
+			if len(nodes) != 1 {
+				t.Errorf("nodes = %#v", nodes)
+			} else if node, _ := nodes[0].(map[string]any); node["fieldValue"] != "openapi/owned.png" {
+				t.Errorf("node = %#v", node)
+			}
+			_, _ = io.WriteString(w, `{"code":0,"data":{"taskId":"rh-owned-task"}}`)
+		case "/task/openapi/outputs":
+			_, _ = io.WriteString(w, `{"code":0,"data":[{"fileUrl":"`+server.URL+`/out.png"}]}`)
+		case "/out.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(source.Bytes())
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	input := workflowCreateInput(server.URL)
+	input.Prompt = "draw"
+	input.Config.APIKey = "consumer-key"
+	input.Config.RunningHubUploadKey = "unused-enterprise-key"
+	input.Config.WorkflowFields = []workflow.Field{{NodeID: "6", FieldName: "image", Source: "referenceImage", Required: true}}
+	input.ReferenceImages = []providerMedia{{ID: "ref-owned", Name: "input.png", StorageKey: "resource:" + resource.ID}}
+	ctx := withProviderAnalytics(context.Background(), svc, task)
+	ctx = svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: task.UserID, TaskID: task.ID, TaskType: task.Type})
+	result, err := generation.Execute(ctx, input)
+	if err != nil || result["mode"] != "image" || uploaded.Load() != 1 || created.Load() != 1 {
+		t.Fatalf("owned workflow result mode=%v err=%v upload=%d create=%d", result["mode"], err, uploaded.Load(), created.Load())
+	}
+	stored, err := svc.repo.Task(task.ID)
+	if err != nil || stored.ProviderRequestID != "rh-owned-task" {
+		t.Fatalf("accepted task receipt missing: %v", err)
+	}
+
+	foreignCtx := svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: "other-owner", TaskID: task.ID, TaskType: task.Type})
+	if _, err := generation.Execute(foreignCtx, input); err == nil || !strings.Contains(err.Error(), "参考资源") {
+		t.Fatalf("foreign resource accepted: %v", err)
+	}
+	if uploaded.Load() != 1 || created.Load() != 1 {
+		t.Fatal("foreign resource reached RunningHub")
 	}
 }
 

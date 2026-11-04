@@ -177,7 +177,7 @@ export function createGenerationTaskMaterializer(dependencies: { effects: Genera
             const outputs: GenerationTaskOutput[] = [];
             for (const originalOutput of task.outputs) {
                 const output = { ...originalOutput };
-                if (!output.materializedAssetId) {
+                if (!output.materializedAssetId && !(output.mediaType === "file" && output.resourceId)) {
                     const effectKey = materializeEffectKey(task.id, output.outputIndex);
                     const claim = await claimWhenAvailable(effectKey, task.id, signal);
                     if (claim.status === "completed") {
@@ -207,7 +207,7 @@ export function createGenerationTaskMaterializer(dependencies: { effects: Genera
             return {
                 ...task,
                 outputs,
-                resultState: outputs.every((output) => Boolean(output.materializedAssetId)) ? "READY" : "MATERIALIZING",
+                resultState: outputs.every((output) => Boolean(output.materializedAssetId || output.mediaType === "file" && output.resourceId)) ? "READY" : "MATERIALIZING",
             };
         },
 
