@@ -66,10 +66,10 @@ func ContainsPrivateData(data []byte) bool {
 }
 
 type SkillMarkdownMetadata struct {
-	Name          string
-	TechnicalName string
-	Description   string
-	Version       string
+	Name                 string
+	TechnicalName        string
+	Description          string
+	Version              string
 	MalformedFrontmatter bool
 }
 
