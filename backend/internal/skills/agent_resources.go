@@ -108,6 +108,36 @@ func (s *Service) agentPackage(userID string, pin Pin) (*model.Skill, *model.Ski
 	return skill, version, files, err
 }
 
+func IsSkillScriptPath(filePath string) bool {
+	normalized, err := normalizeSkillPath(filePath)
+	if err != nil || normalized != filePath {
+		return false
+	}
+	if strings.HasPrefix(normalized, repository.SkillScriptsPrefix) {
+		return len(normalized) > len(repository.SkillScriptsPrefix)
+	}
+	if strings.HasPrefix(normalized, repository.SkillScriptAltPrefix) {
+		return len(normalized) > len(repository.SkillScriptAltPrefix)
+	}
+	return false
+}
+
+func SkillScriptInterpreter(filePath string) (string, bool) {
+	if !IsSkillScriptPath(filePath) {
+		return "", false
+	}
+	switch strings.ToLower(path.Ext(filePath)) {
+	case ".py":
+		return "python3", true
+	case ".sh", ".bash":
+		return "bash", true
+	case ".js", ".mjs", ".cjs":
+		return "node", true
+	default:
+		return "", false
+	}
+}
+
 func (s *Service) AgentVersion(userID string, pin Pin) (*AgentResource, error) {
 	pin = pin.Identity()
 	skill, version, files, err := s.agentPackage(userID, pin)
@@ -115,10 +145,14 @@ func (s *Service) AgentVersion(userID string, pin Pin) (*AgentResource, error) {
 		return nil, err
 	}
 	result := &AgentResource{Pin: pin, Name: skill.Name, Description: skill.Description, Version: version.VersionLabel, Files: []SkillPackageFileItem{}, UnsupportedCapabilities: []string{}}
+	seenUnsupported := false
 	for _, file := range files {
 		result.Files = append(result.Files, skillFileItem(file))
-		if strings.HasPrefix(file.Path, repository.SkillScriptsPrefix) {
-			result.UnsupportedCapabilities = []string{"script_execution"}
+		if IsSkillScriptPath(file.Path) {
+			if _, ok := SkillScriptInterpreter(file.Path); !ok && !seenUnsupported {
+				seenUnsupported = true
+				result.UnsupportedCapabilities = append(result.UnsupportedCapabilities, "unsupported_script_interpreter")
+			}
 		}
 	}
 	entry, err := s.AgentFile(userID, pin, version.EntryPath)
@@ -160,7 +194,8 @@ func (s *Service) AgentFile(userID string, pin Pin, filePath string) (*AgentFile
 		if len(data) > 256<<10 || !utf8.Valid(data) || int64(len(data)) != file.Size || hex.EncodeToString(sum[:]) != file.SHA256 {
 			return nil, kernel.NewAppError(409, "技能文件内容校验失败，请重新选择")
 		}
-		return &AgentFile{Pin: pin, File: skillFileItem(file), Content: string(data), ExecutionSupported: false}, nil
+		_, supported := SkillScriptInterpreter(normalized)
+		return &AgentFile{Pin: pin, File: skillFileItem(file), Content: string(data), ExecutionSupported: IsSkillScriptPath(normalized) && supported}, nil
 	}
 	return nil, kernel.BadAuthRequest("这个文件不在所选技能版本中")
 }

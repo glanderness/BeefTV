@@ -18,10 +18,11 @@ const MaxArchiveBytes = 100 << 20
 const MaxPackageBytes = 200 << 20
 const MaxDescriptionRunes = 1024
 const ScriptsPrefix = "scripts/"
+const ScriptAltPrefix = "script/"
 
 func HasScripts(files []File) bool {
 	for _, file := range files {
-		if strings.HasPrefix(file.Path, ScriptsPrefix) {
+		if strings.HasPrefix(file.Path, ScriptsPrefix) || strings.HasPrefix(file.Path, ScriptAltPrefix) {
 			return true
 		}
 	}

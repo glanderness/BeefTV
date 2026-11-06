@@ -31,6 +31,7 @@ func (r *Repository) SkillVersionsByIDs(ids []string) ([]model.SkillVersion, err
 
 // SkillScriptsPrefix 是技能标准里放可执行脚本的目录。
 const SkillScriptsPrefix = skillhub.ScriptsPrefix
+const SkillScriptAltPrefix = skillhub.ScriptAltPrefix
 
 // SkillVersionsWithScripts 返回这些版本里带脚本的版本。
 func (r *Repository) SkillVersionsWithScripts(ids []string) (map[string]bool, error) {
@@ -39,7 +40,7 @@ func (r *Repository) SkillVersionsWithScripts(ids []string) (map[string]bool, er
 		return result, nil
 	}
 	var rows []string
-	err := r.db.Model(&model.SkillFile{}).Distinct("skill_version_id").Where("skill_version_id IN ? AND path LIKE ?", ids, SkillScriptsPrefix+"%").Pluck("skill_version_id", &rows).Error
+	err := r.db.Model(&model.SkillFile{}).Distinct("skill_version_id").Where("skill_version_id IN ? AND (path LIKE ? OR path LIKE ?)", ids, SkillScriptsPrefix+"%", SkillScriptAltPrefix+"%").Pluck("skill_version_id", &rows).Error
 	for _, id := range rows {
 		result[id] = true
 	}

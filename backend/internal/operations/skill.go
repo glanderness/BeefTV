@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"context"
 	"encoding/json"
 	"infinite-canvas/backend/internal/skills"
 	"strings"
@@ -10,6 +11,10 @@ import (
 type SkillResources interface {
 	AgentSkillVersion(string, skills.Pin) (*skills.AgentResource, error)
 	AgentSkillFile(string, skills.Pin, string) (*skills.AgentFile, error)
+}
+
+type SkillScriptExecutor interface {
+	ProposeOrRunSkillScript(context.Context, string, string, skills.ScriptRunRequest) (any, error)
 }
 
 // SkillCatalog lists the caller's installed skills at their current versions.
@@ -115,4 +120,51 @@ func registerSkillOps(r *Registry) {
 				return result, mapDomainError(err)
 			}})
 	}
+	r.Register(Op{
+		AssistantCanvas:   true,
+		AssistantProposal: true,
+		ReadOnly:          true,
+		ID:                "skill.script.run",
+		Summary:           "在隔离临时目录中运行已选用技能的脚本（需用户确认）",
+		Scope:             ScopeCanvas,
+		Params:            json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"skillId":{"type":"string","description":"已加载技能的 skillId"},"versionId":{"type":"string","description":"已加载技能的 versionId"},"contentHash":{"type":"string","description":"已加载技能的 64 位十六进制 contentHash"},"scriptPath":{"type":"string","description":"包内脚本相对路径（必须位于 scripts/ 或 script/ 下）"},"args":{"type":"array","items":{"type":"string","maxLength":4096},"maxItems":64,"description":"传给脚本的命令行参数列表（argv）"},"stdin":{"type":"string","maxLength":65536,"description":"可选标准输入文本（UTF-8，最多 64 KiB）"},"timeoutSec":{"type":"integer","minimum":1,"maximum":600,"description":"超时时间（秒），默认 120，最大 600"},"useWorkspaceOutputDir":{"type":"boolean","description":"是否同时准备画布工作区输出目录（通过 BEEFTV_OUTPUT_DIR 环境变量传入）"},"note":{"type":"string","maxLength":500,"description":"向用户说明本次运行脚本的目的"}},"required":["canvasId","skillId","versionId","contentHash","scriptPath"],"additionalProperties":false}`),
+		Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
+			var args struct {
+				CanvasID              string   `json:"canvasId"`
+				SkillID               string   `json:"skillId"`
+				VersionID             string   `json:"versionId"`
+				ContentHash           string   `json:"contentHash"`
+				ScriptPath            string   `json:"scriptPath"`
+				Args                  []string `json:"args"`
+				Stdin                 string   `json:"stdin"`
+				TimeoutSec            int      `json:"timeoutSec"`
+				UseWorkspaceOutputDir bool     `json:"useWorkspaceOutputDir"`
+				Note                  string   `json:"note"`
+			}
+			if err := decodeParams(raw, &args); err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(args.CanvasID) == "" {
+				return nil, InvalidArg("invalid_params", "canvasId 必填")
+			}
+			if _, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID); err != nil {
+				return nil, mapDomainError(err)
+			}
+			port, ok := ctx.Domain.(SkillScriptExecutor)
+			if !ok {
+				return nil, Unsupported("skill_unavailable", "当前工作区无法运行技能脚本")
+			}
+			return port.ProposeOrRunSkillScript(ctx.Context, ctx.UserID, ctx.TurnID, skills.ScriptRunRequest{
+				CanvasID:              args.CanvasID,
+				TurnID:                ctx.TurnID,
+				Pin:                   skills.Pin{SkillID: args.SkillID, VersionID: args.VersionID, ContentHash: args.ContentHash},
+				ScriptPath:            args.ScriptPath,
+				Args:                  args.Args,
+				Stdin:                 args.Stdin,
+				TimeoutSec:            args.TimeoutSec,
+				UseWorkspaceOutputDir: args.UseWorkspaceOutputDir,
+				Note:                  args.Note,
+			})
+		},
+	})
 }
