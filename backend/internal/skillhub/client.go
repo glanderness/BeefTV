@@ -16,13 +16,18 @@ import (
 const DefaultURL = "https://beeftv.app/api/beeftv/skillhub/v1"
 const MaxArchiveBytes = 100 << 20
 const MaxPackageBytes = 200 << 20
+const MaxNameRunes = 80
 const MaxDescriptionRunes = 1024
 const ScriptsPrefix = "scripts/"
-const ScriptAltPrefix = "script/"
+const AltScriptsPrefix = "script/"
+
+func IsScriptPath(filePath string) bool {
+	return strings.HasPrefix(filePath, ScriptsPrefix) || strings.HasPrefix(filePath, AltScriptsPrefix)
+}
 
 func HasScripts(files []File) bool {
 	for _, file := range files {
-		if strings.HasPrefix(file.Path, ScriptsPrefix) || strings.HasPrefix(file.Path, ScriptAltPrefix) {
+		if IsScriptPath(file.Path) {
 			return true
 		}
 	}
