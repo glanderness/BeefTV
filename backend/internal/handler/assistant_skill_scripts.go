@@ -81,8 +81,13 @@ func registerAssistantSkillScriptRoutes(
 			failAssistantProposal(c, err)
 			return
 		}
-		continuationMsg := formatSkillScriptContinuationMessage(*proposal, *result)
-		woken := wakeHostWithScriptResult(c.Request.Context(), host, payload.CanvasID, proposal, continuationMsg, canvasRaw)
+		continuationMsg := ""
+		woken := false
+		if !result.Cancelled && proposal.Status != "cancelled" && c.Request.Context().Err() == nil &&
+			svc.AssistantTurns().CheckProposalRunnable(userID, payload.CanvasID, turnID) == nil {
+			continuationMsg = formatSkillScriptContinuationMessage(*proposal, *result)
+			woken = wakeHostWithScriptResult(c.Request.Context(), host, payload.CanvasID, proposal, continuationMsg, canvasRaw)
+		}
 		ok(c, gin.H{
 			"proposal":            proposal,
 			"result":              result,

@@ -147,9 +147,11 @@ export function collectTurnEffects(turn, opID, result, operationId) {
       }
       break;
     case 'skill.script.run':
-      if (result.status === 'requires_confirmation' && result.proposal?.proposalId) {
+      if (result.proposal?.proposalId) {
         turn.scriptProposals ||= [];
-        turn.scriptProposals.push(result.proposal);
+        const index = turn.scriptProposals.findIndex((item) => item?.proposalId === result.proposal.proposalId);
+        if (index >= 0) turn.scriptProposals[index] = result.proposal;
+        else turn.scriptProposals.push(result.proposal);
       }
       break;
     default:

@@ -207,4 +207,77 @@ func TestConfirmSkillScriptProposalRouteAndTokenBoundary(t *testing.T) {
 	if !strings.Contains(uiRec.Body.String(), "CHECK_OK:arg1|arg2") || !strings.Contains(uiRec.Body.String(), `"status":"completed"`) {
 		t.Fatalf("unexpected confirmation response: %s", uiRec.Body.String())
 	}
+
+	// 3. turn_end stream projection includes scriptProposals for the turn
+	turnEndLine := assistantOutputsLine([]byte(`{"type":"turn_end","turnId":"`+turnID+`","reply":"ok","toolCalls":[]}`+"\n"), env.service, owner.ID, env.canvasID, turnID)
+	if !strings.Contains(string(turnEndLine), `"scriptProposals"`) || !strings.Contains(string(turnEndLine), proposal.ProposalID) {
+		t.Fatalf("expected turn_end projection to include scriptProposals, got %s", string(turnEndLine))
+	}
+
+	// 4. Cancelled script run does not wake host
+	var slowArchive bytes.Buffer
+	slowZw := zip.NewWriter(&slowArchive)
+	for name, content := range map[string]string{
+		"SKILL.md":        "---\nname: 慢脚本取消测试\ndescription: 验证取消脚本不唤醒宿主\n---\n运行 scripts/slow.js",
+		"scripts/slow.js": "setTimeout(() => console.log('DONE'), 30000);",
+	} {
+		f, err := slowZw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.WriteString(f, content)
+	}
+	_ = slowZw.Close()
+	var slowBody bytes.Buffer
+	slowForm := multipart.NewWriter(&slowBody)
+	slowFw, _ := slowForm.CreateFormFile("file", "slow.zip")
+	_, _ = slowFw.Write(slowArchive.Bytes())
+	_ = slowForm.Close()
+	slowInstallReq := httptest.NewRequest("POST", "/skills/install", &slowBody)
+	slowInstallReq.Header.Set("Content-Type", slowForm.FormDataContentType())
+	if err := slowInstallReq.ParseMultipartForm(20 << 20); err != nil {
+		t.Fatal(err)
+	}
+	defer slowInstallReq.MultipartForm.RemoveAll()
+	slowInstalled, err := env.service.SkillsDomain().InstallSkillUpload(owner.ID, "zip", slowInstallReq.MultipartForm.File["file"][0], app.SkillInstallRequest{IsPrivate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slowPin := skills.Pin{SkillID: slowInstalled.SkillID, VersionID: slowInstalled.VersionID, ContentHash: slowInstalled.ContentHash}
+
+	const cancelTurnID = "aabbccddeeff0022"
+	env.beginTurn(t, cancelTurnID, app.AssistantTurnInput{SkillPins: []skills.Pin{slowPin}})
+	_ = operations.RevokeSessionScriptAllows(env.service.Database(), owner.ID, env.canvasID, "")
+	slowProposed, err := operations.ProposeOrRunSkillScript(context.Background(), env.service.Database(), env.service.SkillsDomain(), owner.ID, cancelTurnID, skills.ScriptRunRequest{
+		CanvasID:   env.canvasID,
+		Pin:        slowPin,
+		ScriptPath: "scripts/slow.js",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slowProposal := slowProposed.(map[string]any)["proposal"].(operations.SkillScriptProposal)
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if env.service.SkillsDomain().CancelScriptRuns(env.canvasID, "", cancelTurnID) > 0 {
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}()
+	slowRunURL := "http://127.0.0.1:18090/api/assistant/turns/" + cancelTurnID + "/script-proposals/" + slowProposal.ProposalID + "/run"
+	slowUIReq := httptest.NewRequest(http.MethodPost, slowRunURL, strings.NewReader(`{"canvasId":"`+env.canvasID+`"}`))
+	slowUIReq.Host = "127.0.0.1:18090"
+	slowUIReq.RemoteAddr = "127.0.0.1:12345"
+	slowUIReq.Header.Set("Content-Type", "application/json")
+	slowUIReq.Header.Set("X-Beeftv-Ui-Session", env.uiToken)
+	slowUIRec := httptest.NewRecorder()
+	env.router.ServeHTTP(slowUIRec, slowUIReq)
+	if slowUIRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for cancelled script proposal run, got %d %s", slowUIRec.Code, slowUIRec.Body.String())
+	}
+	if !strings.Contains(slowUIRec.Body.String(), `"status":"cancelled"`) || !strings.Contains(slowUIRec.Body.String(), `"woken":false`) || !strings.Contains(slowUIRec.Body.String(), `"continuationMessage":""`) {
+		t.Fatalf("expected cancelled script proposal not to wake host or build continuation message, got %s", slowUIRec.Body.String())
+	}
 }

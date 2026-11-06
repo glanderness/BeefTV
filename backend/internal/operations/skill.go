@@ -121,9 +121,9 @@ func registerSkillOps(r *Registry) {
 			}})
 	}
 	r.Register(Op{
+		ReplaySafe:        true,
 		AssistantCanvas:   true,
 		AssistantProposal: true,
-		ReadOnly:          true,
 		ID:                "skill.script.run",
 		Summary:           "在隔离临时目录中运行已选用技能的脚本（需用户确认）",
 		Scope:             ScopeCanvas,
@@ -143,6 +143,9 @@ func registerSkillOps(r *Registry) {
 			}
 			if err := decodeParams(raw, &args); err != nil {
 				return nil, err
+			}
+			if ctx.Caller.Kind != CallerAssistant || strings.TrimSpace(ctx.TurnID) == "" {
+				return nil, PermissionDenied("scope_denied", "技能脚本只能在内置助手对话轮次中发起运行")
 			}
 			if strings.TrimSpace(args.CanvasID) == "" {
 				return nil, InvalidArg("invalid_params", "canvasId 必填")

@@ -64,7 +64,7 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 	if assistantturns.Mode(s.PermissionMode) != assistantturns.PermissionCanvas && op.ID != "skill.get" && op.ID != "skill.file" && op.ID != "skill.catalog" && op.ID != "skill.script.run" {
 		return nil
 	}
-	if !op.ReadOnly && op.Scope == operations.ScopeCanvas {
+	if !op.ReadOnly && op.Scope == operations.ScopeCanvas && op.ID != "skill.script.run" {
 		if args.CanvasID == s.CanvasID {
 			return nil
 		}

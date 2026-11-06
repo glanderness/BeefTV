@@ -419,6 +419,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			failService(c, err)
 			return
 		}
+		svc.SkillsDomain().CancelScriptRuns(payload.CanvasID, "", c.Param("turnId"))
 		ok(c, gin.H{"revision": revision})
 	})
 
@@ -762,11 +763,11 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			target["sessionId"] = *payload.SessionID
 			target["requestId"] = *payload.RequestID
 		}
+		svc.SkillsDomain().CancelScriptRuns(payload.CanvasID, cancelSession, "")
 		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
 			failService(c, err)
 			return
 		}
-		svc.SkillsDomain().CancelScriptRuns(payload.CanvasID, cancelSession, "")
 		body, err := json.Marshal(target)
 		if err != nil {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))

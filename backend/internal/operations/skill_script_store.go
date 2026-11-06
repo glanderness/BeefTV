@@ -244,6 +244,9 @@ func ProposeOrRunSkillScript(ctx context.Context, db *gorm.DB, skillSvc *skills.
 	if skillSvc == nil {
 		return nil, Unsupported("skill_unavailable", "当前工作区无法运行技能脚本")
 	}
+	if strings.TrimSpace(turnID) == "" {
+		return nil, PermissionDenied("scope_denied", "技能脚本只能在内置助手对话轮次中发起运行")
+	}
 	validated, err := skillSvc.ValidateScriptRun(userID, req, "")
 	if err != nil {
 		return nil, mapDomainError(err)
@@ -299,6 +302,7 @@ func ProposeOrRunSkillScript(ctx context.Context, db *gorm.DB, skillSvc *skills.
 			return nil, AsError(err)
 		}
 		return map[string]any{
+			"canvasId": proposal.CanvasID,
 			"status":   proposal.Status,
 			"proposal": proposal.PublicView(),
 			"result":   res,
@@ -308,6 +312,7 @@ func ProposeOrRunSkillScript(ctx context.Context, db *gorm.DB, skillSvc *skills.
 		return nil, AsError(err)
 	}
 	return map[string]any{
+		"canvasId": proposal.CanvasID,
 		"status":   "requires_confirmation",
 		"proposal": proposal.PublicView(),
 		"message":  "脚本运行提议已提交，等待用户在界面确认后运行。",
@@ -325,7 +330,7 @@ func ConfirmSkillScriptProposal(ctx context.Context, db *gorm.DB, skillSvc *skil
 	if proposal == nil {
 		return nil, nil, NotFound("script_proposal_not_found", "未找到对应的脚本运行提议")
 	}
-	if proposal.CanvasID != strings.TrimSpace(canvasID) || (proposal.TurnID != "" && proposal.TurnID != strings.TrimSpace(turnID)) {
+	if strings.TrimSpace(turnID) == "" || proposal.CanvasID != strings.TrimSpace(canvasID) || proposal.TurnID == "" || proposal.TurnID != strings.TrimSpace(turnID) {
 		return nil, nil, PermissionDenied("script_proposal_mismatch", "脚本运行提议不属于当前画布或对话轮次")
 	}
 	if (proposal.Status == "completed" || proposal.Status == "failed") && proposal.Result != nil {

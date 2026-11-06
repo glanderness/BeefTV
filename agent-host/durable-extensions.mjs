@@ -253,7 +253,7 @@ export async function installDurableExtensions({
       await authorization(entry, entry.turn.turnId);
       try {
         const proposalCount = entry.turn.proposals.length;
-        const scriptProposalCount = (entry.turn.scriptProposals || []).length;
+        const pendingScriptProposalCount = (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length;
         // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
         const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal,
           { executeTool: (name, params, options) => api.executeTool(name, params, context, options),
@@ -266,7 +266,8 @@ export async function installDurableExtensions({
         // termination. Mixed/failed rounds keep their normal model continuation.
         // 提方案失败时它自己不请求结束，整轮仍按官方规则继续，所以同批计划更新请求结束是安全的。
         const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
-        const scriptProposed = tool.label === 'skill.script.run' && result.isError !== true && (entry.turn.scriptProposals || []).length > scriptProposalCount;
+        const scriptProposed = tool.label === 'skill.script.run' && result.isError !== true &&
+          (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length > pendingScriptProposalCount;
         const planWithProposal = tool.label === 'plan.update' && result.isError !== true && (await state(entry))?.roundProposes === true;
         return { ...result, output: content, ...(proposed || scriptProposed || planWithProposal ? { control: { ...result.control, terminate: true } } : {}) };
       } finally { await persistEffects(entry); }
@@ -448,7 +449,7 @@ export async function installDurableExtensions({
       },
       onYield: async () => {
         if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
-        if (entry.turn.proposals?.length || entry.turn.scriptProposals?.length) return;
+        if (entry.turn.proposals?.length || (entry.turn.scriptProposals || []).some((item) => item?.status === 'pending')) return;
         const doc = await state(entry);
         if (doc?.active?.stopped || (doc?.active?.supplementIds?.length || 0) > 0) return;
         if (!entry.generation.unboundReminderSent && entry.turn.createdNodeIds?.length > 0 && typeof readCanvas === 'function') {

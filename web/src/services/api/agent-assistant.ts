@@ -182,12 +182,15 @@ export type AssistantScriptProposal = {
     result?: AssistantScriptRunResult;
 };
 
+const SKILL_SCRIPT_CONFIRM_TIMEOUT_MS = 630_000;
+
 export async function confirmAssistantScriptProposal(
     canvasId: string,
     turnId: string,
     proposalId: string,
     alwaysAllowSession = false,
 ) {
+    const sessionConfig = await uiSessionConfig();
     return http.post<{
         proposal: AssistantScriptProposal;
         result: AssistantScriptRunResult;
@@ -196,7 +199,7 @@ export async function confirmAssistantScriptProposal(
     }>(
         `/assistant/turns/${encodeURIComponent(turnId)}/script-proposals/${encodeURIComponent(proposalId)}/run`,
         { canvasId, alwaysAllowSession },
-        await uiSessionConfig(),
+        { ...sessionConfig, timeout: SKILL_SCRIPT_CONFIRM_TIMEOUT_MS },
     );
 }
 
