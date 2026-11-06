@@ -9,6 +9,7 @@ import { forkSkill, getInstalledVersions, getMarketRelease, installMarketRelease
 import { SkillEditorDrawer } from "./skill-editor-drawer";
 import { SkillInstallModal } from "./skill-install-modal";
 import { SkillDetailModal } from "./skill-detail-drawer";
+import { SkillMarketInstallConfirmModal, hasAcceptedSkillMarketRisk, isOfficialBuiltinMarketSkill, type SkillMarketInstallConfirmRequest } from "./skill-market-install-confirm-modal";
 import { SkillPublishingPanel } from "./publishing-panel";
 import { MarketFilePreview } from "./market-file-preview";
 import { SkillFileDetails } from "./skill-file-details";
@@ -43,6 +44,7 @@ export default function SkillMarketplace() {
     const [edit, setEdit] = useState<Skill | null>(null);
     const [editorOpen, setEditorOpen] = useState(false);
     const [installOpen, setInstallOpen] = useState(false);
+    const [pendingInstall, setPendingInstall] = useState<{ request: SkillMarketInstallConfirmRequest; target: Pick<MarketRelease, "skillId" | "releaseId">; showMine: boolean } | null>(null);
     const [versions, setVersions] = useState<{ skill: Skill; items: InstalledVersion[] } | null>(null);
     const [versionId, setVersionId] = useState("");
     const reload = useCallback(() => setRevision(n => n + 1), []);
@@ -112,6 +114,25 @@ export default function SkillMarketplace() {
         }, "已安装，可在画布助手中选择使用", "安装未完成", "请查看失败原因后重试，或打开技能详情检查使用条件。")
             .finally(() => { installing.current = false; setInstallingRelease(""); });
     };
+    const requestInstall = (target: Pick<MarketItem, "skillId" | "releaseId" | "name" | "versionLabel" | "author" | "description">, showMine: boolean) => {
+        if (isOfficialBuiltinMarketSkill(target, installed) || hasAcceptedSkillMarketRisk()) {
+            install(target, showMine);
+            return;
+        }
+        setPendingInstall({
+            target,
+            showMine,
+            request: {
+                skillId: target.skillId,
+                releaseId: target.releaseId,
+                name: target.name,
+                versionLabel: target.versionLabel,
+                author: target.author,
+                description: target.description,
+                isUpdate: marketInstallationState(target, installed) === "update",
+            },
+        });
+    };
     const releaseInstallation = release ? marketInstallationState(release, installed) : "install";
     const headerProps = {
         title: "技能",
@@ -142,7 +163,7 @@ export default function SkillMarketplace() {
                         </div>
                         <div className="workspace-list-controls">
                             <Button size="small" onClick={() => openRelease(item.skillId, item.releaseId)} disabled={busy}>查看详情</Button>
-                            <Button type="primary" size="small" className="min-w-16" aria-label={`${installLabel}${item.name}`} loading={installingRelease === item.releaseId} disabled={busy || installedLoading || installation === "installed" || item.compatibility?.status === "unsupported"} onClick={() => install(item, false)}>{installLabel}</Button>
+                            <Button type="primary" size="small" className="min-w-16" aria-label={`${installLabel}${item.name}`} loading={installingRelease === item.releaseId} disabled={busy || installedLoading || installation === "installed" || item.compatibility?.status === "unsupported"} onClick={() => requestInstall(item, false)}>{installLabel}</Button>
                         </div>
                     </article>;
                 }) : local.map(skill => {
@@ -175,7 +196,7 @@ export default function SkillMarketplace() {
             </div>
             {!loading && !error && (total > SKILL_PAGE_SIZE || page > 1) ? <nav className="skill-market-pagination" aria-label="技能分页"><Button disabled={page <= 1} onClick={() => setPage(n => n - 1)}>上一页</Button><span>第 {page} / {Math.max(1, Math.ceil(total / SKILL_PAGE_SIZE))} 页 · 共 {total} 项</span><Button disabled={page * SKILL_PAGE_SIZE >= total} onClick={() => setPage(n => n + 1)}>下一页</Button></nav> : null}
         </>}
-        <AppModal flush scrollBody className="skill-release-dialog" wrapClassName="skill-release-wrap" open={Boolean(release)} title={release?.name || "技能详情"} onCancel={() => { setRelease(null); setParams({ tab: "market" }); }} footer={<Button type="primary" loading={busy} disabled={installedLoading || releaseInstallation === "installed" || release?.requirements.some(value => !capabilityOptions.some(item => item.value === value))} onClick={() => { if (release) install(release, true); }}>{releaseInstallation === "installed" ? "已安装" : releaseInstallation === "update" ? "更新此版本" : "安装此版本"}</Button>} width="min(760px, calc(100vw - 32px))">
+        <AppModal flush scrollBody className="skill-release-dialog" wrapClassName="skill-release-wrap" open={Boolean(release)} title={release?.name || "技能详情"} onCancel={() => { setRelease(null); setParams({ tab: "market" }); }} footer={<Button type="primary" loading={busy} disabled={installedLoading || releaseInstallation === "installed" || release?.requirements.some(value => !capabilityOptions.some(item => item.value === value))} onClick={() => { if (release) requestInstall(release, true); }}>{releaseInstallation === "installed" ? "已安装" : releaseInstallation === "update" ? "更新此版本" : "安装此版本"}</Button>} width="min(760px, calc(100vw - 32px))">
             {release ? <div className="skill-market-preview" tabIndex={0} role="region" aria-label="技能详情内容">
                 <div className="skill-release-overview">
                     <dl className="skill-release-metadata">
@@ -230,5 +251,17 @@ export default function SkillMarketplace() {
         />
         <SkillEditorDrawer open={editorOpen} skill={edit} onClose={() => setEditorOpen(false)} onSaved={() => { setEditorOpen(false); changeTab("mine"); reload(); }} />
         <SkillInstallModal open={installOpen} onClose={() => setInstallOpen(false)} onManualCreate={() => { setInstallOpen(false); openEditor(); }} onInstalled={() => { setInstallOpen(false); changeTab("mine"); reload(); }} />
+        <SkillMarketInstallConfirmModal
+            open={Boolean(pendingInstall)}
+            request={pendingInstall?.request ?? null}
+            loading={busy || Boolean(installingRelease)}
+            onCancel={() => setPendingInstall(null)}
+            onConfirm={() => {
+                if (!pendingInstall) return;
+                const { target, showMine } = pendingInstall;
+                setPendingInstall(null);
+                install(target, showMine);
+            }}
+        />
     </WorkspacePage>;
 }

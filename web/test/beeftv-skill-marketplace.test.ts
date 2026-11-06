@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { canSubmitPublication, needsPublicationTargetCorrection, requirementLabel, publicationStatus, unsupportedRequirements } from "../src/pages/skills/market-copy";
+import { SKILL_MARKET_RISK_ACCEPTED_KEY, acceptSkillMarketRisk, hasAcceptedSkillMarketRisk, isOfficialBuiltinMarketSkill } from "../src/pages/skills/skill-market-install-confirm-modal";
 
 async function source(path: string) {
     return Bun.file(new URL(path, import.meta.url)).text();
@@ -29,7 +30,33 @@ test("unknown capabilities and publication states never look accepted", () => {
     expect(requirementLabel("model.audio")).toBe("音频理解模型");
     expect(requirementLabel("needs secret")).toContain("未确认");
     expect(publicationStatus("new-unknown-state")).toBe("状态待刷新");
+    expect(publicationStatus("ready_to_submit")).toBe("等待确认发布");
+    expect(publicationStatus("awaiting_submit_confirmation")).toBe("等待确认发布");
+    expect(publicationStatus("published")).toBe("已发布");
     expect(publicationStatus("rejected")).toBe("需要修改");
+});
+
+test("third-party market skills require one-time risk acceptance while official built-in skills do not", () => {
+    const store = new Map<string, string>();
+    const prevStorage = globalThis.localStorage;
+    Object.defineProperty(globalThis, "localStorage", {
+        configurable: true,
+        value: {
+            getItem: (key: string) => store.get(key) ?? null,
+            setItem: (key: string, value: string) => { store.set(key, value); },
+        },
+    });
+    try {
+        expect(isOfficialBuiltinMarketSkill({ skillId: "novel-to-manju-agent" })).toBe(true);
+        expect(isOfficialBuiltinMarketSkill({ skillId: "community-skill" }, [{ skillId: "community-skill", sourceType: "builtin" }])).toBe(true);
+        expect(isOfficialBuiltinMarketSkill({ skillId: "community-skill" })).toBe(false);
+        expect(hasAcceptedSkillMarketRisk()).toBe(false);
+        acceptSkillMarketRisk();
+        expect(store.get(SKILL_MARKET_RISK_ACCEPTED_KEY)).toBe("true");
+        expect(hasAcceptedSkillMarketRisk()).toBe(true);
+    } finally {
+        Object.defineProperty(globalThis, "localStorage", { configurable: true, value: prevStorage });
+    }
 });
 
 test("legacy publication requirements stay visible until the author explicitly removes them", () => {
