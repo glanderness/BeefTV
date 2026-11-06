@@ -86,7 +86,7 @@ func TestInstalledUserSkillTasksUsePinnedBodyAndAuxiliaryFiles(t *testing.T) {
 		{"采访切片", "读取 references/interview.md，只使用原话标出保留区间，禁止编造采访。", "00:02-00:06 主人公说：每天练习。", "references/interview.md", false, ""},
 		{"声音审片Python", "读取 scripts/listen.py；需要运行脚本时提交确认。", "print('audio ok')", "scripts/listen.py", true, ""},
 		{"脚本目录单数", "读取 script/run.js；需要运行脚本时提交确认。", "console.log('ok')", "script/run.js", true, ""},
-		{"不支持的脚本解释器", "读取 scripts/legacy.rb；不支持的解释器明确提示。", "puts 'unsupported'", "scripts/legacy.rb", false, "unsupported_script_interpreter"},
+		{"不支持的脚本解释器", "读取 scripts/legacy.txt；不支持的解释器明确提示。", "puts 'unsupported'", "scripts/legacy.txt", false, "unsupported_script_interpreter"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
