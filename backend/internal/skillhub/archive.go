@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/goccy/go-yaml"
 )
 
 var privateLiteral = regexp.MustCompile(`btvpub_[A-Za-z0-9_-]{20,}|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----`)
@@ -78,36 +80,12 @@ func ParseSkillMarkdown(data []byte) SkillMarkdownMetadata {
 	bodyStart := 0
 	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
 		closed := false
-		metadataIndent := -1
 		for index := 1; index < len(lines); index++ {
-			line := lines[index]
-			if strings.TrimSpace(line) == "---" {
+			if strings.TrimSpace(lines[index]) == "---" {
 				bodyStart = index + 1
 				closed = true
+				parseFrontmatterBlock(lines[1:index], &metadata)
 				break
-			}
-			trimmed := strings.TrimSpace(line)
-			indent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if indent == 0 {
-				metadataIndent = -1
-			}
-			key, value, ok := strings.Cut(trimmed, ":")
-			if !ok {
-				continue
-			}
-			key = strings.TrimSpace(key)
-			value = yamlScalarValue(value)
-			switch {
-			case indent == 0 && key == "name":
-				metadata.Name = value
-			case indent == 0 && key == "description":
-				metadata.Description = value
-			case indent == 0 && key == "version":
-				metadata.Version = value
-			case indent == 0 && key == "metadata":
-				metadataIndent = indent
-			case metadataIndent >= 0 && indent > metadataIndent && key == "version":
-				metadata.Version = value
 			}
 		}
 		if !closed {
@@ -134,12 +112,72 @@ func ParseSkillMarkdown(data []byte) SkillMarkdownMetadata {
 			}
 			paragraph = append(paragraph, trimmed)
 		}
-		metadata.Description = strings.Join(paragraph, " ")
+		metadata.Description = fitSkillRunes(strings.Join(paragraph, " "), MaxDescriptionRunes)
 	}
 	metadata.Name = strings.TrimSpace(metadata.Name)
 	metadata.Description = strings.TrimSpace(metadata.Description)
 	metadata.Version = strings.TrimSpace(metadata.Version)
 	return metadata
+}
+
+func parseFrontmatterBlock(frontLines []string, metadata *SkillMarkdownMetadata) {
+	var parsed struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+		Version     string `yaml:"version"`
+		Metadata    struct {
+			Version string `yaml:"version"`
+		} `yaml:"metadata"`
+	}
+	rawFront := strings.Join(frontLines, "\n")
+	if err := yaml.Unmarshal([]byte(rawFront), &parsed); err == nil {
+		metadata.Name = strings.TrimSpace(parsed.Name)
+		metadata.Description = strings.TrimSpace(parsed.Description)
+		metadata.Version = strings.TrimSpace(parsed.Version)
+		if metadata.Version == "" {
+			metadata.Version = strings.TrimSpace(parsed.Metadata.Version)
+		}
+	}
+	metadataIndent := -1
+	for _, line := range frontLines {
+		trimmed := strings.TrimSpace(line)
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent == 0 {
+			metadataIndent = -1
+		}
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = yamlScalarValue(value)
+		if value == "" {
+			if indent == 0 && key == "metadata" {
+				metadataIndent = indent
+			}
+			continue
+		}
+		switch {
+		case indent == 0 && key == "name" && metadata.Name == "":
+			metadata.Name = value
+		case indent == 0 && key == "description" && metadata.Description == "":
+			metadata.Description = value
+		case indent == 0 && key == "version" && metadata.Version == "":
+			metadata.Version = value
+		case indent == 0 && key == "metadata":
+			metadataIndent = indent
+		case metadataIndent >= 0 && indent > metadataIndent && key == "version" && metadata.Version == "":
+			metadata.Version = value
+		}
+	}
+}
+
+func fitSkillRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:limit-1])) + "…"
 }
 
 func isTechnicalSkillName(name string) bool {
@@ -204,6 +242,10 @@ func codeFence(line string) (byte, int) {
 
 func yamlScalarValue(value string) string {
 	value = strings.TrimSpace(value)
+	switch value {
+	case ">", "|", ">-", "|-", ">+", "|+":
+		return ""
+	}
 	if len(value) >= 2 && value[0] == '"' {
 		if decoded, err := strconv.Unquote(value); err == nil {
 			return strings.TrimSpace(decoded)

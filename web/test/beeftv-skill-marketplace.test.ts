@@ -61,6 +61,7 @@ test("third-party market skills require one-time risk acceptance while official 
 
 test("matches installed GitHub skills against public skill directory items", () => {
     const item = { source: "anthropics/skills", skillId: "frontend-design", name: "frontend-design" };
+    const siblingItem = { source: "anthropics/skills", skillId: "mcp-builder", name: "mcp-builder" };
     expect(isPublicMarketSkillInstalled(item, [])).toBe(false);
     expect(
         isPublicMarketSkillInstalled(item, [
@@ -73,6 +74,28 @@ test("matches installed GitHub skills against public skill directory items", () 
             },
         ]),
     ).toBe(true);
+    expect(
+        isPublicMarketSkillInstalled(item, [
+            {
+                skillName: "前端设计",
+                sourceType: "github",
+                sourceUrl: "https://github.com/anthropics/skills",
+                sourceSubdir: "skills/frontend-design",
+                isAdded: false,
+            },
+        ]),
+    ).toBe(true);
+    expect(
+        isPublicMarketSkillInstalled(siblingItem, [
+            {
+                skillName: "前端设计",
+                sourceType: "github",
+                sourceUrl: "https://github.com/anthropics/skills",
+                sourceSubdir: "",
+                isAdded: true,
+            },
+        ]),
+    ).toBe(false);
 });
 
 test("legacy publication requirements stay visible until the author explicitly removes them", () => {

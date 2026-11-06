@@ -45,6 +45,7 @@ func ExpandGitHubMirrorURLs(primaryURL, mirrorURL, verifiedDigest, registry stri
 	}
 	if isChina {
 		addUnique(mirrorURL)
+		addUnique(primaryURL)
 		if hasVerifiedDigest && (strings.HasPrefix(primaryURL, "https://github.com/") ||
 			strings.HasPrefix(primaryURL, "https://raw.githubusercontent.com/") ||
 			strings.HasPrefix(primaryURL, "https://codeload.github.com/")) {
@@ -52,7 +53,6 @@ func ExpandGitHubMirrorURLs(primaryURL, mirrorURL, verifiedDigest, registry stri
 				addUnique(strings.TrimRight(proxy, "/") + "/" + strings.TrimSpace(primaryURL))
 			}
 		}
-		addUnique(primaryURL)
 		return urls
 	}
 	addUnique(primaryURL)

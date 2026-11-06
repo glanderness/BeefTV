@@ -28,13 +28,12 @@ export function isPublicMarketSkillInstalled(
 ): boolean {
     const repoUrl = `https://github.com/${item.source}`.toLowerCase();
     return skills.some((skill) => {
-        if (!skill.isAdded) return false;
+        if (skill.sourceType === "builtin" && !skill.isAdded) return false;
         if (
             skill.sourceType === "github" &&
             skill.sourceUrl?.toLowerCase() === repoUrl &&
-            (!skill.sourceSubdir ||
-                skill.sourceSubdir === item.skillId ||
-                skill.sourceSubdir.endsWith(`/${item.skillId}`) ||
+            (skill.sourceSubdir === item.skillId ||
+                Boolean(skill.sourceSubdir?.endsWith(`/${item.skillId}`)) ||
                 skill.skillName === item.name ||
                 skill.skillName === item.skillId)
         ) {

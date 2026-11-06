@@ -137,15 +137,32 @@ func normalizeSkillArchiveRoot(raw map[string][]byte, subdir string) (map[string
 			}
 		}
 		if len(filtered) == 0 && !strings.Contains(normalized, "/") {
-			if matchedRoot := matchSkillSubdirBySkillID(raw, normalized); matchedRoot != "" {
+			if matchedRoot := matchSkillSubdirBySkillID(raw, normalized); matchedRoot == "." {
+				nestedSkillDirs := make([]string, 0)
+				for _, filePath := range sortedSkillPaths(raw) {
+					if filePath != "SKILL.md" && path.Base(filePath) == "SKILL.md" {
+						nestedSkillDirs = append(nestedSkillDirs, path.Dir(filePath)+"/")
+					}
+				}
+				for filePath, content := range raw {
+					inNestedSkill := false
+					for _, nestedPrefix := range nestedSkillDirs {
+						if strings.HasPrefix(filePath, nestedPrefix) {
+							inNestedSkill = true
+							break
+						}
+					}
+					if !inNestedSkill {
+						filtered[filePath] = content
+					}
+				}
+			} else if matchedRoot != "" {
 				matchedPrefix := matchedRoot + "/"
 				for filePath, content := range raw {
 					if strings.HasPrefix(filePath, matchedPrefix) {
 						filtered[strings.TrimPrefix(filePath, matchedPrefix)] = content
 					}
 				}
-			} else if raw["SKILL.md"] != nil && countSkillMarkdownRoots(raw) == 1 {
-				filtered = raw
 			}
 		}
 		if len(filtered) == 0 {
@@ -190,10 +207,7 @@ func matchSkillSubdirBySkillID(raw map[string][]byte, skillID string) string {
 			continue
 		}
 		dir := path.Dir(filePath)
-		if dir == "." {
-			continue
-		}
-		if strings.EqualFold(path.Base(dir), skillID) {
+		if dir != "." && strings.EqualFold(path.Base(dir), skillID) {
 			return dir
 		}
 		parsed := skillhub.ParseSkillMarkdown(raw[filePath])
@@ -202,16 +216,6 @@ func matchSkillSubdirBySkillID(raw map[string][]byte, skillID string) string {
 		}
 	}
 	return ""
-}
-
-func countSkillMarkdownRoots(raw map[string][]byte) int {
-	count := 0
-	for filePath := range raw {
-		if filePath == "SKILL.md" || path.Base(filePath) == "SKILL.md" {
-			count++
-		}
-	}
-	return count
 }
 
 func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata) (skillPackageArchive, error) {

@@ -141,4 +141,19 @@ func TestVerifyArchiveAcceptsScriptsLargeFilesAndExecutablesWhileRejectingSecret
 	if got, err := SkillName([]byte("# 小说转分镜\n\n把小说段落拆成可拍摄的镜头。\n")); err != nil || got != "小说转分镜" {
 		t.Fatalf("title/paragraph fallback failed: %q %v", got, err)
 	}
+	foldedMD := []byte("---\nname: folded-skill\ndescription: >\n  First line of description\n  second line of description.\n---\n# Folded Skill\n")
+	if meta := ParseSkillMarkdown(foldedMD); meta.Description != "First line of description second line of description." {
+		t.Fatalf("folded YAML description = %q", meta.Description)
+	}
+	if got, err := SkillName(foldedMD); err != nil || got != "folded-skill" {
+		t.Fatalf("SkillName folded YAML failed: %q %v", got, err)
+	}
+	literalMD := []byte("---\nname: literal-skill\ndescription: |\n  Line one\n  Line two\n---\n# Literal Skill\n")
+	if meta := ParseSkillMarkdown(literalMD); meta.Description != "Line one\nLine two" {
+		t.Fatalf("literal YAML description = %q", meta.Description)
+	}
+	longBodyMD := []byte("# 长段落技能\n\n" + strings.Repeat("段", MaxDescriptionRunes+50) + "\n")
+	if got, err := SkillName(longBodyMD); err != nil || got != "长段落技能" {
+		t.Fatalf("expected long body paragraph fallback to be truncated and accepted by SkillName: %q %v", got, err)
+	}
 }

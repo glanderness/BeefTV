@@ -1,10 +1,26 @@
 package app
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
 
 func TestSyncGitHubSkillDelegatesInLocalMode(t *testing.T) {
-	svc := &Service{mode: serviceModeLocal}
-	if _, err := svc.SyncGitHubSkill("user-1", "skill-1"); err == nil {
-		t.Fatal("expected missing repository error when syncing unknown skill")
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Skill{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{mode: serviceModeLocal, repo: repository.New(db)}
+	if _, err := svc.SyncGitHubSkill("user-1", "skill-1"); err == nil || strings.Contains(err.Error(), "本地工作区") {
+		t.Fatalf("local GitHub skill sync error = %v, want delegated skill lookup error", err)
 	}
 }
