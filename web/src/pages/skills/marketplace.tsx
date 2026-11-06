@@ -15,10 +15,10 @@ import { SkillPublishingPanel } from "./publishing-panel";
 import { MarketFilePreview } from "./market-file-preview";
 import { SkillFileDetails } from "./skill-file-details";
 import { skillFailureMessage } from "./skill-feedback";
-import { capabilityOptions, isPublicMarketSkillInstalled, marketInstallationState, requirementLabel } from "./market-copy";
+import { canInstallMarketRelease, isPublicMarketSkillInstalled, marketInstallationState, releaseUnsupportedReasons, requirementLabel } from "./market-copy";
 import { ExternalLink, MoreHorizontal, RefreshCw } from "lucide-react";
 import { Switch } from "@/components/ui/base/switch";
-import { formatSkillCount, skillOrigin } from "./skill-catalog";
+import { fallbackSkillCategories, formatSkillCount, skillOrigin } from "./skill-catalog";
 import "./marketplace.css";
 
 const SKILL_PAGE_SIZE = 20;
@@ -34,6 +34,7 @@ export default function SkillMarketplace() {
     const [publicDetail, setPublicDetail] = useState<PublicMarketSkill | null>(null);
     const [installed, setInstalled] = useState<Skill[]>([]);
     const [installedLoading, setInstalledLoading] = useState(true);
+    const [installedError, setInstalledError] = useState("");
     const [installingRelease, setInstallingRelease] = useState("");
     const installing = useRef(false);
     const [local, setLocal] = useState<Skill[]>([]);
@@ -89,6 +90,7 @@ export default function SkillMarketplace() {
         if (tab !== "market") return;
         let stale = false;
         setInstalledLoading(true);
+        setInstalledError("");
         void (async () => {
             const skills: Skill[] = [];
             for (let page = 1; ; page++) {
@@ -98,7 +100,7 @@ export default function SkillMarketplace() {
                 if (!result.hasMore) break;
             }
             if (!stale) setInstalled(skills);
-        })().catch(error => { if (!stale) setError(skillFailureMessage(error, "无法读取安装状态", "请刷新技能市场后重试。")); })
+        })().catch(error => { if (!stale) setInstalledError(skillFailureMessage(error, "无法读取安装状态", "请刷新技能市场后重试。")); })
             .finally(() => { if (!stale) setInstalledLoading(false); });
         return () => { stale = true; };
     }, [tab, revision]);
@@ -191,6 +193,8 @@ export default function SkillMarketplace() {
         }
     };
     const releaseInstallation = release ? marketInstallationState(release, installed) : "install";
+    const releaseItem = release ? items.find(item => item.skillId === release.skillId && item.releaseId === release.releaseId) : undefined;
+    const releaseUnsupported = release ? releaseUnsupportedReasons(release, releaseItem?.compatibility) : [];
     const publicDetailInstalled = publicDetail ? isPublicMarketSkillInstalled(publicDetail, installed) : false;
     const visibleMarketItems = marketSource === "public" ? [] : items;
     const visiblePublicItems = marketSource === "beeftv" ? [] : publicItems;
@@ -218,10 +222,12 @@ export default function SkillMarketplace() {
             </div> : null}
             {tab === "market" && publicNotice && marketSource !== "beeftv" ? <Alert type="info" showIcon title={publicNotice} className="mb-3" /> : null}
             {error ? <Alert type="error" showIcon title={error} action={<Button size="small" onClick={reload}>重试</Button>} /> : loading ? <Skeleton active paragraph={{ rows: 6 }} /> : <>
+                {tab === "market" && installedError ? <Alert type="warning" showIcon title={installedError} className="mb-4" action={<Button size="small" onClick={reload}>重试</Button>} /> : null}
                 {tab === "market" ? <>
                     {visibleMarketItems.map(item => {
                         const installation = marketInstallationState(item, installed);
                         const installLabel = installation === "installed" ? "已安装" : installation === "update" ? "更新" : "安装";
+                        const itemUnsupported = releaseUnsupportedReasons(item, item.compatibility);
                         const isOfficial = isOfficialBuiltinMarketSkill(item, installed);
                         return <article className="workspace-list-row" key={`${item.skillId}/${item.releaseId}`}>
                             <div className="workspace-list-copy">
@@ -230,7 +236,7 @@ export default function SkillMarketplace() {
                             <div className="workspace-list-controls">
                                 <Tooltip title={isOfficial ? "BeefTV 官方内置技能" : `作者：${item.author || "未提供"}`}><span className="skill-origin-label">{isOfficial ? "官方" : "市场"}</span></Tooltip>
                                 <Button size="small" onClick={() => openRelease(item.skillId, item.releaseId)} disabled={busy}>查看详情</Button>
-                                <Button type="primary" size="small" className="min-w-16" aria-label={`${installLabel}${item.name}`} loading={installingRelease === item.releaseId} disabled={busy || installedLoading || installation === "installed" || item.compatibility?.status === "unsupported"} onClick={() => requestInstall(item, false)}>{installLabel}</Button>
+                                <Button type="primary" size="small" className="min-w-16" aria-label={`${installLabel}${item.name}`} loading={installingRelease === item.releaseId} disabled={!canInstallMarketRelease({ busy, installedLoading, installedError, installation, unsupportedReasons: itemUnsupported })} onClick={() => requestInstall(item, false)}>{installLabel}</Button>
                             </div>
                         </article>;
                     })}
@@ -278,7 +284,7 @@ export default function SkillMarketplace() {
             </div>
             {!loading && !error && (total > SKILL_PAGE_SIZE || page > 1) ? <nav className="skill-market-pagination" aria-label="技能分页"><Button disabled={page <= 1} onClick={() => setPage(n => n - 1)}>上一页</Button><span>第 {page} / {Math.max(1, Math.ceil(total / SKILL_PAGE_SIZE))} 页 · 共 {total} 项</span><Button disabled={page * SKILL_PAGE_SIZE >= total} onClick={() => setPage(n => n + 1)}>下一页</Button></nav> : null}
         </>}
-        <AppModal flush scrollBody className="skill-release-dialog" wrapClassName="skill-release-wrap" open={Boolean(release)} title={release?.name || "技能详情"} onCancel={() => { setRelease(null); setParams({ tab: "market" }); }} footer={<Button type="primary" loading={busy} disabled={installedLoading || releaseInstallation === "installed" || release?.requirements.some(value => !capabilityOptions.some(item => item.value === value))} onClick={() => { if (release) requestInstall(release, true); }}>{releaseInstallation === "installed" ? "已安装" : releaseInstallation === "update" ? "更新此版本" : "安装此版本"}</Button>} width="min(760px, calc(100vw - 32px))">
+        <AppModal flush scrollBody className="skill-release-dialog" wrapClassName="skill-release-wrap" open={Boolean(release)} title={release?.name || "技能详情"} onCancel={() => { setRelease(null); setParams({ tab: "market" }); }} footer={<Button type="primary" loading={busy} disabled={!canInstallMarketRelease({ busy, installedLoading, installedError, installation: releaseInstallation, unsupportedReasons: releaseUnsupported })} onClick={() => { if (release) requestInstall(release, true); }}>{releaseInstallation === "installed" ? "已安装" : releaseInstallation === "update" ? "更新此版本" : "安装此版本"}</Button>} width="min(760px, calc(100vw - 32px))">
             {release ? <div className="skill-market-preview" tabIndex={0} role="region" aria-label="技能详情内容">
                 <div className="skill-release-overview">
                     <dl className="skill-release-metadata">
@@ -290,9 +296,10 @@ export default function SkillMarketplace() {
                 </div>
                 <div className="skill-release-sections">
                     <section className="skill-release-section" aria-label="使用条件">
-                        <details><summary>使用条件</summary>
+                        <details open={releaseUnsupported.length > 0}><summary>使用条件</summary>
                             <p>{release.requirements.length ? release.requirements.map(requirementLabel).join("、") : "没有额外工具要求"}</p>
                             {release.requirementNotes ? <p>{release.requirementNotes}</p> : null}
+                            {releaseUnsupported.length ? <p className="skill-market-warning">当前环境不满足：{releaseUnsupported.join("、")}</p> : null}
                             {release.requirements.some(value => value.startsWith("model.")) ? <Alert type="info" title="使用前需要在模型配置中选择支持所需理解能力的模型。安装不代表这些条件已满足。" /> : null}
                         </details>
                     </section>
@@ -335,7 +342,7 @@ export default function SkillMarketplace() {
             skill={detail}
             loading={false}
             mutating={busy}
-            categories={[]}
+            categories={fallbackSkillCategories}
             onClose={() => setDetail(null)}
             onEdit={openEditor}
             onAdd={(skill) => void action(async () => {
