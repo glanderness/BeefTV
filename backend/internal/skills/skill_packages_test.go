@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/driver/sqlite"
@@ -79,6 +82,66 @@ func TestParseGitHubSkillURL(t *testing.T) {
 	}
 	if _, err := parseGitHubSkillURL("https://github.com/example/beeftv-skills/blob/main/SKILL.md", "", ""); err == nil {
 		t.Fatal("expected blob URL to be rejected")
+	}
+}
+
+func TestFetchGitHubSkillArchiveMirrorFallbackAndCommitVerification(t *testing.T) {
+	wantSHA := strings.Repeat("a", 40)
+	wrongSHA := strings.Repeat("b", 40)
+	buildCommitZip := func(commitSHA string) []byte {
+		var buf bytes.Buffer
+		w := zip.NewWriter(&buf)
+		_ = w.SetComment(commitSHA)
+		entry, err := w.Create("beeftv-skills-" + commitSHA + "/skills/canvas-context/SKILL.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = entry.Write([]byte("---\nname: canvas-context\ndescription: 画布上下文技能\n---\n# 画布上下文技能\n\n读取画布说明。\n"))
+		_ = w.Close()
+		return buf.Bytes()
+	}
+
+	urls := outbound.ExpandGitHubMirrorURLs("https://codeload.github.com/example/beeftv-skills/zip/"+wantSHA, "", wantSHA, "")
+	if len(urls) < 3 || !strings.HasPrefix(urls[0], "https://gh-proxy.com/https://codeload.github.com/") {
+		t.Fatalf("expected China GitHub proxies before codeload origin, got %v", urls)
+	}
+	if err := verifyGitHubCommitZip(buildCommitZip(wrongSHA), wantSHA); err == nil {
+		t.Fatal("expected tampered commit SHA zip to be rejected")
+	}
+	if err := verifyGitHubCommitZip(buildCommitZip(wantSHA), wantSHA); err != nil {
+		t.Fatalf("expected matching commit SHA zip to pass: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/example/beeftv-skills":
+			_ = json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"})
+		case "/repos/example/beeftv-skills/commits/main":
+			_ = json.NewEncoder(w).Encode(map[string]any{"sha": wantSHA})
+		case "/example/beeftv-skills/zip/" + wantSHA:
+			_, _ = w.Write(buildCommitZip(wantSHA))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	prevAPI, prevCodeload := githubAPIBaseURL, githubCodeloadBaseURL
+	githubAPIBaseURL, githubCodeloadBaseURL = server.URL, server.URL
+	t.Cleanup(func() {
+		githubAPIBaseURL, githubCodeloadBaseURL = prevAPI, prevCodeload
+	})
+
+	archive, commit, canonicalURL, resolvedRef, err := fetchGitHubSkillArchive(context.Background(), githubSkillSpec{
+		Owner:  "example",
+		Repo:   "beeftv-skills",
+		Subdir: "canvas-context",
+	})
+	if err != nil {
+		t.Fatalf("fetchGitHubSkillArchive failed: %v", err)
+	}
+	if commit != wantSHA || canonicalURL != "https://github.com/example/beeftv-skills" || resolvedRef != "main" || archive.Metadata.Name != "画布上下文技能" {
+		t.Fatalf("unexpected archive metadata: commit=%s url=%s ref=%s name=%s", commit, canonicalURL, resolvedRef, archive.Metadata.Name)
 	}
 }
 

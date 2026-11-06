@@ -136,6 +136,16 @@ func normalizeSkillArchiveRoot(raw map[string][]byte, subdir string) (map[string
 				filtered[strings.TrimPrefix(filePath, prefix)] = content
 			}
 		}
+		if len(filtered) == 0 && !strings.Contains(normalized, "/") {
+			if matchedRoot := matchSkillSubdirBySkillID(raw, normalized); matchedRoot != "" {
+				matchedPrefix := matchedRoot + "/"
+				for filePath, content := range raw {
+					if strings.HasPrefix(filePath, matchedPrefix) {
+						filtered[strings.TrimPrefix(filePath, matchedPrefix)] = content
+					}
+				}
+			}
+		}
 		if len(filtered) == 0 {
 			return nil, kernel.BadAuthRequest("GitHub 子目录不存在或为空")
 		}
@@ -170,6 +180,26 @@ func normalizeSkillArchiveRoot(raw map[string][]byte, subdir string) (map[string
 		files[filePath] = content
 	}
 	return files, nil
+}
+
+func matchSkillSubdirBySkillID(raw map[string][]byte, skillID string) string {
+	for _, filePath := range sortedSkillPaths(raw) {
+		if path.Base(filePath) != "SKILL.md" {
+			continue
+		}
+		dir := path.Dir(filePath)
+		if dir == "." {
+			continue
+		}
+		if strings.EqualFold(path.Base(dir), skillID) {
+			return dir
+		}
+		parsed := skillhub.ParseSkillMarkdown(raw[filePath])
+		if strings.EqualFold(parsed.TechnicalName, skillID) || strings.EqualFold(parsed.Name, skillID) {
+			return dir
+		}
+	}
+	return ""
 }
 
 func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata) (skillPackageArchive, error) {
