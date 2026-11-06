@@ -11,7 +11,7 @@ export function publicationStatus(status: string) {
 export function canSubmitPublication(plan: { status: string; preview?: unknown }, confirmed: boolean) {
     return confirmed && plan.status === "awaiting_submit_confirmation" && Boolean(plan.preview);
 }
-import type { MarketItem, PublishPlan } from "@/services/api/skill-market";
+import type { MarketItem, PublicMarketSkill, PublishPlan } from "@/services/api/skill-market";
 import type { Skill } from "@/services/api/skills";
 
 export function marketInstallationState(release: Pick<MarketItem, "skillId" | "releaseId" | "versionLabel">, skills: Array<Pick<Skill, "skillId" | "sourceType" | "sourceRef" | "sourceCommit" | "version" | "isAdded">>): "install" | "update" | "installed" {
@@ -20,6 +20,28 @@ export function marketInstallationState(release: Pick<MarketItem, "skillId" | "r
     if (!installed) return "install";
     const current = installed.sourceType === "builtin" ? installed.version === release.versionLabel : installed.sourceCommit === release.releaseId;
     return current ? "installed" : "update";
+}
+
+export function isPublicMarketSkillInstalled(
+    item: Pick<PublicMarketSkill, "source" | "skillId" | "name">,
+    skills: Array<Pick<Skill, "skillName" | "sourceType" | "sourceUrl" | "sourceSubdir" | "isAdded">>,
+): boolean {
+    const repoUrl = `https://github.com/${item.source}`.toLowerCase();
+    return skills.some((skill) => {
+        if (!skill.isAdded) return false;
+        if (
+            skill.sourceType === "github" &&
+            skill.sourceUrl?.toLowerCase() === repoUrl &&
+            (!skill.sourceSubdir ||
+                skill.sourceSubdir === item.skillId ||
+                skill.sourceSubdir.endsWith(`/${item.skillId}`) ||
+                skill.skillName === item.name ||
+                skill.skillName === item.skillId)
+        ) {
+            return true;
+        }
+        return skill.skillName === item.name || skill.skillName === item.skillId;
+    });
 }
 
 export function needsPublicationTargetCorrection(plan: Pick<PublishPlan, "submissionId" | "publicationTarget" | "marketSkillId" | "skillId" | "metadata">) {

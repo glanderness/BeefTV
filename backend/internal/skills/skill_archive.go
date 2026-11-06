@@ -144,6 +144,8 @@ func normalizeSkillArchiveRoot(raw map[string][]byte, subdir string) (map[string
 						filtered[strings.TrimPrefix(filePath, matchedPrefix)] = content
 					}
 				}
+			} else if raw["SKILL.md"] != nil && countSkillMarkdownRoots(raw) == 1 {
+				filtered = raw
 			}
 		}
 		if len(filtered) == 0 {
@@ -200,6 +202,16 @@ func matchSkillSubdirBySkillID(raw map[string][]byte, skillID string) string {
 		}
 	}
 	return ""
+}
+
+func countSkillMarkdownRoots(raw map[string][]byte) int {
+	count := 0
+	for filePath := range raw {
+		if filePath == "SKILL.md" || path.Base(filePath) == "SKILL.md" {
+			count++
+		}
+	}
+	return count
 }
 
 func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata) (skillPackageArchive, error) {

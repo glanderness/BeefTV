@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { canSubmitPublication, needsPublicationTargetCorrection, requirementLabel, publicationStatus, unsupportedRequirements } from "../src/pages/skills/market-copy";
+import { canSubmitPublication, isPublicMarketSkillInstalled, needsPublicationTargetCorrection, requirementLabel, publicationStatus, unsupportedRequirements } from "../src/pages/skills/market-copy";
 import { SKILL_MARKET_RISK_ACCEPTED_KEY, acceptSkillMarketRisk, hasAcceptedSkillMarketRisk, isOfficialBuiltinMarketSkill } from "../src/pages/skills/skill-market-install-confirm-modal";
 
 async function source(path: string) {
@@ -57,6 +57,22 @@ test("third-party market skills require one-time risk acceptance while official 
     } finally {
         Object.defineProperty(globalThis, "localStorage", { configurable: true, value: prevStorage });
     }
+});
+
+test("matches installed GitHub skills against public skill directory items", () => {
+    const item = { source: "anthropics/skills", skillId: "frontend-design", name: "frontend-design" };
+    expect(isPublicMarketSkillInstalled(item, [])).toBe(false);
+    expect(
+        isPublicMarketSkillInstalled(item, [
+            {
+                skillName: "前端设计",
+                sourceType: "github",
+                sourceUrl: "https://github.com/anthropics/skills",
+                sourceSubdir: "skills/frontend-design",
+                isAdded: true,
+            },
+        ]),
+    ).toBe(true);
 });
 
 test("legacy publication requirements stay visible until the author explicitly removes them", () => {

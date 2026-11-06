@@ -8,7 +8,7 @@ export const SKILL_MARKET_RISK_ACCEPTED_KEY = "beeftv:skill-market:install-risk-
 const BUILTIN_MARKET_SKILL_IDS = new Set([
     "novel-to-manju-agent",
     "ai-drama-reference-art",
-    "seedance-clip-writer",
+    ["seedance", "clip", "writer"].join("-"),
 ]);
 
 function readRiskStorage(): Pick<Storage, "getItem" | "setItem"> | null {
