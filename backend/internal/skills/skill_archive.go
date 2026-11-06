@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -225,69 +224,13 @@ func encodeSkillArchive(files map[string][]byte) ([]byte, error) {
 }
 
 func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
-	text := string(data)
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	metadata := skillPackageMetadata{}
-	bodyStart := 0
-	if len(lines) > 2 && strings.TrimSpace(lines[0]) == "---" {
-		metadataIndent := -1
-		for index := 1; index < len(lines); index++ {
-			line := lines[index]
-			if strings.TrimSpace(line) == "---" {
-				bodyStart = index + 1
-				break
-			}
-			trimmed := strings.TrimSpace(line)
-			indent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if indent == 0 {
-				metadataIndent = -1
-			}
-			key, value, ok := strings.Cut(trimmed, ":")
-			if !ok {
-				continue
-			}
-			key = strings.TrimSpace(key)
-			value = yamlScalar(value)
-			switch {
-			case indent == 0 && key == "name":
-				metadata.Name = value
-			case indent == 0 && key == "description":
-				metadata.Description = value
-			case indent == 0 && key == "version":
-				metadata.Version = value
-			case indent == 0 && key == "metadata":
-				metadataIndent = indent
-			case metadataIndent >= 0 && indent > metadataIndent && key == "version":
-				metadata.Version = value
-			}
-		}
+	parsed := skillhub.ParseSkillMarkdown(data)
+	return skillPackageMetadata{
+		Name:          fitRunes(parsed.Name, maxSkillNameRunes),
+		TechnicalName: parsed.TechnicalName,
+		Description:   fitRunes(parsed.Description, maxSkillDescriptionRunes),
+		Version:       kernel.TruncateRunes(parsed.Version, 64),
 	}
-	body := lines[bodyStart:]
-	metadata.TechnicalName, metadata.Name = metadata.Name, displaySkillName(metadata.Name, body)
-	if metadata.Name == "" {
-		metadata.Name = firstMarkdownTitle(body)
-	}
-	if metadata.Description == "" {
-		paragraph := make([]string, 0, 4)
-		for _, line := range body {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				if len(paragraph) > 0 {
-					break
-				}
-				continue
-			}
-			if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "```") {
-				continue
-			}
-			paragraph = append(paragraph, trimmed)
-		}
-		metadata.Description = strings.Join(paragraph, " ")
-	}
-	metadata.Name = fitRunes(strings.TrimSpace(metadata.Name), maxSkillNameRunes)
-	metadata.Description = fitRunes(strings.TrimSpace(metadata.Description), maxSkillDescriptionRunes)
-	metadata.Version = kernel.TruncateRunes(strings.TrimSpace(metadata.Version), 64)
-	return metadata
 }
 
 func errSkillPackageTooLarge() error {
@@ -301,17 +244,4 @@ func fitRunes(value string, limit int) string {
 		return value
 	}
 	return strings.TrimSpace(string(runes[:limit-1])) + "…"
-}
-
-func yamlScalar(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) >= 2 && value[0] == '"' {
-		if decoded, err := strconv.Unquote(value); err == nil {
-			return strings.TrimSpace(decoded)
-		}
-	}
-	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
-		return strings.TrimSpace(value[1 : len(value)-1])
-	}
-	return value
 }

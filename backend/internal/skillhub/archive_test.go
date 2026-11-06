@@ -69,6 +69,9 @@ func TestVerifyArchiveAcceptsScriptsLargeFilesAndExecutablesWhileRejectingSecret
 	if !HasScripts(release.Files) {
 		t.Fatal("expected HasScripts to detect scripts/ entry")
 	}
+	if !HasScripts([]File{{Path: "script/helper.sh"}}) {
+		t.Fatal("expected HasScripts to detect script/ entry")
+	}
 	verified, err := VerifyArchive(raw, release)
 	if err != nil {
 		t.Fatalf("expected scripts, executable bits, binary, and >2 MiB file to be accepted: %v", err)
@@ -128,5 +131,14 @@ func TestVerifyArchiveAcceptsScriptsLargeFilesAndExecutablesWhileRejectingSecret
 	tooLongDesc := strings.Repeat("述", MaxDescriptionRunes+1)
 	if _, err := SkillName([]byte("---\nname: example\ndescription: " + tooLongDesc + "\n---\nBody\n")); err == nil {
 		t.Fatal("description over 1024 runes accepted")
+	}
+	if got, err := SkillName([]byte("---\nname: " + strings.Repeat("名", MaxNameRunes) + "\ndescription: 中文技能\n---\n正文\n")); err != nil || len([]rune(got)) != MaxNameRunes {
+		t.Fatalf("80-rune Chinese name rejected: %q %v", got, err)
+	}
+	if _, err := SkillName([]byte("---\nname: " + strings.Repeat("名", MaxNameRunes+1) + "\ndescription: 中文技能\n---\n正文\n")); err == nil {
+		t.Fatal("name over 80 runes accepted")
+	}
+	if got, err := SkillName([]byte("# 小说转分镜\n\n把小说段落拆成可拍摄的镜头。\n")); err != nil || got != "小说转分镜" {
+		t.Fatalf("title/paragraph fallback failed: %q %v", got, err)
 	}
 }
