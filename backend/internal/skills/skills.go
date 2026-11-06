@@ -82,7 +82,6 @@ type SkillItem struct {
 	ExtraInfo       string               `json:"extraInfo"`
 	IsAdded         bool                 `json:"isAdded"`
 	IsOwner         bool                 `json:"isOwner"`
-	HasScripts      bool                 `json:"hasScripts"`
 	MarketRelease   *skillhub.Release    `json:"marketRelease,omitempty"`
 }
 
@@ -297,10 +296,6 @@ func (s *Service) skillItems(userID string, skills []model.Skill, includeInstruc
 		}
 		releases[version.ID] = release
 	}
-	withScripts, err := s.repo.SkillVersionsWithScripts(versionIDs)
-	if err != nil {
-		return nil, err
-	}
 	states, err := s.repo.UserSkillStatesBySkillIDs(userID, ids)
 	if err != nil {
 		return nil, err
@@ -343,7 +338,7 @@ func (s *Service) skillItems(userID string, skills []model.Skill, includeInstruc
 			LikeCount: metric.LikeCount, IsLike: state.Liked, OwnerUID: skill.OwnerID,
 			EffectiveUser: SkillEffectiveUser{Name: ownerName, AvatarURL: ownerAvatarURL, UID: skill.OwnerID}, ShowcaseMedia: showcaseMedia,
 			AddedCount: metric.AddedCount, ExtraInfo: skill.ExtraInfo, IsAdded: state.Added, IsOwner: skill.OwnerID == userID,
-			HasScripts: withScripts[skill.CurrentVersionID], MarketRelease: release,
+			MarketRelease: release,
 		})
 	}
 	return items, nil
@@ -363,7 +358,9 @@ func (s *Service) visibleSkill(userID string, id string) (*model.Skill, error) {
 		return nil, err
 	}
 	if skill.IsPrivate && skill.OwnerID != userID {
-		return nil, kernel.Forbidden("该技能未公开")
+		if state, err := s.repo.UserSkillState(userID, id); err != nil || state == nil || !state.Added {
+			return nil, kernel.Forbidden("该技能未公开")
+		}
 	}
 	return skill, nil
 }

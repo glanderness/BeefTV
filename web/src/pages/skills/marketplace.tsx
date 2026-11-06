@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { CollectionHeader } from "@/components/layout/collection-header";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { addSkill, deleteSkill, getSkill, listSkills, removeSkill, type Skill } from "@/services/api/skills";
+import { addSkill, deleteSkill, getSkill, likeSkill, listSkills, removeSkill, syncSkill, unlikeSkill, type Skill } from "@/services/api/skills";
 import { forkSkill, getInstalledVersions, getMarketRelease, installMarketRelease, rollbackSkill, searchSkillMarket, type InstalledVersion, type MarketItem, type MarketRelease } from "@/services/api/skill-market";
 import { SkillEditorDrawer } from "./skill-editor-drawer";
 import { SkillInstallModal } from "./skill-install-modal";
@@ -208,7 +208,26 @@ export default function SkillMarketplace() {
         <AppModal scrollBody open={Boolean(versions)} title="恢复本机历史版本" onCancel={() => setVersions(null)} onOk={() => { if (versions) void action(async () => { await rollbackSkill(versions.skill.skillId, versionId); setVersions(null); }, "已恢复指定版本"); }} okText="恢复此版本" okButtonProps={{ disabled: !versions || versionId === versions.skill.versionId, loading: busy }}>
             <p>恢复后新对话可选择此版本。已有对话保留原先选定的版本。</p><Select className="w-full" value={versionId} onChange={setVersionId} options={versions?.items.map(v => ({ value: v.id, label: `${v.versionLabel} · ${v.createdAt.slice(0, 10)}${v.id === versions.skill.versionId ? "（当前）" : ""}` }))} />
         </AppModal>
-        <SkillDetailModal fileOnly skill={detail} loading={false} mutating={busy} categories={[]} onClose={() => setDetail(null)} onEdit={openEditor} onAdd={() => {}} onLike={() => {}} onSync={() => {}} />
+        <SkillDetailModal
+            skill={detail}
+            loading={false}
+            mutating={busy}
+            categories={[]}
+            onClose={() => setDetail(null)}
+            onEdit={openEditor}
+            onAdd={(skill) => void action(async () => {
+                const res = skill.isAdded ? await removeSkill(skill.skillId) : await addSkill(skill.skillId);
+                setDetail(res.skill);
+            }, skill.isAdded ? "已停用，不再供助手选择" : "已启用")}
+            onLike={(skill) => void action(async () => {
+                const res = skill.isLike ? await unlikeSkill(skill.skillId) : await likeSkill(skill.skillId);
+                setDetail(res.skill);
+            })}
+            onSync={(skill) => void action(async () => {
+                const res = await syncSkill(skill.skillId);
+                setDetail(res.skill);
+            }, "已同步最新 GitHub 提交", "GitHub 技能同步失败")}
+        />
         <SkillEditorDrawer open={editorOpen} skill={edit} onClose={() => setEditorOpen(false)} onSaved={() => { setEditorOpen(false); changeTab("mine"); reload(); }} />
         <SkillInstallModal open={installOpen} onClose={() => setInstallOpen(false)} onManualCreate={() => { setInstallOpen(false); openEditor(); }} onInstalled={() => { setInstallOpen(false); changeTab("mine"); reload(); }} />
     </WorkspacePage>;

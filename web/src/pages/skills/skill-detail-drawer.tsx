@@ -106,6 +106,8 @@ export function SkillDetailModal({ skill, loading, mutating, categories, onClose
                                 {skill.description ? <p>{skill.description}</p> : null}
                                 <dl>
                                     <div><dt>来源</dt><dd>{sourceLabel(skill.sourceType)}</dd></div>
+                                    {skill.version ? <div><dt>版本</dt><dd>{skill.version}</dd></div> : null}
+                                    {skill.effectiveUser?.name ? <div><dt>作者</dt><dd>{skill.effectiveUser.name}</dd></div> : null}
                                     <div><dt>分类</dt><dd>{skillCategoryLabel(skill.tag, categories)}</dd></div>
                                     <div><dt>更新于</dt><dd>{formatSkillDate(skill.updatedAt)}</dd></div>
                                 </dl>
@@ -115,7 +117,7 @@ export function SkillDetailModal({ skill, loading, mutating, categories, onClose
                             {skill.sourceType === "github" && skill.isOwner ? <Tooltip title={skill.syncError || "从 GitHub 检查并同步最新提交"}><Button loading={mutating} icon={<RefreshCw className="size-4" />} onClick={() => onSync(skill)}>同步</Button></Tooltip> : null}
                             {skill.isOwner ? <Button icon={<Pencil className="size-4" />} onClick={() => onEdit(skill)}>编辑</Button> : null}
                             <Button loading={mutating} icon={<Heart className={`size-4 ${skill.isLike ? "fill-current text-rose-500" : ""}`} />} onClick={() => onLike(skill)}>{skill.isLike ? "已收藏" : "收藏"}</Button>
-                            <Button type={skill.isAdded ? "default" : "primary"} loading={mutating} disabled={skill.isOwner} icon={skill.isAdded ? <Check className="size-4" /> : <Plus className="size-4" />} onClick={() => onAdd(skill)}>{skill.isOwner ? "我的技能" : skill.isAdded ? "已加入" : "加入技能"}</Button>
+                            <Button type={skill.isAdded ? "default" : "primary"} loading={mutating} icon={skill.isAdded ? <Check className="size-4" /> : <Plus className="size-4" />} onClick={() => onAdd(skill)}>{skill.isAdded ? "已启用" : "启用技能"}</Button>
                         </div> : null}
                     </header>
 
@@ -276,6 +278,7 @@ function sourceLabel(source: string) {
     if (source === "zip") return "ZIP 技能包";
     if (source === "builtin") return "内置技能";
     if (source === "plugin") return "插件";
+    if (source === "market") return "技能市场";
     return "Markdown";
 }
 
