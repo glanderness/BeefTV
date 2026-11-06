@@ -59,11 +59,11 @@ func TestVerifyArchiveAcceptsScriptsLargeFilesAndExecutablesWhileRejectingSecret
 	desc := strings.Repeat("述", MaxDescriptionRunes)
 	largeFile := bytes.Repeat([]byte("a"), 3<<20)
 	files := map[string][]byte{
-		"SKILL.md":           []byte("---\nname: example\ndescription: " + desc + "\n---\nRun the attached file.\n"),
-		"scripts/run.py":     []byte("#!/usr/bin/env python3\nprint('ok')\n"),
-		"script/helper.sh":   []byte("#!/bin/sh\necho ok\n"),
-		"assets/font.woff2":  {0x00, 0x01, 0x77, 0x4f, 0x46, 0x32, 0xff},
-		"assets/large.bin":   largeFile,
+		"SKILL.md":          []byte("---\nname: example\ndescription: " + desc + "\n---\nRun the attached file.\n"),
+		"scripts/run.py":    []byte("#!/usr/bin/env python3\nprint('ok')\n"),
+		"script/helper.sh":  []byte("#!/bin/sh\necho ok\n"),
+		"assets/font.woff2": {0x00, 0x01, 0x77, 0x4f, 0x46, 0x32, 0xff},
+		"assets/large.bin":  largeFile,
 	}
 	raw, release := buildTestReleaseArchive(t, files, 0755)
 	if !HasScripts(release.Files) {
