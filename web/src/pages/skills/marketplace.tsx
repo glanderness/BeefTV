@@ -10,7 +10,7 @@ import { forkSkill, getInstalledVersions, getMarketRelease, getPublicSkillsAbout
 import { SkillEditorDrawer } from "./skill-editor-drawer";
 import { SkillInstallModal } from "./skill-install-modal";
 import { SkillDetailModal } from "./skill-detail-drawer";
-import { SkillMarketInstallConfirmModal, hasAcceptedSkillMarketRisk, isOfficialBuiltinMarketSkill, type SkillMarketInstallConfirmRequest } from "./skill-market-install-confirm-modal";
+import { SkillMarketInstallConfirmModal, isOfficialBuiltinMarketSkill, type SkillMarketInstallConfirmRequest } from "./skill-market-install-confirm-modal";
 import { SkillPublishingPanel } from "./publishing-panel";
 import { MarketFilePreview } from "./market-file-preview";
 import { SkillFileDetails } from "./skill-file-details";
@@ -133,7 +133,7 @@ export default function SkillMarketplace() {
             .finally(() => { installing.current = false; setInstallingRelease(""); });
     };
     const requestInstall = (target: Pick<MarketItem, "skillId" | "releaseId" | "name" | "versionLabel" | "author" | "description">, showMine: boolean) => {
-        if (isOfficialBuiltinMarketSkill(target, installed) || hasAcceptedSkillMarketRisk()) {
+        if (isOfficialBuiltinMarketSkill(target, installed)) {
             install(target, showMine);
             return;
         }
@@ -168,10 +168,6 @@ export default function SkillMarketplace() {
             .finally(() => { installing.current = false; setInstallingRelease(""); });
     };
     const requestPublicInstall = (item: PublicMarketSkill, showMine: boolean) => {
-        if (hasAcceptedSkillMarketRisk()) {
-            installPublic(item, showMine);
-            return;
-        }
         setPendingInstall({
             onRun: () => installPublic(item, showMine),
             request: {
@@ -325,7 +321,7 @@ export default function SkillMarketplace() {
                 <div className="skill-release-sections">
                     <section className="skill-release-section">
                         <details className="skill-release-notes" open><summary>安装与运行说明</summary>
-                            <p>该技能通过 GitHub 仓库下载安装，支持国内镜像加速与提交版本校验。</p>
+                            <p>安装时从 GitHub 仓库 {publicDetail.source} 下载技能文件。</p>
                             <p>安装后只保存技能文件，可在「我的技能」中查看完整文件、手动同步最新提交或启用给画布助手。</p>
                         </details>
                     </section>

@@ -3,45 +3,12 @@ import { useEffect, useState } from "react";
 import { Button, Checkbox, Modal, Tag } from "antd";
 import type { Skill } from "@/services/api/skills";
 
-export const SKILL_MARKET_RISK_ACCEPTED_KEY = "beeftv:skill-market:install-risk-accepted:v1";
-
-const BUILTIN_MARKET_SKILL_IDS = new Set([
-    "novel-to-manju-agent",
-    "ai-drama-reference-art",
-    ["seedance", "clip", "writer"].join("-"),
-]);
-
-function readRiskStorage(): Pick<Storage, "getItem" | "setItem"> | null {
-    try {
-        if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
-        if (typeof localStorage !== "undefined") return localStorage;
-    } catch {
-        // Ignore storage access errors in restricted environments.
-    }
-    return null;
-}
-
-export function hasAcceptedSkillMarketRisk(): boolean {
-    return readRiskStorage()?.getItem(SKILL_MARKET_RISK_ACCEPTED_KEY) === "true";
-}
-
-export function acceptSkillMarketRisk(): void {
-    try {
-        readRiskStorage()?.setItem(SKILL_MARKET_RISK_ACCEPTED_KEY, "true");
-    } catch {
-        // Ignore quota or storage errors.
-    }
-}
-
 export function isOfficialBuiltinMarketSkill(
     target: { skillId?: string; author?: string },
     installed: Array<Pick<Skill, "skillId" | "sourceType">> = [],
 ): boolean {
     if (!target.skillId) return false;
-    if (installed.some((skill) => skill.sourceType === "builtin" && skill.skillId === target.skillId)) {
-        return true;
-    }
-    return BUILTIN_MARKET_SKILL_IDS.has(target.skillId);
+    return installed.some((skill) => skill.sourceType === "builtin" && skill.skillId === target.skillId);
 }
 
 export type SkillMarketInstallConfirmRequest = {
@@ -146,7 +113,6 @@ export function SkillMarketInstallConfirmModal({
                             loading={loading}
                             disabled={!canConfirm}
                             onClick={() => {
-                                acceptSkillMarketRisk();
                                 void onConfirm(request);
                             }}
                         >
