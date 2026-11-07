@@ -272,6 +272,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
       models, registry,
       // Do not repeat a failed model request: the upstream may already have billed it.
+      // pi 1.5 counts a request cut off by a host restart as a failed attempt too, so that
+      // turn ends interrupted instead of resending; landed changes stay.
       settings: { stream: { timeoutMs: 180000, maxRetries: 0 }, retry: { maxRetries: 0 },
         afterFailedRun: 'continue', toolExecution: 'sequential', steeringMode: 'all', ...settings },
     }, CTX);
