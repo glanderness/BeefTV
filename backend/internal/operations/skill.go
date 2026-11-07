@@ -125,9 +125,9 @@ func registerSkillOps(r *Registry) {
 		AssistantCanvas:   true,
 		AssistantProposal: true,
 		ID:                "skill.script.run",
-		Summary:           "在隔离临时目录中运行已选用技能的脚本（需用户确认）",
+		Summary:           "运行已选用技能的脚本（用户确认后执行）",
 		Scope:             ScopeCanvas,
-		Params:            json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"skillId":{"type":"string","description":"已加载技能的 skillId"},"versionId":{"type":"string","description":"已加载技能的 versionId"},"contentHash":{"type":"string","description":"已加载技能的 64 位十六进制 contentHash"},"scriptPath":{"type":"string","description":"包内脚本相对路径（必须位于 scripts/ 或 script/ 下）"},"args":{"type":"array","items":{"type":"string","maxLength":4096},"maxItems":64,"description":"传给脚本的命令行参数列表（argv）"},"stdin":{"type":"string","maxLength":65536,"description":"可选标准输入文本（UTF-8，最多 64 KiB）"},"timeoutSec":{"type":"integer","minimum":1,"maximum":600,"description":"超时时间（秒），默认 120，最大 600"},"useWorkspaceOutputDir":{"type":"boolean","description":"是否同时准备画布工作区输出目录（通过 BEEFTV_OUTPUT_DIR 环境变量传入）"},"note":{"type":"string","maxLength":500,"description":"向用户说明本次运行脚本的目的"}},"required":["canvasId","skillId","versionId","contentHash","scriptPath"],"additionalProperties":false}`),
+		Params:            json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"skillId":{"type":"string"},"versionId":{"type":"string"},"contentHash":{"type":"string"},"scriptPath":{"type":"string","description":"scripts/ 或 script/ 下的相对路径"},"args":{"type":"array","items":{"type":"string","maxLength":4096},"maxItems":64},"stdin":{"type":"string","maxLength":65536},"timeoutSec":{"type":"integer","minimum":1,"maximum":600,"description":"默认 120"},"useWorkspaceOutputDir":{"type":"boolean","description":"输出目录经 BEEFTV_OUTPUT_DIR 传入"},"note":{"type":"string","maxLength":500,"description":"告诉用户为什么运行"}},"required":["canvasId","skillId","versionId","contentHash","scriptPath"],"additionalProperties":false}`),
 		Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
 			var args struct {
 				CanvasID              string   `json:"canvasId"`
