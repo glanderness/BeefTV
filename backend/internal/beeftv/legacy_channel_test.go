@@ -53,6 +53,11 @@ func TestReconnectDropsThePreRenameOfficialChannel(t *testing.T) {
 	if ids[len(ids)-1] != "channel-2" {
 		t.Fatalf("user channel was lost: %v", ids)
 	}
+	// The web client reads old "beefapi::model" references through this list.
+	official := findChannel(effective.Config["channels"].([]any), ChannelID)
+	if legacy, _ := json.Marshal(official["legacyIds"]); string(legacy) != `["beefapi"]` {
+		t.Fatalf("official channel legacyIds = %s", legacy)
+	}
 }
 
 func TestStalePageCannotWriteThePreRenameChannelBack(t *testing.T) {

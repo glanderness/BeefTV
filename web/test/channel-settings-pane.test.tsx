@@ -3,6 +3,7 @@ import { BeefTVConnectionActions, mergeManagedBeefTVCatalog, modelConfigChannelP
 import { renderToStaticMarkup } from "react-dom/server";
 import { createModelChannel, defaultConfig, resolveModelRequestConfig } from "../src/stores/use-config-store";
 import { buildGenerationConfig } from "../src/lib/canvas/canvas-generation-config";
+import { defaultModelCapabilityConfig, modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import type { CanvasNodeData } from "../src/types/canvas";
 
 test("removing a channel clears its legacy and assistant selections", () => {
@@ -111,7 +112,7 @@ test("after reconnecting, old canvas nodes generate with the new official servic
     const server = {
         ...defaultConfig,
         channels: [
-            createModelChannel({ id: "beeftv", name: "BeefTV", pinned: true, credentialRef: "beeftv", hasApiKey: true, models: ["seedream-x"], modelProfiles: [{ model: "seedream-x", capability: "image", protocol: "volcengine-ark-image" }] }),
+            createModelChannel({ id: "beeftv", name: "BeefTV", pinned: true, legacyIds: ["beefapi"], credentialRef: "beeftv", hasApiKey: true, models: ["seedream-x"], modelProfiles: [{ model: "seedream-x", capability: "image", protocol: "volcengine-ark-image" }] }),
             createModelChannel({ id: "channel-2", name: "我的服务", baseUrl: "https://own.example.com", models: ["own-image"], modelProfiles: [{ model: "own-image", capability: "image", protocol: "openai-image" }] }),
         ],
     };
@@ -130,10 +131,24 @@ test("after reconnecting, old canvas nodes generate with the new official servic
 test("reconnecting keeps the assistant and default models saved under the old official service", () => {
     const oldOfficial = createModelChannel({ id: "beefapi", name: "BeefTV", pinned: true, credentialRef: "beefapi-enterprise", models: ["chat-b"] });
     const current = { ...defaultConfig, channels: [oldOfficial], assistantModel: "beefapi::chat-b", textModel: "beefapi::chat-b", model: "beefapi::chat-b" };
-    const official = createModelChannel({ id: "beeftv", name: "BeefTV", pinned: true, credentialRef: "beeftv", hasApiKey: true, models: ["chat-a", "chat-b"], modelProfiles: [{ model: "chat-a", capability: "text", protocol: "chat-completion" }, { model: "chat-b", capability: "text", protocol: "chat-completion" }] });
+    const official = createModelChannel({ id: "beeftv", name: "BeefTV", pinned: true, legacyIds: ["beefapi"], credentialRef: "beeftv", hasApiKey: true, models: ["chat-a", "chat-b"], modelProfiles: [{ model: "chat-a", capability: "text", protocol: "chat-completion" }, { model: "chat-b", capability: "text", protocol: "chat-completion" }] });
     const merged = mergeManagedBeefTVCatalog(current, { ...defaultConfig, channels: [official] });
     expect(merged.assistantModel).toBe("beeftv::chat-b");
     expect(merged.textModel).toBe("beeftv::chat-b");
     expect(merged.model).toBe("beeftv::chat-b");
 });
 
+
+// 能力判断也要按服务现在的条目读：别的服务排在前面、有同名模型时，旧引用仍读官方服务的能力。
+test("capabilities of an old official model reference come from the official service", () => {
+    const withMaxImages = (maxImages: number) => {
+        const capabilityConfig = defaultModelCapabilityConfig("openai-image", "shared-image");
+        capabilityConfig.image!.references.maxImages = maxImages;
+        return { model: "shared-image", capability: "image" as const, protocol: "openai-image", capabilityConfig, imageCapabilitiesVersion: "test-1" };
+    };
+    const own = createModelChannel({ id: "channel-2", name: "我的服务", apiKey: "k", models: ["shared-image"], modelProfiles: [withMaxImages(0)] });
+    const official = createModelChannel({ id: "beeftv", name: "BeefTV", pinned: true, legacyIds: ["beefapi"], credentialRef: "beeftv", hasApiKey: true, models: ["shared-image"], modelProfiles: [withMaxImages(8)] });
+    const config = { ...defaultConfig, channels: [own, official] };
+    expect(modelCapabilityConfigFor(config, "beefapi::shared-image").image?.references.maxImages).toBe(8);
+    expect(modelCapabilityConfigFor(config, "channel-2::shared-image").image?.references.maxImages).toBe(0);
+});

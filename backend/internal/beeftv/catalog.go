@@ -542,19 +542,26 @@ func PreserveManagedChannel(incoming, existing map[string]any, managed bool) {
 	incoming["channels"] = incomingChannels
 }
 
-// Releases before v2.2.0 saved the official channel as "beefapi". Channel IDs
-// are generated, never typed, so that ID only ever meant the official channel.
-// The current release no longer recognizes it, so after the user reconnects the
-// entry is dead. The web client reads old model references ("beefapi::model")
-// as the current official channel.
-const legacyOfficialChannelID = "beefapi"
-
+// withoutLegacyOfficialChannel removes saved channels that still use an ID the
+// official preset lists as legacy (releases before v2.2.0 saved it as
+// "beefapi"). Channel IDs are generated, never typed, so such an entry can only
+// be the old official channel, which this release no longer recognizes.
 func withoutLegacyOfficialChannel(raw any) []any {
+	legacy := map[string]bool{}
+	for _, preset := range providerpreset.BuiltinChannels() {
+		if preset.ID == ChannelID {
+			for _, id := range preset.LegacyIDs {
+				legacy[id] = true
+			}
+		}
+	}
 	channels, _ := raw.([]any)
 	kept := make([]any, 0, len(channels))
 	for _, item := range channels {
-		if channel, ok := item.(map[string]any); ok && channel["id"] == legacyOfficialChannelID {
-			continue
+		if channel, ok := item.(map[string]any); ok {
+			if id, _ := channel["id"].(string); legacy[id] {
+				continue
+			}
 		}
 		kept = append(kept, item)
 	}

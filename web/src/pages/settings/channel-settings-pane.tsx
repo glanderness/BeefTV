@@ -10,7 +10,7 @@ import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
-import { channelHasGenerationCredential, channelHasManagedBeefTVCredential, createModelChannel, decodeChannelModel, defaultBaseUrlForApiFormat, encodeChannelModel, filterModelsByCapability, isBuiltinBeefTVChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { channelHasGenerationCredential, channelHasManagedBeefTVCredential, canonicalChannelModel, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefTVChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { ModelServiceEditor } from "./model-service-editor";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
@@ -657,6 +657,7 @@ export function mergeManagedBeefTVCatalog(current: AiConfig, server: AiConfig, a
             apiKey: "",
             secretKey: "",
             credentialRef: serverBeef.credentialRef,
+            legacyIds: serverBeef.legacyIds,
             hasApiKey: serverBeef.hasApiKey,
             hasSecretKey: serverBeef.hasSecretKey,
             baseUrl: serverBeef.baseUrl || channel.baseUrl,
@@ -767,11 +768,8 @@ export function modelConfigChannelPresentation(channel: ModelChannel) {
 }
 
 export function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
-    // 已保存的选择按解码后的渠道比较：旧版官方服务的 beefapi::模型 就是现在的 beeftv::模型。
-    const canonical = (value: string) => {
-        const decoded = value ? decodeChannelModel(value) : null;
-        return decoded ? encodeChannelModel(decoded.channelId, decoded.model) : value;
-    };
+    // 已保存的选择按服务现在的 ID 比较：服务换过 ID 时（legacyIds），旧选择仍算这个服务的。
+    const canonical = (value: string) => canonicalChannelModel(value, channels);
     config = { ...config, model: canonical(config.model), assistantModel: canonical(config.assistantModel), mediaReviewModel: canonical(config.mediaReviewModel), imageModel: canonical(config.imageModel), videoModel: canonical(config.videoModel), textModel: canonical(config.textModel), audioModel: canonical(config.audioModel) };
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
