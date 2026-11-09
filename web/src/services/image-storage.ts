@@ -3,7 +3,8 @@ import { readImageMeta } from "@/lib/image-utils";
 import { IMAGE_FILES_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { importResourceFromUrl, isResourceUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
+import { importResourceFromUrl, isResourceUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, resolveResourceUrl, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -105,7 +106,8 @@ function shouldImportRemoteImage(input: string) {
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "", options?: { cacheMiss?: boolean }) {
-    if (!storageKey) return fallback;
+    const fallbackUrl = resolveEmbeddedAssetUrl(resolveResourceUrl(undefined, fallback));
+    if (!storageKey) return fallbackUrl;
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (resourceId) {
         const cached = await getCachedResourceObjectUrl(storageKey).catch(() => "");
@@ -119,7 +121,7 @@ export async function resolveImageUrl(storageKey?: string, fallback = "", option
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
-    if (!blob) return fallback;
+    if (!blob) return fallbackUrl;
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;

@@ -32,7 +32,7 @@ export function AppChangelogDialog({ open, onClose }: { open: boolean; onClose: 
                 </motion.div>
             )}
         >
-            {showLicenses ? <iframe title="第三方许可与源码" src="/licenses/index.html" className="block h-[min(60vh,560px)] w-full border-0" style={{ colorScheme: theme }} /> : <div className="app-changelog-scroll thin-scrollbar">
+            {showLicenses ? <iframe title="第三方许可与源码" src={resolveEmbeddedAssetUrl("/licenses/index.html")} className="block h-[min(60vh,560px)] w-full border-0" style={{ colorScheme: theme }} /> : <div className="app-changelog-scroll thin-scrollbar">
                 {notes.map((entry, index) => (
                     <details className="app-changelog-release" key={entry.version} open={index === 0 ? true : undefined}>
                         <summary className="app-changelog-release-summary">
@@ -48,3 +48,4 @@ export function AppChangelogDialog({ open, onClose }: { open: boolean; onClose: 
         </AppModal>
     );
 }
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

@@ -310,7 +310,7 @@ export function CanvasNodeLightingPanel({ dataUrl, onClose, onConfirm }: { dataU
                             onClick={() => updateOption("stylePreset", options.stylePreset === preset.id ? "" : preset.id)}
                             className={`relative h-[60px] overflow-hidden rounded-[var(--r-lg)] text-left transition-[box-shadow,filter,border-color,background-color] duration-150 ${options.stylePreset === preset.id ? "ring-2 ring-white/60 shadow-[0_0_0_1px_rgba(255,255,255,0.15)]" : "hover:ring-1 hover:ring-white/30"}`}
                             style={{
-                                backgroundImage: `linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0.08)), url(${preset.image})`,
+                                backgroundImage: `linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0.08)), url(${resolveEmbeddedAssetUrl(preset.image)})`,
                                 backgroundSize: "cover",
                                 backgroundPosition: "center",
                                 backgroundColor: preset.color,
@@ -665,3 +665,4 @@ function LightingSphereControl({ azimuth, elevation, onAngleChange, previewImage
         />
     );
 }
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

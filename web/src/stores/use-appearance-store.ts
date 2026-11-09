@@ -153,7 +153,7 @@ function setMeta(targetDocument: Document, attribute: "name" | "property", key: 
 }
 
 export function appearanceLogoURL(appearance: PublicAppearance, theme: "light" | "dark") {
-    return theme === "dark" ? appearance.darkLogoUrl || appearance.logoUrl : appearance.logoUrl || appearance.darkLogoUrl;
+    return resolveEmbeddedAssetUrl(theme === "dark" ? appearance.darkLogoUrl || appearance.logoUrl : appearance.logoUrl || appearance.darkLogoUrl);
 }
 
 export function brandStudioLabel(appearance: PublicAppearance) {
@@ -180,3 +180,4 @@ function safeAppearanceURL(value: unknown, fallback: string) {
     }
     return fallback;
 }
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

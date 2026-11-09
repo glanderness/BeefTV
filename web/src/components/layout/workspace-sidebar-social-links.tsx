@@ -41,7 +41,7 @@ export function WorkspaceSidebarSocialLinks() {
                             如果觉得好用的话，欢迎捐赠支持我们！<br />
                             你的支持是我们不断优化迭代BeefTV的最大动力
                         </p>
-                        <img src="/beeftv-donation-qr.png" width={294} height={286} alt="博文斯科技官方收款二维码" />
+                        <img src={resolveEmbeddedAssetUrl("/beeftv-donation-qr.png")} width={294} height={286} alt="博文斯科技官方收款二维码" />
                     </div>
                 }
             >
@@ -71,7 +71,7 @@ export function WorkspaceSidebarSocialLinks() {
                 mouseEnterDelay={0}
                 mouseLeaveDelay={0}
                 rootClassName="app-workspace-wechat-popover"
-                content={<img src="/beeftv-wechat-qr.png" width={180} height={180} alt="个人微信二维码" />}
+                content={<img src={resolveEmbeddedAssetUrl("/beeftv-wechat-qr.png")} width={180} height={180} alt="个人微信二维码" />}
             >
                 <button type="button" className="app-workspace-social-action" aria-label="查看微信二维码">
                     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={WECHAT_ICON_PATH} /></svg>
@@ -83,3 +83,4 @@ export function WorkspaceSidebarSocialLinks() {
         </div>
     );
 }
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

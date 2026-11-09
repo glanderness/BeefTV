@@ -210,8 +210,8 @@ function EmotionHeadPreview({ preset }: { preset: CanvasEmotionPreset }) {
 
 function EmotionFaceModel({ preset }: { preset: CanvasEmotionPreset }) {
     const renderer = useThree((state) => state.gl);
-    const gltf = useLoader(GLTFLoader, "/canvas/models/facecap.glb", (loader) => {
-        loader.setKTX2Loader(new KTX2Loader().setTranscoderPath("/three/basis/").detectSupport(renderer));
+    const gltf = useLoader(GLTFLoader, resolveEmbeddedAssetUrl("/canvas/models/facecap.glb"), (loader) => {
+        loader.setKTX2Loader(new KTX2Loader().setTranscoderPath(resolveEmbeddedAssetUrl("/three/basis/")).detectSupport(renderer));
         loader.setMeshoptDecoder(MeshoptDecoder);
     });
     const invalidate = useThree((state) => state.invalidate);
@@ -272,3 +272,4 @@ function morphMeshes(model: Object3D) {
     });
     return meshes;
 }
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
