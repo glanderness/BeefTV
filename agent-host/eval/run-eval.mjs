@@ -330,12 +330,13 @@ export function extractModelRequestTrace(reqBody = {}, respText = '', priorTurnR
       idx -= 1;
     }
     const prevAssistant = idx >= 0 && stableMessages[idx]?.role === 'assistant' ? stableMessages[idx] : null;
-    const nameById = new Map();
+    const callById = new Map();
     for (const tc of prevAssistant?.tool_calls || []) {
-      if (tc?.id) nameById.set(tc.id, tc.function?.name || 'unknown_tool');
+      if (tc?.id) callById.set(tc.id, { name: tc.function?.name || 'unknown_tool', args: tc.function?.arguments || '' });
     }
     for (const tm of trailingToolMsgs) {
-      const toolName = nameById.get(tm.tool_call_id) || tm.name || 'unknown_tool';
+      const call = callById.get(tm.tool_call_id) || { name: tm.name || 'unknown_tool', args: '' };
+      const toolName = call.name;
       const raw = extractMsgText(tm).trim();
       let parsed = null;
       try {
@@ -347,20 +348,23 @@ export function extractModelRequestTrace(reqBody = {}, respText = '', priorTurnR
         parsed?.isError === true ||
           parsed?.error ||
           (typeof parsed?.code === 'number' && parsed.code >= 400) ||
-          /unsupported_operation|revision_conflict|invalid_params|invalid_argument|not_found|permission_denied|模拟器未实现操作|未知操作|画布已变化|必填/.test(
+          /unsupported_operation|revision_conflict|invalid_params|invalid_argument|not_found|permission_denied|模拟器未实现操作|未知操作|画布已变化|必填|Validation failed for tool|: missing/.test(
             raw,
           ),
       );
       const errorReason = isError
         ? parsed?.reason ||
           parsed?.error?.code ||
-          (raw.includes('模拟器未实现操作')
-            ? 'unsupported_operation'
-            : raw.includes('画布已变化')
-              ? 'revision_conflict'
-              : 'tool_error')
+          (/Validation failed for tool/.test(raw)
+            ? 'tool_arguments_invalid'
+            : raw.includes('模拟器未实现操作')
+              ? 'unsupported_operation'
+              : raw.includes('画布已变化')
+                ? 'revision_conflict'
+                : 'tool_error')
         : null;
-      prevTools.push({ name: toolName, isError, errorReason });
+      // 报错时保留原始参数，评测才能判断是否用同一组错误参数反复重试。
+      prevTools.push({ name: toolName, isError, errorReason, ...(isError && call.args ? { args: call.args } : {}) });
     }
   };
 
@@ -559,6 +563,10 @@ export function createCostMeter({
     scenarioId = currentContext.scenarioId,
     turnId = currentContext.turnId,
     runIndex = currentContext.runIndex,
+    seq = null,
+    sessionKey = '',
+    attribution = 'unknown',
+    late = false,
     trace = null,
   }) {
     const inTok = Math.max(0, Number(inputTokens || 0));
@@ -585,10 +593,14 @@ export function createCostMeter({
     const entry = redactSecrets(
       {
         index: entries.length + 1,
+        seq,
         turnRequestIndex,
         runIndex,
         scenarioId,
         turnId,
+        sessionKey,
+        attribution,
+        late,
         mode,
         model,
         trigger: trace?.trigger || 'user_message',
@@ -1072,6 +1084,83 @@ async function sendChatTurn({
   };
 }
 
+// 宿主把会话 ID 作为缓存亲和键发给上游：OpenAI 兼容是 prompt_cache_key，Anthropic 是 metadata.user_id。
+export function requestSessionKey(body) {
+  return String(body?.prompt_cache_key || body?.metadata?.user_id || '');
+}
+
+// 落盘的请求原文去掉内联图片的 base64，只留类型和长度。
+export function elideDataUrls(value) {
+  return JSON.parse(JSON.stringify(value, (_key, item) =>
+    typeof item === 'string' && item.startsWith('data:') && item.length > 256
+      ? `${item.slice(0, item.indexOf(',') + 1)}<${item.length} chars elided>`
+      : item));
+}
+
+// 模型请求登记：发出时编号、按会话归属、原文落盘，并计在途数。
+// 会话键已登记到别的场景的请求是迟到请求，归回原场景；键缺失或未登记的归属记为 unknown。
+export function createRequestTracker({ requestsDir, getContext, secrets = [] }) {
+  const owners = new Map();
+  const dispatches = new WeakMap();
+  const ended = new WeakSet();
+  let seq = 0;
+  let inflight = 0;
+  return {
+    get inflight() { return inflight; },
+    register(sessionKey, owner) { if (sessionKey) owners.set(sessionKey, { ...owner }); },
+    // 先落盘再计数：落盘失败时这次请求不算发出，不会留下在途计数。
+    begin(body) {
+      const sessionKey = requestSessionKey(body);
+      const current = getContext();
+      const owner = sessionKey ? owners.get(sessionKey) : undefined;
+      const late = Boolean(owner) && (owner.scenarioId !== current.scenarioId || owner.runIndex !== current.runIndex);
+      const dispatch = { ...(late ? owner : current), seq: seq + 1, sessionKey, attribution: owner ? 'session' : 'unknown', late };
+      const dump = redactSecrets({ ...dispatch, at: new Date().toISOString(), body: elideDataUrls(body) }, secrets);
+      fs.writeFileSync(path.join(requestsDir, `${String(dispatch.seq).padStart(4, '0')}.json`), JSON.stringify(dump, null, 1));
+      seq = dispatch.seq;
+      inflight += 1;
+      dispatches.set(body, dispatch);
+      return dispatch;
+    },
+    // 每次 begin 恰好扣减一次；重复调用或传空都不影响计数。
+    end(dispatch) {
+      if (!dispatch || ended.has(dispatch)) return;
+      ended.add(dispatch);
+      inflight -= 1;
+    },
+    dispatchOf(body) { return dispatches.get(body); },
+  };
+}
+
+// 只有属于当前场景的请求才交给观察回调和改向钩子；迟到请求只记账，
+// 不能被算作本场景证据，也不能提前消费下一场景的改向钩子。
+export async function runOwnRequestHooks(body, dispatch, reqIndex, { observe, takeSteerHook }) {
+  if (dispatch.late) return;
+  observe(body, dispatch);
+  const hook = takeSteerHook();
+  if (hook) await hook({ reqIndex, body });
+}
+
+// 等画布上的助手真正停下：宿主没有进行中的回合（含生成完成后的自动唤醒），
+// 也没有在途模型请求，并且连续两次轮询都如此。until 可要求先看到某个结果再算停下。
+// 每次查询都受剩余时间约束，宿主不回应也不会越过上限。
+export async function waitForCanvasIdle({ hostBaseUrl, hostToken, canvasId, timeoutMs, isQuiet = () => true, until = () => true }) {
+  const startedAt = Date.now();
+  let quietPolls = 0;
+  while (Date.now() - startedAt < timeoutMs) {
+    const signal = AbortSignal.timeout(Math.max(1, Math.min(5000, timeoutMs - (Date.now() - startedAt))));
+    const res = await fetch(`${hostBaseUrl}/history?canvasId=${encodeURIComponent(canvasId)}`, {
+      headers: { 'X-Beeftv-Agent-Token': hostToken },
+      signal,
+    }).catch(() => null);
+    const history = res?.ok ? await res.json().catch(() => null) : null;
+    quietPolls = history && !history.active && isQuiet() && until() ? quietPolls + 1 : 0;
+    if (quietPolls >= 2) return { idle: true, waitedMs: Date.now() - startedAt };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { idle: false, waitedMs: Date.now() - startedAt };
+}
+
 // 执行完整评测套件
 export async function runEval(rawOptions = {}) {
   const config = validateEvalConfig(rawOptions, rawOptions.env || process.env);
@@ -1108,31 +1197,43 @@ export async function runEval(rawOptions = {}) {
   let activeTurnSteerHook = null;
   let observeModelRequest = null;
 
+  // 账本用请求发出时的归属而不是完成时刻的上下文：上一个场景迟到的请求
+  // （例如生成完成后的自动唤醒）归回它自己的场景，不算进当前场景。
+  const requestsDir = path.join(outDir, 'requests');
+  fs.rmSync(requestsDir, { recursive: true, force: true });
+  fs.mkdirSync(requestsDir, { recursive: true });
+  const tracker = createRequestTracker({ requestsDir, getContext: meter.getContext, secrets: [hostToken, config.realApiKey] });
+  const ownHooks = {
+    observe: (body, dispatch) => observeModelRequest?.(body, dispatch),
+    takeSteerHook: () => { const hook = activeTurnSteerHook; activeTurnSteerHook = null; return hook; },
+  };
+  function sameTurnEntries(dispatch) {
+    return meter.getState().entries.filter((e) =>
+      e.runIndex === dispatch.runIndex && e.scenarioId === dispatch.scenarioId && e.turnId === dispatch.turnId);
+  }
+
   if (config.modelMode === 'fake') {
     fakeModel = createFakeModelServer({
       onRequest: async ({ reqIndex, body }) => {
         meter.checkBudgetBeforeDispatch();
-        observeModelRequest?.(body);
-        if (activeTurnSteerHook) {
-          const hook = activeTurnSteerHook;
-          activeTurnSteerHook = null;
-          await hook({ reqIndex, body });
+        const dispatch = tracker.begin(body);
+        try {
+          await runOwnRequestHooks(body, dispatch, reqIndex, ownHooks);
+        } catch (error) {
+          // 抛错时假模型不会再回调 onResponse，在这里扣掉在途计数。
+          tracker.end(dispatch);
+          throw error;
         }
       },
       onResponse: ({ body, respText }) => {
-        const ctx = meter.getContext();
-        const priorTurnReqs = meter
-          .getState()
-          .entries.filter(
-            (e) =>
-              e.runIndex === ctx.runIndex &&
-              e.scenarioId === ctx.scenarioId &&
-              e.turnId === ctx.turnId,
-          );
-        const trace = extractModelRequestTrace(body, respText, priorTurnReqs);
+        const tracked = tracker.dispatchOf(body);
+        tracker.end(tracked);
+        const dispatch = tracked || meter.getContext();
+        const trace = extractModelRequestTrace(body, respText, sameTurnEntries(dispatch));
         const inTok = Math.max(120, Math.ceil(JSON.stringify(body.messages || []).length / 4));
         const outTok = 85;
         meter.recordRequest({
+          ...dispatch,
           model: body.model || 'fake-eval-model',
           inputTokens: inTok,
           outputTokens: outTok,
@@ -1150,18 +1251,15 @@ export async function runEval(rawOptions = {}) {
     apiKey = config.realApiKey;
     const upstreamBase = config.realBaseUrl.replace(/\/+$/, '');
     realProxyServer = http.createServer(async (req, res) => {
+      let dispatch = null;
       try {
         meter.checkBudgetBeforeDispatch();
         const reqChunks = [];
         for await (const chunk of req) reqChunks.push(Buffer.from(chunk));
         const rawBody = Buffer.concat(reqChunks).toString('utf8');
         const parsedReqBody = rawBody ? JSON.parse(rawBody) : {};
-        observeModelRequest?.(parsedReqBody);
-        if (activeTurnSteerHook) {
-          const hook = activeTurnSteerHook;
-          activeTurnSteerHook = null;
-          await hook({ reqIndex: 1, body: parsedReqBody });
-        }
+        dispatch = tracker.begin(parsedReqBody);
+        await runOwnRequestHooks(parsedReqBody, dispatch, 1, ownHooks);
         const targetUrl = `${upstreamBase}${req.url.replace(/^\/v1/, '')}`;
         let lastStatus = 502;
         let lastContentType = 'text/event-stream';
@@ -1241,17 +1339,9 @@ export async function runEval(rawOptions = {}) {
           if (!isTransientUpstreamError || attempt === 4) break;
           await new Promise((r) => setTimeout(r, 1500 * attempt));
         }
-        const ctx = meter.getContext();
-        const sameTurnReqs = meter
-          .getState()
-          .entries.filter(
-            (e) =>
-              e.runIndex === ctx.runIndex &&
-              e.scenarioId === ctx.scenarioId &&
-              e.turnId === ctx.turnId,
-          );
-        const trace = extractModelRequestTrace(parsedReqBody, finalText, sameTurnReqs);
+        const trace = extractModelRequestTrace(parsedReqBody, finalText, sameTurnEntries(dispatch));
         meter.recordRequest({
+          ...dispatch,
           model: modelId,
           inputTokens: reqInputTokens,
           cachedTokens: reqCachedTokens,
@@ -1266,6 +1356,8 @@ export async function runEval(rawOptions = {}) {
       } catch (err) {
         res.writeHead(err.reason === 'aborted_budget' ? 429 : 500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: String(err.message || err), code: err.reason || 'proxy_error' } }));
+      } finally {
+        tracker.end(dispatch);
       }
     });
     await new Promise((resolve) => realProxyServer.listen(0, '127.0.0.1', resolve));
@@ -1299,10 +1391,11 @@ export async function runEval(rawOptions = {}) {
         const turnRecords = [];
         const steerResults = [];
         const requestEvidence = [];
+        // 工具报错证据：模型侧参数校验失败不会进模拟器操作日志，单独从请求体里收集。
+        const toolErrorEvidence = [];
         let wakeResult = { autoWoken: false };
         let sessionId = '';
         let abortedThisScenario = false;
-        const reqCountBefore = meter.getState().entries.length;
 
         for (const turnSpec of scenario.turns) {
           if (meter.getState().abortedBudget) {
@@ -1324,7 +1417,7 @@ export async function runEval(rawOptions = {}) {
           if (turnSpec.useActiveSkillPins && setupState?.skillPin) {
             skillsPayload = [setupState.skillPin];
           }
-          observeModelRequest = (body) => {
+          observeModelRequest = (body, dispatch) => {
             rawOptions.onModelRequest?.({
               runIndex: runIdx,
               scenarioId: scenario.id,
@@ -1334,6 +1427,18 @@ export async function runEval(rawOptions = {}) {
               sessionId,
               body,
             });
+            // 每一次调用前的请求体里，紧邻末尾的工具结果就是上一次工具调用的真实结果。
+            const trace = extractModelRequestTrace(body, '', []);
+            for (const tool of trace.prevTools) {
+              if (!tool.isError) continue;
+              toolErrorEvidence.push({
+                turnId,
+                tool: tool.name,
+                reason: tool.errorReason,
+                args: tool.args || '',
+                attribution: dispatch.attribution,
+              });
+            }
             if (!setupState?.skillPin) return;
             const pin = setupState.skillPin;
             const nonSystemMessages = (body.messages || []).filter(
@@ -1348,7 +1453,7 @@ export async function runEval(rawOptions = {}) {
               ['skillId', 'versionId', 'contentHash'].every((key) =>
                 nonSystemText.includes(`${key}=\\"${pin[key]}\\"`),
               );
-            requestEvidence.push({ turnId, activeSkillPresent });
+            requestEvidence.push({ seq: dispatch.seq, turnId, attribution: dispatch.attribution, activeSkillPresent });
           };
 
           let sessionPromiseResolve;
@@ -1391,10 +1496,12 @@ export async function runEval(rawOptions = {}) {
               skills: skillsPayload,
               onSessionLine: (ev) => {
                 sessionId = ev.sessionId;
+                tracker.register(sessionId, { runIndex: runIdx, scenarioId: scenario.id, turnId });
                 sessionPromiseResolve(ev);
               },
             });
             sessionId = chatRes.sessionId || sessionId;
+            tracker.register(sessionId, { runIndex: runIdx, scenarioId: scenario.id, turnId });
             turnRecords.push({
               ...chatRes.turnEnd,
               turnId,
@@ -1427,7 +1534,6 @@ export async function runEval(rawOptions = {}) {
               await simGo.confirmProposals(p.proposalId, { delayMs: 10 });
             }
             if (turnSpec.awaitAutoWakeMs) {
-              const inspectsBefore = simGo.counts.mediaInspections;
               const eventRes = await fetch(`${agentHost.baseUrl}/events`, {
                 method: 'POST',
                 headers: {
@@ -1444,21 +1550,45 @@ export async function runEval(rawOptions = {}) {
                   data: { proposalIds: unconfirmedForCanvas.map((p) => p.proposalId) },
                 }),
               }).catch(() => null);
+              const eventBody = eventRes?.ok ? await eventRes.json().catch(() => null) : null;
               // Accepted events are only evidence of delivery. Observe the host
-              // without creating a new user turn on its behalf.
-              await new Promise((r) => setTimeout(r, turnSpec.awaitAutoWakeMs));
-              const inspectsAfter = simGo.counts.mediaInspections;
+              // without creating a new user turn on its behalf: wait, up to the cap, until
+              // the woken turn has inspected this canvas's result and the host stopped.
+              const wakeTurnId = eventBody?.woken ? eventBody.turnId : '';
+              const wakeInspected = () => Boolean(wakeTurnId) && simGo.opLog.some((op) =>
+                op.turnId === wakeTurnId && op.status === 'ok' && op.params?.canvasId === canvasId &&
+                ['media.inspect', 'media.overview'].includes(op.op));
+              if (wakeTurnId) {
+                await waitForCanvasIdle({
+                  hostBaseUrl: agentHost.baseUrl,
+                  hostToken,
+                  canvasId,
+                  timeoutMs: turnSpec.awaitAutoWakeMs,
+                  isQuiet: () => tracker.inflight === 0,
+                  until: wakeInspected,
+                });
+              }
               wakeResult = {
-                autoWoken: inspectsAfter > inspectsBefore,
+                autoWoken: wakeInspected(),
                 eventAccepted: Boolean(eventRes && eventRes.status === 202),
               };
             }
           }
         }
+        // 场景收尾前等助手真正停下，迟到的动作算进本场景，也不会漏进下一个场景。
+        const settle = meter.getState().abortedBudget
+          ? { idle: false, waitedMs: 0 }
+          : await waitForCanvasIdle({
+            hostBaseUrl: agentHost.baseUrl,
+            hostToken,
+            canvasId,
+            timeoutMs: config.modelMode === 'fake' ? 10_000 : 120_000,
+            isQuiet: () => tracker.inflight === 0,
+          });
         observeModelRequest = null;
 
         const afterSnap = simGo.snapshot();
-        const requestEntries = meter.getState().entries.slice(reqCountBefore);
+        const requestEntries = meter.getState().entries.filter((e) => e.runIndex === runIdx && e.scenarioId === scenario.id);
         const durationMs = Date.now() - scenarioStart;
 
         let evalResult;
@@ -1483,7 +1613,21 @@ export async function runEval(rawOptions = {}) {
             steerResults,
             wakeResult,
             requestEvidence,
+            toolErrorEvidence,
           });
+        }
+        if (!settle.idle && !meter.getState().abortedBudget) {
+          // 助手还没停下就打分，请求与画布结果都不完整，本场景不能算通过。
+          evalResult = {
+            ...evalResult,
+            passed: false,
+            status: 'failed',
+            checks: [...evalResult.checks, {
+              name: 'assistant_settled_before_scoring',
+              passed: false,
+              detail: `收尾等待 ${Math.round(settle.waitedMs / 1000)} 秒后助手仍在运行，本场景的请求与画布结果不完整`,
+            }],
+          };
         }
 
         const metrics = computeScenarioMetrics({
@@ -1504,6 +1648,8 @@ export async function runEval(rawOptions = {}) {
           expectedBaselinePass: scenario.expectedBaselinePass,
           capabilities: scenario.capabilities,
           requestEvidence,
+          settle,
+          scoredRequestSeqs: requestEntries.map((e) => e.seq),
           wakeResult: scenario.capabilities.includes('wake-on-generation') ? wakeResult : undefined,
           metrics,
           checks: evalResult.checks,
@@ -1568,6 +1714,12 @@ export async function runEval(rawOptions = {}) {
     fs.rmSync(tempDataDir, { recursive: true, force: true });
   }
 
+  // 打分之后才完成的请求（收尾超时的场景）在账本里归回原场景，报告单列数量，两边对得上。
+  for (const run of scenarioRuns) {
+    const scored = new Set(run.scoredRequestSeqs);
+    run.lateAfterScoring = meter.getState().entries.filter((e) =>
+      e.runIndex === run.runIndex && e.scenarioId === run.scenarioId && !scored.has(e.seq)).length;
+  }
   const rawReport = buildEvalSummary(scenarioRuns, config, meter.getState());
   const report = redactSecrets(rawReport, [hostToken, config.realApiKey]);
   const markdown = redactSecrets(renderMarkdownReport(report), [hostToken, config.realApiKey]);
@@ -1598,7 +1750,7 @@ if (isMain) {
       console.log(
         [
           '用法: bun eval/run-eval.mjs [选项]',
-          '  --scenario <id|all>      指定场景 ID（如 S1..S7 或 shortdrama-2shot）或 all（默认 all）',
+          '  --scenario <id|all>      指定场景 ID（如 S1..S11 或 shortdrama-2shot）或 all（默认 all）',
           '  --model <fake|real>      模型模式：fake（默认零成本本地桩）或 real（真实模型，需显式配置单价）',
           '  --runs <N>               每个场景重复运行次数（默认 1）',
           '  --max-requests <N>       单回合最大模型请求数（默认 25）',

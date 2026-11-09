@@ -36,7 +36,7 @@ func ChannelAPIURLForProtocol(baseURL string, path string, interfaceType model.C
 	return apiURLWithDefaultPrefix(baseURL, path, defaultPrefix)
 }
 
-var channelAPIPrefixes = []string{"/api/plan/v3", "/api/v3", "/api/v1", "/v1beta", "/v1", "/v2", "/v3"}
+var channelAPIPrefixes = []string{"/api/plan/v3", "/api/v3", "/api/v1", "/v1beta", "/v1", "/v2", "/v3", "/v4"}
 
 func apiURLWithDefaultPrefix(baseURL string, path string, defaultPrefix string) string {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -163,7 +163,7 @@ func ProviderDownloadURL(baseURL string, rawURL string) string {
 	if baseErr != nil || targetErr != nil || !strings.EqualFold(base.Scheme, "https") || !strings.EqualFold(target.Scheme, "https") {
 		return rawURL
 	}
-	if isBeefAPIHost(base.Hostname()) && isBeefAPIHost(target.Hostname()) {
+	if isBeefTVHost(base.Hostname()) && isBeefTVHost(target.Hostname()) {
 		target.Scheme = base.Scheme
 		target.Host = base.Host
 		return target.String()
@@ -171,13 +171,13 @@ func ProviderDownloadURL(baseURL string, rawURL string) string {
 	return rawURL
 }
 
-func IsBeefAPIHost(host string) bool {
-	return isBeefAPIHost(host)
+func IsBeefTVHost(host string) bool {
+	return isBeefTVHost(host)
 }
 
-func isBeefAPIHost(host string) bool {
+func isBeefTVHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "beeftv.app" || host == "beefapi.com" || strings.HasSuffix(host, ".beefapi.com")
+	return host == "beeftv.app"
 }
 
 func SameProviderOrigin(baseURL string, rawURL string) bool {

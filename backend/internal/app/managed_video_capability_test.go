@@ -33,14 +33,14 @@ func TestManagedVideoUsesSavedAccountCapabilityInsteadOfRequest(t *testing.T) {
 	server.Video.Operations = []string{"text_to_video", "image_to_video"}
 	write := func(version string, capability any) {
 		t.Helper()
-		body, _ := json.Marshal(map[string]any{"channels": []any{map[string]any{"id": "beefapi", "baseUrl": "https://beeftv.app", "models": []string{name}, "modelProfiles": []any{map[string]any{"model": name, "capability": "video", "protocol": "openai-videos", "capabilityConfig": capability, "videoCapabilitiesVersion": version}}}}})
+		body, _ := json.Marshal(map[string]any{"channels": []any{map[string]any{"id": "beeftv", "baseUrl": "https://beeftv.app", "models": []string{name}, "modelProfiles": []any{map[string]any{"model": name, "capability": "video", "protocol": "openai-videos", "capabilityConfig": capability, "videoCapabilitiesVersion": version}}}}})
 		if err := svc.SaveLocalModelConfig(body); err != nil {
 			t.Fatal(err)
 		}
 	}
 	write("server-v2", server)
 	forged := "forged-request-version"
-	input := generation.Input{Mode: "video", Config: generation.Config{CredentialRef: managedBeefAPIRef, Model: name, InterfaceType: "newapi", BaseURL: "https://beeftv.app", VideoSeconds: "1", VideoCapabilitiesVersion: &forged, CapabilityConfig: modelcatalog.DefaultModelCapabilityConfigForModel("newapi", name)}, ReferenceImages: []generation.Media{{Bytes: 100 << 20, Width: 64, Height: 64}}}
+	input := generation.Input{Mode: "video", Config: generation.Config{CredentialRef: managedBeefTVRef, Model: name, InterfaceType: "newapi", BaseURL: "https://beeftv.app", VideoSeconds: "1", VideoCapabilitiesVersion: &forged, CapabilityConfig: modelcatalog.DefaultModelCapabilityConfigForModel("newapi", name)}, ReferenceImages: []generation.Media{{Bytes: 100 << 20, Width: 64, Height: 64}}}
 	if err := validate(&input); err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +93,13 @@ func TestManagedVideoCreateTaskUsesCurrentAccountCatalog(t *testing.T) {
 			capability := modelcatalog.DefaultModelCapabilityConfigForModel("openai-videos", "unknown-video")
 			capability.Video.Duration = modelcatalog.VideoDurationConfig{Selection: "range", Min: 1, Max: 3, Step: 1, Default: 1}
 			capability.Video.References = modelcatalog.VideoReferenceConfig{MaxImages: 12}
-			body, _ := json.Marshal(map[string]any{"channels": []any{map[string]any{"id": "beefapi", "baseUrl": upstream.URL, "apiKey": "synthetic-test-key", "models": []string{modelName}, "modelProfiles": []any{map[string]any{"model": modelName, "capability": "video", "protocol": "openai-videos", "capabilityConfig": capability, "videoCapabilitiesVersion": tc.version}}}}})
+			body, _ := json.Marshal(map[string]any{"channels": []any{map[string]any{"id": "beeftv", "baseUrl": upstream.URL, "apiKey": "synthetic-test-key", "models": []string{modelName}, "modelProfiles": []any{map[string]any{"model": modelName, "capability": "video", "protocol": "openai-videos", "capabilityConfig": capability, "videoCapabilitiesVersion": tc.version}}}}})
 			if err := svc.SaveLocalModelConfig(body); err != nil {
 				t.Fatal(err)
 			}
 			forged := modelcatalog.DefaultModelCapabilityConfigForModel("newapi", modelName)
 			forged.Video.Duration = modelcatalog.VideoDurationConfig{Selection: "range", Min: 1, Max: 30, Step: 1, Default: 9}
-			request := CreateTaskRequest{Type: "canvas_video", Prompt: "local admission fixture", Model: modelName, Operation: "text_to_video", Input: map[string]any{"mode": "video", "prompt": "local admission fixture", "config": map[string]any{"channelId": "beefapi", "credentialRef": managedBeefAPIRef, "model": modelName, "interfaceType": "newapi", "videoSeconds": tc.seconds, "videoCapabilitiesVersion": "forged-request-version", "capabilityConfig": forged}}}
+			request := CreateTaskRequest{Type: "canvas_video", Prompt: "local admission fixture", Model: modelName, Operation: "text_to_video", Input: map[string]any{"mode": "video", "prompt": "local admission fixture", "config": map[string]any{"channelId": "beeftv", "credentialRef": managedBeefTVRef, "model": modelName, "interfaceType": "newapi", "videoSeconds": tc.seconds, "videoCapabilitiesVersion": "forged-request-version", "capabilityConfig": forged}}}
 			task, err := svc.CreateTask("user", request)
 			if err != nil || task == nil {
 				t.Fatalf("task rejected: %v", err)

@@ -498,7 +498,7 @@ func isExcludedName(pathName string) bool {
 	switch {
 	case base == ".env" || strings.HasPrefix(base, ".env."):
 		return true
-	case base == ".settings-key" || base == "beefapi-connection.json":
+	case base == ".settings-key" || base == "beeftv-connection.json" || strings.HasPrefix(base, ".beeftv-connection-"):
 		return true
 	case base == ".DS_Store" || base == "Thumbs.db" || strings.HasPrefix(base, "._"):
 		return true

@@ -9,15 +9,16 @@ import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, 
 import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
 import { StorageSettingsPane } from "./storage-settings-pane";
+import { AssistantSettingsPane } from "./assistant-settings-pane";
 import { DepthComponentsPanel } from "@/components/depth-components-panel";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
 
-type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics";
+type ConfigSectionKey = "channels" | "models" | "assistant" | "storage" | "diagnostics";
 
 export function isConfigSection(value: string | null): value is ConfigSectionKey {
-    return value === "channels" || value === "storage" || value === "diagnostics";
+    return value === "channels" || value === "assistant" || value === "storage" || value === "diagnostics";
 }
 
 export default function SettingsPage() {
@@ -81,6 +82,12 @@ export default function SettingsPage() {
                 </div>
             </SettingsPane>
         ),
+        assistant: (
+            <SettingsPane>
+                <PageHeader title="助手设置" />
+                <AssistantSettingsPane />
+            </SettingsPane>
+        ),
         storage: (
             <SettingsPane>
                 <PageHeader title="存储设置" />
@@ -101,7 +108,7 @@ export default function SettingsPage() {
                 <div className="settings-pane-header">
                     <div className="min-w-0">
                         <h2>模型选择</h2>
-                        <p>按领域选择默认模型；模型能力与请求协议在渠道“模型与能力”中配置。</p>
+                        <p>按领域选择默认模型；模型能力和接口格式在渠道“模型与能力”中配置。</p>
                     </div>
                 </div>
                 <div className="settings-section">

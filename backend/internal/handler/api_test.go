@@ -70,13 +70,15 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 		"POST /api/resources":                              false,
 		"POST /api/tasks":                                  false,
 		"POST /api/ai/models":                              false,
-		"GET /api/beefapi/connection":                      false,
-		"POST /api/beefapi/connection/start":               false,
+		"GET /api/beeftv/connection":                       false,
+		"POST /api/beeftv/connection/start":                false,
 		"GET /api/creation-conversations":                  false,
 		"PUT /api/creation-conversations/:id":              false,
 		"GET /api/canvas-folders":                          false,
 		"PUT /api/canvas-folders/:id":                      false,
 		"PUT /api/canvas-projects/:id/drawings/:drawingId": false,
+		"POST /api/skills/install/github":                  false,
+		"POST /api/skills/:id/sync":                        false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -110,9 +112,6 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 			"POST /api/canvas-projects/:id/import/libtv", "POST /api/canvas-projects/:id/import/tapnow",
 			"GET /api/public/resources/:id/file", "GET /api/public/resources/:id/file/:filename":
 			t.Fatalf("desktop API must not expose hosted storage route %s", key)
-		}
-		if key == "POST /api/skills/install/github" || key == "POST /api/skills/:id/sync" {
-			t.Fatalf("desktop API must not expose remote skill route %s", key)
 		}
 		if strings.HasPrefix(key, "GET /api/admin/plugins") || strings.HasPrefix(key, "PUT /api/admin/plugins") {
 			t.Fatalf("desktop API must not expose plugin admin route %s", key)

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasAssistantTurnView } from "@/pages/canvas/canvas-assistant-turn";
 import { assistantProposalProgress, assistantProposalText } from "@/pages/canvas/canvas-assistant-copy";
-import type { AssistantGenerationProposal, AssistantTurn } from "@/services/api/agent-assistant";
+import type { AssistantGenerationProposal, AssistantScriptProposal, AssistantTurn } from "@/services/api/agent-assistant";
 
 const proposal: AssistantGenerationProposal = {
     proposalId:"gp-film",kind:"image",nodeIds:["frame"],model:"image",modelKey:"custom::image",
@@ -24,12 +24,12 @@ test("production confirmation shows the backend estimate for each shot and the t
         kind: "image",
         nodeIds: ["img-1"],
         model: "gpt-image-2",
-        modelKey: "beefapi::gpt-image-2",
+        modelKey: "beeftv::gpt-image-2",
         production: {
             targets: [
-                { nodeId: "img-1", title: "分镜1-首帧图", kind: "image", modelKey: "beefapi::gpt-image-2", prompt: "镜头1首帧", parameters: { size: "16:9", count: "1" }, referenceNodeIds: [],
+                { nodeId: "img-1", title: "分镜1-首帧图", kind: "image", modelKey: "beeftv::gpt-image-2", prompt: "镜头1首帧", parameters: { size: "16:9", count: "1" }, referenceNodeIds: [],
                     estimate: { amount: 0.35, basis: "1K 低质量 ¥0.35/张 × 1 张", text: "预计 ¥0.35（1K 低质量 ¥0.35/张 × 1 张）" } },
-                { nodeId: "vid-1", title: "分镜1-6s视频", kind: "video", modelKey: "beefapi::seedance-2.0", prompt: "镜头1视频", parameters: { vquality: "720p", seconds: "6", count: "1" }, referenceNodeIds: ["img-1"],
+                { nodeId: "vid-1", title: "分镜1-6s视频", kind: "video", modelKey: "beeftv::seedance-2.0", prompt: "镜头1视频", parameters: { vquality: "720p", seconds: "6", count: "1" }, referenceNodeIds: ["img-1"],
                     estimate: { amount: 5.9616, approx: true, basis: "720p ¥0.9936/秒 × 6 秒，按 Token 折算", text: "约 ¥5.96（720p ¥0.9936/秒 × 6 秒，按 Token 折算）" } },
                 { nodeId: "tts-1", title: "旁白1", kind: "audio", modelKey: "byok::speech", prompt: "旁白台词", parameters: { count: "1" }, referenceNodeIds: [],
                     estimate: { amount: null, basis: "自带 Key 的渠道暂无价格，按该渠道实际计费", text: "自带 Key 的渠道暂无价格，按该渠道实际计费" } },
@@ -264,7 +264,7 @@ test("ordinary proposal with generation order targets renders collapsible order 
         kind: "image",
         nodeIds: ["shot-1"],
         model: "gpt-image-1.5",
-        modelKey: "beefapi::gpt-image-1.5",
+        modelKey: "beeftv::gpt-image-1.5",
         pricing: "unknown",
         estimate: { amount: 0, priced: 0, unknown: 1, text: "预计费用：暂无价格，按所选渠道实际计费" },
         approvalMode: "ask",
@@ -274,7 +274,7 @@ test("ordinary proposal with generation order targets renders collapsible order 
             title: "镜头1",
             kind: "image",
             model: "gpt-image-1.5",
-            modelKey: "beefapi::gpt-image-1.5",
+            modelKey: "beeftv::gpt-image-1.5",
             pricing: "unknown",
             estimate: { amount: null, basis: "自带 Key 的渠道暂无价格，按该渠道实际计费", text: "自带 Key 的渠道暂无价格，按该渠道实际计费" },
             prompt: "雨夜霓虹街角，主角回头",
@@ -324,4 +324,87 @@ test("ordinary proposal with generation order targets renders collapsible order 
     expect(invalidated).not.toContain("费用：");
     expect(html).toContain("canvas-assistant-proposal-lines");
     expect(html).not.toContain("white-space:pre-line");
+});
+
+test("skill script proposal card renders confirmation actions and collapsible output after execution", () => {
+    const scriptProposal: AssistantScriptProposal = {
+        proposalId: "sp-audio-1",
+        turnId: "turn-script-1",
+        canvasId: "canvas-1",
+        skillId: "audio-skill",
+        skillName: "声音审片",
+        versionId: "v1",
+        version: "1.0",
+        contentHash: "a".repeat(64),
+        scriptPath: "scripts/listen.py",
+        interpreter: "python3",
+        args: ["--check", "shot-1"],
+        timeoutSec: 120,
+        note: "检查第一镜音频静音区间",
+        status: "pending",
+    };
+    const pendingTurn: AssistantTurn = {
+        turnId: "turn-script-1",
+        userText: "检查声音",
+        selectedNodeIds: [],
+        reply: "请确认运行声音检查脚本。",
+        toolCalls: [],
+        change: null,
+        proposals: [],
+        scriptProposals: [scriptProposal],
+        error: null,
+        cancelled: false,
+        createdAt: "2026-11-06",
+    };
+    const pendingHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={pendingTurn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onRunScriptProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(pendingHtml).toContain("运行技能脚本 · 声音审片（1.0）");
+    expect(pendingHtml).toContain("脚本路径：scripts/listen.py");
+    expect(pendingHtml).toContain("运行方式：Python 3");
+    expect(pendingHtml).toContain("启动参数：--check shot-1");
+    expect(pendingHtml).toContain("不会修改已安装的技能文件，也不会读取你的模型密钥");
+    expect(pendingHtml).toContain("运行脚本");
+    expect(pendingHtml).toContain("本对话始终允许");
+    expect(pendingHtml).toContain("先不用");
+
+    const completedHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={{
+                ...pendingTurn,
+                scriptProposals: [{
+                    ...scriptProposal,
+                    status: "completed",
+                    result: {
+                        exitCode: 0,
+                        timedOut: false,
+                        cancelled: false,
+                        durationMs: 420,
+                        stdout: "检测到 00:01.20-00:01.80 停顿",
+                        stderr: "",
+                    },
+                }],
+            }}
+            handledProposals={new Set(["sp-audio-1"])}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onRunScriptProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(completedHtml).toContain("已完成（耗时 0.4 秒）");
+    expect(completedHtml).toContain("查看脚本输出");
+    expect(completedHtml).toContain("检测到 00:01.20-00:01.80 停顿");
+    expect(completedHtml).not.toContain("本对话始终允许");
 });

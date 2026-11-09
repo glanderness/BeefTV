@@ -237,6 +237,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 				"BEEFTV_DESKTOP_TOKEN=",
 				"BEEFTV_CLIENT_ID="+registered.Data.Client.ID,
 				"BEEFTV_CLIENT_TOKEN="+registered.Data.Token,
+				"BEEFTV_CLIENT_TOKEN_FILE=",
 			)
 			output, err := command.CombinedOutput()
 			exitCode := 0
@@ -256,7 +257,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		// 没有登记凭据时拒绝；外部客户端不持有桌面壳的令牌。
 		command := exec.Command(cliBinary, "ops", "list", "--read-only", "--json")
 		command.Env = append(os.Environ(), "BEEFTV_BASE_URL="+baseURL,
-			"BEEFTV_DESKTOP_TOKEN=", "BEEFTV_CLIENT_ID="+registered.Data.Client.ID, "BEEFTV_CLIENT_TOKEN=invalid")
+			"BEEFTV_DESKTOP_TOKEN=", "BEEFTV_CLIENT_ID="+registered.Data.Client.ID, "BEEFTV_CLIENT_TOKEN=invalid", "BEEFTV_CLIENT_TOKEN_FILE=")
 		if err := command.Run(); err == nil {
 			t.Fatal("无效客户端凭据不应能访问桌面实例")
 		}
@@ -270,7 +271,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	}
 
 	// 最小文字读写（默认跳过，避免测试依赖真实模型）：设置 BEEFTV_TEST_REAL_TURN=1
-	// 与 BEEFTV_TEST_CREDENTIALS=<beefapi 凭据 json> 时，用真实模型走一次
+	// 与 BEEFTV_TEST_CREDENTIALS=<beeftv 凭据 json> 时，用真实模型走一次
 	// 「读画布 + 改一个节点字段」，证明发行形态下的助手链路真的能读写。
 	if os.Getenv("BEEFTV_TEST_REAL_TURN") == "1" {
 		fixture := "desktop-chain-fixture"

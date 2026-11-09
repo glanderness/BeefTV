@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { BeefAPIConnectionActions, mergeManagedBeefAPICatalog, modelConfigChannelPresentation, modelConfigChannelStatusLabel, shouldRefreshBeefAPICatalog, withChannels } from "../src/pages/settings/channel-settings-pane";
+import { BeefTVConnectionActions, mergeManagedBeefTVCatalog, modelConfigChannelPresentation, modelConfigChannelStatusLabel, shouldRefreshBeefTVCatalog, withChannels } from "../src/pages/settings/channel-settings-pane";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createModelChannel, defaultConfig } from "../src/stores/use-config-store";
 
@@ -15,20 +15,20 @@ test("removing a channel clears its legacy and assistant selections", () => {
 test("connection actions render immediate progress and a retry after network failure", () => {
     const noop = () => {};
     const props = { busy: false, onConnect: noop, onCancel: noop, onRetry: noop, onDisconnect: noop, onWallet: noop };
-    const connecting = renderToStaticMarkup(<BeefAPIConnectionActions {...props} connection={{ state: "connecting", hasCredential: false }} />);
+    const connecting = renderToStaticMarkup(<BeefTVConnectionActions {...props} connection={{ state: "connecting", hasCredential: false }} />);
     expect(connecting).toContain("正在连接");
     expect(connecting).toContain("disabled");
     expect(connecting).not.toContain("重新连接");
-    const failed = renderToStaticMarkup(<BeefAPIConnectionActions {...props} connection={{ state: "connection_error", hasCredential: false }} />);
+    const failed = renderToStaticMarkup(<BeefTVConnectionActions {...props} connection={{ state: "connection_error", hasCredential: false }} />);
     expect(failed).toContain("重新连接");
     expect(failed).not.toContain("disabled");
 });
 
-test("pinned BeefAPI is visible and cannot be deleted before models are fetched", () => {
+test("pinned BeefTV is visible and cannot be deleted before models are fetched", () => {
     const channel = createModelChannel({
-        id: "beefapi",
-        name: "BeefAPI",
-        baseUrl: "https://enterprise.beefapi.com",
+        id: "beeftv",
+        name: "BeefTV",
+        baseUrl: "https://beeftv.app",
         apiKey: "",
         models: [],
         pinned: true,
@@ -38,31 +38,31 @@ test("pinned BeefAPI is visible and cannot be deleted before models are fetched"
     expect(modelConfigChannelStatusLabel(channel, { status: "idle", revision: 0, dirty: false, error: "" })).toBe("未连接");
 });
 
-test("BeefAPI status copy reflects enterprise connection state", () => {
-    const channel = createModelChannel({ id: "beefapi", apiKey: "", pinned: true, presetVersion: 1 });
+test("BeefTV status copy reflects enterprise connection state", () => {
+    const channel = createModelChannel({ id: "beeftv", apiKey: "", pinned: true, presetVersion: 1 });
     expect(modelConfigChannelStatusLabel(channel, { status: "idle", revision: 1, dirty: false, error: "" }, { state: "pending", userCode: "ABCD-EFGH", hasCredential: false })).toBe("请在浏览器中确认 ABCD-EFGH");
     expect(modelConfigChannelStatusLabel(channel, { status: "idle", revision: 2, dirty: false, error: "" }, { state: "connected", account: { id: "acct-1", display_name: "Ender" }, hasCredential: true })).toBe("已连接 Ender");
     expect(modelConfigChannelStatusLabel(channel, { status: "idle", revision: 2, dirty: false, error: "" }, { state: "revoked", hasCredential: true })).toBe("连接已失效，请重新连接");
 });
 
-test("BeefAPI connected transition refreshes the managed catalog", () => {
-    expect(shouldRefreshBeefAPICatalog("pending", "connected")).toBe(true);
-    expect(shouldRefreshBeefAPICatalog(undefined, "connected")).toBe(true);
-    expect(shouldRefreshBeefAPICatalog("connected", "connected")).toBe(false);
-    expect(shouldRefreshBeefAPICatalog("connected", "disconnected")).toBe(true);
-    expect(shouldRefreshBeefAPICatalog("catalog_failed", "disconnected")).toBe(true);
-    expect(shouldRefreshBeefAPICatalog("pending", "pending")).toBe(false);
-    expect(shouldRefreshBeefAPICatalog(undefined, "disconnected")).toBe(false);
+test("BeefTV connected transition refreshes the managed catalog", () => {
+    expect(shouldRefreshBeefTVCatalog("pending", "connected")).toBe(true);
+    expect(shouldRefreshBeefTVCatalog(undefined, "connected")).toBe(true);
+    expect(shouldRefreshBeefTVCatalog("connected", "connected")).toBe(false);
+    expect(shouldRefreshBeefTVCatalog("connected", "disconnected")).toBe(true);
+    expect(shouldRefreshBeefTVCatalog("catalog_failed", "disconnected")).toBe(true);
+    expect(shouldRefreshBeefTVCatalog("pending", "pending")).toBe(false);
+    expect(shouldRefreshBeefTVCatalog(undefined, "disconnected")).toBe(false);
 });
 
-test("BeefAPI catalog merge keeps manual providers and user-owned BeefAPI fields", () => {
+test("BeefTV catalog merge keeps manual providers and user-owned BeefTV fields", () => {
     const current = {
         ...defaultConfig,
         imageModel: "manual::local-image",
         channels: [
             createModelChannel({
-                id: "beefapi",
-                name: "BeefAPI",
+                id: "beeftv",
+                name: "BeefTV",
                 pinned: true,
                 enabled: false,
                 models: ["stale-image"],
@@ -75,10 +75,10 @@ test("BeefAPI catalog merge keeps manual providers and user-owned BeefAPI fields
         ...defaultConfig,
         channels: [
             createModelChannel({
-                id: "beefapi",
-                name: "BeefAPI",
+                id: "beeftv",
+                name: "BeefTV",
                 pinned: true,
-                credentialRef: "beefapi-enterprise",
+                credentialRef: "beeftv",
                 hasApiKey: true,
                 models: ["enterprise-image"],
                 modelProfiles: [{ model: "enterprise-image", capability: "image", protocol: "openai-image" }],
@@ -86,12 +86,12 @@ test("BeefAPI catalog merge keeps manual providers and user-owned BeefAPI fields
             createModelChannel({ id: "manual", name: "旧名称", apiKey: "old-key", models: ["old-image"] }),
         ],
     };
-    const merged = mergeManagedBeefAPICatalog(current, server);
-    const beef = merged.channels.find((channel) => channel.id === "beefapi");
+    const merged = mergeManagedBeefTVCatalog(current, server);
+    const beef = merged.channels.find((channel) => channel.id === "beeftv");
     const manual = merged.channels.find((channel) => channel.id === "manual");
     expect(beef?.models).toEqual(["enterprise-image"]);
     expect(beef?.modelProfiles?.[0]?.protocol).toBe("openai-image");
-    expect(beef?.credentialRef).toBe("beefapi-enterprise");
+    expect(beef?.credentialRef).toBe("beeftv");
     expect(beef?.enabled).toBe(false);
     expect(beef?.apiKey).toBe("");
     expect(manual?.name).toBe("工作室渠道");

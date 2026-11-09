@@ -116,11 +116,11 @@ function isRevisionConflict(error: unknown) {
     return candidate.status === 409 || candidate.response?.status === 409;
 }
 
-function omitManagedBeefAPISecrets(config: AiConfig): AiConfig {
+function omitManagedBeefTVSecrets(config: AiConfig): AiConfig {
     return {
         ...config,
         channels: config.channels.map((channel) => {
-            if (channel.id !== "beefapi" || !channel.pinned) return channel;
+            if (channel.id !== "beeftv" || !channel.pinned) return channel;
             return { ...channel, apiKey: "", secretKey: "" };
         }),
     };
@@ -128,7 +128,7 @@ function omitManagedBeefAPISecrets(config: AiConfig): AiConfig {
 
 const repository = createModelConfigRepository({
     read: getLocalModelConfig,
-    write: (config, expectedRevision) => saveLocalModelConfig(omitManagedBeefAPISecrets(config), expectedRevision),
+    write: (config, expectedRevision) => saveLocalModelConfig(omitManagedBeefTVSecrets(config), expectedRevision),
 });
 
 export const hydrateModelConfig = repository.hydrate;

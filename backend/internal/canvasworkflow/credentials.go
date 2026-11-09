@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -95,8 +95,8 @@ func ChannelID(host CompileHost, input map[string]any, logical string) (string, 
 	if config == nil {
 		return "", BadRequest("原生成步骤缺少模型配置")
 	}
-	if beefapi.IsManagedChannel(stringValue(config["channelId"]), stringValue(config["credentialRef"]), stringValue(config["baseUrl"])) {
-		return "@beefapi", nil
+	if beeftv.IsManagedChannel(stringValue(config["channelId"]), stringValue(config["credentialRef"]), stringValue(config["baseUrl"])) {
+		return "@beeftv", nil
 	}
 	snapshot, e := host.ProviderConfig()
 	if e != nil {
@@ -129,7 +129,7 @@ func RefreshCredentials(host CompileHost, input map[string]any, channelID string
 	if config == nil {
 		return BadRequest("生成步骤的模型配置缺失")
 	}
-	if channelID == "@beefapi" {
+	if channelID == "@beeftv" {
 		key, base, e := host.ManagedCredential()
 		if e != nil {
 			return e

@@ -66,6 +66,42 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.create",
+    "summary": "创建新画布",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "canvasId": {
+          "description": "可选自定义画布 ID；省略时由服务端生成",
+          "type": "string"
+        },
+        "folderId": {
+          "description": "可选画布文件夹 ID",
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "projectId": {
+          "description": "可选关联项目 ID",
+          "type": "string"
+        },
+        "title": {
+          "description": "画布名称（默认：未命名画布）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.document.commit",
     "summary": "按 revision 提交整份画布文档",
     "readOnly": false,
@@ -226,7 +262,7 @@
   },
   {
     "id": "canvas.generation.submit",
-    "summary": "凭已批准生成单执行画布素材生成并按渠道计费（ask 需人工批准、caller 核对版本后自批、auto 自动批准）",
+    "summary": "凭已批准生成单执行画布生成并计费",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -461,6 +497,10 @@
                 "true",
                 "false"
               ],
+              "type": "string"
+            },
+            "vquality": {
+              "description": "分辨率档位，取自模型目录",
               "type": "string"
             }
           },
@@ -708,7 +748,7 @@
   },
   {
     "id": "canvas.script.prepare",
-    "summary": "准备分镜脚本与可选首帧/视频草稿（传 script 或 nodeId/rowIds；不开始生成）",
+    "summary": "准备分镜脚本与可选首帧/视频草稿（不开始生成）",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -727,6 +767,11 @@
               "type": "string"
             },
             "size": {
+              "type": "string"
+            },
+            "title": {
+              "description": "标题模板，{n} 为镜号，如「镜 {n} 首帧」；省略默认「镜头 {n} · 首帧」",
+              "maxLength": 40,
               "type": "string"
             }
           },
@@ -811,6 +856,11 @@
               "type": "string"
             },
             "size": {
+              "type": "string"
+            },
+            "title": {
+              "description": "标题模板，{n} 为镜号，如「镜 {n} 视频」；省略默认「镜头 {n} · 视频」",
+              "maxLength": 40,
               "type": "string"
             }
           },
@@ -2111,6 +2161,78 @@
     "assistantModes": [
       "full-access",
       "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "skill.script.run",
+    "summary": "运行已选用技能的脚本（用户确认后执行）",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "canvasId": {
+          "type": "string"
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "note": {
+          "description": "告诉用户运行原因",
+          "maxLength": 500,
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "scriptPath": {
+          "description": "scripts/ 或 script/ 下的相对路径",
+          "type": "string"
+        },
+        "skillId": {
+          "type": "string"
+        },
+        "stdin": {
+          "maxLength": 65536,
+          "type": "string"
+        },
+        "timeoutSec": {
+          "description": "默认 300",
+          "maximum": 1800,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "useWorkspaceOutputDir": {
+          "description": "输出目录经 BEEFTV_OUTPUT_DIR 传入",
+          "type": "boolean"
+        },
+        "versionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "skillId",
+        "versionId",
+        "contentHash",
+        "scriptPath",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
       "canvas"
     ],
     "replay": "safe"

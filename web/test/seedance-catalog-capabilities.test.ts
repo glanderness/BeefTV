@@ -3,7 +3,7 @@ import axios from "axios";
 
 import { mergeFetchedChannelModelProfiles, sanitizeChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
 import { modelCapabilityConfigFor, sanitizeServerVideoCapability, type VideoCapabilityConfig } from "../src/lib/model-capabilities";
-import { applyFetchedChannelModelCatalog, mergeManagedBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
+import { applyFetchedChannelModelCatalog, mergeManagedBeefTVCatalog } from "../src/pages/settings/channel-settings-pane";
 import { modelCompatibilityError, portraitGenerationError } from "../src/lib/model-selection";
 import { fetchChannelModels } from "../src/services/api/image-models";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
@@ -54,15 +54,15 @@ function legacyZeroVideo(model: string) {
         },
     };
     return createModelChannel({
-        id: "beefapi",
-        baseUrl: "https://enterprise.beefapi.com",
+        id: "beeftv",
+        baseUrl: "https://beeftv.app",
         models: [model],
         modelProfiles: [{ model, capability: "video", protocol: "newapi", capabilityConfig }],
     });
 }
 
 test("fresh generic OpenAI catalog entries retain real portrait quotes through refresh and reload", () => {
-    const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: ["seedance-2.0-fast"] });
+    const channel = createModelChannel({ id: "beeftv", baseUrl: "https://beeftv.app", models: ["seedance-2.0-fast"] });
     const catalog = ["seedance-2.0-portrait", "seedance-2.5-portrait", "seedance-2.0-fast"].map((id, index) => ({
         id,
         // Actual gateway shape: video contract and quote, no modelType.
@@ -79,23 +79,23 @@ test("fresh generic OpenAI catalog entries retain real portrait quotes through r
         expect(profile.protocol).toBe("openai-videos");
         expect(profile.videoPricing).toEqual(item.videoPricing);
         expect(profile.videoCapabilitiesVersion).toBe(item.videoCapabilitiesVersion);
-        expect(modelCompatibilityError(reloaded, `beefapi::${item.id}`, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } })).toBe("");
-        expect(portraitGenerationError(reloaded, `beefapi::${item.id}`, "720p")).toBe("");
+        expect(modelCompatibilityError(reloaded, `beeftv::${item.id}`, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } })).toBe("");
+        expect(portraitGenerationError(reloaded, `beeftv::${item.id}`, "720p")).toBe("");
     }
     const missingPrice = applyFetchedChannelModelCatalog(refreshed, { models: catalog.map((item) => item.id), catalog: catalog.map((item) => ({ ...item, videoPricing: null })) });
     const unavailable = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [missingPrice] } }).config;
-    expect(portraitGenerationError(unavailable, "beefapi::seedance-2.0-portrait")).toContain("价格暂不可用");
-    expect(portraitGenerationError(unavailable, "beefapi::seedance-2.5-portrait")).toContain("价格暂不可用");
-    expect(portraitGenerationError(unavailable, "beefapi::seedance-2.0-fast")).toBe("");
+    expect(portraitGenerationError(unavailable, "beeftv::seedance-2.0-portrait")).toContain("价格暂不可用");
+    expect(portraitGenerationError(unavailable, "beeftv::seedance-2.5-portrait")).toContain("价格暂不可用");
+    expect(portraitGenerationError(unavailable, "beeftv::seedance-2.0-fast")).toBe("");
 });
 
 test("generic endpoints and prices alone do not classify an unknown catalog model as video", () => {
-    const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [] });
+    const channel = createModelChannel({ id: "beeftv", baseUrl: "https://beeftv.app", models: [] });
     expect(mergeFetchedChannelModelProfiles(channel, [{ id: "unknown-upstream-model", supportedEndpointTypes: ["openai"], videoPricing: { currency: "CNY", mode: "tokens", rates: { "720p": { output: 69, reference_video: 42 } } } }])).toEqual([]);
 });
 
 test("catalog import stores managed video capabilities and version", () => {
-    const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: ["seedance-2.0"] });
+    const channel = createModelChannel({ id: "beeftv", baseUrl: "https://beeftv.app", models: ["seedance-2.0"] });
     const video = sampleVideo(2, 1);
     const profiles = mergeFetchedChannelModelProfiles(channel, [{ id: "seedance-2.0", modelType: "video", videoCapabilities: video, videoCapabilitiesVersion: "cap-v1" }]);
     expect(profiles[0]?.videoCapabilitiesVersion).toBe("cap-v1");
@@ -107,18 +107,18 @@ test("catalog zero prompt ceiling and UTF-16 limit survive import and reload", (
     const video = sampleVideo(0, 0);
     video.references.promptMaxChars = 0;
     video.references.promptMaxUtf16Units = 1000;
-    const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: ["gen4_turbo"] });
+    const channel = createModelChannel({ id: "beeftv", baseUrl: "https://beeftv.app", models: ["gen4_turbo"] });
     const profiles = mergeFetchedChannelModelProfiles(channel, [{ id: "gen4_turbo", modelType: "video", videoCapabilities: video, videoCapabilitiesVersion: "utf16-v1" }]);
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [{ ...channel, modelProfiles: profiles }] } }).config;
-    const references = modelCapabilityConfigFor(config, "beefapi::gen4_turbo").video!.references;
+    const references = modelCapabilityConfigFor(config, "beeftv::gen4_turbo").video!.references;
     expect(references.promptMaxChars).toBe(0);
     expect(references.promptMaxUtf16Units).toBe(1000);
 });
 
 test("refresh replaces managed capabilities and keeps the new version", () => {
     const channel = createModelChannel({
-        id: "beefapi",
-        baseUrl: "https://enterprise.beefapi.com",
+        id: "beeftv",
+        baseUrl: "https://beeftv.app",
         models: ["seedance-2.0"],
         modelProfiles: [{ model: "seedance-2.0", capability: "video", protocol: "newapi", capabilityConfig: { version: 1, video: sampleVideo(3, 3) }, videoCapabilitiesVersion: "v1" }],
     });
@@ -128,7 +128,7 @@ test("refresh replaces managed capabilities and keeps the new version", () => {
     expect(profiles[0]?.capabilityConfig?.video?.references.maxAudios).toBe(1);
 });
 
-test("explicit zero limits stay zero for a server-sourced BeefAPI capability", () => {
+test("explicit zero limits stay zero for a server-sourced BeefTV capability", () => {
     const model = "seedance-2.0";
     const capabilityConfig = {
         version: 1,
@@ -146,19 +146,19 @@ test("explicit zero limits stay zero for a server-sourced BeefAPI capability", (
         },
     };
     const channel = createModelChannel({
-        id: "beefapi",
-        baseUrl: "https://enterprise.beefapi.com",
+        id: "beeftv",
+        baseUrl: "https://beeftv.app",
         models: [model],
         modelProfiles: [{ model, capability: "video", protocol: "newapi", capabilityConfig, videoCapabilitiesVersion: "cap-v1" }],
     });
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
     const profile = config.channels[0]?.modelProfiles?.find((item) => item.model === model);
     expect(profile?.videoCapabilitiesVersion).toBe("cap-v1");
-    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxVideos).toBe(0);
-    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxAudios).toBe(0);
+    expect(modelCapabilityConfigFor(config, `beeftv::${model}`).video!.references.maxVideos).toBe(0);
+    expect(modelCapabilityConfigFor(config, `beeftv::${model}`).video!.references.maxAudios).toBe(0);
 });
 
-test("legacy BeefAPI Seedance waits for a versioned server declaration", () => {
+test("legacy BeefTV Seedance waits for a versioned server declaration", () => {
     const model = "seedance-2.0";
     const repaired = legacyZeroVideo(model);
     repaired.modelProfiles![0]!.capabilityConfig = {
@@ -175,14 +175,14 @@ test("legacy BeefAPI Seedance waits for a versioned server declaration", () => {
     };
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [repaired] } }).config;
     expect(config.channels[0]?.modelProfiles?.[0]?.videoCapabilitiesVersion).toBeUndefined();
-    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).videoCapabilitiesUnavailable).toBeUndefined();
-    expect(modelCompatibilityError(config, `beefapi::${model}`, { capability: "video" })).toBe("");
+    expect(modelCapabilityConfigFor(config, `beeftv::${model}`).videoCapabilitiesUnavailable).toBeUndefined();
+    expect(modelCompatibilityError(config, `beeftv::${model}`, { capability: "video" })).toBe("");
 });
 
 test("invalid or missing catalog video does not clear a good sourced profile", () => {
     const channel = createModelChannel({
-        id: "beefapi",
-        baseUrl: "https://enterprise.beefapi.com",
+        id: "beeftv",
+        baseUrl: "https://beeftv.app",
         models: ["seedance-2.0"],
         modelProfiles: [{ model: "seedance-2.0", capability: "video", protocol: "newapi", capabilityConfig: { version: 1, video: sampleVideo(2, 2) }, videoCapabilitiesVersion: "keep" }],
     });
@@ -216,21 +216,21 @@ test("custom channels adopt only server-declared versioned video capabilities", 
     expect(undeclared[0]?.capabilityConfig?.video?.references.maxAudios).toBe(0);
 });
 
-test("mergeManagedBeefAPICatalog copies sourced capabilities from the backend snapshot", () => {
-    const current = { ...defaultConfig, channels: [createModelChannel({ id: "beefapi", pinned: true, models: ["stale"] })] };
+test("mergeManagedBeefTVCatalog copies sourced capabilities from the backend snapshot", () => {
+    const current = { ...defaultConfig, channels: [createModelChannel({ id: "beeftv", pinned: true, models: ["stale"] })] };
     const server = {
         ...defaultConfig,
         channels: [
             createModelChannel({
-                id: "beefapi",
+                id: "beeftv",
                 pinned: true,
                 models: ["seedance-2.0"],
                 modelProfiles: [{ model: "seedance-2.0", capability: "video", protocol: "newapi", capabilityConfig: { version: 1, video: sampleVideo(0, 0) }, videoCapabilitiesVersion: "from-server" }],
             }),
         ],
     };
-    const merged = mergeManagedBeefAPICatalog(current, server);
-    const profile = merged.channels.find((channel) => channel.id === "beefapi")?.modelProfiles?.[0];
+    const merged = mergeManagedBeefTVCatalog(current, server);
+    const profile = merged.channels.find((channel) => channel.id === "beeftv")?.modelProfiles?.[0];
     expect(profile?.videoCapabilitiesVersion).toBe("from-server");
     expect(profile?.capabilityConfig?.video?.references.maxVideos).toBe(0);
 });
@@ -285,7 +285,7 @@ test("custom pixel restrictions stay in place for non-Ark channels", () => {
     const video = (width: number, height: number) => ({ id: "vid", name: "视频", type: "video/mp4", url: "https://example.com/v.mp4", width, height, durationMs: 3000, bytes: 1 });
 });
 
-test("direct OpenAI catalog fetch keeps BeefAPI video capability fields", async () => {
+test("direct OpenAI catalog fetch keeps BeefTV video capability fields", async () => {
     const original = axios.request;
     axios.request = (async () => ({
         data: {
@@ -328,7 +328,7 @@ test("Auto duration reaches canvas model selection and final generation unchange
         id: "seedance-2.0", modelType: "video",
         videoCapabilities: video, videoCapabilitiesVersion: "auto-v1",
     }]);
-    const model = "beefapi::seedance-2.0";
+    const model = "beeftv::seedance-2.0";
     const config = { ...defaultConfig, channels: [channel], models: [model], videoModels: [model], model, videoModel: model, videoSeconds: "-1", size: "16:9", vquality: "720" };
     const { CanvasNodeType } = await import("../src/types/canvas");
     const result = buildGenerationConfig(config, { id: "auto", type: CanvasNodeType.Video, title: "Auto", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { model, seconds: "-1" } }, "video");
@@ -413,8 +413,8 @@ test("Seedance 2.0 fast and mini cap default resolutions to 480p and 720p while 
         {
             channels: [
                 {
-                    id: "beefapi",
-                    baseUrl: "https://enterprise.beefapi.com",
+                    id: "beeftv",
+                    baseUrl: "https://beeftv.app",
                     models: ["seedance-2.0-fast", "seedance-2.0-mini", "seedance-2.0"],
                     modelProfiles: [
                         { model: "seedance-2.0-fast", protocol: "newapi" },
@@ -424,33 +424,33 @@ test("Seedance 2.0 fast and mini cap default resolutions to 480p and 720p while 
                 },
             ],
         },
-        "beefapi::seedance-2.0-fast",
+        "beeftv::seedance-2.0-fast",
     ).video!;
     const mini = modelCapabilityConfigFor(
         {
             channels: [
                 {
-                    id: "beefapi",
-                    baseUrl: "https://enterprise.beefapi.com",
+                    id: "beeftv",
+                    baseUrl: "https://beeftv.app",
                     models: ["seedance-2.0-mini"],
                     modelProfiles: [{ model: "seedance-2.0-mini", protocol: "openai-videos" }],
                 },
             ],
         },
-        "beefapi::seedance-2.0-mini",
+        "beeftv::seedance-2.0-mini",
     ).video!;
     const standard = modelCapabilityConfigFor(
         {
             channels: [
                 {
-                    id: "beefapi",
-                    baseUrl: "https://enterprise.beefapi.com",
+                    id: "beeftv",
+                    baseUrl: "https://beeftv.app",
                     models: ["seedance-2.0"],
                     modelProfiles: [{ model: "seedance-2.0", protocol: "newapi" }],
                 },
             ],
         },
-        "beefapi::seedance-2.0",
+        "beeftv::seedance-2.0",
     ).video!;
     expect(fast.resolutions).toEqual(["480p", "720p"]);
     expect(mini.resolutions).toEqual(["480p", "720p"]);
@@ -477,7 +477,7 @@ test("buildVideoGenerationMetadata strips stale frame roles in reference_to_vide
             width: 100,
             height: 100,
             metadata: {
-                model: "beefapi::seedance-2.0-fast",
+                model: "beeftv::seedance-2.0-fast",
                 videoStartFrameNodeId: "img-1",
                 videoEndFrameNodeId: "img-2",
             },
@@ -497,7 +497,7 @@ test("buildVideoGenerationMetadata strips stale frame roles in reference_to_vide
             width: 100,
             height: 100,
             metadata: {
-                model: "beefapi::minimax-h3-max",
+                model: "beeftv::minimax-h3-max",
                 videoEditOperation: "reference_to_video",
                 videoStartFrameNodeId: "img-1",
                 videoEndFrameNodeId: "img-2",

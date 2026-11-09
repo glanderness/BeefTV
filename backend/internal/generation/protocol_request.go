@@ -21,6 +21,16 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
+// ProtocolRequestFor builds the request for one resolved adapter. A model saved
+// with a retired interface ID keeps the options it saved under that ID.
+func ProtocolRequestFor(input Input, adapter protocol.Adapter) protocol.GenerationRequest {
+	request := ProtocolRequestFromInput(input)
+	if adapter == nil {
+		return request
+	}
+	return protocol.WithRequestedAliasOptions(request, input.Config.InterfaceType, adapter.Metadata())
+}
+
 func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 	resolution := strings.TrimSpace(input.Config.VQuality)
 	if input.Mode == "video" {
@@ -53,6 +63,15 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 			"audioSpeed":   defaultString(input.Config.AudioSpeed, "1"),
 			"count":        input.Config.Count,
 		},
+	}
+	// 显式 false 与未设置必须区分：插件在未设置时省略声音开关，避免把上游默认值
+	// 当成用户的选择；设置过 true/false 时按原值发出。
+	if value, explicit := explicitVideoGenerateAudio(input); explicit {
+		request.Extra["generateAudio"] = value
+	}
+	// 比例写法额外暴露给只认 aspect_ratio 的上游；像素尺寸不进入比例字段。
+	if value := strings.TrimSpace(input.Config.Size); input.Mode == "video" && IsVideoAspectRatioLiteral(value) {
+		request.Extra["aspectRatio"] = value
 	}
 	for _, message := range input.TextHistory {
 		role := strings.ToLower(strings.TrimSpace(message.Role))
@@ -288,7 +307,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 			return nil, "", RequestPreparationError{Cause: err}
 		}
 	}
-	applyBeefAPIVideoDeliveryHeader(ctx, config, req)
+	applyBeefTVVideoDeliveryHeader(ctx, config, req)
 	if consume != nil {
 		req.Header.Set("Accept", "text/event-stream")
 		return DoBinaryWithConsumer(req, consume)
