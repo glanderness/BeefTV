@@ -27,7 +27,8 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 	if err != nil {
 		return err
 	}
-	channels, _ := config["channels"].([]any)
+	// Reconnecting replaces the official channel saved under the pre-rename ID.
+	channels := withoutLegacyOfficialChannel(config["channels"])
 	replaced := false
 	replaceModels := previousAccountID != "" && nextAccountID != "" && previousAccountID != nextAccountID
 	previousVideos := map[string]bool{}
@@ -481,6 +482,12 @@ func PreserveManagedChannel(incoming, existing map[string]any, managed bool) {
 	incomingChannels, _ := incoming["channels"].([]any)
 	existingChannels, _ := existing["channels"].([]any)
 	existingBeef := findChannel(existingChannels, ChannelID)
+	// After reconnecting, the saved config holds only the current official
+	// channel. A page that loaded before that still sends the old one; drop it
+	// so it does not come back. Before reconnecting it stays as the user left it.
+	if managed {
+		incomingChannels = withoutLegacyOfficialChannel(incomingChannels)
+	}
 	found := false
 	for index, raw := range incomingChannels {
 		channel, ok := raw.(map[string]any)
@@ -533,6 +540,25 @@ func PreserveManagedChannel(incoming, existing map[string]any, managed bool) {
 		}
 	}
 	incoming["channels"] = incomingChannels
+}
+
+// Releases before v2.2.0 saved the official channel as "beefapi". Channel IDs
+// are generated, never typed, so that ID only ever meant the official channel.
+// The current release no longer recognizes it, so after the user reconnects the
+// entry is dead. The web client reads old model references ("beefapi::model")
+// as the current official channel.
+const legacyOfficialChannelID = "beefapi"
+
+func withoutLegacyOfficialChannel(raw any) []any {
+	channels, _ := raw.([]any)
+	kept := make([]any, 0, len(channels))
+	for _, item := range channels {
+		if channel, ok := item.(map[string]any); ok && channel["id"] == legacyOfficialChannelID {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
 }
 
 func findChannel(channels []any, id string) map[string]any {

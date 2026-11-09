@@ -10,7 +10,7 @@ import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
-import { channelHasGenerationCredential, channelHasManagedBeefTVCredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefTVChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { channelHasGenerationCredential, channelHasManagedBeefTVCredential, createModelChannel, decodeChannelModel, defaultBaseUrlForApiFormat, encodeChannelModel, filterModelsByCapability, isBuiltinBeefTVChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { ModelServiceEditor } from "./model-service-editor";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
@@ -641,8 +641,10 @@ export function shouldRefreshBeefTVCatalog(previous: string | undefined, next: s
 
 export function mergeManagedBeefTVCatalog(current: AiConfig, server: AiConfig, adoptAuthorizedAssistant = false): AiConfig {
     const serverBeef = server.channels.find((channel) => channel.id === "beeftv");
+    const serverIds = new Set(server.channels.map((channel) => channel.id));
     let found = false;
-    const channels = current.channels.map((channel) => {
+    // 固定服务由后端维护：后端已经去掉的（比如重连后清掉的旧版官方服务），页面上也去掉。
+    const channels = current.channels.filter((channel) => !channel.pinned || serverIds.has(channel.id)).map((channel) => {
         if (channel.id !== "beeftv") return channel;
         found = true;
         if (!serverBeef) {
@@ -765,6 +767,12 @@ export function modelConfigChannelPresentation(channel: ModelChannel) {
 }
 
 export function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
+    // 已保存的选择按解码后的渠道比较：旧版官方服务的 beefapi::模型 就是现在的 beeftv::模型。
+    const canonical = (value: string) => {
+        const decoded = value ? decodeChannelModel(value) : null;
+        return decoded ? encodeChannelModel(decoded.channelId, decoded.model) : value;
+    };
+    config = { ...config, model: canonical(config.model), assistantModel: canonical(config.assistantModel), mediaReviewModel: canonical(config.mediaReviewModel), imageModel: canonical(config.imageModel), videoModel: canonical(config.videoModel), textModel: canonical(config.textModel), audioModel: canonical(config.audioModel) };
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);

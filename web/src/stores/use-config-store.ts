@@ -662,10 +662,15 @@ export function isChannelModelValue(value: string) {
     return value.includes(CHANNEL_MODEL_SEPARATOR);
 }
 
+// v2.2.0 之前官方服务的 ID 是 beefapi，老画布和老设置里存的是 beefapi::模型。
+// 按现在的官方服务读，否则旧服务删掉后会落到全局默认模型，换成别家服务扣费。
+const PRE_RENAME_OFFICIAL_CHANNEL_ID = "beefapi";
+
 export function decodeChannelModel(value: string) {
     const index = value.indexOf(CHANNEL_MODEL_SEPARATOR);
     if (index < 0) return null;
-    return { channelId: value.slice(0, index), model: value.slice(index + CHANNEL_MODEL_SEPARATOR.length) };
+    const channelId = value.slice(0, index);
+    return { channelId: channelId === PRE_RENAME_OFFICIAL_CHANNEL_ID ? "beeftv" : channelId, model: value.slice(index + CHANNEL_MODEL_SEPARATOR.length) };
 }
 
 export function modelOptionName(value: string) {
