@@ -1,9 +1,11 @@
 const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
 (async () => {
+    const { existsSync } = require("node:fs");
+    const executablePath = [process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].find(path => path && existsSync(path));
     const browser = process.env.BROWSER_CDP_URL
         ? await chromium.connectOverCDP(process.env.BROWSER_CDP_URL)
-        : await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH });
+        : await chromium.launch({ headless: true, executablePath });
     const page = await browser.newPage();
     try {
         await page.goto(process.env.RECOVERY_TEST_URL);

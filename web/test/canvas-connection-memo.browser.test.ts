@@ -13,7 +13,7 @@ test("unchanged and hovered connections reuse geometry while moved endpoints and
     if (!build.success) throw new Error(build.logs.join("\n"));
     const script = await build.outputs.find(output => output.path.endsWith(".js"))!.text();
     const css = (await Promise.all(build.outputs.filter(output => output.path.endsWith(".css")).map(output => output.text()))).join("\n");
-    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find(path => path && existsSync(path));
+    const executablePath = [process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].find(path => path && existsSync(path));
     const browser = await chromium.launch({ executablePath, headless: true });
     try {
         const page = await browser.newPage();
