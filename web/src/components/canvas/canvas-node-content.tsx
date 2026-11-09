@@ -277,14 +277,13 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
         <div
             data-canvas-no-zoom
             data-canvas-wheel-scroll
-            data-canvas-live-scale
             className="canvas-node-error-content flex max-w-[260px] flex-col items-center gap-3 overflow-y-auto px-3 py-2 text-center"
             style={{
                 boxSizing: "border-box",
-                width: `min(260px, calc(${Math.max(1, node.width)}px * var(--canvas-live-scale, 1)))`,
-                maxHeight: `calc(${Math.max(1, node.height)}px * var(--canvas-live-scale, 1))`,
-                transform: "scale(var(--canvas-live-inverse-scale, 1))",
-                transformOrigin: "center center",
+                // Keep text wrapping in node coordinates: live zoom must not
+                // relayout every failed shot's text and scroll area each frame.
+                width: Math.min(260, Math.max(1, node.width)),
+                maxHeight: Math.max(1, node.height),
             }}
         >
             <div className="w-full" style={{ color: submissionUncertain ? theme.node.text : theme.accent.danger }}>

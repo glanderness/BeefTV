@@ -144,42 +144,46 @@ export function CanvasProjectNodeContent({ node: contentNode, projectId, readOnl
     if (contentNode.type === CanvasNodeType.Script) {
         const pipeline = deriveStoryboardPipelineProgress(contentNode, nodesRef.current, connectionsRef.current);
         return (
-            <CanvasScriptNodeContent
-                node={contentNode}
-                nodes={nodesRef.current}
-                batch={visibleGenerationBatch(contentNode)}
-                pipeline={pipeline}
-                scale={viewportScale}
-                mentionReferences={mentionReferencesByNodeId.get(contentNode.id) || EMPTY_RESOURCE_REFERENCES}
-                onOpen={() => setScriptEditorNodeId(contentNode.id)}
-                onCreateImageNodes={() => createScriptImageNodes(contentNode.id)}
-                onCreateVideoNodes={() => createScriptVideoNodes(contentNode.id)}
-                onGenerateImages={(rowIds) => void generateScriptImages(contentNode.id, rowIds)}
-                onGenerateVideos={(rowIds) => (contentNode.metadata?.storyboardVideoInputMode === "keyframe" ? void generateScriptVideos(contentNode.id, rowIds) : void createAndGenerateScriptVideos(contentNode.id, rowIds))}
-                onVideoInputModeChange={(storyboardVideoInputMode) => handleConfigNodeChange(contentNode.id, { storyboardVideoInputMode })}
-                onMergeVideos={() => void mergeVideosByIds(pipeline.successfulVideoNodeIds)}
-                onCreateActionBoards={() => void createScriptActionBoards(contentNode.id)}
-                onRetryBatch={(batchId) => retryFailedBatchItems(contentNode.id, batchId)}
-                onRetryBatchItem={(batchId, itemId) => retryFailedBatchItems(contentNode.id, batchId, itemId)}
-                onStopBatch={(batchId) => stopRemainingBatchItems(contentNode.id, batchId)}
-                onAddRow={() => addScriptRow(contentNode.id)}
-                onRemoveRow={(rowId) => removeScriptRow(contentNode.id, rowId)}
-                onUpdateRow={(rowId, patch) => updateScriptRow(contentNode.id, rowId, patch)}
-                onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
-                onGenerateScript={(prompt) => void generateScriptRows(contentNode.id, prompt)}
-                onModelChange={(model) => handleConfigNodeChange(contentNode.id, { model })}
-                onShotDurationChange={(duration: StoryboardShotDuration) => handleConfigNodeChange(contentNode.id, { storyboardShotDuration: duration })}
-                onShotCountChange={(count: StoryboardShotCount) => handleConfigNodeChange(contentNode.id, { storyboardShotCount: count })}
-                workspaceMode={workspaceMode}
-                onComposerHeightChange={(height) => {
-                    if (contentNode.metadata?.storyboardComposerHeight === height) return;
-                    handleConfigNodeChange(contentNode.id, { storyboardComposerHeight: height });
-                    const minHeight = storyboardMinNodeHeight(height);
-                    if (contentNode.height < minHeight) handleNodeResize(contentNode.id, contentNode.width, minHeight);
-                }}
-                onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
-                onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}
-            />
+            // Keep the editable table on its own compositor surface while the
+            // camera moves. Paint containment would clip the row connection handles.
+            <div className="h-full w-full" data-canvas-storyboard-surface style={{ willChange: "transform", contain: "layout style" }}>
+                <CanvasScriptNodeContent
+                    node={contentNode}
+                    nodes={nodesRef.current}
+                    batch={visibleGenerationBatch(contentNode)}
+                    pipeline={pipeline}
+                    scale={viewportScale}
+                    mentionReferences={mentionReferencesByNodeId.get(contentNode.id) || EMPTY_RESOURCE_REFERENCES}
+                    onOpen={() => setScriptEditorNodeId(contentNode.id)}
+                    onCreateImageNodes={() => createScriptImageNodes(contentNode.id)}
+                    onCreateVideoNodes={() => createScriptVideoNodes(contentNode.id)}
+                    onGenerateImages={(rowIds) => void generateScriptImages(contentNode.id, rowIds)}
+                    onGenerateVideos={(rowIds) => (contentNode.metadata?.storyboardVideoInputMode === "keyframe" ? void generateScriptVideos(contentNode.id, rowIds) : void createAndGenerateScriptVideos(contentNode.id, rowIds))}
+                    onVideoInputModeChange={(storyboardVideoInputMode) => handleConfigNodeChange(contentNode.id, { storyboardVideoInputMode })}
+                    onMergeVideos={() => void mergeVideosByIds(pipeline.successfulVideoNodeIds)}
+                    onCreateActionBoards={() => void createScriptActionBoards(contentNode.id)}
+                    onRetryBatch={(batchId) => retryFailedBatchItems(contentNode.id, batchId)}
+                    onRetryBatchItem={(batchId, itemId) => retryFailedBatchItems(contentNode.id, batchId, itemId)}
+                    onStopBatch={(batchId) => stopRemainingBatchItems(contentNode.id, batchId)}
+                    onAddRow={() => addScriptRow(contentNode.id)}
+                    onRemoveRow={(rowId) => removeScriptRow(contentNode.id, rowId)}
+                    onUpdateRow={(rowId, patch) => updateScriptRow(contentNode.id, rowId, patch)}
+                    onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
+                    onGenerateScript={(prompt) => void generateScriptRows(contentNode.id, prompt)}
+                    onModelChange={(model) => handleConfigNodeChange(contentNode.id, { model })}
+                    onShotDurationChange={(duration: StoryboardShotDuration) => handleConfigNodeChange(contentNode.id, { storyboardShotDuration: duration })}
+                    onShotCountChange={(count: StoryboardShotCount) => handleConfigNodeChange(contentNode.id, { storyboardShotCount: count })}
+                    workspaceMode={workspaceMode}
+                    onComposerHeightChange={(height) => {
+                        if (contentNode.metadata?.storyboardComposerHeight === height) return;
+                        handleConfigNodeChange(contentNode.id, { storyboardComposerHeight: height });
+                        const minHeight = storyboardMinNodeHeight(height);
+                        if (contentNode.height < minHeight) handleNodeResize(contentNode.id, contentNode.width, minHeight);
+                    }}
+                    onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
+                    onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}
+                />
+            </div>
         );
     }
     if (contentNode.type === CanvasNodeType.Director || contentNode.metadata?.directorSceneId) {
