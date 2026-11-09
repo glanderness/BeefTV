@@ -3,9 +3,9 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
+import { ownedResourceIdFromMediaRef, uploadResourceFile } from "@/services/api/resources";
 import { apiClient, configureApiRuntime } from "@/services/api/request";
-import { downloadOwnedOrBrowserMedia, isWailsNativeShell, reportOwnedMediaSave, saveOwnedNativeArchiveFiles, saveOwnedOrBrowserBlob, saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
+import { downloadOwnedOrBrowserMedia, isWailsNativeShell, reportOwnedMediaSave, saveOwnedNativeArchiveFiles, saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
 import { sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 
@@ -97,12 +97,6 @@ describe("native media save", () => {
         expect(helper).toContain("32 * 1024 * 1024");
         expect(readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-export.ts"), "utf8")).toContain("saveOwnedNativeArchiveFiles");
         expect(readFileSync(resolve(import.meta.dir, "../src/pages/assets/asset-transfer.ts"), "utf8")).toContain("saveOwnedOrBrowserBlob");
-        const timeline = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-timeline-dialog.tsx"), "utf8");
-        expect(timeline).toContain("saveOwnedOrBrowserVideoBlob");
-        const handleExport = timeline.slice(timeline.indexOf("const handleExport ="), timeline.indexOf("const handleCreateAssembledNode ="));
-        expect(handleExport.indexOf("setFinalizingExport(true)")).toBeLessThan(handleExport.indexOf("await saveOwnedOrBrowserVideoBlob"));
-        expect(handleExport).toContain('if (saved === "saved") message.success');
-        expect(timeline).toContain("disabled={finalizingExport}");
         const saveGo = readFileSync(resolve(import.meta.dir, "../../backend/internal/bootstrap/owned_media_save.go"), "utf8");
         expect(saveGo).toContain("os.Rename(tmpPath, dest)");
         expect(saveGo).not.toContain(".beeftv-old");
@@ -187,9 +181,8 @@ describe("native video export resource save", () => {
         };
         expect(await saveOwnedNativeArchiveFiles("画布.zip", [{ name: "projects.json", data: '{"projects":[]}' }, { name: "media/video.mp4", data: blob, resourceId: "owned-video" }])).toBe("cancelled");
     });
-    test("33 MiB uploads real multipart Blob and saves the returned owned resource", async () => {
-        const saved: Array<[string, string]> = [];
-        nativeVideoSave(async (name, id) => { saved.push([name, id]); return true; });
+    test("33 MiB video uploads retain multipart content and idempotency", async () => {
+        nativeVideoSave();
         const blob = new Blob([new Uint8Array(33 * 1024 * 1024)], { type: "video/mp4" });
         const requests: string[] = [];
         apiClient.defaults.adapter = async (config) => {
@@ -204,12 +197,11 @@ describe("native video export resource save", () => {
             expect(config.headers.get("X-Idempotency-Key")).toMatch(/^video-export:/);
             return { data: { code: 0, data: { resource: { id: "owned-33", status: "ready" } } }, status: 200, statusText: "OK", headers: {}, config };
         };
-        expect(await saveOwnedOrBrowserVideoBlob("../clip:name.mp4", blob)).toBe("saved");
+        expect((await uploadResourceFile(blob, "video", { fileName: "clip_name.mp4", idempotencyKey: "video-export:multipart" })).id).toBe("owned-33");
         expect(requests).toEqual(["/resources"]);
-        expect(saved).toEqual([["clip_name.mp4", "owned-33"]]);
     });
 
-    test("51 MiB uploads all binary chunks and completes before opening native save", async () => {
+    test("51 MiB video uploads preserve every chunk before completing the resource", async () => {
         const events: string[] = [];
         nativeVideoSave(async (_name, id) => { events.push("save:" + id); return true; });
         const blob = new Blob([new Uint8Array(51 * 1024 * 1024)], { type: "video/mp4" });
@@ -233,16 +225,16 @@ describe("native video export resource save", () => {
             }
             return { data: { code: 0, data }, status: 200, statusText: "OK", headers: {}, config };
         };
-        expect(await saveOwnedOrBrowserVideoBlob("long.mp4", blob)).toBe("saved");
+        expect((await uploadResourceFile(blob, "video", { fileName: "long.mp4", idempotencyKey: "video-export:chunks" })).id).toBe("owned-51");
         expect(sizes).toEqual([...Array(6).fill(chunkSize), 3 * 1024 * 1024]);
-        expect(events).toEqual(["/resources/uploads", ...Array.from({ length: 7 }, (_, i) => `/resources/uploads/export-session/chunks/${i}`), "/resources/uploads/export-session/complete", "save:owned-51"]);
+        expect(events).toEqual(["/resources/uploads", ...Array.from({ length: 7 }, (_, i) => `/resources/uploads/export-session/chunks/${i}`), "/resources/uploads/export-session/complete"]);
     });
 
     test("native save cancellation stays silent", async () => {
         nativeVideoSave(async () => false);
         apiClient.defaults.adapter = async (config) => ({ data: { code: 0, data: { resource: { id: "cancelled-video" } } }, status: 200, statusText: "OK", headers: {}, config });
         const messages: string[] = [];
-        const result = saveOwnedOrBrowserVideoBlob("clip.mp4", new Blob(["video"]));
+        const result = downloadOwnedOrBrowserMedia({ fileName: "clip.mp4", resourceId: "cancelled-video" });
         expect(await result).toBe("cancelled");
         await reportOwnedMediaSave({ success: (text) => messages.push(text), error: (text) => messages.push(text) }, result);
         expect(messages).toEqual([]);
@@ -252,21 +244,21 @@ describe("native video export resource save", () => {
         let saves = 0;
         nativeVideoSave(async () => { saves++; return true; });
         apiClient.defaults.adapter = async () => { throw new Error("local disk full"); };
-        await expect(saveOwnedOrBrowserVideoBlob("clip.mp4", new Blob(["video"]))).rejects.toThrow("local disk full");
+        await expect(uploadResourceFile(new Blob(["video"]), "video")).rejects.toThrow("local disk full");
         expect(saves).toBe(0);
     });
 
     test("native write failure propagates instead of reporting saved", async () => {
         nativeVideoSave(async () => { throw new Error("cannot write selected path"); });
         apiClient.defaults.adapter = async (config) => ({ data: { code: 0, data: { resource: { id: "write-error-video" } } }, status: 200, statusText: "OK", headers: {}, config });
-        await expect(saveOwnedOrBrowserVideoBlob("clip.mp4", new Blob(["video"]))).rejects.toThrow("cannot write selected path");
+        await expect(downloadOwnedOrBrowserMedia({ fileName: "clip.mp4", resourceId: "write-error-video" })).rejects.toThrow("cannot write selected path");
     });
 
     test("browser video export does not upload an owned resource", async () => {
         Object.assign(globalThis, { window: { location: { protocol: "http:" } } });
         let requests = 0;
         apiClient.defaults.adapter = async () => { requests++; throw new Error("unexpected upload"); };
-        expect(await saveOwnedOrBrowserVideoBlob("clip.mp4", new Blob(["video"]))).toBe("saved");
+        expect(await downloadOwnedOrBrowserMedia({ fileName: "clip.mp4", resourceId: "video", browserUrl: "/api/resources/video/file" })).toBe("saved");
         expect(requests).toBe(0);
     });
 });

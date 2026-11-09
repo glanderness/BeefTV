@@ -31,6 +31,7 @@ import type { TimelineDirectMedia } from "@/types/timeline";
 import type { CanvasUploadStatus } from "./canvas-project-feedback";
 import { runOwnedCanvasCreatedNodes, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createOwnedCanvasUploadGuard, persistOwnedCanvasUploadNode, shouldSuppressOwnedCanvasCallback } from "./canvas-upload-ownership";
+import { useCanvasAssembledNode } from "./use-canvas-assembled-node";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasUploadOptions = {
@@ -627,49 +628,9 @@ export function useCanvasUpload({
         return created;
     }, [canvasId, lifetime, message, mountedRef, persistTimelineMedia]);
 
-    // 组装能力闭环：把时间线合成结果（MP4 Blob）上传并创建为新的视频节点放回画布，
-    // 复用上传/持久化/选中逻辑，新节点可继续编辑字幕与样式。
-    const createVideoNodeFromBlob = useCallback(async (blob: Blob, title: string): Promise<CanvasNodeData | null> => {
-        const guard = createOwnedCanvasUploadGuard({
-            lifetime,
-            canvasId,
-            getLiveCanvasId: () => canvasIdRef.current,
-            mounted: () => mountedRef.current,
-        });
-        const progress = startUploadStatus("合成视频片段", "上传合成结果", domainProjectId ? 4 : 3);
-        try {
-            const localRuntime = isLocalRuntimeMode();
-            progress.update(localRuntime ? "保存合成结果到本地资源目录" : "上传到服务器并同步资源", 2);
-            const video = await uploadMediaFile(blob, "video");
-            if (!guard.alive()) return null;
-            progress.update("更新画布节点", 3);
-            const size = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
-            const center = getCanvasCenter();
-            const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-            const node = {
-                id,
-                type: CanvasNodeType.Video,
-                title,
-                position: { x: center.x - size.width / 2, y: center.y - size.height / 2 },
-                width: size.width,
-                height: size.height,
-                metadata: { ...videoMetadata(video), status: NODE_STATUS_SUCCESS },
-            } satisfies CanvasNodeData;
-            setNodes((current) => [...current, node]);
-            selectInsertedNode(id, "preserve");
-            if (domainProjectId) progress.update("写入项目资产", 4);
-            const persisted = await persistMediaNode(node, guard.signal);
-            if (!guard.alive()) return null;
-            progress.done(persisted ? "已生成新视频片段并加入项目资产" : "已生成新视频片段，项目资产待重试");
-            return node;
-        } catch (error) {
-            if (guard.suppress(error)) return null;
-            const details = error instanceof Error ? error.message : "合成视频片段失败";
-            progress.fail(details);
-            message.error(details);
-            return null;
-        }
-    }, [canvasId, domainProjectId, getCanvasCenter, lifetime, message, mountedRef, persistMediaNode, selectInsertedNode, setNodes, startUploadStatus]);
+    const createVideoNodeFromResource = useCanvasAssembledNode({
+        canvasId, getCanvasCenter, setNodes, selectInsertedNode, persistMediaNode, startUploadStatus,
+    });
 
     const replaceNodeMedia = useCallback(async (nodeId: string, file: File) => {
         const currentNode = nodesRef.current.find((node) => node.id === nodeId);
@@ -1027,7 +988,7 @@ export function useCanvasUpload({
         closeUploadModal:()=>setUploadModalOpen(false),
         handleImportUrl,
         closeAssetPicker,
-        createVideoNodeFromBlob,
+        createVideoNodeFromResource,
         createAssetPayloadNode,
         createAssetPayloadNodes,
         createImageAssetNode,

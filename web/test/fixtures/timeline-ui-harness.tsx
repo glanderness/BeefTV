@@ -35,11 +35,11 @@ const root = createRoot(document.getElementById("root")!);
 Object.assign(window, { timelineFixture: { receipt, unmount: () => root.unmount() } });
 const mode = new URLSearchParams(location.search).get("mode");
 root.render(<App>{mode === "canvas" ?
-    <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
+    <CanvasTimelineDialog canvasId="fixture" node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
         onCreateAssembledNode={async () => { receipt.created++; return node; }} /> :
     mode === "canvas-drag" ?
-        <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
+        <CanvasTimelineDialog canvasId="fixture" node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
             onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
             onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :
         <EditorStoreProvider store={store} host={{ projectId: "fixture", assets: [], refreshAssets: async () => [] }}><EditorExport /></EditorStoreProvider>

@@ -27,6 +27,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
+import { TaskResultMedia } from "./task-result-media";
 import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
@@ -586,7 +587,7 @@ export default function TasksPage() {
                                 context={{ taskId: detailTask.id, traceId: detailTask.traceId, canvasId: detailTask.projectId, nodeId: detailTask.clientContext?.nodeId, clientOperationId: detailTask.clientOperationId, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage, failureDiagnostics: detailTask.failureDiagnostics, completedAt: detailTask.completedAt, updatedAt: detailTask.updatedAt }}
                             />
                         ) : null}
-                        <TaskResultMedia value={detailTask.resultJson} taskType={detailTask.type} />
+                        <TaskResultMedia value={detailTask.resultJson} taskType={detailTask.type} status={detailTask.status} />
                         <DetailBlock title="提示词" value={detailLoading ? "详情加载中..." : detailTask.prompt || "无"} tall />
                         <TaskParameters inputJson={detailLoading ? undefined : detailTask.inputJson} />
                         <DetailBlock title="结果" value={detailLoading ? "详情加载中..." : formatTaskJson(detailTask.resultJson)} />
@@ -627,60 +628,6 @@ export default function TasksPage() {
 function canQueryProviderTask(task: GenerationTask) {
     if (task.outcome) return canRecoverTaskOutcome(readTaskOutcome(task));
     return canRecoverTaskOutcome(readTaskOutcome(task)) || (task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId));
-}
-
-function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {
-    const urls = resultMediaUrls(value);
-    if (!urls.length) return null;
-    return (
-        <div>
-            <Typography.Text strong>生成结果</Typography.Text>
-            <div className="mt-2 grid max-h-[360px] grid-cols-2 gap-2 overflow-auto rounded-lg bg-stone-950 p-2 md:grid-cols-3">
-                {urls.map((url, index) => {
-                    const isVideo = isVideoResult(url, taskType);
-                    return (
-                        <MediaPreview
-                            key={`${url}-${index}`}
-                            src={url}
-                            kind={isVideo ? "video" : "image"}
-                            alt={`生成结果 ${index + 1}`}
-                            controls={isVideo}
-                            className={isVideo ? "task-result-media is-video" : "task-result-media"}
-                            fallbackClassName={isVideo ? "task-result-media is-video" : "task-result-media"}
-                        />
-                    );
-                })}
-            </div>
-        </div>
-    );
-}
-
-function resultMediaUrls(value?: string) {
-    if (!value) return [];
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(value);
-    } catch {
-        parsed = value;
-    }
-    const urls: string[] = [];
-    const visit = (item: unknown, key = "") => {
-        if (typeof item === "string") {
-            const isInlineMedia = /^(data:image\/|data:video\/)/.test(item);
-            const isMediaPath = /\.(png|jpe?g|webp|gif|avif|mp4|webm|mov)(?:$|\?)/i.test(item);
-            const isNamedMediaUrl = /^(https?:|blob:)/.test(item) && /(url|image|video|result|output|media)/i.test(key);
-            if ((isInlineMedia || isMediaPath || isNamedMediaUrl) && !urls.includes(item)) urls.push(item);
-            return;
-        }
-        if (Array.isArray(item)) return item.forEach((value) => visit(value, key));
-        if (item && typeof item === "object") Object.entries(item).forEach(([field, value]) => visit(value, field));
-    };
-    visit(parsed);
-    return urls.slice(0, 12);
-}
-
-function isVideoResult(value: string, taskType: string) {
-    return value.startsWith("data:video/") || /\.(mp4|webm|mov)(?:$|\?)/i.test(value) || taskType.includes("video");
 }
 
 function groupTasksByCanvas(tasks: GenerationTask[], canvasById: Map<string, { title: string; projectId?: string }>, projectNameById: Map<string, string>): TaskGroup[] {

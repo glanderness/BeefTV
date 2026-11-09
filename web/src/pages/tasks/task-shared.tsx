@@ -64,6 +64,7 @@ export function statusDotClassName(status: TaskStatus) {
 }
 
 export function taskMediaKind(task: GenerationTask): "text" | "image" | "video" {
+    if (task.type === "timeline_render") return "video";
     const value = `${task.type} ${task.operation || ""}`.toLowerCase();
     if (value.includes("video") || value.includes("视频")) return "video";
     if (value.includes("image") || value.includes("图片") || value.includes("画面")) return "image";

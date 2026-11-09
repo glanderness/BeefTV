@@ -80,6 +80,12 @@ export type TimelineRenderResult = {
     subtitleSrt?: string;
 };
 
+export function parseTimelineRenderResult(value?: string): TimelineRenderResult {
+    const result = JSON.parse(value || "{}") as TimelineRenderResult | null;
+    if (!result || typeof result.resourceId !== "string" || !result.resourceId.trim()) throw new Error("渲染任务未返回产物");
+    return result;
+}
+
 export async function createTimelineRenderTask(
     payload: TimelineRenderCreateRequest,
     config?: HttpRequestConfig,

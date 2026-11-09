@@ -558,7 +558,7 @@ function InfiniteCanvasPage() {
         closeUploadModal,
         handleImportUrl,
         closeAssetPicker,
-        createVideoNodeFromBlob,
+        createVideoNodeFromResource,
         createAssetPayloadNodes,
         fileDropActive,
         handleAssetsInsert,
@@ -1930,7 +1930,7 @@ function InfiniteCanvasPage() {
                                 onOpenProjectAssets: () => openProjectAssets("all", undefined, "timeline"),
                                 onUploadLocalFiles: uploadTimelineMedia,
                                 addNodeToTimelineRef: timelineAddNodeRef, addMediaToTimelineRef: timelineMediaAddRef,
-                                onCreateAssembledNode: createVideoNodeFromBlob,
+                                onCreateAssembledNode: createVideoNodeFromResource,
                             }}
                             directorOnboardingScope={directorOnboardingScope}
                             onDeleteNodes={deleteNodes} onAddDirectorImage={addDirectorReferenceToCanvas}

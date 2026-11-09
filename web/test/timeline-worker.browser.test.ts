@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 
 // Opt-in: requires local ffmpeg/ffprobe and Chromium. Production-style Vite assets,
 // real browser Worker/core/Canvas2D, real downloads. No encoder/task/API mocks.
-// Canvas persistence stops at its explicitly injected onCreateAssembledNode callback.
+// Canvas background export is covered separately at its HTTP boundary.
 const enabled = process.env.BEEFTV_BROWSER_WORKER_TEST === "1";
 let browser: Browser, server: ReturnType<typeof Bun.serve>, dir: string, base: string;
 const run = (args: string[]) => {
@@ -103,7 +103,7 @@ function verifyOutput(path: string) {
     }
 }
 
-for (const mode of ["editor", "canvas"] as const) test.skipIf(!enabled)(`${mode}: real UI to browser FFmpeg Worker to MP4 download/new-node boundary`, async () => {
+for (const mode of ["editor"] as const) test.skipIf(!enabled)(`${mode}: real UI to browser FFmpeg Worker to MP4 download boundary`, async () => {
     const page = await pageFor(`?mode=${mode}`);
     try {
         const download = page.waitForEvent("download", { timeout: 180_000 });
@@ -134,7 +134,7 @@ test.skipIf(!enabled)("real Worker encoding cancel terminates, suppresses downlo
     } finally { await page.close(); }
 }, 120_000);
 
-for (const mode of ["editor", "canvas"] as const) {
+for (const mode of ["editor"] as const) {
     test.skipIf(!enabled)(`${mode}: cancel button and unmount stop the actual encoding Worker`, async () => {
         const page = await pageFor(`?mode=${mode}`); let downloads = 0; page.on("download", () => downloads++);
         try {

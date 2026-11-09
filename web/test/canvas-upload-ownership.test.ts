@@ -293,7 +293,7 @@ test("upload hook threads the canvas owner through persist, file, image, chapter
     expect(chapter).toContain("getProjectUnit(chapter.projectId, chapter.id, guard.signal)");
     expect(chapter).toContain("if (!guard.alive()) return");
 
-    const timeline = hook.slice(hook.indexOf("const uploadTimelineMedia"), hook.indexOf("const createVideoNodeFromBlob"));
+    const timeline = hook.slice(hook.indexOf("const uploadTimelineMedia"), hook.indexOf("const replaceNodeMedia"));
     expect(timeline).toContain("uploadMediaFile(file, \"audio\")");
     expect(timeline).toContain("persistTimelineMedia(media, guard.signal)");
     expect(timeline).toContain("if (guard.suppress(error)) return []");

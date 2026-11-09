@@ -1,5 +1,6 @@
 import { lazy, Suspense, type MutableRefObject } from "react";
 import { App } from "antd";
+import type { CreateAssembledNode } from "@/components/canvas/use-canvas-timeline-export";
 import { syncNodeSubtitlesToTimeline } from "@/lib/timeline/timeline-build";
 import { CanvasNodeType } from "@/types/canvas";
 import type { useCanvasDocumentState } from "./use-canvas-document-state";
@@ -76,7 +77,7 @@ export type CanvasProjectEditorDialogsProps = {
         onUploadLocalFiles: (files: File[]) => Promise<TimelineDirectMedia[]>;
         addNodeToTimelineRef: MutableRefObject<((node: CanvasNodeData) => void) | null>;
         addMediaToTimelineRef: MutableRefObject<((media: TimelineDirectMedia) => void) | null>;
-        onCreateAssembledNode: (blob: Blob, title: string) => Promise<CanvasNodeData | null>;
+        onCreateAssembledNode: CreateAssembledNode;
     };
     directorOnboardingScope: string;
     onDeleteNodes: (nodeIds: Set<string>) => void;
@@ -151,6 +152,7 @@ export function CanvasProjectEditorDialogs({
             {frameNode ? <CanvasVideoFrameDialog node={frameNode} open={Boolean(frameNode)} onClose={mediaTools.closeFrameDialog} onConfirm={params => { if (frameNode) void mediaTools.extractVideoFrames(frameNode, params); }} /> : null}
             {timelineNode ? (
                 <CanvasTimelineDialog
+                    canvasId={projectId}
                     node={timelineNode}
                     open={Boolean(timelineNode)}
                     nodes={nodes}

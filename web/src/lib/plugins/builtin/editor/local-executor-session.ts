@@ -4,6 +4,7 @@ import { getResource, type RemoteResource } from "@/services/api/resources";
 import { waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import {
     createTimelineRenderTask,
+    parseTimelineRenderResult,
     createTimelineTranscriptionTask,
     type TimelineRenderResult,
     type TimelineTranscriptionResult,
@@ -154,8 +155,7 @@ export async function runOwnedTimelineRender(input: {
         intervalMs: input.intervalMs ?? 3000,
         onTaskUpdate: input.onTaskUpdate,
     });
-    const result = JSON.parse(task.resultJson ?? "{}") as TimelineRenderResult;
-    if (!result.resourceId) throw new Error("渲染任务未返回产物");
+    const result = parseTimelineRenderResult(task.resultJson);
     assertLocalExecutorSession(input.session);
     return { task, result };
 }

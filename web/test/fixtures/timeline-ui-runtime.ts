@@ -1,5 +1,7 @@
 import type { TimelineProject } from "../../src/types/timeline";
 import type { TimelineRenderSource } from "../../src/lib/timeline/timeline-to-ffmpeg";
+export { parseTimelineRenderResult } from "../../src/services/api/timeline-tasks";
+export { cancelGenerationTask } from "../../src/services/api/task-center";
 
 // Fault injection at the encoder/task boundary; the mounted React handlers remain real.
 export const receipt = {

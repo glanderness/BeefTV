@@ -61,7 +61,8 @@ async function clickTwice(page: Page, name: string) {
     await page.getByRole("button", { name, exact: true }).evaluate((button) => { (button as HTMLElement).click(); (button as HTMLElement).click(); });
 }
 
-for (const mode of ["editor", "canvas"] as const) {
+// Canvas export now uses the real HTTP boundary in timeline-background.browser.test.ts.
+for (const mode of ["editor"] as const) {
     test(`${mode}: audio sources survive the UI entry, duplicate clicks submit once, subtitle failure never saves`, async () => {
         const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
         try {

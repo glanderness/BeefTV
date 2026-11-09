@@ -9,7 +9,7 @@ import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
 
 import { Captions, Clapperboard, FolderOpen, Library, Lock, LockOpen, Maximize2, MoreHorizontal, Music2, Plus, Scissors, Trash2, Upload, Video, Wand2, ZoomIn, ZoomOut } from "lucide-react";
-import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
+import { useCanvasTimelineExport, type CreateAssembledNode } from "./use-canvas-timeline-export";
 
 import { CanvasTimelineRuler } from "./canvas-timeline-ruler";
 import { CanvasTimelinePreview } from "./canvas-timeline-preview";
@@ -20,8 +20,6 @@ import { canPlaceAt, clampClipDurationByNeighbors, findNearestAvailablePlacement
 import { computeSnap } from "@/lib/timeline/timeline-snap";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
 import { formatTimelineTime, getTimelineTrackWidth, getFitTimelineZoom, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
-import { exportTimelineToMp4 } from "@/lib/timeline/timeline-export";
-import { getVisibleMediaClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
@@ -31,6 +29,7 @@ const SNAP_THRESHOLD_PX = 8;
 const BASE_PX_PER_SECOND = 96;
 
 type CanvasTimelineDialogProps = {
+    canvasId: string;
     node: CanvasNodeData;
     open: boolean;
     nodes: CanvasNodeData[];
@@ -50,7 +49,7 @@ type CanvasTimelineDialogProps = {
     /** 页面层持有：素材库/项目资产直连媒体（不落画布）入轨通道 */
     addMediaToTimelineRef?: MutableRefObject<((media: TimelineDirectMedia) => void) | null>;
     /** 把合成结果保存为新视频节点放回画布（页面层接线） */
-    onCreateAssembledNode: (blob: Blob, title: string) => Promise<CanvasNodeData | null>;
+    onCreateAssembledNode: CreateAssembledNode;
 };
 
 export async function runTimelineDialogSaveAttempt(save: () => Promise<void>, close: () => void) {
@@ -73,6 +72,7 @@ type DragState =
     | null;
 
 export function CanvasTimelineDialog({
+    canvasId,
     node,
     open,
     nodes,
@@ -96,17 +96,9 @@ export function CanvasTimelineDialog({
     const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
     const [snapEnabled, setSnapEnabled] = useState(true);
     const [previewPlaying, setPreviewPlaying] = useState(false);
-    const [exporting, setExporting] = useState(false);
-    const [finalizingExport, setFinalizingExport] = useState(false);
-    const finalizingExportRef = useRef(false);
-    const exportControllerRef = useRef<AbortController | null>(null);
-    useEffect(() => {
-        if (!open) exportControllerRef.current?.abort();
-        return () => exportControllerRef.current?.abort();
-    }, [open]);
+    const timelineExport = useCanvasTimelineExport({ canvasId, node, nodes, open, draft, onCreateAssembledNode });
+    const { busy: exporting, finalizing: finalizingExport, percent: exportPercent, detail: exportDetail } = timelineExport;
     const [saving, setSaving] = useState(false);
-    const [exportPercent, setExportPercent] = useState(0);
-    const [exportDetail, setExportDetail] = useState("");
     const dragRef = useRef<DragState>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const trackAreaRef = useRef<HTMLDivElement>(null);
@@ -489,14 +481,13 @@ export function CanvasTimelineDialog({
     };
 
     const handleClose = () => {
-        if (saving || finalizingExportRef.current) return;
-        exportControllerRef.current?.abort();
+        if (saving || !timelineExport.requestClose()) return;
         onClose();
     };
 
     const handleSave = async () => {
         if (saving) return;
-        if (exportControllerRef.current) return;
+        if (exporting) return;
         // 互通修复：时间线草稿只在打开时初始化，期间节点字幕可能在字幕弹窗中被清空（或节点数据被外部更新）。
         // 保存前以节点当前字幕为准做定向校准：节点字幕已为空时，剔除草稿残留的旧字幕片段并回写空数组，
         // 避免「清空后重开视频节点旧字幕复活」；节点仍有字幕时保留草稿内用户的时间线编辑（拖动/删减/文本）。
@@ -522,86 +513,6 @@ export function CanvasTimelineDialog({
         }, onClose);
         if (error) message.error(error instanceof Error ? error.message : "时间线保存失败，请重试");
         setSaving(false);
-    };
-
-    // 组装导出：把当前草稿按片段顺序合成一个 MP4 Blob（导出下载与生成新片段共用）。
-    const runExport = async (): Promise<Blob> => {
-        if (exportControllerRef.current) throw new Error("正在导出，请等待当前操作完成");
-        const mediaClips = getVisibleMediaClips(draft);
-        if (!mediaClips.length) throw new Error("时间线没有可渲染的媒体片段");
-        const sources: TimelineRenderSource[] = [];
-        for (const clip of mediaClips) {
-            const sourceNode = nodes.find((item) => item.id === clip.nodeId);
-            const media = clip.directMedia;
-            if (sources.some((source) => source.nodeId === clip.nodeId)) continue;
-            if (!sourceNode && !media) throw new Error("找不到素材：" + (clip.title || clip.nodeId));
-            sources.push({
-                nodeId: clip.nodeId,
-                fileName: "input-" + sources.length + ".mp4",
-                durationMs: clip.sourceDurationMs || clip.durationMs,
-                storageKey: media ? media.storageKey : sourceNode?.metadata?.storageKey,
-                url: media ? media.url || media.dataUrl || media.content : sourceNode?.metadata?.content || undefined,
-            });
-        }
-        if (!sources.length) throw new Error("找不到素材");
-        setExporting(true);
-        const controller = new AbortController();
-        exportControllerRef.current = controller;
-        setExportPercent(0);
-        setExportDetail("准备导出");
-        try {
-            return await exportTimelineToMp4(normalizeTimelineProject(draft), sources, {
-                signal: controller.signal,
-                onProgress: ({ percent, detail }) => {
-                    setExportPercent(percent);
-                    setExportDetail(detail);
-                },
-            });
-        } finally {
-            if (controller.signal.aborted) throw new DOMException("导出已取消", "AbortError");
-        }
-    };
-
-    const finishExport = () => {
-        exportControllerRef.current = null;
-        finalizingExportRef.current = false;
-        setExporting(false);
-        setFinalizingExport(false);
-        setExportPercent(0);
-        setExportDetail("");
-    };
-
-    const handleExport = async () => {
-        if (exportControllerRef.current) return;
-        try {
-            const blob = await runExport();
-            finalizingExportRef.current = true;
-            setFinalizingExport(true);
-            setExportDetail("正在保存成片");
-            const saved = await saveOwnedOrBrowserVideoBlob((node.title || "成片") + ".mp4", blob);
-            if (saved === "saved") message.success("成片导出完成");
-        } catch (error) {
-            if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "导出失败");
-        } finally {
-            finishExport();
-        }
-    };
-
-    // 组装能力闭环：合成结果不落地下载，而是作为新视频节点放回画布，可继续编辑字幕与样式。
-    const handleCreateAssembledNode = async () => {
-        if (exportControllerRef.current) return;
-        try {
-            const blob = await runExport();
-            finalizingExportRef.current = true;
-            setFinalizingExport(true);
-            setExportDetail("正在保存新片段");
-            const created = await onCreateAssembledNode(blob, (node.title || "成片") + "-新片段");
-            if (created) message.success("已生成新视频片段并放到画布，可继续编辑字幕与样式");
-        } catch (error) {
-            if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "生成新片段失败");
-        } finally {
-            finishExport();
-        }
     };
 
     const addableNodes = nodes.filter((item) => (item.type === "video" || item.type === "audio") && Boolean(item.metadata?.content || item.metadata?.storageKey) && !isNodeInTimeline(item.id, draft));
@@ -892,13 +803,12 @@ export function CanvasTimelineDialog({
                         <Progress percent={exportPercent} size="small" format={() => exportDetail} />
                         <Button
                             size="small"
-                            disabled={finalizingExport}
-                            onClick={() => {
-                                if (!finalizingExportRef.current) exportControllerRef.current?.abort();
-                            }}
+                            disabled={!timelineExport.canCancel}
+                            onClick={() => void timelineExport.cancel()}
                         >
                             取消导出
                         </Button>
+                        <span className="ml-2 text-xs opacity-60">关闭窗口后后台继续渲染，可在任务中心下载；重新导出会创建新任务。</span>
                     </div>
                 ) : null}
 
@@ -990,10 +900,10 @@ export function CanvasTimelineDialog({
                         总时长 {formatTimelineTime(durationMs)} · {draft.clips.length} 个片段 · {draft.tracks.length} 条轨道
                     </span>
                     <div className="ml-auto flex items-center gap-2">
-                        <Button size="small" type="primary" icon={<Clapperboard className="size-3.5" />} loading={exporting} disabled={!hasVideoClips} onClick={() => void handleExport()}>
+                        <Button size="small" type="primary" icon={<Clapperboard className="size-3.5" />} loading={exporting} disabled={!hasVideoClips || saving} onClick={() => void timelineExport.exportFile()}>
                             导出成片
                         </Button>
-                        <Button size="small" icon={<Wand2 className="size-3.5" />} loading={exporting} disabled={!hasVideoClips} onClick={() => void handleCreateAssembledNode()}>
+                        <Button size="small" icon={<Wand2 className="size-3.5" />} loading={exporting} disabled={!hasVideoClips || saving} onClick={() => void timelineExport.createNode()}>
                             生成新片段
                         </Button>
                         <Button size="small" disabled={saving || finalizingExport} onClick={handleClose}>
