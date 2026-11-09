@@ -10,6 +10,7 @@ import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.j
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import {
     canvasEmotionPresets,
     emotionBlendshapes,
@@ -272,4 +273,3 @@ function morphMeshes(model: Object3D) {
     });
     return meshes;
 }
-import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

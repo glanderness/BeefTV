@@ -1,4 +1,5 @@
 import { ImageSizePicker } from "@/components/image-size-picker";
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import { imageResolutionUsesQuality } from "@/lib/image-size-presets";
 import { createPortal } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from "react";
@@ -988,4 +989,3 @@ function ratioPreviewStyle(value: string) {
     const scale = Math.min(14 / width, 10 / height);
     return { width: Math.max(4, Math.round(width * scale)), height: Math.max(4, Math.round(height * scale)) };
 }
-import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

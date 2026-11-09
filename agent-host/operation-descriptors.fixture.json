@@ -498,10 +498,6 @@
                 "false"
               ],
               "type": "string"
-            },
-            "vquality": {
-              "description": "分辨率档位，取自模型目录",
-              "type": "string"
             }
           },
           "type": "object"

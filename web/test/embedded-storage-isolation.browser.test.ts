@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 
 let browser: Browser;
@@ -67,7 +68,8 @@ beforeAll(async () => {
             ? new Response(script, { headers: { "content-type": "text/javascript" } })
             : new Response('<html><script>window.__BEEFTV_HARNESS__={embedded:true}</script><script type="module" src="/harness.js"></script></html>', { headers: { "content-type": "text/html" } });
     } });
-    browser = await chromium.launch({ executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+    const executablePath = [process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].find(path => path && existsSync(path));
+    browser = await chromium.launch({ executablePath, headless: true });
 }, 30_000);
 
 afterAll(async () => { await browser?.close(); server?.stop(true); });

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { appChangelogZh } from "@/components/layout/app-changelog.zh";
 import { AppModal } from "@/components/ui/product/app-modal/app-modal";
 import { aceternityMotion } from "@/lib/aceternity-motion";
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 export function AppChangelogDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -48,4 +49,3 @@ export function AppChangelogDialog({ open, onClose }: { open: boolean; onClose: 
         </AppModal>
     );
 }
-import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

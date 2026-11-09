@@ -179,16 +179,22 @@ func harnessHTTPHandler(config harnessRuntimeConfig, api http.Handler, frontend 
 			return
 		}
 		request := r.Clone(r.Context())
-		if request.URL.Path == "/beeftv/app" || strings.HasPrefix(request.URL.Path, "/beeftv/app/") {
-			request.URL.Path = strings.TrimPrefix(request.URL.Path, "/beeftv/app")
+		cleaned := path.Clean("/" + strings.TrimPrefix(request.URL.Path, "/"))
+		if cleaned == "/beeftv/app" || strings.HasPrefix(cleaned, "/beeftv/app/") {
+			cleaned = strings.TrimPrefix(cleaned, "/beeftv/app")
 		}
-		if request.URL.Path == "" {
-			request.URL.Path = "/"
+		if cleaned == "" {
+			cleaned = "/"
 		}
-		if strings.HasPrefix(request.URL.Path, "/resources/") {
-			request.URL.Path = "/api" + request.URL.Path
+		if strings.HasPrefix(cleaned, "/resources/") {
+			cleaned = "/api" + cleaned
 		}
-		if request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
+		request.URL.Path = cleaned
+		if cleaned == "/api/assistant" || strings.HasPrefix(cleaned, "/api/assistant/") || cleaned == "/api/ops/clients" || strings.HasPrefix(cleaned, "/api/ops/clients/") {
+			http.Error(w, "managed by DeepSeek Harness", http.StatusForbidden)
+			return
+		}
+		if cleaned == "/api" || strings.HasPrefix(cleaned, "/api/") {
 			// The private bridge capability represents the same trusted local shell.
 			backendURL, _ := url.Parse(config.BaseURL)
 			request.Host = backendURL.Host

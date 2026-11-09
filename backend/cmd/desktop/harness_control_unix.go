@@ -49,9 +49,10 @@ func listenHarnessControl(dataDir string, config harnessRuntimeConfig) (net.List
 		return nil, err
 	}
 	// The caller already holds the workspace lock, so only stale sockets can remain.
-	if _, err := os.Lstat(socketPath); err == nil {
-		if err := validateHarnessSocket(socketPath); err != nil {
-			return nil, err
+	if info, err := os.Lstat(socketPath); err == nil {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || info.Mode()&os.ModeSocket == 0 || stat.Uid != uint32(os.Getuid()) {
+			return nil, errors.New("harness control socket is not private to the current user")
 		}
 		if err := os.Remove(socketPath); err != nil {
 			return nil, err

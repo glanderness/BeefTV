@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import type { PublicAppearance } from "@/services/api/appearance";
 import { applySkinTheme, DEFAULT_CLASSIC_SKIN, normalizeSkinDefinition } from "@/lib/skin-themes";
 
@@ -180,4 +181,3 @@ function safeAppearanceURL(value: unknown, fallback: string) {
     }
     return fallback;
 }
-import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

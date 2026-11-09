@@ -16,6 +16,7 @@ import {
     isGenerationCanceled,
     resolveMetadataReferences,
     resolveStoredReferenceImages,
+    resetGenerationTaskMetadata,
     runBackendCanvasGenerationTask,
     runCanvasGenerationTaskToConsumer,
     sourceNodeReferenceImages,
@@ -202,7 +203,7 @@ export function useCanvasGenerationRetry({
                 if (useStoredSource) rawContext = null;
                 else {
                     const baseContext = buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryContextPrompt, assets, promptOnly, { preserveMediaBindings: retryMode === "video" });
-                    rawContext = await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly);
+                    rawContext = await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly && retryMode !== "audio");
                 }
             } catch (error) {
                 const failure = generationFailureMetadata(error, retryPromptSource, sourceNodeReferenceImages(generationSourceNode));
@@ -261,13 +262,16 @@ export function useCanvasGenerationRetry({
                     return;
                 }
                 const voice = context.resolvedCharacterVoices[0];
-                if (!voice) {
+                const hasReferenceMedia = context.referenceImages.length > 0 || context.referenceAudios.length > 0;
+                if (!voice && !hasReferenceMedia) {
                     const reason = "角色尚未绑定可用声音，无法重试角色配音任务";
                     message?.error?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
                 }
-                generationConfig = { ...generationConfig, audioVoice: voice.voiceKey, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
+                if (voice) {
+                    generationConfig = { ...generationConfig, audioVoice: voice.voiceKey, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
+                }
             }
             const isEmotionRetry = Boolean(node.metadata?.emotionEdit);
             if (isEmotionRetry && resolveModelRequestConfig(generationConfig, generationConfig.model).interfaceType !== "openai-image") {
@@ -345,11 +349,19 @@ export function useCanvasGenerationRetry({
                     : node.metadata?.taskClientOperationId && !node.metadata?.taskId
                       ? { clientOperationId: node.metadata.taskClientOperationId }
                       : { clientOperationId: createClientId() };
-                setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskOutcome: undefined, taskOutcomeSource: undefined, generationFailure: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } } : item)));
                 const targetIds = nativeRetryTargets.length ? nativeRetryTargets.map((item) => item.id) : [node.id];
+                const targetIdSet = new Set(targetIds);
+                setNodes((current) => current.map((item) => targetIdSet.has(item.id) ? {
+                    ...item,
+                    metadata: {
+                        ...resetGenerationTaskMetadata(item.metadata, NODE_STATUS_LOADING),
+                        taskClientOperationId: retryContext.clientOperationId,
+                    },
+                } : item));
                 await runCanvasGenerationTaskToConsumer(
                     { ...input, ...(nativeRetryTargets.length ? { config: { ...input.config, count: String(nativeOutputs) }, metadata: { ...input.metadata, outputNodeIds: targetIds } } : {}), ...retryContext },
                     {
+                        onSubmission: (metadata) => setNodes((current) => current.map((item) => targetIdSet.has(item.id) ? { ...item, metadata: { ...item.metadata, ...metadata } } : item)),
                         bindTask: (task) => targetIds.forEach((id) => bindGenerationTask(id, task)),
                         consumeTask: async (task) => { for (const id of targetIds) await applyGenerationTaskResult(id, task); },
                         isCurrent,
@@ -431,6 +443,8 @@ export function useCanvasGenerationRetry({
                         mode: "audio",
                         prompt,
                         config: generationConfig,
+                        referenceImages: context?.referenceImages || [],
+                        referenceAudios: context?.referenceAudios || [],
                         signal: controller.signal,
                         metadata: { retry: true, sourceNodeId: sourceNode.id, resolvedCharacterVersions: context?.resolvedCharacterVersions || [], resolvedCharacterVoiceKey: context?.resolvedCharacterVoices[0]?.voiceKey },
                     });

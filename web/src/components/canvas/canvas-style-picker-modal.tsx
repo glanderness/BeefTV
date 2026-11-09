@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 
 import { StyleProfileEditorModal } from "@/components/canvas/style-profile-editor-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 import {
     compileCanvasStylePreset,
@@ -785,4 +786,3 @@ function parseStyleSections(prompt: string) {
         return match ? { title: match[1], content: match[2] } : { title: "补充规范", content: line };
     }).filter((section) => section.content);
 }
-import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

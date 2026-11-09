@@ -8,6 +8,7 @@ import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
@@ -665,4 +666,3 @@ function LightingSphereControl({ azimuth, elevation, onAngleChange, previewImage
         />
     );
 }
-import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";

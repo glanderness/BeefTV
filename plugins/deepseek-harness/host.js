@@ -194,8 +194,12 @@ export function apply(ctx) {
           if (req.method === 'GET' && url.pathname === `${current.basePath}/__harness/status`) return json(res, 200, status())
           const origin = req.headers.origin
           if (origin && origin !== ctx.webServer.getOrigin()) return json(res, 403, { error: '不允许的来源' })
-          const path = url.pathname.slice(current.basePath.length) + url.search
-          if (path.startsWith('/api/assistant') || path.startsWith('/api/ops/clients')) return json(res, 403, { error: '该操作由 DeepSeek Harness 管理' })
+          const rawPath = url.pathname.slice(current.basePath.length) || '/'
+          const normalizedPath = new URL(decodeURIComponent(rawPath), 'http://localhost').pathname
+          if (normalizedPath.startsWith('/api/assistant') || normalizedPath.startsWith('/api/ops/clients') || normalizedPath.startsWith('/api/agent-clients')) {
+            return json(res, 403, { error: '该操作由 DeepSeek Harness 管理' })
+          }
+          const path = rawPath + url.search
           await proxy(current, req, res, path, current.basePath)
           return
         }

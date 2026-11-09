@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
 import { embeddedDocument } from './runtime.js'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Page } from '../../web/node_modules/playwright'
@@ -61,7 +62,8 @@ beforeAll(async () => {
     if (path.startsWith('/workspace/')) return new Response(embeddedDocument('<html><head></head><body style="margin:0"><div class="canvas-topbar" style="position:absolute;inset:0 0 auto;display:flex;height:48px;box-sizing:border-box"><button>Canvas menu</button></div><div class="app-user-workspace"><button class="app-workspace-floating-menu" style="position:absolute;top:60px">Page menu</button></div><main style="position:absolute;top:120px;left:0;width:100%">Workspace</main></body></html>', '/beeftv/app/fixture'), { headers: { 'content-type': 'text/html' } })
     return new Response('<html><style>html,body,#root{height:100%;margin:0}body{--dsw-font-family:system-ui;--dsw-alias-bg-base:#fff;--dsw-alias-label-primary:#171717;--dsw-alias-label-secondary:#555;--dsw-alias-label-tertiary:#777;--dsw-alias-border-l2:#ddd}</style><div id="root"></div><script type="module" src="/client.js"></script></html>', { headers: { 'content-type': 'text/html' } })
   } })
-  browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
+  const executablePath = [process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, process.env.CHROME_PATH, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(path => path && existsSync(path))
+  browser = await chromium.launch({ executablePath, headless: true })
 }, 30_000)
 
 afterAll(async () => { await browser?.close(); server?.stop(true) })
