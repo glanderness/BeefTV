@@ -86,6 +86,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			return nil, err
 		}
 		if unified {
+			if err := resolveManagedVideoCapability(ctx, runtime, &input); err != nil {
+				return nil, err
+			}
 			return runManagedVideoTask(ctx, client, input)
 		}
 		if client != nil {
@@ -128,6 +131,14 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 			return nil, err
 		}
 		if err := prepareFullVideoReferences(ctx, &input, ownedFullVideoMediaReader(ctx, userID)); err != nil {
+			return nil, err
+		}
+		if input.Mode == "video" && strings.TrimSpace(input.Config.ChannelID) != "" && input.VideoCapability != nil {
+			if err := validateVideoTask(input.VideoCapability, input); err != nil {
+				return nil, err
+			}
+		}
+		if err := prepareProtocolMediaUploads(ctx, userID, &input); err != nil {
 			return nil, err
 		}
 	}
