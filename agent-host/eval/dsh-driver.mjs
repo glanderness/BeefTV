@@ -281,7 +281,8 @@ export function parseDshEvents(stdout, { fallbackUsages } = {}) {
     if (normalized.cacheKnown) cacheKnown = true;
   }
   // 一条 step_end 都没有：无论是正常结束、进程崩溃、超时还是只输出 error，
-  // 都无法证明这轮没调用模型，不能按 0 通过预算门禁；调用方随后仍可尝试读会话日志补全。
+  // 都无法证明这轮没调用模型，不能按 0 通过预算门禁。会话日志补全按步骤编号对应，
+  // 这里没有步骤可对，所以这类回合只能标不完整，不回填。
   if (steps.length === 0) usageIncomplete = true;
   return {
     sessionId,
