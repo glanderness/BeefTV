@@ -41,20 +41,32 @@ func useManagedMediaEnvelope(ctx context.Context, config Config, mediaType strin
 	return client, slices.Contains(discovery.SupportedMediaTypes, mediaType), nil
 }
 
+// The envelope sends only the controls the account catalog declares, so a new
+// submission resolves that declaration first, as images do. A sent task is only
+// collected, and Execute owns its send fence.
+func resolveManagedVideoCapability(ctx context.Context, runtime Runtime, input *Input) error {
+	if runtime.Config == nil || runtime.ManagedMedia == nil {
+		return nil
+	}
+	sent, err := runtime.ManagedMedia.Sent(ctx)
+	if err != nil {
+		return err
+	}
+	if sent {
+		return nil
+	}
+	// Runtime capabilities are not persisted. Restore the account declaration before freezing a new request.
+	input.Mode = "video"
+	if err := runtime.Config.ApplyCapabilities(ctx, input); err != nil {
+		return RequestPreparationError{Cause: err}
+	}
+	return nil
+}
+
 func runManagedVideoTask(ctx context.Context, client *beeftv.MediaClient, input Input) (map[string]any, error) {
 	runtime, _ := RuntimeFromContext(ctx)
-	if runtime.Config != nil && runtime.ManagedMedia != nil {
-		sent, err := runtime.ManagedMedia.Sent(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if !sent {
-			// Runtime capabilities are not persisted. Restore the account declaration before freezing a new request.
-			input.Mode = "video"
-			if err := runtime.Config.ApplyCapabilities(ctx, &input); err != nil {
-				return nil, RequestPreparationError{Cause: err}
-			}
-		}
+	if err := resolveManagedVideoCapability(ctx, runtime, &input); err != nil {
+		return nil, err
 	}
 	intent := managedLegacyVideoInput(input)
 	ordered, err := beeftv.VideoIntentReferences(intent)
@@ -73,21 +85,9 @@ func runManagedVideoTask(ctx context.Context, client *beeftv.MediaClient, input 
 		for _, media := range group.items {
 			ref := managedReference(media, "reference")
 			ref.Kind = group.kind
+			// Only the local upload bound applies here; the media service judges
+			// each reference against the model's limits.
 			ref.MaxBytes = localLimit
-			if profile := input.VideoCapability; profile != nil {
-				var declared int64
-				switch group.kind {
-				case "image":
-					declared = profile.References.MaxImageBytes
-				case "video":
-					declared = profile.References.MaxVideoBytes
-				case "audio":
-					declared = profile.References.MaxAudioBytes
-				}
-				if declared > 0 && (ref.MaxBytes <= 0 || declared < ref.MaxBytes) {
-					ref.MaxBytes = declared
-				}
-			}
 			sources = append(sources, ref)
 		}
 	}

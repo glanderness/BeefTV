@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
@@ -291,7 +292,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if err != nil {
 		return nil, "", RequestPreparationError{Cause: err}
 	}
-	if method == http.MethodPut && contentType == "application/octet-stream" && req.Body != nil {
+	if req.Body != nil && ((method == http.MethodPut && contentType == "application/octet-stream") || strings.HasPrefix(CanonicalCallMeta(ctx).RequestKind, "reference_")) {
 		req.Body = io.NopCloser(referenceUploadReader(ctx, req.Body))
 	}
 	if contentType != "" {
@@ -357,7 +358,15 @@ func ProtocolRequestBody(ctx context.Context, config Config, spec protocol.Reque
 			}
 		}
 		for _, file := range spec.Files {
-			data, detectedMIME, err := ProtocolMediaBytes(ctx, config, file.Reference)
+			var data []byte
+			var detectedMIME string
+			var err error
+			if len(file.Data) > 0 {
+				data = file.Data
+				detectedMIME = NormalizedMediaMIMEType(file.MIMEType, data)
+			} else {
+				data, detectedMIME, err = ProtocolMediaBytes(ctx, config, file.Reference)
+			}
 			if err != nil {
 				_ = writer.Close()
 				return nil, "", fmt.Errorf("读取 multipart 文件 %s 失败：%w", file.Name, err)
@@ -457,7 +466,7 @@ func SafeProtocolFilename(value string) string {
 func ProtocolRequestURL(baseURL string, spec protocol.RequestSpec) (string, error) {
 	if !spec.OriginPath {
 		if spec.DefaultPathPrefix != "" {
-			return AppendProtocolQuery(apiURLWithDefaultPrefix(baseURL, spec.Path, spec.DefaultPathPrefix), spec.Query)
+			return AppendProtocolQuery(channelurl.Join(baseURL, spec.Path, spec.DefaultPathPrefix), spec.Query)
 		}
 		return AppendProtocolQuery(APIURL(baseURL, spec.Path), spec.Query)
 	}
