@@ -9,14 +9,14 @@ import { GENERATION_OPS } from './generation.mjs';
 import { MEDIA_OPS } from './media.mjs';
 import { SKILL_OPS } from './skills.mjs';
 
-const OP_HANDLERS = new Map(Object.entries({
-  ...CANVAS_OPS,
-  ...STORYBOARD_OPS,
-  ...GENERATION_OPS,
-  ...TASK_OPS,
-  ...MEDIA_OPS,
-  ...SKILL_OPS,
-}));
+// 同一个操作只能由一个模块处理，重复登记在加载时就报错，不能悄悄覆盖。
+const OP_HANDLERS = new Map();
+for (const table of [CANVAS_OPS, STORYBOARD_OPS, GENERATION_OPS, TASK_OPS, MEDIA_OPS, SKILL_OPS]) {
+  for (const [op, handler] of Object.entries(table)) {
+    if (OP_HANDLERS.has(op)) throw new Error(`操作 ${op} 在两个模块里都有处理函数`);
+    OP_HANDLERS.set(op, handler);
+  }
+}
 
 export function enableTaskWait(state) {
   if (state.taskWaitExposed) return false;

@@ -1,4 +1,5 @@
-// 生成提案与提交：选模型、canvas.generation.propose / submit、用户确认提案建任务、任务产物写回节点。
+// 生成提案与提交：模型目录与选模型、canvas.generation.propose / submit、用户确认提案后建任务、
+// 把任务产物绑到节点（canvas.task.bind）。任务本身的耗时和收尾在 tasks.mjs。
 
 import { clone, invalidArg, notFound, conflict, preconditionFailed, permissionDenied } from './common.mjs';
 import { ensureCanvas, saveCanvas } from './canvas-store.mjs';

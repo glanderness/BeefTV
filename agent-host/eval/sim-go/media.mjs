@@ -342,6 +342,7 @@ function readMedia(state, rawParams, ctx) {
 export const MEDIA_OPS = {
   'asset.list': searchAssets,
   'project.media.search': searchAssets,
+  // 模拟器原本就把画布搜索也按素材搜索处理，这里保持不变。
   'project.canvas.search': searchAssets,
   'asset.get': (state, rawParams) => {
     const assetId = String(rawParams.assetId || '').trim();
