@@ -1,6 +1,11 @@
 // 上游模型返回的用量解析：流式 SSE 与非流式 JSON，兼容 OpenAI 兼容网关和 DeepSeek 原生字段。
 // 缺失时返回 missing:true，调用方必须显式展示，不能静默当作 0。
-const num = (value) => (Number.isFinite(Number(value)) ? Number(value) : undefined);
+// 上游可能把 token 数序列化成数字字符串；null、空串、布尔和非有限值都不算有效计数。
+const num = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+};
 
 // Anthropic 的 message_start 可能只带 input_tokens，缓存字段晚到 message_delta。
 // 只看字段会把这个 input_tokens 误当成 OpenAI 的总输入，合并后也不再累加缓存，
@@ -103,9 +108,10 @@ export function parseTurnEnd(text) {
 // 三类外部 Agent 的用量统一口径：未缓存输入、缓存读、输出。
 // Claude 的 input_tokens 不含缓存，cache_creation 按未缓存输入计（写入价格更高，这里只做同口径比较）；
 // Codex 的 input_tokens 已含缓存，要减掉；DSH 的 inputTokens 就是未缓存输入。
-// 至少有一个可识别的有限 number token 字段才算「拿到了用量」；空对象、全 undefined、
-// null 和空串都不能按 0 算完整，否则提供方返回 null 时会绕过预算门禁。
-const hasTokenField = (...values) => values.some((value) => typeof value === 'number' && Number.isFinite(value));
+// 至少有一个可识别的有效 token 字段才算「拿到了用量」；空对象、全 undefined、
+// null、空串、布尔和非有限值都不能按 0 算完整，否则提供方返回 null 时会绕过预算门禁。
+// 数字字符串按有效计数处理，部分兼容网关会把 token 数序列化成字符串。
+const hasTokenField = (...values) => values.some((value) => num(value) !== undefined);
 const incompleteUsage = () => ({ uncachedInput: 0, cacheRead: 0, output: 0, cacheKnown: false, incomplete: true });
 
 export function normalizeAgentUsage(kind, usage) {

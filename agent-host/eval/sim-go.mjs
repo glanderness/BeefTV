@@ -1640,6 +1640,7 @@ export function createSimGo(options = {}) {
         }
         const proposal = {
           proposalId,
+          callerKind: hostCall ? 'host' : 'caller',
           turnId: turnId || '',
           canvasId,
           kind,
@@ -1800,14 +1801,7 @@ export function createSimGo(options = {}) {
         } else {
           // 真实后端在外部提交前先检查素材节点上的任务回执：未失败的任务直接拒绝，
           // 既不回读旧任务，也不再新建。不同 operationId 会算出不同任务键，必须靠这一步拦住。
-          const blocked = nodeIds.some((nodeId) => {
-            const node = (doc.nodes || []).find((n) => n.id === nodeId);
-            const taskId = String(node?.metadata?.taskId || '');
-            if (!taskId) return false;
-            const existing = tasks.get(taskId);
-            return !existing || existing.status !== 'failed';
-          });
-          if (blocked) {
+          if (nodeHasLiveTask(doc, nodeIds)) {
             throw preconditionFailed('generation_task_exists', '节点已关联生成任务，请先查询原任务；需要另做一份时请新建节点');
           }
         }
@@ -2216,6 +2210,17 @@ export function createSimGo(options = {}) {
     return Math.max(0, Number(ms) || 0);
   }
 
+  // 节点上已有未失败任务时不能再生成；失败任务可重提。外部 submit 和外部提案确认共用这条判断。
+  function nodeHasLiveTask(doc, nodeIds) {
+    return nodeIds.some((nodeId) => {
+      const node = (doc.nodes || []).find((n) => n.id === nodeId);
+      const taskId = String(node?.metadata?.taskId || '');
+      if (!taskId) return false;
+      const existing = tasks.get(taskId);
+      return !existing || existing.status !== 'failed';
+    });
+  }
+
   function createGenerationTask({ canvasId, nodeId, kind, modelKey = '', proposalId = '', confirmedByUser = true }) {
     taskSeq += 1;
     const taskId = `task-${taskSeq}`;
@@ -2488,6 +2493,12 @@ export function createSimGo(options = {}) {
       }
       // 已经确认或已经建过任务的提案直接跳过：确认接口必须幂等，不能多买一批付费任务。
       if (proposal.confirmed || proposal.taskIds.length > 0) continue;
+      // 外部调用方创建的提案和外部 submit 走同一条节点任务检查：真实后端里外部生成单
+      // 经 owner 批准后也走 SubmitExternalGeneration，节点已有未失败任务时不能再生成。
+      // 内置宿主的提案是用户在面板上主动确认，保持原行为。
+      if (proposal.callerKind === 'caller' && nodeHasLiveTask(ensureCanvas(proposal.canvasId), proposal.nodeIds)) {
+        throw preconditionFailed('generation_task_exists', '节点已关联生成任务，请先查询原任务；需要另做一份时请新建节点');
+      }
       proposal.confirmed = true;
       counts.userConfirmations += 1;
 

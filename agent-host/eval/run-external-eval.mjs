@@ -277,13 +277,22 @@ export function chargeTurnUsage(budget, tokens) {
 }
 
 // 运行器只确认还没有任务的提案。外部 caller 的 submit 已经把提案标成已确认并记下 taskIds，
-// 这里再确认一次会凭空多出一批付费任务。
+// 这里再确认一次会凭空多出一批付费任务。外部提案指向已有任务（未失败）的节点时，
+// 模拟器会像外部 submit 一样拒绝；跳过这一条即可，不能替用户再买一份，也不能吞掉其他故障。
 export async function confirmPendingProposals(simGo, canvasId, { delayMs = 10 } = {}) {
   const pending = [...simGo.proposals.values()].filter(
     (proposal) => proposal.canvasId === canvasId && !proposal.confirmed && proposal.taskIds.length === 0,
   );
-  for (const proposal of pending) await simGo.confirmProposals(proposal.proposalId, { delayMs });
-  return pending.length;
+  let confirmed = 0;
+  for (const proposal of pending) {
+    try {
+      await simGo.confirmProposals(proposal.proposalId, { delayMs });
+      confirmed += 1;
+    } catch (error) {
+      if (error?.reason !== 'generation_task_exists') throw error;
+    }
+  }
+  return confirmed;
 }
 
 // 中位数与 p90 用最近秩法；空数组返回 0，避免报告里出现 NaN。

@@ -76,6 +76,51 @@ describe('dsh headless 事件流解析', () => {
     expect(filled.usage).toMatchObject({ uncachedInput: 15, cacheRead: 40, output: 3 });
   });
 
+  test('step_end 只带 cacheReadTokens 或只带 outputTokens 时也用会话日志补全', () => {
+    const stdout = ndjson(
+      { type: 'session', sessionId: 's2d' },
+      { type: 'status', phase: 'step_end', turn: 1, step: 1, usage: { cacheReadTokens: 100 } },
+      { type: 'status', phase: 'step_end', turn: 1, step: 2, usage: { outputTokens: 7 } },
+      { type: 'final', sessionId: 's2d', reason: { kind: 'completed' }, text: 'ok' },
+    );
+    const filled = parseDshEvents(stdout, {
+      fallbackUsages: new Map([
+        ['1:1', { inputTokens: 10, cacheReadTokens: 40, outputTokens: 2 }],
+        ['1:2', { inputTokens: 5, cacheReadTokens: 0, outputTokens: 3 }],
+      ]),
+    });
+    expect(filled.usageIncomplete).toBe(false);
+    expect(filled.steps[0].usageSource).toBe('session_log');
+    expect(filled.steps[1].usageSource).toBe('session_log');
+    expect(filled.usage).toMatchObject({ uncachedInput: 15, cacheRead: 40, output: 5 });
+  });
+
+  test('只有缓存读或只有输出且会话日志补不到时标用量不完整', () => {
+    const parsed = parseDshEvents(ndjson(
+      { type: 'session', sessionId: 's2e' },
+      { type: 'status', phase: 'step_end', turn: 1, step: 1, usage: { cacheReadTokens: 100 } },
+      { type: 'status', phase: 'step_end', turn: 1, step: 2, usage: { outputTokens: 7 } },
+      { type: 'final', sessionId: 's2e', reason: { kind: 'completed' }, text: 'ok' },
+    ));
+    expect(parsed.usageIncomplete).toBe(true);
+    // 缺输入或输出的步骤不按已知字段的部分值入账，避免把整步账单算成一半。
+    expect(parsed.usage).toMatchObject({ uncachedInput: 0, cacheRead: 0, output: 0 });
+  });
+
+  test('没有 final 的 error/超时回合也标用量不完整，并保留会话 id 供补全', () => {
+    const errored = parseDshEvents(ndjson(
+      { type: 'session', sessionId: 's2f' },
+      { type: 'error', message: 'turn_timeout' },
+    ));
+    expect(errored).toMatchObject({ final: null, errorEvent: 'turn_timeout', sessionId: 's2f', usageIncomplete: true });
+    // 只有 step_end 没有 final（进程被杀）时，步骤完整就不用标不完整。
+    const interrupted = parseDshEvents(ndjson(
+      { type: 'session', sessionId: 's2g' },
+      { type: 'status', phase: 'step_end', turn: 1, step: 1, usage: { inputTokens: 9, outputTokens: 2 } },
+    ));
+    expect(interrupted).toMatchObject({ final: null, usageIncomplete: false, usage: { uncachedInput: 9, output: 2 } });
+  });
+
   test('正常结束但没有任何 step_end 时标用量不完整，不能按 0 通过预算', () => {
     const parsed = parseDshEvents(ndjson(
       { type: 'session', sessionId: 's2c' },

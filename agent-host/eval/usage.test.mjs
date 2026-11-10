@@ -102,6 +102,23 @@ test('null 和空串不算数值 token 字段，不能按 0 通过预算', () =>
   expect(normalizeAgentUsage('codex', { input_tokens: '', output_tokens: '' }).incomplete).toBe(true);
 });
 
+test('数字字符串按有效 token 计数，布尔和非有限值仍然排除', () => {
+  expect(normalizeAgentUsage('claude', { input_tokens: '10', output_tokens: '2' }))
+    .toEqual({ uncachedInput: 10, cacheRead: 0, output: 2, cacheKnown: false, incomplete: false });
+  expect(normalizeAgentUsage('dsh', { inputTokens: '10', outputTokens: '2' }))
+    .toEqual({ uncachedInput: 10, cacheRead: 0, output: 2, cacheKnown: false, incomplete: false });
+  expect(normalizeAgentUsage('codex', { input_tokens: '10', output_tokens: '2' }))
+    .toEqual({ uncachedInput: 10, cacheRead: 0, output: 2, cacheKnown: false, incomplete: false });
+  // 明确给 0 的数字字符串仍算拿到了用量。
+  expect(normalizeAgentUsage('claude', { input_tokens: '0', output_tokens: '0' }).incomplete).toBe(false);
+  for (const value of [true, false, Infinity, NaN, '', '  ']) {
+    expect(normalizeAgentUsage('claude', { input_tokens: value, output_tokens: value }).incomplete).toBe(true);
+  }
+  // 流式解析路径同样接受数字字符串，不能把兼容网关的序列化计数当成缺失。
+  expect(extractUsage(sse({ choices: [], usage: { prompt_tokens: '100', completion_tokens: '20' } })))
+    .toMatchObject({ promptTokens: 100, completionTokens: 20, missing: false });
+});
+
 test('费用分别按未缓存输入、缓存读、输出折算，缓存价缺省时沿用输入价', () => {
   const tokens = { uncachedInput: 1_000_000, cacheRead: 2_000_000, output: 1_000_000 };
   expect(costOfTokens(tokens, { input: 0.2, cache: 0.004, output: 0.8 })).toBeCloseTo(1.008, 6);

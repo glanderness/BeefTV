@@ -127,7 +127,7 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 ### 两种提交路径
 
 - 内置宿主：`canvas.generation.propose` 之后由面板确认（`confirmProposals`），任务完成后自动写回节点。内置宿主调用 `canvas.generation.submit` 时要求提案已确认，否则按真实后端拒绝；确认过的提案再提交只回读原任务。
-- 外部 Agent（owner token / 已登记客户端，`approvalMode=caller`）：先 `canvas.generation.propose` 拿画布版本和模型配置版本，再带稳定 `operationId` 调用 `canvas.generation.submit`。提交成功即视为完成审批：提案会被标成已确认并记下任务，运行器不会再替用户确认一次。任务只交付产物，节点仍要用 `canvas.task.bind` 写回，和真实后端一致。
+- 外部 Agent（owner token / 已登记客户端，`approvalMode=caller`）：先 `canvas.generation.propose` 拿画布版本和模型配置版本，再带稳定 `operationId` 调用 `canvas.generation.submit`。提交成功即视为完成审批：提案会被标成已确认并记下任务，运行器不会再替用户确认一次。任务只交付产物，节点仍要用 `canvas.task.bind` 写回，和真实后端一致。外部 Agent 不能在已经成功生成过的节点上重新生成；需要另做一份时请新建节点。这与真实后端一致，也是外部路径和内置宿主确认路径的区别。
 - 两条路径都可调用只读的 `task.wait`（单次最多等 25 秒，超时返回 `pending` 和原 `taskId`，不返回错误）。描述符默认不外露，替代场景 setup 调 `simGo.enableTaskWait()` 后才出现在 `/api/ops`；没开启时直接 HTTP 调用也按未知操作拒绝，因此 S1–S11 的能力边界和工具定义体积都不变。
 
 ### 运行器需要配合的等待
@@ -185,7 +185,7 @@ bun eval/run-external-eval.mjs --scenario S1 --runs 1 --budget-cny <元> --out /
 - S4（中途插话）、S5（生成后自动唤醒）只有内置宿主支持，记为不适用；S6 的「每次请求都带着活动技能」只能从宿主请求体取证，不计入。技能 pin 改成在消息里告诉它技能版本，相当于用户说「我选了这个技能」。
 - `--with-digest`：每轮把内置助手同款的制作摘要放在消息前面，用来量摘要对外部 Agent 的作用。
 - 用量统一成三个数：未缓存输入、缓存读、输出。Claude 的 `input_tokens` 不含缓存，缓存创建并进未缓存输入；Codex 的 `input_tokens` 已含缓存，会减掉；DSH 的 `inputTokens` 就是未缓存输入。每轮另记工具调用数和耗时，summary 给出每轮平均工具调用、耗时中位数与 p90、按场景的完成数。Codex 不报模型请求次数，按「工具调用数 + 1」估。
-- 用量不完整：CLI 没返回 usage、返回空对象、DSH 事件流缺 `step_end` 用量或会话日志补不全时，该轮在报告里计入 `usageIncompleteTurns`，不会当成 0 元。设了 `--budget-cny` 时遇到这种轮次立即停止本场景剩余回合和后续场景，状态写 `aborted_usage_incomplete`；没设预算时只计数并继续。
+- 用量不完整：CLI 没返回 usage、返回空对象、DSH 事件流缺 `step_end` 用量（输入和输出缺任一项也算缺）、一轮没有任何 `step_end`（包括崩溃、超时或只输出 error）或会话日志补不全时，该轮在报告里计入 `usageIncompleteTurns`，不会当成 0 元。设了 `--budget-cny` 时遇到这种轮次立即停止本场景剩余回合和后续场景，状态写 `aborted_usage_incomplete`；没设预算时只计数并继续。
 - 费用：`BEEFTV_EVAL_PRICE_IN` 算未缓存输入，`BEEFTV_EVAL_PRICE_CACHE` 算缓存读，`BEEFTV_EVAL_PRICE_OUT` 算输出（元/百万 token）。没给 `PRICE_CACHE` 时按 `PRICE_IN` 算缓存读，报告 `meta.cachePriceSource` 会写成 `price_in`。
 - 预算：`--budget-cny <元>` 在每轮开始前按已累计费用检查，达到上限就停，剩下的场景记 `aborted_budget`；不预留当前轮。设了预算但 `PRICE_IN`/`PRICE_OUT` 缺失或为 0 时直接报错退出，不按 0 算。
 - 模拟器没有 `generation.estimate` 和 `media.review`，外部 Agent 调到时会报不支持；这是模拟器的缺口，正式后端有这两个操作。
@@ -200,7 +200,7 @@ bun eval/run-external-eval.mjs --scenario S1 --runs 1 --budget-cny <元> --out /
 - 工具面：overlay 逐个关闭命令行、文件读写、网页、子 Agent、任务、待办等内置工具，只留技能读取和 BeefTV MCP。headless 没有更细的类别开关，所以按插件 id 禁用；实际工具数从 stderr 读回，不凭配置推断。权限用 `danger-full-access` 预设加 `--approval-policy never`，避免无人值守时等待审批。
 - 技能：`plugins/beeftv-skills/skills/beeftv-canvas/SKILL.md` 复制到临时 `$DSH_HOME/skills/beeftv-canvas/`。
 - 续聊：第二轮起用 `--session-id` 续同一会话；会话不带 agent preset，工作目录固定为同一个临时目录，满足 headless 的续聊限制。
-- 解析：从 `--json` 事件流取最终回复、`final.reason`、退出码和 `tool_call` 数；每步 `status(step_end)` 的 usage 里 `inputTokens` 是未缓存输入、`cacheReadTokens` 是缓存读、`outputTokens` 是输出。有重试的步骤不带 usage 时，从临时 DSH_HOME 下该会话日志的 `assistant/message`/`assistant/attempt` 用量补；没有 `zstd` 命令或补不到时标成「用量不完整」，不按 0 静默通过。
+- 解析：从 `--json` 事件流取最终回复、`final.reason`、退出码和 `tool_call` 数；每步 `status(step_end)` 的 usage 里 `inputTokens` 是未缓存输入、`cacheReadTokens` 是缓存读、`outputTokens` 是输出。一步至少要同时有有效的输入和输出；有重试的步骤不带 usage、或只带缓存读/只带输出时，从临时 DSH_HOME 下该会话日志的 `assistant/message`/`assistant/attempt` 用量补；没有 `zstd` 命令或补不到时标成「用量不完整」，不按 0 静默通过。
 - `BEEFTV_EVAL_AGENT_MODEL`：可选，`provider/model` 形式（模型 id 自己可带斜杠）；不填则用 DSH 当前配置，并把实际 provider、model、推理档位写进报告 meta。`BEEFTV_EVAL_DSH_REASONING` 可覆盖推理档位，默认沿用配置或 `high`。
 
 ---

@@ -1192,6 +1192,67 @@ describe('模拟器任务耗时与外部提交（替代场景 R1 / R3 的前置�
     await simGo.close();
   });
 
+  test('外部调用方：成功后同节点重提被拒，失败后可以重提', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-external-regen';
+    seedParityCanvas(simGo, canvasId);
+    simGo.beginTurn({ turnId: 'turn-external-regen', canvasId, permissionMode: 'canvas' });
+    const submit = (opId, nodeId, kind) => simGo.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: [nodeId],
+      kind,
+      expectedRevision: simGo.ensureCanvas(canvasId).revision,
+      expectedModelConfigRevision: 1,
+    }, opId, 'turn-external-regen').result;
+
+    const first = submit('regen-op-1', 'node-image', 'image');
+    const firstSettled = await simGo.waitForTasks(first.taskIds, 500);
+    expect(firstSettled.tasks[0].status).toBe('succeeded');
+    // 已成功的节点不能由外部调用方原地重提，和真实后端一致；需要另做一份时新建节点。
+    expect(() => submit('regen-op-2', 'node-image', 'image')).toThrow(/已关联生成任务/);
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
+
+    // 失败任务可以重提：同一节点换新的 operationId 会新建任务。
+    simGo.failNextTask('upstream_timeout', 'node-video');
+    const failed = submit('regen-video-1', 'node-video', 'video');
+    const failedSettled = await simGo.waitForTasks(failed.taskIds, 500);
+    expect(failedSettled.tasks[0].status).toBe('failed');
+    const retried = submit('regen-video-2', 'node-video', 'video');
+    const retriedSettled = await simGo.waitForTasks(retried.taskIds, 500);
+    expect(retriedSettled.tasks[0].status).toBe('succeeded');
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(3);
+    await simGo.close();
+  });
+
+  test('外部提案指向已有成功任务的节点时，确认不会新建任务', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-external-confirm-blocked';
+    seedParityCanvas(simGo, canvasId);
+    simGo.beginTurn({ turnId: 'turn-external-confirm-blocked', canvasId, permissionMode: 'canvas' });
+    const submitted = simGo.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'blocked-submit-1', 'turn-external-confirm-blocked').result;
+    await simGo.waitForTasks(submitted.taskIds, 500);
+
+    // 外部 Agent 在已成功的节点上再提议；提案记录调用方类型，确认时走和外部 submit 相同的检查。
+    const proposal = simGo.executeOp('canvas.generation.propose', {
+      canvasId, kind: 'image', nodeIds: ['node-image'],
+    }, '', 'turn-external-confirm-blocked').result;
+    expect(simGo.proposals.get(proposal.proposalId).callerKind).toBe('caller');
+    await expect(simGo.confirmProposals(proposal.proposalId, { delayMs: 1 })).rejects.toThrow(/已关联生成任务/);
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
+
+    // 运行器自动确认同样不能绕过；被拒绝的提案保持未确认。
+    expect(await confirmPendingProposals(simGo, canvasId)).toBe(0);
+    expect(simGo.proposals.get(proposal.proposalId).confirmed).toBe(false);
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
+    await simGo.close();
+  });
+
   test('未配任务耗时的画布上外部提交也会完成，不会永远 running', async () => {
     const simGo = createSimGo({});
     const canvasId = 'canvas-no-timing';

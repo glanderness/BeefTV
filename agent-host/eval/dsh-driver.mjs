@@ -134,6 +134,14 @@ function runProcess(cmd, args, { env, cwd, timeoutMs, input, isDone = () => fals
   });
 }
 
+// 一步的用量至少要有有效的输入和输出；只有缓存读或只有输出都说明这一步的账单不完整，
+// 不能把缺的那部分按 0 计。数字字符串按有效计数处理，和统一口径保持一致。
+const tokenValue = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+};
+
 // 深度找一次 attempt 流里最后一份 usage；不同提供方的 chunk 形状不一样。
 function lastUsageInStream(value, depth = 0) {
   if (value === null || typeof value !== 'object' || depth > 8) return undefined;
@@ -145,7 +153,7 @@ function lastUsageInStream(value, depth = 0) {
     }
     return found;
   }
-  if (value.usage && typeof value.usage === 'object' && Number.isFinite(Number(value.usage.inputTokens ?? value.usage.input_tokens))) {
+  if (value.usage && typeof value.usage === 'object' && tokenValue(value.usage.inputTokens ?? value.usage.input_tokens) !== undefined) {
     found = value.usage;
   }
   for (const [key, item] of Object.entries(value)) {
@@ -155,6 +163,10 @@ function lastUsageInStream(value, depth = 0) {
   }
   return found;
 }
+
+export const stepUsageComplete = (usage) => Boolean(usage) && typeof usage === 'object'
+  && tokenValue(usage.inputTokens ?? usage.input_tokens ?? usage.uncachedInput) !== undefined
+  && tokenValue(usage.outputTokens ?? usage.output_tokens ?? usage.output) !== undefined;
 
 // 会话日志（zstd 解压后的 JSONL）里的用量：有重试的步骤不会在 --json 里带 usage。
 // assistant/message 只带成功 attempt 的用量，失败 attempt 的账单在 assistant/attempt：
@@ -232,6 +244,8 @@ export function parseDshEvents(stdout, { fallbackUsages } = {}) {
     if (!line.trim().startsWith('{')) continue;
     let event;
     try { event = JSON.parse(line); } catch { continue; }
+    // error/timeout 回合可能没有 final；sessionId 出现在哪条事件里都要记下，才能读会话日志补用量。
+    if (event.sessionId) sessionId = String(event.sessionId);
     if (event.type === 'session') sessionId = event.sessionId || sessionId;
     else if (event.type === 'status' && event.phase === 'step_end') steps.push({ turn: event.turn, step: event.step, usage: event.usage || null });
     else if (event.type === 'tool_call') toolCalls += 1;
@@ -251,23 +265,24 @@ export function parseDshEvents(stdout, { fallbackUsages } = {}) {
     const key = `${step.turn}:${step.step}`;
     const hasFallback = fallbackUsages?.has?.(key);
     let normalized = step.usage ? normalizeAgentUsage('dsh', step.usage) : null;
-    // 没有 usage，或 step_end 给的是 {} / 部分 undefined 时，都用会话日志补；
-    // 只判断 !step.usage 会把本可补全的步骤固化成用量不完整。
-    if (hasFallback && (!normalized || normalized.incomplete)) {
+    // 没有 usage、step_end 给的是 {}、或只带缓存读/只带输出时，都用会话日志补；
+    // 只判断「有没有任意 token 字段」会把缺输入或输出的步骤固化成完整用量。
+    if (hasFallback && !stepUsageComplete(step.usage)) {
       step.usage = fallbackUsages.get(key);
       step.usageSource = 'session_log';
       normalized = normalizeAgentUsage('dsh', step.usage);
     }
     if (!step.usage || !normalized) { usageIncomplete = true; continue; }
-    // 空 usage 对象也要算不完整，不能按 0 通过预算门禁。
-    if (normalized.incomplete) { usageIncomplete = true; continue; }
+    // 会话日志也补不到输入/输出时，这一步的账单不可知，不能按 0 通过预算门禁。
+    if (normalized.incomplete || !stepUsageComplete(step.usage)) { usageIncomplete = true; continue; }
     totals.uncachedInput += normalized.uncachedInput;
     totals.cacheRead += normalized.cacheRead;
     totals.output += normalized.output;
     if (normalized.cacheKnown) cacheKnown = true;
   }
-  // 正常结束却一条 step_end 都没有：无法确认这轮真的没花钱，不能按 0 通过预算门禁。
-  if (steps.length === 0 && final) usageIncomplete = true;
+  // 一条 step_end 都没有：无论是正常结束、进程崩溃、超时还是只输出 error，
+  // 都无法证明这轮没调用模型，不能按 0 通过预算门禁；调用方随后仍可尝试读会话日志补全。
+  if (steps.length === 0) usageIncomplete = true;
   return {
     sessionId,
     reply,
