@@ -103,8 +103,9 @@ export function parseTurnEnd(text) {
 // 三类外部 Agent 的用量统一口径：未缓存输入、缓存读、输出。
 // Claude 的 input_tokens 不含缓存，cache_creation 按未缓存输入计（写入价格更高，这里只做同口径比较）；
 // Codex 的 input_tokens 已含缓存，要减掉；DSH 的 inputTokens 就是未缓存输入。
-// 至少有一个可识别的数值 token 字段才算「拿到了用量」；空对象和全是 undefined 不能按 0 算完整。
-const hasTokenField = (...values) => values.some((value) => num(value) !== undefined);
+// 至少有一个可识别的有限 number token 字段才算「拿到了用量」；空对象、全 undefined、
+// null 和空串都不能按 0 算完整，否则提供方返回 null 时会绕过预算门禁。
+const hasTokenField = (...values) => values.some((value) => typeof value === 'number' && Number.isFinite(value));
 const incompleteUsage = () => ({ uncachedInput: 0, cacheRead: 0, output: 0, cacheKnown: false, incomplete: true });
 
 export function normalizeAgentUsage(kind, usage) {

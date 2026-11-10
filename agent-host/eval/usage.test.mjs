@@ -95,6 +95,13 @@ test('空 usage 对象和全 undefined 的字段算用量不完整，不能按 0
   expect(normalizeAgentUsage('dsh', { uncachedInput: 0, cacheRead: 0, output: 0 }).incomplete).toBe(false);
 });
 
+test('null 和空串不算数值 token 字段，不能按 0 通过预算', () => {
+  expect(normalizeAgentUsage('claude', { input_tokens: null, output_tokens: null }).incomplete).toBe(true);
+  expect(normalizeAgentUsage('dsh', { inputTokens: null, outputTokens: null }).incomplete).toBe(true);
+  expect(normalizeAgentUsage('dsh', { uncachedInput: null, cacheRead: null, output: null }).incomplete).toBe(true);
+  expect(normalizeAgentUsage('codex', { input_tokens: '', output_tokens: '' }).incomplete).toBe(true);
+});
+
 test('费用分别按未缓存输入、缓存读、输出折算，缓存价缺省时沿用输入价', () => {
   const tokens = { uncachedInput: 1_000_000, cacheRead: 2_000_000, output: 1_000_000 };
   expect(costOfTokens(tokens, { input: 0.2, cache: 0.004, output: 0.8 })).toBeCloseTo(1.008, 6);

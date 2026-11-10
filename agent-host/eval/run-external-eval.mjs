@@ -113,23 +113,29 @@ function skillPinNote(pin) {
 export function prepareAgentHome(kind, workDir, mcpEnv) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), `beeftv-ext-${kind}-`));
   const cleanup = () => fs.rmSync(home, { recursive: true, force: true });
-  const skillTarget = path.join(home, 'skills', 'beeftv-canvas');
-  fs.mkdirSync(skillTarget, { recursive: true });
-  fs.copyFileSync(path.join(canvasSkillDir, 'SKILL.md'), path.join(skillTarget, 'SKILL.md'));
-  const cli = process.env.BEEFTV_CLI || 'beeftv';
-  if (kind === 'claude') {
-    const mcpPath = path.join(home, 'mcp.json');
-    fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { beeftv: { command: cli, args: ['mcp', 'serve'], env: mcpEnv } } }));
-    return { home, mcpPath, cleanup };
+  try {
+    const skillTarget = path.join(home, 'skills', 'beeftv-canvas');
+    fs.mkdirSync(skillTarget, { recursive: true });
+    fs.copyFileSync(path.join(canvasSkillDir, 'SKILL.md'), path.join(skillTarget, 'SKILL.md'));
+    const cli = process.env.BEEFTV_CLI || 'beeftv';
+    if (kind === 'claude') {
+      const mcpPath = path.join(home, 'mcp.json');
+      fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { beeftv: { command: cli, args: ['mcp', 'serve'], env: mcpEnv } } }));
+      return { home, mcpPath, cleanup };
+    }
+    const envLines = Object.entries(mcpEnv).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n');
+    // 走 OpenAI 兼容网关时（BEEFTV_EVAL_CODEX_BASE_URL），用 Responses 接口和环境变量里的 Key。
+    const gateway = process.env.BEEFTV_EVAL_CODEX_BASE_URL
+      ? `model_provider = "eval"\n[model_providers.eval]\nname = "eval"\nbase_url = ${JSON.stringify(process.env.BEEFTV_EVAL_CODEX_BASE_URL)}\nenv_key = "BEEFTV_EVAL_CODEX_API_KEY"\nwire_api = "responses"\n`
+      : '';
+    // 只读沙箱下，没标只读的 MCP 工具默认被拒；BeefTV 工具单独放行（只连着模拟器），其余照旧锁住。
+    fs.writeFileSync(path.join(home, 'config.toml'), `${gateway}[mcp_servers.beeftv]\ncommand = ${JSON.stringify(cli)}\nargs = ["mcp", "serve"]\ndefault_tools_approval_mode = "approve"\n[mcp_servers.beeftv.env]\n${envLines}\n`);
+    return { home, cleanup };
+  } catch (error) {
+    // mkdtemp 之后的准备步骤失败时调用方拿不到 cleanup，这里必须先删掉含 owner token 的临时目录。
+    fs.rmSync(home, { recursive: true, force: true });
+    throw error;
   }
-  const envLines = Object.entries(mcpEnv).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n');
-  // 走 OpenAI 兼容网关时（BEEFTV_EVAL_CODEX_BASE_URL），用 Responses 接口和环境变量里的 Key。
-  const gateway = process.env.BEEFTV_EVAL_CODEX_BASE_URL
-    ? `model_provider = "eval"\n[model_providers.eval]\nname = "eval"\nbase_url = ${JSON.stringify(process.env.BEEFTV_EVAL_CODEX_BASE_URL)}\nenv_key = "BEEFTV_EVAL_CODEX_API_KEY"\nwire_api = "responses"\n`
-    : '';
-  // 只读沙箱下，没标只读的 MCP 工具默认被拒；BeefTV 工具单独放行（只连着模拟器），其余照旧锁住。
-  fs.writeFileSync(path.join(home, 'config.toml'), `${gateway}[mcp_servers.beeftv]\ncommand = ${JSON.stringify(cli)}\nargs = ["mcp", "serve"]\ndefault_tools_approval_mode = "approve"\n[mcp_servers.beeftv.env]\n${envLines}\n`);
-  return { home, cleanup };
 }
 
 // 外部 CLI 只拿到运行必需的环境变量；HOME 指向临时目录，~/.claude、~/.codex 和本机其它凭据都不可见。
@@ -262,6 +268,12 @@ export function usageAccountingAction({ usageIncomplete, budgetEnabled }) {
     countIncomplete: Boolean(usageIncomplete),
     abortScenarios: Boolean(usageIncomplete && budgetEnabled),
   };
+}
+
+// 无论是否因用量不完整中止，已经拿到的部分 token 费用都要记进预算账本；
+// 中止只影响「是否继续后续轮次/场景」，不能让已知费用从 budget.spent 里消失。
+export function chargeTurnUsage(budget, tokens) {
+  return budget.addCost(tokens);
 }
 
 // 运行器只确认还没有任务的提案。外部 caller 的 submit 已经把提案标成已确认并记下 taskIds，
@@ -444,7 +456,7 @@ export async function runExternalEval(options = {}) {
           const usageIncomplete = Boolean(outcome.usageIncomplete || tokens.incomplete);
           const costCny = costOfTokens(tokens, effectivePrices);
           const usageAction = usageAccountingAction({ usageIncomplete, budgetEnabled: budget.enabled });
-          if (!usageAction.abortScenarios) budget.addCost(tokens);
+          chargeTurnUsage(budget, tokens);
           turnRecords.push({
             type: 'turn_end', turnId, userMessage: turnSpec.message, reply: outcome.reply, error: outcome.error || undefined,
             durationMs, toolCalls: outcome.toolCalls || 0, tokens, costCny,

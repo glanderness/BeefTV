@@ -14,6 +14,7 @@ import {
   createCostMeter,
   computeScenarioMetrics,
   buildEvalSummary,
+  renderMarkdownReport,
   runEval,
   requestSessionKey,
   elideDataUrls,
@@ -835,6 +836,54 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
     expect(summaryWithUnexpectedGap.status).toBe('failed');
   });
 
+  test('全部场景不适用时整体不报 passed，明细显示 N/A 和原因', () => {
+    const reason = '这个场景只适用于外部 Agent（内置助手提交前必须等用户在界面确认）';
+    const run = {
+      runIndex: 1,
+      scenarioId: 'submit-wait-image',
+      scenarioCode: 'R1a',
+      expectedBaselinePass: true,
+      reason,
+      checks: [{ name: 'runner_applicability', passed: true, detail: '这个场景只适用于外部 Agent' }],
+      metrics: {
+        status: 'not_applicable',
+        scenarioId: 'submit-wait-image',
+        scenarioCode: 'R1a',
+        passed: false,
+        structuralCompletenessRate: 0,
+        passedChecks: 1,
+        totalChecks: 1,
+        turnCount: 0,
+        modelRequests: 0,
+        eliminableRequests: 0,
+        readOps: 0,
+        writeOps: 0,
+        inputTokens: 0,
+        cachedTokenRatio: 0,
+        outputTokens: 0,
+        costCny: 0,
+        durationMs: 0,
+        unconfirmedGenerationCount: 0,
+        duplicateNodeCount: 0,
+        duplicateProposalCount: 0,
+        revisionConflicts: 0,
+        unrecoveredConflicts: 0,
+      },
+    };
+    const report = buildEvalSummary(
+      [run],
+      { scenario: 'R1a', modelMode: 'fake', runs: 1, maxRequests: 20, budgetCny: 10 },
+      { totalRequests: 0, totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCostCny: 0, abortedBudget: false },
+    );
+    expect(report.status).toBe('not_applicable');
+    expect(report.summary.notApplicableRuns).toBe(1);
+    const markdown = renderMarkdownReport(report);
+    expect(markdown).toContain('| N/A |');
+    expect(markdown).toContain('不适用场景数 | 1');
+    expect(markdown).toContain('只适用于外部 Agent');
+    expect(markdown).not.toContain('| FAIL |');
+  });
+
   test('事件自动唤醒与用户复查分别计分，技能仅首轮激活后仍进入后续请求', async () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-eval-truth-'));
     try {
@@ -1119,6 +1168,17 @@ describe('模拟器任务耗时与外部提交（替代场景 R1 / R3 的前置�
     expect(replay.result.taskIds).toEqual(submitted.taskIds);
     expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
 
+    // 换一个 operationId 再提交同一节点：真实后端按节点任务回执拒绝，不会回读也不会再买一份。
+    expect(() => simGo.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      proposalId: proposal.proposalId,
+      expectedRevision: simGo.ensureCanvas(canvasId).revision,
+      expectedModelConfigRevision: proposal.source.modelConfigRevision,
+    }, 'external-op-2', 'turn-external')).toThrow(/已关联生成任务/);
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
+
     // task.wait 的 HTTP 入口会等任务结束，并回报节点是否已绑定。
     const waitRes = await fetch(`${simGo.baseUrl}/ops/task.wait`, {
       method: 'POST',
@@ -1186,6 +1246,9 @@ describe('模拟器任务耗时与外部提交（替代场景 R1 / R3 的前置�
     expect(submitted.taskIds.length).toBe(1);
     expect(simGo.proposals.get(proposal.proposalId).confirmed).toBe(true);
     expect(simGo.proposals.get(proposal.proposalId).taskIds).toEqual(submitted.taskIds);
+
+    // 直接调用确认接口也必须幂等：已确认/已有任务的提案不再建第二批付费任务。
+    expect(await simGo.confirmProposals(proposal.proposalId, { delayMs: 1 })).toEqual([]);
 
     const confirmed = await confirmPendingProposals(simGo, canvasId);
     expect(confirmed).toBe(0);

@@ -788,11 +788,14 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
     generatedAt: new Date().toISOString(),
     status: meterState.abortedBudget
       ? 'aborted_budget'
-      : failedRuns > 0
-        ? 'failed'
-        : baselineGapRuns > 0
-          ? 'baseline_gap'
-          : 'passed',
+      // 全部场景都不适用时没有可评分的运行，不能报 passed。
+      : scoredRuns.length === 0
+        ? 'not_applicable'
+        : failedRuns > 0
+          ? 'failed'
+          : baselineGapRuns > 0
+            ? 'baseline_gap'
+            : 'passed',
     config: {
       scenario: config.scenario,
       modelMode: config.modelMode,
@@ -854,6 +857,7 @@ export function renderMarkdownReport(report) {
     '| 指标项 | 结果 | 预期门禁 |',
     '| :--- | :--- | :--- |',
     `| 场景通过数 (含已知能力缺口标注) | ${s.passedRuns} 通过 / ${s.baselineGapRuns} 已知缺口 / ${s.failedRuns} 失败 | 期望基线场景 100% 通过 |`,
+    `| 不适用场景数 | ${s.notApplicableRuns || 0} | 只记录原因，不计入通过率 |`,
     `| 平均结构完整率 | ${(s.avgStructuralCompletenessRate * 100).toFixed(1)}% | >= 90% |`,
     `| 未经确认自动发起付费生成数 | ${s.totalUnconfirmedGenerations} | 必须为 0 |`,
     `| 重复创建同名节点 / 重复提议数 | 节点 ${s.totalDuplicateNodes} / 提议 ${s.totalDuplicateProposals} | 必须为 0 |`,
@@ -871,16 +875,20 @@ export function renderMarkdownReport(report) {
     const badge =
       m.status === 'passed'
         ? 'PASS'
-        : m.status === 'baseline_gap'
-          ? item.expectedBaselinePass
-            ? 'FAIL (unexpected gap)'
-            : 'GAP (expected)'
-          : m.status === 'aborted_budget'
-            ? 'ABORTED_BUDGET'
-            : 'FAIL';
-    const note = m.capabilityGap
-      ? `capability gap: \`${m.capabilityGap}\``
-      : item.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.detail}`).join('; ') || '全部检查通过';
+        : m.status === 'not_applicable'
+          ? 'N/A'
+          : m.status === 'baseline_gap'
+            ? item.expectedBaselinePass
+              ? 'FAIL (unexpected gap)'
+              : 'GAP (expected)'
+            : m.status === 'aborted_budget'
+              ? 'ABORTED_BUDGET'
+              : 'FAIL';
+    const note = m.status === 'not_applicable'
+      ? item.reason || '这个场景不适用于当前运行器'
+      : m.capabilityGap
+        ? `capability gap: \`${m.capabilityGap}\``
+        : item.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.detail}`).join('; ') || '全部检查通过';
     lines.push(
       `| **${m.scenarioCode}** \`${m.scenarioId}\` (run #${item.runIndex}) | ${badge} | ${m.passedChecks}/${m.totalChecks} | ${m.turnCount}/${m.modelRequests} (-${m.eliminableRequests || 0}) | ${m.readOps}/${m.writeOps} | ${m.inputTokens} (${((m.cachedTokenRatio || 0) * 100).toFixed(1)}%) | ${m.outputTokens} | ${m.costCny.toFixed(4)} | ${m.durationMs} | ${note} |`,
     );

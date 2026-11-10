@@ -37,7 +37,6 @@ describe('dsh headless 事件流解析', () => {
     });
   });
 
-  // 有重试的步骤在 --json 里不带 usage；能从会话日志补上时才计入，否则明确标记不完整。
   test('缺 usage 的重试步骤优先用会话日志补，补不到就标用量不完整', () => {
     const stdout = ndjson(
       { type: 'session', sessionId: 's2' },
@@ -46,16 +45,43 @@ describe('dsh headless 事件流解析', () => {
       { type: 'status', phase: 'step_end', turn: 1, step: 3, usage: {} },
       { type: 'final', sessionId: 's2', reason: { kind: 'completed' }, text: 'ok' },
     );
-    const fallback = new Map([['1:1', { inputTokens: 10, cacheReadTokens: 40, outputTokens: 2 }]]);
+    const fallback = new Map([
+      ['1:1', { inputTokens: 10, cacheReadTokens: 40, outputTokens: 2 }],
+      ['1:3', { inputTokens: 3, cacheReadTokens: 7, outputTokens: 1 }],
+    ]);
     const filled = parseDshEvents(stdout, { fallbackUsages: fallback });
-    // 第 3 步的 usage 是空对象，同样不能算完整。
-    expect(filled.usageIncomplete).toBe(true);
-    expect(filled.usage).toMatchObject({ uncachedInput: 15, cacheRead: 40, output: 3 });
+    // 空 usage 对象也会尝试用会话日志补；补到后这一步就是完整的。
+    expect(filled.usageIncomplete).toBe(false);
+    expect(filled.usage).toMatchObject({ uncachedInput: 18, cacheRead: 47, output: 4 });
     expect(filled.steps[0]).toMatchObject({ usageSource: 'session_log' });
+    expect(filled.steps[2]).toMatchObject({ usageSource: 'session_log' });
 
     const missing = parseDshEvents(stdout);
     expect(missing.usageIncomplete).toBe(true);
     expect(missing.usage).toMatchObject({ uncachedInput: 5, cacheRead: 0, output: 1 });
+  });
+
+  test('step_end 只给部分 undefined 字段时也用会话日志补全', () => {
+    const stdout = ndjson(
+      { type: 'session', sessionId: 's2b' },
+      { type: 'status', phase: 'step_end', turn: 1, step: 1, usage: { inputTokens: undefined, cacheReadTokens: undefined } },
+      { type: 'status', phase: 'step_end', turn: 1, step: 2, usage: { inputTokens: 5, outputTokens: 1 } },
+      { type: 'final', sessionId: 's2b', reason: { kind: 'completed' }, text: 'ok' },
+    );
+    const filled = parseDshEvents(stdout, {
+      fallbackUsages: new Map([['1:1', { inputTokens: 10, cacheReadTokens: 40, outputTokens: 2 }]]),
+    });
+    expect(filled.usageIncomplete).toBe(false);
+    expect(filled.steps[0].usageSource).toBe('session_log');
+    expect(filled.usage).toMatchObject({ uncachedInput: 15, cacheRead: 40, output: 3 });
+  });
+
+  test('正常结束但没有任何 step_end 时标用量不完整，不能按 0 通过预算', () => {
+    const parsed = parseDshEvents(ndjson(
+      { type: 'session', sessionId: 's2c' },
+      { type: 'final', sessionId: 's2c', reason: { kind: 'completed' }, text: 'ok' },
+    ));
+    expect(parsed).toMatchObject({ usageIncomplete: true, usage: { uncachedInput: 0, cacheRead: 0, output: 0 } });
   });
 
   test('失败原因来自 error 事件或 final.reason，而不是只看退出码', () => {
@@ -85,7 +111,7 @@ describe('dsh headless 事件流解析', () => {
 describe('dsh 会话日志用量', () => {
   const line = (event) => JSON.stringify(event);
 
-  test('重试步骤把 assistant/message 与所有 assistant/attempt 的用量相加；任一 attempt 缺用量就不输出', () => {
+  test('重试步骤把 assistant/message 与所有 assistant/attempt 的用量相加；成功 message 在时缺用量的 attempt 按 0 计', () => {
     const usages = parseSessionUsageLog([
       line({ type: 'assistant/message', data: { turn: 1, step: 1, usage: { inputTokens: 10, cacheReadTokens: 90, outputTokens: 4 } } }),
       line({ type: 'assistant/message', data: { turn: 1, step: 2, stream: [] } }),
@@ -95,14 +121,20 @@ describe('dsh 会话日志用量', () => {
       line({ type: 'assistant/message', data: { turn: 1, step: 4, usage: { inputTokens: 20, cacheReadTokens: 100, outputTokens: 8 } } }),
       line({ type: 'assistant/attempt', data: { turn: 1, step: 4, stream: [{ usage: { inputTokens: 3, cacheReadTokens: 1, outputTokens: 1 } }] } }),
       line({ type: 'assistant/attempt', data: { turn: 1, step: 4, stream: [{ usage: { inputTokens: 2, cacheReadTokens: 4, outputTokens: 2 } }] } }),
-      // 有 attempt 没拿到用量时整步不输出，保留 usageIncomplete。
+      // 成功 message 已有用量时，没拿到用量的失败 attempt 按 0 计，不能丢掉整步。
       line({ type: 'assistant/message', data: { turn: 1, step: 5, usage: { inputTokens: 9, cacheReadTokens: 9, outputTokens: 9 } } }),
       line({ type: 'assistant/attempt', data: { turn: 1, step: 5, stream: [] } }),
+      // 既没有 message 用量，attempt 又缺用量：整步费用不可知，不输出。
+      line({ type: 'assistant/attempt', data: { turn: 1, step: 6, stream: [] } }),
+      // 空 usage 对象不算成功用量，不能把整步补成 0。
+      line({ type: 'assistant/message', data: { turn: 1, step: 7, usage: {} } }),
     ].join('\n'));
     expect(usages.get('1:1')).toMatchObject({ inputTokens: 10, cacheReadTokens: 90, outputTokens: 4 });
     expect(usages.get('1:2')).toMatchObject({ inputTokens: 12, cacheReadTokens: 5, outputTokens: 3 });
     expect(usages.get('1:4')).toMatchObject({ inputTokens: 25, cacheReadTokens: 105, outputTokens: 11 });
-    expect(usages.has('1:5')).toBe(false);
+    expect(usages.get('1:5')).toMatchObject({ inputTokens: 9, cacheReadTokens: 9, outputTokens: 9 });
+    expect(usages.has('1:6')).toBe(false);
+    expect(usages.has('1:7')).toBe(false);
   });
 
   test('没有会话日志或没有 zstd 时返回 ok:false，不猜 0', () => {
@@ -172,6 +204,11 @@ describe('dsh 隔离配置', () => {
       process.env.PROVIDER_A_API_KEY = 'from-env';
       const envAccess = prepareCredentialAccess({ sourceHome, home, env: {}, sourcePatch: patch });
       expect(envAccess).toMatchObject({ mode: 'env', envProvided: 1 });
+      expect(fs.existsSync(path.join(home, '.credentials.yaml'))).toBe(false);
+
+      // 源配置没有声明任何 apiKeyEnv 时，不把整份凭据带进临时 home。
+      const noDeclared = prepareCredentialAccess({ sourceHome, home, env: {}, sourcePatch: 'providers:\n  provider-a:\n    model: m1\n' });
+      expect(noDeclared).toMatchObject({ mode: 'env', envNames: 0 });
       expect(fs.existsSync(path.join(home, '.credentials.yaml'))).toBe(false);
 
       delete process.env.PROVIDER_A_API_KEY;

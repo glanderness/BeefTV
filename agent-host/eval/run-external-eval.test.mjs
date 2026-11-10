@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import fs from 'node:fs';
+import os from 'node:os';
 
 import { createCnyBudget } from './usage.mjs';
 
-import { agentEnv, createBudgetStop, parseArgs, parseCodexEvents, percentile, prepareAgentHome, readEvalPrices, runExternalEval, summarizeUsage, turnTokens, usageAccountingAction } from './run-external-eval.mjs';
+import { agentEnv, chargeTurnUsage, createBudgetStop, parseArgs, parseCodexEvents, percentile, prepareAgentHome, readEvalPrices, runExternalEval, summarizeUsage, turnTokens, usageAccountingAction } from './run-external-eval.mjs';
 
 describe('external agent eval driver', () => {
   test('parses the comparison flags', () => {
@@ -98,10 +99,16 @@ describe('外部测评预算与新报告字段', () => {
     await expect(runExternalEval({ agent: 'nope', scenario: 'S1' })).rejects.toThrow('claude、codex 或 dsh');
   });
 
-  test('用量不完整设了预算时必须停止后续场景；没预算时只计数', () => {
-    expect(usageAccountingAction({ usageIncomplete: true, budgetEnabled: true })).toEqual({ countIncomplete: true, abortScenarios: true });
+  test('用量不完整设了预算时必须停止后续场景；已知部分费用仍然计入预算账本', () => {
+    const action = usageAccountingAction({ usageIncomplete: true, budgetEnabled: true });
+    expect(action).toEqual({ countIncomplete: true, abortScenarios: true });
     expect(usageAccountingAction({ usageIncomplete: true, budgetEnabled: false })).toEqual({ countIncomplete: true, abortScenarios: false });
     expect(usageAccountingAction({ usageIncomplete: false, budgetEnabled: true })).toEqual({ countIncomplete: false, abortScenarios: false });
+
+    // 中止只停后续轮次；这一轮已经拿到的部分 token 费用不能从账本里消失。
+    const budget = createCnyBudget({ budgetCny: 10, priceIn: 1, priceCache: 0.5, priceOut: 2 });
+    chargeTurnUsage(budget, { uncachedInput: 1_000, cacheRead: 0, output: 0 });
+    expect(budget.spent).toBeCloseTo(0.001, 8);
   });
 
   test('summary 计数用量不完整轮次和被它中止的场景', () => {
@@ -123,6 +130,15 @@ describe('外部测评预算与新报告字段', () => {
     expect(fs.readFileSync(agent.mcpPath, 'utf8')).toContain('owner-token');
     agent.cleanup();
     expect(fs.existsSync(agent.home)).toBe(false);
+  });
+
+  test('准备外部 CLI 临时 home 时出错会立刻删掉，含 owner token 的目录不残留', () => {
+    const before = new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('beeftv-ext-')));
+    // BigInt 无法写进 JSON：在 mkdtemp 和技能复制之后、写 mcp.json 时抛错。
+    expect(() => prepareAgentHome('claude', '/tmp', { BEEFTV_OWNER_TOKEN: 'owner-token', BAD: 1n })).toThrow();
+    const leaked = fs.readdirSync(os.tmpdir())
+      .filter((name) => name.startsWith('beeftv-ext-') && !before.has(name));
+    expect(leaked).toEqual([]);
   });
 
   test('百分位为空时返回 0', () => {

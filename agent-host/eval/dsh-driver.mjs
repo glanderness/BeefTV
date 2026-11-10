@@ -158,7 +158,8 @@ function lastUsageInStream(value, depth = 0) {
 
 // 会话日志（zstd 解压后的 JSONL）里的用量：有重试的步骤不会在 --json 里带 usage。
 // assistant/message 只带成功 attempt 的用量，失败 attempt 的账单在 assistant/attempt：
-// 两者相加才是整步费用；任一 attempt 缺用量就不输出该步，让上层继续标 usageIncomplete。
+// 两者相加才是整步费用。成功 message 已经记下用量时，没拿到用量的 attempt 按 0 计；
+// 只有连 message 用量都没有、又有 attempt 缺用量时，这一步才算不完整。
 export function parseSessionUsageLog(text) {
   const messages = new Map();
   const attempts = new Map();
@@ -171,7 +172,8 @@ export function parseSessionUsageLog(text) {
     const key = `${data.turn}:${data.step}`;
     if (event.type === 'assistant/message') {
       const usage = data.usage ?? lastUsageInStream(data.stream);
-      if (usage) messages.set(key, usage);
+      // 空 usage 对象不能当成一条「成功用量」记下，否则会把整步补成 0。
+      if (usage && !normalizeAgentUsage('dsh', usage).incomplete) messages.set(key, usage);
     } else if (event.type === 'assistant/attempt') {
       const entry = attempts.get(key) || { list: [], missing: false };
       const usage = lastUsageInStream(data.stream);
@@ -182,8 +184,9 @@ export function parseSessionUsageLog(text) {
   const usages = new Map();
   for (const key of new Set([...messages.keys(), ...attempts.keys()])) {
     const attempt = attempts.get(key);
-    // 任一 attempt 缺用量时整步不能算完整，交给上层标 usageIncomplete。
-    if (attempt?.missing) continue;
+    // 有成功 message 的用量时，失败 attempt 没记录用量按 0 计，不能连成功用量一起丢掉；
+    // 连 message 用量都没有时，缺用量说明整步费用不可知，交给上层标 usageIncomplete。
+    if (attempt?.missing && !messages.has(key)) continue;
     const parts = [...(attempt?.list || [])];
     if (messages.has(key)) parts.push(messages.get(key));
     if (parts.length === 0) continue;
@@ -245,19 +248,26 @@ export function parseDshEvents(stdout, { fallbackUsages } = {}) {
   const totals = { uncachedInput: 0, cacheRead: 0, output: 0 };
   let cacheKnown = false;
   for (const step of steps) {
-    if (!step.usage && fallbackUsages?.has?.(`${step.turn}:${step.step}`)) {
-      step.usage = fallbackUsages.get(`${step.turn}:${step.step}`);
+    const key = `${step.turn}:${step.step}`;
+    const hasFallback = fallbackUsages?.has?.(key);
+    let normalized = step.usage ? normalizeAgentUsage('dsh', step.usage) : null;
+    // 没有 usage，或 step_end 给的是 {} / 部分 undefined 时，都用会话日志补；
+    // 只判断 !step.usage 会把本可补全的步骤固化成用量不完整。
+    if (hasFallback && (!normalized || normalized.incomplete)) {
+      step.usage = fallbackUsages.get(key);
       step.usageSource = 'session_log';
+      normalized = normalizeAgentUsage('dsh', step.usage);
     }
-    if (!step.usage) { usageIncomplete = true; continue; }
-    const normalized = normalizeAgentUsage('dsh', step.usage);
+    if (!step.usage || !normalized) { usageIncomplete = true; continue; }
     // 空 usage 对象也要算不完整，不能按 0 通过预算门禁。
     if (normalized.incomplete) { usageIncomplete = true; continue; }
     totals.uncachedInput += normalized.uncachedInput;
     totals.cacheRead += normalized.cacheRead;
     totals.output += normalized.output;
-    if (step.usage.cacheReadTokens !== undefined) cacheKnown = true;
+    if (normalized.cacheKnown) cacheKnown = true;
   }
+  // 正常结束却一条 step_end 都没有：无法确认这轮真的没花钱，不能按 0 通过预算门禁。
+  if (steps.length === 0 && final) usageIncomplete = true;
   return {
     sessionId,
     reply,
@@ -296,7 +306,8 @@ export function prepareCredentialAccess({ sourceHome, home, env, sourcePatch }) 
   for (const name of names) if (process.env[name]) env[name] = process.env[name];
   const missing = names.filter((name) => !process.env[name]);
   const credentialFile = path.join(sourceHome, '.credentials.yaml');
-  if ((names.length === 0 || missing.length > 0) && fs.existsSync(credentialFile)) {
+  // 只在源配置声明了密钥变量、且这些变量确实缺失时才复制；没声明就不带整份凭据进临时 home。
+  if (missing.length > 0 && fs.existsSync(credentialFile)) {
     const target = path.join(home, '.credentials.yaml');
     fs.copyFileSync(credentialFile, target);
     fs.chmodSync(target, 0o600);

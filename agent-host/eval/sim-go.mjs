@@ -1797,6 +1797,19 @@ export function createSimGo(options = {}) {
             };
             break;
           }
+        } else {
+          // 真实后端在外部提交前先检查素材节点上的任务回执：未失败的任务直接拒绝，
+          // 既不回读旧任务，也不再新建。不同 operationId 会算出不同任务键，必须靠这一步拦住。
+          const blocked = nodeIds.some((nodeId) => {
+            const node = (doc.nodes || []).find((n) => n.id === nodeId);
+            const taskId = String(node?.metadata?.taskId || '');
+            if (!taskId) return false;
+            const existing = tasks.get(taskId);
+            return !existing || existing.status !== 'failed';
+          });
+          if (blocked) {
+            throw preconditionFailed('generation_task_exists', '节点已关联生成任务，请先查询原任务；需要另做一份时请新建节点');
+          }
         }
         // 先整批校验，避免后面的节点失败时前面已经建出永远 running 的任务。
         const targets = nodeIds.map((nodeId) => {
@@ -2459,7 +2472,7 @@ export function createSimGo(options = {}) {
     const delayMs = Number(confirmOptions.delayMs ?? options.taskDelayMs ?? 5);
     const targets = proposalId
       ? [proposals.get(proposalId)].filter(Boolean)
-      : [...proposals.values()].filter((p) => !p.confirmed);
+      : [...proposals.values()].filter((p) => !p.confirmed && p.taskIds.length === 0);
 
     if (proposalId && targets.length === 0) {
       throw notFound('proposal_not_found', `生成提议不存在: ${proposalId}`);
@@ -2473,6 +2486,8 @@ export function createSimGo(options = {}) {
           throw conflict('turn_undone', '这一轮已撤销，不会生成。');
         }
       }
+      // 已经确认或已经建过任务的提案直接跳过：确认接口必须幂等，不能多买一批付费任务。
+      if (proposal.confirmed || proposal.taskIds.length > 0) continue;
       proposal.confirmed = true;
       counts.userConfirmations += 1;
 
