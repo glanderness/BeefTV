@@ -351,6 +351,31 @@ describe('S11 受控可恢复错误的计分只依赖结构化数据', () => {
 // ── 替代场景 R1/R3/R6/R7/L1：每个场景至少一条「做错了」的断言 ──────────────────
 const parityScenario = (code) => PARITY_SCENARIOS.find((item) => item.code === code);
 
+describe('场景定义：回合 ID 和运行器适用性', () => {
+  test('S1–S11 与替代场景的回合 ID 互不相同', () => {
+    const ids = [...SCENARIOS, ...PARITY_SCENARIOS].flatMap((item) => item.turns.map((turn) => turn.id));
+    const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+    expect(duplicates).toEqual([]);
+  });
+
+  test('R1a/R1b/R3 只给外部 Agent；R1a 只要首帧，R1b 保留视频', () => {
+    for (const code of ['R1a', 'R1b', 'R3']) {
+      expect(parityScenario(code).runners).toEqual(['external']);
+    }
+    const r1aMessage = parityScenario('R1a').turns[0].message;
+    expect(r1aMessage).not.toContain('视频');
+    expect(parityScenario('R1b').turns[0].message).toContain('视频');
+  });
+
+  test('R6 按内置节奏分多轮：首批后最多 3 轮继续，最后合成时间线', () => {
+    const turns = parityScenario('R6').turns;
+    expect(turns.length).toBe(5);
+    expect(turns.filter((turn) => turn.message.includes('继续，把剩下的首帧做完')).length).toBe(3);
+    expect(turns.at(-1).message).toContain('时间线');
+    expect(turns.every((turn) => turn.confirmProposalsAfterTurn)).toBe(true);
+  });
+});
+
 function evalParity(code, {
   canvasId = 'c',
   nodes = [],
@@ -499,6 +524,16 @@ describe('R6 十镜长片：分镜、首帧、时间线缺一项都判失败', (
   }));
   const images = (count) => Array.from({ length: count }, (_, i) => parityBoundNode(`node-img-${i + 1}`, `镜 ${i + 1} 首帧`));
   const tasks = (count) => Array.from({ length: count }, (_, i) => parityTask(`node-img-${i + 1}`));
+  const renderOpLog = (overrides = {}) => [
+    {
+      op: 'canvas.timeline.update', status: 'ok', params: { canvasId: 'c' }, result: { revision: 21 },
+      at: '2026-01-01T00:00:01.000Z',
+    },
+    {
+      op: 'canvas.timeline.render', status: 'ok', params: { canvasId: 'c' },
+      result: { taskId: 'task-render-1', sourceRevision: 21 }, at: '2026-01-01T00:00:02.000Z',
+    },
+  ];
   const good = (overrides = {}) => evalParity('R6', {
     nodes: [
       { id: 'node-script', type: 'script', title: '分镜脚本', metadata: { storyboard: { rows: rows(10) } } },
@@ -506,11 +541,37 @@ describe('R6 十镜长片：分镜、首帧、时间线缺一项都判失败', (
     ],
     tasks: [...tasks(10), { id: 'task-render-1', canvasId: 'c', type: 'timeline_render', status: 'succeeded' }],
     timeline: { clips: rows(10).map((row, i) => ({ id: `clip-${i + 1}`, kind: 'image', nodeId: row.imageNodeId })) },
+    opLog: renderOpLog(),
     ...overrides,
   });
 
   test('10 行、10 张首帧绑定、时间线渲染成功时通过', () => {
     expect(good().passed).toBe(true);
+  });
+
+  test('10 行都指向同一个已绑定节点判失败，即使数量看起来都对', () => {
+    const sharedRows = rows(10).map((row) => ({ ...row, imageNodeId: 'node-img-1' }));
+    const result = evalParity('R6', {
+      nodes: [
+        { id: 'node-script', type: 'script', title: '分镜脚本', metadata: { storyboard: { rows: sharedRows } } },
+        ...images(10),
+      ],
+      tasks: [...tasks(10), { id: 'task-render-1', canvasId: 'c', type: 'timeline_render', status: 'succeeded' }],
+      timeline: { clips: rows(10).map((row, i) => ({ id: `clip-${i + 1}`, kind: 'image', nodeId: row.imageNodeId })) },
+      opLog: renderOpLog(),
+    });
+    expect(checkOf(result, 'ten_first_frames_bound').passed).toBe(false);
+  });
+
+  test('先渲染旧时间线、之后才更新最终时间线判失败', () => {
+    const result = good({
+      opLog: [
+        { op: 'canvas.timeline.update', status: 'ok', params: { canvasId: 'c' }, result: { revision: 20 }, at: '2026-01-01T00:00:01.000Z' },
+        { op: 'canvas.timeline.render', status: 'ok', params: { canvasId: 'c' }, result: { taskId: 'task-render-1', sourceRevision: 20 }, at: '2026-01-01T00:00:02.000Z' },
+        { op: 'canvas.timeline.update', status: 'ok', params: { canvasId: 'c' }, result: { revision: 21 }, at: '2026-01-01T00:00:03.000Z' },
+      ],
+    });
+    expect(checkOf(result, 'timeline_rendered').passed).toBe(false);
   });
 
   test('只有 9 镜首帧绑定判失败', () => {

@@ -80,6 +80,21 @@ test('统一用量口径：Claude 加回缓存创建，Codex 减掉缓存读，D
   expect(normalizeAgentUsage('dsh', null).incomplete).toBe(true);
 });
 
+test('空 usage 对象和全 undefined 的字段算用量不完整，不能按 0 通过预算', () => {
+  for (const [kind, usage] of [
+    ['dsh', {}],
+    ['dsh', { inputTokens: undefined, cacheReadTokens: undefined }],
+    ['claude', {}],
+    ['codex', {}],
+    ['codex', { input_tokens: undefined, output_tokens: undefined }],
+  ]) {
+    expect(normalizeAgentUsage(kind, usage).incomplete).toBe(true);
+  }
+  // 明确给了 0 仍然算「拿到了用量」。
+  expect(normalizeAgentUsage('claude', { input_tokens: 0, output_tokens: 0 }).incomplete).toBe(false);
+  expect(normalizeAgentUsage('dsh', { uncachedInput: 0, cacheRead: 0, output: 0 }).incomplete).toBe(false);
+});
+
 test('费用分别按未缓存输入、缓存读、输出折算，缓存价缺省时沿用输入价', () => {
   const tokens = { uncachedInput: 1_000_000, cacheRead: 2_000_000, output: 1_000_000 };
   expect(costOfTokens(tokens, { input: 0.2, cache: 0.004, output: 0.8 })).toBeCloseTo(1.008, 6);

@@ -109,8 +109,10 @@ function skillPinNote(pin) {
 }
 
 // 外部 CLI 的隔离配置目录：只放画布技能和 MCP 配置，不碰真实的 ~/.claude 或 ~/.codex。
-function prepareAgentHome(kind, workDir, mcpEnv) {
+// cleanup() 删除整个目录：里面有 owner token 的 MCP 配置，不能留在临时目录里。
+export function prepareAgentHome(kind, workDir, mcpEnv) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), `beeftv-ext-${kind}-`));
+  const cleanup = () => fs.rmSync(home, { recursive: true, force: true });
   const skillTarget = path.join(home, 'skills', 'beeftv-canvas');
   fs.mkdirSync(skillTarget, { recursive: true });
   fs.copyFileSync(path.join(canvasSkillDir, 'SKILL.md'), path.join(skillTarget, 'SKILL.md'));
@@ -118,7 +120,7 @@ function prepareAgentHome(kind, workDir, mcpEnv) {
   if (kind === 'claude') {
     const mcpPath = path.join(home, 'mcp.json');
     fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { beeftv: { command: cli, args: ['mcp', 'serve'], env: mcpEnv } } }));
-    return { home, mcpPath };
+    return { home, mcpPath, cleanup };
   }
   const envLines = Object.entries(mcpEnv).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n');
   // 走 OpenAI 兼容网关时（BEEFTV_EVAL_CODEX_BASE_URL），用 Responses 接口和环境变量里的 Key。
@@ -127,7 +129,7 @@ function prepareAgentHome(kind, workDir, mcpEnv) {
     : '';
   // 只读沙箱下，没标只读的 MCP 工具默认被拒；BeefTV 工具单独放行（只连着模拟器），其余照旧锁住。
   fs.writeFileSync(path.join(home, 'config.toml'), `${gateway}[mcp_servers.beeftv]\ncommand = ${JSON.stringify(cli)}\nargs = ["mcp", "serve"]\ndefault_tools_approval_mode = "approve"\n[mcp_servers.beeftv.env]\n${envLines}\n`);
-  return { home };
+  return { home, cleanup };
 }
 
 // 外部 CLI 只拿到运行必需的环境变量；HOME 指向临时目录，~/.claude、~/.codex 和本机其它凭据都不可见。
@@ -254,6 +256,24 @@ export function createBudgetStop(budget) {
   };
 }
 
+// 用量不完整不能被当成 0 元继续：设了预算就立即停掉后续场景；没设预算时也必须在报告里计数。
+export function usageAccountingAction({ usageIncomplete, budgetEnabled }) {
+  return {
+    countIncomplete: Boolean(usageIncomplete),
+    abortScenarios: Boolean(usageIncomplete && budgetEnabled),
+  };
+}
+
+// 运行器只确认还没有任务的提案。外部 caller 的 submit 已经把提案标成已确认并记下 taskIds，
+// 这里再确认一次会凭空多出一批付费任务。
+export async function confirmPendingProposals(simGo, canvasId, { delayMs = 10 } = {}) {
+  const pending = [...simGo.proposals.values()].filter(
+    (proposal) => proposal.canvasId === canvasId && !proposal.confirmed && proposal.taskIds.length === 0,
+  );
+  for (const proposal of pending) await simGo.confirmProposals(proposal.proposalId, { delayMs });
+  return pending.length;
+}
+
 // 中位数与 p90 用最近秩法；空数组返回 0，避免报告里出现 NaN。
 export function percentile(values, p) {
   const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
@@ -275,7 +295,7 @@ export function summarizeUsage(results, scoredRuns, { prices = {}, budget = null
       totals.modelRequests += u.numTurns || 0;
       totals.toolCalls += u.toolCalls || 0;
       totals.cost += u.costCny ?? costOfTokens(t, prices);
-      if (u.usageIncomplete) totals.incomplete += 1;
+      if (u.usageIncomplete || u.tokens?.incomplete) totals.incomplete += 1;
       totals.turns += 1;
       if (Number.isFinite(u.durationMs)) durations.push(u.durationMs);
     }
@@ -283,10 +303,11 @@ export function summarizeUsage(results, scoredRuns, { prices = {}, budget = null
   const completion = {};
   for (const run of results) {
     if (run.status === 'not_applicable') continue;
-    const entry = completion[run.code] || { passed: 0, total: 0, abortedBudget: 0 };
+    const entry = completion[run.code] || { passed: 0, total: 0, abortedBudget: 0, abortedUsage: 0 };
     entry.total += 1;
     if (run.status === 'passed') entry.passed += 1;
     if (run.status === 'aborted_budget') entry.abortedBudget += 1;
+    if (run.status === 'aborted_usage_incomplete') entry.abortedUsage += 1;
     completion[run.code] = entry;
   }
   const totalInput = totals.uncached + totals.cached;
@@ -294,6 +315,7 @@ export function summarizeUsage(results, scoredRuns, { prices = {}, budget = null
     scenarioRuns: scoredRuns.length,
     passedRuns: scoredRuns.filter((r) => r.status === 'passed').length,
     abortedBudgetRuns: scoredRuns.filter((r) => r.status === 'aborted_budget').length,
+    abortedUsageIncompleteRuns: scoredRuns.filter((r) => r.status === 'aborted_usage_incomplete').length,
     notApplicable: results.length - scoredRuns.length,
     totalTurns: totals.turns,
     totalModelRequests: totals.modelRequests,
@@ -348,6 +370,18 @@ export async function runExternalEval(options = {}) {
     usages: [],
     ops: [],
   });
+  const abortedUsageRecord = (scenario, runIdx, detail) => ({
+    id: scenario.id,
+    code: scenario.code,
+    runIndex: runIdx,
+    status: 'aborted_usage_incomplete',
+    checks: [{ name: 'usage_complete', passed: false, detail }],
+    turns: [],
+    usages: [],
+    ops: [],
+  });
+  // 用量不完整又设了预算时，只停当前轮不够：后续场景也不能按 0 元继续跑。
+  let usageAbort = null;
   try {
     agent = kind === 'dsh'
       ? prepareDshAgent({
@@ -366,6 +400,14 @@ export async function runExternalEval(options = {}) {
           results.push({ id: scenario.id, code: scenario.code, runIndex: runIdx, status: 'not_applicable', reason: HOST_ONLY.get(scenario.code), checks: [] });
           continue;
         }
+        if (scenario.runners && !scenario.runners.includes('external')) {
+          results.push({ id: scenario.id, code: scenario.code, runIndex: runIdx, status: 'not_applicable', reason: '这个场景只适用于内置宿主', checks: [] });
+          continue;
+        }
+        if (usageAbort) {
+          results.push(abortedUsageRecord(scenario, runIdx, `${usageAbort.turnId} 的用量不完整（${usageAbort.detail}），设了预算时不按 0 继续，未开始`));
+          continue;
+        }
         if (budgetStop.shouldStop()) {
           results.push(abortedRecord(scenario, runIdx, `累计费用 ¥${budget.spent.toFixed(4)} 已达到或超过预算上限 ¥${budget.limit}，未开始`));
           continue;
@@ -377,6 +419,7 @@ export async function runExternalEval(options = {}) {
         let sessionId = kind === 'claude' ? crypto.randomUUID() : '';
         const started = Date.now();
         let stoppedByBudget = false;
+        let stoppedByUsageIncomplete = null;
         for (const [index, turnSpec] of scenario.turns.entries()) {
           // 每轮开始前按已累计费用检查；达到上限就停，不预留当前轮。
           if (budgetStop.shouldStop()) {
@@ -397,8 +440,11 @@ export async function runExternalEval(options = {}) {
           if (kind === 'dsh' && outcome.sessionId) sessionId = outcome.sessionId;
           const durationMs = Date.now() - turnStart;
           const tokens = outcome.tokens || normalizeAgentUsage(kind, outcome.usage);
+          // DSH 的 usageIncomplete 和统一口径里的 incomplete 都算；空 usage 对象也一样。
+          const usageIncomplete = Boolean(outcome.usageIncomplete || tokens.incomplete);
           const costCny = costOfTokens(tokens, effectivePrices);
-          budget.addCost(tokens);
+          const usageAction = usageAccountingAction({ usageIncomplete, budgetEnabled: budget.enabled });
+          if (!usageAction.abortScenarios) budget.addCost(tokens);
           turnRecords.push({
             type: 'turn_end', turnId, userMessage: turnSpec.message, reply: outcome.reply, error: outcome.error || undefined,
             durationMs, toolCalls: outcome.toolCalls || 0, tokens, costCny,
@@ -406,16 +452,43 @@ export async function runExternalEval(options = {}) {
           usages.push({
             turnId, agent: kind, usage: outcome.usage, tokens, costUsd: outcome.costUsd, numTurns: outcome.numTurns,
             toolCalls: outcome.toolCalls || 0, durationMs, costCny,
-            ...(outcome.usageIncomplete ? { usageIncomplete: true } : {}),
+            ...(usageAction.countIncomplete ? { usageIncomplete: true } : {}),
           });
           if (kind === 'dsh' && outcome.toolCount) agent.meta.toolCount = outcome.toolCount;
           proxy.state.turnId = '';
+          if (usageAction.abortScenarios) {
+            stoppedByUsageIncomplete = {
+              turnId,
+              detail: outcome.usageIncomplete && tokens.incomplete
+                ? 'DSH 事件流与统一口径都缺用量'
+                : outcome.usageIncomplete ? 'DSH 事件流缺用量' : '统一口径缺用量',
+            };
+            break;
+          }
           if (turnSpec.confirmProposalsAfterTurn) {
-            for (const p of [...simGo.proposals.values()].filter((item) => item.canvasId === canvasId && !item.confirmed)) {
-              await simGo.confirmProposals(p.proposalId, { delayMs: 10 });
-            }
+            await confirmPendingProposals(simGo, canvasId);
             await new Promise((r) => setTimeout(r, 200));
           }
+        }
+        if (stoppedByUsageIncomplete) {
+          usageAbort = stoppedByUsageIncomplete;
+          results.push({
+            id: scenario.id,
+            code: scenario.code,
+            runIndex: runIdx,
+            status: 'aborted_usage_incomplete',
+            checks: [{
+              name: 'usage_complete',
+              passed: false,
+              detail: `${stoppedByUsageIncomplete.turnId} 的用量不完整（${stoppedByUsageIncomplete.detail}），设了预算时不按 0 继续，本场景剩余回合与后续场景已停止`,
+            }],
+            durationMs: Date.now() - started,
+            turns: turnRecords.map(({ turnId, reply, error, durationMs }) => ({ turnId, error, durationMs, reply: String(reply || '').slice(0, 400) })),
+            usages,
+            ops: simGo.opLog.filter((op) => turnRecords.some((t) => t.turnId === op.turnId)).map((op) => ({ turnId: op.turnId, op: op.op, status: op.status, reason: op.reason })),
+          });
+          console.log(`${scenario.code} run${runIdx}: aborted_usage_incomplete`);
+          continue;
         }
         if (stoppedByBudget) {
           results.push({

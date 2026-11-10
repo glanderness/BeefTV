@@ -183,7 +183,7 @@ function evaluateR1({ withVideo }) {
       },
       {
         name: 'reply_reports_result',
-        passed: /完成|生成好|已生成|已绑定|写到节点|做完|视频/.test(replyText(turnRecords)),
+        passed: /完成|生成好|已生成|已绑定|写到节点|做完/.test(replyText(turnRecords)),
         detail: `回复=${replyText(turnRecords).slice(0, 120) || '空'}`,
       },
     ];
@@ -205,8 +205,13 @@ function evaluateR1({ withVideo }) {
   };
 }
 
-const R1_TURN = {
-  id: 'turn-r1-1',
+const R1A_TURN = {
+  id: 'turn-r1a-1',
+  message: '把「镜 1 首帧」生成出来，结果写完再告诉我。',
+};
+
+const R1B_TURN = {
+  id: 'turn-r1b-1',
   message: '把「镜 1 首帧」生成出来，好了把对应的视频也做出来，结果写完再告诉我。',
 };
 
@@ -300,10 +305,12 @@ export const PARITY_SCENARIOS = [
     code: 'R1a',
     aliases: ['R1a', 'r1a', 'submit-wait-image', 'R1'],
     name: 'R1a 提交后等图片结果（约 20 秒）',
-    description: '用户一句话要求生成镜 1 首帧再出视频；图片任务约 20 秒，检查用户不再发消息时首帧完成并绑定、没有重复付费提交、回复说明结果。',
+    description: '外部 Agent 一句话要求生成镜 1 首帧；图片任务约 20 秒，检查用户不再发消息时首帧完成并绑定、没有重复付费提交、回复说明结果。内置助手提交前要等用户在界面确认，这个场景只给外部 Agent 跑。',
     capabilities: [],
+    // 内置助手提交前必须等用户确认，这个场景为「完全权限」的外部 Agent 写的。
+    runners: ['external'],
     setup: r1Setup(R1_IMAGE_MS, 5_000),
-    turns: [R1_TURN],
+    turns: [R1A_TURN],
     evaluate: evaluateR1({ withVideo: false }),
   },
 
@@ -312,10 +319,11 @@ export const PARITY_SCENARIOS = [
     code: 'R1b',
     aliases: ['R1b', 'r1b', 'submit-wait-video'],
     name: 'R1b 超过 2 分钟的视频提交后等结果',
-    description: '图片很快完成，视频任务约 135 秒；检查首帧和视频最终都完成并绑定、同一节点没有重复付费提交、回复说明结果。',
+    description: '外部 Agent 一句话要求首帧和视频；图片很快完成，视频任务约 135 秒，检查首帧和视频最终都完成并绑定、同一节点没有重复付费提交、回复说明结果。这个场景只给外部 Agent 跑。',
     capabilities: [],
+    runners: ['external'],
     setup: r1Setup(5_000, R1_VIDEO_MS),
-    turns: [R1_TURN],
+    turns: [R1B_TURN],
     evaluate: evaluateR1({ withVideo: true }),
   },
 
@@ -324,8 +332,9 @@ export const PARITY_SCENARIOS = [
     code: 'R3',
     aliases: ['R3', 'r3', 'restart-resume'],
     name: 'R3 重启后续聊并收结果',
-    description: '第 1 轮只提交两张首帧（约 30 秒，用户说不用等），任务完成后第 2 轮（新进程续聊）问「刚才那两张好了吗」；检查第 2 轮没有新增付费提交、两张都绑到正确节点。',
+    description: '外部 Agent 第 1 轮只提交两张首帧（约 30 秒，用户说不用等），任务完成后第 2 轮（新进程续聊）问「刚才那两张好了吗」；检查第 2 轮没有新增付费提交、两张都绑到正确节点。内置助手提交前要等用户在界面确认，这个场景只给外部 Agent 跑。',
     capabilities: [],
+    runners: ['external'],
     setup(simGo, canvasId) {
       const doc = simGo.ensureCanvas(canvasId, makeR3Canvas(canvasId));
       simGo.setTaskTiming(canvasId, { imageMs: R3_IMAGE_MS });
@@ -385,7 +394,7 @@ export const PARITY_SCENARIOS = [
     code: 'R6',
     aliases: ['R6', 'r6', 'long-film-10shot'],
     name: 'R6 10 镜长片分批到时间线',
-    description: '10 镜分镜表（canvas.script.prepare 单次最多 8 行，需要分批）、10 个首帧全部生成并绑定、时间线已渲染、没有遗留失败调用。',
+    description: '按内置助手的工作节奏分多轮：第 1 轮写 10 镜分镜表并开始首批首帧，随后最多 3 轮「继续」把首帧做完，最后合成并渲染时间线。检查 10 行和 10 个首帧节点一一对应且都已绑定，以及最后一次时间线更新之后渲染成功。',
     capabilities: [],
     setup(simGo, canvasId) {
       const doc = simGo.ensureCanvas(canvasId, buildR6Canvas(canvasId));
@@ -396,11 +405,37 @@ export const PARITY_SCENARIOS = [
     turns: [
       {
         id: 'turn-r6-1',
-        message: '做一部 10 个镜头的短预告：先把 10 镜分镜表写完整，再为 10 镜各生成一张首帧并绑到分镜行，最后把首帧合成一条时间线并渲染出来。',
+        message: '做一部 10 个镜头的短预告：先把 10 镜分镜表写完整，并开始做首批首帧（一批最多 4 个），做完这一批告诉我。',
         // 内置宿主路径里，用户在面板确认生成；外部 Agent 用自己的提交入口，不看这个字段。
         confirmProposalsAfterTurn: true,
       },
+      {
+        id: 'turn-r6-2',
+        message: '继续，把剩下的首帧做完。',
+        confirmProposalsAfterTurn: true,
+        waitForTasksBeforeTurnMs: 2_000,
+      },
+      {
+        id: 'turn-r6-3',
+        message: '继续，把剩下的首帧做完。',
+        confirmProposalsAfterTurn: true,
+        waitForTasksBeforeTurnMs: 2_000,
+      },
+      {
+        id: 'turn-r6-4',
+        message: '继续，把剩下的首帧做完。',
+        confirmProposalsAfterTurn: true,
+        waitForTasksBeforeTurnMs: 2_000,
+      },
+      {
+        id: 'turn-r6-5',
+        message: '把时间线合成出来。',
+        confirmProposalsAfterTurn: true,
+        waitForTasksBeforeTurnMs: 2_000,
+      },
     ],
+    // 只有内置运行器在打分前等任务结束；外部 Agent 必须自己等，不能由运行器代劳。
+    waitForTasksBeforeEvaluateMs: 5_000,
     evaluate({ simGo, canvasId, turnRecords }) {
       const snap = simGo.snapshot();
       const doc = canvasOf(snap, canvasId);
@@ -408,13 +443,42 @@ export const PARITY_SCENARIOS = [
       const scriptNode = nodes.find((node) => node.type === 'script');
       const rows = scriptNode?.metadata?.storyboard?.rows || [];
       const imageNodes = nodes.filter((node) => node.type === 'image');
-      const rowsHaveImages = rows.filter((row) => row.imageNodeId).length;
+      const imageNodeIds = new Set(imageNodes.map((node) => node.id));
+      const rowImageIds = rows.map((row) => String(row.imageNodeId || ''));
+      const rowImageSet = new Set(rowImageIds.filter(Boolean));
+      // 10 行的 imageNodeId 必须和 10 个首帧节点一一对应，不能 10 行都指向同一个节点。
+      const rowsMapOneToOne = rows.length === 10 &&
+        rowImageIds.every(Boolean) &&
+        rowImageSet.size === 10 &&
+        imageNodeIds.size === 10 &&
+        [...rowImageSet].every((id) => imageNodeIds.has(id));
+      const rowsBound = rows.every((row) => {
+        const node = imageNodes.find((item) => item.id === row.imageNodeId);
+        return Boolean(node && nodeBoundToItsTask(snap, canvasId, node));
+      });
       const boundImages = imageNodes.filter((node) => nodeBoundToItsTask(snap, canvasId, node));
       const succeededImages = imageNodes.filter((node) => tasksForNode(snap, canvasId, node.id).some(isSucceeded));
       const clips = Array.isArray(doc.timeline?.clips) ? doc.timeline.clips : [];
       const imageClipNodeIds = new Set(clips.filter((clip) => clip.kind === 'image' || clip.kind === 'video').map((clip) => clip.nodeId));
       const renderTasks = tasksForCanvas(snap, canvasId).filter((task) => task.type === 'timeline_render');
-      const opErrors = unhandledOpErrors(snap.opLog || [], canvasId);
+      const opLog = snap.opLog || [];
+      const timelineUpdates = opLog.filter(
+        (op) => op.op === 'canvas.timeline.update' && op.status === 'ok' && op.params?.canvasId === canvasId,
+      );
+      const lastUpdate = timelineUpdates.at(-1);
+      const lastUpdateRevision = Number(lastUpdate?.result?.revision);
+      // 成功的渲染必须发生在最后一次时间线更新之后，且渲染的是那次更新后的版本。
+      const renderAfterFinalTimeline = opLog.filter(
+        (op) => op.op === 'canvas.timeline.render' && op.status === 'ok' && op.params?.canvasId === canvasId,
+      ).filter((op) => {
+        const sourceRevision = Number(op.result?.sourceRevision);
+        return Number.isSafeInteger(lastUpdateRevision) &&
+          Number.isSafeInteger(sourceRevision) &&
+          sourceRevision >= lastUpdateRevision &&
+          (op.at || '') >= (lastUpdate?.at || '') &&
+          renderTasks.some((task) => task.id === op.result?.taskId && task.status === 'succeeded');
+      }).length;
+      const opErrors = unhandledOpErrors(opLog, canvasId);
 
       return makeChecks([
         {
@@ -424,8 +488,8 @@ export const PARITY_SCENARIOS = [
         },
         {
           name: 'ten_first_frames_bound',
-          passed: imageNodes.length === 10 && boundImages.length === 10 && rowsHaveImages === 10,
-          detail: `首帧节点=${imageNodes.length}，已绑定=${boundImages.length}，分镜行已回填=${rowsHaveImages}`,
+          passed: imageNodes.length === 10 && boundImages.length === 10 && rowsMapOneToOne && rowsBound,
+          detail: `首帧节点=${imageNodes.length}，已绑定=${boundImages.length}，行映射一一对应=${rowsMapOneToOne}，行指向已绑定节点=${rowsBound}`,
         },
         {
           name: 'all_first_frame_tasks_succeeded',
@@ -437,8 +501,9 @@ export const PARITY_SCENARIOS = [
           passed:
             clips.length >= 10 &&
             imageNodes.every((node) => imageClipNodeIds.has(node.id)) &&
-            renderTasks.some((task) => task.status === 'succeeded'),
-          detail: `时间线片段=${clips.length}，渲染任务=${renderTasks.filter((task) => task.status === 'succeeded').length}`,
+            renderTasks.some((task) => task.status === 'succeeded') &&
+            renderAfterFinalTimeline > 0,
+          detail: `时间线片段=${clips.length}，渲染任务=${renderTasks.filter((task) => task.status === 'succeeded').length}，最后一次时间线更新后成功渲染=${renderAfterFinalTimeline}`,
         },
         {
           name: 'no_failed_or_unhandled_calls',

@@ -103,13 +103,16 @@ export function parseTurnEnd(text) {
 // 三类外部 Agent 的用量统一口径：未缓存输入、缓存读、输出。
 // Claude 的 input_tokens 不含缓存，cache_creation 按未缓存输入计（写入价格更高，这里只做同口径比较）；
 // Codex 的 input_tokens 已含缓存，要减掉；DSH 的 inputTokens 就是未缓存输入。
+// 至少有一个可识别的数值 token 字段才算「拿到了用量」；空对象和全是 undefined 不能按 0 算完整。
+const hasTokenField = (...values) => values.some((value) => num(value) !== undefined);
+const incompleteUsage = () => ({ uncachedInput: 0, cacheRead: 0, output: 0, cacheKnown: false, incomplete: true });
+
 export function normalizeAgentUsage(kind, usage) {
-  if (!usage || typeof usage !== 'object') {
-    return { uncachedInput: 0, cacheRead: 0, output: 0, cacheKnown: false, incomplete: true };
-  }
+  if (!usage || typeof usage !== 'object') return incompleteUsage();
   if (kind === 'dsh') {
     // 解析器产出的已经是统一口径时直接沿用，避免再按 inputTokens 归零。
     if (usage.uncachedInput !== undefined && usage.inputTokens === undefined) {
+      if (!hasTokenField(usage.uncachedInput, usage.cacheRead, usage.output)) return incompleteUsage();
       return {
         uncachedInput: Number(usage.uncachedInput || 0),
         cacheRead: Number(usage.cacheRead || 0),
@@ -118,6 +121,8 @@ export function normalizeAgentUsage(kind, usage) {
         incomplete: false,
       };
     }
+    if (!hasTokenField(usage.inputTokens, usage.input_tokens, usage.cacheWriteTokens, usage.cache_creation_input_tokens,
+      usage.cacheReadTokens, usage.cache_read_input_tokens, usage.outputTokens, usage.output_tokens)) return incompleteUsage();
     const uncached = num(usage.inputTokens ?? usage.input_tokens) ?? 0;
     const cacheWrite = num(usage.cacheWriteTokens ?? usage.cache_creation_input_tokens) ?? 0;
     const cached = num(usage.cacheReadTokens ?? usage.cache_read_input_tokens);
@@ -125,12 +130,16 @@ export function normalizeAgentUsage(kind, usage) {
     return { uncachedInput: uncached + cacheWrite, cacheRead: cached ?? 0, cacheKnown: cached !== undefined, output, incomplete: false };
   }
   if (kind === 'claude') {
+    if (!hasTokenField(usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens, usage.output_tokens)) return incompleteUsage();
     const raw = num(usage.input_tokens) ?? 0;
     const created = num(usage.cache_creation_input_tokens) ?? 0;
     const cached = num(usage.cache_read_input_tokens);
     const output = num(usage.output_tokens) ?? 0;
     return { uncachedInput: raw + created, cacheRead: cached ?? 0, cacheKnown: cached !== undefined, output, incomplete: false };
   }
+  if (!hasTokenField(usage.input_tokens, usage.prompt_tokens, usage.cached_input_tokens,
+    usage.input_tokens_details?.cached_tokens, usage.prompt_tokens_details?.cached_tokens, usage.cached_tokens,
+    usage.output_tokens, usage.completion_tokens)) return incompleteUsage();
   const total = num(usage.input_tokens ?? usage.prompt_tokens) ?? 0;
   const cached = num(usage.cached_input_tokens ?? usage.input_tokens_details?.cached_tokens
     ?? usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens);

@@ -111,10 +111,10 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 
 | 编号 | 场景 ID | 核心验证目标 |
 | :--- | :--- | :--- |
-| **R1a** | `submit-wait-image` | 一句「生成镜 1 首帧，好了把视频也做出来」，图片任务约 20 秒：用户不再发消息时首帧完成并绑定，同一节点没有重复付费提交，回复说明结果 |
-| **R1b** | `submit-wait-video` | 同上，但视频任务约 135 秒：图片和视频最终都完成并绑定，没有重复付费提交 |
-| **R3** | `restart-resume` | 第 1 轮只提交两张首帧（约 30 秒，用户说不用等）；第 2 轮（新进程续聊）问「刚才那两张好了吗」：第 2 轮不再新增付费提交，两张都绑到各自节点 |
-| **R6** | `long-film-10shot` | 10 镜分镜表（`canvas.script.prepare` 单次最多 8 行，需分批）、10 张首帧全部生成并绑定、时间线已渲染、没有遗留失败调用 |
+| **R1a** | `submit-wait-image` | 外部 Agent 一句「生成镜 1 首帧」，图片任务约 20 秒：用户不再发消息时首帧完成并绑定，同一节点没有重复付费提交，回复说明结果。内置助手提交前要等用户在界面确认，只给外部 Agent 跑 |
+| **R1b** | `submit-wait-video` | 外部 Agent 一句话要求首帧和视频，视频任务约 135 秒：图片和视频最终都完成并绑定，没有重复付费提交。内置助手路径同理记为不适用 |
+| **R3** | `restart-resume` | 外部 Agent 第 1 轮只提交两张首帧（约 30 秒，用户说不用等）；第 2 轮（新进程续聊）问「刚才那两张好了吗」：第 2 轮不再新增付费提交，两张都绑到各自节点。内置助手路径记为不适用 |
+| **R6** | `long-film-10shot` | 按内置节奏分 5 轮：第 1 轮写 10 镜分镜并开始首批首帧，最多 3 轮「继续」把首帧做完，最后合成并渲染时间线。10 行与 10 个首帧节点一一对应且都已绑定；最后一次时间线更新之后有一次成功渲染 |
 | **R7** | `same-turn-multi-edit` | 同一轮把 4 个文本节点的标题和正文都改掉：4 个都改对、没有丢改动；`stale_revision` 次数只记进检查明细，不作为失败条件 |
 | **L1** | `large-canvas-locate` | 约 300 个节点的画布上按标题找到「备注 137」并改正文：只改这一个；读画布次数和返回字节数记进检查明细 |
 
@@ -122,17 +122,19 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 
 ### 任务耗时
 
-模拟器新增 `simGo.setTaskTiming(canvasId, { imageMs, videoMs, audioMs, defaultMs })`，按画布配置生成任务耗时。配置过的画布上，`propose → 确认` 或外部 `canvas.generation.submit` 会立即返回 `running`，任务到点后异步完成；没配置的画布保持原来的「确认后 5 毫秒完成、调用返回时已成功」行为。
+模拟器新增 `simGo.setTaskTiming(canvasId, { imageMs, videoMs, audioMs, defaultMs })`，按画布配置生成任务耗时。配置过的画布上，`propose → 确认` 或外部 `canvas.generation.submit` 会立即返回 `running`，任务到点后异步完成；没配置的画布保持原来的「确认后 5 毫秒完成」行为，外部提交也一样会完成，不会停在 `running`。
 
 ### 两种提交路径
 
-- 内置宿主：`canvas.generation.propose` 之后由面板确认（`confirmProposals`），任务完成后自动写回节点。
-- 外部 Agent（owner token / 已登记客户端，`approvalMode=caller`）：先 `canvas.generation.propose` 拿画布版本和模型配置版本，再带稳定 `operationId` 调用 `canvas.generation.submit`。任务只交付产物，节点仍要用 `canvas.task.bind` 写回，和真实后端一致。
-- 两条路径都可调用只读的 `task.wait`（单次最多等 25 秒，超时返回 `pending` 和原 `taskId`，不返回错误）。描述符默认不外露，替代场景 setup 调 `simGo.enableTaskWait()` 后才出现在 `/api/ops`，因此 S1–S11 的工具定义体积不变。
+- 内置宿主：`canvas.generation.propose` 之后由面板确认（`confirmProposals`），任务完成后自动写回节点。内置宿主调用 `canvas.generation.submit` 时要求提案已确认，否则按真实后端拒绝；确认过的提案再提交只回读原任务。
+- 外部 Agent（owner token / 已登记客户端，`approvalMode=caller`）：先 `canvas.generation.propose` 拿画布版本和模型配置版本，再带稳定 `operationId` 调用 `canvas.generation.submit`。提交成功即视为完成审批：提案会被标成已确认并记下任务，运行器不会再替用户确认一次。任务只交付产物，节点仍要用 `canvas.task.bind` 写回，和真实后端一致。
+- 两条路径都可调用只读的 `task.wait`（单次最多等 25 秒，超时返回 `pending` 和原 `taskId`，不返回错误）。描述符默认不外露，替代场景 setup 调 `simGo.enableTaskWait()` 后才出现在 `/api/ops`；没开启时直接 HTTP 调用也按未知操作拒绝，因此 S1–S11 的能力边界和工具定义体积都不变。
 
 ### 运行器需要配合的等待
 
-场景回合可以在定义里带 `waitForTasksBeforeTurnMs`（例如 R3 第 2 轮）：运行器在开始这一轮前，应先等该画布上尚未完成的任务结束。场景收尾打分前也应等任务结束，否则会拿 `running` 状态误判。R6 的 10 毫秒、R7/L1 的同步操作不受影响。
+场景回合可以在定义里带 `waitForTasksBeforeTurnMs`（例如 R3 第 2 轮）：运行器在开始这一轮前，应先等该画布上尚未完成的任务结束。场景还可以带 `waitForTasksBeforeEvaluateMs`，但只有内置运行器在打分前用它等任务；外部运行器不用这个字段替外部 Agent 等待，否则会掩盖没等到结果的问题。
+
+场景可以声明 `runners: ['external']`（例如 R1a/R1b/R3）。内置运行器遇到这类场景记 `not_applicable` 并写明原因，不计入失败；外部运行器照常跑，遇到只给内置的场景同理跳过。
 
 
 ---
@@ -162,7 +164,7 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 
 ## 外部 Agent 对照（Claude Code / Codex / DSH）
 
-`eval/run-external-eval.mjs` 用同一个模拟器和同一套场景判分，换成外部 Agent 来回答：每个用户回合启动一次 `claude -p`、`codex exec` 或 `dsh --profile headless --json`（第二轮起接着上一轮会话），通过 `beeftv mcp serve` 读写模拟器，并装好 `plugins/beeftv-skills` 里的画布技能。外部 Agent 的配置目录是临时目录，不读写本机真实的 `~/.claude`、`~/.codex` 或 `~/.dsh`；Claude Code 只开放技能加载和 BeefTV 工具。
+`eval/run-external-eval.mjs` 用同一个模拟器和同一套场景判分，换成外部 Agent 来回答：每个用户回合启动一次 `claude -p`、`codex exec` 或 `dsh --profile headless --json`（第二轮起接着上一轮会话），通过 `beeftv mcp serve` 读写模拟器，并装好 `plugins/beeftv-skills` 里的画布技能。外部 Agent 的配置目录是临时目录，不读写本机真实的 `~/.claude`、`~/.codex` 或 `~/.dsh`，正常结束和异常退出都会删除。
 
 ```bash
 cd backend && go build -o /tmp/beeftv ./cmd/beeftv && cd ../agent-host
@@ -173,7 +175,7 @@ bun eval/run-external-eval.mjs --scenario S1,S2,S3,S6,S7,S8,S9,S10,S11 --runs 2 
 # Codex（OpenAI Responses 兼容网关）
 BEEFTV_EVAL_AGENT=codex BEEFTV_EVAL_CODEX_BASE_URL=https://<网关>/v1 BEEFTV_EVAL_CODEX_API_KEY=... BEEFTV_EVAL_AGENT_MODEL=<模型> ...
 # DSH headless（模型服务商沿用本机 headless profile 的配置）
-BEEFTV_EVAL_AGENT=dsh BEEFTV_EVAL_DSH_BIN=/Applications/DeepSeek\ Harness.app/Contents/Resources/runtime/cli/bin/dsh \
+BEEFTV_EVAL_AGENT=dsh BEEFTV_EVAL_DSH_BIN="$(command -v dsh)" \
 BEEFTV_CLI=/tmp/beeftv BEEFTV_EVAL_AGENT_MODEL=<服务商>/<模型> \
 BEEFTV_EVAL_PRICE_IN=0.2 BEEFTV_EVAL_PRICE_CACHE=0.004 BEEFTV_EVAL_PRICE_OUT=0.8 \
 bun eval/run-external-eval.mjs --scenario S1 --runs 1 --budget-cny <元> --out /tmp/dsh-eval
@@ -183,16 +185,17 @@ bun eval/run-external-eval.mjs --scenario S1 --runs 1 --budget-cny <元> --out /
 - S4（中途插话）、S5（生成后自动唤醒）只有内置宿主支持，记为不适用；S6 的「每次请求都带着活动技能」只能从宿主请求体取证，不计入。技能 pin 改成在消息里告诉它技能版本，相当于用户说「我选了这个技能」。
 - `--with-digest`：每轮把内置助手同款的制作摘要放在消息前面，用来量摘要对外部 Agent 的作用。
 - 用量统一成三个数：未缓存输入、缓存读、输出。Claude 的 `input_tokens` 不含缓存，缓存创建并进未缓存输入；Codex 的 `input_tokens` 已含缓存，会减掉；DSH 的 `inputTokens` 就是未缓存输入。每轮另记工具调用数和耗时，summary 给出每轮平均工具调用、耗时中位数与 p90、按场景的完成数。Codex 不报模型请求次数，按「工具调用数 + 1」估。
+- 用量不完整：CLI 没返回 usage、返回空对象、DSH 事件流缺 `step_end` 用量或会话日志补不全时，该轮在报告里计入 `usageIncompleteTurns`，不会当成 0 元。设了 `--budget-cny` 时遇到这种轮次立即停止本场景剩余回合和后续场景，状态写 `aborted_usage_incomplete`；没设预算时只计数并继续。
 - 费用：`BEEFTV_EVAL_PRICE_IN` 算未缓存输入，`BEEFTV_EVAL_PRICE_CACHE` 算缓存读，`BEEFTV_EVAL_PRICE_OUT` 算输出（元/百万 token）。没给 `PRICE_CACHE` 时按 `PRICE_IN` 算缓存读，报告 `meta.cachePriceSource` 会写成 `price_in`。
 - 预算：`--budget-cny <元>` 在每轮开始前按已累计费用检查，达到上限就停，剩下的场景记 `aborted_budget`；不预留当前轮。设了预算但 `PRICE_IN`/`PRICE_OUT` 缺失或为 0 时直接报错退出，不按 0 算。
 - 模拟器没有 `generation.estimate` 和 `media.review`，外部 Agent 调到时会报不支持；这是模拟器的缺口，正式后端有这两个操作。
 
 ### DSH headless 驱动
 
-- `BEEFTV_EVAL_DSH_BIN`：`dsh` 可执行文件，默认从 `PATH` 找；macOS 安装包内位置是 `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`。
-- 隔离：每次评测新建临时 `DSH_HOME`，profile 由 dsh 自己初始化；`DSH_AGENTS_HOME` 和 `HOME` 也指向临时目录，结束后删除。不写本机 `~/.dsh`。
+- `BEEFTV_EVAL_DSH_BIN`：`dsh` 可执行文件，默认从 `PATH` 找；不在 `PATH` 时用 `command -v dsh` 的结果或安装包里的实际路径（例如 `<dsh-path>`）。
+- 隔离：每次评测新建临时 `DSH_HOME`，profile 由 dsh 自己初始化；`DSH_AGENTS_HOME` 和 `HOME` 也指向临时目录，结束后删除。准备阶段任何一步失败也会删掉临时目录，不写本机 `~/.dsh`。
 - 模型服务商配置：运行时从源 `DSH_HOME`（`BEEFTV_EVAL_DSH_SOURCE_HOME`，默认当前 `$DSH_HOME` 或 `~/.dsh`）只读复制 `profiles/headless/cordis.patch.yml`。这只包含配置和密钥环境变量名，不含密钥。
-- 凭据：只通过启动环境变量或源 `.credentials.yaml` 的只读软链在运行时提供，评测结束随临时目录一起删除；不写入仓库、报告或日志。
+- 凭据：优先只用启动环境变量，变量名取自源配置里声明的密钥变量（`apiKeyEnv`）。声明的变量缺失时，才把源 `.credentials.yaml` 复制成临时 `DSH_HOME` 下权限 `0600` 的副本，评测结束随临时目录删除；不软链、不改动用户真实凭据文件，也不写入仓库、报告或日志。
 - MCP：用 `--patch` 挂 `@deepseek-ai/dsh-mcp-client`，`serverName` 为 `beeftv`，stdio 启动 `beeftv mcp serve`，env 带 `BEEFTV_BASE_URL` 与 `BEEFTV_OWNER_TOKEN`，`toolCallTimeoutMs` 为 120000。`beeftv mcp serve` 报告的「N 个工具」写进报告 meta。
 - 工具面：overlay 逐个关闭命令行、文件读写、网页、子 Agent、任务、待办等内置工具，只留技能读取和 BeefTV MCP。headless 没有更细的类别开关，所以按插件 id 禁用；实际工具数从 stderr 读回，不凭配置推断。权限用 `danger-full-access` 预设加 `--approval-policy never`，避免无人值守时等待审批。
 - 技能：`plugins/beeftv-skills/skills/beeftv-canvas/SKILL.md` 复制到临时 `$DSH_HOME/skills/beeftv-canvas/`。
@@ -211,7 +214,7 @@ cd backend
 # 默认：脚本化假模型，只验证测量工具本身
 go test ./internal/handler -run TestAssistantEfficiencyBaselineOnRealBackend -count=1
 # 真实模型（费用自理；密钥只通过环境变量传入，不写文件）
-BEEFTV_REAL_BASELINE_URL=https://<网关>/v1 BEEFTV_REAL_BASELINE_KEY=... BEEFTV_REAL_BASELINE_MODEL=deepseek-v4.1-flash \
+BEEFTV_REAL_BASELINE_URL=https://<网关>/v1 BEEFTV_REAL_BASELINE_KEY=... BEEFTV_REAL_BASELINE_MODEL=<model-id> \
 BEEFTV_REAL_BASELINE_OUT=/tmp/baseline go test ./internal/handler -run TestAssistantEfficiencyBaselineOnRealBackend -count=1 -timeout 25m
 ```
 
@@ -234,7 +237,7 @@ BEEFTV_REAL_GEN_OUT=/tmp/real-gen go test ./internal/handler -run TestAssistantR
 
 - `BEEFTV_REAL_GEN=1`：显式开启假模式本地验证；未设置且未提供 `BEEFTV_REAL_GEN_URL` 时测试默认跳过。
 - `BEEFTV_REAL_GEN_URL` / `BEEFTV_REAL_GEN_KEY`：生成与文本模型共用的 OpenAI 兼容网关；设置 URL 后自动走真实模式。
-- `BEEFTV_REAL_GEN_MODEL`：助手文本模型，默认 `deepseek-v4.1-flash`。
+- `BEEFTV_REAL_GEN_MODEL`：助手文本模型，默认沿用内置助手默认模型。
 - `BEEFTV_REAL_GEN_MAX_TASKS`：图片/视频任务总数上限，默认 `6`；超出后不再确认新方案，报告记录原因。
 - `BEEFTV_REAL_GEN_MAX_VIDEO_SECONDS`：单镜头视频秒数上限，默认 `5`；超长或秒数不明的视频方案不确认。
 - `BEEFTV_REAL_GEN_OUT`：输出目录；默认临时目录。报告为 `report.json` / `report.md`，产物在 `artifacts/`，另有 `canvas.json`。

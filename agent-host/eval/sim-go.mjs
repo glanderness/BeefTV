@@ -238,12 +238,13 @@ export function createSimGo(options = {}) {
     assistantModes: ['full-access', 'canvas'],
     replay: 'safe',
   };
+  // 未开启时描述符和操作都不存在：只从 /api/ops 藏起来不够，直接 HTTP 调用也要按未知操作拒绝。
   let taskWaitExposed = false;
-  descriptorMap.set(waitDescriptor.id, waitDescriptor);
 
   function enableTaskWait() {
     if (taskWaitExposed) return false;
     taskWaitExposed = true;
+    descriptorMap.set(waitDescriptor.id, waitDescriptor);
     descriptors.push(waitDescriptor);
     return true;
   }
@@ -827,7 +828,8 @@ export function createSimGo(options = {}) {
     return rec;
   }
 
-  function executeOp(opIdName, rawParams = {}, opKey = '', turnId = '') {
+  function executeOp(opIdName, rawParams = {}, opKey = '', turnId = '', context = {}) {
+    const hostCall = context.host === true;
     const descriptor = descriptorMap.get(opIdName);
     if (!descriptor) {
       throw notFound('unknown_operation', `未知操作: ${opIdName}`);
@@ -1737,6 +1739,7 @@ export function createSimGo(options = {}) {
       case 'canvas.generation.submit': {
         // 外部调用方（owner token / 已登记客户端，approvalMode=caller）的路径：
         // 先读 canvas.generation.propose 拿到画布版本和模型配置版本，再带稳定 operationId 提交。
+        // 内置宿主路径要求提案已经过用户确认；外部 caller 提交本身就是审批结果，成功后把提案记成已确认。
         const canvasId = String(rawParams.canvasId || '').trim();
         const nodeIds = (Array.isArray(rawParams.nodeIds) ? rawParams.nodeIds : []).map(String);
         const kind = String(rawParams.kind || '').trim();
@@ -1770,8 +1773,33 @@ export function createSimGo(options = {}) {
             throw conflict('generation_targets_changed', '画布上的生成参数已变化，请重新读取生成提议', { missingNodeIds: missing });
           }
         }
-        const created = [];
-        for (const nodeId of nodeIds) {
+        if (hostCall) {
+          // 内置宿主不能绕过面板确认：没有提案或提案未确认时，和真实后端一样拒绝付费生成。
+          if (!proposal) {
+            throw permissionDenied('generation_confirmation_required', '付费生成必须经过用户确认，请先提交生成提议');
+          }
+          if (!proposal.confirmed) {
+            counts.unconfirmedTasks += 1;
+            throw permissionDenied('generation_confirmation_required', '付费生成必须经过用户确认');
+          }
+          if (proposal.taskIds.length > 0) {
+            // 确认时已经建过任务：再提交只回读原任务，不重复计费。
+            const existing = proposal.taskIds.map((id) => tasks.get(id)).filter(Boolean);
+            result = {
+              canvasId,
+              taskIds: proposal.taskIds.slice(),
+              tasks: clone(existing),
+              proposalId,
+              orderId: proposalId,
+              approvalMode: 'host',
+              status: 'submitted',
+              replayed: true,
+            };
+            break;
+          }
+        }
+        // 先整批校验，避免后面的节点失败时前面已经建出永远 running 的任务。
+        const targets = nodeIds.map((nodeId) => {
           const node = (doc.nodes || []).find((n) => n.id === nodeId);
           if (!node) throw invalidArg('node_not_in_canvas', `节点不属于当前画布: ${nodeId}`);
           const nodeKind = String(node.type || '');
@@ -1783,24 +1811,38 @@ export function createSimGo(options = {}) {
           }
           const choice = resolveGenerationModel(nodeKind, String(node.metadata?.model || ''));
           if (!choice.modelKey) throw invalidArg('invalid_parameter', '请选择明确的生成模型');
-          const task = createGenerationTask({
-            canvasId,
-            nodeId,
-            kind: nodeKind,
-            modelKey: choice.modelKey,
-            proposalId,
-          });
-          externalTaskIds.add(task.id);
-          created.push(task);
+          return { nodeId, nodeKind, modelKey: choice.modelKey };
+        });
+        const created = [];
+        try {
+          for (const target of targets) {
+            const task = createGenerationTask({
+              canvasId,
+              nodeId: target.nodeId,
+              kind: target.nodeKind,
+              modelKey: target.modelKey,
+              proposalId,
+            });
+            externalTaskIds.add(task.id);
+            created.push(task);
+          }
+        } catch (error) {
+          for (const task of created) finishTask(task);
+          throw error;
         }
-        for (const task of created) scheduleTaskCompletion(task);
+        // 没配任务耗时的画布也要完成；默认 5 毫秒，和确认路径的同步完成保持同一语义。
+        for (const task of created) scheduleTaskCompletionOrDefault(task);
+        if (proposal) {
+          proposal.confirmed = true;
+          proposal.taskIds.push(...created.map((task) => task.id));
+        }
         result = {
           canvasId,
           taskIds: created.map((task) => task.id),
           tasks: clone(created),
           proposalId,
           orderId: proposalId,
-          approvalMode: 'caller',
+          approvalMode: hostCall ? 'host' : 'caller',
           status: 'submitted',
         };
         break;
@@ -2345,6 +2387,17 @@ export function createSimGo(options = {}) {
     return true;
   }
 
+  // 外部提交在没配耗时的画布上也要收尾；否则任务会永远停在 running，task.wait 只能等到超时。
+  function scheduleTaskCompletionOrDefault(task, defaultMs = 5) {
+    if (scheduleTaskCompletion(task)) return true;
+    const timer = setTimeout(() => {
+      pendingTimers.delete(timer);
+      finishTask(task);
+    }, Math.max(0, Number(defaultMs) || 0));
+    pendingTimers.add(timer);
+    return true;
+  }
+
   function sleep(ms) {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -2659,10 +2712,19 @@ export function createSimGo(options = {}) {
     });
   }
 
-  async function executeHttpOp(opIdName, rawParams, opKey, turnId) {
+  // 带对 host token 的请求算内置宿主；外部 Agent 用 owner token，不会碰到这个值。
+  function requestIsHost(req) {
+    return Boolean(hostToken) && req.headers['x-beeftv-agent-token'] === hostToken;
+  }
+
+  // context.host：这次调用是不是内置宿主发的（带对 host token）。外部 Agent 走 caller 语义。
+  async function executeHttpOp(opIdName, rawParams, opKey, turnId, context = {}) {
     try {
-      if (opIdName === 'task.wait') return await executeTaskWaitOp(rawParams, opKey, turnId);
-      return executeOp(opIdName, rawParams, opKey, turnId);
+      if (opIdName === 'task.wait') {
+        if (!taskWaitExposed) throw notFound('unknown_operation', '未知操作: task.wait');
+        return await executeTaskWaitOp(rawParams, opKey, turnId);
+      }
+      return executeOp(opIdName, rawParams, opKey, turnId, context);
     } catch (error) {
       logOpFailure(opIdName, rawParams, opKey, turnId, error);
       throw error;
@@ -2671,6 +2733,7 @@ export function createSimGo(options = {}) {
 
   // task.wait 需要真正等待，HTTP 层单独走异步路径；其余操作仍由同步 executeOp 处理。
   async function executeTaskWaitOp(rawParams, opKey, turnId) {
+    if (!taskWaitExposed) throw notFound('unknown_operation', '未知操作: task.wait');
     const descriptor = descriptorMap.get('task.wait');
     const turnRec = authorizeTurnForOp(turnId, descriptor, rawParams);
     counts.ops['task.wait'] = (counts.ops['task.wait'] || 0) + 1;
@@ -2724,7 +2787,7 @@ export function createSimGo(options = {}) {
         const turnId = String(req.headers['x-beeftv-agent-turn'] || body.turnId || '').trim();
         const opKey = String(body.opId || body.operationId || body.params?.operationId || '').trim();
         const params = body.params !== undefined ? body.params : body;
-        const data = await executeHttpOp(opIdName, params, opKey, turnId);
+        const data = await executeHttpOp(opIdName, params, opKey, turnId, { host: requestIsHost(req) });
         sendOk(res, data);
         return;
       }
@@ -2735,7 +2798,7 @@ export function createSimGo(options = {}) {
         const turnId = String(req.headers['x-beeftv-agent-turn'] || body.turnId || '').trim();
         const opKey = String(body.opId || body.operationId || body.params?.operationId || '').trim();
         const params = body.params !== undefined ? body.params : body;
-        const data = await executeHttpOp(opIdName, params, opKey, turnId);
+        const data = await executeHttpOp(opIdName, params, opKey, turnId, { host: requestIsHost(req) });
         sendOk(res, data);
         return;
       }

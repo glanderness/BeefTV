@@ -63,7 +63,7 @@ export function credentialEnvNames(patchText) {
   return [...names];
 }
 
-// `BEEFTV_EVAL_AGENT_MODEL` 支持 `provider/model`；模型 id 自己可以带斜杠（如 deepseek/deepseek-flash）。
+// `BEEFTV_EVAL_AGENT_MODEL` 支持 `provider/model`；模型 id 自己可以带斜杠（如 provider-a/model-a/v2）。
 export function parseModelOverride(value) {
   const text = String(value || '').trim();
   if (!text) return null;
@@ -156,10 +156,11 @@ function lastUsageInStream(value, depth = 0) {
   return found;
 }
 
-// 会话日志（zstd 解压后的 JSONL）里的用量：有重试的步骤不会在 --json 里带 usage，
-// 但 assistant/message 的 data.usage 或 attempt 流里有账单依据。
+// 会话日志（zstd 解压后的 JSONL）里的用量：有重试的步骤不会在 --json 里带 usage。
+// assistant/message 只带成功 attempt 的用量，失败 attempt 的账单在 assistant/attempt：
+// 两者相加才是整步费用；任一 attempt 缺用量就不输出该步，让上层继续标 usageIncomplete。
 export function parseSessionUsageLog(text) {
-  const usages = new Map();
+  const messages = new Map();
   const attempts = new Map();
   for (const line of String(text || '').split('\n')) {
     if (!line.trim().startsWith('{')) continue;
@@ -170,7 +171,7 @@ export function parseSessionUsageLog(text) {
     const key = `${data.turn}:${data.step}`;
     if (event.type === 'assistant/message') {
       const usage = data.usage ?? lastUsageInStream(data.stream);
-      if (usage) usages.set(key, usage);
+      if (usage) messages.set(key, usage);
     } else if (event.type === 'assistant/attempt') {
       const entry = attempts.get(key) || { list: [], missing: false };
       const usage = lastUsageInStream(data.stream);
@@ -178,9 +179,15 @@ export function parseSessionUsageLog(text) {
       attempts.set(key, entry);
     }
   }
-  for (const [key, entry] of attempts) {
-    if (usages.has(key) || entry.missing || entry.list.length === 0) continue;
-    const total = entry.list.reduce((sum, usage) => {
+  const usages = new Map();
+  for (const key of new Set([...messages.keys(), ...attempts.keys()])) {
+    const attempt = attempts.get(key);
+    // 任一 attempt 缺用量时整步不能算完整，交给上层标 usageIncomplete。
+    if (attempt?.missing) continue;
+    const parts = [...(attempt?.list || [])];
+    if (messages.has(key)) parts.push(messages.get(key));
+    if (parts.length === 0) continue;
+    const total = parts.reduce((sum, usage) => {
       const normalized = normalizeAgentUsage('dsh', usage);
       return {
         inputTokens: sum.inputTokens + normalized.uncachedInput,
@@ -244,6 +251,8 @@ export function parseDshEvents(stdout, { fallbackUsages } = {}) {
     }
     if (!step.usage) { usageIncomplete = true; continue; }
     const normalized = normalizeAgentUsage('dsh', step.usage);
+    // 空 usage 对象也要算不完整，不能按 0 通过预算门禁。
+    if (normalized.incomplete) { usageIncomplete = true; continue; }
     totals.uncachedInput += normalized.uncachedInput;
     totals.cacheRead += normalized.cacheRead;
     totals.output += normalized.output;
@@ -280,8 +289,24 @@ function copyFileIfExists(from, to) {
   }
 }
 
+// 凭据优先只用启动环境变量；源配置声明的密钥变量缺失时，才复制一份临时副本（0600），
+// 不软链用户真实凭据文件，避免 DSH 写回。副本随临时 home 一起删除。
+export function prepareCredentialAccess({ sourceHome, home, env, sourcePatch }) {
+  const names = credentialEnvNames(sourcePatch);
+  for (const name of names) if (process.env[name]) env[name] = process.env[name];
+  const missing = names.filter((name) => !process.env[name]);
+  const credentialFile = path.join(sourceHome, '.credentials.yaml');
+  if ((names.length === 0 || missing.length > 0) && fs.existsSync(credentialFile)) {
+    const target = path.join(home, '.credentials.yaml');
+    fs.copyFileSync(credentialFile, target);
+    fs.chmodSync(target, 0o600);
+    return { mode: 'temp_copy_0600', envNames: names.length, envProvided: names.length - missing.length };
+  }
+  return { mode: 'env', envNames: names.length, envProvided: names.length - missing.length };
+}
+
 // 准备一次评测的隔离 DSH 环境。返回的 agent 可以直接交给 runDshTurn；
-// 调用方负责在结束时调用 cleanup()。
+// 调用方负责在结束时调用 cleanup()。mkdtemp 之后的任何一步失败都会删掉临时 home。
 export function prepareDshAgent({
   workDir,
   baseUrl,
@@ -292,82 +317,83 @@ export function prepareDshAgent({
   model = process.env.BEEFTV_EVAL_AGENT_MODEL,
 } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-eval-dsh-'));
-  const userHome = path.join(home, 'user-home');
-  fs.mkdirSync(userHome, { recursive: true });
-  const env = {
-    HOME: userHome,
-    DSH_HOME: home,
-    DSH_AGENTS_HOME: path.join(home, 'agents'),
-  };
-  for (const key of PASSTHROUGH_ENV) if (process.env[key]) env[key] = process.env[key];
+  try {
+    const userHome = path.join(home, 'user-home');
+    fs.mkdirSync(userHome, { recursive: true });
+    const env = {
+      HOME: userHome,
+      DSH_HOME: home,
+      DSH_AGENTS_HOME: path.join(home, 'agents'),
+    };
+    for (const key of PASSTHROUGH_ENV) if (process.env[key]) env[key] = process.env[key];
 
-  // 1) 让 dsh 自己生成 headless profile（模板决定 bundle 列表）。
-  const init = spawnSync(bin, ['--profile', 'headless', '--dump-default-config'], {
-    env, cwd: workDir, encoding: 'utf8', timeout: 120_000,
-  });
-  if (init.error || init.status !== 0) {
+    // 1) 让 dsh 自己生成 headless profile（模板决定 bundle 列表）。
+    const init = spawnSync(bin, ['--profile', 'headless', '--dump-default-config'], {
+      env, cwd: workDir, encoding: 'utf8', timeout: 120_000,
+    });
+    if (init.error || init.status !== 0) {
+      throw new Error(`dsh_profile_init_failed: ${String(init.error?.message || init.stderr || `exit ${init.status}`).slice(-600)}`);
+    }
+
+    // 2) 模型服务商配置：只读复制源 headless profile 的 patch 层（只有配置，没有密钥）。
+    const sourcePatchPath = path.join(sourceHome, 'profiles', 'headless', 'cordis.patch.yml');
+    let sourcePatch = '';
+    try { sourcePatch = fs.readFileSync(sourcePatchPath, 'utf8'); } catch { sourcePatch = ''; }
+    if (sourcePatch.trim()) {
+      fs.writeFileSync(path.join(home, 'profiles', 'headless', 'cordis.patch.yml'), sourcePatch);
+    }
+    const sourceModel = parseDefaultModel(sourcePatch);
+
+    // 3) 凭据：优先环境变量，缺变量才复制临时副本（0600），不碰源文件。
+    const credential = prepareCredentialAccess({ sourceHome, home, env, sourcePatch });
+
+    // 4) overlay：MCP、工具面、可选模型覆盖。含临时 token，只存在于临时目录。
+    const overlayPath = path.join(home, 'eval-overlay.yml');
+    const modelOverride = parseModelOverride(model);
+    fs.writeFileSync(overlayPath, buildOverlayPatch({ cli, baseUrl, ownerToken, modelOverride, sourceModel }));
+
+    // 5) 技能装进 DSH 的用户技能根（$DSH_HOME/skills）。
+    const driverDir = path.dirname(fileURLToPath(import.meta.url));
+    const skillSource = path.resolve(driverDir, '..', '..', 'plugins', 'beeftv-skills', 'skills', SKILL_NAME, 'SKILL.md');
+    const skillTarget = path.join(home, 'skills', SKILL_NAME);
+    fs.mkdirSync(skillTarget, { recursive: true });
+    if (!copyFileIfExists(skillSource, path.join(skillTarget, 'SKILL.md'))) {
+      throw new Error(`dsh_skill_missing: ${SKILL_NAME}/SKILL.md`);
+    }
+
+    const actualModel = modelOverride
+      ? { provider: modelOverride.provider || sourceModel.provider || '', model: modelOverride.model, reasoningEffort: process.env.BEEFTV_EVAL_DSH_REASONING || sourceModel.reasoningEffort || 'high' }
+      : { ...sourceModel };
+    const toolPlugins = ['tool-skill', 'mcp-beeftv'];
+    return {
+      bin,
+      home,
+      env,
+      workDir,
+      overlayPath,
+      model: actualModel,
+      meta: {
+        driver: 'dsh-headless',
+        permissionMode: 'danger-full-access',
+        toolCallTimeoutMs: TOOL_CALL_TIMEOUT_MS,
+        enabledToolPlugins: toolPlugins,
+        disabledToolIds: [...DISABLED_TOOL_IDS],
+        skillDir: '$DSH_HOME/skills/beeftv-canvas',
+        isolatedHome: true,
+        credentialSource: credential.mode,
+        credentialEnvNames: credential.envNames,
+        credentialEnvProvided: credential.envProvided,
+        ...(actualModel.provider ? { provider: actualModel.provider } : {}),
+        ...(actualModel.model ? { model: actualModel.model } : {}),
+        ...(actualModel.reasoningEffort ? { reasoningEffort: actualModel.reasoningEffort } : {}),
+      },
+      cleanup() { fs.rmSync(home, { recursive: true, force: true }); },
+    };
+  } catch (error) {
+    // 准备失败时 agent 还没返回，调用方拿不到 home；这里必须自己清掉临时目录和临时 token。
     fs.rmSync(home, { recursive: true, force: true });
-    throw new Error(`dsh_profile_init_failed: ${String(init.error?.message || init.stderr || `exit ${init.status}`).slice(-600)}`);
+    throw error;
   }
-
-  // 2) 模型服务商配置：只读复制源 headless profile 的 patch 层（只有配置，没有密钥）。
-  const sourcePatchPath = path.join(sourceHome, 'profiles', 'headless', 'cordis.patch.yml');
-  let sourcePatch = '';
-  try { sourcePatch = fs.readFileSync(sourcePatchPath, 'utf8'); } catch { sourcePatch = ''; }
-  if (sourcePatch.trim()) {
-    fs.writeFileSync(path.join(home, 'profiles', 'headless', 'cordis.patch.yml'), sourcePatch);
-  }
-  const sourceModel = parseDefaultModel(sourcePatch);
-
-  // 3) 凭据：运行时通过环境变量或源凭据文件只读软链提供，不复制内容。
-  // 只透传源配置里声明的密钥变量名，不按服务商名硬编码。
-  for (const name of credentialEnvNames(sourcePatch)) if (process.env[name]) env[name] = process.env[name];
-  const credentialFile = path.join(sourceHome, '.credentials.yaml');
-  if (fs.existsSync(credentialFile)) {
-    try { fs.symlinkSync(credentialFile, path.join(home, '.credentials.yaml')); } catch { /* 环境变量兜底 */ }
-  }
-
-  // 4) overlay：MCP、工具面、可选模型覆盖。含临时 token，只存在于临时目录。
-  const overlayPath = path.join(home, 'eval-overlay.yml');
-  const modelOverride = parseModelOverride(model);
-  fs.writeFileSync(overlayPath, buildOverlayPatch({ cli, baseUrl, ownerToken, modelOverride, sourceModel }));
-
-  // 5) 技能装进 DSH 的用户技能根（$DSH_HOME/skills）。
-  const driverDir = path.dirname(fileURLToPath(import.meta.url));
-  const skillSource = path.resolve(driverDir, '..', '..', 'plugins', 'beeftv-skills', 'skills', SKILL_NAME, 'SKILL.md');
-  const skillTarget = path.join(home, 'skills', SKILL_NAME);
-  fs.mkdirSync(skillTarget, { recursive: true });
-  if (!copyFileIfExists(skillSource, path.join(skillTarget, 'SKILL.md'))) {
-    fs.rmSync(home, { recursive: true, force: true });
-    throw new Error(`dsh_skill_missing: ${SKILL_NAME}/SKILL.md`);
-  }
-
-  const actualModel = modelOverride
-    ? { provider: modelOverride.provider || sourceModel.provider || '', model: modelOverride.model, reasoningEffort: process.env.BEEFTV_EVAL_DSH_REASONING || sourceModel.reasoningEffort || 'high' }
-    : { ...sourceModel };
-  const toolPlugins = ['tool-skill', 'mcp-beeftv'];
-  return {
-    bin,
-    home,
-    env,
-    workDir,
-    overlayPath,
-    model: actualModel,
-    meta: {
-      driver: 'dsh-headless',
-      permissionMode: 'danger-full-access',
-      toolCallTimeoutMs: TOOL_CALL_TIMEOUT_MS,
-      enabledToolPlugins: toolPlugins,
-      disabledToolIds: [...DISABLED_TOOL_IDS],
-      skillDir: '$DSH_HOME/skills/beeftv-canvas',
-      isolatedHome: true,
-      credentialSource: fs.existsSync(credentialFile) ? 'session_credential_store_symlink+env' : 'env',
-      ...(actualModel.provider ? { provider: actualModel.provider } : {}),
-      ...(actualModel.model ? { model: actualModel.model } : {}),
-      ...(actualModel.reasoningEffort ? { reasoningEffort: actualModel.reasoningEffort } : {}),
-    },
-    cleanup() { fs.rmSync(home, { recursive: true, force: true }); },
-  };
 }
 
 // 一个用户回合 = 一次 dsh 调用。第二轮起带 --session-id 续聊；cwd 与工作目录保持不变。

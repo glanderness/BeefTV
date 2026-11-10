@@ -25,8 +25,8 @@ export function resolveNodeRuntime() {
     if (fs.existsSync(candidate)) return candidate;
   }
   const candidates = [
-    '/Applications/BeefTV.app/Contents/Resources/agent-host/runtime/bin/node',
-    '/Users/sunny/.local/bin/node',
+    path.join('/', 'Applications', 'BeefTV.app', 'Contents', 'Resources', 'agent-host', 'runtime', 'bin', 'node'),
+    path.join(os.homedir(), '.local', 'bin', 'node'),
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
@@ -751,31 +751,34 @@ export function computeScenarioMetrics({
 
 export function buildEvalSummary(scenarioRuns, config, meterState) {
   const totalRuns = scenarioRuns.length;
-  const passedRuns = scenarioRuns.filter((r) => r.metrics.status === 'passed').length;
-  const baselineGapRuns = scenarioRuns.filter((r) => r.metrics.status === 'baseline_gap').length;
-  const unexpectedGapRuns = scenarioRuns.filter(
+  // 不适用场景只记录原因，不参与通过率、结构完整率和均值的分母。
+  const scoredRuns = scenarioRuns.filter((r) => r.metrics.status !== 'not_applicable');
+  const notApplicableRuns = totalRuns - scoredRuns.length;
+  const passedRuns = scoredRuns.filter((r) => r.metrics.status === 'passed').length;
+  const baselineGapRuns = scoredRuns.filter((r) => r.metrics.status === 'baseline_gap').length;
+  const unexpectedGapRuns = scoredRuns.filter(
     (r) => r.metrics.status === 'baseline_gap' && r.expectedBaselinePass,
   ).length;
-  const failedRuns = scenarioRuns.filter((r) => r.metrics.status === 'failed').length + unexpectedGapRuns;
-  const abortedRuns = scenarioRuns.filter((r) => r.metrics.status === 'aborted_budget').length;
+  const failedRuns = scoredRuns.filter((r) => r.metrics.status === 'failed').length + unexpectedGapRuns;
+  const abortedRuns = scoredRuns.filter((r) => r.metrics.status === 'aborted_budget').length;
 
   const avgStructuralRate =
-    totalRuns > 0
-      ? Number((scenarioRuns.reduce((s, r) => s + r.metrics.structuralCompletenessRate, 0) / totalRuns).toFixed(4))
+    scoredRuns.length > 0
+      ? Number((scoredRuns.reduce((s, r) => s + r.metrics.structuralCompletenessRate, 0) / scoredRuns.length).toFixed(4))
       : 0;
 
-  const totalUnconfirmedGenerations = scenarioRuns.reduce((s, r) => s + r.metrics.unconfirmedGenerationCount, 0);
-  const totalDuplicateNodes = scenarioRuns.reduce((s, r) => s + r.metrics.duplicateNodeCount, 0);
-  const totalDuplicateProposals = scenarioRuns.reduce((s, r) => s + r.metrics.duplicateProposalCount, 0);
-  const totalRevisionConflicts = scenarioRuns.reduce((s, r) => s + r.metrics.revisionConflicts, 0);
-  const totalUnrecoveredConflicts = scenarioRuns.reduce((s, r) => s + r.metrics.unrecoveredConflicts, 0);
-  const totalTurns = scenarioRuns.reduce((s, r) => s + r.metrics.turnCount, 0);
-  const totalEliminableRequests = scenarioRuns.reduce((s, r) => s + (r.metrics.eliminableRequests || 0), 0);
-  const totalDurationMs = scenarioRuns.reduce((s, r) => s + (r.metrics.durationMs || 0), 0);
+  const totalUnconfirmedGenerations = scoredRuns.reduce((s, r) => s + r.metrics.unconfirmedGenerationCount, 0);
+  const totalDuplicateNodes = scoredRuns.reduce((s, r) => s + r.metrics.duplicateNodeCount, 0);
+  const totalDuplicateProposals = scoredRuns.reduce((s, r) => s + r.metrics.duplicateProposalCount, 0);
+  const totalRevisionConflicts = scoredRuns.reduce((s, r) => s + r.metrics.revisionConflicts, 0);
+  const totalUnrecoveredConflicts = scoredRuns.reduce((s, r) => s + r.metrics.unrecoveredConflicts, 0);
+  const totalTurns = scoredRuns.reduce((s, r) => s + r.metrics.turnCount, 0);
+  const totalEliminableRequests = scoredRuns.reduce((s, r) => s + (r.metrics.eliminableRequests || 0), 0);
+  const totalDurationMs = scoredRuns.reduce((s, r) => s + (r.metrics.durationMs || 0), 0);
   const avgRequestsPerTurn =
     totalTurns > 0 ? Number((meterState.totalRequests / totalTurns).toFixed(2)) : 0;
 
-  const s6Runs = scenarioRuns.filter((r) => r.scenarioId === 'skill-across-turns');
+  const s6Runs = scoredRuns.filter((r) => r.scenarioId === 'skill-across-turns');
   const skillRetentionRate =
     s6Runs.length > 0
       ? Number((s6Runs.filter((r) => r.metrics.passed).length / s6Runs.length).toFixed(4))
@@ -802,6 +805,7 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
     },
     summary: {
       totalScenarioRuns: totalRuns,
+      notApplicableRuns,
       passedRuns,
       baselineGapRuns,
       failedRuns,
@@ -1389,6 +1393,28 @@ export async function runEval(rawOptions = {}) {
 
     outerLoop: for (let runIdx = 1; runIdx <= config.runs; runIdx++) {
       for (const scenario of scenarios) {
+        if (scenario.runners && !scenario.runners.includes('builtin')) {
+          // 场景声明了只给外部 Agent 跑：内置助手提交前要等用户在界面确认，不计入失败。
+          const snap = simGo.snapshot();
+          const evalResult = {
+            passed: false,
+            status: 'not_applicable',
+            checks: [{ name: 'runner_applicability', passed: true, detail: '这个场景只适用于外部 Agent' }],
+          };
+          scenarioRuns.push({
+            runIndex: runIdx,
+            scenarioId: scenario.id,
+            scenarioCode: scenario.code,
+            scenarioName: scenario.name,
+            expectedBaselinePass: scenario.expectedBaselinePass,
+            capabilities: scenario.capabilities,
+            status: 'not_applicable',
+            reason: '这个场景只适用于外部 Agent（内置助手提交前必须等用户在界面确认）',
+            metrics: computeScenarioMetrics({ scenario, evalResult, beforeSnap: snap, afterSnap: snap, turnRecords: [], requestEntries: [], durationMs: 0 }),
+            checks: evalResult.checks,
+          });
+          continue;
+        }
         const scenarioStart = Date.now();
         const canvasId = `canvas-${scenario.code.toLowerCase()}-run${runIdx}`;
         meter.setContext({ runIndex: runIdx, scenarioId: scenario.id, turnId: '' });
@@ -1582,6 +1608,10 @@ export async function runEval(rawOptions = {}) {
               };
             }
           }
+        }
+        // 只有内置运行器替场景等任务；外部 Agent 的场景不能靠这里补等待，否则会掩盖没等到结果。
+        if (scenario.waitForTasksBeforeEvaluateMs) {
+          await waitForCanvasTasks(simGo, canvasId, scenario.waitForTasksBeforeEvaluateMs);
         }
         // 场景收尾前等助手真正停下，迟到的动作算进本场景，也不会漏进下一个场景。
         const settle = meter.getState().abortedBudget

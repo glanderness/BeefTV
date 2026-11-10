@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createSimGo } from './sim-go.mjs';
+import { confirmPendingProposals } from './run-external-eval.mjs';
 import { SCENARIOS, resolveScenarioList, buildS3SeedCanvas } from './scenarios.mjs';
 import {
   parseCliArgs,
@@ -1128,6 +1129,131 @@ describe('模拟器任务耗时与外部提交（替代场景 R1 / R3 的前置�
     expect(waitRes.status).toBe(200);
     expect(waitBody.data.pending).toBe(false);
     expect(waitBody.data.bound).toBe(true);
+    await simGo.close();
+  });
+
+  test('未配任务耗时的画布上外部提交也会完成，不会永远 running', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-no-timing';
+    seedParityCanvas(simGo, canvasId);
+    simGo.beginTurn({ turnId: 'turn-no-timing', canvasId, permissionMode: 'canvas' });
+    // 这张画布没有 setTaskTiming，走默认 5 毫秒完成路径。
+    const submitted = simGo.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'no-timing-submit', 'turn-no-timing').result;
+    const settled = await simGo.waitForTasks(submitted.taskIds, 500);
+    expect(settled.pending).toBe(false);
+    expect(settled.tasks[0].status).toBe('succeeded');
+    await simGo.close();
+  });
+
+  test('批量提交里后面的节点校验失败时，前面不会留下 running 任务', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-batch-fail';
+    seedParityCanvas(simGo, canvasId);
+    simGo.beginTurn({ turnId: 'turn-batch-fail', canvasId, permissionMode: 'canvas' });
+    expect(() => simGo.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image', 'node-video'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'batch-submit', 'turn-batch-fail')).toThrow();
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(0);
+    await simGo.close();
+  });
+
+  test('外部 caller 提交后提案已确认并记下任务，运行器再确认不会产生第二个任务', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-caller-confirm';
+    seedParityCanvas(simGo, canvasId);
+    simGo.beginTurn({ turnId: 'turn-caller-confirm', canvasId, permissionMode: 'canvas' });
+    const proposal = simGo.executeOp('canvas.generation.propose', {
+      canvasId, kind: 'image', nodeIds: ['node-image'],
+    }, '', 'turn-caller-confirm').result;
+    const submitted = simGo.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      proposalId: proposal.proposalId,
+      expectedRevision: proposal.source.canvasRevision,
+      expectedModelConfigRevision: proposal.source.modelConfigRevision,
+    }, 'caller-submit', 'turn-caller-confirm').result;
+    expect(submitted.taskIds.length).toBe(1);
+    expect(simGo.proposals.get(proposal.proposalId).confirmed).toBe(true);
+    expect(simGo.proposals.get(proposal.proposalId).taskIds).toEqual(submitted.taskIds);
+
+    const confirmed = await confirmPendingProposals(simGo, canvasId);
+    expect(confirmed).toBe(0);
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
+    await simGo.close();
+  });
+
+  test('内置宿主提交必须已有确认过的提案；确认后的重复提交只回读原任务', async () => {
+    const simGo = createSimGo({ hostToken: 'host-token' });
+    const canvasId = 'canvas-host-submit';
+    seedParityCanvas(simGo, canvasId);
+    await simGo.listen(0);
+    simGo.beginTurn({ turnId: 'turn-host-submit', canvasId, permissionMode: 'canvas' });
+    const proposal = simGo.executeOp('canvas.generation.propose', {
+      canvasId, kind: 'image', nodeIds: ['node-image'],
+    }, '', 'turn-host-submit').result;
+    const submitParams = {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      proposalId: proposal.proposalId,
+      expectedRevision: proposal.source.canvasRevision,
+      expectedModelConfigRevision: proposal.source.modelConfigRevision,
+    };
+    const rejected = await fetch(`${simGo.baseUrl}/api/ops/canvas.generation.submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Beeftv-Agent-Token': 'host-token', 'x-beeftv-agent-turn': 'turn-host-submit' },
+      body: JSON.stringify({ opId: 'host-submit-1', params: submitParams }),
+    });
+    expect(rejected.status).toBe(403);
+    expect((await rejected.json()).reason).toBe('generation_confirmation_required');
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(0);
+
+    const tasks = await simGo.confirmProposals(proposal.proposalId, { delayMs: 1 });
+    // 确认后任务完成会写回节点并推进画布版本，重提时带当前版本。
+    const replay = await fetch(`${simGo.baseUrl}/api/ops/canvas.generation.submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Beeftv-Agent-Token': 'host-token', 'x-beeftv-agent-turn': 'turn-host-submit' },
+      body: JSON.stringify({ opId: 'host-submit-2', params: { ...submitParams, expectedRevision: simGo.ensureCanvas(canvasId).revision } }),
+    });
+    const replayBody = await replay.json();
+    expect(replay.status).toBe(200);
+    expect(replayBody.data.result.taskIds).toEqual(tasks.map((task) => task.id));
+    expect(simGo.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(1);
+    await simGo.close();
+  });
+
+  test('task.wait 未开启时直接 HTTP 调用也按未知操作拒绝', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-wait-hidden';
+    seedParityCanvas(simGo, canvasId);
+    await simGo.listen(0);
+    simGo.beginTurn({ turnId: 'turn-wait-hidden', canvasId, permissionMode: 'canvas' });
+    const hidden = await fetch(`${simGo.baseUrl}/api/ops/task.wait`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-beeftv-agent-turn': 'turn-wait-hidden' },
+      body: JSON.stringify({ opId: 'wait-hidden', params: { taskId: 'task-1', timeoutMs: 1 } }),
+    });
+    expect(hidden.status).toBe(404);
+    expect((await hidden.json()).reason).toBe('unknown_operation');
+    simGo.enableTaskWait();
+    const exposed = await fetch(`${simGo.baseUrl}/api/ops/task.wait`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-beeftv-agent-turn': 'turn-wait-hidden' },
+      body: JSON.stringify({ opId: 'wait-exposed', params: { taskId: 'task-1', timeoutMs: 1 } }),
+    });
+    expect(exposed.status).toBe(200);
+    expect((await exposed.json()).data.tasks).toEqual([]);
     await simGo.close();
   });
 

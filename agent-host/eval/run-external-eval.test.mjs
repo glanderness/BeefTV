@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import fs from 'node:fs';
 
 import { createCnyBudget } from './usage.mjs';
 
-import { agentEnv, createBudgetStop, parseArgs, parseCodexEvents, percentile, readEvalPrices, runExternalEval, summarizeUsage, turnTokens } from './run-external-eval.mjs';
+import { agentEnv, createBudgetStop, parseArgs, parseCodexEvents, percentile, prepareAgentHome, readEvalPrices, runExternalEval, summarizeUsage, turnTokens, usageAccountingAction } from './run-external-eval.mjs';
 
 describe('external agent eval driver', () => {
   test('parses the comparison flags', () => {
@@ -37,7 +38,7 @@ describe('external agent eval driver', () => {
 
   // 外部 CLI 看不到真实 HOME 和无关的凭据，只拿到自己那家的模型配置。
   test('gives each agent only its own credentials and a private home', () => {
-    const source = { PATH: '/bin', HOME: '/Users/real', ANTHROPIC_API_KEY: 'a', BEEFTV_EVAL_CODEX_API_KEY: 'c', GITHUB_TOKEN: 'g', BEEFTV_AGENT_API_KEY: 'b' };
+    const source = { PATH: '/bin', HOME: '/home/real', ANTHROPIC_API_KEY: 'a', BEEFTV_EVAL_CODEX_API_KEY: 'c', GITHUB_TOKEN: 'g', BEEFTV_AGENT_API_KEY: 'b' };
     expect(agentEnv('claude', '/tmp/h', source)).toEqual({ HOME: '/tmp/h', PATH: '/bin', ANTHROPIC_API_KEY: 'a', CLAUDE_CONFIG_DIR: '/tmp/h' });
     expect(agentEnv('codex', '/tmp/h', source)).toEqual({ HOME: '/tmp/h', PATH: '/bin', BEEFTV_EVAL_CODEX_API_KEY: 'c', CODEX_HOME: '/tmp/h' });
   });
@@ -95,6 +96,33 @@ describe('外部测评预算与新报告字段', () => {
 
   test('拒绝未知的外部 Agent', async () => {
     await expect(runExternalEval({ agent: 'nope', scenario: 'S1' })).rejects.toThrow('claude、codex 或 dsh');
+  });
+
+  test('用量不完整设了预算时必须停止后续场景；没预算时只计数', () => {
+    expect(usageAccountingAction({ usageIncomplete: true, budgetEnabled: true })).toEqual({ countIncomplete: true, abortScenarios: true });
+    expect(usageAccountingAction({ usageIncomplete: true, budgetEnabled: false })).toEqual({ countIncomplete: true, abortScenarios: false });
+    expect(usageAccountingAction({ usageIncomplete: false, budgetEnabled: true })).toEqual({ countIncomplete: false, abortScenarios: false });
+  });
+
+  test('summary 计数用量不完整轮次和被它中止的场景', () => {
+    const results = [
+      { code: 'S1', status: 'aborted_usage_incomplete', usages: [{ tokens: { uncachedInput: 0, cacheRead: 0, output: 0, incomplete: true }, usageIncomplete: true }] },
+      { code: 'S2', status: 'aborted_usage_incomplete', usages: [] },
+      { code: 'S3', status: 'not_applicable', usages: [] },
+    ];
+    const summary = summarizeUsage(results, results.filter((r) => r.status !== 'not_applicable'));
+    expect(summary.usageIncompleteTurns).toBe(1);
+    expect(summary.abortedUsageIncompleteRuns).toBe(2);
+    expect(summary.notApplicable).toBe(1);
+    expect(summary.scenarioCompletion.S1).toMatchObject({ abortedUsage: 1 });
+  });
+
+  test('外部 CLI 的临时 home 清理后不留目录，也不留 owner token', () => {
+    const agent = prepareAgentHome('claude', '/tmp', { BEEFTV_OWNER_TOKEN: 'owner-token' });
+    expect(fs.existsSync(agent.home)).toBe(true);
+    expect(fs.readFileSync(agent.mcpPath, 'utf8')).toContain('owner-token');
+    agent.cleanup();
+    expect(fs.existsSync(agent.home)).toBe(false);
   });
 
   test('百分位为空时返回 0', () => {
