@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { createSimGo } from './sim-go.mjs';
 import { SCENARIOS, resolveScenarioList, createFakeModelServer } from './scenarios.mjs';
 import { isTransientStudioTailMessage } from '../studio-digest.mjs';
+import { parseSimCapabilities, applySimCapabilities, waitForCanvasTasks } from './scenarios/shared.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = path.resolve(__dirname, '../server.mjs');
@@ -41,6 +42,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     maxRequests: 25,
     budgetCny: 25,
     outDir: '',
+    simCapabilities: '',
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -67,6 +69,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       args.budgetCny = Number(argv[++i]);
     } else if (arg.startsWith('--budget-cny=')) {
       args.budgetCny = Number(arg.slice('--budget-cny='.length));
+    } else if (arg === '--sim-capabilities' && argv[i + 1] !== undefined) {
+      args.simCapabilities = String(argv[++i]);
     } else if (arg === '--out' && argv[i + 1] !== undefined) {
       args.outDir = String(argv[++i]);
     } else if (arg.startsWith('--out=')) {
@@ -140,6 +144,7 @@ export function validateEvalConfig(args, env = process.env) {
     realApiKey,
     realModelId,
     realApi,
+    simCapabilities: parseSimCapabilities(args.simCapabilities),
   };
 }
 
@@ -793,6 +798,7 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
       budgetCny: config.budgetCny,
       priceInPerMillion: config.priceInPerMillion,
       priceOutPerMillion: config.priceOutPerMillion,
+      simCapabilities: config.simCapabilities || [],
     },
     summary: {
       totalScenarioRuns: totalRuns,
@@ -1185,6 +1191,7 @@ export async function runEval(rawOptions = {}) {
   });
 
   const simGo = createSimGo({ hostToken });
+  applySimCapabilities(simGo, config.simCapabilities || []);
   await simGo.listen(0);
 
   let fakeModel = null;
@@ -1405,6 +1412,7 @@ export async function runEval(rawOptions = {}) {
           const turnId = `${turnSpec.id}-run${runIdx}`;
           meter.setContext({ runIndex: runIdx, scenarioId: scenario.id, turnId });
 
+          if (turnSpec.waitForTasksBeforeTurnMs) await waitForCanvasTasks(simGo, canvasId, turnSpec.waitForTasksBeforeTurnMs);
           const currentDoc = simGo.ensureCanvas(canvasId);
           simGo.beginTurn({
             turnId,
@@ -1755,6 +1763,7 @@ if (isMain) {
           '  --runs <N>               每个场景重复运行次数（默认 1）',
           '  --max-requests <N>       单回合最大模型请求数（默认 25）',
           '  --budget-cny <number>    整轮评测累计人民币预算上限（默认 25）',
+          '  --sim-capabilities <list> 打开模拟后端里尚未进入真实后端的能力（目前只有 task.wait），默认全关',
           '  --out <dir>              报告与 ledger.jsonl 输出目录',
         ].join('\n'),
       );

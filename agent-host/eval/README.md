@@ -11,7 +11,7 @@
 ## 1. 目录结构
 
 - `sim-go.mjs`：内存版 Go 业务权威模拟器（`createSimGo`）。加载真实的 `operation-descriptors.fixture.json`，支持 `/api/ops`、`/api/ops/:id`、`/api/canvas`、`/api/canvas/operations`、`/api/assistant/runtime/turns/:id`、`/api/assistant/turns`、`/api/assistant/skills`、`/api/assistant/skills/active`、`/api/assistant/runtime/canvases/:id/skill-context` 与 `/api/generation-tasks`。
-- `scenarios.mjs`（及 `scenarios/index.mjs`）：11 个固定评测场景定义、确定性检查项（`checks`）与本地 Fake OpenAI Chat Completions SSE 模型桩（`createFakeModelServer`）。S8–S11 的场景定义与检查项在 `scenarios/real-failures.mjs`，共用纯函数在 `scenarios/shared.mjs`。
+- `scenarios.mjs`（及 `scenarios/index.mjs`）：11 个固定评测场景定义、确定性检查项（`checks`）与本地 Fake OpenAI Chat Completions SSE 模型桩（`createFakeModelServer`）。S8–S11 的场景定义与检查项在 `scenarios/real-failures.mjs`，替代场景 R1/R3/R6/R7/L1 在 `scenarios/parity.mjs`，共用纯函数在 `scenarios/shared.mjs`。
 - `run-eval.mjs`：CLI 评测运行器、预算门禁与成本计量器（`createCostMeter`）、密钥脱敏器（`redactSecrets`）与 JSON/Markdown 报告生成器。
 - `run-external-eval.mjs`：外部 Agent 对照驱动，见下文「外部 Agent 对照」。
 - `sim-go.test.mjs`：针对 `sim-go`、CAS 冲突、分镜行产出连线绑定、生成提议与撤销、预算熔断及脱敏的单测与端到端套件。
@@ -95,6 +95,48 @@ S8–S11 的计分只使用结构化数据：画布节点、生成方案、`opLo
 
 ---
 
+## 替代场景（R1 / R3 / R6 / R7 / L1）
+
+`scenarios/parity.mjs` 定义「在 DSH 里替代内置助手」要过的 6 个场景。它们和 S1–S11 使用同一套 `setup / turns / evaluate`，但**不进 `all`**：`all` 仍然只跑 S1–S11，替代场景用 `parity` 或场景码单独选择。
+
+```bash
+cd agent-host
+# 外部 Agent（Claude Code / Codex / DSH）直接用场景码
+bun eval/run-external-eval.mjs --scenario R1a,R3 --out /tmp/beeftv-parity-ext
+# 内置宿主 + 真实模型（需要模型与预算配置）
+bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-parity
+```
+
+内置的确定性假模型还没有 R 场景的脚本分支，`--model fake --scenario parity` 会跑但判失败；脚本接入前请用外部 Agent 或真实模型。尺子自身的判分可以用 `bun test eval/scenarios.test.mjs` 里的 sim-go 自检覆盖（正确执行应全过，另有每个场景至少一条反例）。
+
+| 编号 | 场景 ID | 核心验证目标 |
+| :--- | :--- | :--- |
+| **R1a** | `submit-wait-image` | 一句「生成镜 1 首帧，好了把视频也做出来」，图片任务约 20 秒：用户不再发消息时首帧完成并绑定，同一节点没有重复付费提交，回复说明结果 |
+| **R1b** | `submit-wait-video` | 同上，但视频任务约 135 秒：图片和视频最终都完成并绑定，没有重复付费提交 |
+| **R3** | `restart-resume` | 第 1 轮只提交两张首帧（约 30 秒，用户说不用等）；第 2 轮（新进程续聊）问「刚才那两张好了吗」：第 2 轮不再新增付费提交，两张都绑到各自节点 |
+| **R6** | `long-film-10shot` | 10 镜分镜表（`canvas.script.prepare` 单次最多 8 行，需分批）、10 张首帧全部生成并绑定、时间线已渲染、没有遗留失败调用 |
+| **R7** | `same-turn-multi-edit` | 同一轮把 4 个文本节点的标题和正文都改掉：4 个都改对、没有丢改动；`stale_revision` 次数只记进检查明细，不作为失败条件 |
+| **L1** | `large-canvas-locate` | 约 300 个节点的画布上按标题找到「备注 137」并改正文：只改这一个；读画布次数和返回字节数记进检查明细 |
+
+判分只看结果：画布节点与绑定字段、`simGo.snapshot().tasks`、`opLog` 和回合记录；不按工具名或模型名分支，以后新增等待/提交工具不用改尺子。
+
+### 任务耗时
+
+模拟器新增 `simGo.setTaskTiming(canvasId, { imageMs, videoMs, audioMs, defaultMs })`，按画布配置生成任务耗时。配置过的画布上，`propose → 确认` 或外部 `canvas.generation.submit` 会立即返回 `running`，任务到点后异步完成；没配置的画布保持原来的「确认后 5 毫秒完成、调用返回时已成功」行为。
+
+### 两种提交路径
+
+- 内置宿主：`canvas.generation.propose` 之后由面板确认（`confirmProposals`），任务完成后自动写回节点。
+- 外部 Agent（owner token / 已登记客户端，`approvalMode=caller`）：先 `canvas.generation.propose` 拿画布版本和模型配置版本，再带稳定 `operationId` 调用 `canvas.generation.submit`。任务只交付产物，节点仍要用 `canvas.task.bind` 写回，和真实后端一致。
+- 两条路径都可调用只读的 `task.wait`（单次最多等 25 秒，超时返回 `pending` 和原 `taskId`，不返回错误）。描述符默认不外露，替代场景 setup 调 `simGo.enableTaskWait()` 后才出现在 `/api/ops`，因此 S1–S11 的工具定义体积不变。
+
+### 运行器需要配合的等待
+
+场景回合可以在定义里带 `waitForTasksBeforeTurnMs`（例如 R3 第 2 轮）：运行器在开始这一轮前，应先等该画布上尚未完成的任务结束。场景收尾打分前也应等任务结束，否则会拿 `running` 状态误判。R6 的 10 毫秒、R7/L1 的同步操作不受影响。
+
+
+---
+
 ## 5. 核心守护指标说明
 
 1. **结构完整率 (`structuralCompletenessRate`)**：场景内通过的结构化断言数 / 总断言数。
@@ -114,13 +156,13 @@ S8–S11 的计分只使用结构化数据：画布节点、生成方案、`opLo
 - **S7 是用户主动复查**：用户再发一条消息发起检查，与 S5 自动唤醒分别计分，不能用 S7 通过宣称自动续做已实现。修正提示词既可以是 `canvas.node.configure` 的 `patch.prompt`（媒体节点的标准做法），也可以是 `canvas.node.update` 的 `prompt`/`content`；只改其他参数不算。图片和缺陷说明由模拟器提供；真实模型模式也使用模拟产物及缺陷说明，不是对真实图片视觉判断准确率的测量。
 - **S11 的受控错误**：模型工具参数 schema 会先拒绝缺少 `expectedVersion` 的 `media.inspect`（错误文本为 `Validation failed ... missing`），不会到达模拟器；直接调用操作层时模拟器按真实后端的 `media_version_required` 拒绝。场景另外用 `armNextMediaInspectError` 让本轮第一次针对目标图片的 `media.inspect` 返回可恢复的 `stale_media_version`，并提示重新读取 overview 取得当前版本；节点声明的 `asset-s11-seed` 与 `res-s11-seed` 都已注册，按 nodeId 或 assetId 读取都会进入同一条受控错误流程。只有随后带正确版本的 `media.inspect` 成功才算完成复查。评测同时统计模型侧与模拟器侧的同参数重试；回复原文只作诊断，不参与计分。
 - **S6 不测试压缩**：场景已从 `skill-after-compaction` 更名为 `skill-across-turns`。真实调用 Durable 压缩、故意使用有损摘要并验证技能重新注入的测试在 `../durable-skills-cases.mjs`，由 `bun test durable-skills.test.mjs` 运行；这份评测报告不继承其结论。
-- **新增场景**：在 `scenarios.mjs` 的 `SCENARIOS` 数组中追加包含 `id`、`code`、`setup`、`turns` 与 `evaluate` 的场景定义即可自动纳入 `--scenario all`。
+- **新增场景**：在 `scenarios.mjs` 的 `SCENARIOS` 数组中追加包含 `id`、`code`、`setup`、`turns` 与 `evaluate` 的场景定义即可自动纳入 `--scenario all`；替代场景放进 `scenarios/parity.mjs` 的 `PARITY_SCENARIOS`，只由 `--scenario parity` 或场景码选择，不改 `all`。
 
 ---
 
-## 外部 Agent 对照（Claude Code / Codex）
+## 外部 Agent 对照（Claude Code / Codex / DSH）
 
-`eval/run-external-eval.mjs` 用同一个模拟器和同一套场景判分，换成外部 Agent 来回答：每个用户回合启动一次 `claude -p` 或 `codex exec`（第二轮起接着上一轮会话），通过 `beeftv mcp serve` 读写模拟器，并装好 `plugins/beeftv-skills` 里的画布技能。外部 Agent 的配置目录是临时目录，不读写本机真实的 `~/.claude` 或 `~/.codex`；Claude Code 只开放技能加载和 BeefTV 工具。
+`eval/run-external-eval.mjs` 用同一个模拟器和同一套场景判分，换成外部 Agent 来回答：每个用户回合启动一次 `claude -p`、`codex exec` 或 `dsh --profile headless --json`（第二轮起接着上一轮会话），通过 `beeftv mcp serve` 读写模拟器，并装好 `plugins/beeftv-skills` 里的画布技能。外部 Agent 的配置目录是临时目录，不读写本机真实的 `~/.claude`、`~/.codex` 或 `~/.dsh`；Claude Code 只开放技能加载和 BeefTV 工具。
 
 ```bash
 cd backend && go build -o /tmp/beeftv ./cmd/beeftv && cd ../agent-host
@@ -130,13 +172,33 @@ BEEFTV_EVAL_PRICE_IN=0.2 BEEFTV_EVAL_PRICE_OUT=0.8 BEEFTV_CLI=/tmp/beeftv \
 bun eval/run-external-eval.mjs --scenario S1,S2,S3,S6,S7,S8,S9,S10,S11 --runs 2 --out /tmp/ext-eval
 # Codex（OpenAI Responses 兼容网关）
 BEEFTV_EVAL_AGENT=codex BEEFTV_EVAL_CODEX_BASE_URL=https://<网关>/v1 BEEFTV_EVAL_CODEX_API_KEY=... BEEFTV_EVAL_AGENT_MODEL=<模型> ...
+# DSH headless（模型服务商沿用本机 headless profile 的配置）
+BEEFTV_EVAL_AGENT=dsh BEEFTV_EVAL_DSH_BIN=/Applications/DeepSeek\ Harness.app/Contents/Resources/runtime/cli/bin/dsh \
+BEEFTV_CLI=/tmp/beeftv BEEFTV_EVAL_AGENT_MODEL=<服务商>/<模型> \
+BEEFTV_EVAL_PRICE_IN=0.2 BEEFTV_EVAL_PRICE_CACHE=0.004 BEEFTV_EVAL_PRICE_OUT=0.8 \
+bun eval/run-external-eval.mjs --scenario S1 --runs 1 --budget-cny <元> --out /tmp/dsh-eval
 ```
 
 - 模拟器前有一层转发，把当前回合写进 `x-beeftv-agent-turn`，按回合判分的检查照常可用；`/business/tools` 回空列表。
 - S4（中途插话）、S5（生成后自动唤醒）只有内置宿主支持，记为不适用；S6 的「每次请求都带着活动技能」只能从宿主请求体取证，不计入。技能 pin 改成在消息里告诉它技能版本，相当于用户说「我选了这个技能」。
 - `--with-digest`：每轮把内置助手同款的制作摘要放在消息前面，用来量摘要对外部 Agent 的作用。
-- 费用按 `BEEFTV_EVAL_PRICE_IN/OUT` 折算，口径和内置评测一致（输入含缓存）。Codex 不报模型请求次数，按「工具调用数 + 1」估。
+- 用量统一成三个数：未缓存输入、缓存读、输出。Claude 的 `input_tokens` 不含缓存，缓存创建并进未缓存输入；Codex 的 `input_tokens` 已含缓存，会减掉；DSH 的 `inputTokens` 就是未缓存输入。每轮另记工具调用数和耗时，summary 给出每轮平均工具调用、耗时中位数与 p90、按场景的完成数。Codex 不报模型请求次数，按「工具调用数 + 1」估。
+- 费用：`BEEFTV_EVAL_PRICE_IN` 算未缓存输入，`BEEFTV_EVAL_PRICE_CACHE` 算缓存读，`BEEFTV_EVAL_PRICE_OUT` 算输出（元/百万 token）。没给 `PRICE_CACHE` 时按 `PRICE_IN` 算缓存读，报告 `meta.cachePriceSource` 会写成 `price_in`。
+- 预算：`--budget-cny <元>` 在每轮开始前按已累计费用检查，达到上限就停，剩下的场景记 `aborted_budget`；不预留当前轮。设了预算但 `PRICE_IN`/`PRICE_OUT` 缺失或为 0 时直接报错退出，不按 0 算。
 - 模拟器没有 `generation.estimate` 和 `media.review`，外部 Agent 调到时会报不支持；这是模拟器的缺口，正式后端有这两个操作。
+
+### DSH headless 驱动
+
+- `BEEFTV_EVAL_DSH_BIN`：`dsh` 可执行文件，默认从 `PATH` 找；macOS 安装包内位置是 `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`。
+- 隔离：每次评测新建临时 `DSH_HOME`，profile 由 dsh 自己初始化；`DSH_AGENTS_HOME` 和 `HOME` 也指向临时目录，结束后删除。不写本机 `~/.dsh`。
+- 模型服务商配置：运行时从源 `DSH_HOME`（`BEEFTV_EVAL_DSH_SOURCE_HOME`，默认当前 `$DSH_HOME` 或 `~/.dsh`）只读复制 `profiles/headless/cordis.patch.yml`。这只包含配置和密钥环境变量名，不含密钥。
+- 凭据：只通过启动环境变量或源 `.credentials.yaml` 的只读软链在运行时提供，评测结束随临时目录一起删除；不写入仓库、报告或日志。
+- MCP：用 `--patch` 挂 `@deepseek-ai/dsh-mcp-client`，`serverName` 为 `beeftv`，stdio 启动 `beeftv mcp serve`，env 带 `BEEFTV_BASE_URL` 与 `BEEFTV_OWNER_TOKEN`，`toolCallTimeoutMs` 为 120000。`beeftv mcp serve` 报告的「N 个工具」写进报告 meta。
+- 工具面：overlay 逐个关闭命令行、文件读写、网页、子 Agent、任务、待办等内置工具，只留技能读取和 BeefTV MCP。headless 没有更细的类别开关，所以按插件 id 禁用；实际工具数从 stderr 读回，不凭配置推断。权限用 `danger-full-access` 预设加 `--approval-policy never`，避免无人值守时等待审批。
+- 技能：`plugins/beeftv-skills/skills/beeftv-canvas/SKILL.md` 复制到临时 `$DSH_HOME/skills/beeftv-canvas/`。
+- 续聊：第二轮起用 `--session-id` 续同一会话；会话不带 agent preset，工作目录固定为同一个临时目录，满足 headless 的续聊限制。
+- 解析：从 `--json` 事件流取最终回复、`final.reason`、退出码和 `tool_call` 数；每步 `status(step_end)` 的 usage 里 `inputTokens` 是未缓存输入、`cacheReadTokens` 是缓存读、`outputTokens` 是输出。有重试的步骤不带 usage 时，从临时 DSH_HOME 下该会话日志的 `assistant/message`/`assistant/attempt` 用量补；没有 `zstd` 命令或补不到时标成「用量不完整」，不按 0 静默通过。
+- `BEEFTV_EVAL_AGENT_MODEL`：可选，`provider/model` 形式（模型 id 自己可带斜杠）；不填则用 DSH 当前配置，并把实际 provider、model、推理档位写进报告 meta。`BEEFTV_EVAL_DSH_REASONING` 可覆盖推理档位，默认沿用配置或 `high`。
 
 ---
 

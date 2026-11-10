@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { extractUsage, parseTurnEnd } from './usage.mjs';
+import { createCnyBudget, costOfTokens, extractUsage, normalizeAgentUsage, parseTurnEnd } from './usage.mjs';
 
 const sse = (...chunks) => chunks.map((c) => 'data: ' + JSON.stringify(c)).join('\n\n') + '\n\ndata: [DONE]\n\n';
 
@@ -65,4 +65,46 @@ test('回合结果以 turn_end 为准：HTTP 200 里的错误和取消都能识�
   expect(parseTurnEnd(line({ type: 'turn_end', error: 'upstream 500', errorReason: 'model_failed' })).status).toBe('error:model_failed');
   expect(parseTurnEnd(line({ type: 'turn_end', cancelled: true })).status).toBe('cancelled');
   expect(parseTurnEnd(line({ type: 'session' })).status).toBe('no_turn_end');
+});
+
+// 三类外部 Agent 的统一口径：未缓存输入、缓存读、输出。
+test('统一用量口径：Claude 加回缓存创建，Codex 减掉缓存读，DSH 直接用未缓存输入', () => {
+  expect(normalizeAgentUsage('claude', { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 50, output_tokens: 7 }))
+    .toEqual({ uncachedInput: 150, cacheRead: 900, output: 7, cacheKnown: true, incomplete: false });
+  expect(normalizeAgentUsage('codex', { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 9 }))
+    .toEqual({ uncachedInput: 200, cacheRead: 800, output: 9, cacheKnown: true, incomplete: false });
+  expect(normalizeAgentUsage('dsh', { inputTokens: 129, cacheReadTokens: 9216, outputTokens: 2 }))
+    .toEqual({ uncachedInput: 129, cacheRead: 9216, output: 2, cacheKnown: true, incomplete: false });
+  expect(normalizeAgentUsage('dsh', { uncachedInput: 5, cacheRead: 6, cacheKnown: true, output: 7 }))
+    .toEqual({ uncachedInput: 5, cacheRead: 6, output: 7, cacheKnown: true, incomplete: false });
+  expect(normalizeAgentUsage('dsh', null).incomplete).toBe(true);
+});
+
+test('费用分别按未缓存输入、缓存读、输出折算，缓存价缺省时沿用输入价', () => {
+  const tokens = { uncachedInput: 1_000_000, cacheRead: 2_000_000, output: 1_000_000 };
+  expect(costOfTokens(tokens, { input: 0.2, cache: 0.004, output: 0.8 })).toBeCloseTo(1.008, 6);
+  expect(costOfTokens(tokens, { input: 0.2, output: 0.8 })).toBeCloseTo(1.4, 6);
+});
+
+test('预算：设了上限但价格缺失或为 0 时直接报错，不按 0 算', () => {
+  expect(() => createCnyBudget({ budgetCny: 1, priceIn: 0, priceOut: 0.8 })).toThrow('budget_price_missing');
+  expect(() => createCnyBudget({ budgetCny: 1, priceIn: 0.2, priceOut: 0 })).toThrow('budget_price_missing');
+  expect(() => createCnyBudget({ budgetCny: 1, priceIn: 0.2, priceCache: 0, priceOut: 0.8 })).toThrow('budget_price_missing');
+  expect(() => createCnyBudget({ budgetCny: 0, priceIn: 0.2, priceOut: 0.8 })).toThrow('--budget-cny');
+});
+
+test('预算：累计达到上限后 reached 为真；没设预算时不限制且按 0 单价', () => {
+  const budget = createCnyBudget({ budgetCny: 0.01, priceIn: 1, priceOut: 1 });
+  expect(budget.enabled).toBe(true);
+  expect(budget.cachePriceSource).toBe('price_in');
+  expect(budget.reached()).toBe(false);
+  budget.addCost({ uncachedInput: 5_000, cacheRead: 0, output: 0 });
+  expect(budget.reached()).toBe(false);
+  budget.addCost({ uncachedInput: 5_000, cacheRead: 0, output: 0 });
+  expect(budget.reached()).toBe(true);
+  expect(budget.spent).toBeCloseTo(0.01, 8);
+
+  const none = createCnyBudget({ priceIn: 0, priceOut: 0 });
+  expect(none.enabled).toBe(false);
+  expect(none.reached()).toBe(false);
 });
