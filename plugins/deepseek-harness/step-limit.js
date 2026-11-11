@@ -7,6 +7,10 @@ export function createStepLimit() {
   const sessions = new Map()
   let notice = null
 
+  function limitOf(state) {
+    return state.limit || 0
+  }
+
   function sessionOf(sessionId) {
     if (!sessionId) return null
     let state = sessions.get(sessionId)
@@ -25,17 +29,20 @@ export function createStepLimit() {
       if (beefTV) state.beefTV = true
       if (!state.stop && state.beefTV && state.count >= limit) {
         state.stop = true
-        notice = { sessionId, text: stepLimitNotice(limit) }
+        state.limit = limit
       }
     },
 
     startTurn({ sessionId, turn, beefTV }) {
       if (!sessionId) return
       sessions.set(sessionId, { turn: turn ?? null, count: 0, beefTV: Boolean(beefTV), stop: false })
+      if (notice?.sessionId === sessionId) notice = null
     },
 
     endTurn(sessionId) {
-      if (sessionId) sessions.delete(sessionId)
+      if (!sessionId) return
+      sessions.delete(sessionId)
+      if (notice?.sessionId === sessionId) notice = null
     },
 
     // 返回这一轮是否已经到上限。用户自己发了消息时重新计数并放行。
@@ -43,19 +50,15 @@ export function createStepLimit() {
       const state = sessionId ? sessions.get(sessionId) : null
       if (!state?.stop) return false
       if (state.turn !== null && turn !== state.turn) return false
-      if (!hasUserInput) return true
+      if (!hasUserInput) {
+        // 只有真正拒绝下一步时才提示；模型自然收尾不显示「先停一下」。
+        notice = { sessionId, text: stepLimitNotice(limitOf(state)) }
+        return true
+      }
       state.count = 0
       state.stop = false
       notice = null
       return false
-    },
-
-    // turn-stopping 只在模型已不再调用工具的收尾阶段触发，用来补齐桌面提示。
-    noteStopping({ sessionId, turn, limit }) {
-      const state = sessionId ? sessions.get(sessionId) : null
-      if (!state?.stop) return
-      if (state.turn !== null && turn !== state.turn) return
-      notice = { sessionId, text: stepLimitNotice(limit) }
     },
 
     // 用户自己发了新消息：上限提示立即收起。

@@ -106,7 +106,6 @@ export function approvalReason(name, args, businessTools = [], quotes = new Map(
 export const defaultPluginSettings = Object.freeze({ autoContinue: true, stepLimit: 40 })
 export const minimumStepLimit = 5
 export const maximumStepLimit = 200
-export { maximumWakesPerSession } from './await-machine.js'
 
 // 设置文件来自本机磁盘，读坏或旧字段都以默认值继续，避免插件整体不可用。
 export function normalizeSettings(value) {
@@ -178,6 +177,8 @@ function taskSaved(task) {
 // 不是生成失败；这类结果只能重新保存，不能重新生成。
 function taskIncomplete(task) {
   if (task?.status !== 'succeeded') return false
+  // 结果还在下载/重试入库时不能提前说「没保存成功」，否则模型会重复保存或重新生成。
+  if (taskDeliveryPending(task)) return false
   const phase = taskPhase(task)
   if (phase === 'failed') return true
   if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_permanent') return true
@@ -259,6 +260,8 @@ export function taskOutcome(task, taskId = task?.taskId) {
 // task.wait 超时返回 pending；任务详情退回用同一套判定，不把暂时读不到当成失败。
 function listedTaskState(value, taskId) {
   const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined) : undefined
+  // 仍在下载/重试入库的结果不能按 listed.status=succeeded 直接算完成。
+  if (listed && taskDeliveryPending(listed)) return { taskId, state: 'pending', reason: '' }
   const raw = typeof listed?.state === 'string' ? listed.state : typeof listed?.status === 'string' ? listed.status : ''
   const state = raw.toLowerCase()
   if (['succeeded', 'success', 'completed', 'ready'].includes(state)) return { taskId, state: 'succeeded', reason: '' }

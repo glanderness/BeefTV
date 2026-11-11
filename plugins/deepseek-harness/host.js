@@ -92,12 +92,6 @@ export function apply(ctx) {
     return { ...decision, messages: baseMessages.filter(message => !excluded.includes(message?.id)) }
   })
 
-  ctx.on('agent/turn-stopping', payload => {
-    const sessionId = sessionIdOf(payload?.agent)
-    if (!sessionId) return
-    stepLimit.noteStopping({ sessionId, turn: payload?.turn, limit: connection.pluginSettings().stepLimit })
-  })
-
   ctx.on('session/event', (session, event) => {
     const sessionId = session?.id
     if (!sessionId) return

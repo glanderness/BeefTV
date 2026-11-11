@@ -73,20 +73,36 @@ function removeMessage(state, messageId) {
   delete state.messages[messageId]
 }
 
+// 超过上限时把最旧的结果转入「离开时完成」，宁可多一条待核对记录，也不静默丢掉已付费的结果。
 function defer(state, sessionId, outcomes, workspaceId) {
   const session = sessionOf(state, sessionId)
-  if (!session) return
+  if (!session) return false
   const list = dedupeOutcomes(outcomes)
-  if (!list.length) return
-  const previous = session.deferred && session.deferred.workspaceId === (workspaceId ?? null)
-    ? session.deferred.outcomes
-    : []
+  if (!list.length) return false
+  let overflow = false
+  let previous = []
+  if (session.deferred && session.deferred.workspaceId === (workspaceId ?? null)) {
+    previous = session.deferred.outcomes
+  } else if (session.deferred) {
+    // 换工作区时旧 deferred 不能覆盖：留给下次连回原工作区时核对。
+    state.away.entries.push({
+      workspaceId: session.deferred.workspaceId ?? null,
+      taskIds: session.deferred.outcomes.map(outcome => outcome.taskId),
+      resolvedCount: 0,
+    })
+    overflow = true
+  }
   const merged = [...previous]
   for (const outcome of list) {
     if (!merged.some(item => item.taskId === outcome.taskId)) merged.push(outcome)
   }
-  while (merged.length > maximumDeferredOutcomes) merged.shift()
+  while (merged.length > maximumDeferredOutcomes) {
+    const oldest = merged.shift()
+    state.away.entries.push({ workspaceId: workspaceId ?? null, taskIds: [oldest.taskId], resolvedCount: 0 })
+    overflow = true
+  }
   session.deferred = { workspaceId: workspaceId ?? null, outcomes: merged }
+  return overflow
 }
 
 // 投进模型前的撤回：先把消息移出账本，再让薄壳调 inbox.remove。
@@ -110,7 +126,8 @@ function abandonWaits(state, sessionIds, actions, out) {
   }
 }
 
-function stopSession(state, sessionId, actions, out) {
+// 停止时也要把已注入但还没进入模型的唤醒撤回；撤回失败由 pre-step 的 stale 过滤兜底。
+function stopSession(state, sessionId, actions, out, reason = 'stop') {
   const session = sessionOf(state, sessionId)
   if (!session) return
   session.stopped = true
@@ -121,10 +138,10 @@ function stopSession(state, sessionId, actions, out) {
     actions.push({ type: 'abortWait', sessionId, token: wait.token })
     out.persist = true
   }
-  for (const [messageId] of messagesOf(state, sessionId)) removeMessage(state, messageId)
+  for (const [messageId, entry] of messagesOf(state, sessionId)) withdraw(state, entry, messageId, reason, actions)
 }
 
-function userMessage(state, sessionId, agentStatus, actions) {
+function userMessage(state, sessionId, agentStatus, actions, out) {
   const session = sessionOf(state, sessionId)
   if (!session) return
   // 用户亲自发消息：连续自动唤醒预算重新开始，被上限挡住的结果这时补投。
@@ -134,7 +151,14 @@ function userMessage(state, sessionId, agentStatus, actions) {
   const deferred = session.deferred
   if (!deferred?.outcomes.length) return
   if (active && deferred.workspaceId && deferred.workspaceId !== active) {
+    // 旧工作区的结果不能带到新工作区，也不能直接丢；留给下次连回原工作区时核对。
+    state.away.entries.push({
+      workspaceId: deferred.workspaceId,
+      taskIds: deferred.outcomes.map(outcome => outcome.taskId),
+      resolvedCount: 0,
+    })
     session.deferred = null
+    out.persist = true
     return
   }
   if (!active) return
@@ -184,7 +208,7 @@ function classifyStep(state, event, out) {
     if (entry) {
       unmarkWoken(state, entry.outcomes)
       if (session) session.wakeCount = Math.max(0, session.wakeCount - 1)
-      if (uncertain.includes(messageId)) defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)
+      if (uncertain.includes(messageId) && defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)) out.persist = true
     }
     removeMessage(state, messageId)
     delete state.stale[messageId]
@@ -197,7 +221,7 @@ function classifyStep(state, event, out) {
       unmarkWoken(state, entry.outcomes)
       const session = sessionOf(state, entry.sessionId)
       if (session) session.wakeCount = Math.max(0, session.wakeCount - 1)
-      defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)
+      if (defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)) out.persist = true
       removeMessage(state, messageId)
     }
   } else {
@@ -268,6 +292,11 @@ export function transition(state, event) {
     if (!fresh.length) return finish()
     let wait = next.waits[event.sessionId]
     if (wait && wait.workspaceId !== (event.workspaceId ?? null)) {
+      // 旧工作区的等待不再续跑，但结果仍留给下次连回同一工作区时核对。
+      if (wait.taskIds.length) {
+        next.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
+        out.persist = true
+      }
       actions.push({ type: 'abortWait', sessionId: event.sessionId, token: wait.token })
       wait = null
     }
@@ -291,9 +320,12 @@ export function transition(state, event) {
       && !deferredHasTaskAnywhere(next, outcome.taskId))
     const workspaceId = wait.workspaceId ?? null
     const active = activeWorkspace(next)
-    if (outcomes.length && next.autoContinue && (!active || workspaceId === active)) {
-      if (session.wakeCount >= maximumWakesPerSession) {
-        defer(next, event.sessionId, outcomes, workspaceId)
+    if (outcomes.length && next.autoContinue) {
+      if (active && workspaceId !== active) {
+        // 等待属于另一个工作区：不能投到当前会话，留给下次连回原工作区时核对。
+        next.away.entries.push({ workspaceId, taskIds: outcomes.map(outcome => outcome.taskId), resolvedCount: 0 })
+      } else if (session.wakeCount >= maximumWakesPerSession) {
+        if (defer(next, event.sessionId, outcomes, workspaceId)) out.persist = true
       } else {
         actions.push({
           type: 'deliver', sessionId: event.sessionId, outcomes, workspaceId,
@@ -306,6 +338,10 @@ export function transition(state, event) {
     const wait = next.waits[event.sessionId]
     if (wait && wait.token === event.waitToken) {
       delete next.waits[event.sessionId]
+      // 超时不再占用会话，但任务可能仍会成功；留给下次连回同一工作区时核对并提示。
+      if (wait.taskIds.length) {
+        next.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
+      }
       actions.push({ type: 'abortWait', sessionId: event.sessionId, token: wait.token })
       out.persist = true
     }
@@ -313,7 +349,7 @@ export function transition(state, event) {
     const session = sessionOf(next, event.sessionId)
     if (!session) return finish()
     if (!event.ok) {
-      defer(next, event.sessionId, event.outcomes, event.workspaceId)
+      if (defer(next, event.sessionId, event.outcomes, event.workspaceId)) out.persist = true
       return finish()
     }
     const outcomes = dedupeOutcomes(event.outcomes)
@@ -347,7 +383,7 @@ export function transition(state, event) {
     const entry = next.messages[event.messageId]
     if (!entry || entry.state !== 'withdrawing') return finish()
     if (!event.removed) {
-      if (entry.reason === 'switch') {
+      if (entry.reason === 'switch' || entry.reason === 'disable' || entry.reason === 'stop') {
         const session = sessionOf(next, entry.sessionId)
         if (session) session.wakeCount = Math.max(0, session.wakeCount - 1)
         unmarkWoken(next, entry.outcomes)
@@ -365,7 +401,7 @@ export function transition(state, event) {
     const outcomes = entry.outcomes
     const workspaceId = entry.workspaceId ?? activeWorkspace(next)
     removeMessage(next, event.messageId)
-    if (entry.reason === 'switch') return finish()
+    if (entry.reason === 'switch' || entry.reason === 'disable' || entry.reason === 'stop') return finish()
     actions.push({
       type: 'deliver', sessionId: entry.sessionId, outcomes, workspaceId,
       mode: event.agentStatus === 'running' ? 'inject' : 'followup', source: 'withdraw',
@@ -381,9 +417,9 @@ export function transition(state, event) {
   } else if (type === 'messageClaimed') {
     if (event.sourceKind === 'beeftv-await' || next.messages[event.messageId] || next.stale[event.messageId]) return finish()
     if (event.sourceKind !== 'user') return finish()
-    userMessage(next, event.sessionId, event.agentStatus, actions)
+    userMessage(next, event.sessionId, event.agentStatus, actions, out)
   } else if (type === 'userMessage') {
-    userMessage(next, event.sessionId, event.agentStatus, actions)
+    userMessage(next, event.sessionId, event.agentStatus, actions, out)
   } else if (type === 'messageDiscarded') {
     const entry = next.messages[event.messageId]
     if (!entry || entry.state === 'withdrawing') return finish()
@@ -392,7 +428,7 @@ export function transition(state, event) {
     unmarkWoken(next, entry.outcomes)
     removeMessage(next, event.messageId)
     if (session?.stopped) return finish()
-    defer(next, entry.sessionId, entry.outcomes, entry.workspaceId)
+    if (defer(next, entry.sessionId, entry.outcomes, entry.workspaceId)) out.persist = true
   } else if (type === 'stepEntered') {
     out.reply = classifyStep(next, event, out)
   } else if (type === 'userStop' || type === 'turnEndedByUser') {
@@ -401,6 +437,12 @@ export function transition(state, event) {
     const session = next.sessions[event.sessionId]
     if (session) session.stopped = false
   } else if (type === 'agentDisposed') {
+    const wait = next.waits[event.sessionId]
+    if (wait?.taskIds.length) {
+      // 会话被销毁不等于用户停止：结果仍应计入离开期间完成的提示。
+      next.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
+      out.persist = true
+    }
     stopSession(next, event.sessionId, actions, out)
     delete next.sessions[event.sessionId]
     for (const [messageId, owner] of Object.entries(next.stale)) {
@@ -414,10 +456,10 @@ export function transition(state, event) {
       actions.push({ type: 'abortWait', sessionId, token: wait.token })
     }
     for (const session of Object.values(next.sessions)) session.deferred = null
-    for (const messageId of Object.keys(next.messages)) removeMessage(next, messageId)
+    for (const [messageId, entry] of Object.entries(next.messages)) withdraw(next, entry, messageId, 'disable', actions)
     out.persist = true
-  } else if (type === 'autoContinueOn') {
-    next.autoContinue = true
+  } else if (type === 'autoContinueOn' || type === 'autoContinueRestored') {
+    next.autoContinue = type === 'autoContinueOn' ? true : event.autoContinue === true
   } else if (type === 'awaySeen') {
     const workspaceId = event.workspaceId ?? null
     next.away.entries = next.away.entries.flatMap(entry => {

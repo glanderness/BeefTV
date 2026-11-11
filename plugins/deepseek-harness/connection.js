@@ -70,10 +70,15 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     return pluginSettingsWrite
   }
 
+  // 状态机不能只靠默认值启动：上次关掉「生成完自动继续」后，重启也必须保持关闭。
   const pluginSettingsReady = readFile(pluginSettingsPath, 'utf8').then(JSON.parse).then(value => {
     pluginSettings = normalizeSettings(value)
+    runner.dispatch({ type: 'autoContinueRestored', autoContinue: pluginSettings.autoContinue })
     return pluginSettings
-  }).catch(() => pluginSettings)
+  }).catch(() => {
+    runner.dispatch({ type: 'autoContinueRestored', autoContinue: pluginSettings.autoContinue })
+    return pluginSettings
+  })
 
   async function writeSettings() {
     await mkdir(pluginHome, { recursive: true, mode: 0o700 })
@@ -132,14 +137,15 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   async function release(runtime) {
     if (!runtime) return
     // 连接断开、切换工作区或插件退出时都不再续跑后台等待。
-    await runner.abandonForRuntime(runtime)
+    // 清理阶段的任何失败都不能让 connect 卡在 switching，也不能跳过后续清理。
+    try { await runner.abandonForRuntime(runtime) } catch { /* 内存状态已经放弃等待。 */ }
     try { await runtime.mcp?.dispose() } catch { /* Complete cleanup after a failed activation. */ }
     try {
       if (runtime.clientId) await workspaceJSON(runtime, `/api/agent-clients/${encodeURIComponent(runtime.clientId)}`, { method: 'DELETE' })
     } catch {
       // Runtime shutdown still proceeds if the desktop owner already exited.
     }
-    await runtime.close()
+    try { await runtime.close() } catch { /* The process may already be gone. */ }
   }
 
   async function connect(mode, reconnect = false) {
@@ -214,6 +220,7 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
       if (runtime.owned) runtime.child.once('exit', () => {
         if (current !== runtime) return
         current = null
+        contexts.clear()
         runner.dispatch({ type: 'workspaceLost' })
         void runner.abandonForRuntime(runtime)
         error = 'BeefTV 工作区已关闭，请重新连接'

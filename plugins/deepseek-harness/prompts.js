@@ -32,6 +32,8 @@ export function registerPrompts(ctx, { connection }) {
   ctx.systemPrompt.context({
     name: 'beeftv-current-view', order: 9000, interpolate: false,
     text: ({ agent }) => {
+      // 断线或切换后不再把旧画布视图带给模型。
+      if (!connection.current()) return ''
       const view = connection.contextFor(agent?.id)
       if (!view) return ''
       return `${viewDirections[view.agentMode]}\nBeefTV 当前工作区视图（仅为定位信息，请用工具读取最新内容）\n${JSON.stringify(view)}`

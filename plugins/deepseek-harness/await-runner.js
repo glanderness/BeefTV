@@ -8,8 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { awaitingSnapshot, createAwaitState, transition } from './await-machine.js'
 import { awaitWakeText, callOperation, hasOperation, taskOutcome, waitOutcome } from './runtime.js'
 
-const awaitMaximumMs = 40 * 60 * 1000
-const taskGetIntervalMs = 5_000
+const defaultAwaitMaximumMs = 40 * 60 * 1000
+const defaultTaskGetIntervalMs = 5_000
 // 后端 task.wait 单次最多等 25 秒；客户端留一点余量，避免边界上自己先 abort。
 const taskWaitCallTimeoutMs = 30_000
 
@@ -40,7 +40,7 @@ export function normalizeAwaiting(value) {
   return { sessions, away }
 }
 
-export function createAwaitRunner({ awaitingPath, runtimeOf }) {
+export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = defaultAwaitMaximumMs, taskGetIntervalMs = defaultTaskGetIntervalMs }) {
   let state = createAwaitState()
   const agents = new Map()
   const waitRunners = new Map()
@@ -50,11 +50,16 @@ export function createAwaitRunner({ awaitingPath, runtimeOf }) {
     return awaitingSnapshot(state)
   }
 
+  // 落盘失败只影响「下次启动能否续看」的兜底信息，不能影响连接切换或事件处理。
   function queuePersist() {
     const value = snapshot()
-    writing = writing.catch(() => {}).then(async () => {
-      await mkdir(dirname(awaitingPath), { recursive: true, mode: 0o700 })
-      await writeFile(awaitingPath, JSON.stringify(value), { mode: 0o600 })
+    writing = writing.then(async () => {
+      try {
+        await mkdir(dirname(awaitingPath), { recursive: true, mode: 0o700 })
+        await writeFile(awaitingPath, JSON.stringify(value), { mode: 0o600 })
+      } catch {
+        // 读写失败时保留内存状态，下一次状态变化会再次尝试。
+      }
     })
     return writing
   }
@@ -217,7 +222,7 @@ export function createAwaitRunner({ awaitingPath, runtimeOf }) {
     state = result.state
     const pending = []
     processActions(result.actions, pending)
-    return { reply: result.reply, settled: Promise.all(pending).then(() => {}) }
+    return { reply: result.reply, settled: Promise.all(pending).then(() => {}).catch(() => {}) }
   }
 
   function abandonForRuntime(runtime) {
@@ -228,7 +233,7 @@ export function createAwaitRunner({ awaitingPath, runtimeOf }) {
   function stopPlugin() {
     const sessionIds = [...waitRunners.keys()]
     const result = dispatch({ type: 'abandonWaits', sessionIds })
-    return Promise.all([result.settled, writing.catch(() => {})]).then(() => {})
+    return Promise.all([result.settled, writing]).then(() => {})
   }
 
   return {

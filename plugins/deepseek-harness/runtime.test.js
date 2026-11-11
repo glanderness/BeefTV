@@ -10,6 +10,7 @@ import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import * as runtime from './runtime.js'
+import { createAwaitRunner } from './await-runner.js'
 import { approvalReason, awaitWakeText, defaultPluginSettings, embeddedDocument, guidedPrompt, normalizeSettings, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord, stepLimitNotice, submittedTaskIds, taskOutcome, validatedSettingsPatch, waitOutcome } from './runtime.js'
 // DSH supplies its MCP client package when it loads the plugin. The Host only hands it to
 // ctx.plugin, which the tests provide, so an inert module stands in for it.
@@ -670,6 +671,9 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', resultState: 'failed_permanent' }).state, 'incomplete')
   assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', phase: undefined, outcome: { phase: 'failed' } }).state, 'incomplete')
   assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }).state, 'incomplete')
+  // 结果还在下载/重试入库时不能提前说「没保存成功」。
+  assert.equal(taskOutcome({ taskId: 'dl', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }], delivery: { outputs: [{ state: 'downloading' }] } }).state, 'pending')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'dl2', status: 'succeeded', delivery: { outputs: [{ state: 'retrying' }] } }] }, 'dl2').state, 'pending')
   assert.equal(taskOutcome({ taskId: 'retry', status: 'failed', outcome: { phase: 'retrievable' } }).state, 'pending')
   assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }, { taskId: 't2', state: 'failed', reason: '素材下载失败' }]),
     '生成已结束：1 个成功，1 个失败（素材下载失败）。任务：t1、t2。请只查询结果、绑定到节点并继续，不要重新提交。')
@@ -1098,6 +1102,66 @@ test('a BeefTV tool call activates the step limit even without a reported view',
     listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent }, { content: [] })
   }
   assert.deepEqual(await listeners.get('agent/pre-step')({ agent, turn: 1 }, async () => ({ kind: 'enter', messages: [] })), { kind: 'reject' })
+})
+
+test('a saved auto-continue off is honored after restart', async context => {
+  const { call, listeners, workspace } = await startHost(context, {
+    extraOps: [{ id: 'task.wait', readOnly: true }],
+    pluginSettings: { autoContinue: false, stepLimit: 40 },
+  })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['quiet-restart']))
+  await sleep(150)
+  assert.equal(wakes.length, 0)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
+})
+
+test('a failing awaiting.json write does not block a workspace switch', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  workspace.taskWait = () => new Promise(resolve => setTimeout(() => resolve({ status: 'pending', taskId: 'disk-1' }), 30))
+  const { agent } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['disk-1']))
+  await sleep(10)
+  const realWrite = fsPromises.writeFile
+  context.mock.method(fsPromises, 'writeFile', async (path, ...rest) => {
+    if (String(path).endsWith('awaiting.json')) throw new Error('disk full')
+    return realWrite(path, ...rest)
+  })
+  syncBuiltinESMExports()
+  const switched = await call('POST', '/beeftv/connect', { mode: 'local' })
+  assert.equal(switched.status, 200)
+  assert.equal(switched.body.connected, true)
+  assert.equal(switched.body.mode, 'local')
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, true)
+})
+
+test('turning auto-continue off withdraws a completion already injected', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected, removed } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['stop-1']))
+  await until(() => injected.length === 1)
+  await call('POST', '/beeftv/settings', { autoContinue: false })
+  await until(() => removed.length === 1)
+  assert.equal(removed[0], injected[0].id)
+  assert.equal(wakes.length, 0)
+})
+
+test('a wait past its deadline moves the tasks to the away list', async context => {
+  const dir = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-await-'))
+  context.after(() => fsPromises.rm(dir, { recursive: true, force: true }))
+  const runtime = { operations: [], baseURL: 'http://127.0.0.1:1/api', clientId: 'client', clientToken: 'token' }
+  const runner = createAwaitRunner({
+    awaitingPath: join(dir, 'awaiting.json'), runtimeOf: () => runtime,
+    awaitMaximumMs: 80, taskGetIntervalMs: 10,
+  })
+  runner.dispatch({ type: 'workspaceConnected', workspaceId: 'w1' })
+  runner.dispatch({ type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['timeout-1'], agentStatus: 'idle' })
+  await until(() => runner.snapshot().away.length === 1)
+  assert.deepEqual(runner.snapshot().away[0], { workspaceId: 'w1', taskIds: ['timeout-1'], resolvedCount: 0 })
 })
 
 test('a backend agent.guide replaces the fixed section; without it the fixed text stays', async context => {
