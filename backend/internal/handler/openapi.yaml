@@ -139,10 +139,20 @@ paths:
     get:
       tags: [beeftv]
       summary: 读取内置 BeefTV 连接状态
-      description: 只返回账号和状态，不含密钥或 device_code。
+      description: 只返回账号和状态，不含密钥或 device_code；refresh=1 时向上游同步实时余额，上游失败时返回对应错误信封。
+      parameters:
+        - in: query
+          name: refresh
+          schema: { type: string, enum: ["1"] }
       responses:
         "200":
           description: 信封 data 为连接摘要
+        "401":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
   /beeftv/connection/start:
     post:
       tags: [beeftv]
@@ -179,6 +189,50 @@ paths:
       responses:
         "200":
           description: 已打开
+  /beeftv/connection/topup/info:
+    get:
+      tags: [beeftv]
+      summary: 读取内置 BeefTV 账户充值配置与实时余额
+      responses:
+        "200":
+          description: 信封 data 为可用支付方式、充值限额与当前余额
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+  /beeftv/connection/topup/checkout:
+    post:
+      tags: [beeftv]
+      summary: 创建内置 BeefTV 账户充值订单并在系统浏览器打开收银台
+      description: 订单已创建但本机未能自动拉起浏览器时仍返回 tradeNo，并带 opened=false 与 openError。
+      responses:
+        "200":
+          description: 信封 data 为订单号、金额、到账额度摘要及浏览器拉起状态（opened / openError）
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+  /beeftv/connection/topup/reconcile:
+    post:
+      tags: [beeftv]
+      summary: 查询内置 BeefTV 账户充值订单支付结果并同步本地余额摘要
+      responses:
+        "200":
+          description: 信封 data 为订单状态、入账确认标记（settled / credited）与刷新后的连接摘要
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
   /canvas-folders:
     get:
       tags: [canvas]
