@@ -23,6 +23,7 @@ type CanvasProjectCreator interface {
 func RegisterDefaultOps(r *Registry) {
 	registerCanvasEditOps(r)
 	registerCanvasNodeBindAsset(r)
+	registerAgentGuideOp(r)
 	registerModelCatalogOp(r)
 	registerGenerationEstimateOp(r)
 	registerMediaOps(r)

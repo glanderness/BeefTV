@@ -240,8 +240,8 @@ test('a missing bundled runtime is reported without falling back to the desktop 
 })
 
 // A loopback stand-in for both the harness bridge and the workspace API. Proxied page requests are recorded.
-async function workspaceServer(context) {
-  const state = { available: true, proxied: [] }
+async function workspaceServer(context, options = {}) {
+  const state = { available: true, proxied: [], guide: options.guide === undefined ? true : options.guide, guideRequests: 0 }
   const server = createServer((req, res) => {
     const send = (status, data) => {
       res.writeHead(status, { 'content-type': 'application/json' })
@@ -258,6 +258,12 @@ async function workspaceServer(context) {
     if (path === '/api/agent-clients' && req.method === 'POST') return send(200, { client: { id: 'test-client' }, token: 'test-token' })
     if (path.startsWith('/api/agent-clients/') && req.method === 'DELETE') return send(200, { revoked: true })
     if (path === '/api/business/tools') return send(200, { tools: [{ id: 'business_get_assets', readOnly: true, submitsGeneration: false }] })
+    if (path === '/api/ops/agent.guide' && req.method === 'POST') {
+      state.guideRequests += 1
+      if (state.guide === 'error') return send(500)
+      if (!state.guide) return send(404)
+      return send(200, { name: 'beeftv-canvas', version: 'test-version', contentHash: 'test-hash', text: '共用说明测试正文' })
+    }
     if (path === '/api/ops') return send(200, { ops: [
       { id: 'canvas.get', readOnly: true }, { id: 'canvas.generation.propose', readOnly: true }, { id: 'media.review', readOnly: true },
       { id: 'canvas.create', readOnly: false }, { id: 'canvas.script.prepare', readOnly: false },
@@ -272,7 +278,7 @@ async function workspaceServer(context) {
 
 // Loads the real Host into a minimal DSH context and serves its handler on loopback.
 async function startHost(context, options = {}) {
-  const workspace = await workspaceServer(context)
+  const workspace = await workspaceServer(context, options.workspace)
   const calls = mockRuntimeProcesses(context, { available: () => workspace.available, bridgeURL: workspace.url, ...options })
   const home = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-dsh-'))
   const previousHome = process.env.DSH_HOME
@@ -328,6 +334,7 @@ test('Host rejects context from missing or previous connection IDs and reattache
   const view = { sessionId: 'session', connectionId: first, context: { route: '/canvas/old' } }
   assert.equal((await call('POST', '/beeftv/context', view)).status, 200)
   assert.match(prompt({ agent: { id: 'session' } }), /\/canvas\/old/)
+  assert.match(prompt({ agent: { id: 'session' } }), /共用说明测试正文/)
   const second = (await call('POST', '/beeftv/connect', { mode: 'local' })).body.connectionId
   assert.notEqual(second, first)
   assert.equal(prompt({ agent: { id: 'session' } }), '')
@@ -349,6 +356,30 @@ test('Host rejects context from missing or previous connection IDs and reattache
   assert.notEqual(restored.connectionId, second)
   assert.equal(calls.filter(call => call.command === '/usr/bin/open').length, 1)
   assert.equal(calls.filter(call => call.args.includes('--harness-attach-only')).length, 3)
+})
+
+test('Host stays connected when the workspace does not provide the shared guide', async context => {
+  const { call, prompt } = await startHost(context, { workspace: { guide: false } })
+  const connected = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
+  assert.match(connected.connectionId, /^[a-f0-9-]{36}$/)
+  const view = { sessionId: 'legacy-session', connectionId: connected.connectionId, context: { route: '/canvas/legacy' } }
+  assert.equal((await call('POST', '/beeftv/context', view)).status, 200)
+  assert.match(prompt({ agent: { id: 'legacy-session' } }), /版本较旧/)
+})
+
+test('Host reports a failed guide read instead of calling the workspace old', async context => {
+  const { call, prompt, workspace } = await startHost(context, { workspace: { guide: 'error' } })
+  const connected = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
+  const status = (await call('GET', '/beeftv/status')).body
+  assert.equal(status.guideState, 'failed')
+  assert.ok(status.guideError)
+  assert.equal(workspace.guideRequests, 2)
+  const view = { sessionId: 'failed-guide', connectionId: connected.connectionId, context: { route: '/canvas/failed' } }
+  assert.equal((await call('POST', '/beeftv/context', view)).status, 200)
+  const text = prompt({ agent: { id: 'failed-guide' } })
+  assert.match(text, /共用使用说明读取失败/)
+  assert.match(text, /\/canvas\/failed/)
+  assert.doesNotMatch(text, /版本较旧/)
 })
 
 test('Host refuses workspace paths that could reach Harness-managed routes', async context => {
