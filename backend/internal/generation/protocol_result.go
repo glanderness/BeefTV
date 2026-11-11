@@ -346,7 +346,7 @@ func ProtocolResultError(message, taskID string, bodies ...[]byte) error {
 				raw, _ := json.Marshal(map[string]interface{}{"task_id": taskID, "request_id": requestID, "error": map[string]string{"code": stringField(errPayload, "code"), "message": stringField(errPayload, "message"), "type": stringField(errPayload, "type"), "param": stringField(errPayload, "param")}})
 				return NewRawPayloadError(string(raw))
 			}
-			if code, detail, failed := PayloadBusinessFailure(payload); failed && (code != "" || detail != "") {
+			if code, detail, failed := PayloadBusinessFailure(payload); failed && code != "" {
 				requestID = firstNonEmpty(stringField(payload, "request_id"), stringField(payload, "requestId"), requestID)
 				jobID := firstNonEmpty(taskID, stringField(payload, "task_id"), stringField(payload, "taskId"), stringField(payload, "id"))
 				envelope := map[string]interface{}{

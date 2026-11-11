@@ -303,6 +303,21 @@ test("live waitForGenerationTask failure preserves backend failureDiagnostics an
         expect(copied).not.toContain("错误来源：未记录");
         expect(copied).toContain("HTTP 状态：400");
         expect(copied).toContain("req-synthetic-400");
+
+        const staleTaskWithoutDiagnostics = {
+            id: "task-live-reject",
+            type: "canvas_image" as const,
+            status: "failed" as const,
+            prompt: "portrait",
+            errorCode: "invalid_params",
+            error: "当前模型不支持该参数组合",
+            attempts: 1,
+            createdAt: "2026-10-01T00:00:00Z",
+            updatedAt: "2026-10-01T00:00:01Z",
+        };
+        const recovered = canvasTaskFailureMetadata(staleTaskWithoutDiagnostics, undefined, caught);
+        expect(recovered.taskFailureDiagnostics?.source).toBe("upstream_http");
+        expect(recovered.taskFailureDiagnostics?.httpStatus).toBe(400);
     } finally {
         apiClient.defaults.adapter = origAdapter;
     }

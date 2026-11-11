@@ -131,6 +131,11 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 			return nil, err
 		}
 		taskID = created.TaskID
+		if taskID == "" && (created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled) {
+			if explicitID, _ := extractExplicitProviderJobID(body); explicitID != "" {
+				taskID = explicitID
+			}
+		}
 		if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
 			return nil, ProtocolResultError(created.Message, taskID, body)
 		}
@@ -195,6 +200,29 @@ func ExtractProviderTaskID(body []byte) (string, error) {
 	for _, key := range []string{"data", "Response"} {
 		if data, ok := payload[key].(map[string]interface{}); ok {
 			nested, nestedErr := firstJSONString(data, "id", "task_id", "taskId", "TaskId", "request_id")
+			if nested != "" {
+				return nested, nil
+			}
+			if nestedErr != nil {
+				return "", nestedErr
+			}
+		}
+	}
+	return "", err
+}
+
+func extractExplicitProviderJobID(body []byte) (string, error) {
+	var payload map[string]interface{}
+	if json.Unmarshal(body, &payload) != nil {
+		return "", nil
+	}
+	id, err := firstJSONString(payload, "id", "task_id", "taskId", "TaskId", "name")
+	if id != "" {
+		return id, nil
+	}
+	for _, key := range []string{"data", "Response"} {
+		if data, ok := payload[key].(map[string]interface{}); ok {
+			nested, nestedErr := firstJSONString(data, "id", "task_id", "taskId", "TaskId")
 			if nested != "" {
 				return nested, nil
 			}
@@ -289,6 +317,11 @@ func tryStreamingDeclarativeTextCreate(ctx context.Context, input Input, adapter
 		return nil, true, err
 	}
 	taskID := created.TaskID
+	if taskID == "" && (created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled) {
+		if explicitID, _ := extractExplicitProviderJobID(data); explicitID != "" {
+			taskID = explicitID
+		}
+	}
 	if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
 		return nil, true, ProtocolResultError(created.Message, taskID, data)
 	}

@@ -142,6 +142,72 @@ func TestYsduiImageManifestFollowsPerModelDocumentation(t *testing.T) {
 		if groupBody["sequential_image_generation"] != "auto" || opts["max_images"] != float64(4) {
 			t.Fatalf("expected sequential group options on Lite, got %#v", groupBody)
 		}
+
+		clippedSpec, err := adapter.BuildCreate(context.Background(), protocol.RequestContext{
+			BaseURL: "https://tokenhub.ysdui.cn",
+			Request: protocol.GenerationRequest{
+				Model:  "doubao-seedream-5-0-260128",
+				Prompt: "series with references",
+				Images: []protocol.MediaReference{
+					{URL: "https://cdn.example.test/1.png"},
+					{URL: "https://cdn.example.test/2.png"},
+					{URL: "https://cdn.example.test/3.png"},
+				},
+				Output: protocol.OutputOptions{
+					Options: map[string]any{"maxImages": "15"},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		clippedBody := decodeSpecBody(t, clippedSpec)
+		clippedOpts, _ := clippedBody["sequential_image_generation_options"].(map[string]any)
+		if clippedBody["sequential_image_generation"] != "auto" || clippedOpts["max_images"] != float64(12) {
+			t.Fatalf("expected max_images clipped to 12 (15 - 3 refs), got %#v", clippedBody)
+		}
+
+		 fourteenRefs := make([]protocol.MediaReference, 14)
+		for i := range fourteenRefs {
+			fourteenRefs[i] = protocol.MediaReference{URL: "https://cdn.example.test/ref.png"}
+		}
+		fullRefSpec, err := adapter.BuildCreate(context.Background(), protocol.RequestContext{
+			BaseURL: "https://tokenhub.ysdui.cn",
+			Request: protocol.GenerationRequest{
+				Model:  "doubao-seedream-5-0-260128",
+				Prompt: "14 refs",
+				Images: fourteenRefs,
+				Output: protocol.OutputOptions{
+					Options: map[string]any{"maxImages": "15"},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fullRefBody := decodeSpecBody(t, fullRefSpec)
+		if _, exists := fullRefBody["sequential_image_generation"]; exists {
+			t.Fatalf("14 references leave only 1 output slot and must omit sequential_image_generation: %#v", fullRefBody)
+		}
+
+		layerTierSpec, err := adapter.BuildCreate(context.Background(), protocol.RequestContext{
+			BaseURL: "https://tokenhub.ysdui.cn",
+			Request: protocol.GenerationRequest{
+				Model:       "doubao-seedream-5-0-pro-260628",
+				Prompt:      "layers with 1K selected",
+				AspectRatio: "1K",
+				Output: protocol.OutputOptions{
+					Options: map[string]any{"mode": "layers"},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		layerTierBody := decodeSpecBody(t, layerTierSpec)
+		if layerTierBody["layer_decomposition"] != true || layerTierBody["size"] != "2K" {
+			t.Fatalf("layers mode with 1K tier must send documented 2K size, got %#v", layerTierBody)
+		}
 	})
 
 	t.Run("Qwen Image 3.0 Pro and Hunyuan Image 3.0 use their own documented fields and sizes", func(t *testing.T) {
@@ -178,6 +244,7 @@ func TestYsduiImageManifestFollowsPerModelDocumentation(t *testing.T) {
 				Prompt:      "watercolor",
 				AspectRatio: "3:2",
 				ImageCount:  4,
+				Watermark:   true,
 			},
 		})
 		if err != nil {

@@ -110,7 +110,7 @@ func enrichAPICallLogPayload(logEntry *model.ApiCallLog, payload map[string]any)
 	}
 	failedCreate := logEntry.Status == model.ApiCallStatusFailed && (logEntry.RequestKind == "" || logEntry.RequestKind == "create")
 	if !failedCreate {
-		if extracted, err := firstJSONString(payload, "task_id", "taskId", "id", "name"); err == nil {
+		if extracted, err := firstJSONString(payload, "task_id", "taskId", "id", "request_id", "requestId", "name"); err == nil {
 			logEntry.ProviderRequestID = firstNonEmpty(nestedTaskID, extracted, logEntry.ProviderRequestID)
 		} else {
 			logEntry.ProviderRequestID = firstNonEmpty(nestedTaskID, logEntry.ProviderRequestID)
@@ -169,12 +169,24 @@ func ProviderRequestIDFromPath(path string) string {
 		if part == "" || part == "content" || part == "download" {
 			continue
 		}
+		if isProviderEndpointSegment(part) {
+			return ""
+		}
 		if index > 0 && (parts[index-1] == "videos" || parts[index-1] == "tasks") {
 			return part
 		}
 		break
 	}
 	return ""
+}
+
+func isProviderEndpointSegment(part string) bool {
+	switch strings.ToLower(strings.TrimSpace(part)) {
+	case "generations", "edits", "variations", "tasks", "videos", "images", "completions", "responses", "messages", "speech", "transcriptions", "translations":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstInt64(values map[string]any, keys ...string) int64 {

@@ -493,3 +493,45 @@ test("a retired interface is not offered again but still names a saved choice", 
     expect(defaultProtocolForCapability("video", [definition])).not.toBe("old-video");
     expect(modelProtocolDefinition("old-video", [definition])?.label).toBe("旧视频接口");
 });
+
+test("upgradeYsduiModelProfile preserves server-versioned capabilities and keeps user defaultResolution valid", async () => {
+    const { upgradeYsduiModelProfile } = await import("../../plugin-packages/beeftv-plugin-ysdui/client/presets.js");
+    const serverProfile = {
+        model: "doubao-seedream-5-0-pro-260628",
+        capability: "image",
+        protocol: "ysdui-image",
+        imageCapabilitiesVersion: "server-v2",
+        capabilityConfig: {
+            version: 1,
+            image: {
+                size: { parameter: "size", values: ["1:1"], default: "1:1" },
+                sequentialGeneration: { supported: true, default: false },
+            },
+        },
+    };
+    expect(upgradeYsduiModelProfile(serverProfile)).toBe(serverProfile);
+
+    const userVideoProfile = {
+        model: "wand-vega-video-1.0-lite",
+        capability: "video",
+        protocol: "ysdui-video",
+        capabilitySource: "user",
+        capabilityConfig: {
+            version: 1,
+            video: {
+                duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 },
+                ratios: ["16:9"],
+                defaultRatio: "16:9",
+                resolutions: ["720P", "1080P"],
+                defaultResolution: "720P",
+                generateAudio: { supported: false, default: false },
+                watermark: { supported: false, default: false },
+                operations: ["text_to_video"],
+                defaultOperation: "text_to_video",
+            },
+        },
+    };
+    const migrated = upgradeYsduiModelProfile(userVideoProfile);
+    expect(migrated.capabilityConfig.video.resolutions).toEqual(["1080P"]);
+    expect(migrated.capabilityConfig.video.defaultResolution).toBe("1080P");
+});

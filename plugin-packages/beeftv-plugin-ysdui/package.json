@@ -332,19 +332,46 @@
                 "$max": [
                   1,
                   {
-                    "$toInt": {
-                      "$coalesce": [
-                        {
-                          "$omitEmpty": {
-                            "$ref": "request.output.options.maxImages"
+                    "$min": [
+                      {
+                        "$max": [
+                          1,
+                          {
+                            "$add": [
+                              15,
+                              {
+                                "$multiply": [
+                                  -1,
+                                  {
+                                    "$len": {
+                                      "$ref": "request.images"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
                           }
-                        },
-                        {
-                          "$ref": "request.providerOptions.ysdui-image.sequential_image_generation_options.max_images"
-                        },
-                        1
-                      ]
-                    }
+                        ]
+                      },
+                      {
+                        "$toInt": {
+                          "$coalesce": [
+                            {
+                              "$ref": "request.extra.sequential_image_generation_max"
+                            },
+                            {
+                              "$omitEmpty": {
+                                "$ref": "request.output.options.maxImages"
+                              }
+                            },
+                            {
+                              "$ref": "request.providerOptions.ysdui-image.sequential_image_generation_options.max_images"
+                            },
+                            1
+                          ]
+                        }
+                      }
+                    ]
                   }
                 ]
               }
@@ -421,32 +448,32 @@
               "value": {
                 "$if": {
                   "condition": {
-                    "$ref": "vars.isSeedreamTier"
+                    "$ref": "vars.isLayers"
                   },
                   "then": {
-                    "$upper": {
-                      "$ref": "vars.rawRatio"
+                    "$if": {
+                      "condition": {
+                        "$eq": [
+                          {
+                            "$lower": {
+                              "$ref": "vars.rawRatio"
+                            }
+                          },
+                          "auto"
+                        ]
+                      },
+                      "then": "auto",
+                      "else": "2K"
                     }
                   },
                   "else": {
                     "$if": {
                       "condition": {
-                        "$ref": "vars.isLayers"
+                        "$ref": "vars.isSeedreamTier"
                       },
                       "then": {
-                        "$if": {
-                          "condition": {
-                            "$eq": [
-                              {
-                                "$lower": {
-                                  "$ref": "vars.rawRatio"
-                                }
-                              },
-                              "auto"
-                            ]
-                          },
-                          "then": "auto",
-                          "else": "2K"
+                        "$upper": {
+                          "$ref": "vars.rawRatio"
                         }
                       },
                       "else": {
@@ -1193,19 +1220,6 @@
                       },
                       false
                     ]
-                  },
-                  "else": {
-                    "$if": {
-                      "condition": {
-                        "$eq": [
-                          {
-                            "$ref": "request.watermark"
-                          },
-                          true
-                        ]
-                      },
-                      "then": true
-                    }
                   }
                 }
               }

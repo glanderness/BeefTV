@@ -797,6 +797,12 @@ export const YSDUI_PRESET_MODELS = [
 export function upgradeYsduiModelProfile(profile) {
   if (!profile || typeof profile !== "object") return profile;
   if (!String(profile.protocol || "").startsWith("ysdui-")) return profile;
+  if (
+    (typeof profile.imageCapabilitiesVersion === "string" && profile.imageCapabilitiesVersion.trim()) ||
+    (typeof profile.videoCapabilitiesVersion === "string" && profile.videoCapabilitiesVersion.trim())
+  ) {
+    return profile;
+  }
   const preset = YSDUI_PRESET_MODELS.find((item) => item.model === profile.model);
   if (!preset) return profile;
 
@@ -833,9 +839,13 @@ export function upgradeYsduiModelProfile(profile) {
     if (currentRes.some((r) => !validSet.has(r))) {
       const filtered = currentRes.filter((r) => validSet.has(r));
       const resolutions = filtered.length > 0 ? filtered : [...presetRes];
-      const defaultResolution = validSet.has(next.capabilityConfig.video.defaultResolution)
-        ? next.capabilityConfig.video.defaultResolution
-        : preset.capabilityConfig.video.defaultResolution;
+      const currentDefault = next.capabilityConfig.video.defaultResolution;
+      const presetDefault = preset.capabilityConfig.video.defaultResolution;
+      const defaultResolution = resolutions.includes(currentDefault)
+        ? currentDefault
+        : resolutions.includes(presetDefault)
+          ? presetDefault
+          : resolutions[0];
       next = {
         ...next,
         capabilityConfig: {
