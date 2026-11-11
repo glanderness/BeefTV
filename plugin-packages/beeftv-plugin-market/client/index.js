@@ -57,6 +57,7 @@ export function activate(host) {
     );
     const [curatedPlugins, setCuratedPlugins] = React.useState(() => recommendationCache.get(REGISTRY_MIRRORS[0].value) || []);
     const [loadingCurated, setLoadingCurated] = React.useState(false);
+    const [curatedError, setCuratedError] = React.useState("");
 
     const [searchQuery, setSearchQuery] = React.useState("");
     const [searchResults, setSearchResults] = React.useState([]);
@@ -91,11 +92,14 @@ export function activate(host) {
       let cancelled = false;
       const previous = recommendationCache.get(registryMirror) || [];
       setCuratedPlugins(previous);
+      setCuratedError("");
       setLoadingCurated(previous.length === 0);
-      const publish = items => {
+      const publish = (items, final = false) => {
+        if (cancelled) return;
         recommendationCache.set(registryMirror, items);
-        if (!cancelled) {
-          setCuratedPlugins(items);
+        setCuratedPlugins(items);
+        if (items.length > 0 || final) {
+          setCuratedError("");
           setLoadingCurated(false);
         }
       };
@@ -106,10 +110,10 @@ export function activate(host) {
           // A remote refresh can still recover when the local catalog is unavailable.
         }
         try {
-          publish(await fetchRecommendations(registryMirror, false));
+          publish(await fetchRecommendations(registryMirror, false), true);
         } catch (error) {
           if (!cancelled && !recommendationCache.get(registryMirror)?.length) {
-            setSearchError(error.message || "插件市场暂时打不开");
+            setCuratedError(error.message || "插件市场暂时打不开");
           }
         } finally {
           if (!cancelled) setLoadingCurated(false);
@@ -185,9 +189,13 @@ export function activate(host) {
     );
 
     const visibleList = activeTab === "curated" ? curatedPlugins : searchResults;
+    const visibleError = activeTab === "curated" ? curatedError : searchError;
 
     const metadata = (label, value) => h("div", { key: label }, h("dt", null, label), h("dd", null, value));
     const loading = activeTab === "curated" ? loadingCurated : searching;
+    if (!props?.Card || !props?.Button || !props?.DetailsModal || !props?.Markdown || !props?.RegistrySelect) {
+      return null;
+    }
 
     return h("div", { className: "plugin-market", "data-testid": "beeftv-plugin-market-view" },
       h("div", { className: "plugin-market-toolbar" },
@@ -222,9 +230,9 @@ export function activate(host) {
         }),
         h("button", { type: "submit", className: "plugin-market-button", disabled: searching, "data-testid": "market-npm-search-button" }, searching ? "搜索中…" : "搜索"),
       ) : null,
-      searchError ? h("p", { role: "alert", className: "plugin-market-error" }, searchError) : null,
+      visibleError ? h("p", { role: "alert", className: "plugin-market-error" }, visibleError) : null,
       loading ? h("p", { role: "status", className: "plugin-market-empty" }, "正在读取插件…") : null,
-      !loading && !searchError && !visibleList.length ? h("p", { className: "plugin-market-empty" }, activeTab === "npm" ? "搜索社区插件，查找可安装的扩展。" : "暂无推荐插件") : null,
+      !loading && !visibleError && !visibleList.length ? h("p", { className: "plugin-market-empty" }, activeTab === "npm" ? "搜索社区插件，查找可安装的扩展。" : "暂无推荐插件") : null,
       h("div", { className: "plugins-grid", "data-testid": "market-plugin-grid" },
         visibleList.map(item => {
           const id = item.id || item.packageName;

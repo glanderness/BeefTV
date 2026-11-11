@@ -22,11 +22,17 @@ export function WorkspaceSidebarSocialLinks({ collapsed, onExpand }: { collapsed
     const transition = { duration: reducedMotion ? 0 : aceternityMotion.duration.state, ease: aceternityMotion.easing.enter };
 
     useEffect(() => {
+        if (collapsed) {
+            wasExpanded.current = false;
+            setExpanded(false);
+            setWechatOpen(false);
+            return;
+        }
         if (!active) setWechatOpen(false);
         if (wasExpanded.current === active) return;
         wasExpanded.current = active;
         (active ? backRef : triggerRef).current?.focus({ preventScroll: true });
-    }, [active]);
+    }, [active, collapsed]);
 
     const close = () => setExpanded(false);
     const openGitHub = async (event: React.MouseEvent<HTMLAnchorElement>) => {

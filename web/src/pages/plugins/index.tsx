@@ -387,7 +387,7 @@ export default function PluginsPage() {
                                                                 name={plugin.manifest.name}
                                                                 description={plugin.manifest.description}
                                                                 sourceLabel={sourceLabel}
-                                                                status={enabled ? "已启用" : "已停用"}
+                                                                status={!state?.platformAvailable && state?.blockedReason ? state.blockedReason : enabled ? "已启用" : "已停用"}
                                                                 openLabel={`查看${plugin.manifest.name}文档`}
                                                                 onOpen={(event) => {
                                                                         const openedByKeyboard = event.detail === 0;

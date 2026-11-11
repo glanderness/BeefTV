@@ -1,16 +1,4 @@
-import type { MouseEventHandler, ReactNode } from "react";
-
-export type PluginCardProps = {
-    name: string;
-    description: string;
-    sourceLabel: string;
-    status: string;
-    onOpen: MouseEventHandler<HTMLButtonElement>;
-    openLabel?: string;
-    actions: ReactNode;
-    children?: ReactNode;
-    "data-testid"?: string;
-};
+import type { PluginCardProps } from "@/lib/plugins/plugin-types";
 
 export function PluginCard({ name, description, sourceLabel, status, onOpen, openLabel, actions, children, "data-testid": testId }: PluginCardProps) {
     return (

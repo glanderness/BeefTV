@@ -4,20 +4,16 @@ import { useState } from "react";
 import { useBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
 import { AccountSettingsModal } from "@/components/account-settings/account-settings-modal";
 import { cn } from "@/lib/utils";
+import { isBeefTVAuthenticated } from "@/services/api/beeftv-connection";
 
 export function WorkspaceSidebarAccount({ collapsed }: { collapsed: boolean }) {
     const [open, setOpen] = useState(false);
     const account = useBeefTVConnection();
     const { connection, loading } = account;
-    const connected = connection?.state === "connected";
+    const connected = isBeefTVAuthenticated(connection);
     const pending = connection?.state === "pending" || connection?.state === "connecting";
     const name = connection?.account?.display_name || connection?.account?.username || connection?.account?.email || "BeefTV 账户";
     const label = loading ? "正在读取账户" : connected ? name : pending ? "等待登录确认" : "登录 BeefTV";
-
-    const handleOpen = () => {
-        setOpen(true);
-        if (!connected && !pending) void account.connect();
-    };
 
     return <>
         <button
@@ -27,7 +23,7 @@ export function WorkspaceSidebarAccount({ collapsed }: { collapsed: boolean }) {
             disabled={loading}
             aria-label={connected ? `BeefTV 账户：${name}` : label}
             title={connected ? `BeefTV 账户：${name}` : label}
-            onClick={handleOpen}
+            onClick={() => setOpen(true)}
         >
             <span className="app-workspace-nav-main flex min-w-0 items-center gap-2.5">
                 <span className="app-workspace-nav-icon" aria-hidden="true">

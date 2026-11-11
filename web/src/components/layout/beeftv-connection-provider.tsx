@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 
 import { mergeManagedBeefTVCatalog, shouldRefreshBeefTVCatalog } from "@/lib/managed-beeftv-catalog";
 import { localWorkspaceConfig } from "@/lib/user-session";
-import { cancelBeefTVConnection, disconnectBeefTVConnection, getBeefTVConnection, openBeefTVWallet, startBeefTVConnection, type BeefTVConnectionSummary } from "@/services/api/beeftv-connection";
+import { cancelBeefTVConnection, disconnectBeefTVConnection, getBeefTVConnection, getBeefTVConnectionEpoch, openBeefTVWallet, startBeefTVConnection, type BeefTVConnectionSummary } from "@/services/api/beeftv-connection";
 import { getLocalModelConfig } from "@/services/api/workspace";
 import { normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
 
@@ -31,14 +31,17 @@ function useConnectionState() {
     const appliedState = useRef<string | undefined>(undefined);
     const catalogSync = useRef<{ state: string; selection: string; adopt: boolean; pending: boolean } | null>(null);
     const actionPending = useRef(false);
+    const mutationSeq = useRef(0);
+    const scheduleNextPoll = useRef<((state?: string) => void) | null>(null);
 
-    const applyConnection = async (summary: BeefTVConnectionSummary) => {
+    const applyConnection = async (summary: BeefTVConnectionSummary, options?: { allowRetry?: boolean }) => {
         const previousState = currentConnection.current?.state;
         currentConnection.current = summary;
         setConnection(summary);
+        scheduleNextPoll.current?.(summary.state);
         const retry = catalogSync.current?.state === summary.state ? catalogSync.current : null;
         if (retry?.pending) return;
-        if (appliedState.current === summary.state && !retry) return;
+        if (appliedState.current === summary.state && !(retry && options?.allowRetry)) return;
         appliedState.current = summary.state;
         if (!retry && !shouldRefreshBeefTVCatalog(previousState, summary.state)) {
             catalogSync.current = null;
@@ -66,40 +69,55 @@ function useConnectionState() {
         }
     };
 
-    const refresh = async () => applyConnection(await getBeefTVConnection());
+    const refresh = async (options?: { allowRetry?: boolean }) => applyConnection(await getBeefTVConnection(), options);
 
     useEffect(() => {
         let stopped = false;
-        let timer: ReturnType<typeof setTimeout>;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const arm = (state = currentConnection.current?.state) => {
+            clearTimeout(timer);
+            if (stopped) return;
+            timer = setTimeout(poll, state === "pending" || state === "connecting" ? 2000 : 30000);
+        };
+        scheduleNextPoll.current = arm;
         const poll = async () => {
             if (!actionPending.current) {
+                const epoch = getBeefTVConnectionEpoch();
+                const seq = mutationSeq.current;
                 try {
                     const summary = await getBeefTVConnection();
-                    if (!stopped && !actionPending.current) await applyConnection(summary);
+                    if (!stopped && !actionPending.current && epoch === getBeefTVConnectionEpoch() && seq === mutationSeq.current) {
+                        await applyConnection(summary);
+                    }
                 } catch { /* 后台状态读取失败时保留已确认的连接，手动操作显示错误。 */ }
-                finally { if (!stopped) setLoading(false); }
             }
             if (!stopped) {
-                const state = currentConnection.current?.state;
-                timer = setTimeout(poll, state === "pending" || state === "connecting" ? 2000 : 30000);
+                setLoading(false);
+                arm();
             }
         };
         void poll();
-        return () => { stopped = true; clearTimeout(timer); };
-    }, [connection?.state]);
+        return () => {
+            stopped = true;
+            scheduleNextPoll.current = null;
+            clearTimeout(timer);
+        };
+    }, []);
 
-    const runAction = async (action: () => Promise<BeefTVConnectionSummary>) => {
+    const runAction = async (action: () => Promise<BeefTVConnectionSummary>, options?: { allowRetry?: boolean }) => {
         if (actionPending.current) return;
         actionPending.current = true;
+        mutationSeq.current += 1;
         setBusy(true);
         const previous = currentConnection.current;
         try {
-            await applyConnection(await action());
+            await applyConnection(await action(), options);
         } catch (error) {
             try { await refresh(); } catch { setConnection(previous); }
             message.error(error instanceof Error ? error.message : "无法更新 BeefTV 连接，请重试");
         } finally {
             actionPending.current = false;
+            setLoading(false);
             setBusy(false);
         }
     };
@@ -111,16 +129,23 @@ function useConnectionState() {
         return startBeefTVConnection();
     });
 
+    const retryCatalog = () => {
+        const current = currentConnection.current;
+        if (current?.catalogFailed || current?.state === "catalog_failed") return connect();
+        return runAction(getBeefTVConnection, { allowRetry: true });
+    };
+
     return {
         connection,
         busy,
         loading,
         syncing,
-        catalogSyncFailed,
+        catalogSyncFailed: catalogSyncFailed || Boolean(connection?.catalogFailed || connection?.state === "catalog_failed"),
         connect,
         cancel: () => runAction(cancelBeefTVConnection),
         disconnect: () => runAction(disconnectBeefTVConnection),
-        refresh: () => runAction(getBeefTVConnection),
+        refresh: () => runAction(getBeefTVConnection, { allowRetry: true }),
+        retryCatalog,
         openAccount: () => openBeefTVWallet().catch((error) => message.error(error instanceof Error ? error.message : "无法打开 BeefTV 账户")),
     };
 }

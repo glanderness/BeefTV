@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { useBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { beefTVConnectionLabel } from "@/services/api/beeftv-connection";
+import { beefTVConnectionLabel, isBeefTVAuthenticated } from "@/services/api/beeftv-connection";
 
 const rechargeAmounts = [50, 100, 200, 500];
 const paymentMethods = [
@@ -18,9 +18,9 @@ export function AccountBalancePane() {
     const { message } = App.useApp();
     const account = useBeefTVConnection();
     const { connection, busy } = account;
-    const connected = connection?.state === "connected";
+    const connected = isBeefTVAuthenticated(connection);
     const pending = connection?.state === "pending" || connection?.state === "connecting";
-    const name = connection?.account?.display_name || connection?.account?.username || connection?.account?.email || "未登录";
+    const name = connection?.account?.display_name || connection?.account?.username || connection?.account?.email || "BeefTV 账户";
     const [selection, setSelection] = useState<number | "custom">(100);
     const [customAmount, setCustomAmount] = useState<number | null>(null);
     const [method, setMethod] = useState<string>("微信支付");
@@ -31,8 +31,8 @@ export function AccountBalancePane() {
     return <>
         <div className="account-balance-identity">
             <div><h3>{connected ? name : "登录 BeefTV"}</h3>
-                {connected && connection.account?.email && name !== connection.account.email ? <p>{connection.account.email}</p> : null}
-                {!connected ? <p role="status" aria-live="polite">{beefTVConnectionLabel(connection)}</p> : null}
+                {connected && connection?.account?.email && name !== connection.account.email ? <p>{connection.account.email}</p> : null}
+                {connection?.state !== "connected" ? <p role="status" aria-live="polite">{beefTVConnectionLabel(connection)}</p> : null}
             </div>
             {!connected ? <Button loading={busy} disabled={pending} onClick={() => void account.connect()}>{pending ? "等待授权" : "登录"}</Button> : null}
         </div>

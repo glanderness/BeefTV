@@ -60,8 +60,9 @@ export function AccountBuiltinPlugins({ onManage }: { onManage: () => void }) {
                 const remote = backendById.get(manifest.id);
                 const enabled = state?.effectiveEnabled ?? installations.find((item) => item.manifest.id === manifest.id)?.enabled ?? false;
                 const canToggle = state?.canToggle ?? (!remote && isLocalRuntimeMode());
+                const statusLabel = !state?.platformAvailable && state?.blockedReason ? state.blockedReason : enabled ? "已启用" : "已停用";
                 return <section className="account-builtin-item" key={manifest.id}>
-                    <div className="account-builtin-heading"><h3>{manifest.name}</h3><span>{enabled ? "已启用" : "已停用"}</span><Switch aria-label={`${enabled ? "停用" : "启用"}${manifest.name}`} checked={enabled} loading={pending === manifest.id} disabled={Boolean(pending) || !canToggle} title={!canToggle ? state?.blockedReason : undefined} onChange={(value) => void toggle(plugin, value)} /></div>
+                    <div className="account-builtin-heading"><h3>{manifest.name}</h3><span>{statusLabel}</span><Switch aria-label={`${enabled ? "停用" : "启用"}${manifest.name}`} checked={enabled} loading={pending === manifest.id} disabled={Boolean(pending) || !canToggle} title={!canToggle ? state?.blockedReason : undefined} onChange={(value) => void toggle(plugin, value)} /></div>
                     {manifest.description ? <p>{manifest.description}</p> : null}
                     <details><summary>插件信息</summary><dl><div><dt>版本</dt><dd>{manifest.version}</dd></div>{manifest.author ? <div><dt>作者</dt><dd>{manifest.author}</dd></div> : null}<div><dt>权限</dt><dd>{manifest.permissions.map((permission) => PLUGIN_PERMISSION_LABELS[permission] || permission).join("、") || "无额外权限"}</dd></div></dl></details>
                 </section>;
