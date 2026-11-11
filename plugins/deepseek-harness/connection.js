@@ -47,6 +47,8 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   const settingsPath = join(pluginHome, 'connection.json')
   const pluginSettingsPath = join(pluginHome, 'settings.json')
   let current = null
+  // 工具名在真正下发时才解析到当时注册的 MCP；切换窗口里 current 已经为空，但旧 MCP 仍可能在跑。
+  let mcpOwner = null
   let error = null
   let desiredMode = null
   let switching = false
@@ -141,6 +143,8 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     // 清理阶段的任何失败都不能让 connect 卡在 switching，也不能跳过后续清理。
     try { await runner.abandonForRuntime(runtime) } catch { /* 内存状态已经放弃等待。 */ }
     try { await runtime.mcp?.dispose() } catch { /* Complete cleanup after a failed activation. */ }
+    // 旧 MCP 已经卸载：之后的调用只会落到新连接，不能再把结果算到它头上。
+    if (mcpOwner === runtime) mcpOwner = null
     try {
       if (runtime.clientId) await workspaceJSON(runtime, `/api/agent-clients/${encodeURIComponent(runtime.clientId)}`, { method: 'DELETE' })
     } catch {
@@ -210,6 +214,7 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
       if (mode === 'standalone') localAppCheckedAt = Date.now()
       runtime.connectionId = randomUUID()
       runtime.basePath = `/beeftv/app/${randomBytes(24).toString('hex')}`
+      mcpOwner = runtime
       runtime.mcp = ctx.plugin(mcpClient.default || mcpClient, {
         serverName: 'beeftv', transport: 'stdio', command: runtime.cli, args: ['mcp', 'serve'],
         failOnStartupError: true, toolCallTimeoutMs: 120_000,
@@ -325,6 +330,11 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     currentGuide: () => current?.guide || null,
     current: () => current,
     describe: () => current ? { connectionId: current.connectionId, workspaceId: current.workspace?.id ?? null } : null,
+    // 真正下发工具时的归属：优先当前连接，切换/释放期间退回仍注册着的 MCP。
+    dispatchOrigin: () => {
+      const owner = current || mcpOwner
+      return owner ? { connectionId: owner.connectionId, workspaceId: owner.workspace?.id ?? null } : null
+    },
     pluginSettings: () => pluginSettings,
     localPromptDismissed: () => localPromptDismissed,
     noteToolResult: (exec, result) => recordToolActivity(current, exec, result),

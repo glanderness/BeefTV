@@ -352,7 +352,7 @@ async function startHost(context, options = {}) {
   host.apply({
     tools: { schemas: () => [] }, connection: { requestRejection: () => null },
     webServer: { getOrigin: () => 'http://127.0.0.1:1', register: options => { handler = options.handler } },
-    plugin: () => Object.assign(Promise.resolve(), { dispose: async () => {} }),
+    plugin: () => Object.assign(Promise.resolve(), { dispose: () => options.mcpDispose ? options.mcpDispose() : Promise.resolve() }),
     effect: callback => { const dispose = callback(); if (typeof dispose === 'function') disposers.push(dispose) },
     on: (event, listener) => { listeners.set(event, listener) },
     get: name => options.services?.[name],
@@ -1253,6 +1253,7 @@ test('a submit result that arrives after a workspace switch is kept for the orig
   const { agent } = fakeAgent()
   const exec = { name: submitName, arguments: {}, agent }
   await listeners.get('tools/pre-execute')(exec, async () => ({ kind: 'allow' }))
+  await listeners.get('tools/execute')(exec, async () => submitResult(['switched-1']))
   await call('POST', '/beeftv/connect', { mode: 'local' })
   workspace.calls.length = 0
   listeners.get('tools/result')(exec, submitResult(['switched-1']))
@@ -1260,6 +1261,48 @@ test('a submit result that arrives after a workspace switch is kept for the orig
   assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
   const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
   assert.ok(stored.away.some(entry => entry.taskIds.includes('switched-1')))
+})
+
+test('a submit approved after a workspace switch is recorded for the workspace that runs it', async context => {
+  const { call, listeners, workspace, home } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent } = fakeAgent()
+  const exec = { name: submitName, arguments: {}, agent }
+  // 审批卡停在旧连接上，批准后真正下发时已经切到新工作区。
+  await listeners.get('tools/pre-execute')(exec, async () => ({ kind: 'ask', reason: '批准生成' }))
+  await call('POST', '/beeftv/connect', { mode: 'local' })
+  workspace.calls.length = 0
+  await listeners.get('tools/execute')(exec, async () => submitResult(['approved-1']))
+  listeners.get('tools/result')(exec, submitResult(['approved-1']))
+  await sleep(100)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait' && item.params.taskId === 'approved-1'), true)
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
+  assert.equal(stored.away.some(entry => entry.taskIds.includes('approved-1')), false)
+})
+
+test('a submit dispatched while the old MCP is still registered stays with that connection', async context => {
+  let releaseDispose
+  const { call, listeners, workspace, home } = await startHost(context, {
+    extraOps: [{ id: 'task.wait', readOnly: true }],
+    // 只有第一次释放旧连接时挂住；测试收尾再释放新连接必须立即完成。
+    mcpDispose: () => releaseDispose ? Promise.resolve() : new Promise(resolve => { releaseDispose = resolve }),
+  })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const switching = call('POST', '/beeftv/connect', { mode: 'local' })
+  // 切换先把 current 清空，旧 MCP 的 dispose 还没完成；这时下发的调用仍由旧连接执行。
+  while ((await call('GET', '/beeftv/status')).body.connected) await sleep(10)
+  while (!releaseDispose) await sleep(10)
+  const { agent } = fakeAgent()
+  const exec = { name: submitName, arguments: {}, agent }
+  await listeners.get('tools/execute')(exec, async () => submitResult(['switch-window-1']))
+  releaseDispose()
+  await switching
+  workspace.calls.length = 0
+  listeners.get('tools/result')(exec, submitResult(['switch-window-1']))
+  await sleep(100)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
+  assert.ok(stored.away.some(entry => entry.taskIds.includes('switch-window-1')))
 })
 
 test('a single-step batch cannot exceed the tool limit', async context => {

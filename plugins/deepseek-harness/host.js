@@ -72,6 +72,13 @@ export function apply(ctx) {
     }
   }
 
+  // 归属按真正下发时的连接记：审批可能停留很久，pre-execute 时的连接早已不是执行者。
+  ctx.on('tools/execute', (exec, next) => {
+    const origin = connection.dispatchOrigin()
+    if (origin) rememberOrigin(exec, origin)
+    return next()
+  })
+
   ctx.on('tools/result', (exec, result) => {
     const current = connection.current()
     if (current) rememberQuote(current.quotes ??= new Map(), exec?.name, result)
@@ -189,8 +196,6 @@ export function apply(ctx) {
       })
       if (blocked) return { kind: 'deny', reason: blocked }
     }
-    const origin = connection.describe()
-    if (origin) rememberOrigin(exec, origin)
     const current = connection.current()
     if (decision.kind !== 'allow' || !requiresGenerationApproval(exec.name, exec.arguments, current?.businessTools, current?.operations)) return decision
     // The user chose 完全权限: DSH shows no approval prompts and rejects any ask without showing it, so the
