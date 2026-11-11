@@ -307,11 +307,15 @@ export function apply(ctx) {
     for (const [messageId, entry] of [...pendingWakeMessages]) {
       if (!entry.workspaceId || entry.workspaceId === workspaceId) continue
       pendingWakeMessages.delete(messageId)
-      staleWakeIds.add(messageId)
-      while (staleWakeIds.size > 200) staleWakeIds.delete(staleWakeIds.values().next().value)
+      let removed = false
+      try { removed = entry.agent?.inbox?.remove?.(messageId) === true } catch { /* 会话可能已经结束。 */ }
+      // 已经从会话里撤掉就不需要兜底；只有拿不回来（已被 claim）才靠 pre-step 过滤。
+      if (!removed) {
+        staleWakeIds.add(messageId)
+        while (staleWakeIds.size > 200) staleWakeIds.delete(staleWakeIds.values().next().value)
+      }
       wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
       for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
-      try { entry.agent?.inbox?.remove?.(messageId) } catch { /* 会话可能已经结束。 */ }
     }
   }
 
@@ -798,10 +802,11 @@ export function apply(ctx) {
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
+    // 未连接时不判定工作区，避免重连窗口把同一工作区的正常通知丢掉；切换完成后再按新工作区撤回。
     const activeWorkspace = current?.workspace?.id || null
     const claimed = (payload.messages || []).map(message => ({ id: message?.id, entry: pendingWakeMessages.get(message?.id) })).filter(item => item.entry || staleWakeIds.has(item.id))
     // 旧工作区的完成通知即使已经被 claim，也不能进入新工作区的模型上下文。
-    const stale = claimed.filter(item => (item.entry?.workspaceId && item.entry.workspaceId !== activeWorkspace) || staleWakeIds.has(item.id))
+    const stale = claimed.filter(item => (activeWorkspace && item.entry?.workspaceId && item.entry.workspaceId !== activeWorkspace) || staleWakeIds.has(item.id))
     for (const item of stale) {
       pendingWakeMessages.delete(item.id)
       staleWakeIds.delete(item.id)
@@ -812,7 +817,9 @@ export function apply(ctx) {
     }
     const staleIds = new Set(stale.map(item => item.id))
     const fresh = claimed.filter(item => !staleIds.has(item.id))
-    const messages = stale.length ? (payload.messages || []).filter(message => !staleIds.has(message?.id)) : payload.messages
+    // 以 decision.messages 为准：DSH 默认还会追加 runtime-context，不能只拿 payload 重建。
+    const baseMessages = Array.isArray(decision.messages) ? decision.messages : payload.messages || []
+    const messages = stale.length ? baseMessages.filter(message => !staleIds.has(message?.id)) : baseMessages
     // DSH 会先 claim 再调用 pre-step：claimed 只看不删，等这里决定这一步是否真的进入。
     if (decision.kind !== 'enter') {
       deferClaimedWakes(fresh)

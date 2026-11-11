@@ -614,7 +614,7 @@ function fakeAgent(id = 'session', status = 'idle') {
   const removed = []
   return {
     agent: {
-      id, status, session: { id }, inbox: { remove: messageId => removed.push(messageId) },
+      id, status, session: { id }, inbox: { remove: messageId => { removed.push(messageId); return true } },
       followup: message => wakes.push(message), inject: message => injected.push(message),
     },
     wakes, injected, removed,
@@ -756,16 +756,18 @@ test('a completion queued in the old workspace never reaches the new workspace',
   const { agent, wakes, injected, removed } = fakeAgent('session', 'running')
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['old-1']))
   await until(() => injected.length === 1)
+  // 模拟消息已经被 claim、撤回拿不回来；这时只能靠 pre-step 兜底。
+  agent.inbox.remove = messageId => { removed.push(messageId); return false }
   workspace.workspaceId = 'another-workspace'
   await call('POST', '/beeftv/connect', { mode: 'local' })
-  // 换工作区时把还没送进模型的完成通知从会话里撤回。
   assert.deepEqual(removed, [injected[0].id])
   listeners.get('agent/inbox/claimed')({ agent, message: injected[0] })
   const userMessage = { id: 'real-user-message', role: 'user', content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } }
+  const runtimeContext = { id: 'runtime-context', role: 'user', content: [{ type: 'text', text: '工作区上下文' }], source: { kind: 'runtime-context' } }
   const messages = [injected[0], userMessage]
-  const decision = await listeners.get('agent/pre-step')({ agent, turn: 2, messages }, async () => ({ kind: 'enter', messages }))
-  // 即使撤回没赶在 claim 之前，旧工作区的消息也不会进入这一步。
-  assert.deepEqual(decision.messages, [userMessage])
+  const decision = await listeners.get('agent/pre-step')({ agent, turn: 2, messages }, async () => ({ kind: 'enter', messages: [...messages, runtimeContext] }))
+  // 旧工作区的消息被过滤，DSH 追加的 runtime-context 和用户消息保留。
+  assert.deepEqual(decision.messages, [userMessage, runtimeContext])
   assert.equal(wakes.length, 0)
 })
 
