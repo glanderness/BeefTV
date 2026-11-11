@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { join } from 'node:path'
@@ -105,7 +106,7 @@ export function approvalReason(name, args, businessTools = [], quotes = new Map(
 export const defaultPluginSettings = Object.freeze({ autoContinue: true, stepLimit: 40 })
 export const minimumStepLimit = 5
 export const maximumStepLimit = 200
-export const maximumWakesPerSession = 3
+export { maximumWakesPerSession } from './await-machine.js'
 
 // 设置文件来自本机磁盘，读坏或旧字段都以默认值继续，避免插件整体不可用。
 export function normalizeSettings(value) {
@@ -584,4 +585,25 @@ export async function inspectWorkspace(runtime) {
     workspace: { id: bootstrap.workspace.id, name: bootstrap.workspace.name, storage: bootstrap.workspace.storage },
     contractVersion: bootstrap.contractVersion,
   }
+}
+
+// 直接走工作区操作层，带插件登记得到的客户端凭据；不经过模型，也不新增付费任务。
+export async function callOperation(runtime, id, params, signal) {
+  const response = await fetch(`${runtime.baseURL}/ops/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    signal: signal ?? AbortSignal.timeout(25_000),
+    headers: {
+      'content-type': 'application/json',
+      'X-Beeftv-Client': runtime.clientId,
+      authorization: `Bearer ${runtime.clientToken}`,
+    },
+    body: JSON.stringify({ opId: randomUUID(), params }),
+  })
+  const value = await response.json()
+  if (!response.ok || value.code !== 0) throw new Error(value.msg || `BeefTV 请求失败 (${response.status})`)
+  return value.data
+}
+
+export function hasOperation(runtime, id) {
+  return Array.isArray(runtime?.operations) && runtime.operations.some(operation => operation?.id === id)
 }
