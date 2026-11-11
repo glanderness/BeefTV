@@ -142,12 +142,11 @@ window.__ModuleLoader__.load({
       const session = useSession(value => value)
       const settling = session === undefined || session.openState === 'loading'
       const running = Boolean(session?.running)
+      // 渲染期同步记住，避免切换会话后消息落在 passive effect 之前。
+      conversationSessionId = sessionId
 
-      React.useEffect(() => {
-        conversationSessionId = sessionId
-        return () => {
-          if (conversationSessionId === sessionId) conversationSessionId = undefined
-        }
+      React.useEffect(() => () => {
+        if (conversationSessionId === sessionId) conversationSessionId = undefined
       }, [sessionId])
 
       React.useEffect(() => {
@@ -411,6 +410,9 @@ window.__ModuleLoader__.load({
 
       async function dismissLocalPrompt() {
         setError('')
+        // An older status read must not put the prompt back after the dismissal was saved.
+        statusRequest.current?.abort()
+        statusRequest.current = null
         try {
           setStatus(await api('local-prompt', { dismissed: true }))
         } catch (failure) {
@@ -458,29 +460,48 @@ window.__ModuleLoader__.load({
     }
 
     function askAssistant(ctx) {
-      return ask => {
+      const prefill = (input, binding, prompt) => {
+        const result = input.requestDraftInitialization(binding, { prompt, whenDraftExists: 'append' })
+        return ['applied', 'preserved', 'blocked'].includes(result) ? result : 'unavailable'
+      }
+      return async ask => {
         const prompt = askPrompt(ask)
+        const input = ctx.get?.('conversation')?.input
+        if (typeof input?.requestDraftInitialization !== 'function') {
+          // 旧版 DSH 没有输入框预填接口：退回新建会话，由 startSession 自己放草稿。
+          try {
+            if (typeof ctx.uiWorkspace?.startSession !== 'function') return 'unavailable'
+            ctx.uiWorkspace.startSession(undefined, { prompt, whenDraftExists: 'append' })
+            ctx.layout.selectPanel(panelId)
+            return 'applied'
+          } catch {
+            return 'unavailable'
+          }
+        }
         let binding
         try {
           binding = conversationSessionId === undefined ? undefined : ctx.sessions?.binding?.(conversationSessionId)
         } catch {
           binding = undefined
         }
-        const input = binding ? ctx.get?.('conversation')?.input : undefined
-        if (binding && typeof input?.requestDraftInitialization === 'function') {
+        if (binding) {
           try {
-            const result = input.requestDraftInitialization(binding, { prompt, whenDraftExists: 'append' })
+            const result = prefill(input, binding, prompt)
             ctx.layout.selectPanel(panelId)
-            return ['applied', 'preserved', 'blocked'].includes(result) ? result : 'unavailable'
+            return result
           } catch {
-            // 当前会话的输入框不可用时，退回新会话预填。
+            return 'unavailable'
           }
         }
+        // 没有当前会话：新建并立即 retain，确认输入框真的接住了草稿，而不是假定成功。
         try {
-          if (typeof ctx.uiWorkspace?.startSession !== 'function') return 'unavailable'
-          ctx.uiWorkspace.startSession(undefined, { prompt, whenDraftExists: 'append' })
+          const sessionId = await ctx.sessions.create()
+          ctx.uiWorkspace.openSession(sessionId)
+          const created = ctx.sessions.binding(sessionId)
+          if (!created) return 'unavailable'
+          const result = prefill(input, created, prompt)
           ctx.layout.selectPanel(panelId)
-          return 'applied'
+          return result
         } catch {
           return 'unavailable'
         }

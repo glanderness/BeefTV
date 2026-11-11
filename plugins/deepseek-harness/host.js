@@ -115,13 +115,34 @@ export function apply(ctx) {
   let error = null
   let desiredMode = null
   let localPromptDismissed = false
+  let localAppCheckedAt = 0
   let statusCheck = null
   const contexts = new Map()
+  // How often a standalone workspace re-checks the installed App. A later install or upgrade
+  // should still surface the one-time switch prompt.
+  const localAppRecheckMs = 30_000
 
   async function writeSettings() {
     await mkdir(pluginHome, { recursive: true, mode: 0o700 })
     await writeFile(settingsPath, JSON.stringify({ mode: desiredMode, localPromptDismissed }), { mode: 0o600 })
   }
+
+  async function refreshLocalApp(runtime) {
+    if (runtime.mode !== 'standalone' || localPromptDismissed || runtime.localApp?.compatible === true) return
+    if (Date.now() - localAppCheckedAt < localAppRecheckMs) return
+    localAppCheckedAt = Date.now()
+    runtime.localApp = await localAppStatus()
+  }
+
+  // Read before answering status or connecting, so a saved 暂不 cannot be overwritten by an
+  // early connection that still sees the default.
+  const settingsReady = readFile(settingsPath, 'utf8').then(JSON.parse).then(settings => {
+    if (settings.localPromptDismissed === true) localPromptDismissed = true
+    return settings
+  }).catch(failure => {
+    if (failure.code !== 'ENOENT') error = failure.message
+    return null
+  })
 
   function status() {
     const mcpTools = ctx.tools.schemas().filter(tool => tool.name.startsWith('mcp__beeftv__')).map(tool => tool.name)
@@ -194,6 +215,7 @@ export function apply(ctx) {
       runtime.readOnlyTools = readOnlyToolNames(operations.ops)
       runtime.mode = mode
       runtime.localApp = mode === 'standalone' ? await localAppStatus() : null
+      if (mode === 'standalone') localAppCheckedAt = Date.now()
       runtime.connectionId = randomUUID()
       runtime.basePath = `/beeftv/app/${randomBytes(24).toString('hex')}`
       runtime.mcp = ctx.plugin(mcpClient.default || mcpClient, {
@@ -239,6 +261,7 @@ export function apply(ctx) {
       if (!current && desiredMode === 'local' && !switching) {
         try { await connect('local', true) } catch { /* Retry discovery on the next status request. */ }
       }
+      if (current) await refreshLocalApp(current)
       // The workspace chooser needs to know whether the installed App can be connected at all.
       return current ? status() : { ...status(), localApp: await localAppStatus() }
     })().finally(() => { statusCheck = null })
@@ -264,9 +287,13 @@ export function apply(ctx) {
         const url = new URL(req.url, 'http://localhost')
         const rejection = ctx.connection.requestRejection({ headers: req.headers })
         if (rejection) return json(res, rejection, { error: '未授权' })
-        if (req.method === 'GET' && url.pathname === '/beeftv/status') return json(res, 200, await refreshConnection())
+        if (req.method === 'GET' && url.pathname === '/beeftv/status') {
+          await settingsReady
+          return json(res, 200, await refreshConnection())
+        }
         if (req.method === 'POST' && url.pathname === '/beeftv/connect') {
           const body = await bodyJSON(req)
+          await settingsReady
           await connect(body.mode)
           return json(res, 200, status())
         }
@@ -283,8 +310,15 @@ export function apply(ctx) {
         if (req.method === 'POST' && url.pathname === '/beeftv/local-prompt') {
           const body = await bodyJSON(req)
           if (body.dismissed !== true) throw new Error('无效的本机连接提示设置')
+          await settingsReady
+          const previous = localPromptDismissed
           localPromptDismissed = true
-          await writeSettings()
+          try {
+            await writeSettings()
+          } catch (failure) {
+            localPromptDismissed = previous
+            throw failure
+          }
           return json(res, 200, status())
         }
         json(res, 404, { error: '未找到接口' })
@@ -300,7 +334,7 @@ export function apply(ctx) {
     text: `你是 BeefTV Agent，协助用户完成长程 AI 视频导演创作、素材管理以及工作区深度定制（接入第三方 API 渠道、编写与安装插件、创建可复用技能）。连接后通过 beeftv MCP 工具直接操作本机 BeefTV 的画布、分镜脚本、生成任务、时间线与配置，与本机 BeefTV 应用共享同一套数据与版本。常规回复使用简洁中文，说明完成结果与需要用户确认的事项，避免向用户倾倒工具 ID、内部接口名和原始回执。
 长程视频创作与工作区定制按以下规范完成：
 1. 画布定位与新建：若当前工作区视图已包含 canvasId，优先用 canvas.get 读取当前画布；否则先用 canvas.search 查找目标画布。需要新建画布时，优先直接调用 canvas.create（最小参数 {"title":"画布标题","operationId":"stable-create-id"}，可选 projectId）；仅当需要整图初始化写入时，再用 business.list 查询 {"query":"business_put_canvas_projects_id"} 并通过 business.call 执行 PUT。
-2. 整片分镜脚本与镜头节点准备（核心长程能力）：新短片创作优先调用 canvas.script.prepare 准备完整分镜（含 title 与 rows 分镜行），一次最多 8 行；分镜超过 8 行时，先用 canvas.script.prepare 准备前 8 行，再用 canvas.script.rows.append 追加其余行。需要同步在画布上铺开首帧图和视频镜头节点草稿（含自动连线）时，同一次传入 image（模型、画幅、质量、title 模板如 "镜 {n} 首帧"）与 video（模型、画幅、分辨率、时长、generateAudio、title 模板如 "镜 {n} 视频"），不要拆成多次零散创建节点。单镜微调优先调用 canvas.script.row.update（会自动同步已绑定的 imageNodeId / videoNodeId 标题与提示词），追加分镜用 canvas.script.rows.append。
+2. 整片分镜脚本与镜头节点准备（核心长程能力）：新短片创作优先调用 canvas.script.prepare 准备完整分镜（含 title 与 rows 分镜行），一次最多 8 行；分镜超过 8 行时，先用 canvas.script.prepare 准备前 8 行，再用 canvas.script.rows.append 追加其余行（单次最多 32 行），分镜脚本节点 ID 取 prepare 返回的 created。需要同步在画布上铺开首帧图和视频镜头节点草稿（含自动连线）时，同一次传入 image（模型、画幅、质量、title 模板如 "镜 {n} 首帧"）与 video（模型、画幅、分辨率、时长、generateAudio、title 模板如 "镜 {n} 视频"），不要拆成多次零散创建节点；追加行需要首帧/视频草稿时，用 canvas.script.prepare 传 nodeId 与 rowIds（每次最多 8 行）补齐。单镜微调优先调用 canvas.script.row.update（会自动同步已绑定的 imageNodeId / videoNodeId 标题与提示词），追加分镜用 canvas.script.rows.append。
 3. 单独节点读写与模型参数核对：新建独立文本节点使用 canvas.nodes.create（如 {"canvasId":"目标画布ID","expectedRevision":1,"nodes":[{"title":"文本标题","type":"text","prompt":"正文"}],"operationId":"stable-node-id"}）。写操作返回里已有的字段不再读回；返回里没有的（例如新建文本节点的正文）才按节点读回。缺失或修改正文时用 canvas.node.update 的 patch.content（patch.prompt 与 patch.content 不得同时提交不同内容）。配置生成节点前先用 model.catalog（capabilities: ["image","video","audio"]）查询所选模型的真实支持值；通过 canvas.node.configure 写入后，返回里已有 metadata.size（画幅比例，如 "16:9"）、metadata.vquality（分辨率，如 "720p"）、metadata.seconds（秒数）就不再读回，缺少时才按节点读回，不得混填。
 4. 成片声音与旁白设计：创作视频短片时主动规划声音方案。需要视频原声、环境音或角色直接说话时，选支持声音的视频模型并在 canvas.node.configure 中设 generateAudio: "true"（无声镜头设 "false"）；需要独立旁白或配音时，创建 audio 节点写入台词，配置语音模型与 audioVoice、audioSpeed、audioFormat。
 5. 长程分批生成提案与推进：调用 canvas.generation.propose 时，整片制作在 productionNodeIds 中列出全部计划素材节点（首帧、视频、旁白），nodeIds 只列当前 kind 且上游参考已就绪的首批节点（未出图的空草稿不能作下游视频参考）。逐项核对返回的 targets.parameters 与 estimate，确认模型、比例、分辨率、时长和费用估算无误后，在回复里写明模型、数量和预计费用，再调用 canvas.generation.submit 提交。是否弹出审批由用户在 DSH 选的访问模式决定：弹出时等用户确认；完全权限下直接执行，不要再另外追问。提交后用 task.get 与 canvas.task.bind 绑定产物；首批首帧完成后先用 media.overview / media.inspect 复核画面与角色一致性，再推进下一批视频节点；个别失败只重试失败节点，不重复购买已成功节点。用户拒绝审批后停止本次生成，不得自动重试或绕道提交付费任务。
@@ -346,10 +380,7 @@ export function apply(ctx) {
     return { kind: 'ask', reason: approvalReason(exec.name, exec.arguments, current?.businessTools, current?.quotes, current?.operations) }
   })
   ctx.effect(() => () => { const runtime = current; current = null; void release(runtime) })
-  void readFile(settingsPath, 'utf8').then(JSON.parse).then(settings => {
-    if (settings.localPromptDismissed === true) localPromptDismissed = true
-    return connect(settings.mode)
-  }).catch(failure => {
-    if (failure.code !== 'ENOENT') error = failure.message
-  })
+  void settingsReady.then(settings => {
+    if (settings?.mode) return connect(settings.mode)
+  }).catch(failure => { error = failure.message })
 }

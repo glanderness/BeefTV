@@ -10,12 +10,19 @@ const root = fileURLToPath(new URL('.', import.meta.url))
 
 const mcpOperationName = id => `mcp__beeftv__${id.replace(/[^A-Za-z0-9_-]/g, '_')}`
 const mcpToolBase = name => typeof name === 'string' ? name.replace(/_[a-f0-9]{12}$/, '') : ''
+// Read-only operations known to call a paid model. A catalog without replay metadata must not
+// silently run them without approval.
+const paidReadOperations = new Set(['media.review'])
+const mediaReviewTool = mcpOperationName('media.review')
 
 // The catalog describes reads that still cost money (replay: unsafe), such as paid media review.
 export function unsafeOperation(name, operations = []) {
-  if (!Array.isArray(operations)) return undefined
   const tool = mcpToolBase(name)
-  return operations.find(operation => operation?.readOnly === true && operation.replay === 'unsafe' && mcpOperationName(String(operation.id || '')) === tool)
+  const catalog = Array.isArray(operations) ? operations : []
+  const matched = catalog.find(operation => mcpOperationName(String(operation?.id || '')) === tool)
+  if (!matched) return tool === mediaReviewTool ? { id: 'media.review', readOnly: true, replay: 'unsafe' } : undefined
+  if (matched.readOnly !== true) return undefined
+  return matched.replay === 'unsafe' || paidReadOperations.has(matched.id) ? matched : undefined
 }
 
 function secondsLabel(milliseconds) {

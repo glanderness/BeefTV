@@ -38,9 +38,15 @@ beforeAll(async () => {
             factory(name => { if (name === 'react') return React; throw new Error(name); }).apply({
               effect: effect => effect(),
               get: name => services[name],
-              sessions: { create: async () => 'created-session', binding: id => ({ sessionId: id }) },
+              sessions: {
+                create: async () => {
+                  if (window.__createFails) throw new Error('无法新建会话');
+                  return 'created-session';
+                },
+                binding: id => ({ sessionId: id }),
+              },
               uiWorkspace: {
-                openSession() {},
+                openSession(id) { window.openedSession = id; },
                 ...(window.__noStartSession ? {} : { startSession(workspaceId, options) { window.startedSession = { workspaceId, options }; } }),
               },
               layout: { selectPanel: id => { window.selectedPanel = id; } },
@@ -54,17 +60,21 @@ beforeAll(async () => {
             });
           }};
           await import(${JSON.stringify(clientPath)});
-          const useSession = () => ({ openState: 'ready' });
-          function renderSlot(name, props) {
-            return h(components.get(name), {
-              ...props, sessionId: window.__noSession ? undefined : 'native-session', useSession,
+          function Shell() {
+            const [sessionId, setSessionId] = React.useState(window.__noSession ? undefined : 'native-session');
+            window.__setSessionId = setSessionId;
+            window.__renderedSession = sessionId;
+            const useSession = () => ({ openState: 'ready' });
+            const renderSlot = (name, props) => h(components.get(name), {
+              ...props, sessionId, useSession,
               renderFactorySlot: (name, options) => h(NativeView, { options }),
             });
+            return h(components.get('main'), {
+              ...window.__mainInject, renderSlot, returnToConversation() {},
+              async createCreativeSession() { window.createdSessions = (window.createdSessions || 0) + 1; },
+            });
           }
-          createRoot(document.getElementById('root')).render(h(components.get('main'), {
-            ...window.__mainInject, renderSlot, returnToConversation() {},
-            async createCreativeSession() { window.createdSessions = (window.createdSessions || 0) + 1; },
-          }));
+          createRoot(document.getElementById('root')).render(h(Shell));
         `,
       }))
     } }],
@@ -414,9 +424,35 @@ for (const status of ['applied', 'preserved', 'blocked']) {
   })
 }
 
-test('没有当前会话时退回新会话预填，没有输入能力时回 unavailable', async () => {
+test('没有当前会话时新建对话并确认草稿状态，失败时不谎报成功', async () => {
   {
     const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true } })
+    await listenAskResults(page)
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'video' }] })).toBe('applied')
+    expect(await page.evaluate(() => (window as any).lastDraft)).toEqual({
+      sessionId: 'created-session',
+      options: { prompt: '画布「画布」中选中的：镜头一\n', whenDraftExists: 'append' },
+    })
+    expect(await page.evaluate(() => (window as any).openedSession)).toBe('created-session')
+    await page.close()
+  }
+  {
+    const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true; (window as any).__draftStatus = 'blocked' } })
+    await listenAskResults(page)
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] })).toBe('blocked')
+    await page.close()
+  }
+  {
+    const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true; (window as any).__createFails = true } })
+    await listenAskResults(page)
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [] })).toBe('unavailable')
+    await page.close()
+  }
+})
+
+test('旧版没有输入预填接口时退回新建会话，完全不可用时回 unavailable', async () => {
+  {
+    const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true; (window as any).__noConversation = true } })
     await listenAskResults(page)
     expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'video' }] })).toBe('applied')
     expect(await page.evaluate(() => (window as any).startedSession)).toEqual({
@@ -426,17 +462,37 @@ test('没有当前会话时退回新会话预填，没有输入能力时回 unav
     await page.close()
   }
   {
-    const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true; (window as any).__noStartSession = true } })
+    const { page } = await openWorkbench({ init: () => { (window as any).__noConversation = true; (window as any).__noStartSession = true } })
     await listenAskResults(page)
-    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [], })).toBe('unavailable')
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [] })).toBe('unavailable')
     await page.close()
   }
 })
 
-test('不是嵌入页发来的问助手消息会被忽略', async () => {
+test('切换会话后问助手写到新会话', async () => {
   const { page } = await openWorkbench()
   await listenAskResults(page)
-  await page.evaluate(() => window.postMessage({ type: 'beeftv:ask', ask: { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] } }, location.origin))
+  await page.evaluate(() => (window as any).__setSessionId('session-two'))
+  await page.waitForFunction(() => (window as any).__renderedSession === 'session-two')
+  expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] })).toBe('applied')
+  expect(await page.evaluate(() => (window as any).lastDraft.sessionId)).toBe('session-two')
+  await page.close()
+})
+
+test('不是嵌入页发来或来源不符的问助手消息会被忽略', async () => {
+  const { page } = await openWorkbench()
+  await listenAskResults(page)
+  const ask = { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] }
+  await page.evaluate(message => window.postMessage(message, location.origin), { type: 'beeftv:ask', ask })
+  // 把来源伪装成嵌入页，但 origin 不是嵌入页的来源。
+  await page.evaluate(message => {
+    const frame = document.querySelector('iframe')!
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://example.invalid',
+      data: message,
+    }))
+  }, { type: 'beeftv:ask', ask })
   await page.waitForTimeout(50)
   expect(await workspaceFrame(page).evaluate(() => (window as any).askResult)).toBeUndefined()
   expect(await page.evaluate(() => (window as any).lastDraft)).toBeUndefined()
@@ -466,5 +522,33 @@ test('独立工作区常驻数据说明，本机可用时只提示一次并能�
   await page.waitForTimeout(30)
   expect(await page.getByText(offer, { exact: true }).count()).toBe(0)
   expect(await page.getByText(note, { exact: true }).count()).toBe(1)
+  await page.close()
+})
+
+test('暂不 会丢弃还在路上的旧状态响应', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  const offer = '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'
+  state.setStatus({
+    ...state.status(),
+    mode: 'standalone',
+    appURL: new URL('/workspace/standalone/', server.url).href,
+    localApp: { compatible: true, version: '2.2.0', message: null },
+    localPromptDismissed: false,
+  } as any)
+  await refresh(page)
+  await page.getByText(offer, { exact: true }).waitFor()
+  let release!: () => void
+  await page.route('**/beeftv/status', async route => {
+    await new Promise<void>(resolve => { release = resolve })
+    await route.fulfill({ json: { ...state.status(), localPromptDismissed: false } }).catch(() => {})
+  })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  for (let index = 0; index < 100 && !release; index++) await page.waitForTimeout(10)
+  expect(typeof release).toBe('function')
+  await page.getByRole('button', { name: '暂不' }).click()
+  release()
+  await page.waitForTimeout(100)
+  expect(await page.getByText(offer, { exact: true }).count()).toBe(0)
   await page.close()
 })
