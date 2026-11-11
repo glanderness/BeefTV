@@ -3,6 +3,7 @@
 
 import { invalidArg } from './common.mjs';
 import { ensureCanvas } from './canvas-store.mjs';
+import { validateTimelineShape } from './timeline.mjs';
 
 const RENDER_FILE_NAME = 'timeline-render.mp4';
 
@@ -19,6 +20,7 @@ export function createTimelineRenderOutput(state, { canvasId, sourceRevision, op
   if (!timeline || typeof timeline !== 'object') {
     throw invalidArg('invalid_timeline', '画布中没有有效时间线');
   }
+  validateTimelineShape(timeline, doc);
   const dims = renderDimensions(options);
   const durationMs = Math.max(0, Number(timeline.durationMs) || 0);
   state.seq.task += 1;

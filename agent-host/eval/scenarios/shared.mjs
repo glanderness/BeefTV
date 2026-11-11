@@ -30,8 +30,9 @@ export function applySimCapabilities(simGo, capabilities = []) {
 
 // 回复至少要说明结果已经产生。认「已生成 / 已经生成 / 生成好 / 完成 / 已绑定」等说法，
 // 但排除「还没生成」「无法完成」这类否定句，避免把过程说明当成完成汇报。
-const BLOCKED_BEFORE = /(尚未|还没|没有|未能|无法|不能|未|会|将|要|准备|计划|打算)$/;
-const RESULT_PHRASE = /已经?[^，。；\n]{0,8}生成|生成好|生成完|(?:完成|做完|绑定|写入|写到)(?!后|之后|以后)/;
+const BLOCKED_BEFORE = /(尚未|还没|没有|没能|没|未能|无法|不能|未|会|将|要|准备|计划|打算|等|如果|一旦|要是|若|待|再)$/;
+const RESULT_PHRASE = /已经?[^，。；\n]{0,8}生成|生成好|生成完|完成|做完|绑定|写入|写到/;
+const FUTURE_OR_PARTIAL = /^(?:了)?(?:之后|以后|后)|^(?:一半|部分|一部分)/;
 
 export function replyReportsResult(text) {
   const value = String(text || '');
@@ -41,7 +42,8 @@ export function replyReportsResult(text) {
     if (!match) return false;
     const index = start + match.index;
     const prefix = value.slice(Math.max(0, index - 2), index);
-    if (!BLOCKED_BEFORE.test(prefix)) return true;
+    const suffix = value.slice(index + match[0].length, index + match[0].length + 3);
+    if (!BLOCKED_BEFORE.test(prefix) && !FUTURE_OR_PARTIAL.test(suffix)) return true;
     start = index + match[0].length;
   }
   return false;

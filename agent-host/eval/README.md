@@ -171,8 +171,11 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 - `media.overview` / `media.inspect`：任务交付后、节点还没 `canvas.task.bind` 时，从节点的 `taskId` 对应产物读取资源；真实后端会把已交付产物自动写回目标节点，模拟器只补读取路径，不放松绑定判定。
 - `canvas.timeline.render`：渲染任务登记可绑定的 mp4 产物；真实后端渲染完成会产出资源，此前模拟器返回空产物，导致合法的 `canvas.task.bind` 被误判为 `task_output_not_found`。
 - `canvas.timeline.update`：补上真实后端已支持的 `refreshNodeIds` 分支；此前模拟器只收 `timeline`，合法刷新会被误判为 `invalid_params`。
-- `canvas.script.prepare` / 分镜行：行草稿时长只要求 JSON 数字，1..60 秒只在准备视频草稿时校验；此前模拟器对任何行都套范围，真实后端会接受的草稿被误判为 `invalid_params`。
 - `canvas.timeline.deliver`、`canvas.generation.regenerate`、`canvas.nodes.configure`、`canvas.nodes.get`：按已确认的对外约定和真实分支实现，经 `--sim-capabilities` 打开，默认关闭；用于阶段重测，不改变 S1–S11 的工具面。
+- `canvas.timeline.deliver` 的返回字段（`renderTaskId`、`resultNodeId`、`timelineRevision`、`revision`、`title`、`status`）照 `origin/feat/ops-timeline-deliver` 的 Go 操作实现，不采用仓库内 JS 助手工具的旧回执格式；非法时间线在落盘前拒绝。
+- `canvas.generation.regenerate`：先只读校验批次内全部节点，再统一释放已结束任务的回执；任一批次失败都不会留下半清理的节点，重复 `nodeId` 去重为一个任务。
+- 只读的 `canvas.nodes.get` 和 `regenerate` 遇到不存在的画布直接报 `canvas_not_found`，不再由读取路径创建幽灵画布。
+- `media.overview` / `media.inspect` 的任务产物回退只认同一画布、同一节点且已成功的任务；伪造 `taskId` 读不到不属于该节点的资源。
 - R6 收尾等待：场景新增 `settleTimeoutMs: 600000`；内置路径最后一轮实测 332–380 秒，120 秒会把仍在运行的正常收尾误判为失败。
 - R1a/R1b 回复判分：接受「已经生成」等同义说法，但仍要求回复说明结果，并用否定句反例守住判定。
 - `no_failed_or_unhandled_calls`：回溯确认它把「同一回合后来同类操作成功」的失败视为已恢复，比 S11 的「同一目标、带正确版本恢复」更宽；本次不收紧该判定，证据留在重测结论里。

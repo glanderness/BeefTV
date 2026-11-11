@@ -2,11 +2,11 @@
 // 也不改变 S1–S11 的内置工具定义。参数与返回按已确认的对外约定和真实分支实现。
 
 import { clone, invalidArg, notFound, conflict, preconditionFailed, permissionDenied } from './common.mjs';
-import { ensureCanvas, saveCanvas, buildDefaultMetadata } from './canvas-store.mjs';
+import { saveCanvas, buildDefaultMetadata } from './canvas-store.mjs';
 import { GENERATION_OPS } from './generation.mjs';
 import { applyNodeConfiguration } from './node-configure.mjs';
 import { createTimelineRenderOutput, applyRenderBinding } from './render.mjs';
-import { refreshTimelineSources } from './timeline.mjs';
+import { refreshTimelineSources, validateTimelineShape } from './timeline.mjs';
 
 const TERMINAL_TASK_STATES = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -218,7 +218,8 @@ function findCanvasAtRevision(state, canvasId, expectedRevision) {
 }
 
 function releaseEndedNodeReceipts(state, doc, nodeIds) {
-  const backups = [];
+  // 先只读校验全部目标，任何一个仍是运行中/没有任务记录就整次拒绝；校验完再统一清回执，避免半途失败留下残缺节点。
+  const plans = [];
   for (const nodeId of nodeIds) {
     const node = (doc.nodes || []).find((item) => item.id === nodeId);
     if (!node) continue;
@@ -233,7 +234,10 @@ function releaseEndedNodeReceipts(state, doc, nodeIds) {
     if (!TERMINAL_TASK_STATES.has(task.status)) {
       throw preconditionFailed('generation_task_exists', '节点已关联生成任务，请先查询原任务；需要另做一份时请新建节点', { nodeId, taskId, taskStatus: task.status });
     }
-    backups.push({ node, metadata: clone(meta) });
+    plans.push({ node, metadata: clone(meta) });
+  }
+  for (const plan of plans) {
+    const node = plan.node;
     for (const key of [
       'taskId', 'taskClientOperationId', 'taskStatus', 'taskProgress', 'generationSubmissionState',
       'assetId', 'resourceId', 'storageKey', 'content', 'mimeType', 'bytes', 'durationMs',
@@ -243,7 +247,7 @@ function releaseEndedNodeReceipts(state, doc, nodeIds) {
     }
     node.metadata.status = 'idle';
   }
-  return backups;
+  return plans;
 }
 
 export const CAPABILITY_OPS = {
@@ -269,6 +273,7 @@ export const CAPABILITY_OPS = {
     let doc = clone(findCanvasAtRevision(state, canvasId, expectedRevision));
     let timelineRevision = expectedRevision;
     if (hasTimeline) {
+      validateTimelineShape(rawParams.timeline, doc);
       doc.timeline = clone(rawParams.timeline);
       timelineRevision = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.timeline.deliver', turnId).revision;
       doc = clone(state.canvases.get(canvasId));
@@ -305,6 +310,7 @@ export const CAPABILITY_OPS = {
     applyRenderBinding(node, render.task, render.output);
     doc.nodes.push(node);
     const saved = saveCanvas(state, canvasId, doc, timelineRevision, 'canvas.timeline.deliver', turnId);
+    // 返回字段照 origin/feat/ops-timeline-deliver 的 Go 操作，而不是内置 JS 助手工具的旧回执。
     return {
       canvasId,
       renderTaskId: render.task.id,
@@ -321,9 +327,10 @@ export const CAPABILITY_OPS = {
   'canvas.generation.regenerate': (state, rawParams, ctx) => {
     requireExternal(ctx);
     const canvasId = String(rawParams.canvasId || '').trim();
-    const nodeIds = (Array.isArray(rawParams.nodeIds) ? rawParams.nodeIds : []).map(String);
+    const nodeIds = [...new Set((Array.isArray(rawParams.nodeIds) ? rawParams.nodeIds : []).map((id) => String(id).trim()).filter(Boolean))];
     if (!canvasId) throw invalidArg('invalid_params', 'canvasId 必填');
-    const doc = ensureCanvas(state, canvasId);
+    const doc = state.canvases.get(canvasId);
+    if (!doc) throw notFound('canvas_not_found', `画布不存在: ${canvasId}`);
     let backups = [];
     try {
       backups = releaseEndedNodeReceipts(state, doc, nodeIds);
@@ -381,7 +388,8 @@ export const CAPABILITY_OPS = {
     const nodeIds = Array.isArray(rawParams.nodeIds) ? rawParams.nodeIds.map(String) : [];
     if (!canvasId) throw invalidArg('invalid_params', 'canvasId 必填');
     if (nodeIds.length === 0 || nodeIds.length > 50) throw invalidArg('invalid_batch', 'nodeIds 必须是 1..50 项的数组');
-    const doc = ensureCanvas(state, canvasId);
+    const doc = state.canvases.get(canvasId);
+    if (!doc) throw notFound('canvas_not_found', `画布不存在: ${canvasId}`);
     const byId = new Map((doc.nodes || []).map((node) => [node.id, node]));
     const nodes = [];
     const missingNodeIds = [];

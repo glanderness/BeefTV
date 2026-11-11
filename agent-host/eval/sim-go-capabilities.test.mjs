@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { createSimGo } from './sim-go.mjs';
 
+const clone = (value) => JSON.parse(JSON.stringify(value));
+
 function imageNode(id, title, metadata = {}) {
   return { id, type: 'image', title, position: { x: 120, y: 160 }, width: 720, height: 405, metadata: { status: 'idle', size: '9:16', count: 1, model: 'seedream-3.0', prompt: '雨夜', composerContent: '雨夜', ...metadata } };
 }
@@ -100,6 +102,24 @@ describe('media 读取已交付的生成产物', () => {
     const afterBind = sim.executeOp('media.overview', { canvasId, nodeId: 'node-image' }).result;
     expect(afterBind.source.resourceId).toBe(output.resourceId);
   });
+
+  test('节点伪造其他任务 ID 时不会读到不属于它的产物', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-media-forged';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧'), imageNode('node-other', '镜 2 首帧')]);
+    sim.beginTurn({ turnId: 'turn-media-forged', canvasId, permissionMode: 'canvas' });
+    const submitted = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-other'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'media-forged-submit', 'turn-media-forged').result;
+    await sim.waitForTasks(submitted.taskIds, 500);
+    const node = sim.ensureCanvas(canvasId).nodes.find((item) => item.id === 'node-image');
+    node.metadata.taskId = submitted.taskIds[0];
+    expect(() => sim.executeOp('media.overview', { canvasId, nodeId: 'node-image' })).toThrow(/尚未生成或绑定/);
+  });
 });
 
 describe('时间线渲染任务产物', () => {
@@ -194,6 +214,22 @@ describe('canvas.nodes.get', () => {
     expect(result.nodes.map((node) => node.id)).toEqual(['node-video', 'node-image']);
     expect(result.missingNodeIds).toEqual(['node-missing']);
     expect(() => sim.executeOp('canvas.nodes.get', { canvasId, nodeIds: Array.from({ length: 51 }, (_, i) => `n${i}`) })).toThrow(/1\.\.50/);
+  });
+
+  test('读取不存在的画布直接报错，不会创建幽灵画布', () => {
+    const sim = createSimGo();
+    sim.enableCapabilities(['canvas.nodes.get']);
+    expect(() => sim.executeOp('canvas.nodes.get', { canvasId: 'ghost', nodeIds: ['n1'] })).toThrow(/画布不存在/);
+    expect(sim.canvases.has('ghost')).toBe(false);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    expect(() => sim.executeOp('canvas.generation.regenerate', {
+      canvasId: 'ghost',
+      nodeIds: ['n1'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'ghost-regen-1', '')).toThrow(/画布不存在/);
+    expect(sim.canvases.has('ghost')).toBe(false);
   });
 });
 
@@ -307,6 +343,70 @@ describe('canvas.generation.regenerate', () => {
     expect(replay.replayed).toBe(true);
     expect(replay.result.taskIds).toEqual(regen.taskIds);
     expect(sim.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(2);
+  });
+
+  test('混合批次里有一个运行中任务时整次拒绝，已结束节点的回执不变', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-regen-mixed';
+    seedCanvas(sim, canvasId, [imageNode('node-a', '镜 1 首帧'), imageNode('node-b', '镜 2 首帧')]);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    sim.beginTurn({ turnId: 'turn-regen-mixed', canvasId, permissionMode: 'canvas' });
+    const first = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-a'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-mixed-submit-a', 'turn-regen-mixed').result;
+    await sim.waitForTasks(first.taskIds, 500);
+    sim.setTaskTiming(canvasId, { imageMs: 5000 });
+    const running = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-b'],
+      kind: 'image',
+      expectedRevision: sim.ensureCanvas(canvasId).revision,
+      expectedModelConfigRevision: 1,
+    }, 'regen-mixed-submit-b', 'turn-regen-mixed').result;
+    const revisionBefore = sim.ensureCanvas(canvasId).revision;
+    const nodeBefore = clone(sim.ensureCanvas(canvasId).nodes.find((node) => node.id === 'node-a').metadata);
+    expect(() => sim.executeOp('canvas.generation.regenerate', {
+      canvasId,
+      nodeIds: ['node-a', 'node-b'],
+      kind: 'image',
+      expectedRevision: revisionBefore,
+      expectedModelConfigRevision: 1,
+    }, 'regen-mixed-2', 'turn-regen-mixed')).toThrow(/已关联生成任务/);
+    const nodeAfter = sim.ensureCanvas(canvasId).nodes.find((node) => node.id === 'node-a').metadata;
+    expect(nodeAfter).toEqual(nodeBefore);
+    expect(sim.ensureCanvas(canvasId).revision).toBe(revisionBefore);
+    await sim.close();
+    expect(running.taskIds.length).toBe(1);
+  });
+
+  test('重复 nodeId 只创建一个任务', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-regen-duplicate';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    sim.beginTurn({ turnId: 'turn-regen-duplicate', canvasId, permissionMode: 'canvas' });
+    const first = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-dup-submit', 'turn-regen-duplicate').result;
+    await sim.waitForTasks(first.taskIds, 500);
+    const before = sim.snapshot().tasks.filter((task) => task.canvasId === canvasId).length;
+    const regen = sim.executeOp('canvas.generation.regenerate', {
+      canvasId,
+      nodeIds: ['node-image', 'node-image'],
+      kind: 'image',
+      expectedRevision: sim.ensureCanvas(canvasId).revision,
+      expectedModelConfigRevision: 1,
+    }, 'regen-dup-2', 'turn-regen-duplicate').result;
+    expect(regen.taskIds.length).toBe(1);
+    expect(sim.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(before + 1);
   });
 
   test('运行中的任务不会被释放', async () => {
@@ -429,5 +529,19 @@ describe('canvas.timeline.deliver', () => {
       expectedRevision: 1,
       timeline: deliverTimeline(),
     }, '', 'turn-deliver')).toThrow(/稳定操作标识/);
+  });
+
+  test('非法时间线整次拒绝，不落盘', () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-deliver-invalid-timeline';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    sim.enableCapabilities(['canvas.timeline.deliver']);
+    expect(() => sim.executeOp('canvas.timeline.deliver', {
+      canvasId,
+      expectedRevision: 1,
+      timeline: { foo: 1 },
+    }, 'deliver-invalid-1', 'turn-deliver')).toThrow(/invalid|版本|时间线/);
+    expect(sim.ensureCanvas(canvasId).revision).toBe(1);
+    expect(sim.ensureCanvas(canvasId).timeline).toBe(null);
   });
 });

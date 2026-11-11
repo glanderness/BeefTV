@@ -41,11 +41,11 @@ function applyStoryboardDraft(row, draft = {}) {
   for (const key of STORYBOARD_ROW_FIELDS) {
     if (draft[key] === undefined || draft[key] === null) continue;
     if (key === 'durationSeconds') {
-      // 与真实后端一致：行草稿本身只要求 JSON 数字，1..60 的范围只在准备视频草稿时校验。
-      if (typeof draft[key] !== 'number' || !Number.isFinite(draft[key])) {
-        throw invalidArg('invalid_params', '镜头时长必须是数字');
+      const num = Number(draft[key]);
+      if (!Number.isFinite(num) || num < 1 || num > 60) {
+        throw invalidArg('invalid_params', '镜头时长必须为 1 至 60 秒');
       }
-      row.durationSeconds = draft[key];
+      row.durationSeconds = num;
     } else if (key === 'mustHave' || key === 'optionalDetails') {
       if (!Array.isArray(draft[key])) throw invalidArg('invalid_params', `${key} 必须是字符串数组`);
       row[key] = draft[key].map((v) => String(v));
@@ -461,12 +461,6 @@ export const STORYBOARD_OPS = {
         }
         if (kind === 'image' && !String(row[promptField] || '').trim() && String(row.plotDescription || '').trim()) {
           row[promptField] = String(row.plotDescription).trim();
-        }
-        if (kind === 'video') {
-          const seconds = Number(row.durationSeconds);
-          if (!Number.isFinite(seconds) || seconds < 1 || seconds > 60) {
-            throw invalidArg('invalid_params', '请先填写有效的分镜时长');
-          }
         }
         const promptText = String(row[promptField] || '').trim();
         if (!promptText) throw invalidArg('missing_prompt', `分镜缺少${promptField}`);

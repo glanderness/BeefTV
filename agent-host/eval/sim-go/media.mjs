@@ -259,11 +259,13 @@ function resourceIdFromMetadata(meta = {}) {
 
 // 外部任务完成后产物先入素材库，节点要等 canvas.task.bind 才有 resourceId。
 // 真实后端会自动把已交付产物写回目标节点，所以 media.* 在绑定前也应能读到同一份产物。
-function resourceIdFromNodeTask(state, node) {
+function resourceIdFromNodeTask(state, node, canvasId) {
   const taskId = String(node?.metadata?.taskId || '').trim();
   if (!taskId) return '';
   const task = state.tasks.get(taskId);
-  const output = Array.isArray(task?.outputs) ? task.outputs[0] : null;
+  // 只认属于同一画布、同一节点且已成功的任务，避免画布文档里伪造 taskId 读到别的资源。
+  if (!task || task.status !== 'succeeded' || task.canvasId !== canvasId || task.nodeId !== node?.id) return '';
+  const output = Array.isArray(task.outputs) ? task.outputs[0] : null;
   if (output?.resourceId) return String(output.resourceId);
   const asset = output?.assetId ? state.assets.get(output.assetId) : null;
   return String(asset?.resourceId || '');
@@ -287,7 +289,7 @@ function readMedia(state, rawParams, ctx) {
     const node = (doc.nodes || []).find((n) => n.id === nodeId);
     if (!node) throw permissionDenied('node_not_in_canvas', '节点不属于指定画布');
     mediaKind = node.type === 'video' ? 'video' : node.type === 'audio' ? 'audio' : 'image';
-    resourceId = resourceId || resourceIdFromMetadata(node.metadata) || resourceIdFromNodeTask(state, node);
+    resourceId = resourceId || resourceIdFromMetadata(node.metadata) || resourceIdFromNodeTask(state, node, canvasId);
     promptText = node.metadata?.composerContent || node.metadata?.prompt || '';
     defectNote = node.metadata?.reviewNote || '';
     durationMs = Number(node.metadata?.durationMs || (Number(node.metadata?.seconds || 6) * 1000));

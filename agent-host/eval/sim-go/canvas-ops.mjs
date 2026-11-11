@@ -5,7 +5,7 @@ import { NODE_CAPABILITIES } from './fixtures.mjs';
 import { ensureCanvas, saveCanvas, buildDefaultMetadata } from './canvas-store.mjs';
 import { applyNodeConfiguration } from './node-configure.mjs';
 import { createTimelineRenderTask } from './render.mjs';
-import { refreshTimelineSources } from './timeline.mjs';
+import { refreshTimelineSources, validateTimelineShape } from './timeline.mjs';
 
 export const CANVAS_OPS = {
   'canvas.get': (state, rawParams) => {
@@ -320,6 +320,7 @@ export const CANVAS_OPS = {
       if (!rawParams.timeline || typeof rawParams.timeline !== 'object') {
         throw invalidArg('invalid_params', 'timeline 必须是对象');
       }
+      validateTimelineShape(rawParams.timeline, doc);
       doc.timeline = clone(rawParams.timeline);
     }
     const saved = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.timeline.update', turnId);
