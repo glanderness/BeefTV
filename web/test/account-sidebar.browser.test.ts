@@ -89,6 +89,8 @@ beforeAll(async () => {
             setup(builder) {
                 builder.onResolve({ filter: /\?url$/ }, (args) => ({ path: args.path, namespace: "test-url" }));
                 builder.onLoad({ filter: /.*/, namespace: "test-url" }, () => ({ contents: 'export default "";', loader: "js" }));
+                builder.onResolve({ filter: /^@\/.*\?raw$/ }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2, -4), import.meta.dir), namespace: "test-raw" }));
+                builder.onLoad({ filter: /.*/, namespace: "test-raw" }, async (args) => ({ contents: `export default ${JSON.stringify(await Bun.file(args.path).text())};`, loader: "js" }));
                 builder.onResolve({ filter: /^@\/components\/model-logo$/ }, () => ({ path: "model-logo", namespace: "test-icons" }));
                 builder.onLoad({ filter: /.*/, namespace: "test-icons" }, () => ({ contents: "export function ModelLogo() { return null; }", loader: "js" }));
                 builder.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
@@ -429,48 +431,138 @@ test("account balance pane shows live balance, switches CNY/USD methods cleanly,
         await modal.getByRole("button", { name: "国际银行卡" }).click();
         await modal.getByText("预计到账 ¥ 71.20").waitFor();
 
-        await modal.getByRole("button", { name: "微信支付" }).click();
         await modal.getByRole("button", { name: "通用设置" }).click();
         await modal.locator(".account-appearance-control").getByText("深色").click();
         await modal.getByRole("button", { name: "账号与余额" }).click();
-        await modal.getByRole("button", { name: "微信支付" }).waitFor();
+        await modal.getByRole("button", { name: "国际银行卡" }).click();
+        await modal.getByText("预计到账 ¥ 71.20").waitFor();
 
         const readRechargeCtaStyle = () => modal.locator(".account-recharge-total").evaluate((row) => {
             const label = row.querySelector("div > span")!;
+            const hint = row.querySelector(".account-recharge-hint")!;
+            const amount = row.querySelector("div > strong")!;
             const button = row.querySelector("button.ant-btn-primary")!;
             const innerSpan = button.querySelector("span") || button;
+            const probe = document.createElement("span");
+            probe.style.color = "var(--muted-foreground)";
+            row.appendChild(probe);
+            const mutedColor = getComputedStyle(probe).color;
+            probe.remove();
             const buttonStyle = getComputedStyle(button);
             return {
+                hasProductOverlays: document.body.classList.contains("app-product-overlays"),
+                mutedColor,
                 labelColor: getComputedStyle(label).color,
+                hintColor: getComputedStyle(hint).color,
+                amountColor: getComputedStyle(amount).color,
                 buttonBg: buttonStyle.backgroundColor,
                 buttonColor: buttonStyle.color,
                 innerSpanColor: getComputedStyle(innerSpan).color,
                 height: buttonStyle.height,
             };
         });
+        const waitRechargeButtonBg = async (expected: string) => {
+            await page.waitForFunction(
+                (target) => {
+                    const btn = document.querySelector(".account-settings-modal .account-recharge-total button.ant-btn-primary");
+                    return Boolean(btn && getComputedStyle(btn).backgroundColor === target);
+                },
+                expected,
+                { timeout: 2000 },
+            );
+            expect((await readRechargeCtaStyle()).buttonBg).toBe(expected);
+        };
 
+        const rechargeButton = modal.getByRole("button", { name: /^充\s*值$/ });
+        await waitRechargeButtonBg("rgb(245, 245, 245)");
         const darkCta = await readRechargeCtaStyle();
+        expect(darkCta.hasProductOverlays).toBe(true);
         expect(darkCta.buttonBg).toBe("rgb(245, 245, 245)");
-        expect(["rgb(19, 19, 19)", "rgb(23, 23, 23)"]).toContain(darkCta.buttonColor);
-        expect(darkCta.innerSpanColor).toBe(darkCta.buttonColor);
-        expect(darkCta.innerSpanColor).not.toBe(darkCta.labelColor);
+        expect(darkCta.buttonColor).toBe("rgb(19, 19, 19)");
+        expect(darkCta.innerSpanColor).toBe("rgb(19, 19, 19)");
+        expect(darkCta.labelColor).toBe(darkCta.mutedColor);
+        expect(darkCta.hintColor).toBe(darkCta.mutedColor);
+        expect(darkCta.labelColor).not.toBe(darkCta.amountColor);
         expect(darkCta.height).toBe("40px");
+
+        const moveOffButtonInsideModal = async () => {
+            const box = await modal.locator(".account-balance-value").boundingBox();
+            await page.mouse.move((box?.x ?? 260) + 12, (box?.y ?? 160) + 12);
+        };
+
+        await rechargeButton.hover();
+        await waitRechargeButtonBg("rgb(255, 255, 255)");
+        await page.mouse.down();
+        await waitRechargeButtonBg("rgb(229, 229, 229)");
+        await moveOffButtonInsideModal();
+        await page.mouse.up();
 
         await modal.getByRole("button", { name: "通用设置" }).click();
         await modal.locator(".account-appearance-control").getByText("浅色").click();
         await modal.getByRole("button", { name: "账号与余额" }).click();
-        await modal.getByRole("button", { name: "微信支付" }).waitFor();
+        await modal.getByRole("button", { name: "国际银行卡" }).click();
+        await modal.getByText("预计到账 ¥ 71.20").waitFor();
 
+        await waitRechargeButtonBg("rgb(23, 23, 23)");
         const lightCta = await readRechargeCtaStyle();
         expect(lightCta.buttonBg).toBe("rgb(23, 23, 23)");
         expect(lightCta.buttonColor).toBe("rgb(255, 255, 255)");
-        expect(lightCta.innerSpanColor).toBe(lightCta.buttonColor);
-        expect(lightCta.innerSpanColor).not.toBe(lightCta.labelColor);
+        expect(lightCta.innerSpanColor).toBe("rgb(255, 255, 255)");
+        expect(lightCta.labelColor).toBe(lightCta.mutedColor);
+        expect(lightCta.hintColor).toBe(lightCta.mutedColor);
+        expect(lightCta.labelColor).not.toBe(lightCta.amountColor);
         expect(lightCta.height).toBe("40px");
 
+        await rechargeButton.hover();
+        await waitRechargeButtonBg("rgb(48, 48, 48)");
+        await page.mouse.down();
+        await waitRechargeButtonBg("rgb(64, 64, 64)");
+        await moveOffButtonInsideModal();
+        await page.mouse.up();
+
+        await page.evaluate(() => {
+            (window as unknown as { __setTestSkin?: (arg: unknown) => void }).__setTestSkin?.({
+                light: { primary: "#2563eb", primaryHover: "#1d4ed8", primaryActive: "#1e40af", primaryForeground: "#ffffff" },
+            });
+        });
+        await waitRechargeButtonBg("rgb(37, 99, 235)");
+        const skinCta = await readRechargeCtaStyle();
+        expect(skinCta.buttonBg).toBe("rgb(37, 99, 235)");
+        expect(skinCta.buttonColor).toBe("rgb(255, 255, 255)");
+        expect(skinCta.innerSpanColor).toBe("rgb(255, 255, 255)");
+        await rechargeButton.hover();
+        await waitRechargeButtonBg("rgb(29, 78, 216)");
+        await page.mouse.down();
+        await waitRechargeButtonBg("rgb(30, 64, 175)");
+        expect((await readRechargeCtaStyle()).innerSpanColor).toBe("rgb(255, 255, 255)");
+        await moveOffButtonInsideModal();
+        await page.mouse.up();
+        await page.evaluate(() => {
+            (window as unknown as { __setTestSkin?: (arg: unknown) => void }).__setTestSkin?.(null);
+        });
+        await waitRechargeButtonBg("rgb(23, 23, 23)");
+
+        await modal.getByRole("button", { name: "国际银行卡" }).focus();
+        await page.keyboard.press("Tab");
+        expect(await rechargeButton.evaluate((btn) => {
+            const style = getComputedStyle(btn);
+            return {
+                focusVisible: btn.matches(":focus-visible"),
+                outlineWidth: style.outlineWidth,
+                outlineStyle: style.outlineStyle,
+            };
+        })).toEqual({
+            focusVisible: true,
+            outlineWidth: "2px",
+            outlineStyle: "solid",
+        });
+
+        await modal.getByRole("button", { name: "微信支付" }).click();
         await modal.getByRole("button", { name: /^充\s*值$/ }).click();
         const checkoutDialog = page.locator(".account-checkout-modal");
         await checkoutDialog.waitFor();
+        await checkoutDialog.getByRole("button", { name: "返回修改" }).focus();
+        await page.keyboard.press("Tab");
         const checkoutActionStyle = await checkoutDialog.locator(".account-checkout-actions").evaluate((row) => {
             const buttons = Array.from(row.querySelectorAll("button.ant-btn"));
             const secondary = buttons[0]!;
@@ -481,6 +573,9 @@ test("account balance pane shows live balance, switches CNY/USD methods cleanly,
                 primaryHeight: primaryStyle.height,
                 primaryBg: primaryStyle.backgroundColor,
                 primaryColor: primaryStyle.color,
+                primaryFocusVisible: primary.matches(":focus-visible"),
+                primaryOutlineWidth: primaryStyle.outlineWidth,
+                primaryOutlineStyle: primaryStyle.outlineStyle,
             };
         });
         expect(checkoutActionStyle).toEqual({
@@ -488,6 +583,9 @@ test("account balance pane shows live balance, switches CNY/USD methods cleanly,
             primaryHeight: "40px",
             primaryBg: "rgb(23, 23, 23)",
             primaryColor: "rgb(255, 255, 255)",
+            primaryFocusVisible: true,
+            primaryOutlineWidth: "2px",
+            primaryOutlineStyle: "solid",
         });
         await checkoutDialog.getByRole("button", { name: /^立\s*即\s*支\s*付$/ }).click();
 
@@ -520,6 +618,14 @@ test("topup info failure blocks unverified payment submission until retried; car
 
         await modal.getByRole("alert").filter({ hasText: "充值配置读取失败" }).waitFor();
         expect(await modal.getByRole("button", { name: /^充\s*值$/ }).isDisabled()).toBe(true);
+        const disabledStyle = await modal.locator(".account-recharge-total button.ant-btn-primary").evaluate((button) => {
+            const style = getComputedStyle(button);
+            return { bg: style.backgroundColor, color: style.color };
+        });
+        expect(disabledStyle).toEqual({
+            bg: "rgba(255, 255, 255, 0.06)",
+            color: "rgba(255, 255, 255, 0.38)",
+        });
         expect(await modal.getByRole("button", { name: "微信支付" }).count()).toBe(0);
 
         failTopUpInfo = false;
@@ -547,6 +653,21 @@ test("topup info failure blocks unverified payment submission until retried; car
         checkoutOpenError = "";
         await modal.getByRole("button", { name: "继续查看" }).click();
         await checkoutDialog.waitFor();
+        await page.setViewportSize({ width: 360, height: 740 });
+        const mobileFooterOverflow = await checkoutDialog.evaluate((dialog) => {
+            const container = dialog.querySelector(".ant-modal-container") as HTMLElement;
+            const containerRect = container.getBoundingClientRect();
+            const buttons = Array.from(dialog.querySelectorAll(".account-checkout-actions button.ant-btn"));
+            return {
+                scrollOverflow: container.scrollWidth > container.clientWidth,
+                outsideBounds: buttons.some((btn) => {
+                    const rect = btn.getBoundingClientRect();
+                    return rect.left < containerRect.left - 1 || rect.right > containerRect.right + 1;
+                }),
+            };
+        });
+        expect(mobileFooterOverflow).toEqual({ scrollOverflow: false, outsideBounds: false });
+        await page.setViewportSize({ width: 960, height: 760 });
         await checkoutDialog.getByRole("button", { name: "重新打开支付页" }).click();
         expect(checkoutCalls).toEqual([
             { paymentMethod: "card", amountUsd: "10.00" },

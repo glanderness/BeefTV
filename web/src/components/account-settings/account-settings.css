@@ -70,8 +70,8 @@
 .account-checkout-modal .account-checkout-actions > .ant-btn-primary { padding-inline: 22px; }
 :is(.account-settings-modal, .account-checkout-modal) button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):not(:disabled):not([aria-pressed="true"]) {
     --btn-solid-bg: var(--control-check-bg, #171717);
-    --btn-solid-hover-bg: color-mix(in srgb, var(--btn-solid-bg) 86%, var(--surface, #ffffff));
-    --btn-solid-active-bg: color-mix(in srgb, var(--btn-solid-bg) 76%, var(--surface, #ffffff));
+    --btn-solid-hover-bg: var(--control-check-hover-bg, #303030);
+    --btn-solid-active-bg: var(--control-check-active-bg, #404040);
     --btn-solid-fg: var(--control-check-fg, #ffffff);
     --user-action-bg: var(--btn-solid-bg);
     --user-action-bg-hover: var(--btn-solid-hover-bg);
@@ -90,6 +90,17 @@
 :is(.account-settings-modal, .account-checkout-modal) button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):not(:disabled):not([aria-pressed="true"]):active {
     background: var(--btn-solid-active-bg) !important;
     color: var(--btn-solid-fg) !important;
+}
+:is(.account-settings-modal, .account-checkout-modal) button.ant-btn-primary:not(.ant-btn-dangerous):not(.ant-btn-background-ghost):not([aria-pressed="true"]):disabled {
+    --btn-solid-bg: var(--control-disabled-bg, rgba(17, 17, 17, 0.05));
+    --btn-solid-fg: var(--control-disabled-fg, rgba(17, 17, 17, 0.36));
+    --user-action-bg: var(--btn-solid-bg);
+    --user-action-foreground: var(--btn-solid-fg);
+    background: var(--btn-solid-bg) !important;
+    border-color: transparent !important;
+    color: var(--btn-solid-fg) !important;
+    box-shadow: none !important;
+    opacity: 1;
 }
 :is(.account-settings-modal, .account-checkout-modal) .ant-btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .account-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; }
@@ -125,6 +136,8 @@
     .account-setting-row { gap: 12px; }
     .account-balance-overview { padding: 18px; gap: 12px; }
     .account-recharge-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .account-checkout-actions { flex-wrap: wrap; }
+    .account-checkout-modal .account-checkout-actions > .ant-btn { flex: 1 1 auto; padding-inline: 12px; }
     .account-settings-content .model-default-setting-row { flex-direction: column; align-items: stretch; gap: 12px; }
     .account-settings-content .model-default-setting-control { width: 100%; }
     .account-plugins-toolbar { align-items: stretch; flex-wrap: wrap; }
