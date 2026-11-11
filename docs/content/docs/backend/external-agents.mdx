@@ -61,7 +61,7 @@ beeftv mcp serve --all-business-tools
 
 ## 4. 写操作 `operationId` 与提交生成防重复扣费
 
-配置视频节点前，先从 `model.catalog` 读取该模型的画幅比例、分辨率与时长能力，再调用 `canvas.node.configure`。`patch.size` 表示视频画幅比例，例如 `16:9`，`patch.vquality` 表示视频分辨率，例如 `480p`，`patch.seconds` 以字符串表示输出秒数。一轮里要改多个媒体节点时改用 `canvas.nodes.configure`：一次传 1–20 个 `{ nodeId, kind, patch }`，共用同一个 `expectedRevision`，全部校验通过才写入，画布版本只增加一次；任何一个节点不合法会整批拒绝，错误里写明第几个节点和哪个 `nodeId`。只想读回指定节点时用 `canvas.nodes.get`，一次传 1–50 个 `nodeIds`，返回这些节点和 `missingNodeIds`，不返回整张画布。配置后再调用 `canvas.generation.propose` 冻结生成单。提交前核对生成单的 `targets.parameters` 与 `estimate`，发现参数或报价与计划有差异时，先修正节点并重新提出生成单。
+配置视频节点前，先从 `model.catalog` 读取该模型的画幅比例、分辨率与时长能力，再调用 `canvas.node.configure`。`patch.size` 表示视频画幅比例，例如 `16:9`，`patch.vquality` 表示视频分辨率，例如 `480p`，`patch.seconds` 以字符串表示输出秒数。一轮里要改多个媒体节点时改用 `canvas.nodes.configure`：一次传 1–20 个 `{ nodeId, kind, patch }`，共用同一个 `expectedRevision`，全部校验通过才写入，画布版本只增加一次；任何一个节点不合法会整批拒绝，错误里写明第几个节点和哪个 `nodeId`。只想读回指定节点时用 `canvas.nodes.get`，一次传 1–50 个 `nodeIds`，返回这些节点和 `missingNodeIds`，不返回整张画布。配置后先核对 configure 返回节点（或 `canvas.nodes.get` 读回节点）里的 `metadata.size`、`metadata.vquality`、`metadata.seconds` 与实际保存一致，再调用 `canvas.generation.propose` 冻结生成单。提交前核对生成单的 `targets.parameters` 与 `estimate`，发现参数或报价与计划有差异时，先修正节点并重新提出生成单。
 
 MCP 写调用与命令行生成提交都要求提供幂等键，按调用路径区分如下：
 

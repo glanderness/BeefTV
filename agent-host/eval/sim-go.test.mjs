@@ -1405,4 +1405,37 @@ describe('模拟器任务耗时与外部提交（替代场景 R1 / R3 的前置�
     expect(appended.rowCount).toBe(10);
     await simGo.close();
   });
+
+  test('批量节点配置与批量读取：全部校验后只写一次，失败整批不落盘', () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-nodes-batch';
+    simGo.ensureCanvas(canvasId);
+    const created = simGo.executeOp('canvas.nodes.create', {
+      canvasId, expectedRevision: 1,
+      nodes: [{ type: 'image', title: '镜 1', prompt: '一' }, { type: 'image', title: '镜 2', prompt: '二' }],
+    }, 'batch-seed', '').result;
+    const [first, second] = created.created.map((node) => node.id);
+    const revision = simGo.ensureCanvas(canvasId).revision;
+
+    const configured = simGo.executeOp('canvas.nodes.configure', {
+      canvasId, expectedRevision: revision,
+      nodes: [{ nodeId: first, kind: 'image', patch: { prompt: '批量一' } }, { nodeId: second, kind: 'image', patch: { prompt: '批量二' } }],
+    }, 'batch-configure', '').result;
+    expect(configured.revision).toBe(revision + 1);
+    expect(configured.nodes.map((node) => node.nodeId)).toEqual([first, second]);
+    expect(configured.nodes[0].node.metadata.composerContent).toBe('批量一');
+
+    const read = simGo.executeOp('canvas.nodes.get', { canvasId, nodeIds: [first, first, 'missing', second, 'missing'] }).result;
+    expect(read.revision).toBe(revision + 1);
+    expect(read.nodes.map((node) => node.id)).toEqual([first, second]);
+    expect(read.missingNodeIds).toEqual(['missing']);
+
+    const before = simGo.ensureCanvas(canvasId).revision;
+    expect(() => simGo.executeOp('canvas.nodes.configure', {
+      canvasId, expectedRevision: before,
+      nodes: [{ nodeId: first, kind: 'image', patch: { prompt: '会写入' } }, { nodeId: second, kind: 'video', patch: { prompt: '类型不匹配' } }],
+    }, 'batch-invalid', '')).toThrow(/第 2 个节点（[^）]+）: 参数类型与目标节点不一致/);
+    expect(simGo.ensureCanvas(canvasId).revision).toBe(before);
+    expect(simGo.ensureCanvas(canvasId).nodes.find((node) => node.id === first).metadata.composerContent).toBe('批量一');
+  });
 });

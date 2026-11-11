@@ -1,9 +1,62 @@
 // 画布操作：canvas.* 的读取与搜索、节点和连线增改删、素材绑定、时间线和整份文档提交。
 
-import { clone, invalidArg, notFound, conflict, preconditionFailed } from './common.mjs';
+import { clone, invalidArg, notFound, conflict, preconditionFailed, OpError } from './common.mjs';
 import { NODE_CAPABILITIES } from './fixtures.mjs';
 import { ensureCanvas, saveCanvas, buildDefaultMetadata } from './canvas-store.mjs';
 import { resolveGenerationModel } from './generation.mjs';
+
+// 单节点与批量配置共用的校验和字段落点；只改传入文档，不保存。
+function applyNodeConfigurePatch(state, doc, nodeId, kind, patch) {
+  if (!['image', 'video', 'audio'].includes(kind)) {
+    throw invalidArg('unsupported_node_kind', '仅媒体生成节点支持参数配置');
+  }
+  const node = (doc.nodes || []).find((n) => n.id === nodeId);
+  if (!node) throw notFound('node_not_found', '节点不在当前画布');
+  if (node.type !== kind) throw invalidArg('node_kind_mismatch', '参数类型与目标节点不一致');
+  const cap = NODE_CAPABILITIES[kind];
+  node.metadata ||= {};
+  for (const [name, val] of Object.entries(patch)) {
+    if (!cap.patchFields.has(name) || name === 'title' || name === 'content') {
+      throw invalidArg('unsupported_field', `该类型不支持参数 ${name}`);
+    }
+    if (name === 'count') {
+      const count = Number(val);
+      if (!Number.isSafeInteger(count) || count < 1 || count > 8) {
+        throw invalidArg('invalid_parameter', 'count 必须是 1..8 的整数');
+      }
+      node.metadata.count = count;
+      continue;
+    }
+    if (name === 'prompt') {
+      if (typeof val !== 'string') {
+        throw invalidArg('invalid_parameter', 'prompt 必须是字符串');
+      }
+      node.metadata.composerContent = val;
+      delete node.metadata.promptTemplateOperation;
+      delete node.metadata.promptTemplateVariables;
+      continue;
+    }
+    if (typeof val !== 'string' || !val.trim()) {
+      throw invalidArg('invalid_parameter', `${name} 必须是有效字符串`);
+    }
+    if (name === 'model') {
+      const choice = resolveGenerationModel(state, kind, val);
+      if (choice.kindMismatch) throw invalidArg('generation_model_kind_mismatch', '所选模型不支持该媒体类型');
+      if (!choice.modelKey) throw preconditionFailed('generation_model_unavailable', '所选模型当前不可用');
+      node.metadata.model = choice.modelKey;
+      continue;
+    }
+    node.metadata[name] = val;
+  }
+  return node;
+}
+
+// 批量错误的定位信息与 Go 操作层保持一致，评测才能判断模型有没有按原因修正。
+function withBatchNodeError(error, index, nodeId) {
+  if (!(error instanceof OpError)) return error;
+  const label = `第 ${index} 个节点${nodeId ? `（${nodeId}）` : ''}`;
+  return new OpError(error.status, error.code, error.reason, `${label}: ${error.message}`, { ...(error.details || {}), index, nodeId });
+}
 
 export const CANVAS_OPS = {
   'canvas.get': (state, rawParams) => {
@@ -146,54 +199,80 @@ export const CANVAS_OPS = {
     if (!canvasId || !nodeId || !kind || !Number.isSafeInteger(expectedRevision) || expectedRevision <= 0 || !patch || typeof patch !== 'object' || Object.keys(patch).length === 0) {
       throw invalidArg('invalid_params', '需要画布、节点、类型、当前版本和参数');
     }
-    if (!['image', 'video', 'audio'].includes(kind)) {
-      throw invalidArg('unsupported_node_kind', '仅媒体生成节点支持参数配置');
+    const doc = clone(ensureCanvas(state, canvasId));
+    if (doc.revision !== expectedRevision) {
+      state.counts.revisionConflicts += 1;
+      throw conflict('revision_conflict', '画布已变化，请重新读取', { currentRevision: doc.revision });
+    }
+    const node = applyNodeConfigurePatch(state, doc, nodeId, kind, patch);
+    const saved = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.node.configure', turnId);
+    return { canvasId, nodeId, revision: saved.revision, node: clone(node), draftConfigured: true };
+  },
+  'canvas.nodes.configure': (state, rawParams, ctx) => {
+    const { turnId } = ctx;
+    const canvasId = String(rawParams.canvasId || '').trim();
+    const expectedRevision = Number(rawParams.expectedRevision);
+    const inputs = Array.isArray(rawParams.nodes) ? rawParams.nodes : [];
+    if (!canvasId || !Number.isSafeInteger(expectedRevision) || expectedRevision <= 0) {
+      throw invalidArg('invalid_params', '需要画布和当前版本');
+    }
+    if (inputs.length === 0 || inputs.length > 20) {
+      throw invalidArg('invalid_batch', 'nodes 必须是 1..20 项的数组');
+    }
+    const seen = new Set();
+    for (const [index, input] of inputs.entries()) {
+      const nodeId = String(input?.nodeId || '').trim();
+      if (!nodeId) throw invalidArg('invalid_params', `第 ${index + 1} 个节点: nodeId 必填`, { index: index + 1, nodeId: '' });
+      if (seen.has(nodeId)) {
+        throw invalidArg('duplicate_node_id', `第 ${index + 1} 个节点（${nodeId}）: 重复的 nodeId`, { index: index + 1, nodeId });
+      }
+      seen.add(nodeId);
+      if (!input.patch || typeof input.patch !== 'object' || Object.keys(input.patch).length === 0) {
+        throw invalidArg('invalid_params', `第 ${index + 1} 个节点（${nodeId}）: patch 至少要有一个字段`, { index: index + 1, nodeId });
+      }
     }
     const doc = clone(ensureCanvas(state, canvasId));
     if (doc.revision !== expectedRevision) {
       state.counts.revisionConflicts += 1;
       throw conflict('revision_conflict', '画布已变化，请重新读取', { currentRevision: doc.revision });
     }
-    const node = (doc.nodes || []).find((n) => n.id === nodeId);
-    if (!node) throw notFound('node_not_found', '节点不在当前画布');
-    if (node.type !== kind) throw invalidArg('node_kind_mismatch', '参数类型与目标节点不一致');
-    const cap = NODE_CAPABILITIES[kind];
-    node.metadata ||= {};
-    for (const [name, val] of Object.entries(patch)) {
-      if (!cap.patchFields.has(name) || name === 'title' || name === 'content') {
-        throw invalidArg('unsupported_field', `该类型不支持参数 ${name}`);
+    const configured = [];
+    for (const [index, input] of inputs.entries()) {
+      const nodeId = String(input.nodeId || '').trim();
+      try {
+        configured.push(applyNodeConfigurePatch(state, doc, nodeId, String(input.kind || '').trim(), input.patch));
+      } catch (error) {
+        throw withBatchNodeError(error, index + 1, nodeId);
       }
-      if (name === 'count') {
-        const count = Number(val);
-        if (!Number.isSafeInteger(count) || count < 1 || count > 8) {
-          throw invalidArg('invalid_parameter', 'count 必须是 1..8 的整数');
-        }
-        node.metadata.count = count;
-        continue;
-      }
-      if (name === 'prompt') {
-        if (typeof val !== 'string') {
-          throw invalidArg('invalid_parameter', 'prompt 必须是字符串');
-        }
-        node.metadata.composerContent = val;
-        delete node.metadata.promptTemplateOperation;
-        delete node.metadata.promptTemplateVariables;
-        continue;
-      }
-      if (typeof val !== 'string' || !val.trim()) {
-        throw invalidArg('invalid_parameter', `${name} 必须是有效字符串`);
-      }
-      if (name === 'model') {
-        const choice = resolveGenerationModel(state, kind, val);
-        if (choice.kindMismatch) throw invalidArg('generation_model_kind_mismatch', '所选模型不支持该媒体类型');
-        if (!choice.modelKey) throw preconditionFailed('generation_model_unavailable', '所选模型当前不可用');
-        node.metadata.model = choice.modelKey;
-        continue;
-      }
-      node.metadata[name] = val;
     }
-    const saved = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.node.configure', turnId);
-    return { canvasId, nodeId, revision: saved.revision, node: clone(node), draftConfigured: true };
+    const saved = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.nodes.configure', turnId);
+    return {
+      canvasId,
+      revision: saved.revision,
+      nodes: configured.map((node, index) => ({
+        canvasId, nodeId: String(inputs[index].nodeId || '').trim(), revision: saved.revision, node: clone(node), draftConfigured: true,
+      })),
+    };
+  },
+  'canvas.nodes.get': (state, rawParams) => {
+    const canvasId = String(rawParams.canvasId || '').trim();
+    const nodeIds = Array.isArray(rawParams.nodeIds) ? rawParams.nodeIds.map((id) => String(id || '').trim()) : [];
+    if (!canvasId) throw invalidArg('invalid_params', 'canvasId 必填');
+    if (nodeIds.length === 0 || nodeIds.length > 50) throw invalidArg('invalid_batch', 'nodeIds 必须是 1..50 项的数组');
+    if (nodeIds.some((id) => !id)) throw invalidArg('invalid_params', 'nodeIds 不能包含空值');
+    const doc = state.canvases.get(canvasId);
+    if (!doc) throw notFound('canvas_not_found', `画布不存在: ${canvasId}`);
+    const nodes = [];
+    const missingNodeIds = [];
+    const seen = new Set();
+    for (const nodeId of nodeIds) {
+      if (seen.has(nodeId)) continue;
+      seen.add(nodeId);
+      const node = (doc.nodes || []).find((item) => item.id === nodeId);
+      if (node) nodes.push(clone(node));
+      else missingNodeIds.push(nodeId);
+    }
+    return { canvasId, revision: doc.revision, nodes, missingNodeIds };
   },
   'canvas.node.move': (state, rawParams, ctx) => {
     const { turnId } = ctx;

@@ -180,7 +180,7 @@ func TestCanvasNodesConfigureReplayReturnsOriginalWithoutSecondWrite(t *testing.
 func TestCanvasNodesGetReturnsRequestedNodesAndMissing(t *testing.T) {
 	h := newHarness(t)
 	result, err := h.execute(t, operations.ExternalCaller(true), "canvas.nodes.get", "", map[string]any{
-		"canvasId": h.canvasID, "nodeIds": []string{"n2", "missing", "n1", "missing"},
+		"canvasId": h.canvasID, "nodeIds": []string{"n2", "n2", "missing", "n1", "missing"},
 	})
 	if err != nil {
 		t.Fatal(err)

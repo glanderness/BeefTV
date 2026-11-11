@@ -152,14 +152,16 @@ func opCanvasNodesGet(ctx *Context, raw json.RawMessage) (any, error) {
 	}
 	nodes := make([]any, 0, len(args.NodeIDs))
 	missing := make([]string, 0)
-	missingSeen := map[string]bool{}
+	seen := make(map[string]bool, len(args.NodeIDs))
 	for _, nodeID := range args.NodeIDs {
+		// 重复的 nodeId 只按首次出现返回一次，返回节点和缺失列表用同一套语义。
+		if seen[nodeID] {
+			continue
+		}
+		seen[nodeID] = true
 		node := findDocNode(doc, nodeID)
 		if node == nil {
-			if !missingSeen[nodeID] {
-				missingSeen[nodeID] = true
-				missing = append(missing, nodeID)
-			}
+			missing = append(missing, nodeID)
 			continue
 		}
 		nodes = append(nodes, sanitizeForClient(node))
