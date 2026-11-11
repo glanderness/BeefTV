@@ -96,6 +96,19 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if err != nil {
 		return nil, err
 	}
+	// The delivery layer reads the target node from input metadata, so a render
+	// registered here binds itself after success without a second caller step.
+	// Merge instead of replacing: other product metadata may share this slot.
+	if target := strings.TrimSpace(req.TargetNodeID); target != "" {
+		metadata, _ := input["metadata"].(map[string]any)
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		metadata["source"] = "canvas"
+		metadata["canvasId"] = strings.TrimSpace(req.ProjectID)
+		metadata["nodeId"] = target
+		input["metadata"] = metadata
+	}
 	return s.admitSpecialized(userID, specializedAdmission{
 		kind:      kind,
 		projectID: strings.TrimSpace(req.ProjectID),
