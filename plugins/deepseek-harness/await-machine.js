@@ -159,10 +159,14 @@ function stopSession(state, sessionId, actions, out, reason = 'stop') {
   const session = sessionOf(state, sessionId)
   if (!session) return
   session.stopped = true
-  if (session.deferred) out.persist = true
+  if (session.deferred) {
+    addAway(state, session.deferred.workspaceId, session.deferred.outcomes.map(outcome => outcome.taskId))
+    out.persist = true
+  }
   session.deferred = null
   const wait = state.waits[sessionId]
   if (wait) {
+    addAway(state, wait.workspaceId, wait.taskIds)
     delete state.waits[sessionId]
     actions.push({ type: 'abortWait', sessionId, token: wait.token })
     out.persist = true
@@ -282,10 +286,12 @@ export function transition(state, event) {
       const taskIds = [...new Set((entry.taskIds || []).filter(taskId => typeof taskId === 'string' && taskId && !seen.has(taskId)))]
       for (const taskId of taskIds) seen.add(taskId)
       if (!taskIds.length && !entry.resolvedCount) continue
+      const completedTaskIds = [...new Set((entry.completedTaskIds || []).filter(taskId => typeof taskId === 'string' && taskId))]
       next.away.entries.push({
         id: `away-${++next.away.seq}`,
         workspaceId: entry.workspaceId ?? null,
         taskIds,
+        completedTaskIds,
         resolvedCount: entry.resolvedCount || 0,
       })
       out.persist = true
@@ -426,6 +432,7 @@ export function transition(state, event) {
     if (!entry || entry.state !== 'withdrawing') return finish()
     if (!event.removed) {
       if (entry.reason === 'switch' || entry.reason === 'disable' || entry.reason === 'stop') {
+        if (addAway(next, entry.workspaceId, entry.outcomes.map(outcome => outcome.taskId))) out.persist = true
         const session = sessionOf(next, entry.sessionId)
         if (session) session.wakeCount = Math.max(0, session.wakeCount - 1)
         unmarkWoken(next, entry.outcomes)
@@ -443,7 +450,10 @@ export function transition(state, event) {
     const outcomes = entry.outcomes
     const workspaceId = entry.workspaceId ?? activeWorkspace(next)
     removeMessage(next, event.messageId)
-    if (entry.reason === 'switch' || entry.reason === 'disable' || entry.reason === 'stop') return finish()
+    if (entry.reason === 'switch' || entry.reason === 'disable' || entry.reason === 'stop') {
+      if (addAway(next, entry.workspaceId, outcomes.map(outcome => outcome.taskId))) out.persist = true
+      return finish()
+    }
     actions.push({
       type: 'deliver', sessionId: entry.sessionId, outcomes, workspaceId,
       mode: event.agentStatus === 'running' ? 'inject' : 'followup', source: 'withdraw',
@@ -515,10 +525,14 @@ export function transition(state, event) {
     next.autoContinue = false
     for (const sessionId of Object.keys(next.waits)) {
       const wait = next.waits[sessionId]
+      addAway(next, wait.workspaceId, wait.taskIds)
       delete next.waits[sessionId]
       actions.push({ type: 'abortWait', sessionId, token: wait.token })
     }
-    for (const session of Object.values(next.sessions)) session.deferred = null
+    for (const session of Object.values(next.sessions)) {
+      if (session.deferred) addAway(next, session.deferred.workspaceId, session.deferred.outcomes.map(outcome => outcome.taskId))
+      session.deferred = null
+    }
     for (const [messageId, entry] of Object.entries(next.messages)) withdraw(next, entry, messageId, 'disable', actions)
     out.persist = true
   } else if (type === 'autoContinueOn' || type === 'autoContinueRestored') {
@@ -572,10 +586,14 @@ export function awaitingSnapshot(state) {
   return {
     sessions,
     deferred,
-    away: state.away.entries.map(entry => ({
-      workspaceId: entry.workspaceId ?? null,
-      taskIds: [...entry.taskIds],
-      resolvedCount: entry.resolvedCount || 0,
-    })),
+    away: state.away.entries.map(entry => {
+      const value = {
+        workspaceId: entry.workspaceId ?? null,
+        taskIds: [...entry.taskIds],
+        resolvedCount: entry.resolvedCount || 0,
+      }
+      if (entry.completedTaskIds?.length) value.completedTaskIds = [...entry.completedTaskIds]
+      return value
+    }),
   }
 }

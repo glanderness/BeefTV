@@ -20,11 +20,16 @@ export function normalizeAwaiting(value) {
     const ids = Array.isArray(entry) ? entry : Array.isArray(entry?.taskIds) ? entry.taskIds : []
     const taskIds = ids.filter(id => typeof id === 'string' && id)
     const resolvedCount = !Array.isArray(entry) && Number.isInteger(entry?.resolvedCount) && entry.resolvedCount > 0 ? entry.resolvedCount : 0
-    return {
+    const completedTaskIds = !Array.isArray(entry) && Array.isArray(entry?.completedTaskIds)
+      ? [...new Set(entry.completedTaskIds.filter(id => typeof id === 'string' && id))]
+      : []
+    const parsed = {
       workspaceId: Array.isArray(entry) ? null : entry?.workspaceId || null,
       taskIds,
       resolvedCount,
     }
+    if (completedTaskIds.length) parsed.completedTaskIds = completedTaskIds
+    return parsed
   }
   const source = value?.sessions && typeof value.sessions === 'object' ? value.sessions : {}
   for (const entry of Object.values(source)) {
@@ -35,7 +40,7 @@ export function normalizeAwaiting(value) {
     if (!Array.isArray(source)) continue
     for (const entry of source) {
       const parsed = readEntry(entry)
-      if (parsed.taskIds.length || parsed.resolvedCount) away.push(parsed)
+      if (parsed.taskIds.length || parsed.resolvedCount || parsed.completedTaskIds?.length) away.push(parsed)
     }
   }
   return { sessions, away }

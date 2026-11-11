@@ -693,6 +693,8 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(waitOutcome({ tasks: [{ taskId: 'dl2', status: 'succeeded', delivery: { outputs: [{ state: 'retrying' }] } }] }, 'dl2').state, 'pending')
   // 后端还在重试入库（FAILED_RETRYABLE + 物化错误码）时继续等，不能提前唤醒。
   assert.equal(waitOutcome({ tasks: [{ taskId: 'retry-later', status: 'succeeded', resultState: 'failed_retryable', outputs: [{ materializationErrorCode: 'persist_failed' }] }], pending: 1 }, 'retry-later').state, 'pending')
+  // 失败任务带 FAILED_RETRYABLE 仍是终态失败，不能一直等到 40 分钟超时。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'failed-retry', status: 'failed', state: 'failed', resultState: 'failed_retryable', error: '上游 503' }] }, 'failed-retry').state, 'failed')
   assert.equal(taskOutcome({ taskId: 'retry', status: 'failed', outcome: { phase: 'retrievable' } }).state, 'pending')
   assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }, { taskId: 't2', state: 'failed', reason: '素材下载失败' }]),
     '生成已结束：1 个成功，1 个失败（素材下载失败）。任务：t1、t2。请只查询结果、绑定到节点并继续，不要重新提交。')

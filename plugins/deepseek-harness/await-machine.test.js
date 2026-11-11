@@ -121,35 +121,8 @@ function checkLosses(before, after, event, ledger, where) {
   const heldAfter = heldTasks(after)
   for (const taskId of heldBefore) {
     if (heldAfter.has(taskId) || after.woken[taskId]) continue
-    let allowed = false
-    if (event.type === 'autoContinueOff') allowed = true
-    else if ((event.type === 'userStop' || event.type === 'turnEndedByUser') && heldBySession(before, event.sessionId, taskId)) allowed = true
-    else if (event.type === 'workspaceConnected' && event.workspaceId !== ledger.taskWorkspace[taskId]) allowed = true
-    else if (event.type === 'userMessage' && activeWorkspace(after) && ledger.taskWorkspace[taskId] !== activeWorkspace(after)) allowed = true
-    else if (event.type === 'messageDiscarded') {
-      const entry = before.messages[event.messageId]
-      allowed = Boolean(entry && before.sessions[entry.sessionId]?.stopped)
-    } else if (event.type === 'stepEntered') {
-      // 只允许真正判定为 stale 的消息被过滤；uncertain 必须进 deferred，丢了要报错。
-      const messageId = Object.keys(before.messages).find(id => before.messages[id].outcomes.some(outcome => outcome.taskId === taskId))
-      if (messageId) {
-        if (!before.messages[messageId].workspaceId && before.stale[messageId]) allowed = true
-        else if (before.messages[messageId].workspaceId) {
-          const connection = before.connection
-          const entryWorkspace = before.messages[messageId].workspaceId
-          if (connection.phase === 'connected') allowed = connection.workspaceId !== entryWorkspace
-          else if (connection.phase === 'connecting' && connection.from) {
-            // 来源未知的重连必须走 uncertain/deferred，任务消失要报错。
-            allowed = Boolean(connection.from.workspaceId)
-              && (connection.from.sameMode ? entryWorkspace !== connection.from.workspaceId : true)
-          }
-        }
-      } else if (before.stale[Object.keys(before.stale).find(id => id === event.claimed?.find(item => item === id))]) {
-        allowed = true
-      }
-    }
-    assert.ok(allowed, `${where}: 任务 ${taskId} 在 ${event.type} 中无声丢失`)
-    ledger.dropped.add(taskId)
+    // 所有清理路径都必须先把结果转进 away；任务凭空消失就是缺陷。
+    assert.fail(`${where}: 任务 ${taskId} 在 ${event.type} 中无声丢失`)
   }
 }
 
@@ -379,6 +352,8 @@ test('用户停止后，这一轮的迟到结果不会唤醒', () => {
   const token = state.waits.s1.token
   const stopped = transition(state, { type: 'userStop', sessionId: 's1' })
   assert.ok(!stopped.state.waits.s1)
+  // 停止不等于丢弃：等待中的任务仍留给下次连回时核对。
+  assert.deepEqual(stopped.state.away.entries.map(entry => entry.taskIds), [['t1']])
   const late = transition(stopped.state, {
     type: 'taskFinished', sessionId: 's1', waitToken: token,
     outcomes: [{ taskId: 't1', state: 'succeeded', reason: '' }], agentStatus: 'idle',
@@ -680,4 +655,50 @@ test('away 完成后保留 taskId，重复提交或迟到的提交结果不会�
   const seen = transition(state, { type: 'awaySeen', workspaceId: 'w1' }).state
   assert.equal(seen.away.entries.length, 0)
   assert.equal(transition(seen, { type: 'taskOrphaned', workspaceId: 'w1', taskIds: ['t1'] }).state.away.entries.length, 1)
+})
+
+test('切区撤回的已投递通知转入旧工作区的离开提示', () => {
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  state = transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t1'], agentStatus: 'running' }).state
+  state = transition(state, {
+    type: 'delivered', sessionId: 's1', messageId: 'wake-1', ok: true,
+    outcomes: [{ taskId: 't1', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  }).state
+  const switched = transition(state, { type: 'workspaceConnected', workspaceId: 'w2' })
+  const withdraw = switched.actions.find(action => action.type === 'withdraw')
+  assert.ok(withdraw)
+  const applied = transition(switched.state, { type: 'withdrawn', messageId: 'wake-1', removed: true, agentStatus: 'running' }).state
+  assert.deepEqual(applied.away.entries.map(entry => ({ workspaceId: entry.workspaceId, taskIds: entry.taskIds })),
+    [{ workspaceId: 'w1', taskIds: ['t1'] }])
+})
+
+test('关闭自动继续会把等待和 deferred 转入离开提示', () => {
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  state = transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['waiting'], agentStatus: 'idle' }).state
+  state = transition(state, {
+    type: 'delivered', sessionId: 's2', messageId: null, ok: false,
+    outcomes: [{ taskId: 'deferred', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  }).state
+  const off = transition(state, { type: 'autoContinueOff' }).state
+  const ids = off.away.entries.flatMap(entry => entry.taskIds).sort()
+  assert.deepEqual(ids, ['deferred', 'waiting'])
+})
+
+test('completedTaskIds 会写入快照并在重启后保持幂等', () => {
+  let state = transition(createAwaitState(), {
+    type: 'historyLoaded', sessions: [], away: [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }],
+  }).state
+  const connected = transition(state, { type: 'workspaceConnected', workspaceId: 'w1' })
+  const probe = connected.actions.find(action => action.type === 'probeAway')
+  state = transition(connected.state, {
+    type: 'awayProbed', epoch: probe.epoch, probe: probe.probe,
+    results: [{ id: probe.targets[0].id, remaining: [], completed: 1, completedTaskIds: ['t1'] }],
+  }).state
+  const snapshot = awaitingSnapshot(state)
+  assert.deepEqual(snapshot.away[0].completedTaskIds, ['t1'])
+  const history = normalizeAwaiting(snapshot)
+  assert.deepEqual(history.away[0].completedTaskIds, ['t1'])
+  let restored = transition(createAwaitState(), { type: 'historyLoaded', sessions: [], away: history.away }).state
+  restored = transition(restored, { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  assert.equal(transition(restored, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t1'], agentStatus: 'idle' }).state.waits.s1, undefined)
 })
