@@ -493,6 +493,9 @@ func TestTaskWaitDoesNotCompleteUnusableMediaResults(t *testing.T) {
 		"空媒体列表":  `{"images":[]}`,
 		"不可用输出":  `{"images":[1]}`,
 		"结果无法解析": `{`,
+		"零产物对象":  `{}`,
+		"空结果":    `null`,
+		"只有模式":   `{"mode":"image"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			task := taskWaitTask("task-1", func(task *model.Task) {
@@ -588,7 +591,9 @@ func TestTaskWaitCancelDuringWait(t *testing.T) {
 	}
 }
 
-func TestTaskWaitStopsReadingAfterDeadline(t *testing.T) {
+// 过了截止时间仍允许再读一次批次里的第一个任务，用来把最近快照带回超时响应；
+// 后面的任务不再读取。名称与这条行为保持一致。
+func TestTaskWaitReadsOnlyFirstTaskAfterDeadline(t *testing.T) {
 	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
 		"task-1": {tasks: []model.Task{taskWaitTask("task-1", nil)}},
 		"task-2": {tasks: []model.Task{taskWaitTask("task-2", nil)}},
@@ -599,7 +604,10 @@ func TestTaskWaitStopsReadingAfterDeadline(t *testing.T) {
 		t.Fatal("过了截止时间应停止继续读取")
 	}
 	if len(observation.views) != 1 || observation.views[0].TaskID != "task-1" {
-		t.Fatalf("截止前只应读到第一个任务: %+v", observation.views)
+		t.Fatalf("截止后只应再读第一个任务: %+v", observation.views)
+	}
+	if reads := domain.reads("task-1"); reads != 1 {
+		t.Fatalf("第一个任务恰好读一次，实际读 %d 次", reads)
 	}
 	if reads := domain.reads("task-2"); reads != 0 {
 		t.Fatalf("截止后不应再读第二个任务，实际读 %d 次", reads)

@@ -229,7 +229,8 @@ func taskWaitPhase(task model.Task) string {
 
 // taskWaitSaved 要求任务成功，且结果里声明的媒体产物都已入库。
 // 文本、转写等结果里没有媒体产物的任务，成功即完成；媒体任务即使成功，
-// 只要结果里还有待保存的产物，或结果是不可解析/不可用的媒体形状，就仍然是未完成。
+// 只要结果里还有待保存的产物，或结果是不可解析/不可用/零产物的媒体形状，
+// 就仍然是未完成。媒体形状的判定由 task 包的 InspectResultJSON 统一给出。
 func taskWaitSaved(task model.Task) bool {
 	if task.Status != model.TaskStatusSucceeded {
 		return false
@@ -362,7 +363,8 @@ func readTaskWaitObservation(ctx context.Context, domain Domain, userID string, 
 			observation.cancelled = true
 			return observation
 		}
-		// 第一遍至少要拿到一次完整快照；之后不再在超时后发起新的查询。
+		// 第一遍至少拿到一次完整快照；之后过了截止时间，只允许再读批次里的第一个任务，
+		// 用来把最近一次快照带回超时响应，其余任务不再发起新的查询。
 		if !firstPass && index > 0 && !time.Now().Before(deadline) {
 			observation.deadlineReached = true
 			return observation
