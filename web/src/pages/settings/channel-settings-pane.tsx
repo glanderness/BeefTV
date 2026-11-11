@@ -49,7 +49,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [serviceEditor, setServiceEditor] = useState<ModelChannel | null | undefined>(undefined);
     const [pluginServiceIds, setPluginServiceIds] = useState<ReadonlySet<string>>(() => new Set());
-    const { connection: beefConnection, busy: beefBusy, catalogSyncFailed, connect, cancel, disconnect, refresh, openAccount } = useBeefTVConnection();
+    const { connection: beefConnection, busy: beefBusy, catalogSyncFailed, connect, cancel, disconnect, retryCatalog, openAccount } = useBeefTVConnection();
     const requests = useRef(createChannelCatalogRequests());
     const deleting = useRef(new Set<string>());
     const [deleteFailures, setDeleteFailures] = useState<Record<string, string>>({});
@@ -315,7 +315,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                         {!builtinBeefTV && !topazUpscale && !pluginChannel && <ChannelRequestAddressLines channel={channel} />}
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
-                                        {builtinBeefTV && catalogSyncFailed ? <Button loading={beefBusy} onClick={() => void refresh()}>重试更新模型列表</Button> : null}
+                                        {builtinBeefTV && catalogSyncFailed ? <Button loading={beefBusy} onClick={() => void retryCatalog()}>重试更新模型列表</Button> : null}
                                         {builtinBeefTV ? (
                                             <BeefTVConnectionActions
                                                 connection={beefConnection}
