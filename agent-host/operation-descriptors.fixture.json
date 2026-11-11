@@ -242,7 +242,7 @@
             "type": "string"
           },
           "maxItems": 24,
-          "description": "本批计划生成的节点（每批最多 24 个，超出拆成多次提案）；nodeIds 只列当前参考已就绪的首批"
+          "description": "本批生成的节点（每批≤24，超出分批提案）；nodeIds 只列已就绪首批"
         },
         "note": {
           "type": "string"

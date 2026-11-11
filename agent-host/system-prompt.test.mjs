@@ -71,4 +71,12 @@ test('storyboard preparation batches beyond eight rows and fills drafts for appe
     expect(producerSkill?.instruction).toContain(instruction);
   }
   expect(producerSkill?.instruction).not.toContain('列出全部计划素材');
+  const descriptors = JSON.parse(
+    fs.readFileSync(new URL('./operation-descriptors.fixture.json', import.meta.url), 'utf8'),
+  );
+  const productionNodeIds = descriptors.find((item) => item.id === 'canvas.generation.propose')
+    ?.params?.properties?.productionNodeIds;
+  expect(productionNodeIds?.maxItems).toBe(24);
+  expect(productionNodeIds?.description).toContain('每批≤24');
+  expect(productionNodeIds?.description).toContain('超出分批提案');
 });
