@@ -58,17 +58,24 @@ function validateClipSource(state, doc, clip) {
   if (nodeId && !node) throw invalidArg('invalid_timeline', `片段引用不在画布的节点: ${nodeId}`);
   if (!state) return;
   const directId = resourceIDFromClip(clip);
-  const nodeIdResource = node ? resourceIDFromNode(node) : '';
-  if (directId && nodeIdResource && directId !== nodeIdResource) {
-    throw invalidArg('timeline_source_not_authorized', '节点与时间线资源不一致');
+  const nodeResourceId = node ? resourceIDFromNode(node) : '';
+  if (nodeId) {
+    // 有节点时只认节点自己关联的资源；没有资源或 directMedia 指向别的资源都不放行。
+    if (!nodeResourceId) throw invalidArg('timeline_resource_required', '时间线节点须明确关联一个资源');
+    if (directId && directId !== nodeResourceId) {
+      throw invalidArg('timeline_source_not_authorized', '节点与时间线资源不一致');
+    }
   }
-  const resourceId = directId || nodeIdResource;
-  if (!resourceId) throw invalidArg('timeline_resource_required', '时间线节点须明确关联一个资源');
+  const resourceId = nodeResourceId || directId;
+  if (!resourceId) throw invalidArg('timeline_resource_required', '时间线片段需要节点或资源引用');
   const resource = state.resources.get(resourceId);
   if (!resource) throw preconditionFailed('timeline_source_not_ready', '时间线素材尚未就绪', { resourceId });
-  const assetId = String(clip?.directMedia?.assetId || node?.metadata?.assetId || resource.assetId || '').trim();
+  const assetId = String(nodeId ? node?.metadata?.assetId : clip?.directMedia?.assetId || '').trim();
   const asset = assetId ? state.assets.get(assetId) : null;
   if (!asset) throw preconditionFailed('timeline_asset_not_linked', '素材尚未关联素材库，请先同步', { assetId });
+  if (String(asset.resourceId || '') !== resourceId) {
+    throw invalidArg('timeline_asset_not_linked', '素材与资源引用不一致');
+  }
   const kind = resourceKind(resource);
   if (!kind || (clip.kind !== kind && !(clip.kind === 'audio' && kind === 'video'))) {
     throw invalidArg('timeline_source_kind', '时间线片段与素材类型不匹配');
@@ -159,7 +166,7 @@ export function refreshTimelineSources(state, doc, nodeIds) {
     }
     clip.directMedia = {
       id: resourceId,
-      assetId: String(node?.metadata?.assetId || resource.assetId || ''),
+      assetId: String(node?.metadata?.assetId || ''),
       kind: String(resource.kind || ''),
       storageKey: `resource:${resourceId}`,
     };

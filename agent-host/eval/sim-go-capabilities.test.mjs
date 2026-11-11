@@ -526,6 +526,38 @@ describe('canvas.generation.regenerate', () => {
     await sim.close();
   });
 
+  test('任务耗时为 0 时同步完成不会误报 revision_conflict，返回新版本可直接继续写', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-regen-zero';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    sim.beginTurn({ turnId: 'turn-regen-zero', canvasId, permissionMode: 'canvas' });
+    sim.setTaskTiming(canvasId, { imageMs: 0 });
+    const first = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-zero-submit', 'turn-regen-zero').result;
+    expect(sim.snapshot().tasks.find((task) => task.id === first.taskIds[0]).status).toBe('succeeded');
+    const revisionBefore = sim.ensureCanvas(canvasId).revision;
+    const regen = sim.executeOp('canvas.generation.regenerate', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: revisionBefore,
+      expectedModelConfigRevision: 1,
+    }, 'regen-zero-2', 'turn-regen-zero').result;
+    expect(regen.revision).toBe(sim.ensureCanvas(canvasId).revision);
+    const created = sim.executeOp('canvas.nodes.create', {
+      canvasId,
+      expectedRevision: regen.revision,
+      nodes: [{ type: 'text', title: '后续写入' }],
+    }, 'regen-zero-after', 'turn-regen-zero').result;
+    expect(created.revision).toBe(regen.revision + 1);
+  });
+
   test('旧任务失败后可以直接在原节点重做', async () => {
     const sim = createSimGo();
     const canvasId = 'canvas-regen-failed';
@@ -602,6 +634,39 @@ describe('时间线校验与真实编辑语义一致', () => {
       canvasId, expectedRevision: 2, timeline: overlappingVisual,
     }, 'timeline-visual-overlap')).toThrow(/重叠/);
     expect(sim.ensureCanvas(canvasId).revision).toBe(2);
+  });
+
+  test('节点有资源但没关联素材、或未绑定节点借 directMedia 引资源时拒绝', () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-timeline-unlinked';
+    seedCanvas(sim, canvasId, [
+      imageNode('node-no-asset', '缺素材', { resourceId: 'res-no-asset' }),
+      imageNode('node-unbound', '未绑定'),
+    ]);
+    registerMedia(sim, 'res-no-asset', 'asset-no-asset');
+    registerMedia(sim, 'res-other', 'asset-other');
+    const noAssetTimeline = {
+      version: 2,
+      durationMs: 1000,
+      tracks: [{ id: 'track-1', kind: 'image' }],
+      clips: [{ id: 'clip-1', kind: 'image', nodeId: 'node-no-asset', trackId: 'track-1', startMs: 0, durationMs: 1000 }],
+    };
+    expect(() => sim.executeOp('canvas.timeline.update', {
+      canvasId, expectedRevision: 1, timeline: noAssetTimeline,
+    }, 'timeline-no-asset-1')).toThrow(/素材尚未关联/);
+    const borrowedTimeline = {
+      version: 2,
+      durationMs: 1000,
+      tracks: [{ id: 'track-1', kind: 'image' }],
+      clips: [{
+        id: 'clip-1', kind: 'image', nodeId: 'node-unbound', trackId: 'track-1', startMs: 0, durationMs: 1000,
+        directMedia: { id: 'res-other', assetId: 'asset-other', kind: 'image' },
+      }],
+    };
+    expect(() => sim.executeOp('canvas.timeline.update', {
+      canvasId, expectedRevision: 1, timeline: borrowedTimeline,
+    }, 'timeline-borrowed-1')).toThrow(/关联一个资源/);
+    expect(sim.ensureCanvas(canvasId).revision).toBe(1);
   });
 
   test('引用未绑定素材的节点时拒绝保存或渲染', () => {

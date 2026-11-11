@@ -52,6 +52,7 @@ describe('回复是否说明了生成结果', () => {
     expect(replyReportsResult('首帧和视频都生成好了，已写到节点。')).toBe(true);
     expect(replyReportsResult('这一批已经完成。')).toBe(true);
     expect(replyReportsResult('已经成功生成并保存到素材库。')).toBe(true);
+    expect(replyReportsResult('已生成中文字幕。')).toBe(true);
   });
 
   test('过程说明和否定句不算结果', () => {
@@ -64,6 +65,8 @@ describe('回复是否说明了生成结果', () => {
     expect(replyReportsResult('正在完成，马上好。')).toBe(false);
     expect(replyReportsResult('视频绑定失败。')).toBe(false);
     expect(replyReportsResult('已经生成失败。')).toBe(false);
+    expect(replyReportsResult('绑定到节点之后就可以预览。')).toBe(false);
+    expect(replyReportsResult('已生成中，稍候。')).toBe(false);
     expect(replyReportsResult('没生成好，稍等。')).toBe(false);
     expect(replyReportsResult('生成好了之后我再绑定到节点。')).toBe(false);
     expect(replyReportsResult('等生成好之后我会告诉您。')).toBe(false);

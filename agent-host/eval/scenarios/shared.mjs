@@ -32,21 +32,29 @@ export function applySimCapabilities(simGo, capabilities = []) {
 // 但排除「还没生成」「无法完成」这类否定句，避免把过程说明当成完成汇报。
 const BLOCKED_BEFORE = /(尚未|还没|没有|没能|没|未能|无法|不能|未|会|将|要|准备|计划|打算|等|如果|一旦|要是|若|待|再|正在|还在|仍在|仍)$/;
 const RESULT_PHRASE = /已经?(?:成功|顺利|全部|都|均|完成)*生成|生成好|生成完|完成|做完|绑定|写入|写到/;
-const FUTURE_OR_PARTIAL = /^(?:了)?(?:之后|以后|后)|^(?:一半|部分|一部分)|^(?:失败|出错|报错|中)/;
 
-export function replyReportsResult(text) {
-  const value = String(text || '');
+function clauseReportsResult(clause) {
   let start = 0;
-  while (start < value.length) {
-    const match = RESULT_PHRASE.exec(value.slice(start));
+  while (start < clause.length) {
+    const match = RESULT_PHRASE.exec(clause.slice(start));
     if (!match) return false;
     const index = start + match.index;
-    const prefix = value.slice(Math.max(0, index - 2), index);
-    const suffix = value.slice(index + match[0].length, index + match[0].length + 3);
-    if (!BLOCKED_BEFORE.test(prefix) && !FUTURE_OR_PARTIAL.test(suffix)) return true;
+    const prefix = clause.slice(Math.max(0, index - 2), index);
+    const rest = clause.slice(index + match[0].length);
+    const future = rest.startsWith('后') || rest.includes('之后') || rest.includes('以后');
+    const failed = /^(?:失败|出错|报错)/.test(rest);
+    const progressing = /^中(?=[，。；、\s]|$)/.test(rest);
+    const partial = /^(?:一半|部分|一部分)/.test(rest);
+    if (!BLOCKED_BEFORE.test(prefix) && !future && !failed && !progressing && !partial) return true;
     start = index + match[0].length;
   }
   return false;
+}
+
+export function replyReportsResult(text) {
+  return String(text || '')
+    .split(/[。；\n]/)
+    .some((clause) => clauseReportsResult(clause));
 }
 
 // 收尾等待由场景声明；只有明确需要更久的场景才放宽，其他场景保持原有上限。

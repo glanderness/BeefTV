@@ -356,8 +356,12 @@ export const CAPABILITY_OPS = {
       throw error;
     }
     // 释放回执和受理新任务一起落盘，版本加 1；失败时上面的 catch 不改画布。
-    saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.generation.regenerate', ctx.turnId);
-    return result;
+    // 任务耗时为 0 时 submit 会同步完成并已经落盘，此时不再用旧版本重复保存。
+    const current = state.canvases.get(canvasId);
+    const revision = current.revision === expectedRevision
+      ? saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.generation.regenerate', ctx.turnId).revision
+      : current.revision;
+    return { ...result, revision };
   },
 
   'canvas.nodes.configure': (state, rawParams, ctx) => {
