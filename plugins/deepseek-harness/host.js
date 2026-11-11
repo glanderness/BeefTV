@@ -1,10 +1,16 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { request } from 'node:http'
+import { setTimeout as delay } from 'node:timers/promises'
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
-import { approvalReason, attachLocalRuntime, embeddedDocument, embeddedPathRejection, inspectWorkspace, localAppStatus, publicContext, rememberQuote, requiresGenerationApproval, startLocalRuntime, startRuntime, workspaceJSON } from './runtime.js'
+import {
+  approvalReason, attachLocalRuntime, awayGenerationNotice, awaitWakeText, defaultPluginSettings, embeddedDocument, embeddedPathRejection,
+  guidedPrompt, inspectWorkspace, localAppStatus, maximumWakesPerSession, normalizeSettings, publicContext, rememberQuote,
+  requiresGenerationApproval, startLocalRuntime, startRuntime, stepLimitNotice, submittedTaskIds, taskOutcome,
+  validatedSettingsPatch, waitOutcome, workspaceJSON,
+} from './runtime.js'
 
 export const name = 'beeftv'
 export const inject = ['webServer', 'connection', 'tools', 'systemPrompt']
@@ -121,6 +127,66 @@ export function apply(ctx) {
   // How often a standalone workspace re-checks the installed App. A later install or upgrade
   // should still surface the one-time switch prompt.
   const localAppRecheckMs = 30_000
+  const pluginSettingsPath = join(pluginHome, 'settings.json')
+  const awaitingPath = join(pluginHome, 'awaiting.json')
+  const awaitMaximumMs = 40 * 60 * 1000
+  const taskGetIntervalMs = 5_000
+  let pluginSettings = { ...defaultPluginSettings }
+  let awayCount = 0
+  // 「会话 → 等待中的任务」只属于当前进程：重启或重连后不续跑，改为在面板提示一次。
+  const waits = new Map()
+  const wakeCounts = new Map()
+  const ownWakeIds = new Set()
+  const wokenTasks = new Set()
+  const turns = new Map()
+  let stepNotice = null
+  let settingsWrite = Promise.resolve()
+  let awaitingWrite = Promise.resolve()
+
+  async function writePluginSettings() {
+    const value = { ...pluginSettings }
+    settingsWrite = settingsWrite.catch(() => {}).then(async () => {
+      await mkdir(pluginHome, { recursive: true, mode: 0o700 })
+      await writeFile(pluginSettingsPath, JSON.stringify(value), { mode: 0o600 })
+    })
+    return settingsWrite
+  }
+
+  function pendingTasks() {
+    const sessions = {}
+    for (const [sessionId, state] of waits) {
+      const ids = [...state.tasks.keys()]
+      if (ids.length) sessions[sessionId] = ids
+    }
+    return sessions
+  }
+
+  async function writeAwaiting() {
+    const value = { sessions: pendingTasks(), away: awayCount }
+    awaitingWrite = awaitingWrite.catch(() => {}).then(async () => {
+      await mkdir(pluginHome, { recursive: true, mode: 0o700 })
+      await writeFile(awaitingPath, JSON.stringify(value), { mode: 0o600 })
+    })
+    return awaitingWrite
+  }
+
+  const pluginSettingsReady = readFile(pluginSettingsPath, 'utf8').then(JSON.parse).then(value => {
+    pluginSettings = normalizeSettings(value)
+    return pluginSettings
+  }).catch(() => pluginSettings)
+
+  // 上次退出时还没投递的任务只计数，不恢复到内存里的等待队列。
+  const awaitingReady = readFile(awaitingPath, 'utf8').then(JSON.parse).then(async value => {
+    const sessions = value?.sessions && typeof value.sessions === 'object' ? value.sessions : {}
+    let leftover = 0
+    for (const ids of Object.values(sessions)) {
+      if (Array.isArray(ids)) leftover += ids.filter(id => typeof id === 'string' && id).length
+    }
+    const savedAway = Number.isInteger(value?.away) && value.away > 0 ? value.away : 0
+    awayCount = savedAway + leftover
+    if (leftover) await writeAwaiting()
+    return value
+  }).catch(() => null)
 
   async function writeSettings() {
     await mkdir(pluginHome, { recursive: true, mode: 0o700 })
@@ -155,13 +221,197 @@ export function apply(ctx) {
       activity: current?.activity || null,
       localApp: current?.localApp || null,
       localPromptDismissed,
+      autoContinue: pluginSettings.autoContinue,
+      stepLimit: pluginSettings.stepLimit,
+      awayNotice: awayGenerationNotice(awayCount) || null,
+      stepNotice: stepNotice?.text || null,
       appURL: current ? `${ctx.webServer.getOrigin()}${current.basePath}/` : null,
       mcpTools, mcpState: current?.mcp?.state ?? null,
     }
   }
 
+  // 直接走工作区操作层，带插件登记得到的客户端凭据；不经过模型，也不新增付费任务。
+  async function callOperation(runtime, id, params, signal) {
+    const response = await fetch(`${runtime.baseURL}/ops/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      signal: signal ?? AbortSignal.timeout(25_000),
+      headers: {
+        'content-type': 'application/json',
+        'X-Beeftv-Client': runtime.clientId,
+        authorization: `Bearer ${runtime.clientToken}`,
+      },
+      body: JSON.stringify({ opId: randomUUID(), params }),
+    })
+    const value = await response.json()
+    if (!response.ok || value.code !== 0) throw new Error(value.msg || `BeefTV 请求失败 (${response.status})`)
+    return value.data
+  }
+
+  function hasOperation(runtime, id) {
+    return Array.isArray(runtime?.operations) && runtime.operations.some(operation => operation?.id === id)
+  }
+
+  // 唤醒消息是会话里的一条普通用户消息，模型能直接看到结论和任务清单。
+  function wakeMessage(text) {
+    const message = {
+      id: `beeftv-await-${randomUUID()}`,
+      role: 'user',
+      content: [{ type: 'text', text }],
+      source: { kind: 'user' },
+    }
+    ownWakeIds.add(message.id)
+    while (ownWakeIds.size > 200) ownWakeIds.delete(ownWakeIds.values().next().value)
+    return message
+  }
+
+  function sessionIdOf(agent) {
+    return agent?.id || agent?.session?.id || null
+  }
+
+  function stopSessionWaits(sessionId) {
+    const state = waits.get(sessionId)
+    if (!state) return Promise.resolve()
+    // 先标记取消：已经在返回路上的结果不得再触发唤醒。
+    state.cancelled = true
+    state.done = true
+    state.controller.abort()
+    waits.delete(sessionId)
+    return writeAwaiting().catch(() => {})
+  }
+
+  // 重连或插件退出后不自动续跑：等待中的任务只留作「离开时完成」的计数。
+  async function abandonWaits(runtime) {
+    let changed = false
+    for (const [sessionId, state] of [...waits]) {
+      if (runtime && state.runtime !== runtime) continue
+      state.done = true
+      state.controller.abort()
+      awayCount += state.tasks.size
+      waits.delete(sessionId)
+      changed = true
+    }
+    if (changed) await writeAwaiting().catch(() => {})
+  }
+
+  function stopAllWaits() {
+    for (const state of waits.values()) {
+      state.done = true
+      state.controller.abort()
+    }
+    waits.clear()
+    return writeAwaiting().catch(() => {})
+  }
+
+  async function deliverWake(state) {
+    const outcomes = [...state.tasks].map(([taskId, outcome]) => ({ taskId, ...outcome }))
+    const unseen = outcomes.filter(outcome => !wokenTasks.has(outcome.taskId))
+    if (!unseen.length || !pluginSettings.autoContinue) return
+    for (const outcome of outcomes) wokenTasks.add(outcome.taskId)
+    const sessionId = state.sessionId
+    if ((wakeCounts.get(sessionId) || 0) >= maximumWakesPerSession) return
+    // 用户点停止后，正在返回的等待结果不能再把会话叫醒。
+    if (state.cancelled) return
+    const agent = state.agent
+    if (!agent || typeof agent.followup !== 'function' || typeof agent.inject !== 'function') return
+    const message = wakeMessage(awaitWakeText(unseen))
+    try {
+      // 空闲时开新一轮；忙时插进当前轮，不打断正在执行的步骤。
+      if (agent.status === 'running') agent.inject(message)
+      else agent.followup(message)
+      wakeCounts.set(sessionId, (wakeCounts.get(sessionId) || 0) + 1)
+    } catch {
+      // 会话已经结束：不补发，也不重试唤醒。
+    }
+  }
+
+  async function drainWait(state) {
+    if (state.running || state.done) return
+    state.running = true
+    try {
+      while (!state.done && Date.now() < state.deadline) {
+        const pending = [...state.tasks].filter(([, outcome]) => outcome.state === 'pending')
+        if (!pending.length) break
+        if (state.useTaskWait) {
+          await Promise.all(pending.map(async ([taskId]) => {
+            try {
+              const value = await callOperation(state.runtime, 'task.wait', { taskId }, AbortSignal.any([state.controller.signal, AbortSignal.timeout(25_000)]))
+              const outcome = waitOutcome(value, taskId)
+              if (outcome.state !== 'pending' && state.tasks.has(taskId)) state.tasks.set(taskId, outcome)
+            } catch {
+              // 操作层没有这个能力或这次读取失败时退回 task.get，避免一直空等。
+              if (state.controller.signal.aborted) return
+              state.useTaskWait = false
+            }
+          }))
+        } else {
+          await Promise.all(pending.map(async ([taskId]) => {
+            try {
+              const value = await callOperation(state.runtime, 'task.get', { taskId }, AbortSignal.any([state.controller.signal, AbortSignal.timeout(25_000)]))
+              const outcome = taskOutcome(value, taskId)
+              if (outcome.state !== 'pending' && state.tasks.has(taskId)) state.tasks.set(taskId, outcome)
+            } catch {
+              // 暂时读不到进度不是任务失败；保留原任务继续等。
+            }
+          }))
+          if (!state.done && [...state.tasks.values()].some(outcome => outcome.state === 'pending')) {
+            await delay(taskGetIntervalMs, undefined, { signal: state.controller.signal }).catch(() => {})
+          }
+        }
+      }
+    } finally {
+      state.running = false
+    }
+    if (state.done || state.controller.signal.aborted) return
+    if ([...state.tasks.values()].some(outcome => outcome.state === 'pending')) {
+      // 40 分钟仍未全部结束：不再占用会话，用户仍可在画布上看任务状态。
+      state.done = true
+      waits.delete(state.sessionId)
+      await writeAwaiting().catch(() => {})
+      return
+    }
+    state.done = true
+    waits.delete(state.sessionId)
+    await writeAwaiting().catch(() => {})
+    await deliverWake(state)
+  }
+
+  function startWaits(runtime, agent, taskIds) {
+    const sessionId = sessionIdOf(agent)
+    if (!pluginSettings.autoContinue || !runtime || !sessionId || !taskIds.length) return
+    const fresh = taskIds.filter(id => !wokenTasks.has(id))
+    if (!fresh.length) return
+    let state = waits.get(sessionId)
+    if (!state || state.runtime !== runtime || state.done) {
+      state = {
+        runtime, agent, sessionId, tasks: new Map(),
+        deadline: Date.now() + awaitMaximumMs, controller: new AbortController(),
+        useTaskWait: hasOperation(runtime, 'task.wait'), running: false, done: false, cancelled: false,
+      }
+      waits.set(sessionId, state)
+    }
+    state.agent = agent
+    for (const taskId of fresh) {
+      if (!state.tasks.has(taskId)) state.tasks.set(taskId, { state: 'pending', reason: '' })
+    }
+    void writeAwaiting().catch(() => {})
+    void drainWait(state)
+  }
+
+  async function loadGuide(runtime) {
+    runtime.guide = null
+    if (!hasOperation(runtime, 'agent.guide')) return
+    try {
+      const guide = await callOperation(runtime, 'agent.guide', {}, AbortSignal.timeout(15_000))
+      if (typeof guide?.text === 'string' && guide.text.trim()) runtime.guide = guide
+    } catch {
+      // 读不到说明时沿用插件内置的完整说明，不让连接失败。
+    }
+  }
+
   async function release(runtime) {
     if (!runtime) return
+    // 连接断开、切换工作区或插件退出时都不再续跑后台等待。
+    await abandonWaits(runtime)
     try { await runtime.mcp?.dispose() } catch { /* Complete cleanup after a failed activation. */ }
     try {
       if (runtime.clientId) await workspaceJSON(runtime, `/api/agent-clients/${encodeURIComponent(runtime.clientId)}`, { method: 'DELETE' })
@@ -172,6 +422,8 @@ export function apply(ctx) {
   }
 
   async function connect(mode, reconnect = false) {
+    // 设置和上次留下的提示先读完，第一次工具调用就按用户的真实选择执行。
+    await Promise.all([pluginSettingsReady, awaitingReady, settingsReady])
     if (!['standalone', 'local'].includes(mode)) throw new Error('请选择独立工作区或本地 BeefTV')
     if (switching) throw new Error('正在连接工作区，请稍后重试')
     if (current?.mode === mode) {
@@ -200,6 +452,7 @@ export function apply(ctx) {
         method: 'POST', body: JSON.stringify({ label: 'DeepSeek Harness', kind: 'other', mode: 'read-write', approvalMode: 'caller' }),
       })
       runtime.clientId = registered.client.id
+      runtime.clientToken = registered.token
       const [business, operations] = await Promise.all(['/business/tools', '/ops'].map(async path => {
         const response = await fetch(`${runtime.baseURL}${path}`, {
           headers: { 'X-Beeftv-Client': registered.client.id, authorization: `Bearer ${registered.token}` },
@@ -213,6 +466,8 @@ export function apply(ctx) {
       runtime.businessTools = business.tools
       runtime.operations = operations.ops
       runtime.readOnlyTools = readOnlyToolNames(operations.ops)
+      // 有 agent.guide 时整段替换内置说明；读不到就沿用内置文案。
+      await loadGuide(runtime)
       runtime.mode = mode
       runtime.localApp = mode === 'standalone' ? await localAppStatus() : null
       if (mode === 'standalone') localAppCheckedAt = Date.now()
@@ -229,6 +484,7 @@ export function apply(ctx) {
       if (runtime.owned) runtime.child.once('exit', () => {
         if (current !== runtime) return
         current = null
+        void abandonWaits(runtime)
         error = 'BeefTV 工作区已关闭，请重新连接'
       })
       await writeSettings()
@@ -288,7 +544,7 @@ export function apply(ctx) {
         const rejection = ctx.connection.requestRejection({ headers: req.headers })
         if (rejection) return json(res, rejection, { error: '未授权' })
         if (req.method === 'GET' && url.pathname === '/beeftv/status') {
-          await settingsReady
+          await Promise.all([settingsReady, pluginSettingsReady, awaitingReady])
           return json(res, 200, await refreshConnection())
         }
         if (req.method === 'POST' && url.pathname === '/beeftv/connect') {
@@ -306,6 +562,34 @@ export function apply(ctx) {
           view.agentMode = ['creation', 'assets', 'ecosystem'].includes(body.agentMode) ? body.agentMode : 'creation'
           contexts.set(body.sessionId, view)
           return json(res, 200, { ok: true })
+        }
+        if (req.method === 'POST' && url.pathname === '/beeftv/settings') {
+          const body = await bodyJSON(req)
+          await pluginSettingsReady
+          const patch = validatedSettingsPatch(body)
+          const previous = pluginSettings
+          pluginSettings = { ...pluginSettings, ...patch }
+          try {
+            await writePluginSettings()
+          } catch (failure) {
+            pluginSettings = previous
+            throw failure
+          }
+          if (!pluginSettings.autoContinue) await stopAllWaits()
+          return json(res, 200, status())
+        }
+        if (req.method === 'POST' && url.pathname === '/beeftv/away-notice') {
+          const body = await bodyJSON(req)
+          if (body.seen !== true) throw new Error('无效的提示设置')
+          awayCount = 0
+          await writeAwaiting().catch(() => {})
+          return json(res, 200, status())
+        }
+        if (req.method === 'POST' && url.pathname === '/beeftv/step-notice') {
+          const body = await bodyJSON(req)
+          if (body.seen !== true) throw new Error('无效的提示设置')
+          stepNotice = null
+          return json(res, 200, status())
         }
         if (req.method === 'POST' && url.pathname === '/beeftv/local-prompt') {
           const body = await bodyJSON(req)
@@ -329,9 +613,7 @@ export function apply(ctx) {
     },
   }))
 
-  ctx.systemPrompt.section({
-    name: 'beeftv-creation', order: 9000, interpolate: false,
-    text: `你是 BeefTV Agent，协助用户完成长程 AI 视频导演创作、素材管理以及工作区深度定制（接入第三方 API 渠道、编写与安装插件、创建可复用技能）。连接后通过 beeftv MCP 工具直接操作本机 BeefTV 的画布、分镜脚本、生成任务、时间线与配置，与本机 BeefTV 应用共享同一套数据与版本。常规回复使用简洁中文，说明完成结果与需要用户确认的事项，避免向用户倾倒工具 ID、内部接口名和原始回执。
+  const fallbackGuide = `你是 BeefTV Agent，协助用户完成长程 AI 视频导演创作、素材管理以及工作区深度定制（接入第三方 API 渠道、编写与安装插件、创建可复用技能）。连接后通过 beeftv MCP 工具直接操作本机 BeefTV 的画布、分镜脚本、生成任务、时间线与配置，与本机 BeefTV 应用共享同一套数据与版本。常规回复使用简洁中文，说明完成结果与需要用户确认的事项，避免向用户倾倒工具 ID、内部接口名和原始回执。
 长程视频创作与工作区定制按以下规范完成：
 1. 画布定位与新建：若当前工作区视图已包含 canvasId，优先用 canvas.get 读取当前画布；否则先用 canvas.search 查找目标画布。需要新建画布时，优先直接调用 canvas.create（最小参数 {"title":"画布标题","operationId":"stable-create-id"}，可选 projectId）；仅当需要整图初始化写入时，再用 business.list 查询 {"query":"business_put_canvas_projects_id"} 并通过 business.call 执行 PUT。
 2. 整片分镜脚本与镜头节点准备（核心长程能力）：新短片创作优先调用 canvas.script.prepare 准备完整分镜（含 title 与 rows 分镜行），一次最多 8 行；分镜超过 8 行时，先用 canvas.script.prepare 准备前 8 行，再用 canvas.script.rows.append 追加其余行（单次最多 32 行），分镜脚本节点 ID 取 prepare 返回的 created。需要同步在画布上铺开首帧图和视频镜头节点草稿（含自动连线）时，同一次传入 image（模型、画幅、质量、title 模板如 "镜 {n} 首帧"）与 video（模型、画幅、分辨率、时长、generateAudio、title 模板如 "镜 {n} 视频"），不要拆成多次零散创建节点；追加行需要首帧/视频草稿时，用 canvas.script.prepare 传 nodeId 与 rowIds（每次最多 8 行）补齐。单镜微调优先调用 canvas.script.row.update（会自动同步已绑定的 imageNodeId / videoNodeId 标题与提示词），追加分镜用 canvas.script.rows.append。
@@ -343,7 +625,11 @@ export function apply(ctx) {
    - 接入第三方 API / 自定义模型渠道：用 business.list 精确查询 {"query":"business_get_plugins_catalog"} 与 {"query":"business_get_workspace_model_config"}，调用 business.call 读取已安装协议与当前模型渠道配置；若目标 API 属于已有协议，构造含新渠道与模型的 config 及 expectedRevision，用 business.call（tool 为 business_put_workspace_model_config）保存并读回验证（不要在回复中回显明文密钥）；若为全新私有 HTTP 协议，先生成并安装声明式协议插件（beeftv.contributes.providers）再配置渠道。
    - 编写与安装 BeefTV 插件：按 BeefTV 插件规范编写包含 package.json 的插件包（name 为插件 ID，不写 beeftv.id/beeftv.version/beeftv.apiVersion/beeftv.displayName；beeftv.contributes.canvasNodes 节点类型字段用 id 不用 type，尺寸用 defaultSize: { width, height }，下拉选项用 values；附带技能写在 pi.skills），向用户展示变更并获确认后，用 business.call 安装：{"tool":"business_post_plugins_install","body":{"source":"插件目录绝对路径"}}，或以 tool 为 business_post_plugins 上传插件包；修改代码后用 {"tool":"business_post_plugins_id_update","path":{"id":"插件 ID"}} 热更新。
    - 编写与管理可复用 Skill：先用 skill.catalog / skill.get / skill.file 查阅已有技能；创建或迭代私人技能时在目标画布上调用 skill.draft 保存名称、描述与写清输入、步骤、检查和交付物的 instruction，再读回核对。
-8. 底层业务接口调用纪律：business_ 开头的名称都是 business.call 的 tool 参数，不是可直接调用的工具。参数或返回含义不清楚时，用 business.list 并将 query 设为完整接口 ID，仅读取所需接口的 schema；禁止不带 query 或使用空 query 全量调用 business.list。所有写操作使用唯一、稳定的 operationId，重试复用相同 operationId 与相同 payload，修改画布遵守 expectedRevision。不要读取或输出账号密钥。`,
+8. 底层业务接口调用纪律：business_ 开头的名称都是 business.call 的 tool 参数，不是可直接调用的工具。参数或返回含义不清楚时，用 business.list 并将 query 设为完整接口 ID，仅读取所需接口的 schema；禁止不带 query 或使用空 query 全量调用 business.list。所有写操作使用唯一、稳定的 operationId，重试复用相同 operationId 与相同 payload，修改画布遵守 expectedRevision。不要读取或输出账号密钥。`
+  // 文本按需读取：连上带 agent.guide 的工作区后，下一轮请求就用后端那一份。
+  ctx.systemPrompt.section({
+    name: 'beeftv-creation', order: 9000, interpolate: false,
+    text: () => guidedPrompt(current?.guide, fallbackGuide),
   })
   ctx.systemPrompt.context({
     name: 'beeftv-current-view', order: 9000, interpolate: false,
@@ -366,9 +652,72 @@ export function apply(ctx) {
       return false
     }
   }
+  function turnState(sessionId) {
+    let state = turns.get(sessionId)
+    if (!state) {
+      state = { turn: null, count: 0, beefTV: contexts.has(sessionId), stop: false }
+      turns.set(sessionId, state)
+    }
+    return state
+  }
+
   ctx.on('tools/result', (exec, result) => {
     if (current) rememberQuote(current.quotes ??= new Map(), exec?.name, result)
     recordToolActivity(current, exec, result)
+    const sessionId = sessionIdOf(exec?.agent)
+    if (!sessionId) return
+    // 步数按这一轮的全部工具调用计算；只有连着 BeefTV 的会话才启用上限。
+    const state = turnState(sessionId)
+    state.count += 1
+    if (typeof exec?.name === 'string' && exec.name.startsWith('mcp__beeftv__')) state.beefTV = true
+    if (!state.stop && state.beefTV && state.count >= pluginSettings.stepLimit) {
+      state.stop = true
+      stepNotice = { sessionId, text: stepLimitNotice(pluginSettings.stepLimit) }
+    }
+    if (current && !result?.isError) startWaits(current, exec.agent, submittedTaskIds(exec.name, result))
+  })
+  // 本轮停止点由下一个步骤入口拒绝：turn-stopping 只在模型已不再调用工具的收尾阶段触发，
+  // 无法打断还在跑的工具循环，所以这里用 pre-step 停，turn-stopping 负责补齐桌面提示。
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const decision = await next()
+    if (decision.kind !== 'enter') return decision
+    const sessionId = sessionIdOf(payload?.agent)
+    const state = sessionId ? turns.get(sessionId) : undefined
+    if (!state?.stop) return decision
+    if (state.turn !== null && payload.turn !== state.turn) return decision
+    return { kind: 'reject' }
+  })
+  ctx.on('agent/turn-stopping', payload => {
+    const sessionId = sessionIdOf(payload?.agent)
+    const state = sessionId ? turns.get(sessionId) : undefined
+    if (!state?.stop) return
+    if (state.turn !== null && payload.turn !== state.turn) return
+    stepNotice = { sessionId, text: stepLimitNotice(pluginSettings.stepLimit) }
+  })
+  ctx.on('session/event', (session, event) => {
+    const sessionId = session?.id
+    if (!sessionId) return
+    if (event?.type === 'turn/start') {
+      turns.set(sessionId, { turn: event.data?.turn ?? null, count: 0, beefTV: contexts.has(sessionId), stop: false })
+    } else if (event?.type === 'turn/end') {
+      const reason = event.data?.reason
+      if (reason?.kind === 'aborted' && reason.reason?.kind === 'user') void stopSessionWaits(sessionId)
+      turns.delete(sessionId)
+    }
+  })
+  ctx.on('agent/inbox/claimed', payload => {
+    const sessionId = sessionIdOf(payload?.agent)
+    if (!sessionId || payload?.message?.source?.kind !== 'user' || ownWakeIds.has(payload.message.id)) return
+    // 用户主动发了新消息：连续自动唤醒的计数从头开始。
+    wakeCounts.set(sessionId, 0)
+    if (stepNotice?.sessionId === sessionId) stepNotice = null
+  })
+  ctx.on('agent/disposed', payload => {
+    const sessionId = sessionIdOf(payload?.agent)
+    if (!sessionId) return
+    void stopSessionWaits(sessionId)
+    turns.delete(sessionId)
+    wakeCounts.delete(sessionId)
   })
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
@@ -379,7 +728,12 @@ export function apply(ctx) {
     if (fullAccess(exec.agent)) return decision
     return { kind: 'ask', reason: approvalReason(exec.name, exec.arguments, current?.businessTools, current?.quotes, current?.operations) }
   })
-  ctx.effect(() => () => { const runtime = current; current = null; void release(runtime) })
+  ctx.effect(() => () => {
+    const runtime = current
+    current = null
+    // 插件退出等同于 DSH 关闭：不再续跑，只留下离开时完成的计数。
+    void abandonWaits(null).then(() => release(runtime))
+  })
   void settingsReady.then(settings => {
     if (settings?.mode) return connect(settings.mode)
   }).catch(failure => { error = failure.message })

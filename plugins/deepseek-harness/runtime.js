@@ -100,6 +100,146 @@ export function approvalReason(name, args, businessTools = [], quotes = new Map(
   return `BeefTV 将生成 ${amount} ${unit}${label}${models.length ? `（${models.join('、')}）` : ''}。${cost}。`
 }
 
+// ---- 生成完接着做：设置、任务判定与唤醒文案 ----
+
+export const defaultPluginSettings = Object.freeze({ autoContinue: true, stepLimit: 40 })
+export const minimumStepLimit = 5
+export const maximumStepLimit = 200
+export const maximumWakesPerSession = 3
+
+// 设置文件来自本机磁盘，读坏或旧字段都以默认值继续，避免插件整体不可用。
+export function normalizeSettings(value) {
+  const autoContinue = typeof value?.autoContinue === 'boolean' ? value.autoContinue : defaultPluginSettings.autoContinue
+  const stepLimit = Number.isInteger(value?.stepLimit) && value.stepLimit >= minimumStepLimit && value.stepLimit <= maximumStepLimit
+    ? value.stepLimit
+    : defaultPluginSettings.stepLimit
+  return { autoContinue, stepLimit }
+}
+
+// 设置写入入口比读取严格：界面只能提交合法值，拼错或越界直接拒绝。
+export function validatedSettingsPatch(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('无效的插件设置')
+  const patch = {}
+  if ('autoContinue' in value) {
+    if (typeof value.autoContinue !== 'boolean') throw new Error('生成完自动继续只能是开或关')
+    patch.autoContinue = value.autoContinue
+  }
+  if ('stepLimit' in value) {
+    if (!Number.isInteger(value.stepLimit) || value.stepLimit < minimumStepLimit || value.stepLimit > maximumStepLimit) {
+      throw new Error(`每轮步数上限必须是 ${minimumStepLimit} 到 ${maximumStepLimit} 之间的整数`)
+    }
+    patch.stepLimit = value.stepLimit
+  }
+  if (!Object.keys(patch).length) throw new Error('没有要保存的设置')
+  return patch
+}
+
+const submitToolPattern = /^mcp__beeftv__canvas_generation_submit(?:_[a-f0-9]{12})?$/
+
+function resultPayload(result) {
+  const text = Array.isArray(result?.content) ? result.content.find(item => item?.type === 'text' && typeof item.text === 'string')?.text : undefined
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    return parsed?.result && typeof parsed.result === 'object' ? parsed.result : parsed
+  } catch {
+    return null
+  }
+}
+
+// 成功提交的返回里可能有 taskIds（整批）或 taskId（单个）。重复提交复用同一任务时也只认一次。
+export function submittedTaskIds(name, result) {
+  if (!submitToolPattern.test(name) || result?.isError) return []
+  const payload = resultPayload(result)
+  const values = Array.isArray(payload?.taskIds) ? payload.taskIds : payload?.taskId ? [payload.taskId] : []
+  return [...new Set(values.filter(id => typeof id === 'string' && id))]
+}
+
+function taskPhase(task) {
+  return typeof task?.outcome?.phase === 'string' ? task.outcome.phase : ''
+}
+
+function resultStateReady(task) {
+  if (typeof task?.resultState !== 'string' || !task.resultState) return true
+  const normalized = task.resultState.toLowerCase()
+  return normalized === 'ready' || normalized === 'succeeded'
+}
+
+function taskSaved(task) {
+  if (task?.status !== 'succeeded') return false
+  const phase = taskPhase(task)
+  if (phase && phase !== 'ready') return false
+  if (!resultStateReady(task)) return false
+  return Boolean(task.outputs?.length && task.outputs.every(output => output?.resourceId && !output?.materializationErrorCode))
+}
+
+function taskFailed(task) {
+  if (task?.status === 'cancelled') return true
+  const phase = taskPhase(task)
+  if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false
+  if (task?.status === 'failed') return true
+  if (task?.status !== 'succeeded') return false
+  if (phase === 'failed') return true
+  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_permanent') return true
+  if (phase === 'fetching' || phase === 'retrievable') return false
+  return Boolean(task?.outputs?.length && task.outputs.every(output => output?.resourceId || output?.materializationErrorCode) &&
+    task.outputs.some(output => output?.materializationErrorCode))
+}
+
+function failureReason(task) {
+  const error = task?.error
+  const message = typeof error === 'string' ? error : typeof error?.message === 'string' ? error.message : typeof error?.msg === 'string' ? error.msg
+    : typeof task?.reason === 'string' ? task.reason : typeof task?.note === 'string' ? task.note : ''
+  if (message) return message.replace(/\s+/g, ' ').slice(0, 120)
+  const materialized = Array.isArray(task?.outputs) && task.outputs.find(output => output?.materializationErrorCode)
+  if (materialized) return String(materialized.materializationErrorCode).slice(0, 120)
+  if (task?.status === 'cancelled') return '已取消'
+  return ''
+}
+
+// 判定照搬内置 await-business-tasks：成功、产物已保存、可绑定才算完成。
+export function taskOutcome(task, taskId = task?.taskId) {
+  if (taskSaved(task)) return { taskId, state: 'succeeded', reason: '' }
+  if (taskFailed(task)) return { taskId, state: 'failed', reason: failureReason(task) }
+  return { taskId, state: 'pending', reason: '' }
+}
+
+// task.wait 超时返回 pending；任务详情退回用同一套判定，不把暂时读不到当成失败。
+export function waitOutcome(value, taskId) {
+  const status = typeof value?.status === 'string' ? value.status : ''
+  // task.wait 自己负责「成功、产物已保存」的判定；这里只读它的结论，不再用 task.get 的字段重算。
+  const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || value.tasks[0] : undefined
+  if (status === 'succeeded') return { taskId, state: 'succeeded', reason: '' }
+  if (status === 'failed' || status === 'incomplete') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
+  if (status === 'pending') return { taskId, state: 'pending', reason: '' }
+  if (value && typeof value === 'object' && ('status' in value || 'taskId' in value)) return taskOutcome(value, taskId)
+  return { taskId, state: 'pending', reason: '' }
+}
+
+export function awaitWakeText(outcomes) {
+  const taskIds = [...new Set(outcomes.map(outcome => outcome.taskId))]
+  const failed = outcomes.filter(outcome => outcome.state === 'failed')
+  const succeeded = outcomes.length - failed.length
+  const reason = failed.map(outcome => outcome.reason).find(Boolean)
+  const failures = failed.length ? `，${failed.length} 个失败${reason ? `（${reason}）` : ''}` : ''
+  return `生成已结束：${succeeded} 个成功${failures}。任务：${taskIds.join('、')}。请只查询结果、绑定到节点并继续，不要重新提交。`
+}
+
+export function stepLimitNotice(limit) {
+  return `这一轮已经做了 ${limit} 步，先停一下。要继续请再说一句。`
+}
+
+export function awayGenerationNotice(count) {
+  return count > 0 ? `有 ${count} 个生成在你离开时完成。` : ''
+}
+
+// agent.guide 是可选的只读操作。有它时整段替换插件的说明，只补 DSH 独有的两句。
+export function guidedPrompt(guide, fallback) {
+  const text = typeof guide?.text === 'string' ? guide.text.trim() : ''
+  if (!text) return fallback
+  return `${text}\n在 DeepSeek Harness 中，BeefTV 工具名带 mcp__beeftv__ 前缀。付费生成是否需要用户确认由 DSH 的访问模式决定：弹出审批时等用户确认，完全权限下直接执行，不要另外追问。`
+}
+
 export function runtimeRecord(value) {
   for (const key of ['bridgeURL', 'baseURL']) {
     const url = new URL(value?.[key])

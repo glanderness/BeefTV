@@ -10,7 +10,7 @@ import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import * as runtime from './runtime.js'
-import { approvalReason, embeddedDocument, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord } from './runtime.js'
+import { approvalReason, awaitWakeText, defaultPluginSettings, embeddedDocument, guidedPrompt, normalizeSettings, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord, stepLimitNotice, submittedTaskIds, taskOutcome, validatedSettingsPatch, waitOutcome } from './runtime.js'
 // DSH supplies its MCP client package when it loads the plugin. The Host only hands it to
 // ctx.plugin, which the tests provide, so an inert module stands in for it.
 register(`data:text/javascript,${encodeURIComponent(`export async function resolve(specifier, context, next) {
@@ -265,14 +265,26 @@ test('a missing bundled runtime is reported without falling back to the desktop 
 
 // A loopback stand-in for both the harness bridge and the workspace API. Proxied page requests are recorded.
 async function workspaceServer(context) {
-  const state = { available: true, proxied: [] }
-  const server = createServer((req, res) => {
+  const state = { available: true, proxied: [], extraOps: [], calls: [], taskWait: null, taskGet: null, guide: null }
+  const server = createServer(async (req, res) => {
     const send = (status, data) => {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(status === 200 ? { code: 0, data } : { code: status, msg: 'Workspace unavailable' }))
     }
     if (!state.available) return send(503)
     const path = req.url.split('?', 1)[0]
+    if (path.startsWith('/api/ops/')) {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      let body = {}
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') } catch { body = {} }
+      const op = decodeURIComponent(path.slice('/api/ops/'.length))
+      state.calls.push({ op, params: body.params || {} })
+      if (op === 'task.wait') return send(200, (state.taskWait || (() => ({ status: 'succeeded', tasks: [] })))(body.params || {}))
+      if (op === 'task.get') return send(200, (state.taskGet || (() => ({ taskId: body.params?.taskId, status: 'succeeded' })))(body.params || {}))
+      if (op === 'agent.guide') return send(200, state.guide || { name: 'guide', version: '1', contentHash: 'x', text: 'GUIDE TEXT' })
+      return send(404)
+    }
     if (req.headers['x-beeftv-harness-page']) {
       state.proxied.push({ method: req.method, url: req.url, headers: req.headers })
       return send(200, { proxied: true })
@@ -286,6 +298,7 @@ async function workspaceServer(context) {
       { id: 'canvas.get', readOnly: true, replay: 'safe' }, { id: 'canvas.generation.propose', readOnly: true, replay: 'safe' },
       { id: 'media.review', readOnly: true, replay: 'unsafe' },
       { id: 'canvas.create', readOnly: false, replay: 'unsafe' }, { id: 'canvas.script.prepare', readOnly: false, replay: 'safe' },
+      ...state.extraOps,
     ] })
     send(404)
   })
@@ -298,6 +311,7 @@ async function workspaceServer(context) {
 // Loads the real Host into a minimal DSH context and serves its handler on loopback.
 async function startHost(context, options = {}) {
   const workspace = await workspaceServer(context)
+  workspace.extraOps = options.extraOps || []
   const calls = mockRuntimeProcesses(context, { available: () => workspace.available, bridgeURL: workspace.url, ...options })
   const home = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-dsh-'))
   const previousHome = process.env.DSH_HOME
@@ -306,6 +320,12 @@ async function startHost(context, options = {}) {
     const settingsDir = join(home, 'storages', 'beeftv')
     await fsPromises.mkdir(settingsDir, { recursive: true })
     await fsPromises.writeFile(join(settingsDir, 'connection.json'), options.rawSettings ?? JSON.stringify(options.initialSettings))
+  }
+  if (options.pluginSettings || options.awaiting) {
+    const settingsDir = join(home, 'storages', 'beeftv')
+    await fsPromises.mkdir(settingsDir, { recursive: true })
+    if (options.pluginSettings) await fsPromises.writeFile(join(settingsDir, 'settings.json'), JSON.stringify(options.pluginSettings))
+    if (options.awaiting) await fsPromises.writeFile(join(settingsDir, 'awaiting.json'), JSON.stringify(options.awaiting))
   }
   if (options.readDelayMs) {
     const readFile = fsPromises.readFile
@@ -317,6 +337,7 @@ async function startHost(context, options = {}) {
   }
   let handler
   let prompt
+  const sections = new Map()
   const listeners = new Map()
   const disposers = []
   host.apply({
@@ -326,7 +347,10 @@ async function startHost(context, options = {}) {
     effect: callback => { const dispose = callback(); if (typeof dispose === 'function') disposers.push(dispose) },
     on: (event, listener) => { listeners.set(event, listener) },
     get: name => options.services?.[name],
-    systemPrompt: { section() {}, context: options => { prompt = options.text } },
+    systemPrompt: {
+      section: options => { sections.set(options.name, options) },
+      context: options => { prompt = options.text },
+    },
   })
   const front = createServer((req, res) => handler(req, res))
   await new Promise(resolve => front.listen(0, '127.0.0.1', resolve))
@@ -353,7 +377,11 @@ async function startHost(context, options = {}) {
       request.end(payload)
     })
   }
-  return { call, calls, workspace, listeners, home, prompt: view => prompt(view) }
+  const section = name => {
+    const value = sections.get(name)?.text
+    return typeof value === 'function' ? value() : value
+  }
+  return { call, calls, workspace, listeners, home, prompt: view => prompt(view), section }
 }
 
 test('Host rejects context from missing or previous connection IDs and reattaches a returning App without reopening it', async context => {
@@ -560,4 +588,221 @@ test('Host reports an outdated desktop App for upgrade without starting it', asy
   assert.equal(refused.status, 503)
   assert.equal(refused.body.error, status.localApp.message)
   assert.deepEqual(calls, [])
+})
+
+
+// ---- 生成完接着做、步数上限与后端说明 ----
+
+const submitName = 'mcp__beeftv__canvas_generation_submit_ab092b275e46'
+const submitResult = taskIds => ({ content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.generation.submit', result: { taskIds } }) }] })
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+async function until(predicate, timeout = 3000) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await sleep(10)
+  }
+  throw new Error('等待条件超时')
+}
+function fakeAgent(id = 'session', status = 'idle') {
+  const wakes = []
+  const injected = []
+  return {
+    agent: { id, status, session: { id }, followup: message => wakes.push(message), inject: message => injected.push(message) },
+    wakes, injected,
+  }
+}
+const succeededTask = taskId => ({ taskId, status: 'succeeded', outputs: [{ resourceId: `resource-${taskId}` }] })
+
+test('task results feed the wake text and never mistake pending downloads for completion', () => {
+  assert.deepEqual(submittedTaskIds(submitName, submitResult(['a', 'a', 'b'])), ['a', 'b'])
+  assert.deepEqual(submittedTaskIds(submitName, { ...submitResult(['a']), isError: true }), [])
+  assert.deepEqual(submittedTaskIds('mcp__beeftv__canvas_get_ab092b275e46', submitResult(['a'])), [])
+  assert.equal(taskOutcome(succeededTask('t1'), 't1').state, 'succeeded')
+  assert.equal(taskOutcome({ taskId: 't', status: 'succeeded', outputs: [], outcome: { phase: 'fetching' } }).state, 'pending')
+  assert.equal(taskOutcome({ taskId: 't', status: 'failed', error: '素材下载失败' }).state, 'failed')
+  assert.equal(waitOutcome({ status: 'pending' }, 't').state, 'pending')
+  assert.equal(waitOutcome({ status: 'incomplete' }, 't').state, 'failed')
+  assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }, { taskId: 't2', state: 'failed', reason: '素材下载失败' }]),
+    '生成已结束：1 个成功，1 个失败（素材下载失败）。任务：t1、t2。请只查询结果、绑定到节点并继续，不要重新提交。')
+  assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }]), '生成已结束：1 个成功。任务：t1。请只查询结果、绑定到节点并继续，不要重新提交。')
+  assert.equal(stepLimitNotice(40), '这一轮已经做了 40 步，先停一下。要继续请再说一句。')
+})
+
+test('plugin settings keep defaults for bad files and reject invalid edits', () => {
+  assert.deepEqual(normalizeSettings(null), defaultPluginSettings)
+  assert.deepEqual(normalizeSettings({ autoContinue: false, stepLimit: 12 }), { autoContinue: false, stepLimit: 12 })
+  assert.deepEqual(normalizeSettings({ autoContinue: 'no', stepLimit: 3 }), defaultPluginSettings)
+  assert.deepEqual(validatedSettingsPatch({ autoContinue: false }), { autoContinue: false })
+  assert.throws(() => validatedSettingsPatch({ stepLimit: 4 }), /5 到 200/)
+  assert.throws(() => validatedSettingsPatch({ stepLimit: 41.5 }), /整数/)
+  assert.throws(() => validatedSettingsPatch({}), /没有要保存/)
+})
+
+test('the backend guide replaces the fixed creation section and only adds DSH-specific lines', () => {
+  assert.match(guidedPrompt({ text: '后端使用说明' }, '内置说明'), /^后端使用说明\n.*mcp__beeftv__ 前缀/)
+  assert.equal(guidedPrompt(null, '内置说明'), '内置说明')
+})
+
+test('a successful generation submission waits with task.wait and wakes the same session once', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t1']))
+  await until(() => wakes.length === 1)
+  assert.equal(wakes[0].content[0].text, '生成已结束：1 个成功。任务：t1。请只查询结果、绑定到节点并继续，不要重新提交。')
+  assert.equal(wakes[0].role, 'user')
+  assert.equal(workspace.calls.filter(item => item.op === 'task.wait').length, 1)
+  assert.equal(workspace.calls.some(item => item.op === 'task.get'), false)
+  // 重复提交同一个任务不会再叫醒一次。
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t1']))
+  await sleep(80)
+  assert.equal(wakes.length, 1)
+})
+
+test('a pending task.wait keeps waiting, and a failed task is reported with its reason', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  let calls = 0
+  workspace.taskWait = ({ taskId }) => {
+    calls += 1
+    if (calls === 1) return { status: 'pending', taskId }
+    return { status: 'failed', tasks: [{ taskId, status: 'failed', error: '素材下载失败' }] }
+  }
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['slow-1']))
+  await until(() => wakes.length === 1)
+  assert.equal(calls, 2)
+  assert.equal(wakes[0].content[0].text, '生成已结束：0 个成功，1 个失败（素材下载失败）。任务：slow-1。请只查询结果、绑定到节点并继续，不要重新提交。')
+})
+
+test('a busy session receives the completion inside the running turn', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['busy-1']))
+  await until(() => injected.length === 1)
+  assert.equal(wakes.length, 0)
+  assert.match(injected[0].content[0].text, /busy-1/)
+})
+
+test('three consecutive auto-wakes stop the fourth until the user writes again', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  for (const [index, taskId] of ['t1', 't2', 't3'].entries()) {
+    listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult([taskId]))
+    await until(() => wakes.length === index + 1)
+  }
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t4']))
+  await sleep(100)
+  assert.equal(wakes.length, 3)
+  // 用户自己发消息后预算恢复。
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t5']))
+  await until(() => wakes.length === 4)
+  assert.match(wakes[3].content[0].text, /t5/)
+})
+
+test('a user stop ends the wait and a late result never wakes the session', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  let release
+  workspace.taskWait = () => new Promise(resolve => { release = resolve })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['late-1']))
+  await until(() => typeof release === 'function')
+  listeners.get('session/event')({ id: 'session' }, { type: 'turn/end', data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } })
+  release({ status: 'succeeded', tasks: [succeededTask('late-1')] })
+  await sleep(100)
+  assert.equal(wakes.length, 0)
+})
+
+test('without task.wait the plugin polls task.get instead', async context => {
+  const { call, listeners, workspace } = await startHost(context)
+  workspace.taskGet = ({ taskId }) => succeededTask(taskId)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['poll-1']))
+  await until(() => wakes.length === 1)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
+  assert.equal(workspace.calls.filter(item => item.op === 'task.get').length, 1)
+})
+
+test('a restart reports generations left behind once and does not resume them', async context => {
+  const { call, workspace } = await startHost(context, { awaiting: { sessions: { s1: ['a', 'b'] }, away: 1 } })
+  const status = (await call('GET', '/beeftv/status')).body
+  assert.equal(status.awayNotice, '有 3 个生成在你离开时完成。')
+  assert.deepEqual(workspace.calls, [])
+  const cleared = (await call('POST', '/beeftv/away-notice', { seen: true })).body
+  assert.equal(cleared.awayNotice, null)
+  await sleep(20)
+  assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, null)
+})
+
+test('turning auto-continue off stops starting waits and saves the setting', async context => {
+  const { call, listeners, workspace, home } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const settings = (await call('POST', '/beeftv/settings', { autoContinue: false })).body
+  assert.equal(settings.autoContinue, false)
+  assert.equal(settings.stepLimit, 40)
+  assert.deepEqual(JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8')), { autoContinue: false, stepLimit: 40 })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['quiet-1']))
+  await sleep(100)
+  assert.equal(wakes.length, 0)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
+  assert.equal((await call('POST', '/beeftv/settings', { stepLimit: 4 })).status, 503)
+  assert.equal((await call('POST', '/beeftv/settings', { stepLimit: 12 })).body.stepLimit, 12)
+})
+
+test('the step limit stops only turns that belong to BeefTV', async context => {
+  const { call, listeners } = await startHost(context, { pluginSettings: { autoContinue: true, stepLimit: 5 } })
+  const connectionId = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.connectionId
+  await call('POST', '/beeftv/context', { sessionId: 'beef-session', connectionId, context: { route: '/canvas/a' } })
+  const other = fakeAgent('other-session')
+  for (let index = 0; index < 10; index++) {
+    listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent: other.agent }, { content: [] })
+  }
+  const allow = async () => ({ kind: 'enter', messages: [] })
+  assert.deepEqual(await listeners.get('agent/pre-step')({ agent: { id: 'other-session' }, turn: 1 }, allow), { kind: 'enter', messages: [] })
+  const beef = fakeAgent('beef-session')
+  for (let index = 0; index < 5; index++) {
+    listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent: beef.agent }, { content: [] })
+  }
+  assert.deepEqual(await listeners.get('agent/pre-step')({ agent: { id: 'beef-session' }, turn: 1 }, allow), { kind: 'reject' })
+  const status = (await call('GET', '/beeftv/status')).body
+  assert.equal(status.stepNotice, '这一轮已经做了 5 步，先停一下。要继续请再说一句。')
+  assert.equal((await call('POST', '/beeftv/step-notice', { seen: true })).body.stepNotice, null)
+  // 另一轮重新计数。
+  listeners.get('session/event')({ id: 'beef-session' }, { type: 'turn/start', data: { turn: 2 } })
+  assert.deepEqual(await listeners.get('agent/pre-step')({ agent: { id: 'beef-session' }, turn: 2 }, allow), { kind: 'enter', messages: [] })
+})
+
+test('a BeefTV tool call activates the step limit even without a reported view', async context => {
+  const { call, listeners } = await startHost(context, { pluginSettings: { autoContinue: true, stepLimit: 5 } })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent } = fakeAgent('tool-session')
+  listeners.get('tools/result')({ name: 'mcp__beeftv__canvas_get_ab092b275e46', arguments: {}, agent }, { content: [] })
+  for (let index = 0; index < 4; index++) {
+    listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent }, { content: [] })
+  }
+  assert.deepEqual(await listeners.get('agent/pre-step')({ agent, turn: 1 }, async () => ({ kind: 'enter', messages: [] })), { kind: 'reject' })
+})
+
+test('a backend agent.guide replaces the fixed section; without it the fixed text stays', async context => {
+  const guided = await startHost(context, { extraOps: [{ id: 'agent.guide', readOnly: true }] })
+  guided.workspace.guide = { name: 'agent.guide', version: '2', contentHash: 'abc', text: '后端使用说明：先读画布。' }
+  await guided.call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const text = guided.section('beeftv-creation')
+  assert.match(text, /^后端使用说明：先读画布。/)
+  assert.match(text, /mcp__beeftv__ 前缀/)
+  assert.doesNotMatch(text, /长程视频创作与工作区定制按以下规范完成/)
+
+  const fixed = await startHost(context)
+  await fixed.call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.match(fixed.section('beeftv-creation'), /长程视频创作与工作区定制按以下规范完成/)
 })
