@@ -592,10 +592,10 @@ test('面板可以开关生成完自动继续、调整每轮步数上限，并�
   await refresh(page)
   await page.getByText('有 2 个生成在你离开时完成。', { exact: true }).waitFor()
   await page.getByText('这一轮已经做了 40 步，先停一下。要继续请再说一句。', { exact: true }).waitFor()
-  await page.getByRole('button', { name: '知道了' }).first().click()
+  await page.getByRole('button', { name: '关闭离开提示' }).click()
   await page.waitForFunction(() => !document.body.innerText.includes('有 2 个生成在你离开时完成。'))
   expect(state.notices[0]).toEqual({ path: 'away-notice', seen: true })
-  await page.getByRole('button', { name: '知道了' }).click()
+  await page.getByRole('button', { name: '关闭步数提示' }).click()
   await page.waitForFunction(() => !document.body.innerText.includes('这一轮已经做了 40 步'))
   expect(state.notices[1]).toEqual({ path: 'step-notice', seen: true })
 
@@ -612,5 +612,35 @@ test('面板可以开关生成完自动继续、调整每轮步数上限，并�
   await stepLimit.press('Enter')
   await saved
   expect(state.settings.at(-1)).toEqual({ stepLimit: 12 })
+  await page.close()
+})
+
+
+test('保存设置或关闭提示会丢弃在途的旧状态响应', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  let release!: () => void
+  let delayed = false
+  await page.route('**/beeftv/status', async route => {
+    if (!delayed) {
+      delayed = true
+      await new Promise<void>(resolve => { release = resolve })
+      await route.fulfill({ json: { ...state.status(), autoContinue: true, awayNotice: '有 2 个生成在你离开时完成。' } }).catch(() => {})
+      return
+    }
+    await route.fulfill({ json: state.status() })
+  })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  for (let index = 0; index < 100 && !release; index++) await page.waitForTimeout(10)
+  expect(typeof release).toBe('function')
+
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('menuitemcheckbox', { name: /生成完自动继续/ })
+  await toggle.click()
+  await page.waitForFunction(() => document.querySelector('[role="menuitemcheckbox"][aria-checked="false"]') !== null)
+  release()
+  await page.waitForTimeout(100)
+  expect(await toggle.getAttribute('aria-checked')).toBe('false')
+  expect(await page.getByText('有 2 个生成在你离开时完成。', { exact: true }).count()).toBe(0)
   await page.close()
 })

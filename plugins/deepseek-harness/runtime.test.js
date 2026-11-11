@@ -280,8 +280,12 @@ async function workspaceServer(context) {
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') } catch { body = {} }
       const op = decodeURIComponent(path.slice('/api/ops/'.length))
       state.calls.push({ op, params: body.params || {} })
-      if (op === 'task.wait') return send(200, (state.taskWait || (() => ({ status: 'succeeded', tasks: [] })))(body.params || {}))
-      if (op === 'task.get') return send(200, (state.taskGet || (() => ({ taskId: body.params?.taskId, status: 'succeeded' })))(body.params || {}))
+      if (op === 'task.wait') {
+        try { return send(200, (state.taskWait || (() => ({ status: 'succeeded', tasks: [] })))(body.params || {})) } catch { return send(503) }
+      }
+      if (op === 'task.get') {
+        try { return send(200, (state.taskGet || (() => ({ taskId: body.params?.taskId, status: 'succeeded' })))(body.params || {})) } catch { return send(503) }
+      }
       if (op === 'agent.guide') return send(200, state.guide || { name: 'guide', version: '1', contentHash: 'x', text: 'GUIDE TEXT' })
       return send(404)
     }
@@ -622,7 +626,16 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(taskOutcome({ taskId: 't', status: 'succeeded', outputs: [], outcome: { phase: 'fetching' } }).state, 'pending')
   assert.equal(taskOutcome({ taskId: 't', status: 'failed', error: '素材下载失败' }).state, 'failed')
   assert.equal(waitOutcome({ status: 'pending' }, 't').state, 'pending')
-  assert.equal(waitOutcome({ status: 'incomplete' }, 't').state, 'failed')
+  // task.wait 已对「成功且产物保存」负责，不再用 tasks 里可能缺失的字段重算。
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 't', status: 'succeeded' }] }, 't').state, 'succeeded')
+  assert.equal(waitOutcome({ status: 'failed', tasks: [{ taskId: 't', status: 'failed', error: '上游拒绝' }] }, 't').reason, '上游拒绝')
+  assert.equal(waitOutcome({ status: 'incomplete' }, 't').state, 'incomplete')
+  assert.match(waitOutcome({ status: 'incomplete' }, 't').reason, /恢复保存/)
+  // 任务成功但产物没入库：保留原任务恢复保存，不算失败也不让模型重新生成。
+  assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', resultState: 'failed_permanent' }).state, 'incomplete')
+  assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', phase: undefined, outcome: { phase: 'failed' } }).state, 'incomplete')
+  assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }).state, 'incomplete')
+  assert.equal(taskOutcome({ taskId: 'retry', status: 'failed', outcome: { phase: 'retrievable' } }).state, 'pending')
   assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }, { taskId: 't2', state: 'failed', reason: '素材下载失败' }]),
     '生成已结束：1 个成功，1 个失败（素材下载失败）。任务：t1、t2。请只查询结果、绑定到节点并继续，不要重新提交。')
   assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }]), '生成已结束：1 个成功。任务：t1。请只查询结果、绑定到节点并继续，不要重新提交。')
@@ -642,6 +655,7 @@ test('plugin settings keep defaults for bad files and reject invalid edits', () 
 test('the backend guide replaces the fixed creation section and only adds DSH-specific lines', () => {
   assert.match(guidedPrompt({ text: '后端使用说明' }, '内置说明'), /^后端使用说明\n.*mcp__beeftv__ 前缀/)
   assert.equal(guidedPrompt(null, '内置说明'), '内置说明')
+  assert.equal(guidedPrompt({ text: 'x'.repeat(runtime.maximumGuideChars + 1) }, '内置说明'), '内置说明')
 })
 
 test('a successful generation submission waits with task.wait and wakes the same session once', async context => {
@@ -688,7 +702,7 @@ test('a busy session receives the completion inside the running turn', async con
   assert.match(injected[0].content[0].text, /busy-1/)
 })
 
-test('three consecutive auto-wakes stop the fourth until the user writes again', async context => {
+test('three consecutive auto-wakes defer the fourth until the user writes again', async context => {
   const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
   workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
@@ -700,11 +714,60 @@ test('three consecutive auto-wakes stop the fourth until the user writes again',
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t4']))
   await sleep(100)
   assert.equal(wakes.length, 3)
-  // 用户自己发消息后预算恢复。
+  // 用户自己发消息后预算恢复，被挡住的 t4 补投。
   listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
-  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t5']))
   await until(() => wakes.length === 4)
-  assert.match(wakes[3].content[0].text, /t5/)
+  assert.match(wakes[3].content[0].text, /t4/)
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t5']))
+  await until(() => wakes.length === 5)
+  assert.match(wakes[4].content[0].text, /t5/)
+})
+
+test('a failed wake delivery keeps the result for the next user message', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  const followup = agent.followup
+  agent.followup = () => { throw new Error('会话已结束') }
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['retry-1']))
+  await sleep(100)
+  assert.equal(wakes.length, 0)
+  agent.followup = followup
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
+  await until(() => wakes.length === 1)
+  assert.match(wakes[0].content[0].text, /retry-1/)
+})
+
+test('a step-limit rejection defers an injected completion instead of swallowing it', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }], pluginSettings: { autoContinue: true, stepLimit: 5 } })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  const connectionId = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.connectionId
+  await call('POST', '/beeftv/context', { sessionId: 'session', connectionId, context: { route: '/canvas/a' } })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  for (let index = 0; index < 5; index++) {
+    listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent }, { content: [] })
+  }
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['held-1']))
+  await until(() => injected.length === 1)
+  assert.equal(wakes.length, 0)
+  const decision = await listeners.get('agent/pre-step')({ agent, turn: 1, messages: injected }, async () => ({ kind: 'enter', messages: injected }))
+  assert.deepEqual(decision, { kind: 'reject' })
+  // 被拒绝的步骤丢掉注入消息，但完成后用户说一句话会补投。
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
+  await until(() => injected.length === 2)
+  assert.match(injected[1].content[0].text, /held-1/)
+})
+
+test('when task.wait is present but fails, the plugin falls back to task.get', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = () => { throw new Error('unavailable') }
+  workspace.taskGet = ({ taskId }) => succeededTask(taskId)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['fallback-1']))
+  await until(() => wakes.length === 1)
+  assert.equal(workspace.calls.some(item => item.op === 'task.get'), true)
 })
 
 test('a user stop ends the wait and a late result never wakes the session', async context => {
@@ -732,11 +795,26 @@ test('without task.wait the plugin polls task.get instead', async context => {
   assert.equal(workspace.calls.filter(item => item.op === 'task.get').length, 1)
 })
 
-test('a restart reports generations left behind once and does not resume them', async context => {
-  const { call, workspace } = await startHost(context, { awaiting: { sessions: { s1: ['a', 'b'] }, away: 1 } })
+test('a restart reports only generations that really finished, scoped to the same workspace', async context => {
+  const { call, workspace } = await startHost(context, {
+    awaiting: {
+      sessions: { s1: { workspaceId: 'verified-workspace', taskIds: ['a'] } },
+      away: [{ workspaceId: 'verified-workspace', taskIds: ['b', 'c'] }, { workspaceId: 'another-workspace', taskIds: ['other'] }],
+    },
+  })
+  workspace.taskGet = ({ taskId }) => {
+    if (taskId === 'a') return succeededTask(taskId)
+    if (taskId === 'c') return { taskId, status: 'failed', error: '素材下载失败' }
+    return { taskId, status: 'running' }
+  }
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
   const status = (await call('GET', '/beeftv/status')).body
-  assert.equal(status.awayNotice, '有 3 个生成在你离开时完成。')
-  assert.deepEqual(workspace.calls, [])
+  // a 已成功、c 已失败，b 仍在跑；另一个工作区的任务不串台。
+  assert.equal(status.awayNotice, '有 2 个生成在你离开时完成。')
+  assert.deepEqual(workspace.calls.map(item => item.op).sort(), ['task.get', 'task.get', 'task.get'])
+  assert.equal(workspace.calls.some(item => item.params.taskId === 'other'), false)
+  // 不自动续跑。
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
   const cleared = (await call('POST', '/beeftv/away-notice', { seen: true })).body
   assert.equal(cleared.awayNotice, null)
   await sleep(20)

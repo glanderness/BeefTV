@@ -173,17 +173,23 @@ function taskSaved(task) {
   return Boolean(task.outputs?.length && task.outputs.every(output => output?.resourceId && !output?.materializationErrorCode))
 }
 
-function taskFailed(task) {
-  if (task?.status === 'cancelled') return true
-  const phase = taskPhase(task)
-  if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false
-  if (task?.status === 'failed') return true
+// 与内置 await-business-tasks 一致：任务本身成功但产物没能保存，是「未完成入库」，
+// 不是生成失败；这类结果只能恢复保存，不能重新生成。
+function taskIncomplete(task) {
   if (task?.status !== 'succeeded') return false
+  const phase = taskPhase(task)
   if (phase === 'failed') return true
   if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_permanent') return true
   if (phase === 'fetching' || phase === 'retrievable') return false
   return Boolean(task?.outputs?.length && task.outputs.every(output => output?.resourceId || output?.materializationErrorCode) &&
     task.outputs.some(output => output?.materializationErrorCode))
+}
+
+function taskFailed(task) {
+  if (task?.status === 'cancelled') return true
+  const phase = taskPhase(task)
+  if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false
+  return task?.status === 'failed'
 }
 
 function failureReason(task) {
@@ -201,6 +207,7 @@ function failureReason(task) {
 export function taskOutcome(task, taskId = task?.taskId) {
   if (taskSaved(task)) return { taskId, state: 'succeeded', reason: '' }
   if (taskFailed(task)) return { taskId, state: 'failed', reason: failureReason(task) }
+  if (taskIncomplete(task)) return { taskId, state: 'incomplete', reason: '结果尚未保存，只能恢复保存，不能重新生成' }
   return { taskId, state: 'pending', reason: '' }
 }
 
@@ -210,7 +217,8 @@ export function waitOutcome(value, taskId) {
   // task.wait 自己负责「成功、产物已保存」的判定；这里只读它的结论，不再用 task.get 的字段重算。
   const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || value.tasks[0] : undefined
   if (status === 'succeeded') return { taskId, state: 'succeeded', reason: '' }
-  if (status === 'failed' || status === 'incomplete') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
+  if (status === 'incomplete') return { taskId, state: 'incomplete', reason: failureReason(listed || value?.task || value) || '结果尚未保存，只能恢复保存，不能重新生成' }
+  if (status === 'failed') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
   if (status === 'pending') return { taskId, state: 'pending', reason: '' }
   if (value && typeof value === 'object' && ('status' in value || 'taskId' in value)) return taskOutcome(value, taskId)
   return { taskId, state: 'pending', reason: '' }
@@ -218,7 +226,8 @@ export function waitOutcome(value, taskId) {
 
 export function awaitWakeText(outcomes) {
   const taskIds = [...new Set(outcomes.map(outcome => outcome.taskId))]
-  const failed = outcomes.filter(outcome => outcome.state === 'failed')
+  // 未入库的结果也算「没成功」，但原因写明只能恢复保存，避免模型重新提交。
+  const failed = outcomes.filter(outcome => outcome.state === 'failed' || outcome.state === 'incomplete')
   const succeeded = outcomes.length - failed.length
   const reason = failed.map(outcome => outcome.reason).find(Boolean)
   const failures = failed.length ? `，${failed.length} 个失败${reason ? `（${reason}）` : ''}` : ''
@@ -234,9 +243,12 @@ export function awayGenerationNotice(count) {
 }
 
 // agent.guide 是可选的只读操作。有它时整段替换插件的说明，只补 DSH 独有的两句。
+export const maximumGuideChars = 100_000
+
 export function guidedPrompt(guide, fallback) {
   const text = typeof guide?.text === 'string' ? guide.text.trim() : ''
-  if (!text) return fallback
+  // 异常超长的说明会挤掉工具定义和对话空间，宁可用插件内置的那份。
+  if (!text || text.length > maximumGuideChars) return fallback
   return `${text}\n在 DeepSeek Harness 中，BeefTV 工具名带 mcp__beeftv__ 前缀。付费生成是否需要用户确认由 DSH 的访问模式决定：弹出审批时等用户确认，完全权限下直接执行，不要另外追问。`
 }
 

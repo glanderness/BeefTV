@@ -132,11 +132,16 @@ export function apply(ctx) {
   const awaitMaximumMs = 40 * 60 * 1000
   const taskGetIntervalMs = 5_000
   let pluginSettings = { ...defaultPluginSettings }
-  let awayCount = 0
+  // 离开时还没投递的任务先留在盘上，连回同一工作区后查一次终态再决定提示数量。
+  let awayPending = []
+  let awayNoticeCount = 0
   // 「会话 → 等待中的任务」只属于当前进程：重启或重连后不续跑，改为在面板提示一次。
   const waits = new Map()
   const wakeCounts = new Map()
-  const ownWakeIds = new Set()
+  const wakeIds = new Set()
+  const pendingWakeMessages = new Map()
+  const deferredWakes = new Map()
+  const stoppedSessions = new Set()
   const wokenTasks = new Set()
   const turns = new Map()
   let stepNotice = null
@@ -156,13 +161,13 @@ export function apply(ctx) {
     const sessions = {}
     for (const [sessionId, state] of waits) {
       const ids = [...state.tasks.keys()]
-      if (ids.length) sessions[sessionId] = ids
+      if (ids.length) sessions[sessionId] = { workspaceId: state.runtime?.workspace?.id || null, taskIds: ids }
     }
     return sessions
   }
 
   async function writeAwaiting() {
-    const value = { sessions: pendingTasks(), away: awayCount }
+    const value = { sessions: pendingTasks(), away: awayPending }
     awaitingWrite = awaitingWrite.catch(() => {}).then(async () => {
       await mkdir(pluginHome, { recursive: true, mode: 0o700 })
       await writeFile(awaitingPath, JSON.stringify(value), { mode: 0o600 })
@@ -175,15 +180,25 @@ export function apply(ctx) {
     return pluginSettings
   }).catch(() => pluginSettings)
 
-  // 上次退出时还没投递的任务只计数，不恢复到内存里的等待队列。
+  // 上次退出时还没投递的任务不恢复到内存里的等待队列，连回同一工作区后再查终态。
   const awaitingReady = readFile(awaitingPath, 'utf8').then(JSON.parse).then(async value => {
     const sessions = value?.sessions && typeof value.sessions === 'object' ? value.sessions : {}
-    let leftover = 0
-    for (const ids of Object.values(sessions)) {
-      if (Array.isArray(ids)) leftover += ids.filter(id => typeof id === 'string' && id).length
+    let leftover = false
+    for (const entry of Object.values(sessions)) {
+      const ids = Array.isArray(entry) ? entry : Array.isArray(entry?.taskIds) ? entry.taskIds : []
+      const taskIds = ids.filter(id => typeof id === 'string' && id)
+      if (!taskIds.length) continue
+      awayPending.push({ workspaceId: Array.isArray(entry) ? null : entry.workspaceId || null, taskIds })
+      leftover = true
     }
-    const savedAway = Number.isInteger(value?.away) && value.away > 0 ? value.away : 0
-    awayCount = savedAway + leftover
+    if (Array.isArray(value?.away)) {
+      for (const entry of value.away) {
+        const taskIds = Array.isArray(entry) ? entry : Array.isArray(entry?.taskIds) ? entry.taskIds : []
+        if (!taskIds.length) continue
+        awayPending.push({ workspaceId: Array.isArray(entry) ? null : entry.workspaceId || null, taskIds })
+        leftover = true
+      }
+    }
     if (leftover) await writeAwaiting()
     return value
   }).catch(() => null)
@@ -223,7 +238,7 @@ export function apply(ctx) {
       localPromptDismissed,
       autoContinue: pluginSettings.autoContinue,
       stepLimit: pluginSettings.stepLimit,
-      awayNotice: awayGenerationNotice(awayCount) || null,
+      awayNotice: awayGenerationNotice(awayNoticeCount) || null,
       stepNotice: stepNotice?.text || null,
       appURL: current ? `${ctx.webServer.getOrigin()}${current.basePath}/` : null,
       mcpTools, mcpState: current?.mcp?.state ?? null,
@@ -251,16 +266,16 @@ export function apply(ctx) {
     return Array.isArray(runtime?.operations) && runtime.operations.some(operation => operation?.id === id)
   }
 
-  // 唤醒消息是会话里的一条普通用户消息，模型能直接看到结论和任务清单。
+  // 唤醒消息是插件发出的用户角色消息，用独立来源，别让其他插件当成用户亲自输入。
   function wakeMessage(text) {
     const message = {
       id: `beeftv-await-${randomUUID()}`,
       role: 'user',
       content: [{ type: 'text', text }],
-      source: { kind: 'user' },
+      source: { kind: 'beeftv-await' },
     }
-    ownWakeIds.add(message.id)
-    while (ownWakeIds.size > 200) ownWakeIds.delete(ownWakeIds.values().next().value)
+    wakeIds.add(message.id)
+    while (wakeIds.size > 200) wakeIds.delete(wakeIds.values().next().value)
     return message
   }
 
@@ -269,6 +284,11 @@ export function apply(ctx) {
   }
 
   function stopSessionWaits(sessionId) {
+    stoppedSessions.add(sessionId)
+    deferredWakes.delete(sessionId)
+    for (const [messageId, entry] of pendingWakeMessages) {
+      if (entry.sessionId === sessionId) pendingWakeMessages.delete(messageId)
+    }
     const state = waits.get(sessionId)
     if (!state) return Promise.resolve()
     // 先标记取消：已经在返回路上的结果不得再触发唤醒。
@@ -284,9 +304,11 @@ export function apply(ctx) {
     let changed = false
     for (const [sessionId, state] of [...waits]) {
       if (runtime && state.runtime !== runtime) continue
+      state.cancelled = true
       state.done = true
       state.controller.abort()
-      awayCount += state.tasks.size
+      const taskIds = [...state.tasks.keys()]
+      if (taskIds.length) awayPending.push({ workspaceId: state.runtime?.workspace?.id || null, taskIds })
       waits.delete(sessionId)
       changed = true
     }
@@ -295,33 +317,52 @@ export function apply(ctx) {
 
   function stopAllWaits() {
     for (const state of waits.values()) {
+      state.cancelled = true
       state.done = true
       state.controller.abort()
     }
     waits.clear()
+    deferredWakes.clear()
+    pendingWakeMessages.clear()
     return writeAwaiting().catch(() => {})
   }
 
-  async function deliverWake(state) {
-    const outcomes = [...state.tasks].map(([taskId, outcome]) => ({ taskId, ...outcome }))
-    const unseen = outcomes.filter(outcome => !wokenTasks.has(outcome.taskId))
-    if (!unseen.length || !pluginSettings.autoContinue) return
-    for (const outcome of outcomes) wokenTasks.add(outcome.taskId)
-    const sessionId = state.sessionId
-    if ((wakeCounts.get(sessionId) || 0) >= maximumWakesPerSession) return
-    // 用户点停止后，正在返回的等待结果不能再把会话叫醒。
-    if (state.cancelled) return
-    const agent = state.agent
-    if (!agent || typeof agent.followup !== 'function' || typeof agent.inject !== 'function') return
-    const message = wakeMessage(awaitWakeText(unseen))
+  function deferOutcomes(sessionId, outcomes) {
+    const deferred = deferredWakes.get(sessionId) || []
+    for (const outcome of outcomes) {
+      if (!deferred.some(item => item.taskId === outcome.taskId)) deferred.push(outcome)
+    }
+    while (deferred.length > 50) deferred.shift()
+    deferredWakes.set(sessionId, deferred)
+  }
+
+  // 投递成功才记账；会话结束或上限挡住时把结果留给下一次用户消息。
+  function deliverOutcomes(sessionId, agent, outcomes) {
+    if (!agent || typeof agent.followup !== 'function' || typeof agent.inject !== 'function') return false
+    const message = wakeMessage(awaitWakeText(outcomes))
     try {
       // 空闲时开新一轮；忙时插进当前轮，不打断正在执行的步骤。
       if (agent.status === 'running') agent.inject(message)
       else agent.followup(message)
+      for (const outcome of outcomes) wokenTasks.add(outcome.taskId)
       wakeCounts.set(sessionId, (wakeCounts.get(sessionId) || 0) + 1)
+      pendingWakeMessages.set(message.id, { sessionId, outcomes })
+      return true
     } catch {
-      // 会话已经结束：不补发，也不重试唤醒。
+      return false
     }
+  }
+
+  function deliverWake(state) {
+    const outcomes = [...state.tasks].map(([taskId, outcome]) => ({ taskId, ...outcome }))
+    const unseen = outcomes.filter(outcome => !wokenTasks.has(outcome.taskId))
+    if (!unseen.length || !pluginSettings.autoContinue || state.cancelled) return
+    const sessionId = state.sessionId
+    if ((wakeCounts.get(sessionId) || 0) >= maximumWakesPerSession) {
+      deferOutcomes(sessionId, unseen)
+      return
+    }
+    if (!deliverOutcomes(sessionId, state.agent, unseen)) deferOutcomes(sessionId, unseen)
   }
 
   async function drainWait(state) {
@@ -369,10 +410,12 @@ export function apply(ctx) {
       await writeAwaiting().catch(() => {})
       return
     }
+    // 投递之前不写盘、也不从 waits 删除：停止/断开仍能找到这个会话并标记取消。
+    // 万一进程在写盘前退出，盘上留着任务清单，重启后还能按终态提示一次。
+    deliverWake(state)
     state.done = true
-    waits.delete(state.sessionId)
+    if (waits.get(state.sessionId) === state) waits.delete(state.sessionId)
     await writeAwaiting().catch(() => {})
-    await deliverWake(state)
   }
 
   function startWaits(runtime, agent, taskIds) {
@@ -393,6 +436,8 @@ export function apply(ctx) {
     for (const taskId of fresh) {
       if (!state.tasks.has(taskId)) state.tasks.set(taskId, { state: 'pending', reason: '' })
     }
+    // 新提交的任务从自己的提交时刻起算 40 分钟；同一会话的后一次等待不会提前掐掉前一次。
+    state.deadline = Date.now() + awaitMaximumMs
     void writeAwaiting().catch(() => {})
     void drainWait(state)
   }
@@ -406,6 +451,34 @@ export function apply(ctx) {
     } catch {
       // 读不到说明时沿用插件内置的完整说明，不让连接失败。
     }
+  }
+
+  // 上一段连接留下的任务只查终态用于提示，不恢复等待；查不到或仍在跑的不算「完成」。
+  async function resolveAway(runtime) {
+    if (!awayPending.length) {
+      awayNoticeCount = 0
+      return
+    }
+    const workspaceId = runtime.workspace?.id || null
+    const matched = []
+    const others = []
+    for (const entry of awayPending) {
+      if (!entry.workspaceId || entry.workspaceId === workspaceId) matched.push(entry)
+      else others.push(entry)
+    }
+    const taskIds = [...new Set(matched.flatMap(entry => entry.taskIds))].slice(0, 20)
+    let completed = 0
+    await Promise.all(taskIds.map(async taskId => {
+      try {
+        const task = await callOperation(runtime, 'task.get', { taskId }, AbortSignal.timeout(10_000))
+        if (taskOutcome(task, taskId).state !== 'pending') completed += 1
+      } catch {
+        // 读不到状态就不计入「完成」，避免把仍在处理或属于别的工作区的任务说成已完成。
+      }
+    }))
+    awayPending = others
+    awayNoticeCount = completed
+    await writeAwaiting().catch(() => {})
   }
 
   async function release(runtime) {
@@ -468,6 +541,8 @@ export function apply(ctx) {
       runtime.readOnlyTools = readOnlyToolNames(operations.ops)
       // 有 agent.guide 时整段替换内置说明；读不到就沿用内置文案。
       await loadGuide(runtime)
+      // 只按当前工作区核对离开时的任务，不恢复等待。
+      await resolveAway(runtime)
       runtime.mode = mode
       runtime.localApp = mode === 'standalone' ? await localAppStatus() : null
       if (mode === 'standalone') localAppCheckedAt = Date.now()
@@ -581,7 +656,8 @@ export function apply(ctx) {
         if (req.method === 'POST' && url.pathname === '/beeftv/away-notice') {
           const body = await bodyJSON(req)
           if (body.seen !== true) throw new Error('无效的提示设置')
-          awayCount = 0
+          awayNoticeCount = 0
+          awayPending = []
           await writeAwaiting().catch(() => {})
           return json(res, 200, status())
         }
@@ -685,6 +761,15 @@ export function apply(ctx) {
     const state = sessionId ? turns.get(sessionId) : undefined
     if (!state?.stop) return decision
     if (state.turn !== null && payload.turn !== state.turn) return decision
+    // 被拒绝的步骤会连同已 claim 的注入消息一起丢掉；先把完成通知挪到下一次用户消息后再投递。
+    for (const message of payload.messages || []) {
+      const entry = pendingWakeMessages.get(message?.id)
+      if (!entry) continue
+      pendingWakeMessages.delete(message.id)
+      wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
+      for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
+      deferOutcomes(entry.sessionId, entry.outcomes)
+    }
     return { kind: 'reject' }
   })
   ctx.on('agent/turn-stopping', payload => {
@@ -698,6 +783,7 @@ export function apply(ctx) {
     const sessionId = session?.id
     if (!sessionId) return
     if (event?.type === 'turn/start') {
+      stoppedSessions.delete(sessionId)
       turns.set(sessionId, { turn: event.data?.turn ?? null, count: 0, beefTV: contexts.has(sessionId), stop: false })
     } else if (event?.type === 'turn/end') {
       const reason = event.data?.reason
@@ -707,10 +793,30 @@ export function apply(ctx) {
   })
   ctx.on('agent/inbox/claimed', payload => {
     const sessionId = sessionIdOf(payload?.agent)
-    if (!sessionId || payload?.message?.source?.kind !== 'user' || ownWakeIds.has(payload.message.id)) return
-    // 用户主动发了新消息：连续自动唤醒的计数从头开始。
+    const message = payload?.message
+    if (!sessionId || !message) return
+    if (wakeIds.has(message.id)) {
+      pendingWakeMessages.delete(message.id)
+      return
+    }
+    if (message.source?.kind !== 'user') return
+    // 用户主动发了新消息：连续自动唤醒的计数从头开始，被上限挡住的完成通知这时补投。
     wakeCounts.set(sessionId, 0)
     if (stepNotice?.sessionId === sessionId) stepNotice = null
+    const deferred = deferredWakes.get(sessionId)
+    if (deferred?.length) {
+      deferredWakes.delete(sessionId)
+      deliverOutcomes(sessionId, payload.agent, deferred)
+    }
+  })
+  ctx.on('agent/inbox/discarded', payload => {
+    const entry = pendingWakeMessages.get(payload?.message?.id)
+    if (!entry) return
+    pendingWakeMessages.delete(payload.message.id)
+    wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
+    for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
+    if (stoppedSessions.has(entry.sessionId)) return
+    deferOutcomes(entry.sessionId, entry.outcomes)
   })
   ctx.on('agent/disposed', payload => {
     const sessionId = sessionIdOf(payload?.agent)

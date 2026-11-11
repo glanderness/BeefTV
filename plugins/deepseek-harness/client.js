@@ -221,6 +221,7 @@ window.__ModuleLoader__.load({
       const statusRequest = React.useRef(null)
       const refreshStatus = React.useRef(null)
       const requestStatusRefresh = React.useCallback(() => refreshStatus.current?.(), [])
+      const skipStepSave = React.useRef(false)
       const reportError = React.useCallback(message => setError(message), [])
       const appURL = !choosingWorkspace && status?.connected ? status.appURL : undefined
       const source = React.useMemo(() => frameURL(appURL), [appURL])
@@ -413,6 +414,9 @@ window.__ModuleLoader__.load({
 
       async function saveSettings(patch) {
         setError('')
+        // 写入前丢掉在途的状态读取，避免旧响应把刚保存的值翻回去。
+        statusRequest.current?.abort()
+        statusRequest.current = null
         try {
           setStatus(await api('settings', patch))
         } catch (failure) {
@@ -422,6 +426,8 @@ window.__ModuleLoader__.load({
 
       async function dismissNotice(path) {
         setError('')
+        statusRequest.current?.abort()
+        statusRequest.current = null
         try {
           setStatus(await api(path, { seen: true }))
         } catch (failure) {
@@ -451,10 +457,10 @@ window.__ModuleLoader__.load({
         standalone && h('div', { className: 'beeftv-harness-workspace-note' }, '独立工作区，和本机 BeefTV 不是同一份数据'),
         status?.awayNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
           h('span', null, status.awayNotice),
-          h('button', { type: 'button', onClick: () => dismissNotice('away-notice') }, '知道了')),
+          h('button', { type: 'button', 'aria-label': '关闭离开提示', onClick: () => dismissNotice('away-notice') }, '知道了')),
         status?.stepNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
           h('span', null, status.stepNotice),
-          h('button', { type: 'button', onClick: () => dismissNotice('step-notice') }, '知道了')),
+          h('button', { type: 'button', 'aria-label': '关闭步数提示', onClick: () => dismissNotice('step-notice') }, '知道了')),
         localReady && h('div', { className: 'beeftv-harness-notice', role: 'status' },
           h('span', null, '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'),
           h('button', { type: 'button', disabled: !!busy, onClick: () => connect('local') }, '连接本机'),
@@ -468,17 +474,20 @@ window.__ModuleLoader__.load({
             h('div', { className: 'beeftv-harness-agent-header' },
               h('div', { className: 'beeftv-harness-agent-title-row' },
                 h('h2', { className: 'beeftv-harness-agent-heading' }, 'BeefTV Agent'),
-                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') setActionsOpen(false) } },
-                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => setActionsOpen(open => !open) }, '⋯'),
-                  actionsOpen && h('div', { className: 'beeftv-harness-action-menu' },
+                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') { skipStepSave.current = true; setActionsOpen(false) } } },
+                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, 'aria-haspopup': 'menu', onClick: () => setActionsOpen(open => !open) }, '⋯'),
+                  actionsOpen && h('div', { className: 'beeftv-harness-action-menu', role: 'menu' },
                     h('button', { type: 'button', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
                     status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
                     h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
-                    h('button', { type: 'button', role: 'menuitemcheckbox', 'aria-checked': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, `${autoContinue ? '✓ ' : ''}生成完自动继续`),
-                    h('label', { className: 'beeftv-harness-setting' }, '每轮步数上限',
+                    h('button', { type: 'button', role: 'menuitemcheckbox', 'aria-checked': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
+                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
                       h('input', {
                         type: 'number', min: 5, max: 200, step: 5, defaultValue: status?.stepLimit || 40,
-                        onBlur: event => saveSettings({ stepLimit: Number(event.currentTarget.value) }),
+                        onBlur: event => {
+                          if (skipStepSave.current) { skipStepSave.current = false; return }
+                          saveSettings({ stepLimit: Number(event.currentTarget.value) })
+                        },
                         onKeyDown: event => { if (event.key === 'Enter') event.currentTarget.blur() },
                       }))))),
               h('div', { className: 'beeftv-harness-modes', 'aria-label': '协作方向' }, modes.map(mode =>
