@@ -403,7 +403,7 @@ function InfiniteCanvasPage() {
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     // 助手只接受属于当前画布的选中项：切画布那一帧仍可能残留旧 id，这里做硬约束，
     // 不让跨画布的 id 进入请求（后端会按画布校验并拒绝整个回合）。
-    const { selectedIds: assistantSelectedNodeIds, askSelectedNodes } = useCanvasSelectionContext(projectId, currentProject?.title, nodes, selectedNodeIds, projectLoaded, internalAssistantEnabled ? openAssistant : undefined);
+    const { selectedIds: assistantSelectedNodeIds, askSelectedNodes } = useCanvasSelectionContext(projectId, currentProject?.title, nodes, selectedNodeIds, projectLoaded, openAssistant);
     // 助手的 @ 菜单覆盖整张画布，而不是只覆盖能当生成输入的资源节点。
     const assistantMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
     // 扩展节点（对比/图表/调色）要读自己的上游才能渲染，经 Context 下发；

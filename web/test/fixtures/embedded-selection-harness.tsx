@@ -17,7 +17,7 @@ const selectedNodeIds = new Set(nodes.map((node) => node.id));
 
 function Harness() {
     const [fallbacks, setFallbacks] = useState(0);
-    const { askSelectedNodes } = useCanvasSelectionContext("canvas-1", "雨夜故事", nodes, selectedNodeIds, true, embedded ? undefined : () => setFallbacks((value) => value + 1));
+    const { askSelectedNodes } = useCanvasSelectionContext("canvas-1", "雨夜故事", nodes, selectedNodeIds, true, () => setFallbacks((value) => value + 1));
     return (
         <>
             <button id="ask" type="button" onClick={askSelectedNodes}>问助手</button>

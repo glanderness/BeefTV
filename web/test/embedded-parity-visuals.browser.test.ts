@@ -80,3 +80,26 @@ test("画布提示使用现有提示样式并带「打开」", async () => {
     await page.getByRole("button", { name: "关闭提示" }).click();
     expect(await notice.isVisible()).toBe(false);
 }, 30_000);
+
+test("提示堆停在短剧流程条下方", async () => {
+    await page.goto(`http://localhost:${server.port}/?notice=1&guide=1`);
+    const notice = page.locator('[data-slot="callout"]').first();
+    await notice.waitFor({ state: "visible" });
+    const guideBox = await page.locator("#guide-bar").boundingBox();
+    const noticeBox = await notice.boundingBox();
+    expect(guideBox).not.toBeNull();
+    expect(noticeBox).not.toBeNull();
+    expect(noticeBox!.y).toBeGreaterThanOrEqual(guideBox!.y + guideBox!.height);
+}, 30_000);
+
+test("提示之间的空隙不拦截下层点击", async () => {
+    await page.goto(`http://localhost:${server.port}/?notice=2`);
+    const notices = page.locator('[data-slot="callout"]');
+    await notices.nth(1).waitFor({ state: "visible" });
+    const first = await notices.nth(0).boundingBox();
+    const second = await notices.nth(1).boundingBox();
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    await page.mouse.click(first!.x + first!.width / 2, (first!.y + first!.height + second!.y) / 2);
+    expect(await page.locator("#behind-count").textContent()).toBe("1");
+}, 30_000);
