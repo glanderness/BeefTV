@@ -12,6 +12,25 @@ export type EmbeddedWorkspaceContext = {
     selectedNodeIds: string[];
 };
 
+export type EmbeddedAskNode = {
+    id: string;
+    title: string;
+    type: string;
+};
+
+export type EmbeddedAsk = {
+    source: "selection-toolbar";
+    canvasId: string;
+    canvasTitle: string;
+    nodes: EmbeddedAskNode[];
+};
+
+export type EmbeddedAskResultStatus = "applied" | "preserved" | "blocked" | "unavailable";
+
+const ASK_MAX_NODES = 20;
+const ASK_TITLE_MAX_CHARS = 80;
+const ASK_RESULT_STATUSES: readonly EmbeddedAskResultStatus[] = ["applied", "preserved", "blocked", "unavailable"];
+
 declare global {
     interface Window {
         __BEEFTV_HARNESS__?: EmbeddedHarnessConfig;
@@ -39,7 +58,7 @@ export function resolveEmbeddedAssetUrl(path: string): string {
     return `${basePath}${path}`;
 }
 
-export function publishEmbeddedContext(context: EmbeddedWorkspaceContext): void {
+function postToEmbeddedParent(message: unknown): void {
     const config = getEmbeddedHarnessConfig();
     if (!config || window.parent === window) return;
     let parentOrigin = config.parentOrigin;
@@ -52,5 +71,57 @@ export function publishEmbeddedContext(context: EmbeddedWorkspaceContext): void 
         }
     }
     // Opaque desktop shells require a Host-injected target. Only UI context crosses this boundary.
-    window.parent.postMessage({ type: "beeftv:context", context }, parentOrigin);
+    window.parent.postMessage(message, parentOrigin);
+}
+
+export function publishEmbeddedContext(context: EmbeddedWorkspaceContext): void {
+    postToEmbeddedParent({ type: "beeftv:context", context });
+}
+
+/**
+ * 把选中节点交给右侧对话。返回是否已按嵌入模式接管；
+ * 单独打开 BeefTV 时返回 false，由页面继续走内置助手。
+ */
+export function publishSelectionAsk(input: {
+    canvasId: string;
+    canvasTitle: string;
+    nodes: readonly { id: string; title: string; type: string }[];
+    selectedNodeIds: Iterable<string>;
+}): boolean {
+    if (!isEmbeddedRuntime()) return false;
+    const selected = new Set(input.selectedNodeIds);
+    const nodes = input.nodes
+        .filter((node) => selected.has(node.id))
+        .slice(0, ASK_MAX_NODES)
+        .map((node) => ({
+            id: node.id,
+            title: Array.from(node.title).slice(0, ASK_TITLE_MAX_CHARS).join(""),
+            type: node.type,
+        }));
+    const ask: EmbeddedAsk = { source: "selection-toolbar", canvasId: input.canvasId, canvasTitle: input.canvasTitle, nodes };
+    postToEmbeddedParent({ type: "beeftv:ask", ask });
+    return true;
+}
+
+export function parseEmbeddedAskResult(data: unknown): EmbeddedAskResultStatus | null {
+    if (!data || typeof data !== "object") return null;
+    const message = data as { type?: unknown; status?: unknown };
+    if (message.type !== "beeftv:ask-result") return null;
+    return ASK_RESULT_STATUSES.find((status) => status === message.status) ?? null;
+}
+
+export function embeddedAskResultNotice(status: EmbeddedAskResultStatus): string | null {
+    if (status === "blocked") return "右侧正在发送，稍后再点";
+    if (status === "unavailable") return "右侧对话还没准备好，稍后再点";
+    return null;
+}
+
+export function createEmbeddedAskResultHandler(notify: (text: string) => void): (event: MessageEvent) => void {
+    return (event) => {
+        if (event.source !== window.parent) return;
+        const status = parseEmbeddedAskResult(event.data);
+        if (!status) return;
+        const text = embeddedAskResultNotice(status);
+        if (text) notify(text);
+    };
 }
