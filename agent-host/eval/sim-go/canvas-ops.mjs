@@ -6,6 +6,39 @@ import { ensureCanvas, saveCanvas, buildDefaultMetadata } from './canvas-store.m
 import { resolveGenerationModel } from './generation.mjs';
 
 // 单节点与批量配置共用的校验和字段落点；只改传入文档，不保存。
+const DRAFT_BOOLEANS = new Set(['generateAudio', 'watermark', 'transparentBackground']);
+const DRAFT_NUMBERS = {
+  seconds: (n) => n > 0 && n <= 600,
+  audioSpeed: (n) => n >= 0.25 && n <= 4,
+  audioPitch: (n) => n >= -12 && n <= 12,
+  audioVolume: (n) => n >= 0 && n <= 2,
+};
+const DRAFT_ENUMS = {
+  audioFormat: new Set(['mp3', 'wav', 'pcm', 'flac', 'aac', 'opus', 'ogg', 'm4a']),
+  videoEditOperation: new Set(['text_to_video', 'image_to_video', 'reference_to_video', 'extend', 'inpaint', 'replace_element', 'camera_motion', 'style_transfer', 'audio_to_video', 'compare_versions', 'concat', 'draft_to_final']),
+};
+const DRAFT_NON_EMPTY = new Set(['size', 'quality', 'vquality', 'audioVoice']);
+const AUTOMATIC_RESOLUTIONS = new Set(['', 'auto', 'default', 'medium', 'high']);
+
+// 与 Go validateDraftValue 保持同一组取值规则，避免模拟器放过真实后端会拒绝的草稿。
+function validateDraftValue(name, value) {
+  const invalid = () => invalidArg('invalid_parameter', `${name} 的值无效`);
+  if (DRAFT_BOOLEANS.has(name)) {
+    if (!['true', 'false'].includes(value)) throw invalid();
+    return;
+  }
+  if (DRAFT_NUMBERS[name]) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || !DRAFT_NUMBERS[name](number)) throw invalid();
+    return;
+  }
+  if (DRAFT_ENUMS[name]) {
+    if (!DRAFT_ENUMS[name].has(value)) throw invalid();
+    return;
+  }
+  if (DRAFT_NON_EMPTY.has(name) && !value.trim()) throw invalid();
+}
+
 function applyNodeConfigurePatch(state, doc, nodeId, kind, patch) {
   if (!['image', 'video', 'audio'].includes(kind)) {
     throw invalidArg('unsupported_node_kind', '仅媒体生成节点支持参数配置');
@@ -36,8 +69,8 @@ function applyNodeConfigurePatch(state, doc, nodeId, kind, patch) {
       delete node.metadata.promptTemplateVariables;
       continue;
     }
-    if (typeof val !== 'string' || !val.trim()) {
-      throw invalidArg('invalid_parameter', `${name} 必须是有效字符串`);
+    if (typeof val !== 'string') {
+      throw invalidArg('invalid_parameter', `${name} 必须是长度有限的字符串`);
     }
     if (name === 'model') {
       const choice = resolveGenerationModel(state, kind, val);
@@ -46,9 +79,33 @@ function applyNodeConfigurePatch(state, doc, nodeId, kind, patch) {
       node.metadata.model = choice.modelKey;
       continue;
     }
+    validateDraftValue(name, val);
     node.metadata[name] = val;
   }
+  if (kind === 'video' && Object.prototype.hasOwnProperty.call(patch, 'vquality')) {
+    const model = state.models.find((item) => item.modelKey === node.metadata.model);
+    const resolutions = model?.capabilities?.resolutions;
+    const value = String(node.metadata.vquality || '').trim();
+    if (Array.isArray(resolutions) && resolutions.length > 0 && !AUTOMATIC_RESOLUTIONS.has(value.toLowerCase()) && !resolutions.includes(value)) {
+      throw invalidArg('invalid_parameter', `当前模型不支持 ${value} 分辨率，可选 ${resolutions.join('、')}`);
+    }
+  }
   return node;
+}
+
+// 批量读取与 Go 一样按键名脱敏，避免评测把节点里的凭据当成正常返回。
+const SECRET_KEY_PATTERN = /(api[_-]?key|secret|token|authorization|password|credential|private[_-]?key)/i;
+
+function sanitizeForClient(value) {
+  if (Array.isArray(value)) return value.map(sanitizeForClient);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, SECRET_KEY_PATTERN.test(key) ? '[redacted]' : sanitizeForClient(item)]));
+  }
+  if (typeof value === 'string' && value.includes('?') && SECRET_KEY_PATTERN.test(value)) {
+    const index = value.indexOf('?');
+    if (index > 0) return value.slice(0, index);
+  }
+  return value;
 }
 
 // 批量错误的定位信息与 Go 操作层保持一致，评测才能判断模型有没有按原因修正。
@@ -269,7 +326,7 @@ export const CANVAS_OPS = {
       if (seen.has(nodeId)) continue;
       seen.add(nodeId);
       const node = (doc.nodes || []).find((item) => item.id === nodeId);
-      if (node) nodes.push(clone(node));
+      if (node) nodes.push(sanitizeForClient(clone(node)));
       else missingNodeIds.push(nodeId);
     }
     return { canvasId, revision: doc.revision, nodes, missingNodeIds };

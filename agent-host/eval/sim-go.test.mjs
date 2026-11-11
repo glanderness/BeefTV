@@ -1438,4 +1438,33 @@ describe('模拟器任务耗时与外部提交（替代场景 R1 / R3 的前置�
     expect(simGo.ensureCanvas(canvasId).revision).toBe(before);
     expect(simGo.ensureCanvas(canvasId).nodes.find((node) => node.id === first).metadata.composerContent).toBe('批量一');
   });
+
+  test('批量操作仅对外部开放，并复刻草稿参数校验与脱敏', () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-nodes-batch-guard';
+    simGo.ensureCanvas(canvasId);
+    simGo.beginTurn({ turnId: 'turn-guard', canvasId, permissionMode: 'canvas' });
+    expect(() => simGo.executeOp('canvas.nodes.get', { canvasId, nodeIds: ['node-1'] }, '', 'turn-guard')).toThrow(/本轮助手权限不允许该操作/);
+    expect(() => simGo.executeOp('canvas.nodes.configure', {
+      canvasId, expectedRevision: 1, nodes: [{ nodeId: 'node-1', kind: 'image', patch: { prompt: '助手不能写' } }],
+    }, 'assistant-config', 'turn-guard')).toThrow(/本轮助手权限不允许该操作/);
+
+    const created = simGo.executeOp('canvas.nodes.create', {
+      canvasId, expectedRevision: 1,
+      nodes: [{ type: 'image', title: '图片' }, { type: 'video', title: '视频' }, { type: 'audio', title: '音频' }],
+    }, 'guard-seed', '').result;
+    const [imageId, videoId, audioId] = created.created.map((node) => node.id);
+    const revision = simGo.ensureCanvas(canvasId).revision;
+    const attempt = (key, nodes) => simGo.executeOp('canvas.nodes.configure', { canvasId, expectedRevision: revision, nodes }, key, '');
+
+    expect(() => attempt('bad-seconds', [{ nodeId: videoId, kind: 'video', patch: { seconds: 'abc' } }])).toThrow(/第 1 个节点.*seconds/);
+    expect(() => attempt('bad-audio', [{ nodeId: videoId, kind: 'video', patch: { generateAudio: 'yes' } }])).toThrow(/第 1 个节点.*generateAudio/);
+    expect(() => attempt('bad-speed', [{ nodeId: audioId, kind: 'audio', patch: { audioSpeed: '9' } }])).toThrow(/第 1 个节点.*audioSpeed/);
+    expect(() => attempt('bad-quality', [{ nodeId: videoId, kind: 'video', patch: { model: 'seedance-1.0', vquality: '4k' } }])).toThrow(/第 1 个节点.*分辨率/);
+    expect(simGo.ensureCanvas(canvasId).revision).toBe(revision);
+
+    simGo.userEditNode(imageId, { metadata: { apiKey: 'secret-value' } }, canvasId);
+    const read = simGo.executeOp('canvas.nodes.get', { canvasId, nodeIds: [imageId] }).result;
+    expect(read.nodes[0].metadata.apiKey).toBe('[redacted]');
+  });
 });
