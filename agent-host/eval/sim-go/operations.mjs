@@ -1,6 +1,6 @@
 // 操作分发：按描述符计数、回合授权、写操作按 operationId 幂等回放，再交给各领域的处理函数，并记操作日志。
 
-import { clone, sha256Hex, invalidArg, notFound, conflict, permissionDenied } from './common.mjs';
+import { clone, sha256Hex, invalidArg, notFound, conflict } from './common.mjs';
 import { authorizeTurnForOp } from './turns.mjs';
 import { taskView, taskWaitIds, taskWaitNodeBinding, waitForTaskIds, TASK_OPS } from './tasks.mjs';
 import { CANVAS_OPS } from './canvas-ops.mjs';
@@ -31,11 +31,6 @@ export function executeOp(state, opIdName, rawParams = {}, opKey = '', turnId = 
   const descriptor = state.descriptorMap.get(opIdName);
   if (!descriptor) {
     throw notFound('unknown_operation', `未知操作: ${opIdName}`);
-  }
-  // 与 Go 操作表一致：assistantModes 为空的描述符只对外部调用方开放。
-  if ((turnId || hostCall) && Array.isArray(descriptor.assistantModes) && descriptor.assistantModes.length === 0) {
-    state.counts.scopeDenied += 1;
-    throw permissionDenied('scope_denied', '本轮助手权限不允许该操作');
   }
   state.counts.ops[opIdName] = (state.counts.ops[opIdName] || 0) + 1;
   if (descriptor.readOnly) state.counts.ReadOps += 1;
