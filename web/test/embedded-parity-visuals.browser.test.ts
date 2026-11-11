@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
 import { chromium, type Browser, type Page } from "playwright";
 
 let browser: Browser;
@@ -29,9 +31,13 @@ beforeAll(async () => {
     });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const js = await build.outputs.find((output) => output.path.endsWith(".js"))!.text();
-    const cssDirectory = import.meta.dir + "/../dist/static";
-    const appCss = existsSync(cssDirectory) ? readdirSync(cssDirectory).find((name) => /^application-.*\.css$/.test(name)) : undefined;
-    const css = appCss ? await Bun.file(cssDirectory + "/" + appCss).text() : "";
+    // 和其他组件浏览器测试一样从源码编译样式，不依赖构建产物：CI 不跑 build，缺样式时布局断言会失去意义。
+    const cssPath = import.meta.dir + "/../src/styles/globals.css";
+    const css = (await postcss([tailwind({ base: import.meta.dir + "/.." })]).process(readFileSync(cssPath, "utf8"), { from: cssPath })).css
+        + readFileSync(import.meta.dir + "/../src/styles/beeftv-local-overrides.css", "utf8")
+        + readFileSync(import.meta.dir + "/../src/styles/workspace-product.css", "utf8")
+        + (await Promise.all(build.outputs.filter((output) => output.path.endsWith(".css")).map((output) => output.text()))).join("\n");
+    if (!/\.pointer-events-none\b/.test(css)) throw new Error("编译出的样式缺少布局断言依赖的工具类");
     server = Bun.serve({
         port: 0,
         fetch(req) {
@@ -41,7 +47,7 @@ beforeAll(async () => {
             return new Response('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"><style>html,body{margin:0}#root{min-height:100vh}</style></head><body><div id="root"></div><script type="module" src="/harness.js"></script></body></html>', { headers: { "content-type": "text/html" } });
         },
     });
-    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path));
+    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ headless: true, executablePath });
     page = await browser.newPage({ viewport: { width: 960, height: 560 }, deviceScaleFactor: 2 });
     page.on("pageerror", (error) => console.error("页面错误", error.message));

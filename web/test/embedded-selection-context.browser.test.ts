@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser, type Page } from "playwright";
 
@@ -36,7 +37,7 @@ beforeAll(async () => {
             return new Response(`<!doctype html><html><body><script>window.__messages = []; window.addEventListener("message", (event) => { if (event.data?.type) window.__messages.push(event.data); });</script><iframe id="child" src="/child?embedded=1" style="width:640px;height:420px"></iframe></body></html>`, { headers: { "content-type": "text/html" } });
         },
     });
-    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path));
+    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ headless: true, executablePath });
     page = await browser.newPage({ viewport: { width: 900, height: 600 } });
 }, 60_000);
