@@ -140,6 +140,7 @@ export function apply(ctx) {
   const wakeCounts = new Map()
   const wakeIds = new Set()
   const pendingWakeMessages = new Map()
+  const staleWakeIds = new Set()
   const deferredWakes = new Map()
   const stoppedSessions = new Set()
   const wokenTasks = new Set()
@@ -301,6 +302,19 @@ export function apply(ctx) {
     return writeAwaiting().catch(() => {})
   }
 
+  // 换工作区后，旧工作区已经排队但还没进入模型的完成通知不能再送到新工作区。
+  function prunePendingWakes(workspaceId) {
+    for (const [messageId, entry] of [...pendingWakeMessages]) {
+      if (!entry.workspaceId || entry.workspaceId === workspaceId) continue
+      pendingWakeMessages.delete(messageId)
+      staleWakeIds.add(messageId)
+      while (staleWakeIds.size > 200) staleWakeIds.delete(staleWakeIds.values().next().value)
+      wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
+      for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
+      try { entry.agent?.inbox?.remove?.(messageId) } catch { /* 会话可能已经结束。 */ }
+    }
+  }
+
   // 重连或插件退出后不自动续跑：等待中的任务只留作「离开时完成」的计数。
   async function abandonWaits(runtime) {
     let changed = false
@@ -350,7 +364,7 @@ export function apply(ctx) {
       else agent.followup(message)
       for (const outcome of outcomes) wokenTasks.add(outcome.taskId)
       wakeCounts.set(sessionId, (wakeCounts.get(sessionId) || 0) + 1)
-      pendingWakeMessages.set(message.id, { sessionId, outcomes, workspaceId: current?.workspace?.id || null })
+      pendingWakeMessages.set(message.id, { sessionId, outcomes, workspaceId: current?.workspace?.id || null, agent })
       return true
     } catch {
       return false
@@ -556,6 +570,8 @@ export function apply(ctx) {
       runtime.readOnlyTools = readOnlyToolNames(operations.ops)
       // 有 agent.guide 时整段替换内置说明；读不到就沿用内置文案。
       await loadGuide(runtime)
+      // 换到别的工作区时丢掉旧工作区还没送进模型的完成通知。
+      prunePendingWakes(runtime.workspace?.id || null)
       // 只按当前工作区核对离开时的任务，不恢复等待。
       await resolveAway(runtime)
       runtime.mode = mode
@@ -782,20 +798,34 @@ export function apply(ctx) {
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
-    const claimed = (payload.messages || []).map(message => ({ id: message?.id, entry: pendingWakeMessages.get(message?.id) })).filter(item => item.entry)
+    const activeWorkspace = current?.workspace?.id || null
+    const claimed = (payload.messages || []).map(message => ({ id: message?.id, entry: pendingWakeMessages.get(message?.id) })).filter(item => item.entry || staleWakeIds.has(item.id))
+    // 旧工作区的完成通知即使已经被 claim，也不能进入新工作区的模型上下文。
+    const stale = claimed.filter(item => (item.entry?.workspaceId && item.entry.workspaceId !== activeWorkspace) || staleWakeIds.has(item.id))
+    for (const item of stale) {
+      pendingWakeMessages.delete(item.id)
+      staleWakeIds.delete(item.id)
+      if (item.entry) {
+        wakeCounts.set(item.entry.sessionId, Math.max(0, (wakeCounts.get(item.entry.sessionId) || 0) - 1))
+        for (const outcome of item.entry.outcomes) wokenTasks.delete(outcome.taskId)
+      }
+    }
+    const staleIds = new Set(stale.map(item => item.id))
+    const fresh = claimed.filter(item => !staleIds.has(item.id))
+    const messages = stale.length ? (payload.messages || []).filter(message => !staleIds.has(message?.id)) : payload.messages
     // DSH 会先 claim 再调用 pre-step：claimed 只看不删，等这里决定这一步是否真的进入。
     if (decision.kind !== 'enter') {
-      deferClaimedWakes(claimed)
+      deferClaimedWakes(fresh)
       return decision
     }
     const sessionId = sessionIdOf(payload?.agent)
     const state = sessionId ? turns.get(sessionId) : undefined
     if (state?.stop && (state.turn === null || payload.turn === state.turn)) {
-      deferClaimedWakes(claimed)
+      deferClaimedWakes(fresh)
       return { kind: 'reject' }
     }
-    for (const item of claimed) pendingWakeMessages.delete(item.id)
-    return decision
+    for (const item of fresh) pendingWakeMessages.delete(item.id)
+    return stale.length ? { ...decision, messages } : decision
   })
   ctx.on('agent/turn-stopping', payload => {
     const sessionId = sessionIdOf(payload?.agent)

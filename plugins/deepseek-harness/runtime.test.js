@@ -611,9 +611,13 @@ async function until(predicate, timeout = 3000) {
 function fakeAgent(id = 'session', status = 'idle') {
   const wakes = []
   const injected = []
+  const removed = []
   return {
-    agent: { id, status, session: { id }, followup: message => wakes.push(message), inject: message => injected.push(message) },
-    wakes, injected,
+    agent: {
+      id, status, session: { id }, inbox: { remove: messageId => removed.push(messageId) },
+      followup: message => wakes.push(message), inject: message => injected.push(message),
+    },
+    wakes, injected, removed,
   }
 }
 const succeededTask = taskId => ({ taskId, status: 'succeeded', outputs: [{ resourceId: `resource-${taskId}` }] })
@@ -743,6 +747,26 @@ test('a failed wake delivery keeps the result for the next user message', async 
   listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
   await until(() => wakes.length === 1)
   assert.match(wakes[0].content[0].text, /retry-1/)
+})
+
+test('a completion queued in the old workspace never reaches the new workspace', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected, removed } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['old-1']))
+  await until(() => injected.length === 1)
+  workspace.workspaceId = 'another-workspace'
+  await call('POST', '/beeftv/connect', { mode: 'local' })
+  // 换工作区时把还没送进模型的完成通知从会话里撤回。
+  assert.deepEqual(removed, [injected[0].id])
+  listeners.get('agent/inbox/claimed')({ agent, message: injected[0] })
+  const userMessage = { id: 'real-user-message', role: 'user', content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } }
+  const messages = [injected[0], userMessage]
+  const decision = await listeners.get('agent/pre-step')({ agent, turn: 2, messages }, async () => ({ kind: 'enter', messages }))
+  // 即使撤回没赶在 claim 之前，旧工作区的消息也不会进入这一步。
+  assert.deepEqual(decision.messages, [userMessage])
+  assert.equal(wakes.length, 0)
 })
 
 test('a step-limit rejection defers an injected completion instead of swallowing it', async context => {
