@@ -249,6 +249,7 @@ test("opening sidebar account modal never auto-starts OAuth; explicit login, cha
     failCatalogReads = 1;
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         const trigger = page.getByRole("button", { name: "登录 BeefTV", exact: true });
         await trigger.waitFor();
@@ -289,6 +290,7 @@ test("catalog_failed keeps authenticated account identity/wallet and retries bac
     connectionState = "catalog_failed";
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         const trigger = page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true });
         await trigger.waitFor();
@@ -314,6 +316,7 @@ test("connection_error with catalogFailed=true retries backend finalize from mod
     connectionState = "connection_error";
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         await page.getByRole("button", { name: "登录 BeefTV", exact: true }).click();
         const modal = page.locator(".account-settings-modal");
@@ -332,6 +335,7 @@ test("stale background poll cannot overwrite a newer connection action result", 
     connectionState = "pending";
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         const trigger = page.getByRole("button", { name: "等待登录确认", exact: true });
         await trigger.waitFor();
@@ -357,6 +361,7 @@ test("stale background poll cannot overwrite a newer connection action result", 
 test("collapsing sidebar resets expanded social links without stealing focus from the collapse button", async () => {
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         await page.getByRole("button", { name: "联系我们" }).click();
         await page.getByRole("button", { name: "收起联系方式" }).waitFor();
@@ -413,6 +418,7 @@ test("account balance pane shows live balance, switches CNY/USD methods cleanly,
     connectionState = "connected";
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         await page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true }).click();
         const modal = page.locator(".account-settings-modal");
@@ -424,9 +430,65 @@ test("account balance pane shows live balance, switches CNY/USD methods cleanly,
         await modal.getByText("预计到账 ¥ 71.20").waitFor();
 
         await modal.getByRole("button", { name: "微信支付" }).click();
+        await modal.getByRole("button", { name: "通用设置" }).click();
+        await modal.locator(".account-appearance-control").getByText("深色").click();
+        await modal.getByRole("button", { name: "账号与余额" }).click();
+        await modal.getByRole("button", { name: "微信支付" }).waitFor();
+
+        const readRechargeCtaStyle = () => modal.locator(".account-recharge-total").evaluate((row) => {
+            const label = row.querySelector("div > span")!;
+            const button = row.querySelector("button.ant-btn-primary")!;
+            const innerSpan = button.querySelector("span") || button;
+            const buttonStyle = getComputedStyle(button);
+            return {
+                labelColor: getComputedStyle(label).color,
+                buttonBg: buttonStyle.backgroundColor,
+                buttonColor: buttonStyle.color,
+                innerSpanColor: getComputedStyle(innerSpan).color,
+                height: buttonStyle.height,
+            };
+        });
+
+        const darkCta = await readRechargeCtaStyle();
+        expect(darkCta.buttonBg).toBe("rgb(245, 245, 245)");
+        expect(["rgb(19, 19, 19)", "rgb(23, 23, 23)"]).toContain(darkCta.buttonColor);
+        expect(darkCta.innerSpanColor).toBe(darkCta.buttonColor);
+        expect(darkCta.innerSpanColor).not.toBe(darkCta.labelColor);
+        expect(darkCta.height).toBe("40px");
+
+        await modal.getByRole("button", { name: "通用设置" }).click();
+        await modal.locator(".account-appearance-control").getByText("浅色").click();
+        await modal.getByRole("button", { name: "账号与余额" }).click();
+        await modal.getByRole("button", { name: "微信支付" }).waitFor();
+
+        const lightCta = await readRechargeCtaStyle();
+        expect(lightCta.buttonBg).toBe("rgb(23, 23, 23)");
+        expect(lightCta.buttonColor).toBe("rgb(255, 255, 255)");
+        expect(lightCta.innerSpanColor).toBe(lightCta.buttonColor);
+        expect(lightCta.innerSpanColor).not.toBe(lightCta.labelColor);
+        expect(lightCta.height).toBe("40px");
+
         await modal.getByRole("button", { name: /^充\s*值$/ }).click();
         const checkoutDialog = page.locator(".account-checkout-modal");
         await checkoutDialog.waitFor();
+        const checkoutActionStyle = await checkoutDialog.locator(".account-checkout-actions").evaluate((row) => {
+            const buttons = Array.from(row.querySelectorAll("button.ant-btn"));
+            const secondary = buttons[0]!;
+            const primary = row.querySelector("button.ant-btn-primary")!;
+            const primaryStyle = getComputedStyle(primary);
+            return {
+                secondaryHeight: getComputedStyle(secondary).height,
+                primaryHeight: primaryStyle.height,
+                primaryBg: primaryStyle.backgroundColor,
+                primaryColor: primaryStyle.color,
+            };
+        });
+        expect(checkoutActionStyle).toEqual({
+            secondaryHeight: "40px",
+            primaryHeight: "40px",
+            primaryBg: "rgb(23, 23, 23)",
+            primaryColor: "rgb(255, 255, 255)",
+        });
         await checkoutDialog.getByRole("button", { name: /^立\s*即\s*支\s*付$/ }).click();
 
         await checkoutDialog.getByText("ORD-TEST-100").waitFor();
@@ -450,6 +512,7 @@ test("topup info failure blocks unverified payment submission until retried; car
     checkoutOpenError = "无法自动打开系统浏览器，请点击“重新打开支付页”继续付款";
     const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
     try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto(server.url.toString());
         await page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true }).click();
         const modal = page.locator(".account-settings-modal");

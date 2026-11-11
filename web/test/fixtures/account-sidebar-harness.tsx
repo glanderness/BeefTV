@@ -1,12 +1,15 @@
-import React, { useState } from "react";
+import React, { useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { App, Button, ConfigProvider, Select, theme } from "antd";
+import { App, Button, ConfigProvider, Select } from "antd";
 import { MemoryRouter } from "react-router";
 import { BeefTVConnectionProvider } from "@/components/layout/beeftv-connection-provider";
 import { WorkspaceSidebarAccount } from "@/components/layout/workspace-sidebar-account";
 import { WorkspaceSidebarSocialLinks } from "@/components/layout/workspace-sidebar-social-links";
 import { AppModal } from "@/components/ui/product/app-modal";
+import { getAntThemeConfig } from "@/lib/app-theme";
+import { DEFAULT_CLASSIC_SKIN, skinCSSVariables } from "@/lib/skin-themes";
 import { PluginCard } from "@/pages/plugins/plugin-card";
+import { useThemeStore } from "@/stores/use-theme-store";
 import { activate } from "../../../plugin-packages/beeftv-plugin-market/client/index.js";
 import type { PluginCenterSectionContribution } from "@/lib/plugins/plugin-types";
 import "@/styles/workspace-product.css";
@@ -26,9 +29,20 @@ const SimpleMarkdown = ({ source, className }: { source: string; className?: str
 
 function Harness() {
     const [collapsed, setCollapsed] = useState(false);
+    const activeTheme = useThemeStore((state) => state.theme);
+    const dark = activeTheme === "dark";
     const showMarket = location.pathname === "/market";
+
+    useLayoutEffect(() => {
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = activeTheme;
+        for (const [property, value] of Object.entries(skinCSSVariables(DEFAULT_CLASSIC_SKIN, activeTheme))) {
+            document.documentElement.style.setProperty(property, value);
+        }
+    }, [activeTheme, dark]);
+
     return (
-        <ConfigProvider theme={{ algorithm: theme.defaultAlgorithm }}>
+        <ConfigProvider theme={getAntThemeConfig(dark)}>
             <App>
                 <MemoryRouter>
                     <BeefTVConnectionProvider>
