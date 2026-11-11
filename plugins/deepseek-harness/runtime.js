@@ -217,7 +217,11 @@ export function waitOutcome(value, taskId) {
   // task.wait 自己负责「成功、产物已保存」的判定；这里只读它的结论，不再用 task.get 的字段重算。
   const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || value.tasks[0] : undefined
   if (status === 'succeeded') return { taskId, state: 'succeeded', reason: '' }
-  if (status === 'incomplete') return { taskId, state: 'incomplete', reason: failureReason(listed || value?.task || value) || '结果尚未保存，只能恢复保存，不能重新生成' }
+  if (status === 'incomplete') {
+    const original = failureReason(listed || value?.task || value)
+    const base = '结果尚未保存，只能恢复保存，不能重新生成'
+    return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
+  }
   if (status === 'failed') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
   if (status === 'pending') return { taskId, state: 'pending', reason: '' }
   if (value && typeof value === 'object' && ('status' in value || 'taskId' in value)) return taskOutcome(value, taskId)
@@ -226,12 +230,21 @@ export function waitOutcome(value, taskId) {
 
 export function awaitWakeText(outcomes) {
   const taskIds = [...new Set(outcomes.map(outcome => outcome.taskId))]
-  // 未入库的结果也算「没成功」，但原因写明只能恢复保存，避免模型重新提交。
-  const failed = outcomes.filter(outcome => outcome.state === 'failed' || outcome.state === 'incomplete')
-  const succeeded = outcomes.length - failed.length
-  const reason = failed.map(outcome => outcome.reason).find(Boolean)
-  const failures = failed.length ? `，${failed.length} 个失败${reason ? `（${reason}）` : ''}` : ''
-  return `生成已结束：${succeeded} 个成功${failures}。任务：${taskIds.join('、')}。请只查询结果、绑定到节点并继续，不要重新提交。`
+  const failed = outcomes.filter(outcome => outcome.state === 'failed')
+  const incomplete = outcomes.filter(outcome => outcome.state === 'incomplete')
+  const succeeded = outcomes.length - failed.length - incomplete.length
+  const parts = []
+  if (failed.length) {
+    const reason = failed.map(outcome => outcome.reason).find(Boolean)
+    parts.push(`${failed.length} 个失败${reason ? `（${reason}）` : ''}`)
+  }
+  if (incomplete.length) {
+    // 结果没入库不是生成失败，固定写明只能恢复保存，避免模型重新提交。
+    const reason = incomplete.map(outcome => outcome.reason).find(Boolean) || '结果尚未保存，只能恢复保存，不能重新生成'
+    parts.push(`${incomplete.length} 个结果未保存（${reason}）`)
+  }
+  const detail = parts.length ? `，${parts.join('，')}` : ''
+  return `生成已结束：${succeeded} 个成功${detail}。任务：${taskIds.join('、')}。请只查询结果、绑定到节点并继续，不要重新提交。`
 }
 
 export function stepLimitNotice(limit) {

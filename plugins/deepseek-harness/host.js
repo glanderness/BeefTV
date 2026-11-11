@@ -187,15 +187,17 @@ export function apply(ctx) {
     for (const entry of Object.values(sessions)) {
       const ids = Array.isArray(entry) ? entry : Array.isArray(entry?.taskIds) ? entry.taskIds : []
       const taskIds = ids.filter(id => typeof id === 'string' && id)
-      if (!taskIds.length) continue
-      awayPending.push({ workspaceId: Array.isArray(entry) ? null : entry.workspaceId || null, taskIds })
+      const resolvedCount = !Array.isArray(entry) && Number.isInteger(entry?.resolvedCount) && entry.resolvedCount > 0 ? entry.resolvedCount : 0
+      if (!taskIds.length && !resolvedCount) continue
+      awayPending.push({ workspaceId: Array.isArray(entry) ? null : entry.workspaceId || null, taskIds, resolvedCount })
       leftover = true
     }
     if (Array.isArray(value?.away)) {
       for (const entry of value.away) {
         const taskIds = Array.isArray(entry) ? entry : Array.isArray(entry?.taskIds) ? entry.taskIds : []
-        if (!taskIds.length) continue
-        awayPending.push({ workspaceId: Array.isArray(entry) ? null : entry.workspaceId || null, taskIds })
+        const resolvedCount = !Array.isArray(entry) && Number.isInteger(entry?.resolvedCount) && entry.resolvedCount > 0 ? entry.resolvedCount : 0
+        if (!taskIds.length && !resolvedCount) continue
+        awayPending.push({ workspaceId: Array.isArray(entry) ? null : entry.workspaceId || null, taskIds, resolvedCount })
         leftover = true
       }
     }
@@ -308,7 +310,7 @@ export function apply(ctx) {
       state.done = true
       state.controller.abort()
       const taskIds = [...state.tasks.keys()]
-      if (taskIds.length) awayPending.push({ workspaceId: state.runtime?.workspace?.id || null, taskIds })
+      if (taskIds.length) awayPending.push({ workspaceId: state.runtime?.workspace?.id || null, taskIds, resolvedCount: 0 })
       waits.delete(sessionId)
       changed = true
     }
@@ -327,13 +329,15 @@ export function apply(ctx) {
     return writeAwaiting().catch(() => {})
   }
 
-  function deferOutcomes(sessionId, outcomes) {
-    const deferred = deferredWakes.get(sessionId) || []
+  function deferOutcomes(sessionId, outcomes, workspaceId) {
+    const current = deferredWakes.get(sessionId)
+    const sameWorkspace = current && current.workspaceId === workspaceId
+    const deferred = sameWorkspace ? current.outcomes : []
     for (const outcome of outcomes) {
       if (!deferred.some(item => item.taskId === outcome.taskId)) deferred.push(outcome)
     }
     while (deferred.length > 50) deferred.shift()
-    deferredWakes.set(sessionId, deferred)
+    deferredWakes.set(sessionId, { workspaceId: workspaceId || null, outcomes: deferred })
   }
 
   // 投递成功才记账；会话结束或上限挡住时把结果留给下一次用户消息。
@@ -346,7 +350,7 @@ export function apply(ctx) {
       else agent.followup(message)
       for (const outcome of outcomes) wokenTasks.add(outcome.taskId)
       wakeCounts.set(sessionId, (wakeCounts.get(sessionId) || 0) + 1)
-      pendingWakeMessages.set(message.id, { sessionId, outcomes })
+      pendingWakeMessages.set(message.id, { sessionId, outcomes, workspaceId: current?.workspace?.id || null })
       return true
     } catch {
       return false
@@ -358,11 +362,12 @@ export function apply(ctx) {
     const unseen = outcomes.filter(outcome => !wokenTasks.has(outcome.taskId))
     if (!unseen.length || !pluginSettings.autoContinue || state.cancelled) return
     const sessionId = state.sessionId
+    const workspaceId = state.runtime?.workspace?.id || null
     if ((wakeCounts.get(sessionId) || 0) >= maximumWakesPerSession) {
-      deferOutcomes(sessionId, unseen)
+      deferOutcomes(sessionId, unseen, workspaceId)
       return
     }
-    if (!deliverOutcomes(sessionId, state.agent, unseen)) deferOutcomes(sessionId, unseen)
+    if (!deliverOutcomes(sessionId, state.agent, unseen)) deferOutcomes(sessionId, unseen, workspaceId)
   }
 
   async function drainWait(state) {
@@ -460,24 +465,32 @@ export function apply(ctx) {
       return
     }
     const workspaceId = runtime.workspace?.id || null
-    const matched = []
-    const others = []
+    let notice = 0
+    const kept = []
     for (const entry of awayPending) {
-      if (!entry.workspaceId || entry.workspaceId === workspaceId) matched.push(entry)
-      else others.push(entry)
-    }
-    const taskIds = [...new Set(matched.flatMap(entry => entry.taskIds))].slice(0, 20)
-    let completed = 0
-    await Promise.all(taskIds.map(async taskId => {
-      try {
-        const task = await callOperation(runtime, 'task.get', { taskId }, AbortSignal.timeout(10_000))
-        if (taskOutcome(task, taskId).state !== 'pending') completed += 1
-      } catch {
-        // 读不到状态就不计入「完成」，避免把仍在处理或属于别的工作区的任务说成已完成。
+      if (entry.workspaceId && entry.workspaceId !== workspaceId) {
+        kept.push(entry)
+        continue
       }
-    }))
-    awayPending = others
-    awayNoticeCount = completed
+      let completed = Number.isInteger(entry.resolvedCount) ? entry.resolvedCount : 0
+      const remaining = []
+      const taskIds = [...new Set(entry.taskIds)].slice(0, 20)
+      await Promise.all(taskIds.map(async taskId => {
+        try {
+          const task = await callOperation(runtime, 'task.get', { taskId }, AbortSignal.timeout(10_000))
+          if (taskOutcome(task, taskId).state !== 'pending') completed += 1
+          else remaining.push(taskId)
+        } catch {
+          // 读不到状态就先留着，下次连回同一工作区再核对，不把仍在处理的说成已完成。
+          remaining.push(taskId)
+        }
+      }))
+      // 已解析的计数保留到用户关闭提示，重连或重启不会把提示清掉。
+      kept.push({ workspaceId: entry.workspaceId, taskIds: remaining, resolvedCount: completed })
+      notice += completed
+    }
+    awayPending = kept
+    awayNoticeCount = notice
     await writeAwaiting().catch(() => {})
   }
 
@@ -502,6 +515,8 @@ export function apply(ctx) {
     if (current?.mode === mode) {
       try {
         await workspaceJSON(current, '/api/health')
+        // 健康检查触发的重连也要把离开时的提示重新解析出来。
+        await resolveAway(current)
         return status()
       } catch {
         const stale = current
@@ -656,8 +671,9 @@ export function apply(ctx) {
         if (req.method === 'POST' && url.pathname === '/beeftv/away-notice') {
           const body = await bodyJSON(req)
           if (body.seen !== true) throw new Error('无效的提示设置')
+          const workspaceId = current?.workspace?.id || null
+          awayPending = awayPending.filter(entry => entry.workspaceId && entry.workspaceId !== workspaceId)
           awayNoticeCount = 0
-          awayPending = []
           await writeAwaiting().catch(() => {})
           return json(res, 200, status())
         }
@@ -754,23 +770,32 @@ export function apply(ctx) {
   })
   // 本轮停止点由下一个步骤入口拒绝：turn-stopping 只在模型已不再调用工具的收尾阶段触发，
   // 无法打断还在跑的工具循环，所以这里用 pre-step 停，turn-stopping 负责补齐桌面提示。
-  ctx.on('agent/pre-step', async (payload, next) => {
-    const decision = await next()
-    if (decision.kind !== 'enter') return decision
-    const sessionId = sessionIdOf(payload?.agent)
-    const state = sessionId ? turns.get(sessionId) : undefined
-    if (!state?.stop) return decision
-    if (state.turn !== null && payload.turn !== state.turn) return decision
-    // 被拒绝的步骤会连同已 claim 的注入消息一起丢掉；先把完成通知挪到下一次用户消息后再投递。
-    for (const message of payload.messages || []) {
-      const entry = pendingWakeMessages.get(message?.id)
-      if (!entry) continue
-      pendingWakeMessages.delete(message.id)
+  // 被拒绝的步骤会连同已 claim 的注入消息一起丢掉；先把完成通知挪到下一次用户消息后再投递。
+  function deferClaimedWakes(claimed) {
+    for (const { id, entry } of claimed) {
+      pendingWakeMessages.delete(id)
       wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
       for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
-      deferOutcomes(entry.sessionId, entry.outcomes)
+      deferOutcomes(entry.sessionId, entry.outcomes, entry.workspaceId)
     }
-    return { kind: 'reject' }
+  }
+
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const decision = await next()
+    const claimed = (payload.messages || []).map(message => ({ id: message?.id, entry: pendingWakeMessages.get(message?.id) })).filter(item => item.entry)
+    // DSH 会先 claim 再调用 pre-step：claimed 只看不删，等这里决定这一步是否真的进入。
+    if (decision.kind !== 'enter') {
+      deferClaimedWakes(claimed)
+      return decision
+    }
+    const sessionId = sessionIdOf(payload?.agent)
+    const state = sessionId ? turns.get(sessionId) : undefined
+    if (state?.stop && (state.turn === null || payload.turn === state.turn)) {
+      deferClaimedWakes(claimed)
+      return { kind: 'reject' }
+    }
+    for (const item of claimed) pendingWakeMessages.delete(item.id)
+    return decision
   })
   ctx.on('agent/turn-stopping', payload => {
     const sessionId = sessionIdOf(payload?.agent)
@@ -795,18 +820,19 @@ export function apply(ctx) {
     const sessionId = sessionIdOf(payload?.agent)
     const message = payload?.message
     if (!sessionId || !message) return
-    if (wakeIds.has(message.id)) {
-      pendingWakeMessages.delete(message.id)
-      return
-    }
+    // 自己发出的唤醒消息：保留到 pre-step 确认这一步真的进入，避免被拒绝步骤吞掉。
+    if (wakeIds.has(message.id)) return
     if (message.source?.kind !== 'user') return
     // 用户主动发了新消息：连续自动唤醒的计数从头开始，被上限挡住的完成通知这时补投。
     wakeCounts.set(sessionId, 0)
     if (stepNotice?.sessionId === sessionId) stepNotice = null
     const deferred = deferredWakes.get(sessionId)
-    if (deferred?.length) {
-      deferredWakes.delete(sessionId)
-      deliverOutcomes(sessionId, payload.agent, deferred)
+    if (deferred?.outcomes.length) {
+      if (deferred.workspaceId && deferred.workspaceId !== current?.workspace?.id) {
+        deferredWakes.delete(sessionId)
+      } else if (deliverOutcomes(sessionId, payload.agent, deferred.outcomes)) {
+        deferredWakes.delete(sessionId)
+      }
     }
   })
   ctx.on('agent/inbox/discarded', payload => {
@@ -816,7 +842,7 @@ export function apply(ctx) {
     wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
     for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
     if (stoppedSessions.has(entry.sessionId)) return
-    deferOutcomes(entry.sessionId, entry.outcomes)
+    deferOutcomes(entry.sessionId, entry.outcomes, entry.workspaceId)
   })
   ctx.on('agent/disposed', payload => {
     const sessionId = sessionIdOf(payload?.agent)

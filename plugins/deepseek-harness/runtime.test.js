@@ -265,7 +265,7 @@ test('a missing bundled runtime is reported without falling back to the desktop 
 
 // A loopback stand-in for both the harness bridge and the workspace API. Proxied page requests are recorded.
 async function workspaceServer(context) {
-  const state = { available: true, proxied: [], extraOps: [], calls: [], taskWait: null, taskGet: null, guide: null }
+  const state = { available: true, proxied: [], extraOps: [], calls: [], taskWait: null, taskGet: null, guide: null, workspaceId: 'verified-workspace' }
   const server = createServer(async (req, res) => {
     const send = (status, data) => {
       res.writeHead(status, { 'content-type': 'application/json' })
@@ -294,7 +294,7 @@ async function workspaceServer(context) {
       return send(200, { proxied: true })
     }
     if (path === '/api/health') return send(200, { ready: true, schema: { ready: true }, build: { version: '2.2.0' } })
-    if (path === '/api/workspace/bootstrap') return send(200, { contractVersion: 1, workspace: { id: 'verified-workspace', name: 'Local', storage: 'sqlite' } })
+    if (path === '/api/workspace/bootstrap') return send(200, { contractVersion: 1, workspace: { id: state.workspaceId, name: 'Local', storage: 'sqlite' } })
     if (path === '/api/agent-clients' && req.method === 'POST') return send(200, { client: { id: 'test-client' }, token: 'test-token' })
     if (path.startsWith('/api/agent-clients/') && req.method === 'DELETE') return send(200, { revoked: true })
     if (path === '/api/business/tools') return send(200, { tools: [{ id: 'business_get_assets', readOnly: true, submitsGeneration: false }] })
@@ -629,6 +629,12 @@ test('task results feed the wake text and never mistake pending downloads for co
   // task.wait 已对「成功且产物保存」负责，不再用 tasks 里可能缺失的字段重算。
   assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 't', status: 'succeeded' }] }, 't').state, 'succeeded')
   assert.equal(waitOutcome({ status: 'failed', tasks: [{ taskId: 't', status: 'failed', error: '上游拒绝' }] }, 't').reason, '上游拒绝')
+  const incomplete = waitOutcome({ status: 'incomplete', tasks: [{ taskId: 't', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }] }, 't')
+  assert.equal(incomplete.state, 'incomplete')
+  assert.match(incomplete.reason, /只能恢复保存/)
+  assert.match(incomplete.reason, /download_failed/)
+  assert.equal(awaitWakeText([{ taskId: 't', state: 'incomplete', reason: '结果尚未保存，只能恢复保存，不能重新生成（download_failed）' }]),
+    '生成已结束：0 个成功，1 个结果未保存（结果尚未保存，只能恢复保存，不能重新生成（download_failed））。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
   assert.equal(waitOutcome({ status: 'incomplete' }, 't').state, 'incomplete')
   assert.match(waitOutcome({ status: 'incomplete' }, 't').reason, /恢复保存/)
   // 任务成功但产物没入库：保留原任务恢复保存，不算失败也不让模型重新生成。
@@ -751,10 +757,18 @@ test('a step-limit rejection defers an injected completion instead of swallowing
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['held-1']))
   await until(() => injected.length === 1)
   assert.equal(wakes.length, 0)
+  // DSH 的真实顺序是先 claim 再调用 pre-step，claimed 不能提前清掉待投递消息。
+  listeners.get('agent/inbox/claimed')({ agent, message: injected[0] })
   const decision = await listeners.get('agent/pre-step')({ agent, turn: 1, messages: injected }, async () => ({ kind: 'enter', messages: injected }))
   assert.deepEqual(decision, { kind: 'reject' })
-  // 被拒绝的步骤丢掉注入消息，但完成后用户说一句话会补投。
+  // 被拒绝的步骤丢掉注入消息；第一次补投失败也不能把结果丢掉。
+  const inject = agent.inject
+  agent.inject = () => { throw new Error('会话正忙') }
   listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
+  await sleep(50)
+  assert.equal(injected.length, 1)
+  agent.inject = inject
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message-2', source: { kind: 'user' } } })
   await until(() => injected.length === 2)
   assert.match(injected[1].content[0].text, /held-1/)
 })
@@ -796,7 +810,7 @@ test('without task.wait the plugin polls task.get instead', async context => {
 })
 
 test('a restart reports only generations that really finished, scoped to the same workspace', async context => {
-  const { call, workspace } = await startHost(context, {
+  const { call, workspace, home } = await startHost(context, {
     awaiting: {
       sessions: { s1: { workspaceId: 'verified-workspace', taskIds: ['a'] } },
       away: [{ workspaceId: 'verified-workspace', taskIds: ['b', 'c'] }, { workspaceId: 'another-workspace', taskIds: ['other'] }],
@@ -815,10 +829,35 @@ test('a restart reports only generations that really finished, scoped to the sam
   assert.equal(workspace.calls.some(item => item.params.taskId === 'other'), false)
   // 不自动续跑。
   assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
+  // 重连（健康检查）不能让已解析的提示消失。
+  assert.equal((await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.awayNotice, '有 2 个生成在你离开时完成。')
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8')).away
+  assert.equal(stored.filter(entry => entry.workspaceId === 'verified-workspace').reduce((sum, entry) => sum + (entry.resolvedCount || 0), 0), 2)
   const cleared = (await call('POST', '/beeftv/away-notice', { seen: true })).body
   assert.equal(cleared.awayNotice, null)
   await sleep(20)
   assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, null)
+  const remaining = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8')).away
+  assert.deepEqual(remaining.map(entry => entry.workspaceId), ['another-workspace'])
+})
+
+test('a deferred completion does not follow the user into another workspace', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  for (const [index, taskId] of ['t1', 't2', 't3'].entries()) {
+    listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult([taskId]))
+    await until(() => wakes.length === index + 1)
+  }
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t4']))
+  await sleep(100)
+  assert.equal(wakes.length, 3)
+  workspace.workspaceId = 'another-workspace'
+  await call('POST', '/beeftv/connect', { mode: 'local' })
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
+  await sleep(100)
+  assert.equal(wakes.length, 3)
 })
 
 test('turning auto-continue off stops starting waits and saves the setting', async context => {

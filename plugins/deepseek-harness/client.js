@@ -33,6 +33,7 @@ window.__ModuleLoader__.load({
 .beeftv-harness-action-menu { position:absolute; right:0; top:32px; z-index:20; min-width:200px; padding:4px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px; background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)); box-shadow:0 6px 20px #0003; }
 .beeftv-harness-action-menu button { display:block; width:100%; padding:8px 12px; text-align:left; border:0; border-radius:4px; background:transparent; white-space:nowrap; font-size:12px; }
 .beeftv-harness-action-menu button:hover { background:var(--dsw-alias-interactive-bg-hover); }
+.beeftv-harness-action-menu button[aria-checked=true]::after { content:"✓"; float:right; margin-left:10px; }
 .beeftv-harness-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 12px; font-size:12px; color:var(--dsw-alias-label-secondary); }
 .beeftv-harness-setting input { width:56px; border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:3px 6px; background:var(--dsw-alias-bg-base); color:inherit; font:inherit; }
 .beeftv-harness-workspace { position:relative; min-width:0; min-height:0; overflow:hidden; }
@@ -222,6 +223,7 @@ window.__ModuleLoader__.load({
       const refreshStatus = React.useRef(null)
       const requestStatusRefresh = React.useCallback(() => refreshStatus.current?.(), [])
       const skipStepSave = React.useRef(false)
+      const statusGeneration = React.useRef(0)
       const reportError = React.useCallback(message => setError(message), [])
       const appURL = !choosingWorkspace && status?.connected ? status.appURL : undefined
       const source = React.useMemo(() => frameURL(appURL), [appURL])
@@ -288,10 +290,11 @@ window.__ModuleLoader__.load({
           const controller = new AbortController()
           const timeout = new AbortController()
           const timer = window.setTimeout(() => timeout.abort(), 10_000)
+          const generation = statusGeneration.current
           statusRequest.current = controller
           try {
             const next = await api('status', undefined, AbortSignal.any([controller.signal, timeout.signal]))
-            if (!mounted || controller.signal.aborted || connecting.current) return
+            if (!mounted || controller.signal.aborted || connecting.current || generation !== statusGeneration.current) return
             setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed', 'autoContinue', 'stepLimit', 'awayNotice', 'stepNotice'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
             setStatusError('')
           } catch (failure) {
@@ -414,36 +417,45 @@ window.__ModuleLoader__.load({
 
       async function saveSettings(patch) {
         setError('')
-        // 写入前丢掉在途的状态读取，避免旧响应把刚保存的值翻回去。
+        // 写入前丢掉在途的状态读取；写入期间的轮询也一并作废，避免旧值把刚保存的值翻回去。
+        statusGeneration.current += 1
         statusRequest.current?.abort()
         statusRequest.current = null
         try {
           setStatus(await api('settings', patch))
         } catch (failure) {
           setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
         }
       }
 
       async function dismissNotice(path) {
         setError('')
+        statusGeneration.current += 1
         statusRequest.current?.abort()
         statusRequest.current = null
         try {
           setStatus(await api(path, { seen: true }))
         } catch (failure) {
           setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
         }
       }
 
       async function dismissLocalPrompt() {
         setError('')
         // An older status read must not put the prompt back after the dismissal was saved.
+        statusGeneration.current += 1
         statusRequest.current?.abort()
         statusRequest.current = null
         try {
           setStatus(await api('local-prompt', { dismissed: true }))
         } catch (failure) {
           setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
         }
       }
 
@@ -474,21 +486,24 @@ window.__ModuleLoader__.load({
             h('div', { className: 'beeftv-harness-agent-header' },
               h('div', { className: 'beeftv-harness-agent-title-row' },
                 h('h2', { className: 'beeftv-harness-agent-heading' }, 'BeefTV Agent'),
-                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') { skipStepSave.current = true; setActionsOpen(false) } } },
-                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, 'aria-haspopup': 'menu', onClick: () => setActionsOpen(open => !open) }, '⋯'),
+                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') setActionsOpen(false) } },
+                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, 'aria-haspopup': 'menu', onClick: () => { skipStepSave.current = false; setActionsOpen(open => !open) } }, '⋯'),
                   actionsOpen && h('div', { className: 'beeftv-harness-action-menu', role: 'menu' },
-                    h('button', { type: 'button', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
-                    status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
-                    h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
+                    h('button', { type: 'button', role: 'menuitem', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
+                    status?.connected && !choosingWorkspace && h('button', { type: 'button', role: 'menuitem', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
+                    h('button', { type: 'button', role: 'menuitem', onClick: returnToConversation }, '返回 DSH'),
                     h('button', { type: 'button', role: 'menuitemcheckbox', 'aria-checked': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
-                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
+                    h('label', { className: 'beeftv-harness-setting', role: 'none' }, '每轮工具调用上限',
                       h('input', {
                         type: 'number', min: 5, max: 200, step: 5, defaultValue: status?.stepLimit || 40,
                         onBlur: event => {
                           if (skipStepSave.current) { skipStepSave.current = false; return }
                           saveSettings({ stepLimit: Number(event.currentTarget.value) })
                         },
-                        onKeyDown: event => { if (event.key === 'Enter') event.currentTarget.blur() },
+                        onKeyDown: event => {
+                          if (event.key === 'Escape') skipStepSave.current = true
+                          if (event.key === 'Enter') event.currentTarget.blur()
+                        },
                       }))))),
               h('div', { className: 'beeftv-harness-modes', 'aria-label': '协作方向' }, modes.map(mode =>
                 h('button', { key: mode.id, type: 'button', title: mode.detail, 'aria-pressed': agentMode === mode.id, onClick: () => setAgentMode(mode.id) }, mode.label))),

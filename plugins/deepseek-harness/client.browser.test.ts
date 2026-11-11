@@ -253,7 +253,7 @@ test('workspace selection stays open across refresh and an in-flight connect rej
   const state = await openWorkbench()
   const { page } = state
   await page.getByRole('button', { name: '工作台操作' }).click()
-  await page.getByRole('button', { name: '切换工作区' }).click()
+  await page.getByRole('menuitem', { name: '切换工作区' }).click()
   await refresh(page)
   expect(await page.getByRole('button', { name: '使用独立工作区' }).count()).toBe(1)
   let release!: () => void
@@ -304,7 +304,7 @@ test('the toolbar is removed and resizing preserves the workspace and native cha
   expect(await page.locator('iframe').getAttribute('data-retained')).toBe('yes')
   expect(await page.evaluate(() => (window as any).nativeMounts)).toBe(1)
   await page.getByRole('button', { name: '工作台操作' }).click()
-  await page.getByRole('button', { name: '新建会话', exact: true }).click()
+  await page.getByRole('menuitem', { name: '新建会话', exact: true }).click()
   expect(await page.evaluate(() => (window as any).createdSessions)).toBe(1)
   await page.close()
 })
@@ -642,5 +642,64 @@ test('保存设置或关闭提示会丢弃在途的旧状态响应', async () =>
   await page.waitForTimeout(100)
   expect(await toggle.getAttribute('aria-checked')).toBe('false')
   expect(await page.getByText('有 2 个生成在你离开时完成。', { exact: true }).count()).toBe(0)
+  await page.close()
+})
+
+
+test('开关有可见勾选；取消步数编辑后再修改仍会保存', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('menuitemcheckbox', { name: /生成完自动继续/ })
+  expect(await toggle.evaluate(element => getComputedStyle(element, '::after').content)).toContain('✓')
+  const input = page.locator('.beeftv-harness-setting input')
+  await input.focus()
+  await input.press('Escape')
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu') === null)
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const reopened = page.locator('.beeftv-harness-setting input')
+  await reopened.fill('12')
+  const saved = page.waitForResponse('**/beeftv/settings')
+  await reopened.press('Enter')
+  await saved
+  expect(state.settings.at(-1)).toEqual({ stepLimit: 12 })
+  await page.close()
+})
+
+test('写入期间新发起的状态轮询不会把刚保存的值翻回去', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  let releaseSettings!: () => void
+  await page.route('**/beeftv/settings', async route => {
+    await new Promise<void>(resolve => { releaseSettings = resolve })
+    state.setStatus({ ...state.status(), autoContinue: false })
+    await route.fulfill({ json: state.status() })
+  })
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('menuitemcheckbox', { name: /生成完自动继续/ })
+  await toggle.click()
+  for (let index = 0; index < 100 && !releaseSettings; index++) await page.waitForTimeout(10)
+  expect(typeof releaseSettings).toBe('function')
+
+  let releaseStatus!: () => void
+  let delayed = false
+  await page.route('**/beeftv/status', async route => {
+    if (!delayed) {
+      delayed = true
+      await new Promise<void>(resolve => { releaseStatus = resolve })
+      await route.fulfill({ json: { ...state.status(), autoContinue: true } }).catch(() => {})
+      return
+    }
+    await route.fulfill({ json: state.status() })
+  })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  for (let index = 0; index < 100 && !releaseStatus; index++) await page.waitForTimeout(10)
+  expect(typeof releaseStatus).toBe('function')
+
+  releaseSettings()
+  await page.waitForFunction(() => document.querySelector('[role="menuitemcheckbox"][aria-checked="false"]') !== null)
+  releaseStatus()
+  await page.waitForTimeout(100)
+  expect(await toggle.getAttribute('aria-checked')).toBe('false')
   await page.close()
 })
