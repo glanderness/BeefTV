@@ -486,3 +486,122 @@ func TestTaskWaitResponseCarriesStableFields(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskWaitDoesNotCompleteUnusableMediaResults(t *testing.T) {
+	useFastTaskWaitPoll(t)
+	for name, resultJSON := range map[string]string{
+		"空媒体列表":  `{"images":[]}`,
+		"不可用输出":  `{"images":[1]}`,
+		"结果无法解析": `{`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := taskWaitTask("task-1", func(task *model.Task) {
+				task.Status = model.TaskStatusSucceeded
+				task.ResultState = localtask.ResultStateReady
+				task.ResultJSON = resultJSON
+				task.Outcome = &model.TaskOutcome{Phase: "ready", Regenerate: "allowed", Reason: "result_ready"}
+			})
+			domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{"task-1": {tasks: []model.Task{task}}}}
+			result, err := runTaskWaitOp(t, domain, `{"taskId":"task-1","timeoutMs":10}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Completed || !result.Pending || result.Failed {
+				t.Fatalf("不可用的媒体结果不能算完成: %+v", result)
+			}
+			if result.Tasks[0].State != taskWaitSaving {
+				t.Fatalf("不可用的媒体结果应保持 saving: %+v", result.Tasks[0])
+			}
+		})
+	}
+}
+
+func TestTaskWaitAggregatesSettledBatches(t *testing.T) {
+	failedTask := func(id string) model.Task {
+		return taskWaitTask(id, func(task *model.Task) { task.Status = model.TaskStatusFailed })
+	}
+	cases := []struct {
+		name          string
+		tasks         map[string]model.Task
+		completed     bool
+		failed        bool
+		failedTaskIDs []string
+	}{
+		{
+			name:      "全部完成",
+			tasks:     map[string]model.Task{"task-1": savedTask("task-1"), "task-2": savedTask("task-2")},
+			completed: true,
+		},
+		{
+			name:          "完成加失败",
+			tasks:         map[string]model.Task{"task-1": savedTask("task-1"), "task-2": failedTask("task-2")},
+			failed:        true,
+			failedTaskIDs: []string{"task-2"},
+		},
+		{
+			name:          "全部失败",
+			tasks:         map[string]model.Task{"task-1": failedTask("task-1"), "task-2": failedTask("task-2")},
+			failed:        true,
+			failedTaskIDs: []string{"task-1", "task-2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sequences := map[string]*taskWaitSequence{}
+			for id, task := range tc.tasks {
+				sequences[id] = &taskWaitSequence{tasks: []model.Task{task}}
+			}
+			domain := &taskWaitDomain{sequences: sequences}
+			result, err := runTaskWaitOp(t, domain, `{"taskIds":["task-1","task-2"],"timeoutMs":2000}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Pending || result.TimedOut || result.Cancelled {
+				t.Fatalf("已结束的批次不应是 pending: %+v", result)
+			}
+			if result.Completed != tc.completed || result.Failed != tc.failed {
+				t.Fatalf("completed=%v failed=%v，应为 %v/%v", result.Completed, result.Failed, tc.completed, tc.failed)
+			}
+			if len(result.FailedTaskIDs) != len(tc.failedTaskIDs) {
+				t.Fatalf("failedTaskIds=%v，应为 %v", result.FailedTaskIDs, tc.failedTaskIDs)
+			}
+			for index, id := range tc.failedTaskIDs {
+				if result.FailedTaskIDs[index] != id {
+					t.Fatalf("failedTaskIds=%v，应为 %v", result.FailedTaskIDs, tc.failedTaskIDs)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskWaitCancelDuringWait(t *testing.T) {
+	useFastTaskWaitPoll(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := time.AfterFunc(20*time.Millisecond, cancel)
+	defer timer.Stop()
+	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
+		"task-1": {tasks: []model.Task{taskWaitTask("task-1", nil)}},
+	}}
+	observation := awaitTaskIDs(ctx, domain, "user-1", []string{"task-1"}, 2*time.Second)
+	if !observation.cancelled || !observation.pending || observation.timedOut {
+		t.Fatalf("等待中取消应返回 cancelled/pending: %+v", observation)
+	}
+}
+
+func TestTaskWaitStopsReadingAfterDeadline(t *testing.T) {
+	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
+		"task-1": {tasks: []model.Task{taskWaitTask("task-1", nil)}},
+		"task-2": {tasks: []model.Task{taskWaitTask("task-2", nil)}},
+	}}
+	observation := readTaskWaitObservation(context.Background(), domain, "user-1",
+		[]string{"task-1", "task-2"}, time.Now().Add(-time.Second), false)
+	if !observation.deadlineReached {
+		t.Fatal("过了截止时间应停止继续读取")
+	}
+	if len(observation.views) != 1 || observation.views[0].TaskID != "task-1" {
+		t.Fatalf("截止前只应读到第一个任务: %+v", observation.views)
+	}
+	if reads := domain.reads("task-2"); reads != 0 {
+		t.Fatalf("截止后不应再读第二个任务，实际读 %d 次", reads)
+	}
+}

@@ -47,7 +47,7 @@ Claude Desktop、Cursor 和其他 MCP 客户端仍在同一页手动配置：
 
 提交生成后需要等结果时，用 `task.wait` 等待任务完成，不要自己反复查询。一次最多等 25 秒，默认也是 25 秒；传 `taskIds`（最多 8 个）或单个 `taskId`，还可以带 `canvasId` 与 `nodeId` 让服务端同时检查产物是否已经绑定到这个节点。
 
-响应里的 `taskIds` 回显请求的任务 ID。超时或被取消时返回 `pending: true`，分别带 `timedOut: true` 或 `cancelled: true`，不是错误；拿到 `pending` 就继续等原任务，不要重新提交。只有请求的任务都已观测且产物已保存才返回 `completed: true`；仍有任务在跑时 `failed` 保持 `false`，全部结束且至少一个失败时才为 `true`，同时用 `failedTaskIds` 列出失败任务。任务读取失败时 `observationFailed: true`，不能当成完成。任务不存在返回 `task_not_found`。每个任务的 `state` 说明排队、运行、下载、保存、完成或失败，`reason` 给出具体原因；任务成功但产物还在下载或保存时也算未完成。带 `canvasId` 与 `nodeId` 时，`bound` 表示节点是否已绑定本次任务；画布读不到时 `bindingObservationFailed: true`，不要把 `bound: false` 当成确定未绑定。
+响应里的 `taskIds` 回显请求的任务 ID。超时或被取消时返回 `pending: true`，分别带 `timedOut: true` 或 `cancelled: true`，不是错误；拿到 `pending` 就继续等原任务，不要重新提交。只有请求的任务都已观测且产物已保存才返回 `completed: true`；仍有任务在跑时 `failed` 保持 `false`，全部结束且至少一个失败时才为 `true`；`failedTaskIds` 是当前响应里已失败的任务子集，即使 `failed` 为 `false` 也可能非空（还有任务在跑）。任务读取失败时 `observationFailed: true`，不能当成完成。任务不存在返回 `task_not_found`，不存在的 ID 在 `details.taskIds` 里。每个任务的 `state` 说明排队、运行、下载、保存、完成或失败，`reason` 给出具体原因；任务成功但产物还在下载或保存时也算未完成。带 `canvasId` 与 `nodeId` 时，`bound` 表示节点是否已绑定本次任务；画布读不到时 `bindingObservationFailed: true`，不要把 `bound: false` 当成确定未绑定。
 
 ### `--all-business-tools` 的作用
 
