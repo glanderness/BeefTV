@@ -271,6 +271,8 @@ function listedTaskState(value, taskId) {
   // 这只能重新保存，不能当成生成失败让模型重新生成。
   const reason = typeof listed?.reason === 'string' ? listed.reason.toLowerCase() : ''
   const resultState = typeof listed?.resultState === 'string' ? listed.resultState.toLowerCase() : ''
+  // 仍在重试入库的结果要继续等，不能提前说「没保存成功」。
+  if (resultState === 'failed_retryable') return { taskId, state: 'pending', reason: '' }
   const successful = listed?.status === 'succeeded' || ['succeeded', 'success', 'completed', 'ready'].includes(listedState)
   // 失败任务也可能带 FAILED_PERMANENT（表示重试被阻断），不能当成物化失败；只有成功的生成才讨论「结果没保存」。
   const materialization = successful && (reason === 'materialization_failed' || resultState === 'failed_permanent'

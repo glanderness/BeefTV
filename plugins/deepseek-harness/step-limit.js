@@ -15,7 +15,7 @@ export function createStepLimit() {
     if (!sessionId) return null
     let state = sessions.get(sessionId)
     if (!state) {
-      state = { turn: null, count: 0, beefTV: false, stop: false }
+      state = { turn: null, count: 0, started: 0, beefTV: false, stop: false }
       sessions.set(sessionId, state)
     }
     return state
@@ -25,6 +25,7 @@ export function createStepLimit() {
     noteToolCall({ sessionId, beefTV, limit }) {
       const state = sessionOf(sessionId)
       if (!state) return
+      state.started = Math.max(0, (state.started || 0) - 1)
       state.count += 1
       if (beefTV) state.beefTV = true
       if (!state.stop && state.beefTV && state.count >= limit) {
@@ -35,7 +36,7 @@ export function createStepLimit() {
 
     startTurn({ sessionId, turn, beefTV }) {
       if (!sessionId) return
-      sessions.set(sessionId, { turn: turn ?? null, count: 0, beefTV: Boolean(beefTV), stop: false })
+      sessions.set(sessionId, { turn: turn ?? null, count: 0, started: 0, beefTV: Boolean(beefTV), stop: false })
       if (notice?.sessionId === sessionId) notice = null
     },
 
@@ -48,12 +49,20 @@ export function createStepLimit() {
       if (!limitBlocked && notice?.sessionId === sessionId) notice = null
     },
 
-    // tools/pre-execute 用它在单步内并行工具执行前硬性拦截；用户自己的消息不受影响。
-    shouldBlock(sessionId) {
-      const state = sessionId ? sessions.get(sessionId) : null
-      if (!state?.stop) return null
-      if (!notice || notice.sessionId !== sessionId) notice = { sessionId, text: stepLimitNotice(state.limit) }
-      return notice.text
+    // tools/pre-execute 用它为即将启动的工具预占名额；并行安全工具在结果回来前也算已用。
+    reserve({ sessionId, beefTV, limit }) {
+      const state = sessionOf(sessionId)
+      if (!state) return null
+      if (beefTV) state.beefTV = true
+      const used = state.count + (state.started || 0)
+      if (state.stop || (state.beefTV && used >= limit)) {
+        state.stop = true
+        state.limit = limit
+        if (!notice || notice.sessionId !== sessionId) notice = { sessionId, text: stepLimitNotice(limit) }
+        return notice.text
+      }
+      state.started = (state.started || 0) + 1
+      return null
     },
 
     // 返回这一轮是否已经到上限。用户自己发了消息时重新计数并放行。

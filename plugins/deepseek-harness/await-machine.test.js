@@ -6,7 +6,8 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createAwaitState, maximumWakesPerSession, transition } from './await-machine.js'
+import { awaitingSnapshot, createAwaitState, maximumWakesPerSession, transition } from './await-machine.js'
+import { normalizeAwaiting } from './await-runner.js'
 import { createStepLimit } from './step-limit.js'
 
 const sessions = ['s1', 's2']
@@ -55,7 +56,7 @@ function heldTasks(state) {
   for (const wait of Object.values(state.waits)) for (const taskId of wait.taskIds) held.add(taskId)
   for (const session of Object.values(state.sessions)) for (const outcome of session.deferred?.outcomes || []) held.add(outcome.taskId)
   for (const entry of Object.values(state.messages)) for (const outcome of entry.outcomes) held.add(outcome.taskId)
-  for (const entry of state.away.entries) for (const taskId of entry.taskIds) held.add(taskId)
+  for (const entry of state.away.entries) for (const taskId of [...entry.taskIds, ...(entry.completedTaskIds || [])]) held.add(taskId)
   return held
 }
 
@@ -88,7 +89,7 @@ function checkState(state, ledger, where) {
       assert.equal(state.woken[outcome.taskId], undefined, `${where}: 已唤醒的任务 ${outcome.taskId} 还在 deferred`)
     }
   }
-  const awayTasks = new Set(state.away.entries.flatMap(entry => entry.taskIds))
+  const awayTasks = new Set(state.away.entries.flatMap(entry => [...entry.taskIds, ...(entry.completedTaskIds || [])]))
   for (const taskId of awayTasks) {
     const overlap = Object.entries(state.waits).some(([, wait]) => wait.taskIds.includes(taskId))
       || Object.values(state.sessions).some(session => session.deferred?.outcomes.some(outcome => outcome.taskId === taskId))
@@ -138,7 +139,9 @@ function checkLosses(before, after, event, ledger, where) {
           const entryWorkspace = before.messages[messageId].workspaceId
           if (connection.phase === 'connected') allowed = connection.workspaceId !== entryWorkspace
           else if (connection.phase === 'connecting' && connection.from) {
-            allowed = connection.from.sameMode ? entryWorkspace !== connection.from.workspaceId : true
+            // 来源未知的重连必须走 uncertain/deferred，任务消失要报错。
+            allowed = Boolean(connection.from.workspaceId)
+              && (connection.from.sameMode ? entryWorkspace !== connection.from.workspaceId : true)
           }
         }
       } else if (before.stale[Object.keys(before.stale).find(id => id === event.claimed?.find(item => item === id))]) {
@@ -307,7 +310,14 @@ test('等待/唤醒状态机在长度 6 的事件序列内保持全部不变量'
     stopped: [...ledger.stopped].sort(),
     stoppedTasks: Object.fromEntries(Object.entries(ledger.stoppedTasks).sort().map(([id, set]) => [id, [...set].sort()])),
   })
-  const stateKey = (state, ledger) => JSON.stringify(state).replace(/wake-\d+/g, 'wake') + '|' + ledgerKey(ledger)
+  // 计数器/消息 id 只用于匹配，不影响后续行为；去重前统一成同一形状。
+  const stateKey = (state, ledger) => JSON.stringify(state)
+    .replace(/wake-\d+/g, 'wake')
+    .replace(/"seq":\d+/g, '"seq":0')
+    .replace(/"probeSeq":\d+/g, '"probeSeq":0')
+    .replace(/"probe":\d+/g, '"probe":0')
+    .replace(/"id":"away-\d+"/g, '"id":"away"')
+    + '|' + ledgerKey(ledger)
 
   function walk(state, ledger, depth, path = []) {
     if (capped || depth === maximumDepth) return
@@ -623,4 +633,51 @@ test('新一轮 away probe 之后，旧 probe 的结果不会覆盖', () => {
   }).state
   assert.equal(stale.away.count, 1)
   assert.deepEqual(stale.away.entries.map(entry => entry.taskIds), [[]])
+})
+
+test('deferred 结果会进入 awaiting 快照，重启后按离开提示恢复', () => {
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  state = transition(state, {
+    type: 'delivered', sessionId: 's1', messageId: null, ok: false,
+    outcomes: [{ taskId: 't1', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  }).state
+  const snapshot = awaitingSnapshot(state)
+  assert.deepEqual(snapshot.deferred, [{ workspaceId: 'w1', taskIds: ['t1'] }])
+  const history = normalizeAwaiting(snapshot)
+  assert.deepEqual(history.away, [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }])
+})
+
+test('切到没有 away 条目的工作区也推进 probe，旧结果不会写回', () => {
+  let state = transition(createAwaitState(), {
+    type: 'historyLoaded', sessions: [], away: [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }],
+  }).state
+  const first = transition(state, { type: 'workspaceConnected', workspaceId: 'w1' })
+  const firstProbe = first.actions.find(action => action.type === 'probeAway')
+  const second = transition(first.state, { type: 'workspaceConnected', workspaceId: 'w2' })
+  assert.equal(second.actions.some(action => action.type === 'probeAway'), false)
+  const applied = transition(second.state, {
+    type: 'awayProbed', epoch: firstProbe.epoch, probe: firstProbe.probe,
+    results: [{ id: firstProbe.targets[0].id, remaining: [], completed: 1, completedTaskIds: ['t1'] }],
+  }).state
+  assert.equal(applied.away.count, 0)
+  assert.deepEqual(applied.away.entries.map(entry => entry.taskIds), [['t1']])
+})
+
+test('away 完成后保留 taskId，重复提交或迟到的提交结果不会再次唤醒', () => {
+  let state = transition(createAwaitState(), {
+    type: 'historyLoaded', sessions: [], away: [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }],
+  }).state
+  const connected = transition(state, { type: 'workspaceConnected', workspaceId: 'w1' })
+  const probe = connected.actions.find(action => action.type === 'probeAway')
+  state = transition(connected.state, {
+    type: 'awayProbed', epoch: probe.epoch, probe: probe.probe,
+    results: [{ id: probe.targets[0].id, remaining: [], completed: 1, completedTaskIds: ['t1'] }],
+  }).state
+  assert.equal(state.away.entries[0].completedTaskIds[0], 't1')
+  assert.equal(transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t1'], agentStatus: 'idle' }).state.waits.s1, undefined)
+  assert.equal(transition(state, { type: 'taskOrphaned', workspaceId: 'w1', taskIds: ['t1'] }).state.away.entries.length, 1)
+  // 用户点「知道了」后才允许同一个 taskId 重新进入。
+  const seen = transition(state, { type: 'awaySeen', workspaceId: 'w1' }).state
+  assert.equal(seen.away.entries.length, 0)
+  assert.equal(transition(seen, { type: 'taskOrphaned', workspaceId: 'w1', taskIds: ['t1'] }).state.away.entries.length, 1)
 })

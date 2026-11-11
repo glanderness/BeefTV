@@ -31,8 +31,9 @@ export function normalizeAwaiting(value) {
     const parsed = readEntry(entry)
     if (parsed.taskIds.length || parsed.resolvedCount) sessions.push(parsed)
   }
-  if (Array.isArray(value?.away)) {
-    for (const entry of value.away) {
+  for (const source of [value?.away, value?.deferred]) {
+    if (!Array.isArray(source)) continue
+    for (const entry of source) {
       const parsed = readEntry(entry)
       if (parsed.taskIds.length || parsed.resolvedCount) away.push(parsed)
     }
@@ -194,17 +195,20 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
     for (const target of action.targets) {
       let completed = target.resolvedCount || 0
       const remaining = [...target.rest]
+      const completedTaskIds = []
       await Promise.all(target.taskIds.map(async taskId => {
         try {
           const task = await callOperation(runtime, 'task.get', { taskId }, AbortSignal.timeout(10_000))
-          if (taskOutcome(task, taskId).state !== 'pending') completed += 1
-          else remaining.push(taskId)
+          if (taskOutcome(task, taskId).state !== 'pending') {
+            completed += 1
+            completedTaskIds.push(taskId)
+          } else remaining.push(taskId)
         } catch {
           // 读不到状态就先留着，下次连回同一工作区再核对，不把仍在处理的说成已完成。
           remaining.push(taskId)
         }
       }))
-      results.push({ id: target.id, remaining, completed })
+      results.push({ id: target.id, remaining, completed, completedTaskIds })
     }
     return dispatch({ type: 'awayProbed', results, epoch: action.epoch, probe: action.probe }).settled
   }

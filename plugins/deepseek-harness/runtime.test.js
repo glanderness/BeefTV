@@ -691,6 +691,8 @@ test('task results feed the wake text and never mistake pending downloads for co
   // 结果还在下载/重试入库时不能提前说「没保存成功」。
   assert.equal(taskOutcome({ taskId: 'dl', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }], delivery: { outputs: [{ state: 'downloading' }] } }).state, 'pending')
   assert.equal(waitOutcome({ tasks: [{ taskId: 'dl2', status: 'succeeded', delivery: { outputs: [{ state: 'retrying' }] } }] }, 'dl2').state, 'pending')
+  // 后端还在重试入库（FAILED_RETRYABLE + 物化错误码）时继续等，不能提前唤醒。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'retry-later', status: 'succeeded', resultState: 'failed_retryable', outputs: [{ materializationErrorCode: 'persist_failed' }] }], pending: 1 }, 'retry-later').state, 'pending')
   assert.equal(taskOutcome({ taskId: 'retry', status: 'failed', outcome: { phase: 'retrievable' } }).state, 'pending')
   assert.equal(awaitWakeText([{ taskId: 't1', state: 'succeeded' }, { taskId: 't2', state: 'failed', reason: '素材下载失败' }]),
     '生成已结束：1 个成功，1 个失败（素材下载失败）。任务：t1、t2。请只查询结果、绑定到节点并继续，不要重新提交。')
@@ -1256,6 +1258,55 @@ test('a submit result that arrives after a workspace switch is kept for the orig
   assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
   const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
   assert.ok(stored.away.some(entry => entry.taskIds.includes('switched-1')))
+})
+
+test('a single-step batch cannot exceed the tool limit', async context => {
+  const { call, listeners } = await startHost(context, { pluginSettings: { autoContinue: true, stepLimit: 5 } })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const preExecute = listeners.get('tools/pre-execute')
+  const kinds = []
+  for (let index = 0; index < 8; index++) {
+    const decision = await preExecute({
+      name: 'mcp__beeftv__canvas_get_ab092b275e46', arguments: {}, agent: { id: 'batch-session', status: 'running' },
+    }, async () => ({ kind: 'allow' }))
+    kinds.push(decision.kind)
+  }
+  assert.deepEqual(kinds, ['allow', 'allow', 'allow', 'allow', 'allow', 'deny', 'deny', 'deny'])
+})
+
+test('closing the away notice while disconnected keeps other workspace counts', async context => {
+  const { call, workspace, home } = await startHost(context, {
+    awaiting: { sessions: {}, away: [{ workspaceId: 'verified-workspace', taskIds: ['a'] }] },
+  })
+  workspace.taskGet = ({ taskId }) => succeededTask(taskId)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, '有 1 个生成在你离开时完成。')
+  workspace.available = false
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.equal((await call('POST', '/beeftv/away-notice', { seen: true })).status, 200)
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
+  assert.deepEqual(stored.away.map(entry => ({ taskIds: entry.taskIds, resolvedCount: entry.resolvedCount })), [{ taskIds: [], resolvedCount: 1 }])
+})
+
+test('concurrent settings saves do not roll back a successful update', async context => {
+  const { call, home } = await startHost(context)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  let writes = 0
+  const realWrite = fsPromises.writeFile
+  context.mock.method(fsPromises, 'writeFile', async (path, ...rest) => {
+    if (String(path).endsWith('settings.json') && writes++ === 0) throw new Error('disk full')
+    return realWrite(path, ...rest)
+  })
+  syncBuiltinESMExports()
+  const first = call('POST', '/beeftv/settings', { autoContinue: false })
+  await sleep(20)
+  const second = call('POST', '/beeftv/settings', { stepLimit: 12 })
+  const [failed, saved] = await Promise.all([first, second])
+  assert.equal(failed.status, 503)
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.stepLimit, 12)
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8'))
+  assert.deepEqual(stored, { autoContinue: true, stepLimit: 12 })
 })
 
 test('a backend agent.guide replaces the fixed section; without it the fixed text stays', async context => {

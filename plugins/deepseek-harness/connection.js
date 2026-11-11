@@ -60,6 +60,7 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   let pluginSettings = { ...defaultPluginSettings }
   let settingsWrite = Promise.resolve()
   let pluginSettingsWrite = Promise.resolve()
+  let settingsUpdate = Promise.resolve()
 
   async function writePluginSettings() {
     const value = { ...pluginSettings }
@@ -272,18 +273,23 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     return statusCheck
   }
 
-  async function updatePluginSettings(patch) {
-    const validated = validatedSettingsPatch(patch)
-    const previous = pluginSettings
-    pluginSettings = { ...pluginSettings, ...validated }
-    try {
-      await writePluginSettings()
-    } catch (failure) {
-      pluginSettings = previous
-      throw failure
+  // 串行保存：前一笔失败回滚时不能覆盖后一笔已经成功写入的设置。
+  function updatePluginSettings(patch) {
+    const run = async () => {
+      const validated = validatedSettingsPatch(patch)
+      const previous = pluginSettings
+      pluginSettings = { ...pluginSettings, ...validated }
+      try {
+        await writePluginSettings()
+      } catch (failure) {
+        pluginSettings = previous
+        throw failure
+      }
+      runner.dispatch({ type: pluginSettings.autoContinue ? 'autoContinueOn' : 'autoContinueOff' })
+      return pluginSettings
     }
-    runner.dispatch({ type: pluginSettings.autoContinue ? 'autoContinueOn' : 'autoContinueOff' })
-    return pluginSettings
+    settingsUpdate = settingsUpdate.catch(() => {}).then(run)
+    return settingsUpdate
   }
 
   async function dismissLocalPrompt() {

@@ -117,9 +117,11 @@ export function registerWorkspaceRoutes(ctx, { connection, runner, stepLimit }) 
         if (req.method === 'POST' && url.pathname === '/beeftv/away-notice') {
           const body = await bodyJSON(req)
           if (body.seen !== true) throw new Error('无效的提示设置')
-          const workspaceId = connection.current()?.workspace?.id || null
+          // 断线时不知道该清哪个工作区；先忽略，等连回后再关，避免把别的工作区计数一起清掉。
+          const live = connection.current()
+          if (!live) return json(res, 200, connection.status())
           // 用户关掉的是已经看到的提示；尚未核对的 taskId 留在盘上，下次连回同一工作区继续查。
-          await runner.dispatch({ type: 'awaySeen', workspaceId }).settled
+          await runner.dispatch({ type: 'awaySeen', workspaceId: live.workspace?.id ?? null }).settled
           return json(res, 200, connection.status())
         }
         if (req.method === 'POST' && url.pathname === '/beeftv/step-notice') {

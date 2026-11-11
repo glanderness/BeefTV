@@ -62,14 +62,15 @@ function deferredHasTaskAnywhere(state, taskId) {
 }
 
 function awayHasTask(state, taskId) {
-  return state.away.entries.some(entry => entry.taskIds.includes(taskId))
+  return state.away.entries.some(entry => entry.taskIds.includes(taskId) || (entry.completedTaskIds || []).includes(taskId))
 }
 
 function removeFromAway(state, taskIds) {
   const ids = new Set(taskIds)
   state.away.entries = state.away.entries.filter(entry => {
     entry.taskIds = entry.taskIds.filter(taskId => !ids.has(taskId))
-    return entry.taskIds.length || entry.resolvedCount > 0
+    entry.completedTaskIds = (entry.completedTaskIds || []).filter(taskId => !ids.has(taskId))
+    return entry.taskIds.length || entry.completedTaskIds.length || entry.resolvedCount > 0
   })
 }
 
@@ -87,7 +88,7 @@ function removeMessage(state, messageId) {
 
 // away 条目带稳定 id，异步 probe 回来时按 id 回写，不依赖数组下标。
 function addAway(state, workspaceId, taskIds) {
-  const existing = new Set(state.away.entries.flatMap(entry => entry.taskIds))
+  const existing = new Set(state.away.entries.flatMap(entry => [...entry.taskIds, ...(entry.completedTaskIds || [])]))
   const fresh = [...new Set((taskIds || []).filter(taskId => typeof taskId === 'string' && taskId && !existing.has(taskId)))]
   if (!fresh.length) return false
   state.away.entries.push({
@@ -158,6 +159,7 @@ function stopSession(state, sessionId, actions, out, reason = 'stop') {
   const session = sessionOf(state, sessionId)
   if (!session) return
   session.stopped = true
+  if (session.deferred) out.persist = true
   session.deferred = null
   const wait = state.waits[sessionId]
   if (wait) {
@@ -189,6 +191,7 @@ function userMessage(state, sessionId, agentStatus, actions, out) {
     !state.woken[outcome.taskId] && !waitHasTask(state, outcome.taskId) && !pendingHasTaskAnywhere(state, outcome.taskId))
   const leftover = deferred.outcomes.filter(outcome => !outcomes.includes(outcome))
   session.deferred = leftover.length ? { workspaceId: deferred.workspaceId, outcomes: leftover } : null
+  out.persist = true
   if (!outcomes.length) return
   actions.push({
     type: 'deliver', sessionId, outcomes, workspaceId: active,
@@ -233,7 +236,10 @@ function classifyStep(state, event, out) {
     if (entry) {
       unmarkWoken(state, entry.outcomes)
       if (session) session.wakeCount = Math.max(0, session.wakeCount - 1)
-      if (uncertain.includes(messageId) && defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)) out.persist = true
+      if (uncertain.includes(messageId)) {
+        defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)
+        out.persist = true
+      }
     }
     removeMessage(state, messageId)
     delete state.stale[messageId]
@@ -246,7 +252,8 @@ function classifyStep(state, event, out) {
       unmarkWoken(state, entry.outcomes)
       const session = sessionOf(state, entry.sessionId)
       if (session) session.wakeCount = Math.max(0, session.wakeCount - 1)
-      if (defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)) out.persist = true
+      defer(state, entry.sessionId, entry.outcomes, entry.workspaceId)
+      out.persist = true
       removeMessage(state, messageId)
     }
   } else {
@@ -307,11 +314,9 @@ export function transition(state, event) {
       })
     }
     if (!next.away.entries.length) next.away.count = 0
-    if (targets.length) {
-      const probe = ++next.away.probeSeq
-      next.away.probe = probe
-      actions.push({ type: 'probeAway', workspaceId, targets, epoch: next.away.epoch, probe })
-    }
+    const probe = ++next.away.probeSeq
+    next.away.probe = probe
+    if (targets.length) actions.push({ type: 'probeAway', workspaceId, targets, epoch: next.away.epoch, probe })
     else if (next.away.entries.length) {
       next.away.count = 0
       out.persist = true
@@ -381,7 +386,8 @@ export function transition(state, event) {
     const session = sessionOf(next, event.sessionId)
     if (!session) return finish()
     if (!event.ok) {
-      if (defer(next, event.sessionId, event.outcomes, event.workspaceId)) out.persist = true
+      defer(next, event.sessionId, event.outcomes, event.workspaceId)
+      out.persist = true
       return finish()
     }
     const outcomes = dedupeOutcomes(event.outcomes)
@@ -411,7 +417,10 @@ export function transition(state, event) {
         if (!item.deferred.outcomes.length) item.deferred = null
       }
     }
-    if (event.source === 'deferred') session.deferred = null
+    if (event.source === 'deferred') {
+      session.deferred = null
+      out.persist = true
+    }
   } else if (type === 'withdrawn') {
     const entry = next.messages[event.messageId]
     if (!entry || entry.state !== 'withdrawing') return finish()
@@ -461,7 +470,8 @@ export function transition(state, event) {
     unmarkWoken(next, entry.outcomes)
     removeMessage(next, event.messageId)
     if (session?.stopped) return finish()
-    if (defer(next, entry.sessionId, entry.outcomes, entry.workspaceId)) out.persist = true
+    defer(next, entry.sessionId, entry.outcomes, entry.workspaceId)
+    out.persist = true
   } else if (type === 'stepEntered') {
     out.reply = classifyStep(next, event, out)
   } else if (type === 'userStop' || type === 'turnEndedByUser') {
@@ -517,7 +527,7 @@ export function transition(state, event) {
     const workspaceId = event.workspaceId ?? null
     next.away.entries = next.away.entries.flatMap(entry => {
       if (workspaceId && entry.workspaceId && entry.workspaceId !== workspaceId) return [entry]
-      return entry.taskIds.length ? [{ ...entry, resolvedCount: 0 }] : []
+      return entry.taskIds.length ? [{ ...entry, completedTaskIds: [], resolvedCount: 0 }] : []
     })
     next.away.count = 0
     next.away.epoch += 1
@@ -533,7 +543,8 @@ export function transition(state, event) {
       // probe 期间被 awaySeen 删掉的条目不再回写，避免把已关闭的提示或任务带回来。
       if (!result) return entry
       notice += result.completed || 0
-      return { ...entry, taskIds: result.remaining || [], resolvedCount: result.completed || 0 }
+      const completed = new Set([...(entry.completedTaskIds || []), ...(result.completedTaskIds || [])])
+      return { ...entry, taskIds: result.remaining || [], completedTaskIds: [...completed], resolvedCount: result.completed || 0 }
     })
     next.away.count = notice
     out.persist = true
@@ -550,8 +561,17 @@ export function awaitingSnapshot(state) {
     sessions[sessionId] = { workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds] }
   }
   // id 只用于异步 probe 对账，不写入磁盘；重启后由 historyLoaded 重新分配。
+  const deferred = []
+  for (const session of Object.values(state.sessions)) {
+    if (!session.deferred?.outcomes.length) continue
+    deferred.push({
+      workspaceId: session.deferred.workspaceId ?? null,
+      taskIds: session.deferred.outcomes.map(outcome => outcome.taskId),
+    })
+  }
   return {
     sessions,
+    deferred,
     away: state.away.entries.map(entry => ({
       workspaceId: entry.workspaceId ?? null,
       taskIds: [...entry.taskIds],

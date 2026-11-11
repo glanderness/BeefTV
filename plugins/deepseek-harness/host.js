@@ -179,9 +179,16 @@ export function apply(ctx) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
-    // 单步内并行工具也要受上限约束：达到上限后不再放行新的工具调用。
-    const blocked = stepLimit.shouldBlock(sessionIdOf(exec?.agent))
-    if (decision.kind === 'allow' && blocked) return { kind: 'deny', reason: blocked }
+    // 单步内并行工具也要受上限约束：为即将启动的调用预占名额，达到上限后连 ask 也直接拒绝。
+    const sessionId = sessionIdOf(exec?.agent)
+    if (sessionId && (decision.kind === 'allow' || decision.kind === 'ask')) {
+      const blocked = stepLimit.reserve({
+        sessionId,
+        beefTV: connection.hasContext(sessionId) || (typeof exec?.name === 'string' && exec.name.startsWith('mcp__beeftv__')),
+        limit: connection.pluginSettings().stepLimit,
+      })
+      if (blocked) return { kind: 'deny', reason: blocked }
+    }
     const origin = connection.describe()
     if (origin) rememberOrigin(exec, origin)
     const current = connection.current()
