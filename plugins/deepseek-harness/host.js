@@ -704,10 +704,11 @@ export function apply(ctx) {
           if (body.seen !== true) throw new Error('无效的提示设置')
           const workspaceId = current?.workspace?.id || null
           // 用户关掉的是已经看到的提示；尚未核对的 taskId 留在盘上，下次连回同一工作区继续查。
+          // 断开或归属未知时按“已看到”清掉计数，只保留待核对的任务，避免重连后又冒出旧提示。
           awayPending = awayPending.flatMap(entry => {
-            if (!entry.workspaceId || entry.workspaceId !== workspaceId) return [entry]
+            if (workspaceId && entry.workspaceId && entry.workspaceId !== workspaceId) return [entry]
             const taskIds = Array.isArray(entry.taskIds) ? entry.taskIds : []
-            return taskIds.length ? [{ workspaceId: entry.workspaceId, taskIds, resolvedCount: 0 }] : []
+            return taskIds.length ? [{ workspaceId: entry.workspaceId || null, taskIds, resolvedCount: 0 }] : []
           })
           awayNoticeCount = 0
           await writeAwaiting().catch(() => {})
@@ -823,13 +824,19 @@ export function apply(ctx) {
     const claimed = (payload.messages || []).map(message => ({ id: message?.id, entry: pendingWakeMessages.get(message?.id) })).filter(item => item.entry || staleWakeIds.has(item.id))
     // 切换期间 current 为空：按旧工作区判断，旧工作区的完成通知不能进入新工作区的模型上下文。
     // 同一工作区的重连保留原通知，避免健康检查窗口把正常完成当成跨区。
+    const sourceUnknown = switching && !switchingFrom?.workspaceId
+    // 连旧工作区都不知道（断线后自动重连）时不能直接丢：交给 deferred，等连上后按实际工作区决定补投还是清掉。
+    const uncertain = sourceUnknown ? claimed.filter(item => item.entry?.workspaceId) : []
+    const uncertainIds = new Set(uncertain.map(item => item.id))
     const stale = claimed.filter(item => {
+      if (uncertainIds.has(item.id)) return false
       if (staleWakeIds.has(item.id)) return true
       const workspaceId = item.entry?.workspaceId
       if (!workspaceId) return false
       if (switching) return switchingFrom?.sameMode ? workspaceId !== switchingFrom.workspaceId : true
       return Boolean(activeWorkspace && workspaceId !== activeWorkspace)
     })
+    if (uncertain.length) deferClaimedWakes(uncertain)
     for (const item of stale) {
       pendingWakeMessages.delete(item.id)
       staleWakeIds.delete(item.id)
@@ -839,10 +846,11 @@ export function apply(ctx) {
       }
     }
     const staleIds = new Set(stale.map(item => item.id))
-    const fresh = claimed.filter(item => !staleIds.has(item.id))
+    const excludedIds = new Set([...staleIds, ...uncertainIds])
+    const fresh = claimed.filter(item => !excludedIds.has(item.id))
     // 以 decision.messages 为准：DSH 默认还会追加 runtime-context，不能只拿 payload 重建。
     const baseMessages = Array.isArray(decision.messages) ? decision.messages : payload.messages || []
-    const messages = stale.length ? baseMessages.filter(message => !staleIds.has(message?.id)) : baseMessages
+    const messages = excludedIds.size ? baseMessages.filter(message => !excludedIds.has(message?.id)) : baseMessages
     // DSH 会先 claim 再调用 pre-step：claimed 只看不删，等这里决定这一步是否真的进入。
     if (decision.kind !== 'enter') {
       deferClaimedWakes(fresh)
@@ -862,7 +870,7 @@ export function apply(ctx) {
       stepNotice = null
     }
     for (const item of fresh) pendingWakeMessages.delete(item.id)
-    return stale.length ? { ...decision, messages } : decision
+    return excludedIds.size ? { ...decision, messages } : decision
   })
   ctx.on('agent/turn-stopping', payload => {
     const sessionId = sessionIdOf(payload?.agent)

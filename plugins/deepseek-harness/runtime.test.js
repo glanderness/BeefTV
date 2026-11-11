@@ -876,6 +876,33 @@ test('a workspace switch in progress does not let the old wake enter the next st
   await switching
 })
 
+test('a reconnect with an unknown old workspace defers the wake instead of dropping it', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['reconnect-1']))
+  await until(() => injected.length === 1)
+  // 健康检查失败后 current 被清空，自动重连时旧工作区信息已不可用。
+  workspace.available = false
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  workspace.available = true
+  let releaseBootstrap
+  workspace.bootstrapGate = new Promise(resolve => { releaseBootstrap = resolve })
+  const reconnecting = call('POST', '/beeftv/connect', { mode: 'standalone' })
+  await sleep(50)
+  const decision = await listeners.get('agent/pre-step')({ agent, turn: 2, messages: [injected[0]] }, async () => ({ kind: 'enter', messages: [injected[0]] }))
+  assert.deepEqual(decision.messages, [])
+  assert.equal(wakes.length, 0)
+  releaseBootstrap()
+  await reconnecting
+  // 连回的其实是同一工作区：下一条用户消息把完成结果补投，而不是丢掉。
+  agent.status = 'idle'
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user', source: { kind: 'user' } } })
+  await until(() => wakes.length === 1)
+  assert.match(wakes[0].content[0].text, /reconnect-1/)
+})
+
 test('a step-limit stop lets a real user message through and restarts the count', async context => {
   const { call, listeners } = await startHost(context, { pluginSettings: { autoContinue: true, stepLimit: 5 } })
   const connectionId = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.connectionId
