@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useRef, useState } from "react";
 import { MemoryRouter } from "react-router";
 
-import { useCanvasStarterNavigation } from "@/pages/canvas/use-canvas-starter-navigation";
+import { starterAssistantHandler, useCanvasStarterNavigation } from "@/pages/canvas/use-canvas-starter-navigation";
 
 const embedded = new URLSearchParams(window.location.search).get("embedded") === "1";
 
@@ -20,7 +20,7 @@ function Harness() {
         createNode: () => {},
         fitCanvasSelection: () => {},
         createDirectorShot: () => {},
-        openAssistant: embedded ? undefined : () => setAssistantCalls((value) => value + 1),
+        openAssistant: starterAssistantHandler(!embedded, () => setAssistantCalls((value) => value + 1)),
     });
     return (
         <>

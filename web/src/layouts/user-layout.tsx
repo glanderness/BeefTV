@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button, ConfigProvider } from "antd";
 
@@ -9,6 +9,7 @@ import { WorkspaceNoticeStack, type WorkspaceNoticeItem } from "@/components/lay
 import { addWorkspaceNotice } from "@/lib/workspace-notices";
 import { hydrateLocalModelConfig } from "@/components/workspace/workspace-bootstrap-hydrator";
 import { cn } from "@/lib/utils";
+import { appPathname } from "@/lib/app-routing";
 import { isEmbeddedRuntime, publishEmbeddedContext } from "@/lib/embedded-runtime";
 import { createEmbeddedCanvasNoticeGate, createEmbeddedWorkspaceSyncHandler } from "@/lib/embedded-workspace-sync";
 import { useEmbeddedAskResult } from "@/hooks/use-embedded-ask-result";
@@ -26,8 +27,6 @@ const workspaceTheme = getWorkspaceAntThemeConfig();
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
-    const pathnameRef = useRef(pathname);
-    pathnameRef.current = pathname;
     const navigate = useNavigate();
     const [canvasNoticeGate] = useState(() => createEmbeddedCanvasNoticeGate());
     const [workspaceNotices, setWorkspaceNotices] = useState<WorkspaceNoticeItem[]>([]);
@@ -71,7 +70,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (!isEmbeddedRuntime()) return;
         const onMessage = createEmbeddedWorkspaceSyncHandler({
-            getPathname: () => pathnameRef.current,
+            getPathname: () => appPathname(),
             hydrateProjects: () => { void hydrateLocalCanvasProjectsFromBackend(); },
             syncExtensions: () => {
                 void syncPluginsFromBackend().catch(() => undefined);

@@ -9,7 +9,7 @@ export type WorkspaceNoticeItem = BaseWorkspaceNoticeItem & { action?: ReactNode
 export function WorkspaceNoticeStack({ notices }: { notices: WorkspaceNoticeItem[] }) {
     if (!notices.length) return null;
     return (
-        <div className="fixed right-5 top-20 z-[var(--z-toast)] flex w-[min(360px,calc(100vw-32px))] flex-col gap-2" role="status" aria-live="polite">
+        <div className="fixed left-1/2 top-20 z-[var(--z-toast)] flex w-[min(400px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-2" role="status" aria-live="polite">
             {notices.map((notice) => (
                 <Callout
                     key={notice.id}

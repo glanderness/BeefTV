@@ -75,11 +75,25 @@ function postToEmbeddedParent(message: unknown): boolean {
     return true;
 }
 
-/** 父窗口消息的第一道校验：来源是父窗口；注入了具体 origin 时再核对来源 origin。 */
+function isLocalHostOrigin(origin: string): boolean {
+    if (origin === "null") return true;
+    try {
+        const url = new URL(origin);
+        return (url.protocol === "http:" || url.protocol === "https:") && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * 父窗口消息的第一道校验：来源必须是父窗口。
+ * 宿主给了具体 origin 就严格比对；桌面宿主只能注入 * 时，只接受同源、本机回环或 opaque 宿主。
+ */
 export function isTrustedEmbeddedParent(event: MessageEvent): boolean {
     if (event.source !== window.parent) return false;
     const parentOrigin = getEmbeddedHarnessConfig()?.parentOrigin;
-    return !parentOrigin || parentOrigin === "*" || event.origin === parentOrigin;
+    if (parentOrigin && parentOrigin !== "*") return event.origin === parentOrigin;
+    return event.origin === window.location.origin || isLocalHostOrigin(event.origin);
 }
 
 export function publishEmbeddedContext(context: EmbeddedWorkspaceContext): void {

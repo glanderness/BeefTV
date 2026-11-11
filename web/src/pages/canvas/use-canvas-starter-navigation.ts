@@ -16,6 +16,11 @@ type Options = {
     openAssistant?: () => void;
 };
 
+/** 嵌入模式没有内置助手；启动参数只能消费，不能把用户带回内置助手。 */
+export function starterAssistantHandler(internalAssistantEnabled: boolean, openAssistant: () => void): (() => void) | undefined {
+    return internalAssistantEnabled ? openAssistant : undefined;
+}
+
 // Entry links are consumed only after the loaded canvas has real dimensions.
 export function useCanvasStarterNavigation({ projectLoaded, searchParams, setSearchParams, containerRef,
     nodesRef, createNode, fitCanvasSelection, createDirectorShot, openAssistant,

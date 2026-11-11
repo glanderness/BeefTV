@@ -3,7 +3,7 @@ import { useLocation } from "react-router";
 
 import { publishEmbeddedContext, publishSelectionAsk } from "@/lib/embedded-runtime";
 
-export function useCanvasSelectionContext(canvasId: string, canvasTitle: string | undefined, nodes: { id: string; title: string; type: string }[], selectedNodeIds: Set<string>, loaded: boolean, onAskAssistant: () => void) {
+export function useCanvasSelectionContext(canvasId: string, canvasTitle: string | undefined, nodes: { id: string; title: string; type: string }[], selectedNodeIds: Set<string>, loaded: boolean, onAskAssistant?: () => void) {
     const { pathname } = useLocation();
     const selectedIds = useMemo(() => {
         const available = new Set(nodes.map((node) => node.id));
@@ -16,7 +16,7 @@ export function useCanvasSelectionContext(canvasId: string, canvasTitle: string 
     // 嵌入模式把选区交给右侧对话；单独打开时仍打开内置助手。
     const askSelectedNodes = useCallback(() => {
         if (publishSelectionAsk({ canvasId, canvasTitle: canvasTitle || "", nodes, selectedNodeIds: selectedIds })) return;
-        onAskAssistant();
+        onAskAssistant?.();
     }, [canvasId, canvasTitle, nodes, onAskAssistant, selectedIds]);
     return { selectedIds, askSelectedNodes };
 }

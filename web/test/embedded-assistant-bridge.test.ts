@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { addWorkspaceNotice, type WorkspaceNoticeItem } from "@/lib/workspace-notices";
+import { starterAssistantHandler } from "@/pages/canvas/use-canvas-starter-navigation";
 
 import { defaultToolbarPrefs, resolveToolbarEntries, type ToolbarHandlers, type ToolContext } from "@/lib/canvas/tool-registry";
 import {
@@ -23,7 +24,7 @@ type FakeParent = {
     postMessage: (message: unknown, targetOrigin: string) => void;
 };
 
-function installBrowserWindow(options: { embedded?: boolean; parentOrigin?: string } = {}) {
+function installBrowserWindow(options: { embedded?: boolean; parentOrigin?: string | null } = {}) {
     const posted: { message: unknown; targetOrigin: string }[] = [];
     const parent: FakeParent = {
         location: { origin: options.parentOrigin ?? "https://host.test" },
@@ -34,7 +35,7 @@ function installBrowserWindow(options: { embedded?: boolean; parentOrigin?: stri
             embedded: true,
             apiBase: "/beeftv/app/api",
             basePath: "/beeftv/app",
-            parentOrigin: options.parentOrigin ?? "https://host.test",
+            ...(options.parentOrigin === null ? {} : { parentOrigin: options.parentOrigin ?? "https://host.test" }),
         },
         location: { origin: "https://app.test" },
         parent,
@@ -87,7 +88,7 @@ describe("问助手交接", () => {
     test("嵌入模式把选中节点按协议发给父窗口，最多 20 个、标题截到 80 字", () => {
         const { posted } = installBrowserWindow();
         const longTitle = "主".repeat(90);
-        const nodes = Array.from({ length: 22 }, (_, index) => ({ id: `n${index + 1}`, title: index === 2 ? longTitle : `节点 ${index + 1}`, type: "image" }));
+        const nodes = Array.from({ length: 24 }, (_, index) => ({ id: `n${index + 1}`, title: index === 2 ? longTitle : `节点 ${index + 1}`, type: "image" }));
         const selectedNodeIds = new Set(nodes.slice(2).map((node) => node.id));
 
         expect(publishSelectionAsk({ canvasId: "canvas-1", canvasTitle: "第一场", nodes, selectedNodeIds })).toBe(true);
@@ -101,6 +102,9 @@ describe("问助手交接", () => {
         expect(message.ask.nodes).toHaveLength(20);
         expect(message.ask.nodes[0]).toEqual({ id: "n3", title: "主".repeat(80), type: "image" });
         expect(message.ask.nodes.map((node) => node.id)).not.toContain("n1");
+        expect(message.ask.nodes.map((node) => node.id)).not.toContain("n2");
+        expect(message.ask.nodes.map((node) => node.id)).not.toContain("n23");
+        expect(message.ask.nodes.map((node) => node.id)).not.toContain("n24");
         expect(message.ask.nodes.at(-1)?.id).toBe("n22");
     });
 
@@ -133,12 +137,50 @@ describe("问助手交接", () => {
         expect(embeddedAskResultNotice("applied")).toBeNull();
         expect(embeddedAskResultNotice("preserved")).toBeNull();
     });
+
+    test("parentOrigin 为 * 时只接受同源、本机回环或 opaque 父窗口", () => {
+        const { parent } = installBrowserWindow({ parentOrigin: "*" });
+        const notices: string[] = [];
+        const handler = createEmbeddedAskResultHandler((text) => notices.push(text));
+        const event = (origin: string) => handler(parentEvent(parent, { type: "beeftv:ask-result", status: "blocked" }, origin));
+        event("https://evil.test");
+        event("http://127.0.0.1:4321");
+        event("null");
+        event("https://app.test");
+        expect(notices).toHaveLength(3);
+    });
+
+    test("嵌入模式把 start=agent 启动参数消费掉但不交给内置助手", () => {
+        const openAssistant = () => {};
+        expect(starterAssistantHandler(false, openAssistant)).toBeUndefined();
+        expect(starterAssistantHandler(true, openAssistant)).toBe(openAssistant);
+    });
 });
 
 describe("工作区同步不拉走页面", () => {
     function syncWindow() {
         return installBrowserWindow().parent;
     }
+
+    test("来源 origin 不对时不刷新也不提示", async () => {
+        const { parent } = installBrowserWindow({ parentOrigin: "*" });
+        const calls: string[] = [];
+        const handler = createEmbeddedWorkspaceSyncHandler({
+            getPathname: () => "/assets",
+            hydrateProjects: () => { calls.push("hydrate"); },
+            syncExtensions: () => {},
+            openCanvas: async () => { calls.push("open"); },
+            refreshCanvas: async () => {},
+            markExternalChange: () => {},
+            findCanvasTitle: () => "雨夜街道",
+            canNotify: () => true,
+            openCanvasInUi: () => {},
+            notifyCanvasChange: () => { calls.push("notice"); },
+        });
+        handler(parentEvent(parent, { type: "beeftv:workspace-sync", activity: { kind: "canvas-created", canvasId: "canvas-1" } }, "https://evil.test"));
+        await flushAsyncWork();
+        expect(calls).toEqual([]);
+    });
 
     test("刷新目标画布并提示，但不自动跳转，点「打开」才进入", async () => {
         const parent = syncWindow();
@@ -226,6 +268,8 @@ describe("工作区同步不拉走页面", () => {
         expect(items.map((item) => item.id)).toEqual(["canvas:c1", "ask-result"]);
         const replaced = addWorkspaceNotice(items, { ...canvas, title: "DSH 修改了画布「雨夜街道」" });
         expect(replaced.map((item) => item.title)).toEqual(["右侧正在发送，稍后再点", "DSH 修改了画布「雨夜街道」"]);
+        const capped = ["c1", "c2", "c3", "c4"].reduce((items, id) => addWorkspaceNotice(items, { ...base, id, title: id }), [] as WorkspaceNoticeItem[]);
+        expect(capped.map((item) => item.id)).toEqual(["c2", "c3", "c4"]);
     });
 
     test("同一张画布 30 秒内只提示一次", () => {
