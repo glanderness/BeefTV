@@ -20,7 +20,7 @@ export function createTimelineRenderOutput(state, { canvasId, sourceRevision, op
   if (!timeline || typeof timeline !== 'object') {
     throw invalidArg('invalid_timeline', '画布中没有有效时间线');
   }
-  validateTimelineShape(timeline, doc);
+  validateTimelineShape(timeline, doc, state);
   const dims = renderDimensions(options);
   const durationMs = Math.max(0, Number(timeline.durationMs) || 0);
   state.seq.task += 1;

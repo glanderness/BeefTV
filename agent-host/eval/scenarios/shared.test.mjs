@@ -60,6 +60,10 @@ describe('回复是否说明了生成结果', () => {
     expect(replyReportsResult('这个任务无法完成。')).toBe(false);
     expect(replyReportsResult('生成明细：模型 Seedream 3.0，1 张。')).toBe(false);
     expect(replyReportsResult('已开始生成，请稍候。')).toBe(false);
+    expect(replyReportsResult('还在完成中，请稍候。')).toBe(false);
+    expect(replyReportsResult('正在完成，马上好。')).toBe(false);
+    expect(replyReportsResult('视频绑定失败。')).toBe(false);
+    expect(replyReportsResult('已经生成失败。')).toBe(false);
     expect(replyReportsResult('没生成好，稍等。')).toBe(false);
     expect(replyReportsResult('生成好了之后我再绑定到节点。')).toBe(false);
     expect(replyReportsResult('等生成好之后我会告诉您。')).toBe(false);

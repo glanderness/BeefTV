@@ -126,7 +126,8 @@ describe('时间线渲染任务产物', () => {
   test('canvas.timeline.render 返回可绑定的 mp4 产物', () => {
     const sim = createSimGo();
     const canvasId = 'canvas-render';
-    const doc = seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    const doc = seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧', { resourceId: 'res-render-src', assetId: 'asset-render-src' })]);
+    registerMedia(sim, 'res-render-src', 'asset-render-src');
     doc.timeline = {
       version: 2,
       durationMs: 3000,
@@ -409,6 +410,97 @@ describe('canvas.generation.regenerate', () => {
     expect(sim.snapshot().tasks.filter((task) => task.canvasId === canvasId).length).toBe(before + 1);
   });
 
+  test('画布版本过期时先报 revision_conflict，而不是先看运行中的任务', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-regen-stale';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    sim.beginTurn({ turnId: 'turn-regen-stale', canvasId, permissionMode: 'canvas' });
+    sim.setTaskTiming(canvasId, { imageMs: 5000 });
+    const running = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-stale-submit', 'turn-regen-stale').result;
+    expect(sim.snapshot().tasks.find((task) => task.id === running.taskIds[0]).status).toBe('running');
+    // 另一次写操作把画布推进到 revision 2，regenerate 仍带 revision 1。
+    sim.executeOp('canvas.nodes.create', {
+      canvasId,
+      expectedRevision: 1,
+      nodes: [{ type: 'text', title: '备注' }],
+    }, 'regen-stale-bump', 'turn-regen-stale');
+    expect(sim.ensureCanvas(canvasId).revision).toBe(2);
+    expect(() => sim.executeOp('canvas.generation.regenerate', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-stale-2', 'turn-regen-stale')).toThrow(/画布已变化/);
+    await sim.close();
+  });
+
+  test('旧产物已绑定时，释放回执后仍能读旧媒体', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-regen-media';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    sim.beginTurn({ turnId: 'turn-regen-media', canvasId, permissionMode: 'canvas' });
+    const first = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-media-submit', 'turn-regen-media').result;
+    await sim.waitForTasks(first.taskIds, 500);
+    const bound = sim.executeOp('canvas.task.bind', {
+      canvasId, taskId: first.taskIds[0], nodeId: 'node-image',
+    }, 'regen-media-bind', 'turn-regen-media').result;
+    const oldResourceId = bound.node.metadata.resourceId;
+    const regen = sim.executeOp('canvas.generation.regenerate', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: sim.ensureCanvas(canvasId).revision,
+      expectedModelConfigRevision: 1,
+    }, 'regen-media-2', 'turn-regen-media').result;
+    const overview = sim.executeOp('media.overview', { canvasId, nodeId: 'node-image' }).result;
+    expect(overview.source.resourceId).toBe(oldResourceId);
+    await sim.waitForTasks(regen.taskIds, 500);
+  });
+
+  test('释放成功但 submit 失败时回滚节点元数据，画布版本不变', async () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-regen-rollback';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    sim.enableCapabilities(['canvas.generation.regenerate']);
+    sim.beginTurn({ turnId: 'turn-regen-rollback', canvasId, permissionMode: 'canvas' });
+    const first = sim.executeOp('canvas.generation.submit', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: 1,
+      expectedModelConfigRevision: 1,
+    }, 'regen-rollback-submit', 'turn-regen-rollback').result;
+    await sim.waitForTasks(first.taskIds, 500);
+    const doc = sim.ensureCanvas(canvasId);
+    const before = clone(doc.nodes[0].metadata);
+    const revisionBefore = doc.revision;
+    // 版本正确、模型配置版本错误：release 已执行，submit 在受理前失败。
+    expect(() => sim.executeOp('canvas.generation.regenerate', {
+      canvasId,
+      nodeIds: ['node-image'],
+      kind: 'image',
+      expectedRevision: revisionBefore,
+      expectedModelConfigRevision: 9,
+    }, 'regen-rollback-2', 'turn-regen-rollback')).toThrow(/模型配置已变化/);
+    expect(sim.ensureCanvas(canvasId).nodes[0].metadata).toEqual(before);
+    expect(sim.ensureCanvas(canvasId).revision).toBe(revisionBefore);
+  });
+
   test('运行中的任务不会被释放', async () => {
     const sim = createSimGo();
     const canvasId = 'canvas-regen-running';
@@ -464,6 +556,74 @@ describe('canvas.generation.regenerate', () => {
   });
 });
 
+describe('时间线校验与真实编辑语义一致', () => {
+  test('音频片段允许交叉，可见画面跨轨重叠被拒', () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-timeline-audio';
+    seedCanvas(sim, canvasId, [
+      imageNode('node-image-a', '镜 1 首帧', { resourceId: 'res-a', assetId: 'asset-a' }),
+      imageNode('node-image-b', '镜 2 首帧', { resourceId: 'res-b', assetId: 'asset-b' }),
+      { ...imageNode('node-audio-1', '音乐 1'), type: 'audio', metadata: { resourceId: 'res-audio-1', assetId: 'asset-audio-1' } },
+      { ...imageNode('node-audio-2', '音乐 2'), type: 'audio', metadata: { resourceId: 'res-audio-2', assetId: 'asset-audio-2' } },
+    ]);
+    for (const [resourceId, kind] of [['res-a', 'image'], ['res-b', 'image'], ['res-audio-1', 'audio'], ['res-audio-2', 'audio']]) {
+      registerMedia(sim, resourceId, `asset-${resourceId === 'res-a' ? 'a' : resourceId === 'res-b' ? 'b' : resourceId.replace('res-', '')}`, kind);
+    }
+    const audioTimeline = {
+      version: 2,
+      durationMs: 4000,
+      tracks: [
+        { id: 'track-image', kind: 'image' },
+        { id: 'track-audio', kind: 'audio' },
+      ],
+      clips: [
+        { id: 'clip-image', kind: 'image', nodeId: 'node-image-a', trackId: 'track-image', startMs: 0, durationMs: 4000 },
+        { id: 'clip-audio-1', kind: 'audio', nodeId: 'node-audio-1', trackId: 'track-audio', startMs: 0, durationMs: 3000 },
+        { id: 'clip-audio-2', kind: 'audio', nodeId: 'node-audio-2', trackId: 'track-audio', startMs: 2000, durationMs: 2000 },
+      ],
+    };
+    expect(sim.executeOp('canvas.timeline.update', {
+      canvasId, expectedRevision: 1, timeline: audioTimeline,
+    }, 'timeline-audio-1').result.timelineUpdated).toBe(true);
+
+    const overlappingVisual = {
+      version: 2,
+      durationMs: 4000,
+      tracks: [
+        { id: 'track-a', kind: 'video' },
+        { id: 'track-b', kind: 'video' },
+      ],
+      clips: [
+        { id: 'clip-a', kind: 'image', nodeId: 'node-image-a', trackId: 'track-a', startMs: 0, durationMs: 3000 },
+        { id: 'clip-b', kind: 'image', nodeId: 'node-image-b', trackId: 'track-b', startMs: 2000, durationMs: 2000 },
+      ],
+    };
+    expect(() => sim.executeOp('canvas.timeline.update', {
+      canvasId, expectedRevision: 2, timeline: overlappingVisual,
+    }, 'timeline-visual-overlap')).toThrow(/重叠/);
+    expect(sim.ensureCanvas(canvasId).revision).toBe(2);
+  });
+
+  test('引用未绑定素材的节点时拒绝保存或渲染', () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-timeline-unready';
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    const timeline = {
+      version: 2,
+      durationMs: 1000,
+      tracks: [{ id: 'track-1', kind: 'image' }],
+      clips: [{ id: 'clip-1', kind: 'image', nodeId: 'node-image', trackId: 'track-1', startMs: 0, durationMs: 1000 }],
+    };
+    expect(() => sim.executeOp('canvas.timeline.update', {
+      canvasId, expectedRevision: 1, timeline,
+    }, 'timeline-unready-1')).toThrow(/关联一个资源/);
+    expect(sim.ensureCanvas(canvasId).revision).toBe(1);
+    expect(() => sim.executeOp('canvas.timeline.render', {
+      canvasId, expectedRevision: 1,
+    }, 'timeline-unready-render')).toThrow(/时间线|关联一个资源|尚未就绪|未关联/);
+  });
+});
+
 describe('canvas.timeline.deliver', () => {
   function deliverTimeline() {
     return {
@@ -477,7 +637,8 @@ describe('canvas.timeline.deliver', () => {
   test('一次保存时间线、建好成片节点并自动绑定渲染产物，重名自动加序号', () => {
     const sim = createSimGo();
     const canvasId = 'canvas-deliver';
-    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
+    seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧', { resourceId: 'res-deliver-src', assetId: 'asset-deliver-src' })]);
+    registerMedia(sim, 'res-deliver-src', 'asset-deliver-src');
     sim.enableCapabilities(['canvas.timeline.deliver']);
     sim.beginTurn({ turnId: 'turn-deliver', canvasId, permissionMode: 'canvas' });
     const first = sim.executeOp('canvas.timeline.deliver', {

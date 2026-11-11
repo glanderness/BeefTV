@@ -176,6 +176,9 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 - `canvas.generation.regenerate`：先只读校验批次内全部节点，再统一释放已结束任务的回执；任一批次失败都不会留下半清理的节点，重复 `nodeId` 去重为一个任务。
 - 只读的 `canvas.nodes.get` 和 `regenerate` 遇到不存在的画布直接报 `canvas_not_found`，不再由读取路径创建幽灵画布。
 - `media.overview` / `media.inspect` 的任务产物回退只认同一画布、同一节点且已成功的任务；伪造 `taskId` 读不到不属于该节点的资源。
+- 时间线重叠按真实 `editing.Compile` 的语义：只对可见 video/image 做跨轨全局重叠检查，audio 允许交叉淡变；非字幕片段在保存或渲染前还要求资源已就绪、素材已关联且类型匹配。
+- `canvas.generation.regenerate` 的释放只清生成尝试字段，保留提示词、参数和已交付媒体；画布版本在释放前校验，受理成功后与释放一起落盘并加 1。
+- R1a/R1b 回复判分继续排除进行时和失败句（「还在完成中」「绑定失败」「已开始生成」），避免把过程或失败当成结果。
 - R6 收尾等待：场景新增 `settleTimeoutMs: 600000`；内置路径最后一轮实测 332–380 秒，120 秒会把仍在运行的正常收尾误判为失败。
 - R1a/R1b 回复判分：接受「已经生成」等同义说法，但仍要求回复说明结果，并用否定句反例守住判定。
 - `no_failed_or_unhandled_calls`：回溯确认它把「同一回合后来同类操作成功」的失败视为已恢复，比 S11 的「同一目标、带正确版本恢复」更宽；本次不收紧该判定，证据留在重测结论里。

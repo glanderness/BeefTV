@@ -320,7 +320,7 @@ export const CANVAS_OPS = {
       if (!rawParams.timeline || typeof rawParams.timeline !== 'object') {
         throw invalidArg('invalid_params', 'timeline 必须是对象');
       }
-      validateTimelineShape(rawParams.timeline, doc);
+      validateTimelineShape(rawParams.timeline, doc, state);
       doc.timeline = clone(rawParams.timeline);
     }
     const saved = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.timeline.update', turnId);

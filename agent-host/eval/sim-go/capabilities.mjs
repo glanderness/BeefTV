@@ -10,6 +10,17 @@ import { refreshTimelineSources, validateTimelineShape } from './timeline.mjs';
 
 const TERMINAL_TASK_STATES = new Set(['succeeded', 'failed', 'cancelled']);
 
+// 与 backend/internal/canvas/task_failure.go 的 generationAttemptFields 对齐；媒体字段不在其中。
+const GENERATION_ATTEMPT_FIELDS = [
+  'taskId', 'taskType', 'taskOutcome', 'taskOutcomeSource', 'taskOutputIndex', 'generationOutputNodeIds',
+  'taskClientOperationId', 'generationSubmissionState', 'retryOf', 'attemptGroupId',
+  'taskStatus', 'taskProgress', 'taskStage', 'taskProvider', 'taskStartedAt', 'taskCompletedAt', 'taskDurationMs',
+  'taskErrorCode', 'taskFailureDiagnostics', 'taskProviderRequestId', 'taskOfficialStatus', 'taskReceiptRecorded',
+  'taskCreatedAt', 'taskUpdatedAt', 'processingLabel', 'generationFailure', 'generationPreflightError',
+  'error', 'errorDetails', 'generationErrorCode', 'generationErrorSummary', 'generationProviderCode',
+  'failedPromptFingerprint', 'failedInputFingerprint', 'resourceReloadAvailable',
+];
+
 const TIMELINE_SCHEMA = {
   type: 'object',
   description: '时间线 v2（毫秒）；可见 video/image 不可重叠',
@@ -238,13 +249,8 @@ function releaseEndedNodeReceipts(state, doc, nodeIds) {
   }
   for (const plan of plans) {
     const node = plan.node;
-    for (const key of [
-      'taskId', 'taskClientOperationId', 'taskStatus', 'taskProgress', 'generationSubmissionState',
-      'assetId', 'resourceId', 'storageKey', 'content', 'mimeType', 'bytes', 'durationMs',
-      'width', 'height', 'errorDetails', 'taskFailureDiagnostics', 'reviewNote',
-    ]) {
-      delete node.metadata[key];
-    }
+    // 对齐 Go 的 ClearGenerationAttemptMetadata：只清这次生成尝试的字段，提示词、参数和已交付媒体留在节点上。
+    for (const key of GENERATION_ATTEMPT_FIELDS) delete node.metadata[key];
     node.metadata.status = 'idle';
   }
   return plans;
@@ -273,7 +279,7 @@ export const CAPABILITY_OPS = {
     let doc = clone(findCanvasAtRevision(state, canvasId, expectedRevision));
     let timelineRevision = expectedRevision;
     if (hasTimeline) {
-      validateTimelineShape(rawParams.timeline, doc);
+      validateTimelineShape(rawParams.timeline, doc, state);
       doc.timeline = clone(rawParams.timeline);
       timelineRevision = saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.timeline.deliver', turnId).revision;
       doc = clone(state.canvases.get(canvasId));
@@ -331,14 +337,27 @@ export const CAPABILITY_OPS = {
     if (!canvasId) throw invalidArg('invalid_params', 'canvasId 必填');
     const doc = state.canvases.get(canvasId);
     if (!doc) throw notFound('canvas_not_found', `画布不存在: ${canvasId}`);
+    const expectedRevision = Number(rawParams.expectedRevision);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+      throw invalidArg('generation_snapshot_required', '请提交画布版本和模型配置版本');
+    }
+    // 真实后端在释放旧任务之前就校验画布版本；这里保持同样的错误优先级。
+    if (doc.revision !== expectedRevision) {
+      state.counts.revisionConflicts += 1;
+      throw conflict('revision_conflict', '画布已变化，请重新读取并确认生成内容', { currentRevision: doc.revision });
+    }
     let backups = [];
+    let result;
     try {
       backups = releaseEndedNodeReceipts(state, doc, nodeIds);
-      return GENERATION_OPS['canvas.generation.submit'](state, rawParams, ctx);
+      result = GENERATION_OPS['canvas.generation.submit'](state, rawParams, ctx);
     } catch (error) {
       for (const backup of backups) backup.node.metadata = backup.metadata;
       throw error;
     }
+    // 释放回执和受理新任务一起落盘，版本加 1；失败时上面的 catch 不改画布。
+    saveCanvas(state, canvasId, doc, expectedRevision, 'canvas.generation.regenerate', ctx.turnId);
+    return result;
   },
 
   'canvas.nodes.configure': (state, rawParams, ctx) => {

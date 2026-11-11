@@ -1,23 +1,47 @@
 // 时间线的局部素材刷新：只更新指定节点对应片段的 directMedia，其余片段和时间线保持原样。
 // 对齐真实后端 canvas.timeline.update 的 refreshNodeIds 分支：节点必须已被片段使用，且必须有一个可读资源。
 
-import { invalidArg } from './common.mjs';
+import { invalidArg, preconditionFailed } from './common.mjs';
+
+function resourceIDFromLocator(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.startsWith('resource:')) return text.slice('resource:'.length);
+  const marker = '/api/resources/';
+  const index = text.indexOf(marker);
+  if (index >= 0) {
+    const rest = text.slice(index + marker.length).split(/[/?#]/)[0];
+    if (rest) return rest;
+  }
+  return /^[A-Za-z0-9_-]{1,80}$/.test(text) ? text : '';
+}
 
 function resourceIDFromNode(node) {
   const meta = node?.metadata || {};
-  const direct = String(meta.resourceId || '').trim();
-  if (direct) return direct;
-  for (const value of [meta.storageKey, meta.content]) {
-    const text = String(value || '').trim();
-    if (!text) continue;
-    if (text.startsWith('resource:')) return text.slice('resource:'.length);
-    const marker = '/api/resources/';
-    const index = text.indexOf(marker);
-    if (index >= 0) {
-      const rest = text.slice(index + marker.length).split(/[/?#]/)[0];
-      if (rest) return rest;
-    }
+  for (const value of [meta.resourceId, meta.storageKey, meta.content]) {
+    const id = resourceIDFromLocator(value);
+    if (id) return id;
   }
+  return '';
+}
+
+function resourceIDFromClip(clip) {
+  const media = clip?.directMedia;
+  if (!media || typeof media !== 'object') return '';
+  for (const value of [media.resourceId, media.id, media.storageKey, media.url, media.content]) {
+    const id = resourceIDFromLocator(value);
+    if (id) return id;
+  }
+  return '';
+}
+
+function resourceKind(resource) {
+  const explicit = String(resource?.kind || '').toLowerCase();
+  if (['image', 'video', 'audio'].includes(explicit)) return explicit;
+  const mime = String(resource?.mimeType || '').toLowerCase();
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('image/')) return 'image';
   return '';
 }
 
@@ -28,9 +52,33 @@ function requireInteger(value, message) {
   if (!Number.isSafeInteger(value) || value < 0) throw invalidArg('invalid_timeline', message);
 }
 
-// 对齐真实后端的 editing.Compile 入口校验：版本、轨道/片段 ID、轨道引用和可见媒体重叠。
-// doc 存在时同时确认片段引用的节点属于这张画布；资源是否就绪仍由渲染/绑定阶段判断。
-export function validateTimelineShape(timeline, doc = null) {
+function validateClipSource(state, doc, clip) {
+  const nodeId = String(clip?.nodeId || '').trim();
+  const node = nodeId ? (doc.nodes || []).find((item) => item.id === nodeId) : null;
+  if (nodeId && !node) throw invalidArg('invalid_timeline', `片段引用不在画布的节点: ${nodeId}`);
+  if (!state) return;
+  const directId = resourceIDFromClip(clip);
+  const nodeIdResource = node ? resourceIDFromNode(node) : '';
+  if (directId && nodeIdResource && directId !== nodeIdResource) {
+    throw invalidArg('timeline_source_not_authorized', '节点与时间线资源不一致');
+  }
+  const resourceId = directId || nodeIdResource;
+  if (!resourceId) throw invalidArg('timeline_resource_required', '时间线节点须明确关联一个资源');
+  const resource = state.resources.get(resourceId);
+  if (!resource) throw preconditionFailed('timeline_source_not_ready', '时间线素材尚未就绪', { resourceId });
+  const assetId = String(clip?.directMedia?.assetId || node?.metadata?.assetId || resource.assetId || '').trim();
+  const asset = assetId ? state.assets.get(assetId) : null;
+  if (!asset) throw preconditionFailed('timeline_asset_not_linked', '素材尚未关联素材库，请先同步', { assetId });
+  const kind = resourceKind(resource);
+  if (!kind || (clip.kind !== kind && !(clip.kind === 'audio' && kind === 'video'))) {
+    throw invalidArg('timeline_source_kind', '时间线片段与素材类型不匹配');
+  }
+}
+
+// 对齐真实后端的 editing.Compile 入口校验：版本、轨道/片段 ID、轨道引用和可见画面重叠。
+// 重叠只检查可见 video/image，且跨轨全局检查；audio 允许交叉淡变。state 存在时同时校验
+// 非字幕片段都有已就绪资源和已关联素材。
+export function validateTimelineShape(timeline, doc = null, state = null) {
   if (!timeline || typeof timeline !== 'object' || Array.isArray(timeline)) {
     throw invalidArg('invalid_timeline', '画布中没有有效时间线');
   }
@@ -48,8 +96,7 @@ export function validateTimelineShape(timeline, doc = null) {
     trackById.set(id, track);
   }
   const seenClips = new Set();
-  const visibleMediaByTrack = new Map();
-  const nodeIds = doc ? new Set((doc.nodes || []).map((node) => node.id)) : null;
+  const visual = [];
   for (const clip of timeline.clips) {
     const id = String(clip?.id || '').trim();
     if (!id) throw invalidArg('invalid_timeline', '片段缺少 id');
@@ -59,21 +106,23 @@ export function validateTimelineShape(timeline, doc = null) {
     if (!CLIP_KINDS.has(kind)) throw invalidArg('invalid_timeline', `片段类型不合法: ${id}`);
     const trackId = String(clip?.trackId || '').trim();
     const track = trackById.get(trackId);
-    if (!track) throw invalidArg('invalid_timeline', `片段指向不存在的轨道: ${id}`);
+    if (trackById.size > 0 && !track) throw invalidArg('invalid_timeline', `片段指向不存在的轨道: ${id}`);
+    if (track && track.visible === false) continue;
     requireInteger(clip.startMs, `片段开始时间不合法: ${id}`);
     requireInteger(clip.durationMs, `片段时长不合法: ${id}`);
-    if (nodeIds) {
-      const nodeId = String(clip?.nodeId || '').trim();
-      if (nodeId && !nodeIds.has(nodeId)) throw invalidArg('invalid_timeline', `片段引用不在画布的节点: ${nodeId}`);
+    if (clip.durationMs <= 0) throw invalidArg('invalid_timeline', `片段时长必须大于 0: ${id}`);
+    if (kind === 'subtitle') {
+      if (!String(clip.text || '').trim()) throw invalidArg('invalid_timeline', `字幕片段缺少文字: ${id}`);
+      continue;
     }
-    if (kind === 'subtitle' || track.visible === false) continue;
-    const ranges = visibleMediaByTrack.get(trackId) || [];
-    const end = clip.startMs + clip.durationMs;
-    if (ranges.some((range) => clip.startMs < range.end && end > range.start)) {
-      throw invalidArg('invalid_timeline', `可见片段重叠: ${id}`);
-    }
-    ranges.push({ start: clip.startMs, end });
-    visibleMediaByTrack.set(trackId, ranges);
+    validateClipSource(state, doc, clip);
+    if (kind === 'video' || kind === 'image') visual.push({ id, start: clip.startMs, end: clip.startMs + clip.durationMs });
+  }
+  visual.sort((a, b) => (a.start === b.start ? a.id.localeCompare(b.id) : a.start - b.start));
+  let cursor = 0;
+  for (const clip of visual) {
+    if (clip.start < cursor) throw invalidArg('invalid_timeline', `可见片段重叠: ${clip.id}`);
+    cursor = Math.max(cursor, clip.end);
   }
   return timeline;
 }
@@ -95,7 +144,6 @@ export function refreshTimelineSources(state, doc, nodeIds) {
   if (!timeline || typeof timeline !== 'object' || !Array.isArray(timeline.clips)) {
     throw invalidArg('invalid_timeline', '当前画布没有可更新的时间线');
   }
-  validateTimelineShape(timeline, doc);
   const found = new Set();
   for (const clip of timeline.clips) {
     const nodeId = String(clip?.nodeId || '');
@@ -120,5 +168,6 @@ export function refreshTimelineSources(state, doc, nodeIds) {
   if (found.size !== selected.size) {
     throw invalidArg('timeline_node_not_used', '指定节点没有对应的媒体片段，未修改时间线');
   }
+  validateTimelineShape(timeline, doc, state);
   return doc;
 }
