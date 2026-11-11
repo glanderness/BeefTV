@@ -35,6 +35,9 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	if !listingHas(ownerListing, "asset.list") || !listingHas(ownerListing, "canvas.search") {
 		t.Fatalf("owner 应包含工作区级操作: %v", ownerListing)
 	}
+	if !listingHas(ownerListing, "task.wait") {
+		t.Fatalf("owner 应包含等待任务操作: %v", ownerListing)
+	}
 
 	reg, token, err := env.clients.RegisterKind("codex", "cli", agentops.ClientReadWrite)
 	if err != nil {
@@ -43,6 +46,9 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	externalListing := getOps(t, env, map[string]string{"X-Beeftv-Client": reg.ID, "Authorization": "Bearer " + token})
 	if !reflect.DeepEqual(externalListing, want) {
 		t.Fatalf("外部客户端能力发现应为 %v，得到 %v", want, externalListing)
+	}
+	if !listingHas(externalListing, "task.wait") {
+		t.Fatalf("外部客户端应能看到等待任务操作: %v", externalListing)
 	}
 
 	hostListing := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken})
@@ -190,5 +196,34 @@ func TestExternalWritesListAndUndoRoutes(t *testing.T) {
 	}
 	if !undoEnv.Data.Undone || undoEnv.Data.OpID != "ext-http-op-1" {
 		t.Fatalf("unexpected undo response: %+v", undoEnv.Data)
+	}
+}
+
+func TestTaskWaitHTTPReturnsSuccessWhenTasksAreMissing(t *testing.T) {
+	env := newAssistantTestEnv(t, nil)
+	owner, err := agentops.EnsureOwnerToken(env.service.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := env.callWithHeaders(t, http.MethodPost, "/ops/task.wait",
+		`{"params":{"taskIds":["missing-task"],"timeoutMs":0}}`,
+		map[string]string{"X-Beeftv-Owner": owner})
+	if response.Code != http.StatusOK {
+		t.Fatalf("task.wait = %d %s", response.Code, response.Body.String())
+	}
+	data := decodeEnvelope(t, response)
+	if code, _ := data["__code"].(float64); code != 0 {
+		t.Fatalf("task.wait code = %v: %s", data["__code"], response.Body.String())
+	}
+	result, _ := data["result"].(map[string]any)
+	if result == nil {
+		t.Fatalf("task.wait 缺少结果: %v", data)
+	}
+	if pending, _ := result["pending"].(bool); pending {
+		t.Fatalf("不存在的任务不应是 pending: %v", result)
+	}
+	missing, _ := result["missingTaskIds"].([]any)
+	if len(missing) != 1 || missing[0] != "missing-task" {
+		t.Fatalf("missingTaskIds = %v", result["missingTaskIds"])
 	}
 }

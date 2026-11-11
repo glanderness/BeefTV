@@ -217,6 +217,8 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 `DELETE /assets/:id` 校验素材归属及业务引用。清空回收站时传 `expectedStatus=archived`，在删除事务内再次检查状态；期间已经还原的素材返回 409 并保留。该参数只接受 `archived`，其他值返回 400。省略参数保留普通删除语义，仍须通过引用检查。
 
 `GET /ops` 返回调用者当前身份可用的操作描述（含 JSON Schema）；`POST /ops/:op` 执行单个操作。
+`task.wait` 是只读操作，在服务端等待任务结果，一次最多 25 秒。任务成功且产物已保存才算完成；排队、下载、保存都返回未完成的原因。超时返回 HTTP 200 和 `pending: true`、原 `taskId`，调用方应继续等待原任务，不要重新提交。
+
 写操作必须带 `opId` 作为幂等键（同一 `opId` 同参数回读原结果，不同参数返回冲突），并按操作声明的
 `expectedRevision` 做原子 CAS：缺少读取时的 revision、或 revision 已过期，都会被拒绝，不会覆盖别人刚写入的内容。
 字段落点由画布能力描述符声明（例如生成类节点的可编辑提示词落在 `metadata.composerContent`，也就是画布编辑器
