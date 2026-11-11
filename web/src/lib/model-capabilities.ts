@@ -149,21 +149,44 @@ function applyProtocolWorkflowVideoCapability(video: VideoCapabilityConfig, work
     }
     if (durationParam) {
         const defDuration = Number(workflow.defaults?.[durationParam.name] ?? workflow.defaults?.duration);
-        const rangeMatch = durationParam.description?.match(/(\d+)\s*[~～-]\s*(\d+)/);
         if (durationParam.values?.length) {
             const values = durationParam.values.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0);
             if (values.length) {
                 video.duration = { selection: "enum", values, default: values.includes(defDuration) ? defDuration : values[0]! };
             }
-        } else if (rangeMatch) {
-            const min = Number(rangeMatch[1]);
-            const max = Number(rangeMatch[2]);
+        } else if (typeof durationParam.min === "number" && typeof durationParam.max === "number" && durationParam.min >= 1 && durationParam.max >= durationParam.min) {
+            const min = Math.trunc(durationParam.min);
+            const max = Math.trunc(durationParam.max);
             const fallbackDefault = Number.isInteger(defDuration) && defDuration >= min && defDuration <= max ? defDuration : Math.min(max, Math.max(min, video.duration.default));
             video.duration = { selection: "range", min, max, step: 1, default: fallbackDefault };
         } else if (Number.isInteger(defDuration) && defDuration > 0) {
             video.duration = { selection: "enum", values: [defDuration], default: defDuration };
         }
     }
+}
+
+export function hasUserModelCapability(
+    profile?: { capabilitySource?: "user"; capabilityConfig?: ModelCapabilityConfig } | null,
+): boolean {
+    return profile?.capabilitySource === "user" && Boolean(profile.capabilityConfig);
+}
+
+export function capabilityForAssignedProtocol(
+    profile: { model: string; capability?: string; capabilitySource?: "user"; capabilityConfig?: ModelCapabilityConfig },
+    protocol: ModelProtocol | undefined,
+    protocols?: ModelProtocolDefinition[],
+    options?: { keepNonMediaExisting?: boolean },
+): { capabilitySource?: "user"; capabilityConfig?: ModelCapabilityConfig } {
+    if (hasUserModelCapability(profile)) {
+        return { capabilitySource: "user", capabilityConfig: profile.capabilityConfig };
+    }
+    if ((profile.capability === "image" || profile.capability === "video") && protocol) {
+        return { capabilitySource: undefined, capabilityConfig: defaultModelCapabilityConfig(protocol, profile.model, protocols) };
+    }
+    return {
+        capabilitySource: undefined,
+        capabilityConfig: options?.keepNonMediaExisting ? profile.capabilityConfig : undefined,
+    };
 }
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "", protocols?: ModelProtocolDefinition[]): ModelCapabilityConfig {

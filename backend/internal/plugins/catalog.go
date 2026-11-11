@@ -76,6 +76,55 @@ func (s *Service) ProviderCatalog(scope, capability string, includeUnavailable b
 	return items
 }
 
+// LookupWorkflow resolves an enabled plugin workflow matching provider ID (or legacy alias), capability, and model ID.
+func (s *Service) LookupWorkflow(providerID string, capability protocol.Capability, modelID string) (protocol.ManifestWorkflow, bool) {
+	wantProvider := strings.TrimSpace(providerID)
+	wantModel := strings.TrimSpace(modelID)
+	if separator := strings.LastIndex(wantModel, "::"); separator >= 0 {
+		wantModel = strings.TrimSpace(wantModel[separator+2:])
+	}
+	if wantProvider == "" || wantModel == "" {
+		return protocol.ManifestWorkflow{}, false
+	}
+	for _, plugin := range s.List() {
+		if plugin.Status != StatusEnabled {
+			continue
+		}
+		for _, provider := range plugin.Manifest.Contributes.Providers {
+			if !matchesProviderIdentifier(provider, wantProvider) {
+				continue
+			}
+			if capability != "" && !containsPluginCapability(provider.Capabilities, capability) {
+				continue
+			}
+			for _, workflow := range plugin.Manifest.Contributes.Workflows {
+				if workflow.ProviderID != "" && !strings.EqualFold(strings.TrimSpace(workflow.ProviderID), provider.ID) {
+					continue
+				}
+				if capability != "" && workflow.Capability != "" && workflow.Capability != capability {
+					continue
+				}
+				if strings.EqualFold(strings.TrimSpace(workflow.ID), wantModel) {
+					return workflow, true
+				}
+			}
+		}
+	}
+	return protocol.ManifestWorkflow{}, false
+}
+
+func matchesProviderIdentifier(provider protocol.ManifestProvider, target string) bool {
+	if strings.EqualFold(strings.TrimSpace(provider.ID), target) {
+		return true
+	}
+	for _, alias := range provider.LegacyAliases {
+		if strings.EqualFold(strings.TrimSpace(alias), target) {
+			return true
+		}
+	}
+	return false
+}
+
 // ForUser filters the plugin center list. Administrators always see every
 // installed plugin; ordinary users only see user-scoped applications when
 // system plugins are hidden. The feature flag itself stays a host adapter.

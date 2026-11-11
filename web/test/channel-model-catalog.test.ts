@@ -293,7 +293,7 @@ describe("public channel model catalog", () => {
                         capability: "video",
                         parameters: [
                             { name: "prompt", type: "string", required: true, mapping: "prompt" },
-                            { name: "duration", type: "integer", mapping: "duration", description: "视频时长 1~15 秒" },
+                            { name: "duration", type: "integer", mapping: "duration", min: 1, max: 15, description: "视频时长 1~15 秒" },
                             { name: "resolution", type: "string", mapping: "resolution", values: ["480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"] },
                         ],
                         defaults: { duration: 5, resolution: "768p竖" },
@@ -307,6 +307,36 @@ describe("public channel model catalog", () => {
         expect(profile.resolutions).toEqual(["480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"]);
         expect(profile.defaultResolution).toBe("768p竖");
         expect(profile.duration).toEqual({ selection: "range", min: 1, max: 15, step: 1, default: 5 });
+    });
+
+    test("applyFetchedChannelModelCatalog updates custom-gateway versioned capabilities unless user customized", () => {
+        const defaultCap = defaultModelCapabilityConfig("newapi", "wan3");
+        const userCap = defaultModelCapabilityConfig("newapi", "wan3-user");
+        userCap.video!.duration = { selection: "range", min: 1, max: 25, step: 1, default: 8 };
+        const channel = createModelChannel({
+            id: "custom-gateway",
+            name: "Custom Gateway",
+            baseUrl: "https://provider.example/v1",
+            models: ["wan3", "wan3-user"],
+            modelProfiles: [
+                { model: "wan3", capability: "video", protocol: "newapi", capabilityConfig: defaultCap },
+                { model: "wan3-user", capability: "video", protocol: "newapi", capabilitySource: "user", capabilityConfig: userCap },
+            ],
+        });
+
+        const refreshed = applyFetchedChannelModelCatalog(channel, {
+            models: ["wan3", "wan3-user"],
+            catalog: [
+                { id: "wan3", modelType: "video", options: { durationSeconds: [{ value: "5" }, { value: "10" }] } },
+                { id: "wan3-user", modelType: "video", options: { durationSeconds: [{ value: "5" }, { value: "10" }] } },
+            ],
+        });
+
+        const wan3 = refreshed.modelProfiles?.find((item) => item.model === "wan3");
+        const wan3User = refreshed.modelProfiles?.find((item) => item.model === "wan3-user");
+        expect(wan3?.capabilityConfig?.video?.duration).toEqual({ selection: "enum", values: [5, 10], default: 5 });
+        expect(wan3User?.capabilitySource).toBe("user");
+        expect(wan3User?.capabilityConfig?.video?.duration.max).toBe(25);
     });
 
     test("preserves user-edited capability config across catalog merge and continuous duration max", () => {
