@@ -231,10 +231,16 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 			}
 			if existing.Status != "succeeded" {
 				if existing.Status == "running" && !existing.CreatedAt.IsZero() && time.Since(existing.CreatedAt) >= runningReceiptLease(req.Op) {
-					// 上一次执行没有落下最终回执（进程退出或最终写入失败）；清掉过期回执再重试。
-					if delErr := tx.Where("user_id = ? AND op_id = ? AND status = ?", req.UserID, req.OpID, "running").
-						Delete(&model.AgentOpRecord{}).Error; delErr != nil {
-						return AsError(delErr)
+					// 上一次执行没有落下最终回执（进程退出或最终写入失败）；按读到的 created_at
+					// 做围栏删除，避免把另一个执行刚接管的新回执删掉。
+					deleted := tx.Where("user_id = ? AND op_id = ? AND status = ? AND created_at = ?",
+						req.UserID, req.OpID, "running", existing.CreatedAt).Delete(&model.AgentOpRecord{})
+					if deleted.Error != nil {
+						return AsError(deleted.Error)
+					}
+					if deleted.RowsAffected != 1 {
+						return Conflict("operation_in_progress",
+							"同一操作正在被其他执行接管，请稍后重试", map[string]any{"opId": req.OpID})
 					}
 					if createErr := tx.Create(&record).Error; createErr != nil {
 						return AsError(createErr)

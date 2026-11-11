@@ -65,3 +65,31 @@ func TestTaskCancelRaceToCancelledReturnsCancelled(t *testing.T) {
 		t.Fatalf("unexpected result: %#v", payload)
 	}
 }
+
+func TestTaskCancelRaceToRunningIsRetryable(t *testing.T) {
+	task := &model.Task{ID: "race-running", UserID: "user-1", Status: model.TaskStatusQueued}
+	ctx := &Context{
+		Context:     context.Background(),
+		UserID:      "user-1",
+		Domain:      stubTaskDomain{tasks: map[string]*model.Task{task.ID: task}},
+		TaskControl: raceTaskController{task: task, status: model.TaskStatusRunning, err: errors.New("任务状态已变化，请刷新后重试")},
+	}
+	_, err := opTaskCancel(ctx, json.RawMessage(`{"taskId":"race-running"}`))
+	if opErr, ok := err.(*Error); !ok || opErr.Code != CodeConflict || opErr.Reason != "task_cancel_race" {
+		t.Fatalf("queued→running 必须保留可重试语义，得到 %v", err)
+	}
+}
+
+func TestTaskCancelRaceToSucceededIsRetryable(t *testing.T) {
+	task := &model.Task{ID: "race-succeeded", UserID: "user-1", Status: model.TaskStatusRunning}
+	ctx := &Context{
+		Context:     context.Background(),
+		UserID:      "user-1",
+		Domain:      stubTaskDomain{tasks: map[string]*model.Task{task.ID: task}},
+		TaskControl: raceTaskController{task: task, status: model.TaskStatusSucceeded, err: errors.New("任务状态已变化，请刷新后重试")},
+	}
+	_, err := opTaskCancel(ctx, json.RawMessage(`{"taskId":"race-succeeded"}`))
+	if opErr, ok := err.(*Error); !ok || opErr.Code != CodeConflict || opErr.Reason != "task_cancel_race" {
+		t.Fatalf("running→succeeded 必须保留可重试语义，得到 %v", err)
+	}
+}

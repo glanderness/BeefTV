@@ -56,18 +56,26 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 		// 取消期间状态可能被其他 worker 改掉；重读一次再决定是业务冲突还是真实故障。
 		latest, readErr := ctx.Domain.Task(ctx.UserID, taskID)
 		if readErr == nil && latest != nil && latest.Status != before.Status {
-			if latest.Status == model.TaskStatusCancelled {
+			switch latest.Status {
+			case model.TaskStatusCancelled:
 				return map[string]any{
 					"taskId":         latest.ID,
 					"status":         latest.Status,
 					"previousStatus": before.Status,
 					"note":           "任务此前已经取消，没有再次提交取消请求。",
 				}, nil
+			case model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSucceeded:
+				// 任务仍可取消或可停止取回，只是状态刚变化；保留重试语义。
+				return nil, Conflict("task_cancel_race", "任务状态在取消时发生变化，请重新查询任务状态后重试", map[string]any{
+					"taskId": taskID,
+					"status": latest.Status,
+				})
+			default:
+				return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(latest.Status)+"，无法取消", map[string]any{
+					"taskId": taskID,
+					"status": latest.Status,
+				})
 			}
-			return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(latest.Status)+"，无法取消", map[string]any{
-				"taskId": taskID,
-				"status": latest.Status,
-			})
 		}
 		mapped := mapDomainError(err)
 		if opErr, ok := mapped.(*Error); ok && opErr.Code == CodeInvalidArgument {
