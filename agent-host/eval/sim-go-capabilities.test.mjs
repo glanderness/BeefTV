@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { createSimGo } from './sim-go.mjs';
+import { createSimState } from './sim-go/state.mjs';
+import { executeOp } from './sim-go/operations.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -197,6 +205,54 @@ describe('模拟能力默认关闭，打开后才出现', () => {
     seedCanvas(sim, 'canvas-host-cap', [imageNode('node-image', '镜 1 首帧')]);
     sim.enableCapabilities(['canvas.nodes.get']);
     expect(() => sim.executeOp('canvas.nodes.get', { canvasId: 'canvas-host-cap', nodeIds: ['node-image'] }, '', '', { host: true })).toThrow(/权限/);
+  });
+});
+
+describe('agent.guide 只在夹具包含描述符时暴露', () => {
+  const descriptor = {
+    id: 'agent.guide',
+    summary: '读取 BeefTV 外部 Agent 使用说明（与一键接入安装的技能同一份）',
+    readOnly: true,
+    scope: 'workspace_read',
+    params: { type: 'object', properties: {}, additionalProperties: false },
+    assistantModes: [],
+    replay: 'safe',
+  };
+  const skillBytes = () =>
+    fs.readFileSync(path.resolve(__dirname, '../../plugins/beeftv-skills/skills/beeftv-canvas/SKILL.md'));
+
+  function stateWithGuide() {
+    const state = createSimState();
+    if (!state.descriptorMap.has('agent.guide')) {
+      state.descriptorMap.set(descriptor.id, descriptor);
+      state.descriptors.push(descriptor);
+    }
+    return state;
+  }
+
+  test('描述符存在时返回与真实后端一致的 name/version/contentHash/text', () => {
+    const result = executeOp(stateWithGuide(), 'agent.guide', {}).result;
+    const bytes = skillBytes();
+    const contentHash = crypto.createHash('sha256').update(bytes).digest('hex');
+    expect(result.name).toBe('beeftv-canvas');
+    expect(result.contentHash).toBe(contentHash);
+    expect(result.version).toBe(contentHash.slice(0, 12));
+    expect(result.text).toBe(bytes.toString('utf8'));
+  });
+
+  test('描述符不存在时按未知操作拒绝，不会被自动暴露', () => {
+    const state = createSimState();
+    const existing = state.descriptorMap.get('agent.guide');
+    if (existing) {
+      state.descriptorMap.delete('agent.guide');
+      state.descriptors.splice(state.descriptors.indexOf(existing), 1);
+    }
+    expect(state.descriptors.some((item) => item.id === 'agent.guide')).toBe(false);
+    expect(() => executeOp(state, 'agent.guide', {})).toThrow(/未知操作/);
+  });
+
+  test('内置宿主不能调用', () => {
+    expect(() => executeOp(stateWithGuide(), 'agent.guide', {}, '', '', { host: true })).toThrow(/权限/);
   });
 });
 

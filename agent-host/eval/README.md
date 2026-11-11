@@ -186,6 +186,9 @@ bun eval/run-eval.mjs --model real --scenario parity --runs 1 --out /tmp/beeftv-
 - R1a/R1b 回复判分：接受「已经生成」等同义说法，但仍要求回复说明结果，并用否定句反例守住判定。
 - `no_failed_or_unhandled_calls`：回溯确认它把「同一回合后来同类操作成功」的失败视为已恢复，比 S11 的「同一目标、带正确版本恢复」更宽；本次不收紧该判定，证据留在重测结论里。
 - S7 判分：用户明确要「改提示词，再给我一个生成提议」，判分仍要求第二次提议未确认；`canvas.generation.regenerate` 是直接计费执行、不产生提议，接进 S7 会绕开确认，因此不改 S7。
+- R6 的 `timeline_rendered`：`canvas.timeline.deliver` 会同步保存时间线并登记成功的渲染任务，此前只认 `canvas.timeline.update` + `canvas.timeline.render`，用一键成片成功出片也被判「最后一次时间线更新之后没有成功渲染」。现在把 deliver 同时算一次时间线写入（`result.timelineRevision`）和一次渲染（`result.renderTaskId` 且任务 succeeded），按 `op.at` 取最后一次写入；update+render 路径保留。`no_failed_or_unhandled_calls` 的口径不变：失败的 deliver 仍要等同一回合后来同类操作成功才算恢复。
+- `agent.guide`：真实后端合并后会把这个只读操作暴露给外部 Agent，模拟器此前没有处理函数，每次连接都会留下 `unsupported_operation`。现在只在夹具确实包含该描述符时可调用，返回与真实后端一致的 `name` / `version` / `contentHash` / `text`（正文为仓库里的画布技能，指纹按原始字节计算）；内置宿主按空 `assistantModes` 过滤，工具定义不变，请求效率门禁的预算不抬高。
+- R1a/R1b 回复判分的未来条件收窄到结果谓词附近：`首帧已生成，之后可在素材库查看` 是汇报结果，`生成完成后会自动绑定到节点`、`生成完毕后会通知您` 是过程说明。此前按整句查「之后」会误杀前者，又漏掉「完成后 / 完毕后」形态的过程句。
 
 ---
 

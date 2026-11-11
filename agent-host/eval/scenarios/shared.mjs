@@ -41,11 +41,24 @@ function clauseReportsResult(clause) {
     const index = start + match.index;
     const prefix = clause.slice(Math.max(0, index - 2), index);
     const rest = clause.slice(index + match[0].length);
-    const future = rest.startsWith('后') || rest.includes('之后') || rest.includes('以后');
+    // 未来条件只认紧贴结果谓词的部分：结果用逗号断开后再说「之后可以查看」仍算已汇报结果；
+    // 「生成完成后」「生成完毕后」则是过程说明，不算结果。
+    const localRest = rest.split(/[，,。；;、]/)[0];
+    const future = rest.startsWith('后') ||
+      /^(?:完成|完毕|成|毕)后/.test(rest) ||
+      localRest.includes('之后') ||
+      localRest.includes('以后');
     const failed = /^(?:失败|出错|报错)/.test(rest);
     const progressing = /^中(?=[，。；、\s]|$)/.test(rest);
     const partial = /^(?:一半|部分|一部分)/.test(rest);
     if (!BLOCKED_BEFORE.test(prefix) && !future && !failed && !progressing && !partial) return true;
+    if (future) {
+      // 未来条件后的同一段是计划描述，不能把其中的「绑定」等动作再当成已完成结果。
+      const nextBreak = rest.search(/[，,。；;、\n]/);
+      if (nextBreak === -1) return false;
+      start = index + match[0].length + nextBreak + 1;
+      continue;
+    }
     start = index + match[0].length;
   }
   return false;

@@ -590,6 +590,46 @@ describe('R6 十镜长片：分镜、首帧、时间线缺一项都判失败', (
     expect(checkOf(result, 'ten_first_frames_bound').passed).toBe(false);
   });
 
+  test('只有 deliver 一键成片时也算时间线写入和渲染', () => {
+    const result = good({
+      opLog: [
+        {
+          op: 'canvas.timeline.deliver', status: 'ok', params: { canvasId: 'c' },
+          result: { timelineRevision: 21, revision: 23, renderTaskId: 'task-render-1' },
+          at: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+    expect(checkOf(result, 'timeline_rendered').passed).toBe(true);
+  });
+
+  test('deliver 之后又有更晚的时间线更新判失败', () => {
+    const result = good({
+      opLog: [
+        {
+          op: 'canvas.timeline.deliver', status: 'ok', params: { canvasId: 'c' },
+          result: { timelineRevision: 21, revision: 23, renderTaskId: 'task-render-1' },
+          at: '2026-01-01T00:00:01.000Z',
+        },
+        {
+          op: 'canvas.timeline.update', status: 'ok', params: { canvasId: 'c' },
+          result: { revision: 24 }, at: '2026-01-01T00:00:02.000Z',
+        },
+      ],
+    });
+    expect(checkOf(result, 'timeline_rendered').passed).toBe(false);
+  });
+
+  test('agent.guide 调用成功不影响 R6 计分', () => {
+    const result = good({
+      opLog: [
+        { op: 'agent.guide', status: 'ok', params: {}, result: { name: 'beeftv-canvas' }, at: '2026-01-01T00:00:00.500Z' },
+        ...renderOpLog(),
+      ],
+    });
+    expect(result.passed).toBe(true);
+  });
+
   test('先渲染旧时间线、之后才更新最终时间线判失败', () => {
     const result = good({
       opLog: [
