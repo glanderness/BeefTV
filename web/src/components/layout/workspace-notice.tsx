@@ -1,19 +1,26 @@
 import type { ReactNode } from "react";
 
-import { Callout, type CalloutTone } from "@/components/ui/product/callout";
+import { Callout } from "@/components/ui/product/callout";
+import type { WorkspaceNoticeItem as BaseWorkspaceNoticeItem } from "@/lib/workspace-notices";
 
-/** 工作区右下角的非阻塞提示，复用 Callout 的语义样式和主题 token。 */
-export function WorkspaceNotice({ tone = "info", title, action, onClose }: { tone?: CalloutTone; title: string; action?: ReactNode; onClose: () => void }) {
+export type WorkspaceNoticeItem = BaseWorkspaceNoticeItem & { action?: ReactNode };
+
+/** 工作区右上角的非阻塞提示堆，复用 Callout 的语义样式和主题 token。 */
+export function WorkspaceNoticeStack({ notices }: { notices: WorkspaceNoticeItem[] }) {
+    if (!notices.length) return null;
     return (
-        <div className="fixed bottom-5 right-5 z-[var(--z-toast)] w-[min(360px,calc(100vw-32px))]" role="status" aria-live="polite">
-            <Callout
-                tone={tone}
-                title={title}
-                action={action}
-                onClose={onClose}
-                closeLabel="关闭提示"
-                className="shadow-[0_18px_50px_rgba(15,23,42,.22)] backdrop-blur-2xl"
-            />
+        <div className="fixed right-5 top-20 z-[var(--z-toast)] flex w-[min(360px,calc(100vw-32px))] flex-col gap-2" role="status" aria-live="polite">
+            {notices.map((notice) => (
+                <Callout
+                    key={notice.id}
+                    tone={notice.tone ?? "info"}
+                    title={notice.title}
+                    action={notice.action}
+                    onClose={notice.onClose}
+                    closeLabel="关闭提示"
+                    className="shadow-[0_18px_50px_rgba(15,23,42,.22)] backdrop-blur-2xl"
+                />
+            ))}
         </div>
     );
 }

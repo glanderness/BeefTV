@@ -58,20 +58,28 @@ export function resolveEmbeddedAssetUrl(path: string): string {
     return `${basePath}${path}`;
 }
 
-function postToEmbeddedParent(message: unknown): void {
+function postToEmbeddedParent(message: unknown): boolean {
     const config = getEmbeddedHarnessConfig();
-    if (!config || window.parent === window) return;
+    if (!config || window.parent === window) return false;
     let parentOrigin = config.parentOrigin;
     if (!parentOrigin) {
         try {
-            if (window.parent.location.origin !== window.location.origin) return;
+            if (window.parent.location.origin !== window.location.origin) return false;
             parentOrigin = window.location.origin;
         } catch {
-            return;
+            return false;
         }
     }
     // Opaque desktop shells require a Host-injected target. Only UI context crosses this boundary.
     window.parent.postMessage(message, parentOrigin);
+    return true;
+}
+
+/** 父窗口消息的第一道校验：来源是父窗口；注入了具体 origin 时再核对来源 origin。 */
+export function isTrustedEmbeddedParent(event: MessageEvent): boolean {
+    if (event.source !== window.parent) return false;
+    const parentOrigin = getEmbeddedHarnessConfig()?.parentOrigin;
+    return !parentOrigin || parentOrigin === "*" || event.origin === parentOrigin;
 }
 
 export function publishEmbeddedContext(context: EmbeddedWorkspaceContext): void {
@@ -99,8 +107,7 @@ export function publishSelectionAsk(input: {
             type: node.type,
         }));
     const ask: EmbeddedAsk = { source: "selection-toolbar", canvasId: input.canvasId, canvasTitle: input.canvasTitle, nodes };
-    postToEmbeddedParent({ type: "beeftv:ask", ask });
-    return true;
+    return postToEmbeddedParent({ type: "beeftv:ask", ask });
 }
 
 export function parseEmbeddedAskResult(data: unknown): EmbeddedAskResultStatus | null {
@@ -118,7 +125,7 @@ export function embeddedAskResultNotice(status: EmbeddedAskResultStatus): string
 
 export function createEmbeddedAskResultHandler(notify: (text: string) => void): (event: MessageEvent) => void {
     return (event) => {
-        if (event.source !== window.parent) return;
+        if (!isTrustedEmbeddedParent(event)) return;
         const status = parseEmbeddedAskResult(event.data);
         if (!status) return;
         const text = embeddedAskResultNotice(status);

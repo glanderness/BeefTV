@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button, ConfigProvider } from "antd";
 
 import { AppWorkspaceShell } from "@/components/layout/app-top-nav";
 import { FirstCreationGuide } from "@/components/onboarding/first-creation-guide";
 import { WorkspaceOperationProgress } from "@/components/layout/workspace-operation-progress";
-import { WorkspaceNotice } from "@/components/layout/workspace-notice";
+import { WorkspaceNoticeStack, type WorkspaceNoticeItem } from "@/components/layout/workspace-notice";
+import { addWorkspaceNotice } from "@/lib/workspace-notices";
 import { hydrateLocalModelConfig } from "@/components/workspace/workspace-bootstrap-hydrator";
 import { cn } from "@/lib/utils";
 import { isEmbeddedRuntime, publishEmbeddedContext } from "@/lib/embedded-runtime";
@@ -25,16 +26,21 @@ const workspaceTheme = getWorkspaceAntThemeConfig();
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
+    const pathnameRef = useRef(pathname);
+    pathnameRef.current = pathname;
     const navigate = useNavigate();
     const [canvasNoticeGate] = useState(() => createEmbeddedCanvasNoticeGate());
-    const [workspaceNotice, setWorkspaceNotice] = useState<{ text: string; tone: "info" | "warning"; onOpen?: () => void } | null>(null);
-    const showEmbeddedAskNotice = useCallback((text: string) => setWorkspaceNotice({ text, tone: "warning" }), []);
+    const [workspaceNotices, setWorkspaceNotices] = useState<WorkspaceNoticeItem[]>([]);
+    const dismissWorkspaceNotice = useCallback((id: string) => setWorkspaceNotices((items) => items.filter((item) => item.id !== id)), []);
+    const showEmbeddedAskNotice = useCallback((text: string) => {
+        setWorkspaceNotices((items) => addWorkspaceNotice(items, { id: "ask-result", tone: "warning", title: text, onClose: () => dismissWorkspaceNotice("ask-result") }));
+    }, [dismissWorkspaceNotice]);
     useEmbeddedAskResult(showEmbeddedAskNotice);
     useEffect(() => {
-        if (workspaceNotice?.tone !== "warning") return;
-        const timer = setTimeout(() => setWorkspaceNotice(null), 5000);
+        if (!workspaceNotices.some((item) => item.id === "ask-result")) return;
+        const timer = setTimeout(() => dismissWorkspaceNotice("ask-result"), 5000);
         return () => clearTimeout(timer);
-    }, [workspaceNotice]);
+    }, [dismissWorkspaceNotice, workspaceNotices]);
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const productWorkspace = !/^\/canvas\/[^/]+(?:\/|$)/.test(pathname);
     useWorkspaceButtonFeedback(productWorkspace);
@@ -65,7 +71,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (!isEmbeddedRuntime()) return;
         const onMessage = createEmbeddedWorkspaceSyncHandler({
-            getPathname: () => pathname,
+            getPathname: () => pathnameRef.current,
             hydrateProjects: () => { void hydrateLocalCanvasProjectsFromBackend(); },
             syncExtensions: () => {
                 void syncPluginsFromBackend().catch(() => undefined);
@@ -77,11 +83,20 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             findCanvasTitle: (canvasId) => useCanvasStore.getState().projects.find((project) => project.id === canvasId)?.title,
             canNotify: (canvasId) => canvasNoticeGate.allow(canvasId),
             openCanvasInUi: (canvasId) => navigate(`/canvas/${encodeURIComponent(canvasId)}`),
-            notifyCanvasChange: (notice) => setWorkspaceNotice({ text: notice.text, tone: "info", onOpen: notice.onOpen }),
+            notifyCanvasChange: (notice) => {
+                const id = `canvas:${notice.canvasId}`;
+                setWorkspaceNotices((items) => addWorkspaceNotice(items, {
+                    id,
+                    tone: "info",
+                    title: notice.text,
+                    action: <Button size="small" autoInsertSpace={false} onClick={() => { dismissWorkspaceNotice(id); notice.onOpen(); }}>打开</Button>,
+                    onClose: () => dismissWorkspaceNotice(id),
+                }));
+            },
         });
         window.addEventListener("message", onMessage);
         return () => window.removeEventListener("message", onMessage);
-    }, [canvasNoticeGate, navigate, pathname]);
+    }, [canvasNoticeGate, dismissWorkspaceNotice, navigate]);
 
     useLayoutEffect(() => {
         // Ant Design 浮层挂载在 body，必须用路由级标记隔离用户工作台与画布编辑器、运营后台。
@@ -101,14 +116,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 <AppWorkspaceShell>{children}</AppWorkspaceShell>
                 <FirstCreationGuide />
                 <WorkspaceOperationProgress />
-                {workspaceNotice ? (
-                    <WorkspaceNotice
-                        tone={workspaceNotice.tone}
-                        title={workspaceNotice.text}
-                        action={workspaceNotice.onOpen ? <Button size="small" autoInsertSpace={false} onClick={() => { const open = workspaceNotice.onOpen!; setWorkspaceNotice(null); open(); }}>打开</Button> : undefined}
-                        onClose={() => setWorkspaceNotice(null)}
-                    />
-                ) : null}
+                <WorkspaceNoticeStack notices={workspaceNotices} />
             </div>
         </ConfigProvider>
     );

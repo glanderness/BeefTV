@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { addWorkspaceNotice, type WorkspaceNoticeItem } from "@/lib/workspace-notices";
+
 import { defaultToolbarPrefs, resolveToolbarEntries, type ToolbarHandlers, type ToolContext } from "@/lib/canvas/tool-registry";
 import {
     createEmbeddedAskResultHandler,
@@ -45,6 +47,10 @@ function flushAsyncWork() {
     return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+function parentEvent(parent: unknown, data: unknown, origin = "https://host.test") {
+    return { source: parent, origin, data } as MessageEvent;
+}
+
 afterEach(() => {
     delete (globalThis as { window?: unknown }).window;
 });
@@ -81,9 +87,8 @@ describe("问助手交接", () => {
     test("嵌入模式把选中节点按协议发给父窗口，最多 20 个、标题截到 80 字", () => {
         const { posted } = installBrowserWindow();
         const longTitle = "主".repeat(90);
-        const nodes = Array.from({ length: 22 }, (_, index) => ({ id: `n${index + 1}`, title: index === 0 ? longTitle : `节点 ${index + 1}`, type: "image" }));
-        const selectedNodeIds = new Set([...nodes.map((node) => node.id), "not-on-canvas"]);
-        selectedNodeIds.delete("n21");
+        const nodes = Array.from({ length: 22 }, (_, index) => ({ id: `n${index + 1}`, title: index === 2 ? longTitle : `节点 ${index + 1}`, type: "image" }));
+        const selectedNodeIds = new Set(nodes.slice(2).map((node) => node.id));
 
         expect(publishSelectionAsk({ canvasId: "canvas-1", canvasTitle: "第一场", nodes, selectedNodeIds })).toBe(true);
         expect(posted).toHaveLength(1);
@@ -94,28 +99,34 @@ describe("问助手交接", () => {
         expect(message.ask.canvasId).toBe("canvas-1");
         expect(message.ask.canvasTitle).toBe("第一场");
         expect(message.ask.nodes).toHaveLength(20);
-        expect(message.ask.nodes[0]).toEqual({ id: "n1", title: "主".repeat(80), type: "image" });
-        expect(message.ask.nodes.map((node) => node.id)).not.toContain("n21");
-        expect(message.ask.nodes.at(-1)?.id).toBe("n20");
+        expect(message.ask.nodes[0]).toEqual({ id: "n3", title: "主".repeat(80), type: "image" });
+        expect(message.ask.nodes.map((node) => node.id)).not.toContain("n1");
+        expect(message.ask.nodes.at(-1)?.id).toBe("n22");
     });
 
-    test("单独打开 BeefTV 时不发消息，页面继续走内置助手", () => {
-        const { posted } = installBrowserWindow({ embedded: false });
+    test("单独打开或无有效父窗口时不发消息，页面继续走内置助手", () => {
+        const standalone = installBrowserWindow({ embedded: false });
         expect(publishSelectionAsk({ canvasId: "canvas-1", canvasTitle: "第一场", nodes: [{ id: "n1", title: "节点", type: "image" }], selectedNodeIds: ["n1"] })).toBe(false);
-        expect(posted).toHaveLength(0);
+        expect(standalone.posted).toHaveLength(0);
+
+        const embedded = installBrowserWindow();
+        (embedded.fakeWindow as { parent?: unknown }).parent = embedded.fakeWindow;
+        expect(publishSelectionAsk({ canvasId: "canvas-1", canvasTitle: "第一场", nodes: [{ id: "n1", title: "节点", type: "image" }], selectedNodeIds: ["n1"] })).toBe(false);
+        expect(embedded.posted).toHaveLength(0);
     });
 
     test("右侧只提示 blocked 和 unavailable", () => {
         const { parent } = installBrowserWindow();
         const notices: string[] = [];
         const handler = createEmbeddedAskResultHandler((text) => notices.push(text));
-        const event = (status: unknown, source: unknown = parent) => handler({ source, data: { type: "beeftv:ask-result", status } } as MessageEvent);
+        const event = (status: unknown, source: unknown = parent, origin = "https://host.test") => handler(parentEvent(source, { type: "beeftv:ask-result", status }, origin));
 
         event("applied");
         event("preserved");
         event("blocked");
         event("unavailable");
         event("blocked", {});
+        event("blocked", parent, "https://other.test");
         expect(notices).toEqual(["右侧正在发送，稍后再点", "右侧对话还没准备好，稍后再点"]);
         expect(parseEmbeddedAskResult({ type: "beeftv:ask-result", status: "blocked" })).toBe("blocked");
         expect(parseEmbeddedAskResult({ type: "beeftv:ask-result", status: "unknown" })).toBeNull();
@@ -146,7 +157,7 @@ describe("工作区同步不拉走页面", () => {
             notifyCanvasChange: (notice) => { notices.push(notice); },
         });
 
-        handler({ source: parent, data: { type: "beeftv:workspace-sync", activity: { kind: "canvas-created", canvasId: "canvas-1" } } } as MessageEvent);
+        handler(parentEvent(parent, { type: "beeftv:workspace-sync", activity: { kind: "canvas-created", canvasId: "canvas-1" } }));
         await flushAsyncWork();
 
         expect(calls).not.toContain("navigate:canvas-1");
@@ -172,7 +183,28 @@ describe("工作区同步不拉走页面", () => {
             openCanvasInUi: () => {},
             notifyCanvasChange: (notice) => { notices.push(notice); },
         });
-        handler({ source: parent, data: { type: "beeftv:workspace-sync", activity: { kind: "canvas-updated", canvasId: "canvas-1" } } } as MessageEvent);
+        handler(parentEvent(parent, { type: "beeftv:workspace-sync", activity: { kind: "canvas-updated", canvasId: "canvas-1" } }));
+        await flushAsyncWork();
+        expect(notices).toHaveLength(0);
+    });
+
+    test("刷新期间用户已打开目标画布时不再提示", async () => {
+        const parent = syncWindow();
+        let pathname = "/assets";
+        const notices: EmbeddedCanvasNotice[] = [];
+        const handler = createEmbeddedWorkspaceSyncHandler({
+            getPathname: () => pathname,
+            hydrateProjects: () => {},
+            syncExtensions: () => {},
+            openCanvas: async () => { pathname = "/canvas/canvas-1"; },
+            refreshCanvas: async () => {},
+            markExternalChange: () => {},
+            findCanvasTitle: () => "雨夜街道",
+            canNotify: () => true,
+            openCanvasInUi: () => {},
+            notifyCanvasChange: (notice) => { notices.push(notice); },
+        });
+        handler(parentEvent(parent, { type: "beeftv:workspace-sync", activity: { kind: "canvas-created", canvasId: "canvas-1" } }));
         await flushAsyncWork();
         expect(notices).toHaveLength(0);
     });
@@ -184,6 +216,16 @@ describe("工作区同步不拉走页面", () => {
         expect(embeddedCanvasNoticeText("workspace-updated", "第二场")).toBeNull();
         expect(currentCanvasIdFromPath("/canvas/a%20b")).toBe("a b");
         expect(currentCanvasIdFromPath("/assets")).toBeNull();
+    });
+
+    test("短时警告不会覆盖带「打开」的画布提示", () => {
+        const base = { onClose: () => {} };
+        const canvas: WorkspaceNoticeItem = { ...base, id: "canvas:c1", tone: "info", title: "DSH 新建了画布「雨夜街道」" };
+        const warning: WorkspaceNoticeItem = { ...base, id: "ask-result", tone: "warning", title: "右侧正在发送，稍后再点" };
+        const items = addWorkspaceNotice(addWorkspaceNotice([], canvas), warning);
+        expect(items.map((item) => item.id)).toEqual(["canvas:c1", "ask-result"]);
+        const replaced = addWorkspaceNotice(items, { ...canvas, title: "DSH 修改了画布「雨夜街道」" });
+        expect(replaced.map((item) => item.title)).toEqual(["右侧正在发送，稍后再点", "DSH 修改了画布「雨夜街道」"]);
     });
 
     test("同一张画布 30 秒内只提示一次", () => {

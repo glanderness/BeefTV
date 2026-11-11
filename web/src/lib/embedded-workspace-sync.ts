@@ -1,3 +1,5 @@
+import { isTrustedEmbeddedParent } from "@/lib/embedded-runtime";
+
 export type EmbeddedWorkspaceActivity = {
     kind?: unknown;
     canvasId?: unknown;
@@ -60,7 +62,7 @@ export function createEmbeddedCanvasNoticeGate(intervalMs = EMBEDDED_CANVAS_NOTI
  */
 export function createEmbeddedWorkspaceSyncHandler(options: EmbeddedWorkspaceSyncOptions): (event: MessageEvent) => void {
     return (event) => {
-        if (event.source !== window.parent || event.data?.type !== "beeftv:workspace-sync") return;
+        if (event.data?.type !== "beeftv:workspace-sync" || !isTrustedEmbeddedParent(event)) return;
         const activity = event.data.activity as EmbeddedWorkspaceActivity | undefined;
         const kind = typeof activity?.kind === "string" ? activity.kind : "";
         const canvasId = typeof activity?.canvasId === "string" ? activity.canvasId.trim() : "";

@@ -77,4 +77,6 @@ test("画布提示使用现有提示样式并带「打开」", async () => {
     await open.waitFor({ state: "visible" });
     expect(await open.isVisible()).toBe(true);
     await capture("workspace-sync-canvas-notice");
+    await page.getByRole("button", { name: "关闭提示" }).click();
+    expect(await notice.isVisible()).toBe(false);
 }, 30_000);

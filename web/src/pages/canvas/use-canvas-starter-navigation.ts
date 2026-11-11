@@ -13,7 +13,7 @@ type Options = {
     createNode: ReturnType<typeof useCanvasNodeOperations>["createNode"];
     fitCanvasSelection: () => void;
     createDirectorShot: ReturnType<typeof useCanvasDirector>["createDirectorShot"];
-    openAssistant: () => void;
+    openAssistant?: () => void;
 };
 
 // Entry links are consumed only after the loaded canvas has real dimensions.
@@ -69,7 +69,7 @@ export function useCanvasStarterNavigation({ projectLoaded, searchParams, setSea
             if (starter === "director" && !nodesRef.current.some((node) => node.type === CanvasNodeType.Director)) {
                 createDirectorShot();
             } else if (starter === "agent") {
-                openAssistant();
+                openAssistant?.();
             }
 
             const next = new URLSearchParams(searchParams);

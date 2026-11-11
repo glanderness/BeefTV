@@ -3,9 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import { Button, ConfigProvider } from "antd";
 
 import { CanvasProjectSelectionToolbar } from "@/pages/canvas/canvas-project-selection-toolbar";
-import { WorkspaceNotice } from "@/components/layout/workspace-notice";
+import { WorkspaceNoticeStack } from "@/components/layout/workspace-notice";
+import { embeddedCanvasNoticeText } from "@/lib/embedded-workspace-sync";
 
 window.__BEEFTV_HARNESS__ = { embedded: true, apiBase: "/beeftv/app/api", basePath: "/beeftv/app", parentOrigin: window.location.origin };
+
+function NoticeDemo() {
+    const [open, setOpen] = useState(true);
+    if (!open) return null;
+    return <WorkspaceNoticeStack notices={[{ id: "demo", tone: "info", title: embeddedCanvasNoticeText("canvas-created", "雨夜街道") || "", action: <Button size="small" autoInsertSpace={false}>打开</Button>, onClose: () => setOpen(false) }]} />;
+}
 
 function Harness() {
     const anchorRef = useRef<HTMLDivElement>(null);
@@ -33,7 +40,7 @@ function Harness() {
                     onSaveWorkflow={() => {}}
                 /> : null}
             </div>
-            {notice ? <WorkspaceNotice tone="info" title="DSH 新建了画布「雨夜街道」" action={<Button size="small" autoInsertSpace={false}>打开</Button>} onClose={() => {}} /> : null}
+            {notice ? <NoticeDemo /> : null}
         </div>
     );
 }
