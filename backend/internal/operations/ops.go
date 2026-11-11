@@ -33,6 +33,7 @@ func RegisterDefaultOps(r *Registry) {
 	registerCanvasTimelineOps(r)
 	registerCanvasRenderOps(r)
 	registerCanvasNodeConfigureOps(r)
+	registerCanvasNodesBatchOps(r)
 	registerStoryboardPreparation(r)
 	registerGenerationSubmit(r)
 	registerCanvasProjectExportOps(r)
