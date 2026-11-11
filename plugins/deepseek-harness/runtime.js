@@ -185,10 +185,18 @@ function taskIncomplete(task) {
     task.outputs.some(output => output?.materializationErrorCode))
 }
 
+function taskDeliveryPending(task) {
+  const outputs = task?.delivery?.outputs
+  return Array.isArray(outputs) && outputs.some(output => ['downloading', 'retrying', 'waiting'].includes(output?.state))
+}
+
 function taskFailed(task) {
   if (task?.status === 'cancelled') return true
   const phase = taskPhase(task)
   if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false
+  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_retryable') return false
+  // /ops/task.get 不一定带 outcome.phase；投递还在下载或重试时不能当成终态失败。
+  if (taskDeliveryPending(task)) return false
   return task?.status === 'failed'
 }
 
@@ -212,19 +220,47 @@ export function taskOutcome(task, taskId = task?.taskId) {
 }
 
 // task.wait 超时返回 pending；任务详情退回用同一套判定，不把暂时读不到当成失败。
+function listedTaskState(value, taskId) {
+  const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined) : undefined
+  const raw = typeof listed?.state === 'string' ? listed.state : typeof listed?.status === 'string' ? listed.status : ''
+  const state = raw.toLowerCase()
+  if (['succeeded', 'success', 'completed', 'ready'].includes(state)) return { taskId, state: 'succeeded', reason: '' }
+  if (['incomplete', 'materialization_failed'].includes(state)) {
+    const original = failureReason(listed)
+    const base = '结果尚未保存，只能恢复保存，不能重新生成'
+    return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
+  }
+  if (['failed', 'error', 'cancelled', 'canceled'].includes(state)) return { taskId, state: 'failed', reason: failureReason(listed) || (state.startsWith('cancel') ? '已取消' : '') }
+  if (state && state !== 'pending' && state !== 'running' && state !== 'queued') return taskOutcome(listed, taskId)
+  return undefined
+}
+
 export function waitOutcome(value, taskId) {
-  const status = typeof value?.status === 'string' ? value.status : ''
-  // task.wait 自己负责「成功、产物已保存」的判定；这里只读它的结论，不再用 task.get 的字段重算。
-  const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || value.tasks[0] : undefined
-  if (status === 'succeeded') return { taskId, state: 'succeeded', reason: '' }
-  if (status === 'incomplete') {
+  const status = typeof value?.status === 'string' ? value.status.toLowerCase() : ''
+  // 后端可能返回单个状态，也可能返回整批的 tasks/pending/completed/failed 汇总；两种都认。
+  const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined) : undefined
+  if (status === 'succeeded' || status === 'success' || status === 'completed' || status === 'ready') return { taskId, state: 'succeeded', reason: '' }
+  if (status === 'incomplete' || status === 'materialization_failed') {
     const original = failureReason(listed || value?.task || value)
     const base = '结果尚未保存，只能恢复保存，不能重新生成'
     return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
   }
-  if (status === 'failed') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
-  if (status === 'pending') return { taskId, state: 'pending', reason: '' }
-  if (value && typeof value === 'object' && ('status' in value || 'taskId' in value)) return taskOutcome(value, taskId)
+  if (status === 'failed' || status === 'error') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
+  if (status === 'cancelled' || status === 'canceled') return { taskId, state: 'failed', reason: '已取消' }
+  if (status === 'pending' || status === 'running' || status === 'queued') return { taskId, state: 'pending', reason: '' }
+  const listedOutcome = listedTaskState(value, taskId)
+  if (listedOutcome) return listedOutcome
+  if (value?.cancelled === true || listed?.cancelled === true) return { taskId, state: 'failed', reason: '已取消' }
+  if (Array.isArray(value?.failedTaskIds) && value.failedTaskIds.includes(taskId)) return { taskId, state: 'failed', reason: failureReason(listed) }
+  if (Array.isArray(value?.completedTaskIds) && value.completedTaskIds.includes(taskId)) return { taskId, state: 'succeeded', reason: '' }
+  if (value?.pending === true || value?.timedOut === true || (typeof value?.pending === 'number' && value.pending > 0)) return { taskId, state: 'pending', reason: '' }
+  const failedCount = typeof value?.failed === 'number' ? value.failed : 0
+  const completedCount = typeof value?.completed === 'number' ? value.completed : 0
+  // 汇总里同时有成功和失败、又没有按任务的 id 时无法判断这一项，继续等下一次更具体的结果。
+  if (failedCount > 0 && completedCount > 0) return { taskId, state: 'pending', reason: '' }
+  if (value?.failed === true || failedCount > 0) return { taskId, state: 'failed', reason: failureReason(listed) }
+  if (value?.completed === true || completedCount > 0) return { taskId, state: 'succeeded', reason: '' }
+  if (value && typeof value === 'object' && ('status' in value || 'taskId' in value || 'outcome' in value || 'outputs' in value)) return taskOutcome(value, taskId)
   return { taskId, state: 'pending', reason: '' }
 }
 

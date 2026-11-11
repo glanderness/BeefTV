@@ -633,6 +633,14 @@ test('task results feed the wake text and never mistake pending downloads for co
   // task.wait 已对「成功且产物保存」负责，不再用 tasks 里可能缺失的字段重算。
   assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 't', status: 'succeeded' }] }, 't').state, 'succeeded')
   assert.equal(waitOutcome({ status: 'failed', tasks: [{ taskId: 't', status: 'failed', error: '上游拒绝' }] }, 't').reason, '上游拒绝')
+  // 后端的 task.wait 也可能返回整批 tasks + completed/failed/pending 汇总，不只有顶层 status。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'succeeded' }], taskIds: ['t'], pending: 0, completed: 1, failed: 0, timedOut: false }, 't').state, 'succeeded')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', error: '上游拒绝' }], pending: 0, failed: 1, failedTaskIds: ['t'] }, 't').reason, '上游拒绝')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', status: 'running' }], pending: 1 }, 't').state, 'pending')
+  assert.equal(waitOutcome({ cancelled: true, tasks: [{ taskId: 't', state: 'cancelled' }] }, 't').reason, '已取消')
+  assert.equal(waitOutcome({ completed: 1, failed: 1, pending: 0 }, 't').state, 'pending')
+  assert.equal(taskOutcome({ taskId: 'd', status: 'failed', delivery: { outputs: [{ state: 'downloading' }] } }).state, 'pending')
+  assert.equal(taskOutcome({ taskId: 'r', status: 'failed', resultState: 'failed_retryable' }).state, 'pending')
   const incomplete = waitOutcome({ status: 'incomplete', tasks: [{ taskId: 't', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }] }, 't')
   assert.equal(incomplete.state, 'incomplete')
   assert.match(incomplete.reason, /只能恢复保存/)
@@ -769,6 +777,43 @@ test('a completion queued in the old workspace never reaches the new workspace',
   // 旧工作区的消息被过滤，DSH 追加的 runtime-context 和用户消息保留。
   assert.deepEqual(decision.messages, [userMessage, runtimeContext])
   assert.equal(wakes.length, 0)
+})
+
+test('a wake injected at the end of a busy turn is followed up when the agent goes idle', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['busy-end-1']))
+  await until(() => injected.length === 1)
+  agent.status = 'idle'
+  listeners.get('agent/status')({ agent, status: 'idle' })
+  await until(() => wakes.length === 1)
+  assert.match(wakes[0].content[0].text, /busy-end-1/)
+})
+
+test('a step-limit stop lets a real user message through and restarts the count', async context => {
+  const { call, listeners } = await startHost(context, { pluginSettings: { autoContinue: true, stepLimit: 5 } })
+  const connectionId = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.connectionId
+  await call('POST', '/beeftv/context', { sessionId: 'session', connectionId, context: { route: '/canvas/a' } })
+  const { agent } = fakeAgent('session', 'running')
+  for (let index = 0; index < 5; index++) {
+    listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent }, { content: [] })
+  }
+  const userMessage = { id: 'real-user-message', role: 'user', content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } }
+  const decision = await listeners.get('agent/pre-step')({ agent, turn: 1, messages: [userMessage] }, async () => ({ kind: 'enter', messages: [userMessage] }))
+  assert.deepEqual(decision, { kind: 'enter', messages: [userMessage] })
+  assert.deepEqual(await listeners.get('agent/pre-step')({ agent, turn: 1, messages: [] }, async () => ({ kind: 'enter', messages: [] })), { kind: 'enter', messages: [] })
+})
+
+test('away resolution queries at most 20 tasks per pass and keeps the rest for later', async context => {
+  const taskIds = Array.from({ length: 21 }, (_, index) => `task-${index}`)
+  const { call, workspace, home } = await startHost(context, { awaiting: { sessions: {}, away: [{ workspaceId: 'verified-workspace', taskIds }] } })
+  workspace.taskGet = ({ taskId }) => succeededTask(taskId)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, '有 20 个生成在你离开时完成。')
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8')).away
+  assert.deepEqual(stored[0].taskIds, [taskIds[20]])
 })
 
 test('a step-limit rejection defers an injected completion instead of swallowing it', async context => {

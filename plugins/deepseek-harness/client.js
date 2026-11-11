@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
 .beeftv-harness-action-menu { position:absolute; right:0; top:32px; z-index:20; min-width:200px; padding:4px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px; background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)); box-shadow:0 6px 20px #0003; }
 .beeftv-harness-action-menu button { display:block; width:100%; padding:8px 12px; text-align:left; border:0; border-radius:4px; background:transparent; white-space:nowrap; font-size:12px; }
 .beeftv-harness-action-menu button:hover { background:var(--dsw-alias-interactive-bg-hover); }
-.beeftv-harness-action-menu button[aria-checked=true]::after { content:"✓"; float:right; margin-left:10px; }
+.beeftv-harness-action-menu button[aria-pressed=true]::after { content:"✓"; float:right; margin-left:10px; }
 .beeftv-harness-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 12px; font-size:12px; color:var(--dsw-alias-label-secondary); }
 .beeftv-harness-setting input { width:56px; border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:3px 6px; background:var(--dsw-alias-bg-base); color:inherit; font:inherit; }
 .beeftv-harness-workspace { position:relative; min-width:0; min-height:0; overflow:hidden; }
@@ -224,6 +224,7 @@ window.__ModuleLoader__.load({
       const requestStatusRefresh = React.useCallback(() => refreshStatus.current?.(), [])
       const skipStepSave = React.useRef(false)
       const statusGeneration = React.useRef(0)
+      const actionsButton = React.useRef(null)
       const reportError = React.useCallback(message => setError(message), [])
       const appURL = !choosingWorkspace && status?.connected ? status.appURL : undefined
       const source = React.useMemo(() => frameURL(appURL), [appURL])
@@ -486,14 +487,14 @@ window.__ModuleLoader__.load({
             h('div', { className: 'beeftv-harness-agent-header' },
               h('div', { className: 'beeftv-harness-agent-title-row' },
                 h('h2', { className: 'beeftv-harness-agent-heading' }, 'BeefTV Agent'),
-                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') setActionsOpen(false) } },
-                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, 'aria-haspopup': 'menu', onClick: () => { skipStepSave.current = false; setActionsOpen(open => !open) } }, '⋯'),
-                  actionsOpen && h('div', { className: 'beeftv-harness-action-menu', role: 'menu' },
-                    h('button', { type: 'button', role: 'menuitem', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
-                    status?.connected && !choosingWorkspace && h('button', { type: 'button', role: 'menuitem', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
-                    h('button', { type: 'button', role: 'menuitem', onClick: returnToConversation }, '返回 DSH'),
-                    h('button', { type: 'button', role: 'menuitemcheckbox', 'aria-checked': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
-                    h('label', { className: 'beeftv-harness-setting', role: 'none' }, '每轮工具调用上限',
+                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') { setActionsOpen(false); actionsButton.current?.focus() } } },
+                  h('button', { ref: actionsButton, type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => { skipStepSave.current = false; setActionsOpen(open => !open) } }, '⋯'),
+                  actionsOpen && h('div', { className: 'beeftv-harness-action-menu' },
+                    h('button', { type: 'button', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
+                    status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
+                    h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
+                    h('button', { type: 'button', 'aria-pressed': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
+                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
                       h('input', {
                         type: 'number', min: 5, max: 200, step: 5, defaultValue: status?.stepLimit || 40,
                         onBlur: event => {

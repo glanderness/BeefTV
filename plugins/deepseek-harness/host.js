@@ -131,6 +131,8 @@ export function apply(ctx) {
   const awaitingPath = join(pluginHome, 'awaiting.json')
   const awaitMaximumMs = 40 * 60 * 1000
   const taskGetIntervalMs = 5_000
+  // 后端 task.wait 单次最多等 25 秒；客户端留一点余量，避免边界上自己先 abort。
+  const taskWaitCallTimeoutMs = 30_000
   let pluginSettings = { ...defaultPluginSettings }
   // 离开时还没投递的任务先留在盘上，连回同一工作区后查一次终态再决定提示数量。
   let awayPending = []
@@ -398,7 +400,7 @@ export function apply(ctx) {
         if (state.useTaskWait) {
           await Promise.all(pending.map(async ([taskId]) => {
             try {
-              const value = await callOperation(state.runtime, 'task.wait', { taskId }, AbortSignal.any([state.controller.signal, AbortSignal.timeout(25_000)]))
+              const value = await callOperation(state.runtime, 'task.wait', { taskId }, AbortSignal.any([state.controller.signal, AbortSignal.timeout(taskWaitCallTimeoutMs)]))
               const outcome = waitOutcome(value, taskId)
               if (outcome.state !== 'pending' && state.tasks.has(taskId)) state.tasks.set(taskId, outcome)
             } catch {
@@ -492,7 +494,10 @@ export function apply(ctx) {
       }
       let completed = Number.isInteger(entry.resolvedCount) ? entry.resolvedCount : 0
       const remaining = []
-      const taskIds = [...new Set(entry.taskIds)].slice(0, 20)
+      const allIds = [...new Set(entry.taskIds)]
+      const taskIds = allIds.slice(0, 20)
+      // 限流只查前 20 个；其余原样留在盘上，下次连回同一工作区继续核对。
+      remaining.push(...allIds.slice(20))
       await Promise.all(taskIds.map(async taskId => {
         try {
           const task = await callOperation(runtime, 'task.get', { taskId }, AbortSignal.timeout(10_000))
@@ -827,9 +832,16 @@ export function apply(ctx) {
     }
     const sessionId = sessionIdOf(payload?.agent)
     const state = sessionId ? turns.get(sessionId) : undefined
+    const userInput = (decision.messages || []).some(message => message?.source?.kind === 'user')
     if (state?.stop && (state.turn === null || payload.turn === state.turn)) {
-      deferClaimedWakes(fresh)
-      return { kind: 'reject' }
+      if (!userInput) {
+        deferClaimedWakes(fresh)
+        return { kind: 'reject' }
+      }
+      // 用户已经自己发了消息：这次直接放行并重新计数，别把用户输入和步骤上限一起丢掉。
+      state.count = 0
+      state.stop = false
+      stepNotice = null
     }
     for (const item of fresh) pendingWakeMessages.delete(item.id)
     return stale.length ? { ...decision, messages } : decision
@@ -880,6 +892,23 @@ export function apply(ctx) {
     for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
     if (stoppedSessions.has(entry.sessionId)) return
     deferOutcomes(entry.sessionId, entry.outcomes, entry.workspaceId)
+  })
+  ctx.on('agent/status', payload => {
+    if (payload?.status !== 'idle') return
+    const agent = payload.agent
+    const sessionId = sessionIdOf(agent)
+    if (!sessionId) return
+    // 忙时 inject 的消息如果落在本轮最后一个步骤之后，轮次会先结束；这里改成 followup 再唤醒。
+    for (const [messageId, entry] of [...pendingWakeMessages]) {
+      if (entry.sessionId !== sessionId) continue
+      let removed = false
+      try { removed = agent?.inbox?.remove?.(messageId) === true } catch { removed = false }
+      if (!removed) continue
+      pendingWakeMessages.delete(messageId)
+      wakeCounts.set(sessionId, Math.max(0, (wakeCounts.get(sessionId) || 0) - 1))
+      for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
+      if (!deliverOutcomes(sessionId, agent, entry.outcomes)) deferOutcomes(sessionId, entry.outcomes, entry.workspaceId)
+    }
   })
   ctx.on('agent/disposed', payload => {
     const sessionId = sessionIdOf(payload?.agent)
