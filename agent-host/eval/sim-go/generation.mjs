@@ -310,7 +310,6 @@ export const GENERATION_OPS = {
           modelKey: target.modelKey,
           proposalId,
         });
-        state.externalTaskIds.add(task.id);
         created.push(task);
       }
     } catch (error) {

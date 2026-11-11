@@ -37,8 +37,6 @@ export function createSimState(options = {}) {
     pendingTimers: new Set(),
     // 按画布模拟任务耗时（毫秒）；没有设置的画布保持原来的 5 毫秒即完成行为。
     taskTimings: new Map(),
-    // 外部提交的任务只交付产物，不自动写回节点；绑定仍由 canvas.task.bind 完成。
-    externalTaskIds: new Set(),
     counts: {
       ops: {},
       WriteOps: 0,

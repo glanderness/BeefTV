@@ -257,8 +257,8 @@ function resourceIdFromMetadata(meta = {}) {
   return '';
 }
 
-// 外部任务完成后产物先入素材库，节点要等 canvas.task.bind 才有 resourceId。
-// 真实后端会自动把已交付产物写回目标节点，所以 media.* 在绑定前也应能读到同一份产物。
+// 真实后端的任务成功后会把已交付产物自动写回目标节点（画布上已有 resourceId）。
+// 这里仍保留按任务产物回退，用于画布文档还没带上写回字段的旧数据或写回未完成的节点。
 function resourceIdFromNodeTask(state, node, canvasId) {
   const taskId = String(node?.metadata?.taskId || '').trim();
   if (!taskId) return '';

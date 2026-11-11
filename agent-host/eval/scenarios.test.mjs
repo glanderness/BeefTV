@@ -887,3 +887,73 @@ describe('替代场景用 sim-go 自检：正确执行时应全部通过', () =>
     expect(result.passed, JSON.stringify(result.checks)).toBe(true);
   });
 });
+
+// 真实后端在任务成功后自动写回目标节点；外部提交不调 canvas.task.bind 也应判过绑定检查。
+// 判分门槛不放低：任务没完成（节点没拿到 resourceId）仍然判失败。
+describe('R1b 判分：绑定可以来自后端自动写回，但任务必须完成', () => {
+  const setupR1b = (simGo, canvasId) => {
+    const scenario = parityScenario('R1b');
+    const setupState = scenario.setup(simGo, canvasId);
+    const turnId = 'turn-R1b-1';
+    simGo.beginTurn({ turnId, canvasId, permissionMode: 'canvas' });
+    return { scenario, setupState, turnId };
+  };
+
+  const submitExternal = (simGo, canvasId, kind, nodeIds, opKey, turnId) => simGo.executeOp('canvas.generation.submit', {
+    canvasId,
+    nodeIds,
+    kind,
+    expectedRevision: simGo.ensureCanvas(canvasId).revision,
+    expectedModelConfigRevision: 1,
+  }, opKey, turnId).result;
+
+  test('任务成功、没调 canvas.task.bind 时判过', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-r1b-autobind';
+    const { scenario, setupState, turnId } = setupR1b(simGo, canvasId);
+    simGo.setTaskTiming(canvasId, { imageMs: 10, videoMs: 20 });
+    try {
+      const image = submitExternal(simGo, canvasId, 'image', ['node-r1-image'], 'r1b-auto-image', turnId);
+      const video = submitExternal(simGo, canvasId, 'video', ['node-r1-video'], 'r1b-auto-video', turnId);
+      await simGo.waitForTasks([...image.taskIds, ...video.taskIds], 1000);
+
+      // 确认绑定不是 Agent 自己补的：操作日志里没有 canvas.task.bind。
+      expect(simGo.snapshot().opLog.some((op) => op.op === 'canvas.task.bind')).toBe(false);
+      const result = scenario.evaluate({
+        simGo,
+        canvasId,
+        setupState,
+        turnRecords: [{ turnId, reply: '首帧和视频都生成好并绑定到节点了。', error: null, durationMs: 1 }],
+      });
+      expect(result.passed, JSON.stringify(result.checks)).toBe(true);
+      expect(checkOf(result, 'video_bound_to_node').passed).toBe(true);
+    } finally {
+      await simGo.close();
+    }
+  });
+
+  test('视频还在跑就收工仍判失败', async () => {
+    const simGo = createSimGo({});
+    const canvasId = 'canvas-r1b-running';
+    const { scenario, setupState, turnId } = setupR1b(simGo, canvasId);
+    simGo.setTaskTiming(canvasId, { imageMs: 10, videoMs: 5000 });
+    try {
+      const image = submitExternal(simGo, canvasId, 'image', ['node-r1-image'], 'r1b-running-image', turnId);
+      const video = submitExternal(simGo, canvasId, 'video', ['node-r1-video'], 'r1b-running-video', turnId);
+      await simGo.waitForTasks(image.taskIds, 500);
+      expect(simGo.tasks.get(video.taskIds[0]).status).toBe('running');
+
+      const result = scenario.evaluate({
+        simGo,
+        canvasId,
+        setupState,
+        turnRecords: [{ turnId, reply: '首帧已生成，视频还在生成中。', error: null, durationMs: 1 }],
+      });
+      expect(checkOf(result, 'video_task_succeeded').passed).toBe(false);
+      expect(checkOf(result, 'video_bound_to_node').passed).toBe(false);
+      expect(result.passed).toBe(false);
+    } finally {
+      await simGo.close();
+    }
+  });
+});

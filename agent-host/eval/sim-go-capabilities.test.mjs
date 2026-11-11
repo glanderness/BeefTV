@@ -81,7 +81,7 @@ describe('canvas.project.export 默认可用', () => {
 });
 
 describe('media 读取已交付的生成产物', () => {
-  test('绑定前也能按 nodeId 读到任务产物，绑定后仍可读', async () => {
+  test('任务完成后按 nodeId 读到同一份交付产物，绑定后仍可读', async () => {
     const sim = createSimGo();
     const canvasId = 'canvas-media';
     seedCanvas(sim, canvasId, [imageNode('node-image', '镜 1 首帧')]);
@@ -97,8 +97,8 @@ describe('media 读取已交付的生成产物', () => {
     expect(settled.tasks[0].status).toBe('succeeded');
     const output = settled.tasks[0].outputs[0];
 
-    // 外部任务不自动写回节点；真实后端仍能从目标节点读同一次交付的产物。
-    expect(sim.ensureCanvas(canvasId).nodes[0].metadata.resourceId).toBeUndefined();
+    // 任务成功后后端已自动写回节点；media.* 读到的就是节点上的同一份产物。
+    expect(sim.ensureCanvas(canvasId).nodes[0].metadata.resourceId).toBe(output.resourceId);
     const overview = sim.executeOp('media.overview', { canvasId, nodeId: 'node-image' }).result;
     expect(overview.source.resourceId).toBe(output.resourceId);
     const inspect = sim.executeOp('media.inspect', { canvasId, nodeId: 'node-image', expectedVersion: overview.source.version }).result;

@@ -95,7 +95,8 @@ function isSucceeded(task) {
   return task && task.status === 'succeeded';
 }
 
-// 绑定看节点自己的媒体字段：任务完成但没有 resourceId 只是「产物已交付」。
+// 绑定看节点自己的媒体字段：任务成功后后端会自动写回，任务成功但节点没有 resourceId
+// 仍然是「没绑定」；判分只认最终的节点状态，不管绑定来自自动写回还是 canvas.task.bind。
 function isBound(node) {
   const metadata = node?.metadata || {};
   return Boolean(metadata.taskId && metadata.resourceId && metadata.assetId);
