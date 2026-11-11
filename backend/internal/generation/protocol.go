@@ -131,18 +131,18 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 			return nil, err
 		}
 		taskID = created.TaskID
+		if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
+			return nil, ProtocolResultError(created.Message, taskID, body)
+		}
+		if created.Status == protocol.StatusSucceeded {
+			return FinishProtocolAdapterResult(ctx, input, adapter, request, taskID, created.Result, policy)
+		}
 		if taskID == "" {
 			extracted, extractErr := ExtractProviderTaskID(body)
 			if extractErr != nil {
 				return nil, extractErr
 			}
 			taskID = extracted
-		}
-		if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
-			return nil, ProtocolResultError(created.Message, taskID, body)
-		}
-		if created.Status == protocol.StatusSucceeded {
-			return FinishProtocolAdapterResult(ctx, input, adapter, request, taskID, created.Result, policy)
 		}
 		if taskID == "" {
 			return nil, SubmissionUnknownError{Cause: errors.New("创建请求未返回可查询的任务 ID，请核对供应商任务记录")}
@@ -289,17 +289,17 @@ func tryStreamingDeclarativeTextCreate(ctx context.Context, input Input, adapter
 		return nil, true, err
 	}
 	taskID := created.TaskID
-	if taskID == "" {
-		if extracted, extractErr := ExtractProviderTaskID(data); extractErr == nil {
-			taskID = extracted
-		}
-	}
 	if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
 		return nil, true, ProtocolResultError(created.Message, taskID, data)
 	}
 	if created.Status == protocol.StatusSucceeded {
 		result, finishErr := FinishProtocolAdapterResult(ctx, input, adapter, request, taskID, created.Result, policy)
 		return result, true, finishErr
+	}
+	if taskID == "" {
+		if extracted, extractErr := ExtractProviderTaskID(data); extractErr == nil {
+			taskID = extracted
+		}
 	}
 	return nil, true, SubmissionUnknownError{Cause: errors.New("流式文本创建未返回最终结果")}
 }
