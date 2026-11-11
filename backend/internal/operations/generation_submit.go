@@ -77,6 +77,7 @@ type GenerationOrder struct {
 	TargetViews         []GenerationOrderTargetView `json:"targetViews,omitempty"`
 	SourceTurnID        string                      `json:"sourceTurnId,omitempty"`
 	TaskIDs             []string                    `json:"taskIds,omitempty"`
+	Regenerate          bool                        `json:"regenerate,omitempty"`
 	ContinuationID      string                      `json:"continuationId,omitempty"`
 	CreatedAt           string                      `json:"createdAt"`
 	UpdatedAt           string                      `json:"updatedAt"`
@@ -91,8 +92,9 @@ type ProposedGenerationRecorder interface {
 }
 
 // External clients own execution approval; they still use the same task admission.
+// releaseEnded 为 true 时按 regenerate 的规则释放节点上已经结束的结果。
 type ExternalGenerationAdmission interface {
-	SubmitExternalGeneration(userID, operationID, canvasID string, targets []GenerationTarget) (any, error)
+	SubmitExternalGeneration(userID, operationID, canvasID string, targets []GenerationTarget, releaseEnded bool) (any, error)
 }
 
 type GenerationOrderRecorder interface {
@@ -157,12 +159,27 @@ func BuildGenerationOrderTargetViews(domain Domain, targets []GenerationTarget) 
 	return views
 }
 
+const generationSubmitParams = `{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`
+
+// generationAdmissionMode 区分两种付费受理。参数、校验和审批流程相同，
+// 只有节点旧结果的释放规则不同（见 generation_resubmit.go）。
+type generationAdmissionMode int
+
+const (
+	generationSubmit generationAdmissionMode = iota
+	generationRegenerate
+)
+
 func registerGenerationSubmit(r *Registry) {
-	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.generation.submit", Summary: "凭已批准生成单执行画布生成并计费", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`), Handler: opGenerationSubmit})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, SubmitsGeneration: true, ID: "canvas.generation.submit", Summary: "凭已批准生成单执行画布生成并计费", Scope: ScopeCanvas,
+		Params: json.RawMessage(generationSubmitParams), Handler: opGenerationSubmit})
 }
 
 func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
+	return admitGeneration(ctx, raw, generationSubmit)
+}
+
+func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmissionMode) (any, error) {
 	var args struct {
 		CanvasID                    string   `json:"canvasId"`
 		ProposalID                  string   `json:"proposalId"`
@@ -205,14 +222,21 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 		}
 		switch approvalMode {
 		case ApprovalModeAsk:
-			if existingOrder == nil || (existingOrder.Status != GenerationOrderApproved && existingOrder.Status != GenerationOrderSubmitted) {
+			if existingOrder == nil {
 				hint := proposalID
 				if hint == "" {
 					hint = "<proposalId>"
 				}
 				return nil, PermissionDenied("generation_approval_required", "当前凭据设为「每次问我」，请先在 BeefTV 界面确认或运行 beeftv approve "+hint+" 批准生成单；Agent 自身凭据不能自批")
 			}
+			// owner 批准的是整张生成单，不能借一次部分节点的重做扩大成整单付费。
+			if mode == generationRegenerate && !sameNodeIDSet(existingOrder.NodeIDs, args.NodeIDs) {
+				return nil, InvalidArg("generation_scope_mismatch", "原地重做必须覆盖整张生成单的节点；请只为要重做的节点提出新生成单")
+			}
 			if existingOrder.Status == GenerationOrderSubmitted && len(existingOrder.TaskIDs) > 0 {
+				if mode == generationRegenerate && !existingOrder.Regenerate {
+					return nil, PermissionDenied("generation_approval_required", "这张生成单已按普通提交执行过；请重新提出生成单并由 owner 批准原地重做")
+				}
 				return map[string]any{
 					"canvasId":     args.CanvasID,
 					"orderId":      existingOrder.OrderID,
@@ -221,6 +245,13 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 					"status":       string(existingOrder.Status),
 					"taskIds":      existingOrder.TaskIDs,
 				}, nil
+			}
+			if existingOrder.Status == GenerationOrderPending && mode != generationRegenerate {
+				hint := existingOrder.ProposalID
+				return nil, PermissionDenied("generation_approval_required", "当前凭据设为「每次问我」，请先在 BeefTV 界面确认或运行 beeftv approve "+hint+" 批准生成单；Agent 自身凭据不能自批")
+			}
+			if mode == generationRegenerate && existingOrder.Status != GenerationOrderPending && !existingOrder.Regenerate {
+				return nil, PermissionDenied("generation_approval_required", "这张生成单不是用于原地重做的；请重新提出生成单并由 owner 批准")
 			}
 		case ApprovalModeAuto:
 			if (args.ExpectedRevision != nil && *args.ExpectedRevision < 1) || (args.ExpectedModelConfigRevision != nil && *args.ExpectedModelConfigRevision < 0) {
@@ -279,18 +310,44 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 	if err = validateGenerationDependencies(doc, nodes, args.NodeIDs, args.Kind); err != nil {
 		return nil, err
 	}
+	// 「每次问我」下 regenerate 不能自批：先在这张生成单上登记「原地重做」，
+	// 等 owner 批准时由审批路径按原地重做的规则释放旧结果。登记与操作回执同事务提交，
+	// 因此这里返回成功但不建任务、不扣费；批准后调用方应换新的 operationId 再读回任务。
+	if external && mode == generationRegenerate && approvalMode == ApprovalModeAsk && existingOrder != nil && existingOrder.Status == GenerationOrderPending {
+		existingOrder.Regenerate = true
+		existingOrder.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := orderRecorder.RecordGenerationOrder(ctx.UserID, *existingOrder); err != nil {
+			return nil, AsError(err)
+		}
+		return map[string]any{
+			"canvasId":         args.CanvasID,
+			"orderId":          existingOrder.OrderID,
+			"proposalId":       existingOrder.ProposalID,
+			"approvalMode":     string(approvalMode),
+			"status":           "pending_approval",
+			"approvalRequired": true,
+			"regenerate":       true,
+			"nodeIds":          existingOrder.NodeIDs,
+			"nextAction": map[string]any{
+				"operation":  "beeftv approve " + existingOrder.ProposalID,
+				"approval":   "owner-required",
+				"proposalId": existingOrder.ProposalID,
+				"message":    "生成单已标记为原地重做，尚未生成或扣费。请由 owner 在 BeefTV 界面确认或运行 beeftv approve 批准；批准后请用新的 operationId 再调用 canvas.generation.regenerate 读取任务。",
+			},
+		}, nil
+	}
 	if external {
 		port, ok := ctx.Domain.(ExternalGenerationAdmission)
 		if !ok {
 			return nil, Unsupported("generation_unavailable", "当前工作区不能提交生成")
 		}
-		out, err := port.SubmitExternalGeneration(ctx.UserID, ctx.OperationID, args.CanvasID, targets)
+		out, err := port.SubmitExternalGeneration(ctx.UserID, ctx.OperationID, args.CanvasID, targets, mode == generationRegenerate)
 		if err != nil {
 			return nil, err
 		}
 		if hasOrderRecorder {
 			now := time.Now().UTC().Format(time.RFC3339)
-			order := buildSubmittedExternalOrder(ctx, args.CanvasID, proposalID, currentRevision, modelConfigRevision, firstChoice, targets, existingOrder, out, now)
+			order := buildSubmittedExternalOrder(ctx, args.CanvasID, proposalID, currentRevision, modelConfigRevision, firstChoice, targets, existingOrder, out, now, mode == generationRegenerate)
 			if err := orderRecorder.RecordGenerationOrder(ctx.UserID, order); err != nil {
 				return nil, AsError(err)
 			}
@@ -326,6 +383,25 @@ func generationTargetsContainBatch(planned, batch []GenerationTarget) bool {
 	return true
 }
 
+// sameNodeIDSet 判断两次请求是否覆盖完全相同的节点集合。owner 批准按生成单执行整单，
+// 所以 ask 模式下的原地重做不能只声明其中一个子集。
+func sameNodeIDSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, id := range left {
+		counts[id]++
+	}
+	for _, id := range right {
+		if counts[id] == 0 {
+			return false
+		}
+		counts[id]--
+	}
+	return true
+}
+
 func buildSubmittedExternalOrder(
 	ctx *Context,
 	canvasID, proposalID string,
@@ -335,11 +411,13 @@ func buildSubmittedExternalOrder(
 	existing *GenerationOrder,
 	submitResult any,
 	now string,
+	regenerate bool,
 ) GenerationOrder {
 	taskIDs := extractSubmittedTaskIDs(submitResult)
 	if existing != nil {
 		updated := *existing
 		updated.Status = GenerationOrderSubmitted
+		updated.Regenerate = updated.Regenerate || regenerate
 		if updated.ApprovedBy == "" {
 			updated.ApprovedBy = string(ctx.Caller.EffectiveApprovalMode()) + ":" + ctx.Caller.EffectiveClientLabel()
 		}
@@ -372,6 +450,7 @@ func buildSubmittedExternalOrder(
 		CallerClient:        ctx.Caller.EffectiveClientLabel(),
 		ApprovalMode:        approvalMode,
 		Status:              GenerationOrderSubmitted,
+		Regenerate:          regenerate,
 		ApprovedBy:          string(approvalMode) + ":" + ctx.Caller.EffectiveClientLabel(),
 		ApprovedAt:          now,
 		Kind:                kind,

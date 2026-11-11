@@ -252,7 +252,7 @@ func ApproveExternalGenerationOrderInTx(tx *gorm.DB, domain Domain, userID, prop
 	if !ok {
 		return nil, Unsupported("generation_unavailable", "当前工作区不能提交生成")
 	}
-	admitted, err := port.SubmitExternalGeneration(userID, "approve:"+order.ProposalID, order.CanvasID, batchTargets)
+	admitted, err := port.SubmitExternalGeneration(userID, "approve:"+order.ProposalID, order.CanvasID, batchTargets, order.Regenerate)
 	if err != nil {
 		return nil, err
 	}

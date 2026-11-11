@@ -46,19 +46,21 @@ type Op struct {
 	AssistantCanvas   bool
 	AssistantProposal bool
 	ExternalOnly      bool
+	SubmitsGeneration bool // 执行一次会创建付费生成任务。
 	ReplaySafe        bool
 	ReplayUnsafe      bool // A read can still incur an external model charge.
 }
 
 // Descriptor 是给客户端做能力发现用的稳定描述。
 type Descriptor struct {
-	ID             string          `json:"id"`
-	Summary        string          `json:"summary"`
-	ReadOnly       bool            `json:"readOnly"`
-	Scope          Scope           `json:"scope"`
-	Params         json.RawMessage `json:"params"`
-	AssistantModes []string        `json:"assistantModes"`
-	Replay         string          `json:"replay"`
+	ID                string          `json:"id"`
+	Summary           string          `json:"summary"`
+	ReadOnly          bool            `json:"readOnly"`
+	Scope             Scope           `json:"scope"`
+	Params            json.RawMessage `json:"params"`
+	AssistantModes    []string        `json:"assistantModes"`
+	Replay            string          `json:"replay"`
+	SubmitsGeneration bool            `json:"submitsGeneration,omitempty"`
 }
 
 // Registry 持有全部操作定义；写操作必须在事务里执行，保证与操作记录同提交。
@@ -120,7 +122,7 @@ func (op *Op) Descriptor() Descriptor {
 	if (op.ReadOnly || op.ReplaySafe) && !op.ReplayUnsafe {
 		replay = "safe"
 	}
-	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams(), AssistantModes: op.assistantModes(), Replay: replay}
+	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams(), AssistantModes: op.assistantModes(), Replay: replay, SubmitsGeneration: op.SubmitsGeneration}
 }
 
 func (op *Op) assistantModes() []string {
