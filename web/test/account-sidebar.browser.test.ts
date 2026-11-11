@@ -33,6 +33,16 @@ let blockCuratedRemote = false;
 let curatedGate = createGate();
 let failCuratedRemote = false;
 let failNpmSearch = false;
+let balanceCny = "28.50";
+let checkoutCalls: Array<Record<string, unknown>> = [];
+let reconcileStatus = "pending";
+let reconcileCredited = false;
+let reconcileSettled = false;
+let failTopUpInfo = false;
+let blockTopUpInfo = false;
+let topUpInfoGate = createGate();
+let checkoutOpened = true;
+let checkoutOpenError = "";
 
 beforeEach(() => {
     connectionState = "disconnected";
@@ -48,6 +58,17 @@ beforeEach(() => {
     curatedGate = createGate();
     failCuratedRemote = false;
     failNpmSearch = false;
+    balanceCny = "28.50";
+    checkoutCalls = [];
+    reconcileStatus = "pending";
+    reconcileCredited = false;
+    reconcileSettled = false;
+    failTopUpInfo = false;
+    blockTopUpInfo = false;
+    topUpInfoGate.release();
+    topUpInfoGate = createGate();
+    checkoutOpened = true;
+    checkoutOpenError = "";
 });
 
 beforeAll(async () => {
@@ -99,6 +120,60 @@ beforeAll(async () => {
                     account: { id: "u-1", display_name: "测试账号", email: "tester@example.com" },
                 });
             }
+            if (path.endsWith("/beeftv/connection/topup/info")) {
+                const snapshotBalance = balanceCny;
+                if (blockTopUpInfo) {
+                    blockTopUpInfo = false;
+                    await topUpInfoGate.enter();
+                }
+                if (failTopUpInfo) {
+                    return Response.json({ code: 502, reason: "bad_gateway", msg: "充值配置服务暂不可用" }, { status: 502 });
+                }
+                return ok({
+                    currency: "CNY",
+                    enableOnlineTopup: true,
+                    payMethods: [
+                        { type: "wxpay", name: "微信支付" },
+                        { type: "alipay", name: "支付宝" },
+                    ],
+                    minTopup: 20,
+                    maxTopup: 100000,
+                    amountOptions: [50, 100, 200, 500],
+                    bonusEnabled: false,
+                    enableCardTopup: true,
+                    card: { paymentCurrency: "USD", creditCurrency: "CNY", minAmount: 5, maxAmount: 10000, usdCnyRate: "7.12" },
+                    balanceCny: snapshotBalance,
+                });
+            }
+            if (path.endsWith("/beeftv/connection/topup/checkout")) {
+                const body = (await req.json()) as Record<string, unknown>;
+                checkoutCalls.push(body);
+                const isCard = body.paymentMethod === "card";
+                return ok({
+                    tradeNo: String(body.tradeNo || "ORD-TEST-100"),
+                    paymentMethod: String(body.paymentMethod || "wxpay"),
+                    amount: isCard ? { currency: "USD", value: String(body.amountUsd || "10.00") } : { currency: "CNY", value: `${Number(body.amount || 100).toFixed(2)}` },
+                    credit: isCard ? { currency: "CNY", value: "71.20" } : { currency: "CNY", value: `${Number(body.amount || 100).toFixed(2)}` },
+                    opened: checkoutOpened,
+                    openError: checkoutOpenError || undefined,
+                });
+            }
+            if (path.endsWith("/beeftv/connection/topup/reconcile")) {
+                if (reconcileStatus === "success" && (reconcileSettled || reconcileCredited)) balanceCny = "128.50";
+                return ok({
+                    status: reconcileStatus,
+                    credited: reconcileCredited,
+                    settled: reconcileSettled,
+                    balanceCny,
+                    connection: {
+                        state: "connected",
+                        hasCredential: true,
+                        balance: "available",
+                        balanceCny,
+                        account: { id: "u-1", display_name: "测试账号", email: "tester@example.com" },
+                    },
+                });
+            }
             if (path.endsWith("/beeftv/connection/cancel")) {
                 connectionState = "cancelled";
                 return ok({ state: connectionState, hasCredential: false });
@@ -114,6 +189,8 @@ beforeAll(async () => {
                 return ok({
                     state: snapshotState,
                     hasCredential: hasRetainedCredential,
+                    balance: hasRetainedCredential ? "available" : "unknown",
+                    balanceCny: hasRetainedCredential ? balanceCny : undefined,
                     catalogFailed: snapshotState === "catalog_failed" || snapshotState === "connection_error",
                     account: hasRetainedCredential ? { id: "u-1", display_name: "测试账号", email: "tester@example.com" } : null,
                 });
@@ -163,9 +240,10 @@ beforeAll(async () => {
 afterAll(async () => {
     connectionPollGate.release();
     curatedGate.release();
-    await browser?.close();
+    topUpInfoGate.release();
     server?.stop(true);
-});
+    await browser?.close();
+}, 30000);
 
 test("opening sidebar account modal never auto-starts OAuth; explicit login, changelog, and manual sync retry work", async () => {
     failCatalogReads = 1;
@@ -326,6 +404,141 @@ test("plugin market keeps loading on empty cache, clears curated error after rec
         await page.getByTestId("market-tab-curated").click();
         await page.waitForFunction(() => !document.querySelector('[role="alert"]'));
         expect(await page.locator(".plugin-market").innerText()).toContain("精选演示插件");
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("account balance pane shows live balance, switches CNY/USD methods cleanly, and updates balance after checkout reconciliation", async () => {
+    connectionState = "connected";
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        await modal.waitFor();
+        await modal.getByText("¥ 28.50").waitFor();
+        expect(await modal.innerText()).not.toContain("暂未开放");
+
+        await modal.getByRole("button", { name: "国际银行卡" }).click();
+        await modal.getByText("预计到账 ¥ 71.20").waitFor();
+
+        await modal.getByRole("button", { name: "微信支付" }).click();
+        await modal.getByRole("button", { name: /^充\s*值$/ }).click();
+        const checkoutDialog = page.locator(".account-checkout-modal");
+        await checkoutDialog.waitFor();
+        await checkoutDialog.getByRole("button", { name: /^立\s*即\s*支\s*付$/ }).click();
+
+        await checkoutDialog.getByText("ORD-TEST-100").waitFor();
+        expect(checkoutCalls).toEqual([{ paymentMethod: "wxpay", amount: 100 }]);
+
+        reconcileStatus = "success";
+        reconcileCredited = true;
+        reconcileSettled = true;
+        await checkoutDialog.getByRole("button", { name: "我已完成支付" }).click();
+        await checkoutDialog.waitFor({ state: "hidden" });
+        await modal.getByText("¥ 128.50").waitFor();
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("topup info failure blocks unverified payment submission until retried; card checkout preserves pending order across dismiss and settles via webhook flag", async () => {
+    connectionState = "connected";
+    failTopUpInfo = true;
+    checkoutOpened = false;
+    checkoutOpenError = "无法自动打开系统浏览器，请点击“重新打开支付页”继续付款";
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        await modal.waitFor();
+
+        await modal.getByRole("alert").filter({ hasText: "充值配置读取失败" }).waitFor();
+        expect(await modal.getByRole("button", { name: /^充\s*值$/ }).isDisabled()).toBe(true);
+        expect(await modal.getByRole("button", { name: "微信支付" }).count()).toBe(0);
+
+        failTopUpInfo = false;
+        await modal.getByRole("button", { name: /^重\s*试$/ }).click();
+        await modal.getByRole("button", { name: "国际银行卡" }).waitFor();
+        expect(await modal.getByRole("button", { name: /^充\s*值$/ }).isDisabled()).toBe(false);
+
+        await modal.getByRole("button", { name: "国际银行卡" }).click();
+        await modal.getByText("预计到账 ¥ 71.20").waitFor();
+        await modal.getByRole("button", { name: /^充\s*值$/ }).click();
+
+        const checkoutDialog = page.locator(".account-checkout-modal");
+        await checkoutDialog.waitFor();
+        await checkoutDialog.getByRole("button", { name: /^立\s*即\s*支\s*付$/ }).click();
+        await checkoutDialog.getByText("ORD-TEST-100").waitFor();
+        expect(await checkoutDialog.innerText()).toContain("无法自动打开系统浏览器");
+        expect(checkoutCalls).toEqual([{ paymentMethod: "card", amountUsd: "10.00" }]);
+
+        await checkoutDialog.getByRole("button", { name: "稍后查看" }).click();
+        await checkoutDialog.waitFor({ state: "hidden" });
+        await modal.getByText("待确认订单 ORD-TEST-100").waitFor();
+        expect(await modal.getByRole("button", { name: /^充\s*值$/ }).isDisabled()).toBe(true);
+
+        checkoutOpened = true;
+        checkoutOpenError = "";
+        await modal.getByRole("button", { name: "继续查看" }).click();
+        await checkoutDialog.waitFor();
+        await checkoutDialog.getByRole("button", { name: "重新打开支付页" }).click();
+        expect(checkoutCalls).toEqual([
+            { paymentMethod: "card", amountUsd: "10.00" },
+            { paymentMethod: "card", tradeNo: "ORD-TEST-100" },
+        ]);
+
+        // Simulate webhook already settled (credited=false, settled=true).
+        reconcileStatus = "success";
+        reconcileCredited = false;
+        reconcileSettled = true;
+        await checkoutDialog.getByRole("button", { name: "我已完成支付" }).click();
+        await checkoutDialog.waitFor({ state: "hidden" });
+        await modal.getByText("¥ 128.50").waitFor();
+        expect(await modal.getByText("待确认订单 ORD-TEST-100").count()).toBe(0);
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("slow topup/info response cannot overwrite a newer reconciled balance from a restored pending order", async () => {
+    connectionState = "connected";
+    blockTopUpInfo = true;
+    reconcileStatus = "success";
+    reconcileCredited = true;
+    reconcileSettled = true;
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.addInitScript(() => {
+            window.sessionStorage.setItem("beeftv:pending-topup:u-1", JSON.stringify({
+                tradeNo: "ORD-RESTORED-1",
+                paymentMethod: "wxpay",
+                amount: { currency: "CNY", value: "100.00" },
+                credit: { currency: "CNY", value: "100.00" },
+                opened: true,
+            }));
+        });
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        await modal.waitFor();
+
+        await topUpInfoGate.entered;
+        await modal.getByText("待确认订单 ORD-RESTORED-1").waitFor();
+        await modal.getByRole("button", { name: "继续查看" }).click();
+        const checkoutDialog = page.locator(".account-checkout-modal");
+        await checkoutDialog.waitFor();
+        await checkoutDialog.getByRole("button", { name: "我已完成支付" }).click();
+        await checkoutDialog.waitFor({ state: "hidden" });
+        await modal.getByText("¥ 128.50").waitFor();
+
+        topUpInfoGate.release();
+        await modal.getByRole("button", { name: "微信支付" }).waitFor();
+        await page.waitForTimeout(200);
+        expect(await modal.innerText()).toContain("¥ 128.50");
+        expect(await modal.innerText()).not.toContain("¥ 28.50");
     } finally {
         await page.close();
     }
