@@ -77,6 +77,8 @@ test('paid review reads ask for approval and name only the inspected segment and
   // A catalog without replay metadata still asks for the known paid review, never fails open.
   assert.equal(requiresGenerationApproval(review, {}, [], []), true)
   assert.equal(requiresGenerationApproval(review, {}, [], [{ id: 'media.review', readOnly: true }]), true)
+  assert.equal(requiresGenerationApproval(review, {}, [], [{ id: 'media.review' }]), true)
+  assert.equal(requiresGenerationApproval(review, {}, [], [{ id: 'media.review', readOnly: false }]), true)
   assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}, [], [{ id: 'canvas.get', readOnly: true }]), false)
   assert.equal(approvalReason(review, { startMs: 1500, endMs: 6500 }, [], new Map(), operations), '审片会调用审片模型，可能收费。片段：1.5–6.5 秒。')
   assert.equal(approvalReason(review, { startMs: 5000, endMs: 2000, model: 'review-model' }, [], new Map(), operations), '审片会调用审片模型，可能收费。模型：review-model。')
@@ -159,6 +161,8 @@ test('workspace handshake verifies the live build, database readiness and worksp
 function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, launchError, appVersion = '2.2.0', installedVersion = appVersion, installed = true, bundled = true, bridgeURL = 'http://127.0.0.1:1234' } = {}) {
   const calls = []
   let attempts = 0
+  let plistReads = 0
+  Object.defineProperty(calls, 'plistReads', { value: () => plistReads })
   context.after(() => {
     context.mock.restoreAll()
     syncBuiltinESMExports()
@@ -169,6 +173,7 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
   })
   context.mock.method(childProcess, 'execFile', (command, args, options, callback) => {
     if (command === '/usr/libexec/PlistBuddy') {
+      plistReads += 1
       const version = typeof installedVersion === 'function' ? installedVersion() : installedVersion
       queueMicrotask(() => version ? callback(null, `${version}\n`, '') : callback(new Error('Print: Entry Does Not Exist'), '', ''))
       return
@@ -297,10 +302,10 @@ async function startHost(context, options = {}) {
   const home = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-dsh-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
-  if (options.initialSettings) {
+  if (options.initialSettings || options.rawSettings) {
     const settingsDir = join(home, 'storages', 'beeftv')
     await fsPromises.mkdir(settingsDir, { recursive: true })
-    await fsPromises.writeFile(join(settingsDir, 'connection.json'), JSON.stringify(options.initialSettings))
+    await fsPromises.writeFile(join(settingsDir, 'connection.json'), options.rawSettings ?? JSON.stringify(options.initialSettings))
   }
   if (options.readDelayMs) {
     const readFile = fsPromises.readFile
@@ -487,10 +492,14 @@ test('a standalone workspace notices a later local App and offers the switch', a
   let version = '2.1.6'
   const now = { value: Date.now() }
   context.mock.method(Date, 'now', () => now.value)
-  const { call } = await startHost(context, { installedVersion: () => version })
+  const { call, calls } = await startHost(context, { installedVersion: () => version })
   const first = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
   assert.equal(first.localApp.compatible, false)
   version = '2.2.0'
+  const reads = calls.plistReads()
+  // The 30-second gate keeps status polling from probing the App on every request.
+  assert.equal((await call('GET', '/beeftv/status')).body.localApp.compatible, false)
+  assert.equal(calls.plistReads(), reads)
   now.value += 31_000
   assert.equal((await call('GET', '/beeftv/status')).body.localApp.compatible, true)
 })
@@ -501,6 +510,14 @@ test('a saved 暂不 is read before the first status answer', async context => {
     readDelayMs: 150,
   })
   assert.equal((await call('GET', '/beeftv/status')).body.localPromptDismissed, true)
+})
+
+test('a broken settings file is reported without connecting', async context => {
+  const { call, calls } = await startHost(context, { rawSettings: '{broken' })
+  const status = (await call('GET', '/beeftv/status')).body
+  assert.equal(status.connected, false)
+  assert.ok(status.error)
+  assert.deepEqual(calls, [])
 })
 
 test('a failed dismissal keeps the prompt available', async context => {

@@ -22,6 +22,7 @@ beforeAll(async () => {
         contents: `
           import React from ${JSON.stringify(Bun.resolveSync('react', webDir))};
           import { createRoot } from ${JSON.stringify(Bun.resolveSync('react-dom/client', webDir))};
+          import { flushSync } from ${JSON.stringify(Bun.resolveSync('react-dom', webDir))};
           const h = React.createElement;
           const components = new Map();
           function NativeView({ options }) {
@@ -62,7 +63,7 @@ beforeAll(async () => {
           await import(${JSON.stringify(clientPath)});
           function Shell() {
             const [sessionId, setSessionId] = React.useState(window.__noSession ? undefined : 'native-session');
-            window.__setSessionId = setSessionId;
+            window.__setSessionId = value => flushSync(() => setSessionId(value));
             window.__renderedSession = sessionId;
             const useSession = () => ({ openState: 'ready' });
             const renderSlot = (name, props) => h(components.get(name), {
@@ -472,9 +473,18 @@ test('旧版没有输入预填接口时退回新建会话，完全不可用时�
 test('切换会话后问助手写到新会话', async () => {
   const { page } = await openWorkbench()
   await listenAskResults(page)
-  await page.evaluate(() => (window as any).__setSessionId('session-two'))
-  await page.waitForFunction(() => (window as any).__renderedSession === 'session-two')
-  expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] })).toBe('applied')
+  // 同一个任务里切换并提问：不等 passive effect，验证渲染期已记住新会话。
+  await page.evaluate(() => {
+    (window as any).__setSessionId('session-two')
+    const frame = document.querySelector('iframe')!
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: location.origin,
+      data: { type: 'beeftv:ask', ask: { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] } },
+    }))
+  })
+  await workspaceFrame(page).waitForFunction(() => (window as any).askResult !== undefined)
+  expect(await workspaceFrame(page).evaluate(() => (window as any).askResult)).toBe('applied')
   expect(await page.evaluate(() => (window as any).lastDraft.sessionId)).toBe('session-two')
   await page.close()
 })
