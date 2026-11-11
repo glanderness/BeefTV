@@ -21,7 +21,7 @@ export function createAwaitState({ autoContinue = true } = {}) {
     // sessionId → { token, workspaceId, taskIds }
     waits: {},
     // 离开期间完成的任务；entries 原样落盘，count 是当前应提示的数量。
-    away: { entries: [], count: 0 },
+    away: { entries: [], count: 0, seq: 0 },
   }
 }
 
@@ -73,6 +73,20 @@ function removeMessage(state, messageId) {
   delete state.messages[messageId]
 }
 
+// away 条目带稳定 id，异步 probe 回来时按 id 回写，不依赖数组下标。
+function addAway(state, workspaceId, taskIds) {
+  const existing = new Set(state.away.entries.flatMap(entry => entry.taskIds))
+  const fresh = [...new Set((taskIds || []).filter(taskId => typeof taskId === 'string' && taskId && !existing.has(taskId)))]
+  if (!fresh.length) return false
+  state.away.entries.push({
+    id: `away-${++state.away.seq}`,
+    workspaceId: workspaceId ?? null,
+    taskIds: fresh,
+    resolvedCount: 0,
+  })
+  return true
+}
+
 // 超过上限时把最旧的结果转入「离开时完成」，宁可多一条待核对记录，也不静默丢掉已付费的结果。
 function defer(state, sessionId, outcomes, workspaceId) {
   const session = sessionOf(state, sessionId)
@@ -85,12 +99,7 @@ function defer(state, sessionId, outcomes, workspaceId) {
     previous = session.deferred.outcomes
   } else if (session.deferred) {
     // 换工作区时旧 deferred 不能覆盖：留给下次连回原工作区时核对。
-    state.away.entries.push({
-      workspaceId: session.deferred.workspaceId ?? null,
-      taskIds: session.deferred.outcomes.map(outcome => outcome.taskId),
-      resolvedCount: 0,
-    })
-    overflow = true
+    overflow = addAway(state, session.deferred.workspaceId, session.deferred.outcomes.map(outcome => outcome.taskId)) || overflow
   }
   const merged = [...previous]
   for (const outcome of list) {
@@ -98,8 +107,7 @@ function defer(state, sessionId, outcomes, workspaceId) {
   }
   while (merged.length > maximumDeferredOutcomes) {
     const oldest = merged.shift()
-    state.away.entries.push({ workspaceId: workspaceId ?? null, taskIds: [oldest.taskId], resolvedCount: 0 })
-    overflow = true
+    overflow = addAway(state, workspaceId, [oldest.taskId]) || overflow
   }
   session.deferred = { workspaceId: workspaceId ?? null, outcomes: merged }
   return overflow
@@ -117,9 +125,7 @@ function abandonWaits(state, sessionIds, actions, out) {
   for (const sessionId of sessionIds) {
     const wait = state.waits[sessionId]
     if (!wait) continue
-    if (wait.taskIds.length) {
-      state.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
-    }
+    addAway(state, wait.workspaceId, wait.taskIds)
     delete state.waits[sessionId]
     actions.push({ type: 'abortWait', sessionId, token: wait.token })
     out.persist = true
@@ -152,11 +158,7 @@ function userMessage(state, sessionId, agentStatus, actions, out) {
   if (!deferred?.outcomes.length) return
   if (active && deferred.workspaceId && deferred.workspaceId !== active) {
     // 旧工作区的结果不能带到新工作区，也不能直接丢；留给下次连回原工作区时核对。
-    state.away.entries.push({
-      workspaceId: deferred.workspaceId,
-      taskIds: deferred.outcomes.map(outcome => outcome.taskId),
-      resolvedCount: 0,
-    })
+    addAway(state, deferred.workspaceId, deferred.outcomes.map(outcome => outcome.taskId))
     session.deferred = null
     out.persist = true
     return
@@ -246,12 +248,22 @@ export function transition(state, event) {
   if (type === 'historyLoaded') {
     for (const entry of Array.isArray(event.sessions) ? event.sessions : []) {
       if (!entry?.taskIds?.length && !entry?.resolvedCount) continue
-      next.away.entries.push({ workspaceId: entry.workspaceId ?? null, taskIds: [...(entry.taskIds || [])], resolvedCount: entry.resolvedCount || 0 })
+      next.away.entries.push({
+        id: `away-${++next.away.seq}`,
+        workspaceId: entry.workspaceId ?? null,
+        taskIds: [...(entry.taskIds || [])],
+        resolvedCount: entry.resolvedCount || 0,
+      })
       out.persist = true
     }
     for (const entry of Array.isArray(event.away) ? event.away : []) {
       if (!entry?.taskIds?.length && !entry?.resolvedCount) continue
-      next.away.entries.push({ workspaceId: entry.workspaceId ?? null, taskIds: [...(entry.taskIds || [])], resolvedCount: entry.resolvedCount || 0 })
+      next.away.entries.push({
+        id: `away-${++next.away.seq}`,
+        workspaceId: entry.workspaceId ?? null,
+        taskIds: [...(entry.taskIds || [])],
+        resolvedCount: entry.resolvedCount || 0,
+      })
       out.persist = true
     }
   } else if (type === 'workspaceConnecting') {
@@ -269,11 +281,14 @@ export function transition(state, event) {
       withdraw(next, entry, messageId, 'switch', actions)
     }
     const targets = []
-    next.away.entries.forEach((entry, index) => {
-      if (entry.workspaceId && entry.workspaceId !== workspaceId) return
-      const taskIds = entry.taskIds.slice(0, 20)
-      targets.push({ index, taskIds, rest: entry.taskIds.slice(20), resolvedCount: entry.resolvedCount || 0 })
-    })
+    for (const entry of next.away.entries) {
+      if (!entry.id) entry.id = `away-${++next.away.seq}`
+      if (entry.workspaceId && entry.workspaceId !== workspaceId) continue
+      targets.push({
+        id: entry.id, taskIds: entry.taskIds.slice(0, 20),
+        rest: entry.taskIds.slice(20), resolvedCount: entry.resolvedCount || 0,
+      })
+    }
     if (!next.away.entries.length) next.away.count = 0
     if (targets.length) actions.push({ type: 'probeAway', workspaceId, targets })
     else if (next.away.entries.length) {
@@ -293,10 +308,7 @@ export function transition(state, event) {
     let wait = next.waits[event.sessionId]
     if (wait && wait.workspaceId !== (event.workspaceId ?? null)) {
       // 旧工作区的等待不再续跑，但结果仍留给下次连回同一工作区时核对。
-      if (wait.taskIds.length) {
-        next.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
-        out.persist = true
-      }
+      if (addAway(next, wait.workspaceId, wait.taskIds)) out.persist = true
       actions.push({ type: 'abortWait', sessionId: event.sessionId, token: wait.token })
       wait = null
     }
@@ -323,7 +335,7 @@ export function transition(state, event) {
     if (outcomes.length && next.autoContinue) {
       if (active && workspaceId !== active) {
         // 等待属于另一个工作区：不能投到当前会话，留给下次连回原工作区时核对。
-        next.away.entries.push({ workspaceId, taskIds: outcomes.map(outcome => outcome.taskId), resolvedCount: 0 })
+        addAway(next, workspaceId, outcomes.map(outcome => outcome.taskId))
       } else if (session.wakeCount >= maximumWakesPerSession) {
         if (defer(next, event.sessionId, outcomes, workspaceId)) out.persist = true
       } else {
@@ -339,9 +351,7 @@ export function transition(state, event) {
     if (wait && wait.token === event.waitToken) {
       delete next.waits[event.sessionId]
       // 超时不再占用会话，但任务可能仍会成功；留给下次连回同一工作区时核对并提示。
-      if (wait.taskIds.length) {
-        next.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
-      }
+      addAway(next, wait.workspaceId, wait.taskIds)
       actions.push({ type: 'abortWait', sessionId: event.sessionId, token: wait.token })
       out.persist = true
     }
@@ -438,16 +448,27 @@ export function transition(state, event) {
     if (session) session.stopped = false
   } else if (type === 'agentDisposed') {
     const wait = next.waits[event.sessionId]
-    if (wait?.taskIds.length) {
-      // 会话被销毁不等于用户停止：结果仍应计入离开期间完成的提示。
-      next.away.entries.push({ workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds], resolvedCount: 0 })
-      out.persist = true
-    }
+    const deferred = next.sessions[event.sessionId]?.deferred
+    // 会话被销毁不等于用户停止：等待和已暂存的完成结果都要计入离开期间完成的提示。
+    if (wait && addAway(next, wait.workspaceId, wait.taskIds)) out.persist = true
+    if (deferred && addAway(next, deferred.workspaceId, deferred.outcomes.map(outcome => outcome.taskId))) out.persist = true
     stopSession(next, event.sessionId, actions, out)
     delete next.sessions[event.sessionId]
     for (const [messageId, owner] of Object.entries(next.stale)) {
       if (owner === event.sessionId) delete next.stale[messageId]
     }
+  } else if (type === 'pluginStopped') {
+    for (const [sessionId, wait] of Object.entries(next.waits)) {
+      addAway(next, wait.workspaceId, wait.taskIds)
+      delete next.waits[sessionId]
+      actions.push({ type: 'abortWait', sessionId, token: wait.token })
+    }
+    for (const session of Object.values(next.sessions)) {
+      if (!session.deferred) continue
+      addAway(next, session.deferred.workspaceId, session.deferred.outcomes.map(outcome => outcome.taskId))
+      session.deferred = null
+    }
+    out.persist = true
   } else if (type === 'autoContinueOff') {
     next.autoContinue = false
     for (const sessionId of Object.keys(next.waits)) {
@@ -464,18 +485,21 @@ export function transition(state, event) {
     const workspaceId = event.workspaceId ?? null
     next.away.entries = next.away.entries.flatMap(entry => {
       if (workspaceId && entry.workspaceId && entry.workspaceId !== workspaceId) return [entry]
-      return entry.taskIds.length ? [{ workspaceId: entry.workspaceId ?? null, taskIds: entry.taskIds, resolvedCount: 0 }] : []
+      return entry.taskIds.length ? [{ ...entry, resolvedCount: 0 }] : []
     })
     next.away.count = 0
     out.persist = true
   } else if (type === 'awayProbed') {
-    const results = new Map((Array.isArray(event.results) ? event.results : []).map(result => [result.index, result]))
-    next.away.entries = next.away.entries.map((entry, index) => {
-      const result = results.get(index)
+    const results = new Map((Array.isArray(event.results) ? event.results : []).map(result => [result.id, result]))
+    let notice = 0
+    next.away.entries = next.away.entries.map(entry => {
+      const result = results.get(entry.id)
+      // probe 期间被 awaySeen 删掉的条目不再回写，避免把已关闭的提示或任务带回来。
       if (!result) return entry
-      return { workspaceId: entry.workspaceId ?? null, taskIds: result.remaining || [], resolvedCount: result.completed || 0 }
+      notice += result.completed || 0
+      return { ...entry, taskIds: result.remaining || [], resolvedCount: result.completed || 0 }
     })
-    next.away.count = [...results.values()].reduce((sum, result) => sum + (result.completed || 0), 0)
+    next.away.count = notice
     out.persist = true
   }
 
@@ -489,5 +513,13 @@ export function awaitingSnapshot(state) {
     if (!wait.taskIds.length) continue
     sessions[sessionId] = { workspaceId: wait.workspaceId ?? null, taskIds: [...wait.taskIds] }
   }
-  return { sessions, away: state.away.entries.map(entry => ({ ...entry, taskIds: [...entry.taskIds] })) }
+  // id 只用于异步 probe 对账，不写入磁盘；重启后由 historyLoaded 重新分配。
+  return {
+    sessions,
+    away: state.away.entries.map(entry => ({
+      workspaceId: entry.workspaceId ?? null,
+      taskIds: [...entry.taskIds],
+      resolvedCount: entry.resolvedCount || 0,
+    })),
+  }
 }

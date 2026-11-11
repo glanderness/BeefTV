@@ -127,7 +127,7 @@ function checkLosses(before, after, event, ledger, where) {
         : after.connection.phase === 'connecting' ? after.connection.from?.workspaceId : null
       const entry = Object.values(before.messages).find(item => item.outcomes.some(outcome => outcome.taskId === taskId))
       allowed = Boolean(target && entry?.workspaceId && entry.workspaceId !== target)
-    } else if (after.autoContinue === false) allowed = true
+    }
     assert.ok(allowed, `${where}: 任务 ${taskId} 在 ${event.type} 中无声丢失`)
     ledger.dropped.add(taskId)
   }
@@ -164,7 +164,7 @@ function settleActions(branches, actions, counter, path) {
           type: 'awayProbed',
           // 探针结果保持 pending：away 条目继续留着，下一轮再核对。
           results: action.targets.map(target => ({
-            index: target.index, remaining: [...target.taskIds, ...target.rest], completed: target.resolvedCount,
+            id: target.id, remaining: [...target.taskIds, ...target.rest], completed: target.resolvedCount,
           })),
         })
         return { state: probed.state, ledger: branch.ledger }
@@ -195,6 +195,13 @@ function eventVariants(state) {
         events.push({ type: 'tasksSubmitted', sessionId, workspaceId: active, taskIds: [taskId], agentStatus: 'idle' })
       }
     }
+  }
+  if (Object.keys(state.waits).length) events.push({ type: 'abandonWaits', sessionIds: Object.keys(state.waits) })
+  if (!Object.keys(state.waits).length && !Object.keys(state.messages).length && !state.away.entries.length) {
+    events.push({ type: 'historyLoaded', sessions: [], away: [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }] })
+  }
+  for (const [messageId, entry] of Object.entries(state.messages)) {
+    events.push({ type: 'messageClaimed', sessionId: entry.sessionId, messageId, sourceKind: 'beeftv-await', agentStatus: 'idle' })
   }
   for (const sessionId of sessions) {
     const wait = state.waits[sessionId]
@@ -229,7 +236,10 @@ function eventVariants(state) {
     if (entry.state === 'pending') events.push({ type: 'messageDiscarded', messageId })
   }
   events.push({ type: state.autoContinue ? 'autoContinueOff' : 'autoContinueOn' })
-  events.push({ type: 'autoContinueRestored', autoContinue: !state.autoContinue })
+  // 恢复持久化设置只发生在启动时，不建模成运行中事件。
+  if (!Object.keys(state.sessions).length && !Object.keys(state.waits).length && !Object.keys(state.messages).length) {
+    events.push({ type: 'autoContinueRestored', autoContinue: false })
+  }
   if (state.away.entries.length) events.push({ type: 'awaySeen', workspaceId: active })
   return events
 }
@@ -412,14 +422,16 @@ test('40 分钟超时把任务留给下次连回时核对，不再静默删除',
   const token = state.waits.s1.token
   const expired = transition(state, { type: 'waitExpired', sessionId: 's1', waitToken: token })
   assert.ok(!expired.state.waits.s1)
-  assert.deepEqual(expired.state.away.entries, [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }])
+  assert.deepEqual(expired.state.away.entries.map(({ workspaceId, taskIds, resolvedCount }) => ({ workspaceId, taskIds, resolvedCount })),
+    [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }])
 })
 
 test('会话被销毁时把等待留给离开提示', () => {
   let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
   state = transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t1'], agentStatus: 'idle' }).state
   const disposed = transition(state, { type: 'agentDisposed', sessionId: 's1' })
-  assert.deepEqual(disposed.state.away.entries, [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }])
+  assert.deepEqual(disposed.state.away.entries.map(({ workspaceId, taskIds, resolvedCount }) => ({ workspaceId, taskIds, resolvedCount })),
+    [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }])
 })
 
 test('关闭自动继续会撤回已注入的唤醒，撤回失败由 pre-step 过滤', () => {
@@ -445,5 +457,51 @@ test('deferred 超过 50 条时转入离开提示而不是静默丢弃', () => {
     }).state
   }
   assert.equal(state.sessions.s1.deferred.outcomes.length, 50)
-  assert.deepEqual(state.away.entries[0], { workspaceId: 'w1', taskIds: ['t0'], resolvedCount: 0 })
+  assert.equal(state.away.entries[0].taskIds[0], 't0')
+  assert.equal(state.away.entries[0].workspaceId, 'w1')
+})
+
+test('插件退出时把 deferred 的完成结果转入离开提示', () => {
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  state = transition(state, {
+    type: 'delivered', sessionId: 's1', messageId: null, ok: false,
+    outcomes: [{ taskId: 't1', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  }).state
+  assert.equal(state.sessions.s1.deferred.outcomes[0].taskId, 't1')
+  const stopped = transition(state, { type: 'pluginStopped' })
+  assert.equal(stopped.state.sessions.s1.deferred, null)
+  assert.deepEqual(stopped.state.away.entries.map(entry => entry.taskIds), [['t1']])
+})
+
+test('会话销毁时把 deferred 的完成结果转入离开提示', () => {
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  state = transition(state, {
+    type: 'delivered', sessionId: 's1', messageId: null, ok: false,
+    outcomes: [{ taskId: 't1', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  }).state
+  const disposed = transition(state, { type: 'agentDisposed', sessionId: 's1' })
+  assert.deepEqual(disposed.state.away.entries.map(entry => entry.taskIds), [['t1']])
+})
+
+test('away probe 按稳定 id 回写，不受 awaySeen 删除条目的影响', () => {
+  let state = createAwaitState()
+  state = transition(state, { type: 'waitExpired', sessionId: 's1', waitToken: -1 }).state
+  state = transition(state, { type: 'historyLoaded', sessions: [], away: [
+    { workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 },
+    { workspaceId: 'w1', taskIds: ['t2'], resolvedCount: 0 },
+  ] }).state
+  const connected = transition(state, { type: 'workspaceConnected', workspaceId: 'w1' })
+  const probe = connected.actions.find(action => action.type === 'probeAway')
+  assert.equal(probe.targets.length, 2)
+  // 用户在 probe 回来前关掉提示：条目顺序/数量变化后，旧结果不能写错位置。
+  const seen = transition(connected.state, { type: 'awaySeen', workspaceId: 'w1' }).state
+  const reordered = [{ ...seen, away: { ...seen.away, entries: [...seen.away.entries].reverse() } }][0]
+  const probed = transition(reordered, {
+    type: 'awayProbed',
+    results: probe.targets.map(target => ({ id: target.id, remaining: [], completed: 0 })),
+  }).state
+  const byId = new Map(probed.away.entries.map(entry => [entry.id, entry]))
+  for (const target of probe.targets) {
+    assert.deepEqual(byId.get(target.id).taskIds, [])
+  }
 })

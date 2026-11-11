@@ -262,6 +262,22 @@ function listedTaskState(value, taskId) {
   const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined) : undefined
   // 仍在下载/重试入库的结果不能按 listed.status=succeeded 直接算完成。
   if (listed && taskDeliveryPending(listed)) return { taskId, state: 'pending', reason: '' }
+  // 保存/下载中的中间态继续等，不能因为带了 materializationErrorCode 就提前下结论。
+  const listedState = typeof listed?.state === 'string' ? listed.state.toLowerCase() : ''
+  if (['downloading', 'retrying', 'waiting', 'saving', 'fetching', 'running', 'pending', 'queued'].includes(listedState)) {
+    return { taskId, state: 'pending', reason: '' }
+  }
+  // 真实 task.wait 对「生成成功但产物永久保存失败」返回 state=failed + reason=materialization_failed；
+  // 这只能重新保存，不能当成生成失败让模型重新生成。
+  const permanent = typeof listed?.reason === 'string' ? listed.reason.toLowerCase()
+    : typeof listed?.resultState === 'string' ? listed.resultState.toLowerCase() : ''
+  const materialization = permanent === 'materialization_failed' || permanent === 'failed_permanent'
+    || (Array.isArray(listed?.outputs) && listed.outputs.some(output => output?.materializationErrorCode))
+  if (materialization) {
+    const original = failureReason(listed)
+    const base = '结果没有保存成功，只能重新保存，不能重新生成'
+    return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
+  }
   const raw = typeof listed?.state === 'string' ? listed.state : typeof listed?.status === 'string' ? listed.status : ''
   const state = raw.toLowerCase()
   if (['succeeded', 'success', 'completed', 'ready'].includes(state)) return { taskId, state: 'succeeded', reason: '' }
@@ -286,7 +302,12 @@ export function waitOutcome(value, taskId) {
     const base = '结果没有保存成功，只能重新保存，不能重新生成'
     return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
   }
-  if (status === 'failed' || status === 'error') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
+  if (status === 'failed' || status === 'error') {
+    // 顶层说 failed，但按任务看其实是「产物没保存」时，仍按 incomplete 处理，避免模型重新生成。
+    const listedOutcome = listedTaskState(value, taskId)
+    if (listedOutcome?.state === 'incomplete') return listedOutcome
+    return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
+  }
   if (status === 'cancelled' || status === 'canceled') return { taskId, state: 'failed', reason: '已取消' }
   if (status === 'pending' || status === 'running' || status === 'queued') return { taskId, state: 'pending', reason: '' }
   const listedOutcome = listedTaskState(value, taskId)

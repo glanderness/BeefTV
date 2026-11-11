@@ -99,8 +99,8 @@ export function apply(ctx) {
       stepLimit.startTurn({ sessionId, turn: event.data?.turn ?? null, beefTV: connection.hasContext(sessionId) })
       runner.dispatch({ type: 'turnStarted', sessionId })
     } else if (event?.type === 'turn/end') {
-      stepLimit.endTurn(sessionId)
       const reason = event.data?.reason
+      stepLimit.endTurn(sessionId, { blocked: reason?.kind === 'blocked' })
       if (reason?.kind === 'aborted' && reason.reason?.kind === 'user') runner.dispatch({ type: 'turnEndedByUser', sessionId })
     }
   })

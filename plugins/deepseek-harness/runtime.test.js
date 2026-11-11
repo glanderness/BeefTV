@@ -651,7 +651,11 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(taskOutcome({ taskId: 's', status: 'succeeded', resultState: 'failed_retryable', outputs: [{ materializationErrorCode: 'download_failed' }] }).state, 'pending')
   // 后端内部 reason 码不直接展示给用户。
   assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't').reason, '')
-  assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'materialization_failed' }] }, 't').reason, '结果没有保存成功')
+  const materialization = waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'materialization_failed' }] }, 't')
+  assert.equal(materialization.state, 'incomplete')
+  assert.match(materialization.reason, /只能重新保存/)
+  const permanent = waitOutcome({ tasks: [{ taskId: 'p', state: 'failed', resultState: 'failed_permanent' }] }, 'p')
+  assert.equal(permanent.state, 'incomplete')
   const failedOutcome = waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't')
   assert.equal(awaitWakeText([failedOutcome]),
     '生成已结束：0 个成功，1 个失败。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
@@ -1087,6 +1091,9 @@ test('the step limit stops only turns that belong to BeefTV', async context => {
   assert.deepEqual(await listeners.get('agent/pre-step')({ agent: { id: 'beef-session' }, turn: 1 }, allow), { kind: 'reject' })
   const status = (await call('GET', '/beeftv/status')).body
   assert.equal(status.stepNotice, '这一轮已经做了 5 步，先停一下。要继续请再说一句。')
+  // DSH 的 pre-step rejection 以 blocked 收尾，这条提示不能在同一轮结束时被清掉。
+  listeners.get('session/event')({ id: 'beef-session' }, { type: 'turn/end', data: { reason: { kind: 'blocked' } } })
+  assert.equal((await call('GET', '/beeftv/status')).body.stepNotice, '这一轮已经做了 5 步，先停一下。要继续请再说一句。')
   assert.equal((await call('POST', '/beeftv/step-notice', { seen: true })).body.stepNotice, null)
   // 另一轮重新计数。
   listeners.get('session/event')({ id: 'beef-session' }, { type: 'turn/start', data: { turn: 2 } })
@@ -1162,6 +1169,21 @@ test('a wait past its deadline moves the tasks to the away list', async context 
   runner.dispatch({ type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['timeout-1'], agentStatus: 'idle' })
   await until(() => runner.snapshot().away.length === 1)
   assert.deepEqual(runner.snapshot().away[0], { workspaceId: 'w1', taskIds: ['timeout-1'], resolvedCount: 0 })
+})
+
+test('plugin shutdown persists deferred completions as away entries', async context => {
+  const dir = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-await-stop-'))
+  context.after(() => fsPromises.rm(dir, { recursive: true, force: true }))
+  const awaitingPath = join(dir, 'awaiting.json')
+  const runner = createAwaitRunner({ awaitingPath, runtimeOf: () => null })
+  runner.dispatch({ type: 'workspaceConnected', workspaceId: 'w1' })
+  runner.dispatch({
+    type: 'delivered', sessionId: 's1', messageId: null, ok: false,
+    outcomes: [{ taskId: 'deferred-1', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  })
+  await runner.stopPlugin()
+  const stored = JSON.parse(await fsPromises.readFile(awaitingPath, 'utf8'))
+  assert.deepEqual(stored.away, [{ workspaceId: 'w1', taskIds: ['deferred-1'], resolvedCount: 0 }])
 })
 
 test('a backend agent.guide replaces the fixed section; without it the fixed text stays', async context => {

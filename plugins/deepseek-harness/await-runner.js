@@ -201,7 +201,7 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
           remaining.push(taskId)
         }
       }))
-      results.push({ index: target.index, remaining, completed })
+      results.push({ id: target.id, remaining, completed })
     }
     return dispatch({ type: 'awayProbed', results }).settled
   }
@@ -231,8 +231,8 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
   }
 
   function stopPlugin() {
-    const sessionIds = [...waitRunners.keys()]
-    const result = dispatch({ type: 'abandonWaits', sessionIds })
+    // 插件退出：等待和 deferred 里的已完成结果都转进 leaving 列表，重启后还能提示一次。
+    const result = dispatch({ type: 'pluginStopped' })
     return Promise.all([result.settled, writing]).then(() => {})
   }
 

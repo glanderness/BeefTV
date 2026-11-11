@@ -39,10 +39,13 @@ export function createStepLimit() {
       if (notice?.sessionId === sessionId) notice = null
     },
 
-    endTurn(sessionId) {
+    endTurn(sessionId, { blocked = false } = {}) {
       if (!sessionId) return
+      const state = sessions.get(sessionId)
+      // 步数上限造成的 blocked 收尾正是提示要出现的场景；其它收尾才清掉旧提示。
+      const limitBlocked = blocked && state?.stop
       sessions.delete(sessionId)
-      if (notice?.sessionId === sessionId) notice = null
+      if (!limitBlocked && notice?.sessionId === sessionId) notice = null
     },
 
     // 返回这一轮是否已经到上限。用户自己发了消息时重新计数并放行。
