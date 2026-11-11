@@ -5,6 +5,8 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const panelId = 'beeftv'
     const conversationSlot = 'beeftv.conversation'
+    // 插件根上拿不到「当前会话」，由挂在会话里的 slot 记住，供「问助手」使用。
+    let conversationSessionId
     const modes = [
       { id: 'creation', label: '创作', detail: '画布、分镜与视频创作' },
       { id: 'assets', label: '素材', detail: '整理与复用创作素材' },
@@ -68,6 +70,11 @@ window.__ModuleLoader__.load({
 .beeftv-harness-option strong,.beeftv-harness-option span { display:block; }
 .beeftv-harness-option span { margin-top:4px; font-size:12px; color:var(--dsw-alias-label-tertiary); }
 .beeftv-harness-error { margin:12px 16px; color:var(--dsw-alias-label-secondary); font-size:12px; overflow-wrap:anywhere; }
+.beeftv-harness-workspace-note { flex:none; padding:6px 16px; border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-tertiary); font-size:12px; line-height:18px; }
+.beeftv-harness-notice { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:10px 16px; border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-secondary); font-size:12px; line-height:18px; }
+.beeftv-harness-notice span { flex:1 1 220px; min-width:0; }
+.beeftv-harness-notice button { border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:4px 10px; background:transparent; font:inherit; color:inherit; cursor:pointer; }
+.beeftv-harness-notice button:hover { background:var(--dsw-alias-interactive-bg-hover); }
 `
 
     async function api(path, body, signal) {
@@ -102,6 +109,31 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // 网页「问助手」交接：入口固定为 selection-toolbar，节点最多 20 个、标题最多 80 字。
+    function readAsk(value) {
+      if (!value || typeof value !== 'object' || value.source !== 'selection-toolbar' || typeof value.canvasId !== 'string') return undefined
+      return {
+        source: 'selection-toolbar',
+        canvasId: value.canvasId.slice(0, 256),
+        canvasTitle: typeof value.canvasTitle === 'string' ? value.canvasTitle.slice(0, 256) : '',
+        nodes: Array.isArray(value.nodes)
+          ? value.nodes.filter(node => node && typeof node.id === 'string' && node.id).slice(0, 20).map(node => ({
+              id: node.id.slice(0, 256),
+              title: typeof node.title === 'string' ? node.title.slice(0, 80) : '',
+              type: typeof node.type === 'string' ? node.type.slice(0, 40) : '',
+            }))
+          : [],
+      }
+    }
+
+    function askPrompt(ask) {
+      const canvasName = ask.canvasTitle || '当前画布'
+      const titles = ask.nodes.map(node => node.title || '未命名节点')
+      if (!titles.length) return `画布「${canvasName}」中选中的节点\n`
+      const listed = titles.length > 5 ? `${titles.slice(0, 5).join('、')} 等 ${titles.length} 个节点` : titles.join('、')
+      return `画布「${canvasName}」中选中的：${listed}\n`
+    }
+
     function FixedChatView({ renderSlot }) {
       return renderSlot('conversation.session', { view: 'chat' })
     }
@@ -110,6 +142,13 @@ window.__ModuleLoader__.load({
       const session = useSession(value => value)
       const settling = session === undefined || session.openState === 'loading'
       const running = Boolean(session?.running)
+
+      React.useEffect(() => {
+        conversationSessionId = sessionId
+        return () => {
+          if (conversationSessionId === sessionId) conversationSessionId = undefined
+        }
+      }, [sessionId])
 
       React.useEffect(() => {
         if (!running || !onAgentActivity) return
@@ -158,7 +197,7 @@ window.__ModuleLoader__.load({
               h('span', null, '为 DSH 使用独立的 BeefTV 本地工作区。')))))
     }
 
-    function Workbench({ renderSlot, returnToConversation, createCreativeSession }) {
+    function Workbench({ renderSlot, returnToConversation, createCreativeSession, askAssistant }) {
       const [status, setStatus] = React.useState()
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
@@ -250,7 +289,7 @@ window.__ModuleLoader__.load({
           try {
             const next = await api('status', undefined, AbortSignal.any([controller.signal, timeout.signal]))
             if (!mounted || controller.signal.aborted || connecting.current) return
-            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
+            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
             setStatusError('')
           } catch (failure) {
             if (!mounted || controller.signal.aborted) return
@@ -289,6 +328,30 @@ window.__ModuleLoader__.load({
         window.addEventListener('message', receiveContext)
         return () => window.removeEventListener('message', receiveContext)
       }, [source, connectionId])
+
+      React.useEffect(() => {
+        if (!source) return
+        const origin = new URL(source).origin
+        const receiveAsk = async event => {
+          if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== 'beeftv:ask') return
+          const ask = readAsk(event.data.ask)
+          if (!ask || !connectionId) return
+          // 模型后续看到的是这次选中的节点，不依赖提示词里的标题。
+          setReportedContext({
+            connectionId,
+            context: {
+              route: workspaceContext?.route || '/',
+              canvasId: ask.canvasId,
+              canvasTitle: ask.canvasTitle,
+              selectedNodeIds: ask.nodes.map(node => node.id),
+            },
+          })
+          const status = await askAssistant(ask)
+          frame.current?.contentWindow?.postMessage({ type: 'beeftv:ask-result', status }, origin)
+        }
+        window.addEventListener('message', receiveAsk)
+        return () => window.removeEventListener('message', receiveAsk)
+      }, [source, connectionId, workspaceContext, askAssistant])
 
       React.useEffect(() => {
         if (!connectionId) {
@@ -346,11 +409,27 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function dismissLocalPrompt() {
+        setError('')
+        try {
+          setStatus(await api('local-prompt', { dismissed: true }))
+        } catch (failure) {
+          setError(failure.message)
+        }
+      }
+
       const visibleError = error || status?.error || statusError
+      const standalone = status?.connected === true && status?.mode === 'standalone' && !choosingWorkspace
+      const localReady = standalone && status?.localApp?.compatible === true && !status?.localPromptDismissed
 
       return h('section', { className: 'beeftv-harness', 'aria-label': 'BeefTV 工作台', 'data-resizing': resizing },
         h('span', { ref: clearanceProbe, className: 'beeftv-harness-clearance', 'aria-hidden': true }),
         visibleError && h('div', { className: 'beeftv-harness-error', role: 'alert' }, visibleError),
+        standalone && h('div', { className: 'beeftv-harness-workspace-note' }, '独立工作区，和本机 BeefTV 不是同一份数据'),
+        localReady && h('div', { className: 'beeftv-harness-notice', role: 'status' },
+          h('span', null, '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'),
+          h('button', { type: 'button', disabled: !!busy, onClick: () => connect('local') }, '连接本机'),
+          h('button', { type: 'button', disabled: !!busy, onClick: dismissLocalPrompt }, '暂不')),
         h('div', { ref: body, className: 'beeftv-harness-body', style: { '--beeftv-agent-width': `${agentWidth}px` } },
           h('div', { className: 'beeftv-harness-workspace' }, source
             ? h('iframe', { key: source, ref: frame, src: source, onLoad: publishFrameClearance, title: 'BeefTV 创作工作区', className: 'beeftv-harness-frame', referrerPolicy: 'no-referrer', allow: 'clipboard-read; clipboard-write' })
@@ -378,9 +457,40 @@ window.__ModuleLoader__.load({
         h('path', { d: 'm10 8 6 4-6 4Z', fill: 'currentColor' }))
     }
 
+    function askAssistant(ctx) {
+      return ask => {
+        const prompt = askPrompt(ask)
+        let binding
+        try {
+          binding = conversationSessionId === undefined ? undefined : ctx.sessions?.binding?.(conversationSessionId)
+        } catch {
+          binding = undefined
+        }
+        const input = binding ? ctx.get?.('conversation')?.input : undefined
+        if (binding && typeof input?.requestDraftInitialization === 'function') {
+          try {
+            const result = input.requestDraftInitialization(binding, { prompt, whenDraftExists: 'append' })
+            ctx.layout.selectPanel(panelId)
+            return ['applied', 'preserved', 'blocked'].includes(result) ? result : 'unavailable'
+          } catch {
+            // 当前会话的输入框不可用时，退回新会话预填。
+          }
+        }
+        try {
+          if (typeof ctx.uiWorkspace?.startSession !== 'function') return 'unavailable'
+          ctx.uiWorkspace.startSession(undefined, { prompt, whenDraftExists: 'append' })
+          ctx.layout.selectPanel(panelId)
+          return 'applied'
+        } catch {
+          return 'unavailable'
+        }
+      }
+    }
+
     return {
       inject: ['slots', 'layout', 'sessions', 'uiWorkspace'],
       apply(ctx) {
+        const handleAsk = askAssistant(ctx)
         ctx.effect(() => {
           const style = document.createElement('style')
           style.dataset.pluginCss = 'dsh-beeftv'
@@ -399,6 +509,7 @@ window.__ModuleLoader__.load({
               ctx.uiWorkspace.openSession(sessionId)
               ctx.layout.selectPanel(panelId)
             },
+            askAssistant: handleAsk,
           }),
         }, Workbench))
         ctx.slots.inject(conversationSlot, () => ctx.slots.register({ name: conversationSlot }, NativeConversation))

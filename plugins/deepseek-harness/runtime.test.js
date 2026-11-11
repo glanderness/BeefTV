@@ -11,7 +11,6 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import * as runtime from './runtime.js'
 import { approvalReason, embeddedDocument, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord } from './runtime.js'
-
 // DSH supplies its MCP client package when it loads the plugin. The Host only hands it to
 // ctx.plugin, which the tests provide, so an inert module stands in for it.
 register(`data:text/javascript,${encodeURIComponent(`export async function resolve(specifier, context, next) {
@@ -64,6 +63,22 @@ test('only trusted catalog metadata exempts a read-only business call from addit
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_generation' }, catalog), true)
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_unknown', readOnly: true }, catalog), true)
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_assets', readOnly: true }), true)
+})
+
+test('paid review reads ask for approval and name only the inspected segment and model', () => {
+  const operations = [
+    { id: 'canvas.get', readOnly: true, replay: 'safe' },
+    { id: 'media.review', readOnly: true, replay: 'unsafe' },
+    { id: 'canvas.create', readOnly: false, replay: 'unsafe' },
+  ]
+  const review = 'mcp__beeftv__media_review_ab092b275e46'
+  assert.equal(requiresGenerationApproval(review, { startMs: 0, endMs: 5000 }, [], operations), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}, [], operations), false)
+  // An operation catalog from an older workspace without replay flags cannot exempt or trigger review.
+  assert.equal(requiresGenerationApproval(review, {}, [], []), false)
+  assert.equal(approvalReason(review, { startMs: 1500, endMs: 6500 }, [], new Map(), operations), '审片会调用审片模型，可能收费。片段：1.5–6.5 秒。')
+  assert.equal(approvalReason(review, { startMs: 5000, endMs: 2000, model: 'review-model' }, [], new Map(), operations), '审片会调用审片模型，可能收费。模型：review-model。')
+  assert.match(approvalReason('mcp__beeftv__canvas_create_ab092b275e46', {}, [], new Map(), operations), /未识别的业务操作/)
 })
 
 // The shape canvas.generation.propose returns through the BeefTV MCP server.
@@ -259,8 +274,9 @@ async function workspaceServer(context) {
     if (path.startsWith('/api/agent-clients/') && req.method === 'DELETE') return send(200, { revoked: true })
     if (path === '/api/business/tools') return send(200, { tools: [{ id: 'business_get_assets', readOnly: true, submitsGeneration: false }] })
     if (path === '/api/ops') return send(200, { ops: [
-      { id: 'canvas.get', readOnly: true }, { id: 'canvas.generation.propose', readOnly: true }, { id: 'media.review', readOnly: true },
-      { id: 'canvas.create', readOnly: false }, { id: 'canvas.script.prepare', readOnly: false },
+      { id: 'canvas.get', readOnly: true, replay: 'safe' }, { id: 'canvas.generation.propose', readOnly: true, replay: 'safe' },
+      { id: 'media.review', readOnly: true, replay: 'unsafe' },
+      { id: 'canvas.create', readOnly: false, replay: 'unsafe' }, { id: 'canvas.script.prepare', readOnly: false, replay: 'safe' },
     ] })
     send(404)
   })
@@ -315,7 +331,7 @@ async function startHost(context, options = {}) {
       request.end(payload)
     })
   }
-  return { call, calls, workspace, listeners, prompt: view => prompt(view) }
+  return { call, calls, workspace, listeners, home, prompt: view => prompt(view) }
 }
 
 test('Host rejects context from missing or previous connection IDs and reattaches a returning App without reopening it', async context => {
@@ -412,6 +428,42 @@ test('without the DSH permission presets, paid submissions still ask', async con
   )
   assert.equal(decision.kind, 'ask')
   assert.match(decision.reason, /无法显示费用/)
+})
+
+test('paid media review asks with its segment unless the user chose full access', async context => {
+  const presets = new Map([['workspace-session', 'workspace-write'], ['full-access-session', 'danger-full-access']])
+  const permissionPresets = { current: session => presets.get(session.id) }
+  const { call, listeners } = await startHost(context, { services: { permissionPresets } })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const preExecute = listeners.get('tools/pre-execute')
+  const allow = async () => ({ kind: 'allow' })
+  const review = session => ({
+    name: 'mcp__beeftv__media_review_ab092b275e46',
+    arguments: { canvasId: 'canvas', expectedVersion: 'v1', startMs: 12000, endMs: 24000, question: '动作连贯吗' },
+    agent: { session: { id: session } },
+  })
+  assert.deepEqual(await preExecute(review('workspace-session'), allow), {
+    kind: 'ask', reason: '审片会调用审片模型，可能收费。片段：12–24 秒。',
+  })
+  assert.deepEqual(await preExecute(review('full-access-session'), allow), { kind: 'allow' })
+  // Ordinary reads do not grow an approval prompt.
+  const read = { name: 'mcp__beeftv__canvas_get_ab092b275e46', arguments: {}, agent: { session: { id: 'workspace-session' } } }
+  assert.deepEqual(await preExecute(read, allow), { kind: 'allow' })
+})
+
+test('a standalone workspace offers the local App once and remembers 暂不', async context => {
+  const { call, home } = await startHost(context)
+  const standalone = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
+  assert.equal(standalone.mode, 'standalone')
+  assert.equal(standalone.localApp.compatible, true)
+  assert.equal(standalone.localPromptDismissed, false)
+  const dismissed = await call('POST', '/beeftv/local-prompt', { dismissed: true })
+  assert.equal(dismissed.status, 200)
+  assert.equal(dismissed.body.localPromptDismissed, true)
+  assert.equal((await call('GET', '/beeftv/status')).body.localPromptDismissed, true)
+  const settings = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'connection.json'), 'utf8'))
+  assert.deepEqual(settings, { mode: 'standalone', localPromptDismissed: true })
+  assert.equal((await call('POST', '/beeftv/local-prompt', { dismissed: false })).status, 503)
 })
 
 test('workspace sync follows the catalog read-only flags instead of tool names', async context => {

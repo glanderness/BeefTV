@@ -30,11 +30,26 @@ beforeAll(async () => {
             return h('div', { 'data-native-conversation': true }, 'Native conversation');
           }
           window.__ModuleLoader__ = { load({ factory }) {
+            const services = { conversation: { input: { requestDraftInitialization: (binding, options) => {
+              window.lastDraft = { sessionId: binding.sessionId, options };
+              return window.__draftStatus || 'applied';
+            } } } };
+            if (window.__noConversation) delete services.conversation;
             factory(name => { if (name === 'react') return React; throw new Error(name); }).apply({
               effect: effect => effect(),
+              get: name => services[name],
+              sessions: { create: async () => 'created-session', binding: id => ({ sessionId: id }) },
+              uiWorkspace: {
+                openSession() {},
+                ...(window.__noStartSession ? {} : { startSession(workspaceId, options) { window.startedSession = { workspaceId, options }; } }),
+              },
+              layout: { selectPanel: id => { window.selectedPanel = id; } },
               slots: {
                 inject: (name, register) => register(),
-                register: (config, component) => components.set(config.name, component),
+                register: (config, component) => {
+                  if (config.inject) window.__mainInject = config.inject();
+                  components.set(config.name, component);
+                },
               },
             });
           }};
@@ -42,12 +57,12 @@ beforeAll(async () => {
           const useSession = () => ({ openState: 'ready' });
           function renderSlot(name, props) {
             return h(components.get(name), {
-              ...props, sessionId: 'native-session', useSession,
+              ...props, sessionId: window.__noSession ? undefined : 'native-session', useSession,
               renderFactorySlot: (name, options) => h(NativeView, { options }),
             });
           }
           createRoot(document.getElementById('root')).render(h(components.get('main'), {
-            renderSlot, returnToConversation() {},
+            ...window.__mainInject, renderSlot, returnToConversation() {},
             async createCreativeSession() { window.createdSessions = (window.createdSessions || 0) + 1; },
           }));
         `,
@@ -68,13 +83,15 @@ beforeAll(async () => {
 
 afterAll(async () => { await browser?.close(); server?.stop(true) })
 
-async function openWorkbench(options: { hidden?: boolean; clock?: boolean } = {}) {
+async function openWorkbench(options: { hidden?: boolean; clock?: boolean; init?: () => void } = {}) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   if (options.clock) await page.clock.install()
+  if (options.init) await page.addInitScript(options.init)
   if (options.hidden) await page.addInitScript(() => Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }))
   let status = { connected: true, connectionId: 'connection-local', mode: 'local', version: '2.1.6', appURL: new URL('/workspace/local/', server.url).href }
   let reads = 0
   const contexts: Array<Record<string, any>> = []
+  const prompts: Array<Record<string, any>> = []
   await page.route('**/beeftv/status', async route => {
     reads += 1
     await route.fulfill({ json: status })
@@ -83,10 +100,37 @@ async function openWorkbench(options: { hidden?: boolean; clock?: boolean } = {}
     contexts.push(route.request().postDataJSON())
     await route.fulfill({ json: { ok: true } })
   })
+  await page.route('**/beeftv/local-prompt', async route => {
+    prompts.push(route.request().postDataJSON())
+    status = { ...status, localPromptDismissed: true }
+    await route.fulfill({ json: status })
+  })
   await page.goto(server.url.href)
   await page.locator('iframe').waitFor()
   await page.frameLocator('iframe').getByText('Workspace', { exact: true }).waitFor()
-  return { page, contexts, reads: () => reads, setStatus: (next: typeof status) => { status = next }, status: () => status }
+  return { page, contexts, prompts, reads: () => reads, setStatus: (next: typeof status) => { status = next }, status: () => status }
+}
+
+function workspaceFrame(page: Page) {
+  return page.frames().find(frame => frame.url().includes('/workspace/'))!
+}
+
+async function sendAsk(page: Page, ask: Record<string, any>) {
+  const workspace = workspaceFrame(page)
+  await workspace.evaluate(message => parent.postMessage(message, location.origin), { type: 'beeftv:ask', ask })
+  await workspace.waitForFunction(() => (window as any).askResult !== undefined)
+  const result = await workspace.evaluate(() => (window as any).askResult)
+  await workspace.evaluate(() => { (window as any).askResult = undefined })
+  return result as string
+}
+
+async function listenAskResults(page: Page) {
+  await workspaceFrame(page).evaluate(() => {
+    (window as any).askResult = undefined
+    window.addEventListener('message', event => {
+      if ((event.data as any)?.type === 'beeftv:ask-result') (window as any).askResult = (event.data as any).status
+    })
+  })
 }
 
 async function refresh(page: Page) {
@@ -338,5 +382,89 @@ test('a timed-out status read reports failure and releases polling for a success
   await page.locator('iframe').waitFor()
   expect(await page.evaluate(() => (window as any).statusAttempts)).toBe(2)
   expect(await page.getByRole('alert').count()).toBe(0)
+  await page.close()
+})
+
+test('问助手把选中的节点预填到当前对话，不发送，并把节点写进会话上下文', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  await listenAskResults(page)
+  const posted = page.waitForRequest(request => request.url().endsWith('/beeftv/context') && request.postDataJSON()?.context?.canvasId === 'canvas-spring')
+  const nodes = Array.from({ length: 7 }, (_, index) => ({ id: `n${index}`, title: `节点${index}`, type: 'image' }))
+  expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'canvas-spring', canvasTitle: '春日', nodes })).toBe('applied')
+  expect(await page.evaluate(() => (window as any).lastDraft)).toEqual({
+    sessionId: 'native-session',
+    options: { prompt: '画布「春日」中选中的：节点0、节点1、节点2、节点3、节点4 等 7 个节点\n', whenDraftExists: 'append' },
+  })
+  expect(await page.evaluate(() => (window as any).selectedPanel)).toBe('beeftv')
+  const report = (await posted).postDataJSON()
+  expect(report.context).toEqual({ route: '/', canvasId: 'canvas-spring', canvasTitle: '春日', selectedNodeIds: nodes.map(node => node.id) })
+  await page.close()
+})
+
+for (const status of ['applied', 'preserved', 'blocked']) {
+  test(`问助手把输入框的 ${status} 结果原样返回，不覆盖已有草稿`, async () => {
+    const { page } = await openWorkbench()
+    // 输入框的返回由 DSH 决定，插件只转交状态。
+    await page.evaluate(value => { (window as any).__draftStatus = value }, status)
+    await listenAskResults(page)
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'video' }] })).toBe(status)
+    expect(await page.evaluate(() => (window as any).lastDraft.options.whenDraftExists)).toBe('append')
+    await page.close()
+  })
+}
+
+test('没有当前会话时退回新会话预填，没有输入能力时回 unavailable', async () => {
+  {
+    const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true } })
+    await listenAskResults(page)
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'video' }] })).toBe('applied')
+    expect(await page.evaluate(() => (window as any).startedSession)).toEqual({
+      workspaceId: undefined,
+      options: { prompt: '画布「画布」中选中的：镜头一\n', whenDraftExists: 'append' },
+    })
+    await page.close()
+  }
+  {
+    const { page } = await openWorkbench({ init: () => { (window as any).__noSession = true; (window as any).__noStartSession = true } })
+    await listenAskResults(page)
+    expect(await sendAsk(page, { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [], })).toBe('unavailable')
+    await page.close()
+  }
+})
+
+test('不是嵌入页发来的问助手消息会被忽略', async () => {
+  const { page } = await openWorkbench()
+  await listenAskResults(page)
+  await page.evaluate(() => window.postMessage({ type: 'beeftv:ask', ask: { source: 'selection-toolbar', canvasId: 'c', canvasTitle: '画布', nodes: [{ id: 'n1', title: '镜头一', type: 'image' }] } }, location.origin))
+  await page.waitForTimeout(50)
+  expect(await workspaceFrame(page).evaluate(() => (window as any).askResult)).toBeUndefined()
+  expect(await page.evaluate(() => (window as any).lastDraft)).toBeUndefined()
+  await page.close()
+})
+
+test('独立工作区常驻数据说明，本机可用时只提示一次并能记住暂不', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  state.setStatus({
+    ...state.status(),
+    mode: 'standalone',
+    appURL: new URL('/workspace/standalone/', server.url).href,
+    localApp: { compatible: true, version: '2.2.0', message: null },
+    localPromptDismissed: false,
+  } as any)
+  await refresh(page)
+  const note = '独立工作区，和本机 BeefTV 不是同一份数据'
+  const offer = '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'
+  await page.getByText(note, { exact: true }).waitFor()
+  await page.getByText(offer, { exact: true }).waitFor()
+  await page.getByRole('button', { name: '暂不' }).click()
+  await page.waitForFunction(text => !document.body.innerText.includes(text), offer)
+  expect(state.prompts).toEqual([{ dismissed: true }])
+  expect(await page.getByText(note, { exact: true }).count()).toBe(1)
+  await refresh(page)
+  await page.waitForTimeout(30)
+  expect(await page.getByText(offer, { exact: true }).count()).toBe(0)
+  expect(await page.getByText(note, { exact: true }).count()).toBe(1)
   await page.close()
 })
