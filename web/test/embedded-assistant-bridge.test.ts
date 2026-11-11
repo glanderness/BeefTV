@@ -138,22 +138,31 @@ describe("问助手交接", () => {
         expect(embeddedAskResultNotice("preserved")).toBeNull();
     });
 
-    test("parentOrigin 为 * 时只接受同源、本机回环或 opaque 父窗口", () => {
-        const { parent } = installBrowserWindow({ parentOrigin: "*" });
-        const notices: string[] = [];
-        const handler = createEmbeddedAskResultHandler((text) => notices.push(text));
-        const event = (origin: string) => handler(parentEvent(parent, { type: "beeftv:ask-result", status: "blocked" }, origin));
-        event("https://evil.test");
-        event("http://127.0.0.1:4321");
-        event("null");
-        event("https://app.test");
-        expect(notices).toHaveLength(3);
+    test("parentOrigin 为 * 或缺失时只接受同源、本机回环或 opaque 父窗口", () => {
+        for (const parentOrigin of ["*", null] as const) {
+            const { parent } = installBrowserWindow({ parentOrigin });
+            const accepted: string[] = [];
+            const handler = createEmbeddedAskResultHandler((text) => accepted.push(text));
+            const event = (origin: string) => handler(parentEvent(parent, { type: "beeftv:ask-result", status: "blocked" }, origin));
+            event("https://evil.test");
+            expect(accepted).toHaveLength(0);
+            event("https://host.test");
+            expect(accepted).toHaveLength(0);
+            event("https://app.test");
+            expect(accepted).toHaveLength(1);
+            event("http://127.0.0.1:4321");
+            expect(accepted).toHaveLength(2);
+            event("null");
+            expect(accepted).toHaveLength(3);
+        }
     });
 
     test("嵌入模式把 start=agent 启动参数消费掉但不交给内置助手", () => {
         const openAssistant = () => {};
-        expect(starterAssistantHandler(false, openAssistant)).toBeUndefined();
-        expect(starterAssistantHandler(true, openAssistant)).toBe(openAssistant);
+        installBrowserWindow({ embedded: false });
+        expect(starterAssistantHandler(openAssistant)).toBe(openAssistant);
+        installBrowserWindow();
+        expect(starterAssistantHandler(openAssistant)).toBeUndefined();
     });
 });
 

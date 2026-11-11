@@ -5,6 +5,9 @@ import { MemoryRouter } from "react-router";
 import { starterAssistantHandler, useCanvasStarterNavigation } from "@/pages/canvas/use-canvas-starter-navigation";
 
 const embedded = new URLSearchParams(window.location.search).get("embedded") === "1";
+if (embedded) {
+    window.__BEEFTV_HARNESS__ = { embedded: true, apiBase: "/beeftv/app/api", basePath: "/beeftv/app", parentOrigin: window.location.origin };
+}
 
 function Harness() {
     const [searchParams, setSearchParams] = useState(new URLSearchParams(window.location.search));
@@ -20,7 +23,7 @@ function Harness() {
         createNode: () => {},
         fitCanvasSelection: () => {},
         createDirectorShot: () => {},
-        openAssistant: starterAssistantHandler(!embedded, () => setAssistantCalls((value) => value + 1)),
+        openAssistant: starterAssistantHandler(() => setAssistantCalls((value) => value + 1)),
     });
     return (
         <>

@@ -65,3 +65,9 @@ test("单独打开时点击问助手仍回退内置助手", async () => {
     await page.locator("#ask").click();
     expect(await page.locator("#fallbacks").textContent()).toBe("1");
 }, 30_000);
+
+test("嵌入模式没有可用父窗口时不回退内置助手", async () => {
+    await page.goto(`http://localhost:${server.port}/child?embedded=1`);
+    await page.locator("#ask").click();
+    expect(await page.locator("#fallbacks").textContent()).toBe("0");
+}, 30_000);

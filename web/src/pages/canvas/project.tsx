@@ -1012,7 +1012,7 @@ function InfiniteCanvasPage() {
     const { addDirectorReferenceToCanvas, createDirectorShot, openDirectorWorkbench } = director;
 
     useCanvasStarterNavigation({ projectLoaded, searchParams, setSearchParams, containerRef, nodesRef,
-        createNode, fitCanvasSelection, createDirectorShot, openAssistant: starterAssistantHandler(internalAssistantEnabled, openAssistant) });
+        createNode, fitCanvasSelection, createDirectorShot, openAssistant: starterAssistantHandler(openAssistant) });
 
     const {
         activateStep: activateShortDramaStep,
