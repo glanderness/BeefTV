@@ -165,6 +165,36 @@ func (s *Service) SearchMarket(ctx context.Context, query string, registry ...st
 	return mergeMarketItems(curatedItems, remoteItems, localItems), nil
 }
 
+// CuratedMarket serves local recommendations immediately when cached is set.
+// The client refreshes the catalog separately, without waiting for npm search.
+func (s *Service) CuratedMarket(ctx context.Context, registry string, cached bool) []MarketPluginItem {
+	if normalized, err := NormalizeNpmRegistry(registry); err == nil {
+		registry = normalized
+	} else {
+		registry = NpmMirrorRegistry
+	}
+	installed := map[string]View{}
+	cachePath := ""
+	if s != nil {
+		if s.runtime != nil && strings.TrimSpace(s.runtime.dataDir) != "" {
+			cachePath = filepath.Join(s.runtime.dataDir, "plugins", "market-registry-cache.json")
+		}
+		for _, item := range s.List() {
+			installed[item.Manifest.ID] = item
+		}
+	}
+	if !cached {
+		return loadCuratedRegistryItemsWithCache(ctx, "", registry, cachePath, installed)
+	}
+	curatedRegistryMemCache.Lock()
+	raw := append([]byte(nil), curatedRegistryMemCache.raw...)
+	curatedRegistryMemCache.Unlock()
+	if len(raw) == 0 {
+		raw = readCuratedRegistryWithCache(nil, registry, cachePath)
+	}
+	return curatedRegistryItems(nil, raw, "", registry, installed)
+}
+
 // mergeMarketItems lists each plugin once, keeping the first group that has it.
 // The recommendation list and npm describe what can be installed (latest
 // version, recommended flag) and already mark installed plugins, so installed
@@ -404,6 +434,10 @@ func loadCuratedRegistryItems(ctx context.Context, query string, installed map[s
 
 func loadCuratedRegistryItemsWithCache(ctx context.Context, query, registry, cachePath string, installed map[string]View) []MarketPluginItem {
 	raw := readCuratedRegistryWithCache(ctx, registry, cachePath)
+	return curatedRegistryItems(ctx, raw, query, registry, installed)
+}
+
+func curatedRegistryItems(ctx context.Context, raw []byte, query, registry string, installed map[string]View) []MarketPluginItem {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -460,6 +494,9 @@ func loadCuratedRegistryItemsWithCache(ctx context.Context, query, registry, cac
 			Category:      item.Category,
 			Bundled:       bundled,
 		})
+	}
+	if ctx == nil {
+		return out
 	}
 	return append(out, listedPackageItems(ctx, payload.Packages, listed, q, registry, installed)...)
 }

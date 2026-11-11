@@ -1,10 +1,11 @@
-import { ChevronLeft, ChevronRight, Home, Plug, Plus, Settings2, HardDrive, Sun, Moon, Bot } from "lucide-react";
+import { ChevronLeft, ChevronRight, Home, Plug, Plus, Settings2, HardDrive, Sun, Moon } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { BrandLogoFrame } from "@/components/brand/brand-logo";
 import { WorkspaceSidebarUpdate } from "@/components/layout/workspace-sidebar-update";
+import { WorkspaceSidebarAccount } from "@/components/layout/workspace-sidebar-account";
 import { WorkspaceSidebarSocialLinks } from "@/components/layout/workspace-sidebar-social-links";
 import { Kbd } from "@/components/ui/base/kbd";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -58,7 +59,6 @@ function buildNav(features: FeatureAvailability): { groups: WorkspaceNavGroup[];
                 { ...toolItem("skills", "/skills"), title: "技能" },
                 ...(features.pluginCenterEnabled ? [{ ...toolItem("plugins", "/plugins"), title: "插件" }] : []),
                 { id: "settings:channels", title: "模型配置", icon: Settings2, to: "/settings?section=channels" },
-                { id: "settings:assistant", title: "助手设置", icon: Bot, to: "/settings?section=assistant" },
                 { id: "settings:storage", title: "存储设置", icon: HardDrive, to: "/settings?section=storage" },
                 { id: "agents", title: "BeefTV MCP", icon: Plug, to: "/agents" },
             ],
@@ -333,11 +333,9 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
                         ))}
                     </div>
                 ) : null}
-                <div className={cn("app-workspace-sidebar-contact-row", collapsed && "is-collapsed")}>
-                    <WorkspaceSidebarSocialLinks />
-                </div>
+                <WorkspaceSidebarSocialLinks collapsed={collapsed} onExpand={onExpand} />
                 <div className={cn("app-workspace-sidebar-utility-row", collapsed && "is-collapsed")}>
-                    <WorkspaceSidebarUpdate collapsed={collapsed} />
+                    <WorkspaceSidebarUpdate collapsed={collapsed} leading={<WorkspaceSidebarAccount collapsed={collapsed} />} />
                     <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="app-workspace-theme-action">
                         {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
                     </AnimatedThemeToggler>

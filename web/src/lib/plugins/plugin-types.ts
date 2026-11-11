@@ -592,6 +592,11 @@ export type PluginProjectViewContribution = {
 };
 
 export type PluginCenterSectionProps = {
+    Card?: typeof import("@/pages/plugins/plugin-card").PluginCard;
+    Button?: typeof import("antd").Button;
+    DetailsModal?: typeof import("@/components/ui/product/app-modal").AppModal;
+    Markdown?: ComponentType<{ source: string; className?: string }>;
+    RegistrySelect?: typeof import("antd").Select;
     pluginId: string;
     installedPlugins?: RegisteredPlugin[];
     pluginStates?: Record<string, unknown>;
