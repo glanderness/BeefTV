@@ -66,7 +66,7 @@ export function validateTimelineShape(timeline, doc = null) {
       const nodeId = String(clip?.nodeId || '').trim();
       if (nodeId && !nodeIds.has(nodeId)) throw invalidArg('invalid_timeline', `片段引用不在画布的节点: ${nodeId}`);
     }
-    if (kind === 'subtitle' || track.visible === false || track.muted === true) continue;
+    if (kind === 'subtitle' || track.visible === false) continue;
     const ranges = visibleMediaByTrack.get(trackId) || [];
     const end = clip.startMs + clip.durationMs;
     if (ranges.some((range) => clip.startMs < range.end && end > range.start)) {
