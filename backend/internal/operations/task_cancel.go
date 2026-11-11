@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	localtask "infinite-canvas/backend/internal/task"
 )
 
 // TaskController 是任务取消这类命令能力的窄端口，由组合根实现。
@@ -54,9 +53,20 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	cancelled, err := ctx.TaskControl.CancelTask(ctx.Context, ctx.UserID, taskID)
 	if err != nil {
-		if err.Error() == localtask.CancelChangedMessage {
-			return nil, Conflict("task_cancel_race", "任务状态在取消时发生变化，请重新查询任务状态", map[string]any{
+		// 取消期间状态可能被其他 worker 改掉；重读一次再决定是业务冲突还是真实故障。
+		latest, readErr := ctx.Domain.Task(ctx.UserID, taskID)
+		if readErr == nil && latest != nil && latest.Status != before.Status {
+			if latest.Status == model.TaskStatusCancelled {
+				return map[string]any{
+					"taskId":         latest.ID,
+					"status":         latest.Status,
+					"previousStatus": before.Status,
+					"note":           "任务此前已经取消，没有再次提交取消请求。",
+				}, nil
+			}
+			return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(latest.Status)+"，无法取消", map[string]any{
 				"taskId": taskID,
+				"status": latest.Status,
 			})
 		}
 		mapped := mapDomainError(err)

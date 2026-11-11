@@ -2,6 +2,7 @@ package operations
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -144,5 +145,107 @@ func TestStaleRunningReceiptRejectsDifferentPayload(t *testing.T) {
 	}
 	if got := countRunningReceipts(t, db, "user-1", "stale-mismatch"); got != 1 {
 		t.Fatalf("拒绝重试不得删除原回执，得到 %d", got)
+	}
+}
+
+type rejectTurnGuard struct{}
+
+func (rejectTurnGuard) VerifyOpenAssistantTurnInTx(*gorm.DB, string, string, string) error {
+	return PreconditionFailed("turn_closed", "助手回合已经结束", nil)
+}
+
+func TestStaleScriptReceiptStillVerifiesTurnGuard(t *testing.T) {
+	store, db := newOpRecordStore(t)
+	stale := model.AgentOpRecord{
+		UserID: "user-1", OpID: "stale-script", Op: "skill.script.run", PayloadHash: "payload-1",
+		Status: "running", TurnID: "turn-1", CreatedAt: time.Now().Add(-time.Hour),
+	}
+	if err := db.Create(&stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	req := RunRequest{UserID: "user-1", OpID: "stale-script", Op: "skill.script.run", PayloadHash: "payload-1",
+		TurnID: "turn-1", TurnGuard: rejectTurnGuard{}}
+	_, err := store.Run(context.Background(), req, func(*gorm.DB) ([]byte, error) {
+		t.Fatal("过期回执接管也必须先通过回合校验")
+		return nil, nil
+	})
+	if opErr, ok := err.(*Error); !ok || opErr.Code != CodePreconditionFailed || opErr.Reason != "turn_closed" {
+		t.Fatalf("expected turn_closed, got %v", err)
+	}
+	var stored model.AgentOpRecord
+	if err := db.Where("user_id = ? AND op_id = ?", "user-1", "stale-script").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "running" || stored.TurnID != "turn-1" {
+		t.Fatalf("回合校验失败必须回滚接管，得到 %+v", stored)
+	}
+}
+
+func TestLeaseTakeoverDoesNotOverwriteNewReceipt(t *testing.T) {
+	store, db := newOpRecordStore(t)
+	stale := model.AgentOpRecord{
+		UserID: "user-1", OpID: "takeover-op", Op: "task.cancel", PayloadHash: "payload-1",
+		Status: "running", CreatedAt: time.Now().Add(-5 * time.Minute),
+	}
+	if err := db.Create(&stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.Run(context.Background(), runOutOfTxRequest("takeover-op"), func(root *gorm.DB) ([]byte, error) {
+		if err := root.Where("user_id = ? AND op_id = ?", "user-1", "takeover-op").Delete(&model.AgentOpRecord{}).Error; err != nil {
+			return nil, err
+		}
+		replacement := model.AgentOpRecord{UserID: "user-1", OpID: "takeover-op", Op: "task.cancel",
+			PayloadHash: "payload-1", Status: "running", CreatedAt: time.Now().Add(time.Second)}
+		if err := root.Create(&replacement).Error; err != nil {
+			return nil, err
+		}
+		return []byte(`{"old":true}`), nil
+	})
+	if opErr, ok := err.(*Error); !ok || opErr.Code != CodeConflict || opErr.Reason != "operation_superseded" {
+		t.Fatalf("被接管的旧执行不得覆盖新回执，得到 %v", err)
+	}
+	var stored model.AgentOpRecord
+	if err := db.Where("user_id = ? AND op_id = ?", "user-1", "takeover-op").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "running" || stored.ResultJSON != "" {
+		t.Fatalf("新执行的回执被旧执行改写: %+v", stored)
+	}
+}
+
+func TestCanceledRequestContextStillFinalizesReceipt(t *testing.T) {
+	store, db := newOpRecordStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	outcome, err := store.Run(ctx, runOutOfTxRequest("canceled-ctx-op"), func(*gorm.DB) ([]byte, error) {
+		cancel()
+		return []byte(`{"ok":true}`), nil
+	})
+	if err != nil {
+		t.Fatalf("客户端取消不应阻止回执落定: %v", err)
+	}
+	if string(outcome.Result) != `{"ok":true}` {
+		t.Fatalf("unexpected result: %s", outcome.Result)
+	}
+	var stored model.AgentOpRecord
+	if err := db.Where("user_id = ? AND op_id = ?", "user-1", "canceled-ctx-op").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "succeeded" {
+		t.Fatalf("回执未落定: %+v", stored)
+	}
+}
+
+func TestCanceledRequestContextCleansRunningReceipt(t *testing.T) {
+	store, db := newOpRecordStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := store.Run(ctx, runOutOfTxRequest("canceled-error-op"), func(*gorm.DB) ([]byte, error) {
+		cancel()
+		return nil, errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("handler failure must return an error")
+	}
+	if got := countRunningReceipts(t, db, "user-1", "canceled-error-op"); got != 0 {
+		t.Fatalf("客户端取消后不得留下 running 回执，得到 %d", got)
 	}
 }

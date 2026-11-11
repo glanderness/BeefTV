@@ -190,21 +190,32 @@ func runsOutsideOperationTx(op string) bool {
 
 // runningReceiptLease 是 out-of-tx 回执可以重试的租约：执行进程若在回执落定前
 // 退出，超过租约后同一 operationId 允许重新执行，而不是永久卡在 operation_in_progress。
-// 脚本可能跑很久，给更长的租约，避免并发重复执行。
+// 脚本最长可跑 30 分钟，租约必须留出脚本执行完和回执落定的余量。
 func runningReceiptLease(op string) time.Duration {
 	if op == "skill.script.run" {
-		return 30 * time.Minute
+		return 45 * time.Minute
 	}
 	return 2 * time.Minute
 }
 
 func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
+	verifyTurn := func(tx *gorm.DB) error {
+		if strings.TrimSpace(req.TurnID) == "" {
+			return nil
+		}
+		if req.TurnGuard == nil {
+			return PreconditionFailed("turn_guard_unavailable", "助手轮次校验不可用", nil)
+		}
+		return req.TurnGuard.VerifyOpenAssistantTurnInTx(tx, req.UserID, req.TurnID, req.CanvasID)
+	}
 	var outcome RunOutcome
+	// created_at 同时是这次执行的归属令牌：接管或并发执行只能改到自己的回执。
+	record := model.AgentOpRecord{OpID: req.OpID, UserID: req.UserID, Op: req.Op,
+		PayloadHash: req.PayloadHash, Status: "running", TurnID: strings.TrimSpace(req.TurnID),
+		CallerKind: strings.TrimSpace(req.CallerKind), ClientID: strings.TrimSpace(req.ClientID),
+		ClientLabel: strings.TrimSpace(req.ClientLabel), CreatedAt: time.Now().UTC()}
+	executionToken := record.CreatedAt
 	err := db.Transaction(func(tx *gorm.DB) error {
-		record := model.AgentOpRecord{OpID: req.OpID, UserID: req.UserID, Op: req.Op,
-			PayloadHash: req.PayloadHash, Status: "running", TurnID: strings.TrimSpace(req.TurnID),
-			CallerKind: strings.TrimSpace(req.CallerKind), ClientID: strings.TrimSpace(req.ClientID),
-			ClientLabel: strings.TrimSpace(req.ClientLabel)}
 		if err := tx.Create(&record).Error; err != nil {
 			if !isDuplicateKey(err) {
 				return AsError(err)
@@ -225,7 +236,10 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 						Delete(&model.AgentOpRecord{}).Error; delErr != nil {
 						return AsError(delErr)
 					}
-					return tx.Create(&record).Error
+					if createErr := tx.Create(&record).Error; createErr != nil {
+						return AsError(createErr)
+					}
+					return verifyTurn(tx)
 				}
 				return Conflict("operation_in_progress",
 					"同一操作正在执行或上次未成功，未回放结果", map[string]any{"opId": req.OpID, "status": existing.Status})
@@ -233,15 +247,7 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 			outcome = RunOutcome{Result: []byte(existing.ResultJSON), Replayed: true}
 			return nil
 		}
-		if strings.TrimSpace(req.TurnID) != "" {
-			if req.TurnGuard == nil {
-				return PreconditionFailed("turn_guard_unavailable", "助手轮次校验不可用", nil)
-			}
-			if err := req.TurnGuard.VerifyOpenAssistantTurnInTx(tx, req.UserID, req.TurnID, req.CanvasID); err != nil {
-				return err
-			}
-		}
-		return nil
+		return verifyTurn(tx)
 	})
 	if err != nil {
 		var opErr *Error
@@ -254,11 +260,15 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 		return outcome, nil
 	}
 	// 回执已经单独提交；handler 失败、panic 或最终回执更新失败时都不能把它留在 running。
+	// 回执清理和最终更新不跟随请求 ctx：客户端断连时回执仍要落定。
 	finalized := false
+	cleanup := func() {
+		_ = s.db.Where("user_id = ? AND op_id = ? AND status = ? AND created_at = ?",
+			req.UserID, req.OpID, "running", executionToken).Delete(&model.AgentOpRecord{}).Error
+	}
 	defer func() {
 		if !finalized {
-			_ = db.Where("user_id = ? AND op_id = ? AND status = ?", req.UserID, req.OpID, "running").
-				Delete(&model.AgentOpRecord{}).Error
+			cleanup()
 		}
 	}()
 	out, runErr := fn(db)
@@ -269,9 +279,14 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 		}
 		return RunOutcome{}, AsError(runErr)
 	}
-	if err := db.Model(&model.AgentOpRecord{}).Where("user_id = ? AND op_id = ?", req.UserID, req.OpID).
-		Updates(map[string]any{"status": "succeeded", "result_json": string(out), "turn_id": strings.TrimSpace(req.TurnID)}).Error; err != nil {
-		return RunOutcome{}, AsError(err)
+	update := s.db.Model(&model.AgentOpRecord{}).
+		Where("user_id = ? AND op_id = ? AND status = ? AND created_at = ?", req.UserID, req.OpID, "running", executionToken).
+		Updates(map[string]any{"status": "succeeded", "result_json": string(out), "turn_id": strings.TrimSpace(req.TurnID)})
+	if update.Error != nil {
+		return RunOutcome{}, AsError(update.Error)
+	}
+	if update.RowsAffected != 1 {
+		return RunOutcome{}, Conflict("operation_superseded", "该操作已被新的执行接管，本次结果没有写入回执", nil)
 	}
 	finalized = true
 	return RunOutcome{Result: out}, nil
