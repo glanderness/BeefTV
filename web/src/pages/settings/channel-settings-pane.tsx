@@ -6,7 +6,7 @@ import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { PageHeader } from "@/components/layout/workspace-page";
-import { applyFetchedChannelModelCatalog, mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
+import { applyFetchedChannelModelCatalog } from "@/lib/channel-model-catalog";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels } from "@/services/api/image";
 import { channelHasGenerationCredential, channelHasManagedBeefTVCredential, canonicalChannelModel, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefTVChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
@@ -581,8 +581,6 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
         </Form>
     );
 }
-
-export { applyFetchedChannelModelCatalog };
 
 export function channelValidationError(channel: ModelChannel, connection?: BeefTVConnectionSummary | null) {
     return channelConnectionError(channel, connection) || validateChannelHeaders(channel.headers) || (!channel.models.length ? "请添加至少一个模型" : "");

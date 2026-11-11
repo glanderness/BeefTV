@@ -34,30 +34,35 @@ func applyProtocolWorkflowVideoCapability(video *VideoCapabilityConfig, workflow
 	resolutionParam := findParam("resolution")
 	durationParam := findParam("duration")
 
-	if ratioParam != nil && len(ratioParam.Values) > 0 {
-		video.Ratios = normalizeWorkflowStrings(ratioParam.Values)
+	var ratios []string
+	if ratioParam != nil {
+		ratios = normalizeWorkflowStrings(ratioParam.Values)
+	}
+	var resolutions []string
+	if resolutionParam != nil {
+		resolutions = normalizeWorkflowStrings(resolutionParam.Values)
+	}
+
+	if len(ratios) > 0 {
+		video.Ratios = ratios
 		defRatio := workflowDefaultString(workflow.Defaults, ratioParam.Name, "aspectRatio", "ratio")
 		if matched := matchWorkflowString(video.Ratios, defRatio); matched != "" {
 			video.DefaultRatio = matched
-		} else if len(video.Ratios) > 0 {
-			video.DefaultRatio = video.Ratios[0]
 		} else {
-			video.DefaultRatio = ""
+			video.DefaultRatio = video.Ratios[0]
 		}
-	} else if resolutionParam != nil && len(resolutionParam.Values) > 0 {
+	} else if len(resolutions) > 0 {
 		video.Ratios = []string{}
 		video.DefaultRatio = ""
 	}
 
-	if resolutionParam != nil && len(resolutionParam.Values) > 0 {
-		video.Resolutions = normalizeWorkflowStrings(resolutionParam.Values)
+	if len(resolutions) > 0 {
+		video.Resolutions = resolutions
 		defRes := workflowDefaultString(workflow.Defaults, resolutionParam.Name, "resolution")
 		if matched := matchWorkflowString(video.Resolutions, defRes); matched != "" {
 			video.DefaultResolution = matched
-		} else if len(video.Resolutions) > 0 {
-			video.DefaultResolution = video.Resolutions[0]
 		} else {
-			video.DefaultResolution = ""
+			video.DefaultResolution = video.Resolutions[0]
 		}
 	}
 
@@ -66,8 +71,11 @@ func applyProtocolWorkflowVideoCapability(video *VideoCapabilityConfig, workflow
 		if len(durationParam.Values) > 0 {
 			values := make([]int, 0, len(durationParam.Values))
 			for _, raw := range durationParam.Values {
-				if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && parsed > 0 && !containsInt(values, parsed) {
-					values = append(values, parsed)
+				trimmed := strings.TrimSpace(raw)
+				if !strings.HasPrefix(trimmed, "+") {
+					if parsed, err := strconv.Atoi(trimmed); err == nil && parsed > 0 && !containsInt(values, parsed) {
+						values = append(values, parsed)
+					}
 				}
 			}
 			if len(values) > 0 {
@@ -121,8 +129,23 @@ func workflowDefaultString(defaults map[string]any, keys ...string) string {
 		if trimmedKey == "" || defaults == nil {
 			continue
 		}
-		if text, ok := defaults[trimmedKey].(string); ok && strings.TrimSpace(text) != "" {
-			return strings.TrimSpace(text)
+		var text string
+		switch typed := defaults[trimmedKey].(type) {
+		case string:
+			text = typed
+		case int:
+			text = strconv.Itoa(typed)
+		case int64:
+			text = strconv.FormatInt(typed, 10)
+		case float64:
+			if !math.IsNaN(typed) && !math.IsInf(typed, 0) {
+				text = strconv.FormatFloat(typed, 'f', -1, 64)
+			}
+		case bool:
+			text = strconv.FormatBool(typed)
+		}
+		if trimmed := strings.TrimSpace(text); trimmed != "" {
+			return trimmed
 		}
 	}
 	return ""
@@ -144,8 +167,11 @@ func workflowDefaultInt(defaults map[string]any, keys ...string) (int, bool) {
 				return int(typed), true
 			}
 		case string:
-			if parsed, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
-				return parsed, true
+			trimmed := strings.TrimSpace(typed)
+			if !strings.HasPrefix(trimmed, "+") {
+				if parsed, err := strconv.Atoi(trimmed); err == nil {
+					return parsed, true
+				}
 			}
 		}
 	}

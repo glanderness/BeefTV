@@ -1,6 +1,7 @@
 package modelcatalog
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,5 +80,33 @@ func TestCapabilityNormalizerProjectsPluginWorkflowCapabilities(t *testing.T) {
 		if cfg.Video.Duration.Selection != "range" || cfg.Video.Duration.Min != 1 || cfg.Video.Duration.Max != tc.maxSeconds || cfg.Video.Duration.Default != tc.defaultSecond {
 			t.Fatalf("%s duration = %#v, want range 1..%d default %d", tc.model, cfg.Video.Duration, tc.maxSeconds, tc.defaultSecond)
 		}
+	}
+}
+
+func TestWorkflowVideoCapabilityProjectionMatchesSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "fixtures", "workflow-video-capability-projection.json"))
+	if err != nil {
+		t.Fatalf("读取工作流能力共享夹具失败：%v", err)
+	}
+	var cases []struct {
+		Name     string                    `json:"name"`
+		Workflow protocol.ManifestWorkflow `json:"workflow"`
+		Expected map[string]any            `json:"expected"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("解析工作流能力共享夹具失败：%v", err)
+	}
+	for _, item := range cases {
+		video := defaultVideoCapabilityConfig(item.Workflow.ProviderID, item.Workflow.ID)
+		applyProtocolWorkflowVideoCapability(video, item.Workflow)
+		encoded, err := json.Marshal(video)
+		if err != nil {
+			t.Fatalf("%s 序列化失败：%v", item.Name, err)
+		}
+		var actual map[string]any
+		if err := json.Unmarshal(encoded, &actual); err != nil {
+			t.Fatalf("%s 解析失败：%v", item.Name, err)
+		}
+		assertFixtureSubset(t, item.Name, item.Expected, actual)
 	}
 }

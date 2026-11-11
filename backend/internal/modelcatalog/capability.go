@@ -142,12 +142,8 @@ type CapabilityNormalizer struct {
 	workflow WorkflowLookup
 }
 
-func NewCapabilityNormalizer(workflow ...WorkflowLookup) CapabilityNormalizer {
-	var lookup WorkflowLookup
-	if len(workflow) > 0 {
-		lookup = workflow[0]
-	}
-	return CapabilityNormalizer{workflow: lookup}
+func NewCapabilityNormalizer(workflow WorkflowLookup) CapabilityNormalizer {
+	return CapabilityNormalizer{workflow: workflow}
 }
 
 func (n CapabilityNormalizer) NormalizeModelCapabilityDraft(draft ModelCapabilityDraft) (*ModelCapabilityConfig, error) {

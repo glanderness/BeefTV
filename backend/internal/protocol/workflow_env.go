@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -17,25 +18,38 @@ func requestAsManifestValue(value any) (any, error) {
 	return result, nil
 }
 
-func manifestModelID(request GenerationRequest) string {
+func manifestRawModelID(request GenerationRequest) string {
 	modelID := strings.TrimSpace(request.Model)
 	if separator := strings.LastIndex(modelID, "::"); separator >= 0 {
-		modelID = modelID[separator+2:]
+		modelID = strings.TrimSpace(modelID[separator+2:])
 	}
-	return strings.ToLower(strings.TrimSpace(modelID))
+	return modelID
+}
+
+func manifestModelID(request GenerationRequest) string {
+	return strings.ToLower(manifestRawModelID(request))
 }
 
 func manifestWorkflowValues(manifest Manifest, request GenerationRequest) map[string]any {
-	modelID := manifestModelID(request)
+	modelID := manifestRawModelID(request)
 	if modelID == "" {
 		return nil
 	}
 	providerID := strings.TrimSpace(manifest.Metadata.ID)
 	for _, workflow := range manifest.Contributes.Workflows {
-		if providerID != "" && workflow.ProviderID != "" && !strings.EqualFold(strings.TrimSpace(workflow.ProviderID), providerID) {
+		if providerID != "" && workflow.ProviderID != providerID {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(workflow.ID), modelID) {
+		if workflow.Capability == "" {
+			continue
+		}
+		if request.Capability != "" && workflow.Capability != request.Capability {
+			continue
+		}
+		if len(manifest.Metadata.Categories) > 0 && !slices.Contains(manifest.Metadata.Categories, workflow.Capability) {
+			continue
+		}
+		if workflow.ID != modelID {
 			continue
 		}
 		values := make(map[string]any, len(workflow.Parameters))

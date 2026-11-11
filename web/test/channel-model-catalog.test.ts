@@ -7,10 +7,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasVideoSettingsPopover } from "../src/components/canvas/canvas-video-settings-popover";
 import { VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
-import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
+import { applyFetchedChannelModelCatalog, mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
 import { defaultModelCapabilityConfig, modelCapabilityConfigFor, videoDurationOptions } from "../src/lib/model-capabilities";
+import { hasDeclaredModelCapability } from "../src/lib/model-selection";
 import { ChannelModelSettings } from "../src/pages/settings/channel-model-settings";
-import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
 import { fetchChannelModels } from "../src/services/api/image";
 import { disconnectBeefTVConnection } from "../src/services/api/beeftv-connection";
 import { apiClient } from "../src/services/api/request";
@@ -697,6 +697,24 @@ describe("public channel model catalog", () => {
         expect(profiles.find((p) => p.model === "custom-img-pro")?.imageCapabilitiesVersion).toBe("gw-img-v1");
         expect(profiles.find((p) => p.model === "custom-vid-pro")?.videoCapabilitiesVersion).toBe("gw-vid-v1");
         expect(profiles.find((p) => p.model === "custom-vid-pro")?.videoPricing).toEqual(pricing);
+    });
+
+    test("hasDeclaredModelCapability 仅把带真实 capabilityConfig 的 user 标记视为用户显式限制", () => {
+        const channel = createModelChannel({
+            id: "byok-custom",
+            baseUrl: "https://gateway.example.com/v1",
+            apiKey: "synthetic-test-key",
+            models: ["vid-default", "vid-user", "vid-empty-user"],
+            modelProfiles: [
+                { model: "vid-default", capability: "video", protocol: "newapi", capabilityConfig: defaultModelCapabilityConfig("newapi", "vid-default") },
+                { model: "vid-user", capability: "video", protocol: "newapi", capabilitySource: "user", capabilityConfig: defaultModelCapabilityConfig("newapi", "vid-user") },
+                { model: "vid-empty-user", capability: "video", protocol: "newapi", capabilitySource: "user" },
+            ],
+        });
+        const config: AiConfig = { ...defaultConfig, channels: [channel], models: channel.models.map((m) => `byok-custom::${m}`) };
+        expect(hasDeclaredModelCapability(config, "byok-custom::vid-default", "video")).toBe(false);
+        expect(hasDeclaredModelCapability(config, "byok-custom::vid-user", "video")).toBe(true);
+        expect(hasDeclaredModelCapability(config, "byok-custom::vid-empty-user", "video")).toBe(false);
     });
 
 });
