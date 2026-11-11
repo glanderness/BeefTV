@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 // TaskController 是任务取消这类命令能力的窄端口，由组合根实现。
@@ -42,10 +43,25 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 	if before == nil {
 		return nil, NotFound("task_not_found", "任务不存在")
 	}
+	// 只有这几种状态有取消语义；其余状态直接说明，不把内部错误伪装成业务冲突。
+	switch before.Status {
+	case model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusCancelled, model.TaskStatusSucceeded:
+	default:
+		return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(before.Status)+"，无法取消", map[string]any{
+			"taskId": taskID,
+			"status": before.Status,
+		})
+	}
 	cancelled, err := ctx.TaskControl.CancelTask(ctx.Context, ctx.UserID, taskID)
 	if err != nil {
+		if err.Error() == localtask.CancelChangedMessage {
+			return nil, Conflict("task_cancel_race", "任务状态在取消时发生变化，请重新查询任务状态", map[string]any{
+				"taskId": taskID,
+			})
+		}
 		mapped := mapDomainError(err)
-		if opErr, ok := mapped.(*Error); ok && (opErr.Code == CodeInvalidArgument || opErr.Code == CodeInternal) {
+		if opErr, ok := mapped.(*Error); ok && opErr.Code == CodeInvalidArgument {
+			// 例如生成结果已经取回：这是明确的业务失败，不是内部故障。
 			return nil, Conflict("task_not_cancellable", err.Error(), map[string]any{
 				"taskId": taskID,
 				"status": before.Status,

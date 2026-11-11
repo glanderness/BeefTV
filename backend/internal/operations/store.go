@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -187,6 +188,16 @@ func runsOutsideOperationTx(op string) bool {
 	}
 }
 
+// runningReceiptLease 是 out-of-tx 回执可以重试的租约：执行进程若在回执落定前
+// 退出，超过租约后同一 operationId 允许重新执行，而不是永久卡在 operation_in_progress。
+// 脚本可能跑很久，给更长的租约，避免并发重复执行。
+func runningReceiptLease(op string) time.Duration {
+	if op == "skill.script.run" {
+		return 30 * time.Minute
+	}
+	return 2 * time.Minute
+}
+
 func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
 	var outcome RunOutcome
 	err := db.Transaction(func(tx *gorm.DB) error {
@@ -202,14 +213,22 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 			if findErr := tx.Where("user_id = ? AND op_id = ?", req.UserID, req.OpID).First(&existing).Error; findErr != nil {
 				return AsError(err)
 			}
-			if existing.Status != "succeeded" {
-				return Conflict("operation_in_progress",
-					"同一操作正在执行或上次未成功，未回放结果", map[string]any{"opId": req.OpID, "status": existing.Status})
-			}
 			if !payloadHashAccepted(existing.PayloadHash, req) || existing.Op != req.Op {
 				return Conflict("operation_id_reused_with_different_payload",
 					"同一操作 ID 已用于不同的请求内容；请换用新的操作 ID",
 					map[string]any{"opId": req.OpID, "existingOp": existing.Op})
+			}
+			if existing.Status != "succeeded" {
+				if existing.Status == "running" && !existing.CreatedAt.IsZero() && time.Since(existing.CreatedAt) >= runningReceiptLease(req.Op) {
+					// 上一次执行没有落下最终回执（进程退出或最终写入失败）；清掉过期回执再重试。
+					if delErr := tx.Where("user_id = ? AND op_id = ? AND status = ?", req.UserID, req.OpID, "running").
+						Delete(&model.AgentOpRecord{}).Error; delErr != nil {
+						return AsError(delErr)
+					}
+					return tx.Create(&record).Error
+				}
+				return Conflict("operation_in_progress",
+					"同一操作正在执行或上次未成功，未回放结果", map[string]any{"opId": req.OpID, "status": existing.Status})
 			}
 			outcome = RunOutcome{Result: []byte(existing.ResultJSON), Replayed: true}
 			return nil
@@ -234,9 +253,16 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 	if outcome.Replayed {
 		return outcome, nil
 	}
+	// 回执已经单独提交；handler 失败、panic 或最终回执更新失败时都不能把它留在 running。
+	finalized := false
+	defer func() {
+		if !finalized {
+			_ = db.Where("user_id = ? AND op_id = ? AND status = ?", req.UserID, req.OpID, "running").
+				Delete(&model.AgentOpRecord{}).Error
+		}
+	}()
 	out, runErr := fn(db)
 	if runErr != nil {
-		_ = db.Where("user_id = ? AND op_id = ? AND status = ?", req.UserID, req.OpID, "running").Delete(&model.AgentOpRecord{}).Error
 		var opErr *Error
 		if errors.As(runErr, &opErr) {
 			return RunOutcome{}, opErr
@@ -247,6 +273,7 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 		Updates(map[string]any{"status": "succeeded", "result_json": string(out), "turn_id": strings.TrimSpace(req.TurnID)}).Error; err != nil {
 		return RunOutcome{}, AsError(err)
 	}
+	finalized = true
 	return RunOutcome{Result: out}, nil
 }
 

@@ -122,7 +122,8 @@ func listGenerationOrdersPageInDB(db *gorm.DB, userID string, filter GenerationO
 		return GenerationOrderPage{}, err
 	}
 	var records []model.AgentOpRecord
-	if err := generationOrdersQuery(db, userID, filter).Order("created_at DESC").
+	// created_at 相同时用 op_id 做稳定次排序，避免翻页重复或漏行。
+	if err := generationOrdersQuery(db, userID, filter).Order("created_at DESC").Order("op_id DESC").
 		Offset((page - 1) * pageSize).Limit(pageSize).Find(&records).Error; err != nil {
 		return GenerationOrderPage{}, err
 	}
@@ -130,6 +131,7 @@ func listGenerationOrdersPageInDB(db *gorm.DB, userID string, filter GenerationO
 	for _, rec := range records {
 		var order GenerationOrder
 		if err := json.Unmarshal([]byte(rec.ResultJSON), &order); err != nil {
+			// 损坏的历史记录无法投影成生成单；跳过它，total 仍按原始记录计数。
 			continue
 		}
 		orders = append(orders, order)

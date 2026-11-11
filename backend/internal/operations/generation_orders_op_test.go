@@ -3,7 +3,9 @@ package operations_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 )
 
@@ -88,4 +90,54 @@ func decodeGenerationOrderPage(t *testing.T, result operations.Result) operation
 		t.Fatal(err)
 	}
 	return page
+}
+
+func TestGenerationOrderListExcludesOtherUsers(t *testing.T) {
+	h := newHarness(t)
+	if err := operations.UpsertGenerationOrderInTx(h.service.Database(), "other-user", operations.GenerationOrder{
+		OrderID: "other-order", ProposalID: "other-order", CanvasID: h.canvasID,
+		Status: operations.GenerationOrderPending, Kind: "image", NodeIDs: []string{"n1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.execute(t, operations.ExternalCaller(true), "canvas.generation.orders", "", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := decodeGenerationOrderPage(t, result)
+	if page.Total != 0 || len(page.Orders) != 0 {
+		t.Fatalf("other user's orders must not be visible: %+v", page)
+	}
+}
+
+func TestGenerationOrderPaginationIsStableForEqualTimestamps(t *testing.T) {
+	h := newHarness(t)
+	for _, id := range []string{"order-same-a", "order-same-b", "order-same-c"} {
+		seedGenerationOrder(t, h, id, h.canvasID, operations.GenerationOrderPending)
+	}
+	sameTime := time.Now().UTC().Add(-time.Hour)
+	if err := h.service.Database().Model(&model.AgentOpRecord{}).
+		Where("op_id IN ?", []string{"generation-order:order-same-a", "generation-order:order-same-b", "generation-order:order-same-c"}).
+		Update("created_at", sameTime).Error; err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for page := 1; page <= 3; page++ {
+		result, err := h.execute(t, operations.ExternalCaller(true), "canvas.generation.orders", "", map[string]any{"page": page, "pageSize": 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded := decodeGenerationOrderPage(t, result)
+		if len(decoded.Orders) != 1 {
+			t.Fatalf("page %d: %+v", page, decoded)
+		}
+		id := decoded.Orders[0].ProposalID
+		if seen[id] {
+			t.Fatalf("equal timestamps repeated %s across pages", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected 3 unique orders, got %v", seen)
+	}
 }

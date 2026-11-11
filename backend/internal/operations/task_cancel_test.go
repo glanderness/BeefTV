@@ -96,3 +96,60 @@ func TestAgentTaskAndWriteOpsStayOutOfAssistantCatalog(t *testing.T) {
 		t.Fatalf("assistant cancel must be denied, got %+v", got)
 	}
 }
+
+func TestTaskCancelRejectsFailedTaskAndRetriesSameOperationID(t *testing.T) {
+	h := newHarness(t)
+	task := model.Task{ID: "task-cancel-failed", UserID: h.userID, Status: model.TaskStatusFailed, Stage: "生成失败", Type: "canvas_image"}
+	if err := h.service.Database().Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	params := map[string]any{"taskId": task.ID}
+	_, err := h.execute(t, operations.ExternalCaller(false), "task.cancel", "cancel-retry-1", params)
+	if got := opErr(t, err); got.Code != operations.CodeConflict || got.Reason != "task_not_cancellable" {
+		t.Fatalf("failed task must be rejected as not cancellable, got %+v", got)
+	}
+	// 失败后同一 operationId 必须能重试，而不是卡在 operation_in_progress。
+	if err := h.service.Database().Model(&model.Task{}).Where("id = ?", task.ID).
+		Updates(map[string]any{"status": model.TaskStatusQueued, "stage": "等待队列调度"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.execute(t, operations.ExternalCaller(false), "task.cancel", "cancel-retry-1", params)
+	if err != nil {
+		t.Fatalf("same operationId retry after failure: %v", err)
+	}
+	if result.Replayed {
+		t.Fatal("失败后重试必须重新执行，不能标记为回放")
+	}
+	if payload, _ := result.Result.(map[string]any); payload["status"] != string(model.TaskStatusCancelled) {
+		t.Fatalf("retry did not cancel: %#v", result.Result)
+	}
+}
+
+func TestTaskCancelPausesSucceededDelivery(t *testing.T) {
+	h := newHarness(t)
+	task := model.Task{ID: "task-cancel-succeeded", UserID: h.userID, Status: model.TaskStatusSucceeded, Stage: "生成完成", Type: "canvas_image", ResultJSON: `{"images":[{"url":"https://example.com/image.png"}]}`}
+	if err := h.service.Database().Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.execute(t, operations.ExternalCaller(false), "task.cancel", "cancel-succeeded-1", map[string]any{"taskId": task.ID})
+	if err != nil {
+		t.Fatalf("cancel succeeded image delivery: %v", err)
+	}
+	payload, _ := result.Result.(map[string]any)
+	note, _ := payload["note"].(string)
+	if payload["status"] != string(model.TaskStatusSucceeded) || !strings.Contains(note, "已经完成") || !strings.Contains(note, "停止") {
+		t.Fatalf("unexpected succeeded cancel result: %#v", payload)
+	}
+}
+
+func TestTaskCancelRejectsAlreadyDeliveredSucceededTask(t *testing.T) {
+	h := newHarness(t)
+	task := model.Task{ID: "task-cancel-delivered", UserID: h.userID, Status: model.TaskStatusSucceeded, Stage: "生成完成", Type: "canvas_image", ResultJSON: "{}"}
+	if err := h.service.Database().Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.execute(t, operations.ExternalCaller(false), "task.cancel", "cancel-delivered-1", map[string]any{"taskId": task.ID})
+	if got := opErr(t, err); got.Code != operations.CodeConflict || got.Reason != "task_not_cancellable" {
+		t.Fatalf("already delivered task must be rejected, got %+v", got)
+	}
+}

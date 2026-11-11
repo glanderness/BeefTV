@@ -37,7 +37,7 @@ Claude Desktop、Cursor 和其他 MCP 客户端仍在同一页手动配置：
 
 `beeftv mcp serve` 默认采用精简工具集（共 46 个工具），避免把上百个底层路由一次性塞满外部 Agent 的上下文窗口：
 
-- **创作业务操作（44 个）**：与内置创作助手共用同一套高频操作面（默认省去面向桌面面板的 `conversation.*`、`skill.publish.*` 与 `skill.script.run`），直接覆盖画布创建与读写（`canvas.create`、`canvas.get`、`canvas.nodes.create` 等 `canvas.*`）、素材查询与整理（`asset.*`）、媒体检查（`media.*`）、任务、生成单与外部改动（`task.get`、`task.cancel`、`canvas.generation.orders`、`canvas.external.write.*`）与技能查询（`skill.*`）。
+- **创作业务操作（44 个）**：与内置创作助手共用高频操作面（默认省去面向桌面面板的 `conversation.*`、`skill.publish.*` 与 `skill.script.run`）；其中 `task.cancel`、`canvas.generation.orders`、`canvas.external.write.list`、`canvas.external.write.undo` 只给外部客户端，内置助手看不到。这些操作直接覆盖画布创建与读写（`canvas.create`、`canvas.get`、`canvas.nodes.create` 等 `canvas.*`）、素材查询与整理（`asset.*`）、媒体检查（`media.*`）、任务与生成单（`task.get`、`task.cancel`、`canvas.generation.orders`）与技能查询（`skill.*`）。
 - **底层业务接口的两个统一入口（2 个）**：
   - `business.list`：按关键字（`query`，匹配接口 ID、说明或路径，例如 `assets`、`folders`、`timeline`）和读写属性（`readOnly`）检索本地工作区的底层业务接口，返回接口 ID、说明、HTTP 方法、路径和参数结构。
   - `business.call`：按 `business.list` 查到的接口 `tool` ID 调用对应底层接口，参数支持 `path`、`query`、`body`、`filePath`（由本机 CLI 读取本地文件上传，单文件上限 64 MiB）或 `file`（base64 文件内容，与 `filePath` 二选一）以及 `operationId`。

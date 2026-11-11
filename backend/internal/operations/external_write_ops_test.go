@@ -109,6 +109,15 @@ func TestExternalWriteListAndUndoRespectClientOwnership(t *testing.T) {
 	if err != nil || !replayed.Replayed {
 		t.Fatalf("same operationId must replay the undo result: %+v (err=%v)", replayed, err)
 	}
+
+	// 换一个新 operationId 再撤销同一次写入，必须明确说明已经撤销，不能重复回滚画布。
+	_, err = h.execute(t, codex, "canvas.external.write.undo", "undo-op-2", map[string]any{
+		"canvasId":  h.canvasID,
+		"writeOpId": "ext-op-1",
+	})
+	if got := opErr(t, err); got.Code != operations.CodeConflict || got.Reason != "already_undone" {
+		t.Fatalf("second undo must report already_undone, got %+v", got)
+	}
 }
 
 func TestExternalWriteUndoRefusesWhenCanvasChangedAfterWrite(t *testing.T) {
