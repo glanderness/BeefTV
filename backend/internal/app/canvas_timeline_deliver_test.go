@@ -200,20 +200,19 @@ func TestCanvasTimelineDeliverRollsBackWhenRenderCannotStart(t *testing.T) {
 		t.Fatal("drained workspace admitted a render")
 	}
 	after := f.canvasJSON(t)
-	var beforeDoc, afterDoc map[string]any
+	// The node used to be created before render admission; the transaction must
+	// leave no half product, including no revision bump.
+	var beforeDoc, afterDoc struct {
+		Revision int64 `json:"revision"`
+	}
 	if err := json.Unmarshal(before, &beforeDoc); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(after, &afterDoc); err != nil {
 		t.Fatal(err)
 	}
-	// The node used to be created before render admission; the transaction must
-	// leave no half product, so the retried operation starts from the same doc.
-	beforeDoc["revision"], afterDoc["revision"] = nil, nil
-	encodedBefore, _ := json.Marshal(beforeDoc)
-	encodedAfter, _ := json.Marshal(afterDoc)
-	if string(encodedBefore) != string(encodedAfter) {
-		t.Fatalf("failed delivery changed the canvas:\nbefore %s\nafter  %s", encodedBefore, encodedAfter)
+	if beforeDoc.Revision != afterDoc.Revision || string(before) != string(after) {
+		t.Fatalf("failed delivery changed the canvas:\nbefore %s\nafter  %s", before, after)
 	}
 	var taskCount int64
 	if err := f.db.Model(&model.Task{}).Count(&taskCount).Error; err != nil {

@@ -141,7 +141,7 @@ func canvasDeliveryTaskKey(operationID string) string {
 
 // canvasDeliveryTitle picks a free node title without a second canvas read.
 func canvasDeliveryTitle(doc map[string]any, requested string) string {
-	requested = strings.TrimSpace(requested)
+	requested = canvas.NormalizeNodeTitle(requested)
 	if requested == "" {
 		requested = canvasDeliveryDefaultTitle
 	}
@@ -151,8 +151,8 @@ func canvasDeliveryTitle(doc map[string]any, requested string) string {
 		if !ok {
 			continue
 		}
-		if title, _ := node["title"].(string); strings.TrimSpace(title) != "" {
-			names[strings.TrimSpace(title)] = true
+		if title, _ := node["title"].(string); canvas.NormalizeNodeTitle(title) != "" {
+			names[canvas.NormalizeNodeTitle(title)] = true
 		}
 	}
 	title := requested

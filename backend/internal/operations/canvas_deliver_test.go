@@ -230,6 +230,24 @@ func TestTimelineDeliverSchemaCarriesSharedTimelineContract(t *testing.T) {
 	}
 }
 
+type allowAllAuthorizer struct{}
+
+func (allowAllAuthorizer) Visible(*Op) bool                  { return true }
+func (allowAllAuthorizer) Allows(*Op, json.RawMessage) error { return nil }
+
+func TestTimelineDeliverIsDeniedToAssistantCallers(t *testing.T) {
+	registry := NewRegistry(nil, nil)
+	RegisterDefaultOps(registry)
+	_, err := registry.Execute(Request{
+		Op: "canvas.timeline.deliver", OpID: "deliver-assistant", UserID: "owner",
+		Caller: AssistantCaller(allowAllAuthorizer{}, false),
+		Params: json.RawMessage(`{"canvasId":"canvas","expectedRevision":1}`),
+	})
+	if failure := opErrFrom(t, err); failure.Reason != "scope_denied" {
+		t.Fatalf("reason = %q, want scope_denied", failure.Reason)
+	}
+}
+
 func opErrFrom(t *testing.T, err error) *Error {
 	t.Helper()
 	if err == nil {
