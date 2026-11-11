@@ -230,6 +230,11 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
       await runner.dispatch({ type: 'workspaceConnected', workspaceId: runtime.workspace?.id ?? null }).settled
       return status()
     } catch (failure) {
+      // 连接已经建立但收尾（如写设置）失败：不能留下 current 说已连接、状态机却已断开。
+      if (runtime === current) {
+        current = null
+        contexts.clear()
+      }
       if (runtime && runtime !== current) await release(runtime)
       error = failure.message
       runner.dispatch({ type: 'connectionFailed' })

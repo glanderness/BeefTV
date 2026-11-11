@@ -329,11 +329,12 @@ async function startHost(context, options = {}) {
     await fsPromises.mkdir(settingsDir, { recursive: true })
     await fsPromises.writeFile(join(settingsDir, 'connection.json'), options.rawSettings ?? JSON.stringify(options.initialSettings))
   }
-  if (options.pluginSettings || options.awaiting) {
+  if (options.pluginSettings || options.awaiting || options.rawAwaiting) {
     const settingsDir = join(home, 'storages', 'beeftv')
     await fsPromises.mkdir(settingsDir, { recursive: true })
     if (options.pluginSettings) await fsPromises.writeFile(join(settingsDir, 'settings.json'), JSON.stringify(options.pluginSettings))
     if (options.awaiting) await fsPromises.writeFile(join(settingsDir, 'awaiting.json'), JSON.stringify(options.awaiting))
+    if (options.rawAwaiting) await fsPromises.writeFile(join(settingsDir, 'awaiting.json'), options.rawAwaiting)
   }
   if (options.readDelayMs) {
     const readFile = fsPromises.readFile
@@ -657,13 +658,15 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(taskOutcome({ taskId: 's', status: 'succeeded', resultState: 'failed_retryable', outputs: [{ materializationErrorCode: 'download_failed' }] }).state, 'pending')
   // 后端内部 reason 码不直接展示给用户。
   assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't').reason, '')
-  const materialization = waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'materialization_failed' }] }, 't')
+  const materialization = waitOutcome({ tasks: [{ taskId: 't', status: 'succeeded', state: 'succeeded', reason: 'materialization_failed' }] }, 't')
   assert.equal(materialization.state, 'incomplete')
   assert.match(materialization.reason, /只能重新保存/)
-  const permanent = waitOutcome({ tasks: [{ taskId: 'p', state: 'failed', resultState: 'failed_permanent' }] }, 'p')
+  const permanent = waitOutcome({ tasks: [{ taskId: 'p', status: 'succeeded', state: 'succeeded', resultState: 'failed_permanent' }] }, 'p')
   assert.equal(permanent.state, 'incomplete')
   // reason 字段存在但为空时，resultState 仍要生效。
-  assert.equal(waitOutcome({ tasks: [{ taskId: 'p2', state: 'failed', reason: '', resultState: 'failed_permanent' }] }, 'p2').state, 'incomplete')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'p2', status: 'succeeded', state: 'succeeded', reason: '', resultState: 'failed_permanent' }] }, 'p2').state, 'incomplete')
+  // 生成失败的任务也可能带 FAILED_PERMANENT（重试被阻断），仍是失败，不是「只需重新保存」。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'real-fail', status: 'failed', state: 'failed', reason: 'task_failed', resultState: 'failed_permanent' }] }, 'real-fail').state, 'failed')
   // 真正的生成失败即使 outputs 带着旧的物化错误码，也不能误报成「只需重新保存」。
   assert.equal(waitOutcome({ tasks: [{ taskId: 'f', status: 'failed', state: 'failed', error: '上游 503', outputs: [{ materializationErrorCode: 'download_failed' }] }] }, 'f').state, 'failed')
   const failedOutcome = waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't')
@@ -1098,6 +1101,12 @@ test('the step limit stops only turns that belong to BeefTV', async context => {
   for (let index = 0; index < 5; index++) {
     listeners.get('tools/result')({ name: 'mcp__other__read', arguments: {}, agent: beef.agent }, { content: [] })
   }
+  const preExecute = listeners.get('tools/pre-execute')
+  // 单步内并行工具在达到上限后也要被拒绝，不能等下一个 pre-step。
+  const blocked = await preExecute({ name: 'mcp__other__read', arguments: {}, agent: beef.agent }, async () => ({ kind: 'allow' }))
+  assert.equal(blocked.kind, 'deny')
+  assert.match(blocked.reason, /先停一下/)
+  assert.equal((await preExecute({ name: 'mcp__other__read', arguments: {}, agent: other.agent }, async () => ({ kind: 'allow' }))).kind, 'allow')
   assert.deepEqual(await listeners.get('agent/pre-step')({ agent: { id: 'beef-session' }, turn: 1 }, allow), { kind: 'reject' })
   const status = (await call('GET', '/beeftv/status')).body
   assert.equal(status.stepNotice, '这一轮已经做了 5 步，先停一下。要继续请再说一句。')
@@ -1206,6 +1215,32 @@ test('plugin shutdown persists an injected but not entered completion', async co
   await dispose()
   const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
   assert.ok(stored.away.some(entry => entry.taskIds.includes('pending-shutdown')))
+})
+
+test('a corrupt awaiting file is kept aside instead of being silently overwritten', async context => {
+  const { call, home } = await startHost(context, { rawAwaiting: '{broken' })
+  assert.equal((await call('GET', '/beeftv/status')).status, 200)
+  await sleep(50)
+  const files = await fsPromises.readdir(join(home, 'storages', 'beeftv'))
+  assert.ok(files.some(name => name.startsWith('awaiting.json.corrupt-')))
+})
+
+test('a connection settings write failure leaves the host disconnected and recoverable', async context => {
+  const { call } = await startHost(context)
+  let failWrites = true
+  const realWrite = fsPromises.writeFile
+  context.mock.method(fsPromises, 'writeFile', async (path, ...rest) => {
+    if (failWrites && String(path).endsWith('connection.json')) throw new Error('disk full')
+    return realWrite(path, ...rest)
+  })
+  syncBuiltinESMExports()
+  const failed = await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal(failed.status, 503)
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  failWrites = false
+  const recovered = await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal(recovered.status, 200)
+  assert.equal(recovered.body.connected, true)
 })
 
 test('a submit result that arrives after a workspace switch is kept for the original workspace', async context => {

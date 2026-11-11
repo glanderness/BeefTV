@@ -2,7 +2,7 @@
 // 所有「该不该唤醒、投到哪、补投还是丢弃」的判断都在 await-machine.js。
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { awaitingSnapshot, createAwaitState, transition } from './await-machine.js'
@@ -56,7 +56,10 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
     writing = writing.then(async () => {
       try {
         await mkdir(dirname(awaitingPath), { recursive: true, mode: 0o700 })
-        await writeFile(awaitingPath, JSON.stringify(value), { mode: 0o600 })
+        // 先写临时文件再原子替换，进程中途退出不会留下截断的恢复文件。
+        const temporary = `${awaitingPath}.tmp`
+        await writeFile(temporary, JSON.stringify(value), { mode: 0o600 })
+        await rename(temporary, awaitingPath)
       } catch {
         // 读写失败时保留内存状态，下一次状态变化会再次尝试。
       }
@@ -203,7 +206,7 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
       }))
       results.push({ id: target.id, remaining, completed })
     }
-    return dispatch({ type: 'awayProbed', results, epoch: action.epoch }).settled
+    return dispatch({ type: 'awayProbed', results, epoch: action.epoch, probe: action.probe }).settled
   }
 
   function processActions(actions, pending) {

@@ -48,6 +48,14 @@ export function createStepLimit() {
       if (!limitBlocked && notice?.sessionId === sessionId) notice = null
     },
 
+    // tools/pre-execute 用它在单步内并行工具执行前硬性拦截；用户自己的消息不受影响。
+    shouldBlock(sessionId) {
+      const state = sessionId ? sessions.get(sessionId) : null
+      if (!state?.stop) return null
+      if (!notice || notice.sessionId !== sessionId) notice = { sessionId, text: stepLimitNotice(state.limit) }
+      return notice.text
+    },
+
     // 返回这一轮是否已经到上限。用户自己发了消息时重新计数并放行。
     decideStep({ sessionId, turn, hasUserInput }) {
       const state = sessionId ? sessions.get(sessionId) : null

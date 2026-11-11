@@ -2,7 +2,7 @@
 // 连接生命周期在 connection.js，HTTP 面在 workspace-http.js，等待与唤醒在 await-machine.js / await-runner.js，
 // 步数上限在 step-limit.js，系统提示词在 prompts.js。
 
-import { readFile } from 'node:fs/promises'
+import { readFile, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createAwaitRunner, normalizeAwaiting } from './await-runner.js'
@@ -28,7 +28,18 @@ export function apply(ctx) {
   let connection = null
   const runner = createAwaitRunner({ awaitingPath, runtimeOf: () => connection?.current() })
   // 上次退出时还没投递的任务不恢复到内存里的等待队列；连回同一工作区后再查终态。
-  const awaitingReady = readFile(awaitingPath, 'utf8').then(JSON.parse).then(value => {
+  const awaitingReady = readFile(awaitingPath, 'utf8').then(text => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return { corrupt: true }
+    }
+  }).then(async value => {
+    if (value?.corrupt) {
+      // 损坏的恢复文件先留档再忽略，避免下一次写入把它悄悄覆盖。
+      await rename(awaitingPath, `${awaitingPath}.corrupt-${Date.now()}`).catch(() => {})
+      return null
+    }
     const history = normalizeAwaiting(value)
     return runner.dispatch({ type: 'historyLoaded', sessions: history.sessions, away: history.away }).settled
   }).catch(() => null)
@@ -168,6 +179,9 @@ export function apply(ctx) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
+    // 单步内并行工具也要受上限约束：达到上限后不再放行新的工具调用。
+    const blocked = stepLimit.shouldBlock(sessionIdOf(exec?.agent))
+    if (decision.kind === 'allow' && blocked) return { kind: 'deny', reason: blocked }
     const origin = connection.describe()
     if (origin) rememberOrigin(exec, origin)
     const current = connection.current()

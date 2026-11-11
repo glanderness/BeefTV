@@ -21,7 +21,7 @@ export function createAwaitState({ autoContinue = true } = {}) {
     // sessionId → { token, workspaceId, taskIds }
     waits: {},
     // 离开期间完成的任务；entries 原样落盘，count 是当前应提示的数量。
-    away: { entries: [], count: 0, seq: 0, epoch: 0 },
+    away: { entries: [], count: 0, seq: 0, epoch: 0, probeSeq: 0, probe: 0 },
   }
 }
 
@@ -307,7 +307,11 @@ export function transition(state, event) {
       })
     }
     if (!next.away.entries.length) next.away.count = 0
-    if (targets.length) actions.push({ type: 'probeAway', workspaceId, targets, epoch: next.away.epoch })
+    if (targets.length) {
+      const probe = ++next.away.probeSeq
+      next.away.probe = probe
+      actions.push({ type: 'probeAway', workspaceId, targets, epoch: next.away.epoch, probe })
+    }
     else if (next.away.entries.length) {
       next.away.count = 0
       out.persist = true
@@ -479,7 +483,11 @@ export function transition(state, event) {
     }
   } else if (type === 'taskOrphaned') {
     // 提交结果回来时原连接已经切走：结果只能留给原工作区，不能在新运行时上轮询。
-    if (addAway(next, event.workspaceId, event.taskIds)) out.persist = true
+    const fresh = (Array.isArray(event.taskIds) ? event.taskIds : []).filter(taskId =>
+      typeof taskId === 'string' && taskId && !next.woken[taskId]
+      && !pendingHasTaskAnywhere(next, taskId) && !deferredHasTaskAnywhere(next, taskId)
+      && !waitHasTask(next, taskId) && !awayHasTask(next, taskId))
+    if (addAway(next, event.workspaceId, fresh)) out.persist = true
   } else if (type === 'pluginStopped') {
     for (const [sessionId, wait] of Object.entries(next.waits)) {
       addAway(next, wait.workspaceId, wait.taskIds)
@@ -515,8 +523,9 @@ export function transition(state, event) {
     next.away.epoch += 1
     out.persist = true
   } else if (type === 'awayProbed') {
-    // awaySeen 之后回来的旧 probe 结果直接丢弃，不能把已关闭的计数写回来。
+    // awaySeen 或新 probe 之后回来的旧结果直接丢弃，不能覆盖更新的计数。
     if (event.epoch !== undefined && event.epoch !== next.away.epoch) return finish()
+    if (event.probe !== undefined && event.probe !== next.away.probe) return finish()
     const results = new Map((Array.isArray(event.results) ? event.results : []).map(result => [result.id, result]))
     let notice = 0
     next.away.entries = next.away.entries.map(entry => {

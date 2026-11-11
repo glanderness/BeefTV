@@ -129,10 +129,21 @@ function checkLosses(before, after, event, ledger, where) {
       const entry = before.messages[event.messageId]
       allowed = Boolean(entry && before.sessions[entry.sessionId]?.stopped)
     } else if (event.type === 'stepEntered') {
-      const target = after.connection.phase === 'connected' ? after.connection.workspaceId
-        : after.connection.phase === 'connecting' ? after.connection.from?.workspaceId : null
-      const entry = Object.values(before.messages).find(item => item.outcomes.some(outcome => outcome.taskId === taskId))
-      allowed = Boolean(target && entry?.workspaceId && entry.workspaceId !== target)
+      // 只允许真正判定为 stale 的消息被过滤；uncertain 必须进 deferred，丢了要报错。
+      const messageId = Object.keys(before.messages).find(id => before.messages[id].outcomes.some(outcome => outcome.taskId === taskId))
+      if (messageId) {
+        if (!before.messages[messageId].workspaceId && before.stale[messageId]) allowed = true
+        else if (before.messages[messageId].workspaceId) {
+          const connection = before.connection
+          const entryWorkspace = before.messages[messageId].workspaceId
+          if (connection.phase === 'connected') allowed = connection.workspaceId !== entryWorkspace
+          else if (connection.phase === 'connecting' && connection.from) {
+            allowed = connection.from.sameMode ? entryWorkspace !== connection.from.workspaceId : true
+          }
+        }
+      } else if (before.stale[Object.keys(before.stale).find(id => id === event.claimed?.find(item => item === id))]) {
+        allowed = true
+      }
     }
     assert.ok(allowed, `${where}: 任务 ${taskId} 在 ${event.type} 中无声丢失`)
     ledger.dropped.add(taskId)
@@ -171,7 +182,7 @@ function settleActions(branches, actions, counter, path) {
           // 探针结果保持 pending：away 条目继续留着，下一轮再核对。
           results: action.targets.map(target => ({
             id: target.id, remaining: [...target.taskIds, ...target.rest], completed: target.resolvedCount,
-          })),
+          })), epoch: action.epoch, probe: action.probe,
         })
         return { state: probed.state, ledger: branch.ledger }
       })
@@ -203,6 +214,7 @@ function eventVariants(state) {
     }
   }
   if (Object.keys(state.waits).length) events.push({ type: 'abandonWaits', sessionIds: Object.keys(state.waits) })
+  for (const taskId of tasks) events.push({ type: 'taskOrphaned', workspaceId: active ?? 'w1', taskIds: [taskId] })
   if (Object.keys(state.waits).length || Object.keys(state.messages).length
     || Object.values(state.sessions).some(session => session.deferred)) events.push({ type: 'pluginStopped' })
   if (!Object.keys(state.waits).length && !Object.keys(state.messages).length && !state.away.entries.length
@@ -323,7 +335,7 @@ test('等待/唤醒状态机在长度 6 的事件序列内保持全部不变量'
   }
 
   walk(createAwaitState(), emptyLedger(), 0)
-  t.diagnostic(`穷举事件序列 ${counter.sequences} 条（深度 ≤ ${maximumDepth}），去重后状态 ${counter.states} 个，状态迁移 ${counter.transitions} 次，剪枝 ${counter.pruned} 条${capped ? '，达到上限提前停止' : '，对建模事件集完整覆盖'}`)
+  t.diagnostic(`穷举事件序列 ${counter.sequences} 条（深度 ≤ ${maximumDepth}），去重后状态 ${counter.states} 个，状态迁移 ${counter.transitions} 次，剪枝 ${counter.pruned} 条${capped ? '，达到上限提前停止' : '，对建模事件集完整覆盖（away 完成/删除与并发 probe 由定向用例覆盖）'}`)
   assert.ok(counter.sequences >= 10_000, `事件序列覆盖太少：${counter.sequences}`)
   assert.ok(!capped, '穷举达到上限，未能完整覆盖；应缩小事件集或加深剪枝')
 })
@@ -576,4 +588,39 @@ test('插件退出把已投递未进入的唤醒转入离开提示', () => {
   }).state
   const stopped = transition(state, { type: 'pluginStopped' })
   assert.deepEqual(stopped.state.away.entries.map(entry => entry.taskIds), [['t1']])
+})
+
+test('taskOrphaned 不会把已投递或已持有的任务再塞进 away', () => {
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  state = transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t1'], agentStatus: 'running' }).state
+  state = transition(state, {
+    type: 'delivered', sessionId: 's1', messageId: 'wake-1', ok: true,
+    outcomes: [{ taskId: 't1', state: 'succeeded', reason: '' }], workspaceId: 'w1', source: 'wait',
+  }).state
+  const duplicated = transition(state, { type: 'taskOrphaned', workspaceId: 'w1', taskIds: ['t1'] })
+  assert.equal(duplicated.state.away.entries.length, 0)
+  const fresh = transition(state, { type: 'taskOrphaned', workspaceId: 'w1', taskIds: ['t2'] })
+  assert.deepEqual(fresh.state.away.entries.map(entry => entry.taskIds), [['t2']])
+})
+
+test('新一轮 away probe 之后，旧 probe 的结果不会覆盖', () => {
+  let state = transition(createAwaitState(), {
+    type: 'historyLoaded', sessions: [], away: [{ workspaceId: 'w1', taskIds: ['t1'], resolvedCount: 0 }],
+  }).state
+  const first = transition(state, { type: 'workspaceConnected', workspaceId: 'w1' })
+  const firstProbe = first.actions.find(action => action.type === 'probeAway')
+  // 第一次 probe 还没完成，又发生一次连接并启动新 probe。
+  const second = transition(first.state, { type: 'workspaceConnected', workspaceId: 'w1' })
+  const secondProbe = second.actions.find(action => action.type === 'probeAway')
+  const applied = transition(second.state, {
+    type: 'awayProbed', epoch: secondProbe.epoch, probe: secondProbe.probe,
+    results: secondProbe.targets.map(target => ({ id: target.id, remaining: [], completed: 1 })),
+  }).state
+  assert.equal(applied.away.count, 1)
+  const stale = transition(applied, {
+    type: 'awayProbed', epoch: firstProbe.epoch, probe: firstProbe.probe,
+    results: firstProbe.targets.map(target => ({ id: target.id, remaining: ['t1'], completed: 0 })),
+  }).state
+  assert.equal(stale.away.count, 1)
+  assert.deepEqual(stale.away.entries.map(entry => entry.taskIds), [[]])
 })

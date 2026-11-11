@@ -272,8 +272,9 @@ function listedTaskState(value, taskId) {
   const reason = typeof listed?.reason === 'string' ? listed.reason.toLowerCase() : ''
   const resultState = typeof listed?.resultState === 'string' ? listed.resultState.toLowerCase() : ''
   const successful = listed?.status === 'succeeded' || ['succeeded', 'success', 'completed', 'ready'].includes(listedState)
-  const materialization = reason === 'materialization_failed' || resultState === 'failed_permanent'
-    || (successful && Array.isArray(listed?.outputs) && listed.outputs.some(output => output?.materializationErrorCode))
+  // 失败任务也可能带 FAILED_PERMANENT（表示重试被阻断），不能当成物化失败；只有成功的生成才讨论「结果没保存」。
+  const materialization = successful && (reason === 'materialization_failed' || resultState === 'failed_permanent'
+    || (Array.isArray(listed?.outputs) && listed.outputs.some(output => output?.materializationErrorCode)))
   if (materialization) {
     const original = failureReason(listed)
     const base = '结果没有保存成功，只能重新保存，不能重新生成'
