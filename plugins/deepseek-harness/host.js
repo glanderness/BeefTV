@@ -36,6 +36,21 @@ export function apply(ctx) {
 
   registerWorkspaceRoutes(ctx, { connection, runner, stepLimit })
   registerPrompts(ctx, { connection })
+  // 记录工具调用发起时所属的连接：长时间提交回来时可能已经切走工作区。
+  const origins = new WeakMap()
+  const originIds = new Map()
+  function rememberOrigin(exec, origin) {
+    if (!exec || typeof exec !== 'object') return
+    origins.set(exec, origin)
+    if (typeof exec.id === 'string' && exec.id) {
+      originIds.set(exec.id, origin)
+      while (originIds.size > 64) originIds.delete(originIds.keys().next().value)
+    }
+  }
+  function originOf(exec) {
+    if (!exec || typeof exec !== 'object') return undefined
+    return origins.get(exec) || (typeof exec.id === 'string' && exec.id ? originIds.get(exec.id) : undefined)
+  }
 
   function fullAccess(agent) {
     if (!agent?.session) return false
@@ -59,11 +74,19 @@ export function apply(ctx) {
       beefTV: connection.hasContext(sessionId) || (typeof exec?.name === 'string' && exec.name.startsWith('mcp__beeftv__')),
       limit: connection.pluginSettings().stepLimit,
     })
-    if (current && !result?.isError) {
-      runner.dispatch({
-        type: 'tasksSubmitted', sessionId, workspaceId: current.workspace?.id ?? null,
-        taskIds: submittedTaskIds(exec.name, result), agentStatus: exec.agent?.status,
-      })
+    if (!result?.isError) {
+      const taskIds = submittedTaskIds(exec.name, result)
+      const origin = originOf(exec)
+      const live = connection.describe()
+      if (origin && origin.connectionId !== live?.connectionId) {
+        // 提交发生在切换前：结果只能留给原工作区，不能在新运行时上轮询。
+        runner.dispatch({ type: 'taskOrphaned', workspaceId: origin.workspaceId, taskIds })
+      } else if (current) {
+        runner.dispatch({
+          type: 'tasksSubmitted', sessionId, workspaceId: current.workspace?.id ?? null,
+          taskIds, agentStatus: exec.agent?.status,
+        })
+      }
     }
   })
 
@@ -145,6 +168,8 @@ export function apply(ctx) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
+    const origin = connection.describe()
+    if (origin) rememberOrigin(exec, origin)
     const current = connection.current()
     if (decision.kind !== 'allow' || !requiresGenerationApproval(exec.name, exec.arguments, current?.businessTools, current?.operations)) return decision
     // The user chose 完全权限: DSH shows no approval prompts and rejects any ask without showing it, so the
@@ -156,8 +181,8 @@ export function apply(ctx) {
 
   ctx.effect(() => () => {
     const runtime = connection.current()
-    // 插件退出等同于 DSH 关闭：不再续跑，只留下离开时完成的计数。
-    void runner.stopPlugin().then(() => connection.release(runtime))
+    // 插件退出等同于 DSH 关闭：先把等待/待补投结果落盘，再释放运行包。
+    return runner.stopPlugin().then(() => connection.release(runtime))
   })
 
   void connection.settingsReady.then(settings => {

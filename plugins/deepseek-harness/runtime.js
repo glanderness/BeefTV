@@ -269,10 +269,11 @@ function listedTaskState(value, taskId) {
   }
   // 真实 task.wait 对「生成成功但产物永久保存失败」返回 state=failed + reason=materialization_failed；
   // 这只能重新保存，不能当成生成失败让模型重新生成。
-  const permanent = typeof listed?.reason === 'string' ? listed.reason.toLowerCase()
-    : typeof listed?.resultState === 'string' ? listed.resultState.toLowerCase() : ''
-  const materialization = permanent === 'materialization_failed' || permanent === 'failed_permanent'
-    || (Array.isArray(listed?.outputs) && listed.outputs.some(output => output?.materializationErrorCode))
+  const reason = typeof listed?.reason === 'string' ? listed.reason.toLowerCase() : ''
+  const resultState = typeof listed?.resultState === 'string' ? listed.resultState.toLowerCase() : ''
+  const successful = listed?.status === 'succeeded' || ['succeeded', 'success', 'completed', 'ready'].includes(listedState)
+  const materialization = reason === 'materialization_failed' || resultState === 'failed_permanent'
+    || (successful && Array.isArray(listed?.outputs) && listed.outputs.some(output => output?.materializationErrorCode))
   if (materialization) {
     const original = failureReason(listed)
     const base = '结果没有保存成功，只能重新保存，不能重新生成'

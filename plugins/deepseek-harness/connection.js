@@ -313,6 +313,7 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     clearContexts: () => contexts.clear(),
     currentGuide: () => current?.guide || null,
     current: () => current,
+    describe: () => current ? { connectionId: current.connectionId, workspaceId: current.workspace?.id ?? null } : null,
     pluginSettings: () => pluginSettings,
     localPromptDismissed: () => localPromptDismissed,
     noteToolResult: (exec, result) => recordToolActivity(current, exec, result),

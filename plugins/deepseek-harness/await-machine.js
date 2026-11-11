@@ -21,7 +21,7 @@ export function createAwaitState({ autoContinue = true } = {}) {
     // sessionId → { token, workspaceId, taskIds }
     waits: {},
     // 离开期间完成的任务；entries 原样落盘，count 是当前应提示的数量。
-    away: { entries: [], count: 0, seq: 0 },
+    away: { entries: [], count: 0, seq: 0, epoch: 0 },
   }
 }
 
@@ -59,6 +59,18 @@ function pendingHasTaskAnywhere(state, taskId) {
 
 function deferredHasTaskAnywhere(state, taskId) {
   return Object.values(state.sessions).some(session => session.deferred?.outcomes.some(outcome => outcome.taskId === taskId))
+}
+
+function awayHasTask(state, taskId) {
+  return state.away.entries.some(entry => entry.taskIds.includes(taskId))
+}
+
+function removeFromAway(state, taskIds) {
+  const ids = new Set(taskIds)
+  state.away.entries = state.away.entries.filter(entry => {
+    entry.taskIds = entry.taskIds.filter(taskId => !ids.has(taskId))
+    return entry.taskIds.length || entry.resolvedCount > 0
+  })
 }
 
 function markWoken(state, outcomes) {
@@ -133,6 +145,15 @@ function abandonWaits(state, sessionIds, actions, out) {
 }
 
 // 停止时也要把已注入但还没进入模型的唤醒撤回；撤回失败由 pre-step 的 stale 过滤兜底。
+function moveMessagesToAway(state, sessionId) {
+  let changed = false
+  for (const [messageId, entry] of messagesOf(state, sessionId)) {
+    changed = addAway(state, entry.workspaceId, entry.outcomes.map(outcome => outcome.taskId)) || changed
+    removeMessage(state, messageId)
+  }
+  return changed
+}
+
 function stopSession(state, sessionId, actions, out, reason = 'stop') {
   const session = sessionOf(state, sessionId)
   if (!session) return
@@ -183,6 +204,8 @@ function classifyClaimed(state, messageId) {
   const sourceUnknown = switching && !from?.workspaceId
   if (sourceUnknown && entry?.workspaceId) return 'uncertain'
   if (state.stale[messageId]) return 'stale'
+  // 断线后没有可用工作区：旧工作区的完成通知不能当成当前会话的新消息消费。
+  if (state.connection.phase === 'disconnected' && entry?.workspaceId) return 'uncertain'
   const workspaceId = entry?.workspaceId
   if (!workspaceId) return 'fresh'
   if (switching) {
@@ -246,22 +269,16 @@ export function transition(state, event) {
   }
 
   if (type === 'historyLoaded') {
-    for (const entry of Array.isArray(event.sessions) ? event.sessions : []) {
+    const seen = new Set()
+    for (const entry of [...(Array.isArray(event.sessions) ? event.sessions : []), ...(Array.isArray(event.away) ? event.away : [])]) {
       if (!entry?.taskIds?.length && !entry?.resolvedCount) continue
+      const taskIds = [...new Set((entry.taskIds || []).filter(taskId => typeof taskId === 'string' && taskId && !seen.has(taskId)))]
+      for (const taskId of taskIds) seen.add(taskId)
+      if (!taskIds.length && !entry.resolvedCount) continue
       next.away.entries.push({
         id: `away-${++next.away.seq}`,
         workspaceId: entry.workspaceId ?? null,
-        taskIds: [...(entry.taskIds || [])],
-        resolvedCount: entry.resolvedCount || 0,
-      })
-      out.persist = true
-    }
-    for (const entry of Array.isArray(event.away) ? event.away : []) {
-      if (!entry?.taskIds?.length && !entry?.resolvedCount) continue
-      next.away.entries.push({
-        id: `away-${++next.away.seq}`,
-        workspaceId: entry.workspaceId ?? null,
-        taskIds: [...(entry.taskIds || [])],
+        taskIds,
         resolvedCount: entry.resolvedCount || 0,
       })
       out.persist = true
@@ -290,7 +307,7 @@ export function transition(state, event) {
       })
     }
     if (!next.away.entries.length) next.away.count = 0
-    if (targets.length) actions.push({ type: 'probeAway', workspaceId, targets })
+    if (targets.length) actions.push({ type: 'probeAway', workspaceId, targets, epoch: next.away.epoch })
     else if (next.away.entries.length) {
       next.away.count = 0
       out.persist = true
@@ -303,7 +320,7 @@ export function transition(state, event) {
     const fresh = (Array.isArray(event.taskIds) ? event.taskIds : []).filter(taskId =>
       typeof taskId === 'string' && taskId && !next.woken[taskId]
       && !pendingHasTaskAnywhere(next, taskId) && !deferredHasTaskAnywhere(next, taskId)
-      && !waitHasTask(next, taskId))
+      && !waitHasTask(next, taskId) && !awayHasTask(next, taskId))
     if (!fresh.length) return finish()
     let wait = next.waits[event.sessionId]
     if (wait && wait.workspaceId !== (event.workspaceId ?? null)) {
@@ -329,11 +346,12 @@ export function transition(state, event) {
     const session = sessionOf(next, event.sessionId)
     const outcomes = dedupeOutcomes(event.outcomes).filter(outcome =>
       !next.woken[outcome.taskId] && !pendingHasTaskAnywhere(next, outcome.taskId)
-      && !deferredHasTaskAnywhere(next, outcome.taskId))
+      && !deferredHasTaskAnywhere(next, outcome.taskId) && !awayHasTask(next, outcome.taskId))
     const workspaceId = wait.workspaceId ?? null
-    const active = activeWorkspace(next)
+    const target = next.connection.phase === 'connected' ? next.connection.workspaceId
+      : next.connection.phase === 'connecting' ? next.connection.from?.workspaceId ?? null : null
     if (outcomes.length && next.autoContinue) {
-      if (active && workspaceId !== active) {
+      if (workspaceId !== target) {
         // 等待属于另一个工作区：不能投到当前会话，留给下次连回原工作区时核对。
         addAway(next, workspaceId, outcomes.map(outcome => outcome.taskId))
       } else if (session.wakeCount >= maximumWakesPerSession) {
@@ -373,6 +391,7 @@ export function transition(state, event) {
       }
     }
     // 兜底清理：同一任务只允许留在一处。正常路径在投递前已经过滤。
+    removeFromAway(next, outcomes.map(outcome => outcome.taskId))
     for (const outcome of outcomes) {
       for (const [id, wait] of Object.entries(next.waits)) {
         if (!wait.taskIds.includes(outcome.taskId)) continue
@@ -452,11 +471,15 @@ export function transition(state, event) {
     // 会话被销毁不等于用户停止：等待和已暂存的完成结果都要计入离开期间完成的提示。
     if (wait && addAway(next, wait.workspaceId, wait.taskIds)) out.persist = true
     if (deferred && addAway(next, deferred.workspaceId, deferred.outcomes.map(outcome => outcome.taskId))) out.persist = true
+    if (moveMessagesToAway(next, event.sessionId)) out.persist = true
     stopSession(next, event.sessionId, actions, out)
     delete next.sessions[event.sessionId]
     for (const [messageId, owner] of Object.entries(next.stale)) {
       if (owner === event.sessionId) delete next.stale[messageId]
     }
+  } else if (type === 'taskOrphaned') {
+    // 提交结果回来时原连接已经切走：结果只能留给原工作区，不能在新运行时上轮询。
+    if (addAway(next, event.workspaceId, event.taskIds)) out.persist = true
   } else if (type === 'pluginStopped') {
     for (const [sessionId, wait] of Object.entries(next.waits)) {
       addAway(next, wait.workspaceId, wait.taskIds)
@@ -468,6 +491,7 @@ export function transition(state, event) {
       addAway(next, session.deferred.workspaceId, session.deferred.outcomes.map(outcome => outcome.taskId))
       session.deferred = null
     }
+    for (const sessionId of Object.keys(next.sessions)) moveMessagesToAway(next, sessionId)
     out.persist = true
   } else if (type === 'autoContinueOff') {
     next.autoContinue = false
@@ -488,8 +512,11 @@ export function transition(state, event) {
       return entry.taskIds.length ? [{ ...entry, resolvedCount: 0 }] : []
     })
     next.away.count = 0
+    next.away.epoch += 1
     out.persist = true
   } else if (type === 'awayProbed') {
+    // awaySeen 之后回来的旧 probe 结果直接丢弃，不能把已关闭的计数写回来。
+    if (event.epoch !== undefined && event.epoch !== next.away.epoch) return finish()
     const results = new Map((Array.isArray(event.results) ? event.results : []).map(result => [result.id, result]))
     let notice = 0
     next.away.entries = next.away.entries.map(entry => {

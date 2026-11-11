@@ -362,8 +362,14 @@ async function startHost(context, options = {}) {
   })
   const front = createServer((req, res) => handler(req, res))
   await new Promise(resolve => front.listen(0, '127.0.0.1', resolve))
+  let disposed = false
+  async function dispose() {
+    if (disposed) return
+    disposed = true
+    for (const disposer of disposers.splice(0)) await disposer?.()
+  }
   context.after(async () => {
-    for (const dispose of disposers) dispose()
+    await dispose()
     front.close()
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
@@ -389,7 +395,7 @@ async function startHost(context, options = {}) {
     const value = sections.get(name)?.text
     return typeof value === 'function' ? value() : value
   }
-  return { call, calls, workspace, listeners, home, prompt: view => prompt(view), section }
+  return { call, calls, workspace, listeners, home, dispose, prompt: view => prompt(view), section }
 }
 
 test('Host rejects context from missing or previous connection IDs and reattaches a returning App without reopening it', async context => {
@@ -656,6 +662,10 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.match(materialization.reason, /只能重新保存/)
   const permanent = waitOutcome({ tasks: [{ taskId: 'p', state: 'failed', resultState: 'failed_permanent' }] }, 'p')
   assert.equal(permanent.state, 'incomplete')
+  // reason 字段存在但为空时，resultState 仍要生效。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'p2', state: 'failed', reason: '', resultState: 'failed_permanent' }] }, 'p2').state, 'incomplete')
+  // 真正的生成失败即使 outputs 带着旧的物化错误码，也不能误报成「只需重新保存」。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'f', status: 'failed', state: 'failed', error: '上游 503', outputs: [{ materializationErrorCode: 'download_failed' }] }] }, 'f').state, 'failed')
   const failedOutcome = waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't')
   assert.equal(awaitWakeText([failedOutcome]),
     '生成已结束：0 个成功，1 个失败。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
@@ -1184,6 +1194,33 @@ test('plugin shutdown persists deferred completions as away entries', async cont
   await runner.stopPlugin()
   const stored = JSON.parse(await fsPromises.readFile(awaitingPath, 'utf8'))
   assert.deepEqual(stored.away, [{ workspaceId: 'w1', taskIds: ['deferred-1'], resolvedCount: 0 }])
+})
+
+test('plugin shutdown persists an injected but not entered completion', async context => {
+  const { call, listeners, workspace, home, dispose } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['pending-shutdown']))
+  await until(() => injected.length === 1)
+  await dispose()
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
+  assert.ok(stored.away.some(entry => entry.taskIds.includes('pending-shutdown')))
+})
+
+test('a submit result that arrives after a workspace switch is kept for the original workspace', async context => {
+  const { call, listeners, workspace, home } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent } = fakeAgent()
+  const exec = { name: submitName, arguments: {}, agent }
+  await listeners.get('tools/pre-execute')(exec, async () => ({ kind: 'allow' }))
+  await call('POST', '/beeftv/connect', { mode: 'local' })
+  workspace.calls.length = 0
+  listeners.get('tools/result')(exec, submitResult(['switched-1']))
+  await sleep(100)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
+  const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
+  assert.ok(stored.away.some(entry => entry.taskIds.includes('switched-1')))
 })
 
 test('a backend agent.guide replaces the fixed section; without it the fixed text stays', async context => {

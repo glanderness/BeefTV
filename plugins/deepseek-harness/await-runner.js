@@ -203,7 +203,7 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
       }))
       results.push({ id: target.id, remaining, completed })
     }
-    return dispatch({ type: 'awayProbed', results }).settled
+    return dispatch({ type: 'awayProbed', results, epoch: action.epoch }).settled
   }
 
   function processActions(actions, pending) {
