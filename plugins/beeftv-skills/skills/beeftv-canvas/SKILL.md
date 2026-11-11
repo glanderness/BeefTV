@@ -19,7 +19,7 @@ BeefTV 画布是一份可编辑的节点图。你通过本地工具读写用户�
 
 - 每次写都带 `operationId`；新的写用新值，只有重试同一笔才复用原值和参数。
 - 先读当前状态再写；版本冲突时重读最新状态再重试。
-- 只提交要改的字段，不整理其他节点。
+- 只提交要改的字段，不整理其他节点。一次配多个媒体节点用 `canvas.nodes.configure` 一次配完，没有时用 `canvas.node.configure` 逐个写；只看几个节点用 `canvas.nodes.get`，没有时才退回 `canvas.get` 读整张画布。
 - 只做被要求的事；相邻节点也要调整时先说明建议，等用户同意。
 - 用户给的数量是硬约束；「完善」「细化」只改写现有条目，不增删。
 - 新建画布用 `canvas.create`，文本或镜头节点用 `canvas.nodes.create`。
@@ -29,7 +29,8 @@ BeefTV 画布是一份可编辑的节点图。你通过本地工具读写用户�
 - 新短片一次调用 `canvas.script.prepare` 提交分镜并传首帧图（image）和视频（video）草稿；超过 8 行时先准备前 8 行，再用 `canvas.script.rows.append` 追加，新增行再用 `canvas.script.prepare` 传 rowIds 补草稿（每次最多 8 个）。
 - 单镜修改用 `canvas.script.row.update`，它会同步已绑定且未手改的首帧/视频草稿。
 - 视频原声、环境音或角色说话用 `canvas.node.configure` 设 `generateAudio`；旁白另建 audio 节点。
-- 已成功生成过的节点不能原地重做，要新建节点再绑定新产物；失败镜头只重试失败节点，不重复购买已成功节点。
+- 已结束且可重做的镜头，要原地重做时用 `canvas.generation.regenerate`（参数与 `canvas.generation.submit` 相同，付费；旧结果留在素材库）；任务还没结束时先等原任务。
+- 没有这个工具时，失败镜头用 `canvas.generation.submit` 在原节点重试，已成功的才新建节点；批量重试只提交失败节点，不重提已成功的。
 
 ## 付费生成
 
