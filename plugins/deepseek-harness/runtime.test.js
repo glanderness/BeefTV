@@ -500,7 +500,7 @@ test('a standalone workspace notices a later local App and offers the switch', a
   // The 30-second gate keeps status polling from probing the App on every request.
   assert.equal((await call('GET', '/beeftv/status')).body.localApp.compatible, false)
   assert.equal(calls.plistReads(), reads)
-  now.value += 31_000
+  now.value += 30_000
   assert.equal((await call('GET', '/beeftv/status')).body.localApp.compatible, true)
 })
 
@@ -514,9 +514,10 @@ test('a saved 暂不 is read before the first status answer', async context => {
 
 test('a broken settings file is reported without connecting', async context => {
   const { call, calls } = await startHost(context, { rawSettings: '{broken' })
-  const status = (await call('GET', '/beeftv/status')).body
-  assert.equal(status.connected, false)
-  assert.ok(status.error)
+  const response = await call('GET', '/beeftv/status')
+  assert.equal(response.status, 200)
+  assert.equal(response.body.connected, false)
+  assert.ok(response.body.error)
   assert.deepEqual(calls, [])
 })
 
