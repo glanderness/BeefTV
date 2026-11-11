@@ -130,6 +130,28 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 	if len(full) <= len(visible) {
 		t.Fatalf("外部客户端应看到完整能力集: %d <= %d", len(full), len(visible))
 	}
+	foundWait := false
+	for _, descriptor := range full {
+		if descriptor.ID == "task.wait" {
+			foundWait = true
+		}
+	}
+	if !foundWait {
+		t.Fatalf("外部客户端应能看到 task.wait: %v", visible)
+	}
+}
+
+// 等待生成任务只在宿主迁移完成后才对内置模型开放；现在任何权限模式都不应看到。
+func TestTaskWaitStaysExternalOnly(t *testing.T) {
+	registry := agentops.NewRegistry(nil, nil)
+	agentops.RegisterDefaultOps(registry)
+	for _, mode := range []string{"canvas", "read-only", "full-access"} {
+		for _, descriptor := range registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false)) {
+			if descriptor.ID == "task.wait" {
+				t.Fatalf("%s 模式不应看到 task.wait", mode)
+			}
+		}
+	}
 }
 
 func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
@@ -152,7 +174,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for mode, want := range map[string]int{"read-only": 21, "canvas": 38, "full-access": 43} {
+	for mode, want := range map[string]int{"read-only": 20, "canvas": 38, "full-access": 42} {
 		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
 		if len(descriptors) != want {
 			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)

@@ -3,6 +3,7 @@ package operations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -22,12 +23,17 @@ type taskWaitDomain struct {
 	unusedDomain
 	mu        sync.Mutex
 	sequences map[string]*taskWaitSequence
+	errors    map[string]error
 	canvas    json.RawMessage
+	canvasErr error
 }
 
 func (d *taskWaitDomain) Task(_ string, id string) (*model.Task, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if err := d.errors[id]; err != nil {
+		return nil, err
+	}
 	sequence := d.sequences[id]
 	if sequence == nil || len(sequence.tasks) == 0 {
 		return nil, gorm.ErrRecordNotFound
@@ -42,6 +48,9 @@ func (d *taskWaitDomain) Task(_ string, id string) (*model.Task, error) {
 }
 
 func (d *taskWaitDomain) UserCanvasProject(_ string, _ string) (json.RawMessage, error) {
+	if d.canvasErr != nil {
+		return nil, d.canvasErr
+	}
 	if d.canvas == nil {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -69,6 +78,7 @@ func savedTask(id string) model.Task {
 	return taskWaitTask(id, func(task *model.Task) {
 		task.Status = model.TaskStatusSucceeded
 		task.ResultState = localtask.ResultStateReady
+		task.ResultJSON = `{"images":[{"resourceId":"res-1"}]}`
 		task.Outcome = &model.TaskOutcome{Phase: "ready", Regenerate: "allowed", Reason: "result_ready"}
 		task.Outputs = []model.TaskOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "res-1"}}
 	})
@@ -78,6 +88,7 @@ func savingTask(id string) model.Task {
 	return taskWaitTask(id, func(task *model.Task) {
 		task.Status = model.TaskStatusSucceeded
 		task.ResultState = localtask.ResultStatePendingMaterialization
+		task.ResultJSON = `{"images":[{"resourceId":"res-1"}]}`
 		task.Outcome = &model.TaskOutcome{Phase: "fetching", Regenerate: "blocked", Reason: "result_fetching"}
 		task.Outputs = []model.TaskOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "https://upstream.example/a.png"}}
 	})
@@ -85,7 +96,12 @@ func savingTask(id string) model.Task {
 
 func runTaskWaitOp(t *testing.T, domain Domain, params string) (taskWaitResult, error) {
 	t.Helper()
-	value, err := opTaskWait(&Context{Context: context.Background(), Domain: domain, UserID: "user-1"}, json.RawMessage(params))
+	return runTaskWaitOpContext(t, context.Background(), domain, params)
+}
+
+func runTaskWaitOpContext(t *testing.T, ctx context.Context, domain Domain, params string) (taskWaitResult, error) {
+	t.Helper()
+	value, err := opTaskWait(&Context{Context: ctx, Domain: domain, UserID: "user-1"}, json.RawMessage(params))
 	if err != nil {
 		return taskWaitResult{}, err
 	}
@@ -96,6 +112,13 @@ func runTaskWaitOp(t *testing.T, domain Domain, params string) (taskWaitResult, 
 	return result, nil
 }
 
+func useFastTaskWaitPoll(t *testing.T) {
+	t.Helper()
+	restore := taskWaitPollInterval
+	taskWaitPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { taskWaitPollInterval = restore })
+}
+
 func TestTaskWaitReturnsImmediatelyWhenSaved(t *testing.T) {
 	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
 		"task-1": {tasks: []model.Task{savedTask("task-1")}},
@@ -104,7 +127,7 @@ func TestTaskWaitReturnsImmediatelyWhenSaved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Pending || result.TimedOut || result.Failed || !result.Completed {
+	if result.Pending || result.TimedOut || result.Cancelled || result.Failed || !result.Completed {
 		t.Fatalf("已完成任务应直接返回成功: %+v", result)
 	}
 	if len(result.Tasks) != 1 || result.Tasks[0].TaskID != "task-1" || result.Tasks[0].State != taskWaitCompleted {
@@ -116,10 +139,7 @@ func TestTaskWaitReturnsImmediatelyWhenSaved(t *testing.T) {
 }
 
 func TestTaskWaitWaitsForCompletion(t *testing.T) {
-	restore := taskWaitPollInterval
-	taskWaitPollInterval = 5 * time.Millisecond
-	defer func() { taskWaitPollInterval = restore }()
-
+	useFastTaskWaitPoll(t)
 	running := taskWaitTask("task-1", nil)
 	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
 		"task-1": {tasks: []model.Task{running, running, savedTask("task-1")}},
@@ -137,10 +157,7 @@ func TestTaskWaitWaitsForCompletion(t *testing.T) {
 }
 
 func TestTaskWaitTimeoutReturnsPendingAndOriginalTaskID(t *testing.T) {
-	restore := taskWaitPollInterval
-	taskWaitPollInterval = 5 * time.Millisecond
-	defer func() { taskWaitPollInterval = restore }()
-
+	useFastTaskWaitPoll(t)
 	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
 		"task-1": {tasks: []model.Task{taskWaitTask("task-1", nil)}},
 	}}
@@ -148,7 +165,7 @@ func TestTaskWaitTimeoutReturnsPendingAndOriginalTaskID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("超时不能返回错误: %v", err)
 	}
-	if !result.Pending || !result.TimedOut {
+	if !result.Pending || !result.TimedOut || result.Cancelled || result.Completed || result.Failed {
 		t.Fatalf("超时应返回 pending/timedOut: %+v", result)
 	}
 	if len(result.TaskIDs) != 1 || result.TaskIDs[0] != "task-1" {
@@ -160,10 +177,7 @@ func TestTaskWaitTimeoutReturnsPendingAndOriginalTaskID(t *testing.T) {
 }
 
 func TestTaskWaitTreatsSavingAsIncomplete(t *testing.T) {
-	restore := taskWaitPollInterval
-	taskWaitPollInterval = 2 * time.Millisecond
-	defer func() { taskWaitPollInterval = restore }()
-
+	useFastTaskWaitPoll(t)
 	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
 		"task-1": {tasks: []model.Task{savingTask("task-1")}},
 	}}
@@ -183,6 +197,7 @@ func TestTaskWaitReportsMaterializationFailure(t *testing.T) {
 	failed := taskWaitTask("task-1", func(task *model.Task) {
 		task.Status = model.TaskStatusSucceeded
 		task.ResultState = localtask.ResultStateFailedPermanent
+		task.ResultJSON = `{"images":[{"resourceId":"res-1"}]}`
 		task.Outcome = &model.TaskOutcome{Phase: "failed", Regenerate: "confirm", Reason: "result_unrecoverable"}
 		task.Outputs = []model.TaskOutput{{OutputIndex: 0, MediaType: "image", MaterializationErrorCode: localtask.MaterializeErrorResourceMissing}}
 	})
@@ -201,6 +216,93 @@ func TestTaskWaitReportsMaterializationFailure(t *testing.T) {
 	}
 }
 
+func TestTaskWaitDoesNotReportFailedWhileOtherTasksRun(t *testing.T) {
+	useFastTaskWaitPoll(t)
+	failed := taskWaitTask("task-1", func(task *model.Task) { task.Status = model.TaskStatusFailed })
+	running := taskWaitTask("task-2", nil)
+	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
+		"task-1": {tasks: []model.Task{failed}},
+		"task-2": {tasks: []model.Task{running}},
+	}}
+	result, err := runTaskWaitOp(t, domain, `{"taskIds":["task-1","task-2"],"timeoutMs":20}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Pending || !result.TimedOut || result.Completed || result.Failed {
+		t.Fatalf("混合批次仍在等待时不应报失败终态: %+v", result)
+	}
+	if len(result.FailedTaskIDs) != 1 || result.FailedTaskIDs[0] != "task-1" {
+		t.Fatalf("应列出已失败的任务: %+v", result.FailedTaskIDs)
+	}
+}
+
+func TestTaskWaitCompletedWithUnreadableTask(t *testing.T) {
+	domain := &taskWaitDomain{
+		sequences: map[string]*taskWaitSequence{
+			"task-1": {tasks: []model.Task{savedTask("task-1")}},
+		},
+		errors: map[string]error{"task-2": errors.New("database is busy")},
+	}
+	result, err := runTaskWaitOp(t, domain, `{"taskIds":["task-1","task-2"],"timeoutMs":0}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed || !result.ObservationFailed || !result.Pending || !result.TimedOut {
+		t.Fatalf("有任务读不到时不能报告完成: %+v", result)
+	}
+}
+
+func TestTaskWaitCompletesTasksWithoutMediaOutputs(t *testing.T) {
+	cases := map[string]model.Task{
+		"文本": {
+			ID: "task-1", Type: "canvas_text", Status: model.TaskStatusSucceeded,
+			ResultState: localtask.ResultStateReady, ResultJSON: `{"text":"hello"}`,
+			Outcome: &model.TaskOutcome{Phase: "ready", Regenerate: "allowed", Reason: "result_ready"},
+		},
+		"转写": {
+			ID: "task-1", Type: model.TaskTypeTimelineTranscription, Status: model.TaskStatusSucceeded,
+			ResultState: localtask.ResultStateReady, ResultJSON: `{"segments":[]}`,
+			Outcome: &model.TaskOutcome{Phase: "ready", Regenerate: "allowed", Reason: "result_ready"},
+		},
+	}
+	for name, task := range cases {
+		t.Run(name, func(t *testing.T) {
+			domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{"task-1": {tasks: []model.Task{task}}}}
+			result, err := runTaskWaitOp(t, domain, `{"taskId":"task-1","timeoutMs":2000}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Completed || result.Pending || result.Failed {
+				t.Fatalf("没有媒体产物的成功任务应完成: %+v", result)
+			}
+			if result.Tasks[0].Reason != "no_outputs" {
+				t.Fatalf("原因应为 no_outputs: %+v", result.Tasks[0])
+			}
+		})
+	}
+}
+
+func TestTaskWaitMediaTaskWithPendingOutputsStaysIncomplete(t *testing.T) {
+	useFastTaskWaitPoll(t)
+	task := taskWaitTask("task-1", func(task *model.Task) {
+		task.Status = model.TaskStatusSucceeded
+		task.ResultState = localtask.ResultStateReady
+		task.ResultJSON = `{"images":[{"resourceId":"res-1"}]}`
+		task.Outcome = &model.TaskOutcome{Phase: "ready", Regenerate: "allowed", Reason: "result_ready"}
+	})
+	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{"task-1": {tasks: []model.Task{task}}}}
+	result, err := runTaskWaitOp(t, domain, `{"taskId":"task-1","timeoutMs":10}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed || !result.Pending {
+		t.Fatalf("结果里还有待保存的媒体产物时不能完成: %+v", result)
+	}
+	if result.Tasks[0].State != taskWaitSaving {
+		t.Fatalf("媒体任务缺产物应为 saving: %+v", result.Tasks[0])
+	}
+}
+
 func TestTaskWaitChecksNodeBinding(t *testing.T) {
 	boundCanvas := func(taskID, storageKey, phase string) json.RawMessage {
 		return json.RawMessage(`{"nodes":[{"id":"node-1","metadata":{"taskId":"` + taskID +
@@ -215,6 +317,7 @@ func TestTaskWaitChecksNodeBinding(t *testing.T) {
 		{"绑定到别的任务", boundCanvas("task-2", "resource:res-1", "ready"), false},
 		{"还没写资源", boundCanvas("task-1", "blob:local", "ready"), false},
 		{"产物阶段未就绪", boundCanvas("task-1", "resource:res-1", "fetching"), false},
+		{"资源需要重新加载", json.RawMessage(`{"nodes":[{"id":"node-1","metadata":{"taskId":"task-1","status":"success","storageKey":"resource:res-1","resourceReloadAvailable":true,"taskOutcome":{"phase":"ready"}}}]}`), false},
 		{"节点不存在", json.RawMessage(`{"nodes":[]}`), false},
 	}
 	for _, tc := range cases {
@@ -230,7 +333,61 @@ func TestTaskWaitChecksNodeBinding(t *testing.T) {
 			if result.Bound == nil || *result.Bound != tc.want {
 				t.Fatalf("bound = %v，应为 %v", result.Bound, tc.want)
 			}
+			if result.BindingObservationFailed {
+				t.Fatal("正常读到画布时不应标记绑定检查失败")
+			}
 		})
+	}
+}
+
+func TestTaskWaitReportsBindingObservationFailure(t *testing.T) {
+	domain := &taskWaitDomain{
+		sequences: map[string]*taskWaitSequence{"task-1": {tasks: []model.Task{savedTask("task-1")}}},
+		canvasErr: errors.New("database is busy"),
+	}
+	result, err := runTaskWaitOp(t, domain, `{"taskId":"task-1","canvasId":"canvas-1","nodeId":"node-1","timeoutMs":2000}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Completed {
+		t.Fatalf("任务本身仍应完成: %+v", result)
+	}
+	if result.Bound == nil || *result.Bound {
+		t.Fatalf("读不到画布时 bound 应为 false: %+v", result.Bound)
+	}
+	if !result.BindingObservationFailed {
+		t.Fatal("读不到画布时必须标记绑定检查失败")
+	}
+}
+
+func TestTaskWaitIgnoresPartialBindingParams(t *testing.T) {
+	for _, params := range []string{
+		`{"taskId":"task-1","canvasId":"canvas-1","timeoutMs":2000}`,
+		`{"taskId":"task-1","nodeId":"node-1","timeoutMs":2000}`,
+	} {
+		domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{"task-1": {tasks: []model.Task{savedTask("task-1")}}}}
+		result, err := runTaskWaitOp(t, domain, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Bound != nil || result.CanvasID != "" || result.NodeID != "" || result.BindingObservationFailed {
+			t.Fatalf("只传一边时不应检查绑定: %+v", result)
+		}
+	}
+}
+
+func TestTaskWaitCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{
+		"task-1": {tasks: []model.Task{taskWaitTask("task-1", nil)}},
+	}}
+	result, err := runTaskWaitOpContext(t, ctx, domain, `{"taskId":"task-1","timeoutMs":2000}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Cancelled || !result.Pending || result.TimedOut || result.Completed || result.Failed {
+		t.Fatalf("取消应返回 cancelled/pending 而不是超时: %+v", result)
 	}
 }
 
@@ -277,21 +434,23 @@ func TestTaskWaitValidatesParams(t *testing.T) {
 	}
 }
 
-func TestTaskWaitReturnsMissingIDsWithoutWaiting(t *testing.T) {
+func TestTaskWaitMissingTaskReturnsNotFound(t *testing.T) {
 	domain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{}}
 	started := time.Now()
-	result, err := runTaskWaitOp(t, domain, `{"taskIds":["task-missing"],"timeoutMs":25000}`)
-	if err != nil {
-		t.Fatal(err)
+	_, err := runTaskWaitOp(t, domain, `{"taskIds":["task-missing"],"timeoutMs":25000}`)
+	if err == nil {
+		t.Fatal("不存在的任务应返回错误")
 	}
 	if time.Since(started) > time.Second {
-		t.Fatal("全部任务不存在时不应等满超时")
+		t.Fatal("不存在的任务不应等满超时")
 	}
-	if result.Pending || result.TimedOut || len(result.Tasks) != 0 {
-		t.Fatalf("不存在的任务不应伪装成待处理: %+v", result)
+	opErr := AsError(err)
+	if opErr.Code != CodeNotFound || opErr.Reason != "task_not_found" {
+		t.Fatalf("应返回 not_found/task_not_found: %v", opErr)
 	}
-	if len(result.MissingTaskIDs) != 1 || result.MissingTaskIDs[0] != "task-missing" {
-		t.Fatalf("应列出不存在的任务: %+v", result.MissingTaskIDs)
+	ids, _ := opErr.Details["taskIds"].([]string)
+	if len(ids) != 1 || ids[0] != "task-missing" {
+		t.Fatalf("错误详情应列出不存在的任务: %+v", opErr.Details)
 	}
 }
 
@@ -311,7 +470,7 @@ func TestTaskWaitResponseCarriesStableFields(t *testing.T) {
 	if err := json.Unmarshal(encoded, &payload); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"tasks", "taskIds", "pending", "timedOut", "completed", "failed"} {
+	for _, key := range []string{"tasks", "taskIds", "pending", "timedOut", "cancelled", "completed", "failed"} {
 		if _, exists := payload[key]; !exists {
 			t.Fatalf("响应缺少 %s: %s", key, encoded)
 		}

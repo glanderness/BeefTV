@@ -2281,10 +2281,7 @@
         }
       }
     },
-    "assistantModes": [
-      "full-access",
-      "read-only"
-    ],
+    "assistantModes": [],
     "replay": "safe"
   }
 ]

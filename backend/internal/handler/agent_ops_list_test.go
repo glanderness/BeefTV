@@ -199,7 +199,7 @@ func TestExternalWritesListAndUndoRoutes(t *testing.T) {
 	}
 }
 
-func TestTaskWaitHTTPReturnsSuccessWhenTasksAreMissing(t *testing.T) {
+func TestTaskWaitHTTPRejectsMissingTasks(t *testing.T) {
 	env := newAssistantTestEnv(t, nil)
 	owner, err := agentops.EnsureOwnerToken(env.service.DataDir())
 	if err != nil {
@@ -208,22 +208,22 @@ func TestTaskWaitHTTPReturnsSuccessWhenTasksAreMissing(t *testing.T) {
 	response := env.callWithHeaders(t, http.MethodPost, "/ops/task.wait",
 		`{"params":{"taskIds":["missing-task"],"timeoutMs":0}}`,
 		map[string]string{"X-Beeftv-Owner": owner})
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNotFound {
 		t.Fatalf("task.wait = %d %s", response.Code, response.Body.String())
 	}
-	data := decodeEnvelope(t, response)
-	if code, _ := data["__code"].(float64); code != 0 {
-		t.Fatalf("task.wait code = %v: %s", data["__code"], response.Body.String())
+	var payload struct {
+		Code    int            `json:"code"`
+		Reason  string         `json:"reason"`
+		Details map[string]any `json:"details"`
 	}
-	result, _ := data["result"].(map[string]any)
-	if result == nil {
-		t.Fatalf("task.wait 缺少结果: %v", data)
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
 	}
-	if pending, _ := result["pending"].(bool); pending {
-		t.Fatalf("不存在的任务不应是 pending: %v", result)
+	if payload.Code != http.StatusNotFound || payload.Reason != "task_not_found" {
+		t.Fatalf("task.wait 错误 = %+v: %s", payload, response.Body.String())
 	}
-	missing, _ := result["missingTaskIds"].([]any)
+	missing, _ := payload.Details["taskIds"].([]any)
 	if len(missing) != 1 || missing[0] != "missing-task" {
-		t.Fatalf("missingTaskIds = %v", result["missingTaskIds"])
+		t.Fatalf("details.taskIds = %v", payload.Details["taskIds"])
 	}
 }

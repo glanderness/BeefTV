@@ -3,6 +3,7 @@ package operations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -20,12 +21,16 @@ const (
 // 目前没有可复用的任务事件流，所以按间隔读取已持久化的任务投影。
 var taskWaitPollInterval = 500 * time.Millisecond
 
+var errTaskWaitCanvasUnreadable = errors.New("画布内容不可读")
+
 func registerTaskWaitOp(r *Registry) {
 	r.Register(Op{
 		ID:       "task.wait",
 		Summary:  "等待生成任务完成；超时返回 pending 和原 taskId，不返回错误",
 		ReadOnly: true,
 		Scope:    ScopeWorkspaceRead,
+		// 外部客户端先用；内置宿主迁移到 task.wait 前，不把等待工具暴露给内置模型。
+		ExternalOnly: true,
 		Params: json.RawMessage(`{"type":"object","properties":{` +
 			`"taskId":{"type":"string","description":"单个任务 ID"},` +
 			`"taskIds":{"type":"array","items":{"type":"string"},"maxItems":8,"description":"最多 8 个任务 ID"},` +
@@ -69,14 +74,19 @@ func opTaskWait(ctx *Context, params json.RawMessage) (any, error) {
 	}
 
 	observation := awaitTaskIDs(ctx.Context, ctx.Domain, ctx.UserID, ids, timeout)
+	if len(observation.missing) > 0 {
+		return nil, newError(CodeNotFound, "task_not_found", "任务不存在",
+			map[string]any{"taskIds": observation.missing})
+	}
 	result := taskWaitResult{
 		TaskIDs:           ids,
-		MissingTaskIDs:    observation.missing,
 		Pending:           observation.pending,
 		TimedOut:          observation.timedOut,
-		ObservationFailed: observation.observationFailed,
+		Cancelled:         observation.cancelled,
 		Completed:         observation.completed,
 		Failed:            observation.failed,
+		FailedTaskIDs:     observation.failedTaskIDs,
+		ObservationFailed: observation.observationFailed,
 		Tasks:             observation.views,
 	}
 	if result.Tasks == nil {
@@ -85,10 +95,13 @@ func opTaskWait(ctx *Context, params json.RawMessage) (any, error) {
 	canvasID := strings.TrimSpace(args.CanvasID)
 	nodeID := strings.TrimSpace(args.NodeID)
 	if canvasID != "" && nodeID != "" {
-		bound := taskWaitNodeBound(ctx.Domain, ctx.UserID, canvasID, nodeID, ids)
+		bound, err := taskWaitNodeBound(ctx.Domain, ctx.UserID, canvasID, nodeID, ids)
 		result.CanvasID = canvasID
 		result.NodeID = nodeID
 		result.Bound = &bound
+		if err != nil {
+			result.BindingObservationFailed = true
+		}
 	}
 	return result, nil
 }
@@ -116,11 +129,14 @@ func taskWaitIDs(args taskWaitArgs) []string {
 type taskWaitObservation struct {
 	views             []taskWaitTaskView
 	missing           []string
+	failedTaskIDs     []string
 	pending           bool
 	timedOut          bool
+	cancelled         bool
 	completed         bool
 	failed            bool
 	observationFailed bool
+	deadlineReached   bool
 }
 
 type taskWaitTaskView struct {
@@ -138,21 +154,23 @@ type taskWaitTaskView struct {
 }
 
 type taskWaitResult struct {
-	Tasks             []taskWaitTaskView `json:"tasks"`
-	TaskIDs           []string           `json:"taskIds"`
-	MissingTaskIDs    []string           `json:"missingTaskIds,omitempty"`
-	Pending           bool               `json:"pending"`
-	TimedOut          bool               `json:"timedOut"`
-	Completed         bool               `json:"completed"`
-	Failed            bool               `json:"failed"`
-	ObservationFailed bool               `json:"observationFailed,omitempty"`
-	CanvasID          string             `json:"canvasId,omitempty"`
-	NodeID            string             `json:"nodeId,omitempty"`
-	Bound             *bool              `json:"bound,omitempty"`
+	Tasks                    []taskWaitTaskView `json:"tasks"`
+	TaskIDs                  []string           `json:"taskIds"`
+	Pending                  bool               `json:"pending"`
+	TimedOut                 bool               `json:"timedOut"`
+	Cancelled                bool               `json:"cancelled"`
+	Completed                bool               `json:"completed"`
+	Failed                   bool               `json:"failed"`
+	FailedTaskIDs            []string           `json:"failedTaskIds,omitempty"`
+	ObservationFailed        bool               `json:"observationFailed,omitempty"`
+	CanvasID                 string             `json:"canvasId,omitempty"`
+	NodeID                   string             `json:"nodeId,omitempty"`
+	Bound                    *bool              `json:"bound,omitempty"`
+	BindingObservationFailed bool               `json:"bindingObservationFailed,omitempty"`
 }
 
-// 任务等待的唯一判定处：排队、下载中、保存中都是未完成；物化失败是失败；
-// 只有任务成功且每个产物都已有 resourceId、没有物化错误，才算完成。
+// task.wait 的判定集中在这一处；内置宿主迁移后删除 JS 版本，避免两处漂移。
+// 排队、下载中、保存中都是未完成；物化失败是失败；成功且需要保存的产物都已入库才算完成。
 const (
 	taskWaitQueued      = "queued"
 	taskWaitRunning     = "running"
@@ -186,6 +204,9 @@ func taskWaitStateOf(task model.Task) taskWaitState {
 			return taskWaitState{taskWaitFailed, "materialization_failed"}
 		}
 		if taskWaitSaved(task) {
+			if len(task.Outputs) == 0 {
+				return taskWaitState{taskWaitCompleted, "no_outputs"}
+			}
 			return taskWaitState{taskWaitCompleted, "saved"}
 		}
 		if taskWaitIsDownloading(task) {
@@ -206,6 +227,9 @@ func taskWaitPhase(task model.Task) string {
 	return strings.ToLower(strings.TrimSpace(task.Outcome.Phase))
 }
 
+// taskWaitSaved 要求任务成功，且结果里声明的媒体产物都已入库。
+// 文本、转写等结果里没有媒体产物的任务，成功即完成；媒体任务即使成功，
+// 只要结果里还有待保存的产物，就仍然是未完成。
 func taskWaitSaved(task model.Task) bool {
 	if task.Status != model.TaskStatusSucceeded {
 		return false
@@ -216,15 +240,18 @@ func taskWaitSaved(task model.Task) bool {
 	if state := strings.ToLower(strings.TrimSpace(task.ResultState)); state != "" && state != "ready" && state != "succeeded" {
 		return false
 	}
-	if len(task.Outputs) == 0 {
+	if len(task.Outputs) > 0 {
+		for _, output := range task.Outputs {
+			if strings.TrimSpace(output.ResourceID) == "" || output.MaterializationErrorCode != "" {
+				return false
+			}
+		}
+		return true
+	}
+	if strings.TrimSpace(task.ResultJSON) == "" {
 		return false
 	}
-	for _, output := range task.Outputs {
-		if strings.TrimSpace(output.ResourceID) == "" || output.MaterializationErrorCode != "" {
-			return false
-		}
-	}
-	return true
+	return len(localtask.CanonicalOutputs(task.ResultJSON, task.Type)) == 0
 }
 
 func taskWaitMaterializationFailed(task model.Task) bool {
@@ -280,27 +307,35 @@ func awaitTaskIDs(ctx context.Context, domain Domain, userID string, ids []strin
 		ctx = context.Background()
 	}
 	deadline := time.Now().Add(timeout)
+	firstPass := true
 	for {
-		observation := readTaskWaitObservation(domain, userID, ids)
-		if observation.allSettled() {
-			if len(observation.missing) > 0 {
-				observation.completed = false
-			}
+		observation := readTaskWaitObservation(ctx, domain, userID, ids, deadline, firstPass)
+		firstPass = false
+		if observation.cancelled {
+			observation.pending = true
 			return observation
 		}
-		// 所有 ID 都不存在时没有可等的任务，和模拟后端一样立即返回空任务列表。
-		if len(observation.views) == 0 && len(observation.missing) == len(ids) && !observation.observationFailed {
+		if len(observation.missing) > 0 {
 			return observation
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		if observation.settled(len(ids)) {
+			observation.completed = observation.allCompleted(len(ids))
+			observation.failed = observation.anyFailed()
+			return observation
+		}
+		if observation.deadlineReached || !time.Now().Before(deadline) {
 			observation.pending = true
 			observation.timedOut = true
 			return observation
 		}
 		wait := taskWaitPollInterval
-		if remaining < wait {
+		if remaining := time.Until(deadline); remaining < wait {
 			wait = remaining
+		}
+		if wait <= 0 {
+			observation.pending = true
+			observation.timedOut = true
+			return observation
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -309,16 +344,25 @@ func awaitTaskIDs(ctx context.Context, domain Domain, userID string, ids []strin
 				<-timer.C
 			}
 			observation.pending = true
-			observation.timedOut = true
+			observation.cancelled = true
 			return observation
 		case <-timer.C:
 		}
 	}
 }
 
-func readTaskWaitObservation(domain Domain, userID string, ids []string) taskWaitObservation {
+func readTaskWaitObservation(ctx context.Context, domain Domain, userID string, ids []string, deadline time.Time, firstPass bool) taskWaitObservation {
 	observation := taskWaitObservation{views: make([]taskWaitTaskView, 0, len(ids))}
-	for _, id := range ids {
+	for index, id := range ids {
+		if ctx.Err() != nil {
+			observation.cancelled = true
+			return observation
+		}
+		// 第一遍至少要拿到一次完整快照；之后不再在超时后发起新的查询。
+		if !firstPass && index > 0 && !time.Now().Before(deadline) {
+			observation.deadlineReached = true
+			return observation
+		}
 		task, err := domain.Task(userID, id)
 		if err != nil {
 			if isNotFoundError(err) {
@@ -350,41 +394,52 @@ func readTaskWaitObservation(domain Domain, userID string, ids []string) taskWai
 			CreatedAt:   task.CreatedAt,
 			UpdatedAt:   task.UpdatedAt,
 		})
-		switch state.State {
-		case taskWaitCompleted:
-			// 完成数在 allSettled 里统一计算。
-		case taskWaitFailed:
-			observation.failed = true
+		if state.State == taskWaitFailed {
+			observation.failedTaskIDs = append(observation.failedTaskIDs, task.ID)
 		}
 	}
 	return observation
 }
 
-func (o *taskWaitObservation) allSettled() bool {
-	if len(o.views) == 0 {
+func (o taskWaitObservation) settled(requested int) bool {
+	if len(o.views) != requested {
 		return false
 	}
-	completed := 0
 	for _, view := range o.views {
 		if view.State != taskWaitCompleted && view.State != taskWaitFailed {
 			return false
 		}
-		if view.State == taskWaitCompleted {
-			completed++
-		}
 	}
-	o.completed = completed == len(o.views)
 	return true
 }
 
-func taskWaitNodeBound(domain Domain, userID, canvasID, nodeID string, taskIDs []string) bool {
-	raw, err := domain.UserCanvasProject(userID, canvasID)
-	if err != nil || len(raw) == 0 {
+func (o taskWaitObservation) allCompleted(requested int) bool {
+	if len(o.views) != requested {
 		return false
+	}
+	for _, view := range o.views {
+		if view.State != taskWaitCompleted {
+			return false
+		}
+	}
+	return true
+}
+
+func (o taskWaitObservation) anyFailed() bool {
+	return len(o.failedTaskIDs) > 0
+}
+
+func taskWaitNodeBound(domain Domain, userID, canvasID, nodeID string, taskIDs []string) (bool, error) {
+	raw, err := domain.UserCanvasProject(userID, canvasID)
+	if err != nil {
+		return false, err
+	}
+	if len(raw) == 0 {
+		return false, errTaskWaitCanvasUnreadable
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return false
+		return false, err
 	}
 	wanted := make(map[string]bool, len(taskIDs))
 	for _, id := range taskIDs {
@@ -397,27 +452,27 @@ func taskWaitNodeBound(domain Domain, userID, canvasID, nodeID string, taskIDs [
 		}
 		metadata, _ := node["metadata"].(map[string]any)
 		if metadata == nil || !wanted[nodeStringValue(metadata["taskId"])] {
-			return false
+			return false, nil
 		}
 		if nodeStringValue(metadata["status"]) != "success" {
-			return false
+			return false, nil
 		}
 		if !strings.HasPrefix(nodeStringValue(metadata["storageKey"]), "resource:") {
-			return false
+			return false, nil
 		}
 		if value, exists := metadata["resourceReloadAvailable"]; exists && value != nil {
 			if flag, ok := value.(bool); ok && flag {
-				return false
+				return false, nil
 			}
 		}
 		if outcome, ok := metadata["taskOutcome"].(map[string]any); ok {
 			if phase := nodeStringValue(outcome["phase"]); phase != "" && phase != "ready" {
-				return false
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 func nodeStringValue(value any) string {
