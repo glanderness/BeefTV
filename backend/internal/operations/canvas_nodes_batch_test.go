@@ -243,6 +243,50 @@ func TestCanvasNodesBatchReadOnlyAndAssistantBoundaries(t *testing.T) {
 	}
 }
 
+func TestCanvasNodesConfigureMatchesSingleNodeWrite(t *testing.T) {
+	h := newHarness(t)
+	caller := operations.ExternalCaller(false)
+	first := h.revisionNow(t)
+	if _, err := h.execute(t, caller, "canvas.node.configure", "single-parity", map[string]any{
+		"canvasId": h.canvasID, "nodeId": "n1", "kind": "image", "expectedRevision": first,
+		"patch": map[string]any{"prompt": "单节点草稿"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterSingle := h.revisionNow(t)
+	if afterSingle != first+1 {
+		t.Fatalf("单节点写入应只增加一次版本: %d -> %d", first, afterSingle)
+	}
+	batchResult, err := h.execute(t, caller, "canvas.nodes.configure", "batch-parity",
+		batchConfigureParams(h.canvasID, afterSingle, configureNode("n2", "image", "批量草稿")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batchResult.Revision != afterSingle+1 {
+		t.Fatalf("批量写入应只增加一次版本: %d -> %d", afterSingle, batchResult.Revision)
+	}
+	if h.nodeMetaString(t, "n1", "composerContent") != "单节点草稿" || h.nodeMetaString(t, "n2", "composerContent") != "批量草稿" {
+		t.Fatal("单节点与批量应写入相同的草稿字段")
+	}
+	if h.nodeMetaString(t, "n1", "prompt") != "原始" {
+		t.Fatal("批量写入不应改动批次外节点")
+	}
+
+	store := operations.NewStore(h.service.Database())
+	writes, err := store.ListExternalCanvasWrites(h.userID, h.canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(writes) != 2 {
+		t.Fatalf("单节点和批量应各记一次外部写入: %+v", writes)
+	}
+	for _, write := range writes {
+		if len(write.UpdatedNodeIDs) != 1 {
+			t.Fatalf("每次写入只应包含自己的节点: %+v", write)
+		}
+	}
+}
+
 func TestCanvasNodesConfigureUndoRestoresWholeBatch(t *testing.T) {
 	h := newHarness(t)
 	store := operations.NewStore(h.service.Database())

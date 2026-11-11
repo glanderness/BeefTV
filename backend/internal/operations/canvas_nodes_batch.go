@@ -98,6 +98,8 @@ func opCanvasNodesConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 		}
 		patches = append(patches, patch)
 	}
+	// 先在同一份文档上应用全部 patch，再把整份文档提交一次；字段落点与单节点共用，
+	// 版本只推进一次，外部写入记录与撤销也按这一次操作整批处理。
 	for index, node := range args.Nodes {
 		if err := canvas.ApplyCanvasNodeFieldsPatch(doc, node.NodeID, patches[index]); err != nil {
 			return nil, batchNodeError(index+1, node.NodeID, mapDomainError(err))
@@ -107,7 +109,6 @@ func opCanvasNodesConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, AsError(err)
 	}
-	// 一次提交只推进一次版本，外部写入记录与撤销也按这一次操作整批处理。
 	if _, _, err := ctx.Domain.CommitUserCanvasDocument(ctx.UserID, args.CanvasID, args.ExpectedRevision, encoded); err != nil {
 		return nil, mapDomainError(err)
 	}
