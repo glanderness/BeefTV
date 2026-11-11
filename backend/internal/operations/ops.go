@@ -35,6 +35,9 @@ func RegisterDefaultOps(r *Registry) {
 	registerCanvasNodeConfigureOps(r)
 	registerStoryboardPreparation(r)
 	registerGenerationSubmit(r)
+	registerTaskCancelOp(r)
+	registerGenerationOrderListOp(r)
+	registerExternalWriteOps(r)
 	registerCanvasProjectExportOps(r)
 	r.Register(Op{ExternalOnly: true, ReplaySafe: true, ID: "canvas.create", Summary: "创建新画布", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"画布名称（默认：未命名画布）"},"canvasId":{"type":"string","description":"可选自定义画布 ID；省略时由服务端生成"},"projectId":{"type":"string","description":"可选关联项目 ID"},"folderId":{"type":"string","description":"可选画布文件夹 ID"}}}`),

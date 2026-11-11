@@ -110,7 +110,7 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 		out, err := fn(db)
 		return RunOutcome{Result: out}, err
 	}
-	if req.Op == "skill.script.run" {
+	if req.Op == "skill.script.run" || runsOutsideOperationTx(req.Op) {
 		return s.runOutOfTx(db, req, fn)
 	}
 	var outcome RunOutcome
@@ -174,6 +174,17 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 		return RunOutcome{}, AsError(err)
 	}
 	return outcome, nil
+}
+
+// runsOutsideOperationTx 标记需要自己管理事务的操作：任务取消和撤销会调用已有的
+// 事务实现，不能套在外层写事务里，否则同一 SQLite 连接会重入加锁。
+func runsOutsideOperationTx(op string) bool {
+	switch op {
+	case "task.cancel", "canvas.external.write.undo":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
