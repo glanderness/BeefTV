@@ -894,6 +894,8 @@ test('a reconnect with an unknown old workspace defers the wake instead of dropp
   const decision = await listeners.get('agent/pre-step')({ agent, turn: 2, messages: [injected[0]] }, async () => ({ kind: 'enter', messages: [injected[0]] }))
   assert.deepEqual(decision.messages, [])
   assert.equal(wakes.length, 0)
+  // 重连还没完成时用户又发了一条：这时工作区未知，deferred 不能被提前清掉。
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'early-user', source: { kind: 'user' } } })
   releaseBootstrap()
   await reconnecting
   // 连回的其实是同一工作区：下一条用户消息把完成结果补投，而不是丢掉。

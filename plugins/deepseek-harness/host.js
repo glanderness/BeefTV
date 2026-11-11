@@ -903,11 +903,13 @@ export function apply(ctx) {
     if (stepNotice?.sessionId === sessionId) stepNotice = null
     const deferred = deferredWakes.get(sessionId)
     if (deferred?.outcomes.length) {
-      if (deferred.workspaceId && deferred.workspaceId !== current?.workspace?.id) {
+      const activeWorkspace = current?.workspace?.id || null
+      if (activeWorkspace && deferred.workspaceId && deferred.workspaceId !== activeWorkspace) {
         deferredWakes.delete(sessionId)
-      } else if (deliverOutcomes(sessionId, payload.agent, deferred.outcomes)) {
+      } else if (activeWorkspace && deliverOutcomes(sessionId, payload.agent, deferred.outcomes)) {
         deferredWakes.delete(sessionId)
       }
+      // 还没连上或工作区未知时保留 deferred，连上后再按实际工作区补投或清掉。
     }
   })
   ctx.on('agent/inbox/discarded', payload => {
