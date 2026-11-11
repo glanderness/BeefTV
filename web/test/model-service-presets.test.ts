@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { MODEL_SERVICE_PRESETS, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, pluginServices, mergeSavedServiceChannel, presetCatalogFor, serviceConnectionError, serviceModelProfile, servicePresetFor, modelCatalogRequestURL } from "../src/lib/model-service-presets";
+import { applyFetchedChannelModelCatalog } from "../src/lib/channel-model-catalog";
+import { MODEL_SERVICE_PRESETS, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, ysduiProtocolsAvailable, pluginServices, mergeSavedServiceChannel, presetCatalogFor, serviceConnectionError, serviceModelProfile, servicePresetFor } from "../src/lib/model-service-presets";
 import { modelConnectionResultDetail, testChannelModelConnection } from "../src/lib/model-connection-test";
-import { applyFetchedChannelModelCatalog, modelConfigChannelStatusLabel } from "../src/pages/settings/channel-settings-pane";
+import { modelConfigChannelStatusLabel } from "../src/pages/settings/channel-settings-pane";
 import { backendProviderConfig } from "../src/services/api/generation-task";
 import { configWithoutCachedSecrets, createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
@@ -142,7 +143,6 @@ test("a plugin interface that makes images and videos is one service, and both k
 test("connection validation rejects full endpoints and embedded credentials", () => {
     const channel = createModelChannel({ baseUrl: "https://api.example.com/v1", apiKey: "synthetic-key" });
     expect(serviceConnectionError(channel)).toBe("");
-    expect(modelCatalogRequestURL(channel)).toBe("https://api.example.com/v1/models");
     expect(serviceConnectionError({ ...channel, baseUrl: "https://api.example.com/v1/chat/completions" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, baseUrl: "https://secret@api.example.com" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "https://assets.example.com" })).toBe("");
@@ -227,7 +227,46 @@ test("official OpenAI and Gemini presets stop advertising discontinued video API
     }
     expect(presets.get("compatible")).toContain("中转");
     expect(presets.get("ll2")).toContain("视频");
+    expect(presets.get("ysdui")).toContain("视频");
     expect(presets.get("ark")).toContain("Seedance 视频");
+});
+
+test("Ysdui service preset resolves all 4 Ysdui protocols when plugin is enabled and fails closed when disabled", () => {
+    const ysduiProtocols = [
+        ...protocols,
+        { value: "ysdui-image", capability: "image", authType: "bearer", enabled: true } as ModelProtocolDefinition,
+        { value: "ysdui-image-task", capability: "image", authType: "bearer", enabled: true } as ModelProtocolDefinition,
+        { value: "ysdui-video", capability: "video", authType: "bearer", enabled: true } as ModelProtocolDefinition,
+    ];
+    expect(ysduiProtocolsAvailable(ysduiProtocols)).toBe(true);
+    expect(ysduiProtocolsAvailable(protocols)).toBe(false);
+
+    const channel = createServicePresetChannel("ysdui", "ysdui-test", ysduiProtocols);
+    const catalog = presetCatalogFor("ysdui");
+    expect(servicePresetFor(channel)).toBe("ysdui");
+    expect(channel.name).toBe("银盛云枢壹算");
+    expect(channel.baseUrl).toBe("https://tokenhub.ysdui.cn");
+    expect(channel.models).toHaveLength(29);
+    expect(catalog).toHaveLength(29);
+
+    const resolvedProtocols = new Set(
+        catalog.map((item) => serviceModelProfile(channel, item, ysduiProtocols).protocol),
+    );
+    expect([...resolvedProtocols].sort()).toEqual([
+        "chat-completion",
+        "ysdui-image",
+        "ysdui-image-task",
+        "ysdui-video",
+    ]);
+
+    const unknownImage = serviceModelProfile(channel, { id: "custom-ysdui-image-model", modelType: "image" }, ysduiProtocols);
+    expect(unknownImage.protocol).toBeUndefined();
+
+    const withoutPlugin = catalog.map((item) => serviceModelProfile(channel, item, protocols));
+    expect(withoutPlugin.find((profile) => profile.capability === "text")?.protocol).toBe("chat-completion");
+    for (const mediaProfile of withoutPlugin.filter((profile) => profile.capability !== "text")) {
+        expect(mediaProfile.protocol).toBeUndefined();
+    }
 });
 
 test("LL2 service preset resolves all 6 LL2 protocols when plugin is enabled and fails closed when disabled", () => {

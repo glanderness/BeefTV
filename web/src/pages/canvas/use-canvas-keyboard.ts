@@ -53,6 +53,26 @@ export function hasCanvasTextSelection(selection: TextSelectionLike | null | und
     return Boolean(selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.toString());
 }
 
+/**
+ * 画布只在项目已加载、不在版本预览、且没有其他键盘宿主时接管快捷键。
+ * React 状态决定监听是否注册；DOM 宿主检查是运行时兜底，防止状态还没回落时
+ * 画布继续接管 Delete、Backspace 和粘贴。
+ */
+export function canvasKeyboardEnabled({ projectLoaded, previewActive, directorNodeId, folderBrowserNodeId }: {
+    projectLoaded: boolean;
+    previewActive: boolean;
+    directorNodeId?: string | null;
+    folderBrowserNodeId?: string | null;
+}) {
+    return projectLoaded && !previewActive && !directorNodeId && !folderBrowserNodeId;
+}
+
+const CANVAS_KEYBOARD_HOST_SELECTOR = "[data-director-workbench='true'], [data-canvas-folder-browser]";
+
+function canvasKeyboardHostMounted(root: { querySelector: (selector: string) => unknown }) {
+    return Boolean(root.querySelector(CANVAS_KEYBOARD_HOST_SELECTOR));
+}
+
 export function useCanvasKeyboard({
     pageUi,
     projectId,
@@ -99,8 +119,9 @@ export function useCanvasKeyboard({
             // propagation so their own handlers still receive the key.
             if ((event.key === "Delete" || event.key === "Backspace") && !isTextEditableTarget(event.target)) event.preventDefault();
             // Runtime guard complements the React `enabled` flag: the workbench
-            // owns keyboard input whenever mounted, regardless of stale canvas selection.
-            if (document.querySelector("[data-director-workbench='true']")) return;
+            // and fullscreen folder browser own keyboard input whenever mounted,
+            // regardless of stale canvas selection.
+            if (canvasKeyboardHostMounted(document)) return;
             const target = event.target instanceof Element ? event.target : null;
             if (target?.closest(".canvas-node-toolbar, .canvas-node-toolbar-menu")) return;
             const key = event.key.toLowerCase();
@@ -245,7 +266,7 @@ export function useCanvasKeyboard({
         };
 
         const handlePaste = (event: ClipboardEvent) => {
-            if (event.defaultPrevented || document.querySelector("[data-director-workbench='true']") || !ownsCanvasClipboard(event.target, document.activeElement)) return;
+            if (event.defaultPrevented || canvasKeyboardHostMounted(document) || !ownsCanvasClipboard(event.target, document.activeElement)) return;
             // 节点标记写入失败或仍在写入时避开旧系统图片，其余情况保持系统内容优先。
             event.preventDefault();
             const text = event.clipboardData?.getData("text/plain") || "";

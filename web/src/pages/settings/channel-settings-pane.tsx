@@ -6,17 +6,17 @@ import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { PageHeader } from "@/components/layout/workspace-page";
-import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
-import { seedancePortraitModel } from "@/lib/seedance-portrait";
+import { applyFetchedChannelModelCatalog } from "@/lib/channel-model-catalog";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
-import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
+import { fetchChannelModels } from "@/services/api/image";
 import { channelHasGenerationCredential, channelHasManagedBeefTVCredential, createModelChannel, defaultBaseUrlForApiFormat, isBuiltinBeefTVChannel, normalizeConfigSnapshot, useConfigStore, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { ModelServiceEditor } from "./model-service-editor";
+import { ChannelRequestAddressLines } from "./channel-request-addresses";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 import { ModelLogo } from "@/components/model-logo";
 import beefTVAppIcon from "../../../../assets/app-icon.png";
-import { MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, channelAllowsEmptyAPIKey, mergeSavedServiceChannel, modelCatalogRequestURL, pluginServices, servicePresetFor } from "@/lib/model-service-presets";
+import { MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, channelAllowsEmptyAPIKey, mergeSavedServiceChannel, pluginServices, servicePresetFor } from "@/lib/model-service-presets";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
 import { getLocalModelConfig } from "@/services/api/workspace";
@@ -312,7 +312,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                             <ChannelStatus channel={channel} persistence={persistence} connection={builtinBeefTV ? beefConnection : null} />
                                         </div>
                                         {topazUpscale ? <p className="mt-1 text-xs text-foreground/55">从图片或视频节点上方的「AI超分」使用</p> : null}
-                                        {!builtinBeefTV && !topazUpscale && !pluginChannel && <p className="mt-1 break-all text-xs text-foreground/50">模型目录地址：{modelCatalogRequestURL(channel)}</p>}
+                                        {!builtinBeefTV && !topazUpscale && !pluginChannel && <ChannelRequestAddressLines channel={channel} />}
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
                                         {builtinBeefTV && catalogSyncFailed ? <Button loading={beefBusy} onClick={() => void refresh()}>重试更新模型列表</Button> : null}
@@ -500,24 +500,6 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
             {serviceEditor !== undefined && <ModelServiceEditor initial={serviceEditor || undefined} onClose={() => setServiceEditor(undefined)} onSave={saveService} />}
         </Form>
     );
-}
-
-export function applyFetchedChannelModelCatalog(channel: ModelChannel, result: ChannelModelFetchResult): ModelChannel {
-    const profiles = mergeFetchedChannelModelProfiles(channel, result.catalog);
-    if (channel.id === "beeftv") return { ...channel, models: uniqueModels(result.models), modelProfiles: profiles };
-    const existing = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
-    // Refresh updates the catalog without silently enabling new models or removing manual ones.
-    return {
-        ...channel,
-        models: channel.models.length ? channel.models : uniqueModels(result.models),
-        modelProfiles: profiles.map((profile) => {
-            const previous = existing.get(profile.model);
-            if (!previous) return profile;
-            if (seedancePortraitModel(profile.model)) return { ...previous, videoPricing: profile.videoPricing ?? null };
-            return profile.videoPricing ? { ...previous, videoPricing: profile.videoPricing } : previous;
-        }).concat((channel.modelProfiles || []).filter((profile) => !profiles.some((item) => item.model === profile.model))
-            .map((profile) => seedancePortraitModel(profile.model) ? { ...profile, videoPricing: null } : profile)),
-    };
 }
 
 export function channelValidationError(channel: ModelChannel, connection?: BeefTVConnectionSummary | null) {

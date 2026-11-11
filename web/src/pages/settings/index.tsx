@@ -1,7 +1,7 @@
 import { App, Button } from "antd";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Navigate, useNavigate, useSearchParams } from "react-router";
 
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -110,6 +110,10 @@ export default function SettingsPage() {
             </SettingsPane>
         ),
     };
+
+    if (requestedSection === "assistant") {
+        return <Navigate to="/skills" replace />;
+    }
 
     return (
         <main className="settings-page app-workspace-page app-user-workspace app-section-page flex h-full min-h-0 flex-col text-foreground">

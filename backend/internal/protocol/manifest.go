@@ -286,12 +286,17 @@ func ValidateManifest(manifest Manifest) error {
 			}
 			continue
 		}
-		requiresV3 := len(provider.Variables) > 0 || provider.Response.Stream != nil || provider.Response.DetectImageMIME
+		requiresV3 := len(provider.Variables) > 0 || provider.Response.Stream != nil || provider.Response.DetectImageMIME || provider.MediaUpload != nil
 		for _, operation := range []*ManifestOperation{&provider.Create, provider.Poll, provider.Cancel, provider.Result, provider.Agent} {
 			requiresV3 = requiresV3 || (operation != nil && operation.DefaultPathPrefix != "")
 		}
 		if strings.TrimSpace(manifest.APIVersion) != "beeftv.plugin/v3" && requiresV3 {
 			return fmt.Errorf("provider %q requires beeftv.plugin/v3 for variables, defaultPathPrefix or image response extensions", provider.ID)
+		}
+		if provider.MediaUpload != nil {
+			if err := validateManifestMediaUpload(*provider.MediaUpload, provider.BaseURL); err != nil {
+				return fmt.Errorf("provider %q mediaUpload: %w", provider.ID, err)
+			}
 		}
 		var expressions []any
 		for _, operation := range []*ManifestOperation{&provider.Create, provider.Poll, provider.Cancel, provider.Result, provider.Agent} {
@@ -391,6 +396,7 @@ func normalizeManifestForProvider(manifest *Manifest, index int) error {
 	manifest.Metadata.Poll = operationSummaryPtr(provider.Poll)
 	manifest.Metadata.Cancel = operationSummaryPtr(provider.Cancel)
 	manifest.Metadata.ContentType = provider.Create.ContentType
+	manifest.Metadata.BaseURL = strings.TrimSpace(provider.BaseURL)
 	manifest.Metadata.RequiresPublicMediaURLs = provider.RequiresPublicMediaURLs
 	for kind, transport := range provider.MediaTransport {
 		if (kind != "image" && kind != "video" && kind != "audio") || (transport != "inline" && transport != "url") {
@@ -398,6 +404,7 @@ func normalizeManifestForProvider(manifest *Manifest, index int) error {
 		}
 	}
 	manifest.Metadata.MediaTransport = provider.MediaTransport
+	manifest.Metadata.MediaUpload = provider.MediaUpload
 	manifest.Metadata.Execution = manifest.Runtime.Backend
 	manifest.Create = provider.Create
 	manifest.Agent = provider.Agent
@@ -470,14 +477,15 @@ func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (Reque
 	if len(a.manifest.Contributes.Providers) == 0 {
 		return RequestSpec{}, fmt.Errorf("plugin %s does not provide a provider", a.manifest.Metadata.ID)
 	}
-	variables, err := manifestRequestVariables(a.manifest.Variables, c.Request)
+	workflow := manifestWorkflowValues(a.manifest, c.Request)
+	variables, err := manifestRequestVariables(a.manifest.Variables, c.Request, workflow)
 	if err != nil {
 		return RequestSpec{}, err
 	}
-	if err := validateManifestRequest(a.manifest.Validations, c.Request, variables); err != nil {
+	if err := validateManifestRequest(a.manifest.Validations, c.Request, variables, workflow); err != nil {
 		return RequestSpec{}, err
 	}
-	spec, err := buildManifestOperation(a.manifest.Create, a.manifest.Auth, c.Request, "", variables)
+	spec, err := buildManifestOperation(a.manifest.Create, a.manifest.Auth, c.Request, "", variables, workflow)
 	if err != nil {
 		return RequestSpec{}, err
 	}
@@ -557,11 +565,12 @@ func (a manifestAdapter) BuildResult(_ context.Context, c PollContext) (RequestS
 }
 
 func (a manifestAdapter) buildOperation(operation ManifestOperation, request GenerationRequest, taskID string) (RequestSpec, error) {
-	variables, err := manifestRequestVariables(a.manifest.Variables, request)
+	workflow := manifestWorkflowValues(a.manifest, request)
+	variables, err := manifestRequestVariables(a.manifest.Variables, request, workflow)
 	if err != nil {
 		return RequestSpec{}, err
 	}
-	return buildManifestOperation(operation, a.manifest.Auth, request, taskID, variables)
+	return buildManifestOperation(operation, a.manifest.Auth, request, taskID, variables, workflow)
 }
 
 func (a manifestAdapter) parse(payload map[string]any, c PollContext) CreateResult {
@@ -692,9 +701,12 @@ func validateManifestVariables(bindings []ManifestVariable, expressions ...any) 
 	return nil
 }
 
-func manifestRequestVariables(bindings []ManifestVariable, request GenerationRequest) (map[string]any, error) {
+func manifestRequestVariables(bindings []ManifestVariable, request GenerationRequest, workflow ...map[string]any) (map[string]any, error) {
 	values := map[string]any{}
 	env := map[string]any{"request": manifestRequestValues(request), "vars": values}
+	if len(workflow) > 0 && workflow[0] != nil {
+		env["workflow"] = workflow[0]
+	}
 	for _, binding := range bindings {
 		if !manifestVariableName.MatchString(binding.Name) {
 			return nil, fmt.Errorf("provider variable requires a simple name")
@@ -711,13 +723,16 @@ func manifestRequestVariables(bindings []ManifestVariable, request GenerationReq
 	return values, nil
 }
 
-func validateManifestRequest(rules []ManifestValidation, request GenerationRequest, variables ...map[string]any) error {
+func validateManifestRequest(rules []ManifestValidation, request GenerationRequest, extras ...map[string]any) error {
 	if draftTaskID, ok := request.Extra["draft_task_id"].(string); len(rules) == 0 || (ok && strings.TrimSpace(draftTaskID) != "") {
 		return nil
 	}
 	env := map[string]any{"request": manifestRequestValues(request)}
-	if len(variables) > 0 {
-		env["vars"] = variables[0]
+	if len(extras) > 0 {
+		env["vars"] = extras[0]
+	}
+	if len(extras) > 1 && extras[1] != nil {
+		env["workflow"] = extras[1]
 	}
 	for _, rule := range rules {
 		value, err := evaluateManifestValue(rule.Assert, env)
@@ -906,11 +921,14 @@ func mediaPathValues(payload map[string]any, path string) []string {
 	return values
 }
 
-func buildManifestOperation(operation ManifestOperation, auth ManifestAuth, request GenerationRequest, taskID string, variables ...map[string]any) (RequestSpec, error) {
+func buildManifestOperation(operation ManifestOperation, auth ManifestAuth, request GenerationRequest, taskID string, extras ...map[string]any) (RequestSpec, error) {
 	requestValues := manifestRequestValues(request)
 	env := map[string]any{"request": requestValues, "taskId": taskID}
-	if len(variables) > 0 {
-		env["vars"] = variables[0]
+	if len(extras) > 0 {
+		env["vars"] = extras[0]
+	}
+	if len(extras) > 1 && extras[1] != nil {
+		env["workflow"] = extras[1]
 	}
 	var body any
 	if operation.Body != nil {
@@ -1210,26 +1228,6 @@ func hasSystemMessage(messages []Message) bool {
 		}
 	}
 	return false
-}
-
-func requestAsManifestValue(value any) (any, error) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	var result any
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func manifestModelID(request GenerationRequest) string {
-	modelID := strings.TrimSpace(request.Model)
-	if separator := strings.LastIndex(modelID, "::"); separator >= 0 {
-		modelID = modelID[separator+2:]
-	}
-	return strings.ToLower(modelID)
 }
 
 func manifestMediaValues(values []MediaReference) []any {
@@ -1546,30 +1544,3 @@ func reflectValueIsZero(value any) bool {
 	}
 }
 
-// firstPathJSONValue keeps scalar response fields string-like while allowing
-// providers to return tool arguments as an object instead of a JSON string.
-// The platform tool contract always stores arguments as JSON text.
-func firstPathJSONValue(payload map[string]any, paths ...string) string {
-	for _, path := range paths {
-		value := pathValue(payload, path)
-		switch typed := value.(type) {
-		case string:
-			if strings.TrimSpace(typed) != "" {
-				return strings.TrimSpace(typed)
-			}
-		case nil:
-			continue
-		default:
-			encoded, err := json.Marshal(typed)
-			if err == nil && len(encoded) > 0 {
-				return string(encoded)
-			}
-		}
-	}
-	return ""
-}
-
-func isRelativePath(path string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(path))
-	return err == nil && parsed.Path != "" && strings.HasPrefix(parsed.Path, "/") && !strings.HasPrefix(parsed.Path, "//") && parsed.Host == "" && parsed.User == nil && parsed.Scheme == ""
-}

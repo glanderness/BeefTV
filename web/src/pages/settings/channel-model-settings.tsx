@@ -1,20 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, App, Button, Popconfirm, Segmented, Tag, Tooltip } from "antd";
 import { ReferenceMediaTransportFields } from "./reference-media-transport-fields";
 import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
+import { builtinPresetForProtocol } from "@/lib/builtin-service-presets";
 import { testChannelModelConnection } from "@/lib/model-connection-test";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
-import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
+import { capabilityForAssignedProtocol, defaultModelCapabilityConfig, hasUserModelCapability } from "@/lib/model-capabilities";
 import { canonicalModelProtocol, modelProtocolDefinitionFor, defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { signatureCredentialHint } from "@/lib/service-credentials";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { normalizeModelCapabilityDraft } from "@/services/api/workspace";
-import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
+import { isBuiltinBeefTVChannel, modelOptionName, type ModelChannel } from "@/stores/use-config-store";
+import { channelTextProtocols, effectiveTextProtocol, useChannelRequestUrls } from "./use-channel-request-urls";
+import { UrlText } from "./channel-request-addresses";
+import { TextProtocolDetection } from "./text-protocol-detection";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 
 type ModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
@@ -32,6 +36,7 @@ export function ChannelModelSettings({
 }) {
     const { message } = App.useApp();
     const [testingModel, setTestingModel] = useState("");
+    const [detecting, setDetecting] = useState(false);
     const [editorTab, setEditorTab] = useState("protocol");
     const [protocolLoading, setProtocolLoading] = useState(true);
     const [protocolError, setProtocolError] = useState("");
@@ -41,6 +46,8 @@ export function ChannelModelSettings({
     const [availableProtocols, setAvailableProtocols] = useState<ModelProtocolDefinition[]>([]);
     const { receipts, record } = useModelConnectionTests();
     const testResult = activeModel ? currentModelConnectionReceipt(receipts, channel, activeModel) : undefined;
+    const channelRef = useRef(channel);
+    channelRef.current = channel;
 
     useEffect(() => {
         let active = true;
@@ -56,6 +63,10 @@ export function ChannelModelSettings({
         setInterfaceOpen(false);
         setActiveModel(focusModel.model);
     }, [focusModel?.model, focusModel?.token]);
+
+    // 官方托管渠道的地址由后端改写，这里不展示请求地址。钩子要在下面的提前返回之前调用。
+    const showRequestUrls = channel.scope !== "system" && !isBuiltinBeefTVChannel(channel);
+    const requestUrls = useChannelRequestUrls(showRequestUrls ? channel.baseUrl : "", channel.apiFormat, channelTextProtocols(channel));
 
     if (!channel.models.length) return (
         <div className="mt-4">
@@ -76,21 +87,22 @@ export function ChannelModelSettings({
             model,
             capability: defaultCap,
             protocol: defaultProtocol,
-            capabilityConfig: defaultModelCapabilityConfig(defaultProtocol, model),
+            capabilityConfig: defaultModelCapabilityConfig(defaultProtocol, model, availableProtocols),
         };
     };
 
     const updateProfile = (model: string, patch: Partial<ModelProfile>, syncSameCapabilityUnconfigured = false) => {
-        const current = channel.modelProfiles?.find((item) => item.model === model) || buildDefaultProfile(model);
+        const liveChannel = channelRef.current;
+        const current = liveChannel.modelProfiles?.find((item) => item.model === model) || buildDefaultProfile(model);
         const nextProfile = { ...current, ...patch, model };
         // 协议或能力切换会重写为默认参数；只有编辑器里的手动修改才保留「用户声明」标记。
         if ("capabilityConfig" in patch && !("capabilitySource" in patch)) nextProfile.capabilitySource = undefined;
         const authType = "protocol" in patch ? modelProtocolDefinition(nextProfile.protocol, availableProtocols)?.authType : nextProfile.authType;
         if ("protocol" in patch) nextProfile.authType = authType;
-        const byModel = new Map((channel.modelProfiles || []).map((item) => [item.model, item]));
+        const byModel = new Map((liveChannel.modelProfiles || []).map((item) => [item.model, item]));
         byModel.set(model, nextProfile);
         if (syncSameCapabilityUnconfigured && nextProfile.protocol && nextProfile.capability) {
-            for (const rawModel of channel.models) {
+            for (const rawModel of liveChannel.models) {
                 const sibling = modelOptionName(rawModel);
                 if (sibling === model) continue;
                 const existing = byModel.get(sibling) || buildDefaultProfile(sibling);
@@ -99,29 +111,41 @@ export function ChannelModelSettings({
                         ...existing,
                         protocol: nextProfile.protocol,
                         authType,
-                        capabilitySource: undefined,
-                        capabilityConfig:
-                            existing.capability === "image" || existing.capability === "video"
-                                ? defaultModelCapabilityConfig(nextProfile.protocol, sibling)
-                                : existing.capabilityConfig,
+                        ...capabilityForAssignedProtocol(existing, nextProfile.protocol, availableProtocols, { keepNonMediaExisting: true }),
                     });
                 }
             }
         }
-        const next = [...byModel.values()];
-        onChange(next.filter((item) => channel.models.includes(item.model)));
+        const next = [...byModel.values()].filter((item) => liveChannel.models.includes(item.model));
+        channelRef.current = { ...liveChannel, modelProfiles: next };
+        onChange(next);
     };
 
-    const refreshBackendCapability = (model: string, capability: ModelCapabilityChoice, protocol?: ModelProtocol) => {
-        if (draft || !protocol || (capability !== "image" && capability !== "video" && capability !== "text")) return;
+    const refreshBackendCapability = (
+        model: string,
+        capability: ModelCapabilityChoice,
+        protocol?: ModelProtocol,
+        capabilityConfig?: ModelProfile["capabilityConfig"],
+        preserveUserCapability = false,
+    ) => {
+        if (draft || preserveUserCapability || !protocol || (capability !== "image" && capability !== "video" && capability !== "text")) return;
         void normalizeModelCapabilityDraft({
             channelId: channel.id,
             baseUrl: channel.baseUrl,
             capability,
             protocol,
             model,
+            capabilityConfig,
         })
             .then((normalized) => {
+                const latest = channelRef.current.modelProfiles?.find((item) => item.model === model);
+                if (
+                    hasUserModelCapability(latest) ||
+                    (latest?.capability && latest.capability !== capability) ||
+                    (latest?.protocol && latest.protocol !== protocol)
+                ) {
+                    return;
+                }
                 const resolved = normalized.capabilityConfig || normalized;
                 if (resolved && typeof resolved.version === "number" && (resolved.video || resolved.image || resolved.text)) {
                     updateProfile(model, { protocol, capability, capabilityConfig: resolved });
@@ -160,6 +184,17 @@ export function ChannelModelSettings({
           : protocolLoading
             ? "正在读取接口列表..."
             : undefined;
+    const rows = channel.models.map((rawModel) => {
+        const model = modelOptionName(rawModel);
+        const profile = channel.modelProfiles?.find((item) => item.model === model);
+        const inferredCapability = profile?.capability || inferProtocolCapabilityFromModel(model);
+        const protocol = profile ? canonicalModelProtocol(profile.protocol, availableProtocols) || resolveChannelProtocol(inferredCapability) || "" : (inferredCapability === "video" ? resolveChannelProtocol("video") || "" : defaultProtocolForModel(model, availableProtocols));
+        const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferredCapability;
+        return { model, profile, protocol, capability, displayName: seedancePortraitLabel(model) || profile?.displayName?.trim() || model };
+    });
+    // 文本模型展示的是后端实际请求的地址；其他能力仍展示接口格式自带的路径。
+    const textRequestUrl = (model: string) => requestUrls?.text[effectiveTextProtocol(channel, model)];
+    const activeRequestUrl = activeModel && activeCapability === "text" ? textRequestUrl(activeModel) : undefined;
 
     return (
         <div className="mt-4">
@@ -171,13 +206,8 @@ export function ChannelModelSettings({
                 <span className="text-[var(--fs-tiny)] text-foreground/35">{channel.models.length} 个模型</span>
             </div>
             <div className="space-y-2">
-                {channel.models.map((rawModel) => {
-                    const model = modelOptionName(rawModel);
-                    const profile = channel.modelProfiles?.find((item) => item.model === model);
-                    const inferredCapability = profile?.capability || inferProtocolCapabilityFromModel(model);
-                    const protocol = profile ? canonicalModelProtocol(profile.protocol, availableProtocols) || resolveChannelProtocol(inferredCapability) || "" : (inferredCapability === "video" ? resolveChannelProtocol("video") || "" : defaultProtocolForModel(model, availableProtocols));
-                    const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferredCapability;
-                    const displayName = seedancePortraitLabel(model) || profile?.displayName?.trim() || model;
+                {rows.map(({ model, protocol, capability, displayName }) => {
+                    const requestPath = (capability === "text" ? textRequestUrl(model) : undefined) || modelProtocolDefinition(protocol, availableProtocols)?.create;
                     return (
                         <div key={model} className="flex min-w-0 items-center gap-3 rounded-md bg-surface-active px-3 py-2.5 transition-colors hover:bg-surface-hover">
                             <span className="grid size-8 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/65">
@@ -192,8 +222,8 @@ export function ChannelModelSettings({
                                     <Tag className="mr-0 text-[var(--fs-tiny)]" bordered={false}>
                                         {capabilityLabel(capability)}
                                     </Tag>
-                                    <span className="truncate font-mono text-[var(--fs-tiny)] text-foreground/40" title={modelProtocolDefinition(protocol, availableProtocols)?.create}>
-                                        {modelProtocolDefinition(protocol, availableProtocols)?.create || "还没选接口格式"}
+                                    <span className="truncate font-mono text-[var(--fs-tiny)] text-foreground/40" title={requestPath}>
+                                        {requestPath || "还没选接口格式"}
                                     </span>
                                 </div>
                             </div>
@@ -206,7 +236,7 @@ export function ChannelModelSettings({
             </div>
             <ModelEditorModal
                 open={Boolean(activeModel)}
-                busy={Boolean(testingModel)}
+                busy={Boolean(testingModel) || detecting}
                 title="编辑模型使用配置"
                 subtitle={activeModel || ""}
                 activeKey={editorTab}
@@ -216,18 +246,18 @@ export function ChannelModelSettings({
                     <div className="model-editor-footer">
                         <span className="text-xs text-foreground/50">{draft ? "完成后，点击「保存并使用」保存更改" : "更改实时保存到本地工作区"}</span>
                         <div className="model-editor-footer-actions">
-                            <Popconfirm title="生成一次测试结果？" description="会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。" okText="开始生成" cancelText="取消" disabled={Boolean(testDisabledReason)} onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
+                            <Popconfirm title="生成一次测试结果？" description="会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。" okText="开始生成" cancelText="取消" disabled={Boolean(testDisabledReason) || detecting} onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
                             <Tooltip title={testDisabledReason}>
                                 <Button
                                     icon={<FlaskConical className="size-4" />}
                                     loading={Boolean(testingModel)}
-                                    disabled={Boolean(testDisabledReason)}
+                                    disabled={Boolean(testDisabledReason) || detecting}
                                 >
                                     生成测试
                                 </Button>
                             </Tooltip>
                             </Popconfirm>
-                            <Button disabled={Boolean(testingModel)} onClick={() => setActiveModel(null)}>完成</Button>
+                            <Button disabled={Boolean(testingModel) || detecting} onClick={() => setActiveModel(null)}>完成</Button>
                         </div>
                     </div>
                 }
@@ -244,16 +274,17 @@ export function ChannelModelSettings({
                                     value={activeCapability}
                                     onChange={(nextCapability) => {
                                         const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && item.enabled !== false)?.value || (nextCapability === "video" ? resolveChannelProtocol("video") : defaultProtocolForCapability(nextCapability, availableProtocols));
+                                        const nextCapabilityConfig = nextCapability === "image" || nextCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel, availableProtocols) : undefined;
                                         updateProfile(activeModel, {
                                             protocol: nextProtocol,
                                             capability: nextCapability,
-                                            capabilityConfig: nextCapability === "image" || nextCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
+                                            capabilityConfig: nextCapabilityConfig,
                                         });
                                         refreshBackendCapability(activeModel, nextCapability, nextProtocol);
                                     }}
                                 />
                             </section>
-                            {channel.scope !== "system" && activeCapability !== "text" && activeProtocol !== "full-video" && <ReferenceMediaTransportFields value={activeModelProfile?.referenceMediaTransport} onChange={(referenceMediaTransport) => updateProfile(activeModel, { referenceMediaTransport })} />}
+                            {channel.scope !== "system" && activeCapability !== "text" && activeProtocol !== "full-video" && !builtinPresetForProtocol(activeProtocol)?.declaresReferenceMediaTransport && <ReferenceMediaTransportFields value={activeModelProfile?.referenceMediaTransport} onChange={(referenceMediaTransport) => updateProfile(activeModel, { referenceMediaTransport })} />}
                             <section className="space-y-2">
                                 {activeProtocol && !interfaceOpen ? (
                                     <div className="flex min-w-0 items-center justify-between gap-3">
@@ -262,6 +293,7 @@ export function ChannelModelSettings({
                                             <div className="mt-0.5 truncate text-xs text-foreground/58" title={modelProtocolDefinition(activeProtocol, availableProtocols)?.create}>
                                                 {modelProtocolDefinition(activeProtocol, availableProtocols)?.label || activeProtocol}
                                             </div>
+                                            {activeRequestUrl ? <div className="mt-1 text-[var(--fs-tiny)] text-foreground/45 [overflow-wrap:anywhere]">请求地址：<span className="font-mono"><UrlText url={activeRequestUrl} /></span></div> : null}
                                         </div>
                                         <Button size="small" onClick={() => setInterfaceOpen(true)}>更改</Button>
                                     </div>
@@ -277,19 +309,40 @@ export function ChannelModelSettings({
                                             protocols={availableProtocols}
                                             onChange={(nextProtocol) => {
                                                 setInterfaceOpen(true);
+                                                const keepUserCapability = hasUserModelCapability(activeModelProfile);
+                                                const assigned = capabilityForAssignedProtocol(
+                                                    activeModelProfile || { model: activeModel, capability: activeCapability },
+                                                    nextProtocol,
+                                                    availableProtocols,
+                                                );
                                                 updateProfile(
                                                     activeModel,
                                                     {
                                                         protocol: nextProtocol,
-                                                        capabilityConfig: activeCapability === "image" || activeCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
+                                                        ...assigned,
                                                     },
                                                     true,
                                                 );
-                                                refreshBackendCapability(activeModel, activeCapability, nextProtocol);
+                                                refreshBackendCapability(activeModel, activeCapability, nextProtocol, undefined, keepUserCapability);
                                             }}
                                         />
                                     </>
                                 )}
+                                {activeCapability === "text" && channel.scope !== "system" && !protocolLoading && !protocolError ? (
+                                    <TextProtocolDetection
+                                        key={activeModel}
+                                        channel={channel}
+                                        model={activeModel}
+                                        current={activeProtocol}
+                                        protocols={availableProtocols}
+                                        disabled={Boolean(testingModel)}
+                                        onRunningChange={setDetecting}
+                                        onSelect={(nextProtocol) => {
+                                            updateProfile(activeModel, { protocol: nextProtocol, capabilityConfig: undefined }, true);
+                                            refreshBackendCapability(activeModel, "text", nextProtocol);
+                                        }}
+                                    />
+                                ) : null}
                                 {signatureHint && <p className="text-xs leading-5 text-foreground/58">{signatureHint}</p>}
                             </section>
                         </div>,
@@ -302,7 +355,7 @@ export function ChannelModelSettings({
                                 <ModelCapabilityEditor
                                     capability={activeCapability}
                                     model={activeModel}
-                                    value={activeModelProfile?.capabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel)}
+                                    value={activeModelProfile?.capabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel, availableProtocols)}
                                     protocol={activeProtocol}
                                     onChange={(capabilityConfig) => updateProfile(activeModel, { capabilityConfig, capabilitySource: "user" })}
                                 />

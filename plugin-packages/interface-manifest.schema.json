@@ -39,7 +39,7 @@
       "type": "object",
       "properties": {
         "providers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/provider" } },
-        "workflows": { "type": "array" }
+        "workflows": { "type": "array", "items": { "$ref": "#/$defs/workflow" } }
       }
     }
   },
@@ -91,6 +91,21 @@
         "baseUrl": { "type": "string", "description": "默认服务地址；用户可在连接里改。" },
         "requiresPublicMediaUrls": { "type": "boolean" },
         "mediaTransport": { "type": "object", "additionalProperties": { "type": "string" } },
+        "mediaUpload": {
+          "type": "object",
+          "description": "服务商自带的参考素材上传接口。配置后，本地或内联参考素材会先上传到此接口换取在线 URL 再提交生成请求。",
+          "properties": {
+            "url": { "type": "string" },
+            "path": { "type": "string" },
+            "field": { "type": "string" },
+            "maxBytes": { "type": "integer" },
+            "urlPaths": { "type": "array", "items": { "type": "string" } },
+            "errorPaths": { "type": "array", "items": { "type": "string" } },
+            "successCodes": { "type": "array" },
+            "messagePaths": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
         "auth": {
           "type": "object",
           "properties": {
@@ -108,18 +123,7 @@
         "parameters": {
           "type": "array",
           "description": "写给读插件的人看的参数说明，BeefTV 不读取。",
-          "items": {
-            "type": "object",
-            "required": ["name", "type"],
-            "properties": {
-              "name": { "type": "string" },
-              "type": { "type": "string" },
-              "required": { "type": "boolean" },
-              "description": { "type": "string" },
-              "values": { "type": "array", "items": { "type": "string" } },
-              "mapping": { "type": "string" }
-            }
-          }
+          "items": { "$ref": "#/$defs/parameter" }
         },
         "validations": {
           "type": "array",
@@ -134,6 +138,34 @@
         "response": { "type": "object", "description": "从上游响应里取任务号、状态、文本或媒体地址。" },
         "agentResponse": { "type": "object" },
         "module": { "type": "string", "description": "插件包里实现 submit/query 的 JS 文件；写了它就不写 create 和 poll。" }
+      },
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "required": { "type": "boolean" },
+        "description": { "type": "string" },
+        "values": { "type": "array", "items": { "type": "string" } },
+        "min": { "type": "integer" },
+        "max": { "type": "integer" },
+        "mapping": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["id", "label", "providerId", "capability"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "providerId": { "$ref": "#/$defs/identifier" },
+        "capability": { "$ref": "#/$defs/capability" },
+        "parameters": { "type": "array", "items": { "$ref": "#/$defs/parameter" } },
+        "defaults": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } }
       },
       "additionalProperties": false
     }
