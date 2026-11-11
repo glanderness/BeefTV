@@ -118,19 +118,19 @@ export function normalizeSettings(value) {
 
 // 设置写入入口比读取严格：界面只能提交合法值，拼错或越界直接拒绝。
 export function validatedSettingsPatch(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('无效的插件设置')
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('没能保存这项设置，请重试。')
   const patch = {}
   if ('autoContinue' in value) {
-    if (typeof value.autoContinue !== 'boolean') throw new Error('生成完自动继续只能是开或关')
+    if (typeof value.autoContinue !== 'boolean') throw new Error('没能保存这项设置，请重试。')
     patch.autoContinue = value.autoContinue
   }
   if ('stepLimit' in value) {
     if (!Number.isInteger(value.stepLimit) || value.stepLimit < minimumStepLimit || value.stepLimit > maximumStepLimit) {
-      throw new Error(`每轮步数上限必须是 ${minimumStepLimit} 到 ${maximumStepLimit} 之间的整数`)
+      throw new Error(`每轮工具调用上限请填 ${minimumStepLimit} 到 ${maximumStepLimit} 之间的整数。`)
     }
     patch.stepLimit = value.stepLimit
   }
-  if (!Object.keys(patch).length) throw new Error('没有要保存的设置')
+  if (!Object.keys(patch).length) throw new Error('没有需要保存的改动。')
   return patch
 }
 
@@ -174,7 +174,7 @@ function taskSaved(task) {
 }
 
 // 与内置 await-business-tasks 一致：任务本身成功但产物没能保存，是「未完成入库」，
-// 不是生成失败；这类结果只能恢复保存，不能重新生成。
+// 不是生成失败；这类结果只能重新保存，不能重新生成。
 function taskIncomplete(task) {
   if (task?.status !== 'succeeded') return false
   const phase = taskPhase(task)
@@ -215,7 +215,7 @@ function failureReason(task) {
 export function taskOutcome(task, taskId = task?.taskId) {
   if (taskSaved(task)) return { taskId, state: 'succeeded', reason: '' }
   if (taskFailed(task)) return { taskId, state: 'failed', reason: failureReason(task) }
-  if (taskIncomplete(task)) return { taskId, state: 'incomplete', reason: '结果尚未保存，只能恢复保存，不能重新生成' }
+  if (taskIncomplete(task)) return { taskId, state: 'incomplete', reason: '结果没有保存成功，只能重新保存，不能重新生成' }
   return { taskId, state: 'pending', reason: '' }
 }
 
@@ -227,7 +227,7 @@ function listedTaskState(value, taskId) {
   if (['succeeded', 'success', 'completed', 'ready'].includes(state)) return { taskId, state: 'succeeded', reason: '' }
   if (['incomplete', 'materialization_failed'].includes(state)) {
     const original = failureReason(listed)
-    const base = '结果尚未保存，只能恢复保存，不能重新生成'
+    const base = '结果没有保存成功，只能重新保存，不能重新生成'
     return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
   }
   if (['failed', 'error', 'cancelled', 'canceled'].includes(state)) return { taskId, state: 'failed', reason: failureReason(listed) || (state.startsWith('cancel') ? '已取消' : '') }
@@ -242,7 +242,7 @@ export function waitOutcome(value, taskId) {
   if (status === 'succeeded' || status === 'success' || status === 'completed' || status === 'ready') return { taskId, state: 'succeeded', reason: '' }
   if (status === 'incomplete' || status === 'materialization_failed') {
     const original = failureReason(listed || value?.task || value)
-    const base = '结果尚未保存，只能恢复保存，不能重新生成'
+    const base = '结果没有保存成功，只能重新保存，不能重新生成'
     return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
   }
   if (status === 'failed' || status === 'error') return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
@@ -275,8 +275,8 @@ export function awaitWakeText(outcomes) {
     parts.push(`${failed.length} 个失败${reason ? `（${reason}）` : ''}`)
   }
   if (incomplete.length) {
-    // 结果没入库不是生成失败，固定写明只能恢复保存，避免模型重新提交。
-    const reason = incomplete.map(outcome => outcome.reason).find(Boolean) || '结果尚未保存，只能恢复保存，不能重新生成'
+    // 结果没入库不是生成失败，固定写明只能重新保存，避免模型重新提交。
+    const reason = incomplete.map(outcome => outcome.reason).find(Boolean) || '结果没有保存成功，只能重新保存，不能重新生成'
     parts.push(`${incomplete.length} 个结果未保存（${reason}）`)
   }
   const detail = parts.length ? `，${parts.join('，')}` : ''

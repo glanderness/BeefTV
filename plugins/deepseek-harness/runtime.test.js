@@ -643,13 +643,13 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(taskOutcome({ taskId: 'r', status: 'failed', resultState: 'failed_retryable' }).state, 'pending')
   const incomplete = waitOutcome({ status: 'incomplete', tasks: [{ taskId: 't', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }] }, 't')
   assert.equal(incomplete.state, 'incomplete')
-  assert.match(incomplete.reason, /只能恢复保存/)
+  assert.match(incomplete.reason, /只能重新保存/)
   assert.match(incomplete.reason, /download_failed/)
-  assert.equal(awaitWakeText([{ taskId: 't', state: 'incomplete', reason: '结果尚未保存，只能恢复保存，不能重新生成（download_failed）' }]),
-    '生成已结束：0 个成功，1 个结果未保存（结果尚未保存，只能恢复保存，不能重新生成（download_failed））。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
+  assert.equal(awaitWakeText([{ taskId: 't', state: 'incomplete', reason: '结果没有保存成功，只能重新保存，不能重新生成（download_failed）' }]),
+    '生成已结束：0 个成功，1 个结果未保存（结果没有保存成功，只能重新保存，不能重新生成（download_failed））。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
   assert.equal(waitOutcome({ status: 'incomplete' }, 't').state, 'incomplete')
-  assert.match(waitOutcome({ status: 'incomplete' }, 't').reason, /恢复保存/)
-  // 任务成功但产物没入库：保留原任务恢复保存，不算失败也不让模型重新生成。
+  assert.match(waitOutcome({ status: 'incomplete' }, 't').reason, /重新保存/)
+  // 任务成功但产物没入库：保留原任务重新保存，不算失败也不让模型重新生成。
   assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', resultState: 'failed_permanent' }).state, 'incomplete')
   assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', phase: undefined, outcome: { phase: 'failed' } }).state, 'incomplete')
   assert.equal(taskOutcome({ taskId: 'm', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }).state, 'incomplete')
@@ -665,9 +665,11 @@ test('plugin settings keep defaults for bad files and reject invalid edits', () 
   assert.deepEqual(normalizeSettings({ autoContinue: false, stepLimit: 12 }), { autoContinue: false, stepLimit: 12 })
   assert.deepEqual(normalizeSettings({ autoContinue: 'no', stepLimit: 3 }), defaultPluginSettings)
   assert.deepEqual(validatedSettingsPatch({ autoContinue: false }), { autoContinue: false })
-  assert.throws(() => validatedSettingsPatch({ stepLimit: 4 }), /5 到 200/)
-  assert.throws(() => validatedSettingsPatch({ stepLimit: 41.5 }), /整数/)
-  assert.throws(() => validatedSettingsPatch({}), /没有要保存/)
+  // 这些错误会直接显示在面板上，只能写用户看得懂的短句，不能出现实现词。
+  assert.throws(() => validatedSettingsPatch({ autoContinue: 'yes' }), { message: '没能保存这项设置，请重试。' })
+  assert.throws(() => validatedSettingsPatch({ stepLimit: 4 }), { message: '每轮工具调用上限请填 5 到 200 之间的整数。' })
+  assert.throws(() => validatedSettingsPatch({ stepLimit: 41.5 }), { message: '每轮工具调用上限请填 5 到 200 之间的整数。' })
+  assert.throws(() => validatedSettingsPatch({}), { message: '没有需要保存的改动。' })
 })
 
 test('the backend guide replaces the fixed creation section and only adds DSH-specific lines', () => {
