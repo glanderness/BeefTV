@@ -197,7 +197,7 @@ export function apply(ctx) {
       if (blocked) return { kind: 'deny', reason: blocked }
     }
     const current = connection.current()
-    if (decision.kind !== 'allow' || !requiresGenerationApproval(exec.name, exec.arguments, current?.businessTools, current?.operations)) return decision
+    if (decision.kind !== 'allow' || !requiresGenerationApproval(exec.name, exec.arguments, current?.businessTools, current?.operations, current?.generationTools)) return decision
     // The user chose 完全权限: DSH shows no approval prompts and rejects any ask without showing it, so the
     // call runs as the user chose, like a fully authorized external agent. A bare "never" approval policy
     // without that preset is DSH's unattended mode, where asks must still fail closed.

@@ -6,7 +6,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import {
-  attachLocalRuntime, awayGenerationNotice, callOperation, defaultPluginSettings, hasOperation, inspectWorkspace, localAppStatus,
+  attachLocalRuntime, awayGenerationNotice, callOperation, defaultPluginSettings, generationToolSet, hasOperation, inspectWorkspace, localAppStatus,
   normalizeSettings, startLocalRuntime, startRuntime, validatedSettingsPatch, workspaceJSON,
 } from './runtime.js'
 
@@ -36,6 +36,8 @@ function recordToolActivity(runtime, exec, result) {
     }
   }
   const rawCanvasId = payload?.canvasId || payload?.project?.id || exec.arguments?.canvasId || exec.arguments?.path?.id
+  // 「每次问我」只登记了原地重做意图，画布没有变化；不能因此触发页面刷新或跳转。
+  if (payload?.status === 'pending_approval') return
   const canvasId = typeof rawCanvasId === 'string' && rawCanvasId ? rawCanvasId.slice(0, 200) : null
   const created = /^mcp__beeftv__canvas_create(?:_[a-f0-9]{12})?$/.test(exec.name)
     || (exec.arguments?.tool === 'business_put_canvas_projects_id' && exec.arguments?.body?.project?.revision === 0)
@@ -208,6 +210,8 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
       runtime.businessTools = business.tools
       runtime.operations = operations.ops
       runtime.readOnlyTools = readOnlyToolNames(operations.ops)
+      // 付费生成工具在连接时按目录确定；目录没写 submitsGeneration 时由判断函数回退认 submit。
+      runtime.generationTools = generationToolSet(operations.ops)
       await loadGuide(runtime)
       runtime.mode = mode
       runtime.localApp = mode === 'standalone' ? await localAppStatus() : null
