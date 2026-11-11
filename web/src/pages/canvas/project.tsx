@@ -14,6 +14,7 @@ import { generationErrorMessage } from "@/lib/generation-error";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
+import { resolveRenderedCanvasConnections } from "@/lib/canvas/canvas-connection-policy";
 import { nanoid } from "nanoid";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { DEFAULT_DRAWING_ENGINE } from "@/lib/canvas/canvas-drawing-engine";
@@ -799,10 +800,7 @@ function InfiniteCanvasPage() {
         handleConnectStart,
         handleBatchConnectionTargetClick,
         batchConnectionPreview,
-        beginBatchConnectionMode,
-        startBatchConnection,
-        mouseWorld,
-        pendingConnectionCreate,
+        beginBatchConnectionMode, startBatchConnection, mouseWorld, openQuickConnectionMenu, pendingConnectionCreate,
     } = connectionController;
 
     const batchSourceNodeIds = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id) && !batchSourceRestriction(node)).map((node) => node.id), [nodes, selectedNodeIds]);
@@ -954,7 +952,7 @@ function InfiniteCanvasPage() {
     } = renderModel;
     lodActiveRef.current = lodActive;
     lodEnterScaleRef.current = lodEnterScale;
-    const renderedConnections = showConnections ? displayConnections : [];
+    const renderedConnections = useMemo(() => resolveRenderedCanvasConnections(displayConnections, showConnections, selectedNodeIds, selectedConnectionId), [displayConnections, selectedConnectionId, selectedNodeIds, showConnections]);
     const dialogNodeCandidate = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const dialogNode = canOpenCanvasNodePromptPanel(dialogNodeCandidate) ? dialogNodeCandidate : null;
     // dragPreview is published on the same pointer-down frame as isNodeDragging.
@@ -1494,7 +1492,7 @@ function InfiniteCanvasPage() {
                                                 connectionApproach={connectionApproach}
                                                 projectId={projectId} readOnly={readOnly}
                                                 viewportScale={viewport.k}
-                                                displayConnections={renderedConnections}
+                                                displayConnections={renderedConnections} spotlightConnections={!showConnections}
                                                 selectedConnectionId={selectedConnectionId}
                                                 relatedConnectionIds={relatedHighlight.connectionIds}
                                                 scriptScrollTopById={scriptScrollTopById}
@@ -1806,7 +1804,7 @@ function InfiniteCanvasPage() {
                             onRetry={retryCanvasNode}
                             onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                             onToggleLocked={(node) => toggleNodeLocked(node.id)}
-                            onDelete={(node) => deleteNodes(new Set([node.id]))}
+                            onQuickReference={readOnly ? undefined : (node) => openQuickConnectionMenu(node, "source")} onDelete={(node) => deleteNodes(new Set([node.id]))}
                         />
 
 {isMiniMapOpen && !focusMode ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} canvasContainerRef={containerRef} onViewportPreviewChange={previewViewport} onViewportChange={handleViewportChange} /> : null}
