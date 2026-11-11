@@ -51,6 +51,7 @@ describe('回复是否说明了生成结果', () => {
     expect(replyReportsResult('镜 1 首帧已生成并绑定到节点。')).toBe(true);
     expect(replyReportsResult('首帧和视频都生成好了，已写到节点。')).toBe(true);
     expect(replyReportsResult('这一批已经完成。')).toBe(true);
+    expect(replyReportsResult('已经成功生成并保存到素材库。')).toBe(true);
   });
 
   test('过程说明和否定句不算结果', () => {
@@ -58,6 +59,7 @@ describe('回复是否说明了生成结果', () => {
     expect(replyReportsResult('目前还没有生成任何图。')).toBe(false);
     expect(replyReportsResult('这个任务无法完成。')).toBe(false);
     expect(replyReportsResult('生成明细：模型 Seedream 3.0，1 张。')).toBe(false);
+    expect(replyReportsResult('已开始生成，请稍候。')).toBe(false);
     expect(replyReportsResult('没生成好，稍等。')).toBe(false);
     expect(replyReportsResult('生成好了之后我再绑定到节点。')).toBe(false);
     expect(replyReportsResult('等生成好之后我会告诉您。')).toBe(false);

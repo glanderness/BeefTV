@@ -20,6 +20,7 @@ function resourceIDFromNode(node) {
   }
   return '';
 }
+
 const TRACK_KINDS = new Set(['video', 'audio', 'subtitle', 'text', 'image']);
 const CLIP_KINDS = new Set(['video', 'image', 'audio', 'subtitle']);
 
@@ -76,7 +77,6 @@ export function validateTimelineShape(timeline, doc = null) {
   }
   return timeline;
 }
-
 
 export function refreshTimelineSources(state, doc, nodeIds) {
   const ids = Array.isArray(nodeIds) ? nodeIds.map(String) : [];
