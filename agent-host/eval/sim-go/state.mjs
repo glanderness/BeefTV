@@ -15,6 +15,8 @@ export function createSimState(options = {}) {
     waitDescriptor: createTaskWaitDescriptor(),
     // 未开启时描述符和操作都不存在：只从 /api/ops 藏起来不够，直接 HTTP 调用也要按未知操作拒绝。
     taskWaitExposed: false,
+    // 尚未进入真实后端的模拟能力；由 --sim-capabilities 打开，默认不改变工具面。
+    simCapabilities: new Set(),
     seq: { node: 0, edge: 0, row: 0, proposal: 0, task: 0, asset: 0, resource: 0, scope: 0 },
     canvases: new Map(),
     canvasHistory: new Map(),

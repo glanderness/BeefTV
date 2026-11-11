@@ -9,7 +9,7 @@
 // 其余场景保持默认（5 毫秒）。
 // 模拟后端的 task.wait 不在场景里打开：基线测今天的真实工具面，要测新能力时运行器加
 // --sim-capabilities task.wait。
-import { clone } from './shared.mjs';
+import { clone, replyReportsResult } from './shared.mjs';
 
 const R1_IMAGE_MS = 20_000;
 const R1_VIDEO_MS = 135_000;
@@ -183,7 +183,7 @@ function evaluateR1({ withVideo }) {
       },
       {
         name: 'reply_reports_result',
-        passed: /完成|生成好|已生成|已绑定|写到节点|做完/.test(replyText(turnRecords)),
+        passed: replyReportsResult(replyText(turnRecords)),
         detail: `回复=${replyText(turnRecords).slice(0, 120) || '空'}`,
       },
     ];
@@ -436,6 +436,8 @@ export const PARITY_SCENARIOS = [
     ],
     // 只有内置运行器在打分前等任务结束；外部 Agent 必须自己等，不能由运行器代劳。
     waitForTasksBeforeEvaluateMs: 5_000,
+    // 内置路径最后一轮实测 332–380 秒才能收尾，120 秒会误判成未停下。
+    settleTimeoutMs: 600_000,
     evaluate({ simGo, canvasId, turnRecords }) {
       const snap = simGo.snapshot();
       const doc = canvasOf(snap, canvasId);

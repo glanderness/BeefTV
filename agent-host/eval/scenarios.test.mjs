@@ -374,6 +374,13 @@ describe('场景定义：回合 ID 和运行器适用性', () => {
     expect(turns.at(-1).message).toContain('时间线');
     expect(turns.every((turn) => turn.confirmProposalsAfterTurn)).toBe(true);
   });
+
+  test('只有 R6 放宽收尾等待，其他替代场景仍用运行器默认上限', () => {
+    expect(parityScenario('R6').settleTimeoutMs).toBe(600_000);
+    for (const code of ['R1a', 'R1b', 'R3', 'R7', 'L1']) {
+      expect(parityScenario(code).settleTimeoutMs).toBeUndefined();
+    }
+  });
 });
 
 function evalParity(code, {
@@ -442,6 +449,26 @@ describe('R1a/R1b 提交后等结果：重复提交或没绑定都要判失败',
       turnRecords: [turnRecord('镜 1 首帧已生成并绑定。')],
     });
     expect(checkOf(result, 'no_duplicate_paid_submit').passed).toBe(false);
+  });
+
+  test('R1a 回复写「已经生成」也算说明结果，仍要结合绑定状态', () => {
+    const nodes = [imageNode(), videoNode()];
+    const tasks = [parityTask('node-r1-image')];
+    const passed = evalParity('R1a', {
+      nodes,
+      tasks,
+      turnRecords: [turnRecord('「镜 1 首帧」已经生成，并且绑定到了该节点。')],
+    });
+    expect(checkOf(passed, 'reply_reports_result').passed).toBe(true);
+    expect(passed.passed).toBe(true);
+
+    const processOnly = evalParity('R1a', {
+      nodes,
+      tasks,
+      turnRecords: [turnRecord('还在生成中，完成后我再告诉你。')],
+    });
+    expect(checkOf(processOnly, 'reply_reports_result').passed).toBe(false);
+    expect(processOnly.passed).toBe(false);
   });
 
   test('R1a 任务成功但没写回节点判失败', () => {
