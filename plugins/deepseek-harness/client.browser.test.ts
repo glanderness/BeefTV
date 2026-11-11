@@ -603,7 +603,8 @@ test('面板可以开关生成完自动继续、调整每轮步数上限，并�
   const toggle = page.getByRole('button', { name: /生成完自动继续/ })
   expect(await toggle.getAttribute('aria-pressed')).toBe('true')
   await toggle.click()
-  await page.waitForFunction(() => document.querySelector('button[aria-pressed="false"]') !== null)
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu button[aria-pressed="false"]') !== null)
+  expect(await toggle.getAttribute('aria-pressed')).toBe('false')
   expect(state.settings.at(-1)).toEqual({ autoContinue: false })
 
   const stepLimit = page.locator('.beeftv-harness-setting input')
@@ -637,7 +638,7 @@ test('保存设置或关闭提示会丢弃在途的旧状态响应', async () =>
   await page.getByRole('button', { name: '工作台操作' }).click()
   const toggle = page.getByRole('button', { name: /生成完自动继续/ })
   await toggle.click()
-  await page.waitForFunction(() => document.querySelector('button[aria-pressed="false"]') !== null)
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu button[aria-pressed="false"]') !== null)
   release()
   await page.waitForTimeout(100)
   expect(await toggle.getAttribute('aria-pressed')).toBe('false')
@@ -697,7 +698,7 @@ test('写入期间新发起的状态轮询不会把刚保存的值翻回去', as
   expect(typeof releaseStatus).toBe('function')
 
   releaseSettings()
-  await page.waitForFunction(() => document.querySelector('button[aria-pressed="false"]') !== null)
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu button[aria-pressed="false"]') !== null)
   releaseStatus()
   await page.waitForTimeout(100)
   expect(await toggle.getAttribute('aria-pressed')).toBe('false')

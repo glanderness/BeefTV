@@ -180,6 +180,8 @@ function taskIncomplete(task) {
   const phase = taskPhase(task)
   if (phase === 'failed') return true
   if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_permanent') return true
+  // failed_retryable 表示后端还在重试入库，不能提前当成「保存失败」。
+  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_retryable') return false
   if (phase === 'fetching' || phase === 'retrievable') return false
   return Boolean(task?.outputs?.length && task.outputs.every(output => output?.resourceId || output?.materializationErrorCode) &&
     task.outputs.some(output => output?.materializationErrorCode))
@@ -194,19 +196,53 @@ function taskFailed(task) {
   if (task?.status === 'cancelled') return true
   const phase = taskPhase(task)
   if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false
-  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_retryable') return false
+  // failed_retryable 只对已成功的生成表示「结果还在下载/重试入库」；失败任务的可重试标记仍是终态失败。
+  if (task?.status === 'succeeded' && typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_retryable') return false
   // /ops/task.get 不一定带 outcome.phase；投递还在下载或重试时不能当成终态失败。
   if (taskDeliveryPending(task)) return false
   return task?.status === 'failed'
 }
 
+// 后端 reason 与入库错误码是内部值，拼进对话前先换成用户能看懂的短句；认不出的内部码不展示。
+const readableReasons = {
+  cancelled: '已取消', canceled: '已取消',
+  materialization_failed: '结果没有保存成功', persist_failed: '结果没有保存成功',
+  result_unrecoverable: '结果无法取回', charged_result_unrecoverable: '已扣费，但结果无法取回',
+  no_result: '没有拿到结果', input_rejected: '内容未通过审核',
+  settlement_pending: '正在核对费用',
+  download_failed: '结果下载失败', delivery_paused: '结果保存已暂停',
+  resource_missing: '结果资源不存在', resource_not_ready: '结果还没准备好',
+  delivery_unreadable: '读不到结果',
+  resource_foreign: '结果不属于这个工作区', asset_foreign: '结果不属于这个工作区',
+  unsupported_result_shape: '结果格式不支持',
+}
+
+function readableReason(value) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return ''
+  const mapped = readableReasons[text.toLowerCase()]
+  if (mapped) return mapped
+  // 全小写加下划线的值按内部码处理，不把 task_failed 这类词带给用户。
+  if (/^[a-z][a-z0-9_]*$/.test(text)) return ''
+  return text.replace(/\s+/g, ' ').slice(0, 120)
+}
+
 function failureReason(task) {
   const error = task?.error
-  const message = typeof error === 'string' ? error : typeof error?.message === 'string' ? error.message : typeof error?.msg === 'string' ? error.msg
-    : typeof task?.reason === 'string' ? task.reason : typeof task?.note === 'string' ? task.note : ''
-  if (message) return message.replace(/\s+/g, ' ').slice(0, 120)
+  const candidates = [
+    typeof error === 'string' ? error : undefined,
+    typeof error?.message === 'string' ? error.message : undefined,
+    typeof error?.msg === 'string' ? error.msg : undefined,
+    task?.reason,
+    task?.note,
+  ]
+  for (const value of candidates) {
+    const text = readableReason(value)
+    if (text) return text
+  }
   const materialized = Array.isArray(task?.outputs) && task.outputs.find(output => output?.materializationErrorCode)
-  if (materialized) return String(materialized.materializationErrorCode).slice(0, 120)
+  const materializedText = materialized ? readableReason(String(materialized.materializationErrorCode)) : ''
+  if (materializedText) return materializedText
   if (task?.status === 'cancelled') return '已取消'
   return ''
 }
@@ -231,7 +267,8 @@ function listedTaskState(value, taskId) {
     return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
   }
   if (['failed', 'error', 'cancelled', 'canceled'].includes(state)) return { taskId, state: 'failed', reason: failureReason(listed) || (state.startsWith('cancel') ? '已取消' : '') }
-  if (state && state !== 'pending' && state !== 'running' && state !== 'queued') return taskOutcome(listed, taskId)
+  // saving/downloading 等还在入库或下载的中间态，以及认不出的新状态，都按未完成处理，不提前下结论。
+  if (state) return { taskId, state: 'pending', reason: '' }
   return undefined
 }
 

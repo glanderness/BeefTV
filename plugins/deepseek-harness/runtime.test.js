@@ -265,7 +265,7 @@ test('a missing bundled runtime is reported without falling back to the desktop 
 
 // A loopback stand-in for both the harness bridge and the workspace API. Proxied page requests are recorded.
 async function workspaceServer(context) {
-  const state = { available: true, proxied: [], extraOps: [], calls: [], taskWait: null, taskGet: null, guide: null, workspaceId: 'verified-workspace' }
+  const state = { available: true, proxied: [], extraOps: [], calls: [], taskWait: null, taskGet: null, guide: null, workspaceId: 'verified-workspace', bootstrapGate: null }
   const server = createServer(async (req, res) => {
     const send = (status, data) => {
       res.writeHead(status, { 'content-type': 'application/json' })
@@ -294,7 +294,10 @@ async function workspaceServer(context) {
       return send(200, { proxied: true })
     }
     if (path === '/api/health') return send(200, { ready: true, schema: { ready: true }, build: { version: '2.2.0' } })
-    if (path === '/api/workspace/bootstrap') return send(200, { contractVersion: 1, workspace: { id: state.workspaceId, name: 'Local', storage: 'sqlite' } })
+    if (path === '/api/workspace/bootstrap') {
+      if (state.bootstrapGate) await state.bootstrapGate
+      return send(200, { contractVersion: 1, workspace: { id: state.workspaceId, name: 'Local', storage: 'sqlite' } })
+    }
     if (path === '/api/agent-clients' && req.method === 'POST') return send(200, { client: { id: 'test-client' }, token: 'test-token' })
     if (path.startsWith('/api/agent-clients/') && req.method === 'DELETE') return send(200, { revoked: true })
     if (path === '/api/business/tools') return send(200, { tools: [{ id: 'business_get_assets', readOnly: true, submitsGeneration: false }] })
@@ -637,16 +640,30 @@ test('task results feed the wake text and never mistake pending downloads for co
   assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'succeeded' }], taskIds: ['t'], pending: 0, completed: 1, failed: 0, timedOut: false }, 't').state, 'succeeded')
   assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', error: '上游拒绝' }], pending: 0, failed: 1, failedTaskIds: ['t'] }, 't').reason, '上游拒绝')
   assert.equal(waitOutcome({ tasks: [{ taskId: 't', status: 'running' }], pending: 1 }, 't').state, 'pending')
+  // 保存/下载中的任务即使带着可重试的入库错误码，也要继续等后端，不提前报“没保存”。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', status: 'succeeded', state: 'downloading', outputs: [{ materializationErrorCode: 'download_failed' }] }], pending: 1, timedOut: true }, 't').state, 'pending')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', status: 'succeeded', state: 'saving', outputs: [{ materializationErrorCode: 'persist_failed' }] }], pending: 1 }, 't').state, 'pending')
   assert.equal(waitOutcome({ cancelled: true, tasks: [{ taskId: 't', state: 'cancelled' }] }, 't').reason, '已取消')
+  // 失败任务的可重试标记仍是终态失败，不能一直等到 40 分钟超时。
+  assert.equal(taskOutcome({ taskId: 'f', status: 'failed', resultState: 'failed_retryable', error: '上游 503' }).state, 'failed')
+  // 已成功的生成还在重试入库时继续等，不算保存失败。
+  assert.equal(taskOutcome({ taskId: 's', status: 'succeeded', resultState: 'failed_retryable', outputs: [{ materializationErrorCode: 'download_failed' }] }).state, 'pending')
+  // 后端内部 reason 码不直接展示给用户。
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't').reason, '')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'materialization_failed' }] }, 't').reason, '结果没有保存成功')
+  const failedOutcome = waitOutcome({ tasks: [{ taskId: 't', state: 'failed', reason: 'task_failed' }] }, 't')
+  assert.equal(awaitWakeText([failedOutcome]),
+    '生成已结束：0 个成功，1 个失败。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
   assert.equal(waitOutcome({ completed: 1, failed: 1, pending: 0 }, 't').state, 'pending')
   assert.equal(taskOutcome({ taskId: 'd', status: 'failed', delivery: { outputs: [{ state: 'downloading' }] } }).state, 'pending')
-  assert.equal(taskOutcome({ taskId: 'r', status: 'failed', resultState: 'failed_retryable' }).state, 'pending')
+  // 失败任务带 failed_retryable 仍是终态失败；只有已成功的生成才把该标记当作还在入库。
+  assert.equal(taskOutcome({ taskId: 'r', status: 'failed', resultState: 'failed_retryable' }).state, 'failed')
   const incomplete = waitOutcome({ status: 'incomplete', tasks: [{ taskId: 't', status: 'succeeded', outputs: [{ materializationErrorCode: 'download_failed' }] }] }, 't')
   assert.equal(incomplete.state, 'incomplete')
   assert.match(incomplete.reason, /只能重新保存/)
-  assert.match(incomplete.reason, /download_failed/)
-  assert.equal(awaitWakeText([{ taskId: 't', state: 'incomplete', reason: '结果没有保存成功，只能重新保存，不能重新生成（download_failed）' }]),
-    '生成已结束：0 个成功，1 个结果未保存（结果没有保存成功，只能重新保存，不能重新生成（download_failed））。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
+  assert.match(incomplete.reason, /结果下载失败/)
+  assert.equal(awaitWakeText([{ taskId: 't', state: 'incomplete', reason: '结果没有保存成功，只能重新保存，不能重新生成（结果下载失败）' }]),
+    '生成已结束：0 个成功，1 个结果未保存（结果没有保存成功，只能重新保存，不能重新生成（结果下载失败））。任务：t。请只查询结果、绑定到节点并继续，不要重新提交。')
   assert.equal(waitOutcome({ status: 'incomplete' }, 't').state, 'incomplete')
   assert.match(waitOutcome({ status: 'incomplete' }, 't').reason, /重新保存/)
   // 任务成功但产物没入库：保留原任务重新保存，不算失败也不让模型重新生成。
@@ -794,6 +811,71 @@ test('a wake injected at the end of a busy turn is followed up when the agent go
   assert.match(wakes[0].content[0].text, /busy-end-1/)
 })
 
+test('an idle wake is not redelivered after the workspace connection drops', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['isolated-1']))
+  await until(() => injected.length === 1)
+  // 断线窗口里 current 为 null；旧工作区的完成通知不能在这时补投给会话。
+  workspace.available = false
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  agent.status = 'idle'
+  listeners.get('agent/status')({ agent, status: 'idle' })
+  await sleep(50)
+  assert.equal(wakes.length, 0)
+  assert.equal(injected.length, 1)
+  // 连回同一工作区后仍能补投，不把完成结果丢掉。
+  workspace.available = true
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  listeners.get('agent/status')({ agent, status: 'idle' })
+  await until(() => wakes.length === 1)
+  assert.match(wakes[0].content[0].text, /isolated-1/)
+})
+
+test('a synchronous discarded event during idle redelivery does not defer or double-count', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['discarded-1']))
+  await until(() => injected.length === 1)
+  // DSH 的 inbox.remove 会同步发出 discarded；这次是插件自己撤回，不能再按“真丢了”补一次。
+  agent.inbox.remove = messageId => {
+    listeners.get('agent/inbox/discarded')({ agent, message: { id: messageId } })
+    return true
+  }
+  agent.status = 'idle'
+  listeners.get('agent/status')({ agent, status: 'idle' })
+  await until(() => wakes.length === 1)
+  // 下一次真实用户消息不能把同一批结果再补投一次。
+  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user', source: { kind: 'user' } } })
+  await sleep(50)
+  assert.equal(wakes.length, 1)
+})
+
+test('a workspace switch in progress does not let the old wake enter the next step', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes, injected } = fakeAgent('session', 'running')
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['switch-1']))
+  await until(() => injected.length === 1)
+  // 卡在拿到新 workspace id 之前：此时 current 为空、switching 为 true。
+  let releaseBootstrap
+  workspace.bootstrapGate = new Promise(resolve => { releaseBootstrap = resolve })
+  workspace.workspaceId = 'another-workspace'
+  const switching = call('POST', '/beeftv/connect', { mode: 'local' })
+  await sleep(50)
+  const message = injected[0]
+  const decision = await listeners.get('agent/pre-step')({ agent, turn: 2, messages: [message] }, async () => ({ kind: 'enter', messages: [message] }))
+  assert.deepEqual(decision.messages, [])
+  assert.equal(wakes.length, 0)
+  releaseBootstrap()
+  await switching
+})
+
 test('a step-limit stop lets a real user message through and restarts the count', async context => {
   const { call, listeners } = await startHost(context, { pluginSettings: { autoContinue: true, stepLimit: 5 } })
   const connectionId = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.connectionId
@@ -814,8 +896,12 @@ test('away resolution queries at most 20 tasks per pass and keeps the rest for l
   workspace.taskGet = ({ taskId }) => succeededTask(taskId)
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
   assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, '有 20 个生成在你离开时完成。')
+  // 用户点“知道了”只关掉已看到的提示，第 21 个还没核对的任务要留在盘上。
+  assert.equal((await call('POST', '/beeftv/away-notice', { seen: true })).body.awayNotice, null)
   const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8')).away
-  assert.deepEqual(stored[0].taskIds, [taskIds[20]])
+  assert.deepEqual(stored[0], { workspaceId: 'verified-workspace', taskIds: [taskIds[20]], resolvedCount: 0 })
+  // 再连回同一工作区时继续核对，提示不会漏掉第 21 个。
+  assert.equal((await call('POST', '/beeftv/connect', { mode: 'standalone' })).body.awayNotice, '有 1 个生成在你离开时完成。')
 })
 
 test('a step-limit rejection defers an injected completion instead of swallowing it', async context => {
@@ -911,7 +997,9 @@ test('a restart reports only generations that really finished, scoped to the sam
   await sleep(20)
   assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, null)
   const remaining = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8')).away
-  assert.deepEqual(remaining.map(entry => entry.workspaceId), ['another-workspace'])
+  // 已经关掉的提示清掉已完成计数，但同一工作区里还没核对完的任务（b 仍在跑）继续留着。
+  assert.deepEqual(remaining.map(entry => entry.workspaceId), ['verified-workspace', 'another-workspace'])
+  assert.deepEqual(remaining[0], { workspaceId: 'verified-workspace', taskIds: ['b'], resolvedCount: 0 })
 })
 
 test('a deferred completion does not follow the user into another workspace', async context => {

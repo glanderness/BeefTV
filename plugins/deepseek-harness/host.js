@@ -118,6 +118,8 @@ export function apply(ctx) {
   const settingsPath = join(pluginHome, 'connection.json')
   let current = null
   let switching = false
+  // 切换窗口里 current 已经清空，用旧连接的信息判断哪些完成通知属于旧工作区。
+  let switchingFrom = null
   let error = null
   let desiredMode = null
   let localPromptDismissed = false
@@ -142,7 +144,8 @@ export function apply(ctx) {
   const wakeCounts = new Map()
   const wakeIds = new Set()
   const pendingWakeMessages = new Map()
-  const staleWakeIds = new Set()
+  // 已从会话撤回失败、但仍可能被 claim 的唤醒消息；按会话清理，不按固定条数淘汰。
+  const staleWakeIds = new Map()
   const deferredWakes = new Map()
   const stoppedSessions = new Set()
   const wokenTasks = new Set()
@@ -313,8 +316,7 @@ export function apply(ctx) {
       try { removed = entry.agent?.inbox?.remove?.(messageId) === true } catch { /* 会话可能已经结束。 */ }
       // 已经从会话里撤掉就不需要兜底；只有拿不回来（已被 claim）才靠 pre-step 过滤。
       if (!removed) {
-        staleWakeIds.add(messageId)
-        while (staleWakeIds.size > 200) staleWakeIds.delete(staleWakeIds.values().next().value)
+        staleWakeIds.set(messageId, entry.sessionId)
       }
       wakeCounts.set(entry.sessionId, Math.max(0, (wakeCounts.get(entry.sessionId) || 0) - 1))
       for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
@@ -535,6 +537,8 @@ export function apply(ctx) {
     await Promise.all([pluginSettingsReady, awaitingReady, settingsReady])
     if (!['standalone', 'local'].includes(mode)) throw new Error('请选择独立工作区或本地 BeefTV')
     if (switching) throw new Error('正在连接工作区，请稍后重试')
+    // 健康检查失败时 current 会先被清空，这里先记下旧连接，切换窗口仍能认出原来的工作区。
+    const source = current
     if (current?.mode === mode) {
       try {
         await workspaceJSON(current, '/api/health')
@@ -550,6 +554,7 @@ export function apply(ctx) {
     switching = true
     error = null
     const previous = current
+    switchingFrom = { workspaceId: source?.workspace?.id || null, sameMode: source?.mode === mode }
     current = null
     contexts.clear()
     await release(previous)
@@ -610,6 +615,7 @@ export function apply(ctx) {
       throw failure
     } finally {
       switching = false
+      switchingFrom = null
     }
   }
 
@@ -697,7 +703,12 @@ export function apply(ctx) {
           const body = await bodyJSON(req)
           if (body.seen !== true) throw new Error('无效的提示设置')
           const workspaceId = current?.workspace?.id || null
-          awayPending = awayPending.filter(entry => entry.workspaceId && entry.workspaceId !== workspaceId)
+          // 用户关掉的是已经看到的提示；尚未核对的 taskId 留在盘上，下次连回同一工作区继续查。
+          awayPending = awayPending.flatMap(entry => {
+            if (!entry.workspaceId || entry.workspaceId !== workspaceId) return [entry]
+            const taskIds = Array.isArray(entry.taskIds) ? entry.taskIds : []
+            return taskIds.length ? [{ workspaceId: entry.workspaceId, taskIds, resolvedCount: 0 }] : []
+          })
           awayNoticeCount = 0
           await writeAwaiting().catch(() => {})
           return json(res, 200, status())
@@ -810,8 +821,15 @@ export function apply(ctx) {
     // 未连接时不判定工作区，避免重连窗口把同一工作区的正常通知丢掉；切换完成后再按新工作区撤回。
     const activeWorkspace = current?.workspace?.id || null
     const claimed = (payload.messages || []).map(message => ({ id: message?.id, entry: pendingWakeMessages.get(message?.id) })).filter(item => item.entry || staleWakeIds.has(item.id))
-    // 旧工作区的完成通知即使已经被 claim，也不能进入新工作区的模型上下文。
-    const stale = claimed.filter(item => (activeWorkspace && item.entry?.workspaceId && item.entry.workspaceId !== activeWorkspace) || staleWakeIds.has(item.id))
+    // 切换期间 current 为空：按旧工作区判断，旧工作区的完成通知不能进入新工作区的模型上下文。
+    // 同一工作区的重连保留原通知，避免健康检查窗口把正常完成当成跨区。
+    const stale = claimed.filter(item => {
+      if (staleWakeIds.has(item.id)) return true
+      const workspaceId = item.entry?.workspaceId
+      if (!workspaceId) return false
+      if (switching) return switchingFrom?.sameMode ? workspaceId !== switchingFrom.workspaceId : true
+      return Boolean(activeWorkspace && workspaceId !== activeWorkspace)
+    })
     for (const item of stale) {
       pendingWakeMessages.delete(item.id)
       staleWakeIds.delete(item.id)
@@ -899,12 +917,20 @@ export function apply(ctx) {
     const sessionId = sessionIdOf(agent)
     if (!sessionId) return
     // 忙时 inject 的消息如果落在本轮最后一个步骤之后，轮次会先结束；这里改成 followup 再唤醒。
+    // 只有确认仍在同一个已连接工作区时才补投，切换或断线窗口里旧工作区的任务不能跟到新工作区。
+    const activeWorkspace = current?.workspace?.id || null
     for (const [messageId, entry] of [...pendingWakeMessages]) {
       if (entry.sessionId !== sessionId) continue
+      if (!entry.workspaceId || entry.workspaceId !== activeWorkspace) continue
+      // 先删表再 remove：remove 会同步发出 discarded，条目还留着会被当成真丢消息而重复补投。
+      pendingWakeMessages.delete(messageId)
       let removed = false
       try { removed = agent?.inbox?.remove?.(messageId) === true } catch { removed = false }
-      if (!removed) continue
-      pendingWakeMessages.delete(messageId)
+      if (!removed) {
+        // 还被占用说明消息已被 claim，恢复条目交给 pre-step 兜底。
+        pendingWakeMessages.set(messageId, entry)
+        continue
+      }
       wakeCounts.set(sessionId, Math.max(0, (wakeCounts.get(sessionId) || 0) - 1))
       for (const outcome of entry.outcomes) wokenTasks.delete(outcome.taskId)
       if (!deliverOutcomes(sessionId, agent, entry.outcomes)) deferOutcomes(sessionId, entry.outcomes, entry.workspaceId)
@@ -916,6 +942,9 @@ export function apply(ctx) {
     void stopSessionWaits(sessionId)
     turns.delete(sessionId)
     wakeCounts.delete(sessionId)
+    for (const [messageId, owner] of [...staleWakeIds]) {
+      if (owner === sessionId) staleWakeIds.delete(messageId)
+    }
   })
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
