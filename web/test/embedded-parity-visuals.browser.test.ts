@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import postcss from "postcss";
-import tailwind from "@tailwindcss/postcss";
+import { existsSync, mkdirSync } from "node:fs";
+import { compileAppStyles } from "./helpers/app-styles";
 import { chromium, type Browser, type Page } from "playwright";
 
 let browser: Browser;
@@ -31,12 +30,8 @@ beforeAll(async () => {
     });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const js = await build.outputs.find((output) => output.path.endsWith(".js"))!.text();
-    // 和其他组件浏览器测试一样从源码编译样式，不依赖构建产物：CI 不跑 build，缺样式时布局断言会失去意义。
-    const cssPath = import.meta.dir + "/../src/styles/globals.css";
-    const css = (await postcss([tailwind({ base: import.meta.dir + "/.." })]).process(readFileSync(cssPath, "utf8"), { from: cssPath })).css
-        + readFileSync(import.meta.dir + "/../src/styles/beeftv-local-overrides.css", "utf8")
-        + readFileSync(import.meta.dir + "/../src/styles/workspace-product.css", "utf8")
-        + (await Promise.all(build.outputs.filter((output) => output.path.endsWith(".css")).map((output) => output.text()))).join("\n");
+    // 从源码编译样式，不依赖构建产物；缺样式时布局断言会失去意义，所以缺关键工具类直接报错。
+    const css = await compileAppStyles(await Promise.all(build.outputs.filter((output) => output.path.endsWith(".css")).map((output) => output.text())));
     if (!/\.pointer-events-none\b/.test(css)) throw new Error("编译出的样式缺少布局断言依赖的工具类");
     server = Bun.serve({
         port: 0,
