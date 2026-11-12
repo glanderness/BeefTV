@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { MediaCapabilities } from "@/lib/media-capabilities";
+import { isDedicatedMediaToolCapability, type MediaCapabilities } from "@/lib/media-capabilities";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
@@ -723,6 +723,7 @@ export function modelOptionsFromChannels(channels: ModelChannel[]) {
                 .filter(Boolean)
                 .filter((model) => !model.replace(/^\/+/, "").startsWith("topaz/upscale/"))
                 .filter((model) => !["topaz-standard-v2", "topaz-wonder-3.5", "topaz-proteus", "topaz-starlight-fast-2"].includes(model))
+                .filter((model) => !isDedicatedMediaToolCapability(channelModelProfile(channel, model)?.mediaCapabilities))
                 .filter((model) => channel.scope !== "system" || hasSystemModelProfile(channel, model))
                 .map((model) => encodeChannelModel(channel.id, model)),
         ),

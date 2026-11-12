@@ -7,6 +7,7 @@ import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-po
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
 import { canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
+import { canRecoverManagedToolNode, isVideoSubtitleEraseNode } from "@/lib/canvas/canvas-ai-upscale-task";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { canvasNodeOperation } from "@/lib/operation-progress";
 import { useOperationProgress } from "@/stores/use-operation-progress";
@@ -269,9 +270,11 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
     const explanation = failureView.explanation;
     const batchChild = Boolean(node.metadata?.batchRootId);
     const localDepthAction = canRecoverOrRetryDepthCapture(node);
-    const upscaleAction = Boolean(node.metadata?.workflowOperation?.id.endsWith(".ai-upscale"));
+    const subtitleEraseNode = isVideoSubtitleEraseNode(node);
+    const managedToolAction = Boolean(node.metadata?.workflowOperation?.id.endsWith(".ai-upscale") || subtitleEraseNode);
+    const managedToolQueryOnly = canRecoverManagedToolNode(node);
     const canReload = failureView.canReload;
-    const retryBlocked = failureView.retryBlocked;
+    const retryBlocked = managedToolQueryOnly ? false : failureView.retryBlocked;
     const submissionUncertain = failureView.cardSubmissionUncertain;
     return (
         <div
@@ -296,7 +299,7 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
                     onOpenDetails={node.metadata?.taskId && onOpenTaskDetails ? () => onOpenTaskDetails(node) : undefined}
                     retryDisabled={retryBlocked}
                     onRetry={retryBlocked ? undefined : onRetry ? () => onRetry(node) : undefined}
-                    retryLabel={upscaleAction ? node.metadata?.taskId ? "取回原结果" : "重试未提交项" : explanation.category === "result_target_unavailable" ? "生成历史" : localDepthAction && node.metadata?.taskStatus === "succeeded" ? "恢复结果" : node.metadata?.isBatchRoot ? "重新生成失败项" : "重新生成"}
+                    retryLabel={explanation.category === "result_target_unavailable" ? "生成历史" : managedToolQueryOnly ? "取回原结果" : managedToolAction ? (subtitleEraseNode ? "重新配置" : "重试未提交项") : localDepthAction && node.metadata?.taskStatus === "succeeded" ? "恢复结果" : node.metadata?.isBatchRoot ? "重新生成失败项" : "重新生成"}
                 />
             </div>
             {canReload ? (
