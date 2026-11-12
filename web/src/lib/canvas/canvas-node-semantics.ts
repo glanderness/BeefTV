@@ -20,6 +20,12 @@ export function hasMediaResource(node: CanvasNodeData): boolean {
     return Boolean(node.metadata?.content || node.metadata?.storageKey || node.metadata?.previewContent || node.metadata?.fileUpload);
 }
 
+/** 媒体卡片已有可用资源（含归档仅存 storageKey / previewContent 的卡片）时允许一键引用生成。 */
+export function canQuickReferenceCanvasMediaNode(node: CanvasNodeData | null | undefined): boolean {
+    if (!node || !isCanvasMediaNode(node) || node.metadata?.reusableWorkflow) return false;
+    return Boolean(node.metadata?.content || node.metadata?.storageKey || node.metadata?.previewContent);
+}
+
 /** Reads explicit semantics first and falls back to legacy persisted data. */
 export function canvasMediaNodeRole(node: CanvasNodeData | null | undefined): CanvasMediaNodeRole | null {
     if (!node || !isCanvasMediaNode(node)) return null;

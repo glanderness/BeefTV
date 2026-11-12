@@ -242,7 +242,7 @@
     --control-selected-hover-bg: rgba(17, 17, 17, 0.13);
     --control-selected-fg: #171717;
     --control-selected-border: rgba(17, 17, 17, 0.18);
-    --control-check-bg: #171717;
+    --control-check-bg: #171717; --control-check-hover-bg: #303030; --control-check-active-bg: #404040;
     --control-check-fg: #ffffff;
     --control-switch-checked-bg: #16a34a;
     --control-switch-checked-hover-bg: #15803d;
@@ -970,7 +970,7 @@
     --control-selected-hover-bg: rgba(255, 255, 255, 0.16);
     --control-selected-fg: #f5f5f5;
     --control-selected-border: rgba(255, 255, 255, 0.18);
-    --control-check-bg: #f5f5f5;
+    --control-check-bg: #f5f5f5; --control-check-hover-bg: #ffffff; --control-check-active-bg: #e5e5e5;
     --control-check-fg: #131313;
     --control-switch-checked-bg: #22c55e;
     --control-switch-checked-hover-bg: #4ade80;

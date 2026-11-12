@@ -1,5 +1,18 @@
 [
   {
+    "id": "agent.guide",
+    "summary": "读取 BeefTV 外部 Agent 使用说明（与一键接入安装的技能同一份）",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "asset.get",
     "summary": "按 ID 读取单个素材",
     "readOnly": true,
@@ -242,7 +255,7 @@
             "type": "string"
           },
           "maxItems": 24,
-          "description": "整片制作时列出全部计划生成的节点，nodeIds 只列当前参考已就绪的首批"
+          "description": "本批生成的节点（每批≤24，超出分批提案）；nodeIds 只列已就绪首批"
         },
         "note": {
           "type": "string"
