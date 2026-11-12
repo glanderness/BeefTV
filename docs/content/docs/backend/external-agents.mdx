@@ -35,9 +35,9 @@ Claude Desktop、Cursor 和其他 MCP 客户端仍在同一页手动配置：
 
 ## 2. 默认提供的工具与 `--all-business-tools`
 
-`beeftv mcp serve` 默认采用精简工具集（共 49 个工具），避免把上百个底层路由一次性塞满外部 Agent 的上下文窗口：
+`beeftv mcp serve` 默认采用精简工具集（共 51 个工具），避免把上百个底层路由一次性塞满外部 Agent 的上下文窗口：
 
-- **创作业务操作（45 个）**：与内置创作助手共用高频操作面（默认省去面向桌面面板的 `conversation.*`、`skill.publish.*` 与 `skill.script.run`）；其中 `task.cancel`、`canvas.generation.orders`、`canvas.external.write.list`、`canvas.external.write.undo` 只给外部客户端，内置助手看不到。这些操作直接覆盖画布创建与读写（`canvas.create`、`canvas.get`、`canvas.nodes.create` 等 `canvas.*`）、素材查询与整理（`asset.*`）、媒体检查（`media.*`）、任务与生成单（`task.get`、`task.cancel`、`canvas.generation.orders`）与技能查询（`skill.*`）。
+- **创作业务操作（47 个）**：与内置创作助手共用高频操作面（默认省去面向桌面面板的 `conversation.*`、`skill.publish.*` 与 `skill.script.run`）；其中 `task.cancel`、`canvas.generation.orders`、`canvas.external.write.list`、`canvas.external.write.undo` 只给外部客户端，内置助手看不到。这些操作直接覆盖画布创建与读写（`canvas.create`、`canvas.get`、`canvas.nodes.create` 等 `canvas.*`）、素材查询与整理（`asset.*`）、媒体检查（`media.*`）、任务与生成单（`task.get`、`task.cancel`、`canvas.generation.orders`）与技能查询（`skill.*`）。
 - **等待生成任务（1 个）**：`task.wait` 在服务端等待任务结果，供外部客户端使用；内置助手迁移前不开放给内置模型。
 - **使用说明（1 个）**：`agent.guide` 返回当前版本的外部 Agent 使用说明，与一键接入装进技能目录的 `beeftv-canvas` 是同一份，外部客户端可以直接读取，不必重复抄写规则。
 - **底层业务接口的两个统一入口（2 个）**：
@@ -69,7 +69,7 @@ beeftv mcp serve --all-business-tools
 
 ## 4. 写操作 `operationId` 与提交生成防重复扣费
 
-配置视频节点前，先从 `model.catalog` 读取该模型的画幅比例、分辨率与时长能力，再调用 `canvas.node.configure`。`patch.size` 表示视频画幅比例，例如 `16:9`，`patch.vquality` 表示视频分辨率，例如 `480p`，`patch.seconds` 以字符串表示输出秒数。配置返回里已经包含写入后的节点、参数和版本，直接使用；只有返回缺少字段或改动牵连其他节点时才按节点读回。然后调用 `canvas.generation.propose` 冻结生成单。提交前核对生成单的 `targets.parameters` 与 `estimate`，发现参数或报价与计划有差异时，先修正节点并重新提出生成单。
+配置视频节点前，先从 `model.catalog` 读取该模型的画幅比例、分辨率与时长能力，再调用 `canvas.node.configure`。`patch.size` 表示视频画幅比例，例如 `16:9`，`patch.vquality` 表示视频分辨率，例如 `480p`，`patch.seconds` 以字符串表示输出秒数。一轮里要改多个媒体节点时改用 `canvas.nodes.configure`：一次传 1–20 个 `{ nodeId, kind, patch }`，共用同一个 `expectedRevision`，全部校验通过才写入，画布版本只增加一次；任何一个节点不合法会整批拒绝，错误里写明第几个节点和哪个 `nodeId`。只想读回指定节点时用 `canvas.nodes.get`，一次传 1–50 个 `nodeIds`，返回这些节点和 `missingNodeIds`，不返回整张画布。配置返回里已经包含写入后的节点、参数和版本，直接使用；只有返回缺少字段或改动牵连其他节点时才按节点读回。然后调用 `canvas.generation.propose` 冻结生成单。提交前核对生成单的 `targets.parameters` 与 `estimate`，发现参数或报价与计划有差异时，先修正节点并重新提出生成单。
 
 MCP 写调用与命令行生成提交都要求提供幂等键，按调用路径区分如下：
 
