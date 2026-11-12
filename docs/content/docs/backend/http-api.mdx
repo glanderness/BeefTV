@@ -77,7 +77,8 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 | `/timeline/render-plan` | 只读编译时间线语义渲染计划：不排队、不落盘、不计费 |
 | `/timeline/renders`、`/timeline/transcriptions` | 本机时间线成片任务与字幕转写任务 |
 | `/depth-captures` | 本机深度动作捕捉任务 |
-| `/media-upscale/*` | Topaz 图片与视频云端超分、规格及费用估算 |
+| `/media-upscale/*` | 图片与视频云端超分、画质增强修复、动态规格目录及费用估算 |
+| `/video-subtitle-erase/*` | 视频画面硬字幕消除、能力查询、费用估算与原任务恢复 |
 | `/canvas-workflows/*`, `/canvas-workflow-runs/*` | 画布可复用工作流模板、输入替换和持久执行 |
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
@@ -107,7 +108,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 ### 内置连接的媒体协议
 
-BeefTV 官方算力新图片任务在读取本地参考图之前，向配置的 API origin 查询 `/v1/models`。响应头 `X-BeefTV-Media-Protocol: managed-media-v1` 与正文 `media_protocol.version` 必须一致；缺少或不识别的版本会在上传和生成前失败。目录声明 `supported_media_types`、`task_submit_url`、`task_query_url_template` 和 `uploads_url`，本批只启用图片任务。图片能力仍使用 `image_capabilities` 和 `image_capabilities_version`；文件大小 `0` 表示没有额外的本地文件上限。连接验证成功后复用现有目录刷新一次；离线、请求失败或声明无效时保留最后一份有效目录。
+BeefTV 官方算力新图片任务在读取本地参考图之前，向配置的 API origin 查询 `/v1/models`。响应头 `X-BeefTV-Media-Protocol: managed-media-v1` 与正文 `media_protocol.version` 必须一致；缺少或不识别的版本会在上传和生成前失败。目录声明 `supported_media_types`、`task_submit_url`、`task_query_url_template` 和 `uploads_url`；目录为某模型声明对应 `media_capabilities` 时，图片生成、视频去字幕与超分均可按统一媒体协议提交和查询。图片能力仍使用 `image_capabilities` 和 `image_capabilities_version`；文件大小 `0` 表示没有额外的本地文件上限。连接验证成功后复用现有目录刷新一次；离线、请求失败或声明无效时保留最后一份有效目录。
 
 本地参考图和蒙版通过 `/v1/media/uploads` 申请票据，直接 PUT 到存储，再以原票据 `/complete` 确认。生成只向 `/v1/media/tasks` 发送小 JSON：`task_ref` 是一次授权 attempt 的稳定编号，另有 `media_type`、`model`、`operation`、`input.prompt`、`input.references[{kind,role,url}]` 和业务 `options`。参考图角色为 `reference`，蒙版为 `mask`。`response_format` 和协议覆盖字段不会进入最终请求。API 决定供应商协议和结果转存；客户端不按模型名称选择传输。
 
@@ -115,7 +116,7 @@ BeefTV 官方算力新图片任务在读取本地参考图之前，向配置的 
 
 新图片结果只接收 `outputs` 的 URL，逐项元数据、顺序、层信息与 `usage` 一并保存。历史任务可由 API 返回 `result_receipt:{format:"openai-image-response",url,expires_at}`；唯一 BeefTV 官方算力适配层直接从存储读取最多 64MiB 的原 JSON，识别实际图片 MIME，保留旧层。该读取不携带 API 或第三方 Header/Cookie，跳转也不携带。存储目标及每次跳转必须为公网 HTTPS；直连只拨已验证 IP，用户显式配置的代理仍作为网络路由使用，代理内部 DNS 不由客户端固定。第三方连接与 BYOK 保留各自协议。
 
-现有视频和超分请求也集中到同一 BeefTV 官方算力适配层，恢复只 GET 原任务，供应商参数由 API 根据通用参考角色与用户操作转换。这批尚未将视频、超分和音频迁入新的通用任务引擎；音频保留既有 speech/music 兼容行为，历史视频与超分内容接口仍可能由主 API 返回文件。
+现有视频、视频去字幕和超分请求也集中到同一 BeefTV 官方算力适配层，恢复只 GET 原任务，供应商参数由 API 根据通用参考角色与用户操作转换。当模型目录声明对应 `media_capabilities` 时，视频去字幕与超分同样走 `/v1/media/tasks` 统一信封；未声明的模型继续走专属任务接口，音频保留既有 speech/music 兼容行为，历史视频与超分内容接口仍可能由主 API 返回文件。
 
 BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `video_capabilities` 和非空 `video_capabilities_version`。显式 `0` 引用数量和 `false` 开关会保留，字节上限 `0` 表示没有额外的本地上限；客户端不再按 Seedance 等模型名或主机地址补充视频能力。有效声明中的陌生模型 ID 同样可使用现有视频控件。
 
@@ -139,15 +140,17 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 
 本阶段仅增加读投影与后台图片恢复：`outcome.regenerate` 不是新授权凭据，费用预览、用户同意、统一付费守门和新 `/recover` 接口尚未接入。原 `/retry` 的历史回执恢复与下载恢复行为不变，调用方不能把新增字段当成接口行为已拆分的证明。
 
-### Topaz 图片与视频超分
+### 图片与视频超分及视频去字幕
 
-`GET /media-upscale/capabilities` 返回图片和视频支持的模式、模型、倍率和格式。`POST /media-upscale/estimate` 接收 `resourceId,channelId,mode,model,scale,outputFormat?,enhancementStrength?`，通过官方算力返回源与输出规格及人民币预留费用 `reservation,currency=CNY,generationSubmitted=false`。估价不提交生成；未取得有效报价时禁止提交。
+`GET /media-upscale/capabilities` 返回图片和视频支持的模式、各模式可选模型列表（`modelOptions`）、倍率、格式与计费维度。服务端在线时优先采用官方算力动态下发的模型目录；离线或暂未下发时保留默认选项。`POST /media-upscale/estimate` 接收 `resourceId,channelId,mode,model,scale,outputFormat?,enhancementStrength?`，通过官方算力返回源与输出规格、计费维度 `billingMode` 及人民币预留费用 `reservation,currency=CNY,generationSubmitted=false`。估价不提交生成；未取得有效报价时禁止提交。
 
-`POST /media-upscale/tasks` 增加 `clientOperationId,projectId?,nodeId?`，创建标准 `canvas_image` 或 `canvas_video` 任务。`channelId` 固定为 `beeftv`；图片支持 Standard V2、Wonder 3.5，视频支持 Proteus、Starlight Fast 2，分别映射到四个 `topaz-*` 官方模型。倍率为一至四的整数，图片输出 PNG 或 JPEG。素材必须属于当前用户且已就绪；视频最长五分钟。
+`POST /media-upscale/tasks` 增加 `clientOperationId,projectId?,nodeId?`，创建标准 `canvas_image` 或 `canvas_video` 任务。`channelId` 固定为 `beeftv`；模型 ID 由能力目录声明并经服务端核验，客户端不硬编码特定模型路由。倍率为一至四的整数，图片输出 PNG 或 JPEG。素材必须属于当前用户且已就绪；视频最长五分钟。
 
 复用已连接的官方算力账号，客户端无需配置供应商 Key；任务输入中的凭据由现有密钥保护层加密。素材上传、估价、生成和结果查询均经 BeefTV 官方算力。任务复用标准生成队列、稳定操作 ID 与回执恢复；提交状态不确定时禁止自动重提。结果保存为用户自有资源并回填新节点，保留原素材。取消不保证云端停止或退款；普通生成接口拒绝直接供应商端点。
 
-`POST /media-upscale/tasks/:id/recover` 校验归属和官方超分模型，优先取回原任务结果。已失败且有回执的任务只查询原云端任务；没有回执的任务仅在现有队列能证明尚未受理时允许沿用原操作 ID 重试，不确定提交仍被阻止。已取消任务要求先核对状态。源视频有音轨而云端结果缺失时，落库前尝试无重编码补回；不能安全保留则明确失败。
+`POST /media-upscale/tasks/:id/recover` 校验归属和超分任务类型，优先取回原任务结果。已失败且有回执的任务只查询原云端任务；没有回执的任务仅在现有队列能证明尚未受理时允许沿用原操作 ID 重试，不确定提交仍被阻止。已取消任务要求先核对状态。源视频有音轨而云端结果缺失时，落库前尝试无重编码补回；不能安全保留则明确失败。
+
+`GET /video-subtitle-erase/capabilities` 返回支持的擦除方式（`auto` 自动识别、`custom` 框选区域）与模型档位（`standard` 标准无痕、`area` 花字增强）。`POST /video-subtitle-erase/estimate` 接收 `resourceId,channelId,eraseMethod,subtitleModel,region?`，返回视频宽高、时长及人民币预留费用 `reservation,currency=CNY,billingMode,generationSubmitted=false`。`POST /video-subtitle-erase/tasks` 接收上述参数及 `clientOperationId,projectId?,nodeId?`，创建标准 `canvas_video` 任务（`operation=media.video.subtitle_erase`），完成后保存去字幕视频并回填目标画布节点，保留原视频音轨。专属接口 `POST /video-subtitle-erase/tasks/:id/recover` 仅查询并取回原云端任务结果，不重新发起付费生成；通用接口 `POST /tasks/:id/recover` 按任务状态与类型执行结果续传或原任务核对（仅在确认请求尚未被云端受理时才允许手动重提），前端则根据只读字段 `task.outcome` 区分展示「取回原结果」与「重新配置」。
 
 ### 画布可复用工作流
 

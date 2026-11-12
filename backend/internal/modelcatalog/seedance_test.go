@@ -333,10 +333,10 @@ func TestSeedanceProFlashResolutionAndReferenceRolesTable(t *testing.T) {
 			wantTaskTypeConst: true,
 		},
 		{
-			name:      "saved draft with 1s duration and 1s audio is tightened to documented floors",
-			protocol:  "newapi-channel-2",
-			model:     "seedance-2.0",
-			baseURL:   "https://relay.example.com/v1",
+			name:     "saved draft with 1s duration and 1s audio is tightened to documented floors",
+			protocol: "newapi-channel-2",
+			model:    "seedance-2.0",
+			baseURL:  "https://relay.example.com/v1",
 			saved: &ModelCapabilityConfig{
 				Version: 1,
 				Video: &VideoCapabilityConfig{

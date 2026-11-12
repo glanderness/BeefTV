@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/kernel"
@@ -81,14 +82,13 @@ func RequestProviderCancellation(ctx context.Context, repo *repository.Repositor
 		}
 		return err
 	}
-	if task.ProviderRequestID == "" {
-		return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("上游未返回任务 ID，无法发送取消请求"), logTask)
-	}
 	input, err := ProviderCancellationInput(task, decryptInput, resolveConfig)
 	if err != nil {
 		return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("读取上游取消配置失败")+"："+err.Error(), logTask)
 	}
-	if !SupportsProviderCancellation(input.Config.InterfaceType) && UpscaleMediaType(input.Config.Model) == "" {
+	isUpscaleTask := input.Upscale != nil || task.IsUpscale() || UpscaleMediaType(input.Config.Model) != ""
+	isSubtitleEraseTask := input.SubtitleErase != nil || task.IsSubtitleErase() || input.Config.Model == SubtitleEraseModelName
+	if !SupportsProviderCancellation(input.Config.InterfaceType) && !isUpscaleTask && !isSubtitleEraseTask {
 		return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("当前上游协议不支持取消"), logTask)
 	}
 	requestCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -100,13 +100,58 @@ func RequestProviderCancellation(ctx context.Context, repo *repository.Repositor
 		requestCtx = bindTaskCtx(requestCtx, requestTask)
 	}
 	requestCtx = WithProviderRequestKind(requestCtx, "cancel")
-	if err := CancelProviderTask(requestCtx, input.Config, task.ProviderRequestID); err != nil {
-		return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("上游取消请求结果不明确")+"："+SafeProviderLogError(err), logTask)
+
+	cancelTargetID := strings.TrimSpace(task.ProviderRequestID)
+	if taskRef, managed := managedEnvelopeTaskRef(repo, task); managed && (isSubtitleEraseTask || isUpscaleTask) {
+		if cancelTargetID == "" {
+			cancelTargetID = strings.TrimSpace(task.ImageJobID)
+		}
+		if cancelTargetID == "" {
+			kind := "video"
+			if isUpscaleTask {
+				kind = "upscale"
+			}
+			if projection, qErr := managedMediaClient(requestCtx, input.Config).Query(requestCtx, taskRef, kind); qErr == nil && strings.TrimSpace(projection.TaskID) != "" {
+				cancelTargetID = strings.TrimSpace(projection.TaskID)
+				_ = repo.UpdateTaskImageJobID(task.ID, cancelTargetID)
+			}
+		}
+	}
+	if cancelTargetID == "" {
+		return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("上游未返回任务 ID，无法发送取消请求"), logTask)
+	}
+
+	var cancelErr error
+	switch {
+	case isSubtitleEraseTask:
+		cancelErr = CancelSubtitleErase(requestCtx, input.Config, cancelTargetID)
+	case isUpscaleTask:
+		cancelErr = CancelUpscale(requestCtx, input.Config, cancelTargetID)
+	default:
+		cancelErr = CancelProviderTask(requestCtx, input.Config, cancelTargetID)
+	}
+	if cancelErr != nil {
+		return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("上游取消请求结果不明确")+"："+SafeProviderLogError(cancelErr), logTask)
 	}
 	if logTask != nil {
-		_ = logTask(task.UserID, task.ID, "info", "已请求上游取消，等待供应商确认", task.ProviderRequestID)
+		_ = logTask(task.UserID, task.ID, "info", "已请求上游取消，等待供应商确认", cancelTargetID)
 	}
 	return nil
+}
+
+func managedEnvelopeTaskRef(repo *repository.Repository, task *model.Task) (string, bool) {
+	if repo == nil || task == nil || strings.TrimSpace(task.ID) == "" {
+		return "", false
+	}
+	attempt, err := repo.LatestRouteAttempt(task.ID)
+	if err != nil || attempt == nil || attempt.RouteRun != task.RouteRun {
+		return "", false
+	}
+	row, err := repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+	if err != nil || row == nil || strings.TrimSpace(row.QueryCipher) == "" {
+		return "", false
+	}
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(attempt.TaskID+":"+attempt.ID)).String(), true
 }
 
 func ReconcileProviderCancellation(ctx context.Context, repo *repository.Repository, task *model.Task, decryptInput func(string) (string, error), resolveConfig func(Config) (Config, error), bindTaskCtx func(context.Context, model.Task) context.Context, logTask func(userID, taskID, level, msg, payload string) error) error {
@@ -125,7 +170,40 @@ func ReconcileProviderCancellation(ctx context.Context, repo *repository.Reposit
 		queryCtx = bindTaskCtx(queryCtx, queryTask)
 	}
 	queryCtx = WithProviderRequestKind(queryCtx, "cancel-query")
-	outcome, providerStatus, err := QueryProviderCancellation(queryCtx, input.Config, task.ProviderRequestID)
+	var outcome ProviderCancellationOutcome
+	var providerStatus string
+	isSubtitleEraseTask := input.SubtitleErase != nil || task.IsSubtitleErase() || input.Config.Model == SubtitleEraseModelName
+	isUpscaleTask := input.Upscale != nil || task.IsUpscale() || UpscaleMediaType(input.Config.Model) != ""
+	if taskRef, managed := managedEnvelopeTaskRef(repo, task); managed && (isSubtitleEraseTask || isUpscaleTask) {
+		kind := "video"
+		if isUpscaleTask {
+			kind = "upscale"
+		}
+		qCtx := WithRequestKind(queryCtx, "poll")
+		var projection beeftv.MediaTask
+		projection, err = managedMediaClient(qCtx, input.Config).Query(qCtx, taskRef, kind)
+		if err == nil {
+			providerStatus = projection.Status
+			outcome = classifyManagedStatusCancellation(providerStatus)
+		}
+	} else {
+		switch {
+		case isSubtitleEraseTask:
+			targetID := firstNonEmpty(strings.TrimSpace(task.ProviderRequestID), strings.TrimSpace(task.ImageJobID))
+			providerStatus, err = QuerySubtitleEraseStatus(queryCtx, input.Config, targetID)
+			if err == nil {
+				outcome = classifyManagedStatusCancellation(providerStatus)
+			}
+		case isUpscaleTask:
+			targetID := firstNonEmpty(strings.TrimSpace(task.ProviderRequestID), strings.TrimSpace(task.ImageJobID))
+			providerStatus, err = QueryUpscaleStatus(queryCtx, input.Config, targetID)
+			if err == nil {
+				outcome = classifyManagedStatusCancellation(providerStatus)
+			}
+		default:
+			outcome, providerStatus, err = QueryProviderCancellation(queryCtx, input.Config, task.ProviderRequestID)
+		}
+	}
 	if err != nil {
 		if task.ProviderCancelAttempts >= ProviderCancellationMaxAttempts-1 {
 			return MarkProviderCancellationUncertain(repo, task, providerCancellationUncertainMessage("连续查询上游取消状态失败")+"："+SafeProviderLogError(err), logTask)
@@ -211,6 +289,9 @@ func SupportsProviderCancellation(interfaceType string) bool {
 }
 
 func CancelProviderTask(ctx context.Context, config Config, providerRequestID string) error {
+	if config.Model == SubtitleEraseModelName {
+		return CancelSubtitleErase(ctx, config, providerRequestID)
+	}
 	if UpscaleMediaType(config.Model) != "" {
 		return CancelUpscale(ctx, config, providerRequestID)
 	}
@@ -243,22 +324,33 @@ func DeleteProviderTask(ctx context.Context, config Config, path string) error {
 	return nil
 }
 
+func classifyManagedStatusCancellation(status string) ProviderCancellationOutcome {
+	switch status {
+	case "cancelled":
+		return ProviderCancellationConfirmed
+	case "completed":
+		return ProviderCancellationSucceeded
+	case "failed":
+		return ProviderCancellationFailed
+	default:
+		return ProviderCancellationPending
+	}
+}
+
 func QueryProviderCancellation(ctx context.Context, config Config, providerRequestID string) (ProviderCancellationOutcome, string, error) {
+	if config.Model == SubtitleEraseModelName {
+		status, err := QuerySubtitleEraseStatus(ctx, config, providerRequestID)
+		if err != nil {
+			return "", "", err
+		}
+		return classifyManagedStatusCancellation(status), status, nil
+	}
 	if UpscaleMediaType(config.Model) != "" {
 		status, err := QueryUpscaleStatus(ctx, config, providerRequestID)
 		if err != nil {
 			return "", "", err
 		}
-		switch status {
-		case "cancelled":
-			return ProviderCancellationConfirmed, status, nil
-		case "completed":
-			return ProviderCancellationSucceeded, status, nil
-		case "failed":
-			return ProviderCancellationFailed, status, nil
-		default:
-			return ProviderCancellationPending, status, nil
-		}
+		return classifyManagedStatusCancellation(status), status, nil
 	}
 	switch {
 	case config.InterfaceType == string(model.ChannelInterfaceGeminiVeo):
@@ -620,21 +712,57 @@ func UpscaleConfig(name string, lookupCred func() (string, string, string, strin
 	return Config{BaseURL: base, APIKey: key, CredentialRef: beeftv.CredentialRef, Model: name, InterfaceType: "newapi"}, nil
 }
 
-func UpscaleCapabilities() map[string]any {
-	return map[string]any{"modes": topaz.Modes(), "cloudProcessing": true, "maxVideoDurationMs": 300000}
+func fetchUpstreamUpscaleModes(ctx context.Context, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) ([]topaz.Mode, int) {
+	if lookupCred == nil {
+		return topaz.Modes(), 300000
+	}
+	cfg, err := UpscaleConfig("", lookupCred)
+	if err != nil {
+		return topaz.Modes(), 300000
+	}
+	qctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+	defer cancel()
+	if bindRuntime != nil {
+		qctx = bindRuntime(qctx, CallMeta{RequestKind: "capabilities"})
+	}
+	qctx = WithRequestKind(qctx, "capabilities")
+	upstream, err := managedMediaClient(qctx, cfg).GetUpscaleCapabilities(qctx)
+	if err != nil || len(upstream.SupportedModels) == 0 {
+		return topaz.Modes(), 300000
+	}
+	items := make([]topaz.UpstreamModel, 0, len(upstream.SupportedModels))
+	for _, m := range upstream.SupportedModels {
+		items = append(items, topaz.UpstreamModel{ID: m.ID, Label: m.Label, MediaType: m.MediaType, Mode: m.Mode, BillingMode: m.BillingMode, BillingSummary: m.BillingSummary})
+	}
+	maxDurationMs := 300000
+	if upstream.MaxVideoSeconds > 0 && upstream.MaxVideoSeconds*1000 < maxDurationMs {
+		maxDurationMs = upstream.MaxVideoSeconds * 1000
+	}
+	return topaz.ModesFromUpstream(items), maxDurationMs
 }
 
-func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensureMetadata func(context.Context, string, string) (*model.Resource, error), lookupCred func() (string, string, string, string, error)) (Input, *model.Resource, error) {
+func LiveUpscaleCapabilities(ctx context.Context, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) map[string]any {
+	modes, maxVideoDurationMs := fetchUpstreamUpscaleModes(ctx, lookupCred, bindRuntime)
+	return map[string]any{"modes": modes, "cloudProcessing": true, "maxVideoDurationMs": maxVideoDurationMs}
+}
+
+func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensureMetadata func(context.Context, string, string) (*model.Resource, error), lookupCred func() (string, string, string, string, error), bindRuntime ...func(context.Context, CallMeta) context.Context) (Input, *model.Resource, error) {
 	var input Input
 	resource, err := ensureMetadata(ctx, user, request.ResourceID)
 	if err != nil || resource == nil || resource.Status != model.ResourceStatusReady {
 		return input, nil, BadAuthRequest("输入素材不存在或未就绪")
 	}
 	kind := localasset.NormalizeKind(resource.Kind, resource.MimeType)
-	if err := topaz.Validate(request, kind); err != nil {
+	var bind func(context.Context, CallMeta) context.Context
+	if len(bindRuntime) > 0 {
+		bind = bindRuntime[0]
+	}
+	modes, _ := fetchUpstreamUpscaleModes(ctx, lookupCred, bind)
+	resolvedModel, err := topaz.ResolveModelID(request, kind, modes)
+	if err != nil {
 		return input, nil, BadAuthRequest(err.Error())
 	}
-	config, err := UpscaleConfig(topaz.ModelID(request.Model), lookupCred)
+	config, err := UpscaleConfig(resolvedModel, lookupCred)
 	if err != nil {
 		return input, nil, err
 	}
@@ -653,7 +781,7 @@ func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensur
 }
 
 func EstimateMediaUpscale(ctx context.Context, user string, request topaz.Request, ensureMetadata func(context.Context, string, string) (*model.Resource, error), lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) (map[string]any, error) {
-	input, resource, err := UpscaleInput(ctx, user, request, ensureMetadata, lookupCred)
+	input, resource, err := UpscaleInput(ctx, user, request, ensureMetadata, lookupCred, bindRuntime)
 	if err != nil {
 		return nil, err
 	}
@@ -670,16 +798,17 @@ func EstimateMediaUpscale(ctx context.Context, user string, request topaz.Reques
 		"output":              map[string]any{"width": int(math.Round(float64(resource.Width) * request.Scale)), "height": int(math.Round(float64(resource.Height) * request.Scale)), "durationMs": resource.DurationMs},
 		"reservation":         estimate.Reservation,
 		"currency":            estimate.Currency,
+		"billingMode":         estimate.BillingMode,
 		"generationSubmitted": estimate.GenerationSubmitted,
 		"cloudProcessing":     true,
 	}, nil
 }
 
-func BuildMediaUpscaleTaskPayload(ctx context.Context, user string, request topaz.Request, ensureMetadata func(context.Context, string, string) (*model.Resource, error), lookupCred func() (string, string, string, string, error)) (Input, map[string]any, error) {
+func BuildMediaUpscaleTaskPayload(ctx context.Context, user string, request topaz.Request, ensureMetadata func(context.Context, string, string) (*model.Resource, error), lookupCred func() (string, string, string, string, error), bindRuntime ...func(context.Context, CallMeta) context.Context) (Input, map[string]any, error) {
 	if strings.TrimSpace(request.ClientOperationID) == "" {
 		return Input{}, nil, BadAuthRequest("缺少本次确认的操作 ID")
 	}
-	input, _, err := UpscaleInput(ctx, user, request, ensureMetadata, lookupCred)
+	input, _, err := UpscaleInput(ctx, user, request, ensureMetadata, lookupCred, bindRuntime...)
 	if err != nil {
 		return Input{}, nil, err
 	}

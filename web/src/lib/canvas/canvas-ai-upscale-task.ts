@@ -1,14 +1,56 @@
 import { isRegenerateBlocked, isTaskOutcomeWorking } from "@/lib/task-outcome";
 import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { ApiError, getTransportFailureKind } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
 
 // A stopped observer says nothing about the paid task's execution state.
 export const UPSCALE_OBSERVATION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
-export function isAIUpscaleTask(task: Pick<GenerationTask, "type" | "model">): boolean {
+export function isAIUpscaleTask(task: Pick<GenerationTask, "type" | "model" | "operation">): boolean {
+    if (task.operation?.startsWith("media.upscale.")) return true;
     return (task.type === "canvas_image" && ["topaz-standard-v2", "topaz-wonder-3.5"].includes(task.model || "")) ||
         (task.type === "canvas_video" && ["topaz-proteus", "topaz-starlight-fast-2"].includes(task.model || ""));
+}
+
+export function isVideoSubtitleEraseTask(task: Pick<GenerationTask, "operation">): boolean {
+    return task.operation === "media.video.subtitle_erase";
+}
+
+export function isVideoSubtitleEraseNode(node?: CanvasNodeData): boolean {
+    return Boolean(node?.metadata?.videoSubtitleEraseSourceNodeId);
+}
+
+export function canRecoverManagedToolNode(node?: CanvasNodeData): boolean {
+    const metadata = node?.metadata;
+    const op = metadata?.workflowOperation?.id;
+    if (!metadata || (!op?.endsWith(".ai-upscale") && !isVideoSubtitleEraseNode(node))) return false;
+    const explicitOutcome = authoritativeNodeOutcome(metadata);
+    if (explicitOutcome) {
+        return explicitOutcome.phase === "retrievable"
+            || (explicitOutcome.phase === "ready" && !metadata.content && !metadata.storageKey);
+    }
+    if (metadata.generationSubmissionState === "rejected" && !metadata.taskId) return false;
+    return Boolean(metadata.taskId || metadata.taskClientOperationId);
+}
+
+export function isDefinitePreAdmissionClientReject(error: unknown): boolean {
+    return error instanceof ApiError
+        && error.status !== undefined
+        && error.status >= 400
+        && error.status < 500
+        && error.status !== 408
+        && error.status !== 429
+        && !getTransportFailureKind(error);
+}
+
+export function unknownSubmissionMetadata(reasonText: string): Partial<CanvasNodeMetadata> {
+    const detail = reasonText ? `（${reasonText}）` : "";
+    return {
+        status: "error",
+        generationSubmissionState: "unknown",
+        errorDetails: `提交回执待确认，请点击「取回原结果」查询任务状态，暂勿重复提交${detail}`,
+    };
 }
 
 export function hasPendingUpscaleTask(metadata?: CanvasNodeMetadata): boolean {

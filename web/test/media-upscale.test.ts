@@ -3,7 +3,7 @@ import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { canRecoverUpscaleNode, hasPendingUpscaleTask, isAIUpscaleTask, upscaleObservationFailureMetadata, UPSCALE_OBSERVATION_TIMEOUT_MS } from "../src/lib/canvas/canvas-ai-upscale-task";
 import { createModelChannel, modelOptionsFromChannels } from "../src/stores/use-config-store";
 import { describe, expect, test } from "bun:test";
-import { createUpscaleTask, estimateUpscale, recoverUpscaleTask, UPSCALE_CREATE_TIMEOUT_MS, UPSCALE_ESTIMATE_TIMEOUT_MS, UPSCALE_RECOVER_TIMEOUT_MS, validUpscaleScale } from "../src/services/api/media-upscale";
+import { createUpscaleTask, estimateUpscale, getUpscaleCapabilities, isUpscaleMediaSelectionAvailable, normalizeUpscaleMediaSelection, recoverUpscaleTask, UPSCALE_CAPABILITIES_TIMEOUT_MS, UPSCALE_CREATE_TIMEOUT_MS, UPSCALE_ESTIMATE_TIMEOUT_MS, UPSCALE_RECOVER_TIMEOUT_MS, validUpscaleScale, type UpscaleCapabilities } from "../src/services/api/media-upscale";
 import { parseBackendGenerationResult } from "../src/services/api/generation-task";
 import { generationTaskMode } from "../src/lib/canvas/canvas-generation-task-sync";
 import type { GenerationTask } from "../src/services/api/task-center";
@@ -58,20 +58,27 @@ describe("Topaz upscale contract", () => {
         }
         apiClient.request = (async request => {
             timeouts.push({ url: request.url, timeout: request.timeout });
+            if (request.url === "/media-upscale/capabilities") {
+                return { status: 200, data: { code: 0, data: { modes: [], cloudProcessing: true, maxVideoDurationMs: 300_000 } } };
+            }
             if (request.url === "/media-upscale/estimate") {
                 return { status: 200, data: { code: 0, data: { mediaType: "video", source: { width: 1280, height: 720, durationMs: 115752 }, output: { width: 2560, height: 1440, durationMs: 115752 }, reservation: 70, currency: "CNY", generationSubmitted: false, cloudProcessing: true } } };
             }
             return { status: 200, data: { code: 0, data: task({ id: "created", type: "canvas_video", model: "topaz-proteus", status: "queued" }) } };
         }) as typeof apiClient.request;
         try {
+            const caps = await getUpscaleCapabilities();
+            expect(caps.maxVideoDurationMs).toBe(300_000);
             const quote = await estimateUpscale({ resourceId: "res-1", channelId: "beeftv", mode: "precision", model: "topaz-proteus", scale: 2 });
             expect(quote.reservation).toBe(70);
             const created = await createUpscaleTask({ resourceId: "res-1", channelId: "beeftv", mode: "precision", model: "topaz-proteus", scale: 2, clientOperationId: "op-1", projectId: "proj-1", nodeId: "node-1" });
             expect(created.id).toBe("created");
             expect(timeouts).toEqual([
+                { url: "/media-upscale/capabilities", timeout: UPSCALE_CAPABILITIES_TIMEOUT_MS },
                 { url: "/media-upscale/estimate", timeout: UPSCALE_ESTIMATE_TIMEOUT_MS },
                 { url: "/media-upscale/tasks", timeout: UPSCALE_CREATE_TIMEOUT_MS },
             ]);
+            expect(UPSCALE_CAPABILITIES_TIMEOUT_MS).toBeGreaterThanOrEqual(8_000);
             expect(UPSCALE_ESTIMATE_TIMEOUT_MS).toBeGreaterThanOrEqual(120_000);
             expect(UPSCALE_CREATE_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
         } finally {
@@ -111,9 +118,16 @@ describe("Topaz upscale contract", () => {
     });
     test("processing models stay in settings but leave normal generation selectors", () => {
         const endpoints = ["topaz/upscale/image/precision", "topaz/upscale/image/generative", "topaz/upscale/image/transparent", "topaz/upscale/video/precision", "topaz/upscale/video/generative", "/topaz/upscale/image/precision", "topaz-standard-v2", "topaz-wonder-3.5", "topaz-proteus", "topaz-starlight-fast-2"];
-        const channel = createModelChannel({ id: "fal", models: [...endpoints, "fal-ai/flux/dev"] });
+        const channel = createModelChannel({
+            id: "fal",
+            models: [...endpoints, "video-subtitle-erase", "video-enhance-pro", "fal-ai/flux/dev"],
+            modelProfiles: [
+                { model: "video-subtitle-erase", capability: "video", mediaCapabilities: { video: { operations: ["subtitle_erase"], options: ["erase_method"], referenceKinds: ["video"], maxOutputs: 1 } } },
+                { model: "video-enhance-pro", capability: "video", mediaCapabilities: { upscale: { operations: ["upscale"], options: ["upscale_factor"], referenceKinds: ["video"], maxOutputs: 1 } } },
+            ],
+        });
         expect(modelOptionsFromChannels([channel])).toEqual(["fal::fal-ai/flux/dev"]);
-        expect(channel.models).toEqual([...endpoints, "fal-ai/flux/dev"]);
+        expect(channel.models).toEqual([...endpoints, "video-subtitle-erase", "video-enhance-pro", "fal-ai/flux/dev"]);
     });
     test("official upscale uses integer scale bounds", () => {
         for (const value of [1, 2, 3, 4]) expect(validUpscaleScale(value)).toBe(true);
@@ -130,5 +144,37 @@ describe("Topaz upscale contract", () => {
         expect(generationTaskMode(task({ type: "canvas_video", model: "topaz-proteus", inputJson: JSON.stringify({ mode: "video" }) }))).toBe("video");
         const result = parseBackendGenerationResult(task({ type: "canvas_video", model: "topaz-proteus", resultJson: JSON.stringify({ mode: "video", video: { storageKey: "resource:video1", width: 200, height: 100, durationMs: 1000 } }) }));
         expect(result.video?.durationMs).toBe(1000);
+    });
+    test("upscale availability checks selected mode and normalizes saved precision when catalog only offers generative", () => {
+        const generativeOnlyCatalog: UpscaleCapabilities = {
+            cloudProcessing: true,
+            maxVideoDurationMs: 600_000,
+            modes: [
+                {
+                    mediaType: "image",
+                    mode: "generative",
+                    models: ["gen-image-v1"],
+                    modelOptions: [{ id: "gen-image-v1", label: "细节重建图像模型" }],
+                    scales: [2, 4],
+                    outputFormats: ["webp"],
+                },
+                {
+                    mediaType: "video",
+                    mode: "precision",
+                    models: [],
+                    scales: [2],
+                    outputFormats: ["mp4"],
+                },
+            ],
+        };
+        const savedImage = { mode: "precision" as const, model: "Standard V2", outputFormat: "png" };
+        expect(isUpscaleMediaSelectionAvailable(generativeOnlyCatalog, "image", savedImage)).toBe(false);
+        const normalizedImage = normalizeUpscaleMediaSelection(generativeOnlyCatalog, "image", savedImage);
+        expect(normalizedImage).toEqual({ mode: "generative", model: "gen-image-v1", outputFormat: "webp" });
+        expect(isUpscaleMediaSelectionAvailable(generativeOnlyCatalog, "image", normalizedImage)).toBe(true);
+
+        const savedVideo = { mode: "precision" as const, model: "Proteus" };
+        const normalizedVideo = normalizeUpscaleMediaSelection(generativeOnlyCatalog, "video", savedVideo);
+        expect(isUpscaleMediaSelectionAvailable(generativeOnlyCatalog, "video", normalizedVideo)).toBe(false);
     });
 });
