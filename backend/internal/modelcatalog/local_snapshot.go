@@ -206,7 +206,11 @@ func PublicCatalogFromLocalSnapshot(body []byte) (*CatalogResponse, error) {
 				if err != nil {
 					continue
 				}
-				config, err = json.Marshal(ApplyLocalVideoContract(item, parsed))
+				mapped, err := ModelCapabilityConfigToMap(ApplyLocalVideoContract(item, parsed))
+				if err != nil {
+					return nil, err
+				}
+				config, err = json.Marshal(mapped)
 				if err != nil {
 					return nil, err
 				}
@@ -217,7 +221,9 @@ func PublicCatalogFromLocalSnapshot(body []byte) (*CatalogResponse, error) {
 		if err != nil {
 			continue
 		}
+		managedBeefTV := isLocalBeefTVRoute(item)
 		public.CapabilityDeclared = &declared
+		public.ManagedBeefTV = &managedBeefTV
 		public.VideoPricing, public.Pricing = item.PublicPrices()
 		index, exists := indexes[item.ChannelID]
 		if !exists {

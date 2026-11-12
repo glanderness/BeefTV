@@ -178,6 +178,31 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			"middleFrame":      false,
 		},
 	}
+	partialOpRefH3Cap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"operationReferences": map[string]any{
+				"image_to_video": map[string]any{"maxImages": 2},
+			},
+		},
+	}
+	emptyOpRefH3Cap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation":    "text_to_video",
+			"operations":          []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
+			"references":          map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"operationReferences": map[string]any{},
+		},
+	}
+	customKlingTwoFrameCap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video"},
+			"references":       map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
+		},
+	}
 	autoDefaultCustomCap := map[string]any{
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
@@ -186,34 +211,56 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		},
 	}
 	undeclared := false
+	managedRoute := true
+	customRoute := false
 	catalog := modelcatalog.NewCatalogResponse(modelcatalog.CatalogSourceSystem, nil, []modelcatalog.PublicChannelCatalog{
 		{
 			ID: "beeftv",
 			Models: []modelcatalog.PublicChannelModel{
-				{ID: "wan3.0-video", ModelKey: "wan3.0-video", Capability: "video", Available: true, CapabilityConfig: wanCap},
-				{ID: "agnes-2.5", ModelKey: "agnes-2.5", Capability: "video", Available: true, CapabilityConfig: agnesCap},
-				{ID: "kling-video-v3", ModelKey: "kling-video-v3", Capability: "video", Available: true, CapabilityConfig: klingCap},
-				{ID: "minimax-h3-max-turbo", ModelKey: "minimax-h3-max-turbo", Capability: "video", Available: true, CapabilityConfig: hostedH3Cap},
-				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, CapabilityConfig: contractH3MaxCap},
-				{ID: "minimax-h3", ModelKey: "minimax-h3", Capability: "video", Available: true, CapabilityConfig: versionedH3LiveCap},
+				{ID: "wan3.0-video", ModelKey: "wan3.0-video", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: wanCap},
+				{ID: "agnes-2.5", ModelKey: "agnes-2.5", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: agnesCap},
+				{ID: "kling-video-v3", ModelKey: "kling-video-v3", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: klingCap},
+				{ID: "minimax-h3-max-turbo", ModelKey: "minimax-h3-max-turbo", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: hostedH3Cap},
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: contractH3MaxCap},
+				{ID: "minimax-h3", ModelKey: "minimax-h3", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: versionedH3LiveCap},
 			},
 		},
 		{
 			ID: "live",
 			Models: []modelcatalog.PublicChannelModel{
-				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, CapabilityConfig: versionedH3LiveCap},
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: hostedH3Cap},
+			},
+		},
+		{
+			ID: "beeftv-omni",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: versionedH3LiveCap},
+			},
+		},
+		{
+			ID: "partial-beeftv",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "minimax-h3", ModelKey: "minimax-h3", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: partialOpRefH3Cap},
+			},
+		},
+		{
+			ID: "empty-beeftv",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "minimax-h3", ModelKey: "minimax-h3", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: emptyOpRefH3Cap},
 			},
 		},
 		{
 			ID: "override",
 			Models: []modelcatalog.PublicChannelModel{
-				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, CapabilityConfig: explicitNoMidH3MaxCap},
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: explicitNoMidH3MaxCap},
 			},
 		},
 		{
 			ID: "custom",
 			Models: []modelcatalog.PublicChannelModel{
-				{ID: "opaque-video", ModelKey: "opaque-video", Capability: "video", Available: true, CapabilityDeclared: &undeclared, CapabilityConfig: autoDefaultCustomCap},
+				{ID: "opaque-video", ModelKey: "opaque-video", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityDeclared: &undeclared, CapabilityConfig: autoDefaultCustomCap},
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: versionedH3LiveCap},
+				{ID: "kling-video-v3", ModelKey: "kling-video-v3", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: customKlingTwoFrameCap},
 			},
 		},
 	})
@@ -304,8 +351,15 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	liveH3MaxMid["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
 	liveH3MaxMid["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
 	liveH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
-	liveH3MaxMid["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-3"
 	liveH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+
+	omniH3MaxMid := imageNode("omni-h3max-mid", "beeftv-omni::minimax-h3-max")
+	omniH3MaxMid["type"] = "video"
+	omniH3MaxMid["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	omniH3MaxMid["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	omniH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	omniH3MaxMid["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-3"
+	omniH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
 
 	overrideH3MaxNoMid := imageNode("override-h3max-nomid", "override::minimax-h3-max")
 	overrideH3MaxNoMid["type"] = "video"
@@ -321,10 +375,34 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	opaqueCustomShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
 	opaqueCustomShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
 
+	customH3MaxShot := imageNode("custom-h3max-shot", "custom::minimax-h3-max")
+	customH3MaxShot["type"] = "video"
+	customH3MaxShot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	customH3MaxShot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	customH3MaxShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	customH3MaxShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+
+	customKlingShot := imageNode("custom-kling-shot", "custom::kling-video-v3")
+	customKlingShot["type"] = "video"
+	customKlingShot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	customKlingShot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	customKlingShot["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-2"
+
+	partialOpRefH3Shot := imageNode("partial-opref-h3", "partial-beeftv::minimax-h3")
+	partialOpRefH3Shot["type"] = "video"
+	partialOpRefH3Shot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	partialOpRefH3Shot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+
+	emptyOpRefH3Shot := imageNode("empty-opref-h3", "empty-beeftv::minimax-h3")
+	emptyOpRefH3Shot["type"] = "video"
+	emptyOpRefH3Shot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	emptyOpRefH3Shot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+
 	allNodes := []map[string]any{
 		img1, img2, img3, aud1, aud2, charCard, drawingRef, colorgradeRef, convVideoRef,
 		wanVideo, agnesVideo, klingVideo, hostedH3Lip, h3FrameAudio, h3MidFrame, switchedFromH3, charAndDrawShot, convVideoShot,
-		versionedH3Lip, versionedH3TwoAudio, liveH3MaxMid, overrideH3MaxNoMid, opaqueCustomShot,
+		versionedH3Lip, versionedH3TwoAudio, liveH3MaxMid, omniH3MaxMid, overrideH3MaxNoMid, opaqueCustomShot,
+		customH3MaxShot, customKlingShot, partialOpRefH3Shot, emptyOpRefH3Shot,
 	}
 	rawNodes := make([]any, 0, len(allNodes))
 	for _, item := range allNodes {
@@ -359,11 +437,24 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			map[string]any{"fromNodeId": "aud-2", "toNodeId": "versioned-h3-2aud"},
 			map[string]any{"fromNodeId": "img-1", "toNodeId": "live-h3max-mid"},
 			map[string]any{"fromNodeId": "img-2", "toNodeId": "live-h3max-mid"},
-			map[string]any{"fromNodeId": "img-3", "toNodeId": "live-h3max-mid"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "omni-h3max-mid"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "omni-h3max-mid"},
+			map[string]any{"fromNodeId": "img-3", "toNodeId": "omni-h3max-mid"},
 			map[string]any{"fromNodeId": "img-1", "toNodeId": "override-h3max-nomid"},
 			map[string]any{"fromNodeId": "img-2", "toNodeId": "override-h3max-nomid"},
 			map[string]any{"fromNodeId": "img-1", "toNodeId": "opaque-custom-shot"},
 			map[string]any{"fromNodeId": "img-2", "toNodeId": "opaque-custom-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "custom-h3max-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "custom-h3max-shot"},
+			map[string]any{"fromNodeId": "aud-1", "toNodeId": "custom-h3max-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "custom-kling-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "custom-kling-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "partial-opref-h3"},
+			map[string]any{"fromNodeId": "aud-1", "toNodeId": "partial-opref-h3"},
+			map[string]any{"fromNodeId": "aud-2", "toNodeId": "partial-opref-h3"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "empty-opref-h3"},
+			map[string]any{"fromNodeId": "aud-1", "toNodeId": "empty-opref-h3"},
+			map[string]any{"fromNodeId": "aud-2", "toNodeId": "empty-opref-h3"},
 		},
 	}
 
@@ -377,7 +468,8 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 
 	shotIDs := []string{
 		"wan-shot", "agnes-shot", "kling-shot", "hosted-h3-lip", "h3-lip-shot", "h3-mid-shot", "wan-from-h3", "char-draw-shot", "conv-video-shot",
-		"versioned-h3-lip", "versioned-h3-2aud", "live-h3max-mid", "override-h3max-nomid", "opaque-custom-shot",
+		"versioned-h3-lip", "versioned-h3-2aud", "live-h3max-mid", "omni-h3max-mid", "override-h3max-nomid", "opaque-custom-shot",
+		"custom-h3max-shot", "custom-kling-shot", "partial-opref-h3", "empty-opref-h3",
 	}
 	targets, err := GenerationTargets(probe, doc, shotIDs)
 	if err != nil {
@@ -457,14 +549,23 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	if got := byID["versioned-h3-2aud"].Parameters["videoStartFrameNodeId"]; got != "" {
 		t.Fatalf("versioned-h3-2aud videoStartFrameNodeId = %q, want empty", got)
 	}
-	if got := byID["live-h3max-mid"].Metadata["videoEditOperation"]; got != "reference_to_video" {
-		t.Fatalf("live-h3max-mid videoEditOperation = %v, want reference_to_video", got)
+	if got := byID["live-h3max-mid"].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("live-h3max-mid videoEditOperation = %v, want image_to_video", got)
 	}
 	if got := byID["live-h3max-mid"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
 		t.Fatalf("live-h3max-mid videoMiddleFrameNodeId = %q, want img-2", got)
 	}
 	if got := byID["live-h3max-mid"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
 		t.Fatalf("live-h3max-mid videoMiddleFrameTime = %v, want 2.5", got)
+	}
+	if got := byID["omni-h3max-mid"].Metadata["videoEditOperation"]; got != "reference_to_video" {
+		t.Fatalf("omni-h3max-mid videoEditOperation = %v, want reference_to_video", got)
+	}
+	if got := byID["omni-h3max-mid"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
+		t.Fatalf("omni-h3max-mid videoMiddleFrameNodeId = %q, want img-2", got)
+	}
+	if got := byID["omni-h3max-mid"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
+		t.Fatalf("omni-h3max-mid videoMiddleFrameTime = %v, want 2.5", got)
 	}
 	if got := byID["override-h3max-nomid"].Metadata["videoEditOperation"]; got != "image_to_video" {
 		t.Fatalf("override-h3max-nomid videoEditOperation = %v, want image_to_video", got)
@@ -483,5 +584,23 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	}
 	if got := byID["opaque-custom-shot"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
 		t.Fatalf("opaque-custom-shot videoMiddleFrameTime = %v, want 2.5", got)
+	}
+	if got := byID["custom-h3max-shot"].Metadata["videoEditOperation"]; got != "reference_to_video" {
+		t.Fatalf("custom-h3max-shot videoEditOperation = %v, want reference_to_video", got)
+	}
+	if got := byID["custom-h3max-shot"].Parameters["videoMiddleFrameNodeId"]; got != "" {
+		t.Fatalf("custom-h3max-shot leaked videoMiddleFrameNodeId: %q", got)
+	}
+	if _, exists := byID["custom-h3max-shot"].Metadata["videoMiddleFrameTime"]; exists {
+		t.Fatalf("custom-h3max-shot leaked videoMiddleFrameTime: %v", byID["custom-h3max-shot"].Metadata["videoMiddleFrameTime"])
+	}
+	if got := byID["custom-kling-shot"].Parameters["videoEndFrameNodeId"]; got != "img-2" {
+		t.Fatalf("custom-kling-shot videoEndFrameNodeId = %q, want img-2", got)
+	}
+	if got := byID["partial-opref-h3"].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("partial-opref-h3 videoEditOperation = %v, want image_to_video", got)
+	}
+	if got := byID["empty-opref-h3"].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("empty-opref-h3 videoEditOperation = %v, want image_to_video", got)
 	}
 }

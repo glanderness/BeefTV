@@ -11,7 +11,7 @@ import { modelOptionName, resolveModelChannel, selectableModelsByCapability, use
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -172,12 +172,13 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
     const h3Model = isH3Model(config.model);
+    const isBeefTVRoute = isBeefTVModelRoute(config.model, config);
     const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
     const effectiveVideoOperation = mode === "video" && requirements.input
-        ? resolveVideoOperation(requirements.input, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model)
+        ? resolveVideoOperation(requirements.input, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model, isBeefTVRoute)
         : undefined;
     const { endFrameSupported, referenceVideoSupported, maxFrameAudios, middleFrameSupported } = mode === "video"
-        ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"))
+        ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"), isBeefTVRoute)
         : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0, middleFrameSupported: false };
     const hasVisualOrVideoReference = activeReferences.some((item) => item.kind === "image" || item.kind === "character" || item.kind === "video");
     const videoModeState = useMemo(() => {
@@ -187,12 +188,12 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
             references: resolvedMentionReferences,
             endFrameSupported,
             referenceVideoSupported,
-            h3Model,
-            h3Style: isH3Style(config.model),
+            h3Model: isBeefTVRoute && h3Model,
+            h3Style: isBeefTVRoute && isH3Style(config.model),
             maxFrameAudios,
             prompt,
         });
-    }, [config.model, effectiveVideoOperation, endFrameSupported, h3Model, hasVisualOrVideoReference, maxFrameAudios, mode, node.metadata, prompt, referenceVideoSupported, resolvedMentionReferences, simpleMode]);
+    }, [config.model, effectiveVideoOperation, endFrameSupported, h3Model, hasVisualOrVideoReference, isBeefTVRoute, maxFrameAudios, mode, node.metadata, prompt, referenceVideoSupported, resolvedMentionReferences, simpleMode]);
     const videoReferenceInputs = useMemo(() => activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]), [activeReferences]);
     const h3SelectedFrames = [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, node.metadata?.videoMiddleFrameNodeId];
     const hasH3ReferenceOrder = isH3MaxFamilyModel(config.model) && videoReferenceInputs.some((input) => ["image", "character", "video", "audio"].includes(input.type) && !h3SelectedFrames.includes(input.nodeId));
@@ -601,7 +602,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                                     onConfigChange(node.id, videoConfigPatch(key, value));
                                 }}
                             >
-                                {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /></> : (requirements.input?.videoCount || 0) > 0 && (modelCapabilityConfigFor(config, config.model).video?.operations.includes("extend") || modelCapabilityConfigFor(config, config.model).video?.operations.includes("inpaint")) ? (
+                                {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} middleFrameSupported={middleFrameSupported} endFrameSupported={endFrameSupported} onChange={(patch) => onConfigChange(node.id, patch)} /></> : (requirements.input?.videoCount || 0) > 0 && (modelCapabilityConfigFor(config, config.model).video?.operations.includes("extend") || modelCapabilityConfigFor(config, config.model).video?.operations.includes("inpaint")) ? (
                                     <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: theme.toolbar.border }}>
                                         <div className="text-[var(--fs-tiny)] font-semibold" style={{ color: theme.node.muted }}>参考视频模式</div>
                                         <div className="grid grid-cols-3 gap-1.5">

@@ -169,6 +169,37 @@ describe("resolveVideoReferenceModeState", () => {
         );
         expect(h3MaxExplicitOffCaps.middleFrameSupport).toBe("unsupported");
         expect(h3MaxExplicitOffCaps.middleFrameSupported).toBe(false);
+
+        // 自定义/BYOK 渠道同名模型不套用 BeefTV 渠道契约
+        const customH3MaxCaps = resolveVideoReferenceCapabilities("custom::minimax-h3-max", managedVideoCatalogItem("minimax-h3").videoCapabilities, true);
+        expect(customH3MaxCaps.middleFrameSupport).toBe("unsupported");
+        expect(customH3MaxCaps.middleFrameSupported).toBe(false);
+        expect(customH3MaxCaps.maxFrameAudios).toBe(0);
+        const customKlingCaps = resolveVideoReferenceCapabilities(
+            "custom::kling-video-v3",
+            {
+                ...managedVideoCatalogItem("kling-video-v3").videoCapabilities!,
+                references: { ...managedVideoCatalogItem("kling-video-v3").videoCapabilities!.references, maxImages: 2, maxAudios: 1 },
+            },
+            true,
+        );
+        expect(customKlingCaps.maxFrameImages).toBe(2);
+        expect(customKlingCaps.endFrameSupported).toBe(true);
+        expect(customKlingCaps.maxFrameAudios).toBe(1);
+
+        // 显式部分或空 operationReferences 继承模型级 references 上限，不回退到契约上限
+        const partialOpRefCaps = resolveVideoReferenceCapabilities(
+            "beeftv::minimax-h3",
+            { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: { image_to_video: { maxImages: 2 } } },
+            true,
+        );
+        expect(partialOpRefCaps.maxFrameAudios).toBe(3);
+        const emptyOpRefCaps = resolveVideoReferenceCapabilities(
+            "beeftv::minimax-h3",
+            { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: {} },
+            true,
+        );
+        expect(emptyOpRefCaps.maxFrameAudios).toBe(3);
     });
 });
 
@@ -577,6 +608,59 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
             { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
         );
         expect(agnesTwoAudioOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(true);
+
+        const { resolveVideoOperation } = await import("../src/lib/model-selection");
+        const { CanvasH3UnsupportedFrames } = await import("../src/components/canvas/canvas-h3-controls");
+        expect(
+            resolveVideoOperation(
+                { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
+                "image_to_video",
+                { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: { image_to_video: { maxImages: 2 } } },
+                "beeftv::minimax-h3",
+                true,
+            ),
+        ).toBe("image_to_video");
+        expect(
+            resolveVideoOperation(
+                { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
+                "image_to_video",
+                { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: {} },
+                "beeftv::minimax-h3",
+                true,
+            ),
+        ).toBe("image_to_video");
+        expect(
+            resolveVideoOperation(
+                { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
+                "image_to_video",
+                managedVideoCatalogItem("minimax-h3").videoCapabilities!,
+                "custom::minimax-h3",
+                false,
+            ),
+        ).toBe("reference_to_video");
+
+        expect(
+            renderToStaticMarkup(
+                <CanvasH3UnsupportedFrames
+                    model="beeftv::minimax-h3-max"
+                    metadata={{ videoMiddleFrameNodeId: "img-2", videoMiddleFrameTime: 2.5 }}
+                    middleFrameSupported
+                    endFrameSupported
+                    onChange={() => {}}
+                />,
+            ),
+        ).toBe("");
+        expect(
+            renderToStaticMarkup(
+                <CanvasH3UnsupportedFrames
+                    model="beeftv::minimax-h3-max"
+                    metadata={{ videoMiddleFrameNodeId: "img-2", videoMiddleFrameTime: 2.5 }}
+                    middleFrameSupported={false}
+                    endFrameSupported
+                    onChange={() => {}}
+                />,
+            ),
+        ).toContain("清除不支持的帧设置");
     });
 });
 

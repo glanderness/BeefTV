@@ -16,7 +16,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { initialWorkbenchModel, refreshedWorkbenchModel } from "./workflow-model-selection";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
 import { customShotTitle, formatShotOrdinal, normalizeDefaultShotTitle } from "@/lib/shot-label";
-import { declaredOrOmniVideoCapability, resolveCompatibleModel, resolveModelVideoBooleanOptions, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, isBeefTVModelRoute, resolveCompatibleModel, resolveModelVideoBooleanOptions, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import { submitBackendGenerationTask } from "@/services/api/generation-task";
 import { type GenerationTask } from "@/services/api/task-center";
@@ -322,6 +322,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                           shotAssetReferenceContext.referenceImages.length ? "reference_to_video" : undefined,
                           declaredOrOmniVideoCapability(config, routedModel),
                           routedModel,
+                          isBeefTVModelRoute(routedModel, config),
                       )
                     : undefined;
             await submitBackendGenerationTask({

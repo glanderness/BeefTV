@@ -9,7 +9,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { isH3Model, h3ResolvedReferenceOrder } from "@/lib/h3-video";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { modelCapabilityConfigFor, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
 import { resolveVideoReferenceCapabilities } from "@/lib/canvas/video-reference-mode";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
@@ -426,6 +426,7 @@ function resolveVideoEditOperation(
     } | undefined,
     effectiveModel: string,
     videoProfile?: VideoCapabilityConfig | null,
+    isBeefTVRoute?: boolean,
 ): CanvasVideoEditOperation {
     const storedOperation = node?.metadata?.videoEditOperation;
     const referenceImages = context?.referenceImages || [];
@@ -437,7 +438,7 @@ function resolveVideoEditOperation(
         audioCount: context?.referenceAudios.length || 0,
         characterCount,
     };
-    return resolveVideoOperation(input, storedOperation, videoProfile, effectiveModel) as CanvasVideoEditOperation;
+    return resolveVideoOperation(input, storedOperation, videoProfile, effectiveModel, isBeefTVRoute) as CanvasVideoEditOperation;
 }
 
 export function buildVideoGenerationMetadata(
@@ -454,14 +455,15 @@ export function buildVideoGenerationMetadata(
     const draftTaskId = metadata?.videoDraftTaskId?.trim() || undefined;
     const effectiveModel = config?.model || metadata?.model || "";
     const safeConfig = config && Array.isArray(config.channels) && config.channels.length ? (config as AiConfig) : undefined;
+    const isBeefTVRoute = isBeefTVModelRoute(effectiveModel, safeConfig);
     const declared = safeConfig ? hasDeclaredModelCapability(safeConfig, effectiveModel, "video") : false;
     const fullVideoProfile = safeConfig && effectiveModel ? modelCapabilityConfigFor(safeConfig, effectiveModel).video : undefined;
     const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
-    const { endFrameSupported, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared);
+    const { endFrameSupported, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
     const hasMiddleFrame = middleFrameSupport === "supported" && Boolean(metadata?.videoMiddleFrameNodeId);
     const resolvedOperation = draftTaskId
         ? "draft_to_final"
-        : resolveVideoEditOperation(node, context, effectiveModel, videoProfile);
+        : resolveVideoEditOperation(node, context, effectiveModel, videoProfile, isBeefTVRoute);
     const videoEditOperation =
         !draftTaskId && hasMiddleFrame && Boolean(videoProfile?.operations.includes("reference_to_video"))
             ? "reference_to_video"

@@ -254,6 +254,7 @@ type PublicChannelModel struct {
 	AudioOptions       *AudioGenerationOptions `json:"audioOptions,omitempty"`
 	Available          bool                    `json:"available"`
 	CapabilityDeclared *bool                   `json:"-"`
+	ManagedBeefTV      *bool                   `json:"-"`
 }
 
 type ChannelModelRequest struct {

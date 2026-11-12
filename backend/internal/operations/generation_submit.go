@@ -583,15 +583,17 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 	return targets, nil
 }
 
-func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.VideoCapabilityConfig, declared bool) string {
+func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.VideoCapabilityConfig, declared bool, managedBeefTV bool) string {
 	if videoProfile != nil && videoProfile.MiddleFrame != nil {
 		if *videoProfile.MiddleFrame {
 			return "supported"
 		}
 		return "unsupported"
 	}
-	if contract, ok := providerpreset.BeefTVVideoContract(modelID); ok && contract.MiddleFrame {
-		return "supported"
+	if managedBeefTV {
+		if contract, ok := providerpreset.BeefTVVideoContract(modelID); ok && contract.MiddleFrame {
+			return "supported"
+		}
 	}
 	if declared {
 		return "unsupported"
@@ -605,9 +607,16 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 	}
 	var rawVideoProfile, videoProfile *modelcatalog.VideoCapabilityConfig
 	declared := false
+	chID, modelID := modelcatalog.SplitModelKey(modelKey)
+	managedBeefTV := strings.EqualFold(strings.TrimSpace(chID), "beeftv")
 	if reader, ok := domain.(ModelCatalogReader); ok && reader != nil {
 		if catalog, err := reader.AgentModelCatalog(); err == nil && catalog != nil {
-			if _, foundModel, found := findEstimateModel(catalog, modelKey); found {
+			if foundChID, foundModel, found := findEstimateModel(catalog, modelKey); found {
+				if foundModel.ManagedBeefTV != nil {
+					managedBeefTV = *foundModel.ManagedBeefTV
+				} else {
+					managedBeefTV = strings.EqualFold(strings.TrimSpace(foundChID), "beeftv")
+				}
 				if capCfg := estimateCapability(foundModel.CapabilityConfig); capCfg != nil && capCfg.Video != nil {
 					rawVideoProfile = capCfg.Video
 					declared = foundModel.CapabilityDeclared == nil || *foundModel.CapabilityDeclared
@@ -618,9 +627,12 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 			}
 		}
 	}
-	_, modelID := modelcatalog.SplitModelKey(modelKey)
-	contract, hasContract := providerpreset.BeefTVVideoContract(modelID)
-	middleFrameSupport := resolveVideoMiddleFrameSupport(modelID, rawVideoProfile, declared)
+	var contract providerpreset.VideoContract
+	hasContract := false
+	if managedBeefTV {
+		contract, hasContract = providerpreset.BeefTVVideoContract(modelID)
+	}
+	middleFrameSupport := resolveVideoMiddleFrameSupport(modelID, rawVideoProfile, declared, managedBeefTV)
 	if middleFrameSupport == "unsupported" {
 		delete(parameters, "videoMiddleFrameNodeId")
 		delete(metadata, "videoMiddleFrameTime")
@@ -651,37 +663,35 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
 	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
 	frameMaxImages, frameMaxAudios := 2, 0
-	hasContractFrameMaxImages := false
-	if hasContract {
-		if contractImg, ok := contract.OperationReferences["image_to_video"]["maxImages"]; ok {
-			frameMaxImages = min(2, contractImg)
-			hasContractFrameMaxImages = true
-		} else if !declared {
-			if maxImg, ok := contract.MaxReferences["image"]; ok {
-				frameMaxImages = min(2, maxImg)
+	if videoProfile != nil && videoProfile.OperationReferences != nil {
+		frameRefs := modelcatalog.VideoReferencesForOperation(videoProfile, "image_to_video")
+		frameMaxImages = min(2, frameRefs.MaxImages)
+		frameMaxAudios = frameRefs.MaxAudios
+	} else {
+		hasContractFrameMaxImages := false
+		if hasContract {
+			if contractImg, ok := contract.OperationReferences["image_to_video"]["maxImages"]; ok {
+				frameMaxImages = min(2, contractImg)
+				hasContractFrameMaxImages = true
+			} else if !declared {
+				if maxImg, ok := contract.MaxReferences["image"]; ok {
+					frameMaxImages = min(2, maxImg)
+				}
+			}
+			if contractAud, ok := contract.OperationReferences["image_to_video"]["maxAudios"]; ok {
+				frameMaxAudios = contractAud
 			}
 		}
-		if contractAud, ok := contract.OperationReferences["image_to_video"]["maxAudios"]; ok {
-			frameMaxAudios = contractAud
-		}
-	}
-	if videoProfile != nil {
-		if !hasContractFrameMaxImages {
-			frameMaxImages = min(2, videoProfile.References.MaxImages)
-		} else if declared && frameMaxImages > videoProfile.References.MaxImages {
-			frameMaxImages = min(2, videoProfile.References.MaxImages)
-		}
-		if !supportsRefVideo && declared {
-			frameMaxAudios = videoProfile.References.MaxAudios
-		} else if declared && frameMaxAudios > videoProfile.References.MaxAudios {
-			frameMaxAudios = videoProfile.References.MaxAudios
-		}
-		if limits, ok := videoProfile.OperationReferences["image_to_video"]; ok {
-			if limits.MaxImages != nil {
-				frameMaxImages = min(2, *limits.MaxImages)
+		if videoProfile != nil {
+			if !hasContractFrameMaxImages {
+				frameMaxImages = min(2, videoProfile.References.MaxImages)
+			} else if declared && frameMaxImages > videoProfile.References.MaxImages {
+				frameMaxImages = min(2, videoProfile.References.MaxImages)
 			}
-			if limits.MaxAudios != nil {
-				frameMaxAudios = *limits.MaxAudios
+			if !supportsRefVideo && declared {
+				frameMaxAudios = videoProfile.References.MaxAudios
+			} else if declared && frameMaxAudios > videoProfile.References.MaxAudios {
+				frameMaxAudios = videoProfile.References.MaxAudios
 			}
 		}
 	}

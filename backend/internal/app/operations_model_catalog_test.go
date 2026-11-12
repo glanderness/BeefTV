@@ -277,6 +277,8 @@ func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) 
 	svc, _ := newModelCatalogTestService(t)
 	svc.mode = serviceModeLocal
 	defaultCap := modelcatalog.DefaultModelCapabilityConfigForModel("openai-videos", "opaque-video")
+	emptyOpRefsCap := modelcatalog.DefaultModelCapabilityConfigForModel("openai-videos", "empty-oprefs")
+	emptyOpRefsCap.Video.OperationReferences = map[string]modelcatalog.VideoOperationReferences{}
 	body, err := json.Marshal(map[string]any{
 		"channels": []any{
 			map[string]any{
@@ -302,6 +304,31 @@ func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) 
 					map[string]any{"model": "sys-cap", "capability": "video", "protocol": "openai-videos", "capabilityConfig": defaultCap},
 				},
 			},
+			map[string]any{
+				"id":      "beeftv",
+				"name":    "BeefTV",
+				"scope":   "system",
+				"baseUrl": "https://beeftv.app/v1",
+				"enabled": true,
+				"models":  []string{"empty-oprefs"},
+				"modelProfiles": []any{
+					map[string]any{"model": "empty-oprefs", "capability": "video", "protocol": "openai-videos", "videoCapabilitiesVersion": "2026-04-06", "capabilityConfig": map[string]any{
+						"video": map[string]any{
+							"references":          emptyOpRefsCap.Video.References,
+							"operationReferences": map[string]any{},
+							"duration":            emptyOpRefsCap.Video.Duration,
+							"ratios":              emptyOpRefsCap.Video.Ratios,
+							"defaultRatio":        emptyOpRefsCap.Video.DefaultRatio,
+							"resolutions":         emptyOpRefsCap.Video.Resolutions,
+							"defaultResolution":   emptyOpRefsCap.Video.DefaultResolution,
+							"generateAudio":       emptyOpRefsCap.Video.GenerateAudio,
+							"watermark":           emptyOpRefsCap.Video.Watermark,
+							"operations":          emptyOpRefsCap.Video.Operations,
+							"defaultOperation":    emptyOpRefsCap.Video.DefaultOperation,
+						},
+					}},
+				},
+			},
 		},
 	})
 	if err != nil {
@@ -315,12 +342,21 @@ func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) 
 		t.Fatal(err)
 	}
 	declaredByKey := map[string]bool{}
+	managedByKey := map[string]bool{}
 	for _, ch := range catalog.Channels {
 		for _, m := range ch.Models {
-			if m.CapabilityDeclared == nil {
-				t.Fatalf("missing CapabilityDeclared for %s::%s", ch.ID, m.ModelKey)
+			if m.CapabilityDeclared == nil || m.ManagedBeefTV == nil {
+				t.Fatalf("missing internal flags for %s::%s", ch.ID, m.ModelKey)
 			}
-			declaredByKey[ch.ID+"::"+m.ModelKey] = *m.CapabilityDeclared
+			key := ch.ID + "::" + m.ModelKey
+			declaredByKey[key] = *m.CapabilityDeclared
+			managedByKey[key] = *m.ManagedBeefTV
+			if key == "beeftv::empty-oprefs" {
+				videoMap, _ := m.CapabilityConfig["video"].(map[string]any)
+				if _, ok := videoMap["operationReferences"]; !ok {
+					t.Fatalf("expected empty operationReferences map preserved on %s, got %#v", key, videoMap)
+				}
+			}
 		}
 	}
 	want := map[string]bool{
@@ -328,10 +364,14 @@ func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) 
 		"custom::user-cap":      true,
 		"custom::versioned-cap": true,
 		"sys::sys-cap":          true,
+		"beeftv::empty-oprefs":  true,
 	}
 	for key, expected := range want {
 		if got, ok := declaredByKey[key]; !ok || got != expected {
 			t.Fatalf("%s CapabilityDeclared = %v (present=%v), want %v", key, got, ok, expected)
 		}
+	}
+	if managedByKey["custom::versioned-cap"] || managedByKey["sys::sys-cap"] || !managedByKey["beeftv::empty-oprefs"] {
+		t.Fatalf("ManagedBeefTV flags = %#v", managedByKey)
 	}
 }
