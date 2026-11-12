@@ -1025,14 +1025,16 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
         expect(genCtx.referenceVideos[0]?.name).toBe("clip.mp4");
     });
 
-    test("显式 @ 子集与素材库引用兼容门禁、ModelPicker 告警、浮层互斥、无封面播放按钮与 auto 比例预览", async () => {
+    test("与 buildNodeGenerationContext 共享兼容门禁（视频全量连线媒体 vs 生图显式 @ 子集/嵌套文本）、ModelPicker 告警、浮层互斥、无封面播放按钮与 auto 比例预览", async () => {
         const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
         const { CanvasNodePromptPanel } = await import("../src/components/canvas/canvas-node-prompt-panel");
+        const { buildNodeGenerationContext } = await import("../src/components/canvas/canvas-node-generation");
         const { InactiveVideoPreview } = await import("../src/components/canvas/canvas-node-content");
         const { ModelPicker } = await import("../src/components/model-picker");
         const { VideoSettingsPanel } = await import("../src/components/video-settings-panel");
         const { notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } = await import("../src/lib/canvas/canvas-popover-layer");
         const { mergeFetchedChannelModelProfiles } = await import("../src/lib/channel-model-catalog");
+        const { defaultImageCapabilityConfig } = await import("../src/lib/model-capabilities-image");
         const { useAssetStore } = await import("../src/stores/use-asset-store");
         const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../src/stores/use-config-store");
         const { CanvasNodeType } = await import("../src/types/canvas");
@@ -1044,7 +1046,7 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
             pinned: true,
             credentialRef: "beeftv",
             baseUrl: "https://beeftv.app/v1",
-            models: ["minimax-h3-max", "single-frame-video"],
+            models: ["minimax-h3-max", "single-frame-video", "single-ref-image", "text-only-image"],
         });
         const singleFrameOnlyItem = {
             ...managedVideoCatalogItem("wan3.0-video"),
@@ -1058,9 +1060,28 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
                 operationReferences: { image_to_video: { minImages: 1, maxImages: 1, maxVideos: 0, maxAudios: 0 } },
             },
         };
+        const baseImgCap = defaultImageCapabilityConfig();
+        const singleRefImageItem = {
+            id: "single-ref-image",
+            displayName: "Single Ref Image",
+            modelType: "image" as const,
+            supportedEndpointTypes: ["openai-image"],
+            imageCapabilitiesVersion: "2026-04-01",
+            imageCapabilities: { ...baseImgCap, references: { ...baseImgCap.references, maxImages: 1 } },
+        };
+        const textOnlyImageItem = {
+            id: "text-only-image",
+            displayName: "Text Only Image",
+            modelType: "image" as const,
+            supportedEndpointTypes: ["openai-image"],
+            imageCapabilitiesVersion: "2026-04-01",
+            imageCapabilities: { ...baseImgCap, references: { ...baseImgCap.references, maxImages: 0 } },
+        };
         beeftvChannel.modelProfiles = mergeFetchedChannelModelProfiles(beeftvChannel, [
             managedVideoCatalogItem("minimax-h3-max"),
             singleFrameOnlyItem,
+            singleRefImageItem,
+            textOnlyImageItem,
         ]);
         const h3Config = normalizeConfigSnapshot({
             config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::minimax-h3-max", videoModel: "beeftv::minimax-h3-max" },
@@ -1068,19 +1089,44 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
         const singleFrameConfig = normalizeConfigSnapshot({
             config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::single-frame-video", videoModel: "beeftv::single-frame-video" },
         }).config;
+        const singleRefImageConfig = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::single-ref-image", imageModel: "beeftv::single-ref-image" },
+        }).config;
+        const textOnlyImageConfig = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::text-only-image", imageModel: "beeftv::text-only-image" },
+        }).config;
 
-        const h3SubsetHtml = renderToStaticMarkup(
+        const fiveImageNodes = Array.from({ length: 5 }, (_, idx) => ({
+            id: `img-${idx + 1}`,
+            type: CanvasNodeType.Image,
+            title: `镜头${idx + 1}`,
+            position: { x: idx * 20, y: 0 },
+            width: 120,
+            height: 80,
+            metadata: { content: `https://example.com/img-${idx + 1}.png` },
+        }));
+        const edgesTo = (targetId: string, sourceIds: string[]) =>
+            sourceIds.map((fromNodeId, idx) => ({ id: `e-${targetId}-${idx}`, fromNodeId, toNodeId: targetId }));
+
+        // 视频执行路径 promptOnly=true 会带入全部已连线媒体：5 张连线图下只 @ 两张或只 @ 文本仍实际提交 5 张，门禁必须如实报错。
+        const h3VideoTarget = {
+            id: "vid-h3-subset",
+            type: CanvasNodeType.Video,
+            title: "Video",
+            position: { x: 0, y: 120 },
+            width: 320,
+            height: 180,
+            metadata: { model: "beeftv::minimax-h3-max", prompt: "@[node:img-1] @[node:img-2] 推镜" },
+        };
+        const h3GraphNodes = [h3VideoTarget, ...fiveImageNodes];
+        const h3GraphEdges = edgesTo("vid-h3-subset", fiveImageNodes.map((n) => n.id));
+        expect(buildNodeGenerationContext("vid-h3-subset", h3GraphNodes, h3GraphEdges, h3VideoTarget.metadata.prompt, [], true, { preserveMediaBindings: true }).imageCount).toBe(5);
+        const h3OverLimitHtml = renderToStaticMarkup(
             <QueryClientProvider client={new QueryClient()}>
                 <CanvasNodePromptPanel
-                    node={{
-                        id: "vid-h3-subset",
-                        type: CanvasNodeType.Video,
-                        title: "Video",
-                        position: { x: 0, y: 0 },
-                        width: 320,
-                        height: 180,
-                        metadata: { model: "beeftv::minimax-h3-max", prompt: "@[node:img-1] @[node:img-2] 推镜" },
-                    }}
+                    node={h3VideoTarget}
+                    referenceNodes={h3GraphNodes}
+                    referenceConnections={h3GraphEdges}
                     config={h3Config}
                     projectId="proj-1"
                     isRunning={false}
@@ -1091,21 +1137,36 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
                 />
             </QueryClientProvider>,
         );
-        expect(h3SubsetHtml).not.toContain("最多支持");
-        expect(h3SubsetHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+        expect(h3OverLimitHtml).toContain("最多支持 2 张参考图");
+        expect(h3OverLimitHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
 
-        const textOnlyMentionHtml = renderToStaticMarkup(
+        const textNode = {
+            id: "txt-1",
+            type: CanvasNodeType.Text,
+            title: "分镜脚本",
+            position: { x: 100, y: 0 },
+            width: 160,
+            height: 80,
+            metadata: { content: "夜景雨巷" },
+        };
+        const videoTextTarget = {
+            id: "vid-text-only",
+            type: CanvasNodeType.Video,
+            title: "Video",
+            position: { x: 0, y: 120 },
+            width: 320,
+            height: 180,
+            metadata: { model: "beeftv::single-frame-video", prompt: "@[node:txt-1] 按分镜生成" },
+        };
+        const videoTextNodes = [videoTextTarget, ...fiveImageNodes, textNode];
+        const videoTextEdges = edgesTo("vid-text-only", [...fiveImageNodes.map((n) => n.id), "txt-1"]);
+        expect(buildNodeGenerationContext("vid-text-only", videoTextNodes, videoTextEdges, videoTextTarget.metadata.prompt, [], true, { preserveMediaBindings: true }).imageCount).toBe(5);
+        const videoTextOverLimitHtml = renderToStaticMarkup(
             <QueryClientProvider client={new QueryClient()}>
                 <CanvasNodePromptPanel
-                    node={{
-                        id: "vid-text-only",
-                        type: CanvasNodeType.Video,
-                        title: "Video",
-                        position: { x: 0, y: 0 },
-                        width: 320,
-                        height: 180,
-                        metadata: { model: "beeftv::single-frame-video", prompt: "@[node:txt-1] 按分镜生成" },
-                    }}
+                    node={videoTextTarget}
+                    referenceNodes={videoTextNodes}
+                    referenceConnections={videoTextEdges}
                     config={singleFrameConfig}
                     projectId="proj-1"
                     isRunning={false}
@@ -1119,8 +1180,83 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
                 />
             </QueryClientProvider>,
         );
-        expect(textOnlyMentionHtml).not.toContain("最多支持");
-        expect(textOnlyMentionHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+        expect(videoTextOverLimitHtml).toContain("最多支持 1 张参考图");
+        expect(videoTextOverLimitHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        // 生图执行路径 promptOnly=false, preserveMediaBindings=false：显式 @ 只计被引用图片，文本内嵌套的 @[node:img-1] 不会误算参考图。
+        const imageSubsetTarget = {
+            id: "img-target-subset",
+            type: CanvasNodeType.Image,
+            title: "Image",
+            position: { x: 0, y: 120 },
+            width: 320,
+            height: 180,
+            metadata: { model: "beeftv::single-ref-image", prompt: "@[node:img-1] 局部重绘" },
+        };
+        const imageSubsetNodes = [imageSubsetTarget, ...fiveImageNodes];
+        const imageSubsetEdges = edgesTo("img-target-subset", fiveImageNodes.map((n) => n.id));
+        expect(buildNodeGenerationContext("img-target-subset", imageSubsetNodes, imageSubsetEdges, imageSubsetTarget.metadata.prompt, [], false).imageCount).toBe(1);
+        const imageSubsetHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={imageSubsetTarget}
+                    referenceNodes={imageSubsetNodes}
+                    referenceConnections={imageSubsetEdges}
+                    config={singleRefImageConfig}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={makeImageRefs(5)}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(imageSubsetHtml).not.toContain("最多支持");
+        expect(imageSubsetHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const nestedMediaTextNode = {
+            id: "txt-nested-img",
+            type: CanvasNodeType.Text,
+            title: "带图token脚本",
+            position: { x: 100, y: 0 },
+            width: 160,
+            height: 80,
+            metadata: { content: "镜头参考 @[node:img-1] 的构图" },
+        };
+        const imageNestedTarget = {
+            id: "img-nested-target",
+            type: CanvasNodeType.Image,
+            title: "Image",
+            position: { x: 0, y: 120 },
+            width: 320,
+            height: 180,
+            metadata: { model: "beeftv::text-only-image", prompt: "@[node:txt-nested-img] 生成概念图" },
+        };
+        const imageNestedNodes = [imageNestedTarget, fiveImageNodes[0]!, nestedMediaTextNode];
+        const imageNestedEdges = edgesTo("img-nested-target", ["img-1", "txt-nested-img"]);
+        expect(buildNodeGenerationContext("img-nested-target", imageNestedNodes, imageNestedEdges, imageNestedTarget.metadata.prompt, [], false).imageCount).toBe(0);
+        const imageNestedHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={imageNestedTarget}
+                    referenceNodes={imageNestedNodes}
+                    referenceConnections={imageNestedEdges}
+                    config={textOnlyImageConfig}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={[
+                        makeImageRefs(1)[0]!,
+                        { id: "txt-nested-img", nodeId: "txt-nested-img", kind: "text", label: "文本1", title: "带图token脚本", text: "镜头参考 @[node:img-1] 的构图", active: true },
+                    ]}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(imageNestedHtml).not.toContain("最多支持");
+        expect(imageNestedHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
 
         const selfVideoRegenHtml = renderToStaticMarkup(
             <QueryClientProvider client={new QueryClient()}>

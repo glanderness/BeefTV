@@ -88,3 +88,73 @@ test("dark project folder and asset search do not keep the brighter gray fills",
     expect(Number(folderTop![1])).toBeLessThanOrEqual(48);
     expect(colors.search).toBe("rgb(32, 32, 32)");
 });
+
+test("creation reference file card (.is-file) keeps 58x77 layout, 11px filename, full-name tooltip, and no maximize overlay in both themes", async () => {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { CreationAttachmentThumbnail } = await import("../src/pages/create/creation-workspace");
+    const longFileName = "ambient-soundtrack-extremely-long-reference-audio-clip-v2-final.mp3";
+    const cardHtml = renderToStaticMarkup(
+        createElement(CreationAttachmentThumbnail, {
+            item: {
+                id: "aud-long",
+                name: longFileName,
+                type: "audio/mpeg",
+                url: "https://example.com/ambient.mp3",
+            },
+            onPreview: () => {},
+            onRemove: () => {},
+        }),
+    );
+
+    for (const dark of [true, false]) {
+        for (const expanded of [false, true]) {
+            await page.setViewportSize({ width: 1280, height: 800 });
+            await page.setContent(`
+                <html class="${dark ? "dark" : ""}"><head><style>${globalsCss}\n${workspaceCss}</style></head>
+                <body><div class="app-user-workspace app-product-workspace"><div class="creation-home" style="padding:24px">
+                    <div class="creation-reference-track ${expanded ? "is-expanded" : ""}">
+                        <div class="creation-reference-stack-card">${cardHtml}</div>
+                    </div>
+                </div></div></body></html>
+            `);
+            const metrics = await page.evaluate(() => {
+                const card = document.querySelector<HTMLElement>(".creation-reference-stack-card")!;
+                const preview = document.querySelector<HTMLElement>(".creation-reference-card-preview.is-file")!;
+                const iconWrap = preview.querySelector<HTMLElement>(".creation-chat-file-icon")!;
+                const svg = iconWrap.querySelector<SVGElement>("svg")!;
+                const nameEl = iconWrap.querySelector<HTMLElement>("em")!;
+                const svgRect = svg.getBoundingClientRect();
+                const nameRect = nameEl.getBoundingClientRect();
+                const wrapStyle = getComputedStyle(iconWrap);
+                const nameStyle = getComputedStyle(nameEl);
+                return {
+                    cardWidth: card.offsetWidth,
+                    cardHeight: card.offsetHeight,
+                    svgVisible: svgRect.width >= 12 && svgRect.height >= 12,
+                    nameVisible: nameRect.width > 20 && nameRect.height >= 11,
+                    wrapOpacity: wrapStyle.opacity,
+                    wrapPosition: wrapStyle.position,
+                    fontSize: nameStyle.fontSize,
+                    textOverflow: nameStyle.textOverflow,
+                    ariaLabel: preview.getAttribute("aria-label"),
+                    title: preview.getAttribute("title"),
+                    hasMaximizeOverlay: Boolean(preview.querySelector(".lucide-maximize-2") || document.querySelector('[aria-label^="放大预览"]')),
+                };
+            });
+            expect(metrics).toEqual({
+                cardWidth: expanded ? 52 : 58,
+                cardHeight: expanded ? 69 : 77,
+                svgVisible: true,
+                nameVisible: true,
+                wrapOpacity: "1",
+                wrapPosition: "static",
+                fontSize: "11px",
+                textOverflow: "ellipsis",
+                ariaLabel: longFileName,
+                title: longFileName,
+                hasMaximizeOverlay: false,
+            });
+        }
+    }
+});

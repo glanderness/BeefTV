@@ -5,7 +5,8 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
-import { canvasGenerationMentionMatches, hasCanvasMentionBoundary as hasMentionBoundary, getGenerationResourceNodes, getContextResourceNodes, getMentionResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { canvasGenerationMentionMatches, hasCanvasMentionBoundary as hasMentionBoundary, getGenerationResourceNodes, getContextResourceNodes, getMentionResourceNodes, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildTextRewritePrompt } from "@/lib/prompts";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { isNeutralColorGrade, resolveCanvasColorGradeReference } from "@/lib/canvas/canvas-color-grade";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
@@ -14,7 +15,7 @@ import { resolveCanvasDrawingReference } from "@/lib/canvas/canvas-drawing-refer
 import { compileCharacterReferencePrompt } from "@/lib/canvas/canvas-character-reference";
 import { nodeReferenceImage } from "@/lib/canvas/canvas-project-generation";
 import { audioFileExtension } from "@/lib/character-voice-formats";
-import type { ModelReferenceLimits } from "@/lib/model-selection";
+import type { ModelInputSummary, ModelReferenceLimits } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { assertCanvasImageReferenceTable, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
@@ -72,12 +73,67 @@ export type NodeGenerationInput = {
     character?: CharacterGenerationReference;
 };
 
-export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[], promptOnly = false, options: { preserveMediaBindings?: boolean } = {}): NodeGenerationContext {
-    const pendingConversion = findPendingMediaConversionInput(nodeId, nodes, connections);
-    if (pendingConversion) {
-        const status = pendingConversion.metadata?.mediaConversion?.status;
-        const reason = status === "stale" ? "输入或方式已变化" : status === "processing" ? "仍在处理中" : "尚未完成本地转换";
-        throw new Error(`转换节点「${pendingConversion.title || pendingConversion.id}」${reason}，完成后才能执行下游生成`);
+export function resolveCanvasNodeInputSummary(
+    node: CanvasNodeData,
+    mode: CanvasGenerationMode,
+    prompt: string,
+    nodes: CanvasNodeData[],
+    connections: CanvasConnection[],
+    assets: Asset[],
+    fallbackReferences: CanvasResourceReference[] = [],
+): ModelInputSummary {
+    let graphNodes = nodes.some((item) => item.id === node.id) ? nodes : [node, ...nodes];
+    let graphConnections = connections;
+    if (!connections.length && nodes.length <= 1 && fallbackReferences.length) {
+        const activeRefs = fallbackReferences.filter((item) => item.active && !item.assetId && item.kind !== "skill");
+        const syntheticNodes = activeRefs
+            .filter((item) => item.nodeId && item.nodeId !== node.id)
+            .map((item): CanvasNodeData => ({
+                id: item.nodeId,
+                type: item.drawingId ? CanvasNodeType.Drawing : item.kind === "video" ? CanvasNodeType.Video : item.kind === "audio" ? CanvasNodeType.Audio : item.kind === "text" ? CanvasNodeType.Text : CanvasNodeType.Image,
+                title: item.title || item.label,
+                position: { x: 0, y: 0 },
+                width: 120,
+                height: 80,
+                metadata: item.kind === "character"
+                    ? { workflowKind: "character", characterAssetId: item.id, characterPrompt: item.text, characterCoverUrl: item.previewUrl }
+                    : item.drawingId
+                      ? { drawingId: item.drawingId, drawingRevision: item.drawingRevision }
+                      : item.kind === "text"
+                        ? { content: item.text || item.title || "text" }
+                        : { content: item.mediaUrl || item.previewUrl || `https://placeholder.local/${item.kind}`, storageKey: item.storageKey },
+            }));
+        graphNodes = [node, ...syntheticNodes];
+        graphConnections = syntheticNodes.map((item) => ({ id: `ref:${item.id}`, fromNodeId: item.id, toNodeId: node.id }));
+    }
+    const editingTextNode = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
+    const effectivePrompt = editingTextNode ? buildTextRewritePrompt(node.metadata!.content!.trim(), prompt) : prompt;
+    const context = buildNodeGenerationContext(
+        node.id,
+        graphNodes,
+        graphConnections,
+        effectivePrompt,
+        assets,
+        mode === "video",
+        { preserveMediaBindings: mode === "video", allowUnresolved: true },
+    );
+    return {
+        textCount: (prompt.trim() ? 1 : 0) + context.textCount,
+        imageCount: context.imageCount,
+        videoCount: context.videoCount,
+        audioCount: context.audioCount,
+        characterCount: context.characterReferences.length,
+    };
+}
+
+export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[], promptOnly = false, options: { preserveMediaBindings?: boolean; allowUnresolved?: boolean } = {}): NodeGenerationContext {
+    if (!options.allowUnresolved) {
+        const pendingConversion = findPendingMediaConversionInput(nodeId, nodes, connections);
+        if (pendingConversion) {
+            const status = pendingConversion.metadata?.mediaConversion?.status;
+            const reason = status === "stale" ? "输入或方式已变化" : status === "processing" ? "仍在处理中" : "尚未完成本地转换";
+            throw new Error(`转换节点「${pendingConversion.title || pendingConversion.id}」${reason}，完成后才能执行下游生成`);
+        }
     }
     const connectedInputs = withArkAssetReferenceInputs(buildNodeGenerationInputs(nodeId, nodes, connections), nodes, assets);
     const sourceNode = nodes.find((node) => node.id === nodeId);
@@ -100,7 +156,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     // 避免已有图片在没有 @图片N 时被悄悄当作自身参考图。
     const mentionInputs = nodeGenerationMentionInputs(nodeId, nodes, connections, assets);
     const storyboardInputs = getConnectedStoryboardRows(nodeId, nodes, connections);
-    assertResolvableGenerationMentions(prompt, mentionInputs);
+    if (!options.allowUnresolved) assertResolvableGenerationMentions(prompt, mentionInputs);
     const hasExplicitResourceMention = hasResolvableGenerationMention(prompt, mentionInputs);
     const hasConnectedMedia = connectedInputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio" || input.type === "character");
     if ((promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && sourceNode?.type === CanvasNodeType.Config) || hasExplicitResourceMention) {
@@ -117,7 +173,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         );
         const tableReferences = generationImageTableReferences(context.referenceImages, mentionInputs);
         if (options.preserveMediaBindings) context.imageReferenceTableReferences = tableReferences;
-        else if (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video) assertCanvasImageReferenceTable(context.prompt, tableReferences);
+        else if (!options.allowUnresolved && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) assertCanvasImageReferenceTable(context.prompt, tableReferences);
         return context;
     }
 
@@ -135,7 +191,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
 
     const composedPrompt = promptOnly ? prompt : upstreamText ? `${basePrompt}\n\n${upstreamText}` : basePrompt;
     const tableReferences = generationImageTableReferences(referenceImages, connectedInputs);
-    if (!options.preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) assertCanvasImageReferenceTable(composedPrompt, tableReferences);
+    if (!options.allowUnresolved && !options.preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) assertCanvasImageReferenceTable(composedPrompt, tableReferences);
     return {
         prompt: composedPrompt,
         referenceImages,
