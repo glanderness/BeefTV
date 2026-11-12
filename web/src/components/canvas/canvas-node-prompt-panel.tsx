@@ -11,7 +11,7 @@ import { modelOptionName, resolveModelChannel, selectableModelsByCapability, use
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
+import { configuredModelDisplayName, declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, modelCompatibilityError, modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -152,6 +152,9 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
         options: modelRequestOptions(config, mode),
         videoSeconds: mode === "video" ? config.videoSeconds : undefined,
     };
+    const currentModelCompatibilityError = !simpleMode && availableModels.length && config.model
+        ? modelCompatibilityError(config, config.model, { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined })
+        : "";
     const promptOptimizerProvider = useMemo(() => {
         if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
@@ -239,7 +242,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const isSubmitDisabled = !isRunning && (!prompt.trim() || Boolean(currentModelCompatibilityError));
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -310,7 +313,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return false;
+        if (!text || isRunning || currentModelCompatibilityError) return false;
         if (referenceCheck.issues.length) {
             setReferenceAction({ type: "locate", token: referenceCheck.issues[0].token, key: Date.now() });
             return false;
@@ -702,6 +705,11 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                     onReplace={(issue) => setReferenceAction({ type: "replace", token: issue.token, key: Date.now() })}
                     onLocateNode={onLocateReferenceNode}
                 />
+                {currentModelCompatibilityError ? (
+                    <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: "var(--status-warning)" }}>
+                        当前模型（{configuredModelDisplayName(config, config.model)}）{currentModelCompatibilityError}，请切换兼容模型或调整已连接的参考素材。
+                    </p>
+                ) : null}
                 {node.metadata?.generationPreflightError ? (
                     <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
                         未开始生成：{node.metadata.generationPreflightError}

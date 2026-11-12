@@ -459,7 +459,7 @@ export function buildVideoGenerationMetadata(
     const declared = safeConfig ? hasDeclaredModelCapability(safeConfig, effectiveModel, "video") : false;
     const fullVideoProfile = safeConfig && effectiveModel ? modelCapabilityConfigFor(safeConfig, effectiveModel).video : undefined;
     const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
-    const { endFrameSupported, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
+    const { maxFrameImages, endFrameSupported, maxFrameAudios, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
     const hasMiddleFrame = middleFrameSupport === "supported" && Boolean(metadata?.videoMiddleFrameNodeId);
     const resolvedOperation = draftTaskId
         ? "draft_to_final"
@@ -479,10 +479,10 @@ export function buildVideoGenerationMetadata(
     const h3 = isH3Model(effectiveModel);
     const allDirectImageNodes =
         connectedImages.length > 0 &&
-        connectedImages.length <= 2 &&
+        connectedImages.length <= maxFrameImages &&
         connectedImages.every((image) => !isIndirectReferenceImage(image));
     const supportsReferenceVideo = !videoProfile || videoProfile.operations.includes("reference_to_video");
-    const nonFrameMediaAttached = !h3 && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > 0 || connectedImages.some(isIndirectReferenceImage));
+    const nonFrameMediaAttached = !h3 && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > maxFrameAudios || connectedImages.some(isIndirectReferenceImage));
     const storedStartFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId)))
         ? undefined
         : metadata?.videoStartFrameNodeId;
@@ -491,12 +491,11 @@ export function buildVideoGenerationMetadata(
         : metadata?.videoEndFrameNodeId;
     const defaultFrames =
         !ignoreFrameSelection &&
-        !h3 &&
         videoEditOperation === "image_to_video" &&
         !storedStartFrame &&
         !storedEndFrame &&
         (context?.referenceVideos.length || 0) === 0 &&
-        (context?.referenceAudios.length || 0) === 0 &&
+        (context?.referenceAudios.length || 0) <= maxFrameAudios &&
         allDirectImageNodes;
     const startFrame = ignoreFrameSelection
         ? undefined

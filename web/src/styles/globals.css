@@ -13140,30 +13140,21 @@ html:not(.dark) .app-workspace-shell.is-creation-workspace .app-workspace-stage 
 .creation-home .creation-reference-track:not(.is-expanded) .creation-reference-stack-card:nth-child(n+4) .creation-reference-card-content { z-index: 1; }
 .creation-home .creation-reference-track:not(.is-expanded) .creation-reference-stack-card:is(:hover, :focus-within) .creation-reference-card-content { z-index: var(--z-popover); }
 .creation-home .creation-reference-track.is-expanded .creation-reference-stack-card { width: 52px; height: 69px; flex-basis: 52px; margin-left: 0; z-index: auto; }
-.creation-home .creation-reference-card-content {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    border: var(--stroke-1) solid var(--creation-border);
-    border-radius: var(--r-sm);
-    background: var(--creation-surface-muted);
-    transform: rotate(var(--stack-rotate, 0deg));
-    transform-origin: center bottom;
-    transition: transform var(--motion-state) var(--motion-ease-out), box-shadow var(--motion-dur-fast-calc) ease;
-}
+.creation-home .creation-reference-card-content { position: relative; width: 100%; height: 100%; overflow: hidden; border: var(--stroke-1) solid var(--creation-border); border-radius: var(--r-sm); background: var(--creation-surface-muted); transform: rotate(var(--stack-rotate, 0deg)); transform-origin: center bottom; transition: transform var(--motion-state) var(--motion-ease-out), box-shadow var(--motion-dur-fast-calc) ease; }
 .creation-home .creation-reference-track.is-expanded .creation-reference-card-content { z-index: auto; transform: rotate(0deg); }
 .creation-home .creation-reference-stack-card[data-framer-dragging="true"] { margin-left: 0; box-shadow: var(--elevation-overlay); z-index: var(--z-popover); }
 .creation-home .creation-reference-stack-card[data-framer-dragging="true"] .creation-reference-card-content { z-index: var(--z-popover); transform: rotate(0deg) scale(1.05); }
 .creation-home .creation-reference-card-preview { display: block; width: 100%; height: 100%; border: 0; background: transparent; padding: 0; cursor: zoom-in; }
-.creation-home .creation-reference-card-preview.is-file { cursor: default; }
+.creation-home .creation-reference-card-preview.is-file { display: flex; cursor: default; }
+.creation-home .creation-reference-card-preview.is-file .creation-chat-file-icon { height: 100%; flex-direction: column; justify-content: center; gap: var(--space-1); padding: var(--space-2) var(--space-1); text-align: center; }
+.creation-home .creation-reference-card-preview.is-file .creation-chat-file-icon em { width: 100%; font-size: var(--fs-micro); }
 .creation-home .creation-reference-card-preview img,
 .creation-home .creation-reference-card-preview video { width: 100%; height: 100%; object-fit: cover; transition: transform var(--motion-dur-fast-calc) var(--motion-ease-out); }
 .creation-home .creation-reference-card-preview:hover img,
 .creation-home .creation-reference-card-preview:hover video { transform: scale(1.04); }
-.creation-home .creation-reference-card-preview > span:not(.cached-resource-image-shell) { position: absolute; right: var(--space-1); bottom: var(--space-1); display: grid; width: var(--space-5); height: var(--space-5); place-items: center; border-radius: var(--r-xs); background: color-mix(in srgb, var(--color-neutral-950) 72%, transparent); color: var(--color-neutral-0); opacity: 0; transition: opacity var(--motion-dur-fast-calc) ease; }
-.creation-home .creation-reference-card-preview:hover > span:not(.cached-resource-image-shell),
-.creation-home .creation-reference-card-preview:focus-visible > span:not(.cached-resource-image-shell) { opacity: 1; }
+.creation-home .creation-reference-card-preview:not(.is-file) > span:not(.cached-resource-image-shell) { position: absolute; right: var(--space-1); bottom: var(--space-1); display: grid; width: var(--space-5); height: var(--space-5); place-items: center; border-radius: var(--r-xs); background: color-mix(in srgb, var(--color-neutral-950) 72%, transparent); color: var(--color-neutral-0); opacity: 0; transition: opacity var(--motion-dur-fast-calc) ease; }
+.creation-home .creation-reference-card-preview:not(.is-file):hover > span:not(.cached-resource-image-shell),
+.creation-home .creation-reference-card-preview:not(.is-file):focus-visible > span:not(.cached-resource-image-shell) { opacity: 1; }
 .creation-home .creation-reference-card-preview > .cached-resource-image-shell { position: static; display: grid; width: 100%; height: 100%; place-items: center; }
 .creation-home .creation-reference-card-preview:focus-visible { outline: var(--stroke-2) solid var(--control-focus-ring); outline-offset: calc(-1 * var(--stroke-2)); }
 .creation-home .creation-reference-card-remove { position: absolute; top: var(--space-1); right: var(--space-1); z-index: 1; display: grid; width: var(--space-5); height: var(--space-5); place-items: center; border: 0; border-radius: var(--r-xs); background: color-mix(in srgb, var(--color-neutral-950) 76%, transparent); color: var(--color-neutral-0); padding: 0; opacity: 0; transition: opacity var(--motion-dur-fast-calc) ease, background-color var(--motion-dur-fast-calc) ease; }

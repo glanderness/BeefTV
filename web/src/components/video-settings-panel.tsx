@@ -97,7 +97,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                     onClick={() => onConfigChange("size", value)}
                                 >
                                     <SizePreview width={ratioPreview(value).width} height={ratioPreview(value).height} color={theme.node.text} />
-                                    <span>{value}</span>
+                                    <span>{value === "adaptive" || value === "auto" ? "自适应" : value}</span>
                                 </button>
                             ))}
                         </div>
@@ -135,7 +135,7 @@ function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, show
                     <div className="grid grid-cols-3 gap-1.5">
                         {profile.ratios.map((value) => (
                             <OptionPill key={value} selected={config.size === value} theme={theme} onClick={() => onConfigChange("size", value)}>
-                                {value}
+                                {value === "adaptive" || value === "auto" ? "自适应" : value}
                             </OptionPill>
                         ))}
                     </div>
@@ -189,7 +189,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-1.5">
                         {(taskConstraints?.ratioLabel ? ["adaptive"] : profile.ratios).map((value) => {
-                            const item = { value, label: taskConstraints?.ratioLabel || value };
+                            const item = { value, label: taskConstraints?.ratioLabel || videoSizeLabel(value) };
                             return (
                                 <button
                                     key={item.value}

@@ -289,3 +289,22 @@ func TestMediaDiscoverRetriesTransientEOF(t *testing.T) {
 		t.Fatalf("discovery=%+v attempts=%d", discovery, attempts)
 	}
 }
+
+func TestReferenceUploadLabelTranslatesProtocolRoles(t *testing.T) {
+	for _, tc := range []struct {
+		kind, role, want string
+	}{
+		{"image", "reference", "参考图片"},
+		{"audio", "reference", "参考音频"},
+		{"video", "reference_video", "参考视频"},
+		{"", "reference", "参考素材"},
+		{"image", "first_frame", "首帧参考图"},
+		{"image", "last_frame", "尾帧参考图"},
+		{"image", "middle_frame", "中间帧参考图"},
+		{"image", "角色1", "角色1"},
+	} {
+		if got := referenceUploadLabel(tc.kind, tc.role); got != tc.want {
+			t.Fatalf("referenceUploadLabel(%q, %q) = %q, want %q", tc.kind, tc.role, got, tc.want)
+		}
+	}
+}

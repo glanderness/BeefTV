@@ -893,4 +893,133 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
         expect(shelfHtml).toContain("取消 图片5 提示词首帧");
         expect(state.promptFirstFrameNodeId).toBe("img-5");
     });
+
+    test("H3 首尾帧默认角色、超限模型内联提示、adaptive 比例文案与上传进度/媒体扩展名去重", async () => {
+        const { buildVideoGenerationMetadata } = await import("../src/lib/canvas/canvas-project-generation");
+        const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+        const { CanvasNodePromptPanel } = await import("../src/components/canvas/canvas-node-prompt-panel");
+        const { VideoSettingsPanel } = await import("../src/components/video-settings-panel");
+        const { buildNodeGenerationContext } = await import("../src/components/canvas/canvas-node-generation");
+        const { formatReferenceUploadProgressDetail } = await import("../src/lib/operation-progress");
+        const { mergeFetchedChannelModelProfiles } = await import("../src/lib/channel-model-catalog");
+        const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../src/stores/use-config-store");
+        const { CanvasNodeType } = await import("../src/types/canvas");
+
+        const beeftvChannel = createModelChannel({
+            id: "beeftv",
+            name: "BeefTV",
+            scope: "system",
+            pinned: true,
+            credentialRef: "beeftv",
+            baseUrl: "https://beeftv.app/v1",
+            models: ["minimax-h3-max", "wan3.0-video"],
+        });
+        const singleFrameOnlyItem = {
+            ...managedVideoCatalogItem("wan3.0-video"),
+            id: "single-frame-video",
+            displayName: "Single Frame Video",
+            videoCapabilities: {
+                ...managedVideoCatalogItem("wan3.0-video").videoCapabilities!,
+                operations: ["text_to_video", "image_to_video"],
+                ratios: ["adaptive", "16:9"],
+                references: { minImages: 0, maxImages: 1, maxVideos: 0, maxAudios: 0 },
+                operationReferences: { image_to_video: { minImages: 1, maxImages: 1, maxVideos: 0, maxAudios: 0 } },
+            },
+        };
+        beeftvChannel.models.push("single-frame-video");
+        beeftvChannel.modelProfiles = mergeFetchedChannelModelProfiles(beeftvChannel, [
+            managedVideoCatalogItem("minimax-h3-max"),
+            managedVideoCatalogItem("wan3.0-video"),
+            singleFrameOnlyItem,
+        ]);
+        const h3Config = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::minimax-h3-max", videoModel: "beeftv::minimax-h3-max" },
+        }).config;
+        const twoImageNodes = ["img-1", "img-2"].map((id, index) => ({
+            id,
+            name: `${id}.png`,
+            type: "image/png",
+            dataUrl: `https://example.com/${id}.png`,
+            position: { x: index * 10, y: 0 },
+        }));
+        const h3TwoFramesWithAudio = buildVideoGenerationMetadata(
+            {
+                id: "vid-h3-pair",
+                type: CanvasNodeType.Video,
+                title: "Video",
+                position: { x: 0, y: 100 },
+                width: 100,
+                height: 100,
+                metadata: { model: "beeftv::minimax-h3-max" },
+            },
+            {
+                referenceImages: twoImageNodes,
+                referenceVideos: [],
+                referenceAudios: [{ id: "aud-1", name: "voice.mp3", type: "audio/mpeg", url: "https://example.com/voice.mp3" }],
+            },
+            h3Config,
+        );
+        expect(h3TwoFramesWithAudio.videoEditOperation).toBe("image_to_video");
+        expect(h3TwoFramesWithAudio.videoStartFrameNodeId).toBe("img-1");
+        expect(h3TwoFramesWithAudio.videoEndFrameNodeId).toBe("img-2");
+
+        const singleFrameConfig = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::single-frame-video", videoModel: "beeftv::single-frame-video" },
+        }).config;
+        const incompatiblePanelHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={{
+                        id: "vid-incompatible",
+                        type: CanvasNodeType.Video,
+                        title: "Video",
+                        position: { x: 0, y: 0 },
+                        width: 320,
+                        height: 180,
+                        metadata: { model: "beeftv::single-frame-video", prompt: "测试镜头" },
+                    }}
+                    config={singleFrameConfig}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={makeImageRefs(2)}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(incompatiblePanelHtml).toContain("最多支持 1 张参考图");
+        expect(incompatiblePanelHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const settingsHtml = renderToStaticMarkup(
+            <VideoSettingsPanel config={singleFrameConfig} theme={canvasThemes.dark} onConfigChange={() => {}} />,
+        );
+        expect(settingsHtml).toContain("自适应");
+        expect(settingsHtml).not.toContain(">adaptive<");
+
+        expect(formatReferenceUploadProgressDetail("transferring", "reference")).toBe("正在上传参考素材");
+        expect(formatReferenceUploadProgressDetail("processing", "first_frame")).toBe("正在确认首帧参考图");
+        expect(formatReferenceUploadProgressDetail("preparing", "reference_audio")).toBe("正在准备参考音频");
+
+        const mediaNodes = [
+            { id: "aud-node", type: CanvasNodeType.Audio, title: "sample.mp3", position: { x: 0, y: 0 }, width: 120, height: 80, metadata: { content: "https://example.com/sample.mp3" } },
+            { id: "aud-bare", type: CanvasNodeType.Audio, title: "voice", position: { x: 0, y: 50 }, width: 120, height: 80, metadata: { content: "https://example.com/voice" } },
+            { id: "vid-node", type: CanvasNodeType.Video, title: "clip.mp4", position: { x: 0, y: 100 }, width: 120, height: 80, metadata: { content: "https://example.com/clip.mp4" } },
+            { id: "target-vid", type: CanvasNodeType.Video, title: "Target", position: { x: 200, y: 0 }, width: 320, height: 180, metadata: {} },
+        ];
+        const genCtx = buildNodeGenerationContext(
+            "target-vid",
+            mediaNodes,
+            [
+                { id: "c1", fromNodeId: "aud-node", toNodeId: "target-vid" },
+                { id: "c2", fromNodeId: "aud-bare", toNodeId: "target-vid" },
+                { id: "c3", fromNodeId: "vid-node", toNodeId: "target-vid" },
+            ],
+            "@[node:aud-node] @[node:aud-bare] @[node:vid-node]",
+            [],
+        );
+        expect(genCtx.referenceAudios[0]?.name).toBe("sample.mp3");
+        expect(genCtx.referenceAudios[1]?.name).toBe("voice.mp3");
+        expect(genCtx.referenceVideos[0]?.name).toBe("clip.mp4");
+    });
 });

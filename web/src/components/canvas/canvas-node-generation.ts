@@ -779,11 +779,17 @@ function readReferenceImage(node: CanvasNodeData, nodes: CanvasNodeData[], conne
     return nodeReferenceImage(node);
 }
 
+function ensureMediaFileExtension(rawName: string, fallbackExtension: string, knownExtensions: RegExp) {
+    const trimmed = rawName.trim();
+    if (!trimmed) return `media${fallbackExtension}`;
+    return knownExtensions.test(trimmed) ? trimmed : `${trimmed}${fallbackExtension}`;
+}
+
 function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
     if (node.type !== CanvasNodeType.Video || (!node.metadata?.content && !node.metadata?.storageKey)) return null;
     return {
         id: node.id,
-        name: `${node.title || node.id}.mp4`,
+        name: ensureMediaFileExtension(node.title || node.id, ".mp4", /\.(mp4|mov|webm|m4v|mkv|avi)$/i),
         type: node.metadata.mimeType || "video/mp4",
         url: node.metadata.content || "",
         storageKey: node.metadata.storageKey,
@@ -798,7 +804,7 @@ function readReferenceAudio(node: CanvasNodeData): ReferenceAudio | null {
     if (node.type !== CanvasNodeType.Audio || (!node.metadata?.content && !node.metadata?.storageKey)) return null;
     return {
         id: node.id,
-        name: `${node.title || node.id}.mp3`,
+        name: ensureMediaFileExtension(node.title || node.id, ".mp3", /\.(mp3|wav|m4a|ogg|flac|aac|opus|webm)$/i),
         type: node.metadata.mimeType || "audio/mpeg",
         url: node.metadata.content || "",
         storageKey: node.metadata.storageKey,

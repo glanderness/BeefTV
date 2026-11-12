@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
 import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
+import { canvasPopoverLayer, notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } from "@/lib/canvas/canvas-popover-layer";
 import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
@@ -27,6 +27,7 @@ type CanvasImageSettingsPopoverProps = {
 
 export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft", showCount = true, summaryOverride }: CanvasImageSettingsPopoverProps) {
     const theme = canvasThemes[useActiveTheme()];
+    const popoverId = useId();
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
@@ -45,6 +46,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const summary = summaryOverride || summaryParts.join(" · ");
     const hasSettings = profile.size.parameter !== "none" || profile.quality.supported || profile.transparentBackground.supported || (showCount && profile.maxOutputs > 1);
     const updateOpen = (nextOpen: boolean) => {
+        if (nextOpen) notifyCanvasPopoverOpen(popoverId);
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
     };
@@ -65,12 +67,17 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         window.addEventListener("resize", syncPosition);
         window.addEventListener("scroll", syncPosition, true);
         window.addEventListener("pointerdown", closeOnOutsidePointer, true);
+        const unsubscribeCanvasPopover = subscribeCanvasPopoverOpen(popoverId, () => {
+            setOpen(false);
+            onOpenChange?.(false);
+        });
         return () => {
             window.removeEventListener("resize", syncPosition);
             window.removeEventListener("scroll", syncPosition, true);
             window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+            unsubscribeCanvasPopover();
         };
-    }, [onOpenChange, open]);
+    }, [onOpenChange, open, popoverId]);
 
     const panel = open && buttonRect ? <ImageSettingsPortal layer={canvasPopoverLayer(buttonRef.current)} buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} showCount={showCount} onConfigChange={onConfigChange} /> : null;
 
