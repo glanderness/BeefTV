@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 
@@ -6,7 +6,9 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { batchInputColumns, batchPromptForRow, batchReferenceColumns, batchReferenceHandleId, createBatchRowsFromColumns, createInheritedBatchRow, moveBatchReferenceCell, removeLastBatchReferenceColumn, reorderBatchReferenceColumns } from "@/lib/canvas/canvas-batch-table";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { buildGenerationConfig, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { batchTableCostTargets } from "@/lib/generation-cost-estimate";
 import { navigateToSettings } from "@/lib/settings-navigation";
+import { estimateGenerationCost } from "@/services/api/cost-estimate";
 import { modelDisplayName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasBatchRow, type CanvasBatchTableData, type CanvasConnection, type CanvasGenerationBatchMode, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
@@ -25,6 +27,12 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
     const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
+    const batchLifetime = useRef(new AbortController());
+    useEffect(() => {
+        const controller = new AbortController();
+        batchLifetime.current = controller;
+        return () => controller.abort();
+    }, [projectId]);
 
     const patchTable = useCallback((nodeId: string, patch: Partial<CanvasBatchTableData>) => {
         setNodes((current) => current.map((node) => node.id !== nodeId ? node : { ...node, metadata: { ...node.metadata, batchTable: { operation: "try_on", concurrency: 10, rows: [], ...node.metadata?.batchTable, ...patch } } }));
@@ -139,9 +147,13 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
             return !output?.metadata?.content;
         });
         if (!rows.length) return message.info("没有可提交的未完成任务，请检查参考图和提示词");
+        const cost = await estimateGenerationCost(batchTableCostTargets(effectiveConfig, rows, nodesRef.current), batchLifetime.current.signal).then(
+            (estimate) => estimate.summary.text,
+            () => "预计费用：暂时算不出，按所选渠道实际计费",
+        );
         const confirmed = await new Promise<boolean>((resolve) => modal.confirm({
             title: `确认提交 ${rows.length} 个批量图片任务`,
-            content: `模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}。这些任务可能消耗积分或产生外部模型费用。`,
+            content: [`模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}`, cost, "这些任务可能消耗积分或产生外部模型费用"].filter(Boolean).join("。") + "。",
             okText: "确认生成",
             cancelText: "取消",
             centered: true,

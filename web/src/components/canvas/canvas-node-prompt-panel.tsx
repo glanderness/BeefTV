@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import { ArrowLeftRight, ArrowUp, Boxes, Camera, ChevronDown, FileText, ImagePlus, Link2, LoaderCircle, Maximize2, Music2, SlidersHorizontal, Video, WandSparkles, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { GenerationCostLabel, useGenerationCostEstimate } from "@/components/generation/generation-cost-badge";
+import { canvasNodeCostTarget, formatInlineCostEstimate } from "@/lib/generation-cost-estimate";
 import { modelCapabilityConfigFor, videoReferencesForOperation } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
@@ -153,6 +155,18 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
     const priceChannel = resolveModelChannel(config, config.model);
+    const costTarget = useMemo(
+        () => canvasNodeCostTarget({
+            mode,
+            config,
+            referenceImages: (requirements.input?.imageCount || 0) + (requirements.input?.characterCount || 0),
+            referenceVideos: requirements.input?.videoCount || 0,
+            prompt,
+        }),
+        [config, mode, prompt, requirements.input?.characterCount, requirements.input?.imageCount, requirements.input?.videoCount],
+    );
+    const costEstimate = useGenerationCostEstimate(costTarget, { refreshKey: priceChannel.modelProfiles?.length || 0 });
+    const costDisplay = useMemo(() => formatInlineCostEstimate(costEstimate), [costEstimate]);
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
     const h3Model = isH3Model(config.model);
@@ -431,7 +445,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const renderSubmitButton = (expanded: boolean) => {
         const actionLabel = isRunning ? "生成中" : "生成";
-        return (
+        const button = (
             <Button
                 type="text"
                 className="canvas-node-composer-submit canvas-node-composer-submit-canvas"
@@ -451,6 +465,17 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     {isRunning ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <ArrowUp className="size-3.5" strokeWidth={2.4} />}
                 </span>
             </Button>
+        );
+        if (!costDisplay) return button;
+        return (
+            <div className="inline-flex h-8 shrink-0 items-center rounded-full pl-2.5" style={{ background: controlSurface }}>
+                <GenerationCostLabel
+                    display={costDisplay}
+                    className="canvas-node-composer-submit-cost pr-1 text-[var(--fs-caption)] font-medium"
+                    style={{ color: isSubmitDisabled ? theme.node.muted : theme.node.text }}
+                />
+                {button}
+            </div>
         );
     };
 
@@ -475,7 +500,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             </div>
         ) : (
             <div className="canvas-node-composer-footer">
-                <div className={expanded ? "min-w-0 flex-1" : "canvas-node-composer-model"}>
+                <div className={expanded ? "min-w-0 flex-1" : costDisplay ? "canvas-node-composer-model !min-w-24" : "canvas-node-composer-model"}>
                     {availableModels.length ? (
                         <ModelPicker
                             className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
