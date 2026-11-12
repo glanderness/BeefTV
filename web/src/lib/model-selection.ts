@@ -483,9 +483,10 @@ export function isBeefTVModelRoute(model: string, config?: Partial<AiConfig>): b
     const optionName = modelOptionName(trimmed);
     if (!optionName) return false;
     if (config?.channels?.length) {
+        if (!hasPrefix || !channelId) return false;
         const hasModel = (item: AiConfig["channels"][number]) =>
             item.models.includes(optionName) || Boolean(item.modelProfiles?.some((profile) => profile.model === optionName));
-        const matched = hasPrefix ? channelForId(config.channels, channelId) : config.channels.find(hasModel);
+        const matched = channelForId(config.channels, channelId);
         const channel = matched && hasModel(matched) ? matched : undefined;
         if (!channel) return false;
         return isBeefTVEndpoint(channel.baseUrl || "") || (!channel.baseUrl?.trim() && channel.id.trim().toLowerCase() === "beeftv");

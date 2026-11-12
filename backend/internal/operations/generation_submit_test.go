@@ -417,11 +417,25 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	staleRemovedShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
 	staleRemovedShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
 
+	unqualifiedKlingShot := imageNode("unqualified-kling-shot", "kling-video-v3")
+	unqualifiedKlingShot["type"] = "video"
+	unqualifiedKlingShot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	unqualifiedKlingShot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	unqualifiedKlingShot["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-2"
+
+	unqualifiedH3MaxShot := imageNode("unqualified-h3max-shot", "minimax-h3-max")
+	unqualifiedH3MaxShot["type"] = "video"
+	unqualifiedH3MaxShot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	unqualifiedH3MaxShot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	unqualifiedH3MaxShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	unqualifiedH3MaxShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+
 	allNodes := []map[string]any{
 		img1, img2, img3, aud1, aud2, charCard, drawingRef, colorgradeRef, convVideoRef,
 		wanVideo, agnesVideo, klingVideo, hostedH3Lip, h3FrameAudio, h3MidFrame, switchedFromH3, charAndDrawShot, convVideoShot,
 		versionedH3Lip, versionedH3TwoAudio, liveH3MaxMid, omniH3MaxMid, overrideH3MaxNoMid, opaqueCustomShot,
 		customH3MaxShot, customKlingShot, partialOpRefH3Shot, emptyOpRefH3Shot, frame9ThreeImgShot, staleRemovedShot,
+		unqualifiedKlingShot, unqualifiedH3MaxShot,
 	}
 	rawNodes := make([]any, 0, len(allNodes))
 	for _, item := range allNodes {
@@ -479,6 +493,10 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			map[string]any{"fromNodeId": "img-3", "toNodeId": "frame9-over-limit"},
 			map[string]any{"fromNodeId": "img-1", "toNodeId": "stale-removed-h3"},
 			map[string]any{"fromNodeId": "img-2", "toNodeId": "stale-removed-h3"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "unqualified-kling-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "unqualified-kling-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "unqualified-h3max-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "unqualified-h3max-shot"},
 		},
 	}
 
@@ -494,6 +512,7 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		"wan-shot", "agnes-shot", "kling-shot", "hosted-h3-lip", "h3-lip-shot", "h3-mid-shot", "wan-from-h3", "char-draw-shot", "conv-video-shot",
 		"versioned-h3-lip", "versioned-h3-2aud", "live-h3max-mid", "omni-h3max-mid", "override-h3max-nomid", "opaque-custom-shot",
 		"custom-h3max-shot", "custom-kling-shot", "partial-opref-h3", "empty-opref-h3", "stale-removed-h3",
+		"unqualified-kling-shot", "unqualified-h3max-shot",
 	}
 	targets, err := GenerationTargets(probe, doc, shotIDs)
 	if err != nil {
@@ -629,6 +648,15 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	}
 	if got := byID["stale-removed-h3"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
 		t.Fatalf("stale-removed-h3 treated as declared or contracted model: %q", got)
+	}
+	if got := byID["unqualified-kling-shot"].Parameters["videoEndFrameNodeId"]; got != "img-2" {
+		t.Fatalf("unqualified-kling-shot matched managed catalog without channel prefix: %q", got)
+	}
+	if got := byID["unqualified-h3max-shot"].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("unqualified-h3max-shot matched managed catalog without channel prefix: %v", got)
+	}
+	if got := byID["unqualified-h3max-shot"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
+		t.Fatalf("unqualified-h3max-shot stripped middle frame as declared model: %q", got)
 	}
 	if _, err := GenerationTargets(probe, doc, []string{"frame9-over-limit"}); err == nil || !strings.Contains(err.Error(), "最多支持 2 张首尾帧参考图") {
 		t.Fatalf("frame9-over-limit expected frame image limit error, got %v", err)

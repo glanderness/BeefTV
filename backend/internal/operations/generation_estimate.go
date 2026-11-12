@@ -125,11 +125,11 @@ func findEstimateModel(catalog *modelcatalog.CatalogResponse, modelKey string) (
 	if i := strings.Index(shortKey, "::"); i >= 0 {
 		channelID, shortKey = strings.TrimSpace(shortKey[:i]), strings.TrimSpace(shortKey[i+2:])
 	}
-	if shortKey == "" {
+	if channelID == "" || shortKey == "" {
 		return "", modelcatalog.PublicChannelModel{}, false
 	}
 	for _, channel := range catalog.Channels {
-		if channelID != "" && channel.ID != channelID {
+		if channel.ID != channelID {
 			continue
 		}
 		for _, model := range channel.Models {

@@ -641,9 +641,23 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
             ),
         ).toBe("reference_to_video");
 
-        // 严格路由判定：无配置未加前缀或已移除模型均不得误判为 BeefTV 托管路由
+        // 严格路由判定：有渠道列表时未加渠道前缀的模型（无论渠道顺序如何）或已移除模型均不得误判为 BeefTV 托管路由
+        const customDupChannel = createModelChannel({
+            id: "custom-dup",
+            name: "Custom Dup",
+            baseUrl: "https://custom.example/v1",
+            models: ["minimax-h3-max", "kling-video-v3"],
+        });
+        const beeftvWithKlingChannel = createModelChannel({
+            ...channel,
+            models: [...channel.models, "kling-video-v3"],
+        });
         expect(isBeefTVModelRoute("minimax-h3-max")).toBe(false);
         expect(isBeefTVModelRoute("minimax-h3-max", defaultConfig)).toBe(false);
+        expect(isBeefTVModelRoute("minimax-h3-max", { ...defaultConfig, baseUrl: "https://beeftv.app/v1" })).toBe(true);
+        expect(isBeefTVModelRoute("minimax-h3-max", nextConfig)).toBe(false);
+        expect(isBeefTVModelRoute("kling-video-v3", { ...nextConfig, channels: [beeftvWithKlingChannel, customDupChannel] })).toBe(false);
+        expect(isBeefTVModelRoute("minimax-h3-max", { ...nextConfig, channels: [customDupChannel, beeftvWithKlingChannel] })).toBe(false);
         expect(isBeefTVModelRoute("custom::removed-model", nextConfig)).toBe(false);
         expect(isBeefTVModelRoute("beeftv::removed-model", nextConfig)).toBe(false);
         expect(isBeefTVModelRoute("beeftv::wan3.0-video", nextConfig)).toBe(true);
