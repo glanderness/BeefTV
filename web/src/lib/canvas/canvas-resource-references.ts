@@ -89,6 +89,72 @@ export function canvasGenerationMentionMatches(prompt: string) {
         .filter((match) => !match[3] || hasCanvasMentionBoundary(prompt, (match.index || 0) + match[0].length));
 }
 
+export function selectSubmittedCanvasReferences(
+    prompt: string,
+    references: CanvasResourceReference[],
+    assetReferences: CanvasResourceReference[] = [],
+    frameNodeIds: Array<string | undefined> = [],
+    selfNodeId?: string,
+): CanvasResourceReference[] {
+    const eligible = references.filter((item) => item.active && item.kind !== "skill");
+    const assets = assetReferences.filter((item) => item.kind !== "skill");
+    const byNodeId = new Map<string, CanvasResourceReference>();
+    const byAssetId = new Map<string, CanvasResourceReference>();
+    const bySlotToken = new Map<string, CanvasResourceReference>();
+    const slotCounts: Record<CanvasResourceKind | "drawing", number> = { image: 0, drawing: 0, video: 0, audio: 0, text: 0, character: 0, skill: 0 };
+    eligible.forEach((item) => {
+        if (item.assetId) {
+            byAssetId.set(item.assetId, item);
+            return;
+        }
+        if (item.nodeId) byNodeId.set(item.nodeId, item);
+        const slotKind = item.drawingId ? "drawing" : item.kind;
+        const slotLabel = slotKind === "drawing" ? `绘图${++slotCounts.drawing}` : labelForKind(slotKind, slotCounts[slotKind]++);
+        bySlotToken.set(`@${slotLabel}`, item);
+        if (item.label && !bySlotToken.has(`@${item.label}`)) bySlotToken.set(`@${item.label}`, item);
+    });
+    assets.forEach((item) => {
+        if (item.assetId && !byAssetId.has(item.assetId)) byAssetId.set(item.assetId, item);
+    });
+
+    const selected: CanvasResourceReference[] = [];
+    const seenKeys = new Set<string>();
+    const addSelected = (item: CanvasResourceReference) => {
+        const key = item.assetId ? `asset:${item.assetId}` : `node:${item.nodeId || item.id}`;
+        if (seenKeys.has(key)) return;
+        seenKeys.add(key);
+        selected.push(item);
+    };
+    let hasResolvedMention = false;
+    for (const match of canvasGenerationMentionMatches(prompt)) {
+        const resolved = match[3]
+            ? bySlotToken.get(match[0])
+            : match[1] === "node"
+              ? byNodeId.get(match[2]!)
+              : match[1] === "asset"
+                ? byAssetId.get(match[2]!)
+                : undefined;
+        if (!resolved) continue;
+        hasResolvedMention = true;
+        addSelected(resolved);
+        if (resolved.kind === "text" && resolved.text) {
+            for (const nested of resolved.text.matchAll(/@\[(node|asset):([^\]]+)\]/gu)) {
+                const mediaRef = nested[1] === "node" ? byNodeId.get(nested[2]!) : byAssetId.get(nested[2]!);
+                if (mediaRef && (mediaRef.kind === "image" || mediaRef.kind === "video" || mediaRef.kind === "audio")) {
+                    addSelected(mediaRef);
+                }
+            }
+        }
+    }
+    if (!hasResolvedMention) return eligible.filter((item) => !selfNodeId || item.nodeId !== selfNodeId);
+    frameNodeIds.forEach((nodeId) => {
+        if (!nodeId) return;
+        const frameRef = byNodeId.get(nodeId);
+        if (frameRef?.kind === "image") addSelected(frameRef);
+    });
+    return selected;
+}
+
 export function hasCanvasMentionBoundary(value: string, index: number) {
     const next = value[index];
     return !next || /\s|[,.!?;:，。！？；：、)\]}】）`"'|]/.test(next);

@@ -301,6 +301,11 @@ func TestReferenceUploadLabelTranslatesProtocolRoles(t *testing.T) {
 		{"image", "first_frame", "首帧参考图"},
 		{"image", "last_frame", "尾帧参考图"},
 		{"image", "middle_frame", "中间帧参考图"},
+		{"image", "edit_source", "编辑源图"},
+		{"image", "source", "源图片"},
+		{"video", "source", "源视频"},
+		{"audio", "source", "源音频"},
+		{"", "source", "源素材"},
 		{"image", "角色1", "角色1"},
 	} {
 		if got := referenceUploadLabel(tc.kind, tc.role); got != tc.want {

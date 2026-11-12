@@ -1000,6 +1000,8 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
         expect(formatReferenceUploadProgressDetail("transferring", "reference")).toBe("正在上传参考素材");
         expect(formatReferenceUploadProgressDetail("processing", "first_frame")).toBe("正在确认首帧参考图");
         expect(formatReferenceUploadProgressDetail("preparing", "reference_audio")).toBe("正在准备参考音频");
+        expect(formatReferenceUploadProgressDetail("transferring", "source")).toBe("正在上传源素材");
+        expect(formatReferenceUploadProgressDetail("transferring", "edit_source")).toBe("正在上传编辑源图");
 
         const mediaNodes = [
             { id: "aud-node", type: CanvasNodeType.Audio, title: "sample.mp3", position: { x: 0, y: 0 }, width: 120, height: 80, metadata: { content: "https://example.com/sample.mp3" } },
@@ -1021,5 +1023,235 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
         expect(genCtx.referenceAudios[0]?.name).toBe("sample.mp3");
         expect(genCtx.referenceAudios[1]?.name).toBe("voice.mp3");
         expect(genCtx.referenceVideos[0]?.name).toBe("clip.mp4");
+    });
+
+    test("显式 @ 子集与素材库引用兼容门禁、ModelPicker 告警、浮层互斥、无封面播放按钮与 auto 比例预览", async () => {
+        const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+        const { CanvasNodePromptPanel } = await import("../src/components/canvas/canvas-node-prompt-panel");
+        const { InactiveVideoPreview } = await import("../src/components/canvas/canvas-node-content");
+        const { ModelPicker } = await import("../src/components/model-picker");
+        const { VideoSettingsPanel } = await import("../src/components/video-settings-panel");
+        const { notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } = await import("../src/lib/canvas/canvas-popover-layer");
+        const { mergeFetchedChannelModelProfiles } = await import("../src/lib/channel-model-catalog");
+        const { useAssetStore } = await import("../src/stores/use-asset-store");
+        const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../src/stores/use-config-store");
+        const { CanvasNodeType } = await import("../src/types/canvas");
+
+        const beeftvChannel = createModelChannel({
+            id: "beeftv",
+            name: "BeefTV",
+            scope: "system",
+            pinned: true,
+            credentialRef: "beeftv",
+            baseUrl: "https://beeftv.app/v1",
+            models: ["minimax-h3-max", "single-frame-video"],
+        });
+        const singleFrameOnlyItem = {
+            ...managedVideoCatalogItem("wan3.0-video"),
+            id: "single-frame-video",
+            displayName: "Single Frame Video",
+            videoCapabilities: {
+                ...managedVideoCatalogItem("wan3.0-video").videoCapabilities!,
+                operations: ["text_to_video", "image_to_video"],
+                ratios: ["auto", "adaptive", "16:9"],
+                references: { minImages: 0, maxImages: 1, maxVideos: 0, maxAudios: 0 },
+                operationReferences: { image_to_video: { minImages: 1, maxImages: 1, maxVideos: 0, maxAudios: 0 } },
+            },
+        };
+        beeftvChannel.modelProfiles = mergeFetchedChannelModelProfiles(beeftvChannel, [
+            managedVideoCatalogItem("minimax-h3-max"),
+            singleFrameOnlyItem,
+        ]);
+        const h3Config = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::minimax-h3-max", videoModel: "beeftv::minimax-h3-max" },
+        }).config;
+        const singleFrameConfig = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::single-frame-video", videoModel: "beeftv::single-frame-video" },
+        }).config;
+
+        const h3SubsetHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={{
+                        id: "vid-h3-subset",
+                        type: CanvasNodeType.Video,
+                        title: "Video",
+                        position: { x: 0, y: 0 },
+                        width: 320,
+                        height: 180,
+                        metadata: { model: "beeftv::minimax-h3-max", prompt: "@[node:img-1] @[node:img-2] 推镜" },
+                    }}
+                    config={h3Config}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={makeImageRefs(5)}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(h3SubsetHtml).not.toContain("最多支持");
+        expect(h3SubsetHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const textOnlyMentionHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={{
+                        id: "vid-text-only",
+                        type: CanvasNodeType.Video,
+                        title: "Video",
+                        position: { x: 0, y: 0 },
+                        width: 320,
+                        height: 180,
+                        metadata: { model: "beeftv::single-frame-video", prompt: "@[node:txt-1] 按分镜生成" },
+                    }}
+                    config={singleFrameConfig}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={[
+                        ...makeImageRefs(5),
+                        { id: "txt-1", nodeId: "txt-1", kind: "text", label: "文本1", title: "分镜脚本", text: "夜景雨巷", active: true },
+                    ]}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(textOnlyMentionHtml).not.toContain("最多支持");
+        expect(textOnlyMentionHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const selfVideoRegenHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={{
+                        id: "vid-self",
+                        type: CanvasNodeType.Video,
+                        title: "Video",
+                        position: { x: 0, y: 0 },
+                        width: 320,
+                        height: 180,
+                        metadata: { model: "beeftv::single-frame-video", prompt: "重新生成新镜头", content: "https://example.com/old.mp4" },
+                    }}
+                    config={singleFrameConfig}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={[{ id: "vid-self", nodeId: "vid-self", kind: "video", label: "视频1", title: "Video", active: true }]}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(selfVideoRegenHtml).not.toContain("不支持参考视频");
+        expect(selfVideoRegenHtml).not.toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const prevAssets = useAssetStore.getState().assets;
+        const prevInitialAssets = useAssetStore.getInitialState().assets;
+        try {
+            const now = "2026-11-12T00:00:00.000Z";
+            const mockAssets = ["asset-1", "asset-2"].map((id, idx) => ({
+                id,
+                kind: "image" as const,
+                title: `素材图${idx + 1}`,
+                coverUrl: `https://example.com/${id}.png`,
+                tags: [],
+                createdAt: now,
+                updatedAt: now,
+                data: { dataUrl: `https://example.com/${id}.png`, width: 512, height: 512, bytes: 1024, mimeType: "image/png" },
+            }));
+            useAssetStore.getInitialState().assets = mockAssets;
+            useAssetStore.setState({ assets: mockAssets });
+            const assetOverflowHtml = renderToStaticMarkup(
+                <QueryClientProvider client={new QueryClient()}>
+                    <CanvasNodePromptPanel
+                        node={{
+                            id: "vid-asset-overflow",
+                            type: CanvasNodeType.Video,
+                            title: "Video",
+                            position: { x: 0, y: 0 },
+                            width: 320,
+                            height: 180,
+                            metadata: { model: "beeftv::single-frame-video", prompt: "@[asset:asset-1] @[asset:asset-2] 双图运动" },
+                        }}
+                        config={singleFrameConfig}
+                        projectId="proj-1"
+                        isRunning={false}
+                        mentionReferences={[]}
+                        onPromptChange={() => {}}
+                        onConfigChange={() => {}}
+                        onGenerate={() => {}}
+                    />
+                </QueryClientProvider>,
+            );
+            expect(assetOverflowHtml).toContain("最多支持 1 张参考图");
+            expect(assetOverflowHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+        } finally {
+            useAssetStore.getInitialState().assets = prevInitialAssets;
+            useAssetStore.setState({ assets: prevAssets });
+        }
+
+        const pickerWarningHtml = renderToStaticMarkup(
+            <ModelPicker
+                config={singleFrameConfig}
+                value="beeftv::single-frame-video"
+                capability="video"
+                requirements={{ capability: "video", input: { textCount: 1, imageCount: 2, videoCount: 0, audioCount: 0, characterCount: 0 } }}
+                onChange={() => {}}
+            />,
+        );
+        expect(pickerWarningHtml).toContain('aria-invalid="true"');
+        expect(pickerWarningHtml).toContain("最多支持 1 张参考图");
+
+        const hadWindow = "window" in globalThis;
+        const previousWindow = (globalThis as { window?: unknown }).window;
+        if (!hadWindow || !previousWindow) {
+            (globalThis as { window?: unknown }).window = new EventTarget();
+        }
+        try {
+            let closedCount = 0;
+            const unsubscribe = subscribeCanvasPopoverOpen("video-settings", () => {
+                closedCount += 1;
+            });
+            notifyCanvasPopoverOpen("video-settings");
+            expect(closedCount).toBe(0);
+            notifyCanvasPopoverOpen("model-picker");
+            expect(closedCount).toBe(1);
+            unsubscribe();
+            notifyCanvasPopoverOpen("model-picker");
+            expect(closedCount).toBe(1);
+        } finally {
+            if (!hadWindow) delete (globalThis as { window?: unknown }).window;
+            else (globalThis as { window?: unknown }).window = previousWindow;
+        }
+
+        const inactiveVideoHtml = renderToStaticMarkup(
+            <InactiveVideoPreview
+                node={{
+                    id: "vid-inactive",
+                    type: CanvasNodeType.Video,
+                    title: "测试成片",
+                    position: { x: 0, y: 0 },
+                    width: 320,
+                    height: 180,
+                    metadata: { content: "https://example.com/out.mp4" },
+                }}
+                theme={canvasThemes.dark}
+                hoverEnabled={false}
+                onPlay={() => {}}
+            />,
+        );
+        expect(inactiveVideoHtml).toContain('aria-label="播放 测试成片"');
+        expect(inactiveVideoHtml).not.toContain("absolute left-1/2 top-1/2");
+        expect(inactiveVideoHtml.indexOf('aria-label="播放 测试成片"')).toBeLessThan(inactiveVideoHtml.indexOf('title="测试成片"'));
+
+        const autoAndAdaptiveSettingsHtml = renderToStaticMarkup(
+            <VideoSettingsPanel config={singleFrameConfig} theme={canvasThemes.dark} onConfigChange={() => {}} />,
+        );
+        expect(autoAndAdaptiveSettingsHtml.match(/>自适应</g)?.length).toBe(2);
+        expect(autoAndAdaptiveSettingsHtml).not.toContain(">auto<");
+        expect(autoAndAdaptiveSettingsHtml).not.toContain(">adaptive<");
+        expect(autoAndAdaptiveSettingsHtml.match(/rounded-\[2px\]/g)?.length).toBe(1);
     });
 });

@@ -97,7 +97,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                     onClick={() => onConfigChange("size", value)}
                                 >
                                     <SizePreview width={ratioPreview(value).width} height={ratioPreview(value).height} color={theme.node.text} />
-                                    <span>{value === "adaptive" || value === "auto" ? "自适应" : value}</span>
+                                    <span>{videoSizeLabel(value)}</span>
                                 </button>
                             ))}
                         </div>
@@ -135,7 +135,7 @@ function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, show
                     <div className="grid grid-cols-3 gap-1.5">
                         {profile.ratios.map((value) => (
                             <OptionPill key={value} selected={config.size === value} theme={theme} onClick={() => onConfigChange("size", value)}>
-                                {value === "adaptive" || value === "auto" ? "自适应" : value}
+                                {videoSizeLabel(value)}
                             </OptionPill>
                         ))}
                     </div>
@@ -418,7 +418,7 @@ function ratioPreview(ratio: string) {
     if (ratio === "4:3") return { width: 4, height: 3 };
     if (ratio === "3:4") return { width: 3, height: 4 };
     if (ratio === "21:9") return { width: 21, height: 9 };
-    if (ratio === "adaptive") return { width: 0, height: 0 };
+    if (ratio === "adaptive" || ratio === "auto") return { width: 0, height: 0 };
     return { width: 16, height: 9 };
 }
 

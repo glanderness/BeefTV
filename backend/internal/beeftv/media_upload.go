@@ -643,6 +643,19 @@ func referenceUploadLabel(kind, role string) string {
 		return "中间帧参考图"
 	case "mask":
 		return "局部蒙版"
+	case "edit_source":
+		return "编辑源图"
+	case "source":
+		switch kind {
+		case "image":
+			return "源图片"
+		case "video":
+			return "源视频"
+		case "audio":
+			return "源音频"
+		default:
+			return "源素材"
+		}
 	case "", "reference", "reference_image", "reference_video", "reference_audio":
 		switch kind {
 		case "image":

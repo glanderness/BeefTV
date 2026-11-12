@@ -98,6 +98,10 @@ export function normalizeReferenceProgressLabel(label?: string) {
             return "中间帧参考图";
         case "mask":
             return "局部蒙版";
+        case "source":
+            return "源素材";
+        case "edit_source":
+            return "编辑源图";
         default:
             return trimmed;
     }

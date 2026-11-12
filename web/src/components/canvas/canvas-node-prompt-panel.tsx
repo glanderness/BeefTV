@@ -32,7 +32,7 @@ import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-pic
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
-import { autoMentionCanvasResourceReferences, buildCanvasResourceReferences, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { autoMentionCanvasResourceReferences, buildCanvasResourceReferences, canvasResourceMentionToken, selectSubmittedCanvasReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { getCanvasNodePromptSelection, insertCanvasResourceMentionAtSelection, setCanvasNodePromptSelection, useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
 import { resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses, togglePromptFirstFrameMention } from "@/lib/canvas/video-reference-mode";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
@@ -138,12 +138,22 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
     const missingSubmissionIdentity = ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") && !node.metadata?.taskId && !node.metadata?.taskClientOperationId?.trim();
     const needsRecoverySection = missingSubmissionIdentity || (!isRunning && isNodeRegenerateBlocked(node.metadata));
     const activeReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill"), [resolvedMentionReferences]);
+    const submittedReferences = useMemo(
+        () => selectSubmittedCanvasReferences(
+            prompt,
+            resolvedMentionReferences,
+            referenceCheck.selectedReferences,
+            mode === "video" ? [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId] : [],
+            node.id,
+        ),
+        [mode, node.id, node.metadata?.videoEndFrameNodeId, node.metadata?.videoStartFrameNodeId, prompt, referenceCheck.selectedReferences, resolvedMentionReferences],
+    );
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, {
-        textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
-        imageCount: activeReferences.filter((item) => item.kind === "image").length,
-        videoCount: activeReferences.filter((item) => item.kind === "video").length,
-        audioCount: activeReferences.filter((item) => item.kind === "audio").length,
-        characterCount: activeReferences.filter((item) => item.kind === "character").length,
+        textCount: (prompt.trim() ? 1 : 0) + submittedReferences.filter((item) => item.kind === "text").length,
+        imageCount: submittedReferences.filter((item) => item.kind === "image").length,
+        videoCount: submittedReferences.filter((item) => item.kind === "video").length,
+        audioCount: submittedReferences.filter((item) => item.kind === "audio").length,
+        characterCount: submittedReferences.filter((item) => item.kind === "character").length,
     });
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
     const availableModels = selectableModelsByCapability(config, mode);
