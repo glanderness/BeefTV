@@ -1,3 +1,5 @@
+import { isH3Model, isH3Style } from "@/lib/h3-video";
+import { videoReferencesForOperation, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
 export type VideoReferenceCandidate = {
@@ -65,6 +67,24 @@ export function togglePromptFirstFrameMention(
     return cleaned ? `${prefix}${cleaned}` : prefix;
 }
 
+export function resolveVideoReferenceCapabilities(
+    model: string,
+    videoProfile?: VideoCapabilityConfig | null,
+    hasDeclaredCapability = false,
+): {
+    endFrameSupported: boolean;
+    referenceVideoSupported: boolean;
+    maxFrameAudios: number;
+} {
+    const h3 = isH3Model(model);
+    if (isH3Style(model)) return { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
+    const frameRefs = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video") : undefined;
+    const endFrameSupported = h3 ? !hasDeclaredCapability || (frameRefs ? frameRefs.maxImages >= 2 : true) : frameRefs ? frameRefs.maxImages >= 2 : true;
+    const referenceVideoSupported = h3 ? !hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video")) : Boolean(videoProfile?.operations.includes("reference_to_video"));
+    const maxFrameAudios = h3 ? Math.min(1, hasDeclaredCapability && frameRefs ? frameRefs.maxAudios : 1) : !referenceVideoSupported && frameRefs ? frameRefs.maxAudios : 0;
+    return { endFrameSupported, referenceVideoSupported, maxFrameAudios };
+}
+
 export function resolveVideoReferenceModeState({
     metadata,
     references,
@@ -72,6 +92,7 @@ export function resolveVideoReferenceModeState({
     referenceVideoSupported = true,
     h3Model = false,
     h3Style = false,
+    maxFrameAudios,
     prompt = "",
 }: {
     metadata?: CanvasNodeMetadata;
@@ -80,6 +101,7 @@ export function resolveVideoReferenceModeState({
     referenceVideoSupported?: boolean;
     h3Model?: boolean;
     h3Style?: boolean;
+    maxFrameAudios?: number;
     prompt?: string;
 }): VideoReferenceModeState {
     const active = references.filter((item) => item.active !== false && item.kind !== "skill");
@@ -89,13 +111,14 @@ export function resolveVideoReferenceModeState({
     const videoCount = active.filter((item) => item.kind === "video").length;
     const audioCount = active.filter((item) => item.kind === "audio").length;
     const maxFrameImages = endFrameSupported ? 2 : 1;
+    const allowedFrameAudios = maxFrameAudios ?? (h3Model ? 1 : 0);
 
     const canSelectFrames =
         imageRefs.length >= 1 &&
         characterCount === 0 &&
         visualCount <= maxFrameImages &&
         videoCount === 0 &&
-        (audioCount === 0 || (h3Model && audioCount <= 1));
+        audioCount <= allowedFrameAudios;
     const canSelectAll = !h3Style && referenceVideoSupported && (visualCount > 0 || videoCount > 0 || audioCount > 0);
 
     let framesDisabledReason: string | undefined;
@@ -114,13 +137,11 @@ export function resolveVideoReferenceModeState({
     }
     const allDisabledReason = !canSelectAll ? "当前模型仅支持首帧/首尾帧模式，不支持全能参考" : undefined;
 
-    const mode: "frames" | "all" = !canSelectFrames
-        ? "all"
-        : !canSelectAll
-          ? "frames"
-          : metadata?.videoEditOperation === "reference_to_video"
-            ? "all"
-            : "frames";
+    const mode: "frames" | "all" = !canSelectAll
+        ? "frames"
+        : !canSelectFrames || metadata?.videoEditOperation === "reference_to_video"
+          ? "all"
+          : "frames";
 
     if (mode === "all") {
         return {

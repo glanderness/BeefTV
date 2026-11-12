@@ -8,7 +8,7 @@ import { submitGenerationCommand } from "./generation-submission";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
 import { seedreamFamily } from "@/lib/seedream-image";
-import { portraitGenerationError, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, portraitGenerationError, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -215,6 +215,8 @@ function generationOperation(options: BackendGenerationTaskOptions) {
             characterCount: 0,
         },
         options.metadata?.videoEditOperation as string | undefined,
+        declaredOrOmniVideoCapability(options.config, options.config.model),
+        options.config.model,
     );
 }
 

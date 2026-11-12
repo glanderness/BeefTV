@@ -3,6 +3,8 @@ package operations
 import (
 	"encoding/json"
 	"testing"
+
+	"infinite-canvas/backend/internal/modelcatalog"
 )
 
 type mixedGenerationProbe struct {
@@ -105,5 +107,134 @@ func TestProductionSeedreamSingleImageKeepsConfirmedOptions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type catalogGenerationProbe struct {
+	mixedGenerationProbe
+	catalog *modelcatalog.CatalogResponse
+}
+
+func (p *catalogGenerationProbe) AgentModelCatalog() (*modelcatalog.CatalogResponse, error) {
+	return p.catalog, nil
+}
+
+func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *testing.T) {
+	wanCap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 10, "maxVideos": 5, "maxAudios": 5},
+			"operationReferences": map[string]any{
+				"image_to_video":     map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
+				"reference_to_video": map[string]any{"maxImages": 10, "maxVideos": 5, "maxAudios": 5},
+			},
+		},
+	}
+	klingCap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video"},
+			"references":       map[string]any{"maxImages": 1, "maxVideos": 0, "maxAudios": 0},
+		},
+	}
+	h3Cap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+		},
+	}
+	catalog := modelcatalog.NewCatalogResponse(modelcatalog.CatalogSourceSystem, nil, []modelcatalog.PublicChannelCatalog{{
+		ID: "beeftv",
+		Models: []modelcatalog.PublicChannelModel{
+			{ID: "wan3.0-video", ModelKey: "wan3.0-video", Capability: "video", Available: true, CapabilityConfig: wanCap},
+			{ID: "kling-video-v3", ModelKey: "kling-video-v3", Capability: "video", Available: true, CapabilityConfig: klingCap},
+			{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, CapabilityConfig: h3Cap},
+		},
+	}})
+
+	img1 := imageNode("img-1", "image")
+	img1["metadata"].(map[string]any)["storageKey"] = "resource:img-1"
+	img2 := imageNode("img-2", "image")
+	img2["metadata"].(map[string]any)["storageKey"] = "resource:img-2"
+	img3 := imageNode("img-3", "image")
+	img3["metadata"].(map[string]any)["storageKey"] = "resource:img-3"
+	aud1 := imageNode("aud-1", "audio")
+	aud1["type"] = "audio"
+	aud1["metadata"].(map[string]any)["storageKey"] = "resource:aud-1"
+
+	wanVideo := imageNode("wan-shot", "beeftv::wan3.0-video")
+	wanVideo["type"] = "video"
+	wanVideo["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	wanVideo["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+
+	klingVideo := imageNode("kling-shot", "beeftv::kling-video-v3")
+	klingVideo["type"] = "video"
+	klingVideo["metadata"].(map[string]any)["videoEditOperation"] = "reference_to_video"
+
+	h3FrameAudio := imageNode("h3-lip-shot", "beeftv::minimax-h3-max")
+	h3FrameAudio["type"] = "video"
+	h3FrameAudio["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	h3FrameAudio["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+
+	h3MidFrame := imageNode("h3-mid-shot", "beeftv::minimax-h3-max")
+	h3MidFrame["type"] = "video"
+	h3MidFrame["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	h3MidFrame["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	h3MidFrame["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	h3MidFrame["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-3"
+	h3MidFrame["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+
+	doc := map[string]any{
+		"nodes": []any{img1, img2, img3, aud1, wanVideo, klingVideo, h3FrameAudio, h3MidFrame},
+		"connections": []any{
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "wan-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "wan-shot"},
+			map[string]any{"fromNodeId": "aud-1", "toNodeId": "wan-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "kling-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "h3-lip-shot"},
+			map[string]any{"fromNodeId": "aud-1", "toNodeId": "h3-lip-shot"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "h3-mid-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "h3-mid-shot"},
+			map[string]any{"fromNodeId": "img-3", "toNodeId": "h3-mid-shot"},
+		},
+	}
+
+	probe := &catalogGenerationProbe{
+		mixedGenerationProbe: mixedGenerationProbe{proposeProbe: proposeProbe{doc: proposeCanvas(t, []map[string]any{img1, img2, img3, aud1, wanVideo, klingVideo, h3FrameAudio, h3MidFrame})}},
+		catalog:              &catalog,
+	}
+	probe.resolve = func(_, selected string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{ModelKey: selected, Display: selected}, nil
+	}
+
+	targets, err := GenerationTargets(probe, doc, []string{"wan-shot", "kling-shot", "h3-lip-shot", "h3-mid-shot"})
+	if err != nil {
+		t.Fatalf("GenerationTargets error: %v", err)
+	}
+	if len(targets) != 4 {
+		t.Fatalf("len(targets) = %d, want 4", len(targets))
+	}
+	if got := targets[0].Metadata["videoEditOperation"]; got != "reference_to_video" {
+		t.Fatalf("wan-shot videoEditOperation = %v, want reference_to_video", got)
+	}
+	if got := targets[0].Parameters["videoStartFrameNodeId"]; got != "" {
+		t.Fatalf("wan-shot stale videoStartFrameNodeId not cleared: %q", got)
+	}
+	if got := targets[1].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("kling-shot videoEditOperation = %v, want image_to_video", got)
+	}
+	if got := targets[2].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("h3-lip-shot videoEditOperation = %v, want image_to_video", got)
+	}
+	if got := targets[2].Parameters["videoStartFrameNodeId"]; got != "img-1" {
+		t.Fatalf("h3-lip-shot videoStartFrameNodeId = %q, want img-1", got)
+	}
+	if got := targets[3].Metadata["videoEditOperation"]; got != "reference_to_video" {
+		t.Fatalf("h3-mid-shot videoEditOperation = %v, want reference_to_video", got)
+	}
+	if got := targets[3].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
+		t.Fatalf("h3-mid-shot videoMiddleFrameNodeId = %q, want img-2", got)
 	}
 }

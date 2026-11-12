@@ -79,7 +79,7 @@ export function VideoReferenceModeSwitch({
             }}
             onClick={(event) => {
                 event.stopPropagation();
-                if (!state.canSelectAll || allActive) return;
+                if (!state.canSelectAll || (allActive && state.canSelectFrames)) return;
                 applyMode("all");
             }}
             onPointerDown={(event) => event.stopPropagation()}
@@ -89,7 +89,7 @@ export function VideoReferenceModeSwitch({
     );
 
     // 仅当模型同时支持「全能参考」时才展示顶部模式切换器；
-    // 纯首帧/首尾帧模型（如 Veo、即梦、Wan 3.0、Novita、H3 Styles）只展示缩略图帧角标，不渲染多余切换栏。
+    // 纯首帧/首尾帧模型只展示缩略图帧角标，不渲染多余切换栏。
     if (!state.canSelectAll) return null;
 
     return (

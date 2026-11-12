@@ -2,10 +2,10 @@ import { Button, Segmented, Select } from "antd";
 import type { CSSProperties } from "react";
 import { ChevronDown, Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Sparkles, Video } from "lucide-react";
 
-import { modelCapabilityConfigFor, videoSupportsTaskTypeConstraints } from "@/lib/model-capabilities";
-import { isH3Model, h3VideoOperation } from "@/lib/h3-video";
+import { modelCapabilityConfigFor, videoReferencesForOperation, videoSupportsTaskTypeConstraints } from "@/lib/model-capabilities";
+import { isH3Model } from "@/lib/h3-video";
 import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
-import { resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -131,29 +131,36 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         <Select
                             aria-label="视频生成模式"
                             className="w-full"
-                            value={isH3Model(config.model) ? h3VideoOperation(config.model, inputSummary, node.metadata?.videoEditOperation) : resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation)}
+                            value={resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model)}
                             options={videoOperationOptions
                                 .filter(
                                     (option) =>
                                         ["text_to_video", "image_to_video", "reference_to_video", "inpaint", "extend", "audio_to_video"].includes(option.value) && modelCapabilityConfigFor(config, config.model).video?.operations.includes(option.value),
                                 )
-                                .map((option) => ({
-                                    ...option,
-                                    label: option.value === "image_to_video" ? "首帧 / 首尾帧" : option.value === "reference_to_video" ? "参考生成" : option.label,
-                                    disabled:
-                                        option.value === "image_to_video"
-                                            ? inputSummary.imageCount + inputSummary.characterCount < 1 ||
-                                              inputSummary.imageCount + inputSummary.characterCount > 2 ||
-                                              inputSummary.videoCount > 0 ||
-                                              (!isH3Model(config.model) && inputSummary.audioCount > 0)
-                                            : ["inpaint", "extend"].includes(option.value)
-                                              ? inputSummary.videoCount < 1
-                                              : option.value === "text_to_video"
-                                                ? inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount + inputSummary.audioCount > 0
-                                                : option.value === "audio_to_video"
-                                                  ? inputSummary.audioCount < 1 || inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount > 0
-                                                  : inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount + inputSummary.audioCount < 1,
-                                }))}
+                                .map((option) => {
+                                    const videoProfile = modelCapabilityConfigFor(config, config.model).video;
+                                    const frameRefs = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video") : undefined;
+                                    const maxFrameImages = isH3Model(config.model) ? 2 : Math.min(2, frameRefs?.maxImages ?? 2);
+                                    const maxFrameAudios = isH3Model(config.model) ? 1 : !videoProfile?.operations.includes("reference_to_video") ? (frameRefs?.maxAudios ?? 0) : 0;
+                                    return {
+                                        ...option,
+                                        label: option.value === "image_to_video" ? "首帧 / 首尾帧" : option.value === "reference_to_video" ? "参考生成" : option.label,
+                                        disabled:
+                                            option.value === "image_to_video"
+                                                ? inputSummary.imageCount + inputSummary.characterCount < 1 ||
+                                                  inputSummary.imageCount + inputSummary.characterCount > maxFrameImages ||
+                                                  inputSummary.characterCount > 0 ||
+                                                  inputSummary.videoCount > 0 ||
+                                                  inputSummary.audioCount > maxFrameAudios
+                                                : ["inpaint", "extend"].includes(option.value)
+                                                  ? inputSummary.videoCount < 1
+                                                  : option.value === "text_to_video"
+                                                    ? inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount + inputSummary.audioCount > 0
+                                                    : option.value === "audio_to_video"
+                                                      ? inputSummary.audioCount < 1 || inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount > 0
+                                                      : inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount + inputSummary.audioCount < 1,
+                                    };
+                                })}
                             onChange={(value) => onConfigChange(node.id, { videoEditOperation: value as CanvasVideoEditOperation })}
                         />
                     ) : (

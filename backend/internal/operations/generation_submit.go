@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
@@ -573,9 +575,85 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		refs := graph.references(id, kind)
 		sort.Strings(refs)
 		refs = uniqueTargetIDs(refs)
+		if kind == "video" {
+			metadata = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, nodes, meta, parameters, metadata)
+		}
 		targets = append(targets, GenerationTarget{NodeID: id, Title: dependencyString(n, "title"), Kind: kind, ModelKey: choice.ModelKey, Prompt: prompt, Parameters: parameters, Metadata: metadata, ReferenceNodeIDs: refs})
 	}
 	return targets, nil
+}
+
+func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, nodes map[string]map[string]any, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) map[string]any {
+	if strings.TrimSpace(dependencyString(nodeMeta, "videoDraftTaskId")) != "" {
+		return metadata
+	}
+	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
+	if storedOp != "" && !slices.Contains([]string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"}, storedOp) {
+		return metadata
+	}
+	var imageCount, videoCount, audioCount int
+	for _, refID := range refs {
+		switch dependencyString(nodes[refID], "type") {
+		case "image":
+			imageCount++
+		case "video":
+			videoCount++
+		case "audio":
+			audioCount++
+		}
+	}
+	var videoProfile *modelcatalog.VideoCapabilityConfig
+	if reader, ok := domain.(ModelCatalogReader); ok && reader != nil {
+		if catalog, err := reader.AgentModelCatalog(); err == nil && catalog != nil {
+			if _, foundModel, found := findEstimateModel(catalog, modelKey); found {
+				if capCfg := estimateCapability(foundModel.CapabilityConfig); capCfg != nil {
+					videoProfile = capCfg.Video
+				}
+			}
+		}
+	}
+	frameMaxImages, frameMaxAudios := 2, 0
+	if videoProfile != nil {
+		frameMaxImages = min(2, videoProfile.References.MaxImages)
+		frameMaxAudios = videoProfile.References.MaxAudios
+		if limits, ok := videoProfile.OperationReferences["image_to_video"]; ok {
+			if limits.MaxImages != nil {
+				frameMaxImages = *limits.MaxImages
+			}
+			if limits.MaxAudios != nil {
+				frameMaxAudios = *limits.MaxAudios
+			}
+		} else if slices.Contains(videoProfile.Operations, "audio_to_video") {
+			frameMaxAudios = min(1, videoProfile.References.MaxAudios)
+		} else if slices.Contains(videoProfile.Operations, "reference_to_video") {
+			frameMaxAudios = 0
+		}
+	}
+	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
+	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
+	hasMiddleFrame := parameters["videoMiddleFrameNodeId"] != ""
+	nextOp := storedOp
+	if supportsRefVideo && (imageCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || imageCount > frameMaxImages || (imageCount > 0 && audioCount > frameMaxAudios)) {
+		nextOp = "reference_to_video"
+	} else if storedOp == "reference_to_video" && videoProfile != nil && !supportsRefVideo && supportsImageVideo && videoCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
+		nextOp = "image_to_video"
+	} else if storedOp == "text_to_video" && supportsImageVideo && videoCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
+		nextOp = "image_to_video"
+	}
+	if nextOp == "" || nextOp == storedOp {
+		return metadata
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["videoEditOperation"] = nextOp
+	if nextOp == "reference_to_video" && storedOp != "reference_to_video" && !hasMiddleFrame {
+		delete(parameters, "videoStartFrameNodeId")
+		delete(parameters, "videoEndFrameNodeId")
+		delete(parameters, "videoMiddleFrameNodeId")
+		delete(metadata, "videoMiddleFrameTime")
+	}
+	return metadata
 }
 
 func uniqueTargetIDs(ids []string) []string {

@@ -11,11 +11,13 @@ import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import type { CanvasGenerationMode, CanvasNodeMetadata, CanvasWorkspaceMode } from "@/types/canvas";
 import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
-import { h3VideoOperation, isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
-import { resolveVideoOperation } from "@/lib/model-selection";
-import { findPromptFirstFrameNodeId, resolveVideoReferenceModeState, stripPromptFirstFrameClauses } from "@/lib/canvas/video-reference-mode";
+import { isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, resolveVideoOperation } from "@/lib/model-selection";
+import { findPromptFirstFrameNodeId, resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses } from "@/lib/canvas/video-reference-mode";
 import { VideoReferenceModeSwitch } from "./canvas-node-reference-shelf";
 import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 import { DEFAULT_PROMPT_FONT_SIZE, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 
 type CanvasConfigComposerProps = {
@@ -53,6 +55,11 @@ export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]|@(图片|视频|音�
 
 export function CanvasConfigComposer({ value, inputs, skillReferences = [], generationMode, metadata, model="", onChange, onMetadataChange, onClose, workspaceMode = "professional" }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useActiveTheme()];
+    const globalConfig = useEffectiveConfig();
+    const videoProfile = generationMode === "video" && model ? modelCapabilityConfigFor(globalConfig, model).video : undefined;
+    const { endFrameSupported, referenceVideoSupported, maxFrameAudios } = generationMode === "video"
+        ? resolveVideoReferenceCapabilities(model, videoProfile, Boolean(model) && hasDeclaredModelCapability(globalConfig, model, "video"))
+        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
     const promptFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize ?? DEFAULT_PROMPT_FONT_SIZE);
     const promptTextStyle = { fontSize: promptFontSize, lineHeight: 1.5 };
     const editorRef = useRef<HTMLDivElement>(null);
@@ -198,9 +205,11 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                                     title: input.title,
                                     active: true,
                                 })),
-                                endFrameSupported: !isH3Style(model),
+                                endFrameSupported,
+                                referenceVideoSupported,
                                 h3Model: isH3Model(model),
                                 h3Style: isH3Style(model),
+                                maxFrameAudios,
                                 prompt: value,
                             })}
                             theme={theme}
@@ -214,10 +223,10 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                     ) : null}
                     <CanvasVideoPromptTools
                         metadata={metadata}
-                        endFrameSupported={!isH3Style(model)}
+                        endFrameSupported={endFrameSupported}
                         referenceLabel="参考生成"
                         frameOptions={videoFrameOptions}
-                        referenceMode={(!isH3MaxModel(model) && (isH3Model(model) ? h3VideoOperation(model, { imageCount: inputs.filter((input) => input.type === "image").length, characterCount: inputs.filter((input) => input.type === "character").length, videoCount: inputs.filter((input) => input.type === "video").length, audioCount: inputs.filter((input) => input.type === "audio").length }, metadata?.videoEditOperation) : resolveVideoOperation({ textCount: 0, imageCount: inputs.filter((input) => input.type === "image").length, characterCount: inputs.filter((input) => input.type === "character").length, videoCount: inputs.filter((input) => input.type === "video").length, audioCount: inputs.filter((input) => input.type === "audio").length }, metadata?.videoEditOperation)) === "reference_to_video") ? "all" : "frames"}
+                        referenceMode={(!isH3MaxModel(model) && resolveVideoOperation({ textCount: 0, imageCount: inputs.filter((input) => input.type === "image").length, characterCount: inputs.filter((input) => input.type === "character").length, videoCount: inputs.filter((input) => input.type === "video").length, audioCount: inputs.filter((input) => input.type === "audio").length }, metadata?.videoEditOperation, declaredOrOmniVideoCapability(globalConfig, model), model) === "reference_to_video") ? "all" : "frames"}
                         referenceSummary={{
                             imageCount: inputs.filter((input) => input.type === "image" || input.type === "character").length,
                             videoCount: inputs.filter((input) => input.type === "video").length,

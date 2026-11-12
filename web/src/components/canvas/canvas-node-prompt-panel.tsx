@@ -6,12 +6,12 @@ import { ArrowLeftRight, ArrowUp, Boxes, Camera, ChevronDown, FileText, ImagePlu
 import { ModelPicker } from "@/components/model-picker";
 import { GenerationCostLabel, useGenerationCostEstimate } from "@/components/generation/generation-cost-badge";
 import { canvasNodeCostTarget, formatInlineCostEstimate } from "@/lib/generation-cost-estimate";
-import { modelCapabilityConfigFor, videoReferencesForOperation } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, modelRequestOptions, defaultImageParamsForModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -27,14 +27,14 @@ import { videoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
 import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
-import { h3VideoOperation, isH3MaxFamilyModel, isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
+import { isH3MaxFamilyModel, isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { autoMentionCanvasResourceReferences, buildCanvasResourceReferences, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { getCanvasNodePromptSelection, insertCanvasResourceMentionAtSelection, setCanvasNodePromptSelection, useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
-import { resolveVideoReferenceModeState, stripPromptFirstFrameClauses, togglePromptFirstFrameMention } from "@/lib/canvas/video-reference-mode";
+import { resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses, togglePromptFirstFrameMention } from "@/lib/canvas/video-reference-mode";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { syncActiveClientPlugins } from "@/lib/plugins/plugin-client-loader";
 import { usePluginSlot } from "@/lib/plugins/slot-registry";
@@ -171,16 +171,13 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
     const h3Model = isH3Model(config.model);
     const h3Max = isH3MaxModel(config.model);
-    const effectiveVideoOperation = mode === "video" && requirements.input
-        ? (h3Model ? h3VideoOperation(config.model, requirements.input, node.metadata?.videoEditOperation) : resolveVideoOperation(requirements.input, node.metadata?.videoEditOperation))
-        : undefined;
     const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
-    const endFrameSupported = mode === "video"
-        ? (!isH3Style(config.model) && (h3Model || (videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video").maxImages >= 2 : true)))
-        : false;
-    const referenceVideoSupported = mode === "video"
-        ? (h3Model ? !isH3Style(config.model) : Boolean(videoProfile?.operations.includes("reference_to_video")))
-        : false;
+    const effectiveVideoOperation = mode === "video" && requirements.input
+        ? resolveVideoOperation(requirements.input, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model)
+        : undefined;
+    const { endFrameSupported, referenceVideoSupported, maxFrameAudios } = mode === "video"
+        ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"))
+        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
     const hasVisualOrVideoReference = activeReferences.some((item) => item.kind === "image" || item.kind === "character" || item.kind === "video");
     const videoModeState = useMemo(() => {
         if (mode !== "video" || simpleMode || !hasVisualOrVideoReference || ["extend", "inpaint"].includes(effectiveVideoOperation || "")) return undefined;
@@ -191,9 +188,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             referenceVideoSupported,
             h3Model,
             h3Style: isH3Style(config.model),
+            maxFrameAudios,
             prompt,
         });
-    }, [config.model, effectiveVideoOperation, endFrameSupported, h3Model, hasVisualOrVideoReference, mode, node.metadata, prompt, referenceVideoSupported, resolvedMentionReferences, simpleMode]);
+    }, [config.model, effectiveVideoOperation, endFrameSupported, h3Model, hasVisualOrVideoReference, maxFrameAudios, mode, node.metadata, prompt, referenceVideoSupported, resolvedMentionReferences, simpleMode]);
     const videoReferenceInputs = useMemo(() => activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]), [activeReferences]);
     const h3SelectedFrames = [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, node.metadata?.videoMiddleFrameNodeId];
     const hasH3ReferenceOrder = isH3MaxFamilyModel(config.model) && videoReferenceInputs.some((input) => ["image", "character", "video", "audio"].includes(input.type) && !h3SelectedFrames.includes(input.nodeId));

@@ -1,4 +1,5 @@
-import { defaultImageCapabilityConfig, hasUserModelCapability, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { h3VideoOperation, isH3Model } from "@/lib/h3-video";
+import { defaultImageCapabilityConfig, hasUserModelCapability, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { sanitizeVideoPriceQuote, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
@@ -122,8 +123,14 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         const profile = capabilityConfig.video!;
         if (requirements.videoOperation !== "draft_to_final" && requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
         if (!input) return "";
-        const operation = resolveVideoOperation(input, requirements.videoOperation);
-        const refs = videoReferencesForOperation(profile, requirements.videoOperation || "");
+        const operation = resolveVideoOperation(input, requirements.videoOperation, profile, model);
+        const refOperation = profile.operations.includes(operation)
+            ? operation
+            : visualInputCount > 0 && input.videoCount === 0 && profile.operations.includes("image_to_video")
+              ? "image_to_video"
+              : operation;
+        const refs = videoReferencesForOperation(profile, refOperation);
+        if (visualInputCount < (refs.minImages ?? 0)) return `至少需要 ${refs.minImages} 张参考图`;
         if (visualInputCount > refs.maxImages) return `最多支持 ${refs.maxImages} 张参考图`;
         if (input.videoCount > refs.maxVideos) return `最多支持 ${refs.maxVideos} 个参考视频`;
         if (input.audioCount > refs.maxAudios) return `最多支持 ${refs.maxAudios} 个参考音频`;
@@ -168,7 +175,19 @@ function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["
         if (!constraint && count > 0) return `不支持${kind}输入`;
         if (constraint && (count < constraint.min || count > constraint.max)) return `${kind}输入需为 ${constraint.min}-${constraint.max} 个`;
     }
-    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation) : requirements.videoOperation;
+    const logicalVideoProfile =
+        requirements.capability === "video" && spec.operations?.length
+            ? ({
+                  operations: spec.operations,
+                  references: {
+                      minImages: spec.inputs?.image?.min ?? 0,
+                      maxImages: spec.inputs?.image?.max ?? 0,
+                      maxVideos: spec.inputs?.video?.max ?? 0,
+                      maxAudios: spec.inputs?.audio?.max ?? 0,
+                  },
+              } as VideoCapabilityConfig)
+            : undefined;
+    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation, logicalVideoProfile) : requirements.videoOperation;
     if (operation && spec.operations?.length && !spec.operations.includes(operation)) return "不支持当前生成模式";
     // 图片创作状态也会携带全局默认视频时长；这个字段只对视频模型有意义，
     // 不能把它拼进图片逻辑模型的能力匹配，否则图片模型会被误判为“不支持当前时长”。
@@ -433,6 +452,13 @@ export function modelGroupReferenceLimits(config: AiConfig, selected: string, ca
     );
 }
 
+export function declaredOrOmniVideoCapability(config: AiConfig | undefined, model: string): VideoCapabilityConfig | undefined {
+    if (!config || !model) return undefined;
+    const video = modelCapabilityConfigFor(config, model).video;
+    if (!video) return undefined;
+    return hasDeclaredModelCapability(config, model, "video") || video.operations.includes("reference_to_video") ? video : undefined;
+}
+
 export function inferVideoOperation(input: ModelInputSummary) {
     const visualInputCount = input.imageCount + input.characterCount;
     // 图片或角色决定图生视频主模式，音频只作为附加参考，不应把组合请求
@@ -443,11 +469,36 @@ export function inferVideoOperation(input: ModelInputSummary) {
     return "text_to_video";
 }
 
-export function resolveVideoOperation(input: ModelInputSummary, storedOperation?: string) {
-    if (storedOperation === "reference_to_video" && input.imageCount + input.characterCount + input.videoCount + input.audioCount > 0) return storedOperation;
-    if (storedOperation === "extend" && input.videoCount > 0) return storedOperation;
+export function resolveVideoOperation(input: ModelInputSummary, storedOperation?: string, profile?: VideoCapabilityConfig | null, model?: string) {
+    const visualInputCount = input.imageCount + input.characterCount;
+    const totalMediaCount = visualInputCount + input.videoCount + input.audioCount;
+    const supportsReferenceVideo = profile ? profile.operations.includes("reference_to_video") : undefined;
     if (storedOperation && !["text_to_video", "image_to_video", "audio_to_video", "extend", "reference_to_video"].includes(storedOperation)) return storedOperation;
-    return inferVideoOperation(input);
+    if (storedOperation === "extend" && input.videoCount > 0) return storedOperation;
+    if (model && isH3Model(model)) {
+        const h3Operation = h3VideoOperation(model, input, storedOperation);
+        if (h3Operation === "reference_to_video" && supportsReferenceVideo === false && input.videoCount === 0 && visualInputCount > 0 && profile?.operations.includes("image_to_video")) {
+            const frameRefs = videoReferencesForOperation(profile, "image_to_video");
+            if (visualInputCount <= frameRefs.maxImages && input.audioCount <= frameRefs.maxAudios) return "image_to_video";
+        }
+        return h3Operation;
+    }
+    if (storedOperation === "reference_to_video" && totalMediaCount > 0 && supportsReferenceVideo !== false) return storedOperation;
+    const inferred = inferVideoOperation(input);
+    if (inferred === "image_to_video" && supportsReferenceVideo) {
+        const frameRefs = videoReferencesForOperation(profile!, "image_to_video");
+        if (
+            visualInputCount > frameRefs.maxImages ||
+            visualInputCount < (frameRefs.minImages ?? 0) ||
+            input.videoCount > frameRefs.maxVideos ||
+            input.audioCount > frameRefs.maxAudios ||
+            input.characterCount > 0 ||
+            input.audioCount > 0
+        ) {
+            return "reference_to_video";
+        }
+    }
+    return inferred;
 }
 
 function videoOperationLabel(operation: string) {

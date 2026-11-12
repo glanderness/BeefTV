@@ -6,10 +6,10 @@ import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { isH3MaxModel, isH3Model, h3VideoOperation, h3ResolvedReferenceOrder } from "@/lib/h3-video";
+import { isH3MaxModel, isH3Model, h3ResolvedReferenceOrder } from "@/lib/h3-video";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { resolveVideoOperation } from "@/lib/model-selection";
+import { modelCapabilityConfigFor, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
 import { repairOverlappingImageBatches } from "@/lib/canvas/canvas-generation-layout";
@@ -412,23 +412,31 @@ export function generationReferenceUrls(context: { referenceImages: ReferenceIma
     ];
 }
 
+function isIndirectReferenceImage(image: ReferenceImage) {
+    return Boolean(image.sourceNodeId) || image.id.startsWith("character-reference-") || image.id.startsWith("asset:");
+}
+
 function resolveVideoEditOperation(
     node: CanvasNodeData | undefined,
-    context?: {
+    context: {
         referenceImages: ReferenceImage[];
         referenceVideos: ReferenceVideo[];
         referenceAudios: ReferenceAudio[];
-    },
+    } | undefined,
+    effectiveModel: string,
+    videoProfile?: VideoCapabilityConfig | null,
 ): CanvasVideoEditOperation {
     const storedOperation = node?.metadata?.videoEditOperation;
+    const referenceImages = context?.referenceImages || [];
+    const characterCount = referenceImages.filter(isIndirectReferenceImage).length;
     const input = {
         textCount: 0,
-        imageCount: context?.referenceImages.length || 0,
+        imageCount: referenceImages.length - characterCount,
         videoCount: context?.referenceVideos.length || 0,
         audioCount: context?.referenceAudios.length || 0,
-        characterCount: 0,
+        characterCount,
     };
-    return resolveVideoOperation(input, storedOperation) as CanvasVideoEditOperation;
+    return resolveVideoOperation(input, storedOperation, videoProfile, effectiveModel) as CanvasVideoEditOperation;
 }
 
 export function buildVideoGenerationMetadata(
@@ -444,26 +452,27 @@ export function buildVideoGenerationMetadata(
     const referenceImageIds = new Set((context?.referenceImages || []).map((image) => image.id));
     const draftTaskId = metadata?.videoDraftTaskId?.trim() || undefined;
     const effectiveModel = config?.model || metadata?.model || "";
+    const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
     const videoEditOperation = draftTaskId
         ? "draft_to_final"
-        : effectiveModel && isH3Model(effectiveModel)
-          ? h3VideoOperation(effectiveModel, { imageCount: context?.referenceImages.length || 0, videoCount: context?.referenceVideos.length || 0, audioCount: context?.referenceAudios.length || 0 }, metadata?.videoEditOperation)
-          : resolveVideoEditOperation(node, context);
+        : resolveVideoEditOperation(node, context, effectiveModel, videoProfile);
     // 非 H3 Max 的全模态参考生成不消费首尾帧/中间帧槽位，不再把历史帧选择当成硬约束或透传给后端。
     const h3Max = isH3MaxModel(effectiveModel);
     const ignoreFrameSelection = videoEditOperation === "draft_to_final" || (videoEditOperation === "reference_to_video" && !h3Max);
     const connectedImages = context?.referenceImages || [];
     const h3 = isH3Model(effectiveModel);
-    const storedStartFrame = !h3 && metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId)
-        ? undefined
-        : metadata?.videoStartFrameNodeId;
-    const storedEndFrame = !h3 && metadata?.videoEndFrameNodeId && !referenceImageIds.has(metadata.videoEndFrameNodeId)
-        ? undefined
-        : metadata?.videoEndFrameNodeId;
     const allDirectImageNodes =
         connectedImages.length > 0 &&
         connectedImages.length <= 2 &&
-        connectedImages.every((image) => !image.sourceNodeId && !image.id.startsWith("character-reference-") && !image.id.startsWith("asset:"));
+        connectedImages.every((image) => !isIndirectReferenceImage(image));
+    const supportsReferenceVideo = !videoProfile || videoProfile.operations.includes("reference_to_video");
+    const nonFrameMediaAttached = !h3 && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > 0 || connectedImages.some(isIndirectReferenceImage));
+    const storedStartFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId)))
+        ? undefined
+        : metadata?.videoStartFrameNodeId;
+    const storedEndFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoEndFrameNodeId && !referenceImageIds.has(metadata.videoEndFrameNodeId)))
+        ? undefined
+        : metadata?.videoEndFrameNodeId;
     const defaultFrames =
         !ignoreFrameSelection &&
         !h3 &&

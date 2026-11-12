@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { ConnectedReferenceShelf, VideoReferenceModeSwitch } from "../src/components/canvas/canvas-node-reference-shelf";
-import { findPromptFirstFrameNodeId, resolveVideoReferenceModeState, stripPromptFirstFrameClauses, togglePromptFirstFrameMention } from "../src/lib/canvas/video-reference-mode";
+import { findPromptFirstFrameNodeId, resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses, togglePromptFirstFrameMention } from "../src/lib/canvas/video-reference-mode";
+import { managedVideoCatalogItem } from "./managed-video-fixture";
 import type { CanvasResourceReference } from "../src/lib/canvas/canvas-resource-references";
 
 const makeImageRefs = (count: number): CanvasResourceReference[] =>
@@ -86,6 +87,26 @@ describe("resolveVideoReferenceModeState", () => {
                 <VideoReferenceModeSwitch state={noRefVideoModelState} theme={canvasThemes.dark} onChange={() => {}} />,
             ),
         ).toBe("");
+
+        // 万相 3.0 / Kling v3 / H3 Max Turbo 等服务端声明能力统一驱动首尾帧与全能参考开关
+        const wanCaps = resolveVideoReferenceCapabilities("beeftv::wan3.0-video", managedVideoCatalogItem("wan3.0-video").videoCapabilities, true);
+        expect(wanCaps).toEqual({ endFrameSupported: true, referenceVideoSupported: true, maxFrameAudios: 0 });
+        const wanWithAudioState = resolveVideoReferenceModeState({
+            metadata: { videoEditOperation: "image_to_video", videoStartFrameNodeId: "img-1" },
+            references: [
+                ...makeImageRefs(2),
+                { nodeId: "aud-1", kind: "audio", label: "音频1", title: "旁白", active: true },
+            ],
+            ...wanCaps,
+        });
+        expect(wanWithAudioState.mode).toBe("all");
+        expect(wanWithAudioState.canSelectFrames).toBe(false);
+
+        const klingCaps = resolveVideoReferenceCapabilities("beeftv::kling-video-v3", managedVideoCatalogItem("kling-video-v3").videoCapabilities, true);
+        expect(klingCaps).toEqual({ endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 });
+
+        const h3TurboCaps = resolveVideoReferenceCapabilities("beeftv::minimax-h3-max-turbo", managedVideoCatalogItem("minimax-h3-max-turbo").videoCapabilities, true);
+        expect(h3TurboCaps).toEqual({ endFrameSupported: true, referenceVideoSupported: false, maxFrameAudios: 1 });
     });
 });
 
@@ -213,7 +234,7 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
 describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
     test("首尾帧模式渲染 [首尾帧 | 全能参考] 切换器、缩略图首帧/尾帧角标与 ⇄ 互换按钮", () => {
         const refs = makeImageRefs(2);
-        const state = resolveVideoReferenceModeState({ model: "seedance-2.5", references: refs });
+        const state = resolveVideoReferenceModeState({ references: refs });
         const switchHtml = renderToStaticMarkup(
             <VideoReferenceModeSwitch state={state} theme={canvasThemes.dark} onChange={() => {}} />,
         );
@@ -237,7 +258,7 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
     test("全能参考模式在图片缩略图上渲染提示词首帧快捷按钮", () => {
         const refs = makeImageRefs(5);
         const prompt = "@[node:img-5] 作为首帧，镜头推进";
-        const state = resolveVideoReferenceModeState({ model: "seedance-2.5", references: refs, prompt });
+        const state = resolveVideoReferenceModeState({ references: refs, prompt });
         const shelfHtml = renderToStaticMarkup(
             <ConnectedReferenceShelf
                 references={refs}
