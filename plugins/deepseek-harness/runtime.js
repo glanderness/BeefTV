@@ -8,8 +8,38 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 
-export function requiresGenerationApproval(name, args, businessTools = []) {
+const mcpOperationName = id => `mcp__beeftv__${id.replace(/[^A-Za-z0-9_-]/g, '_')}`
+const mcpToolBase = name => typeof name === 'string' ? name.replace(/_[a-f0-9]{12}$/, '') : ''
+const mediaReviewTool = mcpOperationName('media.review')
+
+// The catalog describes reads that still cost money (replay: unsafe). A catalog entry for the
+// known paid review, or a missing entry, must never silently skip approval.
+export function unsafeOperation(name, operations = []) {
+  const tool = mcpToolBase(name)
+  if (tool === mediaReviewTool) return { id: 'media.review', readOnly: true, replay: 'unsafe' }
+  const catalog = Array.isArray(operations) ? operations : []
+  const matched = catalog.find(operation => mcpOperationName(String(operation?.id || '')) === tool)
+  return matched?.readOnly === true && matched.replay === 'unsafe' ? matched : undefined
+}
+
+function secondsLabel(milliseconds) {
+  const value = Number(milliseconds)
+  if (!Number.isFinite(value) || value < 0) return null
+  return String(Math.round(value / 100) / 10)
+}
+
+// Names what the review will inspect. The review has no quote, so no amount appears.
+export function reviewApprovalReason(args = {}) {
+  const start = secondsLabel(args?.startMs)
+  const end = secondsLabel(args?.endMs)
+  const segment = start === null || end === null || Number(end) <= Number(start) ? '' : `片段：${start}–${end} 秒。`
+  const model = typeof args?.model === 'string' ? args.model.trim().slice(0, 80) : ''
+  return `审片会调用审片模型，可能收费。${segment}${model ? `模型：${model}。` : ''}`
+}
+
+export function requiresGenerationApproval(name, args, businessTools = [], operations = []) {
   if (/^mcp__beeftv__canvas_generation_submit(?:_[a-f0-9]{12})?$/.test(name)) return true
+  if (unsafeOperation(name, operations)) return true
   if (!/^mcp__beeftv__business_call(?:_[a-f0-9]{12})?$/.test(name)) return false
   const tool = businessTools.find(item => item.id === args?.tool)
   return !(tool?.readOnly === true && tool.submitsGeneration === false)
@@ -37,7 +67,13 @@ export function rememberQuote(quotes, name, result) {
 
 // Text for the DSH approval card. It names only the nodes this submission sends: a proposal can be
 // submitted again for a subset, such as retrying failed nodes. Prices are BeefTV's per-node quotes.
-export function approvalReason(name, args, businessTools = [], quotes = new Map()) {
+export function approvalReason(name, args, businessTools = [], quotes = new Map(), operations = []) {
+  const unsafe = unsafeOperation(name, operations)
+  if (unsafe) {
+    return unsafe.id === 'media.review'
+      ? reviewApprovalReason(args)
+      : `BeefTV 将执行只读操作 ${unsafe.id}，可能调用外部模型并产生费用。请核对本次操作。`
+  }
   if (!/^mcp__beeftv__canvas_generation_submit(?:_[a-f0-9]{12})?$/.test(name)) {
     const business = businessTools.find(tool => tool.id === args?.tool)
     return business

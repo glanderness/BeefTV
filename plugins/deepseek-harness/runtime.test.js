@@ -11,7 +11,6 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import * as runtime from './runtime.js'
 import { approvalReason, embeddedDocument, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord } from './runtime.js'
-
 // DSH supplies its MCP client package when it loads the plugin. The Host only hands it to
 // ctx.plugin, which the tests provide, so an inert module stands in for it.
 register(`data:text/javascript,${encodeURIComponent(`export async function resolve(specifier, context, next) {
@@ -64,6 +63,26 @@ test('only trusted catalog metadata exempts a read-only business call from addit
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_generation' }, catalog), true)
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_unknown', readOnly: true }, catalog), true)
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_assets', readOnly: true }), true)
+})
+
+test('paid review reads ask for approval and name only the inspected segment and model', () => {
+  const operations = [
+    { id: 'canvas.get', readOnly: true, replay: 'safe' },
+    { id: 'media.review', readOnly: true, replay: 'unsafe' },
+    { id: 'canvas.create', readOnly: false, replay: 'unsafe' },
+  ]
+  const review = 'mcp__beeftv__media_review_ab092b275e46'
+  assert.equal(requiresGenerationApproval(review, { startMs: 0, endMs: 5000 }, [], operations), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}, [], operations), false)
+  // A catalog without replay metadata still asks for the known paid review, never fails open.
+  assert.equal(requiresGenerationApproval(review, {}, [], []), true)
+  assert.equal(requiresGenerationApproval(review, {}, [], [{ id: 'media.review', readOnly: true }]), true)
+  assert.equal(requiresGenerationApproval(review, {}, [], [{ id: 'media.review' }]), true)
+  assert.equal(requiresGenerationApproval(review, {}, [], [{ id: 'media.review', readOnly: false }]), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}, [], [{ id: 'canvas.get', readOnly: true }]), false)
+  assert.equal(approvalReason(review, { startMs: 1500, endMs: 6500 }, [], new Map(), operations), '审片会调用审片模型，可能收费。片段：1.5–6.5 秒。')
+  assert.equal(approvalReason(review, { startMs: 5000, endMs: 2000, model: 'review-model' }, [], new Map(), operations), '审片会调用审片模型，可能收费。模型：review-model。')
+  assert.match(approvalReason('mcp__beeftv__canvas_create_ab092b275e46', {}, [], new Map(), operations), /未识别的业务操作/)
 })
 
 // The shape canvas.generation.propose returns through the BeefTV MCP server.
@@ -139,9 +158,11 @@ test('workspace handshake verifies the live build, database readiness and worksp
 })
 
 // Replaces only the operating-system boundary: executable checks, Info.plist reads, App launches and runtime processes.
-function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, launchError, appVersion = '2.2.0', installed = true, bundled = true, bridgeURL = 'http://127.0.0.1:1234' } = {}) {
+function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, launchError, appVersion = '2.2.0', installedVersion = appVersion, installed = true, bundled = true, bridgeURL = 'http://127.0.0.1:1234' } = {}) {
   const calls = []
   let attempts = 0
+  let plistReads = 0
+  Object.defineProperty(calls, 'plistReads', { value: () => plistReads })
   context.after(() => {
     context.mock.restoreAll()
     syncBuiltinESMExports()
@@ -152,7 +173,9 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
   })
   context.mock.method(childProcess, 'execFile', (command, args, options, callback) => {
     if (command === '/usr/libexec/PlistBuddy') {
-      queueMicrotask(() => appVersion ? callback(null, `${appVersion}\n`, '') : callback(new Error('Print: Entry Does Not Exist'), '', ''))
+      plistReads += 1
+      const version = typeof installedVersion === 'function' ? installedVersion() : installedVersion
+      queueMicrotask(() => version ? callback(null, `${version}\n`, '') : callback(new Error('Print: Entry Does Not Exist'), '', ''))
       return
     }
     calls.push({ command, args })
@@ -169,7 +192,8 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
     queueMicrotask(() => {
       if (!ready) child.emit('exit', 1)
       else child.stdout.end(JSON.stringify({
-        bridgeURL, baseURL: `${bridgeURL}/api`, bridgeToken: 'test-bridge', owned: false, version: appVersion || '2.2.0',
+        bridgeURL, baseURL: `${bridgeURL}/api`, bridgeToken: 'test-bridge', owned: false,
+        version: (typeof appVersion === 'function' ? appVersion() : appVersion) || '2.2.0',
       }) + '\n')
     })
     return child
@@ -259,8 +283,9 @@ async function workspaceServer(context) {
     if (path.startsWith('/api/agent-clients/') && req.method === 'DELETE') return send(200, { revoked: true })
     if (path === '/api/business/tools') return send(200, { tools: [{ id: 'business_get_assets', readOnly: true, submitsGeneration: false }] })
     if (path === '/api/ops') return send(200, { ops: [
-      { id: 'canvas.get', readOnly: true }, { id: 'canvas.generation.propose', readOnly: true }, { id: 'media.review', readOnly: true },
-      { id: 'canvas.create', readOnly: false }, { id: 'canvas.script.prepare', readOnly: false },
+      { id: 'canvas.get', readOnly: true, replay: 'safe' }, { id: 'canvas.generation.propose', readOnly: true, replay: 'safe' },
+      { id: 'media.review', readOnly: true, replay: 'unsafe' },
+      { id: 'canvas.create', readOnly: false, replay: 'unsafe' }, { id: 'canvas.script.prepare', readOnly: false, replay: 'safe' },
     ] })
     send(404)
   })
@@ -277,6 +302,19 @@ async function startHost(context, options = {}) {
   const home = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-dsh-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
+  if (options.initialSettings || options.rawSettings) {
+    const settingsDir = join(home, 'storages', 'beeftv')
+    await fsPromises.mkdir(settingsDir, { recursive: true })
+    await fsPromises.writeFile(join(settingsDir, 'connection.json'), options.rawSettings ?? JSON.stringify(options.initialSettings))
+  }
+  if (options.readDelayMs) {
+    const readFile = fsPromises.readFile
+    context.mock.method(fsPromises, 'readFile', async (...args) => {
+      await new Promise(resolve => setTimeout(resolve, options.readDelayMs))
+      return readFile(...args)
+    })
+    syncBuiltinESMExports()
+  }
   let handler
   let prompt
   const listeners = new Map()
@@ -315,7 +353,7 @@ async function startHost(context, options = {}) {
       request.end(payload)
     })
   }
-  return { call, calls, workspace, listeners, prompt: view => prompt(view) }
+  return { call, calls, workspace, listeners, home, prompt: view => prompt(view) }
 }
 
 test('Host rejects context from missing or previous connection IDs and reattaches a returning App without reopening it', async context => {
@@ -412,6 +450,85 @@ test('without the DSH permission presets, paid submissions still ask', async con
   )
   assert.equal(decision.kind, 'ask')
   assert.match(decision.reason, /无法显示费用/)
+})
+
+test('paid media review asks with its segment unless the user chose full access', async context => {
+  const presets = new Map([['workspace-session', 'workspace-write'], ['full-access-session', 'danger-full-access']])
+  const permissionPresets = { current: session => presets.get(session.id) }
+  const { call, listeners } = await startHost(context, { services: { permissionPresets } })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const preExecute = listeners.get('tools/pre-execute')
+  const allow = async () => ({ kind: 'allow' })
+  const review = session => ({
+    name: 'mcp__beeftv__media_review_ab092b275e46',
+    arguments: { canvasId: 'canvas', expectedVersion: 'v1', startMs: 12000, endMs: 24000, question: '动作连贯吗' },
+    agent: { session: { id: session } },
+  })
+  assert.deepEqual(await preExecute(review('workspace-session'), allow), {
+    kind: 'ask', reason: '审片会调用审片模型，可能收费。片段：12–24 秒。',
+  })
+  assert.deepEqual(await preExecute(review('full-access-session'), allow), { kind: 'allow' })
+  // Ordinary reads do not grow an approval prompt.
+  const read = { name: 'mcp__beeftv__canvas_get_ab092b275e46', arguments: {}, agent: { session: { id: 'workspace-session' } } }
+  assert.deepEqual(await preExecute(read, allow), { kind: 'allow' })
+})
+
+test('a standalone workspace offers the local App once and remembers 暂不', async context => {
+  const { call, home } = await startHost(context)
+  const standalone = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
+  assert.equal(standalone.mode, 'standalone')
+  assert.equal(standalone.localApp.compatible, true)
+  assert.equal(standalone.localPromptDismissed, false)
+  const dismissed = await call('POST', '/beeftv/local-prompt', { dismissed: true })
+  assert.equal(dismissed.status, 200)
+  assert.equal(dismissed.body.localPromptDismissed, true)
+  assert.equal((await call('GET', '/beeftv/status')).body.localPromptDismissed, true)
+  const settings = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'connection.json'), 'utf8'))
+  assert.deepEqual(settings, { mode: 'standalone', localPromptDismissed: true })
+  assert.equal((await call('POST', '/beeftv/local-prompt', { dismissed: false })).status, 503)
+})
+
+test('a standalone workspace notices a later local App and offers the switch', async context => {
+  let version = '2.1.6'
+  const now = { value: Date.now() }
+  context.mock.method(Date, 'now', () => now.value)
+  const { call, calls } = await startHost(context, { installedVersion: () => version })
+  const first = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
+  assert.equal(first.localApp.compatible, false)
+  version = '2.2.0'
+  const reads = calls.plistReads()
+  // The 30-second gate keeps status polling from probing the App on every request.
+  assert.equal((await call('GET', '/beeftv/status')).body.localApp.compatible, false)
+  assert.equal(calls.plistReads(), reads)
+  now.value += 30_000
+  assert.equal((await call('GET', '/beeftv/status')).body.localApp.compatible, true)
+})
+
+test('a saved 暂不 is read before the first status answer', async context => {
+  const { call } = await startHost(context, {
+    initialSettings: { mode: 'standalone', localPromptDismissed: true },
+    readDelayMs: 150,
+  })
+  assert.equal((await call('GET', '/beeftv/status')).body.localPromptDismissed, true)
+})
+
+test('a broken settings file is reported without connecting', async context => {
+  const { call, calls } = await startHost(context, { rawSettings: '{broken' })
+  const response = await call('GET', '/beeftv/status')
+  assert.equal(response.status, 200)
+  assert.equal(response.body.connected, false)
+  assert.ok(response.body.error)
+  assert.deepEqual(calls, [])
+})
+
+test('a failed dismissal keeps the prompt available', async context => {
+  const { call, home } = await startHost(context)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const settingsDir = join(home, 'storages', 'beeftv')
+  await fsPromises.rm(settingsDir, { recursive: true, force: true })
+  await fsPromises.writeFile(settingsDir, 'not a directory')
+  assert.equal((await call('POST', '/beeftv/local-prompt', { dismissed: true })).status, 503)
+  assert.equal((await call('GET', '/beeftv/status')).body.localPromptDismissed, false)
 })
 
 test('workspace sync follows the catalog read-only flags instead of tool names', async context => {
