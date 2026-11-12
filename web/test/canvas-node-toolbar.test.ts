@@ -149,4 +149,24 @@ describe("canvas node toolbar model", () => {
         expect(tools.find((tool) => tool.id === "resize")?.active).toBe(true);
         expect(tools.find((tool) => tool.id === "copyPrompt")?.group).toBe("more");
     });
+
+    test("quick-reference predicate covers inline content, storageKey-only, and previewContent media cards while excluding empty or workflow control nodes", async () => {
+        const { canQuickReferenceCanvasMediaNode } = await import("../src/lib/canvas/canvas-node-semantics");
+        const base = (type: CanvasNodeType, metadata?: CanvasNodeData["metadata"]): CanvasNodeData => ({
+            id: "n1",
+            type,
+            title: "素材",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata,
+        });
+
+        expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Image, { storageKey: "image:scope:archived" }))).toBe(true);
+        expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Audio, { storageKey: "audio:scope:archived" }))).toBe(true);
+        expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Video, { previewContent: "data:image/jpeg;base64,thumb" }))).toBe(true);
+        expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Image, { fileUpload: true }))).toBe(false);
+        expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Image, {}))).toBe(false);
+        expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Text, { content: "hello" }))).toBe(false);
+    });
 });

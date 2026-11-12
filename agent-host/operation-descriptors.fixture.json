@@ -1,5 +1,18 @@
 [
   {
+    "id": "agent.guide",
+    "summary": "读取 BeefTV 外部 Agent 使用说明（与一键接入安装的技能同一份）",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "asset.get",
     "summary": "按 ID 读取单个素材",
     "readOnly": true,
@@ -210,6 +223,86 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.external.write.list",
+    "summary": "列出外部客户端对画布做过的改动（最近 50 条，含已撤销）；只读，不修改画布",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "canvasId": {
+          "type": "string",
+          "description": "可选，只看某个画布"
+        }
+      }
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
+    "id": "canvas.external.write.undo",
+    "summary": "撤销一次外部写入。外部客户端只能撤销自己发起的改动；画布在那次改动后又被修改时拒绝撤销并说明原因",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "canvasId": {
+          "description": "改动所在的画布；省略时按写入记录查找",
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "writeOpId": {
+          "description": "要撤销的外部写入 ID；填 latest 表示该画布最近一次可撤销的外部写入",
+          "type": "string"
+        }
+      },
+      "required": [
+        "writeOpId",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
+    "id": "canvas.generation.orders",
+    "summary": "列出生成单，可按画布和状态过滤并分页；只读，不创建任务也不扣费",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "canvasId": {
+          "type": "string",
+          "description": "可选，只看某个画布"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "submitted"
+          ],
+          "description": "可选，生成单状态"
+        },
+        "page": {
+          "type": "integer",
+          "description": "页码，从 1 开始，默认 1"
+        },
+        "pageSize": {
+          "type": "integer",
+          "description": "每页数量，默认 20，最多 100"
+        }
+      }
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.generation.propose",
     "summary": "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止",
     "readOnly": true,
@@ -242,7 +335,7 @@
             "type": "string"
           },
           "maxItems": 24,
-          "description": "整片制作时列出全部计划生成的节点，nodeIds 只列当前参考已就绪的首批"
+          "description": "本批生成的节点（每批≤24，超出分批提案）；nodeIds 只列已就绪首批"
         },
         "note": {
           "type": "string"
@@ -259,6 +352,62 @@
       "canvas"
     ],
     "replay": "safe"
+  },
+  {
+    "id": "canvas.generation.regenerate",
+    "summary": "在原地重做已结束的画布生成并计费",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "expectedModelConfigRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expectedRevision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "video",
+            "audio"
+          ],
+          "type": "string"
+        },
+        "nodeIds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "orderId": {
+          "type": "string"
+        },
+        "proposalId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "nodeIds",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe",
+    "submitsGeneration": true
   },
   {
     "id": "canvas.generation.submit",
@@ -316,7 +465,8 @@
       "full-access",
       "canvas"
     ],
-    "replay": "safe"
+    "replay": "safe",
+    "submitsGeneration": true
   },
   {
     "id": "canvas.get",
@@ -658,6 +808,151 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.nodes.configure",
+    "summary": "一次设置多个媒体节点的提示词草稿与生成参数；全部校验通过后只增加一次画布版本",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "image",
+                  "video",
+                  "audio"
+                ],
+                "type": "string"
+              },
+              "nodeId": {
+                "type": "string"
+              },
+              "patch": {
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "audioFormat": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "audioInstructions": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "audioPitch": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "audioSpeed": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "audioVoice": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "audioVolume": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "count": {
+                    "description": "图片生成数量",
+                    "type": "integer"
+                  },
+                  "generateAudio": {
+                    "description": "草稿参数",
+                    "enum": [
+                      "true",
+                      "false"
+                    ],
+                    "type": "string"
+                  },
+                  "model": {
+                    "description": "从 model.catalog 选择的完整模型键 channelId::modelKey",
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "description": "下次生成提示词草稿，不覆盖现有成品",
+                    "type": "string"
+                  },
+                  "quality": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "seconds": {
+                    "description": "视频输出时长，单位秒。从 model.catalog 的 capabilityConfig.video.duration 选择，以字符串传入",
+                    "type": "string"
+                  },
+                  "size": {
+                    "description": "图片尺寸或视频画幅比例。视频从 model.catalog 的 capabilityConfig.video.ratios 选择，例如 16:9。视频分辨率使用 vquality",
+                    "type": "string"
+                  },
+                  "transparentBackground": {
+                    "description": "草稿参数",
+                    "enum": [
+                      "true",
+                      "false"
+                    ],
+                    "type": "string"
+                  },
+                  "videoEditOperation": {
+                    "description": "草稿参数",
+                    "type": "string"
+                  },
+                  "vquality": {
+                    "description": "视频输出分辨率。从 model.catalog 的 capabilityConfig.video.resolutions 选择，例如 480p、768p、1080p",
+                    "type": "string"
+                  },
+                  "watermark": {
+                    "description": "草稿参数",
+                    "enum": [
+                      "true",
+                      "false"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "nodeId",
+              "kind",
+              "patch"
+            ],
+            "type": "object"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "type": "array"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "expectedRevision",
+        "nodes",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.nodes.create",
     "summary": "批量创建画布节点",
     "readOnly": false,
@@ -708,6 +1003,35 @@
       "full-access",
       "canvas"
     ],
+    "replay": "safe"
+  },
+  {
+    "id": "canvas.nodes.get",
+    "summary": "一次读取指定的多个画布节点",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "nodeIds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "canvasId",
+        "nodeIds"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
     "replay": "safe"
   },
   {
@@ -2411,6 +2735,31 @@
     "replay": "safe"
   },
   {
+    "id": "task.cancel",
+    "summary": "取消排队中或进行中的任务；生成已完成但产物还在取回的会停止继续取回，已经取回的不能取消。上游已经受理的任务可能已经计费，这里不承诺退款",
+    "readOnly": false,
+    "scope": "workspace_read",
+    "params": {
+      "properties": {
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "taskId": {
+          "description": "要取消的任务 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "task.get",
     "summary": "查询任务状态与产物",
     "readOnly": true,
@@ -2431,6 +2780,45 @@
       "read-only",
       "canvas"
     ],
+    "replay": "safe"
+  },
+  {
+    "id": "task.wait",
+    "summary": "等待生成任务完成；超时返回 pending 和原 taskId，不返回错误",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "单个任务 ID"
+        },
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "description": "最多 8 个任务 ID"
+        },
+        "canvasId": {
+          "type": "string",
+          "description": "可选：和 nodeId 一起检查产物是否已绑定到该节点"
+        },
+        "nodeId": {
+          "type": "string",
+          "description": "可选：和 canvasId 一起检查产物是否已绑定到该节点"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 25000,
+          "description": "最多等 25000 毫秒，默认 25000"
+        }
+      }
+    },
+    "assistantModes": [],
     "replay": "safe"
   }
 ]
