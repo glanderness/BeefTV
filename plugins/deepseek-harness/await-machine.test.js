@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { awaitingSnapshot, createAwaitState, maximumWakesPerSession, transition } from './await-machine.js'
 import { normalizeAwaiting } from './await-runner.js'
+import { submittedTaskIds } from './runtime.js'
 import { createStepLimit } from './step-limit.js'
 
 const sessions = ['s1', 's2']
@@ -701,4 +702,32 @@ test('completedTaskIds 会写入快照并在重启后保持幂等', () => {
   let restored = transition(createAwaitState(), { type: 'historyLoaded', sessions: [], away: history.away }).state
   restored = transition(restored, { type: 'workspaceConnected', workspaceId: 'w1' }).state
   assert.equal(transition(restored, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t1'], agentStatus: 'idle' }).state.waits.s1, undefined)
+})
+
+test('原地重做和普通提交一样进入等待并唤醒，等待批准不进入等待', () => {
+  const regenerate = 'mcp__beeftv__canvas_generation_regenerate_ab092b275e46'
+  const result = value => ({ content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.generation.regenerate', result: value }) }] })
+  // 工具名只在 Host 层分类；状态机只看到 tasksSubmitted，所以 regenerate 不需要额外的事件类型。
+  const taskIds = submittedTaskIds(regenerate, result({ taskIds: ['redo-1'] }))
+  assert.deepEqual(taskIds, ['redo-1'])
+  let state = transition(createAwaitState(), { type: 'workspaceConnected', workspaceId: 'w1' }).state
+  const submitted = transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds, agentStatus: 'idle' })
+  const poll = submitted.actions.find(action => action.type === 'poll')
+  assert.ok(poll, '成功的原地重做要开始等结果')
+  assert.deepEqual(poll.taskIds, ['redo-1'])
+  const waitToken = submitted.state.waits.s1.token
+  const finished = transition(submitted.state, {
+    type: 'taskFinished', sessionId: 's1', waitToken,
+    outcomes: [{ taskId: 'redo-1', state: 'succeeded', reason: '' }], agentStatus: 'idle',
+  })
+  assert.equal(finished.actions.some(action => action.type === 'deliver'), true, '重做完成后要唤醒')
+
+  // 「每次问我」只返回 pending_approval：没有任务，也就不会开始等待或唤醒。
+  const pending = submittedTaskIds(regenerate, result({
+    status: 'pending_approval', approvalRequired: true, nodeIds: ['node-1'], taskId: 'approval-1',
+  }))
+  assert.deepEqual(pending, [])
+  const noWait = transition(createAwaitState(), { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: pending, agentStatus: 'idle' })
+  assert.equal(noWait.actions.some(action => action.type === 'poll'), false)
+  assert.equal(noWait.state.waits.s1, undefined)
 })

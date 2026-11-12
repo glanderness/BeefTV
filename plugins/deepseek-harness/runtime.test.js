@@ -11,7 +11,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import * as runtime from './runtime.js'
 import { createAwaitRunner } from './await-runner.js'
-import { approvalReason, awaitWakeText, defaultPluginSettings, embeddedDocument, guidedPrompt, normalizeSettings, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord, stepLimitNotice, submittedTaskIds, taskOutcome, validatedSettingsPatch, waitOutcome } from './runtime.js'
+import { approvalReason, awaitWakeText, defaultPluginSettings, embeddedDocument, guidedPrompt, normalizeSettings, publicContext, rememberQuote, requiresGenerationApproval, runtimeRecord, stepLimitNotice, submittedTaskIds, taskOutcome, unknownCatalogReason, validatedSettingsPatch, waitOutcome } from './runtime.js'
 // DSH supplies its MCP client package when it loads the plugin. The Host only hands it to
 // ctx.plugin, which the tests provide, so an inert module stands in for it.
 register(`data:text/javascript,${encodeURIComponent(`export async function resolve(specifier, context, next) {
@@ -43,11 +43,58 @@ test('canvas context accepts only bounded public view metadata', () => {
 })
 
 test('generation submission and the business gateway require DSH approval', () => {
+  const catalog = [
+    { id: 'canvas.generation.propose', readOnly: true, replay: 'safe' },
+    { id: 'canvas.search', readOnly: true, replay: 'safe' },
+  ]
   assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_submit_ab092b275e46'), true)
   assert.equal(requiresGenerationApproval('mcp__beeftv__business_call_ab092b275e46'), true)
-  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_propose_ab092b275e46'), false)
-  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_search_ab092b275e46'), false)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_propose_ab092b275e46', {}, [], catalog), false)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_search_ab092b275e46', {}, [], catalog), false)
   assert.equal(requiresGenerationApproval('mcp__other__canvas_generation_submit_ab092b275e46'), false)
+})
+
+test('a missing operation catalog fails closed for every tool but the known free reads', () => {
+  // 切换或释放窗口里 current 为空、目录读不到：未来新增的付费操作和普通读取都不能直接放行。
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_extend_ab092b275e46', {}), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_extend', {}), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__business_call_ab092b275e46', { tool: 'business_get_assets' }), true)
+  // 已知不产生费用的工具照旧放行。
+  assert.equal(requiresGenerationApproval('mcp__beeftv__business_list_ab092b275e46', {}), false)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_propose_ab092b275e46', {}), false)
+  // 目录存在但为空，说明目录已经加载，按目录判断而不是按不可用处理。
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}, [], []), false)
+  // 审批卡不能把目录不可用说成可能免费。
+  assert.equal(approvalReason('mcp__beeftv__canvas_generation_extend_ab092b275e46', {}), unknownCatalogReason)
+  assert.equal(approvalReason('mcp__beeftv__business_call_ab092b275e46', { tool: 'business_get_assets' }), unknownCatalogReason)
+})
+
+test('a catalog that marks paid generators covers regenerate with or without the hash suffix', () => {
+  const operations = [
+    { id: 'canvas.get', readOnly: true, replay: 'safe' },
+    { id: 'canvas.generation.submit', readOnly: false, replay: 'safe', submitsGeneration: true },
+    { id: 'canvas.generation.regenerate', readOnly: false, replay: 'safe', submitsGeneration: true },
+  ]
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_regenerate_ab092b275e46', {}, [], operations), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_regenerate', {}, [], operations), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_submit_ab092b275e46', {}, [], operations), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_get_ab092b275e46', {}, [], operations), false)
+  // 旧后端没有 submitsGeneration 字段时，仍然按工具名认 submit。
+  const legacy = [{ id: 'canvas.generation.submit', readOnly: false }, { id: 'canvas.generation.regenerate', readOnly: false }]
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_submit_ab092b275e46', {}, [], legacy), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_regenerate_ab092b275e46', {}, [], legacy), true)
+  // 目录读不到（切换或释放窗口）时，已知付费操作仍按名审批，不能 fail open。
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_regenerate_ab092b275e46', {}), true)
+  // 目录只写了 submitsGeneration: false 的普通写操作不弹付费审批。
+  const explicit = [{ id: 'canvas.node.update', readOnly: false, submitsGeneration: false }]
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_node_update_ab092b275e46', {}, [], explicit), false)
+  // 目录里有 submitsGeneration 字段但 submit 条目缺失或漏标时，submit 仍按工具名审批。
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_submit_ab092b275e46', {}, [], explicit), true)
+  // 未来新增的付费操作不靠名字兜底：目录标了 submitsGeneration 就必须审批。
+  const future = [{ id: 'canvas.generation.extend', readOnly: false, submitsGeneration: true }]
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_extend_ab092b275e46', {}, [], future), true)
+  assert.equal(requiresGenerationApproval('mcp__beeftv__canvas_generation_extend', {}, [], future), true)
 })
 
 test('only trusted catalog metadata exempts a read-only business call from additional approval', () => {
@@ -58,11 +105,12 @@ test('only trusted catalog metadata exempts a read-only business call from addit
     { id: 'business_put_canvas_projects_id', readOnly: false, submitsGeneration: false },
     { id: 'business_get_generation', readOnly: true, submitsGeneration: true },
   ]
-  assert.equal(requiresGenerationApproval(name, { tool: 'business_get_assets' }, catalog), false)
-  assert.equal(requiresGenerationApproval(name, { tool: 'business_post_tasks', readOnly: true, submitsGeneration: false }, catalog), true)
-  assert.equal(requiresGenerationApproval(name, { tool: 'business_put_canvas_projects_id', readOnly: true }, catalog), true)
-  assert.equal(requiresGenerationApproval(name, { tool: 'business_get_generation' }, catalog), true)
-  assert.equal(requiresGenerationApproval(name, { tool: 'business_get_unknown', readOnly: true }, catalog), true)
+  // 业务目录已加载（操作目录为空），只按业务目录的只读标记判断。
+  assert.equal(requiresGenerationApproval(name, { tool: 'business_get_assets' }, catalog, []), false)
+  assert.equal(requiresGenerationApproval(name, { tool: 'business_post_tasks', readOnly: true, submitsGeneration: false }, catalog, []), true)
+  assert.equal(requiresGenerationApproval(name, { tool: 'business_put_canvas_projects_id', readOnly: true }, catalog, []), true)
+  assert.equal(requiresGenerationApproval(name, { tool: 'business_get_generation' }, catalog, []), true)
+  assert.equal(requiresGenerationApproval(name, { tool: 'business_get_unknown', readOnly: true }, catalog, []), true)
   assert.equal(requiresGenerationApproval(name, { tool: 'business_get_assets', readOnly: true }), true)
 })
 
@@ -120,6 +168,24 @@ test('the approval card names the model, amount and price of the nodes this subm
   for (const args of [{ proposalId: 'gp-unseen', nodeIds: ['shot-1'] }, { proposalId: 'gp-image', nodeIds: ['shot-1', 'other'] }, { proposalId: 'gp-image' }]) {
     assert.match(reason(args), /和已有报价对不上，无法显示费用/)
   }
+})
+
+test('the regenerate card says it redos in place and keeps the old result', () => {
+  const quotes = new Map()
+  const propose = 'mcp__beeftv__canvas_generation_propose_ab092b275e46'
+  rememberQuote(quotes, propose, proposeResult('gp-image', {
+    targets: [imageTarget('shot-1', '2', 0.0244), imageTarget('shot-2', undefined, 0.0122)],
+    estimate: { text: '预计费用：¥0.0366。' },
+  }))
+  const regenerate = 'mcp__beeftv__canvas_generation_regenerate_ab092b275e46'
+  assert.equal(approvalReason(regenerate, { proposalId: 'gp-image', nodeIds: ['shot-1', 'shot-2'] }, [], quotes),
+    'BeefTV 将在原节点重新生成并计费，原有结果（如有）会留在素材库。生成 3 张图片（dola-seedream-5-0-flash-260915）。预计费用：¥0.0366。')
+  assert.equal(approvalReason(regenerate, { proposalId: 'gp-image', nodeIds: ['shot-2'] }, [], quotes),
+    'BeefTV 将在原节点重新生成并计费，原有结果（如有）会留在素材库。生成 1 张图片（dola-seedream-5-0-flash-260915）。预计费用：¥0.0122。')
+  const noQuote = approvalReason(regenerate, { proposalId: 'gp-unseen', nodeIds: ['shot-1'] }, [], quotes)
+  assert.equal(noQuote, 'BeefTV 将在原节点重新生成并计费，原有结果（如有）会留在素材库。费用按所选渠道实际计费。')
+  // 没有报价时只说明计费方式，不能说已经扣费。
+  assert.doesNotMatch(noQuote, /已扣费|已经扣费/)
 })
 
 test('only successful propose results are kept as quotes, and only the most recent ones', () => {
@@ -465,7 +531,14 @@ test('paid submissions ask with the quote unless the user chose the full-access 
       return presets.get(session.id)
     },
   }
-  const { call, listeners } = await startHost(context, { services: { permissionPresets } })
+  const { call, listeners } = await startHost(context, {
+    services: { permissionPresets },
+    extraOps: [
+      { id: 'canvas.generation.submit', submitsGeneration: true },
+      { id: 'canvas.generation.regenerate', submitsGeneration: true },
+      { id: 'canvas.generation.extend', submitsGeneration: true },
+    ],
+  })
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
   listeners.get('tools/result')({ name: 'mcp__beeftv__canvas_generation_propose_ab092b275e46', arguments: {} }, proposeResult('gp-1'))
   const preExecute = listeners.get('tools/pre-execute')
@@ -478,10 +551,56 @@ test('paid submissions ask with the quote unless the user chose the full-access 
   assert.deepEqual(await preExecute(submit('full-access-session'), allow), { kind: 'allow' })
   assert.deepEqual(await preExecute(submit('unattended-session'), allow), asked)
   assert.deepEqual(await preExecute(submit('unready-session'), allow), asked)
+  // 原地重做走同一套审批：原节点重做、旧结果留在素材库，完全权限下同样直接执行。
+  const regenerate = session => ({
+    name: regenerateName, arguments: { proposalId: 'gp-1', nodeIds: ['node-1'] }, agent: { session: { id: session } },
+  })
+  const regenerateAsked = { kind: 'ask', reason: 'BeefTV 将在原节点重新生成并计费，原有结果（如有）会留在素材库。生成 1 张图片（dola-seedream-5-0-flash-260915）。预计费用：¥0.0122。' }
+  assert.deepEqual(await preExecute(regenerate('workspace-session'), allow), regenerateAsked)
+  assert.deepEqual(await preExecute(regenerate('full-access-session'), allow), { kind: 'allow' })
+  assert.deepEqual(await preExecute(regenerate('unattended-session'), allow), regenerateAsked)
+  // 没有报价时只说计费方式，不编造金额。
+  assert.deepEqual(await preExecute({ ...regenerate('workspace-session'), arguments: { proposalId: 'gp-unseen', nodeIds: ['node-2'] } }, allow), {
+    kind: 'ask', reason: 'BeefTV 将在原节点重新生成并计费，原有结果（如有）会留在素材库。费用按所选渠道实际计费。',
+  })
+  // 目录里未来新增的付费操作不靠 submit/regenerate 名字兜底，也必须走审批；
+  // 这条同时覆盖 connection 保存的 generationTools 与 Host 的传递。
+  const extend = session => ({
+    name: 'mcp__beeftv__canvas_generation_extend_ab092b275e46', arguments: {}, agent: { session: { id: session } },
+  })
+  const extendAsked = { kind: 'ask', reason: 'BeefTV 将提交生成或未识别的业务操作，可能修改工作区或产生费用，请核对本次操作。' }
+  assert.deepEqual(await preExecute(extend('workspace-session'), allow), extendAsked)
+  assert.deepEqual(await preExecute(extend('full-access-session'), allow), { kind: 'allow' })
+  assert.deepEqual(await preExecute(extend('unattended-session'), allow), extendAsked)
   // A call DSH already denies stays denied, and reads keep DSH's decision in every mode.
   assert.deepEqual(await preExecute(submit('full-access-session'), async () => ({ kind: 'deny', reason: 'sandbox' })), { kind: 'deny', reason: 'sandbox' })
   const read = { name: 'mcp__beeftv__canvas_get_ab092b275e46', arguments: {}, agent: { session: { id: 'workspace-session' } } }
   assert.deepEqual(await preExecute(read, allow), { kind: 'allow' })
+})
+
+test('a call during the switching window asks even when the operation catalog is gone', async context => {
+  const presets = new Map([['workspace-session', 'workspace-write'], ['full-access-session', 'danger-full-access']])
+  const permissionPresets = { current: session => presets.get(session.id) }
+  const { call, listeners, workspace } = await startHost(context, {
+    services: { permissionPresets },
+    extraOps: [{ id: 'canvas.generation.extend', submitsGeneration: true }],
+  })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const preExecute = listeners.get('tools/pre-execute')
+  const allow = async () => ({ kind: 'allow' })
+  const toolCall = (name, session) => ({ name, arguments: {}, agent: { session: { id: session } } })
+  const extend = session => toolCall('mcp__beeftv__canvas_generation_extend_ab092b275e46', session)
+  // 连接在线时按目录判断：未来付费操作要审批，普通读取不拦。
+  assert.equal((await preExecute(extend('workspace-session'), allow)).kind, 'ask')
+  assert.deepEqual(await preExecute(toolCall('mcp__beeftv__canvas_get_ab092b275e46', 'workspace-session'), allow), { kind: 'allow' })
+  // 健康检查失败后 current 被清空，目录读不到；此时未知操作不能当成免审批。
+  workspace.available = false
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.deepEqual(await preExecute(extend('workspace-session'), allow), { kind: 'ask', reason: unknownCatalogReason })
+  assert.deepEqual(await preExecute(toolCall('mcp__beeftv__canvas_get_ab092b275e46', 'workspace-session'), allow), { kind: 'ask', reason: unknownCatalogReason })
+  // 已知不产生费用的工具照旧放行；完全权限照旧直接执行。
+  assert.deepEqual(await preExecute(toolCall('mcp__beeftv__business_list_ab092b275e46', 'workspace-session'), allow), { kind: 'allow' })
+  assert.deepEqual(await preExecute(extend('full-access-session'), allow), { kind: 'allow' })
 })
 
 test('without the DSH permission presets, paid submissions still ask', async context => {
@@ -610,6 +729,11 @@ test('Host reports an outdated desktop App for upgrade without starting it', asy
 
 const submitName = 'mcp__beeftv__canvas_generation_submit_ab092b275e46'
 const submitResult = taskIds => ({ content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.generation.submit', result: { taskIds } }) }] })
+const regenerateName = 'mcp__beeftv__canvas_generation_regenerate_ab092b275e46'
+const regenerateResult = taskIds => ({ content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.generation.regenerate', result: { taskIds } }) }] })
+const pendingApprovalResult = () => ({
+  content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.generation.regenerate', result: { canvasId: 'canvas', status: 'pending_approval', approvalRequired: true, nodeIds: ['node-1'], taskId: 'approval-1' } }) }],
+})
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 async function until(predicate, timeout = 3000) {
   const deadline = Date.now() + timeout
@@ -735,6 +859,40 @@ test('a successful generation submission waits with task.wait and wakes the same
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t1']))
   await sleep(80)
   assert.equal(wakes.length, 1)
+})
+
+test('a successful in-place regenerate is submitted like a normal generation, but a pending approval is not', () => {
+  assert.deepEqual(submittedTaskIds(regenerateName, regenerateResult(['r1', 'r1', 'r2'])), ['r1', 'r2'])
+  assert.deepEqual(submittedTaskIds(regenerateName, { ...regenerateResult(['r2']), isError: true }), [])
+  // 「每次问我」只登记了原地重做，还没生成也没扣费，不能进入等待和唤醒。
+  assert.deepEqual(submittedTaskIds(regenerateName, pendingApprovalResult()), [])
+})
+
+test('a successful regenerate waits with task.wait and wakes the same session once', async context => {
+  const { call, listeners, workspace } = await startHost(context, {
+    extraOps: [{ id: 'task.wait', readOnly: true }, { id: 'canvas.generation.regenerate', submitsGeneration: true }],
+  })
+  workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: regenerateName, arguments: {}, agent }, regenerateResult(['r1']))
+  await until(() => wakes.length === 1)
+  assert.equal(wakes[0].content[0].text, '生成已结束：1 个成功。任务：r1。请只查询结果、绑定到节点并继续，不要重新提交。')
+  assert.equal(workspace.calls.filter(item => item.op === 'task.wait').length, 1)
+})
+
+test('a regenerate waiting for backend approval neither waits nor wakes', async context => {
+  const { call, listeners, workspace } = await startHost(context, {
+    extraOps: [{ id: 'task.wait', readOnly: true }, { id: 'canvas.generation.regenerate', submitsGeneration: true }],
+  })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent, wakes } = fakeAgent()
+  listeners.get('tools/result')({ name: regenerateName, arguments: {}, agent }, pendingApprovalResult())
+  await sleep(120)
+  assert.equal(wakes.length, 0)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait' || item.op === 'task.get'), false)
+  // 只是登记审批意图，画布没有变化：不能触发页面同步或跳转。
+  assert.equal((await call('GET', '/beeftv/status')).body.activity, null)
 })
 
 test('a pending task.wait keeps waiting, and a failed task is reported with its reason', async context => {
