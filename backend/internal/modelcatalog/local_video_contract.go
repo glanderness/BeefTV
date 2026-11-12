@@ -11,17 +11,6 @@ func isLocalBeefTVRoute(item LocalChannelModel) bool {
 	return providerpreset.IsBeefTVEndpoint(item.BaseURL) || (strings.TrimSpace(item.BaseURL) == "" && strings.EqualFold(strings.TrimSpace(item.ChannelID), "beeftv"))
 }
 
-func hasLocalVideoContract(item LocalChannelModel) bool {
-	if item.Capability != "video" || !isLocalBeefTVRoute(item) {
-		return false
-	}
-	if isSeedance2Family(item.Protocol, item.Model) {
-		return true
-	}
-	_, ok := providerpreset.BeefTVVideoContract(item.Model)
-	return ok
-}
-
 // ApplyLocalVideoContract matches the desktop configuration's BeefTV overlay.
 // A versioned gateway profile owns its limits. Otherwise, verified route limits
 // repair legacy generic profiles without changing the saved audio default.
@@ -103,8 +92,9 @@ func ApplyLocalVideoContract(item LocalChannelModel, config *ModelCapabilityConf
 			video.OperationReferences = opRefs
 		}
 	}
-	if contract.MiddleFrame {
-		video.MiddleFrame = true
+	if contract.MiddleFrame && video.MiddleFrame == nil {
+		enabled := true
+		video.MiddleFrame = &enabled
 	}
 	if isSeedance2Family(item.Protocol, item.Model) {
 		repairSeedanceBooleanFlagsAndDraftResolution(item.Protocol, item.Model, &video)

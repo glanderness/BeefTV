@@ -106,7 +106,7 @@ type VideoCapabilityConfig struct {
 	Operations          []string                            `json:"operations"`
 	DefaultOperation    string                              `json:"defaultOperation"`
 	TaskTypeConstraints bool                                `json:"taskTypeConstraints,omitempty"`
-	MiddleFrame         bool                                `json:"middleFrame,omitempty"`
+	MiddleFrame         *bool                               `json:"middleFrame,omitempty"`
 }
 
 // Nil inherits the model-wide count; a declared zero forbids that media kind.

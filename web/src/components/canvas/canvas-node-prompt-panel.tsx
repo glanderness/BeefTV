@@ -27,7 +27,7 @@ import { videoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
 import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
-import { isH3MaxFamilyModel, isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
+import { isH3MaxFamilyModel, isH3Model, isH3Style } from "@/lib/h3-video";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
@@ -60,6 +60,7 @@ import {
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
 type CanvasNodePromptPanelProps = {
+    config?: AiConfig;
     projectId: string;
     node: CanvasNodeData;
     isRunning: boolean;
@@ -83,8 +84,9 @@ type CanvasNodePromptPanelProps = {
     workspaceMode?: CanvasWorkspaceMode;
 };
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, onOpenGenerationHistory, onCreateGenerationReplacement, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, referenceNodes = [node], referenceConnections = [], onLocateReferenceNode, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
-    const globalConfig = useEffectiveConfig();
+export function CanvasNodePromptPanel({ config: configProp, projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, onOpenGenerationHistory, onCreateGenerationReplacement, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, referenceNodes = [node], referenceConnections = [], onLocateReferenceNode, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+    const effectiveConfig = useEffectiveConfig();
+    const globalConfig = configProp || effectiveConfig;
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const preferredFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize);
@@ -170,14 +172,13 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
     const h3Model = isH3Model(config.model);
-    const h3Max = isH3MaxModel(config.model);
     const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
     const effectiveVideoOperation = mode === "video" && requirements.input
         ? resolveVideoOperation(requirements.input, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model)
         : undefined;
-    const { endFrameSupported, referenceVideoSupported, maxFrameAudios } = mode === "video"
+    const { endFrameSupported, referenceVideoSupported, maxFrameAudios, middleFrameSupported } = mode === "video"
         ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"))
-        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
+        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0, middleFrameSupported: false };
     const hasVisualOrVideoReference = activeReferences.some((item) => item.kind === "image" || item.kind === "character" || item.kind === "video");
     const videoModeState = useMemo(() => {
         if (mode !== "video" || simpleMode || !hasVisualOrVideoReference || ["extend", "inpaint"].includes(effectiveVideoOperation || "")) return undefined;
@@ -195,15 +196,15 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const videoReferenceInputs = useMemo(() => activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]), [activeReferences]);
     const h3SelectedFrames = [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, node.metadata?.videoMiddleFrameNodeId];
     const hasH3ReferenceOrder = isH3MaxFamilyModel(config.model) && videoReferenceInputs.some((input) => ["image", "character", "video", "audio"].includes(input.type) && !h3SelectedFrames.includes(input.nodeId));
-    const hasVideoPromptTools = mode === "video" && !simpleMode && ((h3Max && videoFrameOptions.length > 0) || hasH3ReferenceOrder);
+    const hasVideoPromptTools = mode === "video" && !simpleMode && ((middleFrameSupported && videoFrameOptions.length > 0) || hasH3ReferenceOrder);
     const renderVideoPromptTools = () => (
         <>
-            {h3Max && videoFrameOptions.length > 0 ? (
+            {middleFrameSupported && videoFrameOptions.length > 0 ? (
                 <CanvasVideoPromptTools
                     metadata={node.metadata}
                     frameOptions={videoFrameOptions}
-                    endFrameSupported
-                    middleFrameSupported
+                    endFrameSupported={endFrameSupported}
+                    middleFrameSupported={middleFrameSupported}
                     referenceLabel="参考生成"
                     referenceMode="frames"
                     referenceSummary={requirements.input}
@@ -658,7 +659,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         onReplaceReference={onReplaceReference ? (oldReference, sourceNodeId) => onReplaceReference(node.id, oldReference, sourceNodeId) : undefined}
                         onReplaceReferenceFiles={onReplaceReferenceFiles ? (oldReference, files) => onReplaceReferenceFiles(node.id, oldReference, files) : undefined}
                         onVideoMetadataChange={(patch) => onConfigChange(node.id, patch)}
-                        onTogglePromptFirstFrame={h3Max ? undefined : (reference) => updatePrompt(togglePromptFirstFrameMention(prompt, { nodeId: reference.nodeId, token: canvasResourceMentionToken(reference) }, resolvedMentionReferences))}
+                        onTogglePromptFirstFrame={middleFrameSupported ? undefined : (reference) => updatePrompt(togglePromptFirstFrameMention(prompt, { nodeId: reference.nodeId, token: canvasResourceMentionToken(reference) }, resolvedMentionReferences))}
                     />
                     <CanvasResourceMentionTextarea
                         value={prompt}

@@ -2,12 +2,13 @@ import { Button, Segmented, Select } from "antd";
 import type { CSSProperties } from "react";
 import { ChevronDown, Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Sparkles, Video } from "lucide-react";
 
-import { modelCapabilityConfigFor, videoReferencesForOperation, videoSupportsTaskTypeConstraints } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, videoSupportsTaskTypeConstraints } from "@/lib/model-capabilities";
 import { isH3Model } from "@/lib/h3-video";
 import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
-import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, resolveVideoOperation } from "@/lib/model-selection";
+import { resolveVideoReferenceCapabilities } from "@/lib/canvas/video-reference-mode";
 
-import { useEffectiveConfig } from "@/stores/use-config-store";
+import { useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { buildGenerationConfig as buildNodeConfig, buildCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -36,6 +37,37 @@ const videoOperationOptions: Array<{ label: string; value: CanvasVideoEditOperat
     { label: "音频生视频", value: "audio_to_video" },
     { label: "版本对比", value: "compare_versions" },
 ];
+
+export function buildConfigNodeVideoOperationOptions(config: AiConfig, inputSummary: CanvasConfigNodePanelProps["inputSummary"]) {
+    const videoProfile = modelCapabilityConfigFor(config, config.model).video;
+    const { maxFrameImages, maxFrameAudios } = resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"));
+    const visualCount = inputSummary.imageCount + inputSummary.characterCount;
+    const totalMediaCount = visualCount + inputSummary.videoCount + inputSummary.audioCount;
+    return videoOperationOptions
+        .filter(
+            (option) =>
+                ["text_to_video", "image_to_video", "reference_to_video", "inpaint", "extend", "audio_to_video"].includes(option.value) &&
+                videoProfile?.operations.includes(option.value),
+        )
+        .map((option) => ({
+            ...option,
+            label: option.value === "image_to_video" ? "首帧 / 首尾帧" : option.value === "reference_to_video" ? "参考生成" : option.label,
+            disabled:
+                option.value === "image_to_video"
+                    ? visualCount < 1 ||
+                      visualCount > maxFrameImages ||
+                      inputSummary.characterCount > 0 ||
+                      inputSummary.videoCount > 0 ||
+                      inputSummary.audioCount > maxFrameAudios
+                    : ["inpaint", "extend"].includes(option.value)
+                      ? inputSummary.videoCount < 1
+                      : option.value === "text_to_video"
+                        ? totalMediaCount > 0
+                        : option.value === "audio_to_video"
+                          ? inputSummary.audioCount < 1 || visualCount + inputSummary.videoCount > 0
+                          : totalMediaCount < 1,
+        }));
+}
 
 export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigChange, onGenerate, onComposerToggle, workspaceMode = "professional" }: CanvasConfigNodePanelProps) {
     const globalConfig = useEffectiveConfig();
@@ -132,35 +164,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                             aria-label="视频生成模式"
                             className="w-full"
                             value={resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model)}
-                            options={videoOperationOptions
-                                .filter(
-                                    (option) =>
-                                        ["text_to_video", "image_to_video", "reference_to_video", "inpaint", "extend", "audio_to_video"].includes(option.value) && modelCapabilityConfigFor(config, config.model).video?.operations.includes(option.value),
-                                )
-                                .map((option) => {
-                                    const videoProfile = modelCapabilityConfigFor(config, config.model).video;
-                                    const frameRefs = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video") : undefined;
-                                    const maxFrameImages = isH3Model(config.model) ? 2 : Math.min(2, frameRefs?.maxImages ?? 2);
-                                    const maxFrameAudios = isH3Model(config.model) ? 1 : !videoProfile?.operations.includes("reference_to_video") ? (frameRefs?.maxAudios ?? 0) : 0;
-                                    return {
-                                        ...option,
-                                        label: option.value === "image_to_video" ? "首帧 / 首尾帧" : option.value === "reference_to_video" ? "参考生成" : option.label,
-                                        disabled:
-                                            option.value === "image_to_video"
-                                                ? inputSummary.imageCount + inputSummary.characterCount < 1 ||
-                                                  inputSummary.imageCount + inputSummary.characterCount > maxFrameImages ||
-                                                  inputSummary.characterCount > 0 ||
-                                                  inputSummary.videoCount > 0 ||
-                                                  inputSummary.audioCount > maxFrameAudios
-                                                : ["inpaint", "extend"].includes(option.value)
-                                                  ? inputSummary.videoCount < 1
-                                                  : option.value === "text_to_video"
-                                                    ? inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount + inputSummary.audioCount > 0
-                                                    : option.value === "audio_to_video"
-                                                      ? inputSummary.audioCount < 1 || inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount > 0
-                                                      : inputSummary.imageCount + inputSummary.characterCount + inputSummary.videoCount + inputSummary.audioCount < 1,
-                                    };
-                                })}
+                            options={buildConfigNodeVideoOperationOptions(config, inputSummary)}
                             onChange={(value) => onConfigChange(node.id, { videoEditOperation: value as CanvasVideoEditOperation })}
                         />
                     ) : (

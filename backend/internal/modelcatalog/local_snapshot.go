@@ -11,17 +11,33 @@ import (
 
 type LocalChannelModel struct {
 	ChannelID                string
+	ChannelScope             string
 	BaseURL                  string
 	Enabled                  bool
 	Model                    string
 	DisplayName              string
 	Capability               string
 	Protocol                 string
+	CapabilitySource         string
 	CapabilityConfig         any
 	ImageCapabilitiesVersion *string
 	VideoCapabilitiesVersion *string
 	VideoPricing             json.RawMessage
 	Pricing                  json.RawMessage
+}
+
+func (item LocalChannelModel) HasDeclaredCapability() bool {
+	section, ok := item.CapabilityConfig.(map[string]any)
+	if !ok || section[item.Capability] == nil {
+		return false
+	}
+	version := item.ImageCapabilitiesVersion
+	if item.Capability == "video" {
+		version = item.VideoCapabilitiesVersion
+	}
+	return (version != nil && strings.TrimSpace(*version) != "") ||
+		strings.TrimSpace(item.ChannelScope) == "system" ||
+		strings.TrimSpace(item.CapabilitySource) == "user"
 }
 
 func ParseLocalChannelModels(body []byte) []LocalChannelModel {
@@ -31,6 +47,7 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 	var snapshot struct {
 		Channels []struct {
 			ID            string   `json:"id"`
+			Scope         string   `json:"scope"`
 			BaseURL       string   `json:"baseUrl"`
 			Enabled       *bool    `json:"enabled"`
 			Models        []string `json:"models"`
@@ -39,6 +56,7 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 				DisplayName              string          `json:"displayName"`
 				Capability               string          `json:"capability"`
 				Protocol                 string          `json:"protocol"`
+				CapabilitySource         string          `json:"capabilitySource"`
 				CapabilityConfig         json.RawMessage `json:"capabilityConfig"`
 				ImageCapabilitiesVersion *string         `json:"imageCapabilitiesVersion"`
 				VideoCapabilitiesVersion *string         `json:"videoCapabilitiesVersion"`
@@ -56,12 +74,14 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 			continue
 		}
 		enabled := channel.Enabled == nil || *channel.Enabled
+		scope := strings.TrimSpace(channel.Scope)
 		profiles := map[string]LocalChannelModel{}
 		for _, profile := range channel.ModelProfiles {
 			item := LocalChannelModel{
-				ChannelID: channel.ID, BaseURL: channel.BaseURL, Enabled: enabled,
+				ChannelID: channel.ID, ChannelScope: scope, BaseURL: channel.BaseURL, Enabled: enabled,
 				Model: profile.Model, DisplayName: strings.TrimSpace(profile.DisplayName),
 				Capability: profile.Capability, Protocol: profile.Protocol,
+				CapabilitySource:         strings.TrimSpace(profile.CapabilitySource),
 				VideoPricing:             profile.VideoPricing,
 				Pricing:                  profile.Pricing,
 				VideoCapabilitiesVersion: profile.VideoCapabilitiesVersion,
@@ -78,6 +98,7 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 		for _, name := range channel.Models {
 			item := profiles[name]
 			item.ChannelID = channel.ID
+			item.ChannelScope = scope
 			item.BaseURL = channel.BaseURL
 			item.Enabled = enabled
 			item.Model = name
@@ -170,7 +191,7 @@ func PublicCatalogFromLocalSnapshot(body []byte) (*CatalogResponse, error) {
 				cm.Protocol = model.ChannelInterfaceType(protocol)
 			}
 		}
-		declared := item.CapabilityConfig != nil || hasLocalVideoContract(item)
+		declared := item.HasDeclaredCapability()
 		capabilityConfig := item.CapabilityConfig
 		if capabilityConfig == nil {
 			capabilityConfig = DefaultModelCapabilityConfigForModel(string(cm.Protocol), item.Model)

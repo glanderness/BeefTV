@@ -137,6 +137,7 @@ func TestAgentModelCatalogDesktopUsesActualSnapshotWithoutCredentials(t *testing
 		t.Fatalf("refresh=%#v %v", refreshed, err)
 	}
 }
+
 // BeefTV publishes image models without a prompt limit as promptMaxChars 0.
 func TestAgentModelCatalogKeepsUnlimitedPromptImageModelsPriced(t *testing.T) {
 	svc, _ := newModelCatalogTestService(t)
@@ -269,5 +270,68 @@ func TestAgentCatalogFiltersCapabilityAndExposesOnlyValidatedQuote(t *testing.T)
 	}
 	if _, err := registry.Execute(operations.Request{Op: "model.catalog", UserID: "desktop-owner", Caller: operations.ManualCaller(true), Params: json.RawMessage(`{"capability":"other"}`)}); err == nil {
 		t.Fatal("unknown capability accepted")
+	}
+}
+
+func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) {
+	svc, _ := newModelCatalogTestService(t)
+	svc.mode = serviceModeLocal
+	defaultCap := modelcatalog.DefaultModelCapabilityConfigForModel("openai-videos", "opaque-video")
+	body, err := json.Marshal(map[string]any{
+		"channels": []any{
+			map[string]any{
+				"id":      "custom",
+				"name":    "Custom",
+				"baseUrl": "https://custom.example/v1",
+				"enabled": true,
+				"models":  []string{"auto-cap", "user-cap", "versioned-cap"},
+				"modelProfiles": []any{
+					map[string]any{"model": "auto-cap", "capability": "video", "protocol": "openai-videos", "capabilityConfig": defaultCap},
+					map[string]any{"model": "user-cap", "capability": "video", "protocol": "openai-videos", "capabilitySource": "user", "capabilityConfig": defaultCap},
+					map[string]any{"model": "versioned-cap", "capability": "video", "protocol": "openai-videos", "videoCapabilitiesVersion": "2026-04-06", "capabilityConfig": defaultCap},
+				},
+			},
+			map[string]any{
+				"id":      "sys",
+				"name":    "System",
+				"scope":   "system",
+				"baseUrl": "https://system.example/v1",
+				"enabled": true,
+				"models":  []string{"sys-cap"},
+				"modelProfiles": []any{
+					map[string]any{"model": "sys-cap", "capability": "video", "protocol": "openai-videos", "capabilityConfig": defaultCap},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SaveLocalModelConfig(body); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := (&operationSession{service: svc}).AgentModelCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaredByKey := map[string]bool{}
+	for _, ch := range catalog.Channels {
+		for _, m := range ch.Models {
+			if m.CapabilityDeclared == nil {
+				t.Fatalf("missing CapabilityDeclared for %s::%s", ch.ID, m.ModelKey)
+			}
+			declaredByKey[ch.ID+"::"+m.ModelKey] = *m.CapabilityDeclared
+		}
+	}
+	want := map[string]bool{
+		"custom::auto-cap":      false,
+		"custom::user-cap":      true,
+		"custom::versioned-cap": true,
+		"sys::sys-cap":          true,
+	}
+	for key, expected := range want {
+		if got, ok := declaredByKey[key]; !ok || got != expected {
+			t.Fatalf("%s CapabilityDeclared = %v (present=%v), want %v", key, got, ok, expected)
+		}
 	}
 }

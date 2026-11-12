@@ -12,7 +12,7 @@ import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-pic
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
 import { buildCanvasGenerationRequirements, buildGenerationConfig } from "@/lib/canvas/canvas-generation-config";
-import { isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
+import { isH3Model, isH3Style } from "@/lib/h3-video";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, resolveVideoOperation } from "@/lib/model-selection";
 import { findPromptFirstFrameNodeId, resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses } from "@/lib/canvas/video-reference-mode";
@@ -81,9 +81,9 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
         return buildGenerationConfig(globalConfig, syntheticNode, "video", requirements).model || model;
     }, [generationMode, globalConfig, inputSummary, metadata, model]);
     const videoProfile = generationMode === "video" && effectiveModel ? modelCapabilityConfigFor(globalConfig, effectiveModel).video : undefined;
-    const { endFrameSupported, referenceVideoSupported, maxFrameAudios } = generationMode === "video"
+    const { endFrameSupported, referenceVideoSupported, maxFrameAudios, middleFrameSupported } = generationMode === "video"
         ? resolveVideoReferenceCapabilities(effectiveModel, videoProfile, Boolean(effectiveModel) && hasDeclaredModelCapability(globalConfig, effectiveModel, "video"))
-        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
+        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0, middleFrameSupported: false };
     const promptFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize ?? DEFAULT_PROMPT_FONT_SIZE);
     const promptTextStyle = { fontSize: promptFontSize, lineHeight: 1.5 };
     const editorRef = useRef<HTMLDivElement>(null);
@@ -248,9 +248,10 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
                     <CanvasVideoPromptTools
                         metadata={metadata}
                         endFrameSupported={endFrameSupported}
+                        middleFrameSupported={middleFrameSupported}
                         referenceLabel="参考生成"
                         frameOptions={videoFrameOptions}
-                        referenceMode={(!(videoProfile?.middleFrame ?? isH3MaxModel(effectiveModel)) && resolveVideoOperation(inputSummary, metadata?.videoEditOperation, declaredOrOmniVideoCapability(globalConfig, effectiveModel), effectiveModel) === "reference_to_video") ? "all" : "frames"}
+                        referenceMode={(!middleFrameSupported && resolveVideoOperation(inputSummary, metadata?.videoEditOperation, declaredOrOmniVideoCapability(globalConfig, effectiveModel), effectiveModel) === "reference_to_video") ? "all" : "frames"}
                         referenceSummary={{
                             imageCount: inputSummary.imageCount + inputSummary.characterCount,
                             videoCount: inputSummary.videoCount,

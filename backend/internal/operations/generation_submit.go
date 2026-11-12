@@ -583,16 +583,33 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 	return targets, nil
 }
 
+func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.VideoCapabilityConfig, declared bool) string {
+	if videoProfile != nil && videoProfile.MiddleFrame != nil {
+		if *videoProfile.MiddleFrame {
+			return "supported"
+		}
+		return "unsupported"
+	}
+	if contract, ok := providerpreset.BeefTVVideoContract(modelID); ok && contract.MiddleFrame {
+		return "supported"
+	}
+	if declared {
+		return "unsupported"
+	}
+	return "opaque"
+}
+
 func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, graph generationDependencyGraph, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) map[string]any {
 	if strings.TrimSpace(dependencyString(nodeMeta, "videoDraftTaskId")) != "" {
 		return metadata
 	}
-	var videoProfile *modelcatalog.VideoCapabilityConfig
+	var rawVideoProfile, videoProfile *modelcatalog.VideoCapabilityConfig
 	declared := false
 	if reader, ok := domain.(ModelCatalogReader); ok && reader != nil {
 		if catalog, err := reader.AgentModelCatalog(); err == nil && catalog != nil {
 			if _, foundModel, found := findEstimateModel(catalog, modelKey); found {
 				if capCfg := estimateCapability(foundModel.CapabilityConfig); capCfg != nil && capCfg.Video != nil {
+					rawVideoProfile = capCfg.Video
 					declared = foundModel.CapabilityDeclared == nil || *foundModel.CapabilityDeclared
 					if declared || slices.Contains(capCfg.Video.Operations, "reference_to_video") {
 						videoProfile = capCfg.Video
@@ -601,8 +618,10 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 			}
 		}
 	}
-	supportsMiddleFrame := videoProfile != nil && videoProfile.MiddleFrame
-	if declared && !supportsMiddleFrame {
+	_, modelID := modelcatalog.SplitModelKey(modelKey)
+	contract, hasContract := providerpreset.BeefTVVideoContract(modelID)
+	middleFrameSupport := resolveVideoMiddleFrameSupport(modelID, rawVideoProfile, declared)
+	if middleFrameSupport == "unsupported" {
 		delete(parameters, "videoMiddleFrameNodeId")
 		delete(metadata, "videoMiddleFrameTime")
 	}
@@ -632,24 +651,44 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
 	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
 	frameMaxImages, frameMaxAudios := 2, 0
+	hasContractFrameMaxImages := false
+	if hasContract {
+		if contractImg, ok := contract.OperationReferences["image_to_video"]["maxImages"]; ok {
+			frameMaxImages = min(2, contractImg)
+			hasContractFrameMaxImages = true
+		} else if !declared {
+			if maxImg, ok := contract.MaxReferences["image"]; ok {
+				frameMaxImages = min(2, maxImg)
+			}
+		}
+		if contractAud, ok := contract.OperationReferences["image_to_video"]["maxAudios"]; ok {
+			frameMaxAudios = contractAud
+		}
+	}
 	if videoProfile != nil {
-		frameMaxImages = min(2, videoProfile.References.MaxImages)
-		if !supportsRefVideo {
+		if !hasContractFrameMaxImages {
+			frameMaxImages = min(2, videoProfile.References.MaxImages)
+		} else if declared && frameMaxImages > videoProfile.References.MaxImages {
+			frameMaxImages = min(2, videoProfile.References.MaxImages)
+		}
+		if !supportsRefVideo && declared {
+			frameMaxAudios = videoProfile.References.MaxAudios
+		} else if declared && frameMaxAudios > videoProfile.References.MaxAudios {
 			frameMaxAudios = videoProfile.References.MaxAudios
 		}
 		if limits, ok := videoProfile.OperationReferences["image_to_video"]; ok {
 			if limits.MaxImages != nil {
-				frameMaxImages = *limits.MaxImages
+				frameMaxImages = min(2, *limits.MaxImages)
 			}
 			if limits.MaxAudios != nil {
 				frameMaxAudios = *limits.MaxAudios
 			}
 		}
 	}
-	if declared && frameMaxImages < 2 {
+	if frameMaxImages < 2 && (declared || hasContract) {
 		delete(parameters, "videoEndFrameNodeId")
 	}
-	hasMiddleFrame := supportsMiddleFrame && parameters["videoMiddleFrameNodeId"] != ""
+	hasMiddleFrame := middleFrameSupport == "supported" && parameters["videoMiddleFrameNodeId"] != ""
 	nextOp := storedOp
 	if supportsRefVideo && (visualCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || characterCount > 0 || visualCount > frameMaxImages || (visualCount > 0 && audioCount > frameMaxAudios)) {
 		nextOp = "reference_to_video"
@@ -664,7 +703,7 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		}
 		metadata["videoEditOperation"] = nextOp
 	}
-	if nextOp == "reference_to_video" && (declared || nextOp != storedOp) && !supportsMiddleFrame {
+	if nextOp == "reference_to_video" && (middleFrameSupport == "unsupported" || nextOp != storedOp) && middleFrameSupport != "supported" {
 		delete(parameters, "videoStartFrameNodeId")
 		delete(parameters, "videoEndFrameNodeId")
 		delete(parameters, "videoMiddleFrameNodeId")

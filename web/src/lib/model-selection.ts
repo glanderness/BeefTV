@@ -102,7 +102,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
             ...requirements,
             options: Object.fromEntries(Object.entries(requirements.options || {}).filter(([name]) => Boolean(publicOptionNames[name])).map(([name, value]) => [name, capability === "image" && name === "count" ? modelCapabilityConfigFor(config, model).image?.fixedOutputs || value : value])),
         };
-        const errors = logicalSpecs.map((spec) => logicalModelCompatibilityError(spec, logicalRequirements, visualInputCount));
+        const errors = logicalSpecs.map((spec) => logicalModelCompatibilityError(spec, logicalRequirements, visualInputCount, model));
         return errors.some((error) => !error) ? "" : errors[0] || "当前输入不受支持";
     }
 
@@ -162,7 +162,7 @@ export function modelRequestOptions(config: AiConfig, capability: ModelCapabilit
     }
 }
 
-function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["channels"][number]["modelProfiles"]>[number]["logicalCapabilitySpec"]>, requirements: ModelRequirements, visualInputCount: number) {
+function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["channels"][number]["modelProfiles"]>[number]["logicalCapabilitySpec"]>, requirements: ModelRequirements, visualInputCount: number, model?: string) {
     if (requirements.capability && spec.capability !== requirements.capability) return "不支持当前生成类型";
     const input = requirements.input;
     const counts: Record<string, number> = {
@@ -188,7 +188,7 @@ function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["
                   },
               } as VideoCapabilityConfig)
             : undefined;
-    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation, logicalVideoProfile) : requirements.videoOperation;
+    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation, logicalVideoProfile, model) : requirements.videoOperation;
     if (operation && spec.operations?.length && !spec.operations.includes(operation)) return "不支持当前生成模式";
     // 图片创作状态也会携带全局默认视频时长；这个字段只对视频模型有意义，
     // 不能把它拼进图片逻辑模型的能力匹配，否则图片模型会被误判为“不支持当前时长”。
@@ -479,7 +479,15 @@ export function resolveVideoOperation(input: ModelInputSummary, storedOperation?
     if (storedOperation === "extend" && input.videoCount > 0) return storedOperation;
     if (model && isH3Model(model)) {
         const h3Operation = h3VideoOperation(model, input, storedOperation);
-        if (h3Operation === "reference_to_video" && supportsReferenceVideo === false && input.videoCount === 0 && visualInputCount > 0 && profile?.operations.includes("image_to_video")) {
+        if (h3Operation === "image_to_video" && supportsReferenceVideo && profile?.operationReferences?.image_to_video) {
+            const frameRefs = videoReferencesForOperation(profile, "image_to_video");
+            const frameMaxVideos = profile.operationReferences.image_to_video.maxVideos ?? 0;
+            const frameMaxAudios = profile.operationReferences.image_to_video.maxAudios ?? 1;
+            if (visualInputCount > Math.min(2, frameRefs.maxImages) || visualInputCount < (frameRefs.minImages ?? 0) || input.videoCount > frameMaxVideos || input.audioCount > frameMaxAudios || input.characterCount > 0) {
+                return "reference_to_video";
+            }
+        }
+        if (h3Operation === "reference_to_video" && supportsReferenceVideo === false && input.videoCount === 0 && input.characterCount === 0 && visualInputCount > 0 && profile?.operations.includes("image_to_video")) {
             const frameRefs = videoReferencesForOperation(profile, "image_to_video");
             if (visualInputCount <= frameRefs.maxImages && input.audioCount <= frameRefs.maxAudios) return "image_to_video";
         }

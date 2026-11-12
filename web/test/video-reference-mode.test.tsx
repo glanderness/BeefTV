@@ -88,9 +88,16 @@ describe("resolveVideoReferenceModeState", () => {
             ),
         ).toBe("");
 
-        // 万相 3.0 / Kling v3 / H3 Max Turbo 等服务端声明能力统一驱动首尾帧与全能参考开关
+        // 万相 3.0 / Kling v3 / H3 Max Turbo / 带版本号 H3 等统一驱动首尾帧、全能参考与中间帧开关
         const wanCaps = resolveVideoReferenceCapabilities("beeftv::wan3.0-video", managedVideoCatalogItem("wan3.0-video").videoCapabilities, true);
-        expect(wanCaps).toEqual({ endFrameSupported: true, referenceVideoSupported: true, maxFrameAudios: 0 });
+        expect(wanCaps).toEqual({
+            maxFrameImages: 2,
+            endFrameSupported: true,
+            referenceVideoSupported: true,
+            maxFrameAudios: 0,
+            middleFrameSupport: "unsupported",
+            middleFrameSupported: false,
+        });
         const wanWithAudioState = resolveVideoReferenceModeState({
             metadata: { videoEditOperation: "image_to_video", videoStartFrameNodeId: "img-1" },
             references: [
@@ -103,10 +110,65 @@ describe("resolveVideoReferenceModeState", () => {
         expect(wanWithAudioState.canSelectFrames).toBe(false);
 
         const klingCaps = resolveVideoReferenceCapabilities("beeftv::kling-video-v3", managedVideoCatalogItem("kling-video-v3").videoCapabilities, true);
-        expect(klingCaps).toEqual({ endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 });
+        expect(klingCaps).toEqual({
+            maxFrameImages: 1,
+            endFrameSupported: false,
+            referenceVideoSupported: false,
+            maxFrameAudios: 0,
+            middleFrameSupport: "unsupported",
+            middleFrameSupported: false,
+        });
 
         const h3TurboCaps = resolveVideoReferenceCapabilities("beeftv::minimax-h3-max-turbo", managedVideoCatalogItem("minimax-h3-max-turbo").videoCapabilities, true);
-        expect(h3TurboCaps).toEqual({ endFrameSupported: true, referenceVideoSupported: false, maxFrameAudios: 1 });
+        expect(h3TurboCaps).toEqual({
+            maxFrameImages: 2,
+            endFrameSupported: true,
+            referenceVideoSupported: false,
+            maxFrameAudios: 1,
+            middleFrameSupport: "unsupported",
+            middleFrameSupported: false,
+        });
+
+        // 真实线上目录 minimax-h3（省略 operationReferences）保留首尾帧最多 1 段音频，2 段音频升为全能参考
+        const h3LiveCaps = resolveVideoReferenceCapabilities("beeftv::minimax-h3", managedVideoCatalogItem("minimax-h3").videoCapabilities, true);
+        expect(h3LiveCaps).toEqual({
+            maxFrameImages: 2,
+            endFrameSupported: true,
+            referenceVideoSupported: true,
+            maxFrameAudios: 1,
+            middleFrameSupport: "unsupported",
+            middleFrameSupported: false,
+        });
+        const h3OneAudioState = resolveVideoReferenceModeState({
+            references: [...makeImageRefs(1), { nodeId: "aud-1", kind: "audio", label: "音频1", title: "对白", active: true }],
+            h3Model: true,
+            ...h3LiveCaps,
+        });
+        expect(h3OneAudioState.mode).toBe("frames");
+        expect(h3OneAudioState.canSelectFrames).toBe(true);
+        const h3TwoAudioState = resolveVideoReferenceModeState({
+            references: [
+                ...makeImageRefs(1),
+                { nodeId: "aud-1", kind: "audio", label: "音频1", title: "对白", active: true },
+                { nodeId: "aud-2", kind: "audio", label: "音频2", title: "环境音", active: true },
+            ],
+            h3Model: true,
+            ...h3LiveCaps,
+        });
+        expect(h3TwoAudioState.mode).toBe("all");
+        expect(h3TwoAudioState.canSelectFrames).toBe(false);
+
+        // 真实线上目录 minimax-h3-max（省略 middleFrame）从契约补齐中间帧支持；显式 middleFrame: false 强制关闭
+        const h3MaxLiveCaps = resolveVideoReferenceCapabilities("beeftv::minimax-h3-max", managedVideoCatalogItem("minimax-h3-max").videoCapabilities, true);
+        expect(h3MaxLiveCaps.middleFrameSupport).toBe("supported");
+        expect(h3MaxLiveCaps.middleFrameSupported).toBe(true);
+        const h3MaxExplicitOffCaps = resolveVideoReferenceCapabilities(
+            "beeftv::minimax-h3-max",
+            { ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!, middleFrame: false },
+            true,
+        );
+        expect(h3MaxExplicitOffCaps.middleFrameSupport).toBe("unsupported");
+        expect(h3MaxExplicitOffCaps.middleFrameSupported).toBe(false);
     });
 });
 
@@ -229,7 +291,27 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
         expect(withCharacterImageMeta.videoStartFrameNodeId).toBeUndefined();
         expect(withCharacterImageMeta.videoEndFrameNodeId).toBeUndefined();
 
-        // 从 H3 Max 切到非中间帧模型时，图生视频模式同样清除残留中间帧字段；部分 AiConfig 缺省字段不抛错
+        // 从 H3 Max 切到已声明不支持中间帧的模型时清除残留中间帧字段；部分 AiConfig 缺省字段不抛错，未声明自定义渠道保留自定义中间帧
+        const { mergeFetchedChannelModelProfiles } = await import("../src/lib/channel-model-catalog");
+        const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../src/stores/use-config-store");
+        const { defaultModelCapabilityConfig } = await import("../src/lib/model-capabilities");
+        const beeftvChannel = createModelChannel({
+            id: "beeftv",
+            name: "BeefTV",
+            scope: "system",
+            pinned: true,
+            credentialRef: "beeftv",
+            baseUrl: "https://beeftv.app/v1",
+            models: ["wan3.0-video", "minimax-h3-max"],
+        });
+        beeftvChannel.modelProfiles = mergeFetchedChannelModelProfiles(beeftvChannel, [
+            managedVideoCatalogItem("wan3.0-video"),
+            managedVideoCatalogItem("minimax-h3-max"),
+        ]);
+        const declaredWanConfig = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::wan3.0-video", videoModel: "beeftv::wan3.0-video" },
+        }).config;
+
         const switchedFromH3Meta = buildVideoGenerationMetadata(
             {
                 id: "vid-from-h3",
@@ -247,19 +329,91 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
                 },
             },
             { referenceImages: twoImageNodes, referenceVideos: [], referenceAudios: [] },
-            { model: "beeftv::wan3.0-video", videoReturnLastFrame: false } as never,
+            declaredWanConfig,
         );
         expect(switchedFromH3Meta.videoEditOperation).toBe("image_to_video");
         expect(switchedFromH3Meta.videoStartFrameNodeId).toBe("img-1");
         expect(switchedFromH3Meta.videoMiddleFrameNodeId).toBeUndefined();
         expect(switchedFromH3Meta.videoMiddleFrameTime).toBeUndefined();
+
+        const partialConfigMeta = buildVideoGenerationMetadata(
+            {
+                id: "vid-partial-cfg",
+                type: CanvasNodeType.Video,
+                title: "Video",
+                position: { x: 0, y: 100 },
+                width: 100,
+                height: 100,
+                metadata: { model: "beeftv::wan3.0-video", videoEditOperation: "image_to_video", videoStartFrameNodeId: "img-1" },
+            },
+            { referenceImages: twoImageNodes, referenceVideos: [], referenceAudios: [] },
+            { model: "beeftv::wan3.0-video", videoReturnLastFrame: false } as never,
+        );
+        expect(partialConfigMeta.videoStartFrameNodeId).toBe("img-1");
+
+        const customChannel = createModelChannel({
+            id: "custom",
+            name: "Custom",
+            baseUrl: "https://custom.example/v1",
+            models: ["opaque-video"],
+        });
+        customChannel.modelProfiles = [
+            {
+                model: "opaque-video",
+                capability: "video",
+                protocol: "openai-videos",
+                capabilityConfig: defaultModelCapabilityConfig(),
+            },
+        ];
+        const opaqueCustomConfig = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [customChannel], model: "custom::opaque-video", videoModel: "custom::opaque-video" },
+        }).config;
+        const opaqueCustomMeta = buildVideoGenerationMetadata(
+            {
+                id: "vid-opaque",
+                type: CanvasNodeType.Video,
+                title: "Video",
+                position: { x: 0, y: 100 },
+                width: 100,
+                height: 100,
+                metadata: {
+                    model: "custom::opaque-video",
+                    videoEditOperation: "reference_to_video",
+                    videoStartFrameNodeId: "img-1",
+                    videoMiddleFrameNodeId: "img-2",
+                    videoMiddleFrameTime: 2.5,
+                },
+            },
+            { referenceImages: twoImageNodes, referenceVideos: [], referenceAudios: [] },
+            opaqueCustomConfig,
+        );
+        expect(opaqueCustomMeta.videoEditOperation).toBe("reference_to_video");
+        expect(opaqueCustomMeta.videoMiddleFrameNodeId).toBe("img-2");
+        expect(opaqueCustomMeta.videoMiddleFrameTime).toBe(2.5);
     });
 
-    test("CanvasConfigComposer 将残留的生图模型路由到实际视频生成模型再计算参考能力", async () => {
+    test("CanvasConfigComposer 与 CanvasConfigNodePanel 遵循显式 middleFrame 与 operationReferences 声明", async () => {
         const { CanvasConfigComposer } = await import("../src/components/canvas/canvas-config-composer");
+        const { buildConfigNodeVideoOperationOptions } = await import("../src/components/canvas/canvas-config-node-panel");
+        const { CanvasNodePromptPanel } = await import("../src/components/canvas/canvas-node-prompt-panel");
+        const { CanvasNodeType } = await import("../src/types/canvas");
         const { mergeFetchedChannelModelProfiles } = await import("../src/lib/channel-model-catalog");
         const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../src/stores/use-config-store");
         const wanItem = managedVideoCatalogItem("wan3.0-video");
+        const h3MaxOffItem = {
+            ...managedVideoCatalogItem("minimax-h3-max"),
+            videoCapabilities: { ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!, middleFrame: false },
+        };
+        const agnesMidItem = {
+            ...wanItem,
+            id: "omni-video",
+            videoCapabilities: {
+                ...wanItem.videoCapabilities!,
+                middleFrame: true,
+                operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
+            },
+        };
+        const h3StyleItem = { id: "minimax-h3-max-style-vhs", supportedEndpointTypes: ["openai-video"] };
         const channel = createModelChannel({
             id: "beeftv",
             name: "BeefTV",
@@ -267,11 +421,14 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
             pinned: true,
             credentialRef: "beeftv",
             baseUrl: "https://beeftv.app/v1",
-            models: ["seedream-5.0", "wan3.0-video"],
+            models: ["seedream-5.0", "wan3.0-video", "minimax-h3-max", "omni-video", "minimax-h3-max-style-vhs"],
         });
         channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [
             { id: "seedream-5.0", supportedEndpointTypes: ["openai-image"] },
             wanItem,
+            h3MaxOffItem,
+            agnesMidItem,
+            h3StyleItem,
         ]);
         const nextConfig = normalizeConfigSnapshot({
             config: {
@@ -281,6 +438,10 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
                 videoModel: "beeftv::wan3.0-video",
             },
         }).config;
+        const twoComposerInputs = [
+            { nodeId: "img-1", type: "image" as const, title: "分镜1", image: { id: "img-1", name: "1.png", type: "image/png", dataUrl: "https://example.com/1.png", position: { x: 0, y: 0 } } },
+            { nodeId: "img-2", type: "image" as const, title: "分镜2", image: { id: "img-2", name: "2.png", type: "image/png", dataUrl: "https://example.com/2.png", position: { x: 0, y: 0 } } },
+        ];
         const html = renderToStaticMarkup(
             <CanvasConfigComposer
                 config={nextConfig}
@@ -288,10 +449,7 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
                 generationMode="video"
                 model="beeftv::seedream-5.0"
                 metadata={{ model: "beeftv::seedream-5.0", videoEditOperation: "image_to_video" }}
-                inputs={[
-                    { nodeId: "img-1", type: "image", title: "分镜1", image: { id: "img-1", name: "1.png", type: "image/png", dataUrl: "https://example.com/1.png", position: { x: 0, y: 0 } } },
-                    { nodeId: "img-2", type: "image", title: "分镜2", image: { id: "img-2", name: "2.png", type: "image/png", dataUrl: "https://example.com/2.png", position: { x: 0, y: 0 } } },
-                ]}
+                inputs={twoComposerInputs}
                 onChange={() => {}}
                 onMetadataChange={() => {}}
                 onClose={() => {}}
@@ -300,6 +458,125 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
         expect(html).toContain("首尾帧");
         expect(html).toContain("全能参考");
         expect(html).toContain("尾帧");
+
+        // 显式 middleFrame: true 的非 H3 模型在 Composer 中渲染中间帧选择器
+        const agnesMidHtml = renderToStaticMarkup(
+            <CanvasConfigComposer
+                config={{ ...nextConfig, videoModel: "beeftv::omni-video" }}
+                value="镜头推进"
+                generationMode="video"
+                model="beeftv::omni-video"
+                metadata={{ model: "beeftv::omni-video", videoEditOperation: "reference_to_video" }}
+                inputs={twoComposerInputs}
+                onChange={() => {}}
+                onMetadataChange={() => {}}
+                onClose={() => {}}
+            />,
+        );
+        expect(agnesMidHtml).toContain("中间帧");
+
+        // 显式 middleFrame: false 的 H3 Max 在 Composer 与 PromptPanel 中均隐藏中间帧控件
+        const h3MaxOffComposerHtml = renderToStaticMarkup(
+            <CanvasConfigComposer
+                config={{ ...nextConfig, videoModel: "beeftv::minimax-h3-max" }}
+                value="镜头推进"
+                generationMode="video"
+                model="beeftv::minimax-h3-max"
+                metadata={{ model: "beeftv::minimax-h3-max", videoEditOperation: "image_to_video" }}
+                inputs={twoComposerInputs}
+                onChange={() => {}}
+                onMetadataChange={() => {}}
+                onClose={() => {}}
+            />,
+        );
+        expect(h3MaxOffComposerHtml).not.toContain("中间帧");
+
+        const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+        const queryClient = new QueryClient();
+        const h3MaxOffPromptPanelHtml = renderToStaticMarkup(
+            <QueryClientProvider client={queryClient}>
+                <CanvasNodePromptPanel
+                    config={{ ...nextConfig, model: "beeftv::minimax-h3-max", videoModel: "beeftv::minimax-h3-max" }}
+                    projectId="proj-1"
+                    node={{
+                        id: "vid-node",
+                        type: CanvasNodeType.Video,
+                        title: "Video",
+                        position: { x: 0, y: 0 },
+                        width: 240,
+                        height: 180,
+                        metadata: {
+                            model: "beeftv::minimax-h3-max",
+                            prompt: "测试",
+                            videoStartFrameNodeId: "img-1",
+                            videoEndFrameNodeId: "img-2",
+                        },
+                    }}
+                    isRunning={false}
+                    mentionReferences={makeImageRefs(2)}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(h3MaxOffPromptPanelHtml).not.toContain("展开参数");
+
+        const agnesMidPromptPanelHtml = renderToStaticMarkup(
+            <QueryClientProvider client={queryClient}>
+                <CanvasNodePromptPanel
+                    config={{ ...nextConfig, model: "beeftv::omni-video", videoModel: "beeftv::omni-video" }}
+                    projectId="proj-1"
+                    node={{
+                        id: "vid-node-omni",
+                        type: CanvasNodeType.Video,
+                        title: "Video",
+                        position: { x: 0, y: 0 },
+                        width: 240,
+                        height: 180,
+                        metadata: { model: "beeftv::omni-video", prompt: "测试", videoEditOperation: "reference_to_video" },
+                    }}
+                    isRunning={false}
+                    mentionReferences={makeImageRefs(5)}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(agnesMidPromptPanelHtml).toContain("展开参数");
+        expect(agnesMidPromptPanelHtml).not.toContain("写入提示词首帧");
+
+        // CanvasConfigNodePanel 的图生视频选项精确读取 H3 Style 上限（1 图 0 音频）与非 H3 显式音频上限
+        const styleSingleImgOptions = buildConfigNodeVideoOperationOptions(
+            { ...nextConfig, model: "beeftv::minimax-h3-max-style-vhs" },
+            { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 },
+        );
+        expect(styleSingleImgOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(false);
+
+        const styleTwoImgOptions = buildConfigNodeVideoOperationOptions(
+            { ...nextConfig, model: "beeftv::minimax-h3-max-style-vhs" },
+            { textCount: 1, imageCount: 2, videoCount: 0, audioCount: 0, characterCount: 0 },
+        );
+        expect(styleTwoImgOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(true);
+
+        const styleOneAudioOptions = buildConfigNodeVideoOperationOptions(
+            { ...nextConfig, model: "beeftv::minimax-h3-max-style-vhs" },
+            { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
+        );
+        expect(styleOneAudioOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(true);
+
+        const agnesOneAudioOptions = buildConfigNodeVideoOperationOptions(
+            { ...nextConfig, model: "beeftv::omni-video" },
+            { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
+        );
+        expect(agnesOneAudioOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(false);
+
+        const agnesTwoAudioOptions = buildConfigNodeVideoOperationOptions(
+            { ...nextConfig, model: "beeftv::omni-video" },
+            { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
+        );
+        expect(agnesTwoAudioOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(true);
     });
 });
 

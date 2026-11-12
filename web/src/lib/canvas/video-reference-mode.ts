@@ -1,3 +1,4 @@
+import { beefTVVideoContract } from "@/lib/beeftv-video-contracts";
 import { isH3Model, isH3Style } from "@/lib/h3-video";
 import { videoReferencesForOperation, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import type { CanvasNodeMetadata } from "@/types/canvas";
@@ -67,25 +68,82 @@ export function togglePromptFirstFrameMention(
     return cleaned ? `${prefix}${cleaned}` : prefix;
 }
 
+export type VideoMiddleFrameSupport = "supported" | "unsupported" | "opaque";
+
+export function resolveVideoMiddleFrameSupport(
+    model: string,
+    videoProfile?: VideoCapabilityConfig | null,
+    hasDeclaredCapability = false,
+): VideoMiddleFrameSupport {
+    if (videoProfile?.middleFrame === true) return "supported";
+    if (videoProfile?.middleFrame === false) return "unsupported";
+    const modelName = model.split("::").at(-1) || "";
+    if (beefTVVideoContract(modelName)?.middleFrame) return "supported";
+    return hasDeclaredCapability ? "unsupported" : "opaque";
+}
+
 export function resolveVideoReferenceCapabilities(
     model: string,
     videoProfile?: VideoCapabilityConfig | null,
     hasDeclaredCapability = false,
 ): {
+    maxFrameImages: number;
     endFrameSupported: boolean;
     referenceVideoSupported: boolean;
     maxFrameAudios: number;
+    middleFrameSupport: VideoMiddleFrameSupport;
+    middleFrameSupported: boolean;
 } {
-    const h3 = isH3Model(model);
-    if (isH3Style(model)) return { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
+    const modelName = model.split("::").at(-1) || "";
+    const contract = beefTVVideoContract(modelName);
+    const middleFrameSupport = resolveVideoMiddleFrameSupport(model, videoProfile, hasDeclaredCapability);
+    const middleFrameSupported = middleFrameSupport === "supported";
+    const explicitOpRefs = videoProfile?.operationReferences?.image_to_video;
     const frameRefs = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video") : undefined;
-    const explicitFrameMaxAudios = videoProfile?.operationReferences?.image_to_video?.maxAudios;
-    const endFrameSupported = h3 ? !hasDeclaredCapability || (frameRefs ? frameRefs.maxImages >= 2 : true) : frameRefs ? frameRefs.maxImages >= 2 : true;
-    const referenceVideoSupported = h3 ? !hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video")) : Boolean(videoProfile?.operations.includes("reference_to_video"));
-    const maxFrameAudios = h3
-        ? Math.min(1, hasDeclaredCapability ? (explicitFrameMaxAudios ?? (!referenceVideoSupported && frameRefs ? frameRefs.maxAudios : 1)) : 1)
-        : explicitFrameMaxAudios ?? (!referenceVideoSupported && frameRefs ? frameRefs.maxAudios : 0);
-    return { endFrameSupported, referenceVideoSupported, maxFrameAudios };
+
+    if (isH3Style(model) && !explicitOpRefs) {
+        const styleMaxImages = hasDeclaredCapability && frameRefs ? Math.min(2, frameRefs.maxImages) : Math.min(2, contract?.maxReferences?.image ?? 1);
+        const styleMaxAudios = hasDeclaredCapability && frameRefs ? frameRefs.maxAudios : (contract?.maxReferences?.audio ?? 0);
+        return {
+            maxFrameImages: styleMaxImages,
+            endFrameSupported: styleMaxImages >= 2,
+            referenceVideoSupported: hasDeclaredCapability ? Boolean(videoProfile?.operations.includes("reference_to_video")) : false,
+            maxFrameAudios: styleMaxAudios,
+            middleFrameSupport,
+            middleFrameSupported,
+        };
+    }
+
+    const h3 = isH3Model(model);
+    const contractFrameMaxImages = contract?.operationReferences?.image_to_video?.maxImages;
+    const maxFrameImages = explicitOpRefs?.maxImages !== undefined
+        ? Math.min(2, explicitOpRefs.maxImages)
+        : contractFrameMaxImages !== undefined
+          ? Math.min(2, hasDeclaredCapability && videoProfile ? Math.min(contractFrameMaxImages, videoProfile.references.maxImages) : contractFrameMaxImages)
+          : (hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video"))) && frameRefs
+            ? Math.min(2, frameRefs.maxImages)
+            : Math.min(2, contract?.maxReferences?.image ?? 2);
+    const endFrameSupported = maxFrameImages >= 2;
+    const referenceVideoSupported = h3
+        ? !hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video"))
+        : Boolean(videoProfile?.operations.includes("reference_to_video"));
+    const contractFrameMaxAudios = contract?.operationReferences?.image_to_video?.maxAudios;
+    const maxFrameAudios = explicitOpRefs?.maxAudios !== undefined
+        ? explicitOpRefs.maxAudios
+        : !referenceVideoSupported && hasDeclaredCapability && frameRefs
+          ? frameRefs.maxAudios
+          : contractFrameMaxAudios !== undefined
+            ? (hasDeclaredCapability && videoProfile ? Math.min(contractFrameMaxAudios, videoProfile.references.maxAudios) : contractFrameMaxAudios)
+            : 0;
+
+    return {
+        maxFrameImages,
+        endFrameSupported,
+        referenceVideoSupported,
+        maxFrameAudios,
+        middleFrameSupport,
+        middleFrameSupported,
+    };
 }
 
 export function resolveVideoReferenceModeState({
