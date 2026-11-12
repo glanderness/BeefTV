@@ -14,6 +14,7 @@ import { generationErrorMessage } from "@/lib/generation-error";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
+import { resolveRenderedCanvasConnections } from "@/lib/canvas/canvas-connection-policy";
 import { nanoid } from "nanoid";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { DEFAULT_DRAWING_ENGINE } from "@/lib/canvas/canvas-drawing-engine";
@@ -57,7 +58,7 @@ import { CanvasVersionPreview } from "./canvas-version-preview";
 import { CanvasTopBar } from "./canvas-project-top-bar";
 import { CanvasFocusModeBar } from "@/components/canvas/canvas-focus-mode-bar";
 import { CanvasProjectContextMenu } from "./canvas-project-context-menu";
-import { useCanvasStarterNavigation } from "./use-canvas-starter-navigation";
+import { starterAssistantHandler, useCanvasStarterNavigation } from "./use-canvas-starter-navigation";
 import { useCanvasImport } from "./use-canvas-import";
 import { useCanvasNodeReferences } from "./use-canvas-node-references";
 import { CanvasProjectNodePrompt } from "./canvas-project-node-prompt";
@@ -403,7 +404,7 @@ function InfiniteCanvasPage() {
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     // 助手只接受属于当前画布的选中项：切画布那一帧仍可能残留旧 id，这里做硬约束，
     // 不让跨画布的 id 进入请求（后端会按画布校验并拒绝整个回合）。
-    const assistantSelectedNodeIds = useCanvasSelectionContext(projectId, currentProject?.title, nodes, selectedNodeIds, projectLoaded);
+    const { selectedIds: assistantSelectedNodeIds, askSelectedNodes } = useCanvasSelectionContext(projectId, currentProject?.title, nodes, selectedNodeIds, projectLoaded, openAssistant);
     // 助手的 @ 菜单覆盖整张画布，而不是只覆盖能当生成输入的资源节点。
     const assistantMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
     // 扩展节点（对比/图表/调色）要读自己的上游才能渲染，经 Context 下发；
@@ -799,10 +800,7 @@ function InfiniteCanvasPage() {
         handleConnectStart,
         handleBatchConnectionTargetClick,
         batchConnectionPreview,
-        beginBatchConnectionMode,
-        startBatchConnection,
-        mouseWorld,
-        pendingConnectionCreate,
+        beginBatchConnectionMode, startBatchConnection, mouseWorld, openQuickConnectionMenu, pendingConnectionCreate,
     } = connectionController;
 
     const batchSourceNodeIds = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id) && !batchSourceRestriction(node)).map((node) => node.id), [nodes, selectedNodeIds]);
@@ -954,7 +952,7 @@ function InfiniteCanvasPage() {
     } = renderModel;
     lodActiveRef.current = lodActive;
     lodEnterScaleRef.current = lodEnterScale;
-    const renderedConnections = showConnections ? displayConnections : [];
+    const renderedConnections = useMemo(() => resolveRenderedCanvasConnections(displayConnections, showConnections, selectedNodeIds, selectedConnectionId), [displayConnections, selectedConnectionId, selectedNodeIds, showConnections]);
     const dialogNodeCandidate = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const dialogNode = canOpenCanvasNodePromptPanel(dialogNodeCandidate) ? dialogNodeCandidate : null;
     // dragPreview is published on the same pointer-down frame as isNodeDragging.
@@ -1012,7 +1010,7 @@ function InfiniteCanvasPage() {
     const { addDirectorReferenceToCanvas, createDirectorShot, openDirectorWorkbench } = director;
 
     useCanvasStarterNavigation({ projectLoaded, searchParams, setSearchParams, containerRef, nodesRef,
-        createNode, fitCanvasSelection, createDirectorShot, openAssistant });
+        createNode, fitCanvasSelection, createDirectorShot, openAssistant: starterAssistantHandler(openAssistant) });
 
     const {
         activateStep: activateShortDramaStep,
@@ -1494,7 +1492,7 @@ function InfiniteCanvasPage() {
                                                 connectionApproach={connectionApproach}
                                                 projectId={projectId} readOnly={readOnly}
                                                 viewportScale={viewport.k}
-                                                displayConnections={renderedConnections}
+                                                displayConnections={renderedConnections} spotlightConnections={!showConnections}
                                                 selectedConnectionId={selectedConnectionId}
                                                 relatedConnectionIds={relatedHighlight.connectionIds}
                                                 scriptScrollTopById={scriptScrollTopById}
@@ -1759,7 +1757,7 @@ function InfiniteCanvasPage() {
                                 onCreateReferenceGroup={createReferenceGroup}
                                 onBatchConnect={() => beginBatchConnectionMode(Array.from(selectedNodeIds))}
                                 onMergeVideos={() => void mergeSelectedVideos()}
-                                onAskAssistant={internalAssistantEnabled ? openAssistant : undefined}
+                                onAskAssistant={askSelectedNodes}
                                 onSaveWorkflow={readOnly ? undefined : () => workflowsRef.current?.saveSelection()}
                             />
                         ) : null}
@@ -1806,7 +1804,7 @@ function InfiniteCanvasPage() {
                             onRetry={retryCanvasNode}
                             onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                             onToggleLocked={(node) => toggleNodeLocked(node.id)}
-                            onDelete={(node) => deleteNodes(new Set([node.id]))}
+                            onQuickReference={readOnly ? undefined : (node) => openQuickConnectionMenu(node, "source")} onDelete={(node) => deleteNodes(new Set([node.id]))}
                         />
 
 {isMiniMapOpen && !focusMode ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} canvasContainerRef={containerRef} onViewportPreviewChange={previewViewport} onViewportChange={handleViewportChange} /> : null}

@@ -1,5 +1,18 @@
 [
   {
+    "id": "agent.guide",
+    "summary": "读取 BeefTV 外部 Agent 使用说明（与一键接入安装的技能同一份）",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "asset.get",
     "summary": "按 ID 读取单个素材",
     "readOnly": true,
@@ -322,7 +335,7 @@
             "type": "string"
           },
           "maxItems": 24,
-          "description": "整片制作时列出全部计划生成的节点，nodeIds 只列当前参考已就绪的首批"
+          "description": "本批生成的节点（每批≤24，超出分批提案）；nodeIds 只列已就绪首批"
         },
         "note": {
           "type": "string"
@@ -2348,6 +2361,45 @@
       "read-only",
       "canvas"
     ],
+    "replay": "safe"
+  },
+  {
+    "id": "task.wait",
+    "summary": "等待生成任务完成；超时返回 pending 和原 taskId，不返回错误",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "单个任务 ID"
+        },
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "description": "最多 8 个任务 ID"
+        },
+        "canvasId": {
+          "type": "string",
+          "description": "可选：和 nodeId 一起检查产物是否已绑定到该节点"
+        },
+        "nodeId": {
+          "type": "string",
+          "description": "可选：和 canvasId 一起检查产物是否已绑定到该节点"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 25000,
+          "description": "最多等 25000 毫秒，默认 25000"
+        }
+      }
+    },
+    "assistantModes": [],
     "replay": "safe"
   }
 ]

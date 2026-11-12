@@ -144,8 +144,13 @@ func TestTaskCancelPausesSucceededDelivery(t *testing.T) {
 
 func TestTaskCancelRejectsAlreadyDeliveredSucceededTask(t *testing.T) {
 	h := newHarness(t)
-	task := model.Task{ID: "task-cancel-delivered", UserID: h.userID, Status: model.TaskStatusSucceeded, Stage: "生成完成", Type: "canvas_image", ResultJSON: "{}"}
+	task := model.Task{ID: "task-cancel-delivered", UserID: h.userID, Status: model.TaskStatusSucceeded, Stage: "生成完成", Type: "canvas_image", ResultJSON: `{"images":[{"url":"https://example.com/image.png"}]}`}
 	if err := h.service.Database().Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 产物已经保存到素材库，才算“已经取回”；只有结果 JSON 还停在取回中时取消是暂停。
+	delivered := model.Result{ID: "result-cancel-delivered", UserID: h.userID, TaskID: task.ID, Kind: "generation_output", Payload: `{"outputIndex":0,"mediaType":"image","materializedAssetId":"asset-cancel-delivered"}`}
+	if err := h.service.Database().Create(&delivered).Error; err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.execute(t, operations.ExternalCaller(false), "task.cancel", "cancel-delivered-1", map[string]any{"taskId": task.ID})

@@ -158,7 +158,7 @@ jobs:
           bun eval/request-efficiency-gate.mjs
       - name: Run DeepSeek Harness plugin tests
         working-directory: plugins/deepseek-harness
-        run: node --test runtime.test.js
+        run: bun run test
 
   web:
     name: Web checks

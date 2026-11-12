@@ -163,21 +163,23 @@ type CompileHostConfig struct {
 	ModelLookup        modelcatalog.ChannelModelLookup
 	OutputCount        func(string, string) int
 	ImageRetryBlocked  func(*model.Task) bool
-	FailureBlocksRetry func(string, string) bool
+	FailureBlocksRetry func(string, string, string) bool
 }
 
 type compileHost struct{ cfg CompileHostConfig }
 
-func NewCompileHost(cfg CompileHostConfig) CompileHost                               { return compileHost{cfg: cfg} }
-func (h compileHost) DecryptSetting(v string) (string, error)                        { return h.cfg.DecryptSetting(v) }
-func (h compileHost) EncryptSetting(v string) (string, error)                        { return h.cfg.EncryptSetting(v) }
-func (h compileHost) DecryptTaskInput(raw string) (string, error)                    { return h.cfg.DecryptTaskInput(raw) }
-func (h compileHost) ProtectTaskSecrets(v any) error                                 { return h.cfg.ProtectTaskSecrets(v) }
-func (h compileHost) ProviderConfig() (map[string]any, error)                        { return LoadProviderConfig(h.cfg.DataDir) }
-func (h compileHost) LocalMode() bool                                                { return h.cfg.LocalMode }
-func (h compileHost) ManagedCredential() (string, string, error)                     { return h.cfg.ManagedCredential() }
-func (h compileHost) ManagedCredentialRef() string                                   { return h.cfg.ManagedCredRef }
-func (h compileHost) UpscaleAvailable(name string) error                             { return h.cfg.UpscaleAvailable(name) }
+func NewCompileHost(cfg CompileHostConfig) CompileHost            { return compileHost{cfg: cfg} }
+func (h compileHost) DecryptSetting(v string) (string, error)     { return h.cfg.DecryptSetting(v) }
+func (h compileHost) EncryptSetting(v string) (string, error)     { return h.cfg.EncryptSetting(v) }
+func (h compileHost) DecryptTaskInput(raw string) (string, error) { return h.cfg.DecryptTaskInput(raw) }
+func (h compileHost) ProtectTaskSecrets(v any) error              { return h.cfg.ProtectTaskSecrets(v) }
+func (h compileHost) ProviderConfig() (map[string]any, error) {
+	return LoadProviderConfig(h.cfg.DataDir)
+}
+func (h compileHost) LocalMode() bool                            { return h.cfg.LocalMode }
+func (h compileHost) ManagedCredential() (string, string, error) { return h.cfg.ManagedCredential() }
+func (h compileHost) ManagedCredentialRef() string               { return h.cfg.ManagedCredRef }
+func (h compileHost) UpscaleAvailable(name string) error         { return h.cfg.UpscaleAvailable(name) }
 func (h compileHost) ValidateTaskShape(in map[string]any) (string, bool, error) {
 	encoded, err := json.Marshal(in)
 	if err != nil {
@@ -195,12 +197,18 @@ func (h compileHost) ValidateTaskShape(in map[string]any) (string, bool, error) 
 	_, ok := in["config"].(map[string]any)
 	return validated.Config.VQuality, ok, nil
 }
-func (h compileHost) SourceTask(u, id string) (*model.Task, error)                   { return h.cfg.Repo.TaskForUser(u, id) }
-func (h compileHost) Repository() *repository.Repository                             { return h.cfg.Repo }
-func (h compileHost) OutputCount(res, kind string) int                               { return h.cfg.OutputCount(res, kind) }
-func (h compileHost) ImageRetryBlocked(t *model.Task) bool                           { return h.cfg.ImageRetryBlocked(t) }
-func (h compileHost) ImageCreateAccepted(u, id string) (bool, error)                 { return ImageCreateAccepted(h.cfg.Repo, u, id) }
-func (h compileHost) PersistedFailureBlocksRetry(m, s string) bool                   { return h.cfg.FailureBlocksRetry(m, s) }
+func (h compileHost) SourceTask(u, id string) (*model.Task, error) {
+	return h.cfg.Repo.TaskForUser(u, id)
+}
+func (h compileHost) Repository() *repository.Repository   { return h.cfg.Repo }
+func (h compileHost) OutputCount(res, kind string) int     { return h.cfg.OutputCount(res, kind) }
+func (h compileHost) ImageRetryBlocked(t *model.Task) bool { return h.cfg.ImageRetryBlocked(t) }
+func (h compileHost) ImageCreateAccepted(u, id string) (bool, error) {
+	return ImageCreateAccepted(h.cfg.Repo, u, id)
+}
+func (h compileHost) PersistedFailureBlocksRetry(m, s, code string) bool {
+	return h.cfg.FailureBlocksRetry(m, s, code)
+}
 
 type RunHostConfig struct {
 	Compile        CompileHost
@@ -214,28 +222,42 @@ type RunHostConfig struct {
 	RetryTask      func(string, string) (*model.Task, error)
 	CancelTask     func(context.Context, string, string) error
 	Outputs        func(*model.Task) ([]TaskOutput, []TaskOutput)
-	FailureMessage func(string, string) string
+	FailureMessage func(string, string, string) string
 	Draining       func() bool
 	RunLoop        func(func(context.Context)) bool
 }
 
 type runHost struct{ cfg RunHostConfig }
 
-func NewRunHost(cfg RunHostConfig) RunHost                                            { return runHost{cfg: cfg} }
-func (h runHost) ReferenceIDs(cipher string) (map[string]bool, error)                 { return RecipeReferenceIDs(h.cfg.Compile.DecryptSetting, cipher) }
+func NewRunHost(cfg RunHostConfig) RunHost { return runHost{cfg: cfg} }
+func (h runHost) ReferenceIDs(cipher string) (map[string]bool, error) {
+	return RecipeReferenceIDs(h.cfg.Compile.DecryptSetting, cipher)
+}
 func (h runHost) Generate(u, op, cipher string, n Node, nodes map[string]Node, steps map[string]*Step) (*model.Task, error) {
 	return ExecuteGenerateStep(h.cfg.Compile, u, op, cipher, n, nodes, steps, h.cfg.CreateTask)
 }
-func (h runHost) Describe(u, op string, n Node, res string) (*model.Task, error)      { return ExecuteDescribeStep(h.cfg.Compile, u, op, n, res, h.cfg.CreateTask) }
-func (h runHost) Upscale(u, op string, n Node, res string) (*model.Task, error)       { return h.cfg.Upscale(u, op, n, res) }
-func (h runHost) CanvasMedia(u, op string, n Node, res string) (*model.Task, error)   { return h.cfg.CanvasMedia(u, op, n, res) }
-func (h runHost) DepthCapture(u, op, res string) (*model.Task, error)                 { return h.cfg.DepthCapture(u, op, res) }
-func (h runHost) TimelineRender(u, op string, p editing.Project, opts editing.Options) (*model.Task, error) { return h.cfg.TimelineRender(u, op, p, opts) }
+func (h runHost) Describe(u, op string, n Node, res string) (*model.Task, error) {
+	return ExecuteDescribeStep(h.cfg.Compile, u, op, n, res, h.cfg.CreateTask)
+}
+func (h runHost) Upscale(u, op string, n Node, res string) (*model.Task, error) {
+	return h.cfg.Upscale(u, op, n, res)
+}
+func (h runHost) CanvasMedia(u, op string, n Node, res string) (*model.Task, error) {
+	return h.cfg.CanvasMedia(u, op, n, res)
+}
+func (h runHost) DepthCapture(u, op, res string) (*model.Task, error) {
+	return h.cfg.DepthCapture(u, op, res)
+}
+func (h runHost) TimelineRender(u, op string, p editing.Project, opts editing.Options) (*model.Task, error) {
+	return h.cfg.TimelineRender(u, op, p, opts)
+}
 func (h runHost) RetryStep(row model.CanvasWorkflowRun, nodeID string, task *model.Task) (*model.Task, error) {
 	return ExecuteRetryStep(h.cfg.Compile, row, nodeID, task, h.cfg.RecoverUpscale, h.cfg.RetryRefresh, h.cfg.RetryTask)
 }
-func (h runHost) CancelTask(ctx context.Context, u, id string) error                  { return h.cfg.CancelTask(ctx, u, id) }
-func (h runHost) Outputs(task *model.Task) ([]TaskOutput, []TaskOutput)               { return h.cfg.Outputs(task) }
-func (h runHost) FailureMessage(m, s string) string                                   { return h.cfg.FailureMessage(m, s) }
-func (h runHost) Draining() bool                                                      { return h.cfg.Draining() }
-func (h runHost) RunLoop(fn func(context.Context)) bool                               { return h.cfg.RunLoop(fn) }
+func (h runHost) CancelTask(ctx context.Context, u, id string) error {
+	return h.cfg.CancelTask(ctx, u, id)
+}
+func (h runHost) Outputs(task *model.Task) ([]TaskOutput, []TaskOutput) { return h.cfg.Outputs(task) }
+func (h runHost) FailureMessage(m, s, code string) string               { return h.cfg.FailureMessage(m, s, code) }
+func (h runHost) Draining() bool                                        { return h.cfg.Draining() }
+func (h runHost) RunLoop(fn func(context.Context)) bool                 { return h.cfg.RunLoop(fn) }
