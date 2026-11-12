@@ -3,8 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { CanvasNodePromptPanel } from "../src/components/canvas/canvas-node-prompt-panel";
+import { CanvasNodePromptWarnings } from "../src/components/canvas/canvas-node-prompt-panel-controls";
 import { InactiveVideoPreview } from "../src/components/canvas/canvas-node-content";
-import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
+import { buildNodeGenerationContext, resolveCanvasNodeGenerationPreview } from "../src/components/canvas/canvas-node-generation";
 import { ModelPicker } from "../src/components/model-picker";
 import { VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } from "../src/lib/canvas/canvas-popover-layer";
@@ -438,7 +439,7 @@ describe("Video & Canvas generation polish regressions", () => {
         }
     });
 
-    test("待处理转换节点与错误参考图映射表在面板内提前提示并禁用生成，skipMentionAssertion 仅跳过悬空 @ 引用", () => {
+    test("待处理转换节点与错误参考图映射表在面板内提前提示并禁用生成，意外编程异常不被吞成用户预检提示", () => {
         const { h3Config, multiRefImageConfig } = createFixtureConfigs();
         const imgSrc = {
             id: "img-src",
@@ -472,7 +473,7 @@ describe("Video & Canvas generation polish regressions", () => {
             { id: "e-src-conv", fromNodeId: "img-src", toNodeId: "conv-1" },
             { id: "e-conv-vid", fromNodeId: "conv-1", toNodeId: "vid-conv-target" },
         ];
-        expect(() => buildNodeGenerationContext("vid-conv-target", convNodes, convEdges, "按线稿运动", [], true, { skipMentionAssertion: true })).toThrow(
+        expect(resolveCanvasNodeGenerationPreview(videoTarget, "video", "按线稿运动", convNodes, convEdges, []).preflightError).toContain(
             "转换节点「线稿转换」仍在处理中",
         );
         const pendingConvHtml = renderToStaticMarkup(
@@ -514,10 +515,26 @@ describe("Video & Canvas generation polish regressions", () => {
         };
         const badTableNodes = [badTableTarget, ...twoImgs];
         const badTableEdges = edgesTo("img-bad-table", ["img-1", "img-2"]);
-        expect(() => buildNodeGenerationContext("img-bad-table", badTableNodes, badTableEdges, badTableTarget.metadata.prompt, [], false, { skipMentionAssertion: true })).toThrow(
+        expect(resolveCanvasNodeGenerationPreview(badTableTarget, "image", badTableTarget.metadata.prompt, badTableNodes, badTableEdges, []).preflightError).toContain(
             "IMAGE 1 对应图片2",
         );
-        expect(() => buildNodeGenerationContext("img-bad-table", [badTableTarget], [], "@图片9 悬空引用", [], false, { skipMentionAssertion: true })).not.toThrow();
+        expect(resolveCanvasNodeGenerationPreview(badTableTarget, "image", "@图片9 悬空引用", [badTableTarget], [], []).preflightError).toBe("");
+        expect(() => buildNodeGenerationContext("img-bad-table", [badTableTarget], [], "@图片9 悬空引用", [], false)).toThrow("没有对应的画布资源");
+
+        const brokenNode = {
+            id: "img-broken",
+            type: CanvasNodeType.Image,
+            title: "Broken",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            get metadata(): never {
+                throw new TypeError("unexpected builder failure");
+            },
+        };
+        expect(() => resolveCanvasNodeGenerationPreview(brokenNode, "image", "测试", [brokenNode], [], [])).toThrow(
+            new TypeError("unexpected builder failure"),
+        );
 
         const badTableHtml = renderToStaticMarkup(
             <QueryClientProvider client={new QueryClient()}>
@@ -537,6 +554,23 @@ describe("Video & Canvas generation polish regressions", () => {
         );
         expect(badTableHtml).toContain("IMAGE 1 对应图片2");
         expect(badTableHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const warningsHtml = renderToStaticMarkup(
+            <CanvasNodePromptWarnings
+                config={multiRefImageConfig}
+                currentModelCompatibilityError=""
+                livePreflightError="转换节点仍在处理中"
+                persistedPreflightError="上次提交失败原因"
+                needsRecoverySection
+                theme={canvasThemes.dark}
+                onOpenGenerationHistory={() => {}}
+                onCreateGenerationReplacement={() => {}}
+            />,
+        );
+        expect(warningsHtml).toContain("转换节点仍在处理中");
+        expect(warningsHtml).toContain("未开始生成：上次提交失败原因");
+        expect(warningsHtml).toContain("查看生成历史");
+        expect(warningsHtml).toContain("新建节点继续");
     });
 
     test("ModelPicker 告警、浮层互斥、无封面播放按钮与 auto/adaptive 比例展示", () => {

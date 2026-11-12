@@ -13,7 +13,7 @@ import { mediaConversionSourceFingerprint } from "@/lib/media-conversion/contrac
 import { nodeReferenceImage } from "@/lib/canvas/canvas-project-generation";
 import type { ModelInputSummary } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
-import { assertCanvasImageReferenceTable, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
+import { assertCanvasImageReferenceTable, findCanvasImageReferenceTableError, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
 import type { BoundMediaMention, CharacterReferenceBinding } from "@/lib/canvas/generation-reference-contract";
 
 export { compileNodeGenerationReferences, hydrateNodeGenerationContext } from "./canvas-node-generation-hydrate";
@@ -86,16 +86,18 @@ export function resolveCanvasNodeGenerationPreview(
     const effectivePrompt = editingTextNode ? buildTextRewritePrompt(node.metadata!.content!.trim(), prompt) : prompt;
     const promptOnly = mode === "video";
     const preserveMediaBindings = mode === "video";
-    let preflightError = "";
-    let context: NodeGenerationContext;
-    try {
-        context = buildNodeGenerationContext(node.id, graphNodes, connections, effectivePrompt, assets, promptOnly, {
-            preserveMediaBindings,
-            skipMentionAssertion: true,
-        });
-    } catch (error) {
-        preflightError = error instanceof Error ? error.message : String(error);
-        context = computeNodeGenerationContext(node.id, graphNodes, connections, effectivePrompt, assets, promptOnly, preserveMediaBindings).context;
+    const { context, tableReferences, sourceNode, skipAssertions } = computeNodeGenerationContext(
+        node.id,
+        graphNodes,
+        connections,
+        effectivePrompt,
+        assets,
+        promptOnly,
+        preserveMediaBindings,
+    );
+    let preflightError = formatPendingMediaConversionError(node.id, graphNodes, connections);
+    if (!preflightError && !skipAssertions && !preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) {
+        preflightError = findCanvasImageReferenceTableError(context.prompt, tableReferences);
     }
     return {
         inputSummary: {
@@ -116,14 +118,10 @@ export function buildNodeGenerationContext(
     prompt: string,
     assets: Asset[],
     promptOnly = false,
-    options: { preserveMediaBindings?: boolean; skipMentionAssertion?: boolean } = {},
+    options: { preserveMediaBindings?: boolean } = {},
 ): NodeGenerationContext {
-    const pendingConversion = findPendingMediaConversionInput(nodeId, nodes, connections);
-    if (pendingConversion) {
-        const status = pendingConversion.metadata?.mediaConversion?.status;
-        const reason = status === "stale" ? "输入或方式已变化" : status === "processing" ? "仍在处理中" : "尚未完成本地转换";
-        throw new Error(`转换节点「${pendingConversion.title || pendingConversion.id}」${reason}，完成后才能执行下游生成`);
-    }
+    const pendingError = formatPendingMediaConversionError(nodeId, nodes, connections);
+    if (pendingError) throw new Error(pendingError);
     const { context, mentionInputs, tableReferences, sourceNode, skipAssertions } = computeNodeGenerationContext(
         nodeId,
         nodes,
@@ -133,11 +131,19 @@ export function buildNodeGenerationContext(
         promptOnly,
         Boolean(options.preserveMediaBindings),
     );
-    if (!skipAssertions && !options.skipMentionAssertion) assertResolvableGenerationMentions(prompt, mentionInputs);
+    if (!skipAssertions) assertResolvableGenerationMentions(prompt, mentionInputs);
     if (!skipAssertions && !options.preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) {
         assertCanvasImageReferenceTable(context.prompt, tableReferences);
     }
     return context;
+}
+
+function formatPendingMediaConversionError(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): string {
+    const pendingConversion = findPendingMediaConversionInput(nodeId, nodes, connections);
+    if (!pendingConversion) return "";
+    const status = pendingConversion.metadata?.mediaConversion?.status;
+    const reason = status === "stale" ? "输入或方式已变化" : status === "processing" ? "仍在处理中" : "尚未完成本地转换";
+    return `转换节点「${pendingConversion.title || pendingConversion.id}」${reason}，完成后才能执行下游生成`;
 }
 
 function computeNodeGenerationContext(
