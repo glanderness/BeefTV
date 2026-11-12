@@ -5,6 +5,8 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const panelId = 'beeftv'
     const conversationSlot = 'beeftv.conversation'
+    // 插件根上拿不到「当前会话」，由挂在会话里的 slot 记住，供「问助手」使用。
+    let conversationSessionId
     const modes = [
       { id: 'creation', label: '创作', detail: '画布、分镜与视频创作' },
       { id: 'assets', label: '素材', detail: '整理与复用创作素材' },
@@ -28,9 +30,12 @@ window.__ModuleLoader__.load({
 .beeftv-harness-actions { position:relative; }
 .beeftv-harness-actions > button { border:0; border-radius:6px; width:28px; height:28px; background:transparent; }
 .beeftv-harness-actions > button:hover { background:var(--dsw-alias-interactive-bg-hover); }
-.beeftv-harness-action-menu { position:absolute; right:0; top:32px; z-index:20; min-width:144px; padding:4px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px; background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)); box-shadow:0 6px 20px #0003; }
+.beeftv-harness-action-menu { position:absolute; right:0; top:32px; z-index:20; min-width:200px; padding:4px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px; background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)); box-shadow:0 6px 20px #0003; }
 .beeftv-harness-action-menu button { display:block; width:100%; padding:8px 12px; text-align:left; border:0; border-radius:4px; background:transparent; white-space:nowrap; font-size:12px; }
 .beeftv-harness-action-menu button:hover { background:var(--dsw-alias-interactive-bg-hover); }
+.beeftv-harness-action-menu button[aria-pressed=true]::after { content:"✓"; float:right; margin-left:10px; }
+.beeftv-harness-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 12px; font-size:12px; color:var(--dsw-alias-label-secondary); }
+.beeftv-harness-setting input { width:56px; border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:3px 6px; background:var(--dsw-alias-bg-base); color:inherit; font:inherit; }
 .beeftv-harness-workspace { position:relative; min-width:0; min-height:0; overflow:hidden; }
 .beeftv-harness-frame { display:block; width:100%; height:100%; border:0; background:var(--dsw-alias-bg-base); }
 .beeftv-harness-agent { min-height:0; min-width:0; display:flex; flex-direction:column; overflow:hidden; --dsh-content-font-size:14px; --dsh-content-font-delta:0px; --dsh-content-font-size-secondary:12px; --dsh-content-font-delta-secondary:-1px; --dsw-font-markdown-base:14px/1.65 var(--dsw-font-family); --dsw-font-markdown-base-font-size:14px; --dsw-font-markdown-base-line-height:1.65; --dsw-font-markdown-base-strong:600 14px/1.65 var(--dsw-font-family); --dsw-font-markdown-base-italic:italic 14px/1.65 var(--dsw-font-family); --dsw-font-markdown-base-strong-italic:italic 600 14px/1.65 var(--dsw-font-family); }
@@ -68,6 +73,11 @@ window.__ModuleLoader__.load({
 .beeftv-harness-option strong,.beeftv-harness-option span { display:block; }
 .beeftv-harness-option span { margin-top:4px; font-size:12px; color:var(--dsw-alias-label-tertiary); }
 .beeftv-harness-error { margin:12px 16px; color:var(--dsw-alias-label-secondary); font-size:12px; overflow-wrap:anywhere; }
+.beeftv-harness-workspace-note { flex:none; padding:6px 16px; border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-tertiary); font-size:12px; line-height:18px; }
+.beeftv-harness-notice { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:10px 16px; border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-secondary); font-size:12px; line-height:18px; }
+.beeftv-harness-notice span { flex:1 1 220px; min-width:0; }
+.beeftv-harness-notice button { border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:4px 10px; background:transparent; font:inherit; color:inherit; cursor:pointer; }
+.beeftv-harness-notice button:hover { background:var(--dsw-alias-interactive-bg-hover); }
 `
 
     async function api(path, body, signal) {
@@ -102,6 +112,31 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // 网页「问助手」交接：入口固定为 selection-toolbar，节点最多 20 个、标题最多 80 字。
+    function readAsk(value) {
+      if (!value || typeof value !== 'object' || value.source !== 'selection-toolbar' || typeof value.canvasId !== 'string') return undefined
+      return {
+        source: 'selection-toolbar',
+        canvasId: value.canvasId.slice(0, 256),
+        canvasTitle: typeof value.canvasTitle === 'string' ? value.canvasTitle.slice(0, 256) : '',
+        nodes: Array.isArray(value.nodes)
+          ? value.nodes.filter(node => node && typeof node.id === 'string' && node.id).slice(0, 20).map(node => ({
+              id: node.id.slice(0, 256),
+              title: typeof node.title === 'string' ? node.title.slice(0, 80) : '',
+              type: typeof node.type === 'string' ? node.type.slice(0, 40) : '',
+            }))
+          : [],
+      }
+    }
+
+    function askPrompt(ask) {
+      const canvasName = ask.canvasTitle || '当前画布'
+      const titles = ask.nodes.map(node => node.title || '未命名节点')
+      if (!titles.length) return `画布「${canvasName}」中选中的节点\n`
+      const listed = titles.length > 5 ? `${titles.slice(0, 5).join('、')} 等 ${titles.length} 个节点` : titles.join('、')
+      return `画布「${canvasName}」中选中的：${listed}\n`
+    }
+
     function FixedChatView({ renderSlot }) {
       return renderSlot('conversation.session', { view: 'chat' })
     }
@@ -110,6 +145,12 @@ window.__ModuleLoader__.load({
       const session = useSession(value => value)
       const settling = session === undefined || session.openState === 'loading'
       const running = Boolean(session?.running)
+      // 渲染期同步记住，避免切换会话后消息落在 passive effect 之前。
+      conversationSessionId = sessionId
+
+      React.useEffect(() => () => {
+        if (conversationSessionId === sessionId) conversationSessionId = undefined
+      }, [sessionId])
 
       React.useEffect(() => {
         if (!running || !onAgentActivity) return
@@ -158,7 +199,7 @@ window.__ModuleLoader__.load({
               h('span', null, '为 DSH 使用独立的 BeefTV 本地工作区。')))))
     }
 
-    function Workbench({ renderSlot, returnToConversation, createCreativeSession }) {
+    function Workbench({ renderSlot, returnToConversation, createCreativeSession, askAssistant }) {
       const [status, setStatus] = React.useState()
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
@@ -181,6 +222,9 @@ window.__ModuleLoader__.load({
       const statusRequest = React.useRef(null)
       const refreshStatus = React.useRef(null)
       const requestStatusRefresh = React.useCallback(() => refreshStatus.current?.(), [])
+      const skipStepSave = React.useRef(false)
+      const statusGeneration = React.useRef(0)
+      const actionsButton = React.useRef(null)
       const reportError = React.useCallback(message => setError(message), [])
       const appURL = !choosingWorkspace && status?.connected ? status.appURL : undefined
       const source = React.useMemo(() => frameURL(appURL), [appURL])
@@ -190,6 +234,7 @@ window.__ModuleLoader__.load({
       }, [source])
       const connectionId = status?.connectionId
       const workspaceContext = reportedContext?.connectionId === connectionId ? reportedContext?.context : undefined
+      const autoContinue = status?.autoContinue !== false
 
       function clampAgentWidth(width) {
         const maximum = Math.max(320, (body.current?.clientWidth || 718) - 286)
@@ -246,11 +291,12 @@ window.__ModuleLoader__.load({
           const controller = new AbortController()
           const timeout = new AbortController()
           const timer = window.setTimeout(() => timeout.abort(), 10_000)
+          const generation = statusGeneration.current
           statusRequest.current = controller
           try {
             const next = await api('status', undefined, AbortSignal.any([controller.signal, timeout.signal]))
-            if (!mounted || controller.signal.aborted || connecting.current) return
-            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
+            if (!mounted || controller.signal.aborted || connecting.current || generation !== statusGeneration.current) return
+            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed', 'autoContinue', 'stepLimit', 'awayNotice', 'stepNotice'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
             setStatusError('')
           } catch (failure) {
             if (!mounted || controller.signal.aborted) return
@@ -289,6 +335,30 @@ window.__ModuleLoader__.load({
         window.addEventListener('message', receiveContext)
         return () => window.removeEventListener('message', receiveContext)
       }, [source, connectionId])
+
+      React.useEffect(() => {
+        if (!source) return
+        const origin = new URL(source).origin
+        const receiveAsk = async event => {
+          if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== 'beeftv:ask') return
+          const ask = readAsk(event.data.ask)
+          if (!ask || !connectionId) return
+          // 模型后续看到的是这次选中的节点，不依赖提示词里的标题。
+          setReportedContext({
+            connectionId,
+            context: {
+              route: workspaceContext?.route || '/',
+              canvasId: ask.canvasId,
+              canvasTitle: ask.canvasTitle,
+              selectedNodeIds: ask.nodes.map(node => node.id),
+            },
+          })
+          const status = await askAssistant(ask)
+          frame.current?.contentWindow?.postMessage({ type: 'beeftv:ask-result', status }, origin)
+        }
+        window.addEventListener('message', receiveAsk)
+        return () => window.removeEventListener('message', receiveAsk)
+      }, [source, connectionId, workspaceContext, askAssistant])
 
       React.useEffect(() => {
         if (!connectionId) {
@@ -346,11 +416,68 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function saveSettings(patch) {
+        setError('')
+        // 写入前丢掉在途的状态读取；写入期间的轮询也一并作废，避免旧值把刚保存的值翻回去。
+        statusGeneration.current += 1
+        statusRequest.current?.abort()
+        statusRequest.current = null
+        try {
+          setStatus(await api('settings', patch))
+        } catch (failure) {
+          setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
+        }
+      }
+
+      async function dismissNotice(path) {
+        setError('')
+        statusGeneration.current += 1
+        statusRequest.current?.abort()
+        statusRequest.current = null
+        try {
+          setStatus(await api(path, { seen: true }))
+        } catch (failure) {
+          setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
+        }
+      }
+
+      async function dismissLocalPrompt() {
+        setError('')
+        // An older status read must not put the prompt back after the dismissal was saved.
+        statusGeneration.current += 1
+        statusRequest.current?.abort()
+        statusRequest.current = null
+        try {
+          setStatus(await api('local-prompt', { dismissed: true }))
+        } catch (failure) {
+          setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
+        }
+      }
+
       const visibleError = error || status?.error || statusError
+      const standalone = status?.connected === true && status?.mode === 'standalone' && !choosingWorkspace
+      const localReady = standalone && status?.localApp?.compatible === true && !status?.localPromptDismissed
 
       return h('section', { className: 'beeftv-harness', 'aria-label': 'BeefTV 工作台', 'data-resizing': resizing },
         h('span', { ref: clearanceProbe, className: 'beeftv-harness-clearance', 'aria-hidden': true }),
         visibleError && h('div', { className: 'beeftv-harness-error', role: 'alert' }, visibleError),
+        standalone && h('div', { className: 'beeftv-harness-workspace-note' }, '独立工作区，和本机 BeefTV 不是同一份数据'),
+        status?.awayNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
+          h('span', null, status.awayNotice),
+          h('button', { type: 'button', 'aria-label': '关闭离开提示', onClick: () => dismissNotice('away-notice') }, '知道了')),
+        status?.stepNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
+          h('span', null, status.stepNotice),
+          h('button', { type: 'button', 'aria-label': '关闭步数提示', onClick: () => dismissNotice('step-notice') }, '知道了')),
+        localReady && h('div', { className: 'beeftv-harness-notice', role: 'status' },
+          h('span', null, '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'),
+          h('button', { type: 'button', disabled: !!busy, onClick: () => connect('local') }, '连接本机'),
+          h('button', { type: 'button', disabled: !!busy, onClick: dismissLocalPrompt }, '暂不')),
         h('div', { ref: body, className: 'beeftv-harness-body', style: { '--beeftv-agent-width': `${agentWidth}px` } },
           h('div', { className: 'beeftv-harness-workspace' }, source
             ? h('iframe', { key: source, ref: frame, src: source, onLoad: publishFrameClearance, title: 'BeefTV 创作工作区', className: 'beeftv-harness-frame', referrerPolicy: 'no-referrer', allow: 'clipboard-read; clipboard-write' })
@@ -360,12 +487,25 @@ window.__ModuleLoader__.load({
             h('div', { className: 'beeftv-harness-agent-header' },
               h('div', { className: 'beeftv-harness-agent-title-row' },
                 h('h2', { className: 'beeftv-harness-agent-heading' }, 'BeefTV Agent'),
-                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') setActionsOpen(false) } },
-                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => setActionsOpen(open => !open) }, '⋯'),
+                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') { setActionsOpen(false); actionsButton.current?.focus() } } },
+                  h('button', { ref: actionsButton, type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => { skipStepSave.current = false; setActionsOpen(open => !open) } }, '⋯'),
                   actionsOpen && h('div', { className: 'beeftv-harness-action-menu' },
                     h('button', { type: 'button', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
                     status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
-                    h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH')))),
+                    h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
+                    h('button', { type: 'button', 'aria-pressed': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
+                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
+                      h('input', {
+                        type: 'number', min: 5, max: 200, step: 5, defaultValue: status?.stepLimit || 40,
+                        onBlur: event => {
+                          if (skipStepSave.current) { skipStepSave.current = false; return }
+                          saveSettings({ stepLimit: Number(event.currentTarget.value) })
+                        },
+                        onKeyDown: event => {
+                          if (event.key === 'Escape') skipStepSave.current = true
+                          if (event.key === 'Enter') event.currentTarget.blur()
+                        },
+                      }))))),
               h('div', { className: 'beeftv-harness-modes', 'aria-label': '协作方向' }, modes.map(mode =>
                 h('button', { key: mode.id, type: 'button', title: mode.detail, 'aria-pressed': agentMode === mode.id, onClick: () => setAgentMode(mode.id) }, mode.label))),
               workspaceContext?.canvasTitle && h('div', { className: 'beeftv-harness-context', title: workspaceContext.canvasTitle }, workspaceContext.canvasTitle)),
@@ -378,9 +518,59 @@ window.__ModuleLoader__.load({
         h('path', { d: 'm10 8 6 4-6 4Z', fill: 'currentColor' }))
     }
 
+    function askAssistant(ctx) {
+      const prefill = (input, binding, prompt) => {
+        const result = input.requestDraftInitialization(binding, { prompt, whenDraftExists: 'append' })
+        return ['applied', 'preserved', 'blocked'].includes(result) ? result : 'unavailable'
+      }
+      return async ask => {
+        const prompt = askPrompt(ask)
+        const input = ctx.get?.('conversation')?.input
+        if (typeof input?.requestDraftInitialization !== 'function') {
+          // 旧版 DSH 没有输入框预填接口：退回新建会话，由 startSession 自己放草稿。
+          try {
+            if (typeof ctx.uiWorkspace?.startSession !== 'function') return 'unavailable'
+            ctx.uiWorkspace.startSession(undefined, { prompt, whenDraftExists: 'append' })
+            ctx.layout.selectPanel(panelId)
+            return 'applied'
+          } catch {
+            return 'unavailable'
+          }
+        }
+        let binding
+        try {
+          binding = conversationSessionId === undefined ? undefined : ctx.sessions?.binding?.(conversationSessionId)
+        } catch {
+          binding = undefined
+        }
+        if (binding) {
+          try {
+            const result = prefill(input, binding, prompt)
+            ctx.layout.selectPanel(panelId)
+            return result
+          } catch {
+            return 'unavailable'
+          }
+        }
+        // 没有当前会话：新建并立即 retain，确认输入框真的接住了草稿，而不是假定成功。
+        try {
+          const sessionId = await ctx.sessions.create()
+          ctx.uiWorkspace.openSession(sessionId)
+          const created = ctx.sessions.binding(sessionId)
+          if (!created) return 'unavailable'
+          const result = prefill(input, created, prompt)
+          ctx.layout.selectPanel(panelId)
+          return result
+        } catch {
+          return 'unavailable'
+        }
+      }
+    }
+
     return {
       inject: ['slots', 'layout', 'sessions', 'uiWorkspace'],
       apply(ctx) {
+        const handleAsk = askAssistant(ctx)
         ctx.effect(() => {
           const style = document.createElement('style')
           style.dataset.pluginCss = 'dsh-beeftv'
@@ -399,6 +589,7 @@ window.__ModuleLoader__.load({
               ctx.uiWorkspace.openSession(sessionId)
               ctx.layout.selectPanel(panelId)
             },
+            askAssistant: handleAsk,
           }),
         }, Workbench))
         ctx.slots.inject(conversationSlot, () => ctx.slots.register({ name: conversationSlot }, NativeConversation))
