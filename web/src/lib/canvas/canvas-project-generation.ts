@@ -423,6 +423,7 @@ function resolveVideoEditOperation(
         referenceImages: ReferenceImage[];
         referenceVideos: ReferenceVideo[];
         referenceAudios: ReferenceAudio[];
+        characterReferences?: Array<unknown>;
     } | undefined,
     effectiveModel: string,
     videoProfile?: VideoCapabilityConfig | null,
@@ -430,15 +431,43 @@ function resolveVideoEditOperation(
 ): CanvasVideoEditOperation {
     const storedOperation = node?.metadata?.videoEditOperation;
     const referenceImages = context?.referenceImages || [];
-    const characterCount = referenceImages.filter(isIndirectReferenceImage).length;
+    const indirectCount = referenceImages.filter(isIndirectReferenceImage).length;
+    const characterCount = indirectCount || (context?.characterReferences?.length ?? 0);
     const input = {
         textCount: 0,
-        imageCount: referenceImages.length - characterCount,
+        imageCount: referenceImages.length - indirectCount,
         videoCount: context?.referenceVideos.length || 0,
         audioCount: context?.referenceAudios.length || 0,
         characterCount,
     };
     return resolveVideoOperation(input, storedOperation, videoProfile, effectiveModel, isBeefTVRoute) as CanvasVideoEditOperation;
+}
+
+export function resolveVideoGenerationEditOperation(
+    node: CanvasNodeData | undefined,
+    context?: {
+        referenceImages: ReferenceImage[];
+        referenceVideos: ReferenceVideo[];
+        referenceAudios: ReferenceAudio[];
+        characterReferences?: Array<unknown>;
+    },
+    config?: AiConfig,
+): CanvasVideoEditOperation {
+    const metadata = node?.metadata;
+    const draftTaskId = metadata?.videoDraftTaskId?.trim() || undefined;
+    if (draftTaskId) return "draft_to_final";
+    const effectiveModel = config?.model || metadata?.model || "";
+    const safeConfig = config && Array.isArray(config.channels) && config.channels.length ? (config as AiConfig) : undefined;
+    const isBeefTVRoute = isBeefTVModelRoute(effectiveModel, config);
+    const declared = safeConfig ? hasDeclaredModelCapability(safeConfig, effectiveModel, "video") : false;
+    const fullVideoProfile = safeConfig && effectiveModel ? modelCapabilityConfigFor(safeConfig, effectiveModel).video : undefined;
+    const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
+    const { middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
+    const hasMiddleFrame = middleFrameSupport === "supported" && Boolean(metadata?.videoMiddleFrameNodeId);
+    const resolvedOperation = resolveVideoEditOperation(node, context, effectiveModel, videoProfile, isBeefTVRoute);
+    return hasMiddleFrame && Boolean(videoProfile?.operations.includes("reference_to_video"))
+        ? "reference_to_video"
+        : resolvedOperation;
 }
 
 export function buildVideoGenerationMetadata(
@@ -447,6 +476,7 @@ export function buildVideoGenerationMetadata(
         referenceImages: ReferenceImage[];
         referenceVideos: ReferenceVideo[];
         referenceAudios: ReferenceAudio[];
+        characterReferences?: Array<unknown>;
     },
     config?: AiConfig,
 ): CanvasNodeMetadata {
@@ -459,15 +489,8 @@ export function buildVideoGenerationMetadata(
     const declared = safeConfig ? hasDeclaredModelCapability(safeConfig, effectiveModel, "video") : false;
     const fullVideoProfile = safeConfig && effectiveModel ? modelCapabilityConfigFor(safeConfig, effectiveModel).video : undefined;
     const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
-    const { endFrameSupported, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
-    const hasMiddleFrame = middleFrameSupport === "supported" && Boolean(metadata?.videoMiddleFrameNodeId);
-    const resolvedOperation = draftTaskId
-        ? "draft_to_final"
-        : resolveVideoEditOperation(node, context, effectiveModel, videoProfile, isBeefTVRoute);
-    const videoEditOperation =
-        !draftTaskId && hasMiddleFrame && Boolean(videoProfile?.operations.includes("reference_to_video"))
-            ? "reference_to_video"
-            : resolvedOperation;
+    const { maxFrameImages, endFrameSupported, maxFrameAudios, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
+    const videoEditOperation = resolveVideoGenerationEditOperation(node, context, config);
     const storedOperation = metadata?.videoEditOperation;
     // 非中间帧能力声明模型的全模态参考生成不消费首尾帧/中间帧槽位；未知的自定义渠道仅在模式被自动提升时清理残留帧槽位。
     const ignoreFrameSelection =
@@ -479,10 +502,10 @@ export function buildVideoGenerationMetadata(
     const h3 = isH3Model(effectiveModel);
     const allDirectImageNodes =
         connectedImages.length > 0 &&
-        connectedImages.length <= 2 &&
+        connectedImages.length <= maxFrameImages &&
         connectedImages.every((image) => !isIndirectReferenceImage(image));
     const supportsReferenceVideo = !videoProfile || videoProfile.operations.includes("reference_to_video");
-    const nonFrameMediaAttached = !h3 && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > 0 || connectedImages.some(isIndirectReferenceImage));
+    const nonFrameMediaAttached = !h3 && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > maxFrameAudios || connectedImages.some(isIndirectReferenceImage));
     const storedStartFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId)))
         ? undefined
         : metadata?.videoStartFrameNodeId;
@@ -491,12 +514,11 @@ export function buildVideoGenerationMetadata(
         : metadata?.videoEndFrameNodeId;
     const defaultFrames =
         !ignoreFrameSelection &&
-        !h3 &&
         videoEditOperation === "image_to_video" &&
         !storedStartFrame &&
         !storedEndFrame &&
         (context?.referenceVideos.length || 0) === 0 &&
-        (context?.referenceAudios.length || 0) === 0 &&
+        (context?.referenceAudios.length || 0) <= maxFrameAudios &&
         allDirectImageNodes;
     const startFrame = ignoreFrameSelection
         ? undefined
