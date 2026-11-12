@@ -58,7 +58,7 @@ import { CanvasVersionPreview } from "./canvas-version-preview";
 import { CanvasTopBar } from "./canvas-project-top-bar";
 import { CanvasFocusModeBar } from "@/components/canvas/canvas-focus-mode-bar";
 import { CanvasProjectContextMenu } from "./canvas-project-context-menu";
-import { useCanvasStarterNavigation } from "./use-canvas-starter-navigation";
+import { starterAssistantHandler, useCanvasStarterNavigation } from "./use-canvas-starter-navigation";
 import { useCanvasImport } from "./use-canvas-import";
 import { useCanvasNodeReferences } from "./use-canvas-node-references";
 import { CanvasProjectNodePrompt } from "./canvas-project-node-prompt";
@@ -404,7 +404,7 @@ function InfiniteCanvasPage() {
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     // 助手只接受属于当前画布的选中项：切画布那一帧仍可能残留旧 id，这里做硬约束，
     // 不让跨画布的 id 进入请求（后端会按画布校验并拒绝整个回合）。
-    const assistantSelectedNodeIds = useCanvasSelectionContext(projectId, currentProject?.title, nodes, selectedNodeIds, projectLoaded);
+    const { selectedIds: assistantSelectedNodeIds, askSelectedNodes } = useCanvasSelectionContext(projectId, currentProject?.title, nodes, selectedNodeIds, projectLoaded, openAssistant);
     // 助手的 @ 菜单覆盖整张画布，而不是只覆盖能当生成输入的资源节点。
     const assistantMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
     // 扩展节点（对比/图表/调色）要读自己的上游才能渲染，经 Context 下发；
@@ -1010,7 +1010,7 @@ function InfiniteCanvasPage() {
     const { addDirectorReferenceToCanvas, createDirectorShot, openDirectorWorkbench } = director;
 
     useCanvasStarterNavigation({ projectLoaded, searchParams, setSearchParams, containerRef, nodesRef,
-        createNode, fitCanvasSelection, createDirectorShot, openAssistant });
+        createNode, fitCanvasSelection, createDirectorShot, openAssistant: starterAssistantHandler(openAssistant) });
 
     const {
         activateStep: activateShortDramaStep,
@@ -1757,7 +1757,7 @@ function InfiniteCanvasPage() {
                                 onCreateReferenceGroup={createReferenceGroup}
                                 onBatchConnect={() => beginBatchConnectionMode(Array.from(selectedNodeIds))}
                                 onMergeVideos={() => void mergeSelectedVideos()}
-                                onAskAssistant={internalAssistantEnabled ? openAssistant : undefined}
+                                onAskAssistant={askSelectedNodes}
                                 onSaveWorkflow={readOnly ? undefined : () => workflowsRef.current?.saveSelection()}
                             />
                         ) : null}
