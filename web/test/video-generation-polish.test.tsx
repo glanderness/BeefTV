@@ -93,6 +93,9 @@ function createFixtureConfigs() {
         h3Config: normalizeConfigSnapshot({
             config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::minimax-h3-max", videoModel: "beeftv::minimax-h3-max" },
         }).config,
+        wanConfig: normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::wan3.0-video", videoModel: "beeftv::wan3.0-video" },
+        }).config,
         singleFrameConfig: normalizeConfigSnapshot({
             config: { ...defaultConfig, channels: [beeftvChannel], model: "beeftv::single-frame-video", videoModel: "beeftv::single-frame-video" },
         }).config,
@@ -440,7 +443,7 @@ describe("Video & Canvas generation polish regressions", () => {
     });
 
     test("待处理转换节点与错误参考图映射表在面板内提前提示并禁用生成，意外编程异常不被吞成用户预检提示", () => {
-        const { h3Config, multiRefImageConfig } = createFixtureConfigs();
+        const { h3Config, wanConfig, multiRefImageConfig } = createFixtureConfigs();
         const imgSrc = {
             id: "img-src",
             type: CanvasNodeType.Image,
@@ -554,6 +557,59 @@ describe("Video & Canvas generation polish regressions", () => {
         );
         expect(badTableHtml).toContain("IMAGE 1 对应图片2");
         expect(badTableHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const videoBadTableTarget = {
+            id: "vid-bad-table",
+            type: CanvasNodeType.Video,
+            title: "Video",
+            position: { x: 0, y: 120 },
+            width: 320,
+            height: 180,
+            metadata: { model: "beeftv::minimax-h3-max", prompt: "| IMAGE 1 | @镜头2 |\n推镜" },
+        };
+        const videoBadTableHtml = renderToStaticMarkup(
+            <QueryClientProvider client={new QueryClient()}>
+                <CanvasNodePromptPanel
+                    node={videoBadTableTarget}
+                    referenceNodes={[videoBadTableTarget, ...twoImgs]}
+                    referenceConnections={edgesTo("vid-bad-table", ["img-1", "img-2"])}
+                    config={h3Config}
+                    projectId="proj-1"
+                    isRunning={false}
+                    mentionReferences={makeImageRefs(2)}
+                    onPromptChange={() => {}}
+                    onConfigChange={() => {}}
+                    onGenerate={() => {}}
+                />
+            </QueryClientProvider>,
+        );
+        expect(videoBadTableHtml).toContain("IMAGE 1 对应图片2");
+        expect(videoBadTableHtml).toMatch(/aria-label="生成"[^>]*disabled=""|disabled=""[^>]*aria-label="生成"/);
+
+        const threeImgs = [1, 2, 3].map((idx) => ({
+            id: `img-${idx}`,
+            type: CanvasNodeType.Image,
+            title: `镜头${idx}`,
+            position: { x: idx * 20, y: 0 },
+            width: 120,
+            height: 80,
+            metadata: { content: `https://example.com/img-${idx}.png` },
+        }));
+        const omniReorderTarget = {
+            id: "vid-omni-table",
+            type: CanvasNodeType.Video,
+            title: "Video",
+            position: { x: 0, y: 120 },
+            width: 320,
+            height: 180,
+            metadata: { model: "beeftv::wan3.0-video", prompt: "@[node:img-2] 主角出场\n| IMAGE 1 | @镜头1 |" },
+        };
+        const omniNodes = [omniReorderTarget, ...threeImgs];
+        const omniEdges = edgesTo("vid-omni-table", ["img-1", "img-2", "img-3"]);
+        expect(resolveCanvasNodeGenerationPreview(omniReorderTarget, "video", omniReorderTarget.metadata.prompt, omniNodes, omniEdges, [], wanConfig).preflightError).toContain(
+            "IMAGE 1 对应图片2",
+        );
+        expect(resolveCanvasNodeGenerationPreview(omniReorderTarget, "video", "@[node:img-2] 主角出场\n| IMAGE 1 | @[node:img-2] |", omniNodes, omniEdges, [], wanConfig).preflightError).toBe("");
 
         const warningsHtml = renderToStaticMarkup(
             <CanvasNodePromptWarnings

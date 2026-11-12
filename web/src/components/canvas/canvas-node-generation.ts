@@ -10,11 +10,14 @@ import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/can
 import { isNeutralColorGrade } from "@/lib/canvas/canvas-color-grade";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
 import { mediaConversionSourceFingerprint } from "@/lib/media-conversion/contracts";
-import { nodeReferenceImage } from "@/lib/canvas/canvas-project-generation";
+import { buildCanvasGenerationRequirements, buildGenerationConfig } from "@/lib/canvas/canvas-generation-config";
+import { nodeReferenceImage, resolveVideoGenerationEditOperation } from "@/lib/canvas/canvas-project-generation";
 import type { ModelInputSummary } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
+import type { AiConfig } from "@/stores/use-config-store";
 import { assertCanvasImageReferenceTable, findCanvasImageReferenceTableError, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
-import type { BoundMediaMention, CharacterReferenceBinding } from "@/lib/canvas/generation-reference-contract";
+import { findBoundMediaImageTableError, type BoundMediaMention, type CharacterReferenceBinding } from "@/lib/canvas/generation-reference-contract";
+import { usesOmniVideoMentionOrder } from "./canvas-node-generation-hydrate";
 
 export { compileNodeGenerationReferences, hydrateNodeGenerationContext } from "./canvas-node-generation-hydrate";
 
@@ -80,6 +83,7 @@ export function resolveCanvasNodeGenerationPreview(
     nodes: CanvasNodeData[],
     connections: CanvasConnection[],
     assets: Asset[],
+    globalConfig?: AiConfig,
 ): CanvasNodeGenerationPreview {
     const graphNodes = nodes.some((item) => item.id === node.id) ? nodes : [node, ...nodes];
     const editingTextNode = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
@@ -95,18 +99,27 @@ export function resolveCanvasNodeGenerationPreview(
         promptOnly,
         preserveMediaBindings,
     );
+    const inputSummary: ModelInputSummary = {
+        textCount: (prompt.trim() ? 1 : 0) + context.textCount,
+        imageCount: context.imageCount,
+        videoCount: context.videoCount,
+        audioCount: context.audioCount,
+        characterCount: context.characterReferences.length,
+    };
     let preflightError = formatPendingMediaConversionError(node.id, graphNodes, connections);
-    if (!preflightError && !skipAssertions && !preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) {
-        preflightError = findCanvasImageReferenceTableError(context.prompt, tableReferences);
+    if (!preflightError && !skipAssertions) {
+        if (!preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) {
+            preflightError = findCanvasImageReferenceTableError(context.prompt, tableReferences);
+        } else if (preserveMediaBindings && sourceNode) {
+            const nodeConfig = globalConfig
+                ? buildGenerationConfig(globalConfig, sourceNode, mode, buildCanvasGenerationRequirements(globalConfig, sourceNode, mode, inputSummary))
+                : undefined;
+            const operation = resolveVideoGenerationEditOperation(sourceNode, context, nodeConfig);
+            preflightError = findBoundMediaImageTableError(context, usesOmniVideoMentionOrder(nodeConfig, operation));
+        }
     }
     return {
-        inputSummary: {
-            textCount: (prompt.trim() ? 1 : 0) + context.textCount,
-            imageCount: context.imageCount,
-            videoCount: context.videoCount,
-            audioCount: context.audioCount,
-            characterCount: context.characterReferences.length,
-        },
+        inputSummary,
         preflightError,
     };
 }
