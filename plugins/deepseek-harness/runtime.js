@@ -464,6 +464,28 @@ function embeddedChromeBridge() {
     document.documentElement.style.setProperty('--beeftv-host-leading', `${leading}px`)
     document.documentElement.toggleAttribute('data-beeftv-host-chrome', leading > 0)
   })
+  // 把当前明暗、底色、前景与主按钮配色告诉宿主，由宿主侧统一解析颜色、筛掉无彩度值并校验对比度。
+  // 只发送颜色事实，不带工作区数据或凭据。
+  let themeTimer
+  const postTheme = () => {
+    if (!document.body) return
+    const root = document.documentElement
+    const rootStyle = getComputedStyle(root)
+    const dark = root.classList.contains('dark') || rootStyle.colorScheme === 'dark'
+    const shell = document.querySelector('.app-workspace-shell') || document.body
+    const background = getComputedStyle(shell).backgroundColor
+    const foreground = getComputedStyle(document.body).color
+    const accent = rootStyle.getPropertyValue('--primary').trim().slice(0, 64)
+    const accentForeground = rootStyle.getPropertyValue('--primary-foreground').trim().slice(0, 64)
+    window.parent.postMessage({ type: 'beeftv:theme', dark, background, foreground, accent, accentForeground }, '*')
+  }
+  const scheduleTheme = () => {
+    clearTimeout(themeTimer)
+    themeTimer = setTimeout(postTheme, 120)
+  }
+  window.addEventListener('load', scheduleTheme)
+  new MutationObserver(scheduleTheme).observe(document.documentElement, { attributes: true })
+  scheduleTheme()
 }
 
 export function publicContext(value) {

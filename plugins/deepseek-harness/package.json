@@ -1,6 +1,6 @@
 {
   "name": "dsh-beeftv",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI 驱动的视频创作工作台，连接 BeefTV 画布、素材与创作生态。",
   "type": "module",
   "main": "host.js",
