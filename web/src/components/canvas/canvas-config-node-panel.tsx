@@ -16,6 +16,7 @@ import { usePluginSlot } from "@/lib/plugins/slot-registry";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata, CanvasVideoEditOperation, CanvasWorkspaceMode } from "@/types/canvas";
 
 type CanvasConfigNodePanelProps = {
+    config?: AiConfig;
     node: CanvasNodeData;
     isRunning: boolean;
     inputSummary: { textCount: number; imageCount: number; videoCount: number; audioCount: number; characterCount: number };
@@ -69,8 +70,9 @@ export function buildConfigNodeVideoOperationOptions(config: AiConfig, inputSumm
         }));
 }
 
-export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigChange, onGenerate, onComposerToggle, workspaceMode = "professional" }: CanvasConfigNodePanelProps) {
-    const globalConfig = useEffectiveConfig();
+export function CanvasConfigNodePanel({ config: configProp, node, isRunning, inputSummary, onConfigChange, onGenerate, onComposerToggle, workspaceMode = "professional" }: CanvasConfigNodePanelProps) {
+    const effectiveConfig = useEffectiveConfig();
+    const globalConfig = configProp || effectiveConfig;
     const theme = canvasThemes[useActiveTheme()];
     const mode = node.metadata?.generationMode === "video" || node.metadata?.generationMode === "audio" ? node.metadata.generationMode : "image";
     const simpleMode = workspaceMode === "simple";

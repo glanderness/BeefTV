@@ -455,7 +455,7 @@ export function buildVideoGenerationMetadata(
     const draftTaskId = metadata?.videoDraftTaskId?.trim() || undefined;
     const effectiveModel = config?.model || metadata?.model || "";
     const safeConfig = config && Array.isArray(config.channels) && config.channels.length ? (config as AiConfig) : undefined;
-    const isBeefTVRoute = isBeefTVModelRoute(effectiveModel, safeConfig);
+    const isBeefTVRoute = isBeefTVModelRoute(effectiveModel, config);
     const declared = safeConfig ? hasDeclaredModelCapability(safeConfig, effectiveModel, "video") : false;
     const fullVideoProfile = safeConfig && effectiveModel ? modelCapabilityConfigFor(safeConfig, effectiveModel).video : undefined;
     const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);

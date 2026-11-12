@@ -310,12 +310,43 @@ func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) 
 				"scope":   "system",
 				"baseUrl": "https://beeftv.app/v1",
 				"enabled": true,
-				"models":  []string{"empty-oprefs"},
+				"models":  []string{"empty-oprefs", "minimax-h3-max", "minimax-h3"},
 				"modelProfiles": []any{
 					map[string]any{"model": "empty-oprefs", "capability": "video", "protocol": "openai-videos", "videoCapabilitiesVersion": "2026-04-06", "capabilityConfig": map[string]any{
 						"video": map[string]any{
 							"references":          emptyOpRefsCap.Video.References,
 							"operationReferences": map[string]any{},
+							"duration":            emptyOpRefsCap.Video.Duration,
+							"ratios":              emptyOpRefsCap.Video.Ratios,
+							"defaultRatio":        emptyOpRefsCap.Video.DefaultRatio,
+							"resolutions":         emptyOpRefsCap.Video.Resolutions,
+							"defaultResolution":   emptyOpRefsCap.Video.DefaultResolution,
+							"generateAudio":       emptyOpRefsCap.Video.GenerateAudio,
+							"watermark":           emptyOpRefsCap.Video.Watermark,
+							"operations":          emptyOpRefsCap.Video.Operations,
+							"defaultOperation":    emptyOpRefsCap.Video.DefaultOperation,
+						},
+					}},
+					map[string]any{"model": "minimax-h3-max", "capability": "video", "protocol": "newapi-channel-2", "capabilitySource": "user", "capabilityConfig": map[string]any{
+						"video": map[string]any{
+							"references":          emptyOpRefsCap.Video.References,
+							"operationReferences": map[string]any{},
+							"middleFrame":         false,
+							"duration":            emptyOpRefsCap.Video.Duration,
+							"ratios":              emptyOpRefsCap.Video.Ratios,
+							"defaultRatio":        emptyOpRefsCap.Video.DefaultRatio,
+							"resolutions":         emptyOpRefsCap.Video.Resolutions,
+							"defaultResolution":   emptyOpRefsCap.Video.DefaultResolution,
+							"generateAudio":       emptyOpRefsCap.Video.GenerateAudio,
+							"watermark":           emptyOpRefsCap.Video.Watermark,
+							"operations":          emptyOpRefsCap.Video.Operations,
+							"defaultOperation":    emptyOpRefsCap.Video.DefaultOperation,
+						},
+					}},
+					map[string]any{"model": "minimax-h3", "capability": "video", "protocol": "newapi-channel-2", "capabilitySource": "user", "capabilityConfig": map[string]any{
+						"video": map[string]any{
+							"references":          emptyOpRefsCap.Video.References,
+							"operationReferences": map[string]any{"image_to_video": map[string]any{"maxImages": 2}},
 							"duration":            emptyOpRefsCap.Video.Duration,
 							"ratios":              emptyOpRefsCap.Video.Ratios,
 							"defaultRatio":        emptyOpRefsCap.Video.DefaultRatio,
@@ -357,14 +388,31 @@ func TestAgentModelCatalogCapabilityDeclaredMatchesWebSourceRules(t *testing.T) 
 					t.Fatalf("expected empty operationReferences map preserved on %s, got %#v", key, videoMap)
 				}
 			}
+			if key == "beeftv::minimax-h3-max" {
+				videoMap, _ := m.CapabilityConfig["video"].(map[string]any)
+				opRefs, ok := videoMap["operationReferences"].(map[string]any)
+				if !ok || len(opRefs) != 0 || videoMap["middleFrame"] != false {
+					t.Fatalf("unversioned user profile overwritten on %s: %#v", key, videoMap)
+				}
+			}
+			if key == "beeftv::minimax-h3" {
+				videoMap, _ := m.CapabilityConfig["video"].(map[string]any)
+				opRefs, _ := videoMap["operationReferences"].(map[string]any)
+				i2v, _ := opRefs["image_to_video"].(map[string]any)
+				if _, injected := i2v["maxAudios"]; injected {
+					t.Fatalf("unversioned partial operationReferences overwritten on %s: %#v", key, videoMap)
+				}
+			}
 		}
 	}
 	want := map[string]bool{
-		"custom::auto-cap":      false,
-		"custom::user-cap":      true,
-		"custom::versioned-cap": true,
-		"sys::sys-cap":          true,
-		"beeftv::empty-oprefs":  true,
+		"custom::auto-cap":       false,
+		"custom::user-cap":       true,
+		"custom::versioned-cap":  true,
+		"sys::sys-cap":           true,
+		"beeftv::empty-oprefs":   true,
+		"beeftv::minimax-h3-max": true,
+		"beeftv::minimax-h3":     true,
 	}
 	for key, expected := range want {
 		if got, ok := declaredByKey[key]; !ok || got != expected {

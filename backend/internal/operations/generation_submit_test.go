@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -203,6 +204,13 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			"references":       map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
 		},
 	}
+	customFrame9Cap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 0, "maxAudios": 0},
+		},
+	}
 	autoDefaultCustomCap := map[string]any{
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
@@ -261,6 +269,7 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 				{ID: "opaque-video", ModelKey: "opaque-video", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityDeclared: &undeclared, CapabilityConfig: autoDefaultCustomCap},
 				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: versionedH3LiveCap},
 				{ID: "kling-video-v3", ModelKey: "kling-video-v3", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: customKlingTwoFrameCap},
+				{ID: "frame9-video", ModelKey: "frame9-video", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: customFrame9Cap},
 			},
 		},
 	})
@@ -398,11 +407,21 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	emptyOpRefH3Shot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
 	emptyOpRefH3Shot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
 
+	frame9ThreeImgShot := imageNode("frame9-over-limit", "custom::frame9-video")
+	frame9ThreeImgShot["type"] = "video"
+	frame9ThreeImgShot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+
+	staleRemovedShot := imageNode("stale-removed-h3", "beeftv::removed-h3-max")
+	staleRemovedShot["type"] = "video"
+	staleRemovedShot["metadata"].(map[string]any)["videoEditOperation"] = "reference_to_video"
+	staleRemovedShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	staleRemovedShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+
 	allNodes := []map[string]any{
 		img1, img2, img3, aud1, aud2, charCard, drawingRef, colorgradeRef, convVideoRef,
 		wanVideo, agnesVideo, klingVideo, hostedH3Lip, h3FrameAudio, h3MidFrame, switchedFromH3, charAndDrawShot, convVideoShot,
 		versionedH3Lip, versionedH3TwoAudio, liveH3MaxMid, omniH3MaxMid, overrideH3MaxNoMid, opaqueCustomShot,
-		customH3MaxShot, customKlingShot, partialOpRefH3Shot, emptyOpRefH3Shot,
+		customH3MaxShot, customKlingShot, partialOpRefH3Shot, emptyOpRefH3Shot, frame9ThreeImgShot, staleRemovedShot,
 	}
 	rawNodes := make([]any, 0, len(allNodes))
 	for _, item := range allNodes {
@@ -455,6 +474,11 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			map[string]any{"fromNodeId": "img-1", "toNodeId": "empty-opref-h3"},
 			map[string]any{"fromNodeId": "aud-1", "toNodeId": "empty-opref-h3"},
 			map[string]any{"fromNodeId": "aud-2", "toNodeId": "empty-opref-h3"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "frame9-over-limit"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "frame9-over-limit"},
+			map[string]any{"fromNodeId": "img-3", "toNodeId": "frame9-over-limit"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "stale-removed-h3"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "stale-removed-h3"},
 		},
 	}
 
@@ -469,7 +493,7 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	shotIDs := []string{
 		"wan-shot", "agnes-shot", "kling-shot", "hosted-h3-lip", "h3-lip-shot", "h3-mid-shot", "wan-from-h3", "char-draw-shot", "conv-video-shot",
 		"versioned-h3-lip", "versioned-h3-2aud", "live-h3max-mid", "omni-h3max-mid", "override-h3max-nomid", "opaque-custom-shot",
-		"custom-h3max-shot", "custom-kling-shot", "partial-opref-h3", "empty-opref-h3",
+		"custom-h3max-shot", "custom-kling-shot", "partial-opref-h3", "empty-opref-h3", "stale-removed-h3",
 	}
 	targets, err := GenerationTargets(probe, doc, shotIDs)
 	if err != nil {
@@ -602,5 +626,11 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	}
 	if got := byID["empty-opref-h3"].Metadata["videoEditOperation"]; got != "image_to_video" {
 		t.Fatalf("empty-opref-h3 videoEditOperation = %v, want image_to_video", got)
+	}
+	if got := byID["stale-removed-h3"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
+		t.Fatalf("stale-removed-h3 treated as declared or contracted model: %q", got)
+	}
+	if _, err := GenerationTargets(probe, doc, []string{"frame9-over-limit"}); err == nil || !strings.Contains(err.Error(), "最多支持 2 张首尾帧参考图") {
+		t.Fatalf("frame9-over-limit expected frame image limit error, got %v", err)
 	}
 }

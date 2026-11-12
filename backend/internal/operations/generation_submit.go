@@ -576,7 +576,11 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		sort.Strings(refs)
 		refs = uniqueTargetIDs(refs)
 		if kind == "video" {
-			metadata = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, graph, meta, parameters, metadata)
+			var reconcileErr error
+			metadata, reconcileErr = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, graph, meta, parameters, metadata)
+			if reconcileErr != nil {
+				return nil, reconcileErr
+			}
 		}
 		targets = append(targets, GenerationTarget{NodeID: id, Title: dependencyString(n, "title"), Kind: kind, ModelKey: choice.ModelKey, Prompt: prompt, Parameters: parameters, Metadata: metadata, ReferenceNodeIDs: refs})
 	}
@@ -601,9 +605,9 @@ func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.V
 	return "opaque"
 }
 
-func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, graph generationDependencyGraph, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) map[string]any {
+func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, graph generationDependencyGraph, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) (map[string]any, error) {
 	if strings.TrimSpace(dependencyString(nodeMeta, "videoDraftTaskId")) != "" {
-		return metadata
+		return metadata, nil
 	}
 	var rawVideoProfile, videoProfile *modelcatalog.VideoCapabilityConfig
 	declared := false
@@ -624,6 +628,8 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 						videoProfile = capCfg.Video
 					}
 				}
+			} else if len(catalog.Channels) > 0 {
+				managedBeefTV = false
 			}
 		}
 	}
@@ -639,7 +645,7 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 	}
 	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
 	if storedOp != "" && !slices.Contains([]string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"}, storedOp) {
-		return metadata
+		return metadata, nil
 	}
 	var imageCount, characterCount, videoCount, audioCount int
 	for _, refID := range refs {
@@ -695,6 +701,14 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 			}
 		}
 	}
+	if declared && !supportsRefVideo && visualCount > 0 {
+		if !supportsImageVideo {
+			return nil, InvalidArg("video_reference_image_limit", "当前视频模型不支持参考图")
+		}
+		if visualCount > frameMaxImages {
+			return nil, InvalidArg("video_reference_image_limit", fmt.Sprintf("当前视频模型最多支持 %d 张首尾帧参考图", frameMaxImages))
+		}
+	}
 	if frameMaxImages < 2 && (declared || hasContract) {
 		delete(parameters, "videoEndFrameNodeId")
 	}
@@ -719,7 +733,7 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		delete(parameters, "videoMiddleFrameNodeId")
 		delete(metadata, "videoMiddleFrameTime")
 	}
-	return metadata
+	return metadata, nil
 }
 
 func uniqueTargetIDs(ids []string) []string {

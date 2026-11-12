@@ -63,7 +63,7 @@ func ApplyLocalVideoContract(item LocalChannelModel, config *ModelCapabilityConf
 			video.DefaultOperation = video.Operations[0]
 		}
 	}
-	if len(contract.OperationReferences) > 0 {
+	if len(contract.OperationReferences) > 0 && video.OperationReferences == nil {
 		opRefs := make(map[string]VideoOperationReferences, len(contract.OperationReferences))
 		for op, counts := range contract.OperationReferences {
 			if !slices.Contains(video.Operations, op) {

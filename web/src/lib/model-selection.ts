@@ -1,4 +1,5 @@
-import { beefTVVideoContract, isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
+import { isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
+import { channelForId } from "@/lib/channel-identity";
 import { h3VideoOperation, isH3Model } from "@/lib/h3-video";
 import { defaultImageCapabilityConfig, hasUserModelCapability, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { normalizeVideoBoolean, normalizeVideoResolutionValue, videoResolutionComparisonKey } from "@/lib/video-generation-options";
@@ -132,8 +133,9 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
               ? "image_to_video"
               : operation;
         const refs = videoReferencesForOperation(profile, refOperation);
+        const maxImages = refOperation === "image_to_video" ? Math.min(2, refs.maxImages) : refs.maxImages;
         if (visualInputCount < (refs.minImages ?? 0)) return `至少需要 ${refs.minImages} 张参考图`;
-        if (visualInputCount > refs.maxImages) return `最多支持 ${refs.maxImages} 张参考图`;
+        if (visualInputCount > maxImages) return `最多支持 ${maxImages} 张参考图`;
         if (input.videoCount > refs.maxVideos) return `最多支持 ${refs.maxVideos} 个参考视频`;
         if (input.audioCount > refs.maxAudios) return `最多支持 ${refs.maxAudios} 个参考音频`;
         if (operation !== "concat" && !profile.operations.includes(operation)) return `不支持${videoOperationLabel(operation)}`;
@@ -473,19 +475,23 @@ export function inferVideoOperation(input: ModelInputSummary) {
 }
 
 export function isBeefTVModelRoute(model: string, config?: Partial<AiConfig>): boolean {
+    const trimmed = model.trim();
+    if (!trimmed) return false;
+    const hasPrefix = trimmed.includes("::");
+    const [rawPrefix] = trimmed.split("::");
+    const channelId = hasPrefix ? rawPrefix.trim() : "";
+    const optionName = modelOptionName(trimmed);
+    if (!optionName) return false;
     if (config?.channels?.length) {
-        const channel = resolveModelChannel(config as AiConfig, model);
+        const hasModel = (item: AiConfig["channels"][number]) =>
+            item.models.includes(optionName) || Boolean(item.modelProfiles?.some((profile) => profile.model === optionName));
+        const matched = hasPrefix ? channelForId(config.channels, channelId) : config.channels.find(hasModel);
+        const channel = matched && hasModel(matched) ? matched : undefined;
+        if (!channel) return false;
         return isBeefTVEndpoint(channel.baseUrl || "") || (!channel.baseUrl?.trim() && channel.id.trim().toLowerCase() === "beeftv");
     }
-    if (model.includes("::")) {
-        const [prefix] = model.split("::");
-        return prefix.trim().toLowerCase() === "beeftv";
-    }
-    if (config?.baseUrl?.trim()) {
-        if (isBeefTVEndpoint(config.baseUrl)) return true;
-        if (config.apiKey?.trim() || config.baseUrl.trim() !== "https://api.openai.com") return false;
-    }
-    return Boolean(beefTVVideoContract(model));
+    if (hasPrefix) return channelId.toLowerCase() === "beeftv";
+    return Boolean(config?.baseUrl && isBeefTVEndpoint(config.baseUrl));
 }
 
 export function resolveVideoOperation(input: ModelInputSummary, storedOperation?: string, profile?: VideoCapabilityConfig | null, model?: string, isBeefTVRoute = model ? isBeefTVModelRoute(model) : false) {
@@ -499,7 +505,7 @@ export function resolveVideoOperation(input: ModelInputSummary, storedOperation?
         const h3Operation = h3VideoOperation(model, input, storedOperation);
         if (h3Operation === "reference_to_video" && supportsReferenceVideo === false && input.videoCount === 0 && input.characterCount === 0 && visualInputCount > 0 && profile?.operations.includes("image_to_video")) {
             const frameRefs = videoReferencesForOperation(profile, "image_to_video");
-            if (visualInputCount <= frameRefs.maxImages && input.audioCount <= frameRefs.maxAudios) return "image_to_video";
+            if (visualInputCount <= Math.min(2, frameRefs.maxImages) && input.audioCount <= frameRefs.maxAudios) return "image_to_video";
         }
         return h3Operation;
     }
@@ -521,7 +527,7 @@ export function resolveVideoOperation(input: ModelInputSummary, storedOperation?
     }
     if (inferred === "reference_to_video" && supportsReferenceVideo === false && input.videoCount === 0 && input.characterCount === 0 && visualInputCount > 0 && profile?.operations.includes("image_to_video")) {
         const frameRefs = videoReferencesForOperation(profile, "image_to_video");
-        if (visualInputCount <= frameRefs.maxImages && input.audioCount <= frameRefs.maxAudios) return "image_to_video";
+        if (visualInputCount <= Math.min(2, frameRefs.maxImages) && input.audioCount <= frameRefs.maxAudios) return "image_to_video";
     }
     return inferred;
 }
