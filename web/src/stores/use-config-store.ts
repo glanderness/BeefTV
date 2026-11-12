@@ -516,8 +516,10 @@ function beefTVVideoCapabilityConfig(model: string, protocol: ModelProtocol, cur
         duration: contract.duration ? { ...resolved.video.duration, selection: "range", min: contract.duration.min, max: contract.duration.max, default: contract.duration.default } : resolved.video.duration,
         generateAudio: contract.generateAudio ? { ...resolved.video.generateAudio, supported: true } : resolved.video.generateAudio,
         references: { ...resolved.video.references, maxImages: Math.min(resolved.video.references.maxImages, limits.image ?? Infinity), maxVideos: Math.min(resolved.video.references.maxVideos, limits.video ?? Infinity), maxAudios: Math.min(resolved.video.references.maxAudios, limits.audio ?? Infinity) },
+        operationReferences: contract.operationReferences ? { ...(resolved.video.operationReferences || {}), ...contract.operationReferences } : resolved.video.operationReferences,
         operations: contract.operations || resolved.video.operations,
         defaultOperation: contract.operations?.includes(resolved.video.defaultOperation) ? resolved.video.defaultOperation : contract.operations?.[0] || resolved.video.defaultOperation,
+        ...(contract.middleFrame ? { middleFrame: true } : {}),
     } };
 }
 
@@ -745,11 +747,12 @@ export function normalizeModelOptionValue(value: unknown, channels: ModelChannel
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
+    const channels = config.channels || [];
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
-    const lookup = channelLookup(config.channels);
+    const lookup = channelLookup(channels);
     const matched = decoded ? lookup.byId.get(decoded.channelId) : lookup.byModel.get(model);
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName) });
+    return matched || channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: (config.models || []).map(modelOptionName) });
 }
 
 export function logicalModelIDForConfig(config: AiConfig) {

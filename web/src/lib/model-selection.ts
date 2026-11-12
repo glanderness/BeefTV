@@ -78,6 +78,7 @@ export function portraitGenerationError(config: AiConfig, model: string, resolut
  * 设置页自动补出的默认能力只用来填充界面选项，不代表上游的真实上限，因此不能置灰模型或裁掉参考素材。
  */
 export function hasDeclaredModelCapability(config: AiConfig, model: string, capability: "image" | "video") {
+    if (!config?.channels?.length) return false;
     const channel = resolveModelChannel(config, model);
     const profile = channelModelProfile(channel, modelOptionName(model));
     if (!profile?.capabilityConfig?.[capability]) return false;
@@ -452,11 +453,12 @@ export function modelGroupReferenceLimits(config: AiConfig, selected: string, ca
     );
 }
 
-export function declaredOrOmniVideoCapability(config: AiConfig | undefined, model: string): VideoCapabilityConfig | undefined {
+export function declaredOrOmniVideoCapability(config: Partial<AiConfig> | undefined, model: string): VideoCapabilityConfig | undefined {
     if (!config || !model) return undefined;
-    const video = modelCapabilityConfigFor(config, model).video;
+    const safeConfig = { ...config, channels: Array.isArray(config.channels) ? config.channels : [] } as AiConfig;
+    const video = modelCapabilityConfigFor(safeConfig, model).video;
     if (!video) return undefined;
-    return hasDeclaredModelCapability(config, model, "video") || video.operations.includes("reference_to_video") ? video : undefined;
+    return hasDeclaredModelCapability(safeConfig, model, "video") || video.operations.includes("reference_to_video") ? video : undefined;
 }
 
 export function inferVideoOperation(input: ModelInputSummary) {
@@ -487,13 +489,14 @@ export function resolveVideoOperation(input: ModelInputSummary, storedOperation?
     const inferred = inferVideoOperation(input);
     if (inferred === "image_to_video" && supportsReferenceVideo) {
         const frameRefs = videoReferencesForOperation(profile!, "image_to_video");
+        const frameMaxVideos = profile!.operationReferences?.image_to_video?.maxVideos ?? 0;
+        const frameMaxAudios = profile!.operationReferences?.image_to_video?.maxAudios ?? 0;
         if (
-            visualInputCount > frameRefs.maxImages ||
+            visualInputCount > Math.min(2, frameRefs.maxImages) ||
             visualInputCount < (frameRefs.minImages ?? 0) ||
-            input.videoCount > frameRefs.maxVideos ||
-            input.audioCount > frameRefs.maxAudios ||
-            input.characterCount > 0 ||
-            input.audioCount > 0
+            input.videoCount > frameMaxVideos ||
+            input.audioCount > frameMaxAudios ||
+            input.characterCount > 0
         ) {
             return "reference_to_video";
         }

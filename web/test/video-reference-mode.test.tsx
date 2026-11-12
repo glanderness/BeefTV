@@ -228,6 +228,78 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
         );
         expect(withCharacterImageMeta.videoStartFrameNodeId).toBeUndefined();
         expect(withCharacterImageMeta.videoEndFrameNodeId).toBeUndefined();
+
+        // 从 H3 Max 切到非中间帧模型时，图生视频模式同样清除残留中间帧字段；部分 AiConfig 缺省字段不抛错
+        const switchedFromH3Meta = buildVideoGenerationMetadata(
+            {
+                id: "vid-from-h3",
+                type: CanvasNodeType.Video,
+                title: "Video",
+                position: { x: 0, y: 100 },
+                width: 100,
+                height: 100,
+                metadata: {
+                    model: "beeftv::wan3.0-video",
+                    videoEditOperation: "image_to_video",
+                    videoStartFrameNodeId: "img-1",
+                    videoMiddleFrameNodeId: "img-2",
+                    videoMiddleFrameTime: 1.8,
+                },
+            },
+            { referenceImages: twoImageNodes, referenceVideos: [], referenceAudios: [] },
+            { model: "beeftv::wan3.0-video", videoReturnLastFrame: false } as never,
+        );
+        expect(switchedFromH3Meta.videoEditOperation).toBe("image_to_video");
+        expect(switchedFromH3Meta.videoStartFrameNodeId).toBe("img-1");
+        expect(switchedFromH3Meta.videoMiddleFrameNodeId).toBeUndefined();
+        expect(switchedFromH3Meta.videoMiddleFrameTime).toBeUndefined();
+    });
+
+    test("CanvasConfigComposer 将残留的生图模型路由到实际视频生成模型再计算参考能力", async () => {
+        const { CanvasConfigComposer } = await import("../src/components/canvas/canvas-config-composer");
+        const { mergeFetchedChannelModelProfiles } = await import("../src/lib/channel-model-catalog");
+        const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../src/stores/use-config-store");
+        const wanItem = managedVideoCatalogItem("wan3.0-video");
+        const channel = createModelChannel({
+            id: "beeftv",
+            name: "BeefTV",
+            scope: "system",
+            pinned: true,
+            credentialRef: "beeftv",
+            baseUrl: "https://beeftv.app/v1",
+            models: ["seedream-5.0", "wan3.0-video"],
+        });
+        channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [
+            { id: "seedream-5.0", supportedEndpointTypes: ["openai-image"] },
+            wanItem,
+        ]);
+        const nextConfig = normalizeConfigSnapshot({
+            config: {
+                ...defaultConfig,
+                channels: [channel],
+                imageModel: "beeftv::seedream-5.0",
+                videoModel: "beeftv::wan3.0-video",
+            },
+        }).config;
+        const html = renderToStaticMarkup(
+            <CanvasConfigComposer
+                config={nextConfig}
+                value="主角转身"
+                generationMode="video"
+                model="beeftv::seedream-5.0"
+                metadata={{ model: "beeftv::seedream-5.0", videoEditOperation: "image_to_video" }}
+                inputs={[
+                    { nodeId: "img-1", type: "image", title: "分镜1", image: { id: "img-1", name: "1.png", type: "image/png", dataUrl: "https://example.com/1.png", position: { x: 0, y: 0 } } },
+                    { nodeId: "img-2", type: "image", title: "分镜2", image: { id: "img-2", name: "2.png", type: "image/png", dataUrl: "https://example.com/2.png", position: { x: 0, y: 0 } } },
+                ]}
+                onChange={() => {}}
+                onMetadataChange={() => {}}
+                onClose={() => {}}
+            />,
+        );
+        expect(html).toContain("首尾帧");
+        expect(html).toContain("全能参考");
+        expect(html).toContain("尾帧");
     });
 });
 

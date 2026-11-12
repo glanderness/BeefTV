@@ -6,6 +6,7 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/pricing"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 type LocalChannelModel struct {
@@ -137,4 +138,78 @@ func (item LocalChannelModel) PublicPrices() (map[string]any, *pricing.Table) {
 		table, _ = pricing.Normalize(item.Pricing)
 	}
 	return quote, table
+}
+
+// PublicCatalogFromLocalSnapshot projects a desktop provider snapshot into the
+// sanitized public catalog without leaking upstream URLs, headers or keys.
+func PublicCatalogFromLocalSnapshot(body []byte) (*CatalogResponse, error) {
+	var snapshot struct {
+		Channels []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"channels"`
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &snapshot); err != nil {
+			return nil, err
+		}
+	}
+	names := map[string]string{}
+	for _, channel := range snapshot.Channels {
+		names[channel.ID] = strings.TrimSpace(channel.Name)
+	}
+	channels := []PublicChannelCatalog{}
+	indexes := map[string]int{}
+	for _, item := range ParseLocalChannelModels(body) {
+		if !item.Enabled || strings.TrimSpace(item.Model) == "" {
+			continue
+		}
+		cm := model.ChannelModel{ID: item.Model, ModelKey: item.Model, DisplayName: item.DisplayName, Capability: item.Capability, Protocol: model.ChannelInterfaceType(item.Protocol), Enabled: true}
+		if item.Capability == "video" {
+			if _, protocol, ok := providerpreset.HostedBeefTVVideoProfile(item.BaseURL, item.Model); ok {
+				cm.Protocol = model.ChannelInterfaceType(protocol)
+			}
+		}
+		declared := item.CapabilityConfig != nil || hasLocalVideoContract(item)
+		capabilityConfig := item.CapabilityConfig
+		if capabilityConfig == nil {
+			capabilityConfig = DefaultModelCapabilityConfigForModel(string(cm.Protocol), item.Model)
+		}
+		if capabilityConfig != nil {
+			config, err := json.Marshal(capabilityConfig)
+			if err != nil {
+				return nil, err
+			}
+			if item.Capability == "video" {
+				parsed, err := DecodeModelCapabilityConfig(string(config))
+				if err != nil {
+					continue
+				}
+				config, err = json.Marshal(ApplyLocalVideoContract(item, parsed))
+				if err != nil {
+					return nil, err
+				}
+			}
+			cm.CapabilityConfigJSON = string(config)
+		}
+		public, err := SanitizeChannelModel(&cm)
+		if err != nil {
+			continue
+		}
+		public.CapabilityDeclared = &declared
+		public.VideoPricing, public.Pricing = item.PublicPrices()
+		index, exists := indexes[item.ChannelID]
+		if !exists {
+			index = len(channels)
+			indexes[item.ChannelID] = index
+			name := names[item.ChannelID]
+			if name == "" {
+				name = item.ChannelID
+			}
+			channels = append(channels, PublicChannelCatalog{ID: item.ChannelID, Name: name, DisplayName: name, Models: []PublicChannelModel{}})
+		}
+		channels[index].Models = append(channels[index].Models, public)
+	}
+	response := NewCatalogResponse(CatalogSourceSystem, nil, channels)
+	return &response, nil
 }

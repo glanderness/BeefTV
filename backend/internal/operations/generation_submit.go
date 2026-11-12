@@ -576,46 +576,67 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		sort.Strings(refs)
 		refs = uniqueTargetIDs(refs)
 		if kind == "video" {
-			metadata = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, nodes, meta, parameters, metadata)
+			metadata = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, graph, meta, parameters, metadata)
 		}
 		targets = append(targets, GenerationTarget{NodeID: id, Title: dependencyString(n, "title"), Kind: kind, ModelKey: choice.ModelKey, Prompt: prompt, Parameters: parameters, Metadata: metadata, ReferenceNodeIDs: refs})
 	}
 	return targets, nil
 }
 
-func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, nodes map[string]map[string]any, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) map[string]any {
+func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, graph generationDependencyGraph, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) map[string]any {
 	if strings.TrimSpace(dependencyString(nodeMeta, "videoDraftTaskId")) != "" {
 		return metadata
+	}
+	var videoProfile *modelcatalog.VideoCapabilityConfig
+	declared := false
+	if reader, ok := domain.(ModelCatalogReader); ok && reader != nil {
+		if catalog, err := reader.AgentModelCatalog(); err == nil && catalog != nil {
+			if _, foundModel, found := findEstimateModel(catalog, modelKey); found {
+				if capCfg := estimateCapability(foundModel.CapabilityConfig); capCfg != nil && capCfg.Video != nil {
+					declared = foundModel.CapabilityDeclared == nil || *foundModel.CapabilityDeclared
+					if declared || slices.Contains(capCfg.Video.Operations, "reference_to_video") {
+						videoProfile = capCfg.Video
+					}
+				}
+			}
+		}
+	}
+	supportsMiddleFrame := videoProfile != nil && videoProfile.MiddleFrame
+	if declared && !supportsMiddleFrame {
+		delete(parameters, "videoMiddleFrameNodeId")
+		delete(metadata, "videoMiddleFrameTime")
 	}
 	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
 	if storedOp != "" && !slices.Contains([]string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"}, storedOp) {
 		return metadata
 	}
-	var imageCount, videoCount, audioCount int
+	var imageCount, characterCount, videoCount, audioCount int
 	for _, refID := range refs {
-		switch dependencyString(nodes[refID], "type") {
-		case "image":
+		refMeta := dependencyMetadata(graph.nodes[refID])
+		if dependencyString(refMeta, "workflowKind") == "character" {
+			characterCount++
+			continue
+		}
+		switch graph.label(refID) {
+		case "角色":
+			characterCount++
+		case "图片", "绘图":
 			imageCount++
-		case "video":
+		case "视频":
 			videoCount++
-		case "audio":
+		case "音频":
 			audioCount++
 		}
 	}
-	var videoProfile *modelcatalog.VideoCapabilityConfig
-	if reader, ok := domain.(ModelCatalogReader); ok && reader != nil {
-		if catalog, err := reader.AgentModelCatalog(); err == nil && catalog != nil {
-			if _, foundModel, found := findEstimateModel(catalog, modelKey); found {
-				if capCfg := estimateCapability(foundModel.CapabilityConfig); capCfg != nil {
-					videoProfile = capCfg.Video
-				}
-			}
-		}
-	}
+	visualCount := imageCount + characterCount
+	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
+	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
 	frameMaxImages, frameMaxAudios := 2, 0
 	if videoProfile != nil {
 		frameMaxImages = min(2, videoProfile.References.MaxImages)
-		frameMaxAudios = videoProfile.References.MaxAudios
+		if !supportsRefVideo {
+			frameMaxAudios = videoProfile.References.MaxAudios
+		}
 		if limits, ok := videoProfile.OperationReferences["image_to_video"]; ok {
 			if limits.MaxImages != nil {
 				frameMaxImages = *limits.MaxImages
@@ -623,31 +644,27 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, n
 			if limits.MaxAudios != nil {
 				frameMaxAudios = *limits.MaxAudios
 			}
-		} else if slices.Contains(videoProfile.Operations, "audio_to_video") {
-			frameMaxAudios = min(1, videoProfile.References.MaxAudios)
-		} else if slices.Contains(videoProfile.Operations, "reference_to_video") {
-			frameMaxAudios = 0
 		}
 	}
-	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
-	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
-	hasMiddleFrame := parameters["videoMiddleFrameNodeId"] != ""
+	if declared && frameMaxImages < 2 {
+		delete(parameters, "videoEndFrameNodeId")
+	}
+	hasMiddleFrame := supportsMiddleFrame && parameters["videoMiddleFrameNodeId"] != ""
 	nextOp := storedOp
-	if supportsRefVideo && (imageCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || imageCount > frameMaxImages || (imageCount > 0 && audioCount > frameMaxAudios)) {
+	if supportsRefVideo && (visualCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || characterCount > 0 || visualCount > frameMaxImages || (visualCount > 0 && audioCount > frameMaxAudios)) {
 		nextOp = "reference_to_video"
-	} else if storedOp == "reference_to_video" && videoProfile != nil && !supportsRefVideo && supportsImageVideo && videoCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
+	} else if storedOp == "reference_to_video" && declared && !supportsRefVideo && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
 		nextOp = "image_to_video"
-	} else if storedOp == "text_to_video" && supportsImageVideo && videoCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
+	} else if storedOp == "text_to_video" && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
 		nextOp = "image_to_video"
 	}
-	if nextOp == "" || nextOp == storedOp {
-		return metadata
+	if nextOp != "" && nextOp != storedOp {
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		metadata["videoEditOperation"] = nextOp
 	}
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["videoEditOperation"] = nextOp
-	if nextOp == "reference_to_video" && storedOp != "reference_to_video" && !hasMiddleFrame {
+	if nextOp == "reference_to_video" && (declared || nextOp != storedOp) && !supportsMiddleFrame {
 		delete(parameters, "videoStartFrameNodeId")
 		delete(parameters, "videoEndFrameNodeId")
 		delete(parameters, "videoMiddleFrameNodeId")

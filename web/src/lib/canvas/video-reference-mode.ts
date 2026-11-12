@@ -79,9 +79,12 @@ export function resolveVideoReferenceCapabilities(
     const h3 = isH3Model(model);
     if (isH3Style(model)) return { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0 };
     const frameRefs = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video") : undefined;
+    const explicitFrameMaxAudios = videoProfile?.operationReferences?.image_to_video?.maxAudios;
     const endFrameSupported = h3 ? !hasDeclaredCapability || (frameRefs ? frameRefs.maxImages >= 2 : true) : frameRefs ? frameRefs.maxImages >= 2 : true;
     const referenceVideoSupported = h3 ? !hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video")) : Boolean(videoProfile?.operations.includes("reference_to_video"));
-    const maxFrameAudios = h3 ? Math.min(1, hasDeclaredCapability && frameRefs ? frameRefs.maxAudios : 1) : !referenceVideoSupported && frameRefs ? frameRefs.maxAudios : 0;
+    const maxFrameAudios = h3
+        ? Math.min(1, hasDeclaredCapability ? (explicitFrameMaxAudios ?? (!referenceVideoSupported && frameRefs ? frameRefs.maxAudios : 1)) : 1)
+        : explicitFrameMaxAudios ?? (!referenceVideoSupported && frameRefs ? frameRefs.maxAudios : 0);
     return { endFrameSupported, referenceVideoSupported, maxFrameAudios };
 }
 

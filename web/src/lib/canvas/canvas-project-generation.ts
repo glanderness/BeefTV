@@ -8,7 +8,7 @@ import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { isH3MaxModel, isH3Model, h3ResolvedReferenceOrder } from "@/lib/h3-video";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
-import { modelCapabilityConfigFor, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, videoReferencesForOperation, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
@@ -456,11 +456,13 @@ export function buildVideoGenerationMetadata(
     const videoEditOperation = draftTaskId
         ? "draft_to_final"
         : resolveVideoEditOperation(node, context, effectiveModel, videoProfile);
-    // 非 H3 Max 的全模态参考生成不消费首尾帧/中间帧槽位，不再把历史帧选择当成硬约束或透传给后端。
-    const h3Max = isH3MaxModel(effectiveModel);
-    const ignoreFrameSelection = videoEditOperation === "draft_to_final" || (videoEditOperation === "reference_to_video" && !h3Max);
+    // 非中间帧能力声明模型的全模态参考生成不消费首尾帧/中间帧槽位，不再把历史帧选择当成硬约束或透传给后端。
+    const supportsMiddleFrame = videoProfile?.middleFrame ?? isH3MaxModel(effectiveModel);
+    const ignoreFrameSelection = videoEditOperation === "draft_to_final" || (videoEditOperation === "reference_to_video" && !supportsMiddleFrame);
     const connectedImages = context?.referenceImages || [];
     const h3 = isH3Model(effectiveModel);
+    const frameMaxImages = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video").maxImages : 2;
+    const endFrameSupported = h3 ? !videoProfile || frameMaxImages >= 2 : frameMaxImages >= 2;
     const allDirectImageNodes =
         connectedImages.length > 0 &&
         connectedImages.length <= 2 &&
@@ -470,7 +472,7 @@ export function buildVideoGenerationMetadata(
     const storedStartFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId)))
         ? undefined
         : metadata?.videoStartFrameNodeId;
-    const storedEndFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoEndFrameNodeId && !referenceImageIds.has(metadata.videoEndFrameNodeId)))
+    const storedEndFrame = !endFrameSupported || (!h3 && (nonFrameMediaAttached || (metadata?.videoEndFrameNodeId && !referenceImageIds.has(metadata.videoEndFrameNodeId))))
         ? undefined
         : metadata?.videoEndFrameNodeId;
     const defaultFrames =
@@ -489,10 +491,10 @@ export function buildVideoGenerationMetadata(
           : requireConnectedVideoFrame(storedStartFrame, "首帧", referenceImageIds);
     const endFrame = ignoreFrameSelection
         ? undefined
-        : defaultFrames && connectedImages.length === 2
+        : defaultFrames && endFrameSupported && connectedImages.length === 2
           ? connectedImages[1]?.id
           : requireConnectedVideoFrame(storedEndFrame, "尾帧", referenceImageIds);
-    const middleFrame = ignoreFrameSelection || !metadata?.videoMiddleFrameNodeId ? undefined : requireConnectedVideoFrame(metadata.videoMiddleFrameNodeId, "中间帧", referenceImageIds);
+    const middleFrame = ignoreFrameSelection || !supportsMiddleFrame || !metadata?.videoMiddleFrameNodeId ? undefined : requireConnectedVideoFrame(metadata.videoMiddleFrameNodeId, "中间帧", referenceImageIds);
     return {
         ...(config ? { workflowProvider: "model" as const } : {}),
         videoEditOperation,
@@ -503,7 +505,7 @@ export function buildVideoGenerationMetadata(
         videoStartFrameNodeId: startFrame,
         videoEndFrameNodeId: endFrame,
         videoMiddleFrameNodeId: middleFrame,
-        videoMiddleFrameTime: ignoreFrameSelection ? undefined : metadata?.videoMiddleFrameTime,
+        videoMiddleFrameTime: ignoreFrameSelection || !supportsMiddleFrame ? undefined : metadata?.videoMiddleFrameTime,
         videoH3Options: metadata?.videoH3Options,
         videoReferenceOrder: config && isH3Model(config.model) ? h3ResolvedReferenceOrder(metadata?.videoReferenceOrder, [...(context?.referenceImages || []), ...(context?.referenceVideos || []), ...(context?.referenceAudios || [])]) : metadata?.videoReferenceOrder,
     };
