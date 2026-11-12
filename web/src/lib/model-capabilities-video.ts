@@ -49,6 +49,7 @@ export type VideoCapabilityConfig = {
     };
     durationSupported?: boolean;
     taskTypeConstraints?: boolean;
+    middleFrame?: boolean;
     ratios: string[];
     defaultRatio: string;
     resolutions: string[];
@@ -253,6 +254,10 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
     if ("taskTypeConstraints" in object) {
         if (typeof object.taskTypeConstraints !== "boolean") return null;
         video.taskTypeConstraints = object.taskTypeConstraints;
+    }
+    if ("middleFrame" in object) {
+        if (typeof object.middleFrame !== "boolean") return null;
+        video.middleFrame = object.middleFrame;
     }
     if ("draft" in object) {
         const draft = catalogBooleanConfig(object.draft);

@@ -9,16 +9,20 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import { generationInputMentionLabel, type NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
-import type { CanvasGenerationMode, CanvasNodeMetadata, CanvasWorkspaceMode } from "@/types/canvas";
+import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
-import { h3VideoOperation, isH3MaxModel, isH3Model, isH3Style } from "@/lib/h3-video";
-import { resolveVideoOperation } from "@/lib/model-selection";
-import { findPromptFirstFrameNodeId, resolveVideoReferenceModeState, stripPromptFirstFrameClauses } from "@/lib/canvas/video-reference-mode";
+import { buildCanvasGenerationRequirements, buildGenerationConfig } from "@/lib/canvas/canvas-generation-config";
+import { isH3Model, isH3Style } from "@/lib/h3-video";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
+import { findPromptFirstFrameNodeId, resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses } from "@/lib/canvas/video-reference-mode";
 import { VideoReferenceModeSwitch } from "./canvas-node-reference-shelf";
 import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
+import { useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { DEFAULT_PROMPT_FONT_SIZE, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 
 type CanvasConfigComposerProps = {
+    config?: AiConfig;
     model?: string;
     value: string;
     inputs: NodeGenerationInput[];
@@ -51,8 +55,36 @@ type ComposerCandidate =
 
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g;
 
-export function CanvasConfigComposer({ value, inputs, skillReferences = [], generationMode, metadata, model="", onChange, onMetadataChange, onClose, workspaceMode = "professional" }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ config: configProp, value, inputs, skillReferences = [], generationMode, metadata, model="", onChange, onMetadataChange, onClose, workspaceMode = "professional" }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useActiveTheme()];
+    const effectiveConfig = useEffectiveConfig();
+    const globalConfig = configProp || effectiveConfig;
+    const inputSummary = useMemo(() => ({
+        textCount: inputs.filter((input) => input.type === "text").length,
+        imageCount: inputs.filter((input) => input.type === "image").length,
+        videoCount: inputs.filter((input) => input.type === "video").length,
+        audioCount: inputs.filter((input) => input.type === "audio").length,
+        characterCount: inputs.filter((input) => input.type === "character").length,
+    }), [inputs]);
+    const effectiveModel = useMemo(() => {
+        if (generationMode !== "video") return model;
+        const syntheticNode = {
+            id: "composer",
+            type: CanvasNodeType.Config,
+            title: "",
+            position: { x: 0, y: 0 },
+            width: 0,
+            height: 0,
+            metadata: { ...metadata, model: metadata?.model ?? (model || undefined) },
+        };
+        const requirements = buildCanvasGenerationRequirements(globalConfig, syntheticNode, "video", inputSummary);
+        return buildGenerationConfig(globalConfig, syntheticNode, "video", requirements).model || model;
+    }, [generationMode, globalConfig, inputSummary, metadata, model]);
+    const isBeefTVRoute = generationMode === "video" && Boolean(effectiveModel) && isBeefTVModelRoute(effectiveModel, globalConfig);
+    const videoProfile = generationMode === "video" && effectiveModel ? modelCapabilityConfigFor(globalConfig, effectiveModel).video : undefined;
+    const { endFrameSupported, referenceVideoSupported, maxFrameAudios, middleFrameSupported } = generationMode === "video"
+        ? resolveVideoReferenceCapabilities(effectiveModel, videoProfile, Boolean(effectiveModel) && hasDeclaredModelCapability(globalConfig, effectiveModel, "video"), isBeefTVRoute)
+        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0, middleFrameSupported: false };
     const promptFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize ?? DEFAULT_PROMPT_FONT_SIZE);
     const promptTextStyle = { fontSize: promptFontSize, lineHeight: 1.5 };
     const editorRef = useRef<HTMLDivElement>(null);
@@ -187,7 +219,7 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
             </div>
             {generationMode === "video" && onMetadataChange && !simpleMode ? (
                 <div className="mb-3 space-y-2 rounded-lg px-2 py-2" style={{ background: theme.node.fill }}>
-                    {inputs.some((input) => input.type === "image" || input.type === "character" || input.type === "video") ? (
+                    {inputs.some((input) => input.type === "image" || input.type === "character" || input.type === "video" || input.type === "audio") ? (
                         <VideoReferenceModeSwitch
                             state={resolveVideoReferenceModeState({
                                 metadata,
@@ -198,9 +230,11 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                                     title: input.title,
                                     active: true,
                                 })),
-                                endFrameSupported: !isH3Style(model),
-                                h3Model: isH3Model(model),
-                                h3Style: isH3Style(model),
+                                endFrameSupported,
+                                referenceVideoSupported,
+                                h3Model: isBeefTVRoute && isH3Model(effectiveModel),
+                                h3Style: isBeefTVRoute && isH3Style(effectiveModel),
+                                maxFrameAudios,
                                 prompt: value,
                             })}
                             theme={theme}
@@ -214,18 +248,19 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                     ) : null}
                     <CanvasVideoPromptTools
                         metadata={metadata}
-                        endFrameSupported={!isH3Style(model)}
+                        endFrameSupported={endFrameSupported}
+                        middleFrameSupported={middleFrameSupported}
                         referenceLabel="参考生成"
                         frameOptions={videoFrameOptions}
-                        referenceMode={(!isH3MaxModel(model) && (isH3Model(model) ? h3VideoOperation(model, { imageCount: inputs.filter((input) => input.type === "image").length, characterCount: inputs.filter((input) => input.type === "character").length, videoCount: inputs.filter((input) => input.type === "video").length, audioCount: inputs.filter((input) => input.type === "audio").length }, metadata?.videoEditOperation) : resolveVideoOperation({ textCount: 0, imageCount: inputs.filter((input) => input.type === "image").length, characterCount: inputs.filter((input) => input.type === "character").length, videoCount: inputs.filter((input) => input.type === "video").length, audioCount: inputs.filter((input) => input.type === "audio").length }, metadata?.videoEditOperation)) === "reference_to_video") ? "all" : "frames"}
+                        referenceMode={(!middleFrameSupported && resolveVideoOperation(inputSummary, metadata?.videoEditOperation, declaredOrOmniVideoCapability(globalConfig, effectiveModel), effectiveModel, isBeefTVRoute) === "reference_to_video") ? "all" : "frames"}
                         referenceSummary={{
-                            imageCount: inputs.filter((input) => input.type === "image" || input.type === "character").length,
-                            videoCount: inputs.filter((input) => input.type === "video").length,
-                            audioCount: inputs.filter((input) => input.type === "audio").length,
+                            imageCount: inputSummary.imageCount + inputSummary.characterCount,
+                            videoCount: inputSummary.videoCount,
+                            audioCount: inputSummary.audioCount,
                         }}
                         onMetadataChange={onMetadataChange}
                     />
-                    <CanvasH3ReferenceOrder model={model} inputs={inputs} metadata={metadata} onChange={onMetadataChange} />
+                    <CanvasH3ReferenceOrder model={effectiveModel} inputs={inputs} metadata={metadata} onChange={onMetadataChange} />
                 </div>
             ) : null}
             <div className="canvas-config-composer-editor relative rounded-lg" style={{ background: theme.node.fill }}>

@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
@@ -573,9 +575,165 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		refs := graph.references(id, kind)
 		sort.Strings(refs)
 		refs = uniqueTargetIDs(refs)
+		if kind == "video" {
+			var reconcileErr error
+			metadata, reconcileErr = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, graph, meta, parameters, metadata)
+			if reconcileErr != nil {
+				return nil, reconcileErr
+			}
+		}
 		targets = append(targets, GenerationTarget{NodeID: id, Title: dependencyString(n, "title"), Kind: kind, ModelKey: choice.ModelKey, Prompt: prompt, Parameters: parameters, Metadata: metadata, ReferenceNodeIDs: refs})
 	}
 	return targets, nil
+}
+
+func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.VideoCapabilityConfig, declared bool, managedBeefTV bool) string {
+	if videoProfile != nil && videoProfile.MiddleFrame != nil {
+		if *videoProfile.MiddleFrame {
+			return "supported"
+		}
+		return "unsupported"
+	}
+	if managedBeefTV {
+		if contract, ok := providerpreset.BeefTVVideoContract(modelID); ok && contract.MiddleFrame {
+			return "supported"
+		}
+	}
+	if declared {
+		return "unsupported"
+	}
+	return "opaque"
+}
+
+func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, graph generationDependencyGraph, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) (map[string]any, error) {
+	if strings.TrimSpace(dependencyString(nodeMeta, "videoDraftTaskId")) != "" {
+		return metadata, nil
+	}
+	var rawVideoProfile, videoProfile *modelcatalog.VideoCapabilityConfig
+	declared := false
+	chID, modelID := modelcatalog.SplitModelKey(modelKey)
+	managedBeefTV := strings.EqualFold(strings.TrimSpace(chID), "beeftv")
+	if reader, ok := domain.(ModelCatalogReader); ok && reader != nil {
+		if catalog, err := reader.AgentModelCatalog(); err == nil && catalog != nil {
+			if foundChID, foundModel, found := findEstimateModel(catalog, modelKey); found {
+				if foundModel.ManagedBeefTV != nil {
+					managedBeefTV = *foundModel.ManagedBeefTV
+				} else {
+					managedBeefTV = strings.EqualFold(strings.TrimSpace(foundChID), "beeftv")
+				}
+				if capCfg := estimateCapability(foundModel.CapabilityConfig); capCfg != nil && capCfg.Video != nil {
+					rawVideoProfile = capCfg.Video
+					declared = foundModel.CapabilityDeclared == nil || *foundModel.CapabilityDeclared
+					if declared || slices.Contains(capCfg.Video.Operations, "reference_to_video") {
+						videoProfile = capCfg.Video
+					}
+				}
+			} else if len(catalog.Channels) > 0 {
+				managedBeefTV = false
+			}
+		}
+	}
+	var contract providerpreset.VideoContract
+	hasContract := false
+	if managedBeefTV {
+		contract, hasContract = providerpreset.BeefTVVideoContract(modelID)
+	}
+	middleFrameSupport := resolveVideoMiddleFrameSupport(modelID, rawVideoProfile, declared, managedBeefTV)
+	if middleFrameSupport == "unsupported" {
+		delete(parameters, "videoMiddleFrameNodeId")
+		delete(metadata, "videoMiddleFrameTime")
+	}
+	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
+	if storedOp != "" && !slices.Contains([]string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"}, storedOp) {
+		return metadata, nil
+	}
+	var imageCount, characterCount, videoCount, audioCount int
+	for _, refID := range refs {
+		refMeta := dependencyMetadata(graph.nodes[refID])
+		if dependencyString(refMeta, "workflowKind") == "character" {
+			characterCount++
+			continue
+		}
+		switch graph.label(refID) {
+		case "角色":
+			characterCount++
+		case "图片", "绘图":
+			imageCount++
+		case "视频":
+			videoCount++
+		case "音频":
+			audioCount++
+		}
+	}
+	visualCount := imageCount + characterCount
+	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
+	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
+	frameMaxImages, frameMaxAudios := 2, 0
+	if videoProfile != nil && videoProfile.OperationReferences != nil {
+		frameRefs := modelcatalog.VideoReferencesForOperation(videoProfile, "image_to_video")
+		frameMaxImages = min(2, frameRefs.MaxImages)
+		frameMaxAudios = frameRefs.MaxAudios
+	} else {
+		hasContractFrameMaxImages := false
+		if hasContract {
+			if contractImg, ok := contract.OperationReferences["image_to_video"]["maxImages"]; ok {
+				frameMaxImages = min(2, contractImg)
+				hasContractFrameMaxImages = true
+			} else if !declared {
+				if maxImg, ok := contract.MaxReferences["image"]; ok {
+					frameMaxImages = min(2, maxImg)
+				}
+			}
+			if contractAud, ok := contract.OperationReferences["image_to_video"]["maxAudios"]; ok {
+				frameMaxAudios = contractAud
+			}
+		}
+		if videoProfile != nil {
+			if !hasContractFrameMaxImages {
+				frameMaxImages = min(2, videoProfile.References.MaxImages)
+			} else if declared && frameMaxImages > videoProfile.References.MaxImages {
+				frameMaxImages = min(2, videoProfile.References.MaxImages)
+			}
+			if !supportsRefVideo && declared {
+				frameMaxAudios = videoProfile.References.MaxAudios
+			} else if declared && frameMaxAudios > videoProfile.References.MaxAudios {
+				frameMaxAudios = videoProfile.References.MaxAudios
+			}
+		}
+	}
+	if declared && !supportsRefVideo && visualCount > 0 {
+		if !supportsImageVideo {
+			return nil, InvalidArg("video_reference_image_limit", "当前视频模型不支持参考图")
+		}
+		if visualCount > frameMaxImages {
+			return nil, InvalidArg("video_reference_image_limit", fmt.Sprintf("当前视频模型最多支持 %d 张首尾帧参考图", frameMaxImages))
+		}
+	}
+	if frameMaxImages < 2 && (declared || hasContract) {
+		delete(parameters, "videoEndFrameNodeId")
+	}
+	hasMiddleFrame := middleFrameSupport == "supported" && parameters["videoMiddleFrameNodeId"] != ""
+	nextOp := storedOp
+	if supportsRefVideo && (visualCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || characterCount > 0 || visualCount > frameMaxImages || (visualCount > 0 && audioCount > frameMaxAudios)) {
+		nextOp = "reference_to_video"
+	} else if storedOp == "reference_to_video" && declared && !supportsRefVideo && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
+		nextOp = "image_to_video"
+	} else if storedOp == "text_to_video" && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
+		nextOp = "image_to_video"
+	}
+	if nextOp != "" && nextOp != storedOp {
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		metadata["videoEditOperation"] = nextOp
+	}
+	if nextOp == "reference_to_video" && (middleFrameSupport == "unsupported" || nextOp != storedOp) && middleFrameSupport != "supported" {
+		delete(parameters, "videoStartFrameNodeId")
+		delete(parameters, "videoEndFrameNodeId")
+		delete(parameters, "videoMiddleFrameNodeId")
+		delete(metadata, "videoMiddleFrameTime")
+	}
+	return metadata, nil
 }
 
 func uniqueTargetIDs(ids []string) []string {

@@ -6,6 +6,7 @@ type VideoContract = {
     requiresHTTPReferences?: boolean;
     // An omitted kind keeps the model's existing capability limit, matching Go.
     maxReferences?: Partial<Record<"image" | "video" | "audio", number>>;
+    operationReferences?: Record<string, Partial<Record<"minImages" | "maxImages" | "maxVideos" | "maxAudios", number>>>;
     operations?: string[];
     resolutions?: string[];
     referenceResolution?: string;
@@ -13,6 +14,7 @@ type VideoContract = {
     duration?: { min: number; max: number; default: number };
     maxImageDuration?: number;
     generateAudio?: boolean;
+    middleFrame?: boolean;
 };
 
 const contracts: VideoContract[] = [
@@ -43,12 +45,23 @@ const contracts: VideoContract[] = [
         generateAudio: true,
     },
     {
-        models: ["minimax-h3-max-turbo", "minimax-h3-max"],
+        models: ["minimax-h3-max-turbo"],
         allowSuffix: false,
         protocol: "newapi-channel-2",
         inlineMedia: true,
         maxReferences: { image: 9, video: 3, audio: 3 },
+        operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
         operations: ["text_to_video", "image_to_video", "audio_to_video", "reference_to_video"],
+    },
+    {
+        models: ["minimax-h3-max"],
+        allowSuffix: false,
+        protocol: "newapi-channel-2",
+        inlineMedia: true,
+        maxReferences: { image: 9, video: 3, audio: 3 },
+        operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
+        operations: ["text_to_video", "image_to_video", "audio_to_video", "reference_to_video"],
+        middleFrame: true,
     },
     {
         models: ["minimax-h3"],
@@ -56,6 +69,7 @@ const contracts: VideoContract[] = [
         protocol: "newapi-channel-2",
         inlineMedia: true,
         maxReferences: { image: 9, video: 3, audio: 3 },
+        operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
         operations: ["text_to_video", "image_to_video", "audio_to_video", "reference_to_video"],
     },
     {
