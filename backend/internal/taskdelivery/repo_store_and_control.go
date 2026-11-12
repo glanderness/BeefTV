@@ -184,7 +184,7 @@ func AttachTaskDelivery(
 	if task == nil {
 		return
 	}
-	if task.Status == model.TaskStatusFailed && task.ProviderRequestID == "" && hydrateReqID != nil {
+	if (task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled) && task.ProviderRequestID == "" && hydrateReqID != nil {
 		hydrateReqID(task)
 	}
 	stored, loadErr := deliverer.LoadedOutputs(task.ID)

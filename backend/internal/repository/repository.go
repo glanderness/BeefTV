@@ -555,38 +555,6 @@ func (r *Repository) ClaimNextTaskProviderCancellation(owner string, leaseDurati
 	return &task, nil
 }
 
-func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnly bool) ([]model.Task, error) {
-	var tasks []model.Task
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	query := r.db.Select("id", "user_id", "route_run", "recovery_outcome", "beef_usage_state", "beef_billing_state", "beef_reconcile_deadline", "image_job_id", "project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "error", "error_code", "failure_diagnostics", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
-		Where("user_id = ?", userID)
-	if strings.TrimSpace(projectID) != "" {
-		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
-	}
-	if activeOnly {
-		query = query.Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
-	}
-	err := query.Order("created_at desc").Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
-// SuccessfulWorkflowTasksForProject 返回需要补偿工作流产物的成功任务。
-// 不设分页，供项目详情读取时修复浏览器中断造成的历史断点。
-func (r *Repository) SuccessfulWorkflowTasksForProject(userID string, projectID string) ([]model.Task, error) {
-	var tasks []model.Task
-	err := r.db.Where("user_id = ? AND project_id = ? AND status = ?", userID, projectID, model.TaskStatusSucceeded).
-		Order("completed_at asc, created_at asc").Find(&tasks).Error
-	return tasks, err
-}
-
-func (r *Repository) TaskLogs(userID string, taskID string) ([]model.TaskLog, error) {
-	var logs []model.TaskLog
-	err := r.db.Order("created_at asc").Find(&logs, "user_id = ? AND task_id = ?", userID, taskID).Error
-	return logs, err
-}
-
 func (r *Repository) SystemChannels(includeDisabled bool) ([]model.ModelChannel, error) {
 	var channels []model.ModelChannel
 	query := r.db.Order("sort_order asc, created_at asc, id asc").Where("scope = ?", model.ChannelScopeSystem)

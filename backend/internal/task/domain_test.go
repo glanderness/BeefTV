@@ -154,9 +154,6 @@ func (m *memStore) List(userID string, limit int, projectID string, activeOnly b
 		if projectID != "" && task.ProjectID != projectID {
 			continue
 		}
-		if activeOnly && task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning {
-			continue
-		}
 		out = append(out, task)
 	}
 	if limit > 0 && len(out) > limit {

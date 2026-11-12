@@ -16,7 +16,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored, MISSING_GENERATION_TASK_IDENTITY_DETAILS } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
-import { canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
+import { canvasGenerationTaskNodes, canvasTaskFailureMetadata, textReplayRecoveryErrorMessage } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { consumeCanvasGenerationContinuation } from "./use-canvas-operation-history";
 
@@ -116,6 +116,9 @@ export async function recoverCanvasGenerationTaskNode(input: {
     try {
         if (input.completed.projectId && input.completed.projectId !== input.projectId) throw new Error("生成任务不属于当前画布");
         if (!isCurrentProject()) return;
+        if (input.completed.status === "text_replay") {
+            throw new Error(textReplayRecoveryErrorMessage(input.completed));
+        }
         if (input.completed.status === "failed" || input.completed.status === "cancelled") {
             throw new Error(input.completed.error || (input.completed.status === "cancelled" ? "任务已取消" : "任务失败"));
         }
@@ -371,7 +374,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 const onTask = (task: GenerationTask) => {
                     if (settled) return;
                     onUpdate?.(task);
-                    if (task.status !== "succeeded" && task.status !== "failed" && task.status !== "cancelled") return;
+                    if (task.status !== "succeeded" && task.status !== "failed" && task.status !== "cancelled" && task.status !== "text_replay") return;
                     settled = true;
                     cleanup();
                     resolve(task);
