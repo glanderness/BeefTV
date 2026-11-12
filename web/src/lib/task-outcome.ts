@@ -140,7 +140,7 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
         }
         return { phase: "ready", regenerate: "allowed", reason: "result_ready" };
     }
-    if (status === "failed" || status === "cancelled" || errorCode || record.error) {
+    if (status === "failed" || status === "cancelled" || status === "text_replay" || errorCode || record.error) {
         if (errorCode === "result_target_unavailable") {
             return { phase: "failed", regenerate: "blocked", reason: "result_target_unavailable" };
         }
@@ -159,6 +159,9 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
         }
         if (errorCode === "request_not_sent" || status === "cancelled") {
             return { phase: "failed", regenerate: "allowed", reason: "not_charged" };
+        }
+        if (status === "text_replay") {
+            return { phase: "failed", regenerate: "confirm", reason: "task_failed" };
         }
         return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
     }
@@ -188,7 +191,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
         return { phase: "running", regenerate: "blocked", reason: "task_running" };
     }
     const errorCode = typeof metadata.generationErrorCode === "string" ? metadata.generationErrorCode.trim() : "";
-    if (metadata.status === "error" || metadata.taskStatus === "failed" || metadata.taskStatus === "cancelled" || errorCode || metadata.errorDetails) {
+    if (metadata.status === "error" || metadata.taskStatus === "failed" || metadata.taskStatus === "cancelled" || metadata.taskStatus === "text_replay" || errorCode || metadata.errorDetails) {
         if (errorCode === "result_target_unavailable") {
             return { phase: "failed", regenerate: "blocked", reason: "result_target_unavailable" };
         }
@@ -200,6 +203,9 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
         }
         if (errorCode === "request_not_sent" || metadata.taskStatus === "cancelled") {
             return { phase: "failed", regenerate: "allowed", reason: "not_charged" };
+        }
+        if (metadata.taskStatus === "text_replay") {
+            return { phase: "failed", regenerate: "confirm", reason: "task_failed" };
         }
         return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
     }

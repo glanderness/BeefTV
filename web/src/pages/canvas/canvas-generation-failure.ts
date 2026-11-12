@@ -55,6 +55,11 @@ export function canvasGenerationFailureMetadata(error: unknown, input: CanvasGen
     return embeddedOutcome ? { ...failure, taskOutcome: embeddedOutcome } : failure;
 }
 
+export function textReplayRecoveryErrorMessage(task: GenerationTask): string {
+    if (task.error) return task.error;
+    return taskOutcomeCopy(readTaskOutcome(task)).message;
+}
+
 export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: CanvasNodeMetadata, error: unknown = { code: task.errorCode, message: task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败") }) {
     let input: CanvasGenerationFailureInput = { prompt: task.prompt || metadata?.prompt || "" };
     try {
