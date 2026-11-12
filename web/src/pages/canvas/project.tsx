@@ -1165,11 +1165,6 @@ function InfiniteCanvasPage() {
 
     const retryCanvasNode = useCallback(
         (node: CanvasNodeData) => {
-            const plan = canvasNodeRetryPlan(node, nodesRef.current);
-            if (plan.kind === "history") {
-                setGenerationHistoryOpen(true);
-                return;
-            }
             if (node.metadata?.workflowOperation?.id.endsWith(".ai-upscale")) {
                 const processor = nodesRef.current.find(item => item.id === node.metadata?.generatedFromProcessingNodeId);
                 if (canRecoverManagedToolNode(node) || (!processor && node.metadata.taskClientOperationId)) void recoverAIUpscale(node).catch(error => message.error(generationErrorMessage(error)));
@@ -1182,6 +1177,12 @@ function InfiniteCanvasPage() {
                 const source = nodesRef.current.find(item => item.id === sourceId);
                 if (canRecoverManagedToolNode(node)) void mediaTools.recoverVideoSubtitleErase(node).catch(error => message.error(generationErrorMessage(error)));
                 else if (source && !canvasNodeFailureView(node).regenerateBlocked) mediaTools.openVideoSubtitleErase(source);
+                else setGenerationHistoryOpen(true);
+                return;
+            }
+            const plan = canvasNodeRetryPlan(node, nodesRef.current);
+            if (plan.kind === "history") {
+                setGenerationHistoryOpen(true);
                 return;
             }
             if (plan.kind === "depth") {
