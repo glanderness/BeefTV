@@ -33,7 +33,7 @@ import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover"
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { autoMentionCanvasResourceReferences, buildCanvasResourceReferences, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { resolveCanvasNodeInputSummary } from "./canvas-node-generation";
+import { resolveCanvasNodeGenerationPreview } from "./canvas-node-generation";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { getCanvasNodePromptSelection, insertCanvasResourceMentionAtSelection, setCanvasNodePromptSelection, useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
 import { resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses, togglePromptFirstFrameMention } from "@/lib/canvas/video-reference-mode";
@@ -141,9 +141,9 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
     const needsRecoverySection = missingSubmissionIdentity || (!isRunning && isNodeRegenerateBlocked(node.metadata));
     const assets = useAssetStore((state) => state.assets);
     const activeReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill"), [resolvedMentionReferences]);
-    const inputSummary = useMemo(
-        () => resolveCanvasNodeInputSummary(node, mode, prompt, referenceNodes, referenceConnections, assets, resolvedMentionReferences),
-        [assets, mode, node, prompt, referenceConnections, referenceNodes, resolvedMentionReferences],
+    const { inputSummary, preflightError: livePreflightError } = useMemo(
+        () => resolveCanvasNodeGenerationPreview(node, mode, prompt, referenceNodes, referenceConnections, assets),
+        [assets, mode, node, prompt, referenceConnections, referenceNodes],
     );
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, inputSummary);
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
@@ -243,7 +243,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && (!prompt.trim() || Boolean(currentModelCompatibilityError));
+    const isSubmitDisabled = !isRunning && (!prompt.trim() || Boolean(currentModelCompatibilityError) || Boolean(livePreflightError));
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -314,7 +314,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning || currentModelCompatibilityError) return false;
+        if (!text || isRunning || currentModelCompatibilityError || livePreflightError) return false;
         if (referenceCheck.issues.length) {
             setReferenceAction({ type: "locate", token: referenceCheck.issues[0].token, key: Date.now() });
             return false;
@@ -710,8 +710,12 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                     <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: "var(--status-warning)" }}>
                         当前模型（{configuredModelDisplayName(config, config.model)}）{currentModelCompatibilityError}，请切换兼容模型或调整已连接的参考素材。
                     </p>
+                ) : livePreflightError ? (
+                    <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: "var(--status-warning)" }}>
+                        {livePreflightError}
+                    </p>
                 ) : null}
-                {node.metadata?.generationPreflightError ? (
+                {node.metadata?.generationPreflightError && node.metadata.generationPreflightError !== livePreflightError ? (
                     <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
                         未开始生成：{node.metadata.generationPreflightError}
                     </p>

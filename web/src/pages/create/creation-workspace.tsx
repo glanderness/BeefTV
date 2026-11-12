@@ -329,7 +329,7 @@ function CreationMediaPreviewModal({ url, type, onClose }: { url: string; type: 
     </AppModal>;
 }
 
-export function CreationAttachmentThumbnail({ item, onPreview, onRemove }: {
+function CreationAttachmentThumbnail({ item, onPreview, onRemove }: {
     item: CreationAttachment;
     onPreview: (type: "image" | "video", url: string) => void;
     onRemove: (id: string) => void;
