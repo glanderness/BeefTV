@@ -103,6 +103,8 @@ async function openWorkbench(options: { hidden?: boolean; clock?: boolean; init?
   let reads = 0
   const contexts: Array<Record<string, any>> = []
   const prompts: Array<Record<string, any>> = []
+  const settings: Array<Record<string, any>> = []
+  const notices: Array<Record<string, any>> = []
   await page.route('**/beeftv/status', async route => {
     reads += 1
     await route.fulfill({ json: status })
@@ -116,10 +118,25 @@ async function openWorkbench(options: { hidden?: boolean; clock?: boolean; init?
     status = { ...status, localPromptDismissed: true }
     await route.fulfill({ json: status })
   })
+  await page.route('**/beeftv/settings', async route => {
+    settings.push(route.request().postDataJSON())
+    status = { ...status, ...route.request().postDataJSON() }
+    await route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/away-notice', async route => {
+    notices.push({ path: 'away-notice', ...route.request().postDataJSON() })
+    status = { ...status, awayNotice: null }
+    await route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/step-notice', async route => {
+    notices.push({ path: 'step-notice', ...route.request().postDataJSON() })
+    status = { ...status, stepNotice: null }
+    await route.fulfill({ json: status })
+  })
   await page.goto(server.url.href)
   await page.locator('iframe').waitFor()
   await page.frameLocator('iframe').getByText('Workspace', { exact: true }).waitFor()
-  return { page, contexts, prompts, reads: () => reads, setStatus: (next: typeof status) => { status = next }, status: () => status }
+  return { page, contexts, prompts, settings, notices, reads: () => reads, setStatus: (next: typeof status) => { status = next }, status: () => status }
 }
 
 function workspaceFrame(page: Page) {
@@ -560,5 +577,130 @@ test('暂不 会丢弃还在路上的旧状态响应', async () => {
   release()
   await page.waitForTimeout(100)
   expect(await page.getByText(offer, { exact: true }).count()).toBe(0)
+  await page.close()
+})
+
+
+test('面板可以开关生成完自动继续、调整每轮步数上限，并关闭离开提示', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  state.setStatus({
+    ...state.status(),
+    awayNotice: '有 2 个生成在你离开时完成。',
+    stepNotice: '这一轮已经做了 40 步，先停一下。要继续请再说一句。',
+  } as any)
+  await refresh(page)
+  await page.getByText('有 2 个生成在你离开时完成。', { exact: true }).waitFor()
+  await page.getByText('这一轮已经做了 40 步，先停一下。要继续请再说一句。', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '关闭离开提示' }).click()
+  await page.waitForFunction(() => !document.body.innerText.includes('有 2 个生成在你离开时完成。'))
+  expect(state.notices[0]).toEqual({ path: 'away-notice', seen: true })
+  await page.getByRole('button', { name: '关闭步数提示' }).click()
+  await page.waitForFunction(() => !document.body.innerText.includes('这一轮已经做了 40 步'))
+  expect(state.notices[1]).toEqual({ path: 'step-notice', seen: true })
+
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('button', { name: /生成完自动继续/ })
+  expect(await toggle.getAttribute('aria-pressed')).toBe('true')
+  await toggle.click()
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu button[aria-pressed="false"]') !== null)
+  expect(await toggle.getAttribute('aria-pressed')).toBe('false')
+  expect(state.settings.at(-1)).toEqual({ autoContinue: false })
+
+  const stepLimit = page.locator('.beeftv-harness-setting input')
+  await stepLimit.fill('12')
+  const saved = page.waitForResponse('**/beeftv/settings')
+  await stepLimit.press('Enter')
+  await saved
+  expect(state.settings.at(-1)).toEqual({ stepLimit: 12 })
+  await page.close()
+})
+
+
+test('保存设置或关闭提示会丢弃在途的旧状态响应', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  let release!: () => void
+  let delayed = false
+  await page.route('**/beeftv/status', async route => {
+    if (!delayed) {
+      delayed = true
+      await new Promise<void>(resolve => { release = resolve })
+      await route.fulfill({ json: { ...state.status(), autoContinue: true, awayNotice: '有 2 个生成在你离开时完成。' } }).catch(() => {})
+      return
+    }
+    await route.fulfill({ json: state.status() })
+  })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  for (let index = 0; index < 100 && !release; index++) await page.waitForTimeout(10)
+  expect(typeof release).toBe('function')
+
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('button', { name: /生成完自动继续/ })
+  await toggle.click()
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu button[aria-pressed="false"]') !== null)
+  release()
+  await page.waitForTimeout(100)
+  expect(await toggle.getAttribute('aria-pressed')).toBe('false')
+  expect(await page.getByText('有 2 个生成在你离开时完成。', { exact: true }).count()).toBe(0)
+  await page.close()
+})
+
+
+test('开关有可见勾选；取消步数编辑后再修改仍会保存', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('button', { name: /生成完自动继续/ })
+  expect(await toggle.evaluate(element => getComputedStyle(element, '::after').content)).toContain('✓')
+  const input = page.locator('.beeftv-harness-setting input')
+  await input.focus()
+  await input.press('Escape')
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu') === null)
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const reopened = page.locator('.beeftv-harness-setting input')
+  await reopened.fill('12')
+  const saved = page.waitForResponse('**/beeftv/settings')
+  await reopened.press('Enter')
+  await saved
+  expect(state.settings.at(-1)).toEqual({ stepLimit: 12 })
+  await page.close()
+})
+
+test('写入期间新发起的状态轮询不会把刚保存的值翻回去', async () => {
+  const state = await openWorkbench()
+  const { page } = state
+  let releaseSettings!: () => void
+  await page.route('**/beeftv/settings', async route => {
+    await new Promise<void>(resolve => { releaseSettings = resolve })
+    state.setStatus({ ...state.status(), autoContinue: false })
+    await route.fulfill({ json: state.status() })
+  })
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  const toggle = page.getByRole('button', { name: /生成完自动继续/ })
+  await toggle.click()
+  for (let index = 0; index < 100 && !releaseSettings; index++) await page.waitForTimeout(10)
+  expect(typeof releaseSettings).toBe('function')
+
+  let releaseStatus!: () => void
+  let delayed = false
+  await page.route('**/beeftv/status', async route => {
+    if (!delayed) {
+      delayed = true
+      await new Promise<void>(resolve => { releaseStatus = resolve })
+      await route.fulfill({ json: { ...state.status(), autoContinue: true } }).catch(() => {})
+      return
+    }
+    await route.fulfill({ json: state.status() })
+  })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  for (let index = 0; index < 100 && !releaseStatus; index++) await page.waitForTimeout(10)
+  expect(typeof releaseStatus).toBe('function')
+
+  releaseSettings()
+  await page.waitForFunction(() => document.querySelector('.beeftv-harness-action-menu button[aria-pressed="false"]') !== null)
+  releaseStatus()
+  await page.waitForTimeout(100)
+  expect(await toggle.getAttribute('aria-pressed')).toBe('false')
   await page.close()
 })

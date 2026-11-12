@@ -30,9 +30,12 @@ window.__ModuleLoader__.load({
 .beeftv-harness-actions { position:relative; }
 .beeftv-harness-actions > button { border:0; border-radius:6px; width:28px; height:28px; background:transparent; }
 .beeftv-harness-actions > button:hover { background:var(--dsw-alias-interactive-bg-hover); }
-.beeftv-harness-action-menu { position:absolute; right:0; top:32px; z-index:20; min-width:144px; padding:4px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px; background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)); box-shadow:0 6px 20px #0003; }
+.beeftv-harness-action-menu { position:absolute; right:0; top:32px; z-index:20; min-width:200px; padding:4px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px; background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)); box-shadow:0 6px 20px #0003; }
 .beeftv-harness-action-menu button { display:block; width:100%; padding:8px 12px; text-align:left; border:0; border-radius:4px; background:transparent; white-space:nowrap; font-size:12px; }
 .beeftv-harness-action-menu button:hover { background:var(--dsw-alias-interactive-bg-hover); }
+.beeftv-harness-action-menu button[aria-pressed=true]::after { content:"✓"; float:right; margin-left:10px; }
+.beeftv-harness-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 12px; font-size:12px; color:var(--dsw-alias-label-secondary); }
+.beeftv-harness-setting input { width:56px; border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:3px 6px; background:var(--dsw-alias-bg-base); color:inherit; font:inherit; }
 .beeftv-harness-workspace { position:relative; min-width:0; min-height:0; overflow:hidden; }
 .beeftv-harness-frame { display:block; width:100%; height:100%; border:0; background:var(--dsw-alias-bg-base); }
 .beeftv-harness-agent { min-height:0; min-width:0; display:flex; flex-direction:column; overflow:hidden; --dsh-content-font-size:14px; --dsh-content-font-delta:0px; --dsh-content-font-size-secondary:12px; --dsh-content-font-delta-secondary:-1px; --dsw-font-markdown-base:14px/1.65 var(--dsw-font-family); --dsw-font-markdown-base-font-size:14px; --dsw-font-markdown-base-line-height:1.65; --dsw-font-markdown-base-strong:600 14px/1.65 var(--dsw-font-family); --dsw-font-markdown-base-italic:italic 14px/1.65 var(--dsw-font-family); --dsw-font-markdown-base-strong-italic:italic 600 14px/1.65 var(--dsw-font-family); }
@@ -219,6 +222,9 @@ window.__ModuleLoader__.load({
       const statusRequest = React.useRef(null)
       const refreshStatus = React.useRef(null)
       const requestStatusRefresh = React.useCallback(() => refreshStatus.current?.(), [])
+      const skipStepSave = React.useRef(false)
+      const statusGeneration = React.useRef(0)
+      const actionsButton = React.useRef(null)
       const reportError = React.useCallback(message => setError(message), [])
       const appURL = !choosingWorkspace && status?.connected ? status.appURL : undefined
       const source = React.useMemo(() => frameURL(appURL), [appURL])
@@ -228,6 +234,7 @@ window.__ModuleLoader__.load({
       }, [source])
       const connectionId = status?.connectionId
       const workspaceContext = reportedContext?.connectionId === connectionId ? reportedContext?.context : undefined
+      const autoContinue = status?.autoContinue !== false
 
       function clampAgentWidth(width) {
         const maximum = Math.max(320, (body.current?.clientWidth || 718) - 286)
@@ -284,11 +291,12 @@ window.__ModuleLoader__.load({
           const controller = new AbortController()
           const timeout = new AbortController()
           const timer = window.setTimeout(() => timeout.abort(), 10_000)
+          const generation = statusGeneration.current
           statusRequest.current = controller
           try {
             const next = await api('status', undefined, AbortSignal.any([controller.signal, timeout.signal]))
-            if (!mounted || controller.signal.aborted || connecting.current) return
-            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
+            if (!mounted || controller.signal.aborted || connecting.current || generation !== statusGeneration.current) return
+            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed', 'autoContinue', 'stepLimit', 'awayNotice', 'stepNotice'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
             setStatusError('')
           } catch (failure) {
             if (!mounted || controller.signal.aborted) return
@@ -408,15 +416,47 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function saveSettings(patch) {
+        setError('')
+        // 写入前丢掉在途的状态读取；写入期间的轮询也一并作废，避免旧值把刚保存的值翻回去。
+        statusGeneration.current += 1
+        statusRequest.current?.abort()
+        statusRequest.current = null
+        try {
+          setStatus(await api('settings', patch))
+        } catch (failure) {
+          setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
+        }
+      }
+
+      async function dismissNotice(path) {
+        setError('')
+        statusGeneration.current += 1
+        statusRequest.current?.abort()
+        statusRequest.current = null
+        try {
+          setStatus(await api(path, { seen: true }))
+        } catch (failure) {
+          setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
+        }
+      }
+
       async function dismissLocalPrompt() {
         setError('')
         // An older status read must not put the prompt back after the dismissal was saved.
+        statusGeneration.current += 1
         statusRequest.current?.abort()
         statusRequest.current = null
         try {
           setStatus(await api('local-prompt', { dismissed: true }))
         } catch (failure) {
           setError(failure.message)
+        } finally {
+          statusGeneration.current += 1
         }
       }
 
@@ -428,6 +468,12 @@ window.__ModuleLoader__.load({
         h('span', { ref: clearanceProbe, className: 'beeftv-harness-clearance', 'aria-hidden': true }),
         visibleError && h('div', { className: 'beeftv-harness-error', role: 'alert' }, visibleError),
         standalone && h('div', { className: 'beeftv-harness-workspace-note' }, '独立工作区，和本机 BeefTV 不是同一份数据'),
+        status?.awayNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
+          h('span', null, status.awayNotice),
+          h('button', { type: 'button', 'aria-label': '关闭离开提示', onClick: () => dismissNotice('away-notice') }, '知道了')),
+        status?.stepNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
+          h('span', null, status.stepNotice),
+          h('button', { type: 'button', 'aria-label': '关闭步数提示', onClick: () => dismissNotice('step-notice') }, '知道了')),
         localReady && h('div', { className: 'beeftv-harness-notice', role: 'status' },
           h('span', null, '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'),
           h('button', { type: 'button', disabled: !!busy, onClick: () => connect('local') }, '连接本机'),
@@ -441,12 +487,25 @@ window.__ModuleLoader__.load({
             h('div', { className: 'beeftv-harness-agent-header' },
               h('div', { className: 'beeftv-harness-agent-title-row' },
                 h('h2', { className: 'beeftv-harness-agent-heading' }, 'BeefTV Agent'),
-                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') setActionsOpen(false) } },
-                  h('button', { type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => setActionsOpen(open => !open) }, '⋯'),
+                h('div', { className: 'beeftv-harness-actions', onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false) }, onKeyDown: event => { if (event.key === 'Escape') { setActionsOpen(false); actionsButton.current?.focus() } } },
+                  h('button', { ref: actionsButton, type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => { skipStepSave.current = false; setActionsOpen(open => !open) } }, '⋯'),
                   actionsOpen && h('div', { className: 'beeftv-harness-action-menu' },
                     h('button', { type: 'button', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
                     status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
-                    h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH')))),
+                    h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
+                    h('button', { type: 'button', 'aria-pressed': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
+                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
+                      h('input', {
+                        type: 'number', min: 5, max: 200, step: 5, defaultValue: status?.stepLimit || 40,
+                        onBlur: event => {
+                          if (skipStepSave.current) { skipStepSave.current = false; return }
+                          saveSettings({ stepLimit: Number(event.currentTarget.value) })
+                        },
+                        onKeyDown: event => {
+                          if (event.key === 'Escape') skipStepSave.current = true
+                          if (event.key === 'Enter') event.currentTarget.blur()
+                        },
+                      }))))),
               h('div', { className: 'beeftv-harness-modes', 'aria-label': '协作方向' }, modes.map(mode =>
                 h('button', { key: mode.id, type: 'button', title: mode.detail, 'aria-pressed': agentMode === mode.id, onClick: () => setAgentMode(mode.id) }, mode.label))),
               workspaceContext?.canvasTitle && h('div', { className: 'beeftv-harness-context', title: workspaceContext.canvasTitle }, workspaceContext.canvasTitle)),
