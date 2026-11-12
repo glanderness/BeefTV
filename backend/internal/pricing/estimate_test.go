@@ -60,8 +60,8 @@ func TestQuoteUsesCatalogPrices(t *testing.T) {
 			if *got.Amount != tc.amount || got.Approx != tc.approx || got.Basis != tc.basis {
 				t.Fatalf("got %v approx=%v %q, want %v approx=%v %q", *got.Amount, got.Approx, got.Basis, tc.amount, tc.approx, tc.basis)
 			}
-			if !strings.HasSuffix(got.Text, "（"+tc.basis+"）") {
-				t.Fatalf("text %q does not show its basis", got.Text)
+			if !strings.HasSuffix(got.Text, "（"+tc.basis+"）") || got.Label == "" || !strings.HasPrefix(got.Text, got.Label+"（") {
+				t.Fatalf("text %q / label %q does not match basis", got.Text, got.Label)
 			}
 		})
 	}
