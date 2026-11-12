@@ -50,6 +50,8 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 外部读写客户端的提议还返回 `nextAction`：由外部宿主审批后调用 `canvas.generation.submit`，提交 `canvasId`、1 至 8 个 `nodeIds`、`expectedRevision`、`expectedModelConfigRevision` 和稳定 `operationId`。两个版本分别来自提议的 `source.canvasRevision` 与 `source.modelConfigRevision`。此路径不依赖内置助手回合或确认卡，返回已受理的 `taskIds`、`nodeIds` 与画布新 `revision`；同键同参数回读原回执，过期版本和未就绪参考拒绝。当前复用单节点单产物的制作准入。目标节点已关联任务时按该任务的 `outcome` 判断：只有 `phase=failed` 且 `regenerate` 为 `allowed` 或 `confirm` 时，清掉旧任务绑定，在原节点受理新任务（`confirm` 表示原任务可能已扣费，新任务另外计费）。原任务进行中、可取回、正在核对扣费或已出结果，以及节点上还有未落定的提交时，返回 `generation_task_exists`，`details.taskOutcome` 给出原任务结论；这些任务通过 `task.get` 和原任务恢复入口处理，不换键重复购买。历史只读凭据不能提交或回放写回执。
 
+`canvas.generation.regenerate` 参数与 `canvas.generation.submit` 相同，只对外部客户端开放。目标节点的旧任务已经结束（结果已就绪，或失败且仍可重做）时，它先释放旧回执、清空节点上的旧显示再受理新任务，旧结果仍留在素材库；排队、运行、下载或保存中的任务，以及仍在核对扣费、结果仍可能取回的失败任务，仍返回 `generation_task_exists`（`details.taskOutcome` 给出原因）。生成单会记录 `regenerate` 标记，`ask` 模式要求本次 `nodeIds` 与生成单完全一致，登记后返回 `status=pending_approval`，由 owner 批准时按原地重做规则执行；同一 `operationId` 重放返回原回执，不重复建任务或扣费。
+
 整片提案可用 `productionNodeIds` 列出本批 1–24 项图片、视频和音频草稿，超过 24 项时拆成多次提案，`nodeIds` 仅列首批依赖已就绪的同类素材。返回的 `production.targets` 固定节点、模型、提示词、参数、参考节点与数量。界面 `POST /assistant/turns/:turnId/proposals/:proposalId/production` 接收 `{ canvasId, kind, nodeIds, targets }`，在一个业务事务中校验当前方案、保存原回合授权、创建首批既有任务及自动接续回执；只允许可信界面调用。重复确认复用原素材任务，不会重新付费。
 
 获得同一原回合授权的官方 Pi 接续轮可用 `canvas.generation.submit` 执行已确认素材；未授权、输入变化或旧意图已停止时拒绝。宿主工具等待真实任务终态、资源保存及画布绑定后再交给模型继续，不用模型反复轮询。未知结果保留原任务身份；不自动重生成失败素材。授权约束精确素材计划，并非人民币金额硬封顶，报价未知时不能承诺满足金额预算。

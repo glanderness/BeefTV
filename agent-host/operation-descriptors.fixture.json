@@ -354,6 +354,62 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.generation.regenerate",
+    "summary": "在原地重做已结束的画布生成并计费",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "expectedModelConfigRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expectedRevision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "video",
+            "audio"
+          ],
+          "type": "string"
+        },
+        "nodeIds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "orderId": {
+          "type": "string"
+        },
+        "proposalId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "nodeIds",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe",
+    "submitsGeneration": true
+  },
+  {
     "id": "canvas.generation.submit",
     "summary": "凭已批准生成单执行画布生成并计费",
     "readOnly": false,
@@ -409,7 +465,8 @@
       "full-access",
       "canvas"
     ],
-    "replay": "safe"
+    "replay": "safe",
+    "submitsGeneration": true
   },
   {
     "id": "canvas.get",

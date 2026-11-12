@@ -36,6 +36,8 @@ func RegisterDefaultOps(r *Registry) {
 	registerCanvasNodeConfigureOps(r)
 	registerStoryboardPreparation(r)
 	registerGenerationSubmit(r)
+	registerGenerationRegenerate(r)
+
 	registerTaskCancelOp(r)
 	registerGenerationOrderListOp(r)
 	registerExternalWriteOps(r)
