@@ -552,7 +552,8 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 					}
 				}
 				maxImages, _ := strconv.Atoi(parameters["seedreamMaxImages"])
-				if parameters["seedreamMode"] == "layers" || (family != "pro" && family != "flash" && maxImages > 1) {
+				modern := family == "5.5" || family == "pro" || family == "flash"
+				if parameters["seedreamMode"] == "layers" || (!modern && maxImages > 1) {
 					return nil, InvalidArg("production_seedream_multiple_outputs", "整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。")
 				}
 			}

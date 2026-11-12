@@ -145,8 +145,13 @@ func managedImageOptions(input Input) map[string]any {
 		options["background"] = "transparent"
 		options["output_format"] = "png"
 	}
+	family := providerpreset.SeedreamFamily(config.Model)
 	if config.SeedreamOutputFormat != "" {
-		options["output_format"] = config.SeedreamOutputFormat
+		format := config.SeedreamOutputFormat
+		if family != "" && strings.EqualFold(format, "webp") {
+			format = "png"
+		}
+		options["output_format"] = format
 	}
 	if config.TransparentBackground == "true" {
 		options["output_format"] = "png"
@@ -161,9 +166,13 @@ func managedImageOptions(input Input) map[string]any {
 		}
 	}
 	if config.SeedreamOptimize != "" {
-		options["optimize_prompt_options"] = map[string]any{"mode": config.SeedreamOptimize}
+		mode := config.SeedreamOptimize
+		if family != "" && family != "pro" && family != "4.0" && strings.EqualFold(mode, "fast") {
+			mode = "standard"
+		}
+		options["optimize_prompt_options"] = map[string]any{"mode": mode}
 	}
-	if providerpreset.SeedreamFamily(config.Model) != "" {
+	if family != "" {
 		options["watermark"] = config.SeedreamWatermark == "true"
 	}
 	return options
