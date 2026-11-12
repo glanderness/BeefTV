@@ -9,45 +9,25 @@ export type InlineCostDisplay = {
     tooltip: string;
 };
 
-export const MAX_ESTIMATE_TARGETS_PER_REQUEST = 200;
-
 function cleanParameters(parameters: Record<string, string | undefined>): Record<string, string> {
     return Object.fromEntries(
         Object.entries(parameters).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== ""),
     );
 }
 
-function roundFour(value: number): number {
-    return Math.round(value * 10000) / 10000;
-}
-
-export function formatCnyTotal(value: number): string {
-    const rounded = value < 1 ? roundFour(value) : Math.round(value * 100) / 100;
-    return `¥${Number(rounded.toFixed(value < 1 ? 4 : 2))}`;
-}
-
 /**
- * 把后端 generation.estimate 返回的单项价格转成提交按钮旁的紧凑文案。
- * 定价与预冻结金额直接由结构化字段格式化，不依赖解释说明句式；自带 Key 或缺少价格表时不展示。
+ * 直接读取服务端 generation.estimate 给出的结构化紧凑标签与完整说明，不在客户端复写舍入或解析文案。
  */
 export function formatInlineCostEstimate(
     estimate: CostEstimate | null | undefined,
     options?: { hideVariableRate?: boolean },
 ): InlineCostDisplay | null {
     if (!estimate) return null;
-    const text = estimate.text?.trim() || "";
-    if (typeof estimate.amount === "number" && Number.isFinite(estimate.amount)) {
-        const label = `${estimate.approx ? "约 " : "预计 "}${formatCnyTotal(estimate.amount)}`;
-        return { label, tooltip: text || label };
-    }
-    if (typeof estimate.reserve === "number" && Number.isFinite(estimate.reserve)) {
-        const label = `先扣 ${formatCnyTotal(estimate.reserve)}`;
-        return { label, tooltip: text || label };
-    }
-    if (!text || text.includes("暂无价格") || options?.hideVariableRate) return null;
-    const perLayerMatch = text.match(/每层\s*¥[\d.]+/);
-    const label = perLayerMatch ? perLayerMatch[0].replace(/\s+/g, " ") : "按量结算";
-    return { label, tooltip: text };
+    if (estimate.variable && options?.hideVariableRate) return null;
+    const label = estimate.label?.trim() || "";
+    if (!label) return null;
+    const tooltip = estimate.text?.trim() || label;
+    return { label, tooltip };
 }
 
 export function canvasNodeCostTarget({
@@ -186,32 +166,10 @@ export async function estimateBatchCostSummaryText(
     signal?: AbortSignal,
     fetcher: (batch: CostEstimateTarget[], abortSignal?: AbortSignal) => Promise<GenerationCostEstimate> = estimateGenerationCost,
 ): Promise<string> {
-    if (!targets.length) return BATCH_ESTIMATE_FALLBACK_TEXT;
+    if (!targets.length || signal?.aborted) return BATCH_ESTIMATE_FALLBACK_TEXT;
     try {
-        if (targets.length <= MAX_ESTIMATE_TARGETS_PER_REQUEST) {
-            const single = await fetcher(targets, signal);
-            return single?.summary?.text?.trim() || BATCH_ESTIMATE_FALLBACK_TEXT;
-        }
-        let amount = 0;
-        let priced = 0;
-        let unknown = 0;
-        let approx = false;
-        for (let offset = 0; offset < targets.length; offset += MAX_ESTIMATE_TARGETS_PER_REQUEST) {
-            if (signal?.aborted) return BATCH_ESTIMATE_FALLBACK_TEXT;
-            const chunk = targets.slice(offset, offset + MAX_ESTIMATE_TARGETS_PER_REQUEST);
-            const result = await fetcher(chunk, signal);
-            const summary = result?.summary;
-            if (!summary) return BATCH_ESTIMATE_FALLBACK_TEXT;
-            amount += summary.amount;
-            priced += summary.priced;
-            unknown += summary.unknown;
-            approx = approx || Boolean(summary.approx);
-        }
-        const prefix = approx ? "约 " : "";
-        const formatted = formatCnyTotal(roundFour(amount));
-        if (priced === 0) return "预计费用：暂无价格，按所选渠道实际计费";
-        if (unknown === 0) return `预计费用：${prefix}${formatted}`;
-        return `预计费用：已知部分${prefix}${formatted}，另有 ${unknown} 项暂无价格`;
+        const result = await fetcher(targets, signal);
+        return result?.summary?.text?.trim() || BATCH_ESTIMATE_FALLBACK_TEXT;
     } catch {
         return BATCH_ESTIMATE_FALLBACK_TEXT;
     }

@@ -47,7 +47,7 @@ function BatchChild({ projectId, onEnqueued }: { projectId: string; onEnqueued: 
     nodesRef.current = nodes;
     const connectionsRef = useRef(connections);
     connectionsRef.current = connections;
-    const { generateRows } = useCanvasBatchTable({
+    const { generateRows, updateRow } = useCanvasBatchTable({
         pageUi,
         projectId,
         nodesRef,
@@ -59,10 +59,22 @@ function BatchChild({ projectId, onEnqueued }: { projectId: string; onEnqueued: 
             return "batch-1";
         },
     });
+    const mutateSeqRef = useRef(0);
     return (
-        <button type="button" onClick={() => void generateRows(batchNode.id)}>
-            Trigger Batch
-        </button>
+        <div>
+            <button type="button" onClick={() => void generateRows(batchNode.id)}>
+                Trigger Batch
+            </button>
+            <button
+                type="button"
+                onClick={() => {
+                    mutateSeqRef.current += 1;
+                    updateRow(batchNode.id, "row-1", { prompt: `已修改提示词-${mutateSeqRef.current}` });
+                }}
+            >
+                Mutate Row
+            </button>
+        </div>
     );
 }
 
@@ -72,12 +84,13 @@ function Harness() {
     const [enqueuedBatches, setEnqueuedBatches] = useState<number[]>([]);
     return (
         <main style={{ padding: 24 }}>
-            <div data-testid="badge-wrap">
+            <div data-testid="badge-wrap" style={{ marginBottom: 48 }}>
                 <GenerationCostBadge
                     target={{ modelKey: "beeftv::fixture-video", kind: "video", parameters: { seconds, vquality: "720", count: "1" } }}
                     fetcher={(targets, signal) => window.__costEstimateFetcher(targets, signal)}
                 />
             </div>
+            <button type="button" onClick={() => setSeconds("6")}>Switch 6s</button>
             <button type="button" onClick={() => setSeconds("10")}>Switch 10s</button>
             <button type="button" onClick={() => setProjectId("proj-2")}>Switch Project</button>
             <BatchChild projectId={projectId} onEnqueued={(count) => setEnqueuedBatches((prev) => [...prev, count])} />

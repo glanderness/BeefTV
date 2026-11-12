@@ -38,10 +38,11 @@ const fixtureConfig: AiConfig = {
 };
 
 describe("formatInlineCostEstimate", () => {
-    test("官方算力已知价格与预扣价格提取紧凑主文案并保留完整依据", () => {
+    test("官方算力已知价格与预扣价格直接使用服务端结构化标签并保留完整依据", () => {
         expect(
             formatInlineCostEstimate({
                 amount: 0.4,
+                label: "预计 ¥0.4",
                 basis: "1K 中质量 ¥0.4/张 × 1 张",
                 text: "预计 ¥0.4（1K 中质量 ¥0.4/张 × 1 张）",
             }),
@@ -54,6 +55,7 @@ describe("formatInlineCostEstimate", () => {
             formatInlineCostEstimate({
                 amount: 3.9744,
                 approx: true,
+                label: "约 ¥3.97",
                 basis: "720p ¥0.9936/秒 × 4 秒，按 Token 折算",
                 text: "约 ¥3.97（720p ¥0.9936/秒 × 4 秒，按 Token 折算）",
             }),
@@ -66,6 +68,7 @@ describe("formatInlineCostEstimate", () => {
             formatInlineCostEstimate({
                 amount: null,
                 reserve: 15.98,
+                label: "先扣 ¥15.98",
                 basis: "出账后按实际账单结算",
                 text: "预冻结额度，出账后按实际账单结算",
             }),
@@ -75,10 +78,12 @@ describe("formatInlineCostEstimate", () => {
         });
     });
 
-    test("按量结算保留单价提示，自带 Key 与暂无价格保持静默", () => {
+    test("按量结算保留服务端标签，自带 Key 与暂无价格保持静默", () => {
         expect(
             formatInlineCostEstimate({
                 amount: null,
+                label: "按量结算",
+                variable: true,
                 basis: "含参考视频，按实际视频 Token 结算（720p ¥28/百万 Token）",
                 text: "含参考视频，按实际视频 Token 结算（720p ¥28/百万 Token）",
             }),
@@ -88,15 +93,17 @@ describe("formatInlineCostEstimate", () => {
         });
 
         expect(
-            formatInlineCostEstimate({
-                amount: null,
-                basis: "图层拆分按实际拆出的图层数计费，每层 ¥0.0366",
-                text: "图层拆分按实际拆出的图层数计费，每层 ¥0.0366",
-            }),
-        ).toEqual({
-            label: "每层 ¥0.0366",
-            tooltip: "图层拆分按实际拆出的图层数计费，每层 ¥0.0366",
-        });
+            formatInlineCostEstimate(
+                {
+                    amount: null,
+                    label: "每层 ¥0.0366",
+                    variable: true,
+                    basis: "图层拆分按实际拆出的图层数计费，每层 ¥0.0366",
+                    text: "图层拆分按实际拆出的图层数计费，每层 ¥0.0366",
+                },
+                { hideVariableRate: true },
+            ),
+        ).toBeNull();
 
         expect(
             formatInlineCostEstimate({
@@ -207,7 +214,7 @@ describe("generation cost targets", () => {
         ]);
     });
 
-    test("价格标签输出等宽数字、非按钮可聚焦语义与无障碍完整计价说明", () => {
+    test("价格标签输出等宽数字、原生按钮触发语义与无障碍完整计价说明", () => {
         const html = renderToStaticMarkup(
             <GenerationCostLabel
                 display={{
@@ -217,30 +224,27 @@ describe("generation cost targets", () => {
             />,
         );
         expect(html).toContain("约 ¥3.97");
-        expect(html).not.toContain('role="button"');
-        expect(html).toContain('tabindex="0"');
+        expect(html).toContain("<button");
         expect(html).toContain("tabular-nums");
         expect(html).toContain("价格预估：约 ¥3.97（720p ¥0.9936/秒 × 4 秒，按 Token 折算）");
     });
 
-    test("超过 200 行的批量估算自动分块汇总，失败时回退安全说明", async () => {
-        const targets = Array.from({ length: 205 }, (_, index) => ({
+    test("超过 200 行的批量估算直接透传服务端单次汇总，失败时回退安全说明", async () => {
+        const targets = Array.from({ length: 250 }, (_, index) => ({
             modelKey: "beeftv::fixture-image",
             kind: "image" as const,
             parameters: { size: "1:1", count: String((index % 2) + 1) },
         }));
-        const chunkLengths: number[] = [];
-        const totalText = await estimateBatchCostSummaryText(targets, undefined, async (chunk) => {
-            chunkLengths.push(chunk.length);
+        let receivedLength = 0;
+        const totalText = await estimateBatchCostSummaryText(targets, undefined, async (batch) => {
+            receivedLength = batch.length;
             return {
                 items: [],
-                summary: chunk.length === 200
-                    ? { amount: 80, priced: 200, unknown: 0, text: "预计费用：¥80" }
-                    : { amount: 2, priced: 4, unknown: 1, approx: true, text: "预计费用：已知部分约 ¥2，另有 1 项暂无价格" },
+                summary: { amount: 87.5, priced: 250, unknown: 0, text: "预计费用：¥87.5" },
             };
         });
-        expect(chunkLengths).toEqual([200, 5]);
-        expect(totalText).toBe("预计费用：已知部分约 ¥82，另有 1 项暂无价格");
+        expect(receivedLength).toBe(250);
+        expect(totalText).toBe("预计费用：¥87.5");
 
         const fallback = await estimateBatchCostSummaryText(targets.slice(0, 2), undefined, async () => {
             throw new Error("boom");

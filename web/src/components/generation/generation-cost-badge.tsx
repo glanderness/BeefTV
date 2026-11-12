@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Focusable } from "react-aria-components";
+import { Button as RACButton } from "react-aria-components";
 
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { formatInlineCostEstimate, type InlineCostDisplay } from "@/lib/generation-cost-estimate";
@@ -63,21 +63,18 @@ export function GenerationCostLabel({
     style?: CSSProperties;
 }) {
     return (
-        <Tooltip title={display.tooltip}>
-            <Focusable>
-                <span
-                    tabIndex={0}
-                    data-testid="generation-cost-badge"
-                    aria-label={`价格预估：${display.tooltip}`}
-                    className={cn(
-                        "inline-flex shrink-0 cursor-default select-none items-center whitespace-nowrap tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        className,
-                    )}
-                    style={style}
-                >
-                    <span>{display.label}</span>
-                </span>
-            </Focusable>
+        <Tooltip title={display.tooltip} delay={150}>
+            <RACButton
+                data-testid="generation-cost-badge"
+                aria-label={`价格预估：${display.tooltip}`}
+                className={cn(
+                    "inline-flex shrink-0 cursor-default select-none items-center whitespace-nowrap border-0 bg-transparent p-0 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    className,
+                )}
+                style={style}
+            >
+                <span>{display.label}</span>
+            </RACButton>
         </Tooltip>
     );
 }

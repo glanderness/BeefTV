@@ -22,6 +22,39 @@ type Options = {
     enqueueGenerationBatch: (sourceNodeId: string, mode: CanvasGenerationBatchMode, targets: Array<{ rowId: string; nodeId: string }>, options?: { concurrency?: number }) => string | undefined;
 };
 
+function selectReadyBatchRows(sourceNode: CanvasNodeData, table: CanvasBatchTableData, allNodes: CanvasNodeData[], requested: Set<string> | null): CanvasBatchRow[] {
+    const activeNodeIds = new Set(
+        (sourceNode.metadata?.generationBatches || [])
+            .filter((batch) => batch.mode === "batch_image")
+            .flatMap((batch) => batch.items.filter((item) => ["waiting", "submitting", "queued", "running"].includes(item.status)).map((item) => item.nodeId)),
+    );
+    return table.rows.filter((row) => {
+        const inputNodeIds = row.inputNodeIds.filter(Boolean);
+        if (!row.enabled || (requested && !requested.has(row.id)) || !batchPromptForRow(table, row).trim()) return false;
+        if (table.operation === "try_on" && inputNodeIds.length < 2) return false;
+        if (!inputNodeIds.length || inputNodeIds.some((id) => !allNodes.some((node) => node.id === id && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content || node.metadata?.storageKey)))) return false;
+        const output = row.outputNodeId ? allNodes.find((node) => node.id === row.outputNodeId) : undefined;
+        if (output && activeNodeIds.has(output.id)) return false;
+        // 操作列的单行生成允许对已完成结果重新生成；顶部批量按钮仍只提交未完成项。
+        if (requested) return true;
+        return !output?.metadata?.content;
+    });
+}
+
+function batchSubmissionSignature(table: CanvasBatchTableData, rows: CanvasBatchRow[], imageModel: string): string {
+    return JSON.stringify({
+        imageModel,
+        operation: table.operation,
+        concurrency: table.concurrency,
+        rows: rows.map((row) => ({
+            id: row.id,
+            prompt: batchPromptForRow(table, row).trim(),
+            inputNodeIds: row.inputNodeIds.filter(Boolean),
+            outputNodeId: row.outputNodeId || "",
+        })),
+    });
+}
+
 export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRef, setNodes, setConnections, enqueueGenerationBatch }: Options) {
     const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
@@ -134,26 +167,28 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
             navigateToSettings({ continueCreation: true });
             return;
         }
-        const activeNodeIds = new Set((sourceNode.metadata?.generationBatches || []).filter((batch) => batch.mode === "batch_image").flatMap((batch) => batch.items.filter((item) => ["waiting", "submitting", "queued", "running"].includes(item.status)).map((item) => item.nodeId)));
         const requested = requestedRowIds?.length ? new Set(requestedRowIds) : null;
-        const rows = table.rows.filter((row) => {
-            const inputNodeIds = row.inputNodeIds.filter(Boolean);
-            if (!row.enabled || (requested && !requested.has(row.id)) || !batchPromptForRow(table, row).trim()) return false;
-            if (table.operation === "try_on" && inputNodeIds.length < 2) return false;
-            if (!inputNodeIds.length || inputNodeIds.some((id) => !nodesRef.current.some((node) => node.id === id && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content || node.metadata?.storageKey)))) return false;
-            const output = row.outputNodeId ? nodesRef.current.find((node) => node.id === row.outputNodeId) : undefined;
-            if (output && activeNodeIds.has(output.id)) return false;
-            // 操作列的单行生成允许对已完成结果重新生成；顶部批量按钮仍只提交未完成项。
-            if (requested) return true;
-            return !output?.metadata?.content;
-        });
+        const rows = selectReadyBatchRows(sourceNode, table, nodesRef.current, requested);
         if (!rows.length) return message.info("没有可提交的未完成任务，请检查参考图和提示词");
+        const initialSignature = batchSubmissionSignature(table, rows, imageModel);
 
         const signal = batchLifetime.current.signal;
         confirmingRef.current = true;
+        let currentRows = rows;
+        let latestSourceNode = sourceNode;
+        let latestTable = table;
         try {
             const cost = await estimateBatchCostSummaryText(batchTableCostTargets(effectiveConfig, rows, nodesRef.current), signal);
             if (signal.aborted) return;
+            const afterEstimateNode = nodesRef.current.find((item) => item.id === nodeId);
+            const afterEstimateTable = afterEstimateNode?.metadata?.batchTable;
+            if (!afterEstimateNode || !afterEstimateTable) return;
+            const afterEstimateModel = buildGenerationConfig(effectiveConfig, undefined, "image").model;
+            const afterEstimateRows = selectReadyBatchRows(afterEstimateNode, afterEstimateTable, nodesRef.current, requested);
+            if (batchSubmissionSignature(afterEstimateTable, afterEstimateRows, afterEstimateModel) !== initialSignature) {
+                return message.info("表格内容刚发生变动，请重新确认后再生成");
+            }
+
             const confirmed = await new Promise<boolean>((resolve) => {
                 let settled = false;
                 let detachAbort = () => {};
@@ -164,8 +199,8 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
                     resolve(value);
                 };
                 const dialog = modal.confirm({
-                    title: `确认提交 ${rows.length} 个批量图片任务`,
-                    content: [`模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}`, cost, "这些任务可能消耗积分或产生外部模型费用"].filter(Boolean).join("。") + "。",
+                    title: `确认提交 ${afterEstimateRows.length} 个批量图片任务`,
+                    content: [`模型：${modelDisplayName(effectiveConfig, afterEstimateModel)}；并发上限：${afterEstimateTable.concurrency}`, cost, "这些任务可能消耗积分或产生外部模型费用"].filter(Boolean).join("。") + "。",
                     okText: "确认生成",
                     cancelText: "取消",
                     centered: true,
@@ -184,19 +219,28 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
                 signal.addEventListener("abort", onAbort, { once: true });
             });
             if (!confirmed || signal.aborted) return;
+
+            const postConfirmNode = nodesRef.current.find((item) => item.id === nodeId);
+            const postConfirmTable = postConfirmNode?.metadata?.batchTable;
+            if (!postConfirmNode || !postConfirmTable) return;
+            const postConfirmModel = buildGenerationConfig(effectiveConfig, undefined, "image").model;
+            const postConfirmRows = selectReadyBatchRows(postConfirmNode, postConfirmTable, nodesRef.current, requested);
+            if (batchSubmissionSignature(postConfirmTable, postConfirmRows, postConfirmModel) !== initialSignature) {
+                return message.info("表格内容已变更，请重新确认后再生成");
+            }
+            latestSourceNode = postConfirmNode;
+            latestTable = postConfirmTable;
+            currentRows = postConfirmRows;
         } finally {
             confirmingRef.current = false;
         }
 
-        const latestSourceNode = nodesRef.current.find((item) => item.id === nodeId);
-        const latestTable = latestSourceNode?.metadata?.batchTable;
-        if (!latestSourceNode || !latestTable) return;
         const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const nextNodes = [...nodesRef.current];
         let nextConnections = [...connectionsRef.current];
         const outputByRowId = new Map<string, string>();
         const targets: Array<{ rowId: string; nodeId: string }> = [];
-        rows.forEach((row, index) => {
+        currentRows.forEach((row, index) => {
             const existingIndex = row.outputNodeId ? nextNodes.findIndex((node) => node.id === row.outputNodeId && node.type === CanvasNodeType.Image) : -1;
             const prompt = batchPromptForRow(latestTable, row).trim();
             const metadata = {
