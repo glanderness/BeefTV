@@ -26,6 +26,10 @@ type Context struct {
 	UserID      string
 	Caller      Caller
 	Domain      Domain
+	// Store、Binder 和 TaskControl 供复用操作记录或任务域的操作使用；业务数据仍走 Domain。
+	Store       *Store
+	Binder      DomainBinder
+	TaskControl TaskController
 }
 
 // Handler 实现一个操作；返回值必须是可 JSON 序列化的业务结果。
@@ -320,11 +324,15 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	}
 	outcome, err := r.store.RunDomain(runCtx, runReq, r.binder, func(domain Domain) ([]byte, error) {
 		activeDomain = domain
-		trackCanvasWrite := !op.ReadOnly && op.ID != "skill.script.run" && strings.TrimSpace(target.CanvasID) != ""
+		// 撤销外部写入本身是回退动作，不能再记成一次新的外部写入。
+		trackCanvasWrite := !op.ReadOnly && op.ID != "skill.script.run" && op.ID != "canvas.external.write.undo" && strings.TrimSpace(target.CanvasID) != ""
 		if trackCanvasWrite {
 			beforeCanvasRaw, _ = domain.UserCanvasProject(req.UserID, target.CanvasID)
 		}
-		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OperationID: opID, TurnID: req.TurnID}
+		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OperationID: opID, TurnID: req.TurnID, Store: r.store, Binder: r.binder}
+		if controller, ok := r.binder.(TaskController); ok {
+			execCtx.TaskControl = controller
+		}
 		value, runErr := op.Handler(execCtx, params)
 		if runErr != nil {
 			return nil, AsError(runErr)
