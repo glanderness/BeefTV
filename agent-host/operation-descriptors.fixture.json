@@ -2257,5 +2257,44 @@
       "canvas"
     ],
     "replay": "safe"
+  },
+  {
+    "id": "task.wait",
+    "summary": "等待生成任务完成；超时返回 pending 和原 taskId，不返回错误",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "单个任务 ID"
+        },
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "description": "最多 8 个任务 ID"
+        },
+        "canvasId": {
+          "type": "string",
+          "description": "可选：和 nodeId 一起检查产物是否已绑定到该节点"
+        },
+        "nodeId": {
+          "type": "string",
+          "description": "可选：和 canvasId 一起检查产物是否已绑定到该节点"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 25000,
+          "description": "最多等 25000 毫秒，默认 25000"
+        }
+      }
+    },
+    "assistantModes": [],
+    "replay": "safe"
   }
 ]
