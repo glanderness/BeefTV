@@ -190,7 +190,7 @@
     --project-library-icon-surface: #ffffff;
     --project-library-shadow: none;
 
-    /* === 新卡片系统 Token（对应 docs/ui-design-system.md）=== */
+    /* === 新卡片系统 Token（对应三层设计 Token 与 web/src/components/ui/README.md）=== */
     /* 卡片表面通过明度分层，普通卡片不依赖描边和投影。 */
     --card-surface: #f7f7f7;
     --card-surface-hover: #f0f0f0;
@@ -930,7 +930,7 @@
     --project-library-icon-surface: #0d0d0d;
     --project-library-shadow: none;
 
-    /* === 新卡片系统 Token - Dark（对应 docs/ui-design-system.md）=== */
+    /* === 新卡片系统 Token - Dark（对应三层设计 Token 与 web/src/components/ui/README.md）=== */
     --card-surface: #171717;
     --card-surface-hover: #1e1e1e;
     --card-surface-raised: #252525;
@@ -4805,7 +4805,7 @@ html:not(.dark) .creation-studio-control:hover,
     .canvas-library-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-items: stretch; gap: var(--space-6) var(--space-5); }
     .canvas-library-page .app-pagination-bar { position: static; margin-top: var(--space-4); border: 0; background: transparent; padding: var(--space-1-half) var(--space-2); backdrop-filter: none; }
 
-    /* === 画布卡片重构（对应 docs/ui-design-system.md）=== */
+    /* === 画布卡片重构（对应三层设计 Token 与 web/src/components/ui/README.md）=== */
     .app-canvas-project-card { min-width: 0; cursor: pointer; color: var(--foreground); transition: transform var(--motion-state) var(--motion-ease-out), background-color var(--motion-state) ease-out; }
 
     /* 创建卡与内容卡使用相同表面和克制位移。 */
