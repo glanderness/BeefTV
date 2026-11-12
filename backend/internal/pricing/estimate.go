@@ -106,12 +106,28 @@ func Summarize(items []Estimate) Summary {
 func quoteImage(table *Table, target Target, count int) Estimate {
 	if image := table.Image; image != nil {
 		// BeefTV 官方算力 publishes Seedream rows with standard/layers qualities. Those
-		// rows tier by pixel area and include the first reference image.
+		// rows tier by pixel area; 5.0 includes the first reference image while 5.5 bills
+		// from the first reference image via free_reference_images = 0.
 		seedream := image.Output["standard"] != nil
 		tier := imageTier(image, target.Size, seedream)
+		freeRefs := 0
+		if image.FreeReferenceImages != nil {
+			freeRefs = *image.FreeReferenceImages
+		} else if seedream {
+			freeRefs = 1
+		}
+		refs := max(target.ReferenceImages-freeRefs, 0)
+		refPrice := 0.0
+		if image.Reference != nil {
+			refPrice = *image.Reference
+		}
 		if target.Layers {
 			if price, ok := image.Output["layers"][tier]; ok {
-				return variableUnknown("每层 "+yuan(price), fmt.Sprintf("图层拆分按实际拆出的图层数计费，每层 %s", yuan(price)))
+				basis := fmt.Sprintf("图层拆分按实际拆出的图层数计费，每层 %s", yuan(price))
+				if refs > 0 && refPrice > 0 {
+					basis += fmt.Sprintf(" + 参考图 %d 张 × %s", refs, yuan(refPrice))
+				}
+				return variableUnknown("每层 "+yuan(price), basis)
 			}
 			return Unknown("图层拆分暂无价格")
 		}
@@ -119,15 +135,6 @@ func quoteImage(table *Table, target Target, count int) Estimate {
 		price, ok := image.Output[quality][tier]
 		if !ok {
 			return Unknown(strings.TrimSpace(tier+" "+qualityLabel(quality)) + " 暂无价格")
-		}
-		refs := target.ReferenceImages
-		if seedream {
-			refs--
-		}
-		refs = max(refs, 0)
-		refPrice := 0.0
-		if image.Reference != nil {
-			refPrice = *image.Reference
 		}
 		basis := fmt.Sprintf("%s %s/张 × %d 张", strings.TrimSpace(tier+" "+qualityLabel(quality)), yuan(price), count)
 		if refs > 0 && refPrice > 0 {
@@ -226,12 +233,16 @@ func imageTier(image *ImageTable, size string, seedream bool) string {
 	}
 	width, height, pixels := imagePixels(size)
 	if seedream {
+		lowTierMaxPixels := image.LowTierMaxPixels
+		if lowTierMaxPixels <= 0 {
+			lowTierMaxPixels = 2610000
+		}
 		switch {
 		case size == "1K" || size == "1.5K":
 			return "1K"
 		case size == "2K" || size == "3K" || size == "4K":
 			return "2K"
-		case pixels && width*height <= 2610000:
+		case pixels && int64(width)*int64(height) <= lowTierMaxPixels:
 			return "1K"
 		case pixels:
 			return "2K"
