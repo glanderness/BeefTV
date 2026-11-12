@@ -6,9 +6,8 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { batchInputColumns, batchPromptForRow, batchReferenceColumns, batchReferenceHandleId, createBatchRowsFromColumns, createInheritedBatchRow, moveBatchReferenceCell, removeLastBatchReferenceColumn, reorderBatchReferenceColumns } from "@/lib/canvas/canvas-batch-table";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { buildGenerationConfig, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { batchTableCostTargets } from "@/lib/generation-cost-estimate";
+import { batchTableCostTargets, estimateBatchCostSummaryText } from "@/lib/generation-cost-estimate";
 import { navigateToSettings } from "@/lib/settings-navigation";
-import { estimateGenerationCost } from "@/services/api/cost-estimate";
 import { modelDisplayName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasBatchRow, type CanvasBatchTableData, type CanvasConnection, type CanvasGenerationBatchMode, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
@@ -28,6 +27,7 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const batchLifetime = useRef(new AbortController());
+    const confirmingRef = useRef(false);
     useEffect(() => {
         const controller = new AbortController();
         batchLifetime.current = controller;
@@ -125,6 +125,7 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
     }, [nodesRef, patchTable]);
 
     const generateRows = useCallback(async (nodeId: string, requestedRowIds?: string[]) => {
+        if (confirmingRef.current) return;
         const sourceNode = nodesRef.current.find((item) => item.id === nodeId);
         const table = sourceNode?.metadata?.batchTable;
         if (!sourceNode || !table) return;
@@ -147,21 +148,49 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
             return !output?.metadata?.content;
         });
         if (!rows.length) return message.info("没有可提交的未完成任务，请检查参考图和提示词");
-        const cost = await estimateGenerationCost(batchTableCostTargets(effectiveConfig, rows, nodesRef.current), batchLifetime.current.signal).then(
-            (estimate) => estimate.summary.text,
-            () => "预计费用：暂时算不出，按所选渠道实际计费",
-        );
-        const confirmed = await new Promise<boolean>((resolve) => modal.confirm({
-            title: `确认提交 ${rows.length} 个批量图片任务`,
-            content: [`模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}`, cost, "这些任务可能消耗积分或产生外部模型费用"].filter(Boolean).join("。") + "。",
-            okText: "确认生成",
-            cancelText: "取消",
-            centered: true,
-            onOk: () => resolve(true),
-            onCancel: () => resolve(false),
-        }));
-        if (!confirmed) return;
 
+        const signal = batchLifetime.current.signal;
+        confirmingRef.current = true;
+        try {
+            const cost = await estimateBatchCostSummaryText(batchTableCostTargets(effectiveConfig, rows, nodesRef.current), signal);
+            if (signal.aborted) return;
+            const confirmed = await new Promise<boolean>((resolve) => {
+                let settled = false;
+                let detachAbort = () => {};
+                const finish = (value: boolean) => {
+                    if (settled) return;
+                    settled = true;
+                    detachAbort();
+                    resolve(value);
+                };
+                const dialog = modal.confirm({
+                    title: `确认提交 ${rows.length} 个批量图片任务`,
+                    content: [`模型：${modelDisplayName(effectiveConfig, imageModel)}；并发上限：${table.concurrency}`, cost, "这些任务可能消耗积分或产生外部模型费用"].filter(Boolean).join("。") + "。",
+                    okText: "确认生成",
+                    cancelText: "取消",
+                    centered: true,
+                    onOk: () => finish(true),
+                    onCancel: () => finish(false),
+                });
+                const onAbort = () => {
+                    dialog.destroy();
+                    finish(false);
+                };
+                detachAbort = () => signal.removeEventListener("abort", onAbort);
+                if (signal.aborted) {
+                    onAbort();
+                    return;
+                }
+                signal.addEventListener("abort", onAbort, { once: true });
+            });
+            if (!confirmed || signal.aborted) return;
+        } finally {
+            confirmingRef.current = false;
+        }
+
+        const latestSourceNode = nodesRef.current.find((item) => item.id === nodeId);
+        const latestTable = latestSourceNode?.metadata?.batchTable;
+        if (!latestSourceNode || !latestTable) return;
         const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const nextNodes = [...nodesRef.current];
         let nextConnections = [...connectionsRef.current];
@@ -169,7 +198,7 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
         const targets: Array<{ rowId: string; nodeId: string }> = [];
         rows.forEach((row, index) => {
             const existingIndex = row.outputNodeId ? nextNodes.findIndex((node) => node.id === row.outputNodeId && node.type === CanvasNodeType.Image) : -1;
-            const prompt = batchPromptForRow(table, row).trim();
+            const prompt = batchPromptForRow(latestTable, row).trim();
             const metadata = {
                 ...(existingIndex >= 0 ? resetGenerationTaskMetadata(nextNodes[existingIndex].metadata) : {}),
                 prompt,
@@ -178,34 +207,35 @@ export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRe
                 generationMode: "image" as const,
                 generationType: "edit" as const,
                 workflowKind: "final" as const,
-                workflowTitle: `${table.operation === "try_on" ? "换装" : "创意"}任务 ${index + 1}`,
+                workflowTitle: `${latestTable.operation === "try_on" ? "换装" : "创意"}任务 ${index + 1}`,
                 status: "idle" as const,
                 batchSourceNodeId: nodeId,
                 batchRowId: row.id,
-                batchOperation: table.operation,
+                batchOperation: latestTable.operation,
                 batchInputNodeIds: row.inputNodeIds,
             };
             const output = existingIndex >= 0
                 ? { ...nextNodes[existingIndex], metadata }
-                : createCanvasNode(CanvasNodeType.Image, { x: sourceNode.position.x + sourceNode.width + 120 + imageSpec.width / 2, y: sourceNode.position.y + index * (imageSpec.height + 32) + imageSpec.height / 2 }, metadata);
-            output.title = `${table.operation === "try_on" ? "换装" : "创意"} · ${index + 1}`;
+                : createCanvasNode(CanvasNodeType.Image, { x: latestSourceNode.position.x + latestSourceNode.width + 120 + imageSpec.width / 2, y: latestSourceNode.position.y + index * (imageSpec.height + 32) + imageSpec.height / 2 }, metadata);
+            output.title = `${latestTable.operation === "try_on" ? "换装" : "创意"} · ${index + 1}`;
             if (existingIndex >= 0) nextNodes[existingIndex] = output;
             else nextNodes.push(output);
             nextConnections = nextConnections.filter((connection) => connection.toNodeId !== output.id);
             row.inputNodeIds.filter(Boolean).forEach((inputNodeId) => nextConnections.push({ id: nanoid(), fromNodeId: inputNodeId, toNodeId: output.id }));
-            nextConnections.push({ id: nanoid(), fromNodeId: sourceNode.id, toNodeId: output.id, relation: "batch-output", storyboardRowId: row.id });
+            nextConnections.push({ id: nanoid(), fromNodeId: latestSourceNode.id, toNodeId: output.id, relation: "batch-output", storyboardRowId: row.id });
             outputByRowId.set(row.id, output.id);
             targets.push({ rowId: row.id, nodeId: output.id });
         });
-        const sourceIndex = nextNodes.findIndex((node) => node.id === sourceNode.id);
-        nextNodes[sourceIndex] = { ...sourceNode, metadata: { ...sourceNode.metadata, batchTable: { ...table, rows: table.rows.map((row) => outputByRowId.has(row.id) ? { ...row, outputNodeId: outputByRowId.get(row.id) } : row) } } };
+        const sourceIndex = nextNodes.findIndex((node) => node.id === latestSourceNode.id);
+        if (sourceIndex < 0) return;
+        nextNodes[sourceIndex] = { ...latestSourceNode, metadata: { ...latestSourceNode.metadata, batchTable: { ...latestTable, rows: latestTable.rows.map((row) => outputByRowId.has(row.id) ? { ...row, outputNodeId: outputByRowId.get(row.id) } : row) } } };
         nodesRef.current = nextNodes;
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);
         setConnections(nextConnections);
         pageUi.getState().setSelectedNodeIds(new Set(targets.map((target) => target.nodeId)));
-        if (enqueueGenerationBatch(nodeId, "batch_image", targets, { concurrency: table.concurrency })) message.success(`${targets.length} 个任务已加入并发队列`);
-    }, [pageUi, projectId, connectionsRef, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, modal, nodesRef, setConnections, setNodes]);
+        if (enqueueGenerationBatch(nodeId, "batch_image", targets, { concurrency: latestTable.concurrency })) message.success(`${targets.length} 个任务已加入并发队列`);
+    }, [pageUi, connectionsRef, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, modal, nodesRef, setConnections, setNodes]);
 
     return { addReferenceColumn, addRow, fillRowsFromConnections, generateRows, moveReferenceCell, patchTable, removeReferenceColumn, removeRow, reorderReferenceColumns, syncRowsFromConnections, updateRow };
 }

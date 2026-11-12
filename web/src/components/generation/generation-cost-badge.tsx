@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Focusable } from "react-aria-components";
 
 import { Tooltip } from "@/components/ui/base/tooltip";
@@ -18,38 +18,38 @@ export function useGenerationCostEstimate(
 ): CostEstimate | null {
     const targetKey = useMemo(() => (target ? JSON.stringify(target) : ""), [target]);
     const debounceMs = options?.debounceMs ?? (target?.kind === "audio" ? 220 : 60);
-    const fetcher = options?.fetcher ?? estimateGenerationCost;
+    const fetcherRef = useRef<CostEstimateFetcher>(options?.fetcher ?? estimateGenerationCost);
+    fetcherRef.current = options?.fetcher ?? estimateGenerationCost;
     const refreshKey = options?.refreshKey ?? "";
-    const [state, setState] = useState<{ scopeKey: string; estimate: CostEstimate | null }>({ scopeKey: "", estimate: null });
-    const scopeKey = target ? `${target.kind}:${target.modelKey}:${String(refreshKey)}` : "";
+    const requestKey = targetKey ? `${targetKey}::${String(refreshKey)}` : "";
+    const [state, setState] = useState<{ requestKey: string; estimate: CostEstimate | null }>({ requestKey: "", estimate: null });
 
     useEffect(() => {
-        if (!targetKey) {
-            setState({ scopeKey: "", estimate: null });
+        if (!targetKey || !requestKey) {
+            setState({ requestKey: "", estimate: null });
             return;
         }
         const parsed = JSON.parse(targetKey) as CostEstimateTarget;
-        const nextScopeKey = `${parsed.kind}:${parsed.modelKey}:${String(refreshKey)}`;
         const controller = new AbortController();
         const timer = setTimeout(() => {
-            void fetcher([parsed], controller.signal).then(
-                (result) => {
+            void fetcherRef.current([parsed], controller.signal)
+                .then((result) => {
                     if (controller.signal.aborted) return;
-                    setState({ scopeKey: nextScopeKey, estimate: result.items[0] ?? null });
-                },
-                () => {
+                    const first = Array.isArray(result?.items) ? (result.items[0] ?? null) : null;
+                    setState({ requestKey, estimate: first });
+                })
+                .catch(() => {
                     if (controller.signal.aborted) return;
-                    setState({ scopeKey: nextScopeKey, estimate: null });
-                },
-            );
+                    setState({ requestKey, estimate: null });
+                });
         }, debounceMs);
         return () => {
             clearTimeout(timer);
             controller.abort();
         };
-    }, [debounceMs, fetcher, refreshKey, targetKey]);
+    }, [debounceMs, requestKey, targetKey]);
 
-    if (!targetKey || state.scopeKey !== scopeKey) return null;
+    if (!requestKey || state.requestKey !== requestKey) return null;
     return state.estimate;
 }
 
@@ -66,7 +66,6 @@ export function GenerationCostLabel({
         <Tooltip title={display.tooltip}>
             <Focusable>
                 <span
-                    role="button"
                     tabIndex={0}
                     data-testid="generation-cost-badge"
                     aria-label={`价格预估：${display.tooltip}`}
