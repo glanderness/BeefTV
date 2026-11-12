@@ -34,9 +34,9 @@ type CreatedNode struct {
 	Type  string `json:"type"`
 }
 
-// normalizeNodeTitle 是节点标题唯一的规范化入口：校验、去重、重名判定都只看它。
+// NormalizeNodeTitle 是节点标题唯一的规范化入口：校验、去重、重名判定都只看它。
 // 文档里保存的仍是调用方给出的原标题（领域不改写用户内容）。
-func normalizeNodeTitle(title string) string {
+func NormalizeNodeTitle(title string) string {
 	return strings.TrimSpace(title)
 }
 
@@ -145,7 +145,7 @@ func createCanvasNodes(doc map[string]any, drafts []NodeDraft) ([]CreatedNode, e
 	for _, rawNode := range nodes {
 		if node, ok := rawNode.(map[string]any); ok {
 			if title, _ := node["title"].(string); title != "" {
-				existingTitles[normalizeNodeTitle(title)] = true
+				existingTitles[NormalizeNodeTitle(title)] = true
 			}
 			position, _ := node["position"].(map[string]any)
 			x, _ := position["x"].(float64)
@@ -163,7 +163,7 @@ func createCanvasNodes(doc map[string]any, drafts []NodeDraft) ([]CreatedNode, e
 	}
 	seen := map[string]bool{}
 	for _, draft := range drafts {
-		title := normalizeNodeTitle(draft.Title)
+		title := NormalizeNodeTitle(draft.Title)
 		if title == "" {
 			return nil, kernel.NewAppError(http.StatusBadRequest, "每个节点都需要标题")
 		}

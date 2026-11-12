@@ -97,6 +97,8 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 局部重生成镜头、剪辑不变时，可用 `refreshNodeIds` 代替 `timeline`：只将已有片段的媒体引用更新为指定节点当前绑定的资源，保留其余字段，包括字幕正文和起止时间、旁白、裁剪、音量、轨道、输出规格及编辑器扩展字段。两个参数不能同时传入。`canvas.timeline.update` 面向模型的参数结构不携带根级 `oneOf`，`timeline` 与 `refreshNodeIds` 的互斥由服务端校验。节点未入轨、资源不属于当前画布、替换素材不足原裁剪长度或画布版本已变化时，整次操作拒绝，不自动缩短片段或重排字幕。助手的 `canvas_timeline_deliver` 同样接收 `refreshNodeIds`，沿用既有更新、渲染、绑定与工程导出回执。
 
+操作 `canvas.timeline.deliver` 把外部 Agent 的一键成片收敛为一次写入：接收 `canvasId`、`expectedRevision`、可选的 `timeline` 或 `refreshNodeIds`、渲染 `options` 和成片 `title`，在同一事务里保存时间线、按标题去重创建成片节点、创建本地渲染任务，并在任务输入里登记「完成后绑定到该节点」。调用立即返回 `renderTaskId`、`resultNodeId`、`timelineRevision` 和最终画布 `revision`；随后用 `task.get` 查询、等渲染结束（已有 `task.wait` 时可用它等待），后台交付会把成片自动绑定到该节点，无需再调 `canvas.task.bind`。保存、建节点和创建任务任一步失败都整次回滚，画布不留下半成品；同一 `operationId` 重试返回原来的任务和节点，不重复渲染，换新操作编号才会重新发起。若渲染任务本身随后失败，已创建的成片节点会保留为空节点，调用方可删除该节点后用新的操作编号重新交付。导出工程仍单独调用 `canvas.project.export`。
+
 操作 `canvas.project.export` 接收 `canvasId`、`expectedRevision` 和稳定 `operationId`，将已保存的画布与当前工作区已就绪资源导出为 `infinite-canvas` v4 工程 ZIP。返回 `resourceId`、`storageKey`、`fileName`、`mimeType`、`bytes` 和 `sourceRevision`，可通过既有资源下载接口读取；同一操作重试返回原资源。导出不调用付费模型，不创建渲染任务，仍计入本地文件保存额度。单画布导出不携带源文件夹。仅保存在浏览器中的画板和未保存素材须通过画布现有完整备份入口导出；服务端遇到这些引用会明确失败，不生成残缺工程包。
 
 同一工作区成功的 `canvas.project.export` 回执保留其工程包资源引用，后台不会将它当作无主资源清理。引用校验同时发生在清理快照与最终删除事务中；失败回执、其他工作区和不匹配的资源编号不保留文件。

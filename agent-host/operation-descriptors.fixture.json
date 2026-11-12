@@ -1449,6 +1449,194 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.timeline.deliver",
+    "summary": "一次完成保存时间线、开始免费本地渲染并建好自动绑定的成片节点",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "description": "timeline 与 refreshNodeIds 至多提供一个；都不提供时渲染当前已保存的时间线。保存、创建成片节点和开始渲染一次提交，失败不留下半成品。返回后用 task.get 查询，等渲染结束（有 task.wait 时可用它等待），成片节点会自动绑定；导出工程请调用 canvas.project.export。",
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "options": {
+          "properties": {
+            "burnSubtitles": {
+              "type": "boolean"
+            },
+            "fps": {
+              "type": "integer"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "sampleRate": {
+              "type": "integer"
+            },
+            "width": {
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "refreshNodeIds": {
+          "description": "仅刷新指定节点素材引用（与 timeline 二选一）",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeline": {
+          "description": "时间线 v2（毫秒）；可见 video/image 不可重叠",
+          "properties": {
+            "clips": {
+              "items": {
+                "properties": {
+                  "durationMs": {
+                    "type": "integer"
+                  },
+                  "fadeInMs": {
+                    "type": "integer"
+                  },
+                  "fadeOutMs": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "video",
+                      "image",
+                      "audio",
+                      "subtitle"
+                    ],
+                    "type": "string"
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "sourceStartMs": {
+                    "type": "integer"
+                  },
+                  "startMs": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "trackId": {
+                    "type": "string"
+                  },
+                  "volume": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "trackId",
+                  "startMs",
+                  "durationMs"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "durationMs": {
+              "type": "integer"
+            },
+            "output": {
+              "properties": {
+                "burnSubtitles": {
+                  "type": "boolean"
+                },
+                "fps": {
+                  "type": "integer"
+                },
+                "height": {
+                  "type": "integer"
+                },
+                "width": {
+                  "type": "integer"
+                }
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "tracks": {
+              "items": {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "video",
+                      "audio",
+                      "subtitle",
+                      "text",
+                      "image"
+                    ],
+                    "type": "string"
+                  },
+                  "muted": {
+                    "type": "boolean"
+                  },
+                  "visible": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "version": {
+              "enum": [
+                2
+              ],
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "tracks",
+            "clips",
+            "durationMs"
+          ],
+          "type": "object"
+        },
+        "title": {
+          "description": "成片节点标题，默认「成片」；重名时自动加序号",
+          "maxLength": 120,
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "expectedRevision",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.timeline.render",
     "summary": "免费本地渲染已保存的时间线",
     "readOnly": false,
