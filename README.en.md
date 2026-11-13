@@ -43,11 +43,11 @@
 
 ## Recent updates
 
+- **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — Add live balances and online top-ups, refine generation cost estimates, and upgrade DeepSeek Harness collaboration and canvas video processing.
+- **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — Add the Yinsheng Yunshu Yisuan provider plugin, redesign plugin and account settings, and improve canvas previews, generation errors, and retries.
+- **[v2.2.0](https://github.com/glanderness/BeefTV/releases/tag/v2.2.0)** — Add one-click Claude Code and Codex integration, expand provider presets and skill scripting, and improve the assistant, video generation, and voiceovers.
+- **[v2.1.6](https://github.com/glanderness/BeefTV/releases/tag/v2.1.6)** — Move RunningHub and ComfyUI to marketplace plugins, improve plugin management, and add manual storyboard tables, prompt presets, and script imports.
 - **[v2.1.5](https://github.com/glanderness/BeefTV/releases/tag/v2.1.5)** — Add quick access to plugins and one-click LL2 model service setup.
-- **[v2.1.4](https://github.com/glanderness/BeefTV/releases/tag/v2.1.4)** — Bundle the plugin marketplace and character replacement plugin; add generation cost estimates and improve video reference controls.
-- **[v2.1.3](https://github.com/glanderness/BeefTV/releases/tag/v2.1.3)** — Launch plugin extensions, improve large-canvas saving, and refine generation errors and proxy compatibility.
-- **[v2.1.2](https://github.com/glanderness/BeefTV/releases/tag/v2.1.2)** — Add project and canvas backup exports; improve video previews, storyboard workflows, and cross-client synchronization.
-- **[v2.1.1](https://github.com/glanderness/BeefTV/releases/tag/v2.1.1)** — Add Seedance 2.5 preview-to-HD generation and video editing; improve assistant caching and external Agent integration.
 
 [All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
 

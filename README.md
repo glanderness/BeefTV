@@ -43,11 +43,11 @@
 
 ## 最近更新
 
+- **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — 上线实时余额与在线充值，完善生成费用预估，升级 DeepSeek Harness 协同与画布视频处理。
+- **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — 新增银盛云枢壹算渠道插件，改版插件与账户设置，改善画布预览及生成报错与重试。
+- **[v2.2.0](https://github.com/glanderness/BeefTV/releases/tag/v2.2.0)** — 新增 Claude Code 与 Codex 一键接入，扩展模型服务预设与技能脚本能力，优化助手、视频生成与配音。
+- **[v2.1.6](https://github.com/glanderness/BeefTV/releases/tag/v2.1.6)** — RunningHub 与 ComfyUI 转为市场插件，完善插件管理，新增手动分镜表、提示词预设与剧本导入。
 - **[v2.1.5](https://github.com/glanderness/BeefTV/releases/tag/v2.1.5)** — 新增插件快捷入口与 LL2 模型服务一键连接。
-- **[v2.1.4](https://github.com/glanderness/BeefTV/releases/tag/v2.1.4)** — 上线随包插件市场与角色替换插件，新增生成费用预估并优化视频参考操作。
-- **[v2.1.3](https://github.com/glanderness/BeefTV/releases/tag/v2.1.3)** — 开放插件扩展生态，提升大画布保存性能，完善生成报错与代理兼容。
-- **[v2.1.2](https://github.com/glanderness/BeefTV/releases/tag/v2.1.2)** — 新增项目与画布备份导出，改善视频预览、分镜工作流与跨端同步。
-- **[v2.1.1](https://github.com/glanderness/BeefTV/releases/tag/v2.1.1)** — 新增 Seedance 2.5 样片转高清及视频编辑能力，优化助手缓存与外部 Agent 接入。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
