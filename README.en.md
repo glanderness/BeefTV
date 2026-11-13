@@ -58,20 +58,20 @@ Thank you to the partners, sponsors, and customers supporting BeefTV's continued
 <table>
   <tr><th width="26%" align="center">Acknowledgements</th><th align="center">About</th></tr>
   <tr>
-    <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
-    <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises. Special thanks to Tencent Cloud for its compute resources and ecosystem support for this project.</td>
-  </tr>
-  <tr>
-    <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus icon"><br><strong>BytePlus</strong></td>
-    <td><a href="https://www.byteplus.com/en">BytePlus</a> draws on ByteDance's technology to offer generative AI, cloud infrastructure, and audio and video solutions to enterprises worldwide. Special thanks to the BytePlus Overseas Incubator for its compute resources and ecosystem support for this project.</td>
-  </tr>
-  <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-ll2.png" width="32" height="32" alt="ll2.cn icon"><br><strong>ll2.cn</strong></td>
     <td><a href="https://hub.ll2.cn?p=rw6t">ll2.cn</a> | Self-operated compute infrastructure · Direct official contracts at wholesale rates. MiniMax-H3 at CNY 0.05/second (self-hosted, full-capability 768P); deepseek-v4.1-flash at 40% of the official price; Seedance series from 30% off; super-resolution at CNY 0.018/second; Vega series from 40% off.</td>
   </tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-ysdui.png" width="32" height="32" alt="Yinsheng Yunshu Yisuan icon"><br><strong>银盛·云枢壹算</strong></td>
     <td><a href="https://www.ysdui.cn/">Yinsheng Yunshu Yisuan</a> is a one-stop enterprise AI services platform under Yinsheng Communications Co., Ltd., providing compute resources and AI product solutions for businesses. Special thanks to Yinsheng Yunshu Yisuan for its compute resources and ecosystem support for this project.</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
+    <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises. Special thanks to Tencent Cloud for its compute resources and ecosystem support for this project.</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus icon"><br><strong>BytePlus</strong></td>
+    <td><a href="https://www.byteplus.com/en">BytePlus</a> draws on ByteDance's technology to offer generative AI, cloud infrastructure, and audio and video solutions to enterprises worldwide. Special thanks to the BytePlus Overseas Incubator for its compute resources and ecosystem support for this project.</td>
   </tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-pccooler.png" width="120" alt="PCCOOLER logo"><br><strong>PCCOOLER</strong></td>
