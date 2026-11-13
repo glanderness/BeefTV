@@ -3,18 +3,24 @@
 
 import {
   DEFAULT_BASE_URL,
+  YSDUI_CHANNEL_ICON,
   YSDUI_CHANNEL_ID,
   YSDUI_CHANNEL_NAME,
+  YSDUI_LOGO_SVG_SPEC,
   YSDUI_PRESET_MODELS,
+  YSDUI_PROVIDER_INTRO,
   buildYsduiModelChannel,
   upgradeYsduiModelProfile,
 } from "./presets.js";
 
 export {
   DEFAULT_BASE_URL,
+  YSDUI_CHANNEL_ICON,
   YSDUI_CHANNEL_ID,
   YSDUI_CHANNEL_NAME,
+  YSDUI_LOGO_SVG_SPEC,
   YSDUI_PRESET_MODELS,
+  YSDUI_PROVIDER_INTRO,
   buildYsduiModelChannel,
   upgradeYsduiModelProfile,
 };
@@ -239,7 +245,50 @@ function createYsduiSettingsPanel(host) {
           },
           h(
             "div",
-            { style: { fontWeight: 600, fontSize: "14px" } },
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontWeight: 600,
+                fontSize: "14px",
+              },
+            },
+            h(
+              "svg",
+              {
+                width: 20,
+                height: 20,
+                viewBox: YSDUI_LOGO_SVG_SPEC.viewBox,
+                fill: "none",
+                "aria-hidden": true,
+                style: { flexShrink: 0 },
+              },
+              h("rect", {
+                width: 1024,
+                height: 1024,
+                rx: YSDUI_LOGO_SVG_SPEC.backgroundRadius,
+                fill: YSDUI_LOGO_SVG_SPEC.backgroundFill,
+              }),
+              h(
+                "g",
+                { transform: YSDUI_LOGO_SVG_SPEC.emblemTransform },
+                h("circle", {
+                  cx: 512,
+                  cy: 512,
+                  r: YSDUI_LOGO_SVG_SPEC.circleRadius,
+                  fill: YSDUI_LOGO_SVG_SPEC.circleFill,
+                }),
+                h("path", {
+                  d: YSDUI_LOGO_SVG_SPEC.circuitPath,
+                  fill: "none",
+                  stroke: YSDUI_LOGO_SVG_SPEC.backgroundFill,
+                  strokeWidth: YSDUI_LOGO_SVG_SPEC.circuitStrokeWidth,
+                  strokeLinecap: "round",
+                  strokeLinejoin: "round",
+                }),
+              ),
+            ),
             "银盛云枢壹算 (OneAxis) · BYOK 一键接入",
           ),
           h(
@@ -261,9 +310,21 @@ function createYsduiSettingsPanel(host) {
           "p",
           {
             style: {
+              margin: "0 0 4px",
+              fontSize: "12px",
+              color: "var(--user-ink-muted, var(--muted-foreground))",
+              lineHeight: 1.6,
+            },
+          },
+          YSDUI_PROVIDER_INTRO,
+        ),
+        h(
+          "p",
+          {
+            style: {
               margin: 0,
               fontSize: "12px",
-              opacity: 0.75,
+              color: "var(--user-ink-muted, var(--muted-foreground))",
               lineHeight: 1.6,
             },
           },

@@ -3,6 +3,20 @@
 export const DEFAULT_BASE_URL = "https://tokenhub.ysdui.cn";
 export const YSDUI_CHANNEL_ID = "ysdui";
 export const YSDUI_CHANNEL_NAME = "银盛云枢壹算";
+export const YSDUI_CHANNEL_ICON = "Ysdui";
+export const YSDUI_PROVIDER_INTRO =
+  "银盛通信有限公司成立于2002年，注册资本5亿元，国家高新技术企业。银盛·云枢壹算是银盛通信有限公司旗下企业级一站式AI服务平台，为企业提供算力支持以及AI产品解决方案。";
+export const YSDUI_LOGO_SVG_SPEC = {
+  viewBox: "0 0 1024 1024",
+  backgroundFill: "#005CD2",
+  backgroundRadius: 220,
+  emblemTransform: "translate(512 512) scale(0.93) translate(-512 -512)",
+  circleRadius: 457,
+  circleFill: "#FFFFFF",
+  circuitPath:
+    "M512 40V285H325L227 436L327 591H616M512 984V739H699L797 588L697 433H408",
+  circuitStrokeWidth: 94,
+};
 
 const DEFAULT_VIDEO_REFERENCES = {
   promptMaxChars: 2000,

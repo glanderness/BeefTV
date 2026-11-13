@@ -1,12 +1,39 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { Button, Input, Modal } from "antd";
 import { Cpu, Search, X } from "lucide-react";
 
 import { toc } from "@lobehub/icons/es/toc";
 
 import { cn } from "@/lib/utils";
+import { YSDUI_CHANNEL_ICON, YSDUI_CHANNEL_NAME, YSDUI_LOGO_SVG_SPEC } from "../../../plugin-packages/beeftv-plugin-ysdui/client/index.js";
 
 type LobeIconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
+
+const YsduiLogo: LobeIconComponent = memo(({ size = 18, className, style, ...rest }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox={YSDUI_LOGO_SVG_SPEC.viewBox}
+        fill="none"
+        className={className}
+        style={{ flex: "none", lineHeight: 1, ...style }}
+        {...rest}
+    >
+        <rect width="1024" height="1024" rx={YSDUI_LOGO_SVG_SPEC.backgroundRadius} fill={YSDUI_LOGO_SVG_SPEC.backgroundFill} />
+        <g transform={YSDUI_LOGO_SVG_SPEC.emblemTransform}>
+            <circle cx="512" cy="512" r={YSDUI_LOGO_SVG_SPEC.circleRadius} fill={YSDUI_LOGO_SVG_SPEC.circleFill} />
+            <path
+                d={YSDUI_LOGO_SVG_SPEC.circuitPath}
+                fill="none"
+                stroke={YSDUI_LOGO_SVG_SPEC.backgroundFill}
+                strokeWidth={YSDUI_LOGO_SVG_SPEC.circuitStrokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </g>
+    </svg>
+));
+YsduiLogo.displayName = "YsduiLogo";
 
 // 只允许按需加载 Mono 组件。这里不能使用 eager glob：模型 Logo 目录有数百个 provider 模块，
 // eager 会让每次进入工作区都发起数百个开发模块请求，即使用户从未打开 Logo 选择器。
@@ -16,12 +43,15 @@ const iconLoaders = Object.fromEntries(
         .map(([path, loader]) => [path.match(/\/([^/]+)\/components\/Mono\.js$/)?.[1], loader])
         .filter((entry): entry is [string, () => Promise<LobeIconComponent>] => Boolean(entry[0] && entry[1])),
 ) as Record<string, () => Promise<LobeIconComponent>>;
-const iconRegistry = new Map<string, LobeIconComponent>();
+const iconRegistry = new Map<string, LobeIconComponent>([[YSDUI_CHANNEL_ICON, YsduiLogo]]);
 const iconLoadPromises = new Map<string, Promise<LobeIconComponent | undefined>>();
-const iconOptions = toc
-    .filter((item) => item.group === "model" || item.group === "provider" || item.group === "application")
-    .map((item) => ({ id: item.id, title: item.fullTitle || item.title }))
-    .filter((item) => Boolean(iconLoaders[item.id]));
+const iconOptions = [
+    { id: YSDUI_CHANNEL_ICON, title: YSDUI_CHANNEL_NAME },
+    ...toc
+        .filter((item) => item.group === "model" || item.group === "provider" || item.group === "application")
+        .map((item) => ({ id: item.id, title: item.fullTitle || item.title }))
+        .filter((item) => Boolean(iconLoaders[item.id])),
+];
 
 function loadIcon(icon?: string) {
     if (!icon) return Promise.resolve(undefined);
@@ -46,13 +76,13 @@ export function ModelLogo({ icon, size = 18, className }: { icon?: string; size?
     const [Icon, setIcon] = useState<LobeIconComponent | undefined>(() => (icon ? iconRegistry.get(icon) : undefined));
     useEffect(() => {
         let cancelled = false;
-        setIcon(icon ? iconRegistry.get(icon) : undefined);
-        if (!icon || !iconLoaders[icon])
+        setIcon(() => (icon ? iconRegistry.get(icon) : undefined));
+        if (!icon || iconRegistry.has(icon) || !iconLoaders[icon])
             return () => {
                 cancelled = true;
             };
         void loadIcon(icon).then((loaded) => {
-            if (!cancelled) setIcon(loaded);
+            if (!cancelled) setIcon(() => loaded);
         });
         return () => {
             cancelled = true;
