@@ -49,6 +49,26 @@ export function focusMentionEditorSurface(editor: HTMLElement | null, textarea: 
     textarea.scrollTop = scrollTop;
 }
 
+export function createEditableFocusScheduler(
+    scheduleFrame: (callback: FrameRequestCallback) => number = (callback) => requestAnimationFrame(callback),
+    cancelFrame: (handle: number) => void = (handle) => cancelAnimationFrame(handle),
+) {
+    let pendingFrame: number | null = null;
+    const cancel = () => {
+        if (pendingFrame === null) return;
+        cancelFrame(pendingFrame);
+        pendingFrame = null;
+    };
+    const schedule = (task: () => void) => {
+        cancel();
+        pendingFrame = scheduleFrame(() => {
+            pendingFrame = null;
+            task();
+        });
+    };
+    return { schedule, cancel };
+}
+
 export function selectEditableReferenceToken(editor: HTMLElement, token: string, fallbackOffset: number) {
     const chip = [...editor.querySelectorAll<HTMLElement>("[data-mention-token]")].find((item) => item.dataset.mentionToken === token);
     editor.focus({ preventScroll: true });
@@ -219,7 +239,14 @@ export function renderEditableContent(editor: HTMLElement, value: string, refere
         }
         return chip;
     });
+    if (value.endsWith("\n")) nodes.push(createEditorSentinelBr());
     editor.replaceChildren(...nodes);
+}
+
+export function createEditorSentinelBr() {
+    const sentinel = document.createElement("br");
+    sentinel.dataset.mentionSentinel = "true";
+    return sentinel;
 }
 
 function findNextMentionIndex(value: string, tokens: string[], fromIndex: number) {
@@ -232,24 +259,72 @@ function findNextMentionIndex(value: string, tokens: string[], fromIndex: number
 }
 
 export function serializeEditableValue(root: HTMLElement) {
-    return serializeNodeList(root.childNodes).replace(/\u00a0/g, " ");
+    return serializeNodeList(root.childNodes, root).replace(/\u00a0/g, " ").replace(/\uFEFF/g, "");
 }
 
-function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[]) {
+function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[], root: Node) {
     let text = "";
     nodes.forEach((node) => {
-        text += serializeNode(node);
+        text += serializeNode(node, root);
     });
     return text;
 }
 
-function serializeNode(node: ChildNode): string {
+function serializeNode(node: ChildNode, root: Node): string {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
     if (!(node instanceof HTMLElement)) return "";
-    const token = node.dataset.mentionToken;
+    const token = node.dataset.mentionToken || node.dataset.referenceToken;
     if (token) return token;
-    if (node.tagName === "BR") return "\n";
-    return serializeNodeList(node.childNodes);
+    if (node.tagName === "BR") return isEditorSentinelBr(root, node) ? "" : "\n";
+    return serializeNodeList(node.childNodes, root);
+}
+
+export function isEditorSentinelBr(root: Node, node: Node | null | undefined): boolean {
+    return Boolean(
+        node instanceof HTMLElement
+            && node.tagName === "BR"
+            && (node.dataset.mentionSentinel === "true" || (node.parentNode === root && node === root.lastChild)),
+    );
+}
+
+export function pruneDisplacedSentinelBrs(root: HTMLElement): boolean {
+    let removed = false;
+    for (const child of Array.from(root.childNodes)) {
+        if (child instanceof HTMLElement && child.tagName === "BR" && child.dataset.mentionSentinel === "true" && child !== root.lastChild) {
+            if (typeof child.remove === "function") child.remove();
+            else root.removeChild(child);
+            removed = true;
+        }
+    }
+    return removed;
+}
+
+export function normalizeCaretBeforeTrailingSentinelBr(root: HTMLElement | null) {
+    if (!root || !isEditorSentinelBr(root, root.lastChild)) return;
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed || range.startContainer !== root || range.startOffset !== root.childNodes.length) return;
+    range.setStart(root, Math.max(0, root.childNodes.length - 1));
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+export function shouldPreventCollapsedStartBackspace(selection: EditableSelection | null): boolean {
+    return Boolean(selection && selection.start === 0 && selection.end === 0);
+}
+
+export function shouldPreventEditorStartBackspace(editor: HTMLElement | null): boolean {
+    if (!editor) return false;
+    const selection = getEditableSelection(editor);
+    if (selection) return shouldPreventCollapsedStartBackspace(selection);
+    return serializeEditableValue(editor) === "";
+}
+
+function clampDomPointOffset(node: Node, offset: number): number {
+    const maxOffset = node.nodeType === Node.TEXT_NODE ? (node.textContent?.length || 0) : node.childNodes.length;
+    return Math.min(Math.max(0, offset), maxOffset);
 }
 
 export function getEditableSelection(root: HTMLElement | null): EditableSelection | null {
@@ -258,65 +333,70 @@ export function getEditableSelection(root: HTMLElement | null): EditableSelectio
     if (!selection || !selection.rangeCount) return null;
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
-    const start = offsetForPoint(root, range.startContainer, range.startOffset);
-    const end = offsetForPoint(root, range.endContainer, range.endOffset);
+    const start = offsetForPoint(root, range.startContainer, range.startOffset, root);
+    const end = offsetForPoint(root, range.endContainer, range.endOffset, root);
     return start <= end ? { start, end } : { start: end, end: start };
 }
 
-function offsetForPoint(root: Node, target: Node, targetOffset: number): number {
-    if (root === target) {
-        if (root.nodeType === Node.TEXT_NODE) return targetOffset;
-        return Array.from(root.childNodes)
+function offsetForPoint(current: Node, target: Node, targetOffset: number, editorRoot: Node): number {
+    if (current === target) {
+        if (current.nodeType === Node.TEXT_NODE) return targetOffset;
+        return Array.from(current.childNodes)
             .slice(0, targetOffset)
-            .reduce((offset, node) => offset + plainTextLength(node), 0);
+            .reduce((offset, node) => offset + plainTextLength(node, editorRoot), 0);
     }
     let offset = 0;
-    for (const child of Array.from(root.childNodes)) {
-        if (child === target || child.contains(target)) return offset + offsetForPoint(child, target, targetOffset);
-        offset += plainTextLength(child);
+    for (const child of Array.from(current.childNodes)) {
+        if (child === target || child.contains(target)) return offset + offsetForPoint(child, target, targetOffset, editorRoot);
+        offset += plainTextLength(child, editorRoot);
     }
     return offset;
 }
 
 export function setEditableSelection(root: HTMLElement, offset: number) {
     const range = document.createRange();
-    const point = pointForOffset(root, Math.max(0, offset));
-    range.setStart(point.node, point.offset);
+    const point = pointForOffset(root, Math.max(0, offset), root);
+    range.setStart(point.node, clampDomPointOffset(point.node, point.offset));
     range.collapse(true);
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
 }
 
-function pointForOffset(root: Node, offset: number): { node: Node; offset: number } {
-    if (root.nodeType === Node.TEXT_NODE) return { node: root, offset: Math.min(offset, root.textContent?.length || 0) };
+function pointForOffset(current: Node, offset: number, editorRoot: Node = current): { node: Node; offset: number } {
+    if (current.nodeType === Node.TEXT_NODE) return { node: current, offset: Math.min(offset, current.textContent?.length || 0) };
     let remaining = offset;
-    const children = Array.from(root.childNodes);
+    const children = Array.from(current.childNodes);
     for (let index = 0; index < children.length; index += 1) {
         const child = children[index];
-        const length = plainTextLength(child);
+        if (isEditorSentinelBr(editorRoot, child)) {
+            if (child === editorRoot.lastChild) return { node: current, offset: index };
+            continue;
+        }
+        const length = plainTextLength(child, editorRoot);
         if (remaining > length) {
             remaining -= length;
             continue;
         }
-        if (isMentionElement(child)) return { node: root, offset: remaining <= length / 2 ? index : index + 1 };
-        return pointForOffset(child, remaining);
+        if (isMentionElement(child)) return { node: current, offset: remaining <= length / 2 ? index : index + 1 };
+        if (child instanceof HTMLElement && child.tagName === "BR") return { node: current, offset: remaining === 0 ? index : index + 1 };
+        return pointForOffset(child, remaining, editorRoot);
     }
-    return { node: root, offset: children.length };
+    return { node: current, offset: children.length };
 }
 
-function plainTextLength(node: Node): number {
+function plainTextLength(node: Node, editorRoot?: Node): number {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length || 0;
     if (node instanceof HTMLElement) {
-        const token = node.dataset.mentionToken;
+        const token = node.dataset.mentionToken || node.dataset.referenceToken;
         if (token) return token.length;
-        if (node.tagName === "BR") return 1;
+        if (node.tagName === "BR") return editorRoot && isEditorSentinelBr(editorRoot, node) ? 0 : 1;
     }
-    return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child), 0);
+    return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child, editorRoot), 0);
 }
 
 function isMentionElement(node: Node): node is HTMLElement {
-    return node instanceof HTMLElement && Boolean(node.dataset.mentionToken);
+    return node instanceof HTMLElement && Boolean(node.dataset.mentionToken || node.dataset.referenceToken);
 }
 
 export function mentionMenuPosition(anchor: HTMLElement, cursorOffset: number, preferredWidth: number) {
@@ -337,9 +417,9 @@ export function mentionMenuPosition(anchor: HTMLElement, cursorOffset: number, p
 
 export function mentionCaretRect(anchor: HTMLElement, cursorOffset: number): MentionAnchorRect {
     if (anchor instanceof HTMLTextAreaElement) return textareaCaretRect(anchor, cursorOffset);
-    const point = pointForOffset(anchor, cursorOffset);
+    const point = pointForOffset(anchor, Math.max(0, cursorOffset), anchor);
     const range = document.createRange();
-    range.setStart(point.node, point.offset);
+    range.setStart(point.node, clampDomPointOffset(point.node, point.offset));
     range.collapse(true);
     const rangeRect = range.getClientRects()[0] || range.getBoundingClientRect();
     if (rangeRect && (rangeRect.height || rangeRect.width)) return rangeRect;
