@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
+import * as ReactNamespace from "react";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { applyFetchedChannelModelCatalog } from "../src/lib/channel-model-catalog";
-import { MODEL_SERVICE_PRESETS, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, ysduiProtocolsAvailable, pluginServices, mergeSavedServiceChannel, presetCatalogFor, serviceConnectionError, serviceModelProfile, servicePresetFor } from "../src/lib/model-service-presets";
+import { ModelLogo } from "../src/components/model-logo";
+import { MODEL_SERVICE_PRESETS, builtinPresetIntro, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, ysduiProtocolsAvailable, pluginServices, mergeSavedServiceChannel, presetCatalogFor, serviceConnectionError, serviceModelProfile, servicePresetFor } from "../src/lib/model-service-presets";
 import { modelConnectionResultDetail, testChannelModelConnection } from "../src/lib/model-connection-test";
 import { modelConfigChannelStatusLabel } from "../src/pages/settings/channel-settings-pane";
 import { backendProviderConfig } from "../src/services/api/generation-task";
@@ -243,6 +247,15 @@ test("Ysdui service preset resolves all 4 Ysdui protocols when plugin is enabled
 
     const channel = createServicePresetChannel("ysdui", "ysdui-test", ysduiProtocols);
     const catalog = presetCatalogFor("ysdui");
+    const ysduiPreset = MODEL_SERVICE_PRESETS.find((item) => item.id === "ysdui");
+    expect(ysduiPreset?.icon).toBe("Ysdui");
+    expect(builtinPresetIntro("ysdui")).toBe("银盛通信有限公司成立于2002年，注册资本5亿元，国家高新技术企业。银盛·云枢壹算是银盛通信有限公司旗下企业级一站式AI服务平台，为企业提供算力支持以及AI产品解决方案。");
+    expect(builtinPresetIntro("ll2")).toBe("");
+    const renderedLogo = renderToStaticMarkup(createElement(ModelLogo, { icon: ysduiPreset?.icon, size: 24 }));
+    expect(renderedLogo).toContain('viewBox="0 0 1024 1024"');
+    expect(renderedLogo).toContain('fill="#005CD2"');
+    expect(renderedLogo).not.toContain("<mask");
+    expect(renderedLogo).not.toContain("<clipPath");
     expect(servicePresetFor(channel)).toBe("ysdui");
     expect(channel.name).toBe("银盛云枢壹算");
     expect(channel.baseUrl).toBe("https://tokenhub.ysdui.cn");
@@ -534,4 +547,18 @@ test("upgradeYsduiModelProfile preserves server-versioned capabilities and keeps
     const migrated = upgradeYsduiModelProfile(userVideoProfile);
     expect(migrated.capabilityConfig.video.resolutions).toEqual(["1080P"]);
     expect(migrated.capabilityConfig.video.defaultResolution).toBe("1080P");
+
+    const ysduiClient = await import("../../plugin-packages/beeftv-plugin-ysdui/client/index.js");
+    let contributedComponent: ReactNamespace.ComponentType<Record<string, unknown>> | null = null;
+    ysduiClient.activate({
+        React: ReactNamespace,
+        contribute: (_slot: string, payload: { component: ReactNamespace.ComponentType<Record<string, unknown>> }) => {
+            contributedComponent = payload.component;
+            return () => undefined;
+        },
+    });
+    expect(contributedComponent).not.toBeNull();
+    const panelMarkup = renderToStaticMarkup(createElement(contributedComponent!, {}));
+    expect(panelMarkup).toContain('fill="#005CD2"');
+    expect(panelMarkup).toContain("银盛通信有限公司成立于2002年，注册资本5亿元，国家高新技术企业。");
 });
