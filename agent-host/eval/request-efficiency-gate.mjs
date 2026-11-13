@@ -5,7 +5,8 @@
 // 2. 一个会话内头部 system 文本逐字节不变，且仅含稳定内容（<instructions> 在前、<beeftv_skill_catalog> 在后，无其他段落）；
 // 3. 每次请求末尾均带有非 system 的瞬态上下文（含 <beeftv_studio>）；
 // 4. S1–S11 中至少 95% 的相邻请求对公共前缀覆盖前一次请求除末尾瞬态上下文外的全部内容（100% 字节一致）；
-// 5. 记录头部 system + 工具定义的字符数并设只降不升上限（--update 仅允许收紧，不允许调高）。
+// 5. 记录头部 system + 工具定义的字符数并设上限。--update 只收紧；功能确实需要变大时用
+//    --raise "原因" 调到实测值，原因记进预算文件的 raises，和改动一起评审。
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -78,6 +79,8 @@ export function analyzeCapturedRequests(
   let maxHeaderChars = 0;
   let maxToolsChars = 0;
   let maxHeaderPlusToolsChars = 0;
+  // 每个工具定义的字符数（取所有请求里的最大值），超限时用来说出是哪个工具变大了。
+  const toolChars = {};
 
   const sessionReports = [];
   const violations = [];
@@ -133,6 +136,11 @@ export function analyzeCapturedRequests(
       if (headerChars > maxHeaderChars) maxHeaderChars = headerChars;
       if (toolsChars > maxToolsChars) maxToolsChars = toolsChars;
       if (combinedChars > maxHeaderPlusToolsChars) maxHeaderPlusToolsChars = combinedChars;
+      for (const tool of tools) {
+        const name = tool?.function?.name || tool?.name;
+        if (!name) continue;
+        toolChars[name] = Math.max(toolChars[name] || 0, JSON.stringify(tool).length);
+      }
 
       if (!leadingMsg || (leadingMsg.role !== 'system' && leadingMsg.role !== 'developer')) {
         sessionHeaderClean = false;
@@ -309,20 +317,24 @@ export function analyzeCapturedRequests(
   }
 
   if (budget) {
+    const over = [];
     if (Number.isFinite(budget.maxHeaderChars) && maxHeaderChars > budget.maxHeaderChars) {
-      violations.push(`头部 system 字符数 ${maxHeaderChars} 超过上限 ${budget.maxHeaderChars}（只许变小）`);
+      over.push(`头部 system 字符数 ${maxHeaderChars} 超过上限 ${budget.maxHeaderChars}（+${maxHeaderChars - budget.maxHeaderChars}）`);
     }
     if (Number.isFinite(budget.maxToolsChars) && maxToolsChars > budget.maxToolsChars) {
-      violations.push(`工具定义字符数 ${maxToolsChars} 超过上限 ${budget.maxToolsChars}（只许变小）`);
+      over.push(
+        `工具定义字符数 ${maxToolsChars} 超过上限 ${budget.maxToolsChars}（+${maxToolsChars - budget.maxToolsChars}）${describeToolGrowth(toolChars, budget.toolChars)}`,
+      );
     }
     if (
       Number.isFinite(budget.maxHeaderPlusToolsChars) &&
       maxHeaderPlusToolsChars > budget.maxHeaderPlusToolsChars
     ) {
-      violations.push(
-        `头部+工具定义总字符数 ${maxHeaderPlusToolsChars} 超过上限 ${budget.maxHeaderPlusToolsChars}（只许变小）`,
+      over.push(
+        `头部+工具定义总字符数 ${maxHeaderPlusToolsChars} 超过上限 ${budget.maxHeaderPlusToolsChars}（+${maxHeaderPlusToolsChars - budget.maxHeaderPlusToolsChars}）`,
       );
     }
+    if (over.length > 0) violations.push(...over, RAISE_HINT);
   }
 
   return {
@@ -335,18 +347,36 @@ export function analyzeCapturedRequests(
     maxHeaderChars,
     maxToolsChars,
     maxHeaderPlusToolsChars,
+    toolChars,
     budget: budget || null,
     sessions: sessionReports,
     violations,
   };
 }
 
+const LIMIT_KEYS = ['maxHeaderChars', 'maxToolsChars', 'maxHeaderPlusToolsChars'];
+const RAISE_HINT =
+  '体积变大如果是功能需要（例如工具多了用户要用的参数），运行 bun eval/request-efficiency-gate.mjs --raise "原因"，把上限调到实测值并写明原因；否则请把增长去掉。';
+
+// 和上次记录的各工具字符数比，列出变大最多的三个。
+function describeToolGrowth(measured, baseline) {
+  if (!baseline) return '';
+  const grown = Object.entries(measured)
+    .map(([name, chars]) => [name, chars - (baseline[name] ?? 0)])
+    .filter(([, delta]) => delta > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, delta]) => `${name} +${delta}`);
+  return grown.length > 0 ? `，变大最多：${grown.join('、')}` : '';
+}
+
+// --update：只收紧上限。各工具字符数只在实测没超限时刷新，保证它和上限对应。
 export function ratchetBudget(existingBudget, measured) {
   const clamp = (prev, curr) => {
     if (!Number.isFinite(curr) || curr <= 0) return prev;
     return Number.isFinite(prev) ? Math.min(prev, curr) : curr;
   };
-  return {
+  const next = {
     minAdjacentPrefixCoverageRatio: existingBudget?.minAdjacentPrefixCoverageRatio ?? 0.95,
     maxHeaderChars: clamp(existingBudget?.maxHeaderChars, measured.maxHeaderChars),
     maxToolsChars: clamp(existingBudget?.maxToolsChars, measured.maxToolsChars),
@@ -355,13 +385,45 @@ export function ratchetBudget(existingBudget, measured) {
       measured.maxHeaderPlusToolsChars,
     ),
   };
+  const fits = LIMIT_KEYS.every((key) => !(measured[key] > next[key]));
+  const toolChars = fits && measured.toolChars ? measured.toolChars : existingBudget?.toolChars;
+  if (toolChars) next.toolChars = toolChars;
+  if (existingBudget?.raises?.length) next.raises = existingBudget.raises;
+  return next;
+}
+
+function requireRaiseReason(reason) {
+  const why = String(reason ?? '').trim();
+  if (!why) throw new Error('调高上限需要写明原因：--raise "原因"');
+  return why;
+}
+
+// --raise "原因"：把超出的上限调到实测值，原因和新上限追加到 raises。没有超限就不改。
+export function raiseBudget(existingBudget, measured, reason) {
+  const why = requireRaiseReason(reason);
+  const raised = {};
+  for (const key of LIMIT_KEYS) {
+    const prev = existingBudget?.[key];
+    if (Number.isFinite(measured[key]) && (!Number.isFinite(prev) || measured[key] > prev)) {
+      raised[key] = measured[key];
+    }
+  }
+  if (Object.keys(raised).length === 0) return existingBudget;
+  return {
+    ...existingBudget,
+    ...raised,
+    toolChars: measured.toolChars,
+    raises: [...(existingBudget?.raises || []), { reason: why, ...raised }],
+  };
 }
 
 export async function runRequestEfficiencyGate({
   scenario = 'all',
   budgetPath = DEFAULT_BUDGET_PATH,
   updateBudget = false,
+  raiseReason,
 } = {}) {
+  if (raiseReason !== undefined) requireRaiseReason(raiseReason);
   const captured = [];
   const budget = fs.existsSync(budgetPath)
     ? JSON.parse(fs.readFileSync(budgetPath, 'utf8'))
@@ -386,11 +448,12 @@ export async function runRequestEfficiencyGate({
     },
   });
 
-  if (updateBudget) {
+  if (updateBudget || raiseReason !== undefined) {
     const measured = analyzeCapturedRequests(captured, null, { evalReport, expectedScenarios });
     if (measured.passed && measured.maxHeaderChars > 0 && measured.maxToolsChars > 0) {
-      const nextBudget = ratchetBudget(budget, measured);
-      fs.writeFileSync(budgetPath, JSON.stringify(nextBudget, null, 2) + '\n', 'utf8');
+      const nextBudget =
+        raiseReason !== undefined ? raiseBudget(budget, measured, raiseReason) : ratchetBudget(budget, measured);
+      if (nextBudget !== budget) fs.writeFileSync(budgetPath, JSON.stringify(nextBudget, null, 2) + '\n', 'utf8');
       return analyzeCapturedRequests(captured, nextBudget, { evalReport, expectedScenarios });
     }
     return measured;
@@ -408,7 +471,11 @@ if (isMain) {
   const scenarioArgIdx = process.argv.indexOf('--scenario');
   const scenario = scenarioArgIdx >= 0 && process.argv[scenarioArgIdx + 1] ? process.argv[scenarioArgIdx + 1] : 'all';
 
-  const report = await runRequestEfficiencyGate({ scenario, updateBudget });
+  const raiseArgIdx = process.argv.indexOf('--raise');
+  const raiseArg = raiseArgIdx >= 0 ? process.argv[raiseArgIdx + 1] : undefined;
+  const raiseReason = raiseArgIdx >= 0 ? (raiseArg && !raiseArg.startsWith('--') ? raiseArg : '') : undefined;
+
+  const report = await runRequestEfficiencyGate({ scenario, updateBudget, raiseReason });
   console.log(
     `[request-efficiency-gate] requests=${report.totalRequests} pairs=${report.fullPrefixHitPairs}/${report.totalAdjacentPairs} (${(report.overallPrefixHitRatio * 100).toFixed(1)}%) header=${report.maxHeaderChars} tools=${report.maxToolsChars} total=${report.maxHeaderPlusToolsChars}`,
   );

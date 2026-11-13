@@ -142,21 +142,30 @@ jobs:
           fc-match ':lang=zh-cn'
           ffmpeg -version
           ffprobe -version
+      # The checks below are independent. Once setup succeeded, each one runs
+      # even if an earlier check failed, so one red check cannot hide another.
       - name: Build official protocol packages
+        id: backend-setup
         run: sh ../plugin-packages/build-packages.sh
       - name: Run Go tests
         run: go test ./...
       - name: Check dead code budget
+        if: ${{ !cancelled() && steps.backend-setup.outcome == 'success' }}
         run: node ../scripts/deadcode-budget.mjs
       - name: Verify real production timing report
+        if: ${{ !cancelled() && steps.backend-setup.outcome == 'success' }}
         working-directory: agent-host/eval
         run: python3 -m unittest report_production_test.py
-      - name: Verify agent-host request efficiency gate
+      - name: Run agent-host tests
+        if: ${{ !cancelled() && steps.backend-setup.outcome == 'success' }}
         working-directory: agent-host
-        run: |
-          bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs timeline-tool-schema.test.mjs durable-stream-events.test.mjs
-          bun eval/request-efficiency-gate.mjs
+        run: bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs timeline-tool-schema.test.mjs durable-stream-events.test.mjs
+      - name: Verify agent-host request efficiency gate
+        if: ${{ !cancelled() && steps.backend-setup.outcome == 'success' }}
+        working-directory: agent-host
+        run: bun eval/request-efficiency-gate.mjs
       - name: Run DeepSeek Harness plugin tests
+        if: ${{ !cancelled() && steps.backend-setup.outcome == 'success' }}
         working-directory: plugins/deepseek-harness
         run: bun run test
 
@@ -174,7 +183,10 @@ jobs:
           bun-version: 1.3.9
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      # Lint, typecheck and tests each run once setup succeeded, even if an
+      # earlier one failed.
       - name: Install native media test dependencies
+        id: web-setup
         run: |
           bash ../scripts/configure-ubuntu-apt.sh
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
@@ -186,14 +198,17 @@ jobs:
       - name: Lint retired Ant Design APIs
         run: bun run lint
       - name: Typecheck
+        if: ${{ !cancelled() && steps.web-setup.outcome == 'success' }}
         run: bun run typecheck
       - name: Run tests
+        if: ${{ !cancelled() && steps.web-setup.outcome == 'success' }}
         # Component browser tests use the Playwright version pinned by bun.lock.
         # Install its matching browser instead of relying on a runner cache.
         run: |
           bunx playwright install --with-deps chromium
           bun run test
       - name: Run DeepSeek Harness plugin browser tests
+        if: ${{ !cancelled() && steps.web-setup.outcome == 'success' }}
         # The plugin has no dependencies of its own; its browser test borrows
         # React and Playwright (with the Chromium installed above) from web.
         working-directory: plugins/deepseek-harness
