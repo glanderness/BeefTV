@@ -4,7 +4,9 @@ type StyleLoader = (specifier: string, from: string) => { id: string; css: strin
 
 /** Flattens the app's plain local CSS imports for raw-style browser fixtures. */
 export function inlineLocalCssImports(source: string, load: StyleLoader, from = "globals.css", ancestors: string[] = []): string {
-    const tree = postcss.parse(source, { from });
+    // Loader IDs track file context below; passing `from` makes old Bun browser
+    // bundles resolve Node paths through a process-dependent polyfill.
+    const tree = postcss.parse(source);
     tree.walkAtRules("import", (rule) => {
         const match = rule.params.match(/^(["'])(\.[^"']+\.css)\1$/);
         if (!match) {
