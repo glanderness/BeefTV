@@ -70,6 +70,10 @@ Thank you to the partners, sponsors, and customers supporting BeefTV's continued
     <td><a href="https://hub.ll2.cn?p=rw6t">ll2.cn</a> | Self-operated compute infrastructure · Direct official contracts at wholesale rates. MiniMax-H3 at CNY 0.05/second (self-hosted, full-capability 768P); deepseek-v4.1-flash at 40% of the official price; Seedance series from 30% off; super-resolution at CNY 0.018/second; Vega series from 40% off.</td>
   </tr>
   <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-ysdui.png" width="32" height="32" alt="Yinsheng Yunshu Yisuan icon"><br><strong>银盛·云枢壹算</strong></td>
+    <td><a href="https://www.ysdui.cn/">Yinsheng Yunshu Yisuan</a> is a one-stop enterprise AI services platform under Yinsheng Communications Co., Ltd., providing compute resources and AI product solutions for businesses. Special thanks to Yinsheng Yunshu Yisuan for its compute resources and ecosystem support for this project.</td>
+  </tr>
+  <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-pccooler.png" width="120" alt="PCCOOLER logo"><br><strong>PCCOOLER</strong></td>
     <td><a href="https://www.cpspccooler.cn/">PCCOOLER</a> is a publicly listed company specializing in high-performance computing hardware and cooling systems, with products including modular AI PCs and AI workstations. Combining PCCOOLER's hardware R&amp;D capabilities with BeefTV's AIGC software ecosystem, the two teams will explore integrated hardware and software solutions for local AI creation.</td>
   </tr>
