@@ -197,7 +197,7 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 
 BeefTV 的开发基于并参考了以下开源项目与技术：
 
-- **[DDCat 的 OpenAI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理等基础能力来自该项目，并在此基础上持续改进优化为本地应用版本。再次感谢 [DDCat](https://github.com/ddcat-ai) 及所有贡献者对开源AIGC社区作出的贡献。
+- **[影策 Open AI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**（https://github.com/ddcat-ai/open-ai-canvas）：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理及社区内置插件等基础能力来自该项目，并在此基础上持续改进优化为本地应用版本。再次感谢 [ddcat](https://github.com/ddcat-ai) 及所有 Open AI Canvas 贡献者对开源 AIGC 社区作出的贡献。
   
 - **[basketikun 的 infinite-canvas](https://github.com/basketikun/infinite-canvas)**：将无限画布与 AI 图片创作结合的开源工作台。BeefTV 参考了其无限画布整体架构，并沿用了部分画布代码与技术能力，包括节点拖拽与缩放、连线、撤销重做、画布导入导出等。感谢 [basketikun](https://github.com/basketikun) 及所有贡献者。
   
