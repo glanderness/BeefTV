@@ -2,6 +2,8 @@ import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
 
 import { getSkinAntOverrides, normalizeSkinID } from "@/lib/skin-themes";
+import { resolveUIControlMetrics } from "@/lib/ui-theme";
+import { workspaceControlMetrics } from "@/lib/workspace-control-metrics";
 
 // 主操作、普通选择和开关是不同交互语义，必须各自维护成对的背景/前景色。
 const controlTheme = {
@@ -88,6 +90,7 @@ const controlTheme = {
 export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): ThemeConfig {
     const baseColor = dark ? controlTheme.dark : controlTheme.light;
     const skin = getSkinAntOverrides(skinID, dark ? "dark" : "light");
+    const metrics = resolveUIControlMetrics({ scope: "canvas", skin });
     const color = {
         ...baseColor,
         solidBg: skin.primary || baseColor.solidBg,
@@ -185,9 +188,9 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
             borderRadiusLG: skin.borderRadiusLG || 8,
             borderRadiusSM: skin.borderRadiusSM || 5,
             lineWidth: skin.borderWidth || 1,
-            controlHeight: skin.controlHeight || 36,
-            controlHeightLG: skin.controlHeightLarge || 42,
-            controlHeightSM: skin.controlHeightSmall || 30,
+            controlHeight: metrics.height,
+            controlHeightLG: metrics.heightLarge,
+            controlHeightSM: metrics.heightSmall,
             fontSize: 13,
             fontSizeSM: 12,
             motionDurationFast: `${skin.motionFast ?? 120}ms`,
@@ -203,8 +206,8 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 primaryShadow: "none",
                 dangerShadow: "none",
                 dangerColor: color.dangerForeground,
-                fontWeight: skin.buttonFontWeight || 500,
-                borderRadius: skin.buttonRadius || skin.borderRadius || 6,
+                fontWeight: metrics.buttonFontWeight,
+                borderRadius: metrics.buttonRadius,
                 paddingInline: 14,
                 paddingInlineLG: 16,
                 paddingInlineSM: 10,
@@ -223,7 +226,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 defaultActiveBorderColor: color.controlBorder,
             },
             Input: {
-                borderRadius: skin.inputRadius || skin.borderRadiusSM || 5,
+                borderRadius: metrics.inputRadius,
                 paddingInline: 11,
                 activeBg: skin.controlSurface || elevatedBackground,
                 hoverBg: skin.controlHover || elevatedBackground,
@@ -232,7 +235,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 activeShadow: focusShadow,
             },
             InputNumber: {
-                borderRadius: skin.inputRadius || skin.borderRadiusSM || 5,
+                borderRadius: metrics.inputRadius,
                 activeBg: skin.controlSurface || elevatedBackground,
                 hoverBg: skin.controlHover || elevatedBackground,
                 activeBorderColor: interactiveBorder,
@@ -293,7 +296,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 darkItemSelectedColor: controlTheme.dark.menuText,
             },
             Select: {
-                borderRadius: skin.inputRadius || skin.borderRadiusSM || 5,
+                borderRadius: metrics.inputRadius,
                 selectorBg: elevatedBackground,
                 optionHeight: 40,
                 optionPadding: "8px 12px",
@@ -326,7 +329,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 itemActiveColorHover: color.solidFg,
             },
             Segmented: {
-                borderRadius: skin.inputRadius || skin.borderRadiusSM || 5,
+                borderRadius: metrics.inputRadius,
                 trackBg: subtleBackground,
                 trackPadding: 3,
                 itemColor: color.controlDisabledFg,
@@ -384,27 +387,28 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
  */
 /** 用户端与后台共享业务控件，但使用独立的产品尺寸和柔和表面。 */
 export function getWorkspaceAntThemeConfig(): ThemeConfig {
+    const metrics = resolveUIControlMetrics({ scope: "workspace", skin: {} });
     return {
         token: {
-            borderRadius: 12, borderRadiusLG: 16, borderRadiusSM: 8,
-            controlHeight: 38, controlHeightSM: 30, controlHeightLG: 44,
+            borderRadius: metrics.buttonRadius, borderRadiusLG: 16, borderRadiusSM: workspaceControlMetrics.radius.small,
+            controlHeight: metrics.height, controlHeightSM: metrics.heightSmall, controlHeightLG: metrics.heightLarge,
             motionDurationFast: "0.12s", motionDurationMid: "0.18s", motionDurationSlow: "0.36s",
             motionEaseInOut: "cubic-bezier(0.16, 1, 0.3, 1)",
             motionEaseOut: "cubic-bezier(0.16, 1, 0.3, 1)",
         },
         components: {
             Button: {
-                borderRadius: 12, borderRadiusSM: 8, borderRadiusLG: 14, fontWeight: 550,
+                borderRadius: metrics.buttonRadius, borderRadiusSM: workspaceControlMetrics.radius.small, borderRadiusLG: workspaceControlMetrics.radius.large, fontWeight: metrics.buttonFontWeight,
                 colorPrimary: "var(--user-action-bg)", colorPrimaryHover: "var(--user-action-bg-hover)",
                 colorPrimaryActive: "var(--user-action-bg-active)", primaryColor: "var(--user-action-foreground)",
                 defaultBg: "var(--user-surface-muted)", defaultColor: "var(--user-ink)", defaultBorderColor: "transparent",
                 defaultHoverBg: "var(--user-surface-hover)", defaultHoverColor: "var(--user-ink)", defaultHoverBorderColor: "transparent",
                 defaultActiveBg: "var(--user-control-pressed)", defaultActiveColor: "var(--user-ink)", defaultActiveBorderColor: "transparent",
                 defaultShadow: "none", primaryShadow: "none", dangerShadow: "none",
-                paddingInline: 14, paddingInlineSM: 10,
+                paddingInline: workspaceControlMetrics.buttonPadding.normal, paddingInlineSM: workspaceControlMetrics.buttonPadding.small,
             },
-            Input: { borderRadius: 12, activeShadow: "0 0 0 2px var(--user-accent-soft)", paddingInline: 12 },
-            Select: { borderRadius: 12, optionSelectedBg: "var(--user-accent-soft)", optionSelectedColor: "var(--user-ink)", optionActiveBg: "var(--user-surface-muted)", optionPadding: "9px 12px" },
+            Input: { borderRadius: metrics.inputRadius, activeShadow: "0 0 0 2px var(--user-accent-soft)", paddingInline: workspaceControlMetrics.inputPadding },
+            Select: { borderRadius: metrics.inputRadius, optionSelectedBg: "var(--user-accent-soft)", optionSelectedColor: "var(--user-ink)", optionActiveBg: "var(--user-surface-muted)", optionPadding: "9px 12px" },
             Dropdown: { borderRadiusLG: 16, controlItemBgHover: "var(--user-surface-muted)", paddingBlock: 6 },
             Modal: { borderRadiusLG: 20 },
             Popconfirm: { borderRadiusLG: 16 },
