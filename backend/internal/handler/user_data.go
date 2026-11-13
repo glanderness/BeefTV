@@ -369,7 +369,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 				Kind: c.Query("kind"), Category: c.Query("category"), FolderID: folderID,
 				Uncategorized: queryFlag(c, "uncategorized"), Status: c.Query("status"), Query: c.Query("q"),
 				Favorite: queryFlag(c, "favorite"), Recent: queryFlag(c, "recent"), Project: c.Query("project"),
-				Generated: queryFlag(c, "generated"),
+				Generated: queryFlag(c, "generated"), Personal: queryFlag(c, "personal"),
 			})
 			if pageErr != nil {
 				failService(c, pageErr)
@@ -739,7 +739,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 }
 
 func hasUserAssetPageFilters(c *gin.Context) bool {
-	for _, key := range []string{"pageSize", "kind", "category", "folderId", "uncategorized", "status", "q", "favorite", "recent", "project", "generated"} {
+	for _, key := range []string{"pageSize", "kind", "category", "folderId", "uncategorized", "status", "q", "favorite", "recent", "project", "generated", "personal"} {
 		if _, present := c.GetQuery(key); present {
 			return true
 		}

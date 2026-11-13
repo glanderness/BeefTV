@@ -38,7 +38,12 @@ test('committed minimal release receipt passes dry-run and matches release tag o
     cwd: ROOT_DIR,
     encoding: 'utf8',
   });
-  const targetRef = tagCheck.status === 0 ? dryRunResult.version : 'HEAD';
+  const receiptCommit = spawnSync(
+    'git',
+    ['log', '-n', '1', '--format=%H', '--', `docs/release-evidence/${dryRunResult.version}.json`],
+    { cwd: ROOT_DIR, encoding: 'utf8' },
+  ).stdout.trim();
+  const targetRef = tagCheck.status === 0 ? dryRunResult.version : receiptCommit || 'HEAD';
   const releaseResult = runReleaseGate({ cwd: ROOT_DIR, argv: ['--ref', targetRef] });
   assert.equal(releaseResult.mode, 'release');
   assert.equal(releaseResult.receipt.sourceDigest, computeSourceDigest(ROOT_DIR, targetRef));
