@@ -2,10 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { buildNodeGenerationInputs } from "../src/components/canvas/canvas-node-generation";
 import {
+    createEditableFocusScheduler,
+    createEditorSentinelBr,
+    focusMentionEditorSurface,
     getEditableSelection,
+    normalizeCaretBeforeTrailingSentinelBr,
+    pruneDisplacedSentinelBrs,
+    renderEditableContent,
     resolveEditableMentionRemoval,
     serializeEditableValue,
     setEditableSelection,
+    shouldPreventCollapsedStartBackspace,
+    shouldPreventEditorStartBackspace,
 } from "../src/components/canvas/canvas-mention-editable-dom";
 import { createCanvasNode } from "../src/lib/canvas/canvas-project-domain";
 import type { CanvasResourceReference } from "../src/lib/canvas/canvas-resource-references";
@@ -33,6 +41,21 @@ class FakeNode {
         return child;
     }
 
+    removeChild<T extends FakeNode>(child: T): T {
+        const index = this.childNodes.indexOf(child);
+        if (index >= 0) {
+            this.childNodes.splice(index, 1);
+            child.parentNode = null;
+        }
+        return child;
+    }
+
+    replaceChildren(...nodes: FakeNode[]) {
+        for (const existing of this.childNodes) existing.parentNode = null;
+        this.childNodes = [];
+        for (const node of nodes) this.appendChild(node);
+    }
+
     contains(other: FakeNode | null): boolean {
         let current: FakeNode | null = other;
         while (current) {
@@ -55,9 +78,22 @@ class FakeHTMLElement extends FakeNode {
     override nodeType = 1;
     readonly tagName: string;
     dataset: Record<string, string | undefined> = {};
+    style: Record<string, string> = {};
+    scrollTop = 0;
+    contentEditable = "true";
+    className = "";
+    title = "";
     constructor(tagName: string) {
         super();
         this.tagName = tagName.toUpperCase();
+    }
+
+    focus() {
+        (globalThis.document as unknown as { activeElement: unknown }).activeElement = this;
+    }
+
+    remove() {
+        this.parentNode?.removeChild(this);
     }
 }
 
@@ -66,7 +102,9 @@ type FakeRange = {
     startOffset: number;
     endContainer: FakeNode;
     endOffset: number;
+    readonly collapsed: boolean;
     setStart: (node: FakeNode, offset: number) => void;
+    setEnd: (node: FakeNode, offset: number) => void;
     collapse: (toStart?: boolean) => void;
 };
 
@@ -81,6 +119,13 @@ beforeEach(() => {
     g.Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 };
     g.HTMLElement = FakeHTMLElement;
     g.document = {
+        activeElement: null as unknown,
+        createTextNode(text: string) {
+            return new FakeTextNode(text);
+        },
+        createElement(tag: string) {
+            return new FakeHTMLElement(tag);
+        },
         createRange(): FakeRange {
             const root = new FakeHTMLElement("div");
             const range: FakeRange = {
@@ -88,6 +133,9 @@ beforeEach(() => {
                 startOffset: 0,
                 endContainer: root,
                 endOffset: 0,
+                get collapsed() {
+                    return range.startContainer === range.endContainer && range.startOffset === range.endOffset;
+                },
                 setStart(node: FakeNode, offset: number) {
                     const max = node.nodeType === 3 ? (node.textContent?.length || 0) : node.childNodes.length;
                     if (offset < 0 || offset > max) {
@@ -96,10 +144,21 @@ beforeEach(() => {
                     range.startContainer = node;
                     range.startOffset = offset;
                 },
+                setEnd(node: FakeNode, offset: number) {
+                    const max = node.nodeType === 3 ? (node.textContent?.length || 0) : node.childNodes.length;
+                    if (offset < 0 || offset > max) {
+                        throw new RangeError(`IndexSizeError: offset ${offset} out of [0, ${max}]`);
+                    }
+                    range.endContainer = node;
+                    range.endOffset = offset;
+                },
                 collapse(toStart = false) {
                     if (toStart) {
                         range.endContainer = range.startContainer;
                         range.endOffset = range.startOffset;
+                    } else {
+                        range.startContainer = range.endContainer;
+                        range.startOffset = range.endOffset;
                     }
                 },
             };
@@ -218,5 +277,95 @@ describe("editable mention DOM trailing sentinel <br> and Backspace cursor safet
             nextValue: "参考图片：",
             cursor: 5,
         });
+    });
+
+    test("typing after a trailing-newline sentinel <br> does not synthesize a second newline and prunes the displaced sentinel", () => {
+        const root = new FakeHTMLElement("div") as unknown as HTMLElement;
+        renderEditableContent(root, "abc\n", [], []);
+        expect(serializeEditableValue(root)).toBe("abc\n");
+
+        // Simulate user pressing End (placing caret after the sentinel <br>) and typing "d".
+        (root as unknown as FakeHTMLElement).appendChild(new FakeTextNode("d"));
+        const range = document.createRange() as unknown as FakeRange;
+        range.setStart(root.lastChild as unknown as FakeNode, 1);
+        range.collapse(true);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(range as unknown as Range);
+
+        expect(serializeEditableValue(root)).toBe("abc\nd");
+        expect(getEditableSelection(root)).toEqual({ start: 5, end: 5 });
+        expect(pruneDisplacedSentinelBrs(root)).toBe(true);
+        expect(serializeEditableValue(root)).toBe("abc\nd");
+        expect(root.childNodes.length).toBe(2);
+
+        // Also verify normalizeCaretBeforeTrailingSentinelBr moves collapsed caret from after trailing <br> to before it.
+        renderEditableContent(root, "abc\n", [], []);
+        const afterBrRange = document.createRange() as unknown as FakeRange;
+        afterBrRange.setStart(root as unknown as FakeNode, root.childNodes.length);
+        afterBrRange.collapse(true);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(afterBrRange as unknown as Range);
+        normalizeCaretBeforeTrailingSentinelBr(root);
+        expect(currentRange?.startContainer).toBe(root as unknown as FakeNode);
+        expect(currentRange?.startOffset).toBe(root.childNodes.length - 1);
+    });
+
+    test("shares sentinel <br>, data-reference-token serialization, and start-of-editor Backspace guard with CanvasConfigComposer", () => {
+        const composerRoot = new FakeHTMLElement("div");
+        composerRoot.appendChild(new FakeTextNode("镜头："));
+        const refChip = new FakeHTMLElement("span");
+        refChip.dataset.referenceNodeId = "img-1";
+        refChip.dataset.referenceToken = "@[node:img-1]";
+        composerRoot.appendChild(refChip);
+        composerRoot.appendChild(createEditorSentinelBr() as unknown as FakeNode);
+
+        const el = composerRoot as unknown as HTMLElement;
+        expect(serializeEditableValue(el)).toBe("镜头：@[node:img-1]");
+
+        // Collapsed [0, 0] blocks Backspace (prevents WKWebView history back), while [0, end>0] allows range deletion.
+        setEditableSelection(el, 0);
+        expect(shouldPreventEditorStartBackspace(el)).toBe(true);
+        expect(shouldPreventCollapsedStartBackspace({ start: 0, end: 0 })).toBe(true);
+
+        const nonEmptyRange = document.createRange() as unknown as FakeRange;
+        nonEmptyRange.setStart(composerRoot.firstChild!, 0);
+        nonEmptyRange.setEnd(composerRoot.firstChild!, 2);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(nonEmptyRange as unknown as Range);
+        expect(getEditableSelection(el)).toEqual({ start: 0, end: 2 });
+        expect(shouldPreventEditorStartBackspace(el)).toBe(false);
+        expect(shouldPreventCollapsedStartBackspace({ start: 0, end: 5 })).toBe(false);
+    });
+
+    test("cancelling pending focus frame prevents stale mention-removal cursor from overwriting rapid Backspace input", () => {
+        const frames = new Map<number, FrameRequestCallback>();
+        let nextHandle = 1;
+        const scheduler = createEditableFocusScheduler(
+            (cb) => {
+                const id = nextHandle++;
+                frames.set(id, cb);
+                return id;
+            },
+            (id) => {
+                frames.delete(id);
+            },
+        );
+
+        const editor = new FakeHTMLElement("div") as unknown as HTMLElement;
+        renderEditableContent(editor, "参考图片：", [], []);
+        setEditableSelection(editor, 5);
+
+        // Frame scheduled after deleting @图片1 (would restore cursor to 5 on next animation frame).
+        scheduler.schedule(() => focusMentionEditorSurface(editor, null, 5));
+        expect(frames.size).toBe(1);
+
+        // Rapid held Backspace deletes "：" in the same frame and cancels pending focus frame.
+        renderEditableContent(editor, "参考图片", [], []);
+        setEditableSelection(editor, 4);
+        scheduler.cancel();
+
+        // Flush any remaining scheduled frames: none should run, keeping cursor at 4 instead of jumping to 5.
+        for (const [, cb] of frames) cb(16);
+        expect(getEditableSelection(editor)).toEqual({ start: 4, end: 4 });
     });
 });

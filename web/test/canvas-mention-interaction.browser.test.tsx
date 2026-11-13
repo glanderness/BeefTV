@@ -491,4 +491,16 @@ test("Scenario 12: 连续按退格删除多行带引用提示词与普通文本�
         return { defaultPrevented: ev.defaultPrevented, bubbled, focused: document.activeElement === el };
     });
     expect(emptyPlainBackspace).toEqual({ defaultPrevented: true, bubbled: false, focused: true });
+
+    // 在末尾换行后按 End 再继续输入或退格，不应多出空行，且全选（[0, end>0]）按一次退格即可清空
+    await clearRichEditor(page, richInput);
+    await richInput.click();
+    await richInput.pressSequentially("第一行");
+    await richInput.press("Shift+Enter");
+    await richInput.press("End");
+    await richInput.pressSequentially("第二行");
+    expect(await page.locator("#rich-prompt-display").textContent()).toBe("RichPrompt: 第一行\n第二行");
+    await richInput.press("ControlOrMeta+a");
+    await richInput.press("Backspace");
+    expect(await page.locator("#rich-prompt-display").textContent()).toBe("RichPrompt: ");
 }, 30000);

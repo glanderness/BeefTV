@@ -49,6 +49,26 @@ export function focusMentionEditorSurface(editor: HTMLElement | null, textarea: 
     textarea.scrollTop = scrollTop;
 }
 
+export function createEditableFocusScheduler(
+    scheduleFrame: (callback: FrameRequestCallback) => number = (callback) => requestAnimationFrame(callback),
+    cancelFrame: (handle: number) => void = (handle) => cancelAnimationFrame(handle),
+) {
+    let pendingFrame: number | null = null;
+    const cancel = () => {
+        if (pendingFrame === null) return;
+        cancelFrame(pendingFrame);
+        pendingFrame = null;
+    };
+    const schedule = (task: () => void) => {
+        cancel();
+        pendingFrame = scheduleFrame(() => {
+            pendingFrame = null;
+            task();
+        });
+    };
+    return { schedule, cancel };
+}
+
 export function selectEditableReferenceToken(editor: HTMLElement, token: string, fallbackOffset: number) {
     const chip = [...editor.querySelectorAll<HTMLElement>("[data-mention-token]")].find((item) => item.dataset.mentionToken === token);
     editor.focus({ preventScroll: true });
@@ -219,8 +239,14 @@ export function renderEditableContent(editor: HTMLElement, value: string, refere
         }
         return chip;
     });
-    if (value.endsWith("\n")) nodes.push(document.createElement("br"));
+    if (value.endsWith("\n")) nodes.push(createEditorSentinelBr());
     editor.replaceChildren(...nodes);
+}
+
+export function createEditorSentinelBr() {
+    const sentinel = document.createElement("br");
+    sentinel.dataset.mentionSentinel = "true";
+    return sentinel;
 }
 
 function findNextMentionIndex(value: string, tokens: string[], fromIndex: number) {
@@ -233,7 +259,7 @@ function findNextMentionIndex(value: string, tokens: string[], fromIndex: number
 }
 
 export function serializeEditableValue(root: HTMLElement) {
-    return serializeNodeList(root.childNodes, root).replace(/\u00a0/g, " ");
+    return serializeNodeList(root.childNodes, root).replace(/\u00a0/g, " ").replace(/\uFEFF/g, "");
 }
 
 function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[], root: Node) {
@@ -247,14 +273,53 @@ function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[], root: Nod
 function serializeNode(node: ChildNode, root: Node): string {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
     if (!(node instanceof HTMLElement)) return "";
-    const token = node.dataset.mentionToken;
+    const token = node.dataset.mentionToken || node.dataset.referenceToken;
     if (token) return token;
-    if (node.tagName === "BR") return isTrailingEditorSentinelBr(root, node) ? "" : "\n";
+    if (node.tagName === "BR") return isEditorSentinelBr(root, node) ? "" : "\n";
     return serializeNodeList(node.childNodes, root);
 }
 
-function isTrailingEditorSentinelBr(root: Node, node: Node): boolean {
-    return node instanceof HTMLElement && node.tagName === "BR" && node.parentNode === root && node === root.lastChild;
+export function isEditorSentinelBr(root: Node, node: Node | null | undefined): boolean {
+    return Boolean(
+        node instanceof HTMLElement
+            && node.tagName === "BR"
+            && (node.dataset.mentionSentinel === "true" || (node.parentNode === root && node === root.lastChild)),
+    );
+}
+
+export function pruneDisplacedSentinelBrs(root: HTMLElement): boolean {
+    let removed = false;
+    for (const child of Array.from(root.childNodes)) {
+        if (child instanceof HTMLElement && child.tagName === "BR" && child.dataset.mentionSentinel === "true" && child !== root.lastChild) {
+            if (typeof child.remove === "function") child.remove();
+            else root.removeChild(child);
+            removed = true;
+        }
+    }
+    return removed;
+}
+
+export function normalizeCaretBeforeTrailingSentinelBr(root: HTMLElement | null) {
+    if (!root || !isEditorSentinelBr(root, root.lastChild)) return;
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed || range.startContainer !== root || range.startOffset !== root.childNodes.length) return;
+    range.setStart(root, Math.max(0, root.childNodes.length - 1));
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+export function shouldPreventCollapsedStartBackspace(selection: EditableSelection | null): boolean {
+    return Boolean(selection && selection.start === 0 && selection.end === 0);
+}
+
+export function shouldPreventEditorStartBackspace(editor: HTMLElement | null): boolean {
+    if (!editor) return false;
+    const selection = getEditableSelection(editor);
+    if (selection) return shouldPreventCollapsedStartBackspace(selection);
+    return serializeEditableValue(editor) === "";
 }
 
 function clampDomPointOffset(node: Node, offset: number): number {
@@ -304,7 +369,10 @@ function pointForOffset(current: Node, offset: number, editorRoot: Node = curren
     const children = Array.from(current.childNodes);
     for (let index = 0; index < children.length; index += 1) {
         const child = children[index];
-        if (isTrailingEditorSentinelBr(editorRoot, child)) return { node: current, offset: index };
+        if (isEditorSentinelBr(editorRoot, child)) {
+            if (child === editorRoot.lastChild) return { node: current, offset: index };
+            continue;
+        }
         const length = plainTextLength(child, editorRoot);
         if (remaining > length) {
             remaining -= length;
@@ -320,15 +388,15 @@ function pointForOffset(current: Node, offset: number, editorRoot: Node = curren
 function plainTextLength(node: Node, editorRoot?: Node): number {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length || 0;
     if (node instanceof HTMLElement) {
-        const token = node.dataset.mentionToken;
+        const token = node.dataset.mentionToken || node.dataset.referenceToken;
         if (token) return token.length;
-        if (node.tagName === "BR") return editorRoot && isTrailingEditorSentinelBr(editorRoot, node) ? 0 : 1;
+        if (node.tagName === "BR") return editorRoot && isEditorSentinelBr(editorRoot, node) ? 0 : 1;
     }
     return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child, editorRoot), 0);
 }
 
 function isMentionElement(node: Node): node is HTMLElement {
-    return node instanceof HTMLElement && Boolean(node.dataset.mentionToken);
+    return node instanceof HTMLElement && Boolean(node.dataset.mentionToken || node.dataset.referenceToken);
 }
 
 export function mentionMenuPosition(anchor: HTMLElement, cursorOffset: number, preferredWidth: number) {

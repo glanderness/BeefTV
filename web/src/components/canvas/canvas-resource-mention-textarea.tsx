@@ -9,16 +9,21 @@ import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceM
 import { replaceCanvasReferenceToken, type CanvasReferenceAction, type CanvasReferenceIssue } from "@/lib/canvas/canvas-reference-issues";
 import {
     clamp,
+    createEditableFocusScheduler,
     focusMentionEditorSurface,
     getEditableSelection,
     measureEditableContentHeight,
     mentionCaretRect,
+    normalizeCaretBeforeTrailingSentinelBr,
+    pruneDisplacedSentinelBrs,
     referencePreviewUrl,
     renderEditableContent,
     resolveEditableMentionRemoval,
     selectEditableReferenceToken,
     serializeEditableValue,
     setEditableSelection,
+    shouldPreventCollapsedStartBackspace,
+    shouldPreventEditorStartBackspace,
     syncInlineMentionPreviews,
 } from "./canvas-mention-editable-dom";
 import { InlineReferencePreview, MentionMenu } from "./canvas-resource-mention-menu";
@@ -71,7 +76,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     const editorRef = useRef<HTMLDivElement | null>(null);
     const composingRef = useRef(false);
-    const focusFrameRef = useRef<number | null>(null);
+    const focusSchedulerRef = useRef<ReturnType<typeof createEditableFocusScheduler> | null>(null);
+    if (!focusSchedulerRef.current) focusSchedulerRef.current = createEditableFocusScheduler();
     const pendingSelectionRef = useRef<number | null>(null);
     const pendingScrollTopRef = useRef<number | null>(null);
     const lastRenderedValueRef = useRef("");
@@ -238,17 +244,13 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     }, [onContentSizeChange, reportContentSize, style?.fontSize, style?.lineHeight, useRichEditor, value]);
 
     const cancelPendingFocusFrame = useCallback(() => {
-        if (focusFrameRef.current === null) return;
-        cancelAnimationFrame(focusFrameRef.current);
-        focusFrameRef.current = null;
+        focusSchedulerRef.current?.cancel();
     }, []);
 
     useEffect(() => () => cancelPendingFocusFrame(), [cancelPendingFocusFrame]);
 
     const focusEditor = (selectionStart?: number) => {
-        cancelPendingFocusFrame();
-        focusFrameRef.current = requestAnimationFrame(() => {
-            focusFrameRef.current = null;
+        focusSchedulerRef.current?.schedule(() => {
             focusMentionEditorSurface(editorRef.current, textareaRef.current, selectionStart);
         });
     };
@@ -369,9 +371,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         cancelPendingFocusFrame();
         const editor = editorRef.current;
         if (!editor) return;
-        const next = serializeEditableValue(editor);
         const selection = getEditableSelection(editor);
+        const next = serializeEditableValue(editor);
         const cursor = selection?.start ?? next.length;
+        if (pruneDisplacedSentinelBrs(editor) && document.activeElement === editor && (!selection || selection.start === selection.end)) {
+            setEditableSelection(editor, cursor);
+        }
         onSelectionRangeChange?.(selection ?? { start: cursor, end: cursor });
         pendingSelectionRef.current = cursor;
         lastRenderedValueRef.current = next;
@@ -552,6 +557,9 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                         if ((event.key === "Backspace" || event.key === "Delete") && !event.nativeEvent.isComposing && !composingRef.current) {
                             event.stopPropagation();
+                            if (event.key === "Backspace") {
+                                normalizeCaretBeforeTrailingSentinelBr(editorRef.current);
+                            }
                             const removal = resolveEditableMentionRemoval(editorRef.current, activeReferences, event.key);
                             if (removal) {
                                 event.preventDefault();
@@ -559,13 +567,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                                 updateValue(removal.nextValue, removal.cursor);
                                 return;
                             }
-                            if (event.key === "Backspace" && editorRef.current) {
-                                const selection = getEditableSelection(editorRef.current);
-                                if (selection && selection.start === 0 && selection.end === 0 && serializeEditableValue(editorRef.current) === "") {
-                                    event.preventDefault();
-                                    closeMention();
-                                    return;
-                                }
+                            if (event.key === "Backspace" && shouldPreventEditorStartBackspace(editorRef.current)) {
+                                event.preventDefault();
+                                closeMention();
+                                return;
                             }
                         }
                         if (handleMentionOrAutoLinkKeyDown(event)) return;
@@ -655,7 +660,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 onKeyDown={(event) => {
                     if ((event.key === "Backspace" || event.key === "Delete") && !event.nativeEvent.isComposing && !composingRef.current) {
                         event.stopPropagation();
-                        if (event.key === "Backspace" && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0) {
+                        if (event.key === "Backspace" && shouldPreventCollapsedStartBackspace({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })) {
                             event.preventDefault();
                             closeMention();
                             onKeyDown?.(event);

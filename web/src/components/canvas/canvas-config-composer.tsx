@@ -7,6 +7,15 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { generationInputMentionLabel, type NodeGenerationInput } from "./canvas-node-generation";
+import {
+    createEditorSentinelBr,
+    getEditableSelection,
+    normalizeCaretBeforeTrailingSentinelBr,
+    pruneDisplacedSentinelBrs,
+    serializeEditableValue,
+    setEditableSelection,
+    shouldPreventEditorStartBackspace,
+} from "./canvas-mention-editable-dom";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
@@ -124,12 +133,17 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
             const input = referenceById.get(token.nodeId);
             if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview, token.token));
         });
-    }, [inputs, referenceById, theme, tokens]);
+        if (value.endsWith("\n")) editor.append(createEditorSentinelBr());
+    }, [inputs, referenceById, theme, tokens, value]);
 
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
+        const selection = getEditableSelection(editor);
         const next = serializeEditor(editor);
+        if (pruneDisplacedSentinelBrs(editor) && document.activeElement === editor && (!selection || selection.start === selection.end)) {
+            setEditableSelection(editor, selection?.start ?? next.length);
+        }
         onChange(next);
         syncMention();
     };
@@ -306,10 +320,20 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
                                 return;
                             }
                         }
-                        if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
-                            event.preventDefault();
-                            requestAnimationFrame(syncFromEditor);
-                            return;
+                        if ((event.key === "Backspace" || event.key === "Delete") && !event.nativeEvent.isComposing && !composingRef.current) {
+                            if (event.key === "Backspace") {
+                                normalizeCaretBeforeTrailingSentinelBr(editorRef.current);
+                            }
+                            if (deleteAdjacentReference(event.key)) {
+                                event.preventDefault();
+                                requestAnimationFrame(syncFromEditor);
+                                return;
+                            }
+                            if (event.key === "Backspace" && shouldPreventEditorStartBackspace(editorRef.current)) {
+                                event.preventDefault();
+                                closeMention();
+                                return;
+                            }
                         }
                         requestAnimationFrame(syncMention);
                     }}
@@ -442,20 +466,7 @@ function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationI
 }
 
 function serializeEditor(editor: HTMLElement) {
-    return serializeNodes(editor.childNodes).replace(/\uFEFF/g, "");
-}
-
-function serializeNodes(nodes: NodeListOf<ChildNode>) {
-    let result = "";
-    nodes.forEach((node) => {
-        if (node.nodeType === Node.TEXT_NODE) result += node.textContent || "";
-        if (!(node instanceof HTMLElement)) return;
-        const referenceToken = node.dataset.referenceToken;
-        if (referenceToken) result += referenceToken;
-        else if (node.tagName === "BR") result += "\n";
-        else result += serializeNodes(node.childNodes);
-    });
-    return result;
+    return serializeEditableValue(editor);
 }
 
 function removeActiveMention() {
@@ -519,12 +530,7 @@ function closestEditor(node: Node) {
 }
 
 function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    setEditableSelection(element, serializeEditableValue(element).length);
 }
 
 function parseComposerTokens(value: string, inputs: NodeGenerationInput[]): Token[] {
