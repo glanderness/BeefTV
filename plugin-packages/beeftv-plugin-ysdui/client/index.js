@@ -10,6 +10,7 @@ import {
   YSDUI_PRESET_MODELS,
   YSDUI_PROVIDER_INTRO,
   buildYsduiModelChannel,
+  renderYsduiLogoSvg,
   upgradeYsduiModelProfile,
 } from "./presets.js";
 
@@ -22,6 +23,7 @@ export {
   YSDUI_PRESET_MODELS,
   YSDUI_PROVIDER_INTRO,
   buildYsduiModelChannel,
+  renderYsduiLogoSvg,
   upgradeYsduiModelProfile,
 };
 
@@ -254,41 +256,11 @@ function createYsduiSettingsPanel(host) {
                 fontSize: "14px",
               },
             },
-            h(
-              "svg",
-              {
-                width: 20,
-                height: 20,
-                viewBox: YSDUI_LOGO_SVG_SPEC.viewBox,
-                fill: "none",
-                "aria-hidden": true,
-                style: { flexShrink: 0 },
-              },
-              h("rect", {
-                width: 1024,
-                height: 1024,
-                rx: YSDUI_LOGO_SVG_SPEC.backgroundRadius,
-                fill: YSDUI_LOGO_SVG_SPEC.backgroundFill,
-              }),
-              h(
-                "g",
-                { transform: YSDUI_LOGO_SVG_SPEC.emblemTransform },
-                h("circle", {
-                  cx: 512,
-                  cy: 512,
-                  r: YSDUI_LOGO_SVG_SPEC.circleRadius,
-                  fill: YSDUI_LOGO_SVG_SPEC.circleFill,
-                }),
-                h("path", {
-                  d: YSDUI_LOGO_SVG_SPEC.circuitPath,
-                  fill: "none",
-                  stroke: YSDUI_LOGO_SVG_SPEC.backgroundFill,
-                  strokeWidth: YSDUI_LOGO_SVG_SPEC.circuitStrokeWidth,
-                  strokeLinecap: "round",
-                  strokeLinejoin: "round",
-                }),
-              ),
-            ),
+            renderYsduiLogoSvg(h, {
+              size: 20,
+              "aria-hidden": true,
+              style: { flexShrink: 0 },
+            }),
             "银盛云枢壹算 (OneAxis) · BYOK 一键接入",
           ),
           h(

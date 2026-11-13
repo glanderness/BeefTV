@@ -1,38 +1,15 @@
-import { memo, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { createElement, memo, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { Button, Input, Modal } from "antd";
 import { Cpu, Search, X } from "lucide-react";
 
 import { toc } from "@lobehub/icons/es/toc";
 
 import { cn } from "@/lib/utils";
-import { YSDUI_CHANNEL_ICON, YSDUI_CHANNEL_NAME, YSDUI_LOGO_SVG_SPEC } from "../../../plugin-packages/beeftv-plugin-ysdui/client/index.js";
+import { YSDUI_CHANNEL_ICON, YSDUI_CHANNEL_NAME, renderYsduiLogoSvg } from "../../../plugin-packages/beeftv-plugin-ysdui/client/index.js";
 
 type LobeIconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
 
-const YsduiLogo: LobeIconComponent = memo(({ size = 18, className, style, ...rest }) => (
-    <svg
-        width={size}
-        height={size}
-        viewBox={YSDUI_LOGO_SVG_SPEC.viewBox}
-        fill="none"
-        className={className}
-        style={{ flex: "none", lineHeight: 1, ...style }}
-        {...rest}
-    >
-        <rect width="1024" height="1024" rx={YSDUI_LOGO_SVG_SPEC.backgroundRadius} fill={YSDUI_LOGO_SVG_SPEC.backgroundFill} />
-        <g transform={YSDUI_LOGO_SVG_SPEC.emblemTransform}>
-            <circle cx="512" cy="512" r={YSDUI_LOGO_SVG_SPEC.circleRadius} fill={YSDUI_LOGO_SVG_SPEC.circleFill} />
-            <path
-                d={YSDUI_LOGO_SVG_SPEC.circuitPath}
-                fill="none"
-                stroke={YSDUI_LOGO_SVG_SPEC.backgroundFill}
-                strokeWidth={YSDUI_LOGO_SVG_SPEC.circuitStrokeWidth}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-            />
-        </g>
-    </svg>
-));
+const YsduiLogo: LobeIconComponent = memo((props) => renderYsduiLogoSvg(createElement, props));
 YsduiLogo.displayName = "YsduiLogo";
 
 // 只允许按需加载 Mono 组件。这里不能使用 eager glob：模型 Logo 目录有数百个 provider 模块，

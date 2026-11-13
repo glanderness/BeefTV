@@ -2,7 +2,7 @@
 .model-service-modal .ant-modal-body { display:flex; flex-direction:column; min-height:0; }
 .model-service-header { padding:28px 32px 20px; border-bottom:1px solid var(--workspace-border); }
 .model-service-header h2 { margin:0; font-size:24px; line-height:1.4; font-weight:650; letter-spacing:-.025em; }
-.model-service-form-title p,.model-service-catalog-header p { color:var(--muted-foreground); font-size:13px; margin:4px 0 0; line-height:1.7; text-wrap:pretty; }
+.model-service-form-title p,.model-service-catalog-header p { color:var(--user-ink-muted,var(--muted-foreground)); font-size:13px; margin:4px 0 0; line-height:1.7; text-wrap:pretty; }
 .model-service-form-title p+p { margin-top:6px; }
 .model-service-steps { display:flex; list-style:none; padding:0; margin:20px 0 0; gap:28px; font-size:12px; color:var(--muted-foreground); }
 .model-service-steps li { display:flex; align-items:center; gap:8px; }

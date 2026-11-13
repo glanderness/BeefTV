@@ -18,6 +18,49 @@ export const YSDUI_LOGO_SVG_SPEC = {
   circuitStrokeWidth: 94,
 };
 
+/**
+ * @param {any} createElement
+ * @param {Record<string, any>} [props]
+ */
+export function renderYsduiLogoSvg(createElement, { size = 18, className, style, ...rest } = {}) {
+  return createElement(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: YSDUI_LOGO_SVG_SPEC.viewBox,
+      fill: "none",
+      className,
+      style: { flex: "none", lineHeight: 1, ...style },
+      ...rest,
+    },
+    createElement("rect", {
+      width: 1024,
+      height: 1024,
+      rx: YSDUI_LOGO_SVG_SPEC.backgroundRadius,
+      fill: YSDUI_LOGO_SVG_SPEC.backgroundFill,
+    }),
+    createElement(
+      "g",
+      { transform: YSDUI_LOGO_SVG_SPEC.emblemTransform },
+      createElement("circle", {
+        cx: 512,
+        cy: 512,
+        r: YSDUI_LOGO_SVG_SPEC.circleRadius,
+        fill: YSDUI_LOGO_SVG_SPEC.circleFill,
+      }),
+      createElement("path", {
+        d: YSDUI_LOGO_SVG_SPEC.circuitPath,
+        fill: "none",
+        stroke: YSDUI_LOGO_SVG_SPEC.backgroundFill,
+        strokeWidth: YSDUI_LOGO_SVG_SPEC.circuitStrokeWidth,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+      }),
+    ),
+  );
+}
+
 const DEFAULT_VIDEO_REFERENCES = {
   promptMaxChars: 2000,
   minImages: 0,
