@@ -43,11 +43,11 @@
 
 ## 最近更新
 
+- **[v2.2.4](https://github.com/glanderness/BeefTV/releases/tag/v2.2.4)** — 修复桌面端 Eagle 素材库预览与导入下载，支持自定义模型服务无 `/v1` 前缀地址与手动模型改删，修复提示词长按退格、个人资产库分页计数与生成历史本地视频预览。
 - **[v2.2.3](https://github.com/glanderness/BeefTV/releases/tag/v2.2.3)** — 接入 Seedream 5.5 图片生成与细粒度图层拆分，优化画布视频首尾帧自动识别与参考预检，修复超分与去字幕终态重试及诊断耗时显示，并补充银盛云枢壹算品牌图标与简介。
 - **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — 上线实时余额与在线充值，完善生成费用预估，升级 DeepSeek Harness 协同与画布视频处理。
 - **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — 新增银盛云枢壹算渠道插件，改版插件与账户设置，改善画布预览及生成报错与重试。
 - **[v2.2.0](https://github.com/glanderness/BeefTV/releases/tag/v2.2.0)** — 新增 Claude Code 与 Codex 一键接入，扩展模型服务预设与脚本能力，优化视频生成与配音。
-- **[v2.1.6](https://github.com/glanderness/BeefTV/releases/tag/v2.1.6)** — RunningHub 与 ComfyUI 转为市场插件，完善插件管理，新增手动分镜表、提示词预设与剧本导入。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
