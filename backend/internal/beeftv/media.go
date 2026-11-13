@@ -184,7 +184,7 @@ type MediaClient struct {
 	State              MediaStatePort
 	Open               func(context.Context, string) (io.ReadCloser, string, int64, error)
 	Progress           func(label string, loaded, total int64, phase string)
-	Observe            func(*http.Request, *http.Response, []byte, error)
+	Observe            func(*http.Request, *http.Response, []byte, time.Time, error)
 	StorageObserve     func(UploadObservation)
 	InspectReference   func(context.Context, LocalMediaReference, io.ReaderAt, int64, string) error
 	ReferenceUploaded  func(LocalMediaReference, UploadedMedia)
@@ -288,6 +288,7 @@ func (c *MediaClient) send(req *http.Request, limit int64) ([]byte, http.Header,
 }
 
 func (c *MediaClient) sendWith(client *http.Client, req *http.Request, limit int64) ([]byte, http.Header, error) {
+	startedAt := time.Now()
 	resp, err := client.Do(req)
 	var data []byte
 	if err == nil {
@@ -308,7 +309,7 @@ func (c *MediaClient) sendWith(client *http.Client, req *http.Request, limit int
 		}
 	}
 	if c.Observe != nil {
-		c.Observe(req, resp, data, err)
+		c.Observe(req, resp, data, startedAt, err)
 	}
 	if resp != nil {
 		return data, resp.Header, err

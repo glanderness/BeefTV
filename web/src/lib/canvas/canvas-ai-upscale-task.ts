@@ -60,7 +60,7 @@ export function hasPendingUpscaleTask(metadata?: CanvasNodeMetadata): boolean {
     const explicitOutcome = authoritativeNodeOutcome(metadata);
     if (explicitOutcome) {
         if (explicitOutcome.phase === "ready") return !metadata.content && !metadata.storageKey;
-        return isTaskOutcomeWorking(explicitOutcome) || isRegenerateBlocked(explicitOutcome) || Boolean(metadata.taskId);
+        return isTaskOutcomeWorking(explicitOutcome) || isRegenerateBlocked(explicitOutcome);
     }
     // Only a failure before calling the task API proves that no paid task exists.
     if (metadata.generationSubmissionState === "rejected" && !metadata.taskId) return false;
@@ -69,17 +69,21 @@ export function hasPendingUpscaleTask(metadata?: CanvasNodeMetadata): boolean {
     return metadata.generationSubmissionState === "unknown" || metadata.generationSubmissionState === "submitting";
 }
 
-export function upscaleObservationFailureMetadata(task: Pick<GenerationTask, "id" | "status" | "outcome">, errorDetails: string): Partial<CanvasNodeMetadata> {
+export function upscaleObservationFailureMetadata(task: Pick<GenerationTask, "id" | "status" | "outcome" | "operation">, errorDetails: string): Partial<CanvasNodeMetadata> {
     const terminal = task.status === "failed" || task.status === "cancelled" || task.status === "succeeded";
+    const resolvedOutcome = task.outcome ?? (task.status === "succeeded" ? { phase: "retrievable", regenerate: "blocked", reason: "delivery_pending" } : undefined);
+    const terminalFailureDetails = resolvedOutcome && !isRegenerateBlocked(resolvedOutcome)
+        ? errorDetails
+        : `请先在任务详情核对原任务与扣费状态，暂勿重复提交。${errorDetails}`;
     return {
         taskId: task.id,
-        taskOutcome: task.outcome ?? (task.status === "succeeded" ? { phase: "retrievable", regenerate: "blocked", reason: "delivery_pending" } : undefined),
+        taskOutcome: resolvedOutcome,
         taskStatus: task.status,
         status: terminal ? "error" : "loading",
         ...(terminal ? {
-            errorDetails: task.status === "succeeded" ? `云端已完成，结果暂未载入。请从任务详情取回结果，或重新打开画布恢复。${errorDetails}` : `请先在任务详情核对原任务与扣费状态，暂勿重复提交。${errorDetails}`,
+            errorDetails: task.status === "succeeded" ? `云端已完成，结果暂未载入。请从任务详情取回结果，或重新打开画布恢复。${errorDetails}` : terminalFailureDetails,
         } : {
-            processingLabel: "超分任务状态待确认",
+            processingLabel: isVideoSubtitleEraseTask(task) ? "视频处理任务状态待确认" : "超分任务状态待确认",
             taskStage: "状态同步中断，请重新打开画布查询",
             errorDetails: "暂时无法同步进度，云端任务可能仍在处理。请重新打开画布查询，暂勿重复提交。",
         }),
