@@ -2,7 +2,8 @@
 .model-service-modal .ant-modal-body { display:flex; flex-direction:column; min-height:0; }
 .model-service-header { padding:28px 32px 20px; border-bottom:1px solid var(--workspace-border); }
 .model-service-header h2 { margin:0; font-size:24px; line-height:1.4; font-weight:650; letter-spacing:-.025em; }
-.model-service-form-title p,.model-service-catalog-header p { color:var(--muted-foreground); font-size:13px; margin:4px 0 0; line-height:1.7; }
+.model-service-form-title p,.model-service-catalog-header p { color:var(--user-ink-muted,var(--muted-foreground)); font-size:13px; margin:4px 0 0; line-height:1.7; text-wrap:pretty; }
+.model-service-form-title p+p { margin-top:6px; }
 .model-service-steps { display:flex; list-style:none; padding:0; margin:20px 0 0; gap:28px; font-size:12px; color:var(--muted-foreground); }
 .model-service-steps li { display:flex; align-items:center; gap:8px; }
 .model-service-steps li > span { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; background:var(--surface-active); }
@@ -36,7 +37,8 @@
 .model-service-fields { padding:28px 32px; min-width:0; }
 .model-service-fields .ant-form-item { margin-bottom:22px; }
 .model-service-fields .ant-form-item-explain { margin:4px 0 10px; line-height:1.7; }
-.model-service-form-title { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+.model-service-form-title { display:flex; align-items:flex-start; gap:12px; margin-bottom:24px; }
+.model-service-form-title > svg { margin-top:2px; }
 .model-service-form-title h3,.model-service-catalog-header h3 { margin:0; font-size:16px; font-weight:600; }
 .model-service-urls { display:grid; gap:12px; margin-top:-7px; }
 .model-service-url { display:grid; gap:5px; font-size:11px; color:var(--muted-foreground); }
