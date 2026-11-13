@@ -174,9 +174,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      - name: Select bundled Node runtime
+        run: |
+          node -e 'const fs=require("fs"),p=require("path"); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${p.dirname(p.dirname(process.execPath))}\n`);'
       - name: Install agent host dependencies
         working-directory: agent-host
         run: bun install --frozen-lockfile
