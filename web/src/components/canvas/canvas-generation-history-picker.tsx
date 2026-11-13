@@ -197,6 +197,8 @@ function inlineImagePreviewSrc(value: string) {
 }
 
 function imagePreviewStorageKey(task: GenerationTask) {
+    const output = task.outputs?.find((item) => item.mediaType === "image" && (item.outputIndex ?? 0) === 0 && item.resourceId?.trim());
+    if (output?.resourceId) return resourceStorageKey(output.resourceId.trim());
     const preview = task.previewPosterUrl || task.previewUrl || previewFromResult(task);
     if (!task.resultJson) {
         const resourceId = ownedResourceIdFromMediaRef(undefined, preview);

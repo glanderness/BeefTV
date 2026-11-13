@@ -29,6 +29,17 @@ describe("generation history preview after desktop restart", () => {
         });
         expect(generationHistoryVideoSource(video)).toEqual({ storageKey: "resource:local-video", url: "" });
     });
+    test("materialized image output takes priority over an expired provider URL in history thumbnails", () => {
+        const image = task({
+            id: "saved-image",
+            type: "canvas_image",
+            previewUrl: "https://provider.example/image?expired=1",
+            outputs: [{ outputIndex: 0, mediaType: "image", resourceId: "local-image" }],
+            resultJson: JSON.stringify({ mode: "image", images: [{ dataUrl: "", url: "https://provider.example/image?expired=1" }] }),
+        });
+        expect(generationHistoryPreviewStorageKey(image)).toBe("resource:local-image");
+        expect(generationHistoryPreviewImageSrc(image)).toBe("");
+    });
     test("legacy resource-backed videos remain playable without canonical outputs", () => {
         const video = task({ id: "legacy-video", type: "canvas_video", resultJson: JSON.stringify({ video: { storageKey: "resource:legacy-video", url: "https://provider.example/expired" } }) });
         expect(generationHistoryVideoSource(video)).toEqual({ storageKey: "resource:legacy-video", url: "" });
