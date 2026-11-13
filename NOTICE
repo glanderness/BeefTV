@@ -28,19 +28,37 @@ an externally configured model provider or another explicitly networked tool.
 Upstream source
 ---------------
 
-This repository contains code derived from:
+This repository contains code derived from the following upstream projects:
 
   Infinite Canvas
   https://github.com/basketikun/infinite-canvas
   Base version: v0.5.0
   Base commit: 568f0f1838df8de31fe885a4e130e2f346dd14ab
 
-The upstream project is maintained under the basketikun account. Upstream
-authors and contributors retain copyright in their respective contributions.
-The upstream project was relicensed to MIT in commit
+Infinite Canvas, maintained by basketikun, provides the upstream infinite
+canvas architecture and portions of the canvas implementation used by BeefTV,
+including node dragging and zooming, connections, undo/redo, and canvas
+import/export. The project was relicensed to MIT in commit
 890ba95858bbb13496d23978003716656109abb2. Its copyright and permission notice
-are preserved in Part B of LICENSE. The new source-available restrictions do
-not replace the upstream license or the upstream authors' rights.
+are preserved in Part B of LICENSE.
+
+  Open AI Canvas
+  https://github.com/ddcat-ai/open-ai-canvas
+  Base version: v1.3.0 (2026-09-15)
+  Base commit: b7484c56789a7cf1ea7c062084d56af5c3dd18cd
+
+BeefTV is developed on top of DDCat's Open AI Canvas, an AI filmmaking and
+short drama workspace. Foundational capabilities derived from this project
+include canvas node workflows, model provider integration, and task and asset
+management, which BeefTV adapts and extends for its local desktop application.
+The referenced release uses the MIT License; its original copyright notices
+for basketikun, ddcat, and Open AI Canvas contributors are preserved in Part B
+of LICENSE.
+
+We thank both projects' authors, maintainers, and contributors. They retain
+copyright in their respective contributions. BeefTV's source-available
+restrictions do not replace the upstream licenses or the upstream authors'
+rights.
 
 BeefTV changes
 --------------
