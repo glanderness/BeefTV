@@ -6,32 +6,36 @@ let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
 
 beforeAll(async () => {
-    const build = await Bun.build({
-        entrypoints: [import.meta.dir + "/fixtures/creation-reference-file-card-harness.tsx"],
-        target: "browser",
-        external: ["/beef-logo.png"],
-        define: {
-            "import.meta.env.DEV": "false",
-            "import.meta.env.PROD": "true",
-            "import.meta.env.MODE": '"production"',
-            "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"true"',
-            "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"',
-            __APP_VERSION__: '"0.0.0-test"',
-            "process.env.NODE_ENV": '"production"',
-        },
-        plugins: [
-            {
-                name: "stub-vite-glob",
-                setup(builder) {
-                    builder.onResolve({ filter: /model-logo$/ }, () => ({ path: "model-logo", namespace: "test-icons" }));
-                    builder.onLoad({ filter: /.*/, namespace: "test-icons" }, () => ({
-                        contents: "export function ModelLogo() { return null; }",
-                        loader: "js",
-                    }));
-                },
+    const runBuild = () =>
+        Bun.build({
+            entrypoints: [import.meta.dir + "/fixtures/creation-reference-file-card-harness.tsx"],
+            target: "browser",
+            external: ["/beef-logo.png"],
+            define: {
+                "import.meta.env.DEV": "false",
+                "import.meta.env.PROD": "true",
+                "import.meta.env.MODE": '"production"',
+                "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"true"',
+                "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"',
+                __APP_VERSION__: '"0.0.0-test"',
+                "process.env.NODE_ENV": '"production"',
             },
-        ],
-    });
+            plugins: [
+                {
+                    name: "stub-vite-glob",
+                    setup(builder) {
+                        builder.onResolve({ filter: /model-logo$/ }, () => ({ path: "model-logo", namespace: "test-icons" }));
+                        builder.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
+                        builder.onLoad({ filter: /.*/, namespace: "test-icons" }, () => ({
+                            contents: "export function ModelLogo() { return null; }",
+                            loader: "js",
+                        }));
+                    },
+                },
+            ],
+        });
+    let build = await runBuild();
+    if (!build.success) build = await runBuild();
     if (!build.success) throw new Error(build.logs.join("\n"));
     const assets = new Map(
         await Promise.all(
