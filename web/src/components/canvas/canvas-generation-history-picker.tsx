@@ -11,6 +11,7 @@ import {
     assertCanvasGenerationHistoryTaskForInsert,
     canvasGenerationHistorySelectStillValid,
     insertableCanvasGenerationHistoryTasks,
+    generationHistoryVideoSource,
     type CanvasGenerationHistorySelectGate,
 } from "@/lib/canvas/canvas-generation-history";
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
@@ -150,12 +151,7 @@ function HistoryMediaPreview({ task }: { task: GenerationTask }) {
         void (async () => {
             const detail = assertCanvasGenerationHistoryTaskForInsert(await queryGenerationTask(task.id, { signal: controller.signal }), { expectedId: task.id, projectId: task.projectId || "" });
             if (cancelled) return;
-            const result = JSON.parse(detail.resultJson || "{}");
-            const media = result.video;
-            const fallback = media?.dataUrl || media?.url || "";
-            const id = resourceIdFromStorageKey(media?.storageKey) || ownedResourceIdFromMediaRef(media?.storageKey, fallback) || (typeof result.resourceId === "string" ? result.resourceId : "");
-            if (!id && !fallback) throw new Error("缺少媒体地址");
-            if (!cancelled) setMedia({ storageKey: id ? resourceStorageKey(id) : media?.storageKey || "", url: fallback });
+            if (!cancelled) setMedia(generationHistoryVideoSource(detail));
         })().catch(() => { if (!cancelled) setError(true); });
         return () => { cancelled = true; controller.abort(); };
     }, [task.id, task.projectId, retry]);
