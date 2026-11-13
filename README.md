@@ -197,8 +197,10 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 
 BeefTV 的开发基于并参考了以下开源项目与技术：
 
-- **[DDCat 的 OpenAI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理等基础能力来自该项目，并在此基础上持续改进优化为本地APP版本。再次感谢 [DDCat](https://github.com/ddcat-ai) 及所有贡献者对开源AIGC社区作出的贡献。
+- **[DDCat 的 OpenAI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理等基础能力来自该项目，并在此基础上持续改进优化为本地应用版本。再次感谢 [DDCat](https://github.com/ddcat-ai) 及所有贡献者对开源AIGC社区作出的贡献。
+  
 - **[basketikun 的 infinite-canvas](https://github.com/basketikun/infinite-canvas)**：将无限画布与 AI 图片创作结合的开源工作台。BeefTV 参考了其无限画布整体架构，并沿用了部分画布代码与技术能力，包括节点拖拽与缩放、连线、撤销重做、画布导入导出等。感谢 [basketikun](https://github.com/basketikun) 及所有贡献者。
+  
 - **[Pi（Pi Agent）](https://github.com/earendil-works/pi)**：轻量、可扩展的 Agent 框架，提供 Agent 执行循环、工具调用与会话管理等能力。BeefTV 内置 Agent 基于 Pi 构建，并围绕视频创作场景进行适配与扩展，接入画布操作、创作计划与技能管理等能力。感谢 Pi 的作者、[维护团队](https://github.com/earendil-works)及所有贡献者。
 
 感谢以上项目作者、维护者及所有贡献者提供的基础与启发。BeefTV 在这些成果之上持续进行独立开发和深度优化；上游与第三方代码、版权声明及许可仍按各自条款保留，具体归属与许可范围见 [`NOTICE`](NOTICE)、[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 和 [`LICENSE`](LICENSE)。
