@@ -24,6 +24,7 @@ import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canva
 import { cn } from "@/lib/utils";
 
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS, assetCategoryLabel } from "@/lib/asset-category";
 import { resourceStorageLabel, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
@@ -34,7 +35,7 @@ import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { startOperation } from "@/stores/use-operation-progress";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
-import { isUnsavedWorkspaceAsset, isWorkspaceGeneratedHistoryAsset, isWorkspacePersonalLibraryAsset, loadWorkspacePersonalAssetCatalog, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetCountSum, workspaceAssetProjectLabel, workspaceAssetProjectOptions } from "@/services/workspace-asset-read";
+import { isUnsavedWorkspaceAsset, isWorkspaceGeneratedHistoryAsset, isWorkspacePersonalLibraryAsset, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetCountSum, workspaceAssetProjectLabel, workspaceAssetProjectOptions, workspaceAssetTraversalTotal } from "@/services/workspace-asset-read";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges, persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
 import {
     assignWorkspaceAssetsFolder,
@@ -121,6 +122,7 @@ export default function AssetsPage() {
     const folderApi = usesWorkspaceAssetFolderApi();
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
+    const categoryFilter = "all";
     const [folderFilter, setFolderFilter] = useState<AssetFolderFilter>("all");
     const [projectFilter, setProjectFilter] = useState("all");
     const [page, setPage] = useState(1);
@@ -166,13 +168,7 @@ export default function AssetsPage() {
     const coverUrl = Form.useWatch("coverUrl", form) || "";
     const title = Form.useWatch("title", form) || "";
     const content = Form.useWatch("content", form) || "";
-
-    const assetPageQuery = useQuery({
-        queryKey: assetLibraryQueryKey("personal-catalog"),
-        queryFn: ({ signal }) => loadWorkspacePersonalAssetCatalog({ signal }),
-        enabled: canonicalReads && sessionHydrated,
-    });
-    const remoteReady = canonicalReads && assetPageQuery.isSuccess && assetPageQuery.data !== undefined;
+    const debouncedKeyword = useDebouncedValue(keyword.trim(), 250);
 
     const foldersQuery = useQuery({
         queryKey: assetFolderQueryKey(),
@@ -209,23 +205,50 @@ export default function AssetsPage() {
     }, [validAssets]);
     const filteredAssets = useMemo(() => {
         const query = keyword.trim().toLowerCase();
-        const catalog = remoteReady ? assetPageQuery.data!.assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity") : validAssets;
-        return catalog.filter((asset) => {
+        return validAssets.filter((asset) => {
             if (projectFilter !== "all" && workspaceAssetProjectLabel(asset) !== projectFilter) return false;
             if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
             if (folderFilter.startsWith("builtin:") && (asset.folderId || asset.category !== folderFilter.slice(8))) return false;
             if (folderFilter === "uncategorized" && asset.folderId) return false;
             if (folderFilter !== "all" && folderFilter !== "uncategorized" && !folderFilter.startsWith("builtin:") && asset.folderId !== folderFilter) return false;
             if (!query) return true;
-            // Canonical API search covers payload fields, including tags and metadata.
-            return (remoteReady ? JSON.stringify(asset).toLowerCase() : assetSearchText(asset)).includes(query);
+            return assetSearchText(asset).includes(query);
         });
-    }, [assetPageQuery.data, remoteReady, validAssets, keyword, kindFilter, folderFilter, projectFilter]);
-    // Built-in folders exclude custom-folder assets and uncollected history.
-    const builtinFolderCounts = useMemo(() => {
-        const catalog = remoteReady ? assetPageQuery.data!.assets : validAssets;
-        return Object.fromEntries((["character", "environment", "prop"] as const).map(category => [category, catalog.filter(asset => !asset.folderId && asset.category === category).length]));
-    }, [remoteReady, assetPageQuery.data, validAssets]);
+    }, [validAssets, keyword, kindFilter, folderFilter, projectFilter]);
+
+    const assetPageQuery = useQuery({
+        queryKey: assetLibraryQueryKey(page, pageSize, "library", kindFilter, categoryFilter, folderFilter, projectFilter, debouncedKeyword),
+        queryFn: ({ signal }) => loadAssetLibraryPage({
+            page,
+            pageSize,
+            status: "active",
+            personal: true,
+            kind: kindFilter === "all" ? undefined : kindFilter,
+            category: folderFilter.startsWith("builtin:") ? folderFilter.slice(8) as AssetCategory : undefined,
+            folderId: folderFilter !== "all" && folderFilter !== "uncategorized" && !folderFilter.startsWith("builtin:") ? folderFilter : undefined,
+            uncategorized: folderFilter === "uncategorized" || folderFilter.startsWith("builtin:"),
+            query: debouncedKeyword || undefined,
+            project: projectFilter === "all" ? undefined : projectFilter,
+            signal,
+        }),
+        enabled: canonicalReads && sessionHydrated,
+        placeholderData: (previousData) => previousData,
+    });
+    // Built-in folders contain only personal assets without a custom folder.
+    const builtinCountsQuery = useQuery({
+        queryKey: [...assetFolderQueryKey(), "builtin-folder-counts"],
+        queryFn: async ({ signal }) => {
+            const counts = await Promise.all((["character", "environment", "prop"] as const).map(async category => {
+                const result = await loadAssetLibraryPage({ page: 1, pageSize: 1, status: "active", personal: true, category, uncategorized: true, signal });
+                return [category, result.total] as const;
+            }));
+            return Object.fromEntries(counts);
+        },
+        enabled: canonicalReads && sessionHydrated,
+    });
+    const builtinFolderCounts = canonicalReads
+        ? builtinCountsQuery.data || {}
+        : Object.fromEntries((["character", "environment", "prop"] as const).map(category => [category, validAssets.filter(asset => !asset.folderId && asset.category === category).length]));
 
     const historyQuery = useQuery({
         queryKey: assetLibraryQueryKey("history", historyPage, historyKind),
@@ -253,10 +276,13 @@ export default function AssetsPage() {
         setHistoryAssets((current) => mergeHistoryLibraryAssets(current, next, historyPage));
     }, [canonicalReads, historyPage, historyQuery.data, historyQuery.isPlaceholderData, sourceTab]);
 
-    const visibleAssets = useMemo(() => {
+    const localVisibleAssets = useMemo(() => {
         const start = (page - 1) * pageSize;
         return filteredAssets.slice(start, start + pageSize);
     }, [filteredAssets, page, pageSize]);
+    const remotePageAssets = useMemo(() => (assetPageQuery.data?.assets || []).filter((asset): asset is LibraryAsset => asset.kind !== "entity" && (sourceTab !== "personal" || isWorkspacePersonalLibraryAsset(asset))), [assetPageQuery.data?.assets, sourceTab]);
+    const remoteReady = canonicalReads && assetPageQuery.isSuccess && assetPageQuery.data !== undefined;
+    const visibleAssets = useMemo(() => remoteReady ? remotePageAssets : localVisibleAssets, [remoteReady, remotePageAssets, localVisibleAssets]);
     const orderedVisibleAssets = useMemo(() => {
         const next = [...visibleAssets];
         next.sort((left, right) => {
@@ -269,24 +295,24 @@ export default function AssetsPage() {
     }, [sortOrder, visibleAssets]);
     const visibleAssetIds = useMemo(() => visibleAssets.map((asset) => asset.id), [visibleAssets]);
     const allFilteredSelected = visibleAssetIds.length > 0 && visibleAssetIds.every((id) => selectedIds.includes(id));
-    const totalAssets = canonicalReads && assetPageQuery.isError ? 0 : filteredAssets.length;
-    const hasNarrowingFilters = kindFilter !== "all" || folderFilter !== "all" || Boolean(keyword.trim()) || projectFilter !== "all";
+    const totalAssets = canonicalReads && assetPageQuery.isError ? 0 : remoteReady ? Math.max(0, assetPageQuery.data?.total ?? 0) : filteredAssets.length;
+    const hasNarrowingFilters = kindFilter !== "all" || folderFilter !== "all" || Boolean(debouncedKeyword) || projectFilter !== "all";
     const libraryEmpty = remoteReady
         ? totalAssets === 0 && visibleAssets.length === 0 && !hasNarrowingFilters
         : validAssets.length === 0 && totalAssets === 0;
 
-    const kindCounts = useMemo(() => assetCountMap(kindOptions, remoteReady ? assetPageQuery.data?.kindCounts : undefined, activeAssets, (asset) => asset.kind), [activeAssets, assetPageQuery.data?.kindCounts, remoteReady]);
-    const categoryCounts = useMemo(() => assetCountMap(categoryOptions, remoteReady ? assetPageQuery.data?.categoryCounts : undefined, activeAssets, (asset) => asset.category || "other"), [activeAssets, assetPageQuery.data?.categoryCounts, remoteReady]);
+    const kindCounts = useMemo(() => assetCountMap(kindOptions, remoteReady ? assetPageQuery.data?.kindCounts : undefined, validAssets, (asset) => asset.kind), [validAssets, assetPageQuery.data?.kindCounts, remoteReady]);
+    const categoryCounts = useMemo(() => assetCountMap(categoryOptions, remoteReady ? assetPageQuery.data?.categoryCounts : undefined, validAssets, (asset) => asset.category || "other"), [validAssets, assetPageQuery.data?.categoryCounts, remoteReady]);
     const folderCounts = remoteReady
         ? assetPageQuery.data?.folderCounts || {}
-        : Object.fromEntries([...new Set(activeAssets.map((asset) => asset.folderId).filter((id): id is string => Boolean(id)))].map((folderId) => [folderId, activeAssets.filter((asset) => asset.folderId === folderId).length]));
-    const allFoldersCount = remoteReady ? workspaceAssetCountSum(folderCounts) : activeAssets.length;
-    const recentCount = remoteReady ? assetPageQuery.data?.recentTotal ?? 0 : activeAssets.filter((asset) => Number.isFinite(new Date(asset.updatedAt).getTime()) && Date.now() - new Date(asset.updatedAt).getTime() <= 30 * 24 * 60 * 60 * 1000).length;
+        : Object.fromEntries([...new Set(validAssets.map((asset) => asset.folderId).filter((id): id is string => Boolean(id)))].map((folderId) => [folderId, validAssets.filter((asset) => asset.folderId === folderId).length]));
+    const allFoldersCount = remoteReady ? workspaceAssetCountSum(folderCounts) : validAssets.length;
+    const recentCount = remoteReady ? assetPageQuery.data?.recentTotal ?? 0 : validAssets.filter((asset) => Number.isFinite(new Date(asset.updatedAt).getTime()) && Date.now() - new Date(asset.updatedAt).getTime() <= 30 * 24 * 60 * 60 * 1000).length;
     const generationHistoryCount = remoteReady ? assetPageQuery.data?.generatedTotal ?? 0 : localGenerationHistoryCount;
     const remoteProjectCounts = remoteReady ? assetPageQuery.data?.projectCounts : undefined;
     const projectOptions = remoteProjectCounts ? workspaceAssetProjectOptions(remoteProjectCounts) : localProjectOptions;
-    const allProjectsCount = remoteProjectCounts ? workspaceAssetAllProjectsCount(remoteProjectCounts) : activeAssets.length;
-    const traversalTotal = totalAssets;
+    const allProjectsCount = remoteProjectCounts ? workspaceAssetAllProjectsCount(remoteProjectCounts) : validAssets.length;
+    const traversalTotal = remoteReady && assetPageQuery.data ? workspaceAssetTraversalTotal(assetPageQuery.data) : filteredAssets.length;
 
     useEffect(() => {
         const maxPage = Math.max(1, Math.ceil(traversalTotal / pageSize));
@@ -434,10 +460,11 @@ export default function AssetsPage() {
             await flushAssetStorePersistence();
             const movedIds = new Set(assetIds);
             const builtin = folderId.startsWith("builtin:");
-            queryClient.setQueryData<Awaited<ReturnType<typeof loadWorkspacePersonalAssetCatalog>>>(assetLibraryQueryKey("personal-catalog"), current => {
+            const remainsVisible = folderFilter === "all" || folderFilter === folderId || (folderFilter === "uncategorized" && !folderId);
+            queryClient.setQueryData<Awaited<ReturnType<typeof loadAssetLibraryPage>>>(assetLibraryQueryKey(page, pageSize, "library", kindFilter, categoryFilter, folderFilter, projectFilter, debouncedKeyword), current => {
                 if (!current) return current;
-                const assets = current.assets.map(item => !movedIds.has(item.id) ? item : { ...item, folderId: builtin ? undefined : folderId || undefined, category: builtin ? folderId.slice(8) as AssetCategory : item.category });
-                return { ...current, assets };
+                const assets = current.assets.flatMap(item => !movedIds.has(item.id) ? [item] : remainsVisible ? [{ ...item, folderId: builtin ? undefined : folderId || undefined, category: builtin ? folderId.slice(8) as AssetCategory : item.category }] : []);
+                return { ...current, assets, total: Math.max(0, current.total - (current.assets.length - assets.length)) };
             });
             await invalidateAssetLibrary();
             setSelectedIds([]);
@@ -1644,7 +1671,8 @@ function AssetFilterGroup({
 }
 
 function assetSearchText(asset: LibraryAsset) {
-    return [asset.title, asset.source || "", asset.note || "", assetCategoryLabel(asset.category), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
+    const meta = [typeof asset.metadata?.projectName === "string" ? asset.metadata.projectName : "", typeof asset.metadata?.prompt === "string" ? asset.metadata.prompt : "", ...(asset.tags || [])];
+    return [asset.title, asset.source || "", asset.note || "", assetCategoryLabel(asset.category), asset.kind === "text" ? asset.data.content : asset.data.mimeType, ...meta].join(" ").toLowerCase();
 }
 
 function readAssetViewMode(): "grid" | "list" {
