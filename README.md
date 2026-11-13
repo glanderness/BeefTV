@@ -45,7 +45,7 @@
 
 - **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — 上线实时余额与在线充值，完善生成费用预估，升级 DeepSeek Harness 协同与画布视频处理。
 - **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — 新增银盛云枢壹算渠道插件，改版插件与账户设置，改善画布预览及生成报错与重试。
-- **[v2.2.0](https://github.com/glanderness/BeefTV/releases/tag/v2.2.0)** — 新增 Claude Code 与 Codex 一键接入，扩展模型服务预设与技能脚本能力，优化助手、视频生成与配音。
+- **[v2.2.0](https://github.com/glanderness/BeefTV/releases/tag/v2.2.0)** — 新增 Claude Code 与 Codex 一键接入，扩展模型服务预设与脚本能力，优化视频生成与配音。
 - **[v2.1.6](https://github.com/glanderness/BeefTV/releases/tag/v2.1.6)** — RunningHub 与 ComfyUI 转为市场插件，完善插件管理，新增手动分镜表、提示词预设与剧本导入。
 - **[v2.1.5](https://github.com/glanderness/BeefTV/releases/tag/v2.1.5)** — 新增插件快捷入口与 LL2 模型服务一键连接。
 
