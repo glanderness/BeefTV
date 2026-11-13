@@ -292,17 +292,73 @@ async function assetToDataUrl(asset: EagleWritableAsset, signal?: AbortSignal) {
     return fileToDataUrl(withMimeType(blob, asset.data.mimeType), signal);
 }
 
-async function fetchEagleWritableBlob(url: string, signal?: AbortSignal): Promise<Blob> {
-    const trimmedBase = String(apiBaseURL).replace(/\/+$/, "");
-    let apiPath: string | null = null;
-    if (trimmedBase && (url === trimmedBase || url.startsWith(`${trimmedBase}/`))) {
-        apiPath = url.slice(trimmedBase.length) || "/";
-    } else if (url.startsWith("/api/")) {
-        apiPath = url.slice("/api".length);
+export function resolveAuthenticatedBackendApiPath(rawUrl: string, configuredBaseUrl = apiBaseURL): string | null {
+    const trimmed = rawUrl.trim();
+    if (!trimmed || trimmed.includes("\\") || trimmed.startsWith("//")) return null;
+    const base = String(configuredBaseUrl || "").trim().replace(/\/+$/, "");
+    if (!base) return null;
+
+    let pathPart: string | null = null;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+        let target: URL;
+        let backend: URL;
+        try {
+            target = new URL(trimmed);
+            if (/^[a-z][a-z0-9+.-]*:/i.test(base)) {
+                backend = new URL(base);
+            } else if (base.startsWith("/") && typeof window !== "undefined" && /^https?:$/i.test(window.location?.protocol || "")) {
+                backend = new URL(base, window.location.origin);
+            } else {
+                return null;
+            }
+        } catch {
+            return null;
+        }
+        if (target.origin !== backend.origin || target.username || target.password) return null;
+        const backendPath = backend.pathname.replace(/\/+$/, "");
+        if (backendPath && !target.pathname.startsWith(`${backendPath}/`)) return null;
+        const relativePathname = backendPath ? target.pathname.slice(backendPath.length) : target.pathname;
+        if (!/^\/(?!\/)/.test(relativePathname)) return null;
+        pathPart = `${relativePathname}${target.search}`;
+    } else if (trimmed.startsWith("/")) {
+        let parsed: URL;
+        try {
+            parsed = new URL(trimmed, "http://127.0.0.1");
+        } catch {
+            return null;
+        }
+        let backendPath = "/api";
+        if (/^[a-z][a-z0-9+.-]*:/i.test(base)) {
+            try {
+                backendPath = new URL(base).pathname.replace(/\/+$/, "") || "/api";
+            } catch {
+                return null;
+            }
+        } else if (base.startsWith("/")) {
+            backendPath = base.replace(/\/+$/, "") || "/api";
+        }
+        if (!parsed.pathname.startsWith(`${backendPath}/`)) return null;
+        const relativePathname = parsed.pathname.slice(backendPath.length);
+        if (!/^\/(?!\/)/.test(relativePathname)) return null;
+        pathPart = `${relativePathname}${parsed.search}`;
     }
+
+    if (!pathPart || !/^\/(?!\/)/.test(pathPart) || pathPart.includes("\\")) return null;
+    return pathPart;
+}
+
+async function fetchEagleWritableBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+    const apiPath = resolveAuthenticatedBackendApiPath(url);
     if (apiPath) {
         try {
-            const response = await http.raw<ArrayBuffer>({ method: "get", url: apiPath, responseType: "arraybuffer", timeout: 0, signal });
+            const response = await http.raw<ArrayBuffer>({
+                method: "get",
+                url: apiPath,
+                allowAbsoluteUrls: false,
+                responseType: "arraybuffer",
+                timeout: 0,
+                signal,
+            });
             return responseDataToBlob(response.data, response.headers);
         } catch (error) {
             if (error instanceof DOMException && error.name === "AbortError") throw error;

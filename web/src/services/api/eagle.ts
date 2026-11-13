@@ -73,6 +73,13 @@ function decodeBinaryErrorPayload(data: unknown): string {
 async function unwrapEagleBinaryError(error: unknown, fallbackMessage: string): Promise<Error> {
     if (error instanceof DOMException && error.name === "AbortError") return error;
     const cause = error instanceof ApiError ? error.cause : error;
+    if (
+        (cause instanceof DOMException && cause.name === "AbortError")
+        || axios.isCancel(cause)
+        || (axios.isAxiosError(cause) && cause.code === axios.AxiosError.ERR_CANCELED)
+    ) {
+        return new DOMException("请求已取消", "AbortError");
+    }
     if (axios.isAxiosError(cause) && cause.response?.data !== undefined) {
         try {
             const rawText = cause.response.data instanceof Blob ? await cause.response.data.text() : decodeBinaryErrorPayload(cause.response.data);
@@ -96,14 +103,16 @@ export function responseDataToBlob(data: Blob | ArrayBuffer | Uint8Array, header
     return new Blob([part], mimeType ? { type: mimeType } : undefined);
 }
 
-async function fetchEagleBinary(path: string, baseUrl: string, signal: AbortSignal | undefined, fallbackMessage: string) {
+const EAGLE_THUMBNAIL_TIMEOUT_MS = 30_000;
+
+async function fetchEagleBinary(path: string, baseUrl: string, signal: AbortSignal | undefined, timeout: number, fallbackMessage: string) {
     try {
         const response = await http.raw<ArrayBuffer>({
             method: "get",
             url: path,
             params: { baseUrl },
             responseType: "arraybuffer",
-            timeout: 0,
+            timeout,
             signal,
         });
         return responseDataToBlob(response.data, response.headers);
@@ -113,11 +122,11 @@ async function fetchEagleBinary(path: string, baseUrl: string, signal: AbortSign
 }
 
 export async function downloadEagleThumbnail(itemId: string, baseUrl: string, signal?: AbortSignal) {
-    return fetchEagleBinary(`/plugins/eagle/items/${encodeURIComponent(itemId)}/thumbnail`, baseUrl, signal, "读取 Eagle 缩略图失败");
+    return fetchEagleBinary(`/plugins/eagle/items/${encodeURIComponent(itemId)}/thumbnail`, baseUrl, signal, EAGLE_THUMBNAIL_TIMEOUT_MS, "读取 Eagle 缩略图失败");
 }
 
 export async function downloadEagleItem(itemId: string, baseUrl: string, signal?: AbortSignal) {
-    return fetchEagleBinary(`/plugins/eagle/items/${encodeURIComponent(itemId)}/file`, baseUrl, signal, "读取 Eagle 素材失败");
+    return fetchEagleBinary(`/plugins/eagle/items/${encodeURIComponent(itemId)}/file`, baseUrl, signal, 0, "读取 Eagle 素材失败");
 }
 
 export async function addEagleItem(baseUrl: string, input: EagleAddItemInput) {
