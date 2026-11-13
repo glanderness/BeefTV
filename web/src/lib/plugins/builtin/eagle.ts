@@ -1,7 +1,8 @@
 import { createElement, lazy, Suspense } from "react";
 import { nanoid } from "nanoid";
 
-import { addEagleItem, createEagleFolder, downloadEagleItem, eagleItemFileUrl, eagleItemThumbnailUrl, getEagleLibrary, listEagleItems, type EagleFolder, type EagleItem } from "@/services/api/eagle";
+import { addEagleItem, createEagleFolder, downloadEagleItem, eagleItemFileUrl, eagleItemThumbnailUrl, getEagleLibrary, listEagleItems, responseDataToBlob, type EagleFolder, type EagleItem } from "@/services/api/eagle";
+import { apiBaseURL, http } from "@/services/api/request";
 import { getMediaBlob, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import type { Asset } from "@/stores/use-asset-store";
@@ -287,9 +288,30 @@ async function assetToDataUrl(asset: EagleWritableAsset, signal?: AbortSignal) {
     const url = asset.data.url;
     if (!url) throw new Error("生成结果没有可写入 Eagle 的媒体地址");
     if (url.startsWith("data:")) return url;
+    const blob = await fetchEagleWritableBlob(url, signal);
+    return fileToDataUrl(withMimeType(blob, asset.data.mimeType), signal);
+}
+
+async function fetchEagleWritableBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+    const trimmedBase = String(apiBaseURL).replace(/\/+$/, "");
+    let apiPath: string | null = null;
+    if (trimmedBase && (url === trimmedBase || url.startsWith(`${trimmedBase}/`))) {
+        apiPath = url.slice(trimmedBase.length) || "/";
+    } else if (url.startsWith("/api/")) {
+        apiPath = url.slice("/api".length);
+    }
+    if (apiPath) {
+        try {
+            const response = await http.raw<ArrayBuffer>({ method: "get", url: apiPath, responseType: "arraybuffer", timeout: 0, signal });
+            return responseDataToBlob(response.data, response.headers);
+        } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") throw error;
+            throw new Error("读取生成媒体失败，无法写入 Eagle");
+        }
+    }
     const response = await fetch(url, { credentials: "include", signal });
     if (!response.ok) throw new Error("读取生成媒体失败，无法写入 Eagle");
-    return fileToDataUrl(withMimeType(await response.blob(), asset.data.mimeType), signal);
+    return response.blob();
 }
 
 function eagleAssetName(asset: EagleWritableAsset) {
@@ -345,6 +367,18 @@ function isEagleMediaType(mimeType: string) {
     return value.startsWith("image/") || value.startsWith("video/") || value.startsWith("audio/");
 }
 function fileToDataUrl(file: Blob, signal?: AbortSignal): Promise<string> {
+    if (typeof FileReader === "undefined") {
+        return (async () => {
+            signal?.throwIfAborted();
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            signal?.throwIfAborted();
+            let binary = "";
+            for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+                binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+            }
+            return `data:${file.type || "application/octet-stream"};base64,${btoa(binary)}`;
+        })();
+    }
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         const cleanup = () => signal?.removeEventListener("abort", abort);
