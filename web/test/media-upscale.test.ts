@@ -115,6 +115,22 @@ describe("Topaz upscale contract", () => {
         const succeeded = upscaleObservationFailureMetadata({ id: "topaz", status: "succeeded" }, "落图失败");
         expect(hasPendingUpscaleTask(succeeded)).toBe(true);
         expect(hasPendingUpscaleTask({ ...succeeded, content: "resource-result" })).toBe(false);
+
+        const refunded = upscaleObservationFailureMetadata(
+            { id: "erase-1", status: "failed", operation: "media.video.subtitle_erase", outcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" } },
+            "视频素材同步到上游超时，本次未扣费，请直接重试",
+        );
+        expect(refunded.status).toBe("error");
+        expect(hasPendingUpscaleTask(refunded)).toBe(false);
+        expect(refunded.errorDetails).toBe("视频素材同步到上游超时，本次未扣费，请直接重试");
+        expect(refunded.errorDetails).not.toContain("暂勿重复提交");
+
+        const settlementPending = upscaleObservationFailureMetadata(
+            { id: "erase-2", status: "failed", operation: "media.video.subtitle_erase", outcome: { phase: "failed", regenerate: "blocked", reason: "settlement_pending" } },
+            "上游处理失败",
+        );
+        expect(hasPendingUpscaleTask(settlementPending)).toBe(true);
+        expect(settlementPending.errorDetails).toContain("暂勿重复提交");
     });
     test("processing models stay in settings but leave normal generation selectors", () => {
         const endpoints = ["topaz/upscale/image/precision", "topaz/upscale/image/generative", "topaz/upscale/image/transparent", "topaz/upscale/video/precision", "topaz/upscale/video/generative", "/topaz/upscale/image/precision", "topaz-standard-v2", "topaz-wonder-3.5", "topaz-proteus", "topaz-starlight-fast-2"];
