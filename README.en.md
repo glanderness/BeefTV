@@ -193,6 +193,16 @@ The new license permits self-hosting, internal customization, and creating and s
 
 The new restrictions do not apply retroactively to historical MIT content or override independently licensed third-party materials. This is a source-available license; the entire repository should not be treated as standard MIT or as an open source project under the OSI definition. See the [license guide](docs/content/docs/overview/licensing.mdx) for covered scenarios and boundaries, and [`NOTICE`](NOTICE) for upstream sources and third-party attributions.
 
+## Open source acknowledgments
+
+BeefTV builds on and draws from the following open source projects and technologies:
+
+- **[DDCat's OpenAI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**: A workspace for AI filmmaking and short drama creation. BeefTV is developed on top of this project. Foundational capabilities such as canvas node workflows, model provider integration, and task and asset management come from this project and continue to be refined and optimized into a local desktop app. Thanks again to [DDCat](https://github.com/ddcat-ai) and all contributors for their contributions to the open source AIGC community.
+- **[basketikun's infinite-canvas](https://github.com/basketikun/infinite-canvas)**: An open source workspace combining an infinite canvas with AI image creation. BeefTV draws on its overall infinite canvas architecture and reuses parts of its canvas code and capabilities, including node dragging and zooming, connections, undo/redo, and canvas import/export. Thanks to [basketikun](https://github.com/basketikun) and all contributors.
+- **[Pi (Pi Agent)](https://github.com/earendil-works/pi)**: A lightweight, extensible agent framework providing the agent execution loop, tool calling, and session management. BeefTV's built-in Agent is built on Pi, with adaptations and extensions for video creation, including canvas operations, creative planning, and skill management. Thanks to Pi's authors, [maintainers](https://github.com/earendil-works), and all contributors.
+
+We thank these projects' authors, maintainers, and contributors for their foundations and inspiration. BeefTV continues independent development and extensive optimization on top of this work. Upstream and third-party code, copyright notices, and licenses retain their respective terms. See [`NOTICE`](NOTICE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and [`LICENSE`](LICENSE) for attribution and license scope.
+
 ## ⭐ Star History
 
 <a href="https://www.star-history.com/?repos=glanderness%2FBeefTV&amp;type=date&amp;legend=bottom-right">
