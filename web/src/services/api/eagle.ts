@@ -1,5 +1,3 @@
-import axios from "axios";
-
 import { ApiError, apiBaseURL, http } from "@/services/api/request";
 
 export type EagleFolder = {
@@ -70,19 +68,24 @@ function decodeBinaryErrorPayload(data: unknown): string {
     return "";
 }
 
+function responseDataFromCause(error: unknown): unknown {
+    const cause = error instanceof ApiError ? error.cause : error;
+    if (cause && typeof cause === "object" && "response" in cause) {
+        return (cause as { response?: { data?: unknown } }).response?.data;
+    }
+    return undefined;
+}
+
 async function unwrapEagleBinaryError(error: unknown, fallbackMessage: string): Promise<Error> {
     if (error instanceof DOMException && error.name === "AbortError") return error;
     const cause = error instanceof ApiError ? error.cause : error;
-    if (
-        (cause instanceof DOMException && cause.name === "AbortError")
-        || axios.isCancel(cause)
-        || (axios.isAxiosError(cause) && cause.code === axios.AxiosError.ERR_CANCELED)
-    ) {
-        return new DOMException("请求已取消", "AbortError");
+    if (cause instanceof DOMException && cause.name === "AbortError") {
+        return cause;
     }
-    if (axios.isAxiosError(cause) && cause.response?.data !== undefined) {
+    const rawData = responseDataFromCause(error);
+    if (rawData !== undefined) {
         try {
-            const rawText = cause.response.data instanceof Blob ? await cause.response.data.text() : decodeBinaryErrorPayload(cause.response.data);
+            const rawText = rawData instanceof Blob ? await rawData.text() : decodeBinaryErrorPayload(rawData);
             const body = JSON.parse(rawText) as { msg?: unknown };
             if (typeof body?.msg === "string" && body.msg.trim()) {
                 return new Error(body.msg.trim());
