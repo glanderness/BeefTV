@@ -4,8 +4,8 @@ Copyright (C) 2026 BeefTV contributors
 BeefTV uses scoped licensing. New original material first introduced under
 the BeefTV Source Available License 1.0 is governed by Part A of LICENSE
 only to the extent its copyright holders can license it under those terms.
-Previously MIT-licensed material remains under MIT, whose complete original
-text and copyright notices are preserved in Part B of LICENSE.
+Previously MIT-licensed material remains under MIT, whose MIT license text and
+upstream copyright notices are set out in Part B of LICENSE.
 
 The transition begins with the commit introducing Part A. All previously
 MIT-licensed material is excluded from the new restrictions, including the
@@ -42,18 +42,18 @@ import/export. The project was relicensed to MIT in commit
 890ba95858bbb13496d23978003716656109abb2. Its copyright and permission notice
 are preserved in Part B of LICENSE.
 
-  Open AI Canvas
+  影策 Open AI Canvas (ddcat-ai/open-ai-canvas)
   https://github.com/ddcat-ai/open-ai-canvas
   Base version: v1.3.0 (2026-09-15)
   Base commit: b7484c56789a7cf1ea7c062084d56af5c3dd18cd
 
-BeefTV is developed on top of DDCat's Open AI Canvas, an AI filmmaking and
+BeefTV is developed on top of ddcat's Open AI Canvas, an AI filmmaking and
 short drama workspace. Foundational capabilities derived from this project
-include canvas node workflows, model provider integration, and task and asset
-management, which BeefTV adapts and extends for its local desktop application.
-The referenced release uses the MIT License; its original copyright notices
-for basketikun, ddcat, and Open AI Canvas contributors are preserved in Part B
-of LICENSE.
+include canvas node workflows, model provider integration, task and asset
+management, and community-contributed built-in plugins, which BeefTV adapts and
+extends for its local desktop application. The referenced release uses the MIT
+License; its upstream copyright notices for basketikun and for ddcat and Open AI
+Canvas contributors are set out in Part B of LICENSE.
 
 We thank both projects' authors, maintainers, and contributors. They retain
 copyright in their respective contributions. BeefTV's source-available
