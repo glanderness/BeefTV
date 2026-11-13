@@ -219,6 +219,7 @@ export function renderEditableContent(editor: HTMLElement, value: string, refere
         }
         return chip;
     });
+    if (value.endsWith("\n")) nodes.push(document.createElement("br"));
     editor.replaceChildren(...nodes);
 }
 
@@ -232,24 +233,33 @@ function findNextMentionIndex(value: string, tokens: string[], fromIndex: number
 }
 
 export function serializeEditableValue(root: HTMLElement) {
-    return serializeNodeList(root.childNodes).replace(/\u00a0/g, " ");
+    return serializeNodeList(root.childNodes, root).replace(/\u00a0/g, " ");
 }
 
-function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[]) {
+function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[], root: Node) {
     let text = "";
     nodes.forEach((node) => {
-        text += serializeNode(node);
+        text += serializeNode(node, root);
     });
     return text;
 }
 
-function serializeNode(node: ChildNode): string {
+function serializeNode(node: ChildNode, root: Node): string {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
     if (!(node instanceof HTMLElement)) return "";
     const token = node.dataset.mentionToken;
     if (token) return token;
-    if (node.tagName === "BR") return "\n";
-    return serializeNodeList(node.childNodes);
+    if (node.tagName === "BR") return isTrailingEditorSentinelBr(root, node) ? "" : "\n";
+    return serializeNodeList(node.childNodes, root);
+}
+
+function isTrailingEditorSentinelBr(root: Node, node: Node): boolean {
+    return node instanceof HTMLElement && node.tagName === "BR" && node.parentNode === root && node === root.lastChild;
+}
+
+function clampDomPointOffset(node: Node, offset: number): number {
+    const maxOffset = node.nodeType === Node.TEXT_NODE ? (node.textContent?.length || 0) : node.childNodes.length;
+    return Math.min(Math.max(0, offset), maxOffset);
 }
 
 export function getEditableSelection(root: HTMLElement | null): EditableSelection | null {
@@ -258,61 +268,63 @@ export function getEditableSelection(root: HTMLElement | null): EditableSelectio
     if (!selection || !selection.rangeCount) return null;
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
-    const start = offsetForPoint(root, range.startContainer, range.startOffset);
-    const end = offsetForPoint(root, range.endContainer, range.endOffset);
+    const start = offsetForPoint(root, range.startContainer, range.startOffset, root);
+    const end = offsetForPoint(root, range.endContainer, range.endOffset, root);
     return start <= end ? { start, end } : { start: end, end: start };
 }
 
-function offsetForPoint(root: Node, target: Node, targetOffset: number): number {
-    if (root === target) {
-        if (root.nodeType === Node.TEXT_NODE) return targetOffset;
-        return Array.from(root.childNodes)
+function offsetForPoint(current: Node, target: Node, targetOffset: number, editorRoot: Node): number {
+    if (current === target) {
+        if (current.nodeType === Node.TEXT_NODE) return targetOffset;
+        return Array.from(current.childNodes)
             .slice(0, targetOffset)
-            .reduce((offset, node) => offset + plainTextLength(node), 0);
+            .reduce((offset, node) => offset + plainTextLength(node, editorRoot), 0);
     }
     let offset = 0;
-    for (const child of Array.from(root.childNodes)) {
-        if (child === target || child.contains(target)) return offset + offsetForPoint(child, target, targetOffset);
-        offset += plainTextLength(child);
+    for (const child of Array.from(current.childNodes)) {
+        if (child === target || child.contains(target)) return offset + offsetForPoint(child, target, targetOffset, editorRoot);
+        offset += plainTextLength(child, editorRoot);
     }
     return offset;
 }
 
 export function setEditableSelection(root: HTMLElement, offset: number) {
     const range = document.createRange();
-    const point = pointForOffset(root, Math.max(0, offset));
-    range.setStart(point.node, point.offset);
+    const point = pointForOffset(root, Math.max(0, offset), root);
+    range.setStart(point.node, clampDomPointOffset(point.node, point.offset));
     range.collapse(true);
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
 }
 
-function pointForOffset(root: Node, offset: number): { node: Node; offset: number } {
-    if (root.nodeType === Node.TEXT_NODE) return { node: root, offset: Math.min(offset, root.textContent?.length || 0) };
+function pointForOffset(current: Node, offset: number, editorRoot: Node = current): { node: Node; offset: number } {
+    if (current.nodeType === Node.TEXT_NODE) return { node: current, offset: Math.min(offset, current.textContent?.length || 0) };
     let remaining = offset;
-    const children = Array.from(root.childNodes);
+    const children = Array.from(current.childNodes);
     for (let index = 0; index < children.length; index += 1) {
         const child = children[index];
-        const length = plainTextLength(child);
+        if (isTrailingEditorSentinelBr(editorRoot, child)) return { node: current, offset: index };
+        const length = plainTextLength(child, editorRoot);
         if (remaining > length) {
             remaining -= length;
             continue;
         }
-        if (isMentionElement(child)) return { node: root, offset: remaining <= length / 2 ? index : index + 1 };
-        return pointForOffset(child, remaining);
+        if (isMentionElement(child)) return { node: current, offset: remaining <= length / 2 ? index : index + 1 };
+        if (child instanceof HTMLElement && child.tagName === "BR") return { node: current, offset: remaining === 0 ? index : index + 1 };
+        return pointForOffset(child, remaining, editorRoot);
     }
-    return { node: root, offset: children.length };
+    return { node: current, offset: children.length };
 }
 
-function plainTextLength(node: Node): number {
+function plainTextLength(node: Node, editorRoot?: Node): number {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length || 0;
     if (node instanceof HTMLElement) {
         const token = node.dataset.mentionToken;
         if (token) return token.length;
-        if (node.tagName === "BR") return 1;
+        if (node.tagName === "BR") return editorRoot && isTrailingEditorSentinelBr(editorRoot, node) ? 0 : 1;
     }
-    return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child), 0);
+    return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child, editorRoot), 0);
 }
 
 function isMentionElement(node: Node): node is HTMLElement {
@@ -337,9 +349,9 @@ export function mentionMenuPosition(anchor: HTMLElement, cursorOffset: number, p
 
 export function mentionCaretRect(anchor: HTMLElement, cursorOffset: number): MentionAnchorRect {
     if (anchor instanceof HTMLTextAreaElement) return textareaCaretRect(anchor, cursorOffset);
-    const point = pointForOffset(anchor, cursorOffset);
+    const point = pointForOffset(anchor, Math.max(0, cursorOffset), anchor);
     const range = document.createRange();
-    range.setStart(point.node, point.offset);
+    range.setStart(point.node, clampDomPointOffset(point.node, point.offset));
     range.collapse(true);
     const rangeRect = range.getClientRects()[0] || range.getBoundingClientRect();
     if (rangeRect && (rangeRect.height || rangeRect.width)) return rangeRect;
