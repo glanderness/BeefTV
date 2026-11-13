@@ -112,6 +112,62 @@ export async function loadWorkspaceAssetLibraryPage(options: WorkspaceAssetLibra
     return overlaid;
 }
 
+/** The API pages all assets; personal-library membership must precede UI paging. */
+export async function loadWorkspacePersonalAssetCatalog({ signal }: { signal?: AbortSignal } = {}): Promise<WorkspaceAssetLibraryPage> {
+    throwIfAborted(signal);
+    if (!usesWorkspaceAssetLibraryApi()) return personalAssetCatalog(loadBrowserLocalAssetPage({ page: 1, pageSize: Number.MAX_SAFE_INTEGER, status: "active" }));
+    await hydrateAssetStoreDrafts();
+    const assets: Asset[] = [];
+    const seen = new Set<string>();
+    const receivedIds = new Set<string>();
+    let first: WorkspaceAssetLibraryPage | undefined;
+    for (let page = 1; ; page += 1) {
+        throwIfAborted(signal);
+        // Use the API's maximum batch size; resource files are not fetched here.
+        const remote = await listWorkspaceAssetsPage({ page, pageSize: 120, status: "active" }, { signal });
+        throwIfAborted(signal);
+        const batch = parseWorkspaceAssetPage(remote);
+        first ??= batch;
+        if (batch.page !== page) throw new Error("素材分页响应与请求不一致，请刷新重试");
+        const size = receivedIds.size;
+        for (const item of remote.assets) {
+            if (isRecord(item) && typeof item.id === "string") receivedIds.add(item.id);
+        }
+        for (const asset of batch.assets) {
+            if (seen.has(asset.id)) continue;
+            seen.add(asset.id);
+            assets.push(asset);
+        }
+        if (!batch.canonicalHasMore) break;
+        if (receivedIds.size === size) throw new Error("素材分页未返回新的记录，请刷新重试");
+    }
+    const complete = { ...first!, assets, page: 1, pageSize: Math.max(1, assets.length), hasMore: false, canonicalHasMore: false };
+    const overlaid = await overlayAssetDrafts(complete, { page: 1, pageSize: complete.pageSize, status: "active", signal });
+    throwIfAborted(signal);
+    projectCommittedAssets(assets);
+    return personalAssetCatalog(overlaid);
+}
+
+function personalAssetCatalog(page: WorkspaceAssetLibraryPage): WorkspaceAssetLibraryPage {
+    const assets = page.assets.filter((asset) => isActiveLibraryAsset(asset) && isWorkspacePersonalLibraryAsset(asset));
+    return {
+        ...page,
+        assets,
+        page: 1,
+        pageSize: Math.max(1, assets.length),
+        total: assets.length,
+        canonicalTotal: assets.length,
+        hasMore: false,
+        canonicalHasMore: false,
+        kindCounts: countMap(assets, (asset) => asset.kind),
+        categoryCounts: countMap(assets, (asset) => asset.category || "other"),
+        folderCounts: countMap(assets, (asset) => asset.folderId || ""),
+        projectCounts: countMap(assets, workspaceAssetProjectLabel),
+        favoriteTotal: assets.filter(isActiveFavoriteAsset).length,
+        recentTotal: assets.filter(isRecentAsset).length,
+    };
+}
+
 export class WorkspaceAssetUnavailableError extends Error {
     constructor(public readonly assetIds: string[]) {
         super("部分本地素材不存在，请重新选择素材");

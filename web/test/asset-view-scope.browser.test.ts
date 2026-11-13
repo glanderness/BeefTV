@@ -11,6 +11,8 @@ let gateConfirm = false;
 let confirmHits = 0;
 let videoFixture = false;
 let localVideoFixture = false;
+let personalPaginationFixture = false;
+let personalPageRequests = 0;
 let confirmGate: { promise: Promise<void>; resolve: () => void } | undefined;
 
 function resetConfirmGate() {
@@ -118,6 +120,16 @@ beforeAll(async () => {
                 return json({ ok: true });
             }
             if (path === "/api/assets") {
+                if (personalPaginationFixture) {
+                    personalPageRequests += 1;
+                    const history = Array.from({ length: 37 }, (_, index) => ({ ...libraryAsset(`history-${index}`), id: `history-${index}`, source: "生成任务", metadata: { generationEffectKey: `effect-${index}` } }));
+                    const personal = Array.from({ length: 123 }, (_, index) => ({ ...libraryAsset(`personal-${index + 1}`), id: `personal-${index + 1}`, tags: index === 122 ? ["tag-only-marker"] : [], metadata: index === 122 ? { projectName: "project-only-marker" } : {} }));
+                    const catalog = [...history, ...personal];
+                    const page = Number(url.searchParams.get("page")) || 1;
+                    const pageSize = Math.min(Number(url.searchParams.get("pageSize")) || 40, 120);
+                    const start = (page - 1) * pageSize;
+                    return json({ ...assetsPayload("fixture"), assets: catalog.slice(start, start + pageSize), page, pageSize, total: catalog.length, hasMore: start + pageSize < catalog.length, generatedTotal: history.length, kindCounts: { image: catalog.length }, folderCounts: { "": catalog.length } });
+                }
                 if (url.searchParams.get("status") === "archived") {
                     return json({ ...assetsPayload("REPLACEMENT-VISIBLE"), assets: [], total: 0, kindCounts: {}, categoryCounts: {} });
                 }
@@ -140,6 +152,8 @@ beforeEach(async () => {
     await page?.close();
     videoFixture = false;
     localVideoFixture = false;
+    personalPaginationFixture = false;
+    personalPageRequests = 0;
     failConfirm = false;
     gateConfirm = false;
     confirmHits = 0;
@@ -147,6 +161,38 @@ beforeEach(async () => {
     page = await browser.newPage();
     await page.goto(server.url.toString());
 });
+
+test("personal library filters history before paging so full pages stay full", async () => {
+    personalPaginationFixture = true;
+    await page.reload();
+    await page.getByRole("dialog").waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "查看素材：personal-1", exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: /^查看素材：personal-/ }).count()).toBe(40);
+    expect(await page.getByRole("button", { name: /^查看素材：history-/ }).count()).toBe(0);
+    expect(await page.getByText("1-40 / 共 123 条", { exact: true }).count()).toBe(1);
+    const requests = personalPageRequests;
+    await page.getByRole("button", { name: "2", exact: true }).click();
+    await page.getByRole("button", { name: "查看素材：personal-41", exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: /^查看素材：personal-/ }).count()).toBe(40);
+    expect(await page.getByRole("button", { name: "查看素材：personal-1", exact: true }).count()).toBe(0);
+    await page.getByRole("button", { name: "4", exact: true }).click();
+    await page.getByRole("button", { name: "查看素材：personal-121", exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: /^查看素材：personal-/ }).count()).toBe(3);
+    expect(await page.getByRole("button", { name: "下一页", exact: true }).isDisabled()).toBe(true);
+    await page.getByText("40 条/页", { exact: true }).click();
+    await page.getByText("80 条/页", { exact: true }).click();
+    await page.getByRole("button", { name: "查看素材：personal-1", exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: /^查看素材：personal-/ }).count()).toBe(80);
+    await page.getByRole("button", { name: "搜索资产", exact: true }).click();
+    await page.getByPlaceholder("搜索资产").fill("personal-12");
+    expect(await page.getByRole("button", { name: /^查看素材：personal-/ }).count()).toBe(5);
+    await page.getByPlaceholder("搜索资产").fill("tag-only-marker");
+    expect(await page.getByRole("button", { name: "查看素材：personal-123", exact: true }).count()).toBe(1);
+    await page.getByPlaceholder("搜索资产").fill("project-only-marker");
+    expect(await page.getByRole("button", { name: "查看素材：personal-123", exact: true }).count()).toBe(1);
+    expect(personalPageRequests).toBe(requests);
+}, 30_000);
 
 test("asset detail resolves owned video for native playback instead of loading the protected resource URL", async () => {
     videoFixture = true;

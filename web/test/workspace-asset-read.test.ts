@@ -556,7 +556,6 @@ describe("workspace asset canonical reads", () => {
         expect(page).toContain("canonicalReads");
         expect(page).toContain("projectCounts");
         expect(page).toContain("workspaceAssetProjectOptions");
-        expect(page).toContain("workspaceAssetTraversalTotal");
         expect(page).toContain("canonicalHasMore");
         expect(page).toContain("generatedTotal");
         expect(page).toContain("generated: true");

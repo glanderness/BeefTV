@@ -24,7 +24,6 @@ import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canva
 import { cn } from "@/lib/utils";
 
 import { useCopyText } from "@/hooks/use-copy-text";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS, assetCategoryLabel } from "@/lib/asset-category";
 import { resourceStorageLabel, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
@@ -35,7 +34,7 @@ import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { startOperation } from "@/stores/use-operation-progress";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
-import { isUnsavedWorkspaceAsset, isWorkspaceGeneratedHistoryAsset, isWorkspacePersonalLibraryAsset, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetCountSum, workspaceAssetProjectLabel, workspaceAssetProjectOptions, workspaceAssetTraversalTotal } from "@/services/workspace-asset-read";
+import { isUnsavedWorkspaceAsset, isWorkspaceGeneratedHistoryAsset, isWorkspacePersonalLibraryAsset, loadWorkspacePersonalAssetCatalog, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetCountSum, workspaceAssetProjectLabel, workspaceAssetProjectOptions } from "@/services/workspace-asset-read";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges, persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
 import {
     assignWorkspaceAssetsFolder,
@@ -122,7 +121,6 @@ export default function AssetsPage() {
     const folderApi = usesWorkspaceAssetFolderApi();
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
-    const categoryFilter = "all";
     const [folderFilter, setFolderFilter] = useState<AssetFolderFilter>("all");
     const [projectFilter, setProjectFilter] = useState("all");
     const [page, setPage] = useState(1);
@@ -168,7 +166,13 @@ export default function AssetsPage() {
     const coverUrl = Form.useWatch("coverUrl", form) || "";
     const title = Form.useWatch("title", form) || "";
     const content = Form.useWatch("content", form) || "";
-    const debouncedKeyword = useDebouncedValue(keyword.trim(), 250);
+
+    const assetPageQuery = useQuery({
+        queryKey: assetLibraryQueryKey("personal-catalog"),
+        queryFn: ({ signal }) => loadWorkspacePersonalAssetCatalog({ signal }),
+        enabled: canonicalReads && sessionHydrated,
+    });
+    const remoteReady = canonicalReads && assetPageQuery.isSuccess && assetPageQuery.data !== undefined;
 
     const foldersQuery = useQuery({
         queryKey: assetFolderQueryKey(),
@@ -185,7 +189,7 @@ export default function AssetsPage() {
         });
         return () => { active = false; };
     }, [folderApi]);
-    const folders = folderApi ? foldersQuery.data || [] : localFolders;
+    const folders = useMemo(() => folderApi ? foldersQuery.data || [] : localFolders, [folderApi, foldersQuery.data, localFolders]);
 
     const allLibraryAssets = useMemo(() => assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity"), [assets]);
     const activeAssets = useMemo(() => allLibraryAssets.filter((asset) => asset.status !== "archived"), [allLibraryAssets]);
@@ -205,51 +209,23 @@ export default function AssetsPage() {
     }, [validAssets]);
     const filteredAssets = useMemo(() => {
         const query = keyword.trim().toLowerCase();
-        const recentCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        return validAssets.filter((asset) => {
+        const catalog = remoteReady ? assetPageQuery.data!.assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity") : validAssets;
+        return catalog.filter((asset) => {
             if (projectFilter !== "all" && workspaceAssetProjectLabel(asset) !== projectFilter) return false;
             if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
             if (folderFilter.startsWith("builtin:") && (asset.folderId || asset.category !== folderFilter.slice(8))) return false;
             if (folderFilter === "uncategorized" && asset.folderId) return false;
             if (folderFilter !== "all" && folderFilter !== "uncategorized" && !folderFilter.startsWith("builtin:") && asset.folderId !== folderFilter) return false;
             if (!query) return true;
-            return assetSearchText(asset).includes(query);
+            // Canonical API search covers payload fields, including tags and metadata.
+            return (remoteReady ? JSON.stringify(asset).toLowerCase() : assetSearchText(asset)).includes(query);
         });
-    }, [validAssets, keyword, kindFilter, categoryFilter, folderFilter, projectFilter]);
-
-    const assetPageQuery = useQuery({
-        queryKey: assetLibraryQueryKey(page, pageSize, "library", kindFilter, categoryFilter, folderFilter, projectFilter, debouncedKeyword),
-        queryFn: ({ signal }) => loadAssetLibraryPage({
-            page,
-            pageSize,
-            status: "active",
-            kind: kindFilter === "all" ? undefined : kindFilter,
-            category: folderFilter.startsWith("builtin:") ? folderFilter.slice(8) as AssetCategory : undefined,
-            folderId: folderFilter !== "all" && folderFilter !== "uncategorized" && !folderFilter.startsWith("builtin:") ? folderFilter : undefined,
-            uncategorized: folderFilter.startsWith("builtin:"),
-            query: debouncedKeyword || undefined,
-            project: projectFilter === "all" ? undefined : projectFilter,
-            signal,
-        }),
-        enabled: canonicalReads && sessionHydrated,
-        placeholderData: (previousData) => previousData,
-    });
-    // Built-in folders contain only assets without a custom folder. Category
-    // facets alone also include custom-folder assets and would overcount them.
-    const builtinCountsQuery = useQuery({
-        queryKey: [...assetFolderQueryKey(), "builtin-folder-counts"],
-        queryFn: async ({ signal }) => {
-            const counts = await Promise.all((["character", "environment", "prop"] as const).map(async category => {
-                const result = await loadAssetLibraryPage({ page: 1, pageSize: 1, status: "active", category, uncategorized: true, signal });
-                return [category, result.total] as const;
-            }));
-            return Object.fromEntries(counts);
-        },
-        enabled: canonicalReads && sessionHydrated,
-    });
-    const builtinFolderCounts = canonicalReads
-        ? builtinCountsQuery.data || {}
-        : Object.fromEntries((["character", "environment", "prop"] as const).map(category => [category, activeAssets.filter(asset => !asset.folderId && asset.category === category).length]));
+    }, [assetPageQuery.data, remoteReady, validAssets, keyword, kindFilter, folderFilter, projectFilter]);
+    // Built-in folders exclude custom-folder assets and uncollected history.
+    const builtinFolderCounts = useMemo(() => {
+        const catalog = remoteReady ? assetPageQuery.data!.assets : validAssets;
+        return Object.fromEntries((["character", "environment", "prop"] as const).map(category => [category, catalog.filter(asset => !asset.folderId && asset.category === category).length]));
+    }, [remoteReady, assetPageQuery.data, validAssets]);
 
     const historyQuery = useQuery({
         queryKey: assetLibraryQueryKey("history", historyPage, historyKind),
@@ -277,15 +253,10 @@ export default function AssetsPage() {
         setHistoryAssets((current) => mergeHistoryLibraryAssets(current, next, historyPage));
     }, [canonicalReads, historyPage, historyQuery.data, historyQuery.isPlaceholderData, sourceTab]);
 
-    const localVisibleAssets = useMemo(() => {
+    const visibleAssets = useMemo(() => {
         const start = (page - 1) * pageSize;
         return filteredAssets.slice(start, start + pageSize);
     }, [filteredAssets, page, pageSize]);
-    const remotePageAssets = useMemo(() => (assetPageQuery.data?.assets || []).filter((asset): asset is LibraryAsset => asset.kind !== "entity" && (sourceTab !== "personal" || isWorkspacePersonalLibraryAsset(asset))), [assetPageQuery.data?.assets, sourceTab]);
-    const remoteFilteredOut = useMemo(() => (assetPageQuery.data?.assets || []).filter((asset) => asset.kind !== "entity" && sourceTab === "personal" && !isWorkspacePersonalLibraryAsset(asset)).length, [assetPageQuery.data?.assets, sourceTab]);
-    const remoteTotal = Math.max(0, (assetPageQuery.data?.total ?? 0) - remoteFilteredOut);
-    const remoteReady = canonicalReads && assetPageQuery.isSuccess && assetPageQuery.data !== undefined;
-    const visibleAssets = useMemo(() => remoteReady ? remotePageAssets : localVisibleAssets, [remoteReady, remotePageAssets, localVisibleAssets]);
     const orderedVisibleAssets = useMemo(() => {
         const next = [...visibleAssets];
         next.sort((left, right) => {
@@ -298,8 +269,8 @@ export default function AssetsPage() {
     }, [sortOrder, visibleAssets]);
     const visibleAssetIds = useMemo(() => visibleAssets.map((asset) => asset.id), [visibleAssets]);
     const allFilteredSelected = visibleAssetIds.length > 0 && visibleAssetIds.every((id) => selectedIds.includes(id));
-    const totalAssets = canonicalReads && assetPageQuery.isError ? 0 : remoteReady ? remoteTotal : filteredAssets.length;
-    const hasNarrowingFilters = kindFilter !== "all" || folderFilter !== "all" || Boolean(debouncedKeyword) || projectFilter !== "all";
+    const totalAssets = canonicalReads && assetPageQuery.isError ? 0 : filteredAssets.length;
+    const hasNarrowingFilters = kindFilter !== "all" || folderFilter !== "all" || Boolean(keyword.trim()) || projectFilter !== "all";
     const libraryEmpty = remoteReady
         ? totalAssets === 0 && visibleAssets.length === 0 && !hasNarrowingFilters
         : validAssets.length === 0 && totalAssets === 0;
@@ -315,7 +286,7 @@ export default function AssetsPage() {
     const remoteProjectCounts = remoteReady ? assetPageQuery.data?.projectCounts : undefined;
     const projectOptions = remoteProjectCounts ? workspaceAssetProjectOptions(remoteProjectCounts) : localProjectOptions;
     const allProjectsCount = remoteProjectCounts ? workspaceAssetAllProjectsCount(remoteProjectCounts) : activeAssets.length;
-    const traversalTotal = remoteReady && assetPageQuery.data ? workspaceAssetTraversalTotal(assetPageQuery.data) : filteredAssets.length;
+    const traversalTotal = totalAssets;
 
     useEffect(() => {
         const maxPage = Math.max(1, Math.ceil(traversalTotal / pageSize));
@@ -463,11 +434,10 @@ export default function AssetsPage() {
             await flushAssetStorePersistence();
             const movedIds = new Set(assetIds);
             const builtin = folderId.startsWith("builtin:");
-            const remainsVisible = folderFilter === "all" || folderFilter === folderId || (folderFilter === "uncategorized" && !folderId);
-            queryClient.setQueryData<Awaited<ReturnType<typeof loadAssetLibraryPage>>>(assetLibraryQueryKey(page, pageSize, "library", kindFilter, categoryFilter, folderFilter, projectFilter, debouncedKeyword), current => {
+            queryClient.setQueryData<Awaited<ReturnType<typeof loadWorkspacePersonalAssetCatalog>>>(assetLibraryQueryKey("personal-catalog"), current => {
                 if (!current) return current;
-                const assets = current.assets.flatMap(item => !movedIds.has(item.id) ? [item] : remainsVisible ? [{ ...item, folderId: builtin ? undefined : folderId || undefined, category: builtin ? folderId.slice(8) as AssetCategory : item.category }] : []);
-                return { ...current, assets, total: Math.max(0, current.total - (current.assets.length - assets.length)) };
+                const assets = current.assets.map(item => !movedIds.has(item.id) ? item : { ...item, folderId: builtin ? undefined : folderId || undefined, category: builtin ? folderId.slice(8) as AssetCategory : item.category });
+                return { ...current, assets };
             });
             await invalidateAssetLibrary();
             setSelectedIds([]);
