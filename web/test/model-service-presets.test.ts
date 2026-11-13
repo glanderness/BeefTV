@@ -3,6 +3,7 @@ import * as ReactNamespace from "react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { applyFetchedChannelModelCatalog } from "../src/lib/channel-model-catalog";
+import { normalizeChannelBaseUrl } from "../src/lib/channel-url";
 import { ModelLogo } from "../src/components/model-logo";
 import { MODEL_SERVICE_PRESETS, builtinPresetIntro, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, ysduiProtocolsAvailable, pluginServices, mergeSavedServiceChannel, presetCatalogFor, serviceConnectionError, serviceModelProfile, servicePresetFor } from "../src/lib/model-service-presets";
 import { modelConnectionResultDetail, testChannelModelConnection } from "../src/lib/model-connection-test";
@@ -570,8 +571,9 @@ test("raw # baseUrl passes service and channel validation while real URL fragmen
         expect(serviceConnectionError({ ...baseChannel, baseUrl: validUrl }, { protocols })).toBe("");
         expect(channelValidationError({ ...baseChannel, baseUrl: validUrl })).toBe("");
     }
-    for (const invalidUrl of ["http://127.0.0.1#frag", "http://127.0.0.1##", "#", "http://127.0.0.1/chat/completions#"]) {
+    for (const invalidUrl of ["http://127.0.0.1#frag", "http://127.0.0.1##", "http://127.0.0.1/#/", "http://127.0.0.1/#//", "#", "http://127.0.0.1/chat/completions#"]) {
         expect(serviceConnectionError({ ...baseChannel, baseUrl: invalidUrl }, { protocols })).not.toBe("");
+        expect(serviceConnectionError({ ...baseChannel, baseUrl: normalizeChannelBaseUrl(invalidUrl) }, { protocols })).not.toBe("");
     }
     expect(channelValidationError({ ...baseChannel, baseUrl: "http://127.0.0.1#frag" })).toBe("Base URL 格式不正确");
 });
@@ -591,11 +593,16 @@ test("manual model entries can be renamed, retyped, and deleted without losing c
         apiKey: "fixture-key",
         models: ["typo-vid", "keep-text"],
         modelProfiles: [
-            { model: "typo-vid", capability: "video", protocol: "newapi", capabilityConfig: videoCap },
+            { model: "typo-vid", displayName: "typo-vid", capability: "video", protocol: "newapi", capabilityConfig: videoCap },
             { model: "keep-text", capability: "text", protocol: "chat-completion" },
+            { model: "unchecked-typo", displayName: "unchecked-typo", capability: "image", protocol: "openai-image" },
         ],
     });
-    const initialCatalog = [{ id: "typo-vid", modelType: "video" as const }, { id: "keep-text", modelType: "text" as const }];
+    const initialCatalog = [
+        { id: "typo-vid", displayName: "typo-vid", modelType: "video" as const },
+        { id: "keep-text", modelType: "text" as const },
+        { id: "unchecked-typo", displayName: "unchecked-typo", modelType: "image" as const },
+    ];
 
     const duplicate = updateManualModelEntry({
         channel: initialChannel,
@@ -617,16 +624,30 @@ test("manual model entries can be renamed, retyped, and deleted without losing c
     });
     expect(renamed.error).toBeUndefined();
     expect(renamed.channel.models).toEqual(["seedance-2-5", "keep-text"]);
-    expect(renamed.catalog.map((item) => item.id)).toEqual(["seedance-2-5", "keep-text"]);
-    expect(renamed.channel.modelProfiles?.find((p) => p.model === "seedance-2-5")).toMatchObject({
+    expect(renamed.catalog.map((item) => item.id)).toEqual(["seedance-2-5", "keep-text", "unchecked-typo"]);
+    const renamedProfile = renamed.channel.modelProfiles?.find((p) => p.model === "seedance-2-5");
+    expect(renamedProfile).toMatchObject({
         model: "seedance-2-5",
         capability: "video",
         protocol: "newapi",
         capabilityConfig: videoCap,
     });
+    expect(renamedProfile?.displayName).toBeUndefined();
 
-    const removed = removeManualModelEntry(renamed.channel, renamed.catalog, "seedance-2-5");
+    const renamedUnchecked = updateManualModelEntry({
+        channel: renamed.channel,
+        catalog: renamed.catalog,
+        previousId: "unchecked-typo",
+        nextId: "gpt-image-1",
+        capability: "image",
+        protocols,
+    });
+    expect(renamedUnchecked.error).toBeUndefined();
+    expect(renamedUnchecked.channel.models).toEqual(["seedance-2-5", "keep-text"]);
+    expect(renamedUnchecked.catalog.map((item) => item.id)).toEqual(["seedance-2-5", "keep-text", "gpt-image-1"]);
+
+    const removed = removeManualModelEntry(renamedUnchecked.channel, renamedUnchecked.catalog, "seedance-2-5");
     expect(removed.channel.models).toEqual(["keep-text"]);
-    expect(removed.catalog.map((item) => item.id)).toEqual(["keep-text"]);
-    expect(removed.channel.modelProfiles?.map((p) => p.model)).toEqual(["keep-text"]);
+    expect(removed.catalog.map((item) => item.id)).toEqual(["keep-text", "gpt-image-1"]);
+    expect(removed.channel.modelProfiles?.map((p) => p.model)).toEqual(["keep-text", "gpt-image-1"]);
 });

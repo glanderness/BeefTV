@@ -138,6 +138,9 @@ func hostBaseURL(baseURL, protocol string) string {
 		return ""
 	}
 	if hostAPI(protocol) == "anthropic-messages" {
+		if channelurl.IsRawBase(baseURL) {
+			return clean + "#"
+		}
 		return strings.TrimSuffix(clean, "/v1")
 	}
 	endpoint := "/chat/completions"

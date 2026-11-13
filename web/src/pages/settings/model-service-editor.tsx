@@ -58,13 +58,17 @@ export function updateManualModelEntry(options: {
     const strippedDraft = { ...channel, modelProfiles: (channel.modelProfiles || []).filter((p) => p.model !== previousId) };
     const resolveSibling = options.withSiblingProtocol ?? ((_, profile) => profile);
     const nextProfile = prevProfile && prevProfile.capability === capability
-        ? resolveSibling(strippedDraft, { ...prevProfile, model: nextId })
+        ? resolveSibling(strippedDraft, {
+            ...prevProfile,
+            model: nextId,
+            displayName: prevProfile.displayName === previousId ? undefined : prevProfile.displayName,
+        })
         : resolveSibling(strippedDraft, serviceModelProfile(strippedDraft, nextItem, protocols, capability));
     return {
         catalog: catalog.map((item) => item.id === previousId ? nextItem : item),
         channel: {
             ...channel,
-            models: channel.models.includes(previousId) ? channel.models.map((m) => m === previousId ? nextId : m) : [...channel.models, nextId],
+            models: [...new Set(channel.models.map((m) => m === previousId ? nextId : m))],
             modelProfiles: [...(channel.modelProfiles || []).filter((p) => p.model !== previousId && p.model !== nextId), nextProfile],
         },
         profile: nextProfile,

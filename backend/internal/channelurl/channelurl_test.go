@@ -6,9 +6,17 @@ func TestRawBaseMarkersAndNormalization(t *testing.T) {
 	if !IsRawBase("http://127.0.0.1#") || !IsRawBase("  http://127.0.0.1:8000/custom/# ") {
 		t.Fatal("expected trailing single # to be recognized as raw base")
 	}
-	for _, invalid := range []string{"http://127.0.0.1", "http://127.0.0.1#frag", "http://127.0.0.1##"} {
+	for _, invalid := range []string{"http://127.0.0.1", "http://127.0.0.1#frag", "http://127.0.0.1##", "http://127.0.0.1/#/", "http://127.0.0.1/#//"} {
 		if IsRawBase(invalid) {
 			t.Fatalf("IsRawBase(%q) = true, want false", invalid)
+		}
+		first := NormalizeBase(invalid)
+		second := NormalizeBase(first)
+		if first != second {
+			t.Fatalf("NormalizeBase(%q) non-idempotent: %q -> %q", invalid, first, second)
+		}
+		if IsRawBase(first) {
+			t.Fatalf("NormalizeBase(%q) = %q turned invalid fragment into raw base", invalid, first)
 		}
 	}
 	if got := CleanBase(" http://127.0.0.1:8000/custom/# "); got != "http://127.0.0.1:8000/custom" {

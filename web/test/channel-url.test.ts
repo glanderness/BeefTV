@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildApiUrl, cleanChannelBaseUrl, isRawChannelBaseUrl, joinChannelUrl, normalizeChannelBaseUrl } from "../src/lib/channel-url";
+import { geminiApiUrl, geminiBaseUrl } from "../src/services/api/image-transport";
 
 // 期望值取自 backend/internal/channelurl 的 Join(base, path, "/v1")：
 // 浏览器直连渠道和后台生成任务必须拼出同一个地址。
@@ -48,7 +49,14 @@ describe("buildApiUrl", () => {
         expect(cleanChannelBaseUrl("http://127.0.0.1:8000/custom/#")).toBe("http://127.0.0.1:8000/custom");
         expect(normalizeChannelBaseUrl("http://127.0.0.1:8000/custom/#")).toBe("http://127.0.0.1:8000/custom#");
         expect(normalizeChannelBaseUrl(" # ")).toBe("");
+        expect(normalizeChannelBaseUrl("http://127.0.0.1/#/")).toBe("http://127.0.0.1/#/");
+        expect(normalizeChannelBaseUrl(normalizeChannelBaseUrl("http://127.0.0.1/#//"))).toBe("http://127.0.0.1/#//");
+        expect(isRawChannelBaseUrl(normalizeChannelBaseUrl("http://127.0.0.1/#/"))).toBe(false);
         expect(buildApiUrl("http://127.0.0.1/#", "/models")).toBe("http://127.0.0.1/models");
         expect(buildApiUrl("http://127.0.0.1#", "/v1/videos")).toBe("http://127.0.0.1/videos");
+        expect(geminiBaseUrl({ baseUrl: "http://127.0.0.1#" })).toBe("http://127.0.0.1");
+        expect(geminiBaseUrl({ baseUrl: "http://127.0.0.1:8000/custom/#" })).toBe("http://127.0.0.1:8000/custom");
+        expect(geminiApiUrl({ baseUrl: "http://127.0.0.1#", model: "gemini-2.5-flash" }, "generateContent")).toBe("http://127.0.0.1/models/gemini-2.5-flash:generateContent");
+        expect(geminiApiUrl({ baseUrl: "http://127.0.0.1#", model: "" })).toBe("http://127.0.0.1/models");
     });
 });

@@ -89,6 +89,9 @@ func TestAssistantHostEnvCarriesProtocolAndBaseURLShape(t *testing.T) {
 		{"responses", "https://gateway.example.com/api/v3", "openai-responses", "https://gateway.example.com/api/v3"},
 		{"claude-api", "https://beeftv.app/v1", "anthropic-messages", "https://beeftv.app"},
 		{"claude-api", "https://beeftv.app", "anthropic-messages", "https://beeftv.app"},
+		{"claude-api", "http://127.0.0.1:8080/custom/#", "anthropic-messages", "http://127.0.0.1:8080/custom#"},
+		{"chat-completion", "http://127.0.0.1:8080#", "openai-completions", "http://127.0.0.1:8080"},
+		{"responses", "http://127.0.0.1:8080/custom/#", "openai-responses", "http://127.0.0.1:8080/custom"},
 	}
 	for _, item := range cases {
 		env := host.buildEnv(assistant.Provider{Model: "m", BaseURL: item.baseURL, APIKey: "k", Protocol: item.protocol},

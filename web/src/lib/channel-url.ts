@@ -18,6 +18,7 @@ export function isRawChannelBaseUrl(value: string) {
 export function cleanChannelBaseUrl(value: string) {
     let trimmed = value.trim();
     if (isRawChannelBaseUrl(trimmed)) trimmed = trimmed.slice(0, -1);
+    if (/[?#]/.test(trimmed)) return trimmed;
     return trimmed.replace(/\/+$/, "");
 }
 

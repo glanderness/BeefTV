@@ -19,6 +19,9 @@ func CleanBase(value string) string {
 	if IsRawBase(trimmed) {
 		trimmed = trimmed[:len(trimmed)-1]
 	}
+	if strings.ContainsAny(trimmed, "?#") {
+		return trimmed
+	}
 	return strings.TrimRight(trimmed, "/")
 }
 
