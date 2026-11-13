@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Loader2, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import styles from "./icon-button.module.css";
 
 /**
  * IconButton — 纯图标按钮（正方形、尺寸档位、语义变体、loading 态）。
@@ -17,28 +18,30 @@ import { cn } from "@/lib/utils";
  * 对标：dbx ui/button variants（ghost/outline/destructive、icon-xs/sm/lg）；
  *   AntD Button icon-only。
  * 明暗：全部颜色走 token；active 按压底用 bg-surface-active，明暗自动适配。
+ * 组件 token 归局部 CSS Module；保留 cva、布局和状态工具类，延续调用方
+ * className 的 Tailwind 合并，以及既有圆角/焦点环映射。
  */
 export const iconButtonVariants = cva(
-    ["inline-flex shrink-0 items-center justify-center rounded-md", "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", "disabled:pointer-events-none disabled:opacity-45", "motion-safe:active:scale-[0.96]"],
+    [styles.root, "inline-flex shrink-0 items-center justify-center rounded-md", "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", "disabled:pointer-events-none disabled:opacity-45", "motion-safe:active:scale-[0.96]"],
     {
         variants: {
             variant: {
                 // 纯透明 + hover 浮底（最常用：面板/工具条）
-                ghost: "text-muted-foreground hover:bg-surface-hover hover:text-foreground active:bg-surface-active",
+                ghost: "text-[color:var(--icon-button-ink)] hover:bg-surface-hover hover:text-[color:var(--icon-button-hover-ink)] active:bg-[color:var(--icon-button-active-fill)]",
                 // 常驻浅底
-                default: "bg-surface-secondary text-muted-foreground hover:bg-surface-hover hover:text-foreground active:bg-surface-active",
+                default: "bg-[color:var(--icon-button-soft-fill)] text-[color:var(--icon-button-ink)] hover:bg-surface-hover hover:text-[color:var(--icon-button-hover-ink)] active:bg-[color:var(--icon-button-active-fill)]",
                 // 描边
-                outline: "border border-border bg-transparent text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                outline: "border border-border bg-transparent text-[color:var(--icon-button-ink)] hover:bg-surface-hover hover:text-[color:var(--icon-button-hover-ink)]",
                 // 危险（文本色常驻红）
-                danger: "text-status-error hover:bg-surface-hover active:bg-surface-active",
+                danger: "text-[color:var(--icon-button-danger-ink)] hover:bg-surface-hover active:bg-[color:var(--icon-button-active-fill)]",
                 // 实心（中性黑底白图标，主操作；active 反转成白底黑字 + 内描边，供选中态使用）
-                solid: "bg-foreground text-background hover:opacity-85 active:opacity-75 data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:ring-1 data-[active=true]:ring-inset data-[active=true]:ring-border",
+                solid: "bg-[color:var(--icon-button-solid-fill)] text-[color:var(--icon-button-solid-ink)] hover:opacity-85 active:opacity-75 data-[active=true]:bg-[color:var(--icon-button-solid-ink)] data-[active=true]:text-[color:var(--icon-button-solid-fill)] data-[active=true]:ring-1 data-[active=true]:ring-inset data-[active=true]:ring-border",
             },
             size: {
-                xs: "size-6 [&_svg]:size-3.5",
-                sm: "size-7 [&_svg]:size-4",
-                default: "size-8 [&_svg]:size-4",
-                lg: "size-9 [&_svg]:size-[18px]",
+                xs: "size-[var(--icon-button-xs)] [&_svg]:size-[var(--icon-button-glyph-xs)]",
+                sm: "size-[var(--icon-button-sm)] [&_svg]:size-[var(--icon-button-glyph)]",
+                default: "size-[var(--icon-button-md)] [&_svg]:size-[var(--icon-button-glyph)]",
+                lg: "size-[var(--icon-button-lg)] [&_svg]:size-[var(--icon-button-glyph-lg)]",
             },
         },
         defaultVariants: {
