@@ -18,6 +18,7 @@ type SelectedVideoFrame = {
 
 export type CanvasVideoFrameParams = {
     timesMs: number[];
+    preset?: "first" | "last";
 };
 
 type CanvasVideoFrameDialogProps = {

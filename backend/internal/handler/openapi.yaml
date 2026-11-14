@@ -718,6 +718,90 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /resources/{id}/frames:
+    post:
+      tags: [resources]
+      summary: 从当前用户本地视频资源提取关键帧并持久化为图片资源
+      description: 支持首帧（preset=first）、尾帧（preset=last）或最多 30 个毫秒时间点（timesMs）。结果返回 frames、可选 failures（多时间点提取中的单点失败明细）与 durationMs。可选 X-Idempotency-Key 按用户、源资源与请求参数作用域去重重试。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-Idempotency-Key
+          required: false
+          schema: { type: string }
+          description: 幂等键（服务端自动绑定当前用户、源资源指纹与请求参数）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preset:
+                  type: string
+                  enum: [first, last]
+                timesMs:
+                  type: array
+                  maxItems: 30
+                  items:
+                    type: integer
+                    minimum: 0
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "408":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "499":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /resources/{id}/separate-audio:
+    post:
+      tags: [resources]
+      summary: 从当前用户本地视频资源分离独立音频与无声视频资源
+      description: 优先流拷贝分离音轨与无声视频，容器或编码不兼容时自动回退 AAC / H.264 重编码；全成功才落库计入配额。可选 X-Idempotency-Key 支持重试复用。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-Idempotency-Key
+          required: false
+          schema: { type: string }
+          description: 幂等键（服务端自动绑定当前用户与源资源指纹）
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "408":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "499":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
   /resources/storage-usage:
     get:
       tags: [resources]
@@ -909,7 +993,7 @@ components:
           properties:
             code:
               type: integer
-              enum: [400, 401, 403, 404, 409, 429, 500, 502, 503, 504, 40301, 40901, 42901]
+              enum: [400, 401, 403, 404, 408, 409, 429, 499, 500, 502, 503, 504, 40301, 40901, 42901]
             data:
               nullable: true
             reason:
@@ -925,6 +1009,7 @@ components:
                 - rate_limited
                 - unavailable
                 - timeout
+                - request_cancelled
                 - internal
                 - local_storage_failed
                 - local_credential_failed
