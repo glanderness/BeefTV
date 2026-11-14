@@ -1,3 +1,5 @@
+import { hasStaleSettledFileUploadFlag } from "@/lib/canvas/canvas-file-upload";
+import { stripScriptDocumentExtension } from "@/lib/canvas/script-document-import";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -255,6 +257,64 @@ const TASK_LIFECYCLE_NON_MEDIA_KEYS = [
     ...GENERATION_ERROR_METADATA_KEYS,
 ] as const;
 
+const UPLOAD_SETTLEMENT_METADATA_KEYS = [
+    "fileUpload",
+    "fileUploadProgress",
+    "errorDetails",
+    "content",
+    "storageKey",
+    "assetId",
+    "status",
+    "bytes",
+    "mimeType",
+    "naturalWidth",
+    "naturalHeight",
+    "durationMs",
+    "hasAudio",
+    "videoPreview",
+    "outputParameterWarning",
+    "nodeRole",
+    "resultOrigin",
+] as const;
+
+const UPLOAD_REPLACEMENT_RESET_KEYS = [
+    "taskId",
+    "freeResize",
+    "isBatchRoot",
+    "batchRootId",
+    "batchChildIds",
+    "batchFailedCount",
+    "batchUsesReferenceImages",
+    "generationType",
+    "generationResultPlacement",
+    "copiedFromNodeId",
+    "versionOfNodeId",
+    "model",
+    "size",
+    "quality",
+    "transparentBackground",
+    "count",
+    "references",
+    "primaryImageId",
+    "imageBatchExpanded",
+    "richText",
+    "composerContent",
+    "generationErrorCode",
+    "generationErrorSummary",
+    "generationProviderCode",
+    "generationPreflightError",
+    "failedPromptFingerprint",
+] as const;
+
+function stripStaleFileUploadMetadata(node: CanvasNodeData | undefined): CanvasNodeData | undefined {
+    if (!node?.metadata || !hasStaleSettledFileUploadFlag(node.metadata)) return node;
+    const nextMeta: Record<string, unknown> = { ...(node.metadata as Record<string, unknown>) };
+    delete nextMeta.fileUpload;
+    delete nextMeta.fileUploadProgress;
+    delete nextMeta.errorDetails;
+    return { ...node, metadata: nextMeta as CanvasNodeData["metadata"] };
+}
+
 function hasSettledUploadMedia(node: CanvasNodeData | undefined): boolean {
     const meta = node?.metadata;
     if (!meta || meta.fileUpload || meta.status === "loading" || meta.status === "error") return false;
@@ -279,22 +339,75 @@ function isUploadingReplacementOfBase(
     );
 }
 
-function alignUploadingPlaceholderToSettledNode(
+function sameNodeCenter(
+    left: Pick<CanvasNodeData, "position" | "width" | "height"> | undefined,
+    right: Pick<CanvasNodeData, "position" | "width" | "height"> | undefined,
+): boolean {
+    if (!left || !right) return false;
+    const lx = left.position.x + left.width / 2;
+    const ly = left.position.y + left.height / 2;
+    const rx = right.position.x + right.width / 2;
+    const ry = right.position.y + right.height / 2;
+    return Math.abs(lx - rx) <= 1e-6 && Math.abs(ly - ry) <= 1e-6;
+}
+
+function alignUploadSettlementPair(
     baseItem: CanvasNodeData | undefined,
     uploadingItem: CanvasNodeData,
     settledItem: CanvasNodeData,
-): CanvasNodeData {
-    const preserveDraggedPosition = Boolean(
-        baseItem
-        && !equal(uploadingItem.position, baseItem.position)
-        && equal(settledItem.position, baseItem.position),
-    );
-    return {
-        ...settledItem,
-        ...(preserveDraggedPosition ? { position: uploadingItem.position } : {}),
-        ...(uploadingItem.createdAt ? { createdAt: uploadingItem.createdAt } : {}),
-        ...(uploadingItem.updatedAt ? { updatedAt: uploadingItem.updatedAt } : {}),
+): { uploading: CanvasNodeData; settled: CanvasNodeData } {
+    const settledMeta = (settledItem.metadata || {}) as Record<string, unknown>;
+    const uploadingMeta: Record<string, unknown> = { ...((uploadingItem.metadata || {}) as Record<string, unknown>) };
+    const keysToCopy: readonly string[] = hasSettledUploadMedia(baseItem)
+        ? [...UPLOAD_SETTLEMENT_METADATA_KEYS, ...UPLOAD_REPLACEMENT_RESET_KEYS]
+        : UPLOAD_SETTLEMENT_METADATA_KEYS;
+    for (const key of keysToCopy) {
+        if (hasDefinedProperty(settledMeta, key) && !isClearedProperty(settledMeta, key)) {
+            uploadingMeta[key] = settledMeta[key];
+        } else {
+            delete uploadingMeta[key];
+        }
+    }
+    if (
+        settledItem.type === "text"
+        && !hasDefinedProperty(uploadingMeta, "prompt")
+        && hasDefinedProperty(settledMeta, "prompt")
+        && settledMeta.prompt === settledMeta.content
+    ) {
+        uploadingMeta.prompt = settledMeta.prompt;
+    }
+
+    let uploadingNext: CanvasNodeData = {
+        ...uploadingItem,
+        type: settledItem.type,
+        ...(!baseItem && settledItem.type === "text" && stripScriptDocumentExtension(uploadingItem.title) === settledItem.title
+            ? { title: settledItem.title }
+            : {}),
+        metadata: uploadingMeta as CanvasNodeData["metadata"],
     };
+    let settledNext = settledItem;
+
+    const uploadingResized = Boolean(
+        baseItem && (uploadingItem.width !== baseItem.width || uploadingItem.height !== baseItem.height),
+    );
+    if (!uploadingResized) {
+        const settledSize = { width: settledItem.width, height: settledItem.height };
+        if (sameNodeCenter(uploadingItem, settledItem)) {
+            uploadingNext = { ...uploadingNext, ...settledSize, position: settledItem.position };
+        } else if (baseItem && sameNodeCenter(settledItem, baseItem) && !sameNodeCenter(uploadingItem, baseItem)) {
+            const draggedPos = {
+                x: uploadingItem.position.x + (uploadingItem.width - settledSize.width) / 2,
+                y: uploadingItem.position.y + (uploadingItem.height - settledSize.height) / 2,
+            };
+            uploadingNext = { ...uploadingNext, ...settledSize, position: draggedPos };
+            settledNext = { ...settledNext, position: draggedPos };
+        } else if (baseItem && !sameNodeCenter(settledItem, baseItem) && sameNodeCenter(uploadingItem, baseItem)) {
+            uploadingNext = { ...uploadingNext, ...settledSize, position: settledItem.position };
+        } else {
+            uploadingNext = { ...uploadingNext, ...settledSize };
+        }
+    }
+    return { uploading: uploadingNext, settled: settledNext };
 }
 
 function mergeCanvasNodeItem(
@@ -303,28 +416,49 @@ function mergeCanvasNodeItem(
     remoteItem: CanvasNodeData,
     conflict: { value: boolean },
 ): CanvasNodeData {
-    let localNormalized = localItem;
-    let remoteNormalized = remoteItem;
+    const baseClean = stripStaleFileUploadMetadata(baseItem);
+    let localNormalized = stripStaleFileUploadMetadata(localItem)!;
+    let remoteNormalized = stripStaleFileUploadMetadata(remoteItem)!;
     if (
-        hasSettledUploadMedia(localItem)
-        && remoteItem.metadata?.fileUpload === "uploading"
-        && !isUploadingReplacementOfBase(baseItem, localItem, remoteItem)
+        hasSettledUploadMedia(localNormalized)
+        && remoteNormalized.metadata?.fileUpload === "uploading"
+        && !isUploadingReplacementOfBase(baseClean, localNormalized, remoteNormalized)
     ) {
-        remoteNormalized = alignUploadingPlaceholderToSettledNode(baseItem, remoteItem, localItem);
+        const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized);
+        remoteNormalized = aligned.uploading;
+        localNormalized = aligned.settled;
     } else if (
-        hasSettledUploadMedia(remoteItem)
-        && localItem.metadata?.fileUpload === "uploading"
-        && !isUploadingReplacementOfBase(baseItem, remoteItem, localItem)
+        hasSettledUploadMedia(remoteNormalized)
+        && localNormalized.metadata?.fileUpload === "uploading"
+        && !isUploadingReplacementOfBase(baseClean, remoteNormalized, localNormalized)
     ) {
-        localNormalized = alignUploadingPlaceholderToSettledNode(baseItem, localItem, remoteItem);
+        const aligned = alignUploadSettlementPair(baseClean, localNormalized, remoteNormalized);
+        localNormalized = aligned.uploading;
+        remoteNormalized = aligned.settled;
+    } else if (
+        localNormalized.metadata?.fileUpload === "uploading"
+        && remoteNormalized.metadata?.fileUpload === "uploading"
+    ) {
+        const baseProgress = baseClean?.metadata?.fileUploadProgress;
+        const localProgress = localNormalized.metadata?.fileUploadProgress;
+        const remoteProgress = remoteNormalized.metadata?.fileUploadProgress;
+        if (!equal(localProgress, remoteProgress) && !equal(localProgress, baseProgress) && !equal(remoteProgress, baseProgress)) {
+            const alignedMeta: Record<string, unknown> = { ...(remoteNormalized.metadata as Record<string, unknown>) };
+            if (localProgress !== undefined) {
+                alignedMeta.fileUploadProgress = localProgress;
+            } else {
+                delete alignedMeta.fileUploadProgress;
+            }
+            remoteNormalized = { ...remoteNormalized, metadata: alignedMeta as CanvasNodeData["metadata"] };
+        }
     }
     const taskId = nodeTaskId(localNormalized);
-    const baseMeta = (baseItem?.metadata || {}) as Record<string, unknown>;
+    const baseMeta = (baseClean?.metadata || {}) as Record<string, unknown>;
     const localMeta = (localNormalized.metadata || {}) as Record<string, unknown>;
     if (
         TASK_LIFECYCLE_NON_MEDIA_KEYS.some(key => !equal(baseMeta[key], localMeta[key])) &&
         !remoteHasBoundGenerationResult(remoteNormalized) &&
-        !hasTrueGenerationContentConflict(baseItem, localNormalized, remoteNormalized) &&
+        !hasTrueGenerationContentConflict(baseClean, localNormalized, remoteNormalized) &&
         (localNormalized.metadata?.status === "loading" || localNormalized.metadata?.status === "error") &&
         (remoteNormalized.metadata?.status === "loading" || remoteNormalized.metadata?.status === "error")
     ) {
@@ -347,7 +481,7 @@ function mergeCanvasNodeItem(
         remoteNormalized = { ...remoteNormalized, metadata: alignedMeta as CanvasNodeData["metadata"] };
     }
     const merged = mergeObject(
-        stripNodeTimestamps(baseItem),
+        stripNodeTimestamps(baseClean),
         stripNodeTimestamps(localNormalized),
         stripNodeTimestamps(remoteNormalized),
         conflict,

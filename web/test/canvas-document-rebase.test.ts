@@ -644,4 +644,146 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
         expect(replacingRebase.project.nodes[0]?.metadata?.fileUploadProgress).toBe(35);
         expect(replacingRebase.project.nodes[0]?.metadata?.status).toBeUndefined();
     });
+
+    test("stale uploading flag on a distinct settled remote media preserves true conflict instead of treating remote as placeholder", () => {
+        const baseNode = node("n-conflict", "img.png", {
+            content: "https://example.test/old.png",
+            storageKey: "resource:old",
+            status: "success",
+        });
+        const localNode = node("n-conflict", "img.png", {
+            content: "https://example.test/local-new.png",
+            storageKey: "resource:local-new",
+            status: "success",
+        });
+        const remoteCorruptedDifferent = node("n-conflict", "img.png", {
+            content: "https://example.test/remote-new.png",
+            storageKey: "resource:remote-new",
+            status: "success",
+            fileUpload: "uploading",
+            fileUploadProgress: 100,
+        });
+
+        const differentResult = rebaseCanvasDocumentThreeWay({
+            base: project([baseNode], 10),
+            local: project([localNode], 10),
+            remote: project([remoteCorruptedDifferent], 11),
+        });
+        expect(differentResult.conflict).toBe(true);
+        expect(differentResult.project.nodes[0]?.metadata?.content).toBe("https://example.test/local-new.png");
+        expect(differentResult.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+
+        const remoteCorruptedSame = node("n-conflict", "img.png", {
+            content: "https://example.test/local-new.png",
+            storageKey: "resource:local-new",
+            status: "success",
+            fileUpload: "uploading",
+            fileUploadProgress: 100,
+        });
+        const sameResult = rebaseCanvasDocumentThreeWay({
+            base: project([baseNode], 10),
+            local: project([localNode], 10),
+            remote: project([remoteCorruptedSame], 11),
+        });
+        expect(sameResult.conflict).toBe(false);
+        expect(sameResult.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+    });
+
+    test("upload settlement preserves concurrent non-upload edits and dragged video position in both directions", () => {
+        const baseVid: CanvasNodeData = {
+            id: "vid-edit",
+            type: CanvasNodeType.Video,
+            title: "clip.mp4",
+            position: { x: 100, y: 100 },
+            width: 320,
+            height: 180,
+            metadata: { fileUpload: "uploading", fileUploadProgress: 15, bytes: 9000, mimeType: "video/mp4" },
+        };
+        const settledVidAutoCentered: CanvasNodeData = {
+            ...baseVid,
+            position: { x: 100, y: -94 },
+            width: 320,
+            height: 568,
+            metadata: {
+                content: "https://example.test/clip.mp4",
+                storageKey: "resource:clip",
+                status: "success",
+                naturalWidth: 1080,
+                naturalHeight: 1920,
+                bytes: 9000,
+                mimeType: "video/mp4",
+            },
+        };
+        const uploadingEditedAndDragged: CanvasNodeData = {
+            ...baseVid,
+            title: "主角特写",
+            position: { x: 400, y: 300 },
+            metadata: {
+                ...baseVid.metadata,
+                fileUploadProgress: 50,
+                prompt: "慢镜头备注",
+                locked: true,
+            },
+        };
+
+        const localUploadingRebase = rebaseCanvasDocumentThreeWay({
+            base: project([baseVid], 10),
+            local: project([uploadingEditedAndDragged], 10),
+            remote: project([settledVidAutoCentered], 11),
+        });
+        expect(localUploadingRebase.conflict).toBe(false);
+        const mergedLocal = localUploadingRebase.project.nodes[0]!;
+        expect(mergedLocal.title).toBe("主角特写");
+        expect(mergedLocal.height).toBe(568);
+        expect(mergedLocal.position).toEqual({ x: 400, y: 106 });
+        expect(mergedLocal.metadata?.fileUpload).toBeUndefined();
+        expect(mergedLocal.metadata?.status).toBe("success");
+        expect(mergedLocal.metadata?.prompt).toBe("慢镜头备注");
+        expect(mergedLocal.metadata?.locked).toBe(true);
+
+        const remoteUploadingRebase = rebaseCanvasDocumentThreeWay({
+            base: project([baseVid], 10),
+            local: project([settledVidAutoCentered], 10),
+            remote: project([uploadingEditedAndDragged], 11),
+        });
+        expect(remoteUploadingRebase.conflict).toBe(false);
+        const mergedRemote = remoteUploadingRebase.project.nodes[0]!;
+        expect(mergedRemote.title).toBe("主角特写");
+        expect(mergedRemote.height).toBe(568);
+        expect(mergedRemote.position).toEqual({ x: 400, y: 106 });
+        expect(mergedRemote.metadata?.fileUpload).toBeUndefined();
+        expect(mergedRemote.metadata?.prompt).toBe("慢镜头备注");
+        expect(mergedRemote.metadata?.locked).toBe(true);
+    });
+
+    test("concurrent uploading placeholders with different fileUploadProgress do not trigger false rebase conflict", () => {
+        const baseSettled = node("up-prog", "old.png", {
+            content: "https://example.test/old.png",
+            storageKey: "resource:old",
+            status: "success",
+        });
+        const localUploading = node("up-prog", "old.png", {
+            content: "https://example.test/old.png",
+            storageKey: "resource:old",
+            status: undefined,
+            fileUpload: "uploading",
+            fileUploadProgress: 35,
+        });
+        const remoteUploading = node("up-prog", "old.png", {
+            content: "https://example.test/old.png",
+            storageKey: "resource:old",
+            status: undefined,
+            fileUpload: "uploading",
+            fileUploadProgress: 60,
+        });
+
+        const rebased = rebaseCanvasDocumentThreeWay({
+            base: project([baseSettled], 10),
+            local: project([localUploading], 10),
+            remote: project([remoteUploading], 11),
+        });
+        expect(rebased.conflict).toBe(false);
+        expect(rebased.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
+        expect(rebased.project.nodes[0]?.metadata?.fileUploadProgress).toBe(35);
+    });
 });
