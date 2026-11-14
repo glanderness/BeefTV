@@ -1,5 +1,6 @@
 import { canvasResourceDisplayName, canvasResourceMentionToken, hasCanvasMentionBoundary as hasMentionBoundary, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CanvasReferenceIssue } from "@/lib/canvas/canvas-reference-issues";
+import { isProtectedResourceFileUrl } from "@/services/api/resources";
 import { CanvasNodeType } from "@/types/canvas";
 
 export type EditableSelection = {
@@ -157,18 +158,25 @@ export function skillMentionColor(reference: CanvasResourceReference) {
 }
 
 export function referencePreviewUrl(reference: CanvasResourceReference) {
-    return reference.previewUrl || (reference.kind === "video" ? reference.mediaUrl : "") || "";
+    const previewUrl = reference.previewUrl && !isProtectedResourceFileUrl(reference.previewUrl) ? reference.previewUrl : "";
+    const mediaUrl = reference.kind === "video" && reference.mediaUrl && !isProtectedResourceFileUrl(reference.mediaUrl) ? reference.mediaUrl : "";
+    return previewUrl || mediaUrl || "";
 }
 
 export function createInlinePreview(reference: CanvasResourceReference) {
-    if ((reference.kind === "image" || reference.kind === "video" || reference.kind === "character") && reference.previewUrl) {
+    if ((reference.kind === "image" || reference.kind === "video" || reference.kind === "character") && reference.previewUrl && !isProtectedResourceFileUrl(reference.previewUrl)) {
         const media = document.createElement("img");
         media.className = `canvas-resource-inline-preview is-${reference.kind}`;
         media.setAttribute("src", reference.previewUrl);
         media.setAttribute("alt", "");
+        media.onerror = () => {
+            const fallback = createInlineFallbackPreview(reference);
+            fallback.dataset.failedSrc = reference.previewUrl;
+            media.replaceWith(fallback);
+        };
         return media;
     }
-    if (reference.kind === "video" && reference.mediaUrl) {
+    if (reference.kind === "video" && reference.mediaUrl && !isProtectedResourceFileUrl(reference.mediaUrl)) {
         const media = document.createElement("video");
         media.className = "canvas-resource-inline-preview is-video";
         media.setAttribute("src", reference.mediaUrl);
@@ -177,8 +185,17 @@ export function createInlinePreview(reference: CanvasResourceReference) {
         media.playsInline = true;
         media.preload = "metadata";
         media.onloadedmetadata = () => primeVideoPreviewFrame(media);
+        media.onerror = () => {
+            const fallback = createInlineFallbackPreview(reference);
+            fallback.dataset.failedSrc = reference.mediaUrl;
+            media.replaceWith(fallback);
+        };
         return media;
     }
+    return createInlineFallbackPreview(reference);
+}
+
+function createInlineFallbackPreview(reference: CanvasResourceReference) {
     const fallback = document.createElement("span");
     fallback.className = "canvas-resource-inline-preview is-fallback";
     fallback.textContent = reference.sourceType === CanvasNodeType.Drawing ? "✎" : reference.kind === "audio" ? "♪" : reference.kind === "video" ? "▶" : reference.kind === "image" ? "□" : reference.kind === "skill" ? "✦" : "";
@@ -507,13 +524,15 @@ export function syncInlineMentionPreviews(editor: HTMLElement, references: Canva
     editor.querySelectorAll<HTMLElement>("[data-mention-reference-id]").forEach((chip) => {
         const reference = byId.get(chip.dataset.mentionReferenceId || "");
         if (!reference) return;
-        const preview = chip.querySelector(".canvas-resource-inline-preview");
-        const hasImage = ["image", "video", "character"].includes(reference.kind) && Boolean(reference.previewUrl);
-        const hasVideo = !hasImage && reference.kind === "video" && Boolean(reference.mediaUrl);
+        const preview = chip.querySelector<HTMLElement>(".canvas-resource-inline-preview");
+        const safePreviewUrl = reference.previewUrl && !isProtectedResourceFileUrl(reference.previewUrl) ? reference.previewUrl : "";
+        const hasImage = ["image", "video", "character"].includes(reference.kind) && Boolean(safePreviewUrl);
+        const hasVideo = !hasImage && reference.kind === "video" && Boolean(reference.mediaUrl) && !isProtectedResourceFileUrl(reference.mediaUrl);
         const tag = hasImage ? "IMG" : hasVideo ? "VIDEO" : "SPAN";
         const className = `canvas-resource-inline-preview is-${hasImage || hasVideo ? reference.kind : "fallback"}`;
-        const src = hasImage ? reference.previewUrl : hasVideo ? reference.mediaUrl : null;
-        if (preview && (preview.tagName !== tag || preview.className !== className || preview.getAttribute("src") !== src)) {
+        const src = hasImage ? safePreviewUrl : hasVideo ? reference.mediaUrl : null;
+        const skippedFailedSrc = Boolean(src && preview?.dataset.failedSrc === src);
+        if (preview && !skippedFailedSrc && (preview.tagName !== tag || preview.className !== className || preview.getAttribute("src") !== src)) {
             preview.replaceWith(createInlinePreview(reference));
         }
         const label = chip.querySelector(".canvas-resource-inline-label");

@@ -171,6 +171,21 @@ export function ownedResourceIdFromMediaRef(storageKey?: string, url?: string) {
     return resourceIdFromTrustedLocalFileUrl(url);
 }
 
+export function ownedResourceStorageKey(storageKey?: string, url?: string) {
+    const explicit = storageKey?.trim() || "";
+    if (explicit) return explicit;
+    const fromUrl = ownedResourceIdFromMediaRef(undefined, url);
+    return fromUrl ? `resource:${fromUrl}` : "";
+}
+
+export function isProtectedResourceFileUrl(url?: string) {
+    return Boolean(url?.trim() && ownedResourceIdFromMediaRef(undefined, url));
+}
+
+export function renderableMediaUrl(url?: string) {
+    return url && !isProtectedResourceFileUrl(url) ? url : "";
+}
+
 function resourceIdFromResourceFilePath(path: string) {
     const match = path.match(RESOURCE_FILE_PATH);
     if (!match) return "";
@@ -234,9 +249,13 @@ export async function uploadResourceFile(
         progress.done("文件已确认并保存");
         return data.resource;
     } catch (error) {
-        
-        progress.fail("文件保存未完成，请查看上传提示后重试");
-        throw normalizeUploadError(error);
+        if (error instanceof DOMException && error.name === "AbortError") {
+            progress.dismiss();
+            throw error;
+        }
+        const normalized = normalizeUploadError(error);
+        progress.fail(normalized.message || "文件保存未完成，请稍后重试");
+        throw normalized;
     }
 }
 

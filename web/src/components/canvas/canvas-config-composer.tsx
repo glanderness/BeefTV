@@ -3,7 +3,11 @@ import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "rea
 import { Button, Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Pencil, Sparkles, Video, X } from "lucide-react";
 
+import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { ownedResourceStorageKey, renderableMediaUrl } from "@/services/api/resources";
+import { resolveImageUrl } from "@/services/image-storage";
+import { peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { generationInputMentionLabel, type NodeGenerationInput } from "./canvas-node-generation";
@@ -105,12 +109,14 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
     const simpleMode = workspaceMode === "simple";
     const tokens = useMemo(() => parseComposerTokens(value, inputs), [inputs, value]);
     const referenceById = useMemo(() => new Map(inputs.map((input) => [input.nodeId, input])), [inputs]);
+    const previewByNodeId = useResolvedComposerInputPreviews(inputs);
+    const safeImagePreview = renderableMediaUrl(imagePreview || "");
     const videoFrameOptions = useMemo(
         () =>
             inputs
                 .filter((input) => input.type === "image" && input.image)
-                .map((input) => ({ nodeId: input.nodeId, label: resourceLabel(input, inputs), title: input.title, previewUrl: input.image?.dataUrl })),
-        [inputs],
+                .map((input) => ({ nodeId: input.nodeId, label: resourceLabel(input, inputs), title: input.title, previewUrl: previewByNodeId.get(input.nodeId) || undefined })),
+        [inputs, previewByNodeId],
     );
     const candidates = useMemo(() => {
         if (!mention) return [];
@@ -131,10 +137,20 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
                 return;
             }
             const input = referenceById.get(token.nodeId);
-            if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview, token.token));
+            if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview, previewByNodeId.get(input.nodeId) || "", token.token));
         });
         if (value.endsWith("\n")) editor.append(createEditorSentinelBr());
-    }, [inputs, referenceById, theme, tokens, value]);
+    }, [inputs, previewByNodeId, referenceById, theme, tokens, value]);
+
+    useEffect(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        editor.querySelectorAll<HTMLElement>("[data-reference-node-id]").forEach((chip) => {
+            const input = referenceById.get(chip.dataset.referenceNodeId || "");
+            if (!input) return;
+            renderReferenceChipContent(chip, input, inputs, theme, previewByNodeId.get(input.nodeId) || "", setImagePreview);
+        });
+    }, [inputs, previewByNodeId, referenceById, theme]);
 
     const syncFromEditor = () => {
         const editor = editorRef.current;
@@ -172,7 +188,7 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
         if (!editor) return;
         removeActiveMention();
         const space = document.createTextNode(" ");
-        const node = candidate.kind === "skill" ? document.createTextNode(`@${candidate.reference.label}`) : createReferenceChip(candidate.input, inputs, theme, setImagePreview);
+        const node = candidate.kind === "skill" ? document.createTextNode(`@${candidate.reference.label}`) : createReferenceChip(candidate.input, inputs, theme, setImagePreview, previewByNodeId.get(candidate.input.nodeId) || "");
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
         if (range) {
@@ -341,7 +357,7 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
                 />
                 {mention && candidates.length ? <MentionMenu candidates={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertCandidate} /> : null}
             </div>
-            {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
+            {safeImagePreview ? <Image src={safeImagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: safeImagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
 
@@ -420,14 +436,28 @@ function ResourcePreview({ candidate }: { candidate: ComposerCandidate }) {
             </span>
         );
     }
-    if (input.type === "image" && input.image) return <img src={input.image.dataUrl} alt="" className="size-9 rounded-md object-cover" />;
-    if (input.type === "video" && input.previewUrl) return <img src={input.previewUrl} alt="" className="size-9 rounded-md bg-black object-cover" loading="lazy" decoding="async" />;
     const Icon = input.type === "audio" ? Music2 : input.type === "video" ? Video : input.type === "image" ? ImageIcon : FileText;
-    return (
+    const iconFallback = (
         <span className="grid size-9 shrink-0 place-items-center rounded-md bg-black/10">
             <Icon className="size-4" />
         </span>
     );
+    const rawPreview = rawComposerInputPreview(input);
+    const storageKey = composerInputStorageKey(input);
+    if ((input.type === "image" || input.type === "video") && (rawPreview || storageKey)) {
+        return (
+            <CachedResourceImage
+                storageKey={storageKey || undefined}
+                src={rawPreview}
+                alt=""
+                className={input.type === "video" ? "size-9 rounded-md bg-black object-cover" : "size-9 rounded-md object-cover"}
+                loading="lazy"
+                decoding="async"
+                fallback={iconFallback}
+            />
+        );
+    }
+    return iconFallback;
 }
 
 function candidateSearchText(candidate: ComposerCandidate, inputs: NodeGenerationInput[]) {
@@ -435,34 +465,114 @@ function candidateSearchText(candidate: ComposerCandidate, inputs: NodeGeneratio
     return `${resourceLabel(candidate.input, inputs)} ${candidate.input.title} ${candidate.input.text || ""}`;
 }
 
-function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationInput[], theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void, token = `@[node:${input.nodeId}]`) {
+function createReferenceChip(
+    input: NodeGenerationInput,
+    inputs: NodeGenerationInput[],
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes],
+    onImagePreview: (url: string) => void,
+    previewUrl = "",
+    token = `@[node:${input.nodeId}]`,
+) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
     wrapper.dataset.referenceNodeId = input.nodeId;
     wrapper.dataset.referenceToken = token;
-    wrapper.className = "mx-px inline-flex h-7 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";
+    renderReferenceChipContent(wrapper, input, inputs, theme, previewUrl, onImagePreview);
+    return wrapper;
+}
+
+function renderReferenceChipContent(
+    wrapper: HTMLElement,
+    input: NodeGenerationInput,
+    inputs: NodeGenerationInput[],
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes],
+    previewUrl: string,
+    onImagePreview: (url: string) => void,
+) {
+    const safePreview = renderableMediaUrl(previewUrl);
+    if (wrapper.dataset.previewSrc === safePreview && wrapper.childElementCount > 0) return;
+    wrapper.dataset.previewSrc = safePreview;
     Object.assign(wrapper.style, chipStyle(theme));
-    const previewUrl = input.type === "image" && input.image && input.sourceKind !== "drawing" ? input.image.dataUrl : input.type === "video" ? input.previewUrl : "";
-    if (previewUrl) {
-        const image = document.createElement("img");
-        image.src = previewUrl;
-        image.alt = input.title;
-        image.className = "size-6 rounded object-cover";
-        wrapper.className = "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
-        wrapper.appendChild(image);
-        wrapper.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onImagePreview(previewUrl);
-        });
-    } else {
+    const renderTextFallback = () => {
+        wrapper.className = "mx-px inline-flex h-7 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";
         wrapper.title = input.sourceKind === "drawing" ? resourceLabel(input, inputs) : input.text || input.title;
+        wrapper.onclick = null;
+        wrapper.textContent = "";
         const text = document.createElement("span");
         text.className = "block truncate";
         text.textContent = input.sourceKind === "drawing" ? resourceLabel(input, inputs) : input.type === "text" ? input.text || input.title : input.title;
         wrapper.appendChild(text);
+    };
+    if (safePreview) {
+        wrapper.textContent = "";
+        const image = document.createElement("img");
+        image.src = safePreview;
+        image.alt = input.title;
+        image.className = "size-6 rounded object-cover";
+        image.addEventListener("error", renderTextFallback, { once: true });
+        wrapper.className = "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
+        wrapper.title = input.title;
+        wrapper.appendChild(image);
+        wrapper.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onImagePreview(safePreview);
+        };
+        return;
     }
-    return wrapper;
+    renderTextFallback();
+}
+
+function rawComposerInputPreview(input: NodeGenerationInput) {
+    if (input.type === "image" && input.image && input.sourceKind !== "drawing") return input.image.dataUrl || "";
+    if (input.type === "video") return input.previewUrl || "";
+    return "";
+}
+
+function composerInputStorageKey(input: NodeGenerationInput) {
+    const rawPreview = rawComposerInputPreview(input);
+    return ownedResourceStorageKey(input.type === "image" ? input.image?.storageKey : undefined, rawPreview);
+}
+
+function syncComposerInputPreview(input: NodeGenerationInput) {
+    const rawPreview = rawComposerInputPreview(input);
+    const storageKey = composerInputStorageKey(input);
+    const cached = storageKey ? peekCachedResourceObjectUrl(storageKey) : "";
+    return cached || renderableMediaUrl(rawPreview);
+}
+
+function useResolvedComposerInputPreviews(inputs: NodeGenerationInput[]) {
+    const [resolvedByNodeId, setResolvedByNodeId] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        let cancelled = false;
+        inputs.forEach((input) => {
+            const rawPreview = rawComposerInputPreview(input);
+            const storageKey = composerInputStorageKey(input);
+            if (!storageKey && !rawPreview) return;
+            const syncUrl = syncComposerInputPreview(input);
+            if (syncUrl && !storageKey) return;
+            void resolveImageUrl(storageKey, rawPreview, { cacheMiss: true, renderable: true })
+                .then((resolved) => {
+                    if (cancelled) return;
+                    const nextUrl = renderableMediaUrl(resolved) || syncUrl;
+                    setResolvedByNodeId((prev) => (prev[input.nodeId] === nextUrl ? prev : { ...prev, [input.nodeId]: nextUrl }));
+                })
+                .catch(() => {});
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [inputs]);
+
+    return useMemo(() => {
+        const map = new Map<string, string>();
+        inputs.forEach((input) => {
+            const resolved = resolvedByNodeId[input.nodeId];
+            map.set(input.nodeId, resolved !== undefined ? resolved : syncComposerInputPreview(input));
+        });
+        return map;
+    }, [inputs, resolvedByNodeId]);
 }
 
 function serializeEditor(editor: HTMLElement) {
