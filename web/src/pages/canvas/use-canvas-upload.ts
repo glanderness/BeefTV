@@ -19,7 +19,7 @@ import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size"
 import { CANVAS_UPLOAD_ACCEPT, createFileUploadPlaceholder, uploadNodeType, uploadPercent } from "@/lib/canvas/canvas-file-upload";
 import { createScriptDocumentUploadPlaceholder, extractScriptDocumentText, isScriptDocumentFile, resolveScriptOrUploadNodeType, SCRIPT_DOCUMENT_ACCEPT } from "@/lib/canvas/script-document-import";
 import { canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { ownedResourceStorageKey, resourceIdFromStorageKey } from "@/services/api/resources";
 import { isReferenceHTTPSLink } from "@/services/api/reference-link-replacement";
 import { http } from "@/services/api/request";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -337,7 +337,7 @@ export function useCanvasUpload({
             mounted: () => mountedRef.current,
         });
         try {
-            let storageKey = asset.data.storageKey;
+            let storageKey = ownedResourceStorageKey(asset.data.storageKey, asset.data.dataUrl || asset.coverUrl);
             let content = storageKey ? await resolveImageUrl(storageKey, asset.data.dataUrl || asset.coverUrl) : asset.data.dataUrl || asset.coverUrl;
             if (!guard.alive()) return;
             if (!content) {

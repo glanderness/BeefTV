@@ -41,7 +41,7 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import { CanvasAudioPlayer } from "./canvas-audio-player";
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { CanvasSubtitleOverlay } from "./canvas-subtitle-overlay";
-import { CanvasFileUploadContent } from "./canvas-file-upload-content";
+import { CanvasFileUploadContent, isFileUploadOverlayActive } from "./canvas-file-upload-content";
 import { useNodeResourceUrl } from "./use-node-resource-url";
 import { useNearViewport } from "./use-near-viewport";
 import { CanvasNodeGenerationProgress } from "./canvas-node-generation-progress";
@@ -117,7 +117,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     const runtimeStatuses = usePluginStore((state) => state.runtimeStatuses);
     const operation = useOperationProgress(state => canvasNodeOperation(state.entries, props.projectId, props.node.id, props.node.metadata?.taskId));
     if (props.node.type === CanvasNodeType.Upscale) return <UpscaleNodeContent node={props.node} theme={props.theme} />;
-    if (props.node.metadata?.fileUpload) return <CanvasFileUploadContent node={props.node} theme={props.theme} reduceMotion={props.reduceMediaEffects} />;
+    if (isFileUploadOverlayActive(props.node.metadata)) return <CanvasFileUploadContent node={props.node} theme={props.theme} reduceMotion={props.reduceMediaEffects} />;
     if (operation) return <CanvasNodeGenerationProgress node={props.node} theme={props.theme} operation={operation} onOpenTaskDetails={props.onOpenTaskDetails} onCancelTask={props.onCancelTask} />;
     const hasCustomContent = usesCanvasCustomNodeContent(props.node, props.isEditingContent);
     if (hasCustomContent && props.renderNodeContent) return props.renderNodeContent(props.node);

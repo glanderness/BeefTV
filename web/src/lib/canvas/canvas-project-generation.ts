@@ -151,8 +151,10 @@ export async function runCanvasGenerationTaskToConsumer(
         try { result = await (dependencies.runTask ?? runBackendCanvasGenerationTask)({
             ...input,
             onTaskCreated: (task) => {
-                accepted = true;
-                submission("accepted");
+                if (!accepted) {
+                    accepted = true;
+                    submission("accepted");
+                }
                 if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
                 input.onTaskCreated?.(task);
                 dependencies.bindTask(task);

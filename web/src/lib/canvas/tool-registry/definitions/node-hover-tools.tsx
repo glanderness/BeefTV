@@ -2,6 +2,7 @@ import { AudioLines, Captions, Clapperboard, Download, Eraser, FolderPlus, Image
 
 import { canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
 import { canRecoverManagedToolNode } from "@/lib/canvas/canvas-ai-upscale-task";
+import { isFileUploadOverlayActive } from "@/lib/canvas/canvas-file-upload";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { registerToolbarTools, type ToolContext, type ToolDefinition } from "@/lib/canvas/tool-registry";
 import { CanvasNodeType } from "@/types/canvas";
@@ -26,7 +27,7 @@ function simpleMode(ctx: ToolContext) { return ctx.workspaceMode === "simple"; }
 function isImageBatchRoot(ctx: ToolContext) { return isImage(ctx) && Boolean(ctx.nodeMetadata?.isBatchRoot && ctx.nodeMetadata.batchChildIds?.length); }
 function opensSavedHistory(ctx: ToolContext) { return Boolean(ctx.node && canvasNodeFailureView(ctx.node).explanation.category === "result_target_unavailable"); }
 function canRetry(ctx: ToolContext) {
-    if (ctx.nodeMetadata?.fileUpload) return false;
+    if (isFileUploadOverlayActive(ctx.nodeMetadata)) return false;
     if (opensSavedHistory(ctx)) return ctx.nodeMetadata?.status === "error";
     if (canRecoverManagedToolNode(ctx.node)) return ctx.nodeMetadata?.status === "error";
     if (ctx.node && canRecoverOrRetryDepthCapture(ctx.node)) return ctx.nodeMetadata?.status === "error";

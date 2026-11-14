@@ -13,6 +13,7 @@ import { queryGenerationTask, type GenerationTask } from "@/services/api/task-ce
 import { generationErrorMessage } from "@/lib/generation-error";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
+import { isFileUploadOverlayActive } from "@/lib/canvas/canvas-file-upload";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { resolveRenderedCanvasConnections } from "@/lib/canvas/canvas-connection-policy";
 import { nanoid } from "nanoid";
@@ -1702,7 +1703,7 @@ function InfiniteCanvasPage() {
                         {dialogNode &&
                         !maskEditNodeId &&
                         !isCanvasImageSourceNode(dialogNode) &&
-                        !dialogNode.metadata?.fileUpload &&
+                        !isFileUploadOverlayActive(dialogNode.metadata) &&
                         dialogNode.type !== CanvasNodeType.Script &&
                         dialogNode.type !== CanvasNodeType.BatchTable &&
                         dialogNode.type !== CanvasNodeType.Drawing &&
