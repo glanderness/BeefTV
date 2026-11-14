@@ -6112,7 +6112,7 @@ html:not(.dark) .creation-studio-control:hover,
     .project-asset-folder-visual > .canvas-folder-preview { position: absolute; top: 0; left: 50%; width: 360px; height: 280px; transform: translateX(-50%) scale(.68); transform-origin: top center; }
     .project-asset-folder-card:hover .project-asset-folder-visual > .canvas-folder-preview { transform: translateX(-50%) translateY(-2px) scale(.68); }
     .project-asset-folder-card:hover .canvas-folder-preview:not(.canvas-folder-preview-compact) .canvas-folder-front { transform: translateY(var(--space-1)); }
-    .project-asset-folder-card:hover .canvas-folder-front-media > img, .project-asset-folder-card:hover .canvas-folder-front-media > video { filter: blur(16px) saturate(.86); transform: scale(1.14); }
+    .project-asset-folder-card:hover .canvas-folder-front-media > :is(img, video), .project-asset-folder-card:hover .canvas-folder-front-media > .cached-resource-image-shell > img { filter: blur(16px) saturate(.86); transform: scale(1.14); }
     .project-asset-folder-card:hover .canvas-folder-preview:is(.canvas-folder-preview-stacked, .canvas-folder-preview-paper, .canvas-folder-preview-compact) .canvas-folder-preview-card-1 { transform: translate(-8px, -10px) rotate(-8deg); }
     .project-asset-folder-card:hover .canvas-folder-preview:is(.canvas-folder-preview-stacked, .canvas-folder-preview-paper, .canvas-folder-preview-compact) .canvas-folder-preview-card-2 { transform: translate(10px, -12px) rotate(8deg); }
     .project-asset-folder-card:hover .canvas-folder-preview:is(.canvas-folder-preview-stacked, .canvas-folder-preview-paper, .canvas-folder-preview-compact) .canvas-folder-preview-card-3 { transform: translateY(-20px); }
@@ -8394,10 +8394,13 @@ html:not(.dark) .creation-studio-control:hover,
     }
 
     .canvas-folder-back > img,
+    .canvas-folder-back > .cached-resource-image-shell > img,
     .canvas-folder-back > video,
     .canvas-folder-front-media > img,
+    .canvas-folder-front-media > .cached-resource-image-shell > img,
     .canvas-folder-front-media > video,
     .canvas-folder-preview-card > img,
+    .canvas-folder-preview-card > .cached-resource-image-shell > img,
     .canvas-folder-preview-card > video {
         width: 100%;
         height: 100%;
@@ -8458,6 +8461,7 @@ html:not(.dark) .creation-studio-control:hover,
     }
 
     .canvas-folder-front-media > img,
+    .canvas-folder-front-media > .cached-resource-image-shell > img,
     .canvas-folder-front-media > video {
         filter: blur(22px) saturate(.72);
         transform: scale(1.18);
@@ -8469,6 +8473,7 @@ html:not(.dark) .creation-studio-control:hover,
     }
 
     .canvas-folder-preview:hover .canvas-folder-front-media > img,
+    .canvas-folder-preview:hover .canvas-folder-front-media > .cached-resource-image-shell > img,
     .canvas-folder-preview:hover .canvas-folder-front-media > video {
         filter: blur(16px) saturate(.86);
         transform: scale(1.14);
@@ -11127,6 +11132,7 @@ html:not(.dark) .creation-studio-control:hover,
     .canvas-folder-preview,
     .canvas-folder-front,
     .canvas-folder-front-media > img,
+    .canvas-folder-front-media > .cached-resource-image-shell > img,
     .canvas-folder-front-media > video,
     .canvas-folder-preview-card {
         transform: none !important;
