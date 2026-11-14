@@ -2,7 +2,7 @@ import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
 
 import { getSkinAntOverrides, normalizeSkinID } from "@/lib/skin-themes";
-import { resolveUIControlMetrics } from "@/lib/ui-theme";
+import { resolveCanvasControlMetrics } from "@/lib/ui-theme";
 import { workspaceControlMetrics } from "@/lib/workspace-control-metrics";
 
 // 主操作、普通选择和开关是不同交互语义，必须各自维护成对的背景/前景色。
@@ -90,7 +90,7 @@ const controlTheme = {
 export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): ThemeConfig {
     const baseColor = dark ? controlTheme.dark : controlTheme.light;
     const skin = getSkinAntOverrides(skinID, dark ? "dark" : "light");
-    const metrics = resolveUIControlMetrics({ scope: "canvas", skin });
+    const metrics = resolveCanvasControlMetrics(skin);
     const color = {
         ...baseColor,
         solidBg: skin.primary || baseColor.solidBg,
@@ -184,9 +184,9 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
             colorBorderSecondary: dark ? "rgba(255, 255, 255, 0.1)" : "rgba(17, 17, 17, 0.09)",
             boxShadowSecondary:
                 skin.shadowStyle === "none" ? "none" : skin.shadowStyle === "strong" ? (dark ? "0 28px 84px rgba(0, 0, 0, 0.68)" : "0 26px 72px rgba(15, 23, 42, 0.22)") : dark ? "0 24px 72px rgba(0, 0, 0, 0.48)" : "0 22px 64px rgba(15, 23, 42, 0.14)",
-            borderRadius: skin.borderRadius || 6,
-            borderRadiusLG: skin.borderRadiusLG || 8,
-            borderRadiusSM: skin.borderRadiusSM || 5,
+            borderRadius: metrics.borderRadius,
+            borderRadiusLG: metrics.cardRadius,
+            borderRadiusSM: metrics.borderRadiusSM,
             lineWidth: skin.borderWidth || 1,
             controlHeight: metrics.height,
             controlHeightLG: metrics.heightLarge,
@@ -254,7 +254,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
             },
             Checkbox: {
                 colorWhite: color.checkFg,
-                borderRadiusSM: skin.checkboxRadius || 4,
+                borderRadiusSM: metrics.checkboxRadius,
                 colorBgContainer: color.controlSurface,
                 colorBgContainerDisabled: color.controlDisabledBg,
                 colorBorder: color.controlBorder,
@@ -283,8 +283,8 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 controlOutline: color.controlFocus,
             },
             Menu: {
-                itemBorderRadius: skin.menuRadius || skin.borderRadius || 6,
-                subMenuItemBorderRadius: skin.menuRadius || skin.borderRadius || 6,
+                itemBorderRadius: metrics.menuRadius,
+                subMenuItemBorderRadius: metrics.menuRadius,
                 itemHeight: 40,
                 itemMarginBlock: 2,
                 itemActiveBg: color.menuBg,
@@ -340,7 +340,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 itemSelectedColor: color.selectedFg,
             },
             Modal: {
-                borderRadiusLG: skin.overlayRadius || skin.borderRadiusLG || 8,
+                borderRadiusLG: metrics.overlayRadius,
                 headerBg: "transparent",
                 contentBg: elevatedBackground,
                 footerBg: "transparent",
@@ -359,7 +359,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 gradientToColor: dark ? "rgba(255, 255, 255, 0.11)" : "rgba(15, 23, 42, 0.1)",
             },
             Card: {
-                borderRadiusLG: skin.borderRadiusLG || 8,
+                borderRadiusLG: metrics.cardRadius,
                 headerBg: "transparent",
                 headerFontSize: 15,
                 bodyPadding: 18,
@@ -387,18 +387,17 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
  */
 /** 用户端与后台共享业务控件，但使用独立的产品尺寸和柔和表面。 */
 export function getWorkspaceAntThemeConfig(): ThemeConfig {
-    const metrics = resolveUIControlMetrics({ scope: "workspace", skin: {} });
     return {
         token: {
-            borderRadius: metrics.buttonRadius, borderRadiusLG: 16, borderRadiusSM: workspaceControlMetrics.radius.small,
-            controlHeight: metrics.height, controlHeightSM: metrics.heightSmall, controlHeightLG: metrics.heightLarge,
+            borderRadius: workspaceControlMetrics.radius.normal, borderRadiusLG: workspaceControlMetrics.radius.card, borderRadiusSM: workspaceControlMetrics.radius.small,
+            controlHeight: workspaceControlMetrics.height.normal, controlHeightSM: workspaceControlMetrics.height.small, controlHeightLG: workspaceControlMetrics.height.large,
             motionDurationFast: "0.12s", motionDurationMid: "0.18s", motionDurationSlow: "0.36s",
             motionEaseInOut: "cubic-bezier(0.16, 1, 0.3, 1)",
             motionEaseOut: "cubic-bezier(0.16, 1, 0.3, 1)",
         },
         components: {
             Button: {
-                borderRadius: metrics.buttonRadius, borderRadiusSM: workspaceControlMetrics.radius.small, borderRadiusLG: workspaceControlMetrics.radius.large, fontWeight: metrics.buttonFontWeight,
+                borderRadius: workspaceControlMetrics.radius.normal, borderRadiusSM: workspaceControlMetrics.radius.small, borderRadiusLG: workspaceControlMetrics.radius.large, fontWeight: workspaceControlMetrics.buttonWeight,
                 colorPrimary: "var(--user-action-bg)", colorPrimaryHover: "var(--user-action-bg-hover)",
                 colorPrimaryActive: "var(--user-action-bg-active)", primaryColor: "var(--user-action-foreground)",
                 defaultBg: "var(--user-surface-muted)", defaultColor: "var(--user-ink)", defaultBorderColor: "transparent",
@@ -407,29 +406,26 @@ export function getWorkspaceAntThemeConfig(): ThemeConfig {
                 defaultShadow: "none", primaryShadow: "none", dangerShadow: "none",
                 paddingInline: workspaceControlMetrics.buttonPadding.normal, paddingInlineSM: workspaceControlMetrics.buttonPadding.small,
             },
-            Input: { borderRadius: metrics.inputRadius, activeShadow: "0 0 0 2px var(--user-accent-soft)", paddingInline: workspaceControlMetrics.inputPadding },
-            Select: { borderRadius: metrics.inputRadius, optionSelectedBg: "var(--user-accent-soft)", optionSelectedColor: "var(--user-ink)", optionActiveBg: "var(--user-surface-muted)", optionPadding: "9px 12px" },
-            Dropdown: { borderRadiusLG: 16, controlItemBgHover: "var(--user-surface-muted)", paddingBlock: 6 },
-            Modal: { borderRadiusLG: 20 },
-            Popconfirm: { borderRadiusLG: 16 },
-            Message: { borderRadiusLG: 14, contentPadding: "10px 18px" },
-            Notification: { borderRadiusLG: 18 },
-            Tooltip: { borderRadius: 8 },
+            Input: { borderRadius: workspaceControlMetrics.radius.normal, activeShadow: "0 0 0 2px var(--user-accent-soft)", paddingInline: workspaceControlMetrics.inputPadding },
+            Select: { borderRadius: workspaceControlMetrics.radius.normal, optionSelectedBg: "var(--user-accent-soft)", optionSelectedColor: "var(--user-ink)", optionActiveBg: "var(--user-surface-muted)", optionPadding: "9px 12px" },
+            Dropdown: { borderRadiusLG: workspaceControlMetrics.overlayRadius.dropdown, controlItemBgHover: "var(--user-surface-muted)", paddingBlock: 6 },
+            Modal: { borderRadiusLG: workspaceControlMetrics.overlayRadius.modal },
+            Popconfirm: { borderRadiusLG: workspaceControlMetrics.overlayRadius.popconfirm },
+            Message: { borderRadiusLG: workspaceControlMetrics.overlayRadius.message, contentPadding: "10px 18px" },
+            Notification: { borderRadiusLG: workspaceControlMetrics.overlayRadius.notification },
+            Tooltip: { borderRadius: workspaceControlMetrics.overlayRadius.tooltip },
         },
     };
 }
 
 export function getAdminAntThemeConfig(dark: boolean, skinID: unknown = "classic"): ThemeConfig {
     const base = getAntThemeConfig(dark, skinID);
-    const skin = getSkinAntOverrides(skinID, dark ? "dark" : "light");
     const mutedForeground = dark ? "rgba(250, 250, 250, 0.58)" : "rgba(23, 23, 23, 0.58)";
 
     return {
         ...base,
         token: {
             ...base.token,
-            borderRadius: skin.borderRadius || 6,
-            borderRadiusLG: skin.borderRadiusLG || 8,
             colorBgContainer: "var(--color-surface)",
             colorBorder: "var(--color-border)",
             fontFamily: "var(--font-sans)",
