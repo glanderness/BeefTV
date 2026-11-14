@@ -225,7 +225,7 @@ func TestAssistantSkillContextRetainsAggregateInstructionLimit(t *testing.T) {
 	service, canvasID, _ := newAssistantTurnService(t)
 	pins := make([]skills.Pin, 0, 3)
 	for _, name := range []string{"第一份", "第二份", "第三份"} {
-		item, err := service.SkillsDomain().CreateSkill("local", SkillMutationRequest{SkillName: name, Description: "合计超限", Instruction: "---\nname: large-skill\ndescription: limit fixture\n---\n" + strings.Repeat("字", 70000), Tag: "others"})
+		item, err := service.SkillsDomain().CreateSkill("local", SkillMutationRequest{SkillName: name, Description: "合计超限", Instruction: "---\nname: large-skill\ndescription: limit fixture\n---\n" + strings.Repeat("字", 500000), Tag: "others"})
 		if err != nil {
 			t.Fatal(err)
 		}

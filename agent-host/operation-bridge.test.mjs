@@ -510,4 +510,99 @@ describe('同一轮的并行写入', () => {
       expect(log.at(-1).rebasedFrom).toBeUndefined();
     });
   });
+
+  test('技能工具 schema 免填 versionId/contentHash，且 skill.file 支持 offset/limit 按行分页且不把分页参数透传给 Go', async () => {
+    const getSchema = scopedSchema({
+      type: 'object',
+      properties: { skillId: { type: 'string' }, versionId: { type: 'string' }, contentHash: { type: 'string' }, path: { type: 'string' } },
+      required: ['skillId', 'versionId', 'contentHash'],
+    }, false, 'skill.get');
+    expect(getSchema.required).toEqual(['skillId']);
+    expect(getSchema.properties.path).toBeUndefined();
+
+    const fileSchema = scopedSchema({
+      type: 'object',
+      properties: { skillId: { type: 'string' }, versionId: { type: 'string' }, contentHash: { type: 'string' }, path: { type: 'string' } },
+      required: ['skillId', 'versionId', 'contentHash'],
+    }, false, 'skill.file');
+    expect(fileSchema.required).toEqual(['skillId', 'path']);
+    expect(fileSchema.properties.offset).toEqual({ type: 'integer' });
+    expect(fileSchema.properties.limit).toEqual({ type: 'integer' });
+
+    const scriptSchema = scopedSchema({
+      type: 'object',
+      properties: { canvasId: { type: 'string' }, skillId: { type: 'string' }, versionId: { type: 'string' }, contentHash: { type: 'string' }, scriptPath: { type: 'string' } },
+      required: ['canvasId', 'skillId', 'versionId', 'contentHash', 'scriptPath'],
+      additionalProperties: false,
+    }, false, 'skill.script.run');
+    expect(scriptSchema.required).toEqual(['skillId', 'scriptPath']);
+    expect(scriptSchema.properties.versionId).toEqual({ type: 'string' });
+
+    const seen = [];
+    const fileContent = Array.from({ length: 10 }, (_, idx) => `参考第${idx + 1}行`).join('\n');
+    const server = createServer(async (req, res) => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/ops') {
+        res.end(JSON.stringify({
+          code: 0,
+          data: {
+            ops: [{
+              id: 'skill.file',
+              summary: 'Read skill file',
+              assistantModes: ['read-only', 'canvas', 'full-access'],
+              replay: 'safe',
+              readOnly: true,
+              params: {
+                type: 'object',
+                properties: { skillId: { type: 'string' }, versionId: { type: 'string' }, contentHash: { type: 'string' }, path: { type: 'string' } },
+                required: ['skillId', 'versionId', 'contentHash'],
+              },
+            }],
+          },
+        }));
+        return;
+      }
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      seen.push(body);
+      res.end(JSON.stringify({
+        code: 0,
+        data: {
+          op: 'skill.file',
+          result: {
+            pin: { skillId: body.params.skillId, versionId: body.params.versionId, contentHash: body.params.contentHash },
+            file: { path: body.params.path },
+            content: fileContent,
+            executionSupported: false,
+          },
+        },
+      }));
+    });
+    const port = await listen(server);
+    try {
+      const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'secret', turnBudgetContext: new AsyncLocalStorage() });
+      await bridge.loadDescriptors();
+      const tools = bridge.buildTools('canvas-1', [], { aborted: false }, resetTurnAccumulator(newTurnAccumulator(), 1, 'turn-1'), 'sess-1');
+      const res = await tools[0].execute('call-f1', {
+        skillId: 's1',
+        versionId: 'v1',
+        contentHash: 'a'.repeat(64),
+        path: 'references/guide.md',
+        offset: 3,
+        limit: 2,
+        byteOffset: 0,
+      });
+      expect(seen[0].params.offset).toBeUndefined();
+      expect(seen[0].params.limit).toBeUndefined();
+      expect(seen[0].params.byteOffset).toBeUndefined();
+      const parsed = JSON.parse(res.content[0].text);
+      expect(parsed.result.pagination).toEqual({ startLine: 3, endLine: 4, totalLines: 10, truncated: true });
+      expect(parsed.result.content).toContain('参考第3行\n参考第4行');
+      expect(parsed.result.content).toContain('offset=5');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });

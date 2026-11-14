@@ -52,6 +52,11 @@ type AgentFile struct {
 
 var agentSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
+const (
+	MaxAgentSkillFileBytes      = 2 << 20
+	MaxAgentSkillSelectionBytes = 4 << 20
+)
+
 // Requirements belong to the selected immutable version, not the current
 // package or a model-supplied declaration.
 func (s *Service) AgentRequirements(userID string, pin Pin) ([]string, error) {
@@ -179,18 +184,18 @@ func (s *Service) AgentFile(userID string, pin Pin, filePath string) (*AgentFile
 		if file.Path != normalized {
 			continue
 		}
-		if file.Size > 256<<10 && file.Path == version.EntryPath {
-			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: "技能正文超过 256 KiB，请将部分内容移到参考文件"}
+		if file.Size > MaxAgentSkillFileBytes && file.Path == version.EntryPath {
+			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: "技能正文超过 2 MiB，请将部分内容移到参考文件"}
 		}
-		if file.Size > 256<<10 || !isPreviewText(file.MimeType, file.Path) {
-			return nil, kernel.BadAuthRequest("辅助文件只支持 256 KiB 以内的文本")
+		if file.Size > MaxAgentSkillFileBytes || !isPreviewText(file.MimeType, file.Path) {
+			return nil, kernel.BadAuthRequest("辅助文件只支持 2 MiB 以内的文本")
 		}
 		data, err := s.readSkillArchiveEntry(version, normalized)
 		if err != nil {
 			return nil, kernel.WrapAppError(400, "所选技能版本文件不可读取，请重新安装或选择可用版本", err)
 		}
 		sum := sha256.Sum256(data)
-		if len(data) > 256<<10 || !utf8.Valid(data) || int64(len(data)) != file.Size || hex.EncodeToString(sum[:]) != file.SHA256 {
+		if len(data) > MaxAgentSkillFileBytes || !utf8.Valid(data) || int64(len(data)) != file.Size || hex.EncodeToString(sum[:]) != file.SHA256 {
 			return nil, kernel.NewAppError(409, "技能文件内容校验失败，请重新选择")
 		}
 		_, supported := SkillScriptInterpreter(normalized)
@@ -216,8 +221,8 @@ func (s *Service) ValidateAgentSkills(userID string, pins []Pin) ([]Pin, error) 
 			return nil, err
 		}
 		total += len(resource.Instruction)
-		if total > 512<<10 {
-			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: fmt.Sprintf("所选技能正文总量超过 %d KiB，请减少所选技能", 512)}
+		if total > MaxAgentSkillSelectionBytes {
+			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: fmt.Sprintf("所选技能正文总量超过 %d MiB，请减少所选技能", MaxAgentSkillSelectionBytes>>20)}
 		}
 		labeled := pin.Identity()
 		labeled.SkillName = resource.Name
