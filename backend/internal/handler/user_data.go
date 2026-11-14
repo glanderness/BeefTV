@@ -255,6 +255,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		}
 		ok(c, gin.H{"resource": resource})
 	})
+	registerResourceDeriveRoutes(r, owners, resources, usage)
 	r.GET("/resources/:id/file", func(c *gin.Context) {
 		user, err := currentUser(c, owners)
 		if err != nil {

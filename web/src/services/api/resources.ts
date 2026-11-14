@@ -33,6 +33,75 @@ export type AccountFileStorageUsage = {
     totalBytes: number;
 };
 
+export type ExtractedVideoFrameItem = {
+    timeMs: number;
+    resource: RemoteResource;
+};
+
+export type ExtractedVideoFrameFailure = {
+    timeMs: number;
+    reason: string;
+};
+
+export type ExtractResourceVideoFramesRequest = {
+    preset?: "first" | "last";
+    timesMs?: number[];
+};
+
+export type ExtractResourceVideoFramesResponse = {
+    frames: ExtractedVideoFrameItem[];
+    failures?: ExtractedVideoFrameFailure[];
+    durationMs?: number;
+};
+
+export type SeparateResourceVideoAudioResponse = {
+    audio: RemoteResource;
+    mutedVideo: RemoteResource;
+    durationMs?: number;
+};
+
+const VIDEO_DERIVE_REQUEST_TIMEOUT_MS = 120_000;
+
+export async function extractResourceVideoFrames(
+    id: string,
+    payload: ExtractResourceVideoFramesRequest,
+    options?: { idempotencyKey?: string; signal?: AbortSignal },
+) {
+    const base = uploadConfig(options?.idempotencyKey);
+    const data = await http.post<ExtractResourceVideoFramesResponse>(
+        `/resources/${encodeURIComponent(id)}/frames`,
+        payload,
+        {
+            ...base,
+            signal: options?.signal,
+            timeout: VIDEO_DERIVE_REQUEST_TIMEOUT_MS,
+        },
+    );
+    for (const item of data.frames || []) {
+        if (item?.resource?.id) rememberResource(item.resource);
+    }
+    return data;
+}
+
+export async function separateResourceVideoAudio(
+    id: string,
+    options?: { idempotencyKey?: string; signal?: AbortSignal },
+) {
+    const base = uploadConfig(options?.idempotencyKey);
+    const data = await http.post<SeparateResourceVideoAudioResponse>(
+        `/resources/${encodeURIComponent(id)}/separate-audio`,
+        {},
+        {
+            ...base,
+            signal: options?.signal,
+            timeout: VIDEO_DERIVE_REQUEST_TIMEOUT_MS,
+        },
+    );
+    if (data.audio?.id) rememberResource(data.audio);
+    if (data.mutedVideo?.id) rememberResource(data.mutedVideo);
+    return data;
+}
+
 export async function prepareResourcePlayback(id: string, config?: HttpRequestConfig) {
     const data = await http.post<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}/playback`, {}, config);
     return data.resource;
