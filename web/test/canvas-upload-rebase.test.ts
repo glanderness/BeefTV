@@ -230,6 +230,25 @@ describe("rebaseCanvasDocumentThreeWay upload settlement", () => {
         expect(bothDivergedLocalUploading.project.nodes[0]?.metadata?.status).toBeUndefined();
         expect(bothDivergedLocalUploading.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
         expect(bothDivergedLocalUploading.project.nodes[0]?.metadata?.fileUploadProgress).toBe(42);
+
+        const baseBareManualUploading = {
+            ...node("rep-distinct", "placeholder.png", { fileUpload: "uploading", manualSize: true }, { x: 80, y: 80 }),
+            width: 500,
+            height: 344,
+        };
+        const distinctLocalUploading = { ...uploadingC, title: "c-upload.png", position: { x: 300, y: 300 } };
+        const manualBaseVsHeterogenousUploading = rebaseCanvasDocumentThreeWay({
+            base: project([baseBareManualUploading], 10),
+            local: project([distinctLocalUploading], 10),
+            remote: project([{ ...settledD, width: 640, height: 480, position: { x: 10, y: 10 } }], 11),
+        });
+        expect(manualBaseVsHeterogenousUploading.conflict).toBe(true);
+        expect(manualBaseVsHeterogenousUploading.project.nodes[0]?.title).toBe("c-upload.png");
+        expect(manualBaseVsHeterogenousUploading.project.nodes[0]?.position).toEqual({ x: 300, y: 300 });
+        expect(manualBaseVsHeterogenousUploading.project.nodes[0]?.width).toBe(320);
+        expect(manualBaseVsHeterogenousUploading.project.nodes[0]?.height).toBe(220);
+        expect(manualBaseVsHeterogenousUploading.project.nodes[0]?.metadata?.manualSize).toBeUndefined();
+        expect(manualBaseVsHeterogenousUploading.project.nodes[0]?.metadata?.content).toBe("https://example.test/c.png");
     });
 
     test("stale uploading flag on a distinct settled remote media preserves true conflict instead of treating remote as placeholder", () => {
@@ -500,6 +519,25 @@ describe("rebaseCanvasDocumentThreeWay upload settlement", () => {
         expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.height).toBe(440);
         expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.position).toEqual({ x: 60, y: 60 });
         expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.metadata?.manualSize).toBe(true);
+
+        const freeResizeSecondaryUploading = {
+            ...initialUploading,
+            width: 640,
+            height: 440,
+            position: { x: 60, y: 60 },
+            metadata: { fileUpload: "uploading" as const, fileUploadProgress: 80, freeResize: true },
+        };
+        const crossModeVsStale = rebaseCanvasDocumentThreeWay({
+            base: project([persistedManualUploading], 10),
+            local: project([freeResizeSecondaryUploading], 10),
+            remote: project([initialUploading], 11),
+        });
+        expect(crossModeVsStale.conflict).toBe(false);
+        expect(crossModeVsStale.project.nodes[0]?.width).toBe(640);
+        expect(crossModeVsStale.project.nodes[0]?.height).toBe(440);
+        expect(crossModeVsStale.project.nodes[0]?.position).toEqual({ x: 60, y: 60 });
+        expect(crossModeVsStale.project.nodes[0]?.metadata?.freeResize).toBe(true);
+        expect(crossModeVsStale.project.nodes[0]?.metadata?.manualSize).toBeUndefined();
     });
 
     test("settled base is not wiped or rolled back when the other snapshot still holds a bare initial-upload placeholder", () => {

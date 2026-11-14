@@ -366,6 +366,25 @@ function sameNodeCenter(
     return Math.abs(lx - rx) <= 1e-6 && Math.abs(ly - ry) <= 1e-6;
 }
 
+function hasExplicitManualSizeFlag(node: CanvasNodeData | undefined): boolean {
+    return Boolean(node?.metadata?.manualSize || node?.metadata?.freeResize);
+}
+
+function sameUploadingOriginForManualGeometry(
+    baseItem: CanvasNodeData,
+    node: CanvasNodeData,
+): boolean {
+    if (baseItem.type !== node.type) {
+        return false;
+    }
+    const baseHasMedia = hasUploadMediaPayload(baseItem);
+    const nodeHasMedia = hasUploadMediaPayload(node);
+    if (!baseHasMedia && !nodeHasMedia) {
+        return true;
+    }
+    return baseHasMedia && nodeHasMedia && sameUploadMediaPayload(baseItem, node);
+}
+
 function alignUploadSettlementPair(
     baseItem: CanvasNodeData | undefined,
     uploadingItem: CanvasNodeData,
@@ -398,6 +417,9 @@ function alignUploadSettlementPair(
     }
     if (baseItem) {
         for (const key of Object.keys(baseMeta)) {
+            if ((key === "manualSize" || key === "freeResize") && hasExplicitManualSizeFlag(uploadingItem)) {
+                continue;
+            }
             if (!UPLOAD_OWNED_METADATA_KEY_SET.has(key) && !hasDefinedProperty(uploadingMeta, key) && hasDefinedProperty(settledMeta, key)) {
                 uploadingMeta[key] = baseMeta[key];
             }
@@ -419,8 +441,7 @@ function alignUploadSettlementPair(
     }
 
     const keepUploadingManualResize = !hasSettledUploadMedia(baseItem) && Boolean(
-        uploadingItem.metadata?.manualSize
-        || uploadingItem.metadata?.freeResize
+        hasExplicitManualSizeFlag(uploadingItem)
         || (
             baseItem?.metadata?.fileUpload === "uploading"
             && (uploadingItem.width !== baseItem.width || uploadingItem.height !== baseItem.height)
@@ -436,8 +457,7 @@ function alignUploadSettlementPair(
 
     let resolvedUploadingPos = uploadingItem.position;
     if (keepUploadingManualResize) {
-        const settledLacksManualSize = (Boolean(uploadingMeta.manualSize) && !settledItem.metadata?.manualSize)
-            || (!settledItem.metadata?.manualSize && !settledItem.metadata?.freeResize);
+        const settledLacksManualSize = !hasExplicitManualSizeFlag(settledItem);
         const settledVideoAutoFitOverManual = settledItem.type === "video"
             && (sameNodeCenter(settledItem, baseItem) || sameNodeCenter(settledItem, uploadingItem));
         if (settledLacksManualSize || settledVideoAutoFitOverManual) {
@@ -498,29 +518,26 @@ function restorePersistedUploadingManualGeometry(
     baseItem: CanvasNodeData | undefined,
     node: CanvasNodeData,
 ): CanvasNodeData {
-    if (!baseItem || hasSettledUploadMedia(baseItem) || node.metadata?.fileUpload !== "uploading") {
-        return node;
-    }
-    const missingManualSize = Boolean(baseItem.metadata?.manualSize)
-        && !node.metadata?.manualSize
-        && node.metadata?.manualSize !== false;
-    const missingFreeResize = Boolean(baseItem.metadata?.freeResize)
-        && !node.metadata?.freeResize
-        && node.metadata?.freeResize !== false;
-    if (!missingManualSize && !missingFreeResize) {
+    if (
+        !baseItem
+        || hasSettledUploadMedia(baseItem)
+        || !hasExplicitManualSizeFlag(baseItem)
+        || node.metadata?.fileUpload !== "uploading"
+        || !sameUploadingOriginForManualGeometry(baseItem, node)
+        || hasExplicitManualSizeFlag(node)
+        || node.metadata?.manualSize === false
+        || node.metadata?.freeResize === false
+    ) {
         return node;
     }
     const nextMeta: Record<string, unknown> = { ...((node.metadata || {}) as Record<string, unknown>) };
-    if (missingManualSize) nextMeta.manualSize = baseItem.metadata?.manualSize;
-    if (missingFreeResize) nextMeta.freeResize = baseItem.metadata?.freeResize;
-    const restoreBox = missingManualSize || !node.metadata?.manualSize;
+    if (baseItem.metadata?.manualSize !== undefined) nextMeta.manualSize = baseItem.metadata.manualSize;
+    if (baseItem.metadata?.freeResize !== undefined) nextMeta.freeResize = baseItem.metadata.freeResize;
     return {
         ...node,
-        ...(restoreBox ? {
-            width: baseItem.width,
-            height: baseItem.height,
-            position: baseItem.position,
-        } : {}),
+        width: baseItem.width,
+        height: baseItem.height,
+        position: baseItem.position,
         metadata: nextMeta as CanvasNodeData["metadata"],
     };
 }
