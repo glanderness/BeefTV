@@ -4,11 +4,13 @@
     .root {
         --icon-button-ink: var(--muted-foreground);
         --icon-button-hover-ink: var(--foreground);
+        --icon-button-hover-fill: var(--surface-hover);
         --icon-button-active-fill: var(--surface-active);
         --icon-button-soft-fill: var(--bg-secondary);
         --icon-button-danger-ink: var(--status-error);
         --icon-button-solid-fill: var(--foreground);
         --icon-button-solid-ink: var(--background);
+        --icon-button-fg: var(--icon-button-ink);
 
         --icon-button-xs: calc(var(--spacing) * 6);
         --icon-button-sm: calc(var(--spacing) * 7);
@@ -16,7 +18,15 @@
         --icon-button-lg: calc(var(--spacing) * 9);
         --icon-button-glyph-xs: calc(var(--spacing) * 3.5);
         --icon-button-glyph: calc(var(--spacing) * 4);
-        /* Unlike the other glyph sizes, lg was fixed px, even at larger roots. */
+        /* Unlike the other glyph sizes, lg stays 18px across root font sizes. */
         --icon-button-glyph-lg: 18px;
     }
+}
+
+/* Unlayered antd/dist/reset.css sets `button { color: inherit }`, which beats
+   layered `color` utilities on `<button>`. Setting `color` on `.root` unlayered
+   restores IconButton foreground ownership while letting layered
+   `[--icon-button-fg:...]` utilities and `twMerge` manage variant/state colors. */
+.root {
+    color: var(--icon-button-fg);
 }
