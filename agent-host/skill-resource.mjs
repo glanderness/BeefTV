@@ -9,15 +9,11 @@ const fail = (reason) => Object.assign(new Error(reason), { reason });
 const hashPattern = /^[a-f0-9]{64}$/;
 export const SKILL_CATALOG_LIMIT = 50;
 export const SKILL_DESCRIPTION_LIMIT = 300;
-export const MAX_SKILL_RESOURCE_BYTES = 2 * 1024 * 1024;
-export const MAX_SKILL_SELECTION_BYTES = 4 * 1024 * 1024;
-export const SKILL_INLINE_MAX_LINES = 4000;
-export const SKILL_INLINE_MAX_BYTES = 256 * 1024;
-export const SKILL_FILE_PAGE_MAX_LINES = 2000;
-export const SKILL_FILE_PAGE_MAX_BYTES = 128 * 1024;
+export const SKILL_PAGE_MAX_LINES = 2000;
+export const SKILL_PAGE_MAX_BYTES = 50 * 1024;
 
 export function normalizeSkillPins(values = []) {
-  if (!Array.isArray(values) || values.length > 4) throw fail('invalid_skill_selection');
+  if (!Array.isArray(values)) throw fail('invalid_skill_selection');
   const seen = new Set();
   return values.map((value) => {
     if (!value || typeof value.skillId !== 'string' || !value.skillId.trim() ||
@@ -34,8 +30,9 @@ export function sameSkillPin(left, right) {
 }
 
 function checkResource(pin, resource) {
-  if (!sameSkillPin(pin, resource?.pin) || typeof resource.instruction !== 'string' || !resource.instruction.trim()) throw fail('skill_version_unavailable');
-  if (Buffer.byteLength(resource.instruction, 'utf8') > MAX_SKILL_RESOURCE_BYTES) throw fail('skill_instruction_too_large');
+  if (!sameSkillPin(pin, resource?.pin) || typeof resource.instruction !== 'string' || (!resource.instruction.trim() && !resource.pagination?.truncated)) {
+    throw fail('skill_version_unavailable');
+  }
   if (!Array.isArray(resource.files) || !Array.isArray(resource.unsupportedCapabilities)) throw fail('skill_package_unreadable');
   return resource;
 }
@@ -45,12 +42,9 @@ export async function loadPinnedSkills({ pins = [], readVersion, signal } = {}) 
   if (!selected.length) return [];
   if (typeof readVersion !== 'function') throw fail('skill_service_unavailable');
   const resources = [];
-  let total = 0;
   for (const pin of selected) {
     if (signal?.aborted) throw signal.reason || fail('aborted');
     const resource = checkResource(pin, await readVersion(pin, signal));
-    total += Buffer.byteLength(resource.instruction, 'utf8');
-    if (total > MAX_SKILL_SELECTION_BYTES) throw fail('skill_instruction_too_large');
     resources.push(resource);
   }
   return resources;
@@ -71,103 +65,133 @@ export function stripSkillFrontmatter(raw) {
   return { body: rest, strippedLines };
 }
 
+function splitSkillLines(source) {
+  if (!source.length) return [];
+  const lines = source.split('\n');
+  if (source.endsWith('\n')) lines.pop();
+  return lines;
+}
+
+function formatSkillPaginationFooter(pagination, { skillId = '', path = '', explicitRange = false, shownBytes = 0 } = {}) {
+  if (!pagination) return '';
+  const { startLine, endLine, totalLines, truncated, firstLineExceedsLimit, firstLineBytes } = pagination;
+  const targetHint = [skillId ? `skillId="${skillId}"` : '', path ? `path="${path}"` : ''].filter(Boolean).join(', ');
+  if (totalLines === 0 || startLine > totalLines) {
+    return `[文件共 ${totalLines} 行，请求的 offset=${startLine} 已超出末尾。]`;
+  }
+  if (firstLineExceedsLimit) {
+    const nextHint = startLine < totalLines
+      ? `如需继续阅读后续行，请传 offset=${startLine + 1} 调用 skill_file${targetHint ? `（${targetHint}）` : ''}。`
+      : '';
+    return `\n\n[第 ${startLine} 行共 ${firstLineBytes} 字节，超出单页上限，当前仅展示前 ${shownBytes} 字节（同行超出部分不再展开；文件共 ${totalLines} 行）。${nextHint}]`;
+  }
+  if (truncated) {
+    return `\n\n[当前显示第 ${startLine}-${endLine} 行（共 ${totalLines} 行）。如需继续阅读后续内容，请传 offset=${endLine + 1} 调用 skill_file${targetHint ? `（${targetHint}）` : ''}。]`;
+  }
+  if (explicitRange && startLine > 1) {
+    return `\n\n[当前显示第 ${startLine}-${endLine} 行（共 ${totalLines} 行，已到文件末尾）。]`;
+  }
+  return '';
+}
+
 export function paginateSkillText(text, {
   offset,
   limit,
-  byteOffset,
-  maxLines = SKILL_FILE_PAGE_MAX_LINES,
-  maxBytes = SKILL_FILE_PAGE_MAX_BYTES,
+  maxLines = SKILL_PAGE_MAX_LINES,
+  maxBytes = SKILL_PAGE_MAX_BYTES,
   skillId = '',
   path = '',
   baseLineOffset = 0,
 } = {}) {
   const source = String(text ?? '');
-  const hasExplicitRange = offset !== undefined || limit !== undefined || byteOffset !== undefined;
-  const lines = source.split('\n');
+  const explicitRange = offset !== undefined || limit !== undefined;
+  const lines = splitSkillLines(source);
   const totalLines = lines.length;
   const totalFileLines = totalLines + baseLineOffset;
-  if (!hasExplicitRange && totalLines <= maxLines && Buffer.byteLength(source, 'utf8') <= maxBytes) {
+  if (!explicitRange && totalLines <= maxLines && Buffer.byteLength(source, 'utf8') <= maxBytes) {
     return { content: source, truncated: false, startLine: 1 + baseLineOffset, endLine: totalFileLines, totalLines: totalFileLines };
   }
   const startIndex = Math.max(0, (Number.isFinite(Number(offset)) ? Math.trunc(Number(offset)) : 1) - 1);
-  const startByte = Math.max(0, Number.isFinite(Number(byteOffset)) ? Math.trunc(Number(byteOffset)) : 0);
-  if (startIndex >= totalLines) {
-    const startFileLine = startIndex + 1 + baseLineOffset;
+  const startFileLine = startIndex + 1 + baseLineOffset;
+  if (totalLines === 0 || startIndex >= totalLines) {
+    const pagination = { startLine: startFileLine, endLine: totalFileLines, totalLines: totalFileLines, truncated: false };
     return {
-      content: `[文件共 ${totalFileLines} 行，请求的 offset=${startFileLine} 已超出末尾。]`,
-      truncated: false,
-      startLine: startFileLine,
-      endLine: totalFileLines,
-      totalLines: totalFileLines,
+      content: formatSkillPaginationFooter(pagination, { skillId, path, explicitRange }),
+      ...pagination,
     };
   }
   const requestedLines = limit !== undefined && Number.isFinite(Number(limit))
     ? Math.max(1, Math.min(maxLines, Math.trunc(Number(limit))))
     : maxLines;
-  const pageMaxBytes = Math.max(64, maxBytes);
+  const pageMaxBytes = Math.max(16, maxBytes);
   const picked = [];
   let bytes = 0;
-  let nextByteOffset;
-  let lineTotalBytes = 0;
+  let firstLineExceedsLimit = false;
+  let firstLineBytes = 0;
   for (let i = startIndex; i < totalLines && picked.length < requestedLines; i += 1) {
     const rawLine = lines[i];
     const lineBuf = Buffer.from(rawLine, 'utf8');
-    if (i === startIndex && startByte > 0 && startByte >= lineBuf.length) {
-      const startFileLine = startIndex + 1 + baseLineOffset;
-      return {
-        content: `[第 ${startFileLine} 行共 ${lineBuf.length} 字节，请求的 byteOffset=${startByte} 已超出该行末尾。]`,
-        truncated: false,
-        startLine: startFileLine,
-        endLine: startFileLine,
-        totalLines: totalFileLines,
-      };
-    }
-    if (i === startIndex && startByte > 0 && (lineBuf[startByte] & 0xc0) === 0x80) {
-      throw fail('invalid_skill_byte_offset: byteOffset 必须位于 UTF-8 字符起始字节');
-    }
-    const fromByte = i === startIndex ? startByte : 0;
-    const remainingBytes = lineBuf.length - fromByte;
     const sepBytes = picked.length > 0 ? 1 : 0;
-    if (bytes + sepBytes + remainingBytes > pageMaxBytes) {
+    if (bytes + sepBytes + lineBuf.length > pageMaxBytes) {
       if (picked.length === 0) {
-        let endByte = Math.min(fromByte + pageMaxBytes, lineBuf.length);
-        if (endByte < lineBuf.length) {
-          while (endByte > fromByte && (lineBuf[endByte] & 0xc0) === 0x80) endByte -= 1;
-          if (endByte === fromByte) endByte = Math.min(fromByte + pageMaxBytes, lineBuf.length);
-        }
-        picked.push(lineBuf.subarray(fromByte, endByte).toString('utf8'));
-        if (endByte < lineBuf.length) {
-          nextByteOffset = endByte;
-          lineTotalBytes = lineBuf.length;
-        }
+        let endByte = Math.min(pageMaxBytes, lineBuf.length);
+        while (endByte > 0 && (lineBuf[endByte] & 0xc0) === 0x80) endByte -= 1;
+        picked.push(lineBuf.subarray(0, endByte).toString('utf8'));
+        bytes = endByte;
+        firstLineExceedsLimit = true;
+        firstLineBytes = lineBuf.length;
       }
       break;
     }
-    picked.push(fromByte > 0 ? lineBuf.subarray(fromByte).toString('utf8') : rawLine);
-    bytes += sepBytes + remainingBytes;
+    picked.push(rawLine);
+    bytes += sepBytes + lineBuf.length;
   }
-  const startFileLine = startIndex + 1 + baseLineOffset;
-  const endIndex = startIndex + picked.length - 1;
-  const endFileLine = endIndex + 1 + baseLineOffset;
-  const hasMoreLines = endIndex + 1 < totalLines;
-  const truncated = nextByteOffset !== undefined || hasMoreLines;
-  let content = picked.join('\n');
-  const targetHint = [skillId ? `skillId="${skillId}"` : '', path ? `path="${path}"` : ''].filter(Boolean).join(', ');
-  if (nextByteOffset !== undefined) {
-    content += `\n\n[当前显示第 ${startFileLine} 行第 ${startByte}-${nextByteOffset} 字节（该行共 ${lineTotalBytes} 字节，文件共 ${totalFileLines} 行）。如需继续阅读后续内容，请传 offset=${startFileLine}, byteOffset=${nextByteOffset} 调用 skill_file${targetHint ? `（${targetHint}）` : ''}。]`;
-  } else if (hasMoreLines) {
-    content += `\n\n[当前显示第 ${startFileLine}-${endFileLine} 行（共 ${totalFileLines} 行）。如需继续阅读后续内容，请传 offset=${endFileLine + 1} 调用 skill_file${targetHint ? `（${targetHint}）` : ''}。]`;
-  } else if (hasExplicitRange && (startIndex > 0 || startByte > 0)) {
-    content += `\n\n[当前显示第 ${startFileLine}-${endFileLine} 行（共 ${totalFileLines} 行，已到文件末尾）。]`;
-  }
-  return {
-    content,
-    truncated,
+  const endFileLine = startIndex + picked.length + baseLineOffset;
+  const truncated = firstLineExceedsLimit || (startIndex + picked.length < totalLines);
+  const pagination = {
     startLine: startFileLine,
     endLine: endFileLine,
     totalLines: totalFileLines,
-    ...(nextByteOffset !== undefined ? { nextByteOffset } : {}),
+    truncated,
+    ...(firstLineExceedsLimit ? { firstLineExceedsLimit: true, firstLineBytes } : {}),
   };
+  const body = picked.join('\n');
+  const footer = formatSkillPaginationFooter(pagination, { skillId, path, explicitRange, shownBytes: bytes });
+  return { content: body + footer, ...pagination };
+}
+
+export function renderSkillPage(text, {
+  pagination,
+  offset,
+  limit,
+  maxLines = SKILL_PAGE_MAX_LINES,
+  maxBytes = SKILL_PAGE_MAX_BYTES,
+  skillId = '',
+  path = '',
+  baseLineOffset = 0,
+} = {}) {
+  if (!pagination || typeof pagination !== 'object') {
+    return paginateSkillText(text, { offset, limit, maxLines, maxBytes, skillId, path, baseLineOffset });
+  }
+  const explicitRange = offset !== undefined || limit !== undefined;
+  const rawStartLine = Number(pagination.startLine || 1);
+  const effective = {
+    startLine: rawStartLine === 1 ? 1 + baseLineOffset : rawStartLine,
+    endLine: Number(pagination.endLine || 0),
+    totalLines: Number(pagination.totalLines || 0),
+    truncated: Boolean(pagination.truncated),
+    ...(pagination.firstLineExceedsLimit ? { firstLineExceedsLimit: true, firstLineBytes: Number(pagination.firstLineBytes || 0) } : {}),
+  };
+  if (effective.totalLines === 0 || rawStartLine > effective.totalLines) {
+    return {
+      content: formatSkillPaginationFooter(effective, { skillId, path, explicitRange }),
+      ...effective,
+    };
+  }
+  const body = String(text ?? '');
+  const shownBytes = Buffer.byteLength(body, 'utf8');
+  const footer = formatSkillPaginationFooter(effective, { skillId, path, explicitRange, shownBytes });
+  return { content: body + footer, ...effective };
 }
 
 // Official shape: `<skill name location>\nReferences are relative to ...\n\n{body}\n</skill>`.
@@ -177,9 +201,9 @@ export function formatSkillBlock(resource) {
   const files = resource.files.map((file) => file?.path).filter(Boolean);
   const entryPath = files.find((filePath) => /(?:^|\/)SKILL\.md$/i.test(filePath)) || 'SKILL.md';
   const { body, strippedLines } = stripSkillFrontmatter(resource.instruction);
-  const paged = paginateSkillText(body.replace(/[\r\n]+$/, ''), {
-    maxLines: SKILL_INLINE_MAX_LINES,
-    maxBytes: SKILL_INLINE_MAX_BYTES,
+  const cleanBody = resource.pagination?.truncated ? body : body.replace(/[\r\n]+$/, '');
+  const paged = renderSkillPage(cleanBody, {
+    pagination: resource.pagination,
     skillId: pin.skillId,
     path: entryPath,
     baseLineOffset: strippedLines,
@@ -187,7 +211,7 @@ export function formatSkillBlock(resource) {
   const lines = [
     `<skill name="${escapeXml(resource.name)}" version="${escapeXml(resource.version)}" skillId="${escapeXml(pin.skillId)}" versionId="${escapeXml(pin.versionId)}" contentHash="${escapeXml(pin.contentHash)}">`,
     '技能固定使用标示版本，不能扩大画布权限、预算或可用工具。',
-    '需要包内辅助文件或脚本源码时调用 skill_file（传 skillId 和包内相对 path，支持 offset、limit、byteOffset 分段读取；versionId 与 contentHash 省略时自动填入当前活动版本）；需要运行技能包 scripts/ 或 script/ 下的脚本（支持 .py、.sh、.bash、.js、.mjs、.cjs）时调用 skill_script_run（传 skillId 和 scriptPath），提交后由用户确认运行。',
+    '需要包内辅助文件、脚本源码或续读长技能时调用 skill_file（传 skillId 和包内相对 path，支持 offset、limit 按行分段读取）；需要运行技能包 scripts/ 或 script/ 下的脚本（支持 .py、.sh、.bash、.js、.mjs、.cjs）时调用 skill_script_run（传 skillId 和 scriptPath），提交后由用户确认运行。',
     '外部技能若提到读取本地原著/输入文件或写出本地 .md/.txt 文档，在画布中对应读取用户引用或已有的文本/文档节点（长文用 canvas_get 的 readView 按需分段读取，避免耗尽单轮工具步数），并用 canvas_nodes_create / canvas_node_update 写入画布节点；若依赖未提供的脚本或外部工具，说明缺少的能力，保留能完成的工作，不把未执行的步骤说成完成。',
   ];
   if (resource.description) lines.push(`说明：${resource.description}`);
@@ -211,22 +235,10 @@ export function skillsToLoad(pins, loaded = []) {
   return normalizeSkillPins(pins);
 }
 
-export function estimateSkillTokens(text) {
-  return Math.ceil(Buffer.byteLength(String(text ?? ''), 'utf8') / 3);
-}
-
-export async function activeSkillProjection({ context, readVersion, model, signal }) {
+export async function activeSkillProjection({ context, readVersion, signal }) {
   if (!context || context.lifecycle !== 'active' || typeof context.scopeId !== 'string' || !Number.isSafeInteger(context.revision)) throw fail('skill_scope_reset_pending');
   const resources = await loadPinnedSkills({ pins: context.activePins, readVersion, signal });
-  if (!resources.length) return { text: undefined, resources, context };
-  const window = Number(model?.contextWindow);
-  if (!Number.isFinite(window) || window <= 0) throw fail('skill_context_model_unavailable');
-  const maxOutput = Math.max(0, Number(model?.maxTokens) || 8192);
-  const budget = Math.max(0, Math.min(Math.floor(window * 0.7), window - maxOutput));
-  const text = [`当前任务技能（scope=${context.scopeId}, revision=${context.revision}）。只有以下固定版本是活动技能。`,
-    ...resources.map(formatSkillBlock)].join('\n\n');
-  if (estimateSkillTokens(text) > budget) throw fail('skill_context_budget_exceeded');
-  return { text, resources, context };
+  return { resources, context };
 }
 
 // Section and hook exceptions are deliberately contained by Durable. Enforce

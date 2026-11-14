@@ -221,7 +221,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   }
   const skillController = createDurableSkillController({
     skills,
-    getModels,
     state,
     update,
     lock,

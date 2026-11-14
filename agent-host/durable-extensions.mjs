@@ -35,7 +35,7 @@ export function durableToolReplay(tool) {
   return tool.replay === 'safe' ? 'safe' : 'unsafe';
 }
 
-export function createDurableSkillController({ skills, getModels, state, update, lock, officialSubmission }) {
+export function createDurableSkillController({ skills, state, update, lock, officialSubmission }) {
   // Every fresh explicit selection expands its fixed version into the user
   // message, as official `/skill:name` does. Request receipts own retry dedup.
   async function expandSelectedSkills(entry, doc, pins, content, turnId) {
@@ -53,10 +53,9 @@ export function createDurableSkillController({ skills, getModels, state, update,
     return context;
   }
 
-  async function resolveActiveSkills(entry, ref, signal) {
+  async function resolveActiveSkills(entry, signal) {
     const context = await readSkillContext(entry);
-    const model = (await getModels(entry)).getModel(ref.provider, ref.modelId);
-    return activeSkillProjection({ context, model, signal,
+    return activeSkillProjection({ context, signal,
       readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
   }
 
@@ -217,7 +216,7 @@ export async function installDurableExtensions({
   }
 
   async function resolveSkillToolArgs(toolLabel, rawArgs, toolCallId, signal) {
-    if (!skills || !['skill.get', 'skill.file', 'skill.script.run'].includes(toolLabel)) return rawArgs;
+    if (!skills || !['skill.file', 'skill.script.run'].includes(toolLabel)) return rawArgs;
     if (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) return rawArgs;
     const skillId = typeof rawArgs.skillId === 'string' ? rawArgs.skillId.trim() : '';
     if (!skillId) return rawArgs;
@@ -297,8 +296,8 @@ export async function installDurableExtensions({
     replay: durableToolReplay(tool), executionMode: 'sequential',
     ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label)
       ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } }
-      : ['skill.load', 'skill.get', 'skill.file'].includes(tool.label)
-        ? { outputLimits: { maxBytes: 512 * 1024, maxLines: 10000 } }
+      : ['skill.load', 'skill.file'].includes(tool.label)
+        ? { outputLimits: { maxBytes: 128 * 1024, maxLines: 4000 } }
         : {}),
     execute: async (args, api, context) => {
       if (entry.generation.aborted) throw fail('aborted');
@@ -492,7 +491,7 @@ export async function installDurableExtensions({
             const ref = agent.model;
             const model = ref ? _runtime.models.getModel(ref.provider, ref.modelId) : undefined;
             try {
-              const projection = await resolveActiveSkills(entry, ref, context.abortSignal);
+              const projection = await resolveActiveSkills(entry, context.abortSignal);
               const missing = missingSkillResources(baseMessages, projection.resources, model?.contextWindow);
               if (missing.length > 0) {
                 restoredSkillsText = restoredSkillMessage(missing).content[0].text;
@@ -668,7 +667,7 @@ export async function installDurableExtensions({
   if (skills) {
     models = guardSkillModelRequests(models, async (model, request, signal) => {
       await authorization(entry, entry.turn.turnId);
-      const projection = await resolveActiveSkills(entry, { provider: model.provider, modelId: model.id }, signal);
+      const projection = await resolveActiveSkills(entry, signal);
       if (entry.generation.preparedRequests?.has(requestSignature(request.messages))) {
         if (missingSkillResources(request.messages, projection.resources, model?.contextWindow).length > 0) {
           throw fail('skill_context_changed');

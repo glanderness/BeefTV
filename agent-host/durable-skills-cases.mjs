@@ -503,7 +503,7 @@ test('skill_file and skill_script_run auto-fill versionId and contentHash when o
           readOnly: true,
           replay: 'safe',
           description: 'Read skill file',
-          parameters: { type: 'object', properties: { skillId: { type: 'string' }, versionId: { type: 'string' }, contentHash: { type: 'string' }, path: { type: 'string' } }, required: ['skillId', 'path'] },
+          parameters: { type: 'object', properties: { skillId: { type: 'string' }, path: { type: 'string' }, offset: { type: 'integer', minimum: 1 }, limit: { type: 'integer', minimum: 1, maximum: 2000 } }, required: ['skillId', 'path'] },
           execute: async (_callId, args) => {
             seenCalls.push({ tool: 'skill.file', args, activeIds: (await fixture.contexts.readContext(entry)).activePins.map((p) => p.skillId) });
             return { content: [{ type: 'text', text: '参考内容' }] };
@@ -515,7 +515,7 @@ test('skill_file and skill_script_run auto-fill versionId and contentHash when o
           readOnly: false,
           replay: 'safe',
           description: 'Run skill script',
-          parameters: { type: 'object', properties: { skillId: { type: 'string' }, versionId: { type: 'string' }, contentHash: { type: 'string' }, scriptPath: { type: 'string' } }, required: ['skillId', 'scriptPath'] },
+          parameters: { type: 'object', properties: { skillId: { type: 'string' }, scriptPath: { type: 'string' } }, required: ['skillId', 'scriptPath'] },
           execute: async (_callId, args) => {
             seenCalls.push({ tool: 'skill.script.run', args, activeIds: (await fixture.contexts.readContext(entry)).activePins.map((p) => p.skillId) });
             return { content: [{ type: 'text', text: '{"status":"completed"}' }] };
