@@ -331,17 +331,26 @@ function sameUploadMediaPayload(left: CanvasNodeData | undefined, right: CanvasN
         && equal(left?.metadata?.storageKey, right?.metadata?.storageKey);
 }
 
-function isUploadingReplacementOfBase(
+function hasUploadMediaPayload(node: CanvasNodeData | undefined): boolean {
+    const meta = node?.metadata;
+    return Boolean(meta && (nonemptyMediaRef(meta.content) || nonemptyMediaRef(meta.storageKey)));
+}
+
+function shouldSettleUploadingAgainstSettled(
     baseItem: CanvasNodeData | undefined,
     settledItem: CanvasNodeData,
     uploadingItem: CanvasNodeData,
 ): boolean {
+    if (uploadingItem.metadata?.fileUpload !== "uploading" || !hasSettledUploadMedia(settledItem)) {
+        return false;
+    }
+    if (!hasUploadMediaPayload(uploadingItem)) {
+        return true;
+    }
     return (
-        uploadingItem.metadata?.fileUpload === "uploading"
-        && uploadingItem.metadata?.status !== "success"
-        && hasSettledUploadMedia(baseItem)
-        && sameUploadMediaPayload(baseItem, settledItem)
+        hasSettledUploadMedia(baseItem)
         && sameUploadMediaPayload(baseItem, uploadingItem)
+        && !sameUploadMediaPayload(baseItem, settledItem)
     );
 }
 
@@ -361,11 +370,9 @@ function alignUploadSettlementPair(
     baseItem: CanvasNodeData | undefined,
     uploadingItem: CanvasNodeData,
     settledItem: CanvasNodeData,
-    uploadingIsRemote: boolean,
 ): { uploading: CanvasNodeData; settled: CanvasNodeData } {
-    const hadUploadingMedia = nonemptyMediaRef(uploadingItem.metadata?.content) || nonemptyMediaRef(uploadingItem.metadata?.storageKey);
-    // base 已是完成媒体，而对侧要么与 base 媒体相同、要么仍是缺少媒体的初始上传占位：对侧整体早于当前状态，不能清空字段或回退几何。
-    if (baseItem && hasSettledUploadMedia(baseItem) && (sameUploadMediaPayload(baseItem, settledItem) || !hadUploadingMedia)) {
+    // base 已是完成媒体，而对侧仍是缺少媒体的初始上传占位：对侧整体早于当前状态，不能清空字段或回退几何。
+    if (baseItem && hasSettledUploadMedia(baseItem) && !hasUploadMediaPayload(uploadingItem)) {
         return {
             uploading: {
                 ...baseItem,
@@ -408,62 +415,56 @@ function alignUploadSettlementPair(
     let settledNext = settledItem;
     let resolvedUploadingTitle = uploadingItem.title;
     if (!baseItem) {
-        if (
-            !uploadingIsRemote
-            && uploadingItem.title !== settledItem.title
-            && stripScriptDocumentExtension(uploadingItem.title) !== settledItem.title
-            && /\.[a-z0-9]{2,8}$/i.test(settledItem.title)
-            && !/\.[a-z0-9]{2,8}$/i.test(uploadingItem.title)
-        ) {
-            settledNext = { ...settledNext, title: uploadingItem.title };
-        } else {
+        if (settledItem.type === "text" && stripScriptDocumentExtension(uploadingItem.title) === settledItem.title) {
             resolvedUploadingTitle = settledItem.title;
         }
+    } else if (
+        settledItem.type === "text"
+        && stripScriptDocumentExtension(baseItem.title) === settledItem.title
+        && uploadingItem.title !== baseItem.title
+    ) {
+        settledNext = { ...settledNext, title: uploadingItem.title };
     }
 
-    const settledSize = { width: settledItem.width, height: settledItem.height };
-    const uploadingDragged = Boolean(
-        baseItem
-        && !equal(uploadingItem.position, baseItem.position)
-        && !sameNodeCenter(uploadingItem, baseItem),
+    const keepUploadingManualResize = Boolean(
+        baseItem?.metadata?.fileUpload === "uploading"
+        && (uploadingItem.width !== baseItem.width || uploadingItem.height !== baseItem.height),
     );
-    const settledAutoCenteredFromBase = Boolean(
-        baseItem
-        && (
-            equal(settledItem.position, baseItem.position)
-            || sameNodeCenter(settledItem, baseItem)
-            || sameNodeCenter(settledItem, { position: baseItem.position, width: uploadingItem.width, height: uploadingItem.height })
-        ),
-    );
+    const resolvedUploadingSize = keepUploadingManualResize
+        ? { width: uploadingItem.width, height: uploadingItem.height }
+        : { width: settledItem.width, height: settledItem.height };
+    const uploadingCenteredPos = {
+        x: uploadingItem.position.x + (uploadingItem.width - resolvedUploadingSize.width) / 2,
+        y: uploadingItem.position.y + (uploadingItem.height - resolvedUploadingSize.height) / 2,
+    };
 
     let resolvedUploadingPos = uploadingItem.position;
-    if (!uploadingDragged) {
-        if (!baseItem && !uploadingIsRemote && !sameNodeCenter(uploadingItem, settledItem)) {
-            const draggedPos = {
-                x: uploadingItem.position.x + (uploadingItem.width - settledSize.width) / 2,
-                y: uploadingItem.position.y + (uploadingItem.height - settledSize.height) / 2,
-            };
-            resolvedUploadingPos = draggedPos;
-            settledNext = { ...settledNext, position: draggedPos };
+    if (!keepUploadingManualResize) {
+        if (!baseItem) {
+            resolvedUploadingPos = sameNodeCenter(uploadingItem, settledItem)
+                ? settledItem.position
+                : uploadingCenteredPos;
         } else {
-            resolvedUploadingPos = settledItem.position;
+            const uploadingDragged = !equal(uploadingItem.position, baseItem.position) && !sameNodeCenter(uploadingItem, baseItem);
+            const settledAutoCenteredFromBase = equal(settledItem.position, baseItem.position)
+                || sameNodeCenter(settledItem, baseItem)
+                || sameNodeCenter(settledItem, { position: baseItem.position, width: uploadingItem.width, height: uploadingItem.height });
+            if (!uploadingDragged || sameNodeCenter(uploadingItem, settledItem)) {
+                resolvedUploadingPos = settledItem.position;
+            } else if (settledAutoCenteredFromBase) {
+                resolvedUploadingPos = uploadingCenteredPos;
+                settledNext = { ...settledNext, position: uploadingCenteredPos };
+            } else {
+                resolvedUploadingPos = uploadingCenteredPos;
+            }
         }
-    } else if (settledAutoCenteredFromBase) {
-        const draggedPos = {
-            x: uploadingItem.position.x + (uploadingItem.width - settledSize.width) / 2,
-            y: uploadingItem.position.y + (uploadingItem.height - settledSize.height) / 2,
-        };
-        resolvedUploadingPos = draggedPos;
-        settledNext = { ...settledNext, position: draggedPos };
-    } else if (sameNodeCenter(uploadingItem, settledItem)) {
-        resolvedUploadingPos = settledItem.position;
     }
 
     const uploadingNext: CanvasNodeData = {
         ...uploadingItem,
         type: settledItem.type,
         title: resolvedUploadingTitle,
-        ...settledSize,
+        ...resolvedUploadingSize,
         position: resolvedUploadingPos,
         metadata: uploadingMeta as CanvasNodeData["metadata"],
     };
@@ -479,20 +480,12 @@ function mergeCanvasNodeItem(
     const baseClean = stripStaleFileUploadMetadata(baseItem);
     let localNormalized = stripStaleFileUploadMetadata(localItem)!;
     let remoteNormalized = stripStaleFileUploadMetadata(remoteItem)!;
-    if (
-        hasSettledUploadMedia(localNormalized)
-        && remoteNormalized.metadata?.fileUpload === "uploading"
-        && !isUploadingReplacementOfBase(baseClean, localNormalized, remoteNormalized)
-    ) {
-        const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized, true);
+    if (shouldSettleUploadingAgainstSettled(baseClean, localNormalized, remoteNormalized)) {
+        const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized);
         remoteNormalized = aligned.uploading;
         localNormalized = aligned.settled;
-    } else if (
-        hasSettledUploadMedia(remoteNormalized)
-        && localNormalized.metadata?.fileUpload === "uploading"
-        && !isUploadingReplacementOfBase(baseClean, remoteNormalized, localNormalized)
-    ) {
-        const aligned = alignUploadSettlementPair(baseClean, localNormalized, remoteNormalized, false);
+    } else if (shouldSettleUploadingAgainstSettled(baseClean, remoteNormalized, localNormalized)) {
+        const aligned = alignUploadSettlementPair(baseClean, localNormalized, remoteNormalized);
         localNormalized = aligned.uploading;
         remoteNormalized = aligned.settled;
     } else if (
