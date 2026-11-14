@@ -17,16 +17,18 @@ import (
 
 func TestAgentLargeSkillInstruction(t *testing.T) {
 	s, _ := agentSkillFixture(t)
-	body := "---\nname: 导演\ndescription: 长技能测试\n---\n" + strings.Repeat("镜头", 13000)
-	pin := installAgentSkill(t, s, map[string]string{"SKILL.md": body})
-	if _, err := s.ValidateAgentSkills("owner", []Pin{pin}); err != nil {
-		t.Fatal(err)
+	for _, repeats := range []int{10000, 52000} {
+		body := "---\nname: 导演\ndescription: 长技能测试\n---\n" + strings.Repeat("镜头", repeats)
+		pin := installAgentSkill(t, s, map[string]string{"SKILL.md": body})
+		if _, err := s.ValidateAgentSkills("owner", []Pin{pin}); err != nil {
+			t.Fatalf("repeats=%d: %v", repeats, err)
+		}
+		resource, err := s.AgentVersion("owner", pin)
+		if err != nil || resource.Instruction != body {
+			t.Fatalf("large skill (repeats=%d) was rejected or truncated: %v", repeats, err)
+		}
 	}
-	resource, err := s.AgentVersion("owner", pin)
-	if err != nil || resource.Instruction != body {
-		t.Fatalf("large skill was rejected or truncated: %v", err)
-	}
-	large := installAgentSkill(t, s, map[string]string{"SKILL.md": "---\nname: 太大\ndescription: 上限测试\n---\n" + strings.Repeat("字", 90000)})
+	large := installAgentSkill(t, s, map[string]string{"SKILL.md": "---\nname: 太大\ndescription: 上限测试\n---\n" + strings.Repeat("字", 750000)})
 	if _, err := s.ValidateAgentSkills("owner", []Pin{large}); err == nil {
 		t.Fatal("oversized skill accepted")
 	}

@@ -6,6 +6,17 @@ import type { MarketRelease } from "./skill-market";
 let addedSkillsRequest: { scope: string; promise: Promise<{ skills: Skill[] }> } | null = null;
 let addedSkillsCache: { scope: string; value: { skills: Skill[] }; expiresAt: number } | null = null;
 
+export const MAX_SKILL_INSTRUCTION_BYTES = 2 * 1024 * 1024;
+
+export async function validateSkillInstructionBytes(_rule: unknown, value: unknown): Promise<void> {
+    if (typeof value !== "string" || !value.trim()) {
+        throw new Error("请填写技能指令");
+    }
+    if (new TextEncoder().encode(value.trim()).byteLength > MAX_SKILL_INSTRUCTION_BYTES) {
+        throw new Error("技能指令不能超过 2 MiB");
+    }
+}
+
 export type SkillSort = "popular" | "new" | "updated";
 export type SkillScope = "public" | "mine" | "created" | "favorites";
 export type SkillMediaType = "image" | "video";

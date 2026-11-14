@@ -11,6 +11,7 @@ import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs'
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
 import { awaitBusinessTasks } from './await-business-tasks.mjs';
 import { timelineDeliveryTool } from './timeline-delivery.mjs';
+import { SKILL_INLINE_MAX_BYTES, SKILL_INLINE_MAX_LINES, paginateSkillText } from './skill-resource.mjs';
 
 const CANVAS_NODE_UPDATE = 'canvas.node.update';
 
@@ -130,6 +131,14 @@ export function createOperationBridge({
         const params = { ...(args || {}) };
         const readView = descriptor.id === 'canvas.get' ? params.readView : undefined;
         if (descriptor.id === 'canvas.get') delete params.readView;
+        const skillFileOffset = descriptor.id === 'skill.file' ? params.offset : undefined;
+        const skillFileLimit = descriptor.id === 'skill.file' ? params.limit : undefined;
+        const skillFileByteOffset = descriptor.id === 'skill.file' ? params.byteOffset : undefined;
+        if (descriptor.id === 'skill.file') {
+          delete params.offset;
+          delete params.limit;
+          delete params.byteOffset;
+        }
         delete params.operationId;
         delete params.opId;
         if (descriptor.id === 'canvas.search') {
@@ -188,6 +197,43 @@ export function createOperationBridge({
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
           assertToolGeneration(generation, descriptor, signal, turn);
           let data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
+          if (descriptor.id === 'skill.file' && typeof data?.result?.content === 'string') {
+            const paged = paginateSkillText(data.result.content, {
+              offset: skillFileOffset,
+              limit: skillFileLimit,
+              byteOffset: skillFileByteOffset,
+              skillId: params.skillId,
+              path: params.path,
+            });
+            data = {
+              ...data,
+              result: {
+                ...data.result,
+                content: paged.content,
+                ...(paged.truncated || skillFileOffset !== undefined || skillFileLimit !== undefined || skillFileByteOffset !== undefined
+                  ? {
+                      pagination: {
+                        startLine: paged.startLine,
+                        endLine: paged.endLine,
+                        totalLines: paged.totalLines,
+                        truncated: paged.truncated,
+                        ...(paged.nextByteOffset !== undefined ? { nextByteOffset: paged.nextByteOffset } : {}),
+                      },
+                    }
+                  : {}),
+              },
+            };
+          } else if (descriptor.id === 'skill.get' && typeof data?.result?.instruction === 'string') {
+            const paged = paginateSkillText(data.result.instruction, {
+              maxLines: SKILL_INLINE_MAX_LINES,
+              maxBytes: SKILL_INLINE_MAX_BYTES,
+              skillId: params.skillId,
+              path: 'SKILL.md',
+            });
+            if (paged.truncated) {
+              data = { ...data, result: { ...data.result, instruction: paged.content } };
+            }
+          }
           if (descriptor.id === 'canvas.generation.submit' || descriptor.id === 'canvas.timeline.render') {
             data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId,
               rendering: descriptor.id === 'canvas.timeline.render', onProgress: api.reportProgress });
@@ -267,6 +313,20 @@ export function scopedSchema(params, allowReferencedCanvasRead = false, descript
   if (descriptorId === 'canvas.get') {
     clone.properties ||= {};
     clone.properties.readView = JSON.parse(JSON.stringify(CANVAS_READ_VIEW_SCHEMA));
+  }
+  if (descriptorId === 'skill.get') {
+    if (clone.properties) delete clone.properties.path;
+    clone.required = ['skillId'];
+  }
+  if (descriptorId === 'skill.file') {
+    clone.properties ||= {};
+    clone.properties.offset = { type: 'integer' };
+    clone.properties.limit = { type: 'integer' };
+    clone.properties.byteOffset = { type: 'integer' };
+    clone.required = ['skillId', 'path'];
+  }
+  if (descriptorId === 'skill.script.run') {
+    clone.required = ['skillId', 'scriptPath'];
   }
   return clone;
 }
