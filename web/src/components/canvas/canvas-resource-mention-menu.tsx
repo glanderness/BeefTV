@@ -257,10 +257,10 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
 
 function ResolvedReferencePreview({ reference }: { reference: CanvasResourceReference }) {
     const [failedUrl, setFailedUrl] = useState<string | null>(null);
-    const previewUrl = reference.previewUrl && !isProtectedResourceFileUrl(reference.previewUrl) && reference.previewUrl !== failedUrl ? reference.previewUrl : "";
-    if (reference.kind === "image" && previewUrl) return <img src={previewUrl} alt="" className="canvas-resource-mention-preview is-image" onError={() => setFailedUrl(previewUrl)} />;
-    if (reference.kind === "video" && previewUrl) return <img src={previewUrl} alt="" className="canvas-resource-mention-preview is-video" loading="lazy" decoding="async" onError={() => setFailedUrl(previewUrl)} />;
-    if (reference.kind === "character" && previewUrl) return <img src={previewUrl} alt="" className="canvas-resource-mention-preview is-character" onError={() => setFailedUrl(previewUrl)} />;
+    const canRenderPreview = Boolean(reference.previewUrl && !isProtectedResourceFileUrl(reference.previewUrl) && reference.previewUrl !== failedUrl);
+    if (reference.kind === "image" && reference.previewUrl && canRenderPreview) return <img src={reference.previewUrl} alt="" className="canvas-resource-mention-preview is-image" onError={() => setFailedUrl(reference.previewUrl ?? null)} />;
+    if (reference.kind === "video" && reference.previewUrl && canRenderPreview) return <img src={reference.previewUrl} alt="" className="canvas-resource-mention-preview is-video" loading="lazy" decoding="async" onError={() => setFailedUrl(reference.previewUrl ?? null)} />;
+    if (reference.kind === "character" && reference.previewUrl && canRenderPreview) return <img src={reference.previewUrl} alt="" className="canvas-resource-mention-preview is-character" onError={() => setFailedUrl(reference.previewUrl ?? null)} />;
     if (reference.kind === "skill") {
         return (
             <span className="canvas-resource-mention-preview is-skill">
