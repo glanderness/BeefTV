@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'scripts/*installer*'
+      - 'scripts/*linux*'
+      - 'scripts/*agent-host*'
+      - 'scripts/smoke-packaged-cli*'
       - 'scripts/smoke-webview-cache.mjs'
       - 'scripts/webview-cache-probe_windows.go'
       - 'scripts/installers/**'

@@ -361,7 +361,7 @@ func managedMediaClient(ctx context.Context, config Config) *beeftv.MediaClient 
 		}
 		observer(loaded, total, phase)
 	}
-	client.Observe = func(req *http.Request, resp *http.Response, body []byte, err error) {
+	client.Observe = func(req *http.Request, resp *http.Response, body []byte, startedAt time.Time, err error) {
 		if runtime.ReferenceProgress != nil && strings.Contains(req.URL.Path, "/media/tasks") {
 			runtime.ReferenceProgress.ClearReference()
 		}
@@ -371,7 +371,7 @@ func managedMediaClient(ctx context.Context, config Config) *beeftv.MediaClient 
 		if meta := beeftv.UploadMetaFromContext(req.Context()); meta.Stage != "" {
 			req = req.WithContext(withManagedUploadMeta(req.Context(), meta))
 		}
-		observation := TransportObservation{Request: req, Body: body, Err: legacyMediaError(err), StartedAt: time.Now(), Dispatched: true, ResponseLimitBytes: 4 << 20, ReceivedBytes: int64(len(body))}
+		observation := TransportObservation{Request: req, Body: body, Err: legacyMediaError(err), StartedAt: startedAt, Dispatched: true, ResponseLimitBytes: 4 << 20, ReceivedBytes: int64(len(body))}
 		if resp != nil {
 			observation.StatusCode = resp.StatusCode
 			observation.HTTPStatus = resp.StatusCode

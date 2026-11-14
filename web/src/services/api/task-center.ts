@@ -15,6 +15,7 @@ export type GenerationTaskResultState = "NOT_AVAILABLE" | "PENDING_MATERIALIZATI
 export type GenerationTaskOutput = {
     outputIndex: number;
     mediaType: "image" | "video" | "audio";
+    resourceId?: string;
     providerArtifactRef?: string;
     materializedAssetId?: string;
     materializationErrorCode?: string;

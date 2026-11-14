@@ -1,3 +1,5 @@
+import { hasStaleSettledFileUploadFlag } from "@/lib/canvas/canvas-file-upload";
+import { stripScriptDocumentExtension } from "@/lib/canvas/script-document-import";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -255,30 +257,361 @@ const TASK_LIFECYCLE_NON_MEDIA_KEYS = [
     ...GENERATION_ERROR_METADATA_KEYS,
 ] as const;
 
+const UPLOAD_SETTLEMENT_METADATA_KEYS = [
+    "fileUpload",
+    "fileUploadProgress",
+    "errorDetails",
+    "content",
+    "storageKey",
+    "assetId",
+    "status",
+    "bytes",
+    "mimeType",
+    "naturalWidth",
+    "naturalHeight",
+    "durationMs",
+    "hasAudio",
+    "videoPreview",
+    "outputParameterWarning",
+    "nodeRole",
+    "resultOrigin",
+] as const;
+
+const UPLOAD_REPLACEMENT_RESET_KEYS = [
+    "taskId",
+    "freeResize",
+    "isBatchRoot",
+    "batchRootId",
+    "batchChildIds",
+    "batchFailedCount",
+    "batchUsesReferenceImages",
+    "generationType",
+    "generationResultPlacement",
+    "copiedFromNodeId",
+    "versionOfNodeId",
+    "model",
+    "size",
+    "quality",
+    "transparentBackground",
+    "count",
+    "references",
+    "primaryImageId",
+    "imageBatchExpanded",
+    "richText",
+    "composerContent",
+    "generationErrorCode",
+    "generationErrorSummary",
+    "generationProviderCode",
+    "generationPreflightError",
+    "failedPromptFingerprint",
+] as const;
+
+const UPLOAD_OWNED_METADATA_KEY_SET = new Set<string>([
+    ...UPLOAD_SETTLEMENT_METADATA_KEYS,
+    ...UPLOAD_REPLACEMENT_RESET_KEYS,
+]);
+
+function stripStaleFileUploadMetadata(node: CanvasNodeData | undefined): CanvasNodeData | undefined {
+    if (!node?.metadata || !hasStaleSettledFileUploadFlag(node.metadata)) return node;
+    const nextMeta: Record<string, unknown> = { ...(node.metadata as Record<string, unknown>) };
+    delete nextMeta.fileUpload;
+    delete nextMeta.fileUploadProgress;
+    delete nextMeta.errorDetails;
+    return { ...node, metadata: nextMeta as CanvasNodeData["metadata"] };
+}
+
+function hasSettledUploadMedia(node: CanvasNodeData | undefined): boolean {
+    const meta = node?.metadata;
+    if (!meta || meta.fileUpload || meta.status === "loading" || meta.status === "error") return false;
+    return nonemptyMediaRef(meta.content) || nonemptyMediaRef(meta.storageKey);
+}
+
+function sameUploadMediaPayload(left: CanvasNodeData | undefined, right: CanvasNodeData | undefined): boolean {
+    return equal(left?.metadata?.content, right?.metadata?.content)
+        && equal(left?.metadata?.storageKey, right?.metadata?.storageKey);
+}
+
+function hasUploadMediaPayload(node: CanvasNodeData | undefined): boolean {
+    const meta = node?.metadata;
+    return Boolean(meta && (nonemptyMediaRef(meta.content) || nonemptyMediaRef(meta.storageKey)));
+}
+
+function shouldSettleUploadingAgainstSettled(
+    baseItem: CanvasNodeData | undefined,
+    settledItem: CanvasNodeData,
+    uploadingItem: CanvasNodeData,
+): boolean {
+    if (uploadingItem.metadata?.fileUpload !== "uploading" || !hasSettledUploadMedia(settledItem)) {
+        return false;
+    }
+    if (!hasUploadMediaPayload(uploadingItem)) {
+        return true;
+    }
+    return (
+        hasSettledUploadMedia(baseItem)
+        && sameUploadMediaPayload(baseItem, uploadingItem)
+        && !sameUploadMediaPayload(baseItem, settledItem)
+    );
+}
+
+function sameNodeCenter(
+    left: Pick<CanvasNodeData, "position" | "width" | "height"> | undefined,
+    right: Pick<CanvasNodeData, "position" | "width" | "height"> | undefined,
+): boolean {
+    if (!left || !right) return false;
+    const lx = left.position.x + left.width / 2;
+    const ly = left.position.y + left.height / 2;
+    const rx = right.position.x + right.width / 2;
+    const ry = right.position.y + right.height / 2;
+    return Math.abs(lx - rx) <= 1e-6 && Math.abs(ly - ry) <= 1e-6;
+}
+
+function hasExplicitManualSizeFlag(node: CanvasNodeData | undefined): boolean {
+    return Boolean(node?.metadata?.manualSize || node?.metadata?.freeResize);
+}
+
+function sameUploadingOriginForManualGeometry(
+    baseItem: CanvasNodeData,
+    node: CanvasNodeData,
+): boolean {
+    if (baseItem.type !== node.type) {
+        return false;
+    }
+    const baseHasMedia = hasUploadMediaPayload(baseItem);
+    const nodeHasMedia = hasUploadMediaPayload(node);
+    if (!baseHasMedia && !nodeHasMedia) {
+        return true;
+    }
+    return baseHasMedia && nodeHasMedia && sameUploadMediaPayload(baseItem, node);
+}
+
+function alignUploadSettlementPair(
+    baseItem: CanvasNodeData | undefined,
+    uploadingItem: CanvasNodeData,
+    settledItem: CanvasNodeData,
+): { uploading: CanvasNodeData; settled: CanvasNodeData } {
+    // base 已是完成媒体，而对侧仍是缺少媒体的初始上传占位：对侧整体早于当前状态，不能清空字段或回退几何。
+    if (baseItem && hasSettledUploadMedia(baseItem) && !hasUploadMediaPayload(uploadingItem)) {
+        return {
+            uploading: {
+                ...baseItem,
+                ...(uploadingItem.createdAt ? { createdAt: uploadingItem.createdAt } : {}),
+                ...(uploadingItem.updatedAt ? { updatedAt: uploadingItem.updatedAt } : {}),
+            },
+            settled: settledItem,
+        };
+    }
+
+    const baseMeta = (baseItem?.metadata || {}) as Record<string, unknown>;
+    const settledMeta = (settledItem.metadata || {}) as Record<string, unknown>;
+    const uploadingMeta: Record<string, unknown> = { ...((uploadingItem.metadata || {}) as Record<string, unknown>) };
+    const keysToCopy: readonly string[] = hasSettledUploadMedia(baseItem)
+        ? [...UPLOAD_SETTLEMENT_METADATA_KEYS, ...UPLOAD_REPLACEMENT_RESET_KEYS]
+        : UPLOAD_SETTLEMENT_METADATA_KEYS;
+    for (const key of keysToCopy) {
+        if (hasDefinedProperty(settledMeta, key) && !isClearedProperty(settledMeta, key)) {
+            uploadingMeta[key] = settledMeta[key];
+        } else {
+            delete uploadingMeta[key];
+        }
+    }
+    if (baseItem) {
+        for (const key of Object.keys(baseMeta)) {
+            if ((key === "manualSize" || key === "freeResize") && hasExplicitManualSizeFlag(uploadingItem)) {
+                continue;
+            }
+            if (!UPLOAD_OWNED_METADATA_KEY_SET.has(key) && !hasDefinedProperty(uploadingMeta, key) && hasDefinedProperty(settledMeta, key)) {
+                uploadingMeta[key] = baseMeta[key];
+            }
+        }
+    }
+    if (
+        settledItem.type === "text"
+        && !hasDefinedProperty(uploadingMeta, "prompt")
+        && hasDefinedProperty(settledMeta, "prompt")
+        && settledMeta.prompt === settledMeta.content
+    ) {
+        uploadingMeta.prompt = settledMeta.prompt;
+    }
+
+    let settledNext = settledItem;
+    let resolvedUploadingTitle = uploadingItem.title;
+    if (!baseItem && settledItem.type === "text" && stripScriptDocumentExtension(uploadingItem.title) === settledItem.title) {
+        resolvedUploadingTitle = settledItem.title;
+    }
+
+    const keepUploadingManualResize = !hasSettledUploadMedia(baseItem) && Boolean(
+        hasExplicitManualSizeFlag(uploadingItem)
+        || (
+            baseItem?.metadata?.fileUpload === "uploading"
+            && (uploadingItem.width !== baseItem.width || uploadingItem.height !== baseItem.height)
+        ),
+    );
+    const resolvedUploadingSize = keepUploadingManualResize
+        ? { width: uploadingItem.width, height: uploadingItem.height }
+        : { width: settledItem.width, height: settledItem.height };
+    const uploadingCenteredPos = {
+        x: uploadingItem.position.x + (uploadingItem.width - resolvedUploadingSize.width) / 2,
+        y: uploadingItem.position.y + (uploadingItem.height - resolvedUploadingSize.height) / 2,
+    };
+
+    let resolvedUploadingPos = uploadingItem.position;
+    if (keepUploadingManualResize) {
+        const settledLacksManualSize = !hasExplicitManualSizeFlag(settledItem);
+        const settledVideoAutoFitOverManual = settledItem.type === "video"
+            && (sameNodeCenter(settledItem, baseItem) || sameNodeCenter(settledItem, uploadingItem));
+        if (settledLacksManualSize || settledVideoAutoFitOverManual) {
+            const nextSettledMeta: Record<string, unknown> = { ...(settledNext.metadata as Record<string, unknown>) };
+            if (uploadingMeta.manualSize !== undefined) nextSettledMeta.manualSize = uploadingMeta.manualSize;
+            if (uploadingMeta.freeResize !== undefined) nextSettledMeta.freeResize = uploadingMeta.freeResize;
+            settledNext = {
+                ...settledNext,
+                ...resolvedUploadingSize,
+                position: uploadingItem.position,
+                metadata: nextSettledMeta as CanvasNodeData["metadata"],
+            };
+        }
+    } else if (!baseItem) {
+        resolvedUploadingPos = sameNodeCenter(uploadingItem, settledItem)
+            ? settledItem.position
+            : uploadingCenteredPos;
+    } else {
+        const uploadingDragged = !equal(uploadingItem.position, baseItem.position) && !sameNodeCenter(uploadingItem, baseItem);
+        const settledAutoCenteredFromBase = equal(settledItem.position, baseItem.position)
+            || sameNodeCenter(settledItem, baseItem)
+            || sameNodeCenter(settledItem, { position: baseItem.position, width: uploadingItem.width, height: uploadingItem.height });
+        if (!uploadingDragged || sameNodeCenter(uploadingItem, settledItem)) {
+            resolvedUploadingPos = settledItem.position;
+        } else if (settledAutoCenteredFromBase) {
+            resolvedUploadingPos = uploadingCenteredPos;
+            settledNext = { ...settledNext, position: uploadingCenteredPos };
+        } else {
+            resolvedUploadingPos = uploadingCenteredPos;
+        }
+    }
+
+    const uploadingNext: CanvasNodeData = {
+        ...uploadingItem,
+        type: settledItem.type,
+        title: resolvedUploadingTitle,
+        ...resolvedUploadingSize,
+        position: resolvedUploadingPos,
+        metadata: uploadingMeta as CanvasNodeData["metadata"],
+    };
+    return { uploading: uploadingNext, settled: settledNext };
+}
+
+function copyUploadBundleMetadata(source: CanvasNodeData, target: CanvasNodeData, keys: readonly string[]): CanvasNodeData {
+    const srcMeta = (source.metadata || {}) as Record<string, unknown>;
+    const nextMeta: Record<string, unknown> = { ...((target.metadata || {}) as Record<string, unknown>) };
+    for (const key of keys) {
+        if (hasDefinedProperty(srcMeta, key) && !isClearedProperty(srcMeta, key)) {
+            nextMeta[key] = srcMeta[key];
+        } else {
+            delete nextMeta[key];
+        }
+    }
+    return { ...target, metadata: nextMeta as CanvasNodeData["metadata"] };
+}
+
+function restorePersistedUploadingManualGeometry(
+    baseItem: CanvasNodeData | undefined,
+    node: CanvasNodeData,
+): CanvasNodeData {
+    if (
+        !baseItem
+        || hasSettledUploadMedia(baseItem)
+        || !hasExplicitManualSizeFlag(baseItem)
+        || node.metadata?.fileUpload !== "uploading"
+        || !sameUploadingOriginForManualGeometry(baseItem, node)
+        || hasExplicitManualSizeFlag(node)
+        || node.metadata?.manualSize === false
+        || node.metadata?.freeResize === false
+    ) {
+        return node;
+    }
+    const nextMeta: Record<string, unknown> = { ...((node.metadata || {}) as Record<string, unknown>) };
+    if (baseItem.metadata?.manualSize !== undefined) nextMeta.manualSize = baseItem.metadata.manualSize;
+    if (baseItem.metadata?.freeResize !== undefined) nextMeta.freeResize = baseItem.metadata.freeResize;
+    return {
+        ...node,
+        width: baseItem.width,
+        height: baseItem.height,
+        position: baseItem.position,
+        metadata: nextMeta as CanvasNodeData["metadata"],
+    };
+}
+
 function mergeCanvasNodeItem(
     baseItem: CanvasNodeData | undefined,
     localItem: CanvasNodeData,
     remoteItem: CanvasNodeData,
     conflict: { value: boolean },
 ): CanvasNodeData {
-    let remoteNormalized = remoteItem;
-    const taskId = nodeTaskId(localItem);
-    const baseMeta = (baseItem?.metadata || {}) as Record<string, unknown>;
-    const localMeta = (localItem.metadata || {}) as Record<string, unknown>;
+    const baseClean = stripStaleFileUploadMetadata(baseItem);
+    let localNormalized = restorePersistedUploadingManualGeometry(baseClean, stripStaleFileUploadMetadata(localItem)!);
+    let remoteNormalized = restorePersistedUploadingManualGeometry(baseClean, stripStaleFileUploadMetadata(remoteItem)!);
+    if (shouldSettleUploadingAgainstSettled(baseClean, localNormalized, remoteNormalized)) {
+        const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized);
+        remoteNormalized = aligned.uploading;
+        localNormalized = aligned.settled;
+    } else if (shouldSettleUploadingAgainstSettled(baseClean, remoteNormalized, localNormalized)) {
+        const aligned = alignUploadSettlementPair(baseClean, localNormalized, remoteNormalized);
+        localNormalized = aligned.uploading;
+        remoteNormalized = aligned.settled;
+    } else if (
+        (hasSettledUploadMedia(localNormalized) && remoteNormalized.metadata?.fileUpload === "uploading")
+        || (hasSettledUploadMedia(remoteNormalized) && localNormalized.metadata?.fileUpload === "uploading")
+    ) {
+        const localIsSettled = hasSettledUploadMedia(localNormalized);
+        const settledSide = localIsSettled ? localNormalized : remoteNormalized;
+        const uploadingSide = localIsSettled ? remoteNormalized : localNormalized;
+        if (sameUploadMediaPayload(settledSide, uploadingSide)) {
+            const alignedSettled = copyUploadBundleMetadata(uploadingSide, settledSide, ["fileUpload", "fileUploadProgress", "status", "errorDetails"]);
+            if (localIsSettled) {
+                localNormalized = alignedSettled;
+            } else {
+                remoteNormalized = alignedSettled;
+            }
+        } else if (!hasSettledUploadMedia(baseClean) || !sameUploadMediaPayload(baseClean, settledSide)) {
+            conflict.value = true;
+            remoteNormalized = localNormalized;
+        }
+    } else if (
+        localNormalized.metadata?.fileUpload === "uploading"
+        && remoteNormalized.metadata?.fileUpload === "uploading"
+        && sameUploadMediaPayload(localNormalized, remoteNormalized)
+    ) {
+        const baseProgress = baseClean?.metadata?.fileUploadProgress;
+        const localProgress = localNormalized.metadata?.fileUploadProgress;
+        const remoteProgress = remoteNormalized.metadata?.fileUploadProgress;
+        if (!equal(localProgress, remoteProgress) && !equal(localProgress, baseProgress) && !equal(remoteProgress, baseProgress)) {
+            const alignedMeta: Record<string, unknown> = { ...(remoteNormalized.metadata as Record<string, unknown>) };
+            if (localProgress !== undefined) {
+                alignedMeta.fileUploadProgress = localProgress;
+            } else {
+                delete alignedMeta.fileUploadProgress;
+            }
+            remoteNormalized = { ...remoteNormalized, metadata: alignedMeta as CanvasNodeData["metadata"] };
+        }
+    }
+    const taskId = nodeTaskId(localNormalized);
+    const baseMeta = (baseClean?.metadata || {}) as Record<string, unknown>;
+    const localMeta = (localNormalized.metadata || {}) as Record<string, unknown>;
     if (
         TASK_LIFECYCLE_NON_MEDIA_KEYS.some(key => !equal(baseMeta[key], localMeta[key])) &&
-        !remoteHasBoundGenerationResult(remoteItem) &&
-        !hasTrueGenerationContentConflict(baseItem, localItem, remoteItem) &&
-        (localItem.metadata?.status === "loading" || localItem.metadata?.status === "error") &&
-        (remoteItem.metadata?.status === "loading" || remoteItem.metadata?.status === "error")
+        !remoteHasBoundGenerationResult(remoteNormalized) &&
+        !hasTrueGenerationContentConflict(baseClean, localNormalized, remoteNormalized) &&
+        (localNormalized.metadata?.status === "loading" || localNormalized.metadata?.status === "error") &&
+        (remoteNormalized.metadata?.status === "loading" || remoteNormalized.metadata?.status === "error")
     ) {
-        const alignedMeta: Record<string, unknown> = { ...(remoteItem.metadata || {}) };
+        const alignedMeta: Record<string, unknown> = { ...(remoteNormalized.metadata || {}) };
         const keysToAlign =
             taskId &&
-            nodeTaskId(remoteItem) === taskId &&
-            localItem.metadata?.status === "loading" &&
-            remoteItem.metadata?.status === "loading" &&
-            localItem.metadata?.taskStatus === remoteItem.metadata?.taskStatus
+            nodeTaskId(remoteNormalized) === taskId &&
+            localNormalized.metadata?.status === "loading" &&
+            remoteNormalized.metadata?.status === "loading" &&
+            localNormalized.metadata?.taskStatus === remoteNormalized.metadata?.taskStatus
                 ? IN_FLIGHT_POLL_TELEMETRY_KEYS
                 : TASK_LIFECYCLE_NON_MEDIA_KEYS;
         for (const key of keysToAlign) {
@@ -288,11 +621,11 @@ function mergeCanvasNodeItem(
                 delete alignedMeta[key];
             }
         }
-        remoteNormalized = { ...remoteItem, metadata: alignedMeta as CanvasNodeData["metadata"] };
+        remoteNormalized = { ...remoteNormalized, metadata: alignedMeta as CanvasNodeData["metadata"] };
     }
     const merged = mergeObject(
-        stripNodeTimestamps(baseItem),
-        stripNodeTimestamps(localItem),
+        stripNodeTimestamps(baseClean),
+        stripNodeTimestamps(localNormalized),
         stripNodeTimestamps(remoteNormalized),
         conflict,
     ) as unknown as CanvasNodeData;
@@ -387,7 +720,14 @@ export function rebaseCanvasDocumentThreeWay(input: {
         ...generic,
         id: input.local.id,
         title: (generic.title as string | undefined) ?? input.local.title,
-        nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict, sameNodeIgnoringTimestamps, mergeCanvasNodeItem),
+        nodes: mergeEntityList<CanvasNodeData>(
+            input.base.nodes?.map((node) => stripStaleFileUploadMetadata(node)!),
+            input.local.nodes?.map((node) => stripStaleFileUploadMetadata(node)!),
+            input.remote.nodes?.map((node) => stripStaleFileUploadMetadata(node)!),
+            conflict,
+            sameNodeIgnoringTimestamps,
+            mergeCanvasNodeItem,
+        ),
         connections: mergeEntityList<CanvasConnection>(input.base.connections, input.local.connections, input.remote.connections, conflict),
         chatSessions: mergeEntityList(input.base.chatSessions, input.local.chatSessions, input.remote.chatSessions, conflict),
         viewport: input.local.viewport || input.remote.viewport,

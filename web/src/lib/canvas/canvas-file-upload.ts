@@ -1,6 +1,8 @@
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
+
+const INTERRUPTED_FILE_UPLOAD_MESSAGE = "上传已中断，请重新选择文件上传";
 
 export const CANVAS_UPLOAD_ACCEPT = "image/*,video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,text/plain,text/markdown,.txt,.md,.markdown,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 export function isTextUploadFile(file: Pick<File, "name" | "type">) {
@@ -58,7 +60,37 @@ export function createImageUploadPlaceholder(id: string, file: Pick<File, "name"
     };
 }
 
+// 替换上传进行中会把 status 置为 undefined；只有 status=success 且已有媒体引用时，才说明上传已真正完成。
+export function hasSettledFileUploadMedia(metadata: CanvasNodeMetadata | undefined): boolean {
+    if (metadata?.status !== "success") return false;
+    return Boolean(
+        (typeof metadata.content === "string" && metadata.content.trim().length > 0)
+        || (typeof metadata.storageKey === "string" && metadata.storageKey.trim().length > 0),
+    );
+}
+
+export function hasStaleSettledFileUploadFlag(metadata: CanvasNodeMetadata | undefined): boolean {
+    if (!metadata?.fileUpload || !hasSettledFileUploadMedia(metadata)) return false;
+    return metadata.fileUpload === "uploading"
+        || (metadata.fileUpload === "error" && metadata.errorDetails === INTERRUPTED_FILE_UPLOAD_MESSAGE);
+}
+
+export function isFileUploadOverlayActive(metadata: CanvasNodeMetadata | undefined): boolean {
+    return Boolean(metadata?.fileUpload) && !hasStaleSettledFileUploadFlag(metadata);
+}
+
 export function interruptFileUpload(node: CanvasNodeData): CanvasNodeData {
+    if (hasStaleSettledFileUploadFlag(node.metadata)) {
+        return {
+            ...node,
+            metadata: {
+                ...node.metadata,
+                fileUpload: undefined,
+                fileUploadProgress: undefined,
+                errorDetails: undefined,
+            },
+        };
+    }
     if (node.metadata?.fileUpload !== "uploading") return node;
-    return { ...node, metadata: { ...node.metadata, fileUpload: "error", fileUploadProgress: undefined, errorDetails: "上传已中断，请重新选择文件上传" } };
+    return { ...node, metadata: { ...node.metadata, fileUpload: "error", fileUploadProgress: undefined, errorDetails: INTERRUPTED_FILE_UPLOAD_MESSAGE } };
 }

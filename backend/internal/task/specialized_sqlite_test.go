@@ -20,6 +20,7 @@ import (
 	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/taskruntime"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -450,5 +451,96 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 	facts, err := mediatools.ProbeLocal(context.Background(), outPath)
 	if err != nil || !facts.HasAudio || facts.Width != 64 || facts.Height != 48 {
 		t.Fatalf("expected restored audio and 64x48 dimensions, got facts=%+v err=%v", facts, err)
+	}
+}
+
+type fakeClaimedSession struct {
+	ctx  context.Context
+	task *model.Task
+}
+
+func (f fakeClaimedSession) Context() context.Context { return f.ctx }
+func (f fakeClaimedSession) Task() *model.Task        { return f.task }
+func (f fakeClaimedSession) Lost() bool               { return false }
+func (f fakeClaimedSession) LostErr() error           { return nil }
+
+type noopTerminalReplay struct{}
+
+func (noopTerminalReplay) FinalizeTaskTextReplay(string, model.TaskStatus) error { return nil }
+
+type noopTerminalLogger struct{}
+
+func (noopTerminalLogger) Log(string, string, string, string, string) error { return nil }
+
+type noopTerminalOutputs struct{}
+
+func (noopTerminalOutputs) DeliverSucceededTask(model.Task) error       { return nil }
+func (noopTerminalOutputs) RegisterTaskOutputFromTask(model.Task) error { return nil }
+
+func TestExecuteClaimedTaskSyncsPersistedStageBeforeFailureDiagnostics(t *testing.T) {
+	_, db, _ := specializedSQLite(t, nil)
+	repo := repository.New(db)
+	now := time.Now()
+	leaseExp := now.Add(5 * time.Minute)
+	claimed := &model.Task{
+		ID:             "task-worker-stage-sync",
+		UserID:         "owner",
+		Type:           "canvas_video",
+		Operation:      "media.video.subtitle_erase",
+		Status:         model.TaskStatusRunning,
+		LeaseOwner:     "worker-1",
+		LeaseExpiresAt: &leaseExp,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := db.Create(claimed).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var capturedStage string
+	terminal := taskruntime.NewTerminal(taskruntime.TerminalDependencies{
+		Repository:        repo,
+		Replay:            noopTerminalReplay{},
+		Logger:            noopTerminalLogger{},
+		Outputs:           noopTerminalOutputs{},
+		UserFacingMessage: func(err error) string { return err.Error() },
+		FailureErrorCode:  func(error) string { return "async_failed" },
+		CaptureFailure: func(task *model.Task, _ error, _ string) {
+			capturedStage = task.Stage
+			task.FailureDiagnostics = &model.TaskFailureDiagnostics{Source: "upstream_response", Stage: task.Stage}
+		},
+		LogFailedAttempt: func(model.Task, error) {},
+	})
+
+	deps := WorkerExecuteDeps{
+		Repo:     repo,
+		Terminal: terminal,
+		Log:      func(string, string, string, string, string) error { return nil },
+		BeginRouteAttempt: func(*model.Task) (*model.RouteAttempt, error) {
+			return &model.RouteAttempt{}, nil
+		},
+		ExecuteRoute: func(_ context.Context, task *model.Task, _ *model.RouteAttempt) (RouteExecutionResult, error) {
+			// Simulate managedMediaPort.Project updating persisted stage via its value copy while session.Task() still holds "正在连接上游".
+			if err := repo.UpdateTaskStageForLease(task.ID, task.LeaseOwner, "正在消除视频字幕"); err != nil {
+				t.Fatalf("update stage: %v", err)
+			}
+			return RouteExecutionResult{Err: errors.New("upstream failed")}, nil
+		},
+		DecryptTaskInput:      func(s string) (string, error) { return s, nil },
+		ShouldDeferImage:      func(model.Task, error, bool) bool { return false },
+		ResolveProviderConfig: func(c generation.Config) (generation.Config, error) { return c, nil },
+		ImageTaskEnded:        func(error) bool { return true },
+	}
+
+	outcome := ExecuteClaimedTask(deps, fakeClaimedSession{ctx: context.Background(), task: claimed})
+	if outcome.Kind != taskruntime.KindFailed {
+		t.Fatalf("expected failed outcome, got %+v", outcome)
+	}
+	if capturedStage != "正在消除视频字幕" {
+		t.Fatalf("expected captured failure stage 正在消除视频字幕, got %q", capturedStage)
+	}
+	stored, err := repo.Task(claimed.ID)
+	if err != nil || stored == nil || stored.FailureDiagnostics == nil || stored.FailureDiagnostics.Stage != "正在消除视频字幕" {
+		t.Fatalf("expected persisted FailureDiagnostics.Stage 正在消除视频字幕, got %+v (err=%v)", stored, err)
 	}
 }

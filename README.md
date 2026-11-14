@@ -43,11 +43,11 @@
 
 ## 最近更新
 
+- **[v2.2.4](https://github.com/glanderness/BeefTV/releases/tag/v2.2.4)** — 修复桌面端 Eagle 素材库预览与导入下载，支持自定义模型服务无 `/v1` 前缀地址与手动模型改删，修复提示词长按退格、个人资产库分页计数与生成历史本地视频预览。
+- **[v2.2.3](https://github.com/glanderness/BeefTV/releases/tag/v2.2.3)** — 接入 Seedream 5.5 图片生成与细粒度图层拆分，优化画布视频首尾帧自动识别与参考预检，修复超分与去字幕终态重试及诊断耗时显示，并补充银盛云枢壹算品牌图标与简介。
 - **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — 上线实时余额与在线充值，完善生成费用预估，升级 DeepSeek Harness 协同与画布视频处理。
 - **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — 新增银盛云枢壹算渠道插件，改版插件与账户设置，改善画布预览及生成报错与重试。
 - **[v2.2.0](https://github.com/glanderness/BeefTV/releases/tag/v2.2.0)** — 新增 Claude Code 与 Codex 一键接入，扩展模型服务预设与脚本能力，优化视频生成与配音。
-- **[v2.1.6](https://github.com/glanderness/BeefTV/releases/tag/v2.1.6)** — RunningHub 与 ComfyUI 转为市场插件，完善插件管理，新增手动分镜表、提示词预设与剧本导入。
-- **[v2.1.5](https://github.com/glanderness/BeefTV/releases/tag/v2.1.5)** — 新增插件快捷入口与 LL2 模型服务一键连接。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
@@ -192,6 +192,18 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 新许可允许自部署、内部二开及使用 BeefTV 制作并销售作品；对其覆盖的软件进行商业转售、套壳销售、收费部署或定制交付，以及免费或收费向第三方提供托管功能，均需事先书面授权。独立教程、培训和一般技术咨询可收费，不能借此变相交付软件系统。授权联系：[lucas@bf-labs.cn](mailto:lucas@bf-labs.cn)。
 
 新限制不追溯适用于历史 MIT 内容，也不覆盖第三方独立许可的材料。这是一份源码可用许可，不能将整个仓库视为标准 MIT 或 OSI 定义的开源项目。具体场景及覆盖边界见[许可说明](docs/content/docs/overview/licensing.mdx)，上游来源与第三方归属见 [`NOTICE`](NOTICE)。
+
+## 开源参考
+
+BeefTV 的开发基于并参考了以下开源项目与技术：
+
+- **[影策 Open AI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**（https://github.com/ddcat-ai/open-ai-canvas）：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理及社区内置插件等基础能力来自该项目，并在此基础上持续改进优化为本地应用版本。再次感谢 [ddcat](https://github.com/ddcat-ai) 及所有 Open AI Canvas 贡献者对开源 AIGC 社区作出的贡献。
+  
+- **[basketikun 的 infinite-canvas](https://github.com/basketikun/infinite-canvas)**：将无限画布与 AI 图片创作结合的开源工作台。BeefTV 参考了其无限画布整体架构，并沿用了部分画布代码与技术能力，包括节点拖拽与缩放、连线、撤销重做、画布导入导出等。感谢 [basketikun](https://github.com/basketikun) 及所有贡献者。
+  
+- **[Pi（Pi Agent）](https://github.com/earendil-works/pi)**：轻量、可扩展的 Agent 框架，提供 Agent 执行循环、工具调用与会话管理等能力。BeefTV 内置 Agent 基于 Pi 构建，并围绕视频创作场景进行适配与扩展，接入画布操作、创作计划与技能管理等能力。感谢 Pi 的作者、[维护团队](https://github.com/earendil-works)及所有贡献者。
+
+感谢以上项目作者、维护者及所有贡献者提供的基础与启发。BeefTV 在这些成果之上持续进行独立开发和深度优化；上游与第三方代码、版权声明及许可仍按各自条款保留，具体归属与许可范围见 [`NOTICE`](NOTICE)、[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 和 [`LICENSE`](LICENSE)。
 
 ## ⭐ Star History
 
