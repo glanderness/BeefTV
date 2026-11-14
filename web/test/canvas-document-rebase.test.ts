@@ -530,4 +530,118 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
         expect(copiedMeta.generationFailure).toBeUndefined();
         expect(copiedMeta.taskOutcomeSource).toBeUndefined();
     });
+
+    test("completed upload is not rolled back to uploading when store or remote snapshot holds an earlier placeholder", () => {
+        const remoteUploadingImg = node("upload-img-1", "ref.png", {
+            fileUpload: "uploading",
+            fileUploadProgress: 60,
+            bytes: 2048,
+            mimeType: "image/png",
+        });
+        const localCompletedImg = node("upload-img-1", "ref.png", {
+            content: "https://example.test/ref.png",
+            storageKey: "resource:ref-1",
+            status: "success",
+            bytes: 2048,
+            mimeType: "image/png",
+        });
+        const remoteUploadingVid: CanvasNodeData = {
+            id: "upload-vid-1",
+            type: CanvasNodeType.Video,
+            title: "clip.mp4",
+            position: { x: 100, y: 100 },
+            width: 320,
+            height: 180,
+            metadata: { fileUpload: "uploading", bytes: 9000, mimeType: "video/mp4" },
+        };
+        const localCompletedVid: CanvasNodeData = {
+            ...remoteUploadingVid,
+            position: { x: 100, y: -94 },
+            width: 320,
+            height: 568,
+            metadata: {
+                content: "https://example.test/clip.mp4",
+                storageKey: "resource:clip-1",
+                status: "success",
+                naturalWidth: 1080,
+                naturalHeight: 1920,
+                bytes: 9000,
+                mimeType: "video/mp4",
+            },
+        };
+        const runningVideo = node("gen-v1", "生成视频", {
+            taskId: "task-v1",
+            status: "loading",
+            taskStatus: "running",
+            taskStage: "正在查询视频生成结果",
+        });
+
+        const fromEmptyBase = rebaseCanvasDocumentThreeWay({
+            base: project([runningVideo], 10),
+            local: project([runningVideo, localCompletedImg, localCompletedVid], 10),
+            remote: project([runningVideo, remoteUploadingImg, remoteUploadingVid], 11),
+        });
+        expect(fromEmptyBase.conflict).toBe(false);
+        const mergedImg = fromEmptyBase.project.nodes.find((item) => item.id === "upload-img-1");
+        expect(mergedImg?.metadata?.fileUpload).toBeUndefined();
+        expect(mergedImg?.metadata?.fileUploadProgress).toBeUndefined();
+        expect(mergedImg?.metadata?.status).toBe("success");
+        expect(mergedImg?.metadata?.content).toBe("https://example.test/ref.png");
+        const mergedVid = fromEmptyBase.project.nodes.find((item) => item.id === "upload-vid-1");
+        expect(mergedVid?.height).toBe(568);
+        expect(mergedVid?.metadata?.fileUpload).toBeUndefined();
+        expect(mergedVid?.metadata?.status).toBe("success");
+
+        const fromUploadingBase = rebaseCanvasDocumentThreeWay({
+            base: project([{ ...remoteUploadingImg, metadata: { ...remoteUploadingImg.metadata, fileUploadProgress: 20 } }], 10),
+            local: project([localCompletedImg], 10),
+            remote: project([{ ...remoteUploadingImg, metadata: { ...remoteUploadingImg.metadata, fileUploadProgress: 85 } }], 11),
+        });
+        expect(fromUploadingBase.conflict).toBe(false);
+        expect(fromUploadingBase.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+        expect(fromUploadingBase.project.nodes[0]?.metadata?.fileUploadProgress).toBeUndefined();
+        expect(fromUploadingBase.project.nodes[0]?.metadata?.status).toBe("success");
+    });
+
+    test("remote upload completion settles local placeholder while active local replacement upload stays uploading", () => {
+        const baseUploading = node("up-remote", "remote.png", { fileUpload: "uploading", fileUploadProgress: 10 }, { x: 10, y: 20 });
+        const localDraggedUploading = { ...baseUploading, position: { x: 120, y: 240 }, metadata: { fileUpload: "uploading" as const, fileUploadProgress: 40 } };
+        const remoteSettled = node("up-remote", "remote.png", {
+            content: "https://example.test/remote.png",
+            storageKey: "resource:remote",
+            status: "success",
+        }, { x: 10, y: 20 });
+
+        const remoteFinished = rebaseCanvasDocumentThreeWay({
+            base: project([baseUploading], 10),
+            local: project([localDraggedUploading], 10),
+            remote: project([remoteSettled], 11),
+        });
+        expect(remoteFinished.conflict).toBe(false);
+        expect(remoteFinished.project.nodes[0]?.position).toEqual({ x: 120, y: 240 });
+        expect(remoteFinished.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+        expect(remoteFinished.project.nodes[0]?.metadata?.content).toBe("https://example.test/remote.png");
+
+        const existingImage = node("replace-1", "old.png", {
+            content: "https://example.test/old.png",
+            storageKey: "resource:old",
+            status: "success",
+        });
+        const localReplacing = node("replace-1", "old.png", {
+            content: "https://example.test/old.png",
+            storageKey: "resource:old",
+            status: undefined,
+            fileUpload: "uploading",
+            fileUploadProgress: 35,
+        });
+        const replacingRebase = rebaseCanvasDocumentThreeWay({
+            base: project([existingImage], 10),
+            local: project([localReplacing], 10),
+            remote: project([existingImage, node("other", "新增文本", { content: "hi" })], 11),
+        });
+        expect(replacingRebase.conflict).toBe(false);
+        expect(replacingRebase.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
+        expect(replacingRebase.project.nodes[0]?.metadata?.fileUploadProgress).toBe(35);
+        expect(replacingRebase.project.nodes[0]?.metadata?.status).toBeUndefined();
+    });
 });

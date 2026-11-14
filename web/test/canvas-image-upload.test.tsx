@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createImageUploadPlaceholder, createFileUploadPlaceholder, interruptFileUpload, readUploadImageSize, uploadNodeType, uploadPercent, uploadVeilOpacity } from "../src/lib/canvas/canvas-file-upload";
+import { createImageUploadPlaceholder, createFileUploadPlaceholder, interruptFileUpload, isFileUploadOverlayActive, readUploadImageSize, uploadNodeType, uploadPercent, uploadVeilOpacity } from "../src/lib/canvas/canvas-file-upload";
 import { CanvasNodeType } from "../src/types/canvas";
 import { isCanvasImageSourceNode } from "../src/lib/canvas/canvas-image-source";
 import { CanvasFileUploadContent } from "../src/components/canvas/canvas-file-upload-content";
@@ -39,6 +39,54 @@ describe("图片上传占位", () => {
         expect(interruptFileUpload(interrupted)).toBe(interrupted);
         const ready = { ...node, metadata: { content: "image" } };
         expect(interruptFileUpload(ready)).toBe(ready);
+    });
+
+    test("已完成媒体被残留上传标记污染时自动清理，替换上传进行中仍保留中断保护", () => {
+        const staleUploading = {
+            ...placeholder(),
+            metadata: {
+                content: "https://example.test/settled.png",
+                storageKey: "resource:settled",
+                status: "success" as const,
+                fileUpload: "uploading" as const,
+                fileUploadProgress: 80,
+            },
+        };
+        expect(isFileUploadOverlayActive(staleUploading.metadata)).toBe(false);
+        const healedUploading = interruptFileUpload(staleUploading);
+        expect(healedUploading.metadata?.fileUpload).toBeUndefined();
+        expect(healedUploading.metadata?.fileUploadProgress).toBeUndefined();
+        expect(healedUploading.metadata?.status).toBe("success");
+        expect(healedUploading.metadata?.content).toBe("https://example.test/settled.png");
+
+        const staleInterrupted = {
+            ...placeholder(),
+            metadata: {
+                content: "https://example.test/settled.png",
+                storageKey: "resource:settled",
+                status: "success" as const,
+                fileUpload: "error" as const,
+                errorDetails: "上传已中断，请重新选择文件上传",
+            },
+        };
+        expect(isFileUploadOverlayActive(staleInterrupted.metadata)).toBe(false);
+        const healedInterrupted = interruptFileUpload(staleInterrupted);
+        expect(healedInterrupted.metadata?.fileUpload).toBeUndefined();
+        expect(healedInterrupted.metadata?.errorDetails).toBeUndefined();
+        expect(healedInterrupted.metadata?.status).toBe("success");
+
+        const replacingInFlight = {
+            ...placeholder(),
+            metadata: {
+                content: "https://example.test/previous.png",
+                storageKey: "resource:previous",
+                status: undefined,
+                fileUpload: "uploading" as const,
+                fileUploadProgress: 50,
+            },
+        };
+        expect(isFileUploadOverlayActive(replacingInFlight.metadata)).toBe(true);
+        expect(interruptFileUpload(replacingInFlight).metadata?.fileUpload).toBe("error");
     });
 
     test("图片解码成功和失败均释放临时 URL，不伪造尺寸", async () => {

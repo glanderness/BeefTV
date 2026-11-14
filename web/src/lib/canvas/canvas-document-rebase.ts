@@ -255,30 +255,86 @@ const TASK_LIFECYCLE_NON_MEDIA_KEYS = [
     ...GENERATION_ERROR_METADATA_KEYS,
 ] as const;
 
+function hasSettledUploadMedia(node: CanvasNodeData | undefined): boolean {
+    const meta = node?.metadata;
+    if (!meta || meta.fileUpload || meta.status === "loading" || meta.status === "error") return false;
+    return nonemptyMediaRef(meta.content) || nonemptyMediaRef(meta.storageKey);
+}
+
+function sameUploadMediaPayload(left: CanvasNodeData | undefined, right: CanvasNodeData | undefined): boolean {
+    return equal(left?.metadata?.content, right?.metadata?.content)
+        && equal(left?.metadata?.storageKey, right?.metadata?.storageKey);
+}
+
+function isUploadingReplacementOfBase(
+    baseItem: CanvasNodeData | undefined,
+    settledItem: CanvasNodeData,
+    uploadingItem: CanvasNodeData,
+): boolean {
+    return (
+        uploadingItem.metadata?.fileUpload === "uploading"
+        && uploadingItem.metadata?.status !== "success"
+        && hasSettledUploadMedia(baseItem)
+        && sameUploadMediaPayload(baseItem, settledItem)
+    );
+}
+
+function alignUploadingPlaceholderToSettledNode(
+    baseItem: CanvasNodeData | undefined,
+    uploadingItem: CanvasNodeData,
+    settledItem: CanvasNodeData,
+): CanvasNodeData {
+    const preserveDraggedPosition = Boolean(
+        baseItem
+        && !equal(uploadingItem.position, baseItem.position)
+        && equal(settledItem.position, baseItem.position),
+    );
+    return {
+        ...settledItem,
+        ...(preserveDraggedPosition ? { position: uploadingItem.position } : {}),
+        ...(uploadingItem.createdAt ? { createdAt: uploadingItem.createdAt } : {}),
+        ...(uploadingItem.updatedAt ? { updatedAt: uploadingItem.updatedAt } : {}),
+    };
+}
+
 function mergeCanvasNodeItem(
     baseItem: CanvasNodeData | undefined,
     localItem: CanvasNodeData,
     remoteItem: CanvasNodeData,
     conflict: { value: boolean },
 ): CanvasNodeData {
+    let localNormalized = localItem;
     let remoteNormalized = remoteItem;
-    const taskId = nodeTaskId(localItem);
+    if (
+        hasSettledUploadMedia(localItem)
+        && remoteItem.metadata?.fileUpload === "uploading"
+        && !isUploadingReplacementOfBase(baseItem, localItem, remoteItem)
+    ) {
+        remoteNormalized = alignUploadingPlaceholderToSettledNode(baseItem, remoteItem, localItem);
+    } else if (
+        hasSettledUploadMedia(remoteItem)
+        && localItem.metadata?.fileUpload === "uploading"
+        && !isUploadingReplacementOfBase(baseItem, remoteItem, localItem)
+    ) {
+        localNormalized = alignUploadingPlaceholderToSettledNode(baseItem, localItem, remoteItem);
+    }
+    const taskId = nodeTaskId(localNormalized);
     const baseMeta = (baseItem?.metadata || {}) as Record<string, unknown>;
-    const localMeta = (localItem.metadata || {}) as Record<string, unknown>;
+    const localMeta = (localNormalized.metadata || {}) as Record<string, unknown>;
     if (
         TASK_LIFECYCLE_NON_MEDIA_KEYS.some(key => !equal(baseMeta[key], localMeta[key])) &&
-        !remoteHasBoundGenerationResult(remoteItem) &&
-        !hasTrueGenerationContentConflict(baseItem, localItem, remoteItem) &&
-        (localItem.metadata?.status === "loading" || localItem.metadata?.status === "error") &&
-        (remoteItem.metadata?.status === "loading" || remoteItem.metadata?.status === "error")
+        !remoteHasBoundGenerationResult(remoteNormalized) &&
+        !hasTrueGenerationContentConflict(baseItem, localNormalized, remoteNormalized) &&
+        (localNormalized.metadata?.status === "loading" || localNormalized.metadata?.status === "error") &&
+        (remoteNormalized.metadata?.status === "loading" || remoteNormalized.metadata?.status === "error")
     ) {
-        const alignedMeta: Record<string, unknown> = { ...(remoteItem.metadata || {}) };
+        const alignedMeta: Record<string, unknown> = { ...(remoteNormalized.metadata || {}) };
         const keysToAlign =
             taskId &&
-            nodeTaskId(remoteItem) === taskId &&
-            localItem.metadata?.status === "loading" &&
-            remoteItem.metadata?.status === "loading" &&
-            localItem.metadata?.taskStatus === remoteItem.metadata?.taskStatus
+            nodeTaskId(remoteNormalized) === taskId &&
+            localNormalized.metadata?.status === "loading" &&
+            remoteNormalized.metadata?.status === "loading" &&
+            localNormalized.metadata?.taskStatus === remoteNormalized.metadata?.taskStatus
                 ? IN_FLIGHT_POLL_TELEMETRY_KEYS
                 : TASK_LIFECYCLE_NON_MEDIA_KEYS;
         for (const key of keysToAlign) {
@@ -288,11 +344,11 @@ function mergeCanvasNodeItem(
                 delete alignedMeta[key];
             }
         }
-        remoteNormalized = { ...remoteItem, metadata: alignedMeta as CanvasNodeData["metadata"] };
+        remoteNormalized = { ...remoteNormalized, metadata: alignedMeta as CanvasNodeData["metadata"] };
     }
     const merged = mergeObject(
         stripNodeTimestamps(baseItem),
-        stripNodeTimestamps(localItem),
+        stripNodeTimestamps(localNormalized),
         stripNodeTimestamps(remoteNormalized),
         conflict,
     ) as unknown as CanvasNodeData;
