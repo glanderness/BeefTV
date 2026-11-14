@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "../src/lib/canvas/canvas-document-rebase";
+import { interruptFileUpload } from "../src/lib/canvas/canvas-file-upload";
 import { isolateCopiedNodeMetadata } from "../src/lib/canvas/canvas-node-copy";
 import { sameNodeSemanticData } from "../src/lib/canvas/canvas-project-domain";
 import { insertCanvasResourceMentionAtSelection } from "../src/lib/canvas/canvas-text-mention";
@@ -695,15 +696,15 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
             type: CanvasNodeType.Video,
             title: "clip.mp4",
             position: { x: 100, y: 100 },
-            width: 320,
-            height: 180,
+            width: 720,
+            height: 405,
             metadata: { fileUpload: "uploading", fileUploadProgress: 15, bytes: 9000, mimeType: "video/mp4" },
         };
         const settledVidAutoCentered: CanvasNodeData = {
             ...baseVid,
-            position: { x: 100, y: -94 },
-            width: 320,
-            height: 568,
+            position: { x: 250, y: -70.5 },
+            width: 420,
+            height: 746,
             metadata: {
                 content: "https://example.test/clip.mp4",
                 storageKey: "resource:clip",
@@ -734,8 +735,9 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
         expect(localUploadingRebase.conflict).toBe(false);
         const mergedLocal = localUploadingRebase.project.nodes[0]!;
         expect(mergedLocal.title).toBe("主角特写");
-        expect(mergedLocal.height).toBe(568);
-        expect(mergedLocal.position).toEqual({ x: 400, y: 106 });
+        expect(mergedLocal.width).toBe(420);
+        expect(mergedLocal.height).toBe(746);
+        expect(mergedLocal.position).toEqual({ x: 550, y: 129.5 });
         expect(mergedLocal.metadata?.fileUpload).toBeUndefined();
         expect(mergedLocal.metadata?.status).toBe("success");
         expect(mergedLocal.metadata?.prompt).toBe("慢镜头备注");
@@ -749,8 +751,9 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
         expect(remoteUploadingRebase.conflict).toBe(false);
         const mergedRemote = remoteUploadingRebase.project.nodes[0]!;
         expect(mergedRemote.title).toBe("主角特写");
-        expect(mergedRemote.height).toBe(568);
-        expect(mergedRemote.position).toEqual({ x: 400, y: 106 });
+        expect(mergedRemote.width).toBe(420);
+        expect(mergedRemote.height).toBe(746);
+        expect(mergedRemote.position).toEqual({ x: 550, y: 129.5 });
         expect(mergedRemote.metadata?.fileUpload).toBeUndefined();
         expect(mergedRemote.metadata?.prompt).toBe("慢镜头备注");
         expect(mergedRemote.metadata?.locked).toBe(true);
@@ -785,5 +788,196 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
         expect(rebased.conflict).toBe(false);
         expect(rebased.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
         expect(rebased.project.nodes[0]?.metadata?.fileUploadProgress).toBe(35);
+    });
+
+    test("settled base is not wiped or rolled back when the other snapshot still holds a bare initial-upload placeholder", () => {
+        const baseCompleted = node("done-1", "角色定稿", {
+            content: "https://example.test/done.png",
+            storageKey: "resource:done",
+            status: "success",
+            prompt: "服装细节说明",
+            locked: true,
+        }, { x: 360, y: 180 });
+        const staleBarePlaceholder = node("done-1", "raw_upload.png", {
+            fileUpload: "uploading",
+            fileUploadProgress: 45,
+            bytes: 4096,
+            mimeType: "image/png",
+        }, { x: 100, y: 100 });
+        const settledWithFollowupEdit = {
+            ...baseCompleted,
+            title: "角色定稿 v2",
+            metadata: { ...baseCompleted.metadata, prompt: "服装与光影说明" },
+        };
+
+        const remoteStale = rebaseCanvasDocumentThreeWay({
+            base: project([baseCompleted], 10),
+            local: project([settledWithFollowupEdit], 10),
+            remote: project([staleBarePlaceholder], 11),
+        });
+        expect(remoteStale.conflict).toBe(false);
+        expect(remoteStale.project.nodes[0]?.title).toBe("角色定稿 v2");
+        expect(remoteStale.project.nodes[0]?.position).toEqual({ x: 360, y: 180 });
+        expect(remoteStale.project.nodes[0]?.metadata?.content).toBe("https://example.test/done.png");
+        expect(remoteStale.project.nodes[0]?.metadata?.storageKey).toBe("resource:done");
+        expect(remoteStale.project.nodes[0]?.metadata?.status).toBe("success");
+        expect(remoteStale.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+        expect(remoteStale.project.nodes[0]?.metadata?.prompt).toBe("服装与光影说明");
+        expect(remoteStale.project.nodes[0]?.metadata?.locked).toBe(true);
+
+        const localStale = rebaseCanvasDocumentThreeWay({
+            base: project([baseCompleted], 10),
+            local: project([staleBarePlaceholder], 10),
+            remote: project([settledWithFollowupEdit], 11),
+        });
+        expect(localStale.conflict).toBe(false);
+        expect(localStale.project.nodes[0]?.title).toBe("角色定稿 v2");
+        expect(localStale.project.nodes[0]?.position).toEqual({ x: 360, y: 180 });
+        expect(localStale.project.nodes[0]?.metadata?.content).toBe("https://example.test/done.png");
+        expect(localStale.project.nodes[0]?.metadata?.storageKey).toBe("resource:done");
+        expect(localStale.project.nodes[0]?.metadata?.status).toBe("success");
+        expect(localStale.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+        expect(localStale.project.nodes[0]?.metadata?.prompt).toBe("服装与光影说明");
+        expect(localStale.project.nodes[0]?.metadata?.locked).toBe(true);
+    });
+
+    test("portrait video replacement and missing-base upload rename settle cleanly without geometry or metadata loss", () => {
+        const basePortraitVid: CanvasNodeData = {
+            id: "vid-replace",
+            type: CanvasNodeType.Video,
+            title: "镜头一",
+            position: { x: 250, y: -70.5 },
+            width: 420,
+            height: 746,
+            metadata: {
+                content: "https://example.test/old.mp4",
+                storageKey: "resource:old-vid",
+                status: "success",
+                taskId: "task-old",
+                prompt: "人物转身",
+                locked: true,
+                naturalWidth: 1080,
+                naturalHeight: 1920,
+            },
+        };
+        const replacingVidPlaceholder: CanvasNodeData = {
+            ...basePortraitVid,
+            width: 720,
+            height: 405,
+            metadata: {
+                content: "https://example.test/old.mp4",
+                storageKey: "resource:old-vid",
+                status: undefined,
+                fileUpload: "uploading",
+                fileUploadProgress: 70,
+            },
+        };
+        const settledReplacementVid: CanvasNodeData = {
+            ...basePortraitVid,
+            position: { x: 400, y: -241 },
+            width: 420,
+            height: 746,
+            metadata: {
+                content: "https://example.test/new.mp4",
+                storageKey: "resource:new-vid",
+                status: "success",
+                prompt: "人物转身",
+                locked: true,
+                naturalWidth: 1080,
+                naturalHeight: 1920,
+            },
+        };
+
+        const replacedOverRemotePlaceholder = rebaseCanvasDocumentThreeWay({
+            base: project([basePortraitVid], 10),
+            local: project([settledReplacementVid], 10),
+            remote: project([replacingVidPlaceholder], 11),
+        });
+        expect(replacedOverRemotePlaceholder.conflict).toBe(false);
+        const mergedVid = replacedOverRemotePlaceholder.project.nodes[0]!;
+        expect(mergedVid.width).toBe(420);
+        expect(mergedVid.height).toBe(746);
+        expect(mergedVid.position).toEqual({ x: 400, y: -241 });
+        expect(mergedVid.metadata?.content).toBe("https://example.test/new.mp4");
+        expect(mergedVid.metadata?.status).toBe("success");
+        expect(mergedVid.metadata?.fileUpload).toBeUndefined();
+        expect(mergedVid.metadata?.taskId).toBeUndefined();
+        expect(mergedVid.metadata?.prompt).toBe("人物转身");
+        expect(mergedVid.metadata?.locked).toBe(true);
+
+        const replacedOverAncientBarePlaceholder = rebaseCanvasDocumentThreeWay({
+            base: project([basePortraitVid], 10),
+            local: project([settledReplacementVid], 10),
+            remote: project([{
+                id: "vid-replace",
+                type: CanvasNodeType.Video,
+                title: "raw.mp4",
+                position: { x: 0, y: 0 },
+                width: 720,
+                height: 405,
+                metadata: { fileUpload: "uploading", bytes: 9000, mimeType: "video/mp4" },
+            }], 11),
+        });
+        expect(replacedOverAncientBarePlaceholder.conflict).toBe(false);
+        expect(replacedOverAncientBarePlaceholder.project.nodes[0]?.position).toEqual({ x: 400, y: -241 });
+        expect(replacedOverAncientBarePlaceholder.project.nodes[0]?.title).toBe("镜头一");
+        expect(replacedOverAncientBarePlaceholder.project.nodes[0]?.metadata?.prompt).toBe("人物转身");
+        expect(replacedOverAncientBarePlaceholder.project.nodes[0]?.metadata?.locked).toBe(true);
+
+        const renamedSettledLocal = node("new-up", "主角设定", {
+            content: "https://example.test/hero.png",
+            storageKey: "resource:hero",
+            status: "success",
+        });
+        const rawUploadingRemote = node("new-up", "raw_123.png", {
+            fileUpload: "uploading",
+            fileUploadProgress: 50,
+        });
+        const newUploadRenamed = rebaseCanvasDocumentThreeWay({
+            base: project([], 10),
+            local: project([renamedSettledLocal], 10),
+            remote: project([rawUploadingRemote], 11),
+        });
+        expect(newUploadRenamed.conflict).toBe(false);
+        expect(newUploadRenamed.project.nodes[0]?.title).toBe("主角设定");
+        expect(newUploadRenamed.project.nodes[0]?.metadata?.status).toBe("success");
+        expect(newUploadRenamed.project.nodes[0]?.metadata?.fileUpload).toBeUndefined();
+    });
+
+    test("deleting a settled upload node does not false-conflict against stale fileUpload flags", () => {
+        const baseSettled = node("del-1", "img.png", {
+            content: "https://example.test/img.png",
+            storageKey: "resource:img",
+            status: "success",
+        });
+        const staleUploading = {
+            ...baseSettled,
+            metadata: { ...baseSettled.metadata, fileUpload: "uploading" as const, fileUploadProgress: 100 },
+        };
+        const interruptedSample = interruptFileUpload(node("del-1", "img.png", { fileUpload: "uploading" }));
+        const staleInterrupted = {
+            ...baseSettled,
+            metadata: {
+                ...baseSettled.metadata,
+                fileUpload: interruptedSample.metadata?.fileUpload,
+                errorDetails: interruptedSample.metadata?.errorDetails,
+            },
+        };
+
+        const localDeleteAgainstUploading = rebaseCanvasDocumentThreeWay({
+            base: project([baseSettled], 10),
+            local: project([], 10),
+            remote: project([staleUploading], 11),
+        });
+        expect(localDeleteAgainstUploading.conflict).toBe(false);
+        expect(localDeleteAgainstUploading.project.nodes).toHaveLength(0);
+
+        const remoteDeleteAgainstInterrupted = rebaseCanvasDocumentThreeWay({
+            base: project([baseSettled], 10),
+            local: project([staleInterrupted], 10),
+            remote: project([], 11),
+        });
+        expect(remoteDeleteAgainstInterrupted.conflict).toBe(false);
+        expect(remoteDeleteAgainstInterrupted.project.nodes).toHaveLength(0);
     });
 });

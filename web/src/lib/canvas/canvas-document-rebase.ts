@@ -306,6 +306,11 @@ const UPLOAD_REPLACEMENT_RESET_KEYS = [
     "failedPromptFingerprint",
 ] as const;
 
+const UPLOAD_OWNED_METADATA_KEY_SET = new Set<string>([
+    ...UPLOAD_SETTLEMENT_METADATA_KEYS,
+    ...UPLOAD_REPLACEMENT_RESET_KEYS,
+]);
+
 function stripStaleFileUploadMetadata(node: CanvasNodeData | undefined): CanvasNodeData | undefined {
     if (!node?.metadata || !hasStaleSettledFileUploadFlag(node.metadata)) return node;
     const nextMeta: Record<string, unknown> = { ...(node.metadata as Record<string, unknown>) };
@@ -336,6 +341,7 @@ function isUploadingReplacementOfBase(
         && uploadingItem.metadata?.status !== "success"
         && hasSettledUploadMedia(baseItem)
         && sameUploadMediaPayload(baseItem, settledItem)
+        && sameUploadMediaPayload(baseItem, uploadingItem)
     );
 }
 
@@ -355,7 +361,22 @@ function alignUploadSettlementPair(
     baseItem: CanvasNodeData | undefined,
     uploadingItem: CanvasNodeData,
     settledItem: CanvasNodeData,
+    uploadingIsRemote: boolean,
 ): { uploading: CanvasNodeData; settled: CanvasNodeData } {
+    const hadUploadingMedia = nonemptyMediaRef(uploadingItem.metadata?.content) || nonemptyMediaRef(uploadingItem.metadata?.storageKey);
+    // base 已是完成媒体，而对侧要么与 base 媒体相同、要么仍是缺少媒体的初始上传占位：对侧整体早于当前状态，不能清空字段或回退几何。
+    if (baseItem && hasSettledUploadMedia(baseItem) && (sameUploadMediaPayload(baseItem, settledItem) || !hadUploadingMedia)) {
+        return {
+            uploading: {
+                ...baseItem,
+                ...(uploadingItem.createdAt ? { createdAt: uploadingItem.createdAt } : {}),
+                ...(uploadingItem.updatedAt ? { updatedAt: uploadingItem.updatedAt } : {}),
+            },
+            settled: settledItem,
+        };
+    }
+
+    const baseMeta = (baseItem?.metadata || {}) as Record<string, unknown>;
     const settledMeta = (settledItem.metadata || {}) as Record<string, unknown>;
     const uploadingMeta: Record<string, unknown> = { ...((uploadingItem.metadata || {}) as Record<string, unknown>) };
     const keysToCopy: readonly string[] = hasSettledUploadMedia(baseItem)
@@ -368,6 +389,13 @@ function alignUploadSettlementPair(
             delete uploadingMeta[key];
         }
     }
+    if (baseItem) {
+        for (const key of Object.keys(baseMeta)) {
+            if (!UPLOAD_OWNED_METADATA_KEY_SET.has(key) && !hasDefinedProperty(uploadingMeta, key) && hasDefinedProperty(settledMeta, key)) {
+                uploadingMeta[key] = baseMeta[key];
+            }
+        }
+    }
     if (
         settledItem.type === "text"
         && !hasDefinedProperty(uploadingMeta, "prompt")
@@ -377,36 +405,68 @@ function alignUploadSettlementPair(
         uploadingMeta.prompt = settledMeta.prompt;
     }
 
-    let uploadingNext: CanvasNodeData = {
-        ...uploadingItem,
-        type: settledItem.type,
-        ...(!baseItem && settledItem.type === "text" && stripScriptDocumentExtension(uploadingItem.title) === settledItem.title
-            ? { title: settledItem.title }
-            : {}),
-        metadata: uploadingMeta as CanvasNodeData["metadata"],
-    };
     let settledNext = settledItem;
+    let resolvedUploadingTitle = uploadingItem.title;
+    if (!baseItem) {
+        if (
+            !uploadingIsRemote
+            && uploadingItem.title !== settledItem.title
+            && stripScriptDocumentExtension(uploadingItem.title) !== settledItem.title
+            && /\.[a-z0-9]{2,8}$/i.test(settledItem.title)
+            && !/\.[a-z0-9]{2,8}$/i.test(uploadingItem.title)
+        ) {
+            settledNext = { ...settledNext, title: uploadingItem.title };
+        } else {
+            resolvedUploadingTitle = settledItem.title;
+        }
+    }
 
-    const uploadingResized = Boolean(
-        baseItem && (uploadingItem.width !== baseItem.width || uploadingItem.height !== baseItem.height),
+    const settledSize = { width: settledItem.width, height: settledItem.height };
+    const uploadingDragged = Boolean(
+        baseItem
+        && !equal(uploadingItem.position, baseItem.position)
+        && !sameNodeCenter(uploadingItem, baseItem),
     );
-    if (!uploadingResized) {
-        const settledSize = { width: settledItem.width, height: settledItem.height };
-        if (sameNodeCenter(uploadingItem, settledItem)) {
-            uploadingNext = { ...uploadingNext, ...settledSize, position: settledItem.position };
-        } else if (baseItem && sameNodeCenter(settledItem, baseItem) && !sameNodeCenter(uploadingItem, baseItem)) {
+    const settledAutoCenteredFromBase = Boolean(
+        baseItem
+        && (
+            equal(settledItem.position, baseItem.position)
+            || sameNodeCenter(settledItem, baseItem)
+            || sameNodeCenter(settledItem, { position: baseItem.position, width: uploadingItem.width, height: uploadingItem.height })
+        ),
+    );
+
+    let resolvedUploadingPos = uploadingItem.position;
+    if (!uploadingDragged) {
+        if (!baseItem && !uploadingIsRemote && !sameNodeCenter(uploadingItem, settledItem)) {
             const draggedPos = {
                 x: uploadingItem.position.x + (uploadingItem.width - settledSize.width) / 2,
                 y: uploadingItem.position.y + (uploadingItem.height - settledSize.height) / 2,
             };
-            uploadingNext = { ...uploadingNext, ...settledSize, position: draggedPos };
+            resolvedUploadingPos = draggedPos;
             settledNext = { ...settledNext, position: draggedPos };
-        } else if (baseItem && !sameNodeCenter(settledItem, baseItem) && sameNodeCenter(uploadingItem, baseItem)) {
-            uploadingNext = { ...uploadingNext, ...settledSize, position: settledItem.position };
         } else {
-            uploadingNext = { ...uploadingNext, ...settledSize };
+            resolvedUploadingPos = settledItem.position;
         }
+    } else if (settledAutoCenteredFromBase) {
+        const draggedPos = {
+            x: uploadingItem.position.x + (uploadingItem.width - settledSize.width) / 2,
+            y: uploadingItem.position.y + (uploadingItem.height - settledSize.height) / 2,
+        };
+        resolvedUploadingPos = draggedPos;
+        settledNext = { ...settledNext, position: draggedPos };
+    } else if (sameNodeCenter(uploadingItem, settledItem)) {
+        resolvedUploadingPos = settledItem.position;
     }
+
+    const uploadingNext: CanvasNodeData = {
+        ...uploadingItem,
+        type: settledItem.type,
+        title: resolvedUploadingTitle,
+        ...settledSize,
+        position: resolvedUploadingPos,
+        metadata: uploadingMeta as CanvasNodeData["metadata"],
+    };
     return { uploading: uploadingNext, settled: settledNext };
 }
 
@@ -424,7 +484,7 @@ function mergeCanvasNodeItem(
         && remoteNormalized.metadata?.fileUpload === "uploading"
         && !isUploadingReplacementOfBase(baseClean, localNormalized, remoteNormalized)
     ) {
-        const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized);
+        const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized, true);
         remoteNormalized = aligned.uploading;
         localNormalized = aligned.settled;
     } else if (
@@ -432,7 +492,7 @@ function mergeCanvasNodeItem(
         && localNormalized.metadata?.fileUpload === "uploading"
         && !isUploadingReplacementOfBase(baseClean, remoteNormalized, localNormalized)
     ) {
-        const aligned = alignUploadSettlementPair(baseClean, localNormalized, remoteNormalized);
+        const aligned = alignUploadSettlementPair(baseClean, localNormalized, remoteNormalized, false);
         localNormalized = aligned.uploading;
         remoteNormalized = aligned.settled;
     } else if (
@@ -577,7 +637,14 @@ export function rebaseCanvasDocumentThreeWay(input: {
         ...generic,
         id: input.local.id,
         title: (generic.title as string | undefined) ?? input.local.title,
-        nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict, sameNodeIgnoringTimestamps, mergeCanvasNodeItem),
+        nodes: mergeEntityList<CanvasNodeData>(
+            input.base.nodes?.map((node) => stripStaleFileUploadMetadata(node)!),
+            input.local.nodes?.map((node) => stripStaleFileUploadMetadata(node)!),
+            input.remote.nodes?.map((node) => stripStaleFileUploadMetadata(node)!),
+            conflict,
+            sameNodeIgnoringTimestamps,
+            mergeCanvasNodeItem,
+        ),
         connections: mergeEntityList<CanvasConnection>(input.base.connections, input.local.connections, input.remote.connections, conflict),
         chatSessions: mergeEntityList(input.base.chatSessions, input.local.chatSessions, input.remote.chatSessions, conflict),
         viewport: input.local.viewport || input.remote.viewport,
