@@ -22,7 +22,7 @@ describe("助手已确认失败与断流未知结果分开", () => {
     });
     test("技能与脚本相关错误原因映射为明确可操作的用户提示，不回退笼统不可用文案", () => {
         const expectedSubstrings: [string, string][] = [
-            ["skill_instruction_too_large", "2MB"],
+            ["skill_instruction_too_large", "技能包"],
             ["skill_context_budget_exceeded", "精简技能内容"],
             ["skill_context_model_unavailable", "更换上下文更大"],
             ["skill_version_unavailable", "移除该技能"],
@@ -46,10 +46,9 @@ describe("助手已确认失败与断流未知结果分开", () => {
             expect(text).not.toBe("创作助手暂时不可用，请稍后再试");
         }
     });
-    test("技能指令校验按 2 MiB UTF-8 字节上限放行大体积 Markdown 指令并拦截空值与超限内容", async () => {
+    test("技能指令校验放行任意体积非空 Markdown 指令并拦截空值", async () => {
         await expect(validateSkillInstructionBytes(null, "")).rejects.toThrow("请填写技能指令");
         await expect(validateSkillInstructionBytes(null, "   ")).rejects.toThrow("请填写技能指令");
-        await expect(validateSkillInstructionBytes(null, "字".repeat(500_000))).resolves.toBeUndefined();
-        await expect(validateSkillInstructionBytes(null, "字".repeat(750_000))).rejects.toThrow("2 MiB");
+        await expect(validateSkillInstructionBytes(null, "字".repeat(800_000))).resolves.toBeUndefined();
     });
 });

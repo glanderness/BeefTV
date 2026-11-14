@@ -323,7 +323,7 @@ let uiSessionGeneration = 0;
 export function agentAssistantFailureText(reason: string | undefined, fallback = "创作助手暂时不可用，请稍后再试") {
     switch (reason) {
         case "skill_instruction_too_large":
-            return "所选技能文件过大（单个文件最多 2MB，单轮合计最多 4MB），请精简或拆分参考文件后重试。";
+            return "所选技能包超出解压上限或不可读取，请检查技能包后重试。";
         case "skill_context_budget_exceeded":
         case "skill_context_model_unavailable":
             return "当前所选技能内容超出模型单次可处理的范围，请精简技能内容或更换上下文更大的助手模型后重试。";

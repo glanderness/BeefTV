@@ -2423,6 +2423,17 @@
         },
         "path": {
           "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "起始行号（从 1 开始）"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "description": "读取行数（单次最多 2000 行、50KB）"
         }
       },
       "required": [
@@ -2457,6 +2468,17 @@
         },
         "path": {
           "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "起始行号（从 1 开始）"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "description": "读取行数（单次最多 2000 行、50KB）"
         }
       },
       "required": [

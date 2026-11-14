@@ -354,7 +354,7 @@ function respondStoreError(res, error) {
   if (['skill_context_revision_conflict','skill_context_request_conflict','skill_scope_reset_pending','skill_context_changed'].includes(error?.reason)) {
     respond(res,409,{code:409,reason:error.reason});return true;
   }
-  if (['invalid_skill_context_action','invalid_skill_context_request','invalid_skill_selection','skill_selection_limit','skill_context_budget_exceeded'].includes(error?.reason)) {
+  if (['invalid_skill_context_action','invalid_skill_context_request','invalid_skill_selection'].includes(error?.reason)) {
     respond(res,400,{code:400,reason:error.reason});return true;
   }
   if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return true; }
