@@ -421,8 +421,6 @@ function alignUploadSettlementPair(
     const keepUploadingManualResize = !hasSettledUploadMedia(baseItem) && Boolean(
         uploadingItem.metadata?.manualSize
         || uploadingItem.metadata?.freeResize
-        || (baseItem?.metadata?.manualSize && uploadingItem.metadata?.manualSize !== false)
-        || (baseItem?.metadata?.freeResize && uploadingItem.metadata?.freeResize !== false)
         || (
             baseItem?.metadata?.fileUpload === "uploading"
             && (uploadingItem.width !== baseItem.width || uploadingItem.height !== baseItem.height)
@@ -438,9 +436,11 @@ function alignUploadSettlementPair(
 
     let resolvedUploadingPos = uploadingItem.position;
     if (keepUploadingManualResize) {
-        const settledLacksManualSize = !settledItem.metadata?.manualSize && !settledItem.metadata?.freeResize;
-        const settledVideoAutoFitOverManual = settledItem.type === "video" && sameNodeCenter(settledItem, baseItem);
-        if (baseItem && (settledLacksManualSize || settledVideoAutoFitOverManual)) {
+        const settledLacksManualSize = (Boolean(uploadingMeta.manualSize) && !settledItem.metadata?.manualSize)
+            || (!settledItem.metadata?.manualSize && !settledItem.metadata?.freeResize);
+        const settledVideoAutoFitOverManual = settledItem.type === "video"
+            && (sameNodeCenter(settledItem, baseItem) || sameNodeCenter(settledItem, uploadingItem));
+        if (settledLacksManualSize || settledVideoAutoFitOverManual) {
             const nextSettledMeta: Record<string, unknown> = { ...(settledNext.metadata as Record<string, unknown>) };
             if (uploadingMeta.manualSize !== undefined) nextSettledMeta.manualSize = uploadingMeta.manualSize;
             if (uploadingMeta.freeResize !== undefined) nextSettledMeta.freeResize = uploadingMeta.freeResize;
@@ -494,6 +494,37 @@ function copyUploadBundleMetadata(source: CanvasNodeData, target: CanvasNodeData
     return { ...target, metadata: nextMeta as CanvasNodeData["metadata"] };
 }
 
+function restorePersistedUploadingManualGeometry(
+    baseItem: CanvasNodeData | undefined,
+    node: CanvasNodeData,
+): CanvasNodeData {
+    if (!baseItem || hasSettledUploadMedia(baseItem) || node.metadata?.fileUpload !== "uploading") {
+        return node;
+    }
+    const missingManualSize = Boolean(baseItem.metadata?.manualSize)
+        && !node.metadata?.manualSize
+        && node.metadata?.manualSize !== false;
+    const missingFreeResize = Boolean(baseItem.metadata?.freeResize)
+        && !node.metadata?.freeResize
+        && node.metadata?.freeResize !== false;
+    if (!missingManualSize && !missingFreeResize) {
+        return node;
+    }
+    const nextMeta: Record<string, unknown> = { ...((node.metadata || {}) as Record<string, unknown>) };
+    if (missingManualSize) nextMeta.manualSize = baseItem.metadata?.manualSize;
+    if (missingFreeResize) nextMeta.freeResize = baseItem.metadata?.freeResize;
+    const restoreBox = missingManualSize || !node.metadata?.manualSize;
+    return {
+        ...node,
+        ...(restoreBox ? {
+            width: baseItem.width,
+            height: baseItem.height,
+            position: baseItem.position,
+        } : {}),
+        metadata: nextMeta as CanvasNodeData["metadata"],
+    };
+}
+
 function mergeCanvasNodeItem(
     baseItem: CanvasNodeData | undefined,
     localItem: CanvasNodeData,
@@ -501,8 +532,8 @@ function mergeCanvasNodeItem(
     conflict: { value: boolean },
 ): CanvasNodeData {
     const baseClean = stripStaleFileUploadMetadata(baseItem);
-    let localNormalized = stripStaleFileUploadMetadata(localItem)!;
-    let remoteNormalized = stripStaleFileUploadMetadata(remoteItem)!;
+    let localNormalized = restorePersistedUploadingManualGeometry(baseClean, stripStaleFileUploadMetadata(localItem)!);
+    let remoteNormalized = restorePersistedUploadingManualGeometry(baseClean, stripStaleFileUploadMetadata(remoteItem)!);
     if (shouldSettleUploadingAgainstSettled(baseClean, localNormalized, remoteNormalized)) {
         const aligned = alignUploadSettlementPair(baseClean, remoteNormalized, localNormalized);
         remoteNormalized = aligned.uploading;
@@ -527,16 +558,12 @@ function mergeCanvasNodeItem(
             }
         } else if (!hasSettledUploadMedia(baseClean) || !sameUploadMediaPayload(baseClean, settledSide)) {
             conflict.value = true;
-            remoteNormalized = {
-                ...copyUploadBundleMetadata(localNormalized, remoteNormalized, UPLOAD_SETTLEMENT_METADATA_KEYS),
-                type: localNormalized.type,
-                width: localNormalized.width,
-                height: localNormalized.height,
-            };
+            remoteNormalized = localNormalized;
         }
     } else if (
         localNormalized.metadata?.fileUpload === "uploading"
         && remoteNormalized.metadata?.fileUpload === "uploading"
+        && sameUploadMediaPayload(localNormalized, remoteNormalized)
     ) {
         const baseProgress = baseClean?.metadata?.fileUploadProgress;
         const localProgress = localNormalized.metadata?.fileUploadProgress;

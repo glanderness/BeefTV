@@ -190,9 +190,17 @@ describe("rebaseCanvasDocumentThreeWay upload settlement", () => {
         const bothDivergedLocalSettled = rebaseCanvasDocumentThreeWay({
             base: project([baseSettledB], 10),
             local: project([settledD], 10),
-            remote: project([{ ...uploadingC, width: 720, height: 405 }], 11),
+            remote: project([{
+                ...uploadingC,
+                title: "other-clip.mp4",
+                position: { x: 300, y: 300 },
+                width: 720,
+                height: 405,
+            }], 11),
         });
         expect(bothDivergedLocalSettled.conflict).toBe(true);
+        expect(bothDivergedLocalSettled.project.nodes[0]?.title).toBe("shot.png");
+        expect(bothDivergedLocalSettled.project.nodes[0]?.position).toEqual({ x: 0, y: 0 });
         expect(bothDivergedLocalSettled.project.nodes[0]?.width).toBe(320);
         expect(bothDivergedLocalSettled.project.nodes[0]?.height).toBe(220);
         expect(bothDivergedLocalSettled.project.nodes[0]?.metadata?.content).toBe("https://example.test/d.png");
@@ -204,9 +212,19 @@ describe("rebaseCanvasDocumentThreeWay upload settlement", () => {
         const bothDivergedLocalUploading = rebaseCanvasDocumentThreeWay({
             base: project([baseSettledB], 10),
             local: project([uploadingC], 10),
-            remote: project([settledD], 11),
+            remote: project([{
+                ...settledD,
+                title: "remote-final.png",
+                position: { x: 300, y: 300 },
+                width: 640,
+                height: 480,
+            }], 11),
         });
         expect(bothDivergedLocalUploading.conflict).toBe(true);
+        expect(bothDivergedLocalUploading.project.nodes[0]?.title).toBe("shot.png");
+        expect(bothDivergedLocalUploading.project.nodes[0]?.position).toEqual({ x: 0, y: 0 });
+        expect(bothDivergedLocalUploading.project.nodes[0]?.width).toBe(320);
+        expect(bothDivergedLocalUploading.project.nodes[0]?.height).toBe(220);
         expect(bothDivergedLocalUploading.project.nodes[0]?.metadata?.content).toBe("https://example.test/c.png");
         expect(bothDivergedLocalUploading.project.nodes[0]?.metadata?.storageKey).toBe("resource:c");
         expect(bothDivergedLocalUploading.project.nodes[0]?.metadata?.status).toBeUndefined();
@@ -375,9 +393,34 @@ describe("rebaseCanvasDocumentThreeWay upload settlement", () => {
         expect(autosavedResizedReverse.project.nodes[0]?.position).toEqual({ x: 80, y: 80 });
         expect(autosavedResizedReverse.project.nodes[0]?.metadata?.manualSize).toBe(true);
         expect(autosavedResizedReverse.project.nodes[0]?.metadata?.status).toBe("success");
+
+        // base 已持久化 500x344+manualSize=true，而 uploading 侧仍是更早的 320x220 无 manualSize 快照：双向保留 500x344+manualSize=true
+        const staleUploadingLocalVsSettled = rebaseCanvasDocumentThreeWay({
+            base: project([resizedImgUploading], 10),
+            local: project([baseImgUploading], 10),
+            remote: project([settledImg], 11),
+        });
+        expect(staleUploadingLocalVsSettled.conflict).toBe(false);
+        expect(staleUploadingLocalVsSettled.project.nodes[0]?.width).toBe(500);
+        expect(staleUploadingLocalVsSettled.project.nodes[0]?.height).toBe(344);
+        expect(staleUploadingLocalVsSettled.project.nodes[0]?.position).toEqual({ x: 80, y: 80 });
+        expect(staleUploadingLocalVsSettled.project.nodes[0]?.metadata?.manualSize).toBe(true);
+        expect(staleUploadingLocalVsSettled.project.nodes[0]?.metadata?.status).toBe("success");
+
+        const settledLocalVsStaleUploadingRemote = rebaseCanvasDocumentThreeWay({
+            base: project([resizedImgUploading], 10),
+            local: project([settledImg], 10),
+            remote: project([baseImgUploading], 11),
+        });
+        expect(settledLocalVsStaleUploadingRemote.conflict).toBe(false);
+        expect(settledLocalVsStaleUploadingRemote.project.nodes[0]?.width).toBe(500);
+        expect(settledLocalVsStaleUploadingRemote.project.nodes[0]?.height).toBe(344);
+        expect(settledLocalVsStaleUploadingRemote.project.nodes[0]?.position).toEqual({ x: 80, y: 80 });
+        expect(settledLocalVsStaleUploadingRemote.project.nodes[0]?.metadata?.manualSize).toBe(true);
+        expect(settledLocalVsStaleUploadingRemote.project.nodes[0]?.metadata?.status).toBe("success");
     });
 
-    test("concurrent uploading placeholders with different fileUploadProgress do not trigger false rebase conflict", () => {
+    test("concurrent uploading placeholders with different fileUploadProgress or stale pre-resize geometry do not lose manual resize or conflict", () => {
         const baseSettled = node("up-prog", "old.png", {
             content: "https://example.test/old.png",
             storageKey: "resource:old",
@@ -406,6 +449,57 @@ describe("rebaseCanvasDocumentThreeWay upload settlement", () => {
         expect(rebased.conflict).toBe(false);
         expect(rebased.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
         expect(rebased.project.nodes[0]?.metadata?.fileUploadProgress).toBe(35);
+
+        const initialUploading = node("up-manual", "pic.png", { fileUpload: "uploading", fileUploadProgress: 20 }, { x: 100, y: 100 });
+        const persistedManualUploading = {
+            ...initialUploading,
+            width: 500,
+            height: 344,
+            position: { x: 80, y: 80 },
+            metadata: { ...initialUploading.metadata, fileUploadProgress: 45, manualSize: true },
+        };
+        const secondManualUploading = {
+            ...persistedManualUploading,
+            width: 640,
+            height: 440,
+            position: { x: 60, y: 60 },
+            metadata: { ...persistedManualUploading.metadata, fileUploadProgress: 75, manualSize: true },
+        };
+
+        const dualUploadingRemoteStale = rebaseCanvasDocumentThreeWay({
+            base: project([persistedManualUploading], 10),
+            local: project([persistedManualUploading], 10),
+            remote: project([initialUploading], 11),
+        });
+        expect(dualUploadingRemoteStale.conflict).toBe(false);
+        expect(dualUploadingRemoteStale.project.nodes[0]?.width).toBe(500);
+        expect(dualUploadingRemoteStale.project.nodes[0]?.height).toBe(344);
+        expect(dualUploadingRemoteStale.project.nodes[0]?.position).toEqual({ x: 80, y: 80 });
+        expect(dualUploadingRemoteStale.project.nodes[0]?.metadata?.manualSize).toBe(true);
+        expect(dualUploadingRemoteStale.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
+
+        const dualUploadingLocalStale = rebaseCanvasDocumentThreeWay({
+            base: project([persistedManualUploading], 10),
+            local: project([initialUploading], 10),
+            remote: project([persistedManualUploading], 11),
+        });
+        expect(dualUploadingLocalStale.conflict).toBe(false);
+        expect(dualUploadingLocalStale.project.nodes[0]?.width).toBe(500);
+        expect(dualUploadingLocalStale.project.nodes[0]?.height).toBe(344);
+        expect(dualUploadingLocalStale.project.nodes[0]?.position).toEqual({ x: 80, y: 80 });
+        expect(dualUploadingLocalStale.project.nodes[0]?.metadata?.manualSize).toBe(true);
+        expect(dualUploadingLocalStale.project.nodes[0]?.metadata?.fileUpload).toBe("uploading");
+
+        const dualUploadingSecondResizeVsStale = rebaseCanvasDocumentThreeWay({
+            base: project([persistedManualUploading], 10),
+            local: project([secondManualUploading], 10),
+            remote: project([initialUploading], 11),
+        });
+        expect(dualUploadingSecondResizeVsStale.conflict).toBe(false);
+        expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.width).toBe(640);
+        expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.height).toBe(440);
+        expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.position).toEqual({ x: 60, y: 60 });
+        expect(dualUploadingSecondResizeVsStale.project.nodes[0]?.metadata?.manualSize).toBe(true);
     });
 
     test("settled base is not wiped or rolled back when the other snapshot still holds a bare initial-upload placeholder", () => {
