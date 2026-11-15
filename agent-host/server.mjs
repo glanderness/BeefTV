@@ -200,7 +200,9 @@ const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
   extensions: () => pluginController.getExtensions(),
   getModels: entry => {
-    const models = createModels(); const provider = modelRuntime.getProvider(PROVIDER_ID);
+    const models = createModels();
+    const provider = modelRuntime?.getProvider(PROVIDER_ID);
+    if (!provider) return models;
     const budgeted = fn => (...args) => {
       if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
       entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
@@ -260,6 +262,10 @@ function currentId(canvasId) {
 }
 function liveEntry(canvasId) {
   return durable.sessions.get(canvasId) || null;
+}
+function isLiveEntryBusy(canvasId) {
+  const entry = liveEntry(canvasId);
+  return Boolean(entry?.busy || entry?.recovering);
 }
 // A conversation of this canvas: a durable session created for it, or one of its legacy sessions.
 function ownsSession(canvasId, sessionId) {
@@ -457,7 +463,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}');
       const canvasId = String(body.canvasId || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      if (liveEntry(canvasId)?.busy) { respond(res,409,{reason:'session_busy'}); return; }
+      if (isLiveEntryBusy(canvasId)) { respond(res,409,{reason:'session_busy'}); return; }
       const entry = await durable.createSession(canvasId);
       respond(res, 200, { sessionId: entry.sessionId });
       return;
@@ -467,11 +473,14 @@ const server = http.createServer(async (req, res) => {
       const canvasId = String(body.canvasId || '').trim();
       const sessionId = String(body.sessionId || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      if (liveEntry(canvasId)?.busy) { respond(res,409,{reason:'session_busy'}); return; }
+      const currentEntry = liveEntry(canvasId);
+      if (currentEntry && currentEntry.sessionId !== sessionId && (currentEntry.busy || currentEntry.recovering)) {
+        respond(res,409,{reason:'session_busy'}); return;
+      }
       if (isDurableSessionId(sessionId)) {
         const entry = await durable.activateSession(canvasId,sessionId);
-        const submission = await durable.recover(entry);
-        if (submission) followDurable(entry,submission);
+        const recovery = await durable.recoverForRead(entry);
+        if (recovery.submission) followDurable(entry,recovery.submission);
         respond(res,200,{sessionId:entry.sessionId}); return;
       }
       // 旧 JSONL 会话只切换当前指针用于读取展示；执行在下一次发消息时交接给新的 Durable 会话。
@@ -486,7 +495,7 @@ const server = http.createServer(async (req, res) => {
       const canvasId = String(body.canvasId || url.searchParams.get('canvasId') || '').trim();
       const sessionId = String(body.sessionId || pathSessionId || url.searchParams.get('sessionId') || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      if (liveEntry(canvasId)?.busy) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
+      if (isLiveEntryBusy(canvasId)) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
       if (isDurableSessionId(sessionId)) {
         await durable.deleteSession(canvasId, sessionId);
       } else {
@@ -528,10 +537,18 @@ const server = http.createServer(async (req, res) => {
         // A live owner of the current session is read as is: polling must not republish the pointer.
         const live = liveEntry(canvasId);
         const entry = live?.sessionId === sessionId ? live : await durable.ensureSession(canvasId,sessionId);
-        const submission = await durable.recover(entry);
-        if (submission) followDurable(entry,submission);
-        await waitForDurableProjection(entry);
+        const recovery = await durable.recoverForRead(entry);
+        if (recovery.submission) {
+          followDurable(entry,recovery.submission);
+          await waitForDurableProjection(entry);
+        } else if (entry.waiters > 0) {
+          await waitForDurableProjection(entry);
+        }
         const value = await durable.history(canvasId,sessionId);
+        if (recovery.unresumableTurn && value.active?.requestId === recovery.unresumableTurn.requestId) {
+          value.turns = [...value.turns, recovery.unresumableTurn];
+          value.active = null;
+        }
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
         if (value.active && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
         // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。

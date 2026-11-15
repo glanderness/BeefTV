@@ -56,6 +56,14 @@ const fail = (reason) => Object.assign(new Error(reason), { reason });
 const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
 export const isDurableSessionId = (id) => idPattern.test(String(id || ''));
 
+export function isSkippableSessionError(error) {
+  if (error instanceof SyntaxError) return true;
+  if (['ENOENT', 'EACCES', 'EPERM', 'EISDIR'].includes(error?.code)) return true;
+  if (['durable_version_mismatch', 'session_not_found', 'corrupt_session_manifest'].includes(error?.reason)) return true;
+  const detail = `${error?.code || ''} ${error?.message || ''}`;
+  return /SQLITE_(?:CORRUPT|NOTADB|CANTOPEN|IOERR_SHORT_READ)|not a database|database disk image is malformed|corrupt/i.test(detail);
+}
+
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, authorizeContinuation = null, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
   extensions = () => [], settings = {}, skills = null, readCanvas = null, maxPlanContinuations = 6, thinkingLevel = agentThinkingLevel() }) {
@@ -249,7 +257,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     fs.mkdirSync(cwd, { recursive: true });
     const entry = { kind: 'durable', canvasId, sessionId, identity: { prefix: sessionId, source: 'durable-session-id' },
       log: [], generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0 }, turn: newTurnAccumulator(), busy: false, persistence: 'restored',
-      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {}, waiters: 0, recovering: null, submittedRequest: null };
+      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {}, waiters: 0, recovering: null, submittedRequest: null, admittedInProcess: null };
     fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
     const registry = createRegistry();
     entry.generation.persistEffects = () => persistEffects(entry);
@@ -282,8 +290,12 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         afterFailedRun: 'continue', toolExecution: 'sequential', steeringMode: 'all', ...settings },
     }, CTX);
     try {
+      const configuredModel = await getModelRef(entry);
+      const initialModel = configuredModel?.provider && configuredModel?.modelId
+        ? configuredModel
+        : { provider: configuredModel?.provider || 'beeftv', modelId: 'unconfigured' };
       entry.root = await entry.harness.root(CTX, {
-        agent: { model: await getModelRef(entry), tools, instructions: SYSTEM_PROMPT, thinkingLevel, cwd },
+        agent: { model: initialModel, tools, instructions: SYSTEM_PROMPT, thinkingLevel, cwd },
         // 固定官方 provider 身份为 Durable 会话 ID，使缓存亲和性跨重启保持稳定。
         init: async (tx, id) => { (await tx.doc(ProviderDoc, id)).sessionId = sessionId; },
       });
@@ -340,9 +352,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     entry.persistence = created ? 'created' : 'restored';
     return entry;
   }
+  const isEntryBusy = (entry) => Boolean(entry?.busy || entry?.recovering);
   async function createSession(canvasId) {
     return lock(canvasId, async () => {
-      if (sessions.get(canvasId)?.busy) throw fail('session_busy');
+      if (isEntryBusy(sessions.get(canvasId))) throw fail('session_busy');
       return install(await prepareSession(canvasId));
     });
   }
@@ -350,7 +363,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function handoffSession(canvasId, handoffNote = '', handoffSourceId = '') {
     return lock(canvasId, async () => {
       const current = sessions.get(canvasId);
-      if (current?.busy) throw fail('session_busy');
+      if (isEntryBusy(current)) throw fail('session_busy');
       const entry = await prepareSession(canvasId, handoffSourceId);
       if (!(await state(entry)).handoffInitialized) {
         try {
@@ -367,7 +380,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return lock(canvasId, async () => {
       const previous = sessions.get(canvasId);
       if (previous?.sessionId === sessionId) { publish(previous); return previous; }
-      if (previous?.busy) throw fail('session_busy');
+      if (isEntryBusy(previous)) throw fail('session_busy');
       const entry = await open(canvasId, sessionId);
       return install(entry);
     });
@@ -397,15 +410,32 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       return install(await open(canvasId, sessionId));
     });
   }
-  async function submit(entry, input) {
-    return lock(entry.canvasId, async () => {
+  async function submit(entry, input, { fromRecovery = false } = {}) {
+    if (!fromRecovery && !input.continuationId && entry.recovering) {
+      await entry.recovering.catch(() => null);
+    }
+    let pendingStaleComplete = null;
+    try {
+      return await lock(entry.canvasId, async () => {
       // Automatic work must never activate an old conversation. The same lock
       // serializes explicit session changes and this final admission.
       if (input.continuationId && sessions.get(entry.canvasId) !== entry) throw fail('session_not_current');
-      const existing = await state(entry);
+      let existing = await state(entry);
       const requestId = String(input.requestId || input.turnId || '').trim();
       if (!requestId || !input.turnId || !input.content) throw fail('invalid_request');
-      if (existing.active && existing.active.requestId !== requestId) throw fail('session_busy');
+      if (fromRecovery && (!existing.active || existing.active.requestId !== requestId)) {
+        return null;
+      }
+      if (existing.active && existing.active.requestId !== requestId) {
+        const ownedByProcess = entry.waiters > 0
+          || Boolean(entry.running)
+          || Boolean(entry.submittedRequest)
+          || entry.admittedInProcess === existing.active.requestId
+          || Boolean(entry.recovering);
+        if (ownedByProcess || input.continuationId) throw fail('session_busy');
+        pendingStaleComplete = await settleUnresumableTurnLocked(entry, existing.active.requestId);
+        existing = await state(entry);
+      }
       const finished = existing.turns.find((turn) => turn.requestId === requestId);
       if (finished) {
         if (JSON.stringify(skillsToLoad(finished.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || []))) throw fail('submission_request_conflict');
@@ -434,55 +464,66 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         return existing.active ? stoppedRequest(entry, existing.active)
           : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
       }
-      if (!existing.active) {
-        if (skills) {
-          await flushPendingSkillRollback(entry);
-          await resetPendingScope(entry, await readSkillContext(entry, input.turnId));
+      try {
+        if (!existing.active) {
+          if (skills) {
+            await flushPendingSkillRollback(entry);
+            await resetPendingScope(entry, await readSkillContext(entry, input.turnId));
+          }
+          entry.budget = null;
+          resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
+          entry.turn.canvasId=entry.canvasId;
+          entry.turn.supplements = [];
+          entry.turn.plan = publicPlan((await state(entry)).plan);
+          entry.log.length = 0;
+          entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0, unboundReminderSent: false });
+          entry.submittedRequest = null;
+          const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
+          const studioDiff = await refreshStudioDigest(entry, input.turnId, { selectedNodeIds: input.selectedNodeIds || [], computeDiff: true });
+          const submittedContent = prependStudioChanges(expansion.content, studioDiff);
+          await update(entry, (doc) => {
+            // content stays the client's own input (idempotency and history);
+            // submittedContent is what the transcript receives, skills included.
+            doc.active = { ...input, requestId, createdAt: new Date().toISOString(), stopped: false,
+              effects: JSON.parse(JSON.stringify(entry.turn)), log: [], supplements: [], intentEpoch: 0, modelEpoch: 0,
+              ...(publicPlan(doc.plan) ? { plan: publicPlan(doc.plan) } : {}),
+              ...((expansion.records.length || studioDiff) ? { submittedContent } : {}) };
+            if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
+          });
         }
-        entry.budget = null;
-        resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
-        entry.turn.canvasId=entry.canvasId;
-        entry.turn.supplements = [];
-        entry.turn.plan = publicPlan((await state(entry)).plan);
-        entry.log.length = 0;
-        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0, unboundReminderSent: false });
-        entry.submittedRequest = null;
-        const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
-        const studioDiff = await refreshStudioDigest(entry, input.turnId, { selectedNodeIds: input.selectedNodeIds || [], computeDiff: true });
-        const submittedContent = prependStudioChanges(expansion.content, studioDiff);
-        await update(entry, (doc) => {
-          // content stays the client's own input (idempotency and history);
-          // submittedContent is what the transcript receives, skills included.
-          doc.active = { ...input, requestId, createdAt: new Date().toISOString(), stopped: false,
-            effects: JSON.parse(JSON.stringify(entry.turn)), log: [], supplements: [], intentEpoch: 0, modelEpoch: 0,
-            ...(publicPlan(doc.plan) ? { plan: publicPlan(doc.plan) } : {}),
-            ...((expansion.records.length || studioDiff) ? { submittedContent } : {}) };
-          if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
-        });
-      }
-      const prepared = await state(entry);
-      if (stopIntended(entry, prepared, requestId)) return stoppedRequest(entry, prepared.active);
-      await activateTurnSkills(entry);
-      const current = await state(entry);
-      const admitted = current.active;
-      hydrate(entry, admitted);
-      // The reset above must not swallow a Stop sent while this request was being prepared.
-      // Checked synchronously before the official submit; a later Stop finds it running.
-      if (stopIntended(entry, current, requestId)) return stoppedRequest(entry, admitted);
-      if (input.continuationId) {
-        if (!authorizeContinuation) throw fail('continuation_unavailable');
-        try { await authorizeContinuation({id:input.continuationId,turnId:admitted.turnId,sessionId:entry.sessionId}); }
-        catch (error) {
-          if (continuationRevoked(error)) return stoppedRequest(entry, admitted);
-          throw error;
+        entry.admittedInProcess = requestId;
+        const prepared = await state(entry);
+        if (stopIntended(entry, prepared, requestId)) return stoppedRequest(entry, prepared.active);
+        await activateTurnSkills(entry);
+        const current = await state(entry);
+        const admitted = current.active;
+        hydrate(entry, admitted);
+        // The reset above must not swallow a Stop sent while this request was being prepared.
+        // Checked synchronously before the official submit; a later Stop finds it running.
+        if (stopIntended(entry, current, requestId)) return stoppedRequest(entry, admitted);
+        if (input.continuationId) {
+          if (!authorizeContinuation) throw fail('continuation_unavailable');
+          try { await authorizeContinuation({id:input.continuationId,turnId:admitted.turnId,sessionId:entry.sessionId}); }
+          catch (error) {
+            if (continuationRevoked(error)) return stoppedRequest(entry, admitted);
+            throw error;
+          }
+          if (stopIntended(entry, await state(entry), requestId)) return stoppedRequest(entry, admitted);
         }
-        if (stopIntended(entry, await state(entry), requestId)) return stoppedRequest(entry, admitted);
+        const official = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
+        entry.submittedRequest = requestId;
+        await update(entry, (doc) => { if (doc.active) doc.active.submissionId = official.id; });
+        return official;
+      } catch (error) {
+        if (entry.admittedInProcess === requestId && !entry.submittedRequest) entry.admittedInProcess = null;
+        throw error;
       }
-      entry.submittedRequest = requestId;
-      const submission = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
-      await update(entry, (doc) => { if (doc.active) doc.active.submissionId = submission.id; });
-      return submission;
-    });
+      });
+    } finally {
+      if (pendingStaleComplete) {
+        await completeTurn(pendingStaleComplete).catch(() => {});
+      }
+    }
   }
   async function officialSubmission(entry, requestId) {
     const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, requestId), CTX);
@@ -511,7 +552,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     }
     return null;
   }
-  const { stoppedRequest, settleLocal, recover, wait, fenceStop, stop } = createDurableTurnLifecycle({
+  const { stoppedRequest, settleLocal, recover, recoverForRead, settleUnresumableTurnLocked, wait, fenceStop, stop } = createDurableTurnLifecycle({
     stateDoc: STATE,
     state,
     update,
@@ -519,7 +560,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     hydrate,
     authorization,
     turnModel,
-    submit: (entry, active) => submit(entry, active),
+    submit: (entry, active, opts) => submit(entry, active, opts),
     officialSubmission,
     stopBeforeSubmit,
     undoUnsubmittedSkills,
@@ -714,10 +755,18 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (!fs.existsSync(dir)) return [];
     const out = [];
     for (const name of fs.readdirSync(dir).filter((file) => /^[a-f0-9-]{36}\.json$/.test(file))) {
-      const info = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
-      const value = await history(canvasId, info.sessionId);
-      out.push({ sessionId: info.sessionId, kind: 'durable', title: sessionTitle(value.turns),
-        updatedAt: value.turns.at(-1)?.createdAt || info.createdAt, turnCount: value.turns.length });
+      try {
+        const info = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+        if (!info || typeof info !== 'object' || !isDurableSessionId(info.sessionId)) {
+          throw fail('corrupt_session_manifest');
+        }
+        const value = await history(canvasId, info.sessionId);
+        out.push({ sessionId: info.sessionId, kind: 'durable', title: sessionTitle(value.turns),
+          updatedAt: value.turns.at(-1)?.createdAt || info.createdAt || '', turnCount: value.turns.length });
+      } catch (error) {
+        if (!isSkippableSessionError(error)) throw error;
+        console.error(`agent-host: 跳过损坏的历史会话 ${name}: ${error?.reason || error?.message || error}`);
+      }
     }
     return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -725,7 +774,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return lock(canvasId, async () => {
       if (!isDurableSessionId(sessionId) || !hasSession(canvasId, sessionId)) throw fail('session_not_found');
       const current = sessions.get(canvasId);
-      if (current?.busy) throw fail('session_busy');
+      if (isEntryBusy(current)) throw fail('session_busy');
       const uuid = idPattern.exec(sessionId)[1];
       const dir = durableDirectory(canvasId);
       if (current?.sessionId === sessionId) {
@@ -764,6 +813,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     for (const entry of entries) await entry.harness.close(CTX);
     return entries.length;
   }
-  return { sessions, createSession, handoffSession, activateSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, supplement, beginPendingInput, fenceStop, wait,
+  return { sessions, createSession, handoffSession, activateSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,
     stop, cancelRequest, hasSession, history, status, recordEvent, listCanvasSessions, reloadPluginExtensions, disposeAll, skillContext, changeSkillContext };
 }

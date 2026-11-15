@@ -390,8 +390,18 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
     }
 }
 
+/**
+ * 与后端 agent_proxy 超时预算匹配，避免默认 4s 请求超时误报「没能读取对话」：
+ * - 状态查询：探测 + 宿主冷启动宽限（20s + 3s）-> 25s
+ * - 会话/历史只读：宿主冷启动（20s）+ 代理读取（30s）-> 55s
+ * - 会话切换/创建/删除/重启：停止延续任务（30s）+ 宿主转发（30s）-> 65s
+ */
+export const ASSISTANT_STATUS_TIMEOUT_MS = 25_000;
+export const ASSISTANT_READ_TIMEOUT_MS = 55_000;
+export const ASSISTANT_MUTATION_TIMEOUT_MS = 65_000;
+
 export async function getAgentHostStatus(): Promise<AgentHostStatus> {
-    const data = await http.get<AgentHostStatus>("/assistant/status");
+    const data = await http.get<AgentHostStatus>("/assistant/status", { timeout: ASSISTANT_STATUS_TIMEOUT_MS });
     return data;
 }
 
@@ -401,24 +411,32 @@ async function uiSessionConfig() {
     return { headers: { "X-Beeftv-Ui-Session": token } };
 }
 
+async function assistantReadConfig() {
+    return { ...(await uiSessionConfig()), timeout: ASSISTANT_READ_TIMEOUT_MS };
+}
+
+async function assistantMutationConfig() {
+    return { ...(await uiSessionConfig()), timeout: ASSISTANT_MUTATION_TIMEOUT_MS };
+}
+
 /** 重新拉起助手运行环境。失败必须抛出，界面才不会把「没启动」显示成「已就绪」。 */
 export async function restartAgentHost(): Promise<void> {
-    await http.post<{ restarted: boolean }>("/assistant/host/restart", {}, await uiSessionConfig());
+    await http.post<{ restarted: boolean }>("/assistant/host/restart", {}, await assistantMutationConfig());
 }
 
 /** 读取失败必须与空历史区分，由界面保留原内容并提供重新读取。 */
 export async function listAssistantSessions(canvasId: string): Promise<AssistantSessionList> {
-    return http.get<AssistantSessionList>(`/assistant/sessions?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
+    return http.get<AssistantSessionList>(`/assistant/sessions?canvasId=${encodeURIComponent(canvasId)}`, await assistantReadConfig());
 }
 
 export async function createAssistantSession(canvasId: string): Promise<string | null> {
-    const data = await http.post<{ sessionId: string }>("/assistant/sessions", { canvasId }, await uiSessionConfig());
+    const data = await http.post<{ sessionId: string }>("/assistant/sessions", { canvasId }, await assistantMutationConfig());
     if (!data?.sessionId) throw new Error("没能新建对话，请重试");
     return data.sessionId;
 }
 
 export async function activateAssistantSession(canvasId: string, sessionId: string): Promise<string | null> {
-    const data = await http.post<{ sessionId: string }>("/assistant/sessions/activate", { canvasId, sessionId }, await uiSessionConfig());
+    const data = await http.post<{ sessionId: string }>("/assistant/sessions/activate", { canvasId, sessionId }, await assistantMutationConfig());
     if (!data?.sessionId) throw new Error("没能切换对话，请重试");
     return data.sessionId;
 }
@@ -430,14 +448,14 @@ export async function deleteAssistantSession(canvasIdOrSessionId: string, maybeS
     const query = canvasId ? `?canvasId=${encodeURIComponent(canvasId)}` : "";
     return http.delete<{ deleted: boolean; sessionId: string; currentSessionId: string | null }>(
         `/assistant/sessions/${encodeURIComponent(sessionId)}${query}`,
-        await uiSessionConfig(),
+        await assistantMutationConfig(),
     );
 }
 
 export async function getAssistantHistory(canvasId: string, sessionId?: string): Promise<AssistantHistory> {
     const query = new URLSearchParams({ canvasId });
     if (sessionId) query.set("sessionId", sessionId);
-    const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
+    const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await assistantReadConfig());
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
     return { sessionId: data.sessionId || sessionId || "", active: data.active, plan: data.plan ?? null, turns: data.turns.map((turn) => ({
         ...turn,

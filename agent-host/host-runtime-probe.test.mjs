@@ -4,6 +4,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { newTurnAccumulator } from './canvas-turn.mjs';
+import { isSkippableSessionError } from './durable-session-owner.mjs';
+import { createDurableTurnLifecycle } from './durable-watch-observer.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let receipt;
@@ -24,6 +27,8 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     'new-turn-after-budget-exhaustion-still-works',
     'asset-tool-does-not-inject-unknown-canvasId',
     'explicit-reference-canvas-can-reach-backend-read-guard',
+    'history-and-sessions-survive-unresumable-turn-and-corrupt-manifest',
+    'transient-frozen-model-resumes-when-restored-and-allows-continue-when-superseded',
   ]) {
     test(name, () => {
       const result = receipt.results.find((item) => item.name === name);
@@ -31,4 +36,196 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       expect(result.passed, result.error).toBe(true);
     });
   }
+
+  test('isSkippableSessionError classifies corrupt session artifacts without swallowing unexpected errors', () => {
+    expect(isSkippableSessionError(new SyntaxError('Unexpected token'))).toBe(true);
+    for (const code of ['ENOENT', 'EACCES', 'EPERM', 'EISDIR']) {
+      expect(isSkippableSessionError(Object.assign(new Error(code), { code }))).toBe(true);
+    }
+    for (const reason of ['corrupt_session_manifest', 'durable_version_mismatch', 'session_not_found']) {
+      expect(isSkippableSessionError(Object.assign(new Error(reason), { reason }))).toBe(true);
+    }
+    expect(isSkippableSessionError(Object.assign(new Error('SQLITE_NOTADB: file is not a database'), { code: 'ERR_SQLITE_ERROR' }))).toBe(true);
+    expect(isSkippableSessionError(Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' }))).toBe(true);
+    expect(isSkippableSessionError(new RangeError('unexpected programming bug'))).toBe(false);
+    expect(isSkippableSessionError(Object.assign(new Error('out of memory'), { code: 'ENOMEM' }))).toBe(false);
+  });
+
+  test('recoverForRead settle race does not abort or settle a newer turn started before lock acquisition', async () => {
+    let doc = {
+      active: { requestId: 'req-A', turnId: 'turn-A', stopped: false },
+      turns: [],
+      stopRequests: [],
+    };
+    let aborts = 0;
+    let lockQueue = Promise.resolve();
+    const lock = (_canvasId, fn) => {
+      const run = lockQueue.then(fn, fn);
+      lockQueue = run.catch(() => {});
+      return run;
+    };
+    let releaseAuthA;
+    const authGate = new Promise((resolve) => { releaseAuthA = resolve; });
+    const entry = {
+      canvasId: 'race-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000001',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: {
+        id: 'root-1',
+        abort: async () => { aborts += 1; },
+      },
+      harness: {
+        commit: async () => null,
+      },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => doc,
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock,
+      hydrate: () => {},
+      authorization: async (_entry, turnId) => {
+        if (turnId === 'turn-A') {
+          await authGate;
+          throw Object.assign(new Error('turn_not_open'), { reason: 'turn_not_open' });
+        }
+        return { open: true };
+      },
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => null,
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+
+    const readPromise = lifecycle.recoverForRead(entry);
+    // Simulate concurrent request settling req-A and admitting req-B while lock is held right as authGate rejects.
+    const concurrentTurnB = lock('race-canvas', async () => {
+      doc.turns = [{ requestId: 'req-A', turnId: 'turn-A', errorReason: 'turn_interrupted' }];
+      doc.active = { requestId: 'req-B', turnId: 'turn-B', stopped: false };
+      entry.submittedRequest = 'req-B';
+      entry.busy = true;
+      releaseAuthA();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await Promise.all([readPromise, concurrentTurnB]);
+    expect(aborts).toBe(0);
+    expect(doc.active?.requestId).toBe('req-B');
+    expect(doc.turns.map((t) => t.requestId)).toEqual(['req-A']);
+    expect(entry.busy).toBe(true);
+    expect(entry.submittedRequest).toBe('req-B');
+  });
+
+  test('recoverForRead treats model_not_configured as transient without mutating active on disk', async () => {
+    const doc = {
+      active: { requestId: 'req-no-model', turnId: 'turn-no-model', content: [{ type: 'text', text: 'hi' }], stopped: false },
+      turns: [],
+      stopRequests: [],
+    };
+    const entry = {
+      canvasId: 'no-model-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000002',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      admittedInProcess: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: { id: 'root-2', abort: async () => {} },
+      harness: { commit: async () => null },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => doc,
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: true }),
+      turnModel: async () => { throw Object.assign(new Error('model_not_configured'), { reason: 'model_not_configured' }); },
+      submit: async () => null,
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+    const res = await lifecycle.recoverForRead(entry);
+    expect(res.submission).toBeNull();
+    expect(res.unresumableReason).toBe('model_not_configured');
+    expect(res.unresumableTurn?.errorReason).toBe('turn_interrupted');
+    expect(doc.active?.requestId).toBe('req-no-model');
+    expect(entry.busy).toBe(false);
+  });
+
+  test('in-flight recoverOnce re-checks active after authorization and never resurrects a settled turn', async () => {
+    const doc = {
+      active: { requestId: 'req-A', turnId: 'turn-A', stopped: false },
+      turns: [],
+      stopRequests: [],
+    };
+    let submitCalls = 0;
+    let releaseAuthA;
+    const authGate = new Promise((resolve) => { releaseAuthA = resolve; });
+    const entry = {
+      canvasId: 'recover-race-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000003',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      admittedInProcess: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: { id: 'root-3', abort: async () => {} },
+      harness: { commit: async () => null },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => doc,
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => {
+        await authGate;
+        return { open: true };
+      },
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => { submitCalls += 1; return { id: 'sub' }; },
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+    const recovering = lifecycle.recoverForRead(entry);
+    // While recoverOnce is paused in authorization, req-A is settled and req-B becomes active in this process.
+    doc.turns = [{ requestId: 'req-A', turnId: 'turn-A', errorReason: 'turn_interrupted' }];
+    doc.active = { requestId: 'req-B', turnId: 'turn-B', stopped: false };
+    entry.admittedInProcess = 'req-B';
+    releaseAuthA();
+    const res = await recovering;
+    expect(res).toEqual({ submission: null, unresumableReason: null, unresumableTurn: null });
+    expect(submitCalls).toBe(0);
+    expect(doc.active?.requestId).toBe('req-B');
+  });
 });
