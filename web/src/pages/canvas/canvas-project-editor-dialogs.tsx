@@ -21,7 +21,7 @@ import { CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
 import { CanvasNodeSearchModal } from "@/components/canvas/canvas-node-search-modal";
 import { CanvasPanoramaConfigModal, type PanoramaGenerateConfig } from "@/components/canvas/canvas-panorama-config-modal";
 import { CanvasProjectAssetModal } from "@/components/canvas/canvas-project-asset-modal";
-import { CanvasScriptEditor } from "@/components/canvas/canvas-script-node";
+import { CanvasScriptEditor } from "@/components/canvas/canvas-script-editor";
 import { CanvasStylePickerModal } from "@/components/canvas/canvas-style-picker-modal";
 import { CanvasSubtitleDialog } from "@/components/canvas/canvas-subtitle-dialog";
 import { CanvasTextEditorModal } from "@/components/canvas/canvas-text-editor-modal";

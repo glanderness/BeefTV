@@ -2,6 +2,7 @@ import type { AiConfig, ModelChannel, ModelCapability } from "@/stores/use-confi
 import { createModelChannel } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig, hasUserModelCapability } from "@/lib/model-capabilities";
 import { inferProtocolCapabilityFromModel, modelProtocolDefinition, modelProtocolDefinitionFor, type ModelProtocolDefinition } from "@/lib/model-protocols";
+import { cleanChannelBaseUrl, isRawChannelBaseUrl } from "@/lib/channel-url";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { serviceCredentialGuide } from "@/lib/service-credentials";
 import { BUILTIN_PRESETS, COMPATIBLE_CANDIDATES, builtinPreset, builtinProtocolsAvailable, upgradeBuiltinModelProfile } from "@/lib/builtin-service-presets";
@@ -216,7 +217,9 @@ export function serviceConnectionError(channel: ModelChannel, options?: { protoc
         } catch { return "请填写完整的素材服务地址"; }
     }
     try {
-        const url = new URL(channel.baseUrl.trim());
+        const rawBaseUrl = channel.baseUrl.trim();
+        const targetBaseUrl = isRawChannelBaseUrl(rawBaseUrl) ? cleanChannelBaseUrl(rawBaseUrl) : rawBaseUrl;
+        const url = new URL(targetBaseUrl);
         if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return "请填写不含账号、查询参数或片段的 HTTP(S) 服务地址";
         if (/\/(chat\/completions|responses|images\/generations|models)\/?$/i.test(url.pathname)) return "请填写服务的基础地址，不要包含模型或生成接口路径";
     } catch { return "请填写完整的服务地址，例如 https://api.example.com/v1"; }

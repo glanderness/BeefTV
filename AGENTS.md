@@ -53,6 +53,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 ### 插件和文档
 
+- 宿主内核只承载通用工作区、画布基础交互与渲染修复；自带密钥的第三方或本地模型协议统一通过 `registerModelProtocol` 放进 `plugin-packages/`，专用创作流程做成插件槽位或节点扩展，不塞进宿主主干，也不在客户端内联复制服务端预设配置副本或绑定特定上游网关名称。
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
 
 ## 4. 前端 API 和状态合同
@@ -69,6 +70,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 - OpenAPI 3.0 在 `GET /api/openapi.yaml`。不要从规范生成 TypeScript 客户端来替换 `http` 模块。
 - API 模块定义并导出接口类型；页面和 React Query 直接接收解包后的 `data`，不重复访问 `.data.data`。
 - 查询参数使用 `compactApiParams` / `serializeApiParams`；取消请求传递 `AbortSignal` 并保留取消语义。
+- 后端已提供分页、筛选或分类统计接口时，筛选条件、关键词匹配与分类计数必须在后端 SQL 查询阶段先过滤再分页；禁止前端循环翻页拉全表做内存假分页，禁止把业务对象或 `metadata` 直接 `JSON.stringify` 做文本搜索。
 - `FormData` 不手动设置 `Content-Type`，让 Axios 生成 boundary。写路径失败必须向上抛出，不能 `catch { return defaultValue }`。
 
 ### 模型渠道和流式请求
@@ -84,6 +86,8 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 - 画布、项目、任务、素材和大 JSON 使用按工作区命名空间区分的 `localforage`；`localStorage` 只保存小型配置、当前命名空间或 UI 偏好。命名空间（`getActiveUserScope` / `scopedStorageKey`）只用于区分本地存储，改动会让用户读不到已有数据。
 - BeefTV 不管账号：每个后端进程只服务一个本地工作区，运行中不会切换。账号、登录、钱包、余额和扣费归服务端 API；BeefTV 只记当前服务端连接，切换连接时刷新模型能力目录。不要为"异步操作期间切换账号"加保护或测试；异步写回只需核对画布、项目、节点是否仍是原目标。
+- 任务状态与可操作动作（重试、继续取回、失败原因）只认后端 `task.outcome`（`phase`、`regenerate`、`reason`），前端不自行拼凑覆盖。重新生成节点即使保留上一次成功媒体，只要最新任务处于可继续取回态，仍按最新 `task.outcome` 展示继续取回；继续取回只恢复原 `taskId` 轮询与结果入库，不重复发起上游扣费提交。
+- 任务本地权威输出字段（如 `task.outputs[].resourceId`、`storageKey`、`mimeType`）必须在统一解析入口（`parseBackendGenerationResult`）合并进媒体条目，确保生成历史预览、节点回填与插入画布读取同一套媒体源，不在局部按钮分支打补丁。
 - 后端不可用时的本地缓存是降级，不代表服务端已保存。UI 必须区分“本地缓存成功”和“服务端持久化成功”。
 - 生成、激活、审批、权限、删除、上传、配额、账务和密钥相关操作属于强校验写路径；不使用空 ID、默认用户、默认权限或默认额度兜底。
 - 素材删除必须先检查项目、画布、任务和其他业务引用；有引用则保留并返回来源，无引用才清理物理对象。物理删除失败不得删除素材记录。
@@ -91,6 +95,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 ## 5. 后端响应、权限和安全
 
 - Gin 接口统一返回 `{ code, data, msg, reason }`；失败时 HTTP status 和业务 `code` 都应表达真实失败，不把所有错误包装成 200。机器可读原因放在 `reason`，见 `docs/content/docs/backend/http-api.mdx`。
+- 对用户可自行修正的参数、参考素材或审核报错，服务端 API 洗去内部地址、密钥与请求号后须透传具体原因（多参考素材请求须标明第几张，如 `第 3 张参考图（@图片3）`），客户端原样展示，不用笼统的“提交失败，请稍后重试”掩盖真实原因。
 - 所有对象读取、更新、删除都在 service 校验当前用户和资源归属；管理员权限在 service 校验，不依赖前端隐藏按钮。
 - 默认开放本机回环（`localhost` / `127.0.0.1` / `::1`）和局域网私网模型上游，仅拦截链路本地（`169.254.0.0/16` 等）、未指定与多播地址；需要严格公网隔离的部署可显式设置 `CANVAS_ALLOW_PRIVATE_UPSTREAMS=false` 并通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行。
 - 用户 API Key 保存在浏览器本地，任务创建时可能提交给自部署后端；只在可信部署和 HTTPS 下使用真实密钥。日志、错误上报、URL、localStorage 和持久任务正文不得写入敏感 URL、Cookie 或 API Key。
@@ -170,8 +175,8 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 - 不新增按模型名写的规则。内置渠道的差异交给服务端 API；自带 Key 的第三方渠道写成协议插件（`plugin-packages/`）。
 - 新代码不放进 `backend/internal/app`，放到对应领域包；新包不得 import `internal/app`。
 - 已发布的数据库迁移版本不改，只追加新版本。
-- 测试测行为，不读源码文字做断言。
-- 修 bug 前先查这条规则写在几处；有多处就先合成一处再修。
-- 文件超过约 800 行且最近常改、常修时，在本次改动里按职责拆开；不为拆而拆。
-- `node scripts/structure-budget.mjs` 记录几项结构数字：`internal/app` 行数、超过 1000 行的文件（含 CSS）、源码里写死的模型和厂商名、直接依赖 `*app.Service` 的 handler、读源码文字的测试。CI 只允许它们变小；确需变大时在 PR 说明里写清理由，再运行 `--update`。同一轮也运行 `node scripts/deadcode-budget.mjs`，死代码只许减少，确需增加时在 PR 说明理由，不能直接更新基线。
-- 每周花半小时铲屎：运行 `node scripts/structure-budget.mjs --hotspots 7` 看近 7 天修 bug 最集中的文件，挑一处拆开或合并规则，再运行 `--update` 收紧基线；发版前关掉已经过时的 PR。
+- 测试测行为，不读源码文字做断言。按职责拆分大文件时保持外部行为不变，遇到阻碍正常拆分的旧读源码文本断言测试应直接删除或改为真实行为测试；禁止把已知视觉或渲染缺陷（如深色底深色图标、零尺寸元素）写进测试基线或快照锁死。
+- 修 bug 前先查这条规则写在几处；有多处就先合成一处再修。历史预览、节点渲染与插入画布等同一业务的多个入口必须走同一解析或过滤函数。
+- 文件超过约 800 行且最近常改、常修时，在本次改动里按职责拆开；不为拆而拆，不为凑旧行数把正常多行代码压成单行。
+- `node scripts/structure-budget.mjs` 守住两类规则：① **只降不升预算**（`backend/internal/app` 非测试行数、直接依赖 `*app.Service` 的 handler 数、读源码文字断言的测试数、存量 `>1000` 行大文件白名单；存量文件修 bug 不锁死逐行数字，但严禁新增 `>1000` 行大文件，且 `--update` 默认只允许收紧已减小的指标）；② **零容忍红线**（禁止 `web/test/` 下出现 `>500` 行或 `>64KB` 的超大测试 JSON 夹具、禁止 `web/src/pages/dev/` 下放置未从应用路由入口可达的孤立文件、禁止业务代码用 `JSON.stringify` 做文本搜索筛选）。后端改动同步运行 `node scripts/deadcode-budget.mjs`，死代码只减不增。
+- 每周花半小时铲屎：运行 `node scripts/structure-budget.mjs --hotspots 7` 看近 7 天修 bug 最集中的文件，挑一处拆开或合并规则，再运行 `--update` 收紧白名单；发版前关掉已经过时的 PR。

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/kernel"
 )
 
@@ -77,7 +78,7 @@ func NormalizeCatalogAPIFormat(apiFormat string) (string, error) {
 
 // CatalogBaseURL 是读取模型目录前对 Base URL 的整理；设置页展示目录地址也先过这一步。
 func CatalogBaseURL(baseURL string) string {
-	return strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return channelurl.NormalizeBase(baseURL)
 }
 
 func ValidateCatalogRequest(baseURL, apiKey, apiFormat string) (string, string, string, error) {

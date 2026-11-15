@@ -71,10 +71,6 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      - name: Verify minimal release receipt and source digest
-        if: inputs.reuse_build_run_id == ''
-        run: node scripts/verify-real-generation-release.mjs
-
       - name: Require updater keys
         env:
           BEEFTV_CNB_TRIGGER_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN }}

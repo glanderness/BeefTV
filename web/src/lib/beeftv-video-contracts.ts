@@ -1,3 +1,5 @@
+import { cleanChannelBaseUrl, isRawChannelBaseUrl } from "@/lib/channel-url";
+
 type VideoContract = {
     models: string[];
     allowSuffix: boolean;
@@ -102,7 +104,8 @@ const contracts: VideoContract[] = [
 
 export function isBeefTVEndpoint(baseUrl: string): boolean {
     try {
-        const url = new URL(baseUrl.trim());
+        const trimmed = baseUrl.trim();
+        const url = new URL(isRawChannelBaseUrl(trimmed) ? cleanChannelBaseUrl(trimmed) : trimmed);
         return url.protocol === "https:" && url.hostname === "beeftv.app" && !url.username && !url.password && (!url.port || url.port === "443");
     } catch { return false; }
 }

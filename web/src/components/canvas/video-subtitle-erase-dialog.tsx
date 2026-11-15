@@ -219,13 +219,13 @@ export function CanvasVideoSubtitleEraseDialog({
                 .then((cached) => {
                     if (cancelled) return;
                     if (cached) setVideoUrl(cached);
-                    else void resolveMediaUrl(nodeStorageKey, nodeContent).then(applyUrl);
+                    else void resolveMediaUrl(nodeStorageKey, nodeContent, { renderable: true }).then(applyUrl);
                 })
                 .catch(() => {
-                    if (!cancelled) void resolveMediaUrl(nodeStorageKey, nodeContent).then(applyUrl);
+                    if (!cancelled) void resolveMediaUrl(nodeStorageKey, nodeContent, { renderable: true }).then(applyUrl);
                 });
         } else {
-            void resolveMediaUrl(nodeStorageKey, nodeContent).then(applyUrl);
+            void resolveMediaUrl(nodeStorageKey, nodeContent, { renderable: true }).then(applyUrl);
         }
 
         if (existingId) {

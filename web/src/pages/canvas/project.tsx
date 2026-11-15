@@ -13,6 +13,7 @@ import { queryGenerationTask, type GenerationTask } from "@/services/api/task-ce
 import { generationErrorMessage } from "@/lib/generation-error";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
+import { isFileUploadOverlayActive } from "@/lib/canvas/canvas-file-upload";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { resolveRenderedCanvasConnections } from "@/lib/canvas/canvas-connection-policy";
 import { nanoid } from "nanoid";
@@ -516,6 +517,7 @@ function InfiniteCanvasPage() {
     const {
         applyGenerationTaskResult,
         bindGenerationTask,
+        cancelNodeGeneration,
         finishGenerationRequest,
         openNodeTaskDetails,
         setRunningNodeId,
@@ -554,6 +556,7 @@ function InfiniteCanvasPage() {
         screenToCanvas,
         setNodes,
         setConnections,
+        onCancelNodeGeneration: cancelNodeGeneration,
     });
     const {
         assetPickerOpen,
@@ -719,12 +722,14 @@ function InfiniteCanvasPage() {
     const handleNodesDeleted = useCallback(
         (removedIds: Set<string>, nextNodes: CanvasNodeData[], removedNodes: CanvasNodeData[]) => {
             const clearDeletedId = (current: string | null) => (current && removedIds.has(current) ? null : current);
+            removedIds.forEach((id) => cancelNodeGeneration(id));
             clearDeletedNodeIds(removedIds);
             clearDeletedMediaToolNodes(removedIds);
             setRunningNodeId(clearDeletedId);
             cleanupCanvasFiles({ projectId, nodes: nextNodes, chatSessions: chatSessionsRef.current });
         },
         [
+            cancelNodeGeneration,
             cleanupCanvasFiles,
             clearDeletedMediaToolNodes,
             clearDeletedNodeIds,
@@ -970,6 +975,7 @@ function InfiniteCanvasPage() {
     const { updateNodeFromContent, updateMediaNodeFromContent, updateNodeMetadataFromContent } = document;
     const canvasNodeActions = useMemo<CanvasNodeActionContextValue>(
         () => ({
+            pageUi,
             upload: replaceCanvasNodeMedia,
             download: downloadNodeImage,
             duplicate: duplicateNodeFromContent,
@@ -982,7 +988,7 @@ function InfiniteCanvasPage() {
             startUpscaleBatch,
             recoverUpscaleResult: recoverAIUpscale,
         }),
-        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent, startUpscaleBatch, recoverAIUpscale],
+        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, openArtCritique, pageUi, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent, startUpscaleBatch, recoverAIUpscale],
     );
     const styles = useCanvasStyleWorkflow({
         pageUi,
@@ -1702,7 +1708,7 @@ function InfiniteCanvasPage() {
                         {dialogNode &&
                         !maskEditNodeId &&
                         !isCanvasImageSourceNode(dialogNode) &&
-                        !dialogNode.metadata?.fileUpload &&
+                        !isFileUploadOverlayActive(dialogNode.metadata) &&
                         dialogNode.type !== CanvasNodeType.Script &&
                         dialogNode.type !== CanvasNodeType.BatchTable &&
                         dialogNode.type !== CanvasNodeType.Drawing &&

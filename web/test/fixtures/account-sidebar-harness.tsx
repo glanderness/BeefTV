@@ -12,6 +12,9 @@ import { PluginCard } from "@/pages/plugins/plugin-card";
 import { normalizePublicAppearance, useAppearanceStore } from "@/stores/use-appearance-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import rawGlobalsCss from "@/styles/globals.css?raw";
+import rawTokensCss from "@/styles/theme-tokens.css?raw";
+import rawTailwindThemeCss from "@/styles/tailwind-theme.css?raw";
+import { inlineLocalCssImports } from "../helpers/app-style-source";
 import { activate } from "../../../plugin-packages/beeftv-plugin-market/client/index.js";
 import type { PluginCenterSectionContribution } from "@/lib/plugins/plugin-types";
 import "@/styles/workspace-product.css";
@@ -19,7 +22,11 @@ import "@/pages/plugins/plugins.css";
 
 const globalsStyle = document.createElement("style");
 globalsStyle.dataset.globalsBase = "true";
-globalsStyle.textContent = rawGlobalsCss
+const localStyles: Record<string, string> = { "./theme-tokens.css": rawTokensCss, "./tailwind-theme.css": rawTailwindThemeCss };
+globalsStyle.textContent = inlineLocalCssImports(rawGlobalsCss, (specifier) => {
+    if (!Object.hasOwn(localStyles, specifier)) throw new Error(`Missing fixture CSS import: ${specifier}`);
+    return { id: specifier, css: localStyles[specifier] };
+})
     .replace(/^@(?:import|source|custom-variant)\b[^\n]*$/gm, "")
     .replace(/^@theme\s+[^{]*\{[\s\S]*?\n\}/gm, "")
     .replace(/@apply\b[^;\n]*;/g, "");

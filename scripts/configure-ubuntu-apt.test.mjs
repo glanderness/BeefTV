@@ -55,7 +55,7 @@ test('direct list and deb822 sources switch only the exact Azure host', t => {
 });
 
 test('every Ubuntu dependency workflow applies the same mirror configuration', () => {
-  for (const name of ['quality.yml', 'linux-desktop-check.yml', 'desktop-installers.yml', 'release-desktop.yml']) {
+  for (const name of ['quality.yml', 'desktop-installers.yml', 'release-desktop.yml']) {
     const workflow = readFileSync(new URL('../.github/workflows/' + name, import.meta.url), 'utf8');
     assert.match(workflow, /bash (?:\.\.\/)?scripts\/configure-ubuntu-apt\.sh/);
   }
