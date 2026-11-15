@@ -53,10 +53,68 @@ test.skipIf(!enabled)("所有视频入口按需准备预览，失败可重试，
                 console.error({ surface, mode, prepares, status, state: await page.evaluate(() => {const v=document.querySelector("video");return {text:document.body.innerText,video:v?.outerHTML,network:v?.networkState,error:v?.error?.code,currentSrc:v?.currentSrc};}) });
                 throw error;
             }
+            if (surface === "canvas") {
+                expect(await page.locator('[data-canvas-video-surface="native"]').count()).toBe(1);
+                expect(await page.locator('[class*="vds-"]').count()).toBe(0);
+                expect(await page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
+            }
             expect(prepares).toBe(mode === "direct" ? 0 : mode === "retry" ? 2 : 1);
             expect(pageErrors).toEqual([]);
             await context.close();
         }
         }
+        // Verify mid-gesture deferred autoplay (zero play() calls while interacting, single play() after settle)
+        // and manual-pause preservation across a real subsequent gesture cycle observed by MutationObserver.
+        mode = "direct"; prepares = 0; status = "ready";
+        const gestureContext = await browser.newContext();
+        await gestureContext.addInitScript(() => {
+            const win = window as Window & { __videoPlayCalls?: number };
+            win.__videoPlayCalls = 0;
+            const originalPlay = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function (...args) {
+                win.__videoPlayCalls = (win.__videoPlayCalls ?? 0) + 1;
+                return originalPlay.apply(this, args);
+            };
+        });
+        const gesturePage = await gestureContext.newPage();
+        await gesturePage.goto(`${server.url}?surface=canvas&interacting=1`);
+        await gesturePage.waitForFunction(() => {
+            const video = document.querySelector("video");
+            return Boolean(video && video.readyState >= 2 && video.videoWidth === 64);
+        }, undefined, { timeout: 7000 });
+        await gesturePage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await gesturePage.evaluate(() => ({
+            paused: document.querySelector("video")?.paused,
+            playCalls: (window as Window & { __videoPlayCalls?: number }).__videoPlayCalls ?? 0,
+        }))).toEqual({ paused: true, playCalls: 0 });
+        await gesturePage.evaluate(() => {
+            document.querySelector("[data-canvas-viewport]")?.removeAttribute("data-canvas-viewport-interacting");
+        });
+        await gesturePage.waitForFunction(() => {
+            const video = document.querySelector("video");
+            return Boolean(video && !video.paused);
+        }, undefined, { timeout: 7000 });
+        expect(await gesturePage.evaluate(() => (window as Window & { __videoPlayCalls?: number }).__videoPlayCalls ?? 0)).toBe(1);
+        await gesturePage.evaluate(() => {
+            document.querySelector("video")?.pause();
+        });
+        await gesturePage.evaluate(() => new Promise<void>((resolve) => {
+            const viewport = document.querySelector<HTMLElement>("[data-canvas-viewport]");
+            if (viewport) viewport.dataset.canvasViewportInteracting = "true";
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        expect(await gesturePage.evaluate(() => ({
+            paused: document.querySelector("video")?.paused,
+            playCalls: (window as Window & { __videoPlayCalls?: number }).__videoPlayCalls ?? 0,
+        }))).toEqual({ paused: true, playCalls: 1 });
+        await gesturePage.evaluate(() => new Promise<void>((resolve) => {
+            document.querySelector("[data-canvas-viewport]")?.removeAttribute("data-canvas-viewport-interacting");
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        expect(await gesturePage.evaluate(() => ({
+            paused: document.querySelector("video")?.paused,
+            playCalls: (window as Window & { __videoPlayCalls?: number }).__videoPlayCalls ?? 0,
+        }))).toEqual({ paused: true, playCalls: 1 });
+        await gestureContext.close();
     } finally { await browser.close(); server.stop(true); rmSync(dir, { recursive: true, force: true }); }
 }, 120000);

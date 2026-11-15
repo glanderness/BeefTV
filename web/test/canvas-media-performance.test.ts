@@ -10,6 +10,7 @@ import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "../src/li
 import { collectImageStorageKeys } from "../src/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { detectVideoAudioTrack, detectVideoAudioTrackFromBlob, detectVideoAudioTrackFromUrl } from "../src/lib/video-poster";
+import { normalizeVideoPlayerMimeType, resolveEffectiveVideoHasAudio } from "../src/lib/video-player-policy";
 
 const canvasNodeContentSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-content.tsx"), "utf8");
 const canvasAudioPlayerSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-audio-player.tsx"), "utf8");
@@ -283,10 +284,12 @@ describe("video canvas controls", () => {
     });
 
     test("allows a runtime-positive probe to correct stale silent metadata", () => {
-        expect(videoPlayerSource).toContain("hasAudio === true || detectedHasAudio === true ? true");
-        expect(videoPlayerSource).toContain("hasAudio === false ? false : undefined");
-        expect(videoPlayerSource).toContain("detectedHasAudio === false ? false");
-        expect(videoPlayerSource).toContain("detectVideoAudioTrackFromUrl(src)");
+        expect(resolveEffectiveVideoHasAudio(false, true)).toBe(true);
+        expect(resolveEffectiveVideoHasAudio(true, false)).toBe(false);
+        expect(resolveEffectiveVideoHasAudio(false, undefined)).toBe(false);
+        expect(resolveEffectiveVideoHasAudio(undefined, undefined)).toBeUndefined();
+        expect(normalizeVideoPlayerMimeType("video/webm;codecs=vp9")).toBe("video/webm");
+        expect(normalizeVideoPlayerMimeType("application/octet-stream")).toBe("video/mp4");
     });
 
     test("raises only selected video nodes above the canvas dock so controls remain reachable", () => {
