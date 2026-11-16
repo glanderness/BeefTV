@@ -17,6 +17,7 @@ import {
 import type { CanvasNodeData } from "@/types/canvas";
 import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 import type { GenerationTask } from "@/services/api/task-center";
+import { readNodeLiveTaskTelemetry } from "@/stores/use-generation-task-telemetry";
 
 /**
  * 画布节点失败展示与可执行动作的统一读取视图。
@@ -125,10 +126,12 @@ class NodeFailureView implements CanvasNodeFailureView {
             if (authoritative) {
                 return isTaskOutcomeSubmissionUncertain(authoritative);
             }
+            const liveTelemetry = readNodeLiveTaskTelemetry(metadata);
             const task = {
                 outcome: undefined, provider: metadata?.taskProvider,
-                status: (metadata?.taskStatus || "failed") as GenerationTask["status"],
-                stage: metadata?.taskStage, officialStatus: metadata?.taskOfficialStatus,
+                status: ((liveTelemetry?.status ?? metadata?.taskStatus) || "failed") as GenerationTask["status"],
+                stage: liveTelemetry?.stage ?? metadata?.taskStage,
+                officialStatus: liveTelemetry?.officialStatus ?? metadata?.taskOfficialStatus,
                 errorCode: metadata?.taskErrorCode || metadata?.generationErrorCode,
             };
             return isGenerationTaskSubmissionUncertain(task) || this.explanation.uncertain;

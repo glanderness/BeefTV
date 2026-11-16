@@ -111,9 +111,9 @@ test("JSON.stringify text search detector catches multiline calls, distant bindi
     for (const code of forbidden) assert.equal(usesJsonStringifyForSearch(code), true, code);
     for (const code of allowed) assert.equal(usesJsonStringifyForSearch(code), false, code);
 
-    // Linear-time regression check on a large single-line payload (>150KB)
-    usesJsonStringifyForSearch("const x = JSON.stringify({ a: 1 }); ".repeat(200));
+    // Linear-time regression check on a large single-line payload (>150KB) after JIT warmup
     const bigSingleLine = "const x = JSON.stringify({ a: 1 }); ".repeat(5000);
+    usesJsonStringifyForSearch(bigSingleLine);
     const t0 = performance.now();
     assert.equal(usesJsonStringifyForSearch(bigSingleLine), false);
     assert.ok(performance.now() - t0 < 250, "scanner should complete in well under 250ms on 180KB single-line input");
