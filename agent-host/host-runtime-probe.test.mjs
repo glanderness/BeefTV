@@ -454,13 +454,17 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
         },
       },
     };
+    let failSettleUpdate = false;
     const lifecycle = createDurableTurnLifecycle({
       stateDoc: {},
       state: async () => {
         if (failStateRead) throw new Error('transient_state_error');
         return doc;
       },
-      update: async (_entry, mutator) => { mutator(doc); },
+      update: async (_entry, mutator) => {
+        if (failSettleUpdate) throw new Error('sqlite_settle_error');
+        mutator(doc);
+      },
       lock: (_id, fn) => Promise.resolve().then(fn),
       hydrate: () => {},
       authorization: async () => ({ open: true }),
@@ -515,15 +519,22 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(doc.turns).toHaveLength(0);
     expect(abortCalls).toBe(0);
 
-    // 3. Once Go /complete recovers, reconciliation delivers completeTurn and settles doc.active -> doc.turns!
+    // 3. If settleLocal (second lock update) throws a storage error after Go /complete succeeds,
+    // reconcileDetachedEntry still resolves cleanly to true (never unhandled-rejects!) and retries until settled!
     failCompleteTurn = false;
+    failSettleUpdate = true;
+    expect(await lifecycle.reconcileDetachedEntry(entry)).toBe(true);
+    expect(entry.pendingCompleteRetry).toBe(true);
+    expect(entry.busy).toBe(true);
+
+    failSettleUpdate = false;
     expect(await lifecycle.reconcileDetachedEntry(entry)).toBe(false);
     expect(entry.pendingCompleteRetry).toBe(false);
     expect(entry.busy).toBe(false);
     expect(doc.active).toBeNull();
     expect(doc.turns).toHaveLength(1);
     expect(doc.turns[0].reply).toBe('Recovered detached answer.');
-    expect(completedPayloads).toHaveLength(1);
+    expect(completedPayloads).toHaveLength(2);
     expect(completedPayloads[0].turnId).toBe('turn-detach');
     entry.disposed = true;
   });
