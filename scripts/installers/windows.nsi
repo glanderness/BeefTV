@@ -264,7 +264,7 @@ Function ${PREFIX}RequireClosed
           Goto wait_webview_${PREFIX}
         ${EndIf}
       InitPluginsDir
-      File "/oname=$PLUGINSDIR\reclaim-webview.ps1" "${__FILEDIR__}/reclaim-webview.ps1"
+      File "/oname=$PLUGINSDIR\reclaim-webview.ps1" "reclaim-webview.ps1"
       nsExec::Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\reclaim-webview.ps1" "$APPDATA\BeefTV.exe\EBWebView"'
       Pop $5
 !if "${PREFIX}" == ""

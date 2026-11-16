@@ -39,6 +39,22 @@ func readPipeDACLString(t *testing.T, endpoint string) string {
 	return sd.String()
 }
 
+func assertCurrentUserOnlyPipeSDDL(t *testing.T, sddl, userSID string) {
+	t.Helper()
+	// ConvertSecurityDescriptorToStringSecurityDescriptorW abbreviates the built-in
+	// Local Administrator RID (-500, e.g. runneradmin on GitHub Actions) as "LA".
+	hasOwnerAllow := strings.Contains(sddl, ";"+userSID+")") ||
+		(strings.HasSuffix(userSID, "-500") && strings.Contains(sddl, ";LA)"))
+	if !strings.HasPrefix(sddl, "D:P") || !strings.Contains(sddl, ";NU)") || !hasOwnerAllow {
+		t.Fatalf("expected protected current-user + deny-network SDDL for %s, got %q", userSID, sddl)
+	}
+	for _, forbidden := range []string{";WD)", ";AN)", ";AU)", ";BU)"} {
+		if strings.Contains(sddl, forbidden) {
+			t.Fatalf("pipe DACL must not grant broad principal %s: %q", forbidden, sddl)
+		}
+	}
+}
+
 func TestWindowsPipeDACLDeniesNetworkAndEveryone(t *testing.T) {
 	userSID, err := currentUserSIDString()
 	if err != nil {
@@ -53,13 +69,7 @@ func TestWindowsPipeDACLDeniesNetworkAndEveryone(t *testing.T) {
 	}
 	defer listener.Close()
 
-	sddl := readPipeDACLString(t, goPipe)
-	if !strings.HasPrefix(sddl, "D:P") || !strings.Contains(sddl, ";NU)") || !strings.Contains(sddl, userSID) {
-		t.Fatalf("expected protected current-user + deny-network SDDL, got %q", sddl)
-	}
-	if strings.Contains(sddl, ";WD)") || strings.Contains(sddl, ";AN)") {
-		t.Fatalf("pipe DACL must not grant Everyone (WD) or Anonymous (AN): %q", sddl)
-	}
+	assertCurrentUserOnlyPipeSDDL(t, readPipeDACLString(t, goPipe), userSID)
 
 	// 2. Child-created pipe with default NULL SECURITY_ATTRIBUTES (matching libuv)
 	// tightened via TightenEndpointSecurity before credentials are sent.
@@ -86,13 +96,7 @@ func TestWindowsPipeDACLDeniesNetworkAndEveryone(t *testing.T) {
 	if err := TightenEndpointSecurity(libuvPipe); err != nil {
 		t.Fatalf("TightenEndpointSecurity: %v", err)
 	}
-	tightenedSDDL := readPipeDACLString(t, libuvPipe)
-	if !strings.HasPrefix(tightenedSDDL, "D:P") || !strings.Contains(tightenedSDDL, ";NU)") || !strings.Contains(tightenedSDDL, userSID) {
-		t.Fatalf("expected tightened protected SDDL, got %q", tightenedSDDL)
-	}
-	if strings.Contains(tightenedSDDL, ";WD)") || strings.Contains(tightenedSDDL, ";AN)") {
-		t.Fatalf("tightened pipe DACL still grants Everyone or Anonymous: %q", tightenedSDDL)
-	}
+	assertCurrentUserOnlyPipeSDDL(t, readPipeDACLString(t, libuvPipe), userSID)
 
 	// 3. Subsequent pipe instance created with NULL SECURITY_ATTRIBUTES (exact libuv
 	// accept-loop behavior for the next request carrying credentials) must inherit
@@ -116,13 +120,7 @@ func TestWindowsPipeDACLDeniesNetworkAndEveryone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSecurityInfo(secondHandle): %v", err)
 	}
-	secondSDDL := secondSD.String()
-	if !strings.HasPrefix(secondSDDL, "D:P") || !strings.Contains(secondSDDL, ";NU)") || !strings.Contains(secondSDDL, userSID) {
-		t.Fatalf("subsequent NULL-attr pipe instance lost tightened SDDL: %q", secondSDDL)
-	}
-	if strings.Contains(secondSDDL, ";WD)") || strings.Contains(secondSDDL, ";AN)") {
-		t.Fatalf("subsequent NULL-attr pipe instance reverted to Everyone/Anonymous: %q", secondSDDL)
-	}
+	assertCurrentUserOnlyPipeSDDL(t, secondSD.String(), userSID)
 }
 
 func TestDialContextBoundsWaitWhenAllPipeInstancesAreBusy(t *testing.T) {
