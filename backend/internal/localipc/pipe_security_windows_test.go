@@ -96,7 +96,11 @@ func TestWindowsPipeDACLDeniesNetworkAndEveryone(t *testing.T) {
 	if err := TightenEndpointSecurity(libuvPipe); err != nil {
 		t.Fatalf("TightenEndpointSecurity: %v", err)
 	}
-	assertCurrentUserOnlyPipeSDDL(t, readPipeDACLString(t, libuvPipe), userSID)
+	firstSD, err := windows.GetSecurityInfo(rawHandle, windows.SE_KERNEL_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatalf("GetSecurityInfo(rawHandle): %v", err)
+	}
+	assertCurrentUserOnlyPipeSDDL(t, firstSD.String(), userSID)
 
 	// 3. Subsequent pipe instance created with NULL SECURITY_ATTRIBUTES (exact libuv
 	// accept-loop behavior for the next request carrying credentials) must inherit
@@ -121,6 +125,8 @@ func TestWindowsPipeDACLDeniesNetworkAndEveryone(t *testing.T) {
 		t.Fatalf("GetSecurityInfo(secondHandle): %v", err)
 	}
 	assertCurrentUserOnlyPipeSDDL(t, secondSD.String(), userSID)
+	// Also verify client-side CreateFile(READ_CONTROL) against the live second instance.
+	assertCurrentUserOnlyPipeSDDL(t, readPipeDACLString(t, libuvPipe), userSID)
 }
 
 func TestDialContextBoundsWaitWhenAllPipeInstancesAreBusy(t *testing.T) {
