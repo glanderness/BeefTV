@@ -124,6 +124,27 @@ describe("canvas zoom live-scale layout freeze", () => {
         header.writes.length = 0;
         applyCanvasLiveViewport(container as unknown as HTMLDivElement, { x: 20, y: -10, k: 0.4 }, false);
         expect(header.writes).toEqual([]);
+
+        // Regression: a child mounted mid-zoom at k = 0.8 while zooming from 0.4 -> 0.8 -> back to starting 0.4
+        // must STILL be flushed to 0.4 on commit even though lastScale and pre-zoom lastLayoutScale were both 0.4!
+        const roundTripProps = new Map<string, string>();
+        const roundTripChild = Object.assign(new FakeElement(), createStyledMockElement().element);
+        (roundTripChild as { style: unknown }).style = {
+            getPropertyValue: (name: string) => roundTripProps.get(name) ?? "",
+            setProperty: (name: string, value: string) => roundTripProps.set(name, value),
+        };
+        dataset.canvasViewportZooming = "true";
+        applyCanvasLiveViewport(container as unknown as HTMLDivElement, { x: 0, y: 0, k: 0.8 }, false);
+        container.querySelectorAll = () => [header.element, uninitializedChild as unknown as typeof header.element, roundTripChild as unknown as typeof header.element];
+        observerCallback?.([{ type: "childList", addedNodes: [roundTripChild] }]);
+        expect(roundTripProps.get("--canvas-live-scale")).toBe("0.8");
+        // Preview returns to starting k = 0.4 while still zooming (rescans dirty -> false without layout flush).
+        applyCanvasLiveViewport(container as unknown as HTMLDivElement, { x: 0, y: 0, k: 0.4 }, false);
+        expect(roundTripProps.get("--canvas-live-scale")).toBe("0.8");
+        // Gesture commits at starting k = 0.4 -> roundTripChild must flush --canvas-live-scale to "0.4".
+        delete dataset.canvasViewportZooming;
+        applyCanvasLiveViewport(container as unknown as HTMLDivElement, { x: 0, y: 0, k: 0.4 }, false);
+        expect(roundTripProps.get("--canvas-live-scale")).toBe("0.4");
     });
 });
 
@@ -140,7 +161,9 @@ describe("canvas lightweight video surface", () => {
         expect(silentMarkup).toContain('data-controls-open="true"');
         expect(silentMarkup).toContain('data-canvas-subtitle-overlay="bottom"');
         expect(silentMarkup).toContain("z-[calc(var(--node-z-overlay)+1)]");
-        expect(silentMarkup).toContain("group-data-[controls-open=true]/canvas-video:bottom-[58px]");
+        expect(silentMarkup).toContain("group-data-[controls-open=true]/canvas-video:bottom-[calc(var(--canvas-video-controls-height,3.5rem)+2px)]");
+        expect(silentMarkup).toContain("text-[var(--fs-label)]");
+        expect(silentMarkup).not.toContain("text-[11px]");
         expect(silentMarkup).toContain("<video");
         expect(silentMarkup).toContain('type="video/mp4"');
         expect(silentMarkup).toContain("第一句台词");

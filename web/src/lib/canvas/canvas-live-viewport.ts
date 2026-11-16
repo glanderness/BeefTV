@@ -78,6 +78,7 @@ function syncScopedCanvasScale(container: HTMLDivElement, scale: number) {
             state!.dirty = true;
             const current = Number(container.style.getPropertyValue("--canvas-live-scale")) || 1;
             const allowLayoutUpdate = container.dataset.canvasViewportZooming !== "true";
+            if (!allowLayoutUpdate) state!.lastLayoutScale = NaN;
             for (const record of records) {
                 if (record.type === "attributes") applyScopedCanvasScale(record.target as Element, current, allowLayoutUpdate);
                 for (const node of record.addedNodes) {
@@ -91,6 +92,7 @@ function syncScopedCanvasScale(container: HTMLDivElement, scale: number) {
         state.elements = Array.from(container.querySelectorAll<HTMLElement>(LIVE_SCALE_SELECTOR));
         state.pinnedElements = Array.from(container.querySelectorAll<HTMLElement>(PINNED_LIVE_SCALE_SELECTOR));
         state.dirty = false;
+        if (!updateLayoutScale) state.lastLayoutScale = NaN;
     }
     const scaleStr = String(scale);
     const inverseStr = String(1 / Math.max(scale, 0.05));

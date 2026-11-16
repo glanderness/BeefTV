@@ -197,7 +197,7 @@ export function CanvasNodeVideoPlayer({
             data-no-audio={noAudio ? "true" : undefined}
             data-controls-open={!playing ? "true" : undefined}
             className={`group/canvas-video relative flex h-full w-full select-none items-center justify-center overflow-hidden bg-black ${className || ""}`}
-            style={{ "--video-brand": brandColor } as CSSProperties}
+            style={{ "--video-brand": brandColor, "--canvas-video-controls-height": "3.5rem" } as CSSProperties}
         >
             <video
                 ref={videoRef}
@@ -245,7 +245,7 @@ export function CanvasNodeVideoPlayer({
             <div
                 role="group"
                 aria-label={`${title} 播放控制`}
-                className={`absolute inset-x-0 bottom-0 z-[var(--node-z-overlay)] flex items-center gap-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2.5 pb-2 pt-5 text-white transition-opacity ${controlsVisibilityClass}`}
+                className={`absolute inset-x-0 bottom-0 z-[var(--node-z-overlay)] flex min-h-[var(--canvas-video-controls-height)] items-center gap-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2.5 pb-2 pt-5 text-white transition-opacity ${controlsVisibilityClass}`}
                 onPointerDown={stopCanvasEvent}
                 onMouseDown={stopCanvasEvent}
                 onClick={stopCanvasEvent}
@@ -261,7 +261,7 @@ export function CanvasNodeVideoPlayer({
                 >
                     {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="ml-0.5 size-3.5 fill-current" />}
                 </button>
-                <span className="shrink-0 text-[11px] leading-none text-white/85 tabular-nums">
+                <span className="shrink-0 text-[var(--fs-label)] leading-none text-white/85 tabular-nums">
                     {formatVideoClock(currentTime)} / {duration > 0 ? formatVideoClock(duration) : "--:--"}
                 </span>
                 <input

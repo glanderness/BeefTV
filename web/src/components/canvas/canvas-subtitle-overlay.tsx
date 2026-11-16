@@ -15,7 +15,7 @@ const POSITION_STYLE: Record<SubtitleStyle["position"], CSSProperties> = {
     bottom: {},
 };
 
-const BOTTOM_SUBTITLE_OFFSET_CLASS = "bottom-[8%] group-data-[controls-open=true]/canvas-video:bottom-[58px] group-hover/canvas-video:bottom-[58px] group-focus-within/canvas-video:bottom-[58px] transition-[bottom] duration-150";
+const BOTTOM_SUBTITLE_OFFSET_CLASS = "bottom-[8%] group-data-[controls-open=true]/canvas-video:bottom-[calc(var(--canvas-video-controls-height,3.5rem)+2px)] group-hover/canvas-video:bottom-[calc(var(--canvas-video-controls-height,3.5rem)+2px)] group-focus-within/canvas-video:bottom-[calc(var(--canvas-video-controls-height,3.5rem)+2px)] transition-[bottom] duration-150";
 
 /**
  * 画布视频节点上的实时字幕叠加层：按字幕样式定位到视频画面内。

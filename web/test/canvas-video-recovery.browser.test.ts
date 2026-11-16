@@ -6,11 +6,15 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { build } from "vite";
 
+const ffmpegProbe = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" });
+const hasFfmpeg = !ffmpegProbe.error && ffmpegProbe.status === 0;
+
 async function startVideoHarnessEnv(durationSeconds = 0.4) {
     const dir = mkdtempSync(join(tmpdir(), "beeftv-video-recovery-"));
     const file = join(dir, "preview.mp4");
     const result = spawnSync("ffmpeg", ["-nostdin", "-v", "error", "-f", "lavfi", "-i", `color=c=red:s=64x48:r=5:d=${durationSeconds}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", file]);
-    if (result.status !== 0) throw new Error(result.stderr.toString());
+    if (result.error) throw new Error(`ffmpeg unavailable: ${result.error.message}`);
+    if (result.status !== 0) throw new Error(result.stderr?.toString() || `ffmpeg exited with status ${result.status}`);
     const dist = join(dir, "dist");
     await build({ configFile: false, root: join(import.meta.dir, ".."), publicDir: false, logLevel: "error",
         define: { __APP_VERSION__: '"test"', __APP_CHANGELOG__: '""', __BEEFTV_HEAVY_MEDIA_ENABLED__: "false", "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"false"', "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"' },
@@ -44,7 +48,7 @@ async function startVideoHarnessEnv(durationSeconds = 0.4) {
     };
 }
 
-test("画布原生视频播放器在缩放期间挂起解码、平移不中断播放、暂停态底部字幕不与控件栏重叠", async () => {
+test.skipIf(!hasFfmpeg)("画布原生视频播放器在缩放期间挂起解码、平移不中断播放、暂停态底部字幕不与控件栏重叠", async () => {
     const env = await startVideoHarnessEnv(3);
     try {
         const context = await env.browser.newContext();
@@ -108,32 +112,39 @@ test("画布原生视频播放器在缩放期间挂起解码、平移不中断�
         });
         await page.waitForFunction(() => Boolean(document.querySelector("video") && !document.querySelector("video")!.paused), undefined, { timeout: 7000 });
 
-        // 4. 用户手动暂停后：经历缩放手势不会误恢复播放，且底部字幕层级高于控件栏并上移避让不重叠。
+        // 4. 用户手动暂停后：经历缩放手势不会误恢复播放，且底部字幕层级高于控件栏并在标准与放大根字号下均不与控件栏重叠。
         await page.evaluate(() => {
             document.querySelector("video")?.pause();
         });
-        await page.waitForFunction(() => {
-            const surface = document.querySelector('[data-canvas-video-surface="native"]');
-            const subtitle = document.querySelector<HTMLElement>('[data-canvas-subtitle-overlay="bottom"]');
-            return surface?.getAttribute("data-controls-open") === "true"
-                && subtitle !== null
-                && getComputedStyle(subtitle).bottom === "58px";
-        }, undefined, { timeout: 7000 });
+        for (const rootFontSize of ["16px", "20px"]) {
+            await page.evaluate((size) => {
+                document.documentElement.style.fontSize = size;
+            }, rootFontSize);
+            await page.waitForFunction(() => {
+                const surface = document.querySelector('[data-canvas-video-surface="native"]');
+                const subtitle = document.querySelector<HTMLElement>('[data-canvas-subtitle-overlay="bottom"]');
+                const controls = document.querySelector<HTMLElement>('[role="group"][aria-label*="播放控制"]');
+                return surface?.getAttribute("data-controls-open") === "true"
+                    && subtitle !== null
+                    && controls !== null
+                    && subtitle.getBoundingClientRect().bottom <= controls.getBoundingClientRect().top;
+            }, undefined, { timeout: 7000 });
 
-        const layout = await page.evaluate(() => {
-            const subtitle = document.querySelector<HTMLElement>('[data-canvas-subtitle-overlay="bottom"]')!;
-            const controls = document.querySelector<HTMLElement>('[role="group"][aria-label*="播放控制"]')!;
-            const subtitleRect = subtitle.getBoundingClientRect();
-            const controlsRect = controls.getBoundingClientRect();
-            return {
-                subtitleZ: Number(getComputedStyle(subtitle).zIndex),
-                controlsZ: Number(getComputedStyle(controls).zIndex),
-                subtitleBottom: subtitleRect.bottom,
-                controlsTop: controlsRect.top,
-            };
-        });
-        expect(layout.subtitleZ).toBeGreaterThan(layout.controlsZ);
-        expect(layout.subtitleBottom).toBeLessThanOrEqual(layout.controlsTop);
+            const layout = await page.evaluate(() => {
+                const subtitle = document.querySelector<HTMLElement>('[data-canvas-subtitle-overlay="bottom"]')!;
+                const controls = document.querySelector<HTMLElement>('[role="group"][aria-label*="播放控制"]')!;
+                const subtitleRect = subtitle.getBoundingClientRect();
+                const controlsRect = controls.getBoundingClientRect();
+                return {
+                    subtitleZ: Number(getComputedStyle(subtitle).zIndex),
+                    controlsZ: Number(getComputedStyle(controls).zIndex),
+                    subtitleBottom: subtitleRect.bottom,
+                    controlsTop: controlsRect.top,
+                };
+            });
+            expect(layout.subtitleZ).toBeGreaterThan(layout.controlsZ);
+            expect(layout.subtitleBottom).toBeLessThanOrEqual(layout.controlsTop);
+        }
 
         const playCallsBeforeManualZoom = await page.evaluate(() => (window as Window & { __videoPlayCalls?: number }).__videoPlayCalls ?? 0);
         await page.evaluate(() => new Promise<void>((resolve) => {
