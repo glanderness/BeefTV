@@ -112,7 +112,7 @@ test("JSON.stringify text search detector catches multiline calls, distant bindi
     usesJsonStringifyForSearch(bigSingleLine);
     const t0 = performance.now();
     assert.equal(usesJsonStringifyForSearch(bigSingleLine), false);
-    assert.ok(performance.now() - t0 < 250, "scanner should complete in well under 250ms on 180KB single-line input");
+    assert.ok(performance.now() - t0 < 100, "scanner should complete in well under 100ms on 180KB single-line input");
 });
 
 test("unrouted pages/dev files are detected strictly from router entrypoints (orphan src importers cannot launder them)", () => {

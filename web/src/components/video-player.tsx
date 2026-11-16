@@ -9,8 +9,6 @@ import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
 import "./video-player.css";
 
-export { normalizeVideoPlayerMimeType };
-
 type MediaPlayerProps = ComponentProps<typeof MediaPlayer>;
 
 type VideoPlayerProps = {
@@ -21,7 +19,6 @@ type VideoPlayerProps = {
     brandColor?: string;
     preload?: MediaPlayerProps["preload"];
     autoPlay?: boolean;
-    dataCanvasNoZoom?: boolean;
     compactControls?: boolean;
     /** Explicitly marks videos known to have an audio track (or not). */
     hasAudio?: boolean;
@@ -85,7 +82,6 @@ export function VideoPlayer({
     brandColor = "#f5f5f5",
     preload = "metadata",
     autoPlay = false,
-    dataCanvasNoZoom = false,
     compactControls = false,
     hasAudio,
     onCanPlay,
@@ -139,18 +135,14 @@ export function VideoPlayer({
         if (noAudio && isVolumeControlEvent(event)) {
             event.preventDefault?.();
             event.stopPropagation();
-            return;
         }
-        if (dataCanvasNoZoom) event.stopPropagation();
     };
     const stopCanvasControlClick = (event: React.MouseEvent) => {
         if (!isPlayerControlEvent(event)) return;
         if (noAudio && isVolumeControlEvent(event)) {
             event.preventDefault();
             event.stopPropagation();
-            return;
         }
-        if (dataCanvasNoZoom) event.stopPropagation();
     };
     const type = normalizeVideoPlayerMimeType(mimeType);
     const mediaSource = useMemo(() => ({ src, type }), [src, type]);
@@ -190,7 +182,6 @@ export function VideoPlayer({
             muted={noAudio ? true : undefined}
             load="eager"
             preload={preload}
-            data-canvas-no-zoom={dataCanvasNoZoom ? "true" : undefined}
             data-no-audio={noAudio ? "true" : undefined}
             style={{ "--video-brand": brandColor }}
             onCanPlay={handleCanPlay}
@@ -215,16 +206,8 @@ export function VideoPlayer({
             <DefaultVideoLayout
                 icons={layoutIcons}
                 translations={zhCNTranslations}
-                // Canvas controls use one stable DOM arrangement regardless
-                // of the node's aspect ratio. Without this override Vidstack
-                // swaps between its small and large layouts as the node is
-                // resized, moving the same icons to different groups.
+                // Compact controls use one stable DOM arrangement regardless of container aspect ratio.
                 smallLayoutWhen={compactControls ? true : undefined}
-                // The canvas selects and mounts a player from the node's
-                // pointer event. Vidstack's default pointerup gesture can
-                // otherwise toggle the freshly mounted player a second time,
-                // causing the intermittent play-then-pause-at-zero bug.
-                noGestures={dataCanvasNoZoom}
                 slots={{
                     // 节点外部已经显示标题，播放器内不再重复渲染章节标题和设置菜单。
                     chapterTitle: null,

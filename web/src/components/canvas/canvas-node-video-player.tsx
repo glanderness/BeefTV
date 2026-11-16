@@ -21,8 +21,8 @@ export type CanvasNodeVideoPlayerProps = {
 };
 
 /**
- * 在画布缩放或平移手势进行中暂停活动视频解码，保留当前已解码帧，手势结束后自动恢复。
- * 用户主动暂停的视频不会在手势结束后被误恢复；手势期间挂载的自动播放会顺延到手势结束再触发。
+ * 在画布视口缩放手势进行中暂停活动视频解码，保留当前已解码帧，缩放结束后自动恢复。
+ * 纯平移不中断正在播放的视频与声音；用户主动暂停的视频不会在缩放结束后被误恢复。
  */
 export function bindCanvasViewportVideoPause(
     root: HTMLElement,
@@ -34,8 +34,8 @@ export function bindCanvasViewportVideoPause(
 
     let pausedByGesture = false;
     const syncGestureState = () => {
-        const interacting = viewport.dataset.canvasViewportInteracting === "true";
-        if (interacting) {
+        const zooming = viewport.dataset.canvasViewportZooming === "true";
+        if (zooming) {
             if (!video.paused && !video.ended) {
                 pausedByGesture = true;
                 video.pause();
@@ -50,14 +50,14 @@ export function bindCanvasViewportVideoPause(
     };
 
     const handlePlayDuringGesture = () => {
-        if (viewport.dataset.canvasViewportInteracting === "true" && !video.paused) {
+        if (viewport.dataset.canvasViewportZooming === "true" && !video.paused) {
             pausedByGesture = true;
             video.pause();
         }
     };
 
     const observer = new MutationObserver(syncGestureState);
-    observer.observe(viewport, { attributes: true, attributeFilter: ["data-canvas-viewport-interacting"] });
+    observer.observe(viewport, { attributes: true, attributeFilter: ["data-canvas-viewport-zooming"] });
     video.addEventListener("play", handlePlayDuringGesture);
     syncGestureState();
 
@@ -115,7 +115,7 @@ export function CanvasNodeVideoPlayer({
 
     const tryInitialAutoPlay = (video: HTMLVideoElement) => {
         if (!autoPlay || autoPlayAttemptedRef.current) return;
-        if (rootRef.current?.closest<HTMLElement>("[data-canvas-viewport]")?.dataset.canvasViewportInteracting === "true") {
+        if (rootRef.current?.closest<HTMLElement>("[data-canvas-viewport]")?.dataset.canvasViewportZooming === "true") {
             deferredAutoPlayRef.current = true;
             return;
         }
@@ -195,6 +195,7 @@ export function CanvasNodeVideoPlayer({
             data-canvas-video-surface="native"
             data-canvas-no-zoom={dataCanvasNoZoom ? "true" : undefined}
             data-no-audio={noAudio ? "true" : undefined}
+            data-controls-open={!playing ? "true" : undefined}
             className={`group/canvas-video relative flex h-full w-full select-none items-center justify-center overflow-hidden bg-black ${className || ""}`}
             style={{ "--video-brand": brandColor } as CSSProperties}
         >

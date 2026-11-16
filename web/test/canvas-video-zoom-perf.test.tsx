@@ -3,9 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { bindCanvasViewportVideoPause, CanvasNodeVideoPlayer } from "../src/components/canvas/canvas-node-video-player";
 import { InactiveVideoPreview } from "../src/components/canvas/canvas-node-content";
+import { CanvasSubtitleOverlay } from "../src/components/canvas/canvas-subtitle-overlay";
 import { canvasAppearanceForTheme } from "../src/lib/canvas/canvas-appearance";
 import { applyCanvasLiveViewport } from "../src/lib/canvas/canvas-live-viewport";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
+import { createDefaultSubtitleStyle } from "../src/types/timeline";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
 
@@ -126,15 +128,19 @@ describe("canvas zoom live-scale layout freeze", () => {
 });
 
 describe("canvas lightweight video surface", () => {
-    test("renders active CanvasNodeContent video surface without Vidstack layout custom elements, keeps subtitles inside fullscreen container, and omits backdrop-blur", () => {
+    test("renders active CanvasNodeContent video surface without Vidstack layout custom elements, keeps bottom subtitles above paused controls inside fullscreen container, and omits backdrop-blur", () => {
         const theme = canvasAppearanceForTheme("dark").theme;
         const silentMarkup = renderToStaticMarkup(
             <CanvasNodeVideoPlayer src="https://media.example/clip.mp4" mimeType="video/mp4;codecs=avc1" title="镜头 01" hasAudio={false} autoPlay>
-                <div data-testid="subtitle-overlay">第一句台词</div>
+                <CanvasSubtitleOverlay text="第一句台词" style={createDefaultSubtitleStyle()} />
             </CanvasNodeVideoPlayer>,
         );
         expect(silentMarkup).toContain('data-canvas-video-surface="native"');
         expect(silentMarkup).toContain('data-no-audio="true"');
+        expect(silentMarkup).toContain('data-controls-open="true"');
+        expect(silentMarkup).toContain('data-canvas-subtitle-overlay="bottom"');
+        expect(silentMarkup).toContain("z-[calc(var(--node-z-overlay)+1)]");
+        expect(silentMarkup).toContain("group-data-[controls-open=true]/canvas-video:bottom-[58px]");
         expect(silentMarkup).toContain("<video");
         expect(silentMarkup).toContain('type="video/mp4"');
         expect(silentMarkup).toContain("第一句台词");
@@ -161,7 +167,7 @@ describe("canvas lightweight video surface", () => {
         expect(previewMarkup).not.toContain("backdrop-blur");
     });
 
-    test("pauses active video decode during viewport gestures, defers mid-gesture autoplay, and respects manual user pause", () => {
+    test("pauses active video decode during viewport zoom gestures without interrupting pure pan, defers mid-zoom autoplay, and respects manual user pause", () => {
         let notifyMutation: (() => void) | undefined;
         stubGlobal(
             "MutationObserver",
@@ -202,36 +208,41 @@ describe("canvas lightweight video surface", () => {
         });
         expect(settledNotifications).toBe(1);
 
-        // Gesture starts while playing -> pauses decode immediately.
+        // Pure pan (canvasViewportInteracting without canvasViewportZooming) does NOT pause active playback.
         viewport.dataset.canvasViewportInteracting = "true";
+        notifyMutation?.();
+        expect(video.paused).toBe(false);
+        expect(video.pauseCalls).toBe(0);
+
+        // Zoom starts while playing -> pauses decode immediately.
+        viewport.dataset.canvasViewportZooming = "true";
         notifyMutation?.();
         expect(video.paused).toBe(true);
         expect(video.pauseCalls).toBe(1);
-        expect(settledNotifications).toBe(1);
 
-        // Gesture ends -> automatically resumes playback and fires settled callback for deferred autoplay.
+        // Zoom ends -> automatically resumes playback and fires settled callback for deferred autoplay.
+        delete viewport.dataset.canvasViewportZooming;
         delete viewport.dataset.canvasViewportInteracting;
         notifyMutation?.();
         expect(video.paused).toBe(false);
         expect(video.playCalls).toBe(1);
-        expect(settledNotifications).toBe(2);
 
-        // User manually pauses before a gesture -> gesture end must NOT force-play.
+        // User manually pauses before a zoom gesture -> zoom end must NOT force-play.
         video.pause();
         const pausesBefore = video.pauseCalls;
-        viewport.dataset.canvasViewportInteracting = "true";
+        viewport.dataset.canvasViewportZooming = "true";
         notifyMutation?.();
-        delete viewport.dataset.canvasViewportInteracting;
+        delete viewport.dataset.canvasViewportZooming;
         notifyMutation?.();
         expect(video.paused).toBe(true);
         expect(video.pauseCalls).toBe(pausesBefore);
         expect(video.playCalls).toBe(1);
 
-        // Play event firing mid-gesture is caught and deferred until gesture ends.
-        viewport.dataset.canvasViewportInteracting = "true";
+        // Play event firing mid-zoom is caught and deferred until zoom ends.
+        viewport.dataset.canvasViewportZooming = "true";
         void video.play();
         expect(video.paused).toBe(true);
-        delete viewport.dataset.canvasViewportInteracting;
+        delete viewport.dataset.canvasViewportZooming;
         notifyMutation?.();
         expect(video.paused).toBe(false);
 

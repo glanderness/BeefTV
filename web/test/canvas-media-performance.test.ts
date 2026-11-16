@@ -279,7 +279,6 @@ describe("video canvas controls", () => {
         expect(videoPlayerSource).toContain("event.nativeEvent?.composedPath?.()");
         expect(videoPlayerSource).toContain("if (autoPlay && !autoPlayAttemptedRef.current)");
         expect(videoPlayerSource).toContain("autoPlayAttemptedRef.current = true;");
-        expect(videoPlayerSource).toContain("noGestures={dataCanvasNoZoom}");
         expect(videoPlayerSource).toContain("smallLayoutWhen={compactControls ? true : undefined}");
     });
 
