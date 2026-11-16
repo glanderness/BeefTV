@@ -463,7 +463,8 @@ try{
     // Explicit ?sessionId=<corrupt> must return 409 corrupt_session_manifest, never 500.
     const explicitHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}&sessionId=${encodeURIComponent(doomedSessionId)}`);
     assert.equal(explicitHist.status,409,`explicit corrupt session history must return 409, got ${explicitHist.status} ${explicitHist.text}`);
-    // Default /sessions, /active, and /history must self-heal to validSessionId with 200!
+    // Default /sessions, /active, and /history must fall back to validSessionId purely with 200 without mutating current.json!
+    const pointerBeforeReads=readFileSync(path.join(canvasSessionDir,'current.json'),'utf8');
     const healedActive=await request(`/active?canvasId=${encodeURIComponent(canvasId)}`);
     assert.equal(healedActive.status,200,healedActive.text);
     const healedSessions=await request(`/sessions?canvasId=${encodeURIComponent(canvasId)}`);
@@ -476,6 +477,7 @@ try{
     const healedHistJson=JSON.parse(healedHist.text);
     assert.equal(healedHistJson.sessionId,validSessionId);
     assert.equal(healedHistJson.turns.length,1);
+    assert.equal(readFileSync(path.join(canvasSessionDir,'current.json'),'utf8'),pointerBeforeReads,'read endpoints must not mutate current.json on fallback');
     // Malformed JSON request bodies must return 400 invalid_request, never 409 corrupt_session_manifest.
     const malformedRes=await fetch(base+'/sessions',{method:'POST',headers:{'content-type':'application/json','X-Beeftv-Agent-Token':hostAuth},body:'{malformed-json',signal:AbortSignal.timeout(5000)});
     assert.equal(malformedRes.status,400);
@@ -518,7 +520,11 @@ try{
     const ptrHist=await request(`/history?canvasId=${encodeURIComponent(badPtrCanvas)}`);
     assert.equal(ptrHist.status,200,ptrHist.text);
     assert.deepEqual(JSON.parse(ptrHist.text),{sessionId:null,turns:[]});
-    writeFileSync(path.join(badPtrDir,'current.json'),'{truncated-json-3');
+    rmSync(path.join(badPtrDir,'current.json'),{force:true});
+    mkdirSync(path.join(badPtrDir,'current.json'),{recursive:true});
+    const dirPtrHist=await request(`/history?canvasId=${encodeURIComponent(badPtrCanvas)}`);
+    assert.equal(dirPtrHist.status,200,dirPtrHist.text);
+    assert.deepEqual(JSON.parse(dirPtrHist.text),{sessionId:null,turns:[]});
     const ptrChat=await request('/chat',{canvasId:badPtrCanvas,message:'Heal corrupt pointer on chat.',turnId:'aa30',revisionBefore:1});
     assert.equal(ptrChat.status,200,ptrChat.text);
     const ptrSessionId=ptrChat.events.find(e=>e.type==='session')?.sessionId;

@@ -259,8 +259,7 @@ function liveEntry(canvasId) {
   return durable.sessions.get(canvasId) || null;
 }
 function isLiveEntryBusy(canvasId) {
-  const entry = liveEntry(canvasId);
-  return Boolean(entry?.busy || entry?.recovering);
+  return durable.isEntryBusy(liveEntry(canvasId));
 }
 // A conversation of this canvas: a durable session created for it, or one of its legacy sessions.
 function ownsSession(canvasId, sessionId) {
@@ -391,6 +390,10 @@ function respondStoreError(res, error) {
     respond(res, 500, { code: 500, reason: 'session_pointer_failed', message: String(error.message || error) });
     return true;
   }
+  if (error?.reason === 'session_pointer_unavailable') {
+    respond(res, 503, { code: 503, reason: 'session_pointer_unavailable' });
+    return true;
+  }
   if (error?.reason === 'session_store_closed') {
     respond(res, 503, { code: 503, reason: 'session_store_closed' });
     return true;
@@ -403,7 +406,7 @@ function respondStoreError(res, error) {
 }
 
 function anySessionBusy() {
-  for (const entry of durable.sessions.values()) if (entry.busy) return true;
+  for (const entry of durable.sessions.values()) if (durable.isEntryBusy(entry)) return true;
   return false;
 }
 
@@ -487,23 +490,50 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/active') {
       const canvasId = String(url.searchParams.get('canvasId') || '');
       const requestedSessionId = String(url.searchParams.get('sessionId') || '').trim();
+      const live = liveEntry(canvasId);
       if (requestedSessionId) {
-        const live = liveEntry(canvasId);
-        const entry = isDurableSessionId(requestedSessionId)
-          ? (live?.sessionId === requestedSessionId ? live : await durable.ensureSession(canvasId, requestedSessionId))
-          : null;
-        respond(res, 200, { sessionId: entry?.sessionId || requestedSessionId, turnId: entry?.turn.turnId || null, busy: Boolean(entry?.busy) });
+        if (!isDurableSessionId(requestedSessionId)) {
+          respond(res, 200, { sessionId: requestedSessionId, turnId: null, busy: false });
+          return;
+        }
+        if (live?.sessionId === requestedSessionId) {
+          respond(res, 200, { sessionId: live.sessionId, turnId: live.turn.turnId || null, busy: durable.isEntryBusy(live) });
+          return;
+        }
+        const snap = await durable.history(canvasId, requestedSessionId);
+        respond(res, 200, { sessionId: requestedSessionId, turnId: snap.active?.turnId || null, busy: Boolean(snap.active) });
         return;
       }
-      const resolved = await durable.resolveCurrentSession(canvasId);
-      respond(res, 200, { sessionId: resolved.sessionId, turnId: resolved.entry?.turn.turnId || null, busy: Boolean(resolved.entry?.busy) });
-      return;
+      let resolved = await durable.resolveCurrentSession(canvasId, { persist: false, activateDurable: false });
+      if (!resolved.sessionId || resolved.kind !== 'durable') {
+        respond(res, 200, { sessionId: resolved.sessionId, turnId: null, busy: false });
+        return;
+      }
+      if (resolved.entry) {
+        respond(res, 200, { sessionId: resolved.entry.sessionId, turnId: resolved.entry.turn.turnId || null, busy: durable.isEntryBusy(resolved.entry) });
+        return;
+      }
+      try {
+        const snap = await durable.history(canvasId, resolved.sessionId);
+        respond(res, 200, { sessionId: resolved.sessionId, turnId: snap.active?.turnId || null, busy: Boolean(snap.active) });
+        return;
+      } catch (error) {
+        if (!isCorruptSessionArtifactError(error) && error?.reason !== 'session_not_found') throw error;
+        resolved = await durable.resolveCurrentSession(canvasId, { persist: false, activateDurable: false, skipSessionId: resolved.sessionId });
+        if (!resolved.sessionId || resolved.kind !== 'durable') {
+          respond(res, 200, { sessionId: resolved.sessionId, turnId: null, busy: false });
+          return;
+        }
+        const snap = await durable.history(canvasId, resolved.sessionId);
+        respond(res, 200, { sessionId: resolved.sessionId, turnId: snap.active?.turnId || null, busy: Boolean(snap.active) });
+        return;
+      }
     }
     if (req.method === 'GET' && url.pathname === '/sessions') {
       const canvasId = String(url.searchParams.get('canvasId') || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const list = [...await legacy.listCanvasSessions(canvasId), ...await durable.listCanvasSessions(canvasId)];
-      const resolved = await durable.resolveCurrentSession(canvasId, { activateDurable: false, preloadedList: list });
+      const resolved = await durable.resolveCurrentSession(canvasId, { persist: false, activateDurable: false, preloadedList: list });
       const active = resolved.sessionId;
       if (active && !list.some((item) => item.sessionId === active)) {
         list.unshift({ sessionId: active, title: '', updatedAt: new Date().toISOString(), turnCount: 0 });
@@ -526,7 +556,7 @@ const server = http.createServer(async (req, res) => {
       const sessionId = String(body.sessionId || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const currentEntry = liveEntry(canvasId);
-      if (currentEntry && currentEntry.sessionId !== sessionId && (currentEntry.busy || currentEntry.recovering)) {
+      if (currentEntry && currentEntry.sessionId !== sessionId && durable.isEntryBusy(currentEntry)) {
         respond(res,409,{reason:'session_busy'}); return;
       }
       if (isDurableSessionId(sessionId)) {
@@ -553,7 +583,7 @@ const server = http.createServer(async (req, res) => {
       } else {
         legacy.deleteSession(canvasId, sessionId);
       }
-      const nextActive = (await durable.resolveCurrentSession(canvasId)).sessionId;
+      const nextActive = (await durable.resolveCurrentSession(canvasId, { persist: true, activateDurable: true })).sessionId;
       respond(res, 200, { deleted: true, sessionId, currentSessionId: nextActive });
       return;
     }
@@ -597,10 +627,21 @@ const server = http.createServer(async (req, res) => {
           respond(res, 200, await readCurrentDurableHistory(requested)); return;
         }
       } else {
-        const resolved = await durable.resolveCurrentSession(canvasId);
+        const pointerAtRead = currentId(canvasId);
+        let skipSessionId = '';
+        if (pointerAtRead && isDurableSessionId(pointerAtRead)) {
+          try {
+            respond(res, 200, await readCurrentDurableHistory(pointerAtRead)); return;
+          } catch (error) {
+            if (!isCorruptSessionArtifactError(error) && error?.reason !== 'session_not_found') throw error;
+            skipSessionId = pointerAtRead;
+          }
+        }
+        const resolved = await durable.resolveCurrentSession(canvasId, { persist: false, activateDurable: false, skipSessionId });
         if (!resolved.sessionId) { respond(res, 200, { sessionId: null, turns: [] }); return; }
         if (resolved.kind === 'durable') {
-          respond(res, 200, await readCurrentDurableHistory(resolved.sessionId, resolved.entry)); return;
+          respond(res, 200, resolved.entry ? await readCurrentDurableHistory(resolved.sessionId, resolved.entry) : await durable.history(canvasId, resolved.sessionId));
+          return;
         }
         sessionId = resolved.sessionId;
       }

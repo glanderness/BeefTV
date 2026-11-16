@@ -22,6 +22,10 @@ export function hasLiveLocalOwner(entry) {
   return Boolean(entry?.waiters > 0 || entry?.running || entry?.submittingRequest);
 }
 
+export function isEntryActiveOrDetached(entry) {
+  return Boolean(hasLiveLocalOwner(entry) || entry?.recovering || entry?.detachedRunning);
+}
+
 async function scanConversationEntries(entry, query, context = CTX) {
   const items = [];
   let cursor;
@@ -72,6 +76,7 @@ export function createDurableTurnLifecycle({
     });
     forgetStop(entry.canvasId, entry.sessionId, active.requestId);
     if (entry.submittedRequest === active.requestId) entry.submittedRequest = null;
+    entry.detachedRunning = false;
     entry.busy = false;
     if (entry.pendingPluginExtensions && typeof entry.reloadPluginExtensions === 'function') {
       const pending = entry.pendingPluginExtensions;
@@ -308,16 +313,29 @@ export function createDurableTurnLifecycle({
   async function wait(entry, submission, options = {}) {
     // Counted before the first await so a recovery read in the same tick sees the live owner.
     entry.waiters += 1;
+    entry.detachedRunning = false;
     let settled = false;
+    let detachedRunning = false;
     try {
       const record = await observe(entry, submission, options);
       settled = true;
+      entry.detachedRunning = false;
       return record;
+    } catch (error) {
+      try {
+        detachedRunning = (await submission.status(CTX))?.status === 'running';
+      } catch {
+        detachedRunning = false;
+      }
+      entry.detachedRunning = detachedRunning;
+      throw error;
     } finally {
       entry.waiters -= 1;
-      // Exclude entry.running here because followDurable assigns entry.running to wait().finally(...),
-      // so entry.running is still this expiring promise while wait()'s own finally executes.
-      if (!settled && entry.waiters === 0 && !entry.submittingRequest && !entry.recovering) entry.busy = false;
+      // Exclude entry.running here because followDurable assigns entry.running to wait().finally(...);
+      // keep busy if the official submission is still running in the background after observer failure.
+      if (!settled && !detachedRunning && entry.waiters === 0 && !entry.submittingRequest && !entry.recovering) {
+        entry.busy = false;
+      }
     }
   }
 

@@ -18,6 +18,7 @@ let statusCalls = 0, historyCalls = 0;
 let holdHistory: (() => Promise<void>) | null = null;
 let pausedTurnReason: string | undefined;
 let failHistoryStatus = 0;
+let sessionSummaries: { sessionId: string; title: string; updatedAt: string; turnCount: number }[] = [];
 const uploadKeys: string[] = [];
 const uploadMetadata: { name: string; width: string | null; height: string | null; durationMs: string | null }[] = [];
 const registeredAssets: Record<string, any>[] = [];
@@ -100,7 +101,12 @@ beforeAll(async () => {
         if (pathname.endsWith("/skills/added")) return ok({ skills: installedSkills });
         if (pathname.endsWith("/assistant/ui-session")) return ok({ token: "synthetic-only", expiresAt: new Date(Date.now() + 1800000).toISOString() });
         if (pathname.endsWith("/assistant/status")) { statusCalls += 1; return ok(statusPayload); }
-        if (pathname.endsWith("/assistant/sessions")) return ok({ currentSessionId: "s1", sessions: [] });
+        if (pathname.endsWith("/assistant/sessions") && req.method === "GET") return ok({ currentSessionId: "s1", sessions: sessionSummaries });
+        if (pathname.includes("/assistant/sessions/") && req.method === "DELETE") {
+            const deletedId = decodeURIComponent(pathname.split("/").pop() || "");
+            sessionSummaries = sessionSummaries.filter(item => item.sessionId !== deletedId);
+            return ok({ deleted: true, sessionId: deletedId, currentSessionId: "s1" });
+        }
         if (pathname.endsWith("/assistant/history")) {
             historyCalls += 1;
             if (holdHistory) await holdHistory();
@@ -143,6 +149,7 @@ beforeEach(() => {
     holdHistory = null;
     pausedTurnReason = undefined;
     failHistoryStatus = 0;
+    sessionSummaries = [];
 });
 
 test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, draft restore and busy supplement", async () => {
@@ -496,41 +503,93 @@ test("status polling does not pile up initial history reads and reloads paused t
     await page.close();
 }, 20000);
 
-test("failed initial history read does not loop infinitely and reloads once status becomes available", async () => {
+test("cold-start 503 hides false failure banner until ready and deleting non-current session never wedges polling", async () => {
     running = false;
     cancelled = false;
     turns.length = 0;
     failHistoryStatus = 503;
+    sessionSummaries = [
+        { sessionId: "s1", title: "当前主对话", updatedAt: "2026-10-08", turnCount: 1 },
+        { sessionId: "s2", title: "旧支线对话", updatedAt: "2026-10-07", turnCount: 1 },
+    ];
     statusPayload = { available: false, reason: "host_starting" };
 
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
 
-    await page.getByText("没能读取对话。请重新读取。", { exact: true }).waitFor({ timeout: 5000 });
+    // Cold-start 503 while host_starting must show "正在读取对话…" without flashing "没能读取对话。请重新读取。" or looping!
+    await page.getByText("正在读取对话…", { exact: true }).waitFor({ timeout: 5000 });
     const pollDeadline = Date.now() + 6000;
     while (statusCalls < 2 && Date.now() < pollDeadline) {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
-    await new Promise(resolve => setTimeout(resolve, 350));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(await page.getByText("没能读取对话。请重新读取。").count()).toBe(0);
     expect(historyCalls).toBe(1);
 
+    // Once status becomes model_not_configured (read-only host ready), history reloads (#2) with s1+s2 and paused turn!
     failHistoryStatus = 0;
+    pausedTurnReason = "model_unavailable_for_resume";
     turns.push({
-        turnId: "recovered-after-503",
+        turnId: "busy",
         userText: "首次读取失败后的对话",
         selectedNodeIds: [],
-        reply: "宿主就绪后已自动载入历史。",
+        reply: "",
         attachments: [],
         skills: [],
         toolCalls: [],
         proposals: [],
         change: null,
-        error: null,
+        error: "上一轮已中断",
+        errorReason: "turn_interrupted",
         cancelled: false,
         createdAt: "2026-10-08",
     });
-    statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
-    await page.getByText("宿主就绪后已自动载入历史。", { exact: true }).waitFor({ timeout: 6000 });
+    statusPayload = { available: false, reason: "model_not_configured" };
+    await page.getByText("首次读取失败后的对话", { exact: true }).waitFor({ timeout: 6000 });
     expect(historyCalls).toBe(2);
+
+    // Open session dropdown (s1 + s2 loaded), trigger paused-turn reload (#3) via status becoming available,
+    // delete non-current session s2 WHILE #3 is held in flight, let #3 return an active turn (2s poll),
+    // and verify 2s background poll #4 still fires (proving historyInFlight returned to 0)!
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).waitFor({ timeout: 4000 });
+    let releaseThirdRead!: () => void;
+    const thirdReadGate = new Promise<void>(resolve => { releaseThirdRead = resolve; });
+    let markThirdReadEntered!: () => void;
+    const thirdReadEntered = new Promise<void>(resolve => { markThirdReadEntered = resolve; });
+    holdHistory = async () => {
+        if (historyCalls === 3) {
+            markThirdReadEntered();
+            await thirdReadGate;
+            pausedTurnReason = undefined;
+            running = true;
+            turns.length = 0;
+        } else if (historyCalls >= 4) {
+            running = false;
+            turns.splice(0, turns.length, {
+                turnId: "busy",
+                userText: "首次读取失败后的对话",
+                selectedNodeIds: [],
+                reply: "删除支线会话后自动刷新仍然正常。",
+                attachments: [],
+                skills: [],
+                toolCalls: [],
+                proposals: [],
+                change: null,
+                error: null,
+                cancelled: false,
+                createdAt: "2026-10-08",
+            });
+        }
+    };
+    statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
+    await thirdReadEntered;
+    await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).click();
+    await new Promise(resolve => setTimeout(resolve, 150));
+    releaseThirdRead();
+
+    await page.getByText("删除支线会话后自动刷新仍然正常。", { exact: true }).waitFor({ timeout: 8000 });
+    expect(historyCalls).toBe(4);
     await page.close();
-}, 20000);
+}, 35000);

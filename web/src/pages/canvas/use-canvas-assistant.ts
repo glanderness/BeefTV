@@ -97,7 +97,7 @@ type CanvasRun = {
     turns: AssistantTurn[];
     plan: AssistantPlan | null;
     historyLoaded: boolean;
-    historyLoading: boolean;
+    historyInFlight: number;
     historyError: string | null;
     historyHostUnavailable: boolean;
     historyRequest: number;
@@ -159,7 +159,7 @@ const createRun = (): CanvasRun => ({
     turns: [],
     plan: null,
     historyLoaded: false,
-    historyLoading: false,
+    historyInFlight: 0,
     historyError: null,
     historyHostUnavailable: false,
     historyRequest: 0,
@@ -254,7 +254,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         return () => {
             for (const [key, run] of runsRef.current) {
                 ++run.historyRequest;
-                run.historyLoading = false;
+                run.historyInFlight = 0;
                 // Detach the old browser observer; durable work is stopped only by explicit Stop.
                 run.controller?.abort();
                 runsRef.current.delete(key);
@@ -292,7 +292,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
         const run = runFor(targetCanvas);
         const request = ++run.historyRequest;
-        run.historyLoading = true;
+        ++run.historyInFlight;
         const statusKeyAtRequest = assistantStatusResumeKey(statusRef.current);
         const planAtRequest = run.plan;
         try {
@@ -367,11 +367,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             }
             return false;
         } finally {
+            run.historyInFlight = Math.max(0, run.historyInFlight - 1);
             if (request === run.historyRequest) {
-                run.historyLoading = false;
-                const statusBecameAvailableInFlight = Boolean(statusRef.current?.available)
+                const hostCanServeHistory = Boolean(statusRef.current?.available)
+                    || statusRef.current?.reason === "model_not_configured";
+                const statusBecameReadyInFlight = hostCanServeHistory
                     && assistantStatusResumeKey(statusRef.current) !== statusKeyAtRequest;
-                if (activeCanvasRef.current === targetCanvas && statusBecameAvailableInFlight) {
+                if (activeCanvasRef.current === targetCanvas && statusBecameReadyInFlight) {
                     setHistorySettledEpoch((value) => value + 1);
                 }
             }
@@ -385,7 +387,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         let reading = false;
         const timer = setInterval(() => {
             const run = runFor(canvasId);
-            if (reading || run.historyLoading || run.controller || (!run.backgroundActive && !run.recovery)) return;
+            if (reading || run.historyInFlight > 0 || run.controller || (!run.backgroundActive && !run.recovery)) return;
             reading = true;
             void loadHistory(canvasId).finally(() => { reading = false; });
         }, 2000);
@@ -396,9 +398,11 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     useEffect(() => {
         if (!open) return;
         const run = runFor(canvasId);
-        if (run.streaming || run.sessionBusy || run.historyLoading) return;
+        if (run.streaming || run.sessionBusy || run.historyInFlight > 0) return;
         if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, statusRef.current)) return;
-        if (run.historyError && !statusRef.current?.available) return;
+        const hostCanServeHistory = Boolean(statusRef.current?.available)
+            || statusRef.current?.reason === "model_not_configured";
+        if (run.historyError && !hostCanServeHistory) return;
         void loadHistory(canvasId);
     }, [canvasId, historySettledEpoch, loadHistory, open, runFor, statusResumeKey]);
 
@@ -734,7 +738,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const run = runFor(targetCanvas);
         if (run.streaming || run.sessionBusy || !sessionId) return false;
         run.sessionBusy = true;
-        ++run.historyRequest;
+        if (run.sessionId === sessionId) ++run.historyRequest;
         rerenderIfActive(targetCanvas);
         try {
             const result = await deleteAssistantSession(targetCanvas, sessionId);
@@ -872,7 +876,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         turns: run.turns,
         plan: run.plan,
         historyLoaded: run.historyLoaded,
-        historyError: status?.reason === "model_not_configured" && run.historyHostUnavailable && !run.turns.length && !run.pendingUserText && !run.pendingAttachments.length && !run.streamed && !run.reasoning.length ? null : run.historyError,
+        historyError: (status === null || status.reason === "host_starting" || status.reason === "model_not_configured") && run.historyHostUnavailable && !run.turns.length && !run.pendingUserText && !run.pendingAttachments.length && !run.streamed && !run.reasoning.length ? null : run.historyError,
         sessionBusy: run.sessionBusy,
         reloadHistory: () => loadHistory(canvasId),
         pendingUserText: run.pendingUserText,

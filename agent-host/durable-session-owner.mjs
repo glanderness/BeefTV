@@ -22,8 +22,14 @@ import {
 import {
   createDurableTurnLifecycle,
   hasLiveLocalOwner,
+  isEntryActiveOrDetached,
   PERMANENT_UNRESUMABLE_REASONS,
 } from './durable-watch-observer.mjs';
+import {
+  createDurablePointerResolver,
+  isCorruptSessionArtifactError,
+  isSkippableSessionError,
+} from './durable-pointer-resolver.mjs';
 import {
   createDurableSkillController,
   durableToolReplay,
@@ -38,6 +44,8 @@ export {
   durableRetryReason,
   durableStreamEvents,
   durableToolReplay,
+  isCorruptSessionArtifactError,
+  isSkippableSessionError,
   publicDurableTurn,
 };
 
@@ -59,21 +67,6 @@ const idPattern = /^durable:([a-f0-9-]{36})$/;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
 export const isDurableSessionId = (id) => idPattern.test(String(id || ''));
-
-export function isCorruptSessionArtifactError(error) {
-  if (['durable_version_mismatch', 'corrupt_session_manifest'].includes(error?.reason)) return true;
-  const detail = `${error?.code || ''} ${error?.message || ''}`;
-  return /SQLITE_(?:CORRUPT|NOTADB|IOERR_SHORT_READ)|not a database|database disk image is malformed/i.test(detail);
-}
-
-export function isSkippableSessionError(error) {
-  if (isCorruptSessionArtifactError(error)) return true;
-  if (error instanceof SyntaxError) return true;
-  if (['ENOENT', 'EACCES', 'EPERM', 'EISDIR'].includes(error?.code)) return true;
-  if (error?.reason === 'session_not_found') return true;
-  const detail = `${error?.code || ''} ${error?.message || ''}`;
-  return /SQLITE_CANTOPEN|corrupt/i.test(detail);
-}
 
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, authorizeContinuation = null, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
@@ -107,39 +100,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
   const currentPath = (canvasId) => path.join(directory(canvasId), 'current.json');
-  function clearCorruptPointer(canvasId) {
-    try {
-      const target = currentPath(canvasId);
-      if (fs.existsSync(target) && fs.statSync(target).isFile()) fs.rmSync(target, { force: true });
-    } catch {}
-  }
-  function readSafeCurrentPointer(canvasId) {
-    const live = sessions.get(canvasId);
-    let raw;
-    try {
-      raw = fs.readFileSync(currentPath(canvasId), 'utf8');
-    } catch (error) {
-      if (error?.code === 'ENOENT') return live?.sessionId || '';
-      if (live) return live.sessionId;
-      throw fail('session_pointer_failed');
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      const id = typeof parsed?.sessionId === 'string' ? parsed.sessionId.trim() : '';
-      if (!id) {
-        if (live) return live.sessionId;
-        console.error(`agent-host: 清理缺少 sessionId 的当前会话指针 ${canvasId}`);
-        clearCorruptPointer(canvasId);
-        return '';
-      }
-      return id;
-    } catch (error) {
-      if (live) return live.sessionId;
-      console.error(`agent-host: 清理损坏的当前会话指针 ${canvasId}: ${error.message}`);
-      clearCorruptPointer(canvasId);
-      return '';
-    }
-  }
   async function lock(canvasId, fn) {
     const previous = locks.get(canvasId) || Promise.resolve();
     const next = previous.catch(() => {}).then(() => { if (closed) throw fail('session_store_closed'); return fn(); });
@@ -416,7 +376,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     entry.persistence = created ? 'created' : 'restored';
     return entry;
   }
-  const isEntryBusy = (entry) => Boolean(entry?.busy || entry?.recovering);
+  const isEntryBusy = (entry) => Boolean(entry?.busy || isEntryActiveOrDetached(entry));
   async function createSession(canvasId) {
     return lock(canvasId, async () => {
       if (isEntryBusy(sessions.get(canvasId))) throw fail('session_busy');
@@ -458,80 +418,27 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       await current.harness.close(CTX);
     });
   }
-  async function resolveCurrentSession(canvasId, { activateDurable = true, createIfMissing = false, handoffLegacy = false, preloadedList = null } = {}) {
-    const live = sessions.get(canvasId) || null;
-    if (isEntryBusy(live)) {
-      return { sessionId: live.sessionId, entry: live, kind: 'durable' };
-    }
-    const pointerId = readSafeCurrentPointer(canvasId);
-    if (pointerId && live?.sessionId === pointerId) {
-      return { sessionId: live.sessionId, entry: live, kind: 'durable' };
-    }
-    if (pointerId && isDurableSessionId(pointerId)) {
-      if (!activateDurable && Array.isArray(preloadedList)) {
-        if (preloadedList.some((item) => item.sessionId === pointerId)) {
-          return { sessionId: pointerId, entry: null, kind: 'durable' };
-        }
-        console.error(`agent-host: 跳过未列出的损坏当前会话 ${pointerId}`);
-      } else {
-        try {
-          const entry = await activateSession(canvasId, pointerId);
-          return { sessionId: entry.sessionId, entry, kind: 'durable' };
-        } catch (error) {
-          if (error?.reason === 'session_busy') {
-            const busyLive = sessions.get(canvasId);
-            if (busyLive) return { sessionId: busyLive.sessionId, entry: busyLive, kind: 'durable' };
-          }
-          if (!isSkippableSessionError(error)) throw error;
-          console.error(`agent-host: 跳过损坏的当前会话 ${pointerId}: ${error?.reason || error?.message || error}`);
-        }
-      }
-    } else if (pointerId) {
-      if (handoffLegacy) {
-        const entry = await handoffSession(canvasId, legacy ? legacy.readHandoffNote(canvasId, pointerId) : '', pointerId);
-        return { sessionId: entry.sessionId, entry, kind: 'durable' };
-      }
-      return { sessionId: pointerId, entry: null, kind: 'legacy' };
-    }
-    const currentLive = sessions.get(canvasId) || null;
-    if (isEntryBusy(currentLive)) {
-      return { sessionId: currentLive.sessionId, entry: currentLive, kind: 'durable' };
-    }
-    const candidates = [...(Array.isArray(preloadedList)
-      ? preloadedList
-      : [...(legacy ? await legacy.listCanvasSessions(canvasId) : []), ...await listCanvasSessions(canvasId)])]
-      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-    const fallback = candidates[0]?.sessionId || '';
-    if (fallback) {
-      if (isDurableSessionId(fallback)) {
-        const entry = await activateSession(canvasId, fallback);
-        return { sessionId: entry.sessionId, entry, kind: 'durable' };
-      }
-      if (currentLive) await releaseIdleSession(canvasId);
-      legacy?.writeCurrentSessionId(canvasId, fallback);
-      if (handoffLegacy) {
-        const entry = await handoffSession(canvasId, legacy ? legacy.readHandoffNote(canvasId, fallback) : '', fallback);
-        return { sessionId: entry.sessionId, entry, kind: 'durable' };
-      }
-      return { sessionId: fallback, entry: null, kind: 'legacy' };
-    }
-    if (currentLive) {
-      return { sessionId: currentLive.sessionId, entry: currentLive, kind: 'durable' };
-    }
-    clearCorruptPointer(canvasId);
-    if (createIfMissing) {
-      const entry = await createSession(canvasId);
-      return { sessionId: entry.sessionId, entry, kind: 'durable' };
-    }
-    return { sessionId: null, entry: null, kind: null };
-  }
+  const { clearCorruptPointer, readSafeCurrentPointer, resolveCurrentSession } = createDurablePointerResolver({
+    currentPath,
+    sessions,
+    isEntryBusy,
+    isDurableSessionId,
+    hasSession,
+    activateSession,
+    releaseIdleSession,
+    handoffSession,
+    createSession,
+    listCanvasSessions: (canvasId) => listCanvasSessions(canvasId),
+    legacy,
+    fail,
+  });
   async function ensureSession(canvasId, sessionId = '', { handoffLegacy = false } = {}) {
     if (sessionId) {
       if (isDurableSessionId(sessionId)) return activateSession(canvasId, sessionId);
       if (handoffLegacy) return handoffSession(canvasId, legacy ? legacy.readHandoffNote(canvasId, sessionId) : '', sessionId);
       throw fail('session_not_found');
     }
-    const resolved = await resolveCurrentSession(canvasId, { createIfMissing: true, handoffLegacy });
+    const resolved = await resolveCurrentSession(canvasId, { persist: true, activateDurable: true, createIfMissing: true, handoffLegacy });
     if (!resolved.entry) throw fail('session_not_found');
     return resolved.entry;
   }
@@ -565,8 +472,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (fromRecovery && (!existing.active || existing.active.requestId !== requestId)) {
         return null;
       }
+      const finished = existing.turns.find((turn) => turn.requestId === requestId);
+      if (finished) {
+        if (JSON.stringify(skillsToLoad(finished.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || []))) throw fail('submission_request_conflict');
+        // The same request sent again never runs again. Go opened a new turn for this send;
+        // nothing can use it, so it is closed here and the original record answers.
+        if (finished.turnId !== input.turnId) await completeTurn({ canvasId: entry.canvasId, turnId: input.turnId, sessionId: entry.sessionId, record: finished });
+        // A request stopped before submit has a record but no official submission.
+        return finished.submissionId === undefined ? null : entry.harness.submission(finished.submissionId, CTX);
+      }
       if (existing.active && existing.active.requestId !== requestId) {
         if (hasLiveLocalOwner(entry) || entry.recovering) throw fail('session_busy');
+        if (entry.detachedRunning) {
+          const liveSub = await officialSubmission(entry, existing.active.requestId).catch(() => null);
+          const liveStatus = liveSub ? await liveSub.status(CTX).catch(() => null) : null;
+          if (liveStatus?.status === 'running') throw fail('session_busy');
+          entry.detachedRunning = false;
+        }
         if (input.continuationId) {
           let staleOpen = true;
           try {
@@ -583,15 +505,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       }
       if (!fromRecovery) entry.submittingRequest = requestId;
       try {
-        const finished = existing.turns.find((turn) => turn.requestId === requestId);
-        if (finished) {
-          if (JSON.stringify(skillsToLoad(finished.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || []))) throw fail('submission_request_conflict');
-          // The same request sent again never runs again. Go opened a new turn for this send;
-          // nothing can use it, so it is closed here and the original record answers.
-          if (finished.turnId !== input.turnId) await completeTurn({ canvasId: entry.canvasId, turnId: input.turnId, sessionId: entry.sessionId, record: finished });
-          // A request stopped before submit has a record but no official submission.
-          return finished.submissionId === undefined ? null : entry.harness.submission(finished.submissionId, CTX);
-        }
         // A Stop named this request before it got here: record it stopped, with no model request.
         if (stopIntended(entry, existing, requestId)) {
           return existing.active ? stoppedRequest(entry, existing.active)
@@ -933,10 +846,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       for (const suffix of ['.json', '.sqlite', '.sqlite-wal', '.sqlite-shm', '.budget']) {
         fs.rmSync(path.join(dir, `${uuid}${suffix}`), { recursive: true, force: true });
       }
-      let currentPointer = '';
-      try { currentPointer = JSON.parse(fs.readFileSync(currentPath(canvasId), 'utf8')).sessionId || ''; }
-      catch { currentPointer = ''; }
-      if (currentPointer === sessionId) {
+      const wasCurrent = current?.sessionId === sessionId || readSafeCurrentPointer(canvasId) === sessionId;
+      if (wasCurrent) {
         const remaining = await listCanvasSessions(canvasId);
         if (remaining.length > 0) {
           const next = await open(canvasId, remaining[0].sessionId);
@@ -962,6 +873,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     for (const entry of entries) await entry.harness.close(CTX);
     return entries.length;
   }
-  return { sessions, createSession, handoffSession, activateSession, releaseIdleSession, resolveCurrentSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,
+  return { sessions, isEntryBusy, createSession, handoffSession, activateSession, releaseIdleSession, resolveCurrentSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,
     stop, cancelRequest, hasSession, readSafeCurrentPointer, clearCorruptPointer, history, status, recordEvent, listCanvasSessions, reloadPluginExtensions, disposeAll, skillContext, changeSkillContext };
 }

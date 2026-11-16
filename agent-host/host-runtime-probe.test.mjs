@@ -302,13 +302,14 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(doc.turns[0].reply).toBe('Committed answer text.');
   });
 
-  test('wait() clears entry.busy when watcher throws while entry.running still holds the outer promise', async () => {
+  test('wait() keeps entry busy when official submission is still running and clears busy once submission is not running', async () => {
     const doc = {
       active: { requestId: 'req-fail', turnId: 'turn-fail', stopped: false },
       turns: [],
       stopRequests: [],
     };
     let watchClosed = false;
+    let currentSubStatus = 'running';
     const emittedTypes = [];
     const entry = {
       canvasId: 'wait-fail-canvas',
@@ -353,8 +354,9 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       completeTurn: async () => {},
     });
     const failingSubmission = {
-      status: async () => ({ status: 'running', entry: 1, requestId: 'req-fail' }),
+      status: async () => ({ status: currentSubStatus, entry: 1, requestId: 'req-fail' }),
     };
+    // 1. Official submission still running: observer failure marks detachedRunning and keeps entry.busy=true!
     entry.running = lifecycle.wait(entry, failingSubmission, {
       onEvent: (event) => { emittedTypes.push(event.type); },
     }).finally(() => {
@@ -365,10 +367,20 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(watchClosed).toBe(true);
     expect(entry.waiters).toBe(0);
     expect(entry.running).toBeNull();
+    expect(entry.detachedRunning).toBe(true);
+    expect(entry.busy).toBe(true);
+
+    // 2. Official submission not running: observer failure clears detachedRunning and resets entry.busy=false!
+    currentSubStatus = 'unanswered';
+    entry.running = lifecycle.wait(entry, failingSubmission).finally(() => {
+      entry.running = null;
+    });
+    await expect(entry.running).rejects.toThrow('storage_io_error');
+    expect(entry.detachedRunning).toBe(false);
     expect(entry.busy).toBe(false);
   });
 
-  test('resolveCurrentSession preserves busy live owner over stale pointer and idle live owner on missing pointer', async () => {
+  test('resolveCurrentSession is pure on read fallback, handles directory pointer, and submit deduplicates before settling active', async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv-resolve-live-'));
     const store = createDurableSessionStore({
       sessionRoot: path.join(scratch, 'sessions'),
@@ -392,6 +404,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       expect(busyActive.sessionId).toBe(second.sessionId);
       expect(busyActive.entry).toBe(second);
       const busyPreloaded = await store.resolveCurrentSession('live-canvas', {
+        persist: false,
         activateDurable: false,
         preloadedList: [
           { sessionId: first.sessionId, updatedAt: '2026-01-02T00:00:00.000Z' },
@@ -408,7 +421,17 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       expect(missingPtrResolved.sessionId).toBe(second.sessionId);
       expect(missingPtrResolved.entry).toBe(second);
 
-      // 3. Explicit legacy sessionId without handoffLegacy throws session_not_found instead of creating durable session.
+      // 3. Cold-start (no live owner): corrupt pointer or directory pointer falls back purely without mutating current.json!
+      await store.releaseIdleSession('live-canvas');
+      rmSync(pointerPath, { force: true });
+      mkdirSync(pointerPath, { recursive: true });
+      expect(store.readSafeCurrentPointer('live-canvas')).toBe('');
+      const pureFallback = await store.resolveCurrentSession('live-canvas', { persist: false, activateDurable: false });
+      expect(pureFallback.entry).toBeNull();
+      expect([first.sessionId, second.sessionId]).toContain(pureFallback.sessionId);
+      expect(store.sessions.has('live-canvas')).toBe(false);
+
+      // 4. Explicit legacy sessionId without handoffLegacy throws session_not_found instead of creating durable session.
       await expect(store.ensureSession('live-canvas', 'legacy-readonly-id')).rejects.toMatchObject({ reason: 'session_not_found' });
     } finally {
       await store.disposeAll();
