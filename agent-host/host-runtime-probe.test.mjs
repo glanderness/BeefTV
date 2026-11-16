@@ -29,6 +29,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     'explicit-reference-canvas-can-reach-backend-read-guard',
     'history-and-sessions-survive-unresumable-turn-and-corrupt-manifest',
     'transient-frozen-model-resumes-when-restored-and-allows-continue-when-superseded',
+    'corrupt-current-session-and-pointer-self-heal-without-500',
   ]) {
     test(name, () => {
       const result = receipt.results.find((item) => item.name === name);
@@ -291,5 +292,58 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(doc.active).toBeNull();
     expect(doc.turns).toHaveLength(1);
     expect(doc.turns[0].reply).toBe('Committed answer text.');
+  });
+
+  test('wait() clears entry.busy when watcher throws while entry.running still holds the outer promise', async () => {
+    const doc = {
+      active: { requestId: 'req-fail', turnId: 'turn-fail', stopped: false },
+      turns: [],
+      stopRequests: [],
+    };
+    const entry = {
+      canvasId: 'wait-fail-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000005',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: 'req-fail',
+      submittingRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: { id: 'root-5', abort: async () => {} },
+      harness: { commit: async () => null },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => doc,
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: true }),
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => null,
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+    const failingSubmission = {
+      watch: async function* () {
+        yield { type: 'snapshot', state: { status: 'running' } };
+        throw new Error('storage_io_error');
+      },
+    };
+    entry.running = lifecycle.wait(entry, failingSubmission).finally(() => {
+      entry.running = null;
+    });
+    await expect(entry.running).rejects.toThrow('storage_io_error');
+    expect(entry.waiters).toBe(0);
+    expect(entry.running).toBeNull();
+    expect(entry.busy).toBe(false);
   });
 });

@@ -100,6 +100,35 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
   const currentPath = (canvasId) => path.join(directory(canvasId), 'current.json');
+  function clearCorruptPointer(canvasId) {
+    try {
+      const target = currentPath(canvasId);
+      if (fs.existsSync(target) && fs.statSync(target).isFile()) fs.rmSync(target, { force: true });
+    } catch {}
+  }
+  function readSafeCurrentPointer(canvasId) {
+    let raw;
+    try {
+      raw = fs.readFileSync(currentPath(canvasId), 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return '';
+      throw fail('session_pointer_failed');
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const id = typeof parsed?.sessionId === 'string' ? parsed.sessionId.trim() : '';
+      if (!id) {
+        console.error(`agent-host: 清理缺少 sessionId 的当前会话指针 ${canvasId}`);
+        clearCorruptPointer(canvasId);
+        return '';
+      }
+      return id;
+    } catch (error) {
+      console.error(`agent-host: 清理损坏的当前会话指针 ${canvasId}: ${error.message}`);
+      clearCorruptPointer(canvasId);
+      return '';
+    }
+  }
   async function lock(canvasId, fn) {
     const previous = locks.get(canvasId) || Promise.resolve();
     const next = previous.catch(() => {}).then(() => { if (closed) throw fail('session_store_closed'); return fn(); });
@@ -330,7 +359,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (!isDurableSessionId(sessionId)) return false;
     try {
       const manifest = JSON.parse(fs.readFileSync(path.join(durableDirectory(canvasId), `${idPattern.exec(sessionId)[1]}.json`), 'utf8'));
-      return manifest.canvasId === canvasId && manifest.sessionId === sessionId;
+      return manifest.canvasId === canvasId && manifest.sessionId === sessionId && manifest.version === DURABLE_VERSION;
     } catch { return false; }
   }
   // 新建候选：写清单、打开官方 Harness，但不发布指针、不写入 sessions。
@@ -390,13 +419,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     });
   }
   async function ensureSession(canvasId, sessionId = '') {
-    if (!sessionId) {
-      if (sessions.has(canvasId)) return sessions.get(canvasId);
-      try { sessionId = JSON.parse(fs.readFileSync(currentPath(canvasId), 'utf8')).sessionId; }
-      catch (error) { if (error.code !== 'ENOENT') throw fail('session_pointer_failed'); }
+    if (sessionId) return activateSession(canvasId, sessionId);
+    if (sessions.has(canvasId)) return sessions.get(canvasId);
+    const pointerId = readSafeCurrentPointer(canvasId);
+    if (pointerId && isDurableSessionId(pointerId)) {
+      try {
+        return await activateSession(canvasId, pointerId);
+      } catch (error) {
+        if (!isSkippableSessionError(error)) throw error;
+        console.error(`agent-host: 跳过损坏的当前会话 ${pointerId}: ${error?.reason || error?.message || error}`);
+      }
+      const fallback = (await listCanvasSessions(canvasId))[0]?.sessionId || '';
+      if (fallback) return activateSession(canvasId, fallback);
+      clearCorruptPointer(canvasId);
+      return createSession(canvasId);
     }
-    if (!sessionId) return createSession(canvasId);
-    return activateSession(canvasId, sessionId);
+    if (!pointerId) return createSession(canvasId);
+    return activateSession(canvasId, pointerId);
   }
   // Restore only the current pointer, under the same lock as explicit switches.
   // A delayed automatic request must never install its old session.
@@ -407,9 +446,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         if (entry.sessionId !== sessionId) throw fail('session_not_current');
         return entry;
       }
-      let pointer;
-      try { pointer = JSON.parse(fs.readFileSync(currentPath(canvasId), 'utf8')).sessionId; }
-      catch (error) { throw fail(error.code === 'ENOENT' ? 'session_not_current' : 'session_pointer_failed'); }
+      const pointer = readSafeCurrentPointer(canvasId);
       if (!sessionId || pointer !== sessionId) throw fail('session_not_current');
       return install(await open(canvasId, sessionId));
     });
@@ -489,6 +526,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           entry.log.length = 0;
           entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0, unboundReminderSent: false });
           entry.submittedRequest = null;
+          entry.lifecycle = null;
+          entry.turnProjection = null;
+          entry.turnProjectionTurnId = null;
+          entry.turnProjectionReady = null;
           const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
           const studioDiff = await refreshStudioDigest(entry, input.turnId, { selectedNodeIds: input.selectedNodeIds || [], computeDiff: true });
           const submittedContent = prependStudioChanges(expansion.content, studioDiff);
@@ -715,8 +756,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (!cleanCanvasId || !cleanKind || !cleanMessage) throw fail('invalid_request');
     let currentSessionId = sessions.get(cleanCanvasId)?.sessionId || '';
     if (!currentSessionId) {
-      try { currentSessionId = JSON.parse(fs.readFileSync(currentPath(cleanCanvasId), 'utf8')).sessionId || ''; }
-      catch (error) { if (error.code !== 'ENOENT') throw fail('session_pointer_failed'); }
+      currentSessionId = readSafeCurrentPointer(cleanCanvasId);
     }
     if (requestedSessionId && isDurableSessionId(requestedSessionId) && requestedSessionId !== currentSessionId) {
       return lock(cleanCanvasId, async () => {
@@ -825,5 +865,5 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return entries.length;
   }
   return { sessions, createSession, handoffSession, activateSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,
-    stop, cancelRequest, hasSession, history, status, recordEvent, listCanvasSessions, reloadPluginExtensions, disposeAll, skillContext, changeSkillContext };
+    stop, cancelRequest, hasSession, clearCorruptPointer, history, status, recordEvent, listCanvasSessions, reloadPluginExtensions, disposeAll, skillContext, changeSkillContext };
 }

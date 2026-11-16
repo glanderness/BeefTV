@@ -97,6 +97,7 @@ type CanvasRun = {
     turns: AssistantTurn[];
     plan: AssistantPlan | null;
     historyLoaded: boolean;
+    historyLoading: boolean;
     historyError: string | null;
     historyHostUnavailable: boolean;
     historyRequest: number;
@@ -158,6 +159,7 @@ const createRun = (): CanvasRun => ({
     turns: [],
     plan: null,
     historyLoaded: false,
+    historyLoading: false,
     historyError: null,
     historyHostUnavailable: false,
     historyRequest: 0,
@@ -251,6 +253,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         return () => {
             for (const [key, run] of runsRef.current) {
                 ++run.historyRequest;
+                run.historyLoading = false;
                 // Detach the old browser observer; durable work is stopped only by explicit Stop.
                 run.controller?.abort();
                 runsRef.current.delete(key);
@@ -288,6 +291,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
         const run = runFor(targetCanvas);
         const request = ++run.historyRequest;
+        run.historyLoading = true;
         const planAtRequest = run.plan;
         try {
             const [sessionList, history] = await Promise.all([
@@ -361,6 +365,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             }
             return false;
         } finally {
+            if (request === run.historyRequest) run.historyLoading = false;
             rerenderIfActive(targetCanvas);
         }
     }, [rerenderIfActive, runFor]);
@@ -371,7 +376,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         let reading = false;
         const timer = setInterval(() => {
             const run = runFor(canvasId);
-            if (reading || run.controller || (!run.backgroundActive && !run.recovery)) return;
+            if (reading || run.historyLoading || run.controller || (!run.backgroundActive && !run.recovery)) return;
             reading = true;
             void loadHistory(canvasId).finally(() => { reading = false; });
         }, 2000);
@@ -382,10 +387,10 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     useEffect(() => {
         if (!open) return;
         const run = runFor(canvasId);
-        if (run.streaming || run.sessionBusy) return;
-        if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, status)) return;
+        if (run.streaming || run.sessionBusy || run.historyLoading) return;
+        if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, statusRef.current)) return;
         void loadHistory(canvasId);
-    }, [canvasId, loadHistory, open, runFor, status, statusResumeKey]);
+    }, [canvasId, loadHistory, open, runFor, statusResumeKey]);
 
     const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode} = {}) => {
         const message = text.trim();

@@ -207,20 +207,22 @@ export function createDurableTurnLifecycle({
         return { submission: null, unresumableReason: reason, unresumableTurn: null };
       }
       if (TRANSIENT_UNRESUMABLE_REASONS.has(reason)) {
-        if (!hasLiveLocalOwner(entry)) entry.busy = false;
-        const active = (await state(entry)).active;
-        const matchesFailed = active && (!failedRequestId || active.requestId === failedRequestId);
-        let unresumableTurn = null;
-        if (matchesFailed) {
-          hydrate(entry, active);
-          const record = active.result || await completionRecord(entry, active, {
-            status: 'unanswered',
-            reason: active.stopped ? 'aborted' : 'interrupted',
-          });
-          unresumableTurn = publicDurableTurn(record);
+        try {
+          const active = (await state(entry)).active;
+          const matchesFailed = active && (!failedRequestId || active.requestId === failedRequestId);
+          let unresumableTurn = null;
+          if (matchesFailed) {
+            hydrate(entry, active);
+            const record = active.result || await completionRecord(entry, active, {
+              status: 'unanswered',
+              reason: active.stopped ? 'aborted' : 'interrupted',
+            });
+            unresumableTurn = publicDurableTurn(record);
+          }
+          return { submission: null, unresumableReason: reason, unresumableTurn };
+        } finally {
           if (!hasLiveLocalOwner(entry)) entry.busy = false;
         }
-        return { submission: null, unresumableReason: reason, unresumableTurn };
       }
       if (!hasLiveLocalOwner(entry)) entry.busy = false;
       throw error;
@@ -313,7 +315,9 @@ export function createDurableTurnLifecycle({
       return record;
     } finally {
       entry.waiters -= 1;
-      if (!settled && !hasLiveLocalOwner(entry) && !entry.recovering) entry.busy = false;
+      // Exclude entry.running here because followDurable assigns entry.running to wait().finally(...),
+      // so entry.running is still this expiring promise while wait()'s own finally executes.
+      if (!settled && entry.waiters === 0 && !entry.submittingRequest && !entry.recovering) entry.busy = false;
     }
   }
 

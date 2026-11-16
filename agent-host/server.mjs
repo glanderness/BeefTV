@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId, publicDurableTurn } from './durable-session-owner.mjs';
+import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId, isSkippableSessionError, publicDurableTurn } from './durable-session-owner.mjs';
 import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { parseHostBaseUrlEnv, providerRegistration, providerUnavailableReason, resolveHostModelRequestUrl,
@@ -257,6 +257,11 @@ function currentId(canvasId) {
     // Failed pointer publication must not erase a previously owned live chat.
     const entry = durable.sessions.get(canvasId);
     if (entry) return entry.sessionId;
+    if (error?.cause instanceof SyntaxError || error?.message === '当前会话指针缺少 sessionId') {
+      console.error(`agent-host: 清理损坏的当前会话指针 ${canvasId}: ${error.cause?.message || error.message}`);
+      durable.clearCorruptPointer(canvasId);
+      return '';
+    }
     throw error;
   }
 }
@@ -283,9 +288,11 @@ function emitDurable(entry, event) {
 }
 function followDurable(entry, submission) {
   if (!entry.running) {
+    const observedTurnId = entry.turn.turnId || entry.input?.turnId || null;
     entry.listeners = new Set();
     entry.lifecycle = null;
     entry.turnProjection = createDurableTurnProjection();
+    entry.turnProjectionTurnId = observedTurnId;
     entry.livePlan = entry.turn.plan ?? null;
     const ready = Promise.withResolvers();
     entry.turnProjectionReady = ready.promise;
@@ -293,7 +300,12 @@ function followDurable(entry, submission) {
       emitDurable(entry,event);
       if (event.type === 'snapshot') ready.resolve();
     }})
-      .finally(()=>{ready.resolve();entry.running=null;entry.lifecycle=null;});
+      .finally(()=>{
+        ready.resolve();
+        entry.running=null;
+        entry.lifecycle=null;
+        if (entry.turnProjectionTurnId === observedTurnId) entry.turnProjectionTurnId = null;
+      });
     // Observers may disconnect; the official task and its completion persist.
     entry.running.catch(error=>console.error(`agent-host: durable wait ${error.reason || error.message}`));
   }
@@ -374,6 +386,14 @@ function respondStoreError(res, error) {
     respond(res, 503, { code: 503, reason: 'session_store_closed' });
     return true;
   }
+  if (['durable_version_mismatch', 'corrupt_session_manifest'].includes(error?.reason)) {
+    respond(res, 409, { code: 409, reason: error.reason });
+    return true;
+  }
+  if (isSkippableSessionError(error)) {
+    respond(res, 409, { code: 409, reason: 'corrupt_session_manifest' });
+    return true;
+  }
   return false;
 }
 
@@ -443,17 +463,41 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/active') {
       const canvasId = String(url.searchParams.get('canvasId') || '');
-      const sessionId = String(url.searchParams.get('sessionId') || currentId(canvasId));
-      let entry = liveEntry(canvasId);
-      if (isDurableSessionId(sessionId)) entry = await durable.ensureSession(canvasId,sessionId);
+      const requestedSessionId = String(url.searchParams.get('sessionId') || '').trim();
+      const sessionId = requestedSessionId || currentId(canvasId);
+      const live = liveEntry(canvasId);
+      let entry = live;
+      if (isDurableSessionId(sessionId)) {
+        try {
+          entry = live?.sessionId === sessionId ? live : await durable.ensureSession(canvasId, sessionId);
+        } catch (error) {
+          if (!requestedSessionId && isSkippableSessionError(error)) {
+            respond(res, 200, { sessionId: null, turnId: null, busy: false }); return;
+          }
+          throw error;
+        }
+      }
       respond(res,200,{sessionId:entry?.sessionId || sessionId || null,turnId:entry?.turn.turnId || null,busy:Boolean(entry?.busy)}); return;
     }
     if (req.method === 'GET' && url.pathname === '/sessions') {
       const canvasId = String(url.searchParams.get('canvasId') || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const list = [...await legacy.listCanvasSessions(canvasId), ...await durable.listCanvasSessions(canvasId)];
-      const active = currentId(canvasId) || null;
-      if (active && !list.some((item) => item.sessionId === active)) {
+      let active = currentId(canvasId) || null;
+      if (active && isDurableSessionId(active) && liveEntry(canvasId)?.sessionId !== active && !list.some((item) => item.sessionId === active)) {
+        const fallback = [...list].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0]?.sessionId || null;
+        if (fallback) {
+          if (isDurableSessionId(fallback)) {
+            active = (await durable.activateSession(canvasId, fallback)).sessionId;
+          } else {
+            legacy.writeCurrentSessionId(canvasId, fallback);
+            active = fallback;
+          }
+        } else {
+          durable.clearCorruptPointer(canvasId);
+          active = null;
+        }
+      } else if (active && !list.some((item) => item.sessionId === active)) {
         list.unshift({ sessionId: active, title: '', updatedAt: new Date().toISOString(), turnCount: 0 });
       }
       respond(res, 200, { currentSessionId: active, sessions: list });
@@ -525,42 +569,60 @@ const server = http.createServer(async (req, res) => {
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const cwd = legacy.canvasWorkspace(canvasId);
       const sessionDir = legacy.canvasSessionDir(canvasId);
-      let sessionId = requested;
-      if (!sessionId) {
-        sessionId = currentId(canvasId);
-      }
+      let sessionId = requested || currentId(canvasId);
       if (!sessionId) { respond(res, 200, { sessionId: null, turns: [] }); return; }
-      if (isDurableSessionId(sessionId)) {
-        if (requested && sessionId !== currentId(canvasId)) {
-          respond(res,200,await durable.history(canvasId,sessionId)); return;
-        }
+      const readCurrentDurableHistory = async (targetSessionId) => {
         // A live owner of the current session is read as is: polling must not republish the pointer.
         const live = liveEntry(canvasId);
-        const entry = live?.sessionId === sessionId ? live : await durable.ensureSession(canvasId,sessionId);
+        const entry = live?.sessionId === targetSessionId ? live : await durable.ensureSession(canvasId, targetSessionId);
         const recovery = await durable.recoverForRead(entry);
         if (recovery.submission) {
-          followDurable(entry,recovery.submission);
+          followDurable(entry, recovery.submission);
           await waitForDurableProjection(entry);
         } else if (entry.waiters > 0) {
           await waitForDurableProjection(entry);
         }
-        const value = await durable.history(canvasId,sessionId);
+        const value = await durable.history(canvasId, targetSessionId);
         if (recovery.unresumableTurn && value.active?.requestId === recovery.unresumableTurn.requestId) {
           value.turns = [...value.turns, recovery.unresumableTurn];
           value.active = null;
           value.pausedTurnReason = recovery.unresumableReason;
         }
-        if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
-        if (value.active && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
+        const ownsProjection = Boolean(value.active && entry.turnProjectionTurnId && value.active.turnId === entry.turnProjectionTurnId);
+        if (ownsProjection && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
+        if (ownsProjection && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
         // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
         // 投影初始化之后思考是权威值：清空后必须写空数组，轮询才能撤掉上一次读到的旧思考；
         // 没拿到初始投影时仍然省略字段，不把尚未观测到的状态当成确定空值。
-        if (value.active && entry.turnProjection?.initialized) value.active.reasoning = entry.turnProjection.reasoning;
-        respond(res,200,value); return;
+        if (ownsProjection && entry.turnProjection?.initialized) value.active.reasoning = entry.turnProjection.reasoning;
+        return value;
+      };
+      if (isDurableSessionId(sessionId)) {
+        if (requested && sessionId !== currentId(canvasId)) {
+          respond(res, 200, await durable.history(canvasId, sessionId)); return;
+        }
+        try {
+          respond(res, 200, await readCurrentDurableHistory(sessionId)); return;
+        } catch (error) {
+          if (requested || !isSkippableSessionError(error)) throw error;
+          console.error(`agent-host: 跳过损坏的当前历史会话 ${sessionId}: ${error?.reason || error?.message || error}`);
+          const fallback = [...await legacy.listCanvasSessions(canvasId), ...await durable.listCanvasSessions(canvasId)]
+            .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0]?.sessionId || '';
+          if (!fallback) {
+            durable.clearCorruptPointer(canvasId);
+            respond(res, 200, { sessionId: null, turns: [] }); return;
+          }
+          if (isDurableSessionId(fallback)) {
+            const activated = await durable.activateSession(canvasId, fallback);
+            respond(res, 200, await readCurrentDurableHistory(activated.sessionId)); return;
+          }
+          legacy.writeCurrentSessionId(canvasId, fallback);
+          sessionId = fallback;
+        }
       }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
       if (!file) {
-        const active = durable.sessions.get(canvasId)?.sessionId || legacy.readCurrentSessionId(canvasId) || '';
+        const active = durable.sessions.get(canvasId)?.sessionId || currentId(canvasId) || '';
         const empty = unflushedSessionHistory(sessionId, active);
         if (empty) { respond(res, 200, empty); return; }
         respond(res, 404, { code: 404, reason: 'session_not_found' }); return;
@@ -730,10 +792,11 @@ const server = http.createServer(async (req, res) => {
       // 新建一条 Durable 会话，并用旧会话文本作为交接说明开头。
       const entry = body.continuationId
         ? await durable.ensureCurrentSession(canvasId, chosen)
+        : !requestedSessionId && (!chosen || isDurableSessionId(chosen))
+        ? await durable.ensureSession(canvasId)
         : isDurableSessionId(chosen)
         ? await durable.ensureSession(canvasId,chosen)
-        : chosen ? await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen)
-          : await durable.ensureSession(canvasId);
+        : await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen);
       const content = await attachmentContent(body,turnId,ops.opsRequest);
       content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
       let result = null;

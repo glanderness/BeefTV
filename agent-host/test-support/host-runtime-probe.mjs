@@ -428,6 +428,80 @@ try{
     const slowHistRes=await slowHistPromise;
     assert.equal(slowHistRes.status,200,slowHistRes.text);
   });
+  await scenario('corrupt-current-session-and-pointer-self-heal-without-500',async()=>{
+    mode='plain';
+    const restartCurrentHost=async()=>{
+      if(child&&child.exitCode===null){const killed=new Promise(r=>child.once('close',r));child.kill('SIGKILL');await killed;}
+      releaseHeldReply?.();releaseHeldReply=null;
+      releaseHeldOps?.();releaseHeldOps=null;
+      releaseAuthHold?.();releaseAuthHold=null;
+      child=spawn(process.execPath,[path.join(root,'agent-host/server.mjs')],{cwd:root,env:{...env,BEEFTV_AGENT_MODEL:'synthetic-model',BEEFTV_AGENT_MAX_REQUESTS_PER_TURN:'3'},stdio:['ignore','pipe','pipe']});
+      child.stdout.on('data',c=>{hostLog+=c});child.stderr.on('data',c=>{hostLog+=c});
+      const dl=Date.now()+15000;let ok=false;
+      while(Date.now()<dl){if(child.exitCode!==null)throw new Error('host exited '+child.exitCode+' '+hostLog.slice(-1500));try{const r=await fetch(base+'/health',{signal:AbortSignal.timeout(500)});if(r.ok){ok=true;break;}}catch{}await delay(100);}
+      assert(ok,'host must restart for corrupt current session scenario');
+    };
+    await restartCurrentHost();
+    const canvasId='synthetic-corrupt-current';
+    const validTurn=await request('/chat',{canvasId,message:'Valid fallback conversation',turnId:'aa29',revisionBefore:1});
+    assert.equal(validTurn.status,200,validTurn.text);
+    const validSessionId=validTurn.events.find(e=>e.type==='session')?.sessionId;
+    assert(validSessionId,'valid fallback session id required');
+    const doomedRes=await request('/sessions',{canvasId});
+    assert.equal(doomedRes.status,200,doomedRes.text);
+    const doomedSessionId=JSON.parse(doomedRes.text).sessionId;
+    assert(doomedSessionId&&doomedSessionId!==validSessionId);
+    // Corrupt the CURRENT durable session's SQLite file on disk and cold-restart.
+    const doomedRawId=doomedSessionId.slice('durable:'.length);
+    const canvasSessionDir=path.join(scratch,'sessions',canvasKey(canvasId));
+    writeFileSync(path.join(canvasSessionDir,'durable',`${doomedRawId}.sqlite`),'corrupt-current-sqlite-bytes');
+    await restartCurrentHost();
+    // Explicit ?sessionId=<corrupt> must return 409 corrupt_session_manifest, never 500.
+    const explicitHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}&sessionId=${encodeURIComponent(doomedSessionId)}`);
+    assert.equal(explicitHist.status,409,`explicit corrupt session history must return 409, got ${explicitHist.status} ${explicitHist.text}`);
+    // Default /sessions, /active, and /history must self-heal to validSessionId with 200!
+    const healedActive=await request(`/active?canvasId=${encodeURIComponent(canvasId)}`);
+    assert.equal(healedActive.status,200,healedActive.text);
+    const healedSessions=await request(`/sessions?canvasId=${encodeURIComponent(canvasId)}`);
+    assert.equal(healedSessions.status,200,healedSessions.text);
+    const healedSessionsJson=JSON.parse(healedSessions.text);
+    assert.equal(healedSessionsJson.currentSessionId,validSessionId);
+    assert(!healedSessionsJson.sessions.some(s=>s.sessionId===doomedSessionId),'corrupt current session must not be unshifted into /sessions');
+    const healedHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}`);
+    assert.equal(healedHist.status,200,healedHist.text);
+    const healedHistJson=JSON.parse(healedHist.text);
+    assert.equal(healedHistJson.sessionId,validSessionId);
+    assert.equal(healedHistJson.turns.length,1);
+    // Corrupt current.json itself on an empty canvas -> /sessions, /history, and /chat self-heal without 500!
+    const badPtrCanvas='synthetic-corrupt-pointer';
+    const badPtrDir=path.join(scratch,'sessions',canvasKey(badPtrCanvas));
+    mkdirSync(badPtrDir,{recursive:true});
+    writeFileSync(path.join(badPtrDir,'current.json'),'{truncated-json');
+    const ptrSessions=await request(`/sessions?canvasId=${encodeURIComponent(badPtrCanvas)}`);
+    assert.equal(ptrSessions.status,200,ptrSessions.text);
+    assert.equal(JSON.parse(ptrSessions.text).currentSessionId,null);
+    writeFileSync(path.join(badPtrDir,'current.json'),'{truncated-json-2');
+    const ptrHist=await request(`/history?canvasId=${encodeURIComponent(badPtrCanvas)}`);
+    assert.equal(ptrHist.status,200,ptrHist.text);
+    assert.deepEqual(JSON.parse(ptrHist.text),{sessionId:null,turns:[]});
+    writeFileSync(path.join(badPtrDir,'current.json'),'{truncated-json-3');
+    const ptrChat=await request('/chat',{canvasId:badPtrCanvas,message:'Heal corrupt pointer on chat.',turnId:'aa30',revisionBefore:1});
+    assert.equal(ptrChat.status,200,ptrChat.text);
+    const ptrSessionId=ptrChat.events.find(e=>e.type==='session')?.sessionId;
+    assert(ptrSessionId);
+    // While a new turn (aa31) is active before streaming any token after settled aa30, GET /history must never leak aa30's streamed text onto active!
+    mode='hold-then-reply';
+    const nextChatPromise=request('/chat',{canvasId:badPtrCanvas,sessionId:ptrSessionId,message:'Second turn.',turnId:'aa31',revisionBefore:1});
+    const wNext=Date.now()+8000;while(!releaseHeldReply&&Date.now()<wNext)await delay(20);
+    assert(releaseHeldReply,'aa31 must reach held model');
+    const midSubmitHist=JSON.parse((await request(`/history?canvasId=${encodeURIComponent(badPtrCanvas)}`)).text);
+    assert.equal(midSubmitHist.active?.turnId,'aa31');
+    assert.notEqual(midSubmitHist.active?.streamed,'Synthetic probe acknowledged.','prior turn streamed text must never leak onto new active turn');
+    releaseHeldReply();releaseHeldReply=null;
+    mode='plain';
+    const nextChatRes=await nextChatPromise;
+    assert.equal(nextChatRes.status,200,nextChatRes.text);
+  });
 } catch(error){results.push({name:'probe-runtime',passed:false,error:error.message});console.error(error.message);}
 finally{
   if(child&&child.exitCode===null){const exited=new Promise(resolve=>child.once('close',resolve));child.kill('SIGTERM');await Promise.race([exited,delay(3000)]);if(child.exitCode===null)child.kill('SIGKILL');}

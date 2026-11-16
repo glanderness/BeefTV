@@ -13,6 +13,10 @@ const undoRequests: Record<string, any>[] = [];
 let rejectNextUndo = false;
 let running = false, cancelled = false, nextId = 0, failNextAsset = false;
 let activePermissionMode: string | undefined;
+let statusPayload: Record<string, any> = { available: true };
+let statusCalls = 0, historyCalls = 0;
+let holdHistory: (() => Promise<void>) | null = null;
+let pausedTurnReason: string | undefined;
 const uploadKeys: string[] = [];
 const uploadMetadata: { name: string; width: string | null; height: string | null; durationMs: string | null }[] = [];
 const registeredAssets: Record<string, any>[] = [];
@@ -94,9 +98,13 @@ beforeAll(async () => {
         }
         if (pathname.endsWith("/skills/added")) return ok({ skills: installedSkills });
         if (pathname.endsWith("/assistant/ui-session")) return ok({ token: "synthetic-only", expiresAt: new Date(Date.now() + 1800000).toISOString() });
-        if (pathname.endsWith("/assistant/status")) return ok({ available: true });
+        if (pathname.endsWith("/assistant/status")) { statusCalls += 1; return ok(statusPayload); }
         if (pathname.endsWith("/assistant/sessions")) return ok({ currentSessionId: "s1", sessions: [] });
-        if (pathname.endsWith("/assistant/history")) return ok({ sessionId: "s1", turns, active: running && !cancelled ? { turnId: "busy", userText: "继续创作", permissionMode: activePermissionMode, selectedNodeIds: [], attachments: [], skills: [], supplements: [], status: "running", createdAt: "2026-10-08" } : null });
+        if (pathname.endsWith("/assistant/history")) {
+            historyCalls += 1;
+            if (holdHistory) await holdHistory();
+            return ok({ sessionId: "s1", turns, ...(pausedTurnReason ? { pausedTurnReason } : {}), active: running && !cancelled ? { turnId: "busy", userText: "继续创作", permissionMode: activePermissionMode, selectedNodeIds: [], attachments: [], skills: [], supplements: [], status: "running", createdAt: "2026-10-08" } : null });
+        }
         if (pathname.endsWith("/assistant/steer")) { supplements.push(await req.json()); return ok({ accepted: true }); }
         if (pathname.endsWith("/assistant/cancel")) { cancelled = true; running = false; return ok({ accepted: true }); }
         if (pathname.includes("/assistant/turns/") && pathname.endsWith("/undo")) {
@@ -123,7 +131,14 @@ beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
 afterAll(async () => { await browser?.close(); server?.stop(true); if (scratch) rmSync(scratch, { recursive: true, force: true }); });
-beforeEach(() => { registeredAssets.length = 0; });
+beforeEach(() => {
+    registeredAssets.length = 0;
+    statusPayload = { available: true };
+    statusCalls = 0;
+    historyCalls = 0;
+    holdHistory = null;
+    pausedTurnReason = undefined;
+});
 
 test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, draft restore and busy supplement", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } }); await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
@@ -400,3 +415,74 @@ for (const mode of ["markdown", "zip"] as const) {
         await page.close();
     }, 20000);
 }
+
+test("status polling does not pile up initial history reads and reloads paused turn once model status recovers", async () => {
+    running = false;
+    cancelled = false;
+    turns.length = 0;
+    turns.push({
+        turnId: "paused-1",
+        userText: "继续分镜脚本",
+        selectedNodeIds: [],
+        reply: "",
+        attachments: [],
+        skills: [],
+        toolCalls: [],
+        proposals: [],
+        change: null,
+        error: "上一轮已中断",
+        errorReason: "turn_interrupted",
+        cancelled: false,
+        createdAt: "2026-10-08",
+    });
+    pausedTurnReason = "model_unavailable_for_resume";
+    statusPayload = { available: false, reason: "host_starting" };
+    let releaseInitialHistory!: () => void;
+    const initialHistoryGate = new Promise<void>(resolve => { releaseInitialHistory = resolve; });
+    holdHistory = () => initialHistoryGate;
+
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+
+    // Wait for at least two 2s host_starting /assistant/status polls while initial /assistant/history is still in flight.
+    const pollDeadline = Date.now() + 8000;
+    while (statusCalls < 2 && Date.now() < pollDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(statusCalls).toBeGreaterThanOrEqual(2);
+    expect(historyCalls).toBe(1);
+
+    holdHistory = null;
+    releaseInitialHistory();
+    await page.getByText("继续分镜脚本", { exact: true }).waitFor({ timeout: 5000 });
+    expect(historyCalls).toBe(1);
+
+    // Another unchanged host_starting status poll must not reload history.
+    const beforeRecoveryPolls = statusCalls;
+    const unchangedDeadline = Date.now() + 5000;
+    while (statusCalls <= beforeRecoveryPolls && Date.now() < unchangedDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(historyCalls).toBe(1);
+
+    // Once /assistant/status reports model available, the paused turn triggers a single automatic history reload.
+    turns.splice(0, turns.length, {
+        turnId: "paused-1",
+        userText: "继续分镜脚本",
+        selectedNodeIds: [],
+        reply: "模型恢复后已完成续跑。",
+        attachments: [],
+        skills: [],
+        toolCalls: [],
+        proposals: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-08",
+    });
+    pausedTurnReason = undefined;
+    statusPayload = { available: true, model: "restored-model" };
+    await page.getByText("模型恢复后已完成续跑。", { exact: true }).waitFor({ timeout: 6000 });
+    expect(historyCalls).toBe(2);
+    await page.close();
+}, 20000);
