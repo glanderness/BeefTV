@@ -404,6 +404,8 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	customKlingShot["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
 	customKlingShot["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
 	customKlingShot["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-2"
+	customKlingShot["metadata"].(map[string]any)["videoReferenceOrder"] = []any{"img-2", "img-1"}
+	customKlingShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{"seed": float64(15)}
 
 	partialOpRefH3Shot := imageNode("partial-opref-h3", "partial-beeftv::minimax-h3")
 	partialOpRefH3Shot["type"] = "video"
@@ -645,11 +647,11 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	if got := byID["opaque-custom-shot"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
 		t.Fatalf("opaque-custom-shot videoMiddleFrameTime = %v, want 2.5", got)
 	}
-	if got := byID["opaque-custom-shot"].Metadata["videoReferenceOrder"]; got != nil {
-		t.Fatalf("opaque-custom-shot leaked stale videoReferenceOrder: %#v", got)
+	if got := byID["opaque-custom-shot"].Metadata["videoReferenceOrder"]; got == nil {
+		t.Fatal("opaque-custom-shot lost videoReferenceOrder")
 	}
-	if got := byID["opaque-custom-shot"].Metadata["videoH3Options"]; got != nil {
-		t.Fatalf("opaque-custom-shot leaked stale videoH3Options: %#v", got)
+	if got := byID["opaque-custom-shot"].Metadata["videoH3Options"]; got == nil {
+		t.Fatal("opaque-custom-shot lost videoH3Options")
 	}
 	if got := byID["custom-h3max-shot"].Metadata["videoEditOperation"]; got != "reference_to_video" {
 		t.Fatalf("custom-h3max-shot videoEditOperation = %v, want reference_to_video", got)
@@ -668,6 +670,12 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	}
 	if got := byID["custom-kling-shot"].Parameters["videoEndFrameNodeId"]; got != "img-2" {
 		t.Fatalf("custom-kling-shot videoEndFrameNodeId = %q, want img-2", got)
+	}
+	if got := byID["custom-kling-shot"].Metadata["videoReferenceOrder"]; got != nil {
+		t.Fatalf("custom-kling-shot leaked stale videoReferenceOrder: %#v", got)
+	}
+	if got := byID["custom-kling-shot"].Metadata["videoH3Options"]; got != nil {
+		t.Fatalf("custom-kling-shot leaked stale videoH3Options: %#v", got)
 	}
 	if got := byID["partial-opref-h3"].Metadata["videoEditOperation"]; got != "image_to_video" {
 		t.Fatalf("partial-opref-h3 videoEditOperation = %v, want image_to_video", got)

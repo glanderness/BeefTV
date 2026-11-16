@@ -606,6 +606,19 @@ func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.V
 	return "opaque"
 }
 
+func resolveVideoContractFlagSupport(contractFlag bool, hasRouteContract bool, declared bool, managedBeefTV bool) string {
+	if hasRouteContract {
+		if contractFlag {
+			return "supported"
+		}
+		return "unsupported"
+	}
+	if declared || managedBeefTV {
+		return "unsupported"
+	}
+	return "opaque"
+}
+
 func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, graph generationDependencyGraph, nodeMeta map[string]any, parameters map[string]string, metadata map[string]any) (map[string]any, error) {
 	if strings.TrimSpace(dependencyString(nodeMeta, "videoDraftTaskId")) != "" {
 		return metadata, nil
@@ -645,10 +658,10 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		delete(parameters, "videoMiddleFrameNodeId")
 		delete(metadata, "videoMiddleFrameTime")
 	}
-	if !(hasRouteContract && routeContract.ReferenceOrder) {
+	if resolveVideoContractFlagSupport(routeContract.ReferenceOrder, hasRouteContract, declared, managedBeefTV) == "unsupported" {
 		delete(metadata, "videoReferenceOrder")
 	}
-	if !(hasRouteContract && routeContract.H3Options) {
+	if resolveVideoContractFlagSupport(routeContract.H3Options, hasRouteContract, declared, managedBeefTV) == "unsupported" {
 		delete(metadata, "videoH3Options")
 	}
 	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
