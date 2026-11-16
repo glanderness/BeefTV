@@ -60,17 +60,24 @@ const fail = (reason) => Object.assign(new Error(reason), { reason });
 const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
 export const isDurableSessionId = (id) => idPattern.test(String(id || ''));
 
+export function isCorruptSessionArtifactError(error) {
+  if (['durable_version_mismatch', 'corrupt_session_manifest'].includes(error?.reason)) return true;
+  const detail = `${error?.code || ''} ${error?.message || ''}`;
+  return /SQLITE_(?:CORRUPT|NOTADB|IOERR_SHORT_READ)|not a database|database disk image is malformed/i.test(detail);
+}
+
 export function isSkippableSessionError(error) {
+  if (isCorruptSessionArtifactError(error)) return true;
   if (error instanceof SyntaxError) return true;
   if (['ENOENT', 'EACCES', 'EPERM', 'EISDIR'].includes(error?.code)) return true;
-  if (['durable_version_mismatch', 'session_not_found', 'corrupt_session_manifest'].includes(error?.reason)) return true;
+  if (error?.reason === 'session_not_found') return true;
   const detail = `${error?.code || ''} ${error?.message || ''}`;
-  return /SQLITE_(?:CORRUPT|NOTADB|CANTOPEN|IOERR_SHORT_READ)|not a database|database disk image is malformed|corrupt/i.test(detail);
+  return /SQLITE_CANTOPEN|corrupt/i.test(detail);
 }
 
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, authorizeContinuation = null, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
-  extensions = () => [], settings = {}, skills = null, readCanvas = null, maxPlanContinuations = 6, thinkingLevel = agentThinkingLevel() }) {
+  extensions = () => [], settings = {}, skills = null, readCanvas = null, legacy = null, maxPlanContinuations = 6, thinkingLevel = agentThinkingLevel() }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
@@ -107,23 +114,27 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     } catch {}
   }
   function readSafeCurrentPointer(canvasId) {
+    const live = sessions.get(canvasId);
     let raw;
     try {
       raw = fs.readFileSync(currentPath(canvasId), 'utf8');
     } catch (error) {
       if (error?.code === 'ENOENT') return '';
+      if (live) return live.sessionId;
       throw fail('session_pointer_failed');
     }
     try {
       const parsed = JSON.parse(raw);
       const id = typeof parsed?.sessionId === 'string' ? parsed.sessionId.trim() : '';
       if (!id) {
+        if (live) return live.sessionId;
         console.error(`agent-host: 清理缺少 sessionId 的当前会话指针 ${canvasId}`);
         clearCorruptPointer(canvasId);
         return '';
       }
       return id;
     } catch (error) {
+      if (live) return live.sessionId;
       console.error(`agent-host: 清理损坏的当前会话指针 ${canvasId}: ${error.message}`);
       clearCorruptPointer(canvasId);
       return '';
@@ -283,8 +294,21 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     const uuid = idPattern.exec(sessionId)[1];
     const dir = durableDirectory(canvasId);
     const manifestPath = path.join(dir, `${uuid}.json`);
-    if (!fs.existsSync(manifestPath)) throw fail('session_not_found');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    let rawManifest;
+    try {
+      rawManifest = fs.readFileSync(manifestPath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') throw fail('session_not_found');
+      if (error?.code === 'EISDIR') throw fail('corrupt_session_manifest');
+      throw error;
+    }
+    let manifest;
+    try {
+      manifest = JSON.parse(rawManifest);
+    } catch (error) {
+      throw Object.assign(fail('corrupt_session_manifest'), { cause: error });
+    }
+    if (!manifest || typeof manifest !== 'object') throw fail('corrupt_session_manifest');
     if (manifest.canvasId !== canvasId || manifest.sessionId !== sessionId || manifest.version !== DURABLE_VERSION) throw fail('durable_version_mismatch');
     const cwd = path.join(workspaceRoot, canvasKey(canvasId));
     fs.mkdirSync(cwd, { recursive: true });
@@ -314,14 +338,21 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       getModels,
       extensions,
     });
-    entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
-      models, registry,
-      // Do not repeat a failed model request: the upstream may already have billed it.
-      // pi 1.5 counts a request cut off by a host restart as a failed attempt too, so that
-      // turn ends interrupted instead of resending; landed changes stay.
-      settings: { stream: { timeoutMs: 180000, maxRetries: 0 }, retry: { maxRetries: 0 },
-        afterFailedRun: 'continue', toolExecution: 'sequential', steeringMode: 'all', ...settings },
-    }, CTX);
+    try {
+      entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
+        models, registry,
+        // Do not repeat a failed model request: the upstream may already have billed it.
+        // pi 1.5 counts a request cut off by a host restart as a failed attempt too, so that
+        // turn ends interrupted instead of resending; landed changes stay.
+        settings: { stream: { timeoutMs: 180000, maxRetries: 0 }, retry: { maxRetries: 0 },
+          afterFailedRun: 'continue', toolExecution: 'sequential', steeringMode: 'all', ...settings },
+      }, CTX);
+    } catch (error) {
+      if (isCorruptSessionArtifactError(error)) {
+        throw Object.assign(fail('corrupt_session_manifest'), { cause: error });
+      }
+      throw error;
+    }
     try {
       const configuredModel = await getModelRef(entry);
       const initialModel = configuredModel?.provider && configuredModel?.modelId
@@ -418,24 +449,72 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       return install(entry);
     });
   }
-  async function ensureSession(canvasId, sessionId = '') {
-    if (sessionId) return activateSession(canvasId, sessionId);
-    if (sessions.has(canvasId)) return sessions.get(canvasId);
+  async function resolveCurrentSession(canvasId, { activateDurable = true, createIfMissing = false, handoffLegacy = false, preloadedList = null } = {}) {
+    const live = sessions.get(canvasId) || null;
     const pointerId = readSafeCurrentPointer(canvasId);
-    if (pointerId && isDurableSessionId(pointerId)) {
-      try {
-        return await activateSession(canvasId, pointerId);
-      } catch (error) {
-        if (!isSkippableSessionError(error)) throw error;
-        console.error(`agent-host: 跳过损坏的当前会话 ${pointerId}: ${error?.reason || error?.message || error}`);
-      }
-      const fallback = (await listCanvasSessions(canvasId))[0]?.sessionId || '';
-      if (fallback) return activateSession(canvasId, fallback);
-      clearCorruptPointer(canvasId);
-      return createSession(canvasId);
+    if (pointerId && live?.sessionId === pointerId) {
+      return { sessionId: live.sessionId, entry: live, kind: 'durable' };
     }
-    if (!pointerId) return createSession(canvasId);
-    return activateSession(canvasId, pointerId);
+    if (pointerId && isDurableSessionId(pointerId)) {
+      if (!activateDurable && Array.isArray(preloadedList)) {
+        if (preloadedList.some((item) => item.sessionId === pointerId)) {
+          return { sessionId: pointerId, entry: null, kind: 'durable' };
+        }
+        console.error(`agent-host: 跳过未列出的损坏当前会话 ${pointerId}`);
+      } else {
+        try {
+          const entry = await activateSession(canvasId, pointerId);
+          return { sessionId: entry.sessionId, entry, kind: 'durable' };
+        } catch (error) {
+          if (!isSkippableSessionError(error)) throw error;
+          console.error(`agent-host: 跳过损坏的当前会话 ${pointerId}: ${error?.reason || error?.message || error}`);
+        }
+      }
+    } else if (pointerId) {
+      if (handoffLegacy) {
+        const entry = await handoffSession(canvasId, legacy ? legacy.readHandoffNote(canvasId, pointerId) : '', pointerId);
+        return { sessionId: entry.sessionId, entry, kind: 'durable' };
+      }
+      return { sessionId: pointerId, entry: null, kind: 'legacy' };
+    }
+    if (isEntryBusy(live)) {
+      return { sessionId: live.sessionId, entry: live, kind: 'durable' };
+    }
+    const candidates = [...(Array.isArray(preloadedList)
+      ? preloadedList
+      : [...(legacy ? await legacy.listCanvasSessions(canvasId) : []), ...await listCanvasSessions(canvasId)])]
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    const fallback = candidates[0]?.sessionId || '';
+    if (fallback) {
+      if (isDurableSessionId(fallback)) {
+        const entry = await activateSession(canvasId, fallback);
+        return { sessionId: entry.sessionId, entry, kind: 'durable' };
+      }
+      legacy?.writeCurrentSessionId(canvasId, fallback);
+      if (handoffLegacy) {
+        const entry = await handoffSession(canvasId, legacy ? legacy.readHandoffNote(canvasId, fallback) : '', fallback);
+        return { sessionId: entry.sessionId, entry, kind: 'durable' };
+      }
+      return { sessionId: fallback, entry: null, kind: 'legacy' };
+    }
+    if (live) {
+      return { sessionId: live.sessionId, entry: live, kind: 'durable' };
+    }
+    clearCorruptPointer(canvasId);
+    if (createIfMissing) {
+      const entry = await createSession(canvasId);
+      return { sessionId: entry.sessionId, entry, kind: 'durable' };
+    }
+    return { sessionId: null, entry: null, kind: null };
+  }
+  async function ensureSession(canvasId, sessionId = '') {
+    if (sessionId) {
+      return isDurableSessionId(sessionId)
+        ? activateSession(canvasId, sessionId)
+        : handoffSession(canvasId, legacy ? legacy.readHandoffNote(canvasId, sessionId) : '', sessionId);
+    }
+    const resolved = await resolveCurrentSession(canvasId, { createIfMissing: true, handoffLegacy: true });
+    return resolved.entry;
   }
   // Restore only the current pointer, under the same lock as explicit switches.
   // A delayed automatic request must never install its old session.
@@ -864,6 +943,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     for (const entry of entries) await entry.harness.close(CTX);
     return entries.length;
   }
-  return { sessions, createSession, handoffSession, activateSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,
-    stop, cancelRequest, hasSession, clearCorruptPointer, history, status, recordEvent, listCanvasSessions, reloadPluginExtensions, disposeAll, skillContext, changeSkillContext };
+  return { sessions, createSession, handoffSession, activateSession, resolveCurrentSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,
+    stop, cancelRequest, hasSession, readSafeCurrentPointer, clearCorruptPointer, history, status, recordEvent, listCanvasSessions, reloadPluginExtensions, disposeAll, skillContext, changeSkillContext };
 }

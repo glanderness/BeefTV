@@ -416,7 +416,7 @@ for (const mode of ["markdown", "zip"] as const) {
     }, 20000);
 }
 
-test("status polling does not pile up initial history reads and reloads paused turn once model status recovers", async () => {
+test("status polling does not pile up initial history reads and reloads paused turn even when status recovers mid-flight", async () => {
     running = false;
     cancelled = false;
     turns.length = 0;
@@ -444,7 +444,7 @@ test("status polling does not pile up initial history reads and reloads paused t
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
 
-    // Wait for at least two 2s host_starting /assistant/status polls while initial /assistant/history is still in flight.
+    // 1. Wait for at least two 2s host_starting /assistant/status polls while initial /assistant/history is still in flight.
     const pollDeadline = Date.now() + 8000;
     while (statusCalls < 2 && Date.now() < pollDeadline) {
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -452,36 +452,40 @@ test("status polling does not pile up initial history reads and reloads paused t
     expect(statusCalls).toBeGreaterThanOrEqual(2);
     expect(historyCalls).toBe(1);
 
-    holdHistory = null;
-    releaseInitialHistory();
-    await page.getByText("继续分镜脚本", { exact: true }).waitFor({ timeout: 5000 });
-    expect(historyCalls).toBe(1);
-
-    // Another unchanged host_starting status poll must not reload history.
-    const beforeRecoveryPolls = statusCalls;
-    const unchangedDeadline = Date.now() + 5000;
-    while (statusCalls <= beforeRecoveryPolls && Date.now() < unchangedDeadline) {
+    // 2. Flip /assistant/status to available WHILE initial /assistant/history (#1) is STILL in flight!
+    const statusCallsBeforeAvailable = statusCalls;
+    statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
+    const availableDeadline = Date.now() + 6000;
+    while (statusCalls <= statusCallsBeforeAvailable && Date.now() < availableDeadline) {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
+    // Give the browser a moment to apply setStatus({ available: true }) while history #1 is still held:
+    // historyLoading lock must keep historyCalls === 1 during flight, NOT drop a concurrent duplicate.
+    await new Promise(resolve => setTimeout(resolve, 150));
     expect(historyCalls).toBe(1);
 
-    // Once /assistant/status reports model available, the paused turn triggers a single automatic history reload.
-    turns.splice(0, turns.length, {
-        turnId: "paused-1",
-        userText: "继续分镜脚本",
-        selectedNodeIds: [],
-        reply: "模型恢复后已完成续跑。",
-        attachments: [],
-        skills: [],
-        toolCalls: [],
-        proposals: [],
-        change: null,
-        error: null,
-        cancelled: false,
-        createdAt: "2026-10-08",
-    });
-    pausedTurnReason = undefined;
-    statusPayload = { available: true, model: "restored-model" };
+    // 3. Now let history #1 finish with pausedTurnReason="model_unavailable_for_resume", and prepare history #2 with the resumed reply:
+    // settling history #1 must immediately detect that status recovered mid-flight and trigger history #2!
+    holdHistory = async () => {
+        if (historyCalls >= 2) {
+            pausedTurnReason = undefined;
+            turns.splice(0, turns.length, {
+                turnId: "paused-1",
+                userText: "继续分镜脚本",
+                selectedNodeIds: [],
+                reply: "模型恢复后已完成续跑。",
+                attachments: [],
+                skills: [],
+                toolCalls: [],
+                proposals: [],
+                change: null,
+                error: null,
+                cancelled: false,
+                createdAt: "2026-10-08",
+            });
+        }
+    };
+    releaseInitialHistory();
     await page.getByText("模型恢复后已完成续跑。", { exact: true }).waitFor({ timeout: 6000 });
     expect(historyCalls).toBe(2);
     await page.close();

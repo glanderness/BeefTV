@@ -430,15 +430,16 @@ try{
   });
   await scenario('corrupt-current-session-and-pointer-self-heal-without-500',async()=>{
     mode='plain';
-    const restartCurrentHost=async()=>{
-      if(child&&child.exitCode===null){const killed=new Promise(r=>child.once('close',r));child.kill('SIGKILL');await killed;}
+    const restartCurrentHost=async(beforeStart=null)=>{
+      if(child&&child.exitCode===null&&child.signalCode===null){const killed=new Promise(r=>child.once('close',r));child.kill('SIGKILL');await killed;}
       releaseHeldReply?.();releaseHeldReply=null;
       releaseHeldOps?.();releaseHeldOps=null;
       releaseAuthHold?.();releaseAuthHold=null;
+      if(beforeStart)await beforeStart();
       child=spawn(process.execPath,[path.join(root,'agent-host/server.mjs')],{cwd:root,env:{...env,BEEFTV_AGENT_MODEL:'synthetic-model',BEEFTV_AGENT_MAX_REQUESTS_PER_TURN:'3'},stdio:['ignore','pipe','pipe']});
       child.stdout.on('data',c=>{hostLog+=c});child.stderr.on('data',c=>{hostLog+=c});
       const dl=Date.now()+15000;let ok=false;
-      while(Date.now()<dl){if(child.exitCode!==null)throw new Error('host exited '+child.exitCode+' '+hostLog.slice(-1500));try{const r=await fetch(base+'/health',{signal:AbortSignal.timeout(500)});if(r.ok){ok=true;break;}}catch{}await delay(100);}
+      while(Date.now()<dl){if(child.exitCode!==null||child.signalCode!==null)throw new Error('host exited '+child.exitCode+' '+hostLog.slice(-1500));try{const r=await fetch(base+'/health',{signal:AbortSignal.timeout(500)});if(r.ok){ok=true;break;}}catch{}await delay(100);}
       assert(ok,'host must restart for corrupt current session scenario');
     };
     await restartCurrentHost();
@@ -451,11 +452,14 @@ try{
     assert.equal(doomedRes.status,200,doomedRes.text);
     const doomedSessionId=JSON.parse(doomedRes.text).sessionId;
     assert(doomedSessionId&&doomedSessionId!==validSessionId);
-    // Corrupt the CURRENT durable session's SQLite file on disk and cold-restart.
+    // Stop host first so WAL frames do not replay over the corrupted SQLite file, then cold-start.
     const doomedRawId=doomedSessionId.slice('durable:'.length);
     const canvasSessionDir=path.join(scratch,'sessions',canvasKey(canvasId));
-    writeFileSync(path.join(canvasSessionDir,'durable',`${doomedRawId}.sqlite`),'corrupt-current-sqlite-bytes');
-    await restartCurrentHost();
+    await restartCurrentHost(()=>{
+      rmSync(path.join(canvasSessionDir,'durable',`${doomedRawId}.sqlite-wal`),{force:true});
+      rmSync(path.join(canvasSessionDir,'durable',`${doomedRawId}.sqlite-shm`),{force:true});
+      writeFileSync(path.join(canvasSessionDir,'durable',`${doomedRawId}.sqlite`),'corrupt-current-sqlite-bytes');
+    });
     // Explicit ?sessionId=<corrupt> must return 409 corrupt_session_manifest, never 500.
     const explicitHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}&sessionId=${encodeURIComponent(doomedSessionId)}`);
     assert.equal(explicitHist.status,409,`explicit corrupt session history must return 409, got ${explicitHist.status} ${explicitHist.text}`);
@@ -472,6 +476,27 @@ try{
     const healedHistJson=JSON.parse(healedHist.text);
     assert.equal(healedHistJson.sessionId,validSessionId);
     assert.equal(healedHistJson.turns.length,1);
+    // Malformed JSON request bodies must return 400 invalid_request, never 409 corrupt_session_manifest.
+    const malformedRes=await fetch(base+'/sessions',{method:'POST',headers:{'content-type':'application/json','X-Beeftv-Agent-Token':hostAuth},body:'{malformed-json',signal:AbortSignal.timeout(5000)});
+    assert.equal(malformedRes.status,400);
+    assert.equal((await malformedRes.json()).reason,'invalid_request');
+    // Corrupt current.json on a canvas that only has a valid legacy JSONL session -> /chat without sessionId hands off legacy instead of stranding it!
+    const legacyFallbackCanvas='synthetic-legacy-fallback';
+    const legacyWorkspaceDir=path.join(scratch,'workspace',canvasKey(legacyFallbackCanvas));
+    const legacySessionDir=path.join(scratch,'sessions',canvasKey(legacyFallbackCanvas));
+    mkdirSync(legacyWorkspaceDir,{recursive:true});
+    mkdirSync(legacySessionDir,{recursive:true});
+    const legacyId='legacy-fallback-001';
+    const legacyRows=[
+      {type:'session',version:3,id:legacyId,timestamp:'2026-10-07T12:00:00.000Z',cwd:legacyWorkspaceDir},
+      {type:'message',id:'m1',parentId:null,timestamp:'2026-10-07T12:00:01.000Z',message:{role:'user',content:[{type:'text',text:'Legacy fallback memory anchor'}],timestamp:1791374401000}},
+    ];
+    writeFileSync(path.join(legacySessionDir,`2026-10-07T12-00-00-000Z_${legacyId}.jsonl`),legacyRows.map(r=>JSON.stringify(r)).join('\n')+'\n');
+    writeFileSync(path.join(legacySessionDir,'current.json'),'{truncated-legacy-pointer');
+    const legacyHealedChat=await request('/chat',{canvasId:legacyFallbackCanvas,message:'Continue after corrupt legacy pointer.',turnId:'aa32',revisionBefore:1});
+    assert.equal(legacyHealedChat.status,200,legacyHealedChat.text);
+    const legacyHealedSessions=JSON.parse((await request(`/sessions?canvasId=${encodeURIComponent(legacyFallbackCanvas)}`)).text);
+    assert.equal(legacyHealedSessions.sessions.length,2,'legacy session and handed-off durable session must both exist');
     // Corrupt current.json itself on an empty canvas -> /sessions, /history, and /chat self-heal without 500!
     const badPtrCanvas='synthetic-corrupt-pointer';
     const badPtrDir=path.join(scratch,'sessions',canvasKey(badPtrCanvas));

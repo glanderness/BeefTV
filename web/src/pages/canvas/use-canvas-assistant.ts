@@ -217,6 +217,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const [status, setStatus] = useState<AgentHostStatus | null>(null);
     const [statusBusy, setStatusBusy] = useState(false);
     const [handledProposals, setHandledProposals] = useState<Set<string>>(readStoredProposals);
+    const [historySettledEpoch, setHistorySettledEpoch] = useState(0);
     const [, forceRender] = useState(0);
 
     const [preferredPermissionMode, setPreferredPermissionMode] = useState(() => assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)));
@@ -292,6 +293,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const run = runFor(targetCanvas);
         const request = ++run.historyRequest;
         run.historyLoading = true;
+        const statusKeyAtRequest = assistantStatusResumeKey(statusRef.current);
         const planAtRequest = run.plan;
         try {
             const [sessionList, history] = await Promise.all([
@@ -340,7 +342,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessions = sessionList.sessions;
             run.sessionId = nextSession;
             run.pausedTurnReason = history.pausedTurnReason ?? null;
-            run.pausedStatusKey = run.pausedTurnReason ? assistantStatusResumeKey(statusRef.current) : null;
+            run.pausedStatusKey = run.pausedTurnReason ? statusKeyAtRequest : null;
             run.turns = [...history.turns, ...recent];
             // A history read started before turn_end may omit that newer turn and its plan.
             if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
@@ -365,7 +367,10 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             }
             return false;
         } finally {
-            if (request === run.historyRequest) run.historyLoading = false;
+            if (request === run.historyRequest) {
+                run.historyLoading = false;
+                if (activeCanvasRef.current === targetCanvas) setHistorySettledEpoch((value) => value + 1);
+            }
             rerenderIfActive(targetCanvas);
         }
     }, [rerenderIfActive, runFor]);
@@ -390,7 +395,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         if (run.streaming || run.sessionBusy || run.historyLoading) return;
         if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, statusRef.current)) return;
         void loadHistory(canvasId);
-    }, [canvasId, loadHistory, open, runFor, statusResumeKey]);
+    }, [canvasId, historySettledEpoch, loadHistory, open, runFor, statusResumeKey]);
 
     const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode} = {}) => {
         const message = text.trim();

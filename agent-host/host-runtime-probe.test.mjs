@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { newTurnAccumulator } from './canvas-turn.mjs';
-import { isSkippableSessionError } from './durable-session-owner.mjs';
+import { isCorruptSessionArtifactError, isSkippableSessionError } from './durable-session-owner.mjs';
 import { createDurableTurnLifecycle } from './durable-watch-observer.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,6 +50,12 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(isSkippableSessionError(Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' }))).toBe(true);
     expect(isSkippableSessionError(new RangeError('unexpected programming bug'))).toBe(false);
     expect(isSkippableSessionError(Object.assign(new Error('out of memory'), { code: 'ENOMEM' }))).toBe(false);
+
+    expect(isCorruptSessionArtifactError(new SyntaxError('Unexpected token'))).toBe(false);
+    expect(isCorruptSessionArtifactError(Object.assign(new Error('EACCES'), { code: 'EACCES' }))).toBe(false);
+    expect(isCorruptSessionArtifactError(Object.assign(new Error('corrupt_session_manifest'), { reason: 'corrupt_session_manifest' }))).toBe(true);
+    expect(isCorruptSessionArtifactError(Object.assign(new Error('durable_version_mismatch'), { reason: 'durable_version_mismatch' }))).toBe(true);
+    expect(isCorruptSessionArtifactError(Object.assign(new Error('SQLITE_NOTADB: file is not a database'), { code: 'ERR_SQLITE_ERROR' }))).toBe(true);
   });
 
   test('recoverForRead settle race does not abort or settle a newer turn started before lock acquisition', async () => {
@@ -300,6 +306,8 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       turns: [],
       stopRequests: [],
     };
+    let watchClosed = false;
+    const emittedTypes = [];
     const entry = {
       canvasId: 'wait-fail-canvas',
       sessionId: 'durable:00000000-0000-4000-8000-000000000005',
@@ -312,8 +320,18 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       log: [],
       turn: newTurnAccumulator(),
       generation: {},
-      root: { id: 'root-5', abort: async () => {} },
-      harness: { commit: async () => null },
+      root: {
+        id: 'root-5',
+        abort: async () => {},
+        watch: async () => ({
+          value: { entries: [], docs: {} },
+          stop: () => { watchClosed = true; },
+        }),
+      },
+      harness: {
+        commit: async () => null,
+        watchDoc: async () => { throw new Error('storage_io_error'); },
+      },
     };
     const lifecycle = createDurableTurnLifecycle({
       stateDoc: {},
@@ -333,15 +351,16 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       completeTurn: async () => {},
     });
     const failingSubmission = {
-      watch: async function* () {
-        yield { type: 'snapshot', state: { status: 'running' } };
-        throw new Error('storage_io_error');
-      },
+      status: async () => ({ status: 'running', entry: 1, requestId: 'req-fail' }),
     };
-    entry.running = lifecycle.wait(entry, failingSubmission).finally(() => {
+    entry.running = lifecycle.wait(entry, failingSubmission, {
+      onEvent: (event) => { emittedTypes.push(event.type); },
+    }).finally(() => {
       entry.running = null;
     });
     await expect(entry.running).rejects.toThrow('storage_io_error');
+    expect(emittedTypes).toContain('snapshot');
+    expect(watchClosed).toBe(true);
     expect(entry.waiters).toBe(0);
     expect(entry.running).toBeNull();
     expect(entry.busy).toBe(false);
