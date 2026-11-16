@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createModels } from '@earendil-works/pi-ai/models';
+import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { newTurnAccumulator } from './canvas-turn.mjs';
 import { createDurableSessionStore, isCorruptSessionArtifactError, isSkippableSessionError } from './durable-session-owner.mjs';
 import { canvasKey } from './session-owner.mjs';
@@ -370,8 +371,22 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(entry.detachedRunning).toBe(true);
     expect(entry.busy).toBe(true);
 
-    // 2. Official submission not running: observer failure clears detachedRunning and resets entry.busy=false!
+    // 2. When the background submission later finishes on its own (without a second wait() call),
+    // monitorDetachedSubmission reaps detachedRunning and settles entry.busy back to false!
     currentSubStatus = 'unanswered';
+    const reapDeadline = Date.now() + 2000;
+    while (entry.busy && Date.now() < reapDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    expect(entry.detachedRunning).toBe(false);
+    expect(entry.busy).toBe(false);
+    expect(doc.active).toBeNull();
+    expect(doc.turns.map((item) => item.requestId)).toEqual(['req-fail']);
+
+    // 3. Observer failure when submission is already not running clears detachedRunning and busy immediately!
+    doc.active = { requestId: 'req-fail-2', turnId: 'turn-fail-2', stopped: false };
+    entry.busy = true;
+    entry.submittedRequest = 'req-fail-2';
     entry.running = lifecycle.wait(entry, failingSubmission).finally(() => {
       entry.running = null;
     });
@@ -380,7 +395,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(entry.busy).toBe(false);
   });
 
-  test('resolveCurrentSession is pure on read fallback, handles directory pointer, and submit deduplicates before settling active', async () => {
+  test('resolveCurrentSession is pure on read fallback and handles directory or missing pointers', async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv-resolve-live-'));
     const store = createDurableSessionStore({
       sessionRoot: path.join(scratch, 'sessions'),
@@ -433,6 +448,119 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
 
       // 4. Explicit legacy sessionId without handoffLegacy throws session_not_found instead of creating durable session.
       await expect(store.ensureSession('live-canvas', 'legacy-readonly-id')).rejects.toMatchObject({ reason: 'session_not_found' });
+    } finally {
+      await store.disposeAll();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('submit deduplicates an already-finished requestId without settling a paused active turn, and refreshCanvasBusy settles finished detached turns', async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv-submit-dedup-'));
+    const completedTurns = [];
+    const runtime = await ModelRuntime.create({
+      authPath: path.join(scratch, 'auth.json'),
+      modelsPath: null,
+      refreshOnCreate: false,
+    });
+    runtime.registerProvider('beeftv', {
+      api: 'openai-completions',
+      apiKey: 'synthetic',
+      baseUrl: 'http://127.0.0.1:1/v1',
+      models: [{
+        id: 'synthetic-model',
+        name: 'synthetic-model',
+        reasoning: false,
+        input: ['text'],
+        contextWindow: 200000,
+        maxTokens: 100,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }],
+    });
+    const registeredModels = createModels();
+    registeredModels.setProvider(runtime.getProvider('beeftv'));
+    const store = createDurableSessionStore({
+      sessionRoot: path.join(scratch, 'sessions'),
+      workspaceRoot: path.join(scratch, 'workspace'),
+      getModels: () => registeredModels,
+      getModelRef: () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      buildTools: () => [],
+      authorizeTurn: async ({ turnId, canvasId }) => ({ open: true, turnId, canvasId, permissionMode: 'canvas' }),
+      completeTurn: async ({ turnId }) => { completedTurns.push(turnId); },
+      settings: { retry: { maxRetries: 0 } },
+    });
+    try {
+      const entry = await store.createSession('dedup-canvas');
+      // Stop req-finished-1 before submit so it records a finished turn in doc.turns with zero model calls!
+      await store.cancelRequest('dedup-canvas', entry.sessionId, 'req-finished-1');
+      const stoppedSub = await store.submit(entry, {
+        requestId: 'req-finished-1',
+        turnId: 'turn-finished-1',
+        content: [{ type: 'text', text: 'first' }],
+        userText: 'first',
+      });
+      expect(stoppedSub).toBeNull();
+
+      let allowModel = true;
+      await store.disposeAll();
+      const store2 = createDurableSessionStore({
+        sessionRoot: path.join(scratch, 'sessions'),
+        workspaceRoot: path.join(scratch, 'workspace'),
+        getModels: () => (allowModel ? registeredModels : createModels()),
+        getModelRef: () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+        buildTools: () => [],
+        authorizeTurn: async ({ turnId, canvasId }) => ({ open: true, turnId, canvasId, permissionMode: 'canvas' }),
+        completeTurn: async ({ turnId }) => { completedTurns.push(turnId); },
+        settings: { retry: { maxRetries: 0 } },
+      });
+      try {
+        const reopened = await store2.activateSession('dedup-canvas', entry.sessionId);
+        // Submit req-paused-2 (loopback port 1 settles unanswered quickly with maxRetries: 0,
+        // while doc.active holds req-paused-2 until wait/settle runs!).
+        const pausedSub = await store2.submit(reopened, {
+          requestId: 'req-paused-2',
+          turnId: 'turn-paused-2',
+          content: [{ type: 'text', text: 'paused' }],
+          userText: 'paused',
+        });
+        expect(pausedSub).toBeTruthy();
+        // Reset local live flags as after a cold restart with paused turn on disk (pinned model now unavailable).
+        allowModel = false;
+        reopened.submittingRequest = null;
+        reopened.submittedRequest = null;
+        reopened.busy = false;
+        const pausedRead = await store2.recoverForRead(reopened);
+        expect(pausedRead.unresumableReason).toBe('model_unavailable_for_resume');
+
+        // Now resend already-finished req-finished-1 with new Go turnId 'turn-dup-1':
+        // must return null (finished stopped record), complete ONLY 'turn-dup-1', and keep req-paused-2 active on disk!
+        const dupSub = await store2.submit(reopened, {
+          requestId: 'req-finished-1',
+          turnId: 'turn-dup-1',
+          content: [{ type: 'text', text: 'first' }],
+          userText: 'first',
+        });
+        expect(dupSub).toBeNull();
+        expect(completedTurns).toContain('turn-dup-1');
+        expect(completedTurns).not.toContain('turn-paused-2');
+        const histAfterDup = await store2.history('dedup-canvas', reopened.sessionId);
+        expect(histAfterDup.active?.requestId).toBe('req-paused-2');
+
+        // Also verify refreshCanvasBusy clears detachedRunning once the official submission is no longer running,
+        // unblocking createSession without 409 session_busy!
+        const statusDeadline = Date.now() + 5000;
+        while ((await pausedSub.status()).status === 'running' && Date.now() < statusDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+        reopened.busy = true;
+        reopened.detachedRunning = true;
+        expect(await store2.refreshCanvasBusy('dedup-canvas')).toBe(false);
+        expect(reopened.detachedRunning).toBe(false);
+        expect(reopened.busy).toBe(false);
+        const createdAfterDetached = await store2.createSession('dedup-canvas');
+        expect(createdAfterDetached.sessionId).not.toBe(reopened.sessionId);
+      } finally {
+        await store2.disposeAll();
+      }
     } finally {
       await store.disposeAll();
       rmSync(scratch, { recursive: true, force: true });

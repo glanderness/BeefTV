@@ -591,5 +591,6 @@ test("cold-start 503 hides false failure banner until ready and deleting non-cur
 
     await page.getByText("删除支线会话后自动刷新仍然正常。", { exact: true }).waitFor({ timeout: 8000 });
     expect(historyCalls).toBe(4);
+    expect(await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).count()).toBe(0);
     await page.close();
 }, 35000);

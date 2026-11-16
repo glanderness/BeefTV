@@ -310,12 +310,42 @@ export function createDurableTurnLifecycle({
     }
   }
 
+  function monitorDetachedSubmission(entry, submission, detachedRequestId) {
+    if (entry.detachedMonitor) return;
+    const monitor = (async () => {
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, Math.min(200 + attempt * 50, 1000));
+          timer.unref?.();
+        });
+        if (!entry.detachedRunning || hasLiveLocalOwner(entry)) return;
+        let currentStatus = null;
+        try {
+          currentStatus = await submission.status(CTX);
+        } catch {
+          currentStatus = null;
+        }
+        if (currentStatus?.status === 'running') continue;
+        if (!entry.detachedRunning || hasLiveLocalOwner(entry)) return;
+        entry.detachedRunning = false;
+        await settleUnresumableTurn(entry, detachedRequestId).catch(() => {
+          if (!hasLiveLocalOwner(entry) && !entry.recovering) entry.busy = false;
+        });
+        return;
+      }
+    })().finally(() => {
+      if (entry.detachedMonitor === monitor) entry.detachedMonitor = null;
+    });
+    entry.detachedMonitor = monitor;
+  }
+
   async function wait(entry, submission, options = {}) {
     // Counted before the first await so a recovery read in the same tick sees the live owner.
     entry.waiters += 1;
     entry.detachedRunning = false;
     let settled = false;
     let detachedRunning = false;
+    let detachedRequestId = '';
     try {
       const record = await observe(entry, submission, options);
       settled = true;
@@ -323,11 +353,14 @@ export function createDurableTurnLifecycle({
       return record;
     } catch (error) {
       try {
-        detachedRunning = (await submission.status(CTX))?.status === 'running';
+        const snap = await submission.status(CTX);
+        detachedRunning = snap?.status === 'running';
+        detachedRequestId = String(snap?.requestId || entry.submittedRequest || '');
       } catch {
         detachedRunning = false;
       }
       entry.detachedRunning = detachedRunning;
+      if (detachedRunning) monitorDetachedSubmission(entry, submission, detachedRequestId);
       throw error;
     } finally {
       entry.waiters -= 1;

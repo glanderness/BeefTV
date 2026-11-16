@@ -525,6 +525,24 @@ try{
     const dirPtrHist=await request(`/history?canvasId=${encodeURIComponent(badPtrCanvas)}`);
     assert.equal(dirPtrHist.status,200,dirPtrHist.text);
     assert.deepEqual(JSON.parse(dirPtrHist.text),{sessionId:null,turns:[]});
+    rmSync(path.join(badPtrDir,'current.json'),{recursive:true,force:true});
+    if(process.platform!=='win32'&&typeof process.getuid==='function'&&process.getuid()!==0){
+      const unreadablePtr=path.join(badPtrDir,'current.json');
+      writeFileSync(unreadablePtr,JSON.stringify({sessionId:'durable:00000000-0000-4000-8000-000000000099'}));
+      chmodSync(unreadablePtr,0o000);
+      try{
+        const permSessions=await request(`/sessions?canvasId=${encodeURIComponent(badPtrCanvas)}`);
+        assert.equal(permSessions.status,503,permSessions.text);
+        assert.equal(JSON.parse(permSessions.text).reason,'session_pointer_unavailable');
+        const permHist=await request(`/history?canvasId=${encodeURIComponent(badPtrCanvas)}`);
+        assert.equal(permHist.status,503,permHist.text);
+        assert.equal(JSON.parse(permHist.text).reason,'session_pointer_unavailable');
+      }finally{
+        chmodSync(unreadablePtr,0o600);
+        rmSync(unreadablePtr,{force:true});
+      }
+    }
+    writeFileSync(path.join(badPtrDir,'current.json'),'{truncated-json-3');
     const ptrChat=await request('/chat',{canvasId:badPtrCanvas,message:'Heal corrupt pointer on chat.',turnId:'aa30',revisionBefore:1});
     assert.equal(ptrChat.status,200,ptrChat.text);
     const ptrSessionId=ptrChat.events.find(e=>e.type==='session')?.sessionId;

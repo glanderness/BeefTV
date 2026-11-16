@@ -258,8 +258,8 @@ function currentId(canvasId) {
 function liveEntry(canvasId) {
   return durable.sessions.get(canvasId) || null;
 }
-function isLiveEntryBusy(canvasId) {
-  return durable.isEntryBusy(liveEntry(canvasId));
+async function isLiveEntryBusy(canvasId) {
+  return durable.refreshCanvasBusy(canvasId);
 }
 // A conversation of this canvas: a durable session created for it, or one of its legacy sessions.
 function ownsSession(canvasId, sessionId) {
@@ -545,7 +545,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const canvasId = String(body.canvasId || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      if (isLiveEntryBusy(canvasId)) { respond(res,409,{reason:'session_busy'}); return; }
+      if (await isLiveEntryBusy(canvasId)) { respond(res,409,{reason:'session_busy'}); return; }
       const entry = await durable.createSession(canvasId);
       respond(res, 200, { sessionId: entry.sessionId });
       return;
@@ -556,7 +556,7 @@ const server = http.createServer(async (req, res) => {
       const sessionId = String(body.sessionId || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const currentEntry = liveEntry(canvasId);
-      if (currentEntry && currentEntry.sessionId !== sessionId && durable.isEntryBusy(currentEntry)) {
+      if (currentEntry && currentEntry.sessionId !== sessionId && await isLiveEntryBusy(canvasId)) {
         respond(res,409,{reason:'session_busy'}); return;
       }
       if (isDurableSessionId(sessionId)) {
@@ -577,7 +577,7 @@ const server = http.createServer(async (req, res) => {
       const canvasId = String(body.canvasId || url.searchParams.get('canvasId') || '').trim();
       const sessionId = String(body.sessionId || pathSessionId || url.searchParams.get('sessionId') || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      if (isLiveEntryBusy(canvasId)) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
+      if (await isLiveEntryBusy(canvasId)) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
       if (isDurableSessionId(sessionId)) {
         await durable.deleteSession(canvasId, sessionId);
       } else {
