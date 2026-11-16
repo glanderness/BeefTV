@@ -634,15 +634,22 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 			}
 		}
 	}
+	routeContract, hasRouteContract := providerpreset.BeefTVVideoContract(modelID)
 	var contract providerpreset.VideoContract
 	hasContract := false
-	if managedBeefTV {
-		contract, hasContract = providerpreset.BeefTVVideoContract(modelID)
+	if managedBeefTV && hasRouteContract {
+		contract, hasContract = routeContract, true
 	}
 	middleFrameSupport := resolveVideoMiddleFrameSupport(modelID, rawVideoProfile, declared, managedBeefTV)
 	if middleFrameSupport == "unsupported" {
 		delete(parameters, "videoMiddleFrameNodeId")
 		delete(metadata, "videoMiddleFrameTime")
+	}
+	if !(hasRouteContract && routeContract.ReferenceOrder) {
+		delete(metadata, "videoReferenceOrder")
+	}
+	if !(hasRouteContract && routeContract.H3Options) {
+		delete(metadata, "videoH3Options")
 	}
 	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
 	if storedOp != "" && !slices.Contains([]string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"}, storedOp) {
