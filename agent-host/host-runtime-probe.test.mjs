@@ -906,8 +906,18 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(doc.turns[0].reply).toBe('Already committed reply.');
     entry.disposed = true;
 
-    // Part B: Crash window with full supplementIds + supplementInputs + supplementContents on an already-settled turn ->
-    // recoverForRead prunes the unadmitted supplementId AND lifecycle.wait(observer) settles cleanly without supplement_submission_missing!
+    // Part B: Crash window with full supplementIds + supplementInputs + supplementContents + loadedSkills + intentEpoch on an already-settled turn ->
+    // recoverForRead prunes the unadmitted supplementId, loadedSkills, and intentEpoch AND lifecycle.wait(observer) settles cleanly without supplement_submission_missing!
+    const suppSkillPin = {
+      skillId: 'supp-skill-1',
+      versionId: 'v1',
+      contentHash: 'a'.repeat(64),
+    };
+    const baseSkillPin = {
+      skillId: 'base-skill-1',
+      versionId: 'v1',
+      contentHash: 'b'.repeat(64),
+    };
     const answerEntry = {
       id: 2,
       model: [{ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Completed main answer.' }] }],
@@ -924,11 +934,17 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
         submissionId: 'sub-settled-orig',
         userText: 'Original',
         stopped: false,
+        skills: [baseSkillPin],
+        intentEpoch: 1,
         supplementIds: ['supp-1'],
         supplements: ['Extra instruction'],
-        supplementInputs: [{ requestId: 'supp-1', message: 'Extra instruction', attachments: [], skills: [] }],
+        supplementInputs: [{ requestId: 'supp-1', message: 'Extra instruction', attachments: [], skills: [suppSkillPin] }],
         supplementContents: [{ requestId: 'supp-1', content: 'Extra instruction' }],
       },
+      loadedSkills: [
+        { ...baseSkillPin, name: 'Base Skill', version: '1.0', source: 'selected', turnId: 'turn-supp-idle' },
+        { ...suppSkillPin, name: 'Supp Skill', version: '1.0', source: 'selected', turnId: 'turn-supp-idle', supplementRequestId: 'supp-1' },
+      ],
       turns: [],
       stopRequests: [],
     };
@@ -992,6 +1008,8 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     const idleRecovered = await idleLifecycle.recoverForRead(idleEntry);
     expect(idleRecovered.submission).toBe(settledOrigSub);
     expect(idleDoc.active?.supplementIds).toEqual([]);
+    expect(idleDoc.active?.intentEpoch).toBe(0);
+    expect(idleDoc.loadedSkills.map((s) => s.skillId)).toEqual(['base-skill-1']);
     const observedRecord = await idleLifecycle.wait(idleEntry, idleRecovered.submission);
     expect(observedRecord?.status).toBe('done');
     expect(observedRecord?.reply).toBe('Completed main answer.');
@@ -999,6 +1017,56 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(idleDoc.active).toBeNull();
     expect(idleDoc.turns).toHaveLength(1);
     idleEntry.disposed = true;
+
+    // Part B2: inspectReadOnlyEntry on a rootless entry where turnModel throws turn_not_open returns projected unresumableTurn without throwing!
+    const rootlessDoc = {
+      active: {
+        requestId: 'req-rootless',
+        turnId: 'turn-rootless',
+        userText: 'Rootless prompt',
+        stopped: false,
+      },
+      turns: [],
+      stopRequests: [],
+    };
+    const rootlessEntry = {
+      canvasId: 'rootless-ro-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000011',
+      readOnlyHandle: true,
+      busy: false,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      submittingRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: null,
+      harness: { commit: async () => null, submission: async () => null },
+    };
+    const rootlessLifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => rootlessDoc,
+      update: async () => { throw new Error('read-only entry must never mutate state'); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: true }),
+      turnModel: async () => { throw Object.assign(new Error('turn_not_open'), { reason: 'turn_not_open' }); },
+      submit: async () => null,
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+    const rootlessInspected = await rootlessLifecycle.inspectReadOnlyEntry(rootlessEntry);
+    expect(rootlessInspected.submission).toBeNull();
+    expect(rootlessInspected.unresumableReason).toBeNull();
+    expect(rootlessInspected.unresumableTurn?.turnId).toBe('turn-rootless');
+    expect(rootlessInspected.unresumableTurn?.errorReason).toBe('turn_interrupted');
 
     // Part C: Live supplement() hitting ConversationIdle rolls back supplementIds/supplements AND pending.cancel() avoids pendingInputError!
     const scratchLive = mkdtempSync(path.join(tmpdir(), 'beeftv-steer-idle-rollback-'));

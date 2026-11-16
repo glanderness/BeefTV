@@ -3,11 +3,54 @@
 // 2. 释放锁后调用 Go /complete，仅在确认成功（或永久不可恢复码表示 Go 已关闭）后才执行 settleLocal；
 // 3. 存储读取异常或 Go 临时失败时保留 doc.active.result 与 busy，由后台退避监控重试。
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { sameSkillPin } from './skill-resource.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
 
 export function isTerminalSubmissionStatus(status) {
   return status === 'done' || status === 'unanswered';
+}
+
+export function rollbackSupplementsInDoc(doc, activeRequestId, removeIds) {
+  const removedSet = removeIds instanceof Set ? removeIds : new Set(removeIds || []);
+  if (!doc?.active || doc.active.requestId !== activeRequestId || !removedSet.size) return 0;
+  const active = doc.active;
+  const prevIds = active.supplementIds || [];
+  const removedCount = prevIds.filter((id) => removedSet.has(id)).length;
+  const prevInputs = active.supplementInputs || [];
+  const removedInputs = prevInputs.filter((item) => removedSet.has(item.requestId));
+  const keptInputs = prevInputs.filter((item) => !removedSet.has(item.requestId));
+  const keptContents = (active.supplementContents || []).filter((item) => !removedSet.has(item.requestId));
+  active.supplementIds = prevIds.filter((id) => !removedSet.has(id));
+  active.supplementInputs = keptInputs;
+  active.supplementContents = keptContents;
+  active.supplements = keptInputs.length
+    ? keptInputs.map((item) => item.message)
+    : keptContents.map((item) => String(item.content || ''));
+  if (typeof active.intentEpoch === 'number' && removedCount > 0) {
+    active.intentEpoch = Math.max(0, active.intentEpoch - removedCount);
+  }
+  if (Array.isArray(doc.loadedSkills) && doc.loadedSkills.length > 0) {
+    const keptTurnPins = [
+      ...(active.skills || []),
+      ...keptInputs.flatMap((item) => item.skills || []),
+    ];
+    const removedPins = removedInputs.flatMap((item) => item.skills || []);
+    doc.loadedSkills = doc.loadedSkills.filter((skill) => {
+      if (skill?.supplementRequestId && removedSet.has(skill.supplementRequestId)) return false;
+      if (
+        !skill?.supplementRequestId
+        && skill?.source === 'selected'
+        && skill?.turnId === active.turnId
+        && removedPins.some((pin) => sameSkillPin(skill, pin))
+        && !keptTurnPins.some((pin) => sameSkillPin(skill, pin))
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+  return removedCount;
 }
 
 export function createDurableDetachedReconciler({

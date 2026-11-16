@@ -377,7 +377,7 @@ function respondStoreError(res, error) {
     respond(res, 400, { code: 400, reason: 'invalid_request' });
     return true;
   }
-  if (['skill_context_revision_conflict','skill_context_request_conflict','skill_scope_reset_pending','skill_context_changed'].includes(error?.reason)) {
+  if (['skill_context_revision_conflict','skill_context_request_conflict','skill_scope_reset_pending','skill_context_changed','session_not_running','supplement_preparation_pending','submission_request_conflict'].includes(error?.reason)) {
     respond(res,409,{code:409,reason:error.reason});return true;
   }
   if (['invalid_skill_context_action','invalid_skill_context_request','invalid_skill_selection'].includes(error?.reason)) {
@@ -719,17 +719,18 @@ const server = http.createServer(async (req, res) => {
       if (!state.runningForSteer) {
         respond(res,409,{code:409,reason:'session_not_running'}); return;
       }
-      const pending = durable.beginPendingInput(entry);
+      let pending = null;
       try {
+        pending = durable.beginPendingInput(entry);
         const content = await attachmentContent(body,entry.turn.turnId,ops.opsRequest);
         await durable.supplement(entry,{requestId:body.requestId || crypto.randomUUID(),content,input:body});
         pending.resolve();
         respond(res,202,{accepted:true}); return;
       } catch (error) {
         if (error?.reason === 'session_not_running') {
-          pending.cancel();
+          pending?.cancel();
         } else {
-          pending.reject(error);
+          pending?.reject(error);
         }
         throw error;
       }

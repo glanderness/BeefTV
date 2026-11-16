@@ -602,6 +602,10 @@ try{
     mode='plain';
     const nextChatRes=await nextChatPromise;
     assert.equal(nextChatRes.status,200,nextChatRes.text);
+    // POST /steer on an idle current session must return 409 session_not_running, never 500 internal_error!
+    const idleSteerRes=await request('/steer',{canvasId:badPtrCanvas,sessionId:ptrSessionId,message:'Too late steer'});
+    assert.equal(idleSteerRes.status,409,idleSteerRes.text);
+    assert.equal(JSON.parse(idleSteerRes.text).reason,'session_not_running');
   });
 } catch(error){results.push({name:'probe-runtime',passed:false,error:error.message});console.error(error.message);}
 finally{

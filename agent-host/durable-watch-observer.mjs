@@ -11,7 +11,11 @@ import {
   durableTurnReplyText,
   publicDurableTurn,
 } from './durable-turn-projection.mjs';
-import { createDurableDetachedReconciler, isTerminalSubmissionStatus } from './durable-detached-reconciler.mjs';
+import {
+  createDurableDetachedReconciler,
+  isTerminalSubmissionStatus,
+  rollbackSupplementsInDoc,
+} from './durable-detached-reconciler.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
@@ -219,6 +223,9 @@ export function createDurableTurnLifecycle({
       await turnModel(entry, active);
     } catch (error) {
       const reason = error?.reason || '';
+      if (PERMANENT_UNRESUMABLE_REASONS.has(reason)) {
+        return { submission: null, unresumableReason: null, unresumableTurn: await buildProjectedRecord() };
+      }
       if (TRANSIENT_UNRESUMABLE_REASONS.has(reason)) {
         return { submission: null, unresumableReason: reason, unresumableTurn: await buildProjectedRecord() };
       }
@@ -350,13 +357,7 @@ export function createDurableTurnLifecycle({
         }
         if (!unadmitted.size) return;
         await update(entry, (doc) => {
-          if (doc.active?.requestId !== activeRequestId) return;
-          doc.active.supplementIds = (doc.active.supplementIds || []).filter((id) => !unadmitted.has(id));
-          doc.active.supplementInputs = (doc.active.supplementInputs || []).filter((item) => !unadmitted.has(item.requestId));
-          doc.active.supplementContents = (doc.active.supplementContents || []).filter((item) => !unadmitted.has(item.requestId));
-          doc.active.supplements = (doc.active.supplementInputs || []).length
-            ? doc.active.supplementInputs.map((item) => item.message)
-            : (doc.active.supplementContents || []).map((item) => String(item.content || ''));
+          rollbackSupplementsInDoc(doc, activeRequestId, unadmitted);
         });
         const updated = (await state(entry)).active;
         if (updated) hydrate(entry, updated);

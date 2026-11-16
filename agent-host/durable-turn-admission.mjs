@@ -5,7 +5,7 @@ import { resetTurnAccumulator } from './canvas-turn.mjs';
 import { skillsToLoad } from './skill-resource.mjs';
 import { publicPlan } from './plan.mjs';
 import { prependStudioChanges, supplementContent } from './durable-extensions.mjs';
-import { isTerminalSubmissionStatus } from './durable-detached-reconciler.mjs';
+import { isTerminalSubmissionStatus, rollbackSupplementsInDoc } from './durable-detached-reconciler.mjs';
 import {
   hasLiveLocalOwner,
   isEntryActiveOrDetached,
@@ -114,6 +114,7 @@ export function createDurableTurnAdmission({
   }
 
   async function submit(entry, input, { fromRecovery = false, onSubmitted = null } = {}) {
+    if (input.continuationId && sessions.get(entry.canvasId) !== entry) throw fail('session_not_current');
     if (!fromRecovery && !input.continuationId && entry.recovering) {
       await entry.recovering.catch(() => null);
     }
@@ -222,8 +223,8 @@ export function createDurableTurnAdmission({
           }
           if (stopIntended(entry, await state(entry), requestId)) return stoppedRequest(entry, admitted);
         }
-        const official = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
         entry.submittedRequest = requestId;
+        const official = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
         await update(entry, (doc) => { if (doc.active) doc.active.submissionId = official.id; });
         onSubmitted?.(official);
         return official;
@@ -311,13 +312,11 @@ export function createDurableTurnAdmission({
       if (skills) await prepareSkillContext(entry, input.skills, `supplement:${requestId}`, active.turnId, { append: true });
       if (entry.generation.aborted || entry.pendingCompleteRetry) throw fail('session_not_running');
       const prevIntentEpoch = entry.generation.intentEpoch;
-      let prevLoadedSkillsLen = 0;
       let appendedSupplement = false;
       entry.generation.intentEpoch += 1;
       await update(entry, (doc) => {
         if (!doc.active || doc.active.stopped || doc.active.result || entry.generation.aborted) throw fail('session_not_running');
         const ids = doc.active.supplementIds || [];
-        prevLoadedSkillsLen = (doc.loadedSkills || []).length;
         if (!ids.includes(requestId)) {
           appendedSupplement = true;
           doc.active.supplementIds = [...ids, requestId];
@@ -331,7 +330,12 @@ export function createDurableTurnAdmission({
           }];
           doc.active.supplementContents = [...(doc.active.supplementContents || []),
             expansion.records.length ? { requestId, content: expansion.content, rawContent: content } : { requestId, content }];
-          if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
+          if (expansion.records.length) {
+            doc.loadedSkills = [
+              ...(doc.loadedSkills || []),
+              ...expansion.records.map((record) => ({ ...record, supplementRequestId: requestId })),
+            ];
+          }
           doc.active.intentEpoch = entry.generation.intentEpoch;
         }
       });
@@ -343,15 +347,7 @@ export function createDurableTurnAdmission({
       } catch (error) {
         if (appendedSupplement) {
           await update(entry, (doc) => {
-            if (!doc.active || doc.active.requestId !== active.requestId) return;
-            doc.active.supplementIds = (doc.active.supplementIds || []).filter((id) => id !== requestId);
-            doc.active.supplementInputs = (doc.active.supplementInputs || []).filter((item) => item.requestId !== requestId);
-            doc.active.supplementContents = (doc.active.supplementContents || []).filter((item) => item.requestId !== requestId);
-            doc.active.supplements = (doc.active.supplementInputs || []).map((item) => item.message);
-            doc.active.intentEpoch = prevIntentEpoch;
-            if (expansion.records.length && Array.isArray(doc.loadedSkills)) {
-              doc.loadedSkills = doc.loadedSkills.slice(0, prevLoadedSkillsLen);
-            }
+            rollbackSupplementsInDoc(doc, active.requestId, [requestId]);
           }).catch(() => {});
           entry.generation.intentEpoch = prevIntentEpoch;
           const reverted = (await state(entry).catch(() => null))?.active;
