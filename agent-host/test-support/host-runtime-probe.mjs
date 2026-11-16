@@ -26,6 +26,7 @@ let releaseAuthHold = null;
 let holdAuthTurn = '';
 let failSecondAuthTurn = '';
 const authReads = new Map();
+const failCompleteCount = new Map();
 const completedTurns = new Set();
 const closedTurns = new Set();
 const descriptors = [
@@ -72,6 +73,11 @@ const ops=createServer(async(req,res)=>{
     const turnId=decodeURIComponent(parts[5]||'');
     const subAction=parts[6]||'';
     if(req.method==='POST'&&subAction==='complete'){
+      const remaining502=failCompleteCount.get(turnId)||0;
+      if(remaining502>0){
+        failCompleteCount.set(turnId,remaining502-1);
+        res.writeHead(502).end(JSON.stringify({code:502,reason:'synthetic_complete_502'}));return;
+      }
       completedTurns.add(turnId);
       res.end(JSON.stringify({code:0,data:{turnId,completed:true}}));return;
     }
@@ -523,6 +529,27 @@ try{
     const legacyHealedChat=await request('/chat',{canvasId:legacyFallbackCanvas,message:'Continue after corrupt legacy pointer.',turnId:'aa32',revisionBefore:1});
     assert.equal(legacyHealedChat.status,200,legacyHealedChat.text);
     const legacyHealedSessions=JSON.parse((await request(`/sessions?canvasId=${encodeURIComponent(legacyFallbackCanvas)}`)).text);
+    // Also verify GET /history returns 200 (never 500) when doc.active.result is committed on disk and Go /complete returns 502 twice, then settles into 1 turn!
+    const retryCompleteCanvas='synthetic-complete-retry';
+    turnCanvas.set('aa33',retryCompleteCanvas);
+    failCompleteCount.set('aa33',3);
+    const chat502=await request('/chat',{canvasId:retryCompleteCanvas,message:'Reply then fail complete.',turnId:'aa33',revisionBefore:1});
+    // /chat fails to complete on attempt 1 (leaves doc.active.result on disk); restart host and read /history while 2 more 502s remain!
+    void chat502;
+    await restartCurrentHost();
+    failCompleteCount.set('aa33',2);
+    const histDuring502=await request(`/history?canvasId=${encodeURIComponent(retryCompleteCanvas)}`);
+    assert.equal(histDuring502.status,200,`GET /history must return 200 even during /complete 502, got ${histDuring502.status} ${histDuring502.text}`);
+    const histDuring502Json=JSON.parse(histDuring502.text);
+    assert.equal(histDuring502Json.active,null);
+    assert.equal(histDuring502Json.turns.length,1);
+    assert.equal(histDuring502Json.pausedTurnReason,undefined);
+    const waitCompleteDl=Date.now()+6000;
+    while(!completedTurns.has('aa33')&&Date.now()<waitCompleteDl)await delay(100);
+    assert(completedTurns.has('aa33'),'background reconciler must retry /complete until Go acknowledges');
+    const histAfterCompleteOk=JSON.parse((await request(`/history?canvasId=${encodeURIComponent(retryCompleteCanvas)}`)).text);
+    assert.equal(histAfterCompleteOk.active,null);
+    assert.equal(histAfterCompleteOk.turns.length,1,'must produce exactly one turn after /complete retry succeeds');
     assert.equal(legacyHealedSessions.sessions.length,2,'legacy session and handed-off durable session must both exist');
     // Corrupt current.json itself on an empty canvas -> /sessions, /history, and /chat self-heal without 500!
     const badPtrCanvas='synthetic-corrupt-pointer';

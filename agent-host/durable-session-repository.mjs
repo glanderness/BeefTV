@@ -45,6 +45,8 @@ export function createDurableSessionRepository({
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
   const currentPath = (canvasId) => path.join(directory(canvasId), 'current.json');
+  const borrowed = new Map();
+  let openCount = 0;
 
   function publish(entry) {
     const temporary = `${currentPath(entry.canvasId)}.${crypto.randomUUID()}.tmp`;
@@ -76,7 +78,7 @@ export function createDurableSessionRepository({
     return entry;
   }
 
-  async function open(canvasId, sessionId) {
+  async function open(canvasId, sessionId, { readOnly = false } = {}) {
     if (!isDurableSessionId(sessionId)) throw fail('session_not_found');
     const uuid = idPattern.exec(sessionId)[1];
     const dir = durableDirectory(canvasId);
@@ -98,11 +100,12 @@ export function createDurableSessionRepository({
     if (!manifest || typeof manifest !== 'object') throw fail('corrupt_session_manifest');
     if (manifest.canvasId !== canvasId || manifest.sessionId !== sessionId || manifest.version !== durableVersion) throw fail('durable_version_mismatch');
     const cwd = path.join(workspaceRoot, canvasKey(canvasId));
-    fs.mkdirSync(cwd, { recursive: true });
+    if (!readOnly) fs.mkdirSync(cwd, { recursive: true });
     const entry = {
       kind: 'durable',
       canvasId,
       sessionId,
+      readOnlyHandle: readOnly,
       identity: { prefix: sessionId, source: 'durable-session-id' },
       log: [],
       generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0 },
@@ -116,7 +119,7 @@ export function createDurableSessionRepository({
       submittedRequest: null,
       submittingRequest: null,
     };
-    fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
+    if (!readOnly) fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
     const registry = createRegistry();
     entry.generation.persistEffects = () => persistEffects(entry);
     entry.generation.permissionMode = 'full-access';
@@ -139,10 +142,12 @@ export function createDurableSessionRepository({
       getModels,
       extensions,
     });
+    openCount += 1;
     try {
       entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
         models,
         registry,
+        readOnly,
         // Do not repeat a failed model request: the upstream may already have billed it.
         // pi 1.5 counts a request cut off by a host restart as a failed attempt too, so that
         // turn ends interrupted instead of resending; landed changes stay.
@@ -162,6 +167,14 @@ export function createDurableSessionRepository({
       throw error;
     }
     try {
+      if (readOnly) {
+        entry.root = await entry.harness.conversation(1, CTX);
+        const hostState = await state(entry);
+        if (hostState && hostState.canvasId && (hostState.canvasId !== canvasId || hostState.sessionId !== sessionId || hostState.version !== durableVersion)) {
+          throw fail('durable_version_mismatch');
+        }
+        return entry;
+      }
       const configuredModel = await getModelRef(entry);
       const initialModel = configuredModel?.provider && configuredModel?.modelId
         ? configuredModel
@@ -192,14 +205,20 @@ export function createDurableSessionRepository({
     }
   }
 
-  async function withSession(canvasId, sessionId, fn) {
+  async function withSession(canvasId, sessionId, fn, { readOnly = true } = {}) {
     const cached = sessions.get(canvasId);
     if (cached?.sessionId === sessionId) return fn(cached, true);
-    const entry = await open(canvasId, sessionId);
-    entry.readOnlyHandle = true;
+    const borrowKey = `${canvasId}\0${sessionId}`;
+    const activeBorrow = borrowed.get(borrowKey);
+    if (activeBorrow && (!activeBorrow.readOnlyHandle || readOnly)) {
+      return fn(activeBorrow, false);
+    }
+    const entry = await open(canvasId, sessionId, { readOnly });
+    borrowed.set(borrowKey, entry);
     try {
       return await fn(entry, false);
     } finally {
+      if (borrowed.get(borrowKey) === entry) borrowed.delete(borrowKey);
       entry.disposed = true;
       await entry.harness.close(CTX);
     }
@@ -239,17 +258,20 @@ export function createDurableSessionRepository({
     return entry;
   }
 
+  async function historyOf(entry) {
+    const value = await state(entry);
+    if (!value) return { sessionId: entry.sessionId, turns: [], active: null };
+    const plan = publicPlan(value.plan);
+    return {
+      sessionId: entry.sessionId,
+      turns: (value.turns || []).map((turn) => publicDurableTurn(turn)),
+      active: publicDurableTurn(value.active, true),
+      ...(plan ? { plan } : {}),
+    };
+  }
+
   async function history(canvasId, sessionId) {
-    return withSession(canvasId, sessionId, async (entry) => {
-      const value = await state(entry);
-      const plan = publicPlan(value.plan);
-      return {
-        sessionId,
-        turns: value.turns.map((turn) => publicDurableTurn(turn)),
-        active: publicDurableTurn(value.active, true),
-        ...(plan ? { plan } : {}),
-      };
-    });
+    return withSession(canvasId, sessionId, (entry) => historyOf(entry), { readOnly: true });
   }
 
   async function status(entry) {
@@ -349,7 +371,7 @@ export function createDurableSessionRepository({
       return lock(cleanCanvasId, async () => withSession(cleanCanvasId, requestedSessionId, async (entry) => {
         const submission = await writeEventEntry(entry);
         return { accepted: true, sessionId: entry.sessionId, submissionId: submission.id, requestId: `event:${requestId}` };
-      }));
+      }, { readOnly: false }));
     }
     const entry = await ensureSession(cleanCanvasId, requestedSessionId, { handoffLegacy: !requestedSessionId });
     return lock(cleanCanvasId, async () => {
@@ -364,9 +386,11 @@ export function createDurableSessionRepository({
     install,
     open,
     withSession,
+    getOpenCount: () => openCount,
     handoffSessionId,
     hasSession,
     prepareSession,
+    historyOf,
     history,
     status,
     listCanvasSessions,

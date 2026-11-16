@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isCorruptSessionArtifactError, isDurableSessionId, publicDurableTurn } from './durable-session-owner.mjs';
+import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isCorruptSessionArtifactError, isDurableSessionId, publicDurableTurn, TRANSIENT_UNRESUMABLE_REASONS } from './durable-session-owner.mjs';
 import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { parseHostBaseUrlEnv, providerRegistration, providerUnavailableReason, resolveHostModelRequestUrl,
@@ -497,8 +497,10 @@ const server = http.createServer(async (req, res) => {
           return { sessionId: live.sessionId, turnId: live.turn.turnId || null, busy: state.busy };
         }
         return durable.withSession(canvasId, targetSessionId, async (entry, isMounted) => {
-          const recovery = await durable.recoverForRead(entry, { allowResume: isMounted });
-          const snap = await durable.history(canvasId, targetSessionId);
+          const recovery = isMounted
+            ? await durable.recoverForRead(entry)
+            : await durable.inspectReadOnlyEntry(entry);
+          const snap = await durable.historyOf(entry);
           const effectiveActive = recovery.unresumableTurn && snap.active?.requestId === recovery.unresumableTurn.requestId ? null : snap.active;
           return { sessionId: targetSessionId, turnId: effectiveActive?.turnId || null, busy: Boolean(effectiveActive) };
         });
@@ -594,21 +596,25 @@ const server = http.createServer(async (req, res) => {
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const cwd = legacy.canvasWorkspace(canvasId);
       const sessionDir = legacy.canvasSessionDir(canvasId);
-      const readDurableHistoryEntry = async (entry, { allowResume = true } = {}) => {
-        const recovery = await durable.recoverForRead(entry, { allowResume });
-        if (allowResume && recovery.submission) {
+      const readDurableHistoryEntry = async (entry, { isMounted = true } = {}) => {
+        const recovery = isMounted
+          ? await durable.recoverForRead(entry)
+          : await durable.inspectReadOnlyEntry(entry);
+        if (isMounted && recovery.submission) {
           followDurable(entry, recovery.submission);
           await waitForDurableProjection(entry);
-        } else if (allowResume && entry.waiters > 0) {
+        } else if (isMounted && entry.waiters > 0) {
           await waitForDurableProjection(entry);
         }
-        const value = await durable.history(canvasId, entry.sessionId);
+        const value = await durable.historyOf(entry);
         if (recovery.unresumableTurn && value.active?.requestId === recovery.unresumableTurn.requestId) {
           value.turns = [...value.turns, recovery.unresumableTurn];
           value.active = null;
-          value.pausedTurnReason = recovery.unresumableReason;
+          if (recovery.unresumableReason && TRANSIENT_UNRESUMABLE_REASONS.has(recovery.unresumableReason)) {
+            value.pausedTurnReason = recovery.unresumableReason;
+          }
         }
-        const ownsProjection = Boolean(allowResume && value.active && entry.turnProjectionTurnId && value.active.turnId === entry.turnProjectionTurnId);
+        const ownsProjection = Boolean(isMounted && value.active && entry.turnProjectionTurnId && value.active.turnId === entry.turnProjectionTurnId);
         if (ownsProjection && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
         if (ownsProjection && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
         // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
@@ -622,13 +628,13 @@ const server = http.createServer(async (req, res) => {
         const entry = live?.sessionId === targetSessionId
           ? live
           : await durable.activateSession(canvasId, targetSessionId, { publishPointer: false });
-        return readDurableHistoryEntry(entry, { allowResume: true });
+        return readDurableHistoryEntry(entry, { isMounted: true });
       };
       let sessionId = requested;
       if (requested) {
         if (isDurableSessionId(requested)) {
           if (requested !== currentId(canvasId) && liveEntry(canvasId)?.sessionId !== requested) {
-            respond(res, 200, await durable.withSession(canvasId, requested, (entry, isMounted) => readDurableHistoryEntry(entry, { allowResume: isMounted })));
+            respond(res, 200, await durable.withSession(canvasId, requested, (entry, isMounted) => readDurableHistoryEntry(entry, { isMounted })));
             return;
           }
           respond(res, 200, await readMountedDurableHistory(requested)); return;

@@ -740,6 +740,22 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
         expect(reopened.busy).toBe(false);
         const createdAfterDetached = await store2.createSession('dedup-canvas');
         expect(createdAfterDetached.sessionId).not.toBe(reopened.sessionId);
+
+        // Verify withSession + historyOf opens a non-current session only ONCE with readOnly:true,
+        // and inspectReadOnlyEntry preserves resumable active without leaking session_inactive!
+        const openBeforeBorrow = store2.getOpenCount();
+        const borrowedResult = await store2.withSession('dedup-canvas', reopened.sessionId, async (borrowedEntry, isMounted) => {
+          expect(isMounted).toBe(false);
+          expect(borrowedEntry.readOnlyHandle).toBe(true);
+          const nestedHist = await store2.history('dedup-canvas', reopened.sessionId);
+          const directHist = await store2.historyOf(borrowedEntry);
+          const roInspect = await store2.inspectReadOnlyEntry(borrowedEntry);
+          return { nestedHist, directHist, roInspect };
+        });
+        expect(store2.getOpenCount() - openBeforeBorrow).toBe(1);
+        expect(borrowedResult.directHist.turns.length).toBeGreaterThanOrEqual(2);
+        expect(borrowedResult.nestedHist.turns.length).toBe(borrowedResult.directHist.turns.length);
+        expect(borrowedResult.roInspect.unresumableReason).toBeNull();
       } finally {
         await store2.disposeAll();
       }
@@ -747,5 +763,154 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       await store.disposeAll();
       rmSync(scratch, { recursive: true, force: true });
     }
+  });
+
+  test('recoverForRead handles committed active.result during /complete 502 without throwing and guards supplement crash recovery with whenIdle:reject', async () => {
+    // Part A: active.result committed on disk while Go /complete returns 502 twice -> recoverForRead returns unresumableTurn (zero throw) and settles into 1 turn on 3rd attempt
+    let completeCalls = 0;
+    const doc = {
+      active: {
+        requestId: 'req-committed-res',
+        turnId: 'turn-committed-res',
+        userText: 'Hello',
+        stopped: false,
+        result: {
+          requestId: 'req-committed-res',
+          turnId: 'turn-committed-res',
+          userText: 'Hello',
+          reply: 'Already committed reply.',
+          cancelled: false,
+          error: null,
+          errorReason: null,
+          toolCalls: [],
+          change: null,
+          proposals: [],
+          scriptProposals: [],
+          status: 'done',
+        },
+      },
+      turns: [],
+      stopRequests: [],
+    };
+    const entry = {
+      canvasId: 'committed-res-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000009',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      submittingRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: { id: 'root-9', abort: async () => {} },
+      harness: { commit: async () => null, submission: async () => null },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => doc,
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: true }),
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => null,
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {
+        completeCalls += 1;
+        if (completeCalls <= 2) throw new Error('transient_502');
+      },
+    });
+    const r1 = await lifecycle.recoverForRead(entry);
+    expect(r1.unresumableReason).toBeNull();
+    expect(r1.unresumableTurn?.reply).toBe('Already committed reply.');
+    expect(doc.active?.result?.reply).toBe('Already committed reply.');
+    expect(doc.turns).toHaveLength(0);
+
+    const r2 = await lifecycle.recoverForRead(entry);
+    expect(r2.unresumableTurn?.reply).toBe('Already committed reply.');
+    expect(doc.turns).toHaveLength(0);
+
+    const r3 = await lifecycle.recoverForRead(entry);
+    expect(r3.unresumableTurn).toBeNull();
+    expect(doc.active).toBeNull();
+    expect(doc.turns).toHaveLength(1);
+    expect(doc.turns[0].reply).toBe('Already committed reply.');
+    entry.disposed = true;
+
+    // Part B: persisted supplementContents when original submission already ended unanswered (idle conversation) -> passes whenIdle:'reject' and never starts a second run
+    const submittedDrafts = [];
+    const settledOrigSub = {
+      id: 'sub-settled-orig',
+      status: async () => ({ status: 'unanswered', reason: 'interrupted', entry: 1 }),
+    };
+    const idleDoc = {
+      active: {
+        requestId: 'req-supp-idle',
+        turnId: 'turn-supp-idle',
+        submissionId: 'sub-settled-orig',
+        userText: 'Original',
+        stopped: false,
+        supplementContents: [{ requestId: 'supp-1', content: 'Extra instruction' }],
+      },
+      turns: [],
+      stopRequests: [],
+    };
+    const idleEntry = {
+      canvasId: 'supp-idle-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000010',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      submittingRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: {
+        id: 'root-10',
+        abort: async () => {},
+        submit: async (draft) => {
+          submittedDrafts.push(draft);
+          const err = new Error('Conversation 1 is idle');
+          err.name = 'ConversationIdle';
+          throw err;
+        },
+      },
+      harness: {
+        commit: async () => null,
+        submission: async () => settledOrigSub,
+      },
+    };
+    let recoverySubmitCalls = 0;
+    const idleLifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => idleDoc,
+      update: async (_entry, mutator) => { mutator(idleDoc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: true }),
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => { recoverySubmitCalls += 1; return null; },
+      officialSubmission: async () => settledOrigSub,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+    const idleRecovered = await idleLifecycle.recoverForRead(idleEntry);
+    expect(idleRecovered.submission).toBe(settledOrigSub);
+    expect(submittedDrafts).toHaveLength(0);
+    expect(recoverySubmitCalls).toBe(0);
+    idleEntry.disposed = true;
   });
 });

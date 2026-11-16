@@ -22,17 +22,17 @@ export function createDurableDetachedReconciler({
   isEntryActiveOrDetached,
   permanentUnresumableReasons,
 }) {
-  async function settleTurnWithConfirmation(entry, expectedRequestId = '', { abortIfRunning = false } = {}) {
+  async function settleTurnWithConfirmation(entry, expectedRequestId = '', { abortIfRunning = false, confirmCommittedResult = false } = {}) {
     if (!entry || entry.disposed) return { settled: false, busy: false, record: null };
-    if (!abortIfRunning && !entry.detachedRunning && !entry.pendingCompleteRetry) {
+    if (!abortIfRunning && !confirmCommittedResult && !entry.detachedRunning && !entry.pendingCompleteRetry) {
       return { settled: false, busy: Boolean(entry.busy || isEntryActiveOrDetached(entry)), record: null };
     }
     let prepared;
     try {
       prepared = await lock(entry.canvasId, async () => {
         if (entry.disposed) return { kind: 'idle', busy: false };
-        if (!abortIfRunning && (hasLiveLocalOwner(entry) || entry.recovering)) return { kind: 'busy' };
-        if (!abortIfRunning && !entry.detachedRunning && !entry.pendingCompleteRetry) {
+        if (!abortIfRunning && !confirmCommittedResult && (hasLiveLocalOwner(entry) || entry.recovering)) return { kind: 'busy' };
+        if (!abortIfRunning && !confirmCommittedResult && !entry.detachedRunning && !entry.pendingCompleteRetry) {
           return { kind: 'idle', busy: Boolean(entry.busy) };
         }
         let current;

@@ -17,7 +17,7 @@ const CTX = BACKGROUND_CONTEXT;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
 export const PERMANENT_UNRESUMABLE_REASONS = new Set(['turn_not_open', 'turn_not_found', 'permission_mode_frozen']);
-const TRANSIENT_UNRESUMABLE_REASONS = new Set(['model_unavailable_for_resume', 'turn_model_frozen', 'model_not_configured', 'session_inactive']);
+export const TRANSIENT_UNRESUMABLE_REASONS = new Set(['model_unavailable_for_resume', 'turn_model_frozen', 'model_not_configured']);
 
 export function hasLiveLocalOwner(entry) {
   return Boolean(entry?.waiters > 0 || entry?.running || entry?.submittingRequest);
@@ -97,7 +97,7 @@ export function createDurableTurnLifecycle({
     const original = active.submissionId ? await entry.harness.submission(active.submissionId, CTX) : null;
     const originalStatus = original ? await original.status(CTX) : null;
     const lowerBound = originalStatus?.entry ?? settled.entry;
-    const view = lowerBound === undefined ? null : await entry.root.context(CTX);
+    const view = lowerBound === undefined || !entry.root ? null : await entry.root.context(CTX);
     let viewEntries = view?.entries || [];
     if (lowerBound !== undefined && view?.head?.head !== undefined && view.head.head > lowerBound + 1) {
       const compactedPrefix = await scanConversationEntries(
@@ -169,17 +169,74 @@ export function createDurableTurnLifecycle({
     permanentUnresumableReasons: PERMANENT_UNRESUMABLE_REASONS,
   });
 
-  async function recover(entry, { allowResume = true } = {}) {
+  async function recover(entry) {
     // A live official wait already owns the turn: a read must not hydrate over its
     // in-memory effects, re-authorize, or re-submit. Concurrent reads share one recovery.
     if (hasLiveLocalOwner(entry)) return null;
-    if (!entry.recovering) entry.recovering = recoverOnce(entry, { allowResume }).finally(() => { entry.recovering = null; });
+    if (!entry.recovering) entry.recovering = recoverOnce(entry).finally(() => { entry.recovering = null; });
     return entry.recovering;
   }
 
-  async function recoverForRead(entry, { allowResume = true } = {}) {
+  async function inspectReadOnlyEntry(entry) {
+    const doc = await state(entry);
+    const active = doc?.active;
+    if (!active) return { submission: null, unresumableReason: null, unresumableTurn: null };
+    if (active.result) {
+      return { submission: null, unresumableReason: null, unresumableTurn: publicDurableTurn(active.result) };
+    }
+    const buildProjectedRecord = async (settled = null) => {
+      const record = await completionRecord(entry, active, settled || {
+        status: 'unanswered',
+        reason: active.stopped ? 'aborted' : 'interrupted',
+      });
+      return publicDurableTurn(record);
+    };
+    let auth;
     try {
-      const submission = await recover(entry, { allowResume });
+      auth = await authorization(entry, active.turnId, true);
+    } catch (error) {
+      const reason = error?.reason || '';
+      if (PERMANENT_UNRESUMABLE_REASONS.has(reason)) {
+        return { submission: null, unresumableReason: null, unresumableTurn: await buildProjectedRecord() };
+      }
+      throw error;
+    }
+    if (stopIntended(entry, doc, active.requestId)) {
+      return { submission: null, unresumableReason: null, unresumableTurn: await buildProjectedRecord({ status: 'unanswered', reason: 'aborted' }) };
+    }
+    if (auth?.open === false) {
+      const admitted = entry.root ? await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, active.requestId), CTX).catch(() => null) : null;
+      const submission = admitted ? await entry.harness.submission(admitted.id, CTX).catch(() => null) : null;
+      const settled = submission ? await submission.status(CTX).catch(() => null) : null;
+      const isDone = settled?.status === 'done' && !active.stopped;
+      return {
+        submission: null,
+        unresumableReason: null,
+        unresumableTurn: await buildProjectedRecord(isDone ? settled : { ...(settled || {}), status: 'unanswered', reason: active.stopped ? 'aborted' : 'interrupted' }),
+      };
+    }
+    try {
+      await turnModel(entry, active);
+    } catch (error) {
+      const reason = error?.reason || '';
+      if (TRANSIENT_UNRESUMABLE_REASONS.has(reason)) {
+        return { submission: null, unresumableReason: reason, unresumableTurn: await buildProjectedRecord() };
+      }
+      throw error;
+    }
+    return { submission: null, unresumableReason: null, unresumableTurn: null };
+  }
+
+  async function recoverForRead(entry) {
+    try {
+      const submission = await recover(entry);
+      if (submission && typeof submission === 'object' && 'unconfirmedRecord' in submission) {
+        return {
+          submission: null,
+          unresumableReason: null,
+          unresumableTurn: submission.unconfirmedRecord ? publicDurableTurn(submission.unconfirmedRecord) : null,
+        };
+      }
       return { submission, unresumableReason: null, unresumableTurn: null };
     } catch (error) {
       const reason = error?.reason || '';
@@ -188,7 +245,7 @@ export function createDurableTurnLifecycle({
         const settledRes = await settleTurnWithConfirmation(entry, failedRequestId, { abortIfRunning: true });
         return {
           submission: null,
-          unresumableReason: reason,
+          unresumableReason: null,
           unresumableTurn: !settledRes.settled && settledRes.record ? publicDurableTurn(settledRes.record) : null,
         };
       }
@@ -215,7 +272,7 @@ export function createDurableTurnLifecycle({
     }
   }
 
-  async function recoverOnce(entry, { allowResume = true } = {}) {
+  async function recoverOnce(entry) {
     if (hasLiveLocalOwner(entry)) return null;
     const doc = await state(entry);
     if (doc?.pendingSkillRollback && typeof flushPendingSkillRollback === 'function') {
@@ -251,11 +308,16 @@ export function createDurableTurnLifecycle({
       }
       const currentActive = currentDoc.active;
       hydrate(entry, currentActive);
-      // Completion is already committed: only acknowledge it, never re-run or rebuild it.
-      // Pre-submit stops have no official submission, including after Go has already closed.
+      // Completion is already committed: confirm with Go via unified two-phase confirmation, never re-run.
       if (currentActive.result) {
-        if (auth?.open !== false) await completeTurn({ canvasId: entry.canvasId, turnId: currentActive.turnId, sessionId: entry.sessionId, record: currentActive.result });
-        await settleLocal(entry, currentActive, currentActive.result);
+        if (auth?.open === false) {
+          await settleLocal(entry, currentActive, currentActive.result);
+          return currentActive.submissionId == null ? null : entry.harness.submission(currentActive.submissionId, CTX);
+        }
+        const confirmed = await settleTurnWithConfirmation(entry, currentActive.requestId, { confirmCommittedResult: true });
+        if (!confirmed.settled) {
+          return { unconfirmedRecord: confirmed.record || currentActive.result };
+        }
         return currentActive.submissionId == null ? null : entry.harness.submission(currentActive.submissionId, CTX);
       }
       // A stopped request is settled as stopped, never (re)submitted.
@@ -272,17 +334,34 @@ export function createDurableTurnLifecycle({
         return submission;
       }
       await turnModel(entry, currentActive);
-      if (!allowResume) throw fail('session_inactive');
       const beforeSubmitDoc = await state(entry);
       if (!beforeSubmitDoc.active || beforeSubmitDoc.active.requestId !== active.requestId || hasLiveLocalOwner(entry)) {
         syncIdleIfSettled(beforeSubmitDoc);
         return null;
       }
-      // Re-admit persisted supplements by stable request ID before scheduling the
-      // original submission. The official queue deduplicates already placed ones.
+      const existingSub = beforeSubmitDoc.active.submissionId != null
+        ? await entry.harness.submission(beforeSubmitDoc.active.submissionId, CTX)
+        : await officialSubmission(entry, beforeSubmitDoc.active.requestId);
+      const existingStatus = existingSub ? await existingSub.status(CTX) : null;
+      if (existingSub && isTerminalSubmissionStatus(existingStatus?.status)) {
+        return existingSub;
+      }
+      // Re-admit persisted supplements by stable request ID only while the run is active (whenIdle: 'reject').
       for (const input of beforeSubmitDoc.active.supplementContents || []) {
-        await entry.root.submit({ type: 'input', requestId: `supplement:${input.requestId}`,
-          content: supplementContent(input.requestId, input.content), whenBusy: 'steer' }, CTX);
+        try {
+          await entry.root.submit({
+            type: 'input',
+            requestId: `supplement:${input.requestId}`,
+            content: supplementContent(input.requestId, input.content),
+            whenBusy: 'steer',
+            whenIdle: 'reject',
+          }, CTX);
+        } catch (error) {
+          if (error?.name === 'ConversationIdle' || /idle/i.test(String(error?.message || ''))) {
+            return existingSub;
+          }
+          throw error;
+        }
       }
       const sub = await submit(entry, beforeSubmitDoc.active, { fromRecovery: true });
       return sub;
@@ -650,5 +729,5 @@ export function createDurableTurnLifecycle({
     if (submission) return wait(entry, submission);
   }
 
-  return { stoppedRequest, settleLocal, completionRecord, recover, recoverForRead, settleTurnWithConfirmation, reconcileDetachedEntry, wait, fenceStop, stop };
+  return { stoppedRequest, settleLocal, completionRecord, recover, recoverForRead, inspectReadOnlyEntry, settleTurnWithConfirmation, reconcileDetachedEntry, wait, fenceStop, stop };
 }

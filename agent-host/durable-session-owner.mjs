@@ -11,7 +11,7 @@ import {
   durableStreamEvents,
   publicDurableTurn,
 } from './durable-turn-projection.mjs';
-import { createDurableTurnLifecycle } from './durable-watch-observer.mjs';
+import { createDurableTurnLifecycle, TRANSIENT_UNRESUMABLE_REASONS } from './durable-watch-observer.mjs';
 import {
   createDurablePointerResolver,
   isCorruptSessionArtifactError,
@@ -33,6 +33,7 @@ export {
   isCorruptSessionArtifactError,
   isSkippableSessionError,
   publicDurableTurn,
+  TRANSIENT_UNRESUMABLE_REASONS,
 };
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
@@ -260,9 +261,11 @@ export function createDurableSessionStore({
     install,
     open,
     withSession,
+    getOpenCount,
     handoffSessionId,
     hasSession,
     prepareSession,
+    historyOf,
     history,
     status,
     listCanvasSessions,
@@ -305,6 +308,7 @@ export function createDurableSessionStore({
     settleLocal,
     recover,
     recoverForRead,
+    inspectReadOnlyEntry,
     settleTurnWithConfirmation,
     reconcileDetachedEntry,
     wait,
@@ -477,6 +481,7 @@ export function createDurableSessionStore({
     handoffSession,
     activateSession,
     withSession,
+    getOpenCount,
     releaseIdleSession,
     resolveCurrentSession,
     ensureSession,
@@ -485,6 +490,7 @@ export function createDurableSessionStore({
     submit,
     recover,
     recoverForRead,
+    inspectReadOnlyEntry,
     settleTurnWithConfirmation,
     supplement,
     beginPendingInput,
@@ -495,6 +501,7 @@ export function createDurableSessionStore({
     hasSession,
     readSafeCurrentPointer,
     clearCorruptPointer,
+    historyOf,
     history,
     status,
     recordEvent,
