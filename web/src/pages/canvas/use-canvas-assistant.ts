@@ -41,7 +41,12 @@ import {
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
 import { waitForAssistant } from "./assistant-readiness";
-import { findRecoveredAssistantTurn, type PendingAssistantRecovery } from "./canvas-assistant-recovery";
+import {
+    assistantStatusResumeKey,
+    findRecoveredAssistantTurn,
+    shouldReloadPausedAssistantTurn,
+    type PendingAssistantRecovery,
+} from "./canvas-assistant-recovery";
 import { recordAssistantInterruption } from "@/services/diagnostics/assistant-diagnostics";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
@@ -95,6 +100,8 @@ type CanvasRun = {
     historyError: string | null;
     historyHostUnavailable: boolean;
     historyRequest: number;
+    pausedTurnReason: string | null;
+    pausedStatusKey: string | null;
     sessionBusy: boolean;
     dispatched: boolean;
     backgroundActive: boolean;
@@ -154,6 +161,8 @@ const createRun = (): CanvasRun => ({
     historyError: null,
     historyHostUnavailable: false,
     historyRequest: 0,
+    pausedTurnReason: null,
+    pausedStatusKey: null,
     sessionBusy: false,
     dispatched: false,
     backgroundActive: false,
@@ -213,6 +222,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const observedInterruptions = useRef(new Set<string>());
     const activeCanvasRef = useRef(canvasId);
     activeCanvasRef.current = canvasId;
+    const statusRef = useRef(status);
+    statusRef.current = status;
     const onCanvasChangedRef = useRef(onCanvasChanged);
     onCanvasChangedRef.current = onCanvasChanged;
 
@@ -324,6 +335,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             }
             run.sessions = sessionList.sessions;
             run.sessionId = nextSession;
+            run.pausedTurnReason = history.pausedTurnReason ?? null;
+            run.pausedStatusKey = run.pausedTurnReason ? assistantStatusResumeKey(statusRef.current) : null;
             run.turns = [...history.turns, ...recent];
             // A history read started before turn_end may omit that newer turn and its plan.
             if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
@@ -365,12 +378,14 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         return () => clearInterval(timer);
     }, [canvasId, loadHistory, open, runFor]);
 
+    const statusResumeKey = assistantStatusResumeKey(status);
     useEffect(() => {
         if (!open) return;
         const run = runFor(canvasId);
-        if (run.historyLoaded || run.streaming || run.sessionBusy) return;
+        if (run.streaming || run.sessionBusy) return;
+        if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, status)) return;
         void loadHistory(canvasId);
-    }, [canvasId, loadHistory, open, runFor, status?.available]);
+    }, [canvasId, loadHistory, open, runFor, status, statusResumeKey]);
 
     const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode} = {}) => {
         const message = text.trim();
@@ -419,6 +434,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.error = null;
         run.dispatched = false;
         run.backgroundActive = false;
+        run.pausedTurnReason = null;
+        run.pausedStatusKey = null;
         run.recovery = null;
         run.lastSent = { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, attachments, skills, permissionMode };
         // A new identity per send: Stop names exactly this one, and a retry is a new request.

@@ -303,6 +303,7 @@ export type AssistantSessionList = {
 export type AssistantHistory = {
     sessionId: string;
     plan?: AssistantPlan | null;
+    pausedTurnReason?: string | null;
     turns: (AssistantTurn & { undone?: boolean })[];
     active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
@@ -457,7 +458,7 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
     if (sessionId) query.set("sessionId", sessionId);
     const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await assistantReadConfig());
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
-    return { sessionId: data.sessionId || sessionId || "", active: data.active, plan: data.plan ?? null, turns: data.turns.map((turn) => ({
+    return { sessionId: data.sessionId || sessionId || "", active: data.active, plan: data.plan ?? null, pausedTurnReason: data.pausedTurnReason ?? null, turns: data.turns.map((turn) => ({
         ...turn,
         error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
     })) };

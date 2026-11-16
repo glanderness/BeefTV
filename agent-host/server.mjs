@@ -548,6 +548,7 @@ const server = http.createServer(async (req, res) => {
         if (recovery.unresumableTurn && value.active?.requestId === recovery.unresumableTurn.requestId) {
           value.turns = [...value.turns, recovery.unresumableTurn];
           value.active = null;
+          value.pausedTurnReason = recovery.unresumableReason;
         }
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
         if (value.active && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
@@ -672,9 +673,10 @@ const server = http.createServer(async (req, res) => {
               userText: String(body.userText || message).trim() || message,
               revisionBefore: Number(body.revisionBefore || 0),
               permissionMode: 'canvas',
+            }, {
+              onSubmitted: (sub) => { followDurable(entry, sub); },
             });
             if (submission) {
-              followDurable(entry, submission);
               respond(res, 202, {
                 accepted: true,
                 woken: true,
@@ -734,7 +736,12 @@ const server = http.createServer(async (req, res) => {
           : await durable.ensureSession(canvasId);
       const content = await attachmentContent(body,turnId,ops.opsRequest);
       content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
-      const submission = await durable.submit(entry,{...body,content,userText,revisionBefore,requestId});
+      let result = null;
+      const submission = await durable.submit(
+        entry,
+        {...body,content,userText,revisionBefore,requestId},
+        { onSubmitted: (sub) => { result = followDurable(entry, sub); } },
+      );
       res.durableTurn = true;
       res.writeHead(200,{'Content-Type':'application/x-ndjson'});
       sendLine(res, { type: 'session', sessionId: entry.sessionId, turnId });
@@ -743,7 +750,7 @@ const server = http.createServer(async (req, res) => {
         const record = (await durable.history(canvasId,entry.sessionId)).turns.find((turn) => turn.requestId === requestId);
         sendLine(res,{...record,type:'turn_end',persistence:entry.persistence,sessionId:entry.sessionId}); res.end(); return;
       }
-      const result = followDurable(entry,submission);
+      if (!result) result = followDurable(entry,submission);
       const listener = payload=>{ if (!res.destroyed) sendLine(res,payload); };
       entry.listeners.add(listener);
       // A repeated request re-attaches to a running turn: show its current progress first.

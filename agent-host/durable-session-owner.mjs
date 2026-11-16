@@ -19,7 +19,11 @@ import {
   durableStreamEvents,
   publicDurableTurn,
 } from './durable-turn-projection.mjs';
-import { createDurableTurnLifecycle } from './durable-watch-observer.mjs';
+import {
+  createDurableTurnLifecycle,
+  hasLiveLocalOwner,
+  PERMANENT_UNRESUMABLE_REASONS,
+} from './durable-watch-observer.mjs';
 import {
   createDurableSkillController,
   durableToolReplay,
@@ -257,7 +261,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     fs.mkdirSync(cwd, { recursive: true });
     const entry = { kind: 'durable', canvasId, sessionId, identity: { prefix: sessionId, source: 'durable-session-id' },
       log: [], generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0 }, turn: newTurnAccumulator(), busy: false, persistence: 'restored',
-      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {}, waiters: 0, recovering: null, submittedRequest: null, admittedInProcess: null };
+      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {}, waiters: 0, recovering: null, submittedRequest: null, submittingRequest: null };
     fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
     const registry = createRegistry();
     entry.generation.persistEffects = () => persistEffects(entry);
@@ -410,7 +414,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       return install(await open(canvasId, sessionId));
     });
   }
-  async function submit(entry, input, { fromRecovery = false } = {}) {
+  async function submit(entry, input, { fromRecovery = false, onSubmitted = null } = {}) {
     if (!fromRecovery && !input.continuationId && entry.recovering) {
       await entry.recovering.catch(() => null);
     }
@@ -427,44 +431,51 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         return null;
       }
       if (existing.active && existing.active.requestId !== requestId) {
-        const ownedByProcess = entry.waiters > 0
-          || Boolean(entry.running)
-          || Boolean(entry.submittedRequest)
-          || entry.admittedInProcess === existing.active.requestId
-          || Boolean(entry.recovering);
-        if (ownedByProcess || input.continuationId) throw fail('session_busy');
+        if (hasLiveLocalOwner(entry) || entry.recovering) throw fail('session_busy');
+        if (input.continuationId) {
+          let staleOpen = true;
+          try {
+            const staleAuth = await authorization(entry, existing.active.turnId, true);
+            staleOpen = staleAuth?.open !== false;
+          } catch (error) {
+            if (!PERMANENT_UNRESUMABLE_REASONS.has(error?.reason || '')) throw fail('session_busy');
+            staleOpen = false;
+          }
+          if (staleOpen) throw fail('session_busy');
+        }
         pendingStaleComplete = await settleUnresumableTurnLocked(entry, existing.active.requestId);
         existing = await state(entry);
       }
-      const finished = existing.turns.find((turn) => turn.requestId === requestId);
-      if (finished) {
-        if (JSON.stringify(skillsToLoad(finished.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || []))) throw fail('submission_request_conflict');
-        // The same request sent again never runs again. Go opened a new turn for this send;
-        // nothing can use it, so it is closed here and the original record answers.
-        if (finished.turnId !== input.turnId) await completeTurn({ canvasId: entry.canvasId, turnId: input.turnId, sessionId: entry.sessionId, record: finished });
-        // A request stopped before submit has a record but no official submission.
-        return finished.submissionId === undefined ? null : entry.harness.submission(finished.submissionId, CTX);
-      }
-      // A Stop named this request before it got here: record it stopped, with no model request.
-      if (stopIntended(entry, existing, requestId)) {
-        return existing.active ? stoppedRequest(entry, existing.active)
-          : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
-      }
-      if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content) ||
-        JSON.stringify(skillsToLoad(existing.active.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || [])))) throw fail('submission_request_conflict');
-      let auth;
-      try { auth = await authorization(entry, input.turnId); }
-      catch (error) {
-        if (input.continuationId && continuationRevoked(error)) return stoppedRequest(entry, existing.active || {...input, requestId});
-        throw error;
-      }
-      const modelRef = await turnModel(entry, existing.active);
-      input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
-      if (stopIntended(entry, await state(entry), requestId)) {
-        return existing.active ? stoppedRequest(entry, existing.active)
-          : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
-      }
+      if (!fromRecovery) entry.submittingRequest = requestId;
       try {
+        const finished = existing.turns.find((turn) => turn.requestId === requestId);
+        if (finished) {
+          if (JSON.stringify(skillsToLoad(finished.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || []))) throw fail('submission_request_conflict');
+          // The same request sent again never runs again. Go opened a new turn for this send;
+          // nothing can use it, so it is closed here and the original record answers.
+          if (finished.turnId !== input.turnId) await completeTurn({ canvasId: entry.canvasId, turnId: input.turnId, sessionId: entry.sessionId, record: finished });
+          // A request stopped before submit has a record but no official submission.
+          return finished.submissionId === undefined ? null : entry.harness.submission(finished.submissionId, CTX);
+        }
+        // A Stop named this request before it got here: record it stopped, with no model request.
+        if (stopIntended(entry, existing, requestId)) {
+          return existing.active ? stoppedRequest(entry, existing.active)
+            : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
+        }
+        if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content) ||
+          JSON.stringify(skillsToLoad(existing.active.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || [])))) throw fail('submission_request_conflict');
+        let auth;
+        try { auth = await authorization(entry, input.turnId); }
+        catch (error) {
+          if (input.continuationId && continuationRevoked(error)) return stoppedRequest(entry, existing.active || {...input, requestId});
+          throw error;
+        }
+        const modelRef = await turnModel(entry, existing.active);
+        input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
+        if (stopIntended(entry, await state(entry), requestId)) {
+          return existing.active ? stoppedRequest(entry, existing.active)
+            : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
+        }
         if (!existing.active) {
           if (skills) {
             await flushPendingSkillRollback(entry);
@@ -491,7 +502,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
             if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
           });
         }
-        entry.admittedInProcess = requestId;
         const prepared = await state(entry);
         if (stopIntended(entry, prepared, requestId)) return stoppedRequest(entry, prepared.active);
         await activateTurnSkills(entry);
@@ -513,10 +523,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         const official = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
         entry.submittedRequest = requestId;
         await update(entry, (doc) => { if (doc.active) doc.active.submissionId = official.id; });
+        onSubmitted?.(official);
         return official;
-      } catch (error) {
-        if (entry.admittedInProcess === requestId && !entry.submittedRequest) entry.admittedInProcess = null;
-        throw error;
+      } finally {
+        if (entry.submittingRequest === requestId) entry.submittingRequest = null;
       }
       });
     } finally {
@@ -756,11 +766,12 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     const out = [];
     for (const name of fs.readdirSync(dir).filter((file) => /^[a-f0-9-]{36}\.json$/.test(file))) {
       try {
+        const expectedSessionId = `durable:${name.slice(0, -5)}`;
         const info = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
-        if (!info || typeof info !== 'object' || !isDurableSessionId(info.sessionId)) {
+        if (!info || typeof info !== 'object' || info.sessionId !== expectedSessionId || info.canvasId !== canvasId || info.version !== DURABLE_VERSION) {
           throw fail('corrupt_session_manifest');
         }
-        const value = await history(canvasId, info.sessionId);
+        const value = await history(canvasId, expectedSessionId);
         out.push({ sessionId: info.sessionId, kind: 'durable', title: sessionTitle(value.turns),
           updatedAt: value.turns.at(-1)?.createdAt || info.createdAt || '', turnCount: value.turns.length });
       } catch (error) {

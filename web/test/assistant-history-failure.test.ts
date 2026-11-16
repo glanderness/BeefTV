@@ -2,23 +2,31 @@ import { beforeEach, expect, mock, test } from "bun:test";
 
 let failure = false;
 let response: unknown;
+let lastRequestMethod: string | undefined;
+let lastRequestPath: string | undefined;
 let lastRequestConfig: Record<string, unknown> | undefined;
 mock.module("@/services/api/request", () => ({
     ApiError: class extends Error {},
     apiBaseURL: "/api",
     http: {
-        get: async (_path: string, config?: Record<string, unknown>) => {
+        get: async (path: string, config?: Record<string, unknown>) => {
+            lastRequestMethod = "GET";
+            lastRequestPath = path;
             lastRequestConfig = config;
             if (failure) throw new Error("offline");
             return response;
         },
         post: async (path: string, _body?: unknown, config?: Record<string, unknown>) => {
             if (path === "/assistant/ui-session") return { token: "fixture-ui" };
+            lastRequestMethod = "POST";
+            lastRequestPath = path;
             lastRequestConfig = config;
             if (failure) throw new Error("offline");
             return response;
         },
-        delete: async (_path: string, config?: Record<string, unknown>) => {
+        delete: async (path: string, config?: Record<string, unknown>) => {
+            lastRequestMethod = "DELETE";
+            lastRequestPath = path;
             lastRequestConfig = config;
             if (failure) throw new Error("offline");
             return response;
@@ -38,7 +46,11 @@ const {
     restartAgentHost,
     resetAgentUiSession,
 } = await import("@/services/api/agent-assistant");
-beforeEach(() => { failure = false; response = undefined; lastRequestConfig = undefined; resetAgentUiSession(); });
+const {
+    assistantStatusResumeKey,
+    shouldReloadPausedAssistantTurn,
+} = await import("@/pages/canvas/canvas-assistant-recovery");
+beforeEach(() => { failure = false; response = undefined; lastRequestMethod = undefined; lastRequestPath = undefined; lastRequestConfig = undefined; resetAgentUiSession(); });
 
 test("C02: rejected create/activate cannot resolve as a new empty conversation", async () => {
     failure = true;
@@ -58,38 +70,77 @@ test("C02: malformed successful session response does not erase the current sess
 test("C05: malformed history is distinguished from genuine zero turns", async () => {
     response = {};
     await expect(getAssistantHistory("a")).rejects.toThrow();
-    response = { sessionId: "s1", turns: [] };
-    expect(await getAssistantHistory("a")).toEqual({ sessionId: "s1", turns: [], active: undefined, plan: null });
+    response = { sessionId: "s1", turns: [], pausedTurnReason: "turn_model_frozen" };
+    expect(await getAssistantHistory("a")).toEqual({ sessionId: "s1", turns: [], active: undefined, plan: null, pausedTurnReason: "turn_model_frozen" });
 });
-test("status, read, and mutation endpoints match backend cold-start and proxy timeout budgets", async () => {
+test("status, read, and mutation endpoints hit canonical /assistant/* routes with matching timeout budgets", async () => {
     expect(ASSISTANT_STATUS_TIMEOUT_MS).toBe(25_000);
     expect(ASSISTANT_READ_TIMEOUT_MS).toBe(55_000);
     expect(ASSISTANT_MUTATION_TIMEOUT_MS).toBe(65_000);
 
     response = { available: true };
     await getAgentHostStatus();
+    expect(lastRequestMethod).toBe("GET");
+    expect(lastRequestPath).toBe("/assistant/status");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_STATUS_TIMEOUT_MS);
 
     response = { sessionId: "s1", turns: [] };
     await getAssistantHistory("a");
+    expect(lastRequestMethod).toBe("GET");
+    expect(lastRequestPath).toBe("/assistant/history?canvasId=a");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_READ_TIMEOUT_MS);
 
     response = { currentSessionId: "s1", sessions: [] };
     await listAssistantSessions("a");
+    expect(lastRequestMethod).toBe("GET");
+    expect(lastRequestPath).toBe("/assistant/sessions?canvasId=a");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_READ_TIMEOUT_MS);
 
     response = { sessionId: "s2" };
     await createAssistantSession("a");
+    expect(lastRequestMethod).toBe("POST");
+    expect(lastRequestPath).toBe("/assistant/sessions");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_MUTATION_TIMEOUT_MS);
 
     await activateAssistantSession("a", "s2");
+    expect(lastRequestMethod).toBe("POST");
+    expect(lastRequestPath).toBe("/assistant/sessions/activate");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_MUTATION_TIMEOUT_MS);
 
     response = { deleted: true, sessionId: "s2", currentSessionId: null };
     await deleteAssistantSession("a", "s2");
+    expect(lastRequestMethod).toBe("DELETE");
+    expect(lastRequestPath).toBe("/assistant/sessions/s2?canvasId=a");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_MUTATION_TIMEOUT_MS);
 
     response = { restarted: true };
     await restartAgentHost();
+    expect(lastRequestMethod).toBe("POST");
+    expect(lastRequestPath).toBe("/assistant/host/restart");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_MUTATION_TIMEOUT_MS);
+});
+test("paused turn reloads automatically when assistant model availability or identity changes", () => {
+    const unavailableKey = assistantStatusResumeKey({ available: false, reason: "model_not_configured" });
+    expect(shouldReloadPausedAssistantTurn("model_not_configured", unavailableKey, { available: false, reason: "model_not_configured" })).toBe(false);
+    expect(shouldReloadPausedAssistantTurn("model_not_configured", unavailableKey, {
+        available: true,
+        model: { id: "m1", channelId: "c1", channelName: "Ch1" },
+    })).toBe(true);
+
+    const otherModelKey = assistantStatusResumeKey({
+        available: true,
+        model: { id: "other", channelId: "c1", channelName: "Ch1" },
+    });
+    expect(shouldReloadPausedAssistantTurn("turn_model_frozen", otherModelKey, {
+        available: true,
+        model: { id: "other", channelId: "c1", channelName: "Ch1" },
+    })).toBe(false);
+    expect(shouldReloadPausedAssistantTurn("turn_model_frozen", otherModelKey, {
+        available: true,
+        model: { id: "m1", channelId: "c1", channelName: "Ch1" },
+    })).toBe(true);
+    expect(shouldReloadPausedAssistantTurn(null, otherModelKey, {
+        available: true,
+        model: { id: "m1", channelId: "c1", channelName: "Ch1" },
+    })).toBe(false);
 });

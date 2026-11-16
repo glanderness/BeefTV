@@ -15,8 +15,12 @@ import {
 const CTX = BACKGROUND_CONTEXT;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
-const PERMANENT_UNRESUMABLE_REASONS = new Set(['turn_not_open', 'turn_not_found', 'permission_mode_frozen']);
+export const PERMANENT_UNRESUMABLE_REASONS = new Set(['turn_not_open', 'turn_not_found', 'permission_mode_frozen']);
 const TRANSIENT_UNRESUMABLE_REASONS = new Set(['model_unavailable_for_resume', 'turn_model_frozen', 'model_not_configured']);
+
+export function hasLiveLocalOwner(entry) {
+  return Boolean(entry?.waiters > 0 || entry?.running || entry?.submittingRequest);
+}
 
 async function scanConversationEntries(entry, query, context = CTX) {
   const items = [];
@@ -68,7 +72,6 @@ export function createDurableTurnLifecycle({
     });
     forgetStop(entry.canvasId, entry.sessionId, active.requestId);
     if (entry.submittedRequest === active.requestId) entry.submittedRequest = null;
-    if (entry.admittedInProcess === active.requestId) entry.admittedInProcess = null;
     entry.busy = false;
     if (entry.pendingPluginExtensions && typeof entry.reloadPluginExtensions === 'function') {
       const pending = entry.pendingPluginExtensions;
@@ -146,10 +149,6 @@ export function createDurableTurnLifecycle({
     }
   }
 
-  function hasLiveLocalOwner(entry) {
-    return Boolean(entry.waiters > 0 || entry.running || entry.submittedRequest || entry.admittedInProcess);
-  }
-
   async function recover(entry) {
     // A live official wait already owns the turn: a read must not hydrate over its
     // in-memory effects, re-authorize, or re-submit. Concurrent reads share one recovery.
@@ -170,12 +169,18 @@ export function createDurableTurnLifecycle({
     const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, active.requestId), CTX).catch(() => null);
     const submission = admitted ? await entry.harness.submission(admitted.id, CTX).catch(() => null) : null;
     const settled = submission ? await submission.status(CTX).catch(() => null) : null;
-    const settlement = {
-      ...(settled || {}),
-      status: 'unanswered',
-      reason: active.stopped ? 'aborted' : 'interrupted',
-      ...(admitted?.entry !== undefined && settled?.entry === undefined ? { entry: admitted.entry } : {}),
-    };
+    const isCommittedDone = settled?.status === 'done' && !active.stopped;
+    const settlement = isCommittedDone
+      ? {
+          ...settled,
+          ...(admitted?.entry !== undefined && settled.entry === undefined ? { entry: admitted.entry } : {}),
+        }
+      : {
+          ...(settled || {}),
+          status: 'unanswered',
+          reason: active.stopped ? 'aborted' : 'interrupted',
+          ...(admitted?.entry !== undefined && settled?.entry === undefined ? { entry: admitted.entry } : {}),
+        };
     const record = active.result || await completionRecord(entry, active, settlement);
     if (!active.result) await compensateFailedSkillSelection(entry, active, record);
     const pendingComplete = { canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record };
@@ -205,20 +210,16 @@ export function createDurableTurnLifecycle({
         if (!hasLiveLocalOwner(entry)) entry.busy = false;
         const active = (await state(entry)).active;
         const matchesFailed = active && (!failedRequestId || active.requestId === failedRequestId);
-        const unresumableTurn = matchesFailed ? publicDurableTurn({
-          ...active,
-          reply: '',
-          toolCalls: [...entry.log],
-          change: turnChange(entry.turn),
-          proposals: [...entry.turn.proposals],
-          scriptProposals: [...(entry.turn.scriptProposals || [])],
-          reasoning: [],
-          cancelled: false,
-          error: '上一轮执行中断，请核对已落地的改动。',
-          errorReason: 'turn_interrupted',
-          status: 'unanswered',
-          sessionId: entry.sessionId,
-        }) : null;
+        let unresumableTurn = null;
+        if (matchesFailed) {
+          hydrate(entry, active);
+          const record = active.result || await completionRecord(entry, active, {
+            status: 'unanswered',
+            reason: active.stopped ? 'aborted' : 'interrupted',
+          });
+          unresumableTurn = publicDurableTurn(record);
+          if (!hasLiveLocalOwner(entry)) entry.busy = false;
+        }
         return { submission: null, unresumableReason: reason, unresumableTurn };
       }
       if (!hasLiveLocalOwner(entry)) entry.busy = false;
@@ -305,8 +306,15 @@ export function createDurableTurnLifecycle({
   async function wait(entry, submission, options = {}) {
     // Counted before the first await so a recovery read in the same tick sees the live owner.
     entry.waiters += 1;
-    try { return await observe(entry, submission, options); }
-    finally { entry.waiters -= 1; }
+    let settled = false;
+    try {
+      const record = await observe(entry, submission, options);
+      settled = true;
+      return record;
+    } finally {
+      entry.waiters -= 1;
+      if (!settled && !hasLiveLocalOwner(entry) && !entry.recovering) entry.busy = false;
+    }
   }
 
   async function observe(entry, submission, { onEvent = () => {}, signal } = {}) {

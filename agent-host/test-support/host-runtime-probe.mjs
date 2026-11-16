@@ -179,6 +179,7 @@ try{
       '00000000-0000-4000-8000-000000000092',
       '00000000-0000-4000-8000-000000000093',
       '00000000-0000-4000-8000-000000000094',
+      '00000000-0000-4000-8000-000000000095',
     ];
     writeFileSync(path.join(durableDir,`${corruptIds[0]}.json`),'{corrupt-json');
     writeFileSync(path.join(durableDir,`${corruptIds[1]}.json`),'null');
@@ -192,6 +193,14 @@ try{
     writeFileSync(path.join(durableDir,`${corruptIds[2]}.sqlite`),'not-a-valid-sqlite-database');
     const manifestDirAsFile=path.join(durableDir,`${corruptIds[3]}.json`);
     mkdirSync(manifestDirAsFile,{recursive:true});
+    // Mismatched manifest pointing at valid siblingSessionId must be skipped rather than duplicating siblingSessionId.
+    writeFileSync(path.join(durableDir,`${corruptIds[4]}.json`),JSON.stringify({
+      sessionId:siblingSessionId,
+      canvasId,
+      handoffSourceId:'',
+      version:DURABLE_VERSION,
+      createdAt:'2026-01-01T00:00:00.000Z',
+    }));
     child=spawn(process.execPath,[path.join(root,'agent-host/server.mjs')],{cwd:root,env,stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',c=>{hostLog+=c});child.stderr.on('data',c=>{hostLog+=c});
     const restartDeadline=Date.now()+15000;let restarted=false;
@@ -207,9 +216,9 @@ try{
     const sessionsRes=await request(`/sessions?canvasId=${encodeURIComponent(canvasId)}`);
     assert.equal(sessionsRes.status,200,sessionsRes.text);
     const sessionsJson=JSON.parse(sessionsRes.text);
-    const listedSibling=sessionsJson.sessions.find(s=>s.sessionId===siblingSessionId);
-    assert(listedSibling,'valid non-current sibling session must be listed');
-    assert.match(listedSibling.title,/Valid sibling conversation/);
+    const listedSiblings=sessionsJson.sessions.filter(s=>s.sessionId===siblingSessionId);
+    assert.equal(listedSiblings.length,1,'valid non-current sibling session must be listed once without spoofed duplicate');
+    assert.match(listedSiblings[0].title,/Valid sibling conversation/);
     for(const cid of corruptIds){
       assert(!sessionsJson.sessions.some(s=>s.sessionId.includes(cid)),`corrupt session ${cid} must be skipped`);
     }
@@ -256,6 +265,7 @@ try{
     assert.equal(unconfiguredHistRes.status,200,unconfiguredHistRes.text);
     const histUnconfigured=JSON.parse(unconfiguredHistRes.text);
     assert.equal(histUnconfigured.active,null);
+    assert.equal(histUnconfigured.pausedTurnReason,'model_unavailable_for_resume');
     assert.equal(histUnconfigured.turns.length,1);
     assert.equal(histUnconfigured.turns[0].errorReason,'turn_interrupted');
     const unconfiguredSessionsRes=await request(`/sessions?canvasId=${encodeURIComponent(canvasId)}`);
@@ -264,6 +274,7 @@ try{
     await restartHost('other-model');
     const histMissing=JSON.parse((await request(`/history?canvasId=${encodeURIComponent(canvasId)}`)).text);
     assert.equal(histMissing.active,null);
+    assert.equal(histMissing.pausedTurnReason,'model_unavailable_for_resume');
     assert.equal(histMissing.turns.length,1);
     assert.equal(histMissing.turns[0].errorReason,'turn_interrupted');
     // 3. Switch back to synthetic-model: /history resumes aa18 cleanly with zero duplicate turns!

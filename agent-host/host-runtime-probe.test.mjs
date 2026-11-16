@@ -73,6 +73,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       waiters: 0,
       running: null,
       submittedRequest: null,
+      submittingRequest: null,
       recovering: null,
       log: [],
       turn: newTurnAccumulator(),
@@ -140,7 +141,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       waiters: 0,
       running: null,
       submittedRequest: null,
-      admittedInProcess: null,
+      submittingRequest: null,
       recovering: null,
       log: [],
       turn: newTurnAccumulator(),
@@ -189,7 +190,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       waiters: 0,
       running: null,
       submittedRequest: null,
-      admittedInProcess: null,
+      submittingRequest: null,
       recovering: null,
       log: [],
       turn: newTurnAccumulator(),
@@ -221,11 +222,74 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     // While recoverOnce is paused in authorization, req-A is settled and req-B becomes active in this process.
     doc.turns = [{ requestId: 'req-A', turnId: 'turn-A', errorReason: 'turn_interrupted' }];
     doc.active = { requestId: 'req-B', turnId: 'turn-B', stopped: false };
-    entry.admittedInProcess = 'req-B';
+    entry.submittingRequest = 'req-B';
     releaseAuthA();
     const res = await recovering;
     expect(res).toEqual({ submission: null, unresumableReason: null, unresumableTurn: null });
     expect(submitCalls).toBe(0);
     expect(doc.active?.requestId).toBe('req-B');
+  });
+
+  test('settleUnresumableTurnLocked preserves committed done answers instead of misreporting turn_interrupted', async () => {
+    const doc = {
+      active: { requestId: 'req-done', turnId: 'turn-done', submissionId: 'sub-done', userText: 'Hi', stopped: false },
+      turns: [],
+      stopRequests: [],
+    };
+    const answerEntry = {
+      id: 2,
+      model: [{ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Committed answer text.' }] }],
+    };
+    const entry = {
+      canvasId: 'done-settle-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000004',
+      busy: true,
+      waiters: 0,
+      running: null,
+      submittedRequest: null,
+      submittingRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: {
+        id: 'root-4',
+        abort: async () => {},
+        context: async () => ({ entries: [answerEntry], head: { head: 2 } }),
+      },
+      harness: {
+        commit: async (fn) => fn({
+          submissionByRequest: () => ({ id: 'sub-done', entry: 1 }),
+          entry: (id) => (id === 2 ? answerEntry : null),
+        }),
+        submission: async () => ({
+          status: async () => ({ status: 'done', entry: 1, answer: 2 }),
+        }),
+      },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => doc,
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: false }),
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => null,
+      officialSubmission: async () => null,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async () => {},
+    });
+    const pending = await lifecycle.settleUnresumableTurnLocked(entry, 'req-done');
+    expect(pending?.record.status).toBe('done');
+    expect(pending?.record.reply).toBe('Committed answer text.');
+    expect(pending?.record.error).toBeNull();
+    expect(doc.active).toBeNull();
+    expect(doc.turns).toHaveLength(1);
+    expect(doc.turns[0].reply).toBe('Committed answer text.');
   });
 });
