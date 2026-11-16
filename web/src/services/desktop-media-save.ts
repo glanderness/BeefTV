@@ -9,9 +9,20 @@ export type OwnedMediaSaveResult = "saved" | "cancelled";
 
 export const MAX_OWNED_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
+let lastSavedDiagnosticPath = "";
+
+export function getLastSavedDiagnosticPath(): string {
+    return lastSavedDiagnosticPath;
+}
+
 export function isWailsNativeShell() {
     if (typeof window === "undefined") return false;
-    return isDesktopShellOrigin(window.location) || typeof window.go?.main?.DesktopApp?.SaveOwnedMedia === "function" || typeof window.go?.main?.DesktopApp?.SaveOwnedArtifact === "function";
+    return (
+        isDesktopShellOrigin(window.location) ||
+        typeof window.go?.main?.DesktopApp?.SaveDiagnosticBundle === "function" ||
+        typeof window.go?.main?.DesktopApp?.SaveOwnedMedia === "function" ||
+        typeof window.go?.main?.DesktopApp?.SaveOwnedArtifact === "function"
+    );
 }
 
 export async function downloadOwnedOrBrowserMedia(options: { fileName: string; resourceId?: string; browserUrl?: string }): Promise<OwnedMediaSaveResult> {
@@ -40,6 +51,30 @@ export async function saveOwnedOrBrowserBlob(fileName: string, blob: Blob): Prom
         const saved = await save(name, bytesToBase64(bytes));
         return saved ? "saved" : "cancelled";
     }
+    saveAs(blob, name);
+    return "saved";
+}
+
+export async function saveDiagnosticBundleBlob(fileName: string, blob: Blob): Promise<OwnedMediaSaveResult> {
+    const name = sanitizeDownloadFileName(fileName, "beeftv-diagnostics.zip");
+    if (isWailsNativeShell()) {
+        if (blob.size > MAX_OWNED_ARTIFACT_BYTES) throw new Error("导出包太大，请减少所选内容后再导出");
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const encoded = bytesToBase64(bytes);
+        const saveDiagnostic = window.go?.main?.DesktopApp?.SaveDiagnosticBundle;
+        if (typeof saveDiagnostic === "function") {
+            const savedPath = await saveDiagnostic(name, encoded);
+            if (!savedPath) return "cancelled";
+            lastSavedDiagnosticPath = savedPath;
+            return "saved";
+        }
+        const saveArtifact = window.go?.main?.DesktopApp?.SaveOwnedArtifact;
+        if (!saveArtifact) throw new Error("当前应用还不能把文件存到所选位置");
+        const saved = await saveArtifact(name, encoded);
+        lastSavedDiagnosticPath = "";
+        return saved ? "saved" : "cancelled";
+    }
+    lastSavedDiagnosticPath = "";
     saveAs(blob, name);
     return "saved";
 }

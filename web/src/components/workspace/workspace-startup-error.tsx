@@ -82,6 +82,7 @@ export function WorkspaceStartupError({
     const desktopApp = readDesktopDiagnosticsBinding();
     const canOpenDataDir = typeof desktopApp?.OpenUpdateLogDirectory === "function";
     const effectiveDiagnosticPath = savedPath || resolvedFailure.diagnosticPath || "";
+    const canRevealBundle = Boolean(effectiveDiagnosticPath) && typeof desktopApp?.RevealDiagnosticBundle === "function";
 
     useEffect(() => {
         const canPoll = typeof readDesktopDiagnosticsBinding()?.StartupState === "function" || isDesktopShellOrigin();
@@ -149,7 +150,7 @@ export function WorkspaceStartupError({
                 const chosen = await desktopApp.ExportStartupDiagnostics(serialized);
                 if (chosen) {
                     setSavedPath(chosen);
-                    setNotice("诊断包已导出，可将该压缩包发送给支持人员排查。");
+                    setNotice("诊断包已保存并打开所在文件夹，可直接拖入聊天发送给支持人员。");
                 }
                 return;
             }
@@ -169,6 +170,15 @@ export function WorkspaceStartupError({
             await desktopApp.OpenUpdateLogDirectory();
         } catch {
             setNotice("无法自动打开数据目录，请按下方路径手动前往查看。");
+        }
+    };
+
+    const handleRevealBundle = async () => {
+        if (!desktopApp?.RevealDiagnosticBundle) return;
+        try {
+            await desktopApp.RevealDiagnosticBundle();
+        } catch {
+            setNotice("无法自动定位诊断包，请按下方诊断包位置手动查看。");
         }
     };
 
@@ -283,6 +293,21 @@ export function WorkspaceStartupError({
                     >
                         {exporting ? "正在导出…" : "导出诊断包"}
                     </button>
+                    {canRevealBundle ? (
+                        <button
+                            type="button"
+                            onClick={() => void handleRevealBundle()}
+                            className="inline-flex h-9 cursor-pointer items-center justify-center border px-3.5 text-[length:var(--typ-caption)] leading-5 font-[550] transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--ring)]"
+                            style={{
+                                borderRadius: "var(--button-radius)",
+                                borderColor: "var(--user-border-strong)",
+                                background: "var(--user-surface)",
+                                color: "var(--user-ink)",
+                            }}
+                        >
+                            在文件夹中显示
+                        </button>
+                    ) : null}
                     {canOpenDataDir ? (
                         <button
                             type="button"

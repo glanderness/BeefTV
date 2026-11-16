@@ -5,6 +5,7 @@ import { apiClient } from "@/services/api/request";
 import { browserCapabilities } from "./browser-environment";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import {
+    DEFAULT_DIAGNOSTIC_WINDOW_MS,
     setStartupDiagnosticEventSink,
     setStartupDiagnosticPayloadBuilder,
     setStartupFailureDiagnosticSink,
@@ -96,7 +97,7 @@ function registerStartupDiagnosticPayloadBuilder() {
     startupPayloadBuilderRegistered = true;
     setStartupDiagnosticPayloadBuilder(async (description) => {
         const to = new Date();
-        const from = new Date(to.getTime() - 30 * 60_000);
+        const from = new Date(to.getTime() - DEFAULT_DIAGNOSTIC_WINDOW_MS);
         const snapshot = await getClientDiagnosticSnapshot({ from, to });
         return {
             from: from.toISOString(),

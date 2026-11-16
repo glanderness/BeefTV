@@ -61,6 +61,8 @@ const INITIAL_SNAPSHOT: DesktopBootSnapshot = {
 const ISOLATED_DEV_REPRO_PATHS: ReadonlySet<string> = new Set(["/dev/director-repro", "/dev/assistant-panel"]);
 const MAX_PENDING_DIAGNOSTIC_EVENTS = 16;
 
+export const DEFAULT_DIAGNOSTIC_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function isIsolatedDevReproPath(pathname: string): boolean {
     return ISOLATED_DEV_REPRO_PATHS.has(pathname);
 }
@@ -125,7 +127,7 @@ export async function buildStartupDiagnosticPayload(failure: WorkspaceStartupFai
         }
     }
     const to = new Date();
-    const from = new Date(to.getTime() - 30 * 60_000);
+    const from = new Date(to.getTime() - DEFAULT_DIAGNOSTIC_WINDOW_MS);
     return {
         from: from.toISOString(),
         to: to.toISOString(),

@@ -1,6 +1,6 @@
 import { http, ApiError } from "@/services/api/request";
 import type { ClientDiagnosticEvent, ClientDiagnosticCoverage } from "./client-diagnostics";
-import { saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
+import { saveDiagnosticBundleBlob } from "@/services/desktop-media-save";
 
 export type DiagnosticExportInput = {
     from: string;
@@ -92,7 +92,7 @@ async function readErrorBody(data: unknown) {
 }
 
 export function downloadDiagnosticBundle(download: DiagnosticDownload) {
-    return saveOwnedOrBrowserBlob(download.fileName, download.blob);
+    return saveDiagnosticBundleBlob(download.fileName, download.blob);
 }
 
 function readHeader(headers: unknown, name: string) {
