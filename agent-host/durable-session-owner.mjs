@@ -119,13 +119,17 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function install(entry) {
     try { publish(entry); }
     catch (error) {
+      entry.disposed = true;
       try { await entry.harness.close(CTX); }
       catch (cleanup) { error.cause = new AggregateError([error.cause, cleanup], 'session_candidate_cleanup_failed'); }
       throw error;
     }
     const previous = sessions.get(entry.canvasId);
     sessions.set(entry.canvasId, entry);
-    if (previous) await previous.harness.close(CTX);
+    if (previous) {
+      previous.disposed = true;
+      await previous.harness.close(CTX);
+    }
     return entry;
   }
   async function state(entry) { return await entry.harness.snapshot(STATE, CTX); }
@@ -377,71 +381,58 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return entry;
   }
   const isEntryBusy = (entry) => Boolean(entry?.busy || isEntryActiveOrDetached(entry));
-  async function checkEntryBusyLocked(entry) {
-    if (!entry) return false;
-    if (hasLiveLocalOwner(entry) || entry.recovering) return true;
-    if (entry.detachedRunning) {
-      const current = await state(entry).catch(() => null);
-      const active = current?.active;
-      if (!active) {
-        entry.detachedRunning = false;
-        entry.busy = false;
-        return false;
-      }
-      const liveSub = await officialSubmission(entry, active.requestId).catch(() => null);
-      const liveStatus = liveSub ? await liveSub.status(CTX).catch(() => null) : null;
-      if (liveStatus?.status === 'running') return true;
-      entry.detachedRunning = false;
-      const pending = await settleUnresumableTurnLocked(entry, active.requestId);
-      if (pending) void completeTurn(pending).catch(() => {});
-      return false;
-    }
-    return Boolean(entry.busy);
-  }
   async function refreshCanvasBusy(canvasId) {
     const entry = sessions.get(canvasId);
     if (!entry) return false;
-    if (!entry.detachedRunning) return isEntryBusy(entry);
-    return lock(canvasId, () => checkEntryBusyLocked(sessions.get(canvasId)));
+    if (!entry.detachedRunning && !entry.pendingCompleteRetry) return isEntryBusy(entry);
+    return reconcileDetachedEntry(entry);
   }
   async function createSession(canvasId) {
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
     return lock(canvasId, async () => {
-      if (await checkEntryBusyLocked(sessions.get(canvasId))) throw fail('session_busy');
+      if (isEntryBusy(sessions.get(canvasId))) throw fail('session_busy');
       return install(await prepareSession(canvasId));
     });
   }
   // An initialized successor must never reset when an old client retries.
   async function handoffSession(canvasId, handoffNote = '', handoffSourceId = '') {
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
     return lock(canvasId, async () => {
       const current = sessions.get(canvasId);
-      if (await checkEntryBusyLocked(current)) throw fail('session_busy');
+      if (isEntryBusy(current)) throw fail('session_busy');
       const entry = await prepareSession(canvasId, handoffSourceId);
       if (!(await state(entry)).handoffInitialized) {
         try {
           if (handoffNote) await entry.root.reset(handoffNote, CTX);
           await update(entry, (doc) => { doc.handoffInitialized = true; });
         }
-        catch (error) { await entry.harness.close(CTX).catch(() => {}); throw error; }
+        catch (error) { entry.disposed = true; await entry.harness.close(CTX).catch(() => {}); throw error; }
       }
       if (entry === current) { publish(entry); return entry; }
       return install(entry);
     });
   }
   async function activateSession(canvasId, sessionId) {
+    const current = sessions.get(canvasId);
+    if (current && current.sessionId !== sessionId && await refreshCanvasBusy(canvasId)) {
+      throw fail('session_busy');
+    }
     return lock(canvasId, async () => {
       const previous = sessions.get(canvasId);
       if (previous?.sessionId === sessionId) { publish(previous); return previous; }
-      if (await checkEntryBusyLocked(previous)) throw fail('session_busy');
+      if (isEntryBusy(previous)) throw fail('session_busy');
       const entry = await open(canvasId, sessionId);
       return install(entry);
     });
   }
   async function releaseIdleSession(canvasId) {
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
     return lock(canvasId, async () => {
       const current = sessions.get(canvasId);
       if (!current) return;
-      if (await checkEntryBusyLocked(current)) throw fail('session_busy');
+      if (isEntryBusy(current)) throw fail('session_busy');
       sessions.delete(canvasId);
+      current.disposed = true;
       await current.harness.close(CTX);
     });
   }
@@ -487,6 +478,14 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (!fromRecovery && !input.continuationId && entry.recovering) {
       await entry.recovering.catch(() => null);
     }
+    if (!fromRecovery && (entry.detachedRunning || entry.pendingCompleteRetry)) {
+      const incomingRequestId = String(input.requestId || input.turnId || '').trim();
+      const snap = await state(entry).catch(() => null);
+      const alreadyFinished = snap?.turns?.some((turn) => turn.requestId === incomingRequestId);
+      if (!alreadyFinished && (!snap || snap.active?.requestId !== incomingRequestId)) {
+        if (await reconcileDetachedEntry(entry)) throw fail('session_busy');
+      }
+    }
     let pendingStaleComplete = null;
     try {
       return await lock(entry.canvasId, async () => {
@@ -510,10 +509,18 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       }
       if (existing.active && existing.active.requestId !== requestId) {
         if (hasLiveLocalOwner(entry) || entry.recovering) throw fail('session_busy');
-        if (entry.detachedRunning) {
-          const liveSub = await officialSubmission(entry, existing.active.requestId).catch(() => null);
-          const liveStatus = liveSub ? await liveSub.status(CTX).catch(() => null) : null;
-          if (liveStatus?.status === 'running') throw fail('session_busy');
+        if (entry.detachedRunning || entry.pendingCompleteRetry) {
+          let liveSub;
+          let liveStatus;
+          try {
+            liveSub = await officialSubmission(entry, existing.active.requestId);
+            liveStatus = liveSub ? await liveSub.status(CTX) : null;
+          } catch {
+            throw fail('session_busy');
+          }
+          if (entry.pendingCompleteRetry || (liveSub && (!liveStatus || liveStatus.status === 'running'))) {
+            throw fail('session_busy');
+          }
           entry.detachedRunning = false;
         }
         if (input.continuationId) {
@@ -641,7 +648,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     }
     return null;
   }
-  const { stoppedRequest, settleLocal, recover, recoverForRead, settleUnresumableTurnLocked, wait, fenceStop, stop } = createDurableTurnLifecycle({
+  const { stoppedRequest, settleLocal, recover, recoverForRead, settleUnresumableTurnLocked, reconcileDetachedEntry, wait, fenceStop, stop } = createDurableTurnLifecycle({
     stateDoc: STATE,
     state,
     update,
@@ -860,14 +867,16 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
   async function deleteSession(canvasId, sessionId) {
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
     return lock(canvasId, async () => {
       if (!isDurableSessionId(sessionId) || !hasSession(canvasId, sessionId)) throw fail('session_not_found');
       const current = sessions.get(canvasId);
-      if (await checkEntryBusyLocked(current)) throw fail('session_busy');
+      if (isEntryBusy(current)) throw fail('session_busy');
       const uuid = idPattern.exec(sessionId)[1];
       const dir = durableDirectory(canvasId);
       if (current?.sessionId === sessionId) {
         sessions.delete(canvasId);
+        current.disposed = true;
         await current.harness.close(CTX);
       }
       for (const suffix of ['.json', '.sqlite', '.sqlite-wal', '.sqlite-shm', '.budget']) {
@@ -897,7 +906,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     closed = true;
     await Promise.allSettled([...locks.values()]);
     const entries = [...sessions.values()]; sessions.clear();
-    for (const entry of entries) await entry.harness.close(CTX);
+    for (const entry of entries) {
+      entry.disposed = true;
+      await entry.harness.close(CTX);
+    }
     return entries.length;
   }
   return { sessions, isEntryBusy, refreshCanvasBusy, createSession, handoffSession, activateSession, releaseIdleSession, resolveCurrentSession, ensureSession, ensureCurrentSession, deleteSession, submit, recover, recoverForRead, supplement, beginPendingInput, fenceStop, wait,

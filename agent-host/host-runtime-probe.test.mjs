@@ -395,6 +395,139 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(entry.busy).toBe(false);
   });
 
+  test('detached reconciliation preserves busy on state/status errors and retries Go completeTurn before clearing active', async () => {
+    const doc = {
+      active: { requestId: 'req-detach', turnId: 'turn-detach', submissionId: 'sub-detach', userText: 'Hi', stopped: false },
+      turns: [],
+      stopRequests: [],
+    };
+    const answerEntry = {
+      id: 2,
+      model: [{ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Recovered detached answer.' }] }],
+    };
+    let failStateRead = true;
+    let failStatusRead = false;
+    let currentSubStatus = 'running';
+    let failCompleteTurn = true;
+    let abortCalls = 0;
+    const completedPayloads = [];
+    const submissionObj = {
+      status: async () => {
+        if (failStatusRead) throw new Error('transient_sqlite_busy');
+        return currentSubStatus === 'done'
+          ? { status: 'done', entry: 1, answer: 2, requestId: 'req-detach' }
+          : { status: currentSubStatus, entry: 1, requestId: 'req-detach' };
+      },
+    };
+    const entry = {
+      canvasId: 'detach-safe-canvas',
+      sessionId: 'durable:00000000-0000-4000-8000-000000000006',
+      busy: true,
+      detachedRunning: false,
+      pendingCompleteRetry: false,
+      waiters: 0,
+      running: null,
+      submittedRequest: 'req-detach',
+      submittingRequest: null,
+      recovering: null,
+      log: [],
+      turn: newTurnAccumulator(),
+      generation: {},
+      root: {
+        id: 'root-6',
+        abort: async () => { abortCalls += 1; },
+        context: async () => ({ entries: [answerEntry], head: { head: 2 } }),
+        watch: async () => ({
+          value: { entries: [], docs: {} },
+          stop: () => {},
+        }),
+      },
+      harness: {
+        commit: async (fn) => fn({
+          submissionByRequest: () => ({ id: 'sub-detach', entry: 1 }),
+          entry: (id) => (id === 2 ? answerEntry : null),
+        }),
+        submission: async () => submissionObj,
+        watchDoc: async () => {
+          failStatusRead = true;
+          throw new Error('watch_dropped');
+        },
+      },
+    };
+    const lifecycle = createDurableTurnLifecycle({
+      stateDoc: {},
+      state: async () => {
+        if (failStateRead) throw new Error('transient_state_error');
+        return doc;
+      },
+      update: async (_entry, mutator) => { mutator(doc); },
+      lock: (_id, fn) => Promise.resolve().then(fn),
+      hydrate: () => {},
+      authorization: async () => ({ open: true }),
+      turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      submit: async () => null,
+      officialSubmission: async () => submissionObj,
+      stopBeforeSubmit: async () => null,
+      undoUnsubmittedSkills: async () => {},
+      flushPendingSkillRollback: async () => {},
+      stopIntended: () => false,
+      forgetStop: () => {},
+      completeTurn: async (payload) => {
+        if (failCompleteTurn) throw new Error('go_ops_temporary_502');
+        completedPayloads.push(payload);
+      },
+    });
+
+    // Trigger detached mode via observer failure while submission.status() also fails transiently in catch:
+    // entry.submittedRequest ensures detachedRunning stays true and monitor starts!
+    await expect(lifecycle.wait(entry, submissionObj)).rejects.toThrow('watch_dropped');
+    expect(entry.detachedRunning).toBe(true);
+    expect(entry.busy).toBe(true);
+
+    // 1. Both state() and status() throwing must keep detachedRunning=true, busy=true, zero aborts, zero settlements!
+    expect(await lifecycle.reconcileDetachedEntry(entry)).toBe(true);
+    expect(entry.detachedRunning).toBe(true);
+    expect(entry.busy).toBe(true);
+    expect(abortCalls).toBe(0);
+    expect(doc.active?.requestId).toBe('req-detach');
+
+    failStateRead = false;
+    expect(await lifecycle.reconcileDetachedEntry(entry)).toBe(true);
+    expect(entry.detachedRunning).toBe(true);
+    expect(entry.busy).toBe(true);
+    expect(abortCalls).toBe(0);
+
+    // Wait >250ms while status() throws so monitorDetachedSubmission also hits catch and does NOT settle!
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(entry.detachedRunning).toBe(true);
+    expect(entry.busy).toBe(true);
+    expect(doc.active?.requestId).toBe('req-detach');
+
+    // 2. Submission finishes ('done'), but Go /complete fails transiently on first attempt:
+    // doc.active.result is committed, pendingCompleteRetry=true, busy=true, doc.active NOT cleared yet!
+    failStatusRead = false;
+    currentSubStatus = 'done';
+    expect(await lifecycle.reconcileDetachedEntry(entry)).toBe(true);
+    expect(entry.detachedRunning).toBe(false);
+    expect(entry.pendingCompleteRetry).toBe(true);
+    expect(entry.busy).toBe(true);
+    expect(doc.active?.result?.reply).toBe('Recovered detached answer.');
+    expect(doc.turns).toHaveLength(0);
+    expect(abortCalls).toBe(0);
+
+    // 3. Once Go /complete recovers, reconciliation delivers completeTurn and settles doc.active -> doc.turns!
+    failCompleteTurn = false;
+    expect(await lifecycle.reconcileDetachedEntry(entry)).toBe(false);
+    expect(entry.pendingCompleteRetry).toBe(false);
+    expect(entry.busy).toBe(false);
+    expect(doc.active).toBeNull();
+    expect(doc.turns).toHaveLength(1);
+    expect(doc.turns[0].reply).toBe('Recovered detached answer.');
+    expect(completedPayloads).toHaveLength(1);
+    expect(completedPayloads[0].turnId).toBe('turn-detach');
+    entry.disposed = true;
+  });
+
   test('resolveCurrentSession is pure on read fallback and handles directory or missing pointers', async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv-resolve-live-'));
     const store = createDurableSessionStore({

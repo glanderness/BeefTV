@@ -405,8 +405,14 @@ function respondStoreError(res, error) {
   return false;
 }
 
-function anySessionBusy() {
-  for (const entry of durable.sessions.values()) if (durable.isEntryBusy(entry)) return true;
+async function anySessionBusy() {
+  for (const [canvasId, entry] of durable.sessions.entries()) {
+    if (entry.detachedRunning || entry.pendingCompleteRetry) {
+      if (await durable.refreshCanvasBusy(canvasId)) return true;
+    } else if (durable.isEntryBusy(entry)) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -419,10 +425,11 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/health') {
     if (!instanceOK(req)) { respond(res, 403, { code: 403, reason: 'instance_mismatch' }); return; }
+    const busy = await anySessionBusy();
     const persistenceSummary = durable.sessions.size === 0 ? 'ok' : [...new Set([...durable.sessions.values()].map((entry) => entry.persistence))].join(',');
     const proof = instanceProof();
     respond(res, 200, { ok: !providerReason, reason: providerReason || undefined,
-      sessions: durable.sessions.size, busy: anySessionBusy(), model: MODEL?.id || MODEL_ID, api: MODEL_API,
+      sessions: durable.sessions.size, busy, model: MODEL?.id || MODEL_ID, api: MODEL_API,
       baseUrl: MODEL?.baseUrl || BASE_URL, persistence: persistenceSummary, runId: RUN_ID,
       instance: proof || undefined,
       requests: { dispatched, perTurnRequests: MAX_REQUESTS_PER_TURN, perTurnToolSteps: MAX_TOOL_STEPS_PER_TURN,
@@ -497,7 +504,8 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (live?.sessionId === requestedSessionId) {
-          respond(res, 200, { sessionId: live.sessionId, turnId: live.turn.turnId || null, busy: durable.isEntryBusy(live) });
+          const busy = await isLiveEntryBusy(canvasId);
+          respond(res, 200, { sessionId: live.sessionId, turnId: live.turn.turnId || null, busy });
           return;
         }
         const snap = await durable.history(canvasId, requestedSessionId);
@@ -510,7 +518,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (resolved.entry) {
-        respond(res, 200, { sessionId: resolved.entry.sessionId, turnId: resolved.entry.turn.turnId || null, busy: durable.isEntryBusy(resolved.entry) });
+        const busy = await isLiveEntryBusy(canvasId);
+        respond(res, 200, { sessionId: resolved.entry.sessionId, turnId: resolved.entry.turn.turnId || null, busy });
         return;
       }
       try {
