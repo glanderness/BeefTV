@@ -11,7 +11,7 @@ const (
 	SchemaVersion    = 3
 	RedactionVersion = 1
 	DefaultWindow    = 7 * 24 * time.Hour
-	maxWindow        = 7 * 24 * time.Hour
+	maxWindow        = DefaultWindow
 	maxClientEvents  = 500
 	maxBundleBytes   = 10 << 20
 	maxDescription   = 1000

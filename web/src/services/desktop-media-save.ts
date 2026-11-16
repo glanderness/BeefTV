@@ -7,13 +7,12 @@ import { uploadResourceFile } from "@/services/api/resources";
 
 export type OwnedMediaSaveResult = "saved" | "cancelled";
 
+export type DiagnosticBundleSaveOutcome = {
+    status: OwnedMediaSaveResult;
+    savedPath: string;
+};
+
 export const MAX_OWNED_ARTIFACT_BYTES = 32 * 1024 * 1024;
-
-let lastSavedDiagnosticPath = "";
-
-export function getLastSavedDiagnosticPath(): string {
-    return lastSavedDiagnosticPath;
-}
 
 export function isWailsNativeShell() {
     if (typeof window === "undefined") return false;
@@ -55,7 +54,7 @@ export async function saveOwnedOrBrowserBlob(fileName: string, blob: Blob): Prom
     return "saved";
 }
 
-export async function saveDiagnosticBundleBlob(fileName: string, blob: Blob): Promise<OwnedMediaSaveResult> {
+export async function saveDiagnosticBundleBlob(fileName: string, blob: Blob): Promise<DiagnosticBundleSaveOutcome> {
     const name = sanitizeDownloadFileName(fileName, "beeftv-diagnostics.zip");
     if (isWailsNativeShell()) {
         if (blob.size > MAX_OWNED_ARTIFACT_BYTES) throw new Error("导出包太大，请减少所选内容后再导出");
@@ -64,19 +63,16 @@ export async function saveDiagnosticBundleBlob(fileName: string, blob: Blob): Pr
         const saveDiagnostic = window.go?.main?.DesktopApp?.SaveDiagnosticBundle;
         if (typeof saveDiagnostic === "function") {
             const savedPath = await saveDiagnostic(name, encoded);
-            if (!savedPath) return "cancelled";
-            lastSavedDiagnosticPath = savedPath;
-            return "saved";
+            if (!savedPath) return { status: "cancelled", savedPath: "" };
+            return { status: "saved", savedPath };
         }
         const saveArtifact = window.go?.main?.DesktopApp?.SaveOwnedArtifact;
         if (!saveArtifact) throw new Error("当前应用还不能把文件存到所选位置");
         const saved = await saveArtifact(name, encoded);
-        lastSavedDiagnosticPath = "";
-        return saved ? "saved" : "cancelled";
+        return { status: saved ? "saved" : "cancelled", savedPath: "" };
     }
-    lastSavedDiagnosticPath = "";
     saveAs(blob, name);
-    return "saved";
+    return { status: "saved", savedPath: "" };
 }
 
 /** Video exports use the resource upload path so large files never cross Wails as base64. */

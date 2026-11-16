@@ -1,4 +1,5 @@
 import { browserCapabilities } from "./browser-environment";
+import { DEFAULT_DIAGNOSTIC_WINDOW_MS } from "./diagnostic-window";
 
 type RequiredCapabilities = { secureRandom: boolean; structuredClone: boolean; indexedDB: boolean };
 
@@ -98,7 +99,7 @@ function showFailure(stage: "capability" | "workspace", capabilities: RequiredCa
             void desktopApp
                 .ExportStartupDiagnostics!(
                     JSON.stringify({
-                        from: new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString(),
+                        from: new Date(Date.now() - DEFAULT_DIAGNOSTIC_WINDOW_MS).toISOString(),
                         to: new Date().toISOString(),
                         description: `preflight:${stage}${reason ? `:${reason}` : ""}`,
                         runtime: {

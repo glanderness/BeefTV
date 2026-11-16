@@ -91,41 +91,23 @@ func (a *DesktopApp) ExportStartupDiagnostics(clientPayload string) (string, err
 func (a *DesktopApp) saveAndRevealDiagnosticZip(fileName string, data []byte, autoFallbackPath string) (string, error) {
 	cleanName := sanitizeDiagnosticZipName(fileName)
 
-	a.mu.RLock()
-	downloadsDir := strings.TrimSpace(a.downloadsDir)
-	usePlatform := a.usePlatformDownloads
-	hasCustomDialog := a.chooseSavePath != nil
-	a.mu.RUnlock()
-
-	if downloadsDir != "" || (usePlatform && !hasCustomDialog) {
-		targetDir := downloadsDir
-		if targetDir == "" {
-			targetDir = platformDownloadsDir()
-		}
-		if targetDir != "" {
-			if savedPath, err := writeUniqueDiagnosticZip(targetDir, cleanName, data); err == nil {
-				a.recordLastDiagnosticBundlePath(savedPath)
-				a.revealSavedFileBestEffort(savedPath)
-				return savedPath, nil
-			}
+	if targetDir := a.targetDownloadsDir(); targetDir != "" {
+		if savedPath, err := writeUniqueDiagnosticZip(targetDir, cleanName, data); err == nil {
+			return a.finishSavedDiagnosticZip(savedPath), nil
 		}
 	}
 
 	ctx, dialogErr := a.dialogContext()
 	if dialogErr != nil {
 		if autoFallbackPath != "" {
-			a.recordLastDiagnosticBundlePath(autoFallbackPath)
-			a.revealSavedFileBestEffort(autoFallbackPath)
-			return autoFallbackPath, nil
+			return a.finishSavedDiagnosticZip(autoFallbackPath), nil
 		}
 		return "", dialogErr
 	}
 	chosen, err := a.promptSavePath(ctx, cleanName)
 	if err != nil {
 		if autoFallbackPath != "" {
-			a.recordLastDiagnosticBundlePath(autoFallbackPath)
-			a.revealSavedFileBestEffort(autoFallbackPath)
-			return autoFallbackPath, nil
+			return a.finishSavedDiagnosticZip(autoFallbackPath), nil
 		}
 		return "", err
 	}
@@ -135,16 +117,37 @@ func (a *DesktopApp) saveAndRevealDiagnosticZip(fileName string, data []byte, au
 	if err := bootstrap.WriteOwnedArtifact(chosen, data); err != nil {
 		return "", err
 	}
-	a.recordLastDiagnosticBundlePath(chosen)
-	a.revealSavedFileBestEffort(chosen)
-	return chosen, nil
+	return a.finishSavedDiagnosticZip(chosen), nil
+}
+
+func (a *DesktopApp) targetDownloadsDir() string {
+	a.mu.RLock()
+	downloadsDir := strings.TrimSpace(a.downloadsDir)
+	usePlatform := a.usePlatformDownloads
+	hasCustomDialog := a.chooseSavePath != nil
+	resolveDir := a.resolveDownloadsDir
+	a.mu.RUnlock()
+
+	if downloadsDir != "" {
+		return downloadsDir
+	}
+	if !usePlatform || hasCustomDialog {
+		return ""
+	}
+	if resolveDir != nil {
+		return strings.TrimSpace(resolveDir())
+	}
+	return platformDownloadsDir()
+}
+
+func (a *DesktopApp) finishSavedDiagnosticZip(savedPath string) string {
+	a.recordLastDiagnosticBundlePath(savedPath)
+	a.revealSavedFileBestEffort(savedPath)
+	return savedPath
 }
 
 func sanitizeDiagnosticZipName(fileName string) string {
-	cleaned := bootstrap.SanitizeSaveFileName(fileName)
-	if cleaned == "" || cleaned == "未命名媒体" {
-		cleaned = "beeftv-diagnostics.zip"
-	}
+	cleaned := bootstrap.SanitizeSaveFileNameWithFallbackStem(fileName, "beeftv-diagnostics")
 	if !strings.HasSuffix(strings.ToLower(cleaned), ".zip") {
 		cleaned += ".zip"
 	}
@@ -161,9 +164,52 @@ func writeUniqueDiagnosticZip(dir, cleanName string, data []byte) (string, error
 		return "", errors.New("下载目录不存在")
 	}
 
+	tmpFile, tmpErr := os.CreateTemp(cleanDir, ".beeftv-diag-*.tmp")
+	if tmpErr != nil {
+		return "", tmpErr
+	}
+	tmpPath := tmpFile.Name()
+	_ = tmpFile.Chmod(0o600)
+	_, writeErr := tmpFile.Write(data)
+	syncErr := tmpFile.Sync()
+	closeErr := tmpFile.Close()
+	if writeErr != nil || syncErr != nil || closeErr != nil {
+		_ = os.Remove(tmpPath)
+		if writeErr != nil {
+			return "", writeErr
+		}
+		if syncErr != nil {
+			return "", syncErr
+		}
+		return "", closeErr
+	}
+
 	ext := filepath.Ext(cleanName)
 	stem := strings.TrimSuffix(cleanName, ext)
 	for attempt := 1; attempt <= 100; attempt++ {
+		name := cleanName
+		if attempt > 1 {
+			name = fmt.Sprintf("%s-%d%s", stem, attempt, ext)
+		}
+		candidate := filepath.Join(cleanDir, name)
+		linkErr := os.Link(tmpPath, candidate)
+		if linkErr == nil {
+			_ = os.Remove(tmpPath)
+			return candidate, nil
+		}
+		if errors.Is(linkErr, os.ErrExist) {
+			continue
+		}
+		// Filesystem does not support hard links (e.g. exFAT/FAT32); fall back to O_EXCL.
+		_ = os.Remove(tmpPath)
+		return writeUniqueDiagnosticZipDirect(cleanDir, stem, ext, cleanName, attempt, data)
+	}
+	_ = os.Remove(tmpPath)
+	return "", errors.New("下载目录中同名诊断包过多")
+}
+
+func writeUniqueDiagnosticZipDirect(cleanDir, stem, ext, cleanName string, startAttempt int, data []byte) (string, error) {
+	for attempt := startAttempt; attempt <= 100; attempt++ {
 		name := cleanName
 		if attempt > 1 {
 			name = fmt.Sprintf("%s-%d%s", stem, attempt, ext)
@@ -232,17 +278,12 @@ func (a *DesktopApp) revealSavedFile(path string) error {
 
 func (a *DesktopApp) revealSavedFileBestEffort(path string) {
 	a.mu.RLock()
-	reveal := a.revealFile
-	usePlatform := a.usePlatformDownloads
+	shouldReveal := a.revealFile != nil || a.usePlatformDownloads
 	a.mu.RUnlock()
-	if reveal != nil {
-		_ = reveal(path)
+	if !shouldReveal {
 		return
 	}
-	if !usePlatform {
-		return
-	}
-	_ = revealFileInFileManager(path)
+	_ = a.revealSavedFile(path)
 }
 
 func (a *DesktopApp) collectAndSnapshotStartupBundle(

@@ -28,6 +28,7 @@ const params = new URLSearchParams(location.search);
 const mode = params.get("mode") || "panel";
 const dark = params.get("dark") === "1";
 const offlineRouteExport = params.get("offline") === "1";
+const nativeOfflineFail = params.get("nativeFail") === "1";
 
 document.documentElement.classList.toggle("dark", dark);
 document.documentElement.style.colorScheme = dark ? "dark" : "light";
@@ -59,6 +60,7 @@ document.body.className = "app-user-overlays app-spatial-overlays app-product-ov
                 (window as any).__diagCalls.openDirCount += 1;
             },
             ExportStartupDiagnostics: async (payload: string) => {
+                if (nativeOfflineFail) throw new Error("wails context unavailable");
                 (window as any).__diagCalls.offlineStartupPayloads.push(JSON.parse(payload));
                 return "C:\\\\Users\\\\creator\\\\Downloads\\\\beeftv-startup-diagnostics.zip";
             },
@@ -76,6 +78,16 @@ document.body.className = "app-user-overlays app-spatial-overlays app-product-ov
 
 function BrokenRoute(): React.ReactElement {
     throw new Error("节点时间轴组件初始化失败");
+}
+
+function PanelHost() {
+    const [open, setOpen] = React.useState(true);
+    return (
+        <div className="app-user-workspace min-h-dvh p-6">
+            {!open ? <button type="button" onClick={() => setOpen(true)}>重新打开诊断</button> : null}
+            <DiagnosticsPanel open={open} onClose={() => setOpen(false)} />
+        </div>
+    );
 }
 
 function Root() {
@@ -114,9 +126,7 @@ function Root() {
         <ConfigProvider locale={zhCN} theme={baseTheme}>
             <ConfigProvider theme={workspaceTheme}>
                 <App>
-                    <div className="app-user-workspace min-h-dvh p-6">
-                        <DiagnosticsPanel open={true} onClose={() => {}} />
-                    </div>
+                    <PanelHost />
                 </App>
             </ConfigProvider>
         </ConfigProvider>
@@ -138,32 +148,50 @@ beforeAll(async () => {
             export const clearVideoPreviewCache = async () => { (window).__diagCalls.clearedPreviewCount += 1; return { cleared: 3 }; };
             export const uploadResourceFile = async () => ({ id: "res-1" });
         `,
-        "@/services/diagnostics/diagnostics-api": `
-            import { saveDiagnosticBundleBlob } from "@/services/desktop-media-save";
-            export const previewDiagnosticBundle = async (input) => {
-                (window).__diagCalls.previews.push(input);
-                return {
-                    taskCount: 12,
-                    taskLogCount: 38,
-                    apiCallCount: 24,
-                    assistantTurnCount: 5,
-                    clientEventLimit: 500,
-                    estimatedBytes: 18432,
-                    willTruncate: false,
-                    updateLog: { status: "available", lines: 6, truncated: false },
-                };
+        "@/services/api/request": `
+            export class ApiError extends Error {
+                constructor(msg, opts) { super(msg); this.name = "ApiError"; Object.assign(this, opts || {}); }
+            }
+            export const configureApiRuntime = () => {};
+            export const apiClient = {
+                interceptors: {
+                    request: { use: () => 0 },
+                    response: { use: () => 0 },
+                },
             };
-            export const exportDiagnosticBundle = async (input) => {
-                if ((window).__routeExportOffline) throw new Error("network down");
-                (window).__diagCalls.exports.push(input);
-                const bytes = new Uint8Array([80, 75, 3, 4, 1, 2, 3, 4]);
-                return {
-                    blob: new Blob([bytes], { type: "application/zip" }),
-                    bundleId: "DIAG_7DAY_OK",
-                    fileName: "beeftv-diagnostics-7d.zip",
-                };
+            export const http = {
+                post: async (url, data) => {
+                    if (url === "/diagnostics/preview") {
+                        (window).__diagCalls.previews.push(data);
+                        return {
+                            taskCount: 12,
+                            taskLogCount: 38,
+                            apiCallCount: 24,
+                            assistantTurnCount: 5,
+                            clientEventLimit: 500,
+                            estimatedBytes: 18432,
+                            willTruncate: false,
+                            updateLog: { status: "available", lines: 6, truncated: false },
+                        };
+                    }
+                    throw new Error("unexpected http.post: " + url);
+                },
+                raw: async (config) => {
+                    if (config.url === "/diagnostics/export") {
+                        if ((window).__routeExportOffline) throw new Error("network down");
+                        (window).__diagCalls.exports.push(config.data);
+                        const bytes = new Uint8Array([80, 75, 3, 4, 1, 2, 3, 4]);
+                        return {
+                            data: new Blob([bytes], { type: "application/zip" }),
+                            headers: {
+                                "x-diagnostic-bundle-id": "DIAG_7DAY_OK",
+                                "content-disposition": 'attachment; filename="beeftv-diagnostics-7d.zip"',
+                            },
+                        };
+                    }
+                    throw new Error("unexpected http.raw: " + config.url);
+                },
             };
-            export const downloadDiagnosticBundle = (download) => saveDiagnosticBundleBlob(download.fileName, download.blob);
         `,
     };
 
@@ -298,6 +326,13 @@ for (const width of [1440, 390]) {
                 expect(calls.savedBundles).toHaveLength(1);
                 expect(calls.revealCount).toBe(1);
 
+                if (screenshotDir) {
+                    await page.screenshot({ path: `${screenshotDir}/diag-panel-${width}-${dark ? "dark" : "light"}.png` });
+                }
+
+                await dialog.getByText("更多选项（时间范围、补充说明与预览缓存）", { exact: true }).click();
+                await dialog.getByText("日志范围", { exact: true }).waitFor();
+
                 expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
                 const minContrast = await page.evaluate(() => {
                     const probeCanvas = document.createElement("canvas");
@@ -341,7 +376,9 @@ for (const width of [1440, 390]) {
                         return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
                     }
                     const dialogEl = document.querySelector('[role="dialog"]')!;
-                    const nodes = Array.from(dialogEl.querySelectorAll("h3, p, summary, button.ant-btn-primary span"));
+                    const nodes = Array.from(
+                        dialogEl.querySelectorAll("h3, p, summary span, label, button span, .ant-select-selection-item"),
+                    );
                     const details: Array<{ text: string; r: number }> = [];
                     for (const node of nodes) {
                         if (!node.textContent?.trim() || node.getClientRects().length === 0) continue;
@@ -354,9 +391,12 @@ for (const width of [1440, 390]) {
                     return worst.r;
                 });
                 expect(minContrast).toBeGreaterThanOrEqual(4.5);
-                if (screenshotDir) {
-                    await page.screenshot({ path: `${screenshotDir}/diag-panel-${width}-${dark ? "dark" : "light"}.png` });
-                }
+
+                // Closing and reopening clears stale bundleId & savedPath.
+                await dialog.getByRole("button", { name: "关闭问题诊断", exact: true }).click();
+                await page.getByRole("button", { name: "重新打开诊断", exact: true }).click();
+                await page.getByRole("dialog").getByText("一键导出诊断包", { exact: true }).waitFor();
+                expect(await page.getByRole("dialog").getByText("诊断编号：DIAG_7DAY_OK", { exact: true }).count()).toBe(0);
             } finally {
                 await page.close();
             }
@@ -382,6 +422,10 @@ test("RouteErrorPage and WorkspaceStartupError expose one-click 7d diagnostic ex
         if (screenshotDir) {
             await page.screenshot({ path: `${screenshotDir}/route-error-dark.png` });
         }
+
+        await page.goto(`${server.url}?mode=route-error&dark=1&offline=1&nativeFail=1`);
+        await page.getByRole("button", { name: "导出诊断包", exact: true }).click();
+        await page.getByText("本地服务暂未响应，已保存前端诊断快照，可发送给支持人员排查。", { exact: true }).waitFor();
 
         await page.goto(`${server.url}?mode=startup-error&dark=1`);
         await page.getByRole("button", { name: "在文件夹中显示", exact: true }).click();

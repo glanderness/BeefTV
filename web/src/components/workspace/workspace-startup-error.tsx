@@ -1,3 +1,4 @@
+import copy from "copy-to-clipboard";
 import { useEffect, useRef, useState } from "react";
 
 import { WorkspaceSignalIcon } from "@/components/ui/aceternity/workspace-signal-icon";
@@ -192,12 +193,25 @@ export function WorkspaceStartupError({
             ...(resolvedFailure.dataDir ? [`数据目录: ${resolvedFailure.dataDir}`] : []),
             ...(effectiveDiagnosticPath ? [`自动诊断包: ${effectiveDiagnosticPath}`] : []),
         ];
+        const summaryText = lines.join("\n");
         try {
-            await navigator.clipboard.writeText(lines.join("\n"));
-            setNotice("排查信息已复制到剪贴板。");
+            if (typeof navigator !== "undefined" && typeof navigator.clipboard?.writeText === "function") {
+                await navigator.clipboard.writeText(summaryText);
+                setNotice("排查信息已复制到剪贴板。");
+                return;
+            }
         } catch {
-            setNotice("当前环境不支持剪贴板直写，请直接截图或导出诊断包。");
+            // Fall through to execCommand copy helper on custom-scheme WebViews.
         }
+        try {
+            if (await copy(summaryText)) {
+                setNotice("排查信息已复制到剪贴板。");
+                return;
+            }
+        } catch {
+            // Ignore fallback failure and surface manual guidance below.
+        }
+        setNotice("当前环境不支持剪贴板直写，请直接截图或导出诊断包。");
     };
 
     return (

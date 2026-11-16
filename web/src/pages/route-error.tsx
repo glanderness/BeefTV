@@ -5,8 +5,8 @@ import { useNavigate, useRouteError } from "react-router";
 
 import { WorkspaceSignalIcon } from "@/components/ui/aceternity/workspace-signal-icon";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
-import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { DEFAULT_DIAGNOSTIC_WINDOW_MS } from "@/services/workspace-startup-state";
+import { getClientDiagnosticSnapshot, getDiagnosticRuntime, recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { DEFAULT_DIAGNOSTIC_WINDOW_MS } from "@/services/diagnostics/diagnostic-window";
 
 function triggerBrowserJsonDownload(fileName: string, text: string) {
     const blob = new Blob([text], { type: "application/json;charset=utf-8" });
@@ -46,12 +46,6 @@ export default function RouteErrorPage() {
         setExporting(true);
         setNotice("");
         try {
-            const [{ getClientDiagnosticSnapshot, getDiagnosticRuntime }, { downloadDiagnosticBundle, exportDiagnosticBundle }, { getLastSavedDiagnosticPath }] =
-                await Promise.all([
-                    import("@/services/diagnostics/client-diagnostics"),
-                    import("@/services/diagnostics/diagnostics-api"),
-                    import("@/services/desktop-media-save"),
-                ]);
             const to = new Date();
             const from = new Date(to.getTime() - DEFAULT_DIAGNOSTIC_WINDOW_MS);
             const snapshot = await getClientDiagnosticSnapshot({ from, to });
@@ -64,29 +58,40 @@ export default function RouteErrorPage() {
                 clientCoverage: snapshot.coverage,
             };
             try {
+                const { downloadDiagnosticBundle, exportDiagnosticBundle } = await import("@/services/diagnostics/diagnostics-api");
                 const download = await exportDiagnosticBundle(input);
-                const status = await downloadDiagnosticBundle(download);
+                let latestPath = "";
+                const status = await downloadDiagnosticBundle(download, (path) => {
+                    latestPath = path;
+                });
                 if (status === "saved") {
-                    const latestPath = getLastSavedDiagnosticPath();
                     setSavedPath(latestPath);
                     setNotice(
                         latestPath
                             ? `诊断包已保存（编号：${download.bundleId}），已打开所在文件夹。`
                             : `诊断包已保存（编号：${download.bundleId}），请发送给支持人员。`,
                     );
+                } else {
+                    setNotice("已取消保存诊断包。");
                 }
                 return;
             } catch {
                 if (typeof desktopBinding?.ExportStartupDiagnostics === "function") {
-                    const offlineSaved = await desktopBinding.ExportStartupDiagnostics(JSON.stringify(input));
-                    if (offlineSaved) {
-                        setSavedPath(offlineSaved);
-                        setNotice("离线诊断包已保存并打开所在文件夹，可直接发送给支持人员。");
+                    try {
+                        const offlineSaved = await desktopBinding.ExportStartupDiagnostics(JSON.stringify(input));
+                        if (offlineSaved) {
+                            setSavedPath(offlineSaved);
+                            setNotice("离线诊断包已保存并打开所在文件夹，可直接发送给支持人员。");
+                        } else {
+                            setNotice("已取消保存诊断包。");
+                        }
+                        return;
+                    } catch {
+                        // Fall through to browser JSON snapshot when Wails context or native export fails.
                     }
-                    return;
                 }
                 triggerBrowserJsonDownload("beeftv-route-error-diagnostics.json", JSON.stringify(input, null, 2));
-                setNotice("已保存前端诊断快照，可发送给支持人员排查。");
+                setNotice("本地服务暂未响应，已保存前端诊断快照，可发送给支持人员排查。");
             }
         } catch {
             setNotice("导出诊断包未完成，请重试或截图反馈给支持人员。");

@@ -612,3 +612,68 @@ func TestSaveDiagnosticBundleFallsBackToDialogWhenDownloadsUnavailable(t *testin
 		t.Fatalf("SaveDiagnosticBundle fallback = (%q, %v), revealed=%q", saved, err, revealed)
 	}
 }
+
+func TestPlatformDownloadsProductionBranchWindowsDeviceNamesAndRevealFallback(t *testing.T) {
+	dataDir := t.TempDir()
+	downloads := t.TempDir()
+	app := newDesktopApp(dataDir)
+	app.tempDir = t.TempDir()
+	app.wailsCtx = context.Background()
+	app.usePlatformDownloads = true
+	app.resolveDownloadsDir = func() string { return downloads }
+	var revealed []string
+	app.revealFile = func(path string) error {
+		revealed = append(revealed, path)
+		return nil
+	}
+	var openedDirs []string
+	app.openDirectory = func(path string) error {
+		openedDirs = append(openedDirs, path)
+		return nil
+	}
+
+	// No known diagnostic bundle yet -> RevealDiagnosticBundle falls back to opening workspace dataDir.
+	if err := app.RevealDiagnosticBundle(); err != nil {
+		t.Fatalf("RevealDiagnosticBundle empty fallback failed: %v", err)
+	}
+	if !reflect.DeepEqual(openedDirs, []string{dataDir}) {
+		t.Fatalf("openedDirs = %v, want [%s]", openedDirs, dataDir)
+	}
+
+	// Windows reserved device name (CON.zip) is rejected and sanitized to beeftv-diagnostics.zip.
+	saved, err := app.SaveDiagnosticBundle("CON.zip", []byte("PK-PROD"))
+	if err != nil {
+		t.Fatalf("SaveDiagnosticBundle with usePlatformDownloads failed: %v", err)
+	}
+	wantSaved := filepath.Join(downloads, "beeftv-diagnostics.zip")
+	if saved != wantSaved {
+		t.Fatalf("saved = %q, want %q", saved, wantSaved)
+	}
+	if !reflect.DeepEqual(revealed, []string{wantSaved}) {
+		t.Fatalf("revealed = %v, want [%s]", revealed, wantSaved)
+	}
+
+	// Retry boot failure updates lastDiagnosticPath so RevealDiagnosticBundle always points to latest failure archive.
+	app.openRuntime = func(_ context.Context, _ string, _ func(string, string)) (*bootstrap.Runtime, error) {
+		return nil, errors.New("boom-1")
+	}
+	_ = app.start(context.Background())
+	firstFailPath := app.StartupState().DiagnosticPath
+	time.Sleep(2 * time.Millisecond)
+	app.openRuntime = func(_ context.Context, _ string, _ func(string, string)) (*bootstrap.Runtime, error) {
+		return nil, errors.New("boom-2")
+	}
+	_ = app.RetryStartup()
+	_ = app.start(context.Background())
+	secondFailPath := app.StartupState().DiagnosticPath
+	if firstFailPath == "" || secondFailPath == "" || firstFailPath == secondFailPath {
+		t.Fatalf("expected two distinct startup failure bundles, got %q and %q", firstFailPath, secondFailPath)
+	}
+	revealed = nil
+	if err := app.RevealDiagnosticBundle(); err != nil {
+		t.Fatalf("RevealDiagnosticBundle after retry failed: %v", err)
+	}
+	if !reflect.DeepEqual(revealed, []string{secondFailPath}) {
+		t.Fatalf("revealed after retry = %v, want [%s]", revealed, secondFailPath)
+	}
+}

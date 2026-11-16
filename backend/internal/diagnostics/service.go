@@ -290,7 +290,7 @@ func (s *Service) normalizeWindow(fromRaw string, toRaw string) (timeWindow, err
 		return timeWindow{}, kernel.BadAuthRequest("诊断时间范围无效")
 	}
 	if to.Sub(from) > maxWindow {
-		return timeWindow{}, kernel.BadAuthRequest("诊断时间范围不能超过 7 天")
+		return timeWindow{}, kernel.BadAuthRequest(fmt.Sprintf("诊断时间范围不能超过 %d 天", int(maxWindow/(24*time.Hour))))
 	}
 	return timeWindow{From: from, To: to}, nil
 }

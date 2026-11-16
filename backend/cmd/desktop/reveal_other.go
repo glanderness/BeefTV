@@ -16,9 +16,44 @@ func platformDownloadsDir() string {
 	if err != nil || strings.TrimSpace(home) == "" {
 		return ""
 	}
+	if runtime.GOOS == "linux" {
+		if xdgDir := resolveLinuxXDGDownloadsDir(home); xdgDir != "" {
+			return xdgDir
+		}
+	}
 	candidate := filepath.Join(home, "Downloads")
 	if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
 		return candidate
+	}
+	return ""
+}
+
+func resolveLinuxXDGDownloadsDir(home string) string {
+	if envDir := strings.TrimSpace(os.Getenv("XDG_DOWNLOAD_DIR")); envDir != "" && filepath.IsAbs(envDir) {
+		if info, err := os.Stat(envDir); err == nil && info.IsDir() {
+			return filepath.Clean(envDir)
+		}
+	}
+	configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if configHome == "" || !filepath.IsAbs(configHome) {
+		configHome = filepath.Join(home, ".config")
+	}
+	raw, err := os.ReadFile(filepath.Join(configHome, "user-dirs.dirs"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "XDG_DOWNLOAD_DIR=") {
+			continue
+		}
+		val := strings.Trim(strings.TrimPrefix(trimmed, "XDG_DOWNLOAD_DIR="), `"`)
+		val = strings.ReplaceAll(val, "$HOME", home)
+		if filepath.IsAbs(val) {
+			if info, statErr := os.Stat(val); statErr == nil && info.IsDir() {
+				return filepath.Clean(val)
+			}
+		}
 	}
 	return ""
 }

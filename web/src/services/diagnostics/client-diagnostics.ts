@@ -5,12 +5,12 @@ import { apiClient } from "@/services/api/request";
 import { browserCapabilities } from "./browser-environment";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import {
-    DEFAULT_DIAGNOSTIC_WINDOW_MS,
     setStartupDiagnosticEventSink,
     setStartupDiagnosticPayloadBuilder,
     setStartupFailureDiagnosticSink,
 } from "@/services/workspace-startup-state";
 import { createDiagnosticEventStore } from "./diagnostic-event-store";
+import { DEFAULT_DIAGNOSTIC_WINDOW_MS } from "./diagnostic-window";
 import { createDiagnosticTrace, diagnosticTraceHeaders, parseDiagnosticTraceparent, validTraceId } from "./diagnostic-trace";
 export type { ClientDiagnosticCoverage } from "./diagnostic-event-store";
 

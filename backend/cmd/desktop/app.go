@@ -46,7 +46,9 @@ type DesktopApp struct {
 	boot                    desktopBootAttempt
 	openRuntime             func(ctx context.Context, dataDir string, onPhase func(phase, detail string)) (*bootstrap.Runtime, error)
 	chooseSavePath          func(ctx context.Context, fileName string) (string, error)
+	resolveDownloadsDir     func() string
 	revealFile              func(path string) error
+	openDirectory           func(path string) error
 	copyOwnedMedia          func(resourceID, destPath string) error
 	copyEagleMedia          func(baseURL, itemID, destPath string) error
 }

@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 
 import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBundle, type DiagnosticExportInput, type DiagnosticPreview } from "@/services/diagnostics/diagnostics-api";
 import { getClientDiagnosticSnapshot, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
+import { DEFAULT_DIAGNOSTIC_RANGE, diagnosticRangeMilliseconds, type DiagnosticRange } from "@/services/diagnostics/diagnostic-window";
 import { clearVideoPreviewCache } from "@/services/api/resources";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { getLastSavedDiagnosticPath } from "@/services/desktop-media-save";
+import { useCopyText } from "@/hooks/use-copy-text";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { EnvironmentChecks } from "./environment-checks";
 
@@ -18,7 +19,12 @@ type DiagnosticsPanelProps = {
     onClose: () => void;
 };
 
-export type DiagnosticRange = "7d" | "24h" | "1h" | "30m";
+export type { DiagnosticRange };
+
+type ExportResultState = {
+    bundleId: string;
+    savedPath: string;
+};
 
 const rangeOptions: { value: DiagnosticRange; label: string }[] = [
     { value: "7d", label: "最近 7 天（推荐）" },
@@ -29,13 +35,13 @@ const rangeOptions: { value: DiagnosticRange; label: string }[] = [
 
 export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: DiagnosticsPanelProps) {
     const { message } = App.useApp();
-    const [range, setRange] = useState<DiagnosticRange>("7d");
+    const copyText = useCopyText();
+    const [range, setRange] = useState<DiagnosticRange>(DEFAULT_DIAGNOSTIC_RANGE);
     const [description, setDescription] = useState("");
     const [preview, setPreview] = useState<DiagnosticPreview | null>(null);
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [exporting, setExporting] = useState(false);
-    const [bundleId, setBundleId] = useState("");
-    const [savedPath, setSavedPath] = useState("");
+    const [exportResult, setExportResult] = useState<ExportResultState | null>(null);
     const [clearingPreviews, setClearingPreviews] = useState(false);
     const desktopBinding = getDesktopAppBinding();
     const openUpdateLogs = desktopBinding?.OpenUpdateLogDirectory;
@@ -43,7 +49,11 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     const [updateLogError, setUpdateLogError] = useState("");
 
     useEffect(() => {
-        if (!open) return;
+        if (!open) {
+            setExportResult(null);
+            setUpdateLogError("");
+            return;
+        }
         let cancelled = false;
         setLoadingPreview(true);
         void buildInput(range, undefined, taskId, projectId)
@@ -64,15 +74,20 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
 
     const handleExport = async () => {
         setExporting(true);
+        setExportResult(null);
         try {
             const download = await exportDiagnosticBundle(await buildInput(range, description, taskId, projectId));
-            const saved = await downloadDiagnosticBundle(download);
-            if (saved !== "saved") return;
-            const latestSavedPath = getLastSavedDiagnosticPath();
-            setBundleId(download.bundleId);
-            setSavedPath(latestSavedPath);
+            let resolvedSavedPath = "";
+            const saved = await downloadDiagnosticBundle(download, (path) => {
+                resolvedSavedPath = path;
+            });
+            if (saved !== "saved") {
+                message.info("已取消保存诊断包");
+                return;
+            }
+            setExportResult({ bundleId: download.bundleId, savedPath: resolvedSavedPath });
             message.success(
-                latestSavedPath
+                resolvedSavedPath
                     ? "诊断包已存至下载目录并自动打开所在文件夹，可直接发送给支持人员"
                     : "诊断包已保存，请连同诊断编号发送给支持人员",
             );
@@ -92,14 +107,9 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
         }
     };
 
-    const handleCopyBundleId = async () => {
-        if (!bundleId) return;
-        try {
-            await navigator.clipboard.writeText(bundleId);
-            message.success("已复制诊断编号");
-        } catch {
-            message.error("复制失败，请手动选中复制");
-        }
+    const handleCopyBundleId = () => {
+        if (!exportResult?.bundleId) return;
+        copyText(exportResult.bundleId, "已复制诊断编号");
     };
 
     const rangeLabel = rangeOptions.find((option) => option.value === range)?.label.replace("（推荐）", "") ?? "最近 7 天";
@@ -161,14 +171,14 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
                         </Button>
                     </div>
 
-                    {bundleId ? (
+                    {exportResult?.bundleId ? (
                         <div className="mt-3 border-t border-border pt-3">
                             <p className="font-mono text-[12px] leading-[20px] text-foreground [overflow-wrap:anywhere]" role="status">
-                                诊断编号：{bundleId}
+                                诊断编号：{exportResult.bundleId}
                             </p>
-                            {savedPath ? (
+                            {exportResult.savedPath ? (
                                 <p className="mt-0.5 font-mono text-[12px] leading-[20px] text-foreground/70 [overflow-wrap:anywhere]">
-                                    保存位置：{savedPath}
+                                    保存位置：{exportResult.savedPath}
                                 </p>
                             ) : null}
                             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -177,7 +187,7 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
                                         在文件夹中显示
                                     </Button>
                                 ) : null}
-                                <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => void handleCopyBundleId()}>
+                                <Button size="small" icon={<Copy className="size-3.5" />} onClick={handleCopyBundleId}>
                                     复制诊断编号
                                 </Button>
                             </div>
@@ -297,18 +307,9 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     );
 }
 
-export async function buildDiagnosticExportInput(
-    range: DiagnosticRange = "7d",
-    description?: string,
-    taskId?: string,
-    projectId?: string,
-): Promise<DiagnosticExportInput> {
-    return buildInput(range, description, taskId, projectId);
-}
-
 async function buildInput(range: DiagnosticRange, description: string | undefined, taskId?: string, projectId?: string): Promise<DiagnosticExportInput> {
     const to = new Date();
-    const from = new Date(to.getTime() - rangeMilliseconds(range));
+    const from = new Date(to.getTime() - diagnosticRangeMilliseconds(range));
     const snapshot = await getClientDiagnosticSnapshot({ from, to });
     return {
         from: from.toISOString(),
@@ -320,17 +321,4 @@ async function buildInput(range: DiagnosticRange, description: string | undefine
         clientEvents: snapshot.events,
         clientCoverage: snapshot.coverage,
     };
-}
-
-export function rangeMilliseconds(range: DiagnosticRange) {
-    switch (range) {
-        case "30m":
-            return 30 * 60 * 1000;
-        case "1h":
-            return 60 * 60 * 1000;
-        case "24h":
-            return 24 * 60 * 60 * 1000;
-        default:
-            return 7 * 24 * 60 * 60 * 1000;
-    }
 }
