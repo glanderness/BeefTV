@@ -369,7 +369,11 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         } finally {
             if (request === run.historyRequest) {
                 run.historyLoading = false;
-                if (activeCanvasRef.current === targetCanvas) setHistorySettledEpoch((value) => value + 1);
+                const statusBecameAvailableInFlight = Boolean(statusRef.current?.available)
+                    && assistantStatusResumeKey(statusRef.current) !== statusKeyAtRequest;
+                if (activeCanvasRef.current === targetCanvas && statusBecameAvailableInFlight) {
+                    setHistorySettledEpoch((value) => value + 1);
+                }
             }
             rerenderIfActive(targetCanvas);
         }
@@ -394,6 +398,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const run = runFor(canvasId);
         if (run.streaming || run.sessionBusy || run.historyLoading) return;
         if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, statusRef.current)) return;
+        if (run.historyError && !statusRef.current?.available) return;
         void loadHistory(canvasId);
     }, [canvasId, historySettledEpoch, loadHistory, open, runFor, statusResumeKey]);
 

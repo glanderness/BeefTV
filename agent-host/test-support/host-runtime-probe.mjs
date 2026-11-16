@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -492,6 +492,15 @@ try{
       {type:'message',id:'m1',parentId:null,timestamp:'2026-10-07T12:00:01.000Z',message:{role:'user',content:[{type:'text',text:'Legacy fallback memory anchor'}],timestamp:1791374401000}},
     ];
     writeFileSync(path.join(legacySessionDir,`2026-10-07T12-00-00-000Z_${legacyId}.jsonl`),legacyRows.map(r=>JSON.stringify(r)).join('\n')+'\n');
+    // Read-only GET /skill-context on a legacy session (explicit or current) must NOT create/publish a durable session or mutate current.json!
+    writeFileSync(path.join(legacySessionDir,'current.json'),JSON.stringify({sessionId:legacyId}));
+    const legacySkillExplicit=await request(`/skill-context?canvasId=${encodeURIComponent(legacyFallbackCanvas)}&sessionId=${encodeURIComponent(legacyId)}`);
+    assert.equal(legacySkillExplicit.status,200,legacySkillExplicit.text);
+    const legacySkillCurrent=await request(`/skill-context?canvasId=${encodeURIComponent(legacyFallbackCanvas)}`);
+    assert.equal(legacySkillCurrent.status,200,legacySkillCurrent.text);
+    assert.equal(JSON.parse(readFileSync(path.join(legacySessionDir,'current.json'),'utf8')).sessionId,legacyId,'GET /skill-context must not mutate legacy current.json');
+    const preChatSessions=JSON.parse((await request(`/sessions?canvasId=${encodeURIComponent(legacyFallbackCanvas)}`)).text);
+    assert.equal(preChatSessions.sessions.length,1,'GET /skill-context must not create a durable session for legacy view');
     writeFileSync(path.join(legacySessionDir,'current.json'),'{truncated-legacy-pointer');
     const legacyHealedChat=await request('/chat',{canvasId:legacyFallbackCanvas,message:'Continue after corrupt legacy pointer.',turnId:'aa32',revisionBefore:1});
     assert.equal(legacyHealedChat.status,200,legacyHealedChat.text);

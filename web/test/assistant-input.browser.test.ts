@@ -17,6 +17,7 @@ let statusPayload: Record<string, any> = { available: true };
 let statusCalls = 0, historyCalls = 0;
 let holdHistory: (() => Promise<void>) | null = null;
 let pausedTurnReason: string | undefined;
+let failHistoryStatus = 0;
 const uploadKeys: string[] = [];
 const uploadMetadata: { name: string; width: string | null; height: string | null; durationMs: string | null }[] = [];
 const registeredAssets: Record<string, any>[] = [];
@@ -103,6 +104,9 @@ beforeAll(async () => {
         if (pathname.endsWith("/assistant/history")) {
             historyCalls += 1;
             if (holdHistory) await holdHistory();
+            if (failHistoryStatus > 0) {
+                return Response.json({ code: failHistoryStatus, reason: "host_unreachable", msg: "host unreachable" }, { status: failHistoryStatus });
+            }
             return ok({ sessionId: "s1", turns, ...(pausedTurnReason ? { pausedTurnReason } : {}), active: running && !cancelled ? { turnId: "busy", userText: "继续创作", permissionMode: activePermissionMode, selectedNodeIds: [], attachments: [], skills: [], supplements: [], status: "running", createdAt: "2026-10-08" } : null });
         }
         if (pathname.endsWith("/assistant/steer")) { supplements.push(await req.json()); return ok({ accepted: true }); }
@@ -138,6 +142,7 @@ beforeEach(() => {
     historyCalls = 0;
     holdHistory = null;
     pausedTurnReason = undefined;
+    failHistoryStatus = 0;
 });
 
 test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, draft restore and busy supplement", async () => {
@@ -487,6 +492,45 @@ test("status polling does not pile up initial history reads and reloads paused t
     };
     releaseInitialHistory();
     await page.getByText("模型恢复后已完成续跑。", { exact: true }).waitFor({ timeout: 6000 });
+    expect(historyCalls).toBe(2);
+    await page.close();
+}, 20000);
+
+test("failed initial history read does not loop infinitely and reloads once status becomes available", async () => {
+    running = false;
+    cancelled = false;
+    turns.length = 0;
+    failHistoryStatus = 503;
+    statusPayload = { available: false, reason: "host_starting" };
+
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+
+    await page.getByText("没能读取对话。请重新读取。", { exact: true }).waitFor({ timeout: 5000 });
+    const pollDeadline = Date.now() + 6000;
+    while (statusCalls < 2 && Date.now() < pollDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => setTimeout(resolve, 350));
+    expect(historyCalls).toBe(1);
+
+    failHistoryStatus = 0;
+    turns.push({
+        turnId: "recovered-after-503",
+        userText: "首次读取失败后的对话",
+        selectedNodeIds: [],
+        reply: "宿主就绪后已自动载入历史。",
+        attachments: [],
+        skills: [],
+        toolCalls: [],
+        proposals: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-08",
+    });
+    statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
+    await page.getByText("宿主就绪后已自动载入历史。", { exact: true }).waitFor({ timeout: 6000 });
     expect(historyCalls).toBe(2);
     await page.close();
 }, 20000);

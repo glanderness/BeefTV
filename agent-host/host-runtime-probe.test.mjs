@@ -1,11 +1,13 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createModels } from '@earendil-works/pi-ai/models';
 import { newTurnAccumulator } from './canvas-turn.mjs';
-import { isCorruptSessionArtifactError, isSkippableSessionError } from './durable-session-owner.mjs';
+import { createDurableSessionStore, isCorruptSessionArtifactError, isSkippableSessionError } from './durable-session-owner.mjs';
+import { canvasKey } from './session-owner.mjs';
 import { createDurableTurnLifecycle } from './durable-watch-observer.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -364,5 +366,53 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(entry.waiters).toBe(0);
     expect(entry.running).toBeNull();
     expect(entry.busy).toBe(false);
+  });
+
+  test('resolveCurrentSession preserves busy live owner over stale pointer and idle live owner on missing pointer', async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv-resolve-live-'));
+    const store = createDurableSessionStore({
+      sessionRoot: path.join(scratch, 'sessions'),
+      workspaceRoot: path.join(scratch, 'workspace'),
+      getModels: () => createModels(),
+      getModelRef: () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      buildTools: () => [],
+      authorizeTurn: async () => ({ open: true, canvasId: 'live-canvas', permissionMode: 'canvas' }),
+    });
+    try {
+      const first = await store.createSession('live-canvas');
+      const second = await store.createSession('live-canvas');
+      expect(second.sessionId).not.toBe(first.sessionId);
+      const pointerPath = path.join(scratch, 'sessions', canvasKey('live-canvas'), 'current.json');
+
+      // 1. Stale pointer pointing to first while second is busy in memory -> live busy wins without 409 session_busy!
+      second.busy = true;
+      mkdirSync(path.dirname(pointerPath), { recursive: true });
+      writeFileSync(pointerPath, JSON.stringify({ sessionId: first.sessionId }));
+      const busyActive = await store.resolveCurrentSession('live-canvas');
+      expect(busyActive.sessionId).toBe(second.sessionId);
+      expect(busyActive.entry).toBe(second);
+      const busyPreloaded = await store.resolveCurrentSession('live-canvas', {
+        activateDurable: false,
+        preloadedList: [
+          { sessionId: first.sessionId, updatedAt: '2026-01-02T00:00:00.000Z' },
+          { sessionId: second.sessionId, updatedAt: '2026-01-01T00:00:00.000Z' },
+        ],
+      });
+      expect(busyPreloaded.sessionId).toBe(second.sessionId);
+
+      // 2. Missing pointer (ENOENT) while second is idle live owner -> keeps second instead of switching away!
+      second.busy = false;
+      rmSync(pointerPath, { force: true });
+      expect(store.readSafeCurrentPointer('live-canvas')).toBe(second.sessionId);
+      const missingPtrResolved = await store.resolveCurrentSession('live-canvas');
+      expect(missingPtrResolved.sessionId).toBe(second.sessionId);
+      expect(missingPtrResolved.entry).toBe(second);
+
+      // 3. Explicit legacy sessionId without handoffLegacy throws session_not_found instead of creating durable session.
+      await expect(store.ensureSession('live-canvas', 'legacy-readonly-id')).rejects.toMatchObject({ reason: 'session_not_found' });
+    } finally {
+      await store.disposeAll();
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });

@@ -460,8 +460,26 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/skill-context' && ['GET','POST'].includes(req.method)) {
       const body=req.method==='POST'?await readJsonBody(req):Object.fromEntries(url.searchParams);
       const canvasId=String(body.canvasId || '').trim();
+      const requestedSkillSessionId=String(body.sessionId || '').trim();
       if (!canvasId) {respond(res,400,{reason:'invalid_request'});return;}
-      const entry=await durable.ensureSession(canvasId,String(body.sessionId || ''));
+      if (req.method === 'GET') {
+        if (requestedSkillSessionId && !isDurableSessionId(requestedSkillSessionId)) {
+          if (!ownsSession(canvasId, requestedSkillSessionId)) { respond(res, 404, { code: 404, reason: 'session_not_found' }); return; }
+          respond(res, 200, await ops.opsRequest('GET', `/assistant/runtime/canvases/${encodeURIComponent(canvasId)}/skill-context?sessionId=${encodeURIComponent(requestedSkillSessionId)}`));
+          return;
+        }
+        if (!requestedSkillSessionId) {
+          const resolved = await durable.resolveCurrentSession(canvasId);
+          if (!resolved.entry) {
+            const query = resolved.sessionId ? `?sessionId=${encodeURIComponent(resolved.sessionId)}` : '';
+            respond(res, 200, await ops.opsRequest('GET', `/assistant/runtime/canvases/${encodeURIComponent(canvasId)}/skill-context${query}`));
+            return;
+          }
+          respond(res, 200, await durable.skillContext(resolved.entry));
+          return;
+        }
+      }
+      const entry=await durable.ensureSession(canvasId,requestedSkillSessionId);
       const result=req.method==='GET'?await durable.skillContext(entry):await durable.changeSkillContext(entry,{
         action:body.action,expectedRevision:body.expectedRevision,requestId:body.requestId,...(body.pins?{pins:body.pins}:{})});
       respond(res,200,result);return;
@@ -518,6 +536,7 @@ const server = http.createServer(async (req, res) => {
         respond(res,200,{sessionId:entry.sessionId}); return;
       }
       // 旧 JSONL 会话只切换当前指针用于读取展示；执行在下一次发消息时交接给新的 Durable 会话。
+      await durable.releaseIdleSession(canvasId);
       legacy.writeCurrentSessionId(canvasId, sessionId);
       respond(res, 200, { sessionId });
       return;
@@ -756,7 +775,7 @@ const server = http.createServer(async (req, res) => {
       // 新建一条 Durable 会话，并用旧会话文本作为交接说明开头。
       const entry = body.continuationId
         ? await durable.ensureCurrentSession(canvasId, chosen)
-        : await durable.ensureSession(canvasId, requestedSessionId);
+        : await durable.ensureSession(canvasId, requestedSessionId, { handoffLegacy: true });
       const content = await attachmentContent(body,turnId,ops.opsRequest);
       content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
       let result = null;
