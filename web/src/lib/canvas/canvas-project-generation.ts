@@ -217,13 +217,9 @@ export function createGenerationBatchRetryContexts(taskIds: readonly string[], a
     return Promise.all(taskIds.map((taskId) => createGenerationRetryContext(taskId, attemptGroupId)));
 }
 
-export function isInFlightGenerationTelemetryTask(task: Pick<GenerationTask, "status" | "stage" | "outcome">): boolean {
-    return isInFlightGenerationTelemetryState(task);
-}
-
 export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
     publishGenerationTaskTelemetry(task);
-    const inFlight = isInFlightGenerationTelemetryTask(task);
+    const inFlight = isInFlightGenerationTelemetryState(task);
     const progress = inFlight ? undefined : normalizeGenerationTaskProgress(task.progress, task.status);
     return {
         taskId: task.id,

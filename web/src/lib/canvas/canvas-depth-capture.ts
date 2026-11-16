@@ -4,8 +4,7 @@ import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-er
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import { authoritativeNodeOutcome, nodeFailureExplanation } from "@/lib/canvas/canvas-node-failure-state";
-import { normalizeGenerationTaskProgress } from "@/lib/canvas/canvas-node-metadata-contract";
-import { isInFlightGenerationTelemetryTask } from "@/lib/canvas/canvas-project-generation";
+import { isInFlightGenerationTelemetryState, normalizeGenerationTaskProgress } from "@/lib/canvas/canvas-node-metadata-contract";
 import { publishGenerationTaskTelemetry } from "@/stores/use-generation-task-telemetry";
 
 export function isDepthCaptureResultNode(node: CanvasNodeData) {
@@ -28,7 +27,7 @@ export function depthCaptureTaskMetadata(task: GenerationTask): CanvasNodeMetada
     publishGenerationTaskTelemetry(task);
     const outcome = readTaskOutcome(task);
     const active = outcome ? outcome.phase === "running" || outcome.phase === "fetching" : task.status === "queued" || task.status === "running";
-    const inFlight = isInFlightGenerationTelemetryTask(task);
+    const inFlight = isInFlightGenerationTelemetryState(task);
     return {
         taskId: task.id,
         taskType: task.type,
