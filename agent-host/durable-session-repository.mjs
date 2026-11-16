@@ -173,6 +173,11 @@ export function createDurableSessionRepository({
         if (hostState && hostState.canvasId && (hostState.canvasId !== canvasId || hostState.sessionId !== sessionId || hostState.version !== durableVersion)) {
           throw fail('durable_version_mismatch');
         }
+        if (hostState?.active) {
+          hydrate(entry, hostState.active);
+          entry.busy = false;
+          entry.log.push(...(hostState.active.log || []));
+        }
         return entry;
       }
       const configuredModel = await getModelRef(entry);
@@ -208,19 +213,42 @@ export function createDurableSessionRepository({
   async function withSession(canvasId, sessionId, fn, { readOnly = true } = {}) {
     const cached = sessions.get(canvasId);
     if (cached?.sessionId === sessionId) return fn(cached, true);
-    const borrowKey = `${canvasId}\0${sessionId}`;
-    const activeBorrow = borrowed.get(borrowKey);
-    if (activeBorrow && (!activeBorrow.readOnlyHandle || readOnly)) {
-      return fn(activeBorrow, false);
+    if (!readOnly) {
+      const entry = await open(canvasId, sessionId, { readOnly: false });
+      try {
+        return await fn(entry, false);
+      } finally {
+        entry.disposed = true;
+        await entry.harness.close(CTX);
+      }
     }
-    const entry = await open(canvasId, sessionId, { readOnly });
-    borrowed.set(borrowKey, entry);
+    const borrowKey = `${canvasId}\0${sessionId}`;
+    let lease = borrowed.get(borrowKey);
+    if (!lease) {
+      lease = {
+        refs: 0,
+        entryPromise: open(canvasId, sessionId, { readOnly: true }),
+      };
+      borrowed.set(borrowKey, lease);
+    }
+    lease.refs += 1;
+    let entry;
+    try {
+      entry = await lease.entryPromise;
+    } catch (error) {
+      lease.refs -= 1;
+      if (lease.refs <= 0 && borrowed.get(borrowKey) === lease) borrowed.delete(borrowKey);
+      throw error;
+    }
     try {
       return await fn(entry, false);
     } finally {
-      if (borrowed.get(borrowKey) === entry) borrowed.delete(borrowKey);
-      entry.disposed = true;
-      await entry.harness.close(CTX);
+      lease.refs -= 1;
+      if (lease.refs <= 0) {
+        if (borrowed.get(borrowKey) === lease) borrowed.delete(borrowKey);
+        entry.disposed = true;
+        await entry.harness.close(CTX);
+      }
     }
   }
 

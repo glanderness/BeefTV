@@ -310,11 +310,16 @@ export function createDurableTurnAdmission({
       const expansion = await expandSelectedSkills(entry, await state(entry), input.skills, content, active.turnId);
       if (skills) await prepareSkillContext(entry, input.skills, `supplement:${requestId}`, active.turnId, { append: true });
       if (entry.generation.aborted || entry.pendingCompleteRetry) throw fail('session_not_running');
+      const prevIntentEpoch = entry.generation.intentEpoch;
+      let prevLoadedSkillsLen = 0;
+      let appendedSupplement = false;
       entry.generation.intentEpoch += 1;
       await update(entry, (doc) => {
         if (!doc.active || doc.active.stopped || doc.active.result || entry.generation.aborted) throw fail('session_not_running');
         const ids = doc.active.supplementIds || [];
+        prevLoadedSkillsLen = (doc.loadedSkills || []).length;
         if (!ids.includes(requestId)) {
+          appendedSupplement = true;
           doc.active.supplementIds = [...ids, requestId];
           const message = String(input.message ?? (typeof content === 'string' ? content : ''));
           doc.active.supplements = [...doc.active.supplements, message];
@@ -332,8 +337,29 @@ export function createDurableTurnAdmission({
       });
       entry.turn.supplements = (await state(entry)).active?.supplements || [];
       hydrate(entry, (await state(entry)).active);
-      if (entry.generation.aborted || entry.pendingCompleteRetry) throw fail('session_not_running');
-      return submitSteer(expansion.content);
+      try {
+        if (entry.generation.aborted || entry.pendingCompleteRetry) throw fail('session_not_running');
+        return await submitSteer(expansion.content);
+      } catch (error) {
+        if (appendedSupplement) {
+          await update(entry, (doc) => {
+            if (!doc.active || doc.active.requestId !== active.requestId) return;
+            doc.active.supplementIds = (doc.active.supplementIds || []).filter((id) => id !== requestId);
+            doc.active.supplementInputs = (doc.active.supplementInputs || []).filter((item) => item.requestId !== requestId);
+            doc.active.supplementContents = (doc.active.supplementContents || []).filter((item) => item.requestId !== requestId);
+            doc.active.supplements = (doc.active.supplementInputs || []).map((item) => item.message);
+            doc.active.intentEpoch = prevIntentEpoch;
+            if (expansion.records.length && Array.isArray(doc.loadedSkills)) {
+              doc.loadedSkills = doc.loadedSkills.slice(0, prevLoadedSkillsLen);
+            }
+          }).catch(() => {});
+          entry.generation.intentEpoch = prevIntentEpoch;
+          const reverted = (await state(entry).catch(() => null))?.active;
+          entry.turn.supplements = reverted?.supplements || [];
+          if (reverted) hydrate(entry, reverted);
+        }
+        throw error;
+      }
     });
   }
 
@@ -357,6 +383,9 @@ export function createDurableTurnAdmission({
     entry.generation.pendingInput = pending;
     entry.generation.modelEpoch = -1;
     return {
+      cancel() {
+        pending.cancel();
+      },
       resolve() {
         if (pending.state !== 'pending') return;
         pending.state = 'resolved';

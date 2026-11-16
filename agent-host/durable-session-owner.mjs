@@ -137,7 +137,7 @@ export function createDurableSessionStore({
     const mode = result?.permissionMode || 'canvas';
     if (!['read-only', 'canvas', 'full-access'].includes(mode)) throw fail('invalid_permission_mode');
     if (entry.input?.turnId === turnId && (entry.input.permissionMode || 'canvas') !== mode) throw fail('permission_mode_frozen');
-    if (entry.permissionMode !== mode) {
+    if (!entry.readOnlyHandle && entry.permissionMode !== mode) {
       entry.permissionMode = mode;
       entry.generation.permissionMode = mode;
       if (entry.configurePermission) await entry.configurePermission(mode);
@@ -172,6 +172,7 @@ export function createDurableSessionStore({
     }
   }
   async function turnModel(entry, active) {
+    if (!entry.root) throw fail(active ? 'turn_not_open' : 'model_not_configured');
     const agent = await entry.root.agent(CTX);
     const ref = active ? (active.modelRef || agent.model) : await getModelRef(entry);
     if (!ref?.provider || !ref?.modelId) throw fail('model_not_configured');

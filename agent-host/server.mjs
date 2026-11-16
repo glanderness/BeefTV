@@ -725,7 +725,14 @@ const server = http.createServer(async (req, res) => {
         await durable.supplement(entry,{requestId:body.requestId || crypto.randomUUID(),content,input:body});
         pending.resolve();
         respond(res,202,{accepted:true}); return;
-      } catch (error) { pending.reject(error); throw error; }
+      } catch (error) {
+        if (error?.reason === 'session_not_running') {
+          pending.cancel();
+        } else {
+          pending.reject(error);
+        }
+        throw error;
+      }
     }
     if (req.method === 'POST' && url.pathname === '/events') {
       const body = await readJsonBody(req);

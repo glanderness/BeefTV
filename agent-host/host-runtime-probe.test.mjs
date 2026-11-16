@@ -741,21 +741,83 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
         const createdAfterDetached = await store2.createSession('dedup-canvas');
         expect(createdAfterDetached.sessionId).not.toBe(reopened.sessionId);
 
-        // Verify withSession + historyOf opens a non-current session only ONCE with readOnly:true,
-        // and inspectReadOnlyEntry preserves resumable active without leaking session_inactive!
+        // Verify concurrent withSession calls share ONE refcounted readOnly:true lease (openCount +1)
+        // and the slower caller still succeeds after the faster caller exits!
         const openBeforeBorrow = store2.getOpenCount();
-        const borrowedResult = await store2.withSession('dedup-canvas', reopened.sessionId, async (borrowedEntry, isMounted) => {
-          expect(isMounted).toBe(false);
-          expect(borrowedEntry.readOnlyHandle).toBe(true);
-          const nestedHist = await store2.history('dedup-canvas', reopened.sessionId);
-          const directHist = await store2.historyOf(borrowedEntry);
-          const roInspect = await store2.inspectReadOnlyEntry(borrowedEntry);
-          return { nestedHist, directHist, roInspect };
-        });
+        const [fastBorrow, slowBorrow] = await Promise.all([
+          store2.withSession('dedup-canvas', reopened.sessionId, async (borrowedEntry, isMounted) => {
+            expect(isMounted).toBe(false);
+            expect(borrowedEntry.readOnlyHandle).toBe(true);
+            return store2.historyOf(borrowedEntry);
+          }),
+          store2.withSession('dedup-canvas', reopened.sessionId, async (borrowedEntry, isMounted) => {
+            expect(isMounted).toBe(false);
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            const directHist = await store2.historyOf(borrowedEntry);
+            const roInspect = await store2.inspectReadOnlyEntry(borrowedEntry);
+            return { directHist, roInspect };
+          }),
+        ]);
         expect(store2.getOpenCount() - openBeforeBorrow).toBe(1);
-        expect(borrowedResult.directHist.turns.length).toBeGreaterThanOrEqual(2);
-        expect(borrowedResult.nestedHist.turns.length).toBe(borrowedResult.directHist.turns.length);
-        expect(borrowedResult.roInspect.unresumableReason).toBeNull();
+        expect(fastBorrow.turns.length).toBeGreaterThanOrEqual(2);
+        expect(slowBorrow.directHist.turns.length).toBe(fastBorrow.turns.length);
+        expect(slowBorrow.roInspect.unresumableReason).toBeNull();
+
+        // Also verify a non-current session with active turn + toolCalls/proposals + non-canvas permissionMode
+        // can be read via readOnly withSession without triggering ReadOnlySession writes, while preserving toolCalls/proposals!
+        let activePermissionMode = 'full-access';
+        const storePerm = createDurableSessionStore({
+          sessionRoot: path.join(scratch, 'sessions'),
+          workspaceRoot: path.join(scratch, 'workspace'),
+          getModels: () => (allowModel ? registeredModels : createModels()),
+          getModelRef: () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+          buildTools: () => [{
+            name: 'synthetic_tool',
+            description: 'Synthetic tool',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+            execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+          }],
+          authorizeTurn: async ({ turnId, canvasId }) => ({ open: true, turnId, canvasId, permissionMode: activePermissionMode }),
+          completeTurn: async ({ turnId }) => { completedTurns.push(turnId); },
+          settings: { retry: { maxRetries: 0 } },
+        });
+        try {
+          allowModel = true;
+          const richSession = await storePerm.createSession('perm-canvas');
+          const richSub = await storePerm.submit(richSession, {
+            requestId: 'req-rich-1',
+            turnId: 'turn-rich-1',
+            content: [{ type: 'text', text: 'rich' }],
+            userText: 'rich',
+          });
+          while (!['done', 'unanswered'].includes((await richSub.status()).status)) {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          // Seed persisted log + proposals on active before switching to another current session!
+          await richSession.harness.commit(async (tx) => {
+            const stateDoc = [...await richSession.harness.inspect()].length;
+            void stateDoc;
+            void tx;
+          }).catch(() => {});
+          richSession.log.push({ id: 'call-1', name: 'synthetic_tool', status: 'done' });
+          richSession.turn.proposals.push({ id: 'prop-1', title: 'Shot 1' });
+          await richSession.generation.persistEffects();
+          richSession.submittingRequest = null;
+          richSession.submittedRequest = null;
+          richSession.busy = false;
+          await storePerm.createSession('perm-canvas');
+          allowModel = false;
+          const roRich = await storePerm.withSession('perm-canvas', richSession.sessionId, async (borrowedEntry) => {
+            const inspection = await storePerm.inspectReadOnlyEntry(borrowedEntry);
+            return inspection;
+          });
+          expect(roRich.unresumableReason).toBe('model_unavailable_for_resume');
+          expect(roRich.unresumableTurn?.toolCalls).toEqual([{ id: 'call-1', name: 'synthetic_tool', status: 'done' }]);
+          expect(roRich.unresumableTurn?.proposals).toEqual([{ id: 'prop-1', title: 'Shot 1' }]);
+          activePermissionMode = 'full-access';
+        } finally {
+          await storePerm.disposeAll();
+        }
       } finally {
         await store2.disposeAll();
       }
@@ -765,7 +827,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     }
   });
 
-  test('recoverForRead handles committed active.result during /complete 502 without throwing and guards supplement crash recovery with whenIdle:reject', async () => {
+  test('recoverForRead handles committed active.result during /complete 502 without throwing and rolls back/prunes unadmitted supplements end-to-end with observer', async () => {
     // Part A: active.result committed on disk while Go /complete returns 502 twice -> recoverForRead returns unresumableTurn (zero throw) and settles into 1 turn on 3rd attempt
     let completeCalls = 0;
     const doc = {
@@ -844,11 +906,16 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(doc.turns[0].reply).toBe('Already committed reply.');
     entry.disposed = true;
 
-    // Part B: persisted supplementContents when original submission already ended unanswered (idle conversation) -> passes whenIdle:'reject' and never starts a second run
-    const submittedDrafts = [];
+    // Part B: Crash window with full supplementIds + supplementInputs + supplementContents on an already-settled turn ->
+    // recoverForRead prunes the unadmitted supplementId AND lifecycle.wait(observer) settles cleanly without supplement_submission_missing!
+    const answerEntry = {
+      id: 2,
+      model: [{ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Completed main answer.' }] }],
+    };
     const settledOrigSub = {
       id: 'sub-settled-orig',
-      status: async () => ({ status: 'unanswered', reason: 'interrupted', entry: 1 }),
+      status: async () => ({ status: 'done', entry: 1, answer: 2, requestId: 'req-supp-idle' }),
+      wait: async () => ({ status: 'done', entry: 1, answer: 2, requestId: 'req-supp-idle' }),
     };
     const idleDoc = {
       active: {
@@ -857,6 +924,9 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
         submissionId: 'sub-settled-orig',
         userText: 'Original',
         stopped: false,
+        supplementIds: ['supp-1'],
+        supplements: ['Extra instruction'],
+        supplementInputs: [{ requestId: 'supp-1', message: 'Extra instruction', attachments: [], skills: [] }],
         supplementContents: [{ requestId: 'supp-1', content: 'Extra instruction' }],
       },
       turns: [],
@@ -877,19 +947,31 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       root: {
         id: 'root-10',
         abort: async () => {},
-        submit: async (draft) => {
-          submittedDrafts.push(draft);
+        context: async () => ({ entries: [answerEntry], head: { head: 2 } }),
+        watch: async () => ({
+          value: { entries: [answerEntry], docs: {} },
+          start: () => {},
+          stop: () => {},
+        }),
+        submit: async () => {
           const err = new Error('Conversation 1 is idle');
           err.name = 'ConversationIdle';
           throw err;
         },
       },
       harness: {
-        commit: async () => null,
+        commit: async (fn) => fn({
+          submissionByRequest: () => undefined,
+          entry: (id) => (id === 2 ? answerEntry : null),
+        }),
         submission: async () => settledOrigSub,
+        watchDoc: async () => ({
+          value: undefined,
+          start: () => {},
+          stop: () => {},
+        }),
       },
     };
-    let recoverySubmitCalls = 0;
     const idleLifecycle = createDurableTurnLifecycle({
       stateDoc: {},
       state: async () => idleDoc,
@@ -898,7 +980,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       hydrate: () => {},
       authorization: async () => ({ open: true }),
       turnModel: async () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
-      submit: async () => { recoverySubmitCalls += 1; return null; },
+      submit: async () => null,
       officialSubmission: async () => settledOrigSub,
       stopBeforeSubmit: async () => null,
       undoUnsubmittedSkills: async () => {},
@@ -909,8 +991,74 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     });
     const idleRecovered = await idleLifecycle.recoverForRead(idleEntry);
     expect(idleRecovered.submission).toBe(settledOrigSub);
-    expect(submittedDrafts).toHaveLength(0);
-    expect(recoverySubmitCalls).toBe(0);
+    expect(idleDoc.active?.supplementIds).toEqual([]);
+    const observedRecord = await idleLifecycle.wait(idleEntry, idleRecovered.submission);
+    expect(observedRecord?.status).toBe('done');
+    expect(observedRecord?.reply).toBe('Completed main answer.');
+    expect(observedRecord?.error).toBeNull();
+    expect(idleDoc.active).toBeNull();
+    expect(idleDoc.turns).toHaveLength(1);
     idleEntry.disposed = true;
+
+    // Part C: Live supplement() hitting ConversationIdle rolls back supplementIds/supplements AND pending.cancel() avoids pendingInputError!
+    const scratchLive = mkdtempSync(path.join(tmpdir(), 'beeftv-steer-idle-rollback-'));
+    const liveRuntime = await ModelRuntime.create({
+      authPath: path.join(scratchLive, 'auth.json'),
+      modelsPath: null,
+      refreshOnCreate: false,
+    });
+    liveRuntime.registerProvider('beeftv', {
+      api: 'openai-completions',
+      apiKey: 'synthetic',
+      baseUrl: 'http://127.0.0.1:1/v1',
+      models: [{
+        id: 'synthetic-model',
+        name: 'synthetic-model',
+        reasoning: false,
+        input: ['text'],
+        contextWindow: 200000,
+        maxTokens: 100,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }],
+    });
+    const liveModels = createModels();
+    liveModels.setProvider(liveRuntime.getProvider('beeftv'));
+    const liveStore = createDurableSessionStore({
+      sessionRoot: path.join(scratchLive, 'sessions'),
+      workspaceRoot: path.join(scratchLive, 'workspace'),
+      getModels: () => liveModels,
+      getModelRef: () => ({ provider: 'beeftv', modelId: 'synthetic-model' }),
+      buildTools: () => [],
+      authorizeTurn: async ({ turnId, canvasId }) => ({ open: true, turnId, canvasId, permissionMode: 'canvas' }),
+      completeTurn: async () => {},
+      settings: { retry: { maxRetries: 0 } },
+    });
+    try {
+      const liveEntry = await liveStore.createSession('steer-race-canvas');
+      const liveSub = await liveStore.submit(liveEntry, {
+        requestId: 'req-steer-race',
+        turnId: 'turn-steer-race',
+        content: [{ type: 'text', text: 'race' }],
+        userText: 'race',
+      });
+      // Wait for official run to become idle on port 1 while doc.active hasn't been settled by wait() yet!
+      while (!['done', 'unanswered'].includes((await liveSub.status()).status)) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      const pending = liveStore.beginPendingInput(liveEntry);
+      await expect(liveStore.supplement(liveEntry, {
+        requestId: 'late-steer-id',
+        content: [{ type: 'text', text: 'too late' }],
+        input: { message: 'too late', attachments: [], skills: [] },
+      })).rejects.toMatchObject({ reason: 'session_not_running' });
+      pending.cancel();
+      expect(liveEntry.generation.pendingInputError).toBeNull();
+      const settledRace = await liveStore.wait(liveEntry, liveSub);
+      expect(settledRace?.supplements).toEqual([]);
+      expect(settledRace?.errorReason).not.toBe('session_not_running');
+    } finally {
+      await liveStore.disposeAll();
+      rmSync(scratchLive, { recursive: true, force: true });
+    }
   });
 });

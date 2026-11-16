@@ -339,11 +339,34 @@ export function createDurableTurnLifecycle({
         syncIdleIfSettled(beforeSubmitDoc);
         return null;
       }
+      const pruneUnadmittedSupplements = async (activeRequestId) => {
+        const snap = await state(entry);
+        const ids = snap?.active?.requestId === activeRequestId ? [...(snap.active.supplementIds || [])] : [];
+        if (!ids.length) return;
+        const unadmitted = new Set();
+        for (const id of ids) {
+          const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, `supplement:${id}`), CTX);
+          if (!admitted) unadmitted.add(id);
+        }
+        if (!unadmitted.size) return;
+        await update(entry, (doc) => {
+          if (doc.active?.requestId !== activeRequestId) return;
+          doc.active.supplementIds = (doc.active.supplementIds || []).filter((id) => !unadmitted.has(id));
+          doc.active.supplementInputs = (doc.active.supplementInputs || []).filter((item) => !unadmitted.has(item.requestId));
+          doc.active.supplementContents = (doc.active.supplementContents || []).filter((item) => !unadmitted.has(item.requestId));
+          doc.active.supplements = (doc.active.supplementInputs || []).length
+            ? doc.active.supplementInputs.map((item) => item.message)
+            : (doc.active.supplementContents || []).map((item) => String(item.content || ''));
+        });
+        const updated = (await state(entry)).active;
+        if (updated) hydrate(entry, updated);
+      };
       const existingSub = beforeSubmitDoc.active.submissionId != null
         ? await entry.harness.submission(beforeSubmitDoc.active.submissionId, CTX)
         : await officialSubmission(entry, beforeSubmitDoc.active.requestId);
       const existingStatus = existingSub ? await existingSub.status(CTX) : null;
       if (existingSub && isTerminalSubmissionStatus(existingStatus?.status)) {
+        await pruneUnadmittedSupplements(beforeSubmitDoc.active.requestId);
         return existingSub;
       }
       // Re-admit persisted supplements by stable request ID only while the run is active (whenIdle: 'reject').
@@ -358,6 +381,7 @@ export function createDurableTurnLifecycle({
           }, CTX);
         } catch (error) {
           if (error?.name === 'ConversationIdle' || /idle/i.test(String(error?.message || ''))) {
+            await pruneUnadmittedSupplements(beforeSubmitDoc.active.requestId);
             return existingSub;
           }
           throw error;
