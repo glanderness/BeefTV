@@ -191,7 +191,7 @@ func TestDesktopAppBoundMethodsStayTiny(t *testing.T) {
 		names = append(names, typ.Method(i).Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "ConsumeSkillLink", "DepthComponentStatus", "DownloadDepthComponents", "DownloadUpdate", "ExportStartupDiagnostics", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "OpenSkillMarketURL", "OpenUpdateLogDirectory", "PauseDepthComponentDownload", "ReferenceStorageSettings", "ReferenceUploadStatus", "RetryStartup", "SaveEagleMedia", "SaveOwnedArchive", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StartupState", "StorageMigrationStatus", "StorageSettings", "TestReferenceStorage", "UpdateStatus", "UploadReferenceMedia"}) {
+	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "ConsumeSkillLink", "DepthComponentStatus", "DownloadDepthComponents", "DownloadUpdate", "ExportStartupDiagnostics", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "OpenSkillMarketURL", "OpenUpdateLogDirectory", "PauseDepthComponentDownload", "ReferenceStorageSettings", "ReferenceUploadStatus", "RetryStartup", "RevealDiagnosticBundle", "SaveDiagnosticBundle", "SaveEagleMedia", "SaveOwnedArchive", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StartupState", "StorageMigrationStatus", "StorageSettings", "TestReferenceStorage", "UpdateStatus", "UploadReferenceMedia"}) {
 		t.Fatalf("bound methods = %v", names)
 	}
 }
@@ -550,4 +550,65 @@ func desktopResourcePath(t *testing.T, app *DesktopApp, resourceID string) strin
 		t.Fatalf("resource envelope = %#v", envelope)
 	}
 	return filepath.Join(app.dataDir, "resources", filepath.FromSlash(envelope.Data.Resource.ObjectKey))
+}
+
+func TestSaveDiagnosticBundleWritesUniqueFileInDownloadsAndReveals(t *testing.T) {
+	downloads := t.TempDir()
+	app := newDesktopApp(t.TempDir())
+	app.wailsCtx = context.Background()
+	app.downloadsDir = downloads
+	var revealed []string
+	app.revealFile = func(path string) error {
+		revealed = append(revealed, path)
+		return nil
+	}
+
+	firstPath, err := app.SaveDiagnosticBundle("../beeftv-diagnostics.zip", []byte("PK-ONE"))
+	if err != nil {
+		t.Fatalf("first SaveDiagnosticBundle failed: %v", err)
+	}
+	if firstPath != filepath.Join(downloads, "beeftv-diagnostics.zip") {
+		t.Fatalf("firstPath = %q", firstPath)
+	}
+	secondPath, err := app.SaveDiagnosticBundle("beeftv-diagnostics.zip", []byte("PK-TWO"))
+	if err != nil {
+		t.Fatalf("second SaveDiagnosticBundle failed: %v", err)
+	}
+	if secondPath != filepath.Join(downloads, "beeftv-diagnostics-2.zip") {
+		t.Fatalf("secondPath = %q, want deduplicated -2.zip", secondPath)
+	}
+	firstBytes, _ := os.ReadFile(firstPath)
+	secondBytes, _ := os.ReadFile(secondPath)
+	if string(firstBytes) != "PK-ONE" || string(secondBytes) != "PK-TWO" {
+		t.Fatalf("collision overwrote existing archive: first=%q second=%q", firstBytes, secondBytes)
+	}
+	if err := app.RevealDiagnosticBundle(); err != nil {
+		t.Fatalf("RevealDiagnosticBundle failed: %v", err)
+	}
+	if !reflect.DeepEqual(revealed, []string{firstPath, secondPath, secondPath}) {
+		t.Fatalf("revealed = %v", revealed)
+	}
+}
+
+func TestSaveDiagnosticBundleFallsBackToDialogWhenDownloadsUnavailable(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	app.wailsCtx = context.Background()
+	app.downloadsDir = filepath.Join(t.TempDir(), "missing-downloads")
+	dialogTarget := filepath.Join(t.TempDir(), "chosen-diag.zip")
+	app.chooseSavePath = func(_ context.Context, name string) (string, error) {
+		if name != "beeftv-diagnostics.zip" {
+			t.Fatalf("dialog fileName = %q", name)
+		}
+		return dialogTarget, nil
+	}
+	var revealed string
+	app.revealFile = func(path string) error {
+		revealed = path
+		return nil
+	}
+
+	saved, err := app.SaveDiagnosticBundle("beeftv-diagnostics", []byte("PK-DIALOG"))
+	if err != nil || saved != dialogTarget || revealed != dialogTarget {
+		t.Fatalf("SaveDiagnosticBundle fallback = (%q, %v), revealed=%q", saved, err, revealed)
+	}
 }
