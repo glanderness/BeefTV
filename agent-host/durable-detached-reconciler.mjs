@@ -1,9 +1,14 @@
-// 观察者异常脱离后的后台官方提交监控与两阶段回收：
-// 1. 仅在存储读取成功且官方 submission 显式到达非 running 终态（或为空）时进入结算，读错一律保持 busy；
-// 2. 先在锁内持久化 doc.active.result 并设 pendingCompleteRetry，锁外确认 Go /complete 后再 settleLocal。
+// 统一的两阶段回合完成确认与脱离监控：
+// 1. 先在锁内持久化 doc.active.result 并置 pendingCompleteRetry（已提交 done 的回合绝不 root.abort）；
+// 2. 释放锁后调用 Go /complete，仅在确认成功（或永久不可恢复码表示 Go 已关闭）后才执行 settleLocal；
+// 3. 存储读取异常或 Go 临时失败时保留 doc.active.result 与 busy，由后台退避监控重试。
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 
 const CTX = BACKGROUND_CONTEXT;
+
+export function isTerminalSubmissionStatus(status) {
+  return status === 'done' || status === 'unanswered';
+}
 
 export function createDurableDetachedReconciler({
   state,
@@ -17,17 +22,17 @@ export function createDurableDetachedReconciler({
   isEntryActiveOrDetached,
   permanentUnresumableReasons,
 }) {
-  async function reconcileDetachedEntry(entry, expectedRequestId = '') {
-    if (!entry || entry.disposed) return false;
-    if (!entry.detachedRunning && !entry.pendingCompleteRetry) {
-      return Boolean(entry.busy || isEntryActiveOrDetached(entry));
+  async function settleTurnWithConfirmation(entry, expectedRequestId = '', { abortIfRunning = false } = {}) {
+    if (!entry || entry.disposed) return { settled: false, busy: false, record: null };
+    if (!abortIfRunning && !entry.detachedRunning && !entry.pendingCompleteRetry) {
+      return { settled: false, busy: Boolean(entry.busy || isEntryActiveOrDetached(entry)), record: null };
     }
     let prepared;
     try {
       prepared = await lock(entry.canvasId, async () => {
         if (entry.disposed) return { kind: 'idle', busy: false };
-        if (hasLiveLocalOwner(entry) || entry.recovering) return { kind: 'busy' };
-        if (!entry.detachedRunning && !entry.pendingCompleteRetry) {
+        if (!abortIfRunning && (hasLiveLocalOwner(entry) || entry.recovering)) return { kind: 'busy' };
+        if (!abortIfRunning && !entry.detachedRunning && !entry.pendingCompleteRetry) {
           return { kind: 'idle', busy: Boolean(entry.busy) };
         }
         let current;
@@ -55,16 +60,27 @@ export function createDurableDetachedReconciler({
             admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, active.requestId), CTX);
             submission = admitted ? await entry.harness.submission(admitted.id, CTX) : null;
             settled = submission ? await submission.status(CTX) : null;
-          } catch {
-            return { kind: 'busy' };
+          } catch (error) {
+            if (!abortIfRunning) return { kind: 'busy' };
+            admitted = null;
+            submission = null;
+            settled = null;
+            void error;
           }
-          if (submission && (!settled || settled.status === 'running')) {
+          if (!abortIfRunning && submission && !isTerminalSubmissionStatus(settled?.status)) {
             entry.detachedRunning = true;
             entry.busy = true;
             return { kind: 'busy' };
           }
           const isCommittedDone = settled?.status === 'done' && !active.stopped;
-          const settlement = isCommittedDone
+          if (abortIfRunning && !isCommittedDone) {
+            await entry.root.abort(CTX).catch(() => {});
+            if (submission) {
+              settled = await submission.status(CTX).catch(() => settled);
+            }
+          }
+          const finalCommittedDone = settled?.status === 'done' && !active.stopped;
+          const settlement = finalCommittedDone
             ? {
                 ...settled,
                 ...(admitted?.entry !== undefined && settled.entry === undefined ? { entry: admitted.entry } : {}),
@@ -96,25 +112,27 @@ export function createDurableDetachedReconciler({
         };
       });
     } catch (error) {
-      if (error?.reason === 'session_store_closed') return false;
-      return true;
+      if (error?.reason === 'session_store_closed') return { settled: false, busy: false, record: null };
+      return { settled: false, busy: true, record: null };
     }
 
-    if (prepared.kind === 'busy') return true;
-    if (prepared.kind === 'idle') return prepared.busy;
+    if (prepared.kind === 'busy') return { settled: false, busy: true, record: null };
+    if (prepared.kind === 'idle') return { settled: true, busy: prepared.busy, record: null };
 
     try {
       await completeTurn(prepared.payload);
     } catch (error) {
       if (!permanentUnresumableReasons.has(error?.reason || '')) {
-        console.error(`agent-host: 脱离回合完成回调暂未成功，保留重试标记 ${error?.reason || error?.message || error}`);
-        monitorDetachedSubmission(entry, null, prepared.active.requestId);
-        return true;
+        console.error(`agent-host: 回合完成回调暂未成功，保留重试标记 ${error?.reason || error?.message || error}`);
+        if (!entry.disposed && !entry.readOnlyHandle) {
+          monitorDetachedSubmission(entry, null, prepared.active.requestId);
+        }
+        return { settled: false, busy: true, record: prepared.record };
       }
     }
 
     try {
-      return await lock(entry.canvasId, async () => {
+      const busyAfter = await lock(entry.canvasId, async () => {
         if (entry.disposed) {
           entry.pendingCompleteRetry = false;
           entry.busy = false;
@@ -131,15 +149,23 @@ export function createDurableDetachedReconciler({
         }
         return Boolean(entry.busy || isEntryActiveOrDetached(entry));
       });
+      return { settled: true, busy: busyAfter, record: prepared.record };
     } catch (error) {
-      if (error?.reason === 'session_store_closed') return false;
-      monitorDetachedSubmission(entry, null, prepared.active.requestId);
-      return true;
+      if (error?.reason === 'session_store_closed') return { settled: false, busy: false, record: prepared.record };
+      if (!entry.disposed && !entry.readOnlyHandle) {
+        monitorDetachedSubmission(entry, null, prepared.active.requestId);
+      }
+      return { settled: false, busy: true, record: prepared.record };
     }
   }
 
+  async function reconcileDetachedEntry(entry, expectedRequestId = '') {
+    const res = await settleTurnWithConfirmation(entry, expectedRequestId, { abortIfRunning: false });
+    return res.busy;
+  }
+
   function monitorDetachedSubmission(entry, submission, detachedRequestId) {
-    if (entry.detachedMonitor) return;
+    if (entry.detachedMonitor || entry.disposed || entry.readOnlyHandle) return;
     const monitor = (async () => {
       for (let attempt = 0, consecutiveErrors = 0; ; attempt += 1) {
         const delayMs = consecutiveErrors > 0
@@ -159,7 +185,7 @@ export function createDurableDetachedReconciler({
             consecutiveErrors += 1;
             continue;
           }
-          if (!currentStatus || currentStatus.status === 'running') continue;
+          if (!isTerminalSubmissionStatus(currentStatus?.status)) continue;
         }
         const stillBusy = await reconcileDetachedEntry(entry, detachedRequestId);
         if (!stillBusy) return;
@@ -171,5 +197,5 @@ export function createDurableDetachedReconciler({
     entry.detachedMonitor = monitor;
   }
 
-  return { reconcileDetachedEntry, monitorDetachedSubmission };
+  return { settleTurnWithConfirmation, reconcileDetachedEntry, monitorDetachedSubmission };
 }

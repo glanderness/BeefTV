@@ -5,8 +5,21 @@ let response: unknown;
 let lastRequestMethod: string | undefined;
 let lastRequestPath: string | undefined;
 let lastRequestConfig: Record<string, unknown> | undefined;
+let uiSessionConfigSeen: Record<string, unknown> | undefined;
+let uiSessionError: Error | null = null;
+class MockApiError extends Error {
+    code?: number;
+    status?: number;
+    reason?: string;
+    constructor(message = "", options: { code?: number; status?: number; reason?: string } = {}) {
+        super(message);
+        this.code = options.code;
+        this.status = options.status;
+        this.reason = options.reason;
+    }
+}
 mock.module("@/services/api/request", () => ({
-    ApiError: class extends Error {},
+    ApiError: MockApiError,
     apiBaseURL: "/api",
     http: {
         get: async (path: string, config?: Record<string, unknown>) => {
@@ -17,7 +30,11 @@ mock.module("@/services/api/request", () => ({
             return response;
         },
         post: async (path: string, _body?: unknown, config?: Record<string, unknown>) => {
-            if (path === "/assistant/ui-session") return { token: "fixture-ui" };
+            if (path === "/assistant/ui-session") {
+                uiSessionConfigSeen = config;
+                if (uiSessionError) throw uiSessionError;
+                return { token: "fixture-ui" };
+            }
             lastRequestMethod = "POST";
             lastRequestPath = path;
             lastRequestConfig = config;
@@ -50,7 +67,8 @@ const {
     assistantStatusResumeKey,
     shouldReloadPausedAssistantTurn,
 } = await import("@/pages/canvas/canvas-assistant-recovery");
-beforeEach(() => { failure = false; response = undefined; lastRequestMethod = undefined; lastRequestPath = undefined; lastRequestConfig = undefined; resetAgentUiSession(); });
+const { waitForAssistant } = await import("@/pages/canvas/assistant-readiness");
+beforeEach(() => { failure = false; response = undefined; lastRequestMethod = undefined; lastRequestPath = undefined; lastRequestConfig = undefined; uiSessionConfigSeen = undefined; uiSessionError = null; resetAgentUiSession(); });
 
 test("C02: rejected create/activate cannot resolve as a new empty conversation", async () => {
     failure = true;
@@ -86,9 +104,28 @@ test("status, read, and mutation endpoints hit canonical /assistant/* routes wit
 
     response = { sessionId: "s1", turns: [] };
     await getAssistantHistory("a");
+    expect(uiSessionConfigSeen?.timeout).toBe(ASSISTANT_READ_TIMEOUT_MS);
     expect(lastRequestMethod).toBe("GET");
     expect(lastRequestPath).toBe("/assistant/history?canvasId=a");
     expect(lastRequestConfig?.timeout).toBe(ASSISTANT_READ_TIMEOUT_MS);
+
+    resetAgentUiSession();
+    uiSessionError = new MockApiError("host down", { code: 503, status: 503, reason: "host_unreachable" });
+    await expect(getAssistantHistory("a")).rejects.toMatchObject({ status: 503, reason: "host_unreachable" });
+    uiSessionError = null;
+    resetAgentUiSession();
+
+    const abortController = new AbortController();
+    let forwardedSignal: AbortSignal | undefined;
+    const pendingWait = waitForAssistant(abortController.signal, async (opts) => {
+        forwardedSignal = opts?.signal;
+        return new Promise((_resolve, reject) => {
+            opts?.signal?.addEventListener("abort", () => reject(new DOMException("Stopped", "AbortError")), { once: true });
+        });
+    });
+    abortController.abort();
+    await expect(pendingWait).rejects.toThrow();
+    expect(forwardedSignal).toBe(abortController.signal);
 
     response = { currentSessionId: "s1", sessions: [] };
     await listAssistantSessions("a");

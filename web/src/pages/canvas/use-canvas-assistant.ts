@@ -98,6 +98,7 @@ type CanvasRun = {
     plan: AssistantPlan | null;
     historyLoaded: boolean;
     historyInFlight: number;
+    historyNeedsReload: boolean;
     historyError: string | null;
     historyHostUnavailable: boolean;
     historyRequest: number;
@@ -160,6 +161,7 @@ const createRun = (): CanvasRun => ({
     plan: null,
     historyLoaded: false,
     historyInFlight: 0,
+    historyNeedsReload: false,
     historyError: null,
     historyHostUnavailable: false,
     historyRequest: 0,
@@ -204,6 +206,15 @@ function readStoredProposals(): Set<string> {
     }
 }
 
+function shouldAutoLoadHistory(run: CanvasRun, currentStatus: AgentHostStatus | null): boolean {
+    if (run.streaming || run.sessionBusy) return false;
+    const hostCanServeHistory = Boolean(currentStatus?.available) || currentStatus?.reason === "model_not_configured";
+    if (!run.historyLoaded) {
+        return !run.historyError || hostCanServeHistory;
+    }
+    return shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, currentStatus);
+}
+
 /**
  * 画布内助手的全部状态。
  *
@@ -217,12 +228,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const [status, setStatus] = useState<AgentHostStatus | null>(null);
     const [statusBusy, setStatusBusy] = useState(false);
     const [handledProposals, setHandledProposals] = useState<Set<string>>(readStoredProposals);
-    const [historySettledEpoch, setHistorySettledEpoch] = useState(0);
     const [, forceRender] = useState(0);
 
     const [preferredPermissionMode, setPreferredPermissionMode] = useState(() => assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)));
     const runsRef = useRef<Map<string, CanvasRun>>(new Map());
     const observedInterruptions = useRef(new Set<string>());
+    const openRef = useRef(open);
+    openRef.current = open;
     const activeCanvasRef = useRef(canvasId);
     activeCanvasRef.current = canvasId;
     const statusRef = useRef(status);
@@ -293,6 +305,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const run = runFor(targetCanvas);
         const request = ++run.historyRequest;
         ++run.historyInFlight;
+        run.historyNeedsReload = false;
         const statusKeyAtRequest = assistantStatusResumeKey(statusRef.current);
         const planAtRequest = run.plan;
         try {
@@ -361,30 +374,33 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             return true;
         } catch (error) {
             if (request === run.historyRequest) {
-                run.historyHostUnavailable = error instanceof ApiError && (error.reason === "host_unreachable" || error.reason === "model_not_configured");
+                const hostStillStarting = statusRef.current === null || statusRef.current.reason === "host_starting";
+                run.historyHostUnavailable = hostStillStarting
+                    || (error instanceof ApiError && (error.reason === "host_unreachable" || error.reason === "model_not_configured"));
                 run.historyError = run.turns.length || run.pendingUserText || run.pendingAttachments.length || run.streamed || run.reasoning.length
                     ? "没能读取对话，已有内容仍然保留。请重新读取。" : "没能读取对话。请重新读取。";
             }
             return false;
         } finally {
             run.historyInFlight = Math.max(0, run.historyInFlight - 1);
-            const hostCanServeHistory = Boolean(statusRef.current?.available)
-                || statusRef.current?.reason === "model_not_configured";
-            if (request === run.historyRequest) {
-                const statusBecameReadyInFlight = hostCanServeHistory
-                    && assistantStatusResumeKey(statusRef.current) !== statusKeyAtRequest;
-                if (activeCanvasRef.current === targetCanvas && statusBecameReadyInFlight) {
-                    setHistorySettledEpoch((value) => value + 1);
-                }
-            } else if (
-                activeCanvasRef.current === targetCanvas
-                && run.historyInFlight === 0
-                && !run.sessionBusy
-                && ((!run.historyLoaded && !run.historyError) || shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, statusRef.current))
-            ) {
-                setHistorySettledEpoch((value) => value + 1);
+            if (assistantStatusResumeKey(statusRef.current) !== statusKeyAtRequest) {
+                run.historyNeedsReload = true;
             }
+            const shouldFollowUp = run.historyInFlight === 0
+                && openRef.current
+                && activeCanvasRef.current === targetCanvas
+                && (run.historyNeedsReload || request !== run.historyRequest)
+                && shouldAutoLoadHistory(run, statusRef.current);
+            run.historyNeedsReload = false;
             rerenderIfActive(targetCanvas);
+            if (shouldFollowUp) {
+                queueMicrotask(() => {
+                    const latest = runFor(targetCanvas);
+                    if (openRef.current && activeCanvasRef.current === targetCanvas && latest.historyInFlight === 0 && shouldAutoLoadHistory(latest, statusRef.current)) {
+                        void loadHistory(targetCanvas);
+                    }
+                });
+            }
         }
     }, [rerenderIfActive, runFor]);
 
@@ -405,13 +421,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     useEffect(() => {
         if (!open) return;
         const run = runFor(canvasId);
-        if (run.streaming || run.sessionBusy || run.historyInFlight > 0) return;
-        if (run.historyLoaded && !shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, statusRef.current)) return;
-        const hostCanServeHistory = Boolean(statusRef.current?.available)
-            || statusRef.current?.reason === "model_not_configured";
-        if (run.historyError && !hostCanServeHistory) return;
+        if (!shouldAutoLoadHistory(run, statusRef.current)) return;
+        if (run.historyInFlight > 0) {
+            run.historyNeedsReload = true;
+            return;
+        }
         void loadHistory(canvasId);
-    }, [canvasId, historySettledEpoch, loadHistory, open, runFor, statusResumeKey]);
+    }, [canvasId, loadHistory, open, runFor, statusResumeKey]);
 
     const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode} = {}) => {
         const message = text.trim();

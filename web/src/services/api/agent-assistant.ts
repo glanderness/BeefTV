@@ -401,8 +401,11 @@ export const ASSISTANT_STATUS_TIMEOUT_MS = 25_000;
 export const ASSISTANT_READ_TIMEOUT_MS = 55_000;
 export const ASSISTANT_MUTATION_TIMEOUT_MS = 65_000;
 
-export async function getAgentHostStatus(): Promise<AgentHostStatus> {
-    const data = await http.get<AgentHostStatus>("/assistant/status", { timeout: ASSISTANT_STATUS_TIMEOUT_MS });
+export async function getAgentHostStatus(options?: { signal?: AbortSignal }): Promise<AgentHostStatus> {
+    const data = await http.get<AgentHostStatus>("/assistant/status", {
+        timeout: ASSISTANT_STATUS_TIMEOUT_MS,
+        signal: options?.signal,
+    });
     return data;
 }
 
@@ -533,11 +536,23 @@ export async function ensureAgentUiSession(): Promise<string> {
 async function issueAgentUiSession(generation: number): Promise<string> {
     let data: { token?: string; expiresAt?: string };
     try {
-        data = await http.post<{ token: string; expiresAt: string }>("/assistant/ui-session", {});
+        data = await http.post<{ token: string; expiresAt: string }>("/assistant/ui-session", {}, { timeout: ASSISTANT_READ_TIMEOUT_MS });
     } catch (error) {
-        const status = error instanceof ApiError ? error.status : undefined;
-        if (status === 403) {
-            throw new Error(agentAssistantFailureText("forbidden"));
+        if (error instanceof ApiError) {
+            if (error.status === 403) {
+                throw new Error(agentAssistantFailureText("forbidden"));
+            }
+            if (error.reason === "host_unreachable" || error.status === 503) {
+                throw new ApiError(
+                    agentAssistantFailureText(error.reason, "创作助手暂时不可用，请稍后再试"),
+                    {
+                        code: error.code,
+                        status: error.status,
+                        reason: error.reason || "host_unreachable",
+                        cause: error,
+                    },
+                );
+            }
         }
         throw new Error(agentAssistantFailureText(undefined, "创作助手暂时不可用，请稍后再试"));
     }

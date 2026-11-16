@@ -259,7 +259,7 @@ function liveEntry(canvasId) {
   return durable.sessions.get(canvasId) || null;
 }
 async function isLiveEntryBusy(canvasId) {
-  return durable.refreshCanvasBusy(canvasId);
+  return (await durable.busyState(canvasId)).busy;
 }
 // A conversation of this canvas: a durable session created for it, or one of its legacy sessions.
 function ownsSession(canvasId, sessionId) {
@@ -490,19 +490,25 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/active') {
       const canvasId = String(url.searchParams.get('canvasId') || '');
       const requestedSessionId = String(url.searchParams.get('sessionId') || '').trim();
-      const live = liveEntry(canvasId);
+      const readDurableActive = async (targetSessionId) => {
+        const live = liveEntry(canvasId);
+        if (live?.sessionId === targetSessionId) {
+          const state = await durable.busyState(canvasId);
+          return { sessionId: live.sessionId, turnId: live.turn.turnId || null, busy: state.busy };
+        }
+        return durable.withSession(canvasId, targetSessionId, async (entry, isMounted) => {
+          const recovery = await durable.recoverForRead(entry, { allowResume: isMounted });
+          const snap = await durable.history(canvasId, targetSessionId);
+          const effectiveActive = recovery.unresumableTurn && snap.active?.requestId === recovery.unresumableTurn.requestId ? null : snap.active;
+          return { sessionId: targetSessionId, turnId: effectiveActive?.turnId || null, busy: Boolean(effectiveActive) };
+        });
+      };
       if (requestedSessionId) {
         if (!isDurableSessionId(requestedSessionId)) {
           respond(res, 200, { sessionId: requestedSessionId, turnId: null, busy: false });
           return;
         }
-        if (live?.sessionId === requestedSessionId) {
-          const busy = await isLiveEntryBusy(canvasId);
-          respond(res, 200, { sessionId: live.sessionId, turnId: live.turn.turnId || null, busy });
-          return;
-        }
-        const snap = await durable.history(canvasId, requestedSessionId);
-        respond(res, 200, { sessionId: requestedSessionId, turnId: snap.active?.turnId || null, busy: Boolean(snap.active) });
+        respond(res, 200, await readDurableActive(requestedSessionId));
         return;
       }
       let resolved = await durable.resolveCurrentSession(canvasId, { persist: false, activateDurable: false });
@@ -510,14 +516,8 @@ const server = http.createServer(async (req, res) => {
         respond(res, 200, { sessionId: resolved.sessionId, turnId: null, busy: false });
         return;
       }
-      if (resolved.entry) {
-        const busy = await isLiveEntryBusy(canvasId);
-        respond(res, 200, { sessionId: resolved.entry.sessionId, turnId: resolved.entry.turn.turnId || null, busy });
-        return;
-      }
       try {
-        const snap = await durable.history(canvasId, resolved.sessionId);
-        respond(res, 200, { sessionId: resolved.sessionId, turnId: snap.active?.turnId || null, busy: Boolean(snap.active) });
+        respond(res, 200, await readDurableActive(resolved.sessionId));
         return;
       } catch (error) {
         if (!isCorruptSessionArtifactError(error) && error?.reason !== 'session_not_found') throw error;
@@ -526,8 +526,7 @@ const server = http.createServer(async (req, res) => {
           respond(res, 200, { sessionId: resolved.sessionId, turnId: null, busy: false });
           return;
         }
-        const snap = await durable.history(canvasId, resolved.sessionId);
-        respond(res, 200, { sessionId: resolved.sessionId, turnId: snap.active?.turnId || null, busy: Boolean(snap.active) });
+        respond(res, 200, await readDurableActive(resolved.sessionId));
         return;
       }
     }
@@ -595,23 +594,21 @@ const server = http.createServer(async (req, res) => {
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       const cwd = legacy.canvasWorkspace(canvasId);
       const sessionDir = legacy.canvasSessionDir(canvasId);
-      const readCurrentDurableHistory = async (targetSessionId, preloadedEntry = null) => {
-        const live = preloadedEntry || liveEntry(canvasId);
-        const entry = live?.sessionId === targetSessionId ? live : await durable.ensureSession(canvasId, targetSessionId);
-        const recovery = await durable.recoverForRead(entry);
-        if (recovery.submission) {
+      const readDurableHistoryEntry = async (entry, { allowResume = true } = {}) => {
+        const recovery = await durable.recoverForRead(entry, { allowResume });
+        if (allowResume && recovery.submission) {
           followDurable(entry, recovery.submission);
           await waitForDurableProjection(entry);
-        } else if (entry.waiters > 0) {
+        } else if (allowResume && entry.waiters > 0) {
           await waitForDurableProjection(entry);
         }
-        const value = await durable.history(canvasId, targetSessionId);
+        const value = await durable.history(canvasId, entry.sessionId);
         if (recovery.unresumableTurn && value.active?.requestId === recovery.unresumableTurn.requestId) {
           value.turns = [...value.turns, recovery.unresumableTurn];
           value.active = null;
           value.pausedTurnReason = recovery.unresumableReason;
         }
-        const ownsProjection = Boolean(value.active && entry.turnProjectionTurnId && value.active.turnId === entry.turnProjectionTurnId);
+        const ownsProjection = Boolean(allowResume && value.active && entry.turnProjectionTurnId && value.active.turnId === entry.turnProjectionTurnId);
         if (ownsProjection && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
         if (ownsProjection && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
         // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
@@ -620,20 +617,28 @@ const server = http.createServer(async (req, res) => {
         if (ownsProjection && entry.turnProjection?.initialized) value.active.reasoning = entry.turnProjection.reasoning;
         return value;
       };
+      const readMountedDurableHistory = async (targetSessionId, preloadedEntry = null) => {
+        const live = preloadedEntry || liveEntry(canvasId);
+        const entry = live?.sessionId === targetSessionId
+          ? live
+          : await durable.activateSession(canvasId, targetSessionId, { publishPointer: false });
+        return readDurableHistoryEntry(entry, { allowResume: true });
+      };
       let sessionId = requested;
       if (requested) {
         if (isDurableSessionId(requested)) {
-          if (requested !== currentId(canvasId)) {
-            respond(res, 200, await durable.history(canvasId, requested)); return;
+          if (requested !== currentId(canvasId) && liveEntry(canvasId)?.sessionId !== requested) {
+            respond(res, 200, await durable.withSession(canvasId, requested, (entry, isMounted) => readDurableHistoryEntry(entry, { allowResume: isMounted })));
+            return;
           }
-          respond(res, 200, await readCurrentDurableHistory(requested)); return;
+          respond(res, 200, await readMountedDurableHistory(requested)); return;
         }
       } else {
         const pointerAtRead = currentId(canvasId);
         let skipSessionId = '';
         if (pointerAtRead && isDurableSessionId(pointerAtRead)) {
           try {
-            respond(res, 200, await readCurrentDurableHistory(pointerAtRead)); return;
+            respond(res, 200, await readMountedDurableHistory(pointerAtRead)); return;
           } catch (error) {
             if (!isCorruptSessionArtifactError(error) && error?.reason !== 'session_not_found') throw error;
             skipSessionId = pointerAtRead;
@@ -642,7 +647,7 @@ const server = http.createServer(async (req, res) => {
         const resolved = await durable.resolveCurrentSession(canvasId, { persist: false, activateDurable: false, skipSessionId });
         if (!resolved.sessionId) { respond(res, 200, { sessionId: null, turns: [] }); return; }
         if (resolved.kind === 'durable') {
-          respond(res, 200, resolved.entry ? await readCurrentDurableHistory(resolved.sessionId, resolved.entry) : await durable.history(canvasId, resolved.sessionId));
+          respond(res, 200, await readMountedDurableHistory(resolved.sessionId, resolved.entry));
           return;
         }
         sessionId = resolved.sessionId;
@@ -677,33 +682,35 @@ const server = http.createServer(async (req, res) => {
         }
         respond(res,202,{accepted:true,state:result.state === 'running' ? 'stopped' : result.state}); return;
       }
-      const entry = liveEntry(canvasId);
-      if (!entry) { respond(res, 404, { code: 404, reason: 'session_not_found' }); return; }
+      const state = await durable.busyState(canvasId);
+      if (!state.entry) { respond(res, 404, { code: 404, reason: 'session_not_found' }); return; }
       // An idle entry has no turn to stop; its turn ID would be the previous, settled one.
-      if (entry.busy) {
+      if (state.stoppable) {
         // Persist stop intent before the Go fence so a crash can still journal it.
-        const requestId = entry.input?.requestId;
-        const turnId = await durable.fenceStop(entry, requestId);
+        const requestId = state.entry.input?.requestId;
+        const turnId = await durable.fenceStop(state.entry, requestId);
         if (turnId) {
           await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`,{});
-          await durable.stop(entry, requestId);
+          await durable.stop(state.entry, requestId);
         }
       }
-      respond(res,202,{accepted:true,busy:entry.busy}); return;
+      const afterCancel = await durable.busyState(canvasId);
+      respond(res,202,{accepted:true,busy:afterCancel.busy}); return;
     }
     if (req.method === 'POST' && url.pathname === '/steer') {
       const body = await readJsonBody(req);
       const canvasId = String(body.canvasId || '').trim();
       const message = String(body.message || '').trim();
       const sessionId = String(body.sessionId || '').trim();
-      const entry = liveEntry(canvasId);
       if (!canvasId || !sessionId || (!message && !body.attachments?.length) || message.length > 16000) {
         respond(res, 400, { code: 400, reason: 'invalid_request' }); return;
       }
+      const state = await durable.busyState(canvasId);
+      const entry = state.entry;
       if (!entry || entry.sessionId !== sessionId) {
         respond(res, 409, { code: 409, reason: 'session_not_current' }); return;
       }
-      if (!entry.busy || entry.completing || entry.generation.aborted) {
+      if (!state.runningForSteer) {
         respond(res,409,{code:409,reason:'session_not_running'}); return;
       }
       const pending = durable.beginPendingInput(entry);
@@ -734,7 +741,8 @@ const server = http.createServer(async (req, res) => {
         (!requestedSessionId || requestedSessionId === currentSessionId)
       ) {
         const entry = await durable.ensureCurrentSession(canvasId, currentSessionId).catch(() => null);
-        if (entry && !entry.busy) {
+        const wakeBusy = entry ? (await durable.busyState(canvasId)).busy : true;
+        if (entry && !wakeBusy) {
           const requestId = String(body.requestId || crypto.randomUUID()).trim();
           const rawTurnId = String(body.turnId || '').trim().toLowerCase();
           const turnId = /^[0-9a-f]{8,64}$/.test(rawTurnId)

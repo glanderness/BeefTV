@@ -11,13 +11,13 @@ import {
   durableTurnReplyText,
   publicDurableTurn,
 } from './durable-turn-projection.mjs';
-import { createDurableDetachedReconciler } from './durable-detached-reconciler.mjs';
+import { createDurableDetachedReconciler, isTerminalSubmissionStatus } from './durable-detached-reconciler.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
 export const PERMANENT_UNRESUMABLE_REASONS = new Set(['turn_not_open', 'turn_not_found', 'permission_mode_frozen']);
-const TRANSIENT_UNRESUMABLE_REASONS = new Set(['model_unavailable_for_resume', 'turn_model_frozen', 'model_not_configured']);
+const TRANSIENT_UNRESUMABLE_REASONS = new Set(['model_unavailable_for_resume', 'turn_model_frozen', 'model_not_configured', 'session_inactive']);
 
 export function hasLiveLocalOwner(entry) {
   return Boolean(entry?.waiters > 0 || entry?.running || entry?.submittingRequest);
@@ -156,62 +156,41 @@ export function createDurableTurnLifecycle({
     }
   }
 
-  async function recover(entry) {
+  const { settleTurnWithConfirmation, reconcileDetachedEntry, monitorDetachedSubmission } = createDurableDetachedReconciler({
+    state,
+    update,
+    lock,
+    completionRecord,
+    compensateFailedSkillSelection,
+    settleLocal,
+    completeTurn,
+    hasLiveLocalOwner,
+    isEntryActiveOrDetached,
+    permanentUnresumableReasons: PERMANENT_UNRESUMABLE_REASONS,
+  });
+
+  async function recover(entry, { allowResume = true } = {}) {
     // A live official wait already owns the turn: a read must not hydrate over its
     // in-memory effects, re-authorize, or re-submit. Concurrent reads share one recovery.
     if (hasLiveLocalOwner(entry)) return null;
-    if (!entry.recovering) entry.recovering = recoverOnce(entry).finally(() => { entry.recovering = null; });
+    if (!entry.recovering) entry.recovering = recoverOnce(entry, { allowResume }).finally(() => { entry.recovering = null; });
     return entry.recovering;
   }
 
-  async function settleUnresumableTurnLocked(entry, expectedRequestId = '') {
-    const current = await state(entry);
-    const active = current.active;
-    if (!active) {
-      if (!hasLiveLocalOwner(entry)) entry.busy = false;
-      return null;
-    }
-    if (expectedRequestId && active.requestId !== expectedRequestId) return null;
-    await entry.root.abort(CTX).catch(() => {});
-    const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, active.requestId), CTX).catch(() => null);
-    const submission = admitted ? await entry.harness.submission(admitted.id, CTX).catch(() => null) : null;
-    const settled = submission ? await submission.status(CTX).catch(() => null) : null;
-    const isCommittedDone = settled?.status === 'done' && !active.stopped;
-    const settlement = isCommittedDone
-      ? {
-          ...settled,
-          ...(admitted?.entry !== undefined && settled.entry === undefined ? { entry: admitted.entry } : {}),
-        }
-      : {
-          ...(settled || {}),
-          status: 'unanswered',
-          reason: active.stopped ? 'aborted' : 'interrupted',
-          ...(admitted?.entry !== undefined && settled?.entry === undefined ? { entry: admitted.entry } : {}),
-        };
-    const record = active.result || await completionRecord(entry, active, settlement);
-    if (!active.result) await compensateFailedSkillSelection(entry, active, record);
-    const pendingComplete = { canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record };
-    await settleLocal(entry, active, record);
-    return pendingComplete;
-  }
-
-  async function settleUnresumableTurn(entry, expectedRequestId = '') {
-    const pendingComplete = await lock(entry.canvasId, () => settleUnresumableTurnLocked(entry, expectedRequestId));
-    if (pendingComplete) {
-      await completeTurn(pendingComplete).catch(() => {});
-    }
-  }
-
-  async function recoverForRead(entry) {
+  async function recoverForRead(entry, { allowResume = true } = {}) {
     try {
-      const submission = await recover(entry);
+      const submission = await recover(entry, { allowResume });
       return { submission, unresumableReason: null, unresumableTurn: null };
     } catch (error) {
       const reason = error?.reason || '';
       const failedRequestId = error?.failedRequestId || '';
       if (PERMANENT_UNRESUMABLE_REASONS.has(reason)) {
-        await settleUnresumableTurn(entry, failedRequestId);
-        return { submission: null, unresumableReason: reason, unresumableTurn: null };
+        const settledRes = await settleTurnWithConfirmation(entry, failedRequestId, { abortIfRunning: true });
+        return {
+          submission: null,
+          unresumableReason: reason,
+          unresumableTurn: !settledRes.settled && settledRes.record ? publicDurableTurn(settledRes.record) : null,
+        };
       }
       if (TRANSIENT_UNRESUMABLE_REASONS.has(reason)) {
         try {
@@ -228,15 +207,15 @@ export function createDurableTurnLifecycle({
           }
           return { submission: null, unresumableReason: reason, unresumableTurn };
         } finally {
-          if (!hasLiveLocalOwner(entry)) entry.busy = false;
+          if (!hasLiveLocalOwner(entry) && !entry.pendingCompleteRetry && !entry.detachedRunning) entry.busy = false;
         }
       }
-      if (!hasLiveLocalOwner(entry)) entry.busy = false;
+      if (!hasLiveLocalOwner(entry) && !entry.pendingCompleteRetry && !entry.detachedRunning) entry.busy = false;
       throw error;
     }
   }
 
-  async function recoverOnce(entry) {
+  async function recoverOnce(entry, { allowResume = true } = {}) {
     if (hasLiveLocalOwner(entry)) return null;
     const doc = await state(entry);
     if (doc?.pendingSkillRollback && typeof flushPendingSkillRollback === 'function') {
@@ -293,6 +272,7 @@ export function createDurableTurnLifecycle({
         return submission;
       }
       await turnModel(entry, currentActive);
+      if (!allowResume) throw fail('session_inactive');
       const beforeSubmitDoc = await state(entry);
       if (!beforeSubmitDoc.active || beforeSubmitDoc.active.requestId !== active.requestId || hasLiveLocalOwner(entry)) {
         syncIdleIfSettled(beforeSubmitDoc);
@@ -312,19 +292,6 @@ export function createDurableTurnLifecycle({
     }
   }
 
-  const { reconcileDetachedEntry, monitorDetachedSubmission } = createDurableDetachedReconciler({
-    state,
-    update,
-    lock,
-    completionRecord,
-    compensateFailedSkillSelection,
-    settleLocal,
-    completeTurn,
-    hasLiveLocalOwner,
-    isEntryActiveOrDetached,
-    permanentUnresumableReasons: PERMANENT_UNRESUMABLE_REASONS,
-  });
-
   async function wait(entry, submission, options = {}) {
     // Counted before the first await so a recovery read in the same tick sees the live owner.
     entry.waiters += 1;
@@ -340,7 +307,7 @@ export function createDurableTurnLifecycle({
     } catch (error) {
       try {
         const snap = await submission.status(CTX);
-        detachedRunning = snap?.status === 'running';
+        detachedRunning = Boolean(snap && !isTerminalSubmissionStatus(snap.status));
         detachedRequestId = String(snap?.requestId || entry.submittedRequest || '');
       } catch {
         detachedRunning = Boolean(entry.submittedRequest);
@@ -683,5 +650,5 @@ export function createDurableTurnLifecycle({
     if (submission) return wait(entry, submission);
   }
 
-  return { stoppedRequest, settleLocal, completionRecord, recover, recoverForRead, settleUnresumableTurnLocked, reconcileDetachedEntry, wait, fenceStop, stop };
+  return { stoppedRequest, settleLocal, completionRecord, recover, recoverForRead, settleTurnWithConfirmation, reconcileDetachedEntry, wait, fenceStop, stop };
 }

@@ -240,7 +240,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
     expect(doc.active?.requestId).toBe('req-B');
   });
 
-  test('settleUnresumableTurnLocked preserves committed done answers instead of misreporting turn_interrupted', async () => {
+  test('settleTurnWithConfirmation preserves committed done answers without aborting and retries Go /complete twice on 502 before clearing active', async () => {
     const doc = {
       active: { requestId: 'req-done', turnId: 'turn-done', submissionId: 'sub-done', userText: 'Hi', stopped: false },
       turns: [],
@@ -250,6 +250,8 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       id: 2,
       model: [{ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Committed answer text.' }] }],
     };
+    let abortCalls = 0;
+    let completeAttempts = 0;
     const entry = {
       canvasId: 'done-settle-canvas',
       sessionId: 'durable:00000000-0000-4000-8000-000000000004',
@@ -264,7 +266,7 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       generation: {},
       root: {
         id: 'root-4',
-        abort: async () => {},
+        abort: async () => { abortCalls += 1; },
         context: async () => ({ entries: [answerEntry], head: { head: 2 } }),
       },
       harness: {
@@ -292,15 +294,34 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
       flushPendingSkillRollback: async () => {},
       stopIntended: () => false,
       forgetStop: () => {},
-      completeTurn: async () => {},
+      completeTurn: async () => {
+        completeAttempts += 1;
+        if (completeAttempts <= 2) throw new Error('go_complete_502');
+      },
     });
-    const pending = await lifecycle.settleUnresumableTurnLocked(entry, 'req-done');
-    expect(pending?.record.status).toBe('done');
-    expect(pending?.record.reply).toBe('Committed answer text.');
-    expect(pending?.record.error).toBeNull();
+    const firstAttempt = await lifecycle.settleTurnWithConfirmation(entry, 'req-done', { abortIfRunning: true });
+    expect(firstAttempt.settled).toBe(false);
+    expect(firstAttempt.busy).toBe(true);
+    expect(abortCalls).toBe(0);
+    expect(doc.active?.result?.reply).toBe('Committed answer text.');
+    expect(doc.turns).toHaveLength(0);
+
+    const secondAttempt = await lifecycle.settleTurnWithConfirmation(entry, 'req-done', { abortIfRunning: true });
+    expect(secondAttempt.settled).toBe(false);
+    expect(doc.active?.requestId).toBe('req-done');
+
+    const thirdAttempt = await lifecycle.settleTurnWithConfirmation(entry, 'req-done', { abortIfRunning: true });
+    expect(thirdAttempt.settled).toBe(true);
+    expect(thirdAttempt.busy).toBe(false);
+    expect(thirdAttempt.record?.status).toBe('done');
+    expect(thirdAttempt.record?.reply).toBe('Committed answer text.');
+    expect(thirdAttempt.record?.error).toBeNull();
+    expect(abortCalls).toBe(0);
+    expect(completeAttempts).toBe(3);
     expect(doc.active).toBeNull();
     expect(doc.turns).toHaveLength(1);
     expect(doc.turns[0].reply).toBe('Committed answer text.');
+    entry.disposed = true;
   });
 
   test('wait() keeps entry busy when official submission is still running and clears busy once submission is not running', async () => {
@@ -689,15 +710,32 @@ describe('真实 Node 与 pi SDK 的隔离执行链（模型和操作端点均�
         const histAfterDup = await store2.history('dedup-canvas', reopened.sessionId);
         expect(histAfterDup.active?.requestId).toBe('req-paused-2');
 
-        // Also verify refreshCanvasBusy clears detachedRunning once the official submission is no longer running,
+        // Verify steer/beginPendingInput and busyState reject detachedRunning / pendingCompleteRetry cleanly (no orphan run)!
+        reopened.busy = true;
+        reopened.pendingCompleteRetry = true;
+        expect(() => store2.beginPendingInput(reopened)).toThrow('session_not_running');
+        await expect(store2.supplement(reopened, {
+          requestId: 'steer-orphan-1',
+          content: [{ type: 'text', text: 'steer' }],
+        })).rejects.toMatchObject({ reason: 'session_not_running' });
+        reopened.pendingCompleteRetry = false;
+
+        // Also verify busyState / refreshCanvasBusy clears detachedRunning once the official submission is no longer running,
         // unblocking createSession without 409 session_busy!
         const statusDeadline = Date.now() + 5000;
-        while ((await pausedSub.status()).status === 'running' && Date.now() < statusDeadline) {
+        while (!['done', 'unanswered'].includes((await pausedSub.status()).status) && Date.now() < statusDeadline) {
           await new Promise((resolve) => setTimeout(resolve, 40));
         }
         reopened.busy = true;
         reopened.detachedRunning = true;
-        expect(await store2.refreshCanvasBusy('dedup-canvas')).toBe(false);
+        await expect(store2.supplement(reopened, {
+          requestId: 'steer-finished-detached-1',
+          content: [{ type: 'text', text: 'steer' }],
+        })).rejects.toMatchObject({ reason: 'session_not_running' });
+        const reconciledState = await store2.busyState('dedup-canvas');
+        expect(reconciledState.busy).toBe(false);
+        expect(reconciledState.runningForSteer).toBe(false);
+        expect(reconciledState.stoppable).toBe(false);
         expect(reopened.detachedRunning).toBe(false);
         expect(reopened.busy).toBe(false);
         const createdAfterDetached = await store2.createSession('dedup-canvas');

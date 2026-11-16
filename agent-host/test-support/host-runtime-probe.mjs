@@ -448,6 +448,18 @@ try{
     assert.equal(validTurn.status,200,validTurn.text);
     const validSessionId=validTurn.events.find(e=>e.type==='session')?.sessionId;
     assert(validSessionId,'valid fallback session id required');
+    // Also leave an unresumable active turn (aa29_orphan) on validSessionId so fallback /history & /active must run recoverForRead without mutating current.json!
+    mode='hold-ops';
+    turnCanvas.set('aa29_orphan',canvasId);
+    const orphanAbort=new AbortController();
+    const orphanChat=fetch(base+'/chat',{method:'POST',headers:{'content-type':'application/json','X-Beeftv-Agent-Token':hostAuth},
+      body:JSON.stringify({canvasId,sessionId:validSessionId,message:'Orphan fallback turn.',turnId:'aa29_orphan',revisionBefore:1,references:[{kind:'asset',id:'explicit-asset'}]}),signal:orphanAbort.signal}).catch(()=>null);
+    const orphanWait=Date.now()+8000;while(!releaseHeldOps&&Date.now()<orphanWait)await delay(40);
+    assert(releaseHeldOps,'aa29_orphan must reach tool execution');
+    orphanAbort.abort();await orphanChat;
+    mode='plain';
+    closedTurns.add('aa29_orphan');
+    await restartCurrentHost();
     const doomedRes=await request('/sessions',{canvasId});
     assert.equal(doomedRes.status,200,doomedRes.text);
     const doomedSessionId=JSON.parse(doomedRes.text).sessionId;
@@ -463,20 +475,24 @@ try{
     // Explicit ?sessionId=<corrupt> must return 409 corrupt_session_manifest, never 500.
     const explicitHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}&sessionId=${encodeURIComponent(doomedSessionId)}`);
     assert.equal(explicitHist.status,409,`explicit corrupt session history must return 409, got ${explicitHist.status} ${explicitHist.text}`);
-    // Default /sessions, /active, and /history must fall back to validSessionId purely with 200 without mutating current.json!
+    // Default /sessions, /active, and /history must fall back to validSessionId, settle aa29_orphan via recoverForRead, and NOT mutate current.json!
     const pointerBeforeReads=readFileSync(path.join(canvasSessionDir,'current.json'),'utf8');
     const healedActive=await request(`/active?canvasId=${encodeURIComponent(canvasId)}`);
     assert.equal(healedActive.status,200,healedActive.text);
+    assert.equal(JSON.parse(healedActive.text).busy,false,'fallback /active must settle unresumable turn rather than reporting busy');
+    const healedHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}`);
+    assert.equal(healedHist.status,200,healedHist.text);
+    const healedHistJson=JSON.parse(healedHist.text);
+    assert.equal(healedHistJson.sessionId,validSessionId);
+    assert.equal(healedHistJson.active,null,'fallback /history must not leave unresumable turn running');
+    assert.equal(healedHistJson.turns.length,2);
+    assert.equal(healedHistJson.turns[1].turnId,'aa29_orphan');
+    assert.equal(healedHistJson.turns[1].errorReason,'turn_interrupted');
     const healedSessions=await request(`/sessions?canvasId=${encodeURIComponent(canvasId)}`);
     assert.equal(healedSessions.status,200,healedSessions.text);
     const healedSessionsJson=JSON.parse(healedSessions.text);
     assert.equal(healedSessionsJson.currentSessionId,validSessionId);
     assert(!healedSessionsJson.sessions.some(s=>s.sessionId===doomedSessionId),'corrupt current session must not be unshifted into /sessions');
-    const healedHist=await request(`/history?canvasId=${encodeURIComponent(canvasId)}`);
-    assert.equal(healedHist.status,200,healedHist.text);
-    const healedHistJson=JSON.parse(healedHist.text);
-    assert.equal(healedHistJson.sessionId,validSessionId);
-    assert.equal(healedHistJson.turns.length,1);
     assert.equal(readFileSync(path.join(canvasSessionDir,'current.json'),'utf8'),pointerBeforeReads,'read endpoints must not mutate current.json on fallback');
     // Malformed JSON request bodies must return 400 invalid_request, never 409 corrupt_session_manifest.
     const malformedRes=await fetch(base+'/sessions',{method:'POST',headers:{'content-type':'application/json','X-Beeftv-Agent-Token':hostAuth},body:'{malformed-json',signal:AbortSignal.timeout(5000)});
