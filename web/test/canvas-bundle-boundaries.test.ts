@@ -96,15 +96,30 @@ describe("canvas initial static import boundaries", () => {
         const forbiddenModules = [
             "components/canvas/canvas-node-emotion-panel.tsx",
             "components/canvas/canvas-node-lighting-dialog.tsx",
-            "components/canvas/chart-node.tsx",
+            "components/canvas/nodes/chart-node.tsx",
             "components/canvas/canvas-text-editor-modal.tsx",
             "components/canvas/asset-picker-modal.tsx",
             "components/canvas/canvas-style-picker-modal.tsx",
             "components/canvas/canvas-timeline-dialog.tsx",
-            "components/canvas/ai-art-critique-modal.tsx",
-            "components/canvas/director/director-workbench.tsx",
+            "components/canvas/art-critique/ai-art-critique-modal.tsx",
+            "components/canvas/director/canvas-director-workbench.tsx",
+            "components/canvas/canvas-character-reference-modal.tsx",
+            "components/canvas/canvas-folder-browser-modal.tsx",
+            "components/canvas/canvas-generation-history-picker.tsx",
+            "components/canvas/canvas-node-search-modal.tsx",
+            "components/canvas/canvas-panorama-config-modal.tsx",
+            "components/canvas/canvas-project-asset-modal.tsx",
+            "components/canvas/canvas-subtitle-dialog.tsx",
+            "components/canvas/canvas-version-compare-modal.tsx",
+            "components/canvas/canvas-video-frame-dialog.tsx",
+            "components/canvas/video-subtitle-erase-dialog.tsx",
+            "components/canvas/canvas-drawing-editor-modal.tsx",
+            "components/canvas/canvas-node-upscale-dialog.tsx",
+            "pages/canvas/components/libtv-import-dialog.tsx",
+            "pages/canvas/components/tapnow-import-dialog.tsx",
         ];
         for (const mod of forbiddenModules) {
+            expect({ mod, exists: existsSync(path.join(SRC_ROOT, mod)) }).toEqual({ mod, exists: true });
             expect({ mod, present: closure.files.has(mod), chain: closure.edgePaths.get(mod) ?? null }).toEqual({
                 mod,
                 present: false,
