@@ -35,6 +35,16 @@ import {
 } from "@/lib/task-outcome";
 
 describe("task-outcome", () => {
+    it("keeps unconfirmed cancellation out of active work without permitting duplicate generation", () => {
+        const outcome: TaskOutcome = { phase: "failed", regenerate: "blocked", reason: "cancelled_result_unconfirmed" };
+        expect(isTaskOutcomeWorking(outcome)).toBe(false);
+        expect(canRecoverTaskOutcome(outcome)).toBe(false);
+        expect(canRegenerateTaskOutcome(outcome)).toBe(false);
+        const copy = taskOutcomeCopy(outcome);
+        expect(copy.badge).toBe("结果待确认");
+        expect(copy.message).toContain("渠道端核对");
+        expect(copy.message).not.toContain("正在");
+    });
     it("recognizes all 5 phase values and 3 regenerate values", () => {
         const phases: TaskOutcomePhase[] = ["running", "fetching", "ready", "retrievable", "failed"];
         const regenerates: TaskOutcomeRegenerate[] = ["allowed", "confirm", "blocked"];

@@ -452,6 +452,11 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
         }
         case "failed": {
             if (outcome.regenerate === "blocked") {
+                if (outcome.reason === "cancelled_result_unconfirmed") {
+                    const reason = "任务已取消，上游结果尚未确认";
+                    const action = "请在渠道端核对原请求的结果与扣费状态，勿重复生成";
+                    return { badge: "结果待确认", reason, action, message: `${reason}。${action}。` };
+                }
                 if (outcome.reason === "result_target_unavailable") {
                     const reason = "生成结果已保存在生成历史，当前目标节点已变更";
                     const action = "请从生成历史查看结果，请勿重复生成";

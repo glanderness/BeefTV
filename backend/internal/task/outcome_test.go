@@ -42,6 +42,11 @@ func TestComputeOutcome(t *testing.T) {
 		{"明确失败不代表退款", with(func(t *model.Task) { t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "no_result")},
 		{"旧回执没有路由", failed, "", OutcomeFacts{HasImageReceipt: true}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"已接受", failed, "", OutcomeFacts{DispatchState: "accepted"}, want("retrievable", "blocked", "image_recovery_pending")},
+		{"取消后提交未确认不假装自动取回", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "submission_unknown"}, want("failed", "blocked", "cancelled_result_unconfirmed")},
+		{"取消后已接受仍需核对原请求", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "blocked", "cancelled_result_unconfirmed")},
+		{"取消后证据读取失败不能允许重新生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{Unreadable: true}, want("failed", "blocked", "cancelled_result_unconfirmed")},
+		{"取消前确认未发送可重新生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", "task_failed")},
+		{"取消后确认无结果保留终态", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled; t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "no_result")},
 		{"同键待重发", failed, "", OutcomeFacts{DispatchState: "submission_unknown", SafeImageReplay: true}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"旧提交未确认等待扫描", with(func(t *model.Task) { t.Stage = "submission_unknown" }), "", OutcomeFacts{}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"确认取不回", with(func(t *model.Task) { t.RecoveryOutcome = &unrecoverable }), "", OutcomeFacts{HasImageReceipt: true}, want("failed", "confirm", "result_unrecoverable")},
@@ -160,5 +165,21 @@ func TestComputeOutcome(t *testing.T) {
 				t.Fatalf("投影解析了错误文案: %+v", got)
 			}
 		})
+	}
+}
+
+func TestCancelledUnconfirmedImageLeavesActiveList(t *testing.T) {
+	task := model.Task{ID: "cancelled-image", Type: "canvas_image", Status: model.TaskStatusCancelled}
+	outcome := ComputeOutcome(task, "", OutcomeFacts{DispatchState: "submission_unknown"})
+	active := Outcome{Phase: "running", Regenerate: "blocked", Reason: "task_running"}
+	got := filterActiveTaskSummaries([]Summary{
+		{ID: task.ID, Status: task.Status, Outcome: &outcome},
+		{ID: "running-image", Status: model.TaskStatusRunning, Outcome: &active},
+	}, 30)
+	if len(got) != 1 || got[0].ID != "running-image" {
+		t.Fatalf("active summaries = %+v", got)
+	}
+	if RegenerableFailure(outcome) {
+		t.Fatal("unconfirmed cancellation must not allow regeneration")
 	}
 }

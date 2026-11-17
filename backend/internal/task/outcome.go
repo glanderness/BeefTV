@@ -28,7 +28,14 @@ type OutcomeFacts struct {
 	RequestNotSent        bool
 }
 
-func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Outcome {
+func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) (outcome Outcome) {
+	// Ordinary image cancellation stops the worker and is not scanned by automatic recovery.
+	// Keep uncertain upstream results blocked without claiming recovery is running.
+	defer func() {
+		if task.Status == model.TaskStatusCancelled && task.Type == "canvas_image" && !task.IsUpscale() && outcome.Phase == "retrievable" {
+			outcome = Outcome{Phase: "failed", Regenerate: "blocked", Reason: "cancelled_result_unconfirmed"}
+		}
+	}()
 	out := func(phase, regenerate, reason string) Outcome {
 		return Outcome{Phase: phase, Regenerate: regenerate, Reason: reason}
 	}
