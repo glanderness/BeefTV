@@ -414,8 +414,8 @@ describe("ComfyUI provider against a ComfyUI server", () => {
             expect(submittedPrompts[1]["5"].inputs.height).toBe(1024);
 
             // VHS path loaders get /api/view URLs, VHS_LoadAudio.duration remains 0, Wan22 & WanFirstLastFrame resize & reframe, and unsupported combo ratio "21:9" leaves "16:9".
-            const videoRef = { dataUrl: "data:video/mp4;base64,AA==", mimeType: "video/mp4" };
-            const audioRef = { dataUrl: "data:audio/wav;base64,AA==", mimeType: "audio/wav" };
+            const videoRef = { dataUrl: `data:video/mp4;base64,${Buffer.from("mp4-bytes").toString("base64")}`, mimeType: "video/mp4" };
+            const audioRef = { dataUrl: `data:audio/wav;base64,${Buffer.from("wav-bytes").toString("base64")}`, mimeType: "audio/wav" };
             await provider.submit(
                 { model: "vhs-path-wan.json", capability: "video", aspectRatio: "21:9", resolution: "720p", duration: 6, videos: [videoRef], audios: [audioRef], extra: { idempotencyKey: "t-vhs" } },
                 localCtx,
