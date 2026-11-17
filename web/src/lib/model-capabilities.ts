@@ -287,6 +287,29 @@ export function hasUserModelCapability(
     return profile?.capabilitySource === "user" && Boolean(profile.capabilityConfig);
 }
 
+export function hasVersionedModelCapability(
+    profile?: {
+        capability?: string;
+        capabilityConfig?: ModelCapabilityConfig;
+        imageCapabilitiesVersion?: string;
+        videoCapabilitiesVersion?: string;
+        mediaCapabilitiesVersion?: string;
+    } | null,
+    capability?: string,
+): boolean {
+    const cap = (capability || profile?.capability || "").trim();
+    if (cap === "image") {
+        return Boolean(profile?.imageCapabilitiesVersion?.trim() && sanitizeServerImageCapability(profile.capabilityConfig?.image));
+    }
+    if (cap === "video") {
+        return Boolean(versionedVideoCapability(profile?.capabilityConfig?.video, profile?.videoCapabilitiesVersion));
+    }
+    if (cap === "audio") {
+        return Boolean(profile?.mediaCapabilitiesVersion?.trim());
+    }
+    return false;
+}
+
 export function capabilityForAssignedProtocol(
     profile: { model: string; capability?: string; capabilitySource?: "user"; capabilityConfig?: ModelCapabilityConfig },
     protocol: ModelProtocol | undefined,

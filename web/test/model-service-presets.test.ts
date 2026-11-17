@@ -796,4 +796,72 @@ test("saved pre-2.2.0 AutoDL workflow profiles upgrade media bounds and operatio
     const serverOwned = serviceModelProfile(serverOwnedChannel, { id: "minimax_h3_zm_u24" }, allProtocols);
     expect(serverOwned.videoCapabilitiesVersion).toBe("gw-v1");
     expect(serverOwned.capabilityConfig).toEqual(serverOwnedBase);
+
+    const unrelatedVersionsChannel = createModelChannel({
+        id: "autodl-unrelated-versions",
+        baseUrl: "https://autodl.art",
+        models: ["minimax_h3_image_audio_to_video"],
+        modelProfiles: [
+            {
+                model: "minimax_h3_image_audio_to_video",
+                capability: "video",
+                protocol: "autodl-comfyui",
+                imageCapabilitiesVersion: "img-v1",
+                mediaCapabilitiesVersion: "aud-v1",
+                capabilityConfig: structuredClone(staleBase),
+            },
+        ],
+    });
+    const upgradedUnrelated = serviceModelProfile(unrelatedVersionsChannel, { id: "minimax_h3_image_audio_to_video" }, allProtocols);
+    expect(upgradedUnrelated.capabilityConfig?.video?.references.maxImages).toBe(1);
+    expect(upgradedUnrelated.capabilityConfig?.video?.references.maxAudios).toBe(3);
+    expect(upgradedUnrelated.capabilityConfig?.video?.operations).toEqual(["image_to_video", "reference_to_video"]);
+});
+
+test("versioned ComfyUI module profiles preserve capabilityConfig across preset sync and catalog refresh", () => {
+    const comfyProtocols = [
+        ...protocols,
+        ...toProviderDefinitions({
+            id: "comfyui",
+            version: "0.2.0",
+            name: "ComfyUI",
+            vendor: "ComfyUI",
+            categories: ["image", "video", "audio"],
+            scopes: ["user.custom-channel"],
+            enabled: true,
+            module: true,
+            authType: "none",
+            baseUrl: "http://127.0.0.1:8188",
+        }),
+    ];
+    const channel = createPluginServiceChannel(comfyProtocols.find((p) => p.value === "comfyui")!, "comfy-versioned");
+    const customConfig = defaultModelCapabilityConfig("comfyui", "custom.json", comfyProtocols);
+    customConfig.video!.ratios = ["21:9", "16:9"];
+    customConfig.video!.defaultRatio = "21:9";
+    customConfig.video!.references.maxImages = 2;
+    customConfig.video!.references.maxAudios = 0;
+
+    const versionedChannel = {
+        ...channel,
+        models: ["custom.json"],
+        modelProfiles: [{
+            model: "custom.json",
+            capability: "video" as const,
+            protocol: "comfyui" as const,
+            videoCapabilitiesVersion: "gw-v1",
+            capabilityConfig: structuredClone(customConfig),
+        }],
+    };
+    const synced = serviceModelProfile(versionedChannel, { id: "custom.json", displayName: "custom", modelType: "video" }, comfyProtocols);
+    expect(synced.videoCapabilitiesVersion).toBe("gw-v1");
+    expect(synced.capabilitySource).toBeUndefined();
+    expect(synced.capabilityConfig).toEqual(customConfig);
+
+    const refreshed = applyFetchedChannelModelCatalog(versionedChannel, {
+        models: ["custom.json"],
+        catalog: [{ id: "custom.json", displayName: "custom", modelType: "video" }],
+    });
+    const refreshedProfile = refreshed.modelProfiles?.find((p) => p.model === "custom.json");
+    expect(refreshedProfile?.videoCapabilitiesVersion).toBe("gw-v1");
+    expect(refreshedProfile?.capabilityConfig).toEqual(customConfig);
 });

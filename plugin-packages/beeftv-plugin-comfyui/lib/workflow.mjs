@@ -308,7 +308,23 @@ export function applyWorkflowParameters(prepared, request) {
       .filter((item) => item.widget === "aspect_ratio" || item.widget === "ratio")
       .map((item) => item.nodeId),
   );
-  const hasAppModeRatioOptIn = appModeRatioNodes.size > 0;
+  const appModeRatioLinkedNodes = new Set(appModeRatioNodes);
+  if (appModeRatioLinkedNodes.size > 0) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [id, node] of Object.entries(graph)) {
+        if (appModeRatioLinkedNodes.has(id)) continue;
+        for (const value of Object.values(node?.inputs ?? {})) {
+          if (isLink(value) && appModeRatioLinkedNodes.has(String(value[0]))) {
+            appModeRatioLinkedNodes.add(id);
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+  }
   const workflowFps = isVideo && hasDuration ? detectWorkflowFps(graph) : 24;
 
   // 先处理各节点的比例下拉约束，再统一计算潜空间宽高，避免节点顺序影响比例一致性。
@@ -352,13 +368,13 @@ export function applyWorkflowParameters(prepared, request) {
     const shouldResizeLatent =
       (isVideo && SIZE_GENERATOR_NODE.test(classType)) ||
       appModeSizeNodes.has(id) ||
-      (hasAppModeRatioOptIn && SIZE_GENERATOR_NODE.test(classType)) ||
+      (appModeRatioLinkedNodes.has(id) && SIZE_GENERATOR_NODE.test(classType)) ||
       appModeRatioNodes.has(id);
 
     if ((ratioInfo || resInfo) && shouldResizeLatent && typeof inputs.width === "number" && typeof inputs.height === "number") {
       const keptOverride = keptNodeRatio.has(id)
         ? keptNodeRatio.get(id)
-        : (anyRatioRejected && !anyRatioAccepted ? workflowRejectedRatio : undefined);
+        : ((isVideo || appModeRatioLinkedNodes.has(id)) && anyRatioRejected && !anyRatioAccepted ? workflowRejectedRatio : undefined);
       const ratioRejected = keptOverride !== undefined;
       const fallbackRatio = inputs.width / Math.max(1, inputs.height);
       const effectiveRatio = ratioRejected ? (keptOverride ?? fallbackRatio) : (ratioInfo?.ratio ?? fallbackRatio);

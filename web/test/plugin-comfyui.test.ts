@@ -356,10 +356,11 @@ describe("ComfyUI provider against a ComfyUI server", () => {
             "img-app-ratio.app.json": {
                 nodes: [
                     { id: 3, type: "CR Aspect Ratio", mode: 0, inputs: [], widgets_values: ["16:9"] },
-                    { id: 5, type: "EmptyLatentImage", mode: 0, inputs: [], widgets_values: [512, 512, 1] },
-                    { id: 9, type: "SaveImage", mode: 0, inputs: [{ name: "images", link: 1 }], widgets_values: ["out"] },
+                    { id: 5, type: "EmptyLatentImage", mode: 0, inputs: [{ name: "batch_size", type: "INT", link: 1 }], widgets_values: [512, 512, 1] },
+                    { id: 6, type: "EmptyLatentImage", mode: 0, inputs: [], widgets_values: [640, 640, 1] },
+                    { id: 9, type: "SaveImage", mode: 0, inputs: [{ name: "images", link: 2 }], widgets_values: ["out"] },
                 ],
-                links: [],
+                links: [[1, 3, 0, 5, 2, "INT"], [2, 5, 0, 9, 0, "IMAGE"]],
                 extra: { linearData: { inputs: [["root:3:aspect_ratio", "aspect_ratio"]], outputs: [9] } },
             },
             "api-wan-combo.json": {
@@ -455,6 +456,8 @@ describe("ComfyUI provider against a ComfyUI server", () => {
             expect(submittedPrompts[5]["3"].inputs.aspect_ratio).toBe("9:16");
             expect(submittedPrompts[5]["5"].inputs.width).toBe(1088);
             expect(submittedPrompts[5]["5"].inputs.height).toBe(1920);
+            expect(submittedPrompts[5]["6"].inputs.width).toBe(640);
+            expect(submittedPrompts[5]["6"].inputs.height).toBe(640);
         } finally {
             localServer.stop(true);
         }

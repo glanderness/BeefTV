@@ -162,7 +162,7 @@ func TestPublicCatalogFromLocalSnapshotUpgradesSavedWorkflowProfiles(t *testing.
 			"id": "autodl",
 			"name": "AutoDL",
 			"baseUrl": "https://autodl.art",
-			"models": ["minimax_h3_image_audio_to_video", "minimax_h3_zm_u24"],
+			"models": ["minimax_h3_image_audio_to_video", "minimax_h3_zm_u24", "minimax_h3_zm_u24_versioned", "minimax_h3_zm_u24_other_versions"],
 			"modelProfiles": [
 				{
 					"model": "minimax_h3_image_audio_to_video",
@@ -190,6 +190,49 @@ func TestPublicCatalogFromLocalSnapshotUpgradesSavedWorkflowProfiles(t *testing.
 						"version": 1,
 						"video": {
 							"references": { "promptMaxChars": 0, "minImages": 0, "maxImages": 3, "maxImageBytes": 31457280, "maxVideos": 0, "maxVideoBytes": 0, "maxVideoDurationSeconds": 0, "maxAudios": 0, "maxAudioBytes": 0, "maxAudioDurationSeconds": 0 },
+							"duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+							"ratios": [],
+							"defaultRatio": "",
+							"resolutions": ["768p竖"],
+							"defaultResolution": "768p竖",
+							"generateAudio": { "supported": false, "default": false },
+							"watermark": { "supported": false, "default": false },
+							"operations": ["text_to_video", "image_to_video"],
+							"defaultOperation": "text_to_video"
+						}
+					}
+				},
+				{
+					"model": "minimax_h3_zm_u24_versioned",
+					"capability": "video",
+					"protocol": "autodl-comfyui",
+					"videoCapabilitiesVersion": "gw-v1",
+					"capabilityConfig": {
+						"version": 1,
+						"video": {
+							"references": { "promptMaxChars": 0, "minImages": 0, "maxImages": 9, "maxImageBytes": 31457280, "maxVideos": 0, "maxVideoBytes": 0, "maxVideoDurationSeconds": 0, "maxAudios": 0, "maxAudioBytes": 0, "maxAudioDurationSeconds": 0 },
+							"duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+							"ratios": [],
+							"defaultRatio": "",
+							"resolutions": ["768p竖"],
+							"defaultResolution": "768p竖",
+							"generateAudio": { "supported": false, "default": false },
+							"watermark": { "supported": false, "default": false },
+							"operations": ["text_to_video", "image_to_video"],
+							"defaultOperation": "text_to_video"
+						}
+					}
+				},
+				{
+					"model": "minimax_h3_zm_u24_other_versions",
+					"capability": "video",
+					"protocol": "autodl-comfyui",
+					"imageCapabilitiesVersion": "img-v1",
+					"mediaCapabilitiesVersion": "aud-v1",
+					"capabilityConfig": {
+						"version": 1,
+						"video": {
+							"references": { "promptMaxChars": 0, "minImages": 0, "maxImages": 9, "maxImageBytes": 31457280, "maxVideos": 0, "maxVideoBytes": 0, "maxVideoDurationSeconds": 0, "maxAudios": 0, "maxAudioBytes": 0, "maxAudioDurationSeconds": 0 },
 							"duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
 							"ratios": [],
 							"defaultRatio": "",
@@ -238,7 +281,7 @@ func TestPublicCatalogFromLocalSnapshotUpgradesSavedWorkflowProfiles(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Channels) != 1 || len(catalog.Channels[0].Models) != 2 {
+	if len(catalog.Channels) != 1 || len(catalog.Channels[0].Models) != 4 {
 		t.Fatalf("unexpected catalog = %#v", catalog)
 	}
 	findVideo := func(modelID string) map[string]any {
@@ -267,5 +310,20 @@ func TestPublicCatalogFromLocalSnapshotUpgradesSavedWorkflowProfiles(t *testing.
 	}
 	if ops, _ := userKept["operations"].([]any); len(ops) != 2 || ops[1] != "image_to_video" {
 		t.Fatalf("user custom operations altered: %#v", userKept["operations"])
+	}
+
+	versionedKept := findVideo("minimax_h3_zm_u24_versioned")
+	versionedRefs := versionedKept["references"].(map[string]any)
+	if versionedRefs["maxImages"] != float64(9) {
+		t.Fatalf("versioned maxImages altered: %#v", versionedRefs)
+	}
+	if ops, _ := versionedKept["operations"].([]any); len(ops) != 2 || ops[1] != "image_to_video" {
+		t.Fatalf("versioned operations altered: %#v", versionedKept["operations"])
+	}
+
+	unrelatedUpgraded := findVideo("minimax_h3_zm_u24_other_versions")
+	unrelatedRefs := unrelatedUpgraded["references"].(map[string]any)
+	if unrelatedRefs["maxImages"] != float64(3) {
+		t.Fatalf("video profile with only image/media version was not upgraded: %#v", unrelatedRefs)
 	}
 }

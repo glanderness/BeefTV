@@ -1,6 +1,6 @@
 import type { AiConfig, ModelChannel, ModelCapability } from "@/stores/use-config-store";
 import { createModelChannel } from "@/stores/use-config-store";
-import { defaultModelCapabilityConfig, hasUserModelCapability } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, hasUserModelCapability, hasVersionedModelCapability } from "@/lib/model-capabilities";
 import { inferProtocolCapabilityFromModel, modelProtocolDefinition, modelProtocolDefinitionFor, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { cleanChannelBaseUrl, isRawChannelBaseUrl } from "@/lib/channel-url";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
@@ -149,7 +149,8 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
             const usable = (nextCapability ? matching.find((p) => p.capability === nextCapability) : undefined) ?? matching[0];
             const capabilityChanged = Boolean(nextCapability && existing.capability && nextCapability !== existing.capability);
             const keepUser = hasUserModelCapability(existing) && !capabilityChanged;
-            const nextConfig = keepUser
+            const keepVersioned = !capabilityChanged && hasVersionedModelCapability(existing, nextCapability);
+            const nextConfig = keepUser || keepVersioned
                 ? existing.capabilityConfig
                 : (nextCapability === "image" || nextCapability === "video") && usable
                   ? defaultModelCapabilityConfig(usable.value, item.id, protocols)
@@ -167,13 +168,8 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
         const definition = modelProtocolDefinition(existing.protocol, protocols);
         const usable = definition && definition.enabled !== false ? definition : undefined;
         const workflow = usable?.workflows?.find((w) => w.id === item.id && w.capability === "video");
-        const hasVersionedCapability = Boolean(
-            existing.videoCapabilitiesVersion?.trim()
-            || existing.imageCapabilitiesVersion?.trim()
-            || existing.mediaCapabilitiesVersion?.trim(),
-        );
         const projectedWorkflowConfig =
-            workflow && !hasUserModelCapability(existing) && !hasVersionedCapability
+            workflow && !hasUserModelCapability(existing) && !hasVersionedModelCapability(existing, "video")
                 ? defaultModelCapabilityConfig(usable!.value, item.id, protocols)
                 : undefined;
         const repairedCapabilityConfig =

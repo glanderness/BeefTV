@@ -23,21 +23,38 @@ type LocalChannelModel struct {
 	CapabilityConfig         any
 	ImageCapabilitiesVersion *string
 	VideoCapabilitiesVersion *string
+	MediaCapabilitiesVersion *string
 	VideoPricing             json.RawMessage
 	Pricing                  json.RawMessage
 }
 
+func (item LocalChannelModel) HasVersionedCapability(capability string) bool {
+	if strings.TrimSpace(capability) == "audio" {
+		return item.MediaCapabilitiesVersion != nil && strings.TrimSpace(*item.MediaCapabilitiesVersion) != ""
+	}
+	section, ok := item.CapabilityConfig.(map[string]any)
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(capability) {
+	case "image":
+		return section["image"] != nil && item.ImageCapabilitiesVersion != nil && strings.TrimSpace(*item.ImageCapabilitiesVersion) != ""
+	case "video":
+		return section["video"] != nil && item.VideoCapabilitiesVersion != nil && strings.TrimSpace(*item.VideoCapabilitiesVersion) != ""
+	default:
+		return false
+	}
+}
+
 func (item LocalChannelModel) HasDeclaredCapability() bool {
+	if item.HasVersionedCapability(item.Capability) {
+		return true
+	}
 	section, ok := item.CapabilityConfig.(map[string]any)
 	if !ok || section[item.Capability] == nil {
 		return false
 	}
-	version := item.ImageCapabilitiesVersion
-	if item.Capability == "video" {
-		version = item.VideoCapabilitiesVersion
-	}
-	return (version != nil && strings.TrimSpace(*version) != "") ||
-		strings.TrimSpace(item.ChannelScope) == "system" ||
+	return strings.TrimSpace(item.ChannelScope) == "system" ||
 		strings.TrimSpace(item.CapabilitySource) == "user"
 }
 
@@ -61,6 +78,7 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 				CapabilityConfig         json.RawMessage `json:"capabilityConfig"`
 				ImageCapabilitiesVersion *string         `json:"imageCapabilitiesVersion"`
 				VideoCapabilitiesVersion *string         `json:"videoCapabilitiesVersion"`
+				MediaCapabilitiesVersion *string         `json:"mediaCapabilitiesVersion"`
 				VideoPricing             json.RawMessage `json:"videoPricing"`
 				Pricing                  json.RawMessage `json:"pricing"`
 			} `json:"modelProfiles"`
@@ -87,6 +105,7 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 				Pricing:                  profile.Pricing,
 				VideoCapabilitiesVersion: profile.VideoCapabilitiesVersion,
 				ImageCapabilitiesVersion: profile.ImageCapabilitiesVersion,
+				MediaCapabilitiesVersion: profile.MediaCapabilitiesVersion,
 			}
 			if len(profile.CapabilityConfig) > 0 {
 				var value any
@@ -198,8 +217,7 @@ func PublicCatalogFromLocalSnapshot(body []byte, workflow ...WorkflowLookup) (*C
 		}
 		declared := item.HasDeclaredCapability()
 		capabilityConfig := item.CapabilityConfig
-		hasVersion := item.VideoCapabilitiesVersion != nil && strings.TrimSpace(*item.VideoCapabilitiesVersion) != ""
-		if item.Capability == "video" && strings.TrimSpace(item.CapabilitySource) != "user" && !hasVersion && workflowLookup != nil {
+		if item.Capability == "video" && strings.TrimSpace(item.CapabilitySource) != "user" && !item.HasVersionedCapability("video") && workflowLookup != nil {
 			if wf, ok := workflowLookup(string(cm.Protocol), protocol.CapabilityVideo, item.Model); ok {
 				if projected := DefaultModelCapabilityConfigForModel(string(cm.Protocol), item.Model); projected != nil && projected.Video != nil {
 					applyProtocolWorkflowVideoCapability(projected.Video, wf)

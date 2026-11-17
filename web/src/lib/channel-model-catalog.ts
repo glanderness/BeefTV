@@ -1,4 +1,4 @@
-import { defaultModelCapabilityConfig, hasUserModelCapability, sanitizeServerImageCapability, versionedVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, hasUserModelCapability, hasVersionedModelCapability, sanitizeServerImageCapability, versionedVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { modelProtocolCapability, protocolForModelCatalog, protocolForBeefTVCatalog, type ModelProtocol } from "@/lib/model-protocols";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
@@ -186,7 +186,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             const keepSourced = keepUserCapability || (capability === "video" && Boolean(versionedVideoCapability(existing.capabilityConfig?.video, existing.videoCapabilitiesVersion)) && !sourcedVideo);
             const missingManagedVideo = managed && capability === "video" && !sourcedVideo && !keepSourced;
             const patchCapabilityConfig = !missingManagedVideo && !keepSourced && !sourcedVideo && hasCatalogCapabilityConfig(item) && (capability === "image" || capability === "video");
-            const refreshModuleCapability = isModuleWorkflowRefresh && !keepUserCapability;
+            const refreshModuleCapability = isModuleWorkflowRefresh && !keepUserCapability && !hasVersionedModelCapability(existing, capability);
             const capabilityConfig = sourcedVideo
                 ? { version: 1, video: sourcedVideo }
                 : keepSourced
