@@ -143,6 +143,27 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     const rawExisting = channel.modelProfiles?.find((profile) => profile.model === item.id);
     const existing = rawExisting ? upgradeBuiltinModelProfile(rawExisting) : rawExisting;
     if (existing?.protocol && !explicitCapability) {
+        const matching = protocols.filter((p) => p.value === existing.protocol && p.enabled !== false);
+        if (matching.some((p) => p.module)) {
+            const nextCapability = item.modelType || existing.capability;
+            const usable = (nextCapability ? matching.find((p) => p.capability === nextCapability) : undefined) ?? matching[0];
+            const capabilityChanged = Boolean(nextCapability && existing.capability && nextCapability !== existing.capability);
+            const keepUser = hasUserModelCapability(existing) && !capabilityChanged;
+            const nextConfig = keepUser
+                ? existing.capabilityConfig
+                : (nextCapability === "image" || nextCapability === "video") && usable
+                  ? defaultModelCapabilityConfig(usable.value, item.id, protocols)
+                  : undefined;
+            return {
+                ...existing,
+                displayName: item.displayName || existing.displayName,
+                capability: nextCapability,
+                protocol: usable?.value ?? existing.protocol,
+                authType: usable ? usable.authType : existing.authType,
+                capabilitySource: keepUser ? "user" : undefined,
+                capabilityConfig: nextConfig,
+            };
+        }
         const definition = modelProtocolDefinition(existing.protocol, protocols);
         const usable = definition && definition.enabled !== false ? definition : undefined;
         const workflow = usable?.workflows?.find((w) => w.id === item.id && w.capability === "video");

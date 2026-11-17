@@ -35,13 +35,29 @@ func TestCapabilityNormalizerProjectsPluginWorkflowCapabilities(t *testing.T) {
 		defaultRes    string
 		maxSeconds    int
 		defaultSecond int
+		maxImages     int
+		maxAudios     int
+		wantOps       []string
 	}{
+		{
+			model:         "minimax_h3_b99_001",
+			resolutions:   []string{"736p竖", "736p横", "736p(1:1)"},
+			defaultRes:    "736p竖",
+			maxSeconds:    15,
+			defaultSecond: 5,
+			maxImages:     0,
+			maxAudios:     0,
+			wantOps:       []string{"text_to_video"},
+		},
 		{
 			model:         "minimax_h3_b99_003_12s",
 			resolutions:   []string{"736p竖", "736p横", "736p(1:1)"},
 			defaultRes:    "736p竖",
 			maxSeconds:    12,
 			defaultSecond: 5,
+			maxImages:     9,
+			maxAudios:     0,
+			wantOps:       []string{"text_to_video", "image_to_video", "reference_to_video"},
 		},
 		{
 			model:         "minimax_h3_lightx2v_v5",
@@ -49,6 +65,9 @@ func TestCapabilityNormalizerProjectsPluginWorkflowCapabilities(t *testing.T) {
 			defaultRes:    "768p竖",
 			maxSeconds:    10,
 			defaultSecond: 5,
+			maxImages:     9,
+			maxAudios:     0,
+			wantOps:       []string{"text_to_video", "image_to_video", "reference_to_video"},
 		},
 		{
 			model:         "minimax_h3_image_audio_to_video",
@@ -56,6 +75,29 @@ func TestCapabilityNormalizerProjectsPluginWorkflowCapabilities(t *testing.T) {
 			defaultRes:    "768p竖",
 			maxSeconds:    15,
 			defaultSecond: 5,
+			maxImages:     1,
+			maxAudios:     3,
+			wantOps:       []string{"image_to_video", "reference_to_video"},
+		},
+		{
+			model:         "minimax_h3_image_audio_to_video_v2",
+			resolutions:   []string{"480p竖", "768p竖", "1080p竖", "480p横", "768p横", "1080p横"},
+			defaultRes:    "768p竖",
+			maxSeconds:    10,
+			defaultSecond: 5,
+			maxImages:     9,
+			maxAudios:     3,
+			wantOps:       []string{"text_to_video", "image_to_video", "reference_to_video"},
+		},
+		{
+			model:         "minimax_h3_zm_u24",
+			resolutions:   []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"},
+			defaultRes:    "768p竖",
+			maxSeconds:    15,
+			defaultSecond: 5,
+			maxImages:     9,
+			maxAudios:     0,
+			wantOps:       []string{"text_to_video", "image_to_video", "reference_to_video"},
 		},
 	}
 
@@ -79,6 +121,9 @@ func TestCapabilityNormalizerProjectsPluginWorkflowCapabilities(t *testing.T) {
 		}
 		if cfg.Video.Duration.Selection != "range" || cfg.Video.Duration.Min != 1 || cfg.Video.Duration.Max != tc.maxSeconds || cfg.Video.Duration.Default != tc.defaultSecond {
 			t.Fatalf("%s duration = %#v, want range 1..%d default %d", tc.model, cfg.Video.Duration, tc.maxSeconds, tc.defaultSecond)
+		}
+		if cfg.Video.References.MaxImages != tc.maxImages || cfg.Video.References.MaxAudios != tc.maxAudios || !slices.Equal(cfg.Video.Operations, tc.wantOps) {
+			t.Fatalf("%s media projection mismatch: refs=%#v ops=%#v", tc.model, cfg.Video.References, cfg.Video.Operations)
 		}
 	}
 }

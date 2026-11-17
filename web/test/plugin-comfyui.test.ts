@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { convertEditorGraph, extractAppMode } from "../../plugin-packages/beeftv-plugin-comfyui/lib/editor.mjs";
-import { inputTargets, outputNodeIds, prepareWorkflow, randomizeSeeds, workflowOutputKind } from "../../plugin-packages/beeftv-plugin-comfyui/lib/workflow.mjs";
+import { convertEditorGraph, editorNodeTypes, extractAppMode } from "../../plugin-packages/beeftv-plugin-comfyui/lib/editor.mjs";
+import { applyWorkflowParameters, inputTargets, missingNodeTypes, outputNodeIds, prepareWorkflow, randomizeSeeds, workflowOutputKind } from "../../plugin-packages/beeftv-plugin-comfyui/lib/workflow.mjs";
 import * as provider from "../../plugin-packages/beeftv-plugin-comfyui/provider.mjs";
 
 // 只列出用到的节点，形状和 ComfyUI 的 /object_info 一致。
@@ -223,5 +223,112 @@ describe("ComfyUI provider against a ComfyUI server", () => {
         const states = [];
         for (let i = 0; i < 3; i += 1) states.push((await provider.query("gone", { model: "invert.app.json" }, ctx)).status);
         expect(states).toEqual(["processing", "processing", "failed"]);
+    });
+
+    test("community wireless SetNode/GetNode, rgthree cosmetic nodes, and audio/video loaders convert cleanly (#523)", async () => {
+        const communityObjectInfo = {
+            ...objectInfo,
+            EmptyHunyuanLatentVideo: { input: { required: { width: ["INT", { default: 848 }], height: ["INT", { default: 480 }], length: ["INT", { default: 81 }], batch_size: ["INT", { default: 1 }] } } },
+            LoadAudio: { input: { required: { audio: [["voice.wav"], { audio_upload: true }], audioUI: ["AUDIOUI", {}] } } },
+            VHS_LoadVideoPath: { input: { required: { video: ["STRING", { default: "clip.mp4" }] } } },
+            SaveVideo: { input: { required: { video: ["VIDEO"], filename_prefix: ["STRING", { default: "vid" }] } } },
+        };
+        const wirelessWorkflow = {
+            nodes: [
+                { id: 1, type: "CheckpointLoaderSimple", mode: 0, inputs: [], widgets_values: ["model.safetensors"] },
+                { id: 2, type: "SetNode", mode: 0, inputs: [{ name: "CLIP", type: "CLIP", link: 1 }], widgets_values: ["shared_clip"] },
+                { id: 3, type: "GetNode", mode: 0, inputs: [], outputs: [{ name: "CLIP", type: "CLIP", links: [2] }], widgets_values: ["shared_clip"] },
+                { id: 4, type: "Reroute (rgthree)", mode: 0, inputs: [{ name: "", type: "*", link: 2 }], outputs: [{ type: "CLIP", links: [3] }] },
+                { id: 5, type: "CLIPTextEncode", mode: 0, inputs: [{ name: "clip", type: "CLIP", link: 3 }], widgets_values: ["positive prompt"] },
+                { id: 6, type: "EmptyHunyuanLatentVideo", mode: 0, inputs: [], widgets_values: [848, 480, 81, 1] },
+                { id: 7, type: "LoadAudio", mode: 0, inputs: [], widgets_values: ["voice.wav", "audio"] },
+                { id: 8, type: "VHS_LoadVideoPath", mode: 0, inputs: [], widgets_values: { video: "clip.mp4" } },
+                { id: 9, type: "SaveVideo", mode: 0, inputs: [{ name: "video", link: 4 }], widgets_values: ["out"] },
+                { id: 10, type: "Label (rgthree)", mode: 0, inputs: [], widgets_values: ["注记"] },
+                { id: 11, type: "Fast Groups Muter (rgthree)", mode: 0, inputs: [], widgets_values: [] },
+                { id: 12, type: "easy setNode", mode: 0, inputs: [{ name: "LATENT", type: "LATENT", link: 5 }], widgets_values: ["shared_lat"] },
+                { id: 13, type: "easy getNode", mode: 0, inputs: [], outputs: [{ name: "LATENT", type: "LATENT", links: [6] }], widgets_values: ["shared_lat"] },
+                { id: 14, type: "KSampler", mode: 0, inputs: [{ name: "model", link: 7 }, { name: "positive", link: 8 }, { name: "negative", link: 8 }, { name: "latent_image", link: 6 }], widgets_values: [7, "randomize", 20, 7, "euler", "normal", 1] },
+            ],
+            links: [
+                [1, 1, 1, 2, 0, "CLIP"],
+                [2, 3, 0, 4, 0, "CLIP"],
+                [3, 4, 0, 5, 0, "CLIP"],
+                [4, 8, 0, 9, 0, "VIDEO"],
+                [5, 6, 0, 12, 0, "LATENT"],
+                [6, 13, 0, 14, 3, "LATENT"],
+                [7, 1, 0, 14, 0, "MODEL"],
+                [8, 5, 0, 14, 1, "CONDITIONING"],
+            ],
+            extra: {},
+        };
+
+        expect(missingNodeTypes(wirelessWorkflow, communityObjectInfo)).toEqual([]);
+        expect(editorNodeTypes(wirelessWorkflow)).not.toContain("SetNode");
+        expect(editorNodeTypes(wirelessWorkflow)).not.toContain("GetNode");
+        expect(editorNodeTypes(wirelessWorkflow)).not.toContain("Reroute (rgthree)");
+        expect(editorNodeTypes(wirelessWorkflow)).not.toContain("Label (rgthree)");
+
+        const prepared = prepareWorkflow(wirelessWorkflow, communityObjectInfo);
+        expect(prepared.graph["5"].inputs.clip).toEqual(["1", 1]);
+        expect(prepared.graph["14"].inputs.latent_image).toEqual(["6", 0]);
+        expect(inputTargets(prepared).media.audio).toEqual([{ nodeId: "7", widget: "audio" }]);
+        expect(inputTargets(prepared).media.video).toEqual([{ nodeId: "8", widget: "video" }]);
+
+        applyWorkflowParameters(prepared, { aspectRatio: "9:16", resolution: "720p", duration: 6 });
+        expect(prepared.graph["6"].inputs.width).toBe(720);
+        expect(prepared.graph["6"].inputs.height).toBe(1280);
+        expect(prepared.graph["6"].inputs.length).toBe(145);
+
+        const untouched = prepareWorkflow(wirelessWorkflow, communityObjectInfo);
+        applyWorkflowParameters(untouched, {});
+        expect(untouched.graph["6"].inputs.width).toBe(848);
+        expect(untouched.graph["6"].inputs.height).toBe(480);
+        expect(untouched.graph["6"].inputs.length).toBe(81);
+    });
+
+    test("modified workflows sync cleanly with cache-no-store and objectInfoCache refresh (#540)", async () => {
+        const seenCacheModes: string[] = [];
+        let objectInfoFetches = 0;
+        const dynamicWorkflows: Record<string, unknown> = {
+            "sync-test.json": { nodes: [{ id: 1, type: "SaveImage", mode: 0, inputs: [], widgets_values: ["img"] }], links: [], extra: {} },
+        };
+        const originalFetch = globalThis.fetch;
+        const syncServer = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const url = new URL(request.url);
+                if (url.pathname === "/api/userdata") return Response.json(Object.keys(dynamicWorkflows));
+                if (url.pathname === "/api/userdata/workflows%2Fsync-test.json") return Response.json(dynamicWorkflows["sync-test.json"]);
+                if (url.pathname === "/api/object_info") {
+                    objectInfoFetches += 1;
+                    return Response.json(
+                        objectInfoFetches === 1
+                            ? objectInfo
+                            : { ...objectInfo, SaveVideo: { input: { required: { video: ["VIDEO"], filename_prefix: ["STRING", { default: "vid" }] } } } },
+                    );
+                }
+                if (url.pathname === "/api/prompt") return Response.json({ prompt_id: "p-sync", number: 1 });
+                return new Response("not found", { status: 404 });
+            },
+        });
+        globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+            if (init?.cache) seenCacheModes.push(init.cache);
+            return originalFetch(input, init);
+        }) as typeof fetch;
+        try {
+            const syncCtx = { config: { baseUrl: `http://127.0.0.1:${syncServer.port}` }, signal: new AbortController().signal, log: () => {} };
+            expect(await provider.models(syncCtx)).toEqual([{ id: "sync-test.json", displayName: "sync-test", capability: "image" }]);
+            dynamicWorkflows["sync-test.json"] = { nodes: [{ id: 1, type: "SaveVideo", mode: 0, inputs: [], widgets_values: ["vid"] }], links: [], extra: {} };
+            expect(await provider.models(syncCtx)).toEqual([{ id: "sync-test.json", displayName: "sync-test", capability: "video" }]);
+            expect(seenCacheModes.length).toBeGreaterThan(0);
+            expect(seenCacheModes.every((mode) => mode === "no-store")).toBe(true);
+            const submitted = await provider.submit({ model: "sync-test.json", prompt: "" }, syncCtx);
+            expect(submitted).toEqual({ taskId: "p-sync", status: "pending" });
+            expect(objectInfoFetches).toBeGreaterThanOrEqual(1);
+        } finally {
+            globalThis.fetch = originalFetch;
+            syncServer.stop(true);
+        }
     });
 });

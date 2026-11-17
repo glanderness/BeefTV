@@ -2,7 +2,9 @@
 // 提交时读出工作流、填进提示词和素材、换掉种子，交给 ComfyUI 排队；查询时看 /history，
 // 跑完后把输出文件的 /view 地址交给 BeefTV 下载。
 
+import { ComfyConversionError } from "./lib/editor.mjs";
 import {
+  applyWorkflowParameters,
   inputTargets,
   missingNodeTypes,
   needsObjectInfo,
@@ -29,7 +31,7 @@ async function comfy(ctx, path, init = {}) {
   const url = `${baseUrl(ctx)}/api${path}`;
   let response;
   try {
-    response = await fetch(url, { ...init, signal: ctx.signal });
+    response = await fetch(url, { cache: "no-store", ...init, signal: ctx.signal });
   } catch (error) {
     if (ctx.signal?.aborted) throw error;
     throw new Error("连不上 ComfyUI。请确认 ComfyUI 已经启动，服务地址也填对了");
@@ -83,15 +85,25 @@ async function objectInfo(ctx, force = false) {
 
 async function prepare(ctx, raw) {
   if (!needsObjectInfo(raw)) return prepareWorkflow(raw, null);
+  let refreshed = false;
   let info = await objectInfo(ctx);
   let missing = missingNodeTypes(raw, info);
   if (missing.length > 0) {
     // 用户刚装好节点包再试时，缓存里还是旧目录。
     info = await objectInfo(ctx, true);
+    refreshed = true;
     missing = missingNodeTypes(raw, info);
   }
   if (missing.length > 0) throw new Error(`这台 ComfyUI 缺少节点：${missing.join("、")}。请先装好对应的节点包`);
-  return prepareWorkflow(raw, info);
+  try {
+    return prepareWorkflow(raw, info);
+  } catch (error) {
+    if (error instanceof ComfyConversionError && !refreshed) {
+      info = await objectInfo(ctx, true);
+      return prepareWorkflow(raw, info);
+    }
+    throw error;
+  }
 }
 
 function mediaBytes(reference) {
@@ -180,6 +192,7 @@ async function preparePrompt(request, ctx) {
     }
   }
 
+  applyWorkflowParameters(prepared, request);
   randomizeSeeds(prepared);
   const outputs = outputNodeIds(prepared);
   if (outputs.length === 0) return { status: "failed", message: "这个工作流没有保存图片、视频或音频的节点" };
@@ -291,6 +304,7 @@ async function mapLimit(items, limit, fn) {
 
 /** @type {NonNullable<import("@beeftv/plugin-sdk").ProviderModule["models"]>} */
 export async function models(ctx) {
+  objectInfoCache.delete(baseUrl(ctx));
   let files;
   try {
     files = await comfyJSON(ctx, `/userdata?dir=${WORKFLOW_DIR}&recurse=true&split=false`);

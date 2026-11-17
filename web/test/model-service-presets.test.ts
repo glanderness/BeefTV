@@ -651,3 +651,45 @@ test("manual model entries can be renamed, retyped, and deleted without losing c
     expect(removed.catalog.map((item) => item.id)).toEqual(["keep-text", "gpt-image-1"]);
     expect(removed.channel.modelProfiles?.map((p) => p.model)).toEqual(["keep-text", "gpt-image-1"]);
 });
+
+test("re-reading ComfyUI workflows updates changed capability and multimodal defaults without renaming (#540)", () => {
+    const comfyProtocols = [
+        ...protocols,
+        ...toProviderDefinitions({
+            id: "comfyui",
+            version: "0.2.0",
+            name: "ComfyUI",
+            vendor: "ComfyUI",
+            categories: ["image", "video", "audio"],
+            scopes: ["user.custom-channel"],
+            enabled: true,
+            module: true,
+            authType: "none",
+            baseUrl: "http://127.0.0.1:8188",
+        }),
+    ];
+    const channel = createPluginServiceChannel(comfyProtocols.find((p) => p.value === "comfyui")!, "comfy");
+    const savedImageChannel = {
+        ...channel,
+        models: ["workflow.json"],
+        modelProfiles: [{
+            model: "workflow.json",
+            capability: "image" as const,
+            protocol: "comfyui" as const,
+            capabilityConfig: defaultModelCapabilityConfig("comfyui", "workflow.json", comfyProtocols),
+        }],
+    };
+    const switchedToVideo = serviceModelProfile(savedImageChannel, { id: "workflow.json", displayName: "workflow", modelType: "video" }, comfyProtocols);
+    expect(switchedToVideo.capability).toBe("video");
+    expect(switchedToVideo.capabilityConfig?.video?.operations).toContain("reference_to_video");
+    expect(switchedToVideo.capabilityConfig?.video?.references.maxAudios).toBe(3);
+
+    const refreshedCatalog = applyFetchedChannelModelCatalog(savedImageChannel, {
+        models: ["workflow.json"],
+        catalog: [{ id: "workflow.json", displayName: "workflow", modelType: "video" }],
+    });
+    const refreshedProfile = refreshedCatalog.modelProfiles?.find((p) => p.model === "workflow.json");
+    expect(refreshedProfile?.capability).toBe("video");
+    expect(refreshedProfile?.capabilityConfig?.video?.operations).toContain("reference_to_video");
+    expect(refreshedProfile?.capabilityConfig?.video?.references.maxAudios).toBe(3);
+});
