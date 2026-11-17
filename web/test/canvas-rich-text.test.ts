@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { getSchema } from "@tiptap/core";
 
-import { canvasRichTextHTML, isSafeCanvasRichTextLink } from "@/lib/canvas/canvas-rich-text";
+import {
+    SUPPORTED_CANVAS_RICH_TEXT_MARKS,
+    SUPPORTED_CANVAS_RICH_TEXT_NODES,
+    canvasRichTextHTML,
+    isSafeCanvasRichTextLink,
+} from "@/lib/canvas/canvas-rich-text";
+import { createCanvasRichTextExtensions } from "@/lib/canvas/canvas-rich-text-extensions";
 
 describe("canvas rich text serializer", () => {
     test("serializes headings, aligned paragraphs, lists, blockquotes, code blocks, and formatting marks", () => {
@@ -114,5 +121,34 @@ describe("canvas rich text serializer", () => {
         expect(isSafeCanvasRichTextLink("javascript:alert(1)")).toBe(false);
         expect(isSafeCanvasRichTextLink("data:text/html,<script>")).toBe(false);
         expect(isSafeCanvasRichTextLink("")).toBe(false);
+    });
+
+    test("covers every node and mark registered by the Tiptap schema and clamps heading/oklch values", () => {
+        const schema = getSchema(createCanvasRichTextExtensions());
+        expect(Object.keys(schema.nodes).sort()).toEqual([...SUPPORTED_CANVAS_RICH_TEXT_NODES].sort());
+        expect(Object.keys(schema.marks).sort()).toEqual([...SUPPORTED_CANVAS_RICH_TEXT_MARKS].sort());
+
+        const html = canvasRichTextHTML({
+            type: "doc",
+            content: [
+                {
+                    type: "heading",
+                    attrs: { level: 4 },
+                    content: [
+                        {
+                            type: "text",
+                            text: "现代色值",
+                            marks: [
+                                { type: "code" },
+                                { type: "textStyle", attrs: { color: "oklch(0.65 0.2 250 / 80%)" } },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+        expect(html).toContain("<h3>");
+        expect(html).toContain('style="color: oklch(0.65 0.2 250 / 80%)"');
+        expect(html).toContain('<code><span style="color: oklch(0.65 0.2 250 / 80%)">现代色值</span></code>');
     });
 });

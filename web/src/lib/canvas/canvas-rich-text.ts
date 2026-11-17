@@ -1,8 +1,33 @@
 import type { JSONContent } from "@tiptap/core";
 
+export const SUPPORTED_CANVAS_RICH_TEXT_NODES = [
+    "doc",
+    "paragraph",
+    "heading",
+    "bulletList",
+    "orderedList",
+    "listItem",
+    "blockquote",
+    "codeBlock",
+    "horizontalRule",
+    "hardBreak",
+    "text",
+] as const;
+
+export const SUPPORTED_CANVAS_RICH_TEXT_MARKS = [
+    "bold",
+    "italic",
+    "strike",
+    "underline",
+    "code",
+    "link",
+    "textStyle",
+    "highlight",
+] as const;
+
 const ALLOWED_TEXT_ALIGNS = new Set(["left", "center", "right", "justify"]);
 const SAFE_CODE_LANG_RE = /^[A-Za-z0-9_-]{1,32}$/;
-const SAFE_CSS_COLOR_RE = /^(?:#[0-9a-fA-F]{3,8}|(?:rgb|rgba|hsl|hsla)\([0-9\s.,%+-]+\)|var\(--[A-Za-z0-9_-]+\)|[A-Za-z]{1,24})$/;
+const SAFE_CSS_COLOR_RE = /^(?:#[0-9a-fA-F]{3,8}|(?:rgb|rgba|hsl|hsla|oklch|oklab)\([0-9\s.,%/+-]+\)|var\(--[A-Za-z0-9_-]+\)|[A-Za-z]{1,24})$/;
 
 function escapeHtml(text: string): string {
     return text
@@ -78,8 +103,8 @@ function renderNode(node: JSONContent): string {
         case "paragraph":
             return `<p${textAlignAttribute(attrs)}>${children}</p>`;
         case "heading": {
-            const rawLevel = typeof attrs?.level === "number" ? Math.trunc(attrs.level) : 1;
-            const level = rawLevel >= 1 && rawLevel <= 3 ? rawLevel : 1;
+            const rawLevel = typeof attrs?.level === "number" && Number.isFinite(attrs.level) ? Math.trunc(attrs.level) : 1;
+            const level = Math.min(3, Math.max(1, rawLevel));
             return `<h${level}${textAlignAttribute(attrs)}>${children}</h${level}>`;
         }
         case "bulletList":
