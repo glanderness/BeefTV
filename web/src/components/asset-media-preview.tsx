@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
-import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
+import { bindCanvasVideoHoverPreview } from "@/lib/canvas/canvas-video-hover-preview";
+import { cn } from "@/lib/utils";
+import { acquireCanvasVideoPreview, getCachedCanvasVideoPreviewBlob } from "@/services/canvas-video-preview";
+import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import type { Asset } from "@/stores/use-asset-store";
 
 type AssetMediaPreviewProps = {
@@ -12,67 +15,107 @@ type AssetMediaPreviewProps = {
     hoverPlayDelayMs?: number;
 };
 
-export function AssetMediaPreview({ asset, alt, className = "", fallback = null, hoverPlayDelayMs }: AssetMediaPreviewProps) {
-    const hoverTimerRef = useRef<number | null>(null);
-    const [mediaFailed, setMediaFailed] = useState(false);
-    const videoStorageKey = asset?.kind === "video" ? asset.data.storageKey : undefined;
-    const videoFallbackUrl = asset?.kind === "video" ? asset.data.url : "";
-    const playback = useResourceVideoPlayback(videoStorageKey || "", videoFallbackUrl || "", asset?.kind === "video");
-    const resolvedVideoUrl = playback.url;
-    useEffect(() => { setMediaFailed(false); }, [asset?.id]);
-    useEffect(() => () => { if (hoverTimerRef.current !== null) window.clearTimeout(hoverTimerRef.current); }, []);
-    if (!asset) return fallback;
-    if (mediaFailed || playback.error) return fallback;
+// Serialize source acquisition as well as decoding so a grid never downloads
+// every full video while the shared poster decoder is still busy.
+let posterQueue: Promise<unknown> = Promise.resolve();
 
-    if (asset.kind === "video" && asset.data.url) {
-        if (!resolvedVideoUrl) return fallback;
-        const clearHoverTimer = () => {
-            if (hoverTimerRef.current !== null) {
-                window.clearTimeout(hoverTimerRef.current);
-                hoverTimerRef.current = null;
-            }
+function loadAssetPoster(storageKey: string, content: string, signal: AbortSignal) {
+    const work = posterQueue.then(async () => {
+        signal.throwIfAborted();
+        const controller = new AbortController();
+        const cancel = () => controller.abort(signal.reason);
+        signal.addEventListener("abort", cancel, { once: true });
+        const deadline = setTimeout(() => controller.abort(new DOMException("Video poster timed out", "TimeoutError")), 8_000);
+        const node = { metadata: { storageKey, content } };
+        const preview = acquireCanvasVideoPreview(node);
+        let rejectAborted: () => void = () => undefined;
+        const aborted = new Promise<never>((_, reject) => {
+            rejectAborted = () => reject(controller.signal.reason);
+            controller.signal.addEventListener("abort", rejectAborted, { once: true });
+        });
+        try {
+            const result = await Promise.race([preview.promise, aborted]);
+            controller.signal.throwIfAborted();
+            const blob = result && getCachedCanvasVideoPreviewBlob(node);
+            return blob ? URL.createObjectURL(blob) : "";
+        } finally {
+            clearTimeout(deadline);
+            signal.removeEventListener("abort", cancel);
+            controller.signal.removeEventListener("abort", rejectAborted);
+            preview.release();
+        }
+    });
+    posterQueue = work.catch(() => undefined);
+    return work;
+}
+
+function AssetVideoCover({ asset, alt, className, fallback, hoverPlayDelayMs }: AssetMediaPreviewProps & { asset: Extract<Asset, { kind: "video" }> }) {
+    const target = useRef<HTMLSpanElement>(null);
+    const [failedCover, setFailedCover] = useState("");
+    const storageKey = asset.data.storageKey || "";
+    const content = asset.data.url || "";
+    const identity = JSON.stringify([storageKey, content]);
+    const cover = asset.coverUrl && asset.coverUrl !== content && asset.coverUrl !== failedCover ? asset.coverUrl : "";
+    const [captured, setCaptured] = useState({ identity: "", url: "" });
+    const [retryEpoch, setRetryEpoch] = useState(0);
+    const poster = cover || (captured.identity === identity ? captured.url : "");
+
+    useEffect(() => {
+        if (cover || !target.current) return;
+        let ownedUrl = "";
+        let controller: AbortController | undefined;
+        let visible = false;
+        let attempts = 0;
+        let retryTimer: ReturnType<typeof setTimeout> | undefined;
+        const load = () => {
+            if (ownedUrl || attempts >= 2 || (controller && !controller.signal.aborted)) return;
+            attempts++;
+            const current = new AbortController();
+            controller = current;
+            void loadAssetPoster(storageKey, content, current.signal).then(url => {
+                if (current.signal.aborted) { if (url) URL.revokeObjectURL(url); return; }
+                ownedUrl = url;
+                setCaptured({ identity, url });
+            }).catch(() => undefined).finally(() => {
+                if (ownedUrl || current.signal.aborted) return;
+                current.abort();
+                if (visible && attempts < 2) retryTimer = setTimeout(load, 1_000);
+            });
         };
-        const poster = asset.coverUrl && asset.coverUrl !== asset.data.url ? asset.coverUrl : undefined;
-        return (
-            <video
-                src={resolvedVideoUrl}
-                poster={poster}
-                aria-label={alt}
-                muted
-                playsInline
-                preload="auto"
-                className={className}
-                onError={() => { if (!playback.requestCompatible()) setMediaFailed(true); }}
-                onMouseEnter={(event) => {
-                    if (hoverPlayDelayMs === undefined) return;
-                    const video = event.currentTarget;
-                    clearHoverTimer();
-                    hoverTimerRef.current = window.setTimeout(() => {
-                        void video.play().catch(() => undefined);
-                    }, hoverPlayDelayMs);
-                }}
-                onMouseLeave={(event) => {
-                    if (hoverPlayDelayMs === undefined) return;
-                    clearHoverTimer();
-                    event.currentTarget.pause();
-                    event.currentTarget.currentTime = 0;
-                }}
-                onLoadedMetadata={(event) => {
-                    // 主动触发首帧附近的解码，避免只有 metadata 时长期停留在空白画面。
-                    const video = event.currentTarget;
-                    if (!poster && video.currentTime === 0 && video.duration > 0) video.currentTime = Math.min(0.001, video.duration);
-                }}
-                onLoadedData={(event) => {
-                    const video = event.currentTarget;
-                    if (!poster && video.readyState >= 2) {
-                        video.currentTime = 0;
-                        video.pause();
-                    }
-                }}
-            />
-        );
-    }
+        const observer = typeof IntersectionObserver === "undefined" ? undefined : new IntersectionObserver(entries => {
+            visible = entries.some(entry => entry.isIntersecting);
+            if (visible) load();
+            else if (!ownedUrl) {
+                clearTimeout(retryTimer);
+                controller?.abort();
+                attempts = 0;
+            }
+        });
+        if (observer) observer.observe(target.current);
+        else { visible = true; load(); }
+        return () => {
+            clearTimeout(retryTimer);
+            observer?.disconnect();
+            controller?.abort();
+            if (ownedUrl) URL.revokeObjectURL(ownedUrl);
+        };
+    }, [cover, content, identity, retryEpoch, storageKey]);
 
+    useEffect(() => {
+        if (!target.current || hoverPlayDelayMs === undefined) return;
+        return bindCanvasVideoHoverPreview(target.current,
+            signal => acquireCanvasVideoSource(storageKey, content, signal),
+            { delayMs: hoverPlayDelayMs, className: "pointer-events-none absolute inset-0 size-full object-cover" });
+    }, [content, hoverPlayDelayMs, storageKey]);
+
+    return <span ref={target} className={cn("relative block size-full overflow-hidden", className)} onPointerEnter={() => { if (!poster) setRetryEpoch(value => value + 1); }}>
+        {poster ? <CachedResourceImage src={poster} alt={alt} className="size-full" style={{ objectFit: "inherit", maxHeight: "inherit" }} loading="lazy" decoding="async" fallback={fallback} onError={() => setFailedCover(cover)} /> : fallback}
+    </span>;
+}
+
+export function AssetMediaPreview({ asset, alt, className = "", fallback = null, hoverPlayDelayMs }: AssetMediaPreviewProps) {
+    if (!asset) return fallback;
+    if (asset.kind === "video") return <AssetVideoCover asset={asset} alt={alt} className={className} fallback={fallback} hoverPlayDelayMs={hoverPlayDelayMs} />;
     const storageKey = asset.kind === "image" ? asset.data.storageKey : undefined;
     const imageUrl = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
     if (!imageUrl && !storageKey) return fallback;
