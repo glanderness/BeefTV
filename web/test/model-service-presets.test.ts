@@ -693,3 +693,85 @@ test("re-reading ComfyUI workflows updates changed capability and multimodal def
     expect(refreshedProfile?.capabilityConfig?.video?.operations).toContain("reference_to_video");
     expect(refreshedProfile?.capabilityConfig?.video?.references.maxAudios).toBe(3);
 });
+
+test("saved pre-2.2.0 AutoDL workflow profiles upgrade media bounds and operations while keeping user overrides", () => {
+    const workflows = [
+        {
+            id: "minimax_h3_b99_001",
+            label: "H3 文生视频",
+            providerId: "autodl-comfyui",
+            capability: "video" as const,
+            parameters: [
+                { name: "prompt", type: "string", required: true, mapping: "prompt" },
+                { name: "resolution", type: "string", mapping: "resolution", values: ["736p竖", "736p横"] },
+                { name: "images", type: "array", mapping: "images", min: 0, max: 0 },
+            ],
+            defaults: { resolution: "736p竖" },
+        },
+        {
+            id: "minimax_h3_image_audio_to_video",
+            label: "H3 图生视频音频同步",
+            providerId: "autodl-comfyui",
+            capability: "video" as const,
+            parameters: [
+                { name: "resolution", type: "string", mapping: "resolution", values: ["768p竖", "768p横"] },
+                { name: "images", type: "array", mapping: "images", max: 1 },
+                { name: "audios", type: "array", mapping: "audios", max: 3 },
+            ],
+            defaults: { resolution: "768p竖" },
+        },
+        {
+            id: "minimax_h3_zm_u24",
+            label: "H3 ZM U24",
+            providerId: "autodl-comfyui",
+            capability: "video" as const,
+            parameters: [
+                { name: "prompt", type: "string", required: true, mapping: "prompt" },
+                { name: "resolution", type: "string", mapping: "resolution", values: ["768p竖", "768p横"] },
+                { name: "images", type: "array", mapping: "images", max: 9 },
+            ],
+            defaults: { resolution: "768p竖" },
+        },
+    ];
+    const autodlProtocol: ModelProtocolDefinition = {
+        value: "autodl-comfyui",
+        label: "AutoDL",
+        capability: "video",
+        create: "POST /api/v1/comfyui/comfyui_workflow/{{model}}",
+        contentType: "application/json",
+        media: "plugin",
+        enabled: true,
+        authType: "header",
+        workflows,
+    };
+    const allProtocols = [...protocols, autodlProtocol];
+    const staleBase = defaultModelCapabilityConfig("autodl-comfyui", "minimax_h3_image_audio_to_video");
+    // Pre-2.2.0 saved AutoDL config: resolution-only (`ratios: []`), old default `maxImages: 9`, missing `maxAudios`/`reference_to_video`.
+    staleBase.video!.ratios = [];
+    staleBase.video!.defaultRatio = "";
+    staleBase.video!.operations = ["text_to_video", "image_to_video"];
+
+    const savedChannel = createModelChannel({
+        id: "autodl",
+        baseUrl: "https://autodl.art",
+        models: ["minimax_h3_b99_001", "minimax_h3_image_audio_to_video", "minimax_h3_zm_u24"],
+        modelProfiles: [
+            { model: "minimax_h3_b99_001", capability: "video", protocol: "autodl-comfyui", capabilityConfig: structuredClone(staleBase) },
+            { model: "minimax_h3_image_audio_to_video", capability: "video", protocol: "autodl-comfyui", capabilityConfig: structuredClone(staleBase) },
+            { model: "minimax_h3_zm_u24", capability: "video", protocol: "autodl-comfyui", capabilitySource: "user", capabilityConfig: structuredClone(staleBase) },
+        ],
+    });
+
+    const b99 = serviceModelProfile(savedChannel, { id: "minimax_h3_b99_001" }, allProtocols);
+    expect(b99.capabilityConfig?.video?.references.maxImages).toBe(0);
+    expect(b99.capabilityConfig?.video?.operations).toEqual(["text_to_video"]);
+
+    const imgAudio = serviceModelProfile(savedChannel, { id: "minimax_h3_image_audio_to_video" }, allProtocols);
+    expect(imgAudio.capabilityConfig?.video?.references.maxImages).toBe(1);
+    expect(imgAudio.capabilityConfig?.video?.references.maxAudios).toBe(3);
+    expect(imgAudio.capabilityConfig?.video?.operations).toEqual(["image_to_video", "reference_to_video"]);
+
+    const userOverride = serviceModelProfile(savedChannel, { id: "minimax_h3_zm_u24" }, allProtocols);
+    expect(userOverride.capabilitySource).toBe("user");
+    expect(userOverride.capabilityConfig?.video?.operations).toEqual(["text_to_video", "image_to_video"]);
+});

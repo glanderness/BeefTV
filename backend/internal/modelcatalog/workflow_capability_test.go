@@ -155,3 +155,117 @@ func TestWorkflowVideoCapabilityProjectionMatchesSharedFixture(t *testing.T) {
 		assertFixtureSubset(t, item.Name, item.Expected, actual)
 	}
 }
+
+func TestPublicCatalogFromLocalSnapshotUpgradesSavedWorkflowProfiles(t *testing.T) {
+	snapshot := []byte(`{
+		"channels": [{
+			"id": "autodl",
+			"name": "AutoDL",
+			"baseUrl": "https://autodl.art",
+			"models": ["minimax_h3_image_audio_to_video", "minimax_h3_zm_u24"],
+			"modelProfiles": [
+				{
+					"model": "minimax_h3_image_audio_to_video",
+					"capability": "video",
+					"protocol": "autodl-comfyui",
+					"capabilityConfig": {
+						"version": 1,
+						"video": {
+							"references": { "maxImages": 9, "maxAudios": 0 },
+							"ratios": [],
+							"defaultRatio": "",
+							"resolutions": ["768p竖"],
+							"defaultResolution": "768p竖",
+							"operations": ["text_to_video", "image_to_video"],
+							"defaultOperation": "text_to_video"
+						}
+					}
+				},
+				{
+					"model": "minimax_h3_zm_u24",
+					"capability": "video",
+					"protocol": "autodl-comfyui",
+					"capabilitySource": "user",
+					"capabilityConfig": {
+						"version": 1,
+						"video": {
+							"references": { "promptMaxChars": 0, "minImages": 0, "maxImages": 3, "maxImageBytes": 31457280, "maxVideos": 0, "maxVideoBytes": 0, "maxVideoDurationSeconds": 0, "maxAudios": 0, "maxAudioBytes": 0, "maxAudioDurationSeconds": 0 },
+							"duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+							"ratios": [],
+							"defaultRatio": "",
+							"resolutions": ["768p竖"],
+							"defaultResolution": "768p竖",
+							"generateAudio": { "supported": false, "default": false },
+							"watermark": { "supported": false, "default": false },
+							"operations": ["text_to_video", "image_to_video"],
+							"defaultOperation": "text_to_video"
+						}
+					}
+				}
+			]
+		}]
+	}`)
+
+	max1, max3 := 1, 3
+	lookup := func(providerID string, capability protocol.Capability, modelID string) (protocol.ManifestWorkflow, bool) {
+		if providerID != "autodl-comfyui" || capability != protocol.CapabilityVideo {
+			return protocol.ManifestWorkflow{}, false
+		}
+		if modelID == "minimax_h3_image_audio_to_video" {
+			return protocol.ManifestWorkflow{
+				ID:         "minimax_h3_image_audio_to_video",
+				ProviderID: "autodl-comfyui",
+				Capability: protocol.CapabilityVideo,
+				Parameters: []protocol.Parameter{
+					{Name: "resolution", Type: "string", Mapping: "resolution", Values: []string{"768p竖", "768p横"}},
+					{Name: "images", Type: "array", Mapping: "images", Max: &max1},
+					{Name: "audios", Type: "array", Mapping: "audios", Max: &max3},
+				},
+			}, true
+		}
+		return protocol.ManifestWorkflow{
+			ID:         "minimax_h3_zm_u24",
+			ProviderID: "autodl-comfyui",
+			Capability: protocol.CapabilityVideo,
+			Parameters: []protocol.Parameter{
+				{Name: "prompt", Type: "string", Required: true, Mapping: "prompt"},
+				{Name: "images", Type: "array", Mapping: "images", Max: &max3},
+			},
+		}, true
+	}
+
+	catalog, err := PublicCatalogFromLocalSnapshot(snapshot, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Channels) != 1 || len(catalog.Channels[0].Models) != 2 {
+		t.Fatalf("unexpected catalog = %#v", catalog)
+	}
+	findVideo := func(modelID string) map[string]any {
+		for _, m := range catalog.Channels[0].Models {
+			if m.ID == modelID {
+				return m.CapabilityConfig["video"].(map[string]any)
+			}
+		}
+		t.Fatalf("missing model %s", modelID)
+		return nil
+	}
+
+	upgraded := findVideo("minimax_h3_image_audio_to_video")
+	refs := upgraded["references"].(map[string]any)
+	if refs["maxImages"] != float64(1) || refs["maxAudios"] != float64(3) {
+		t.Fatalf("stale pre-2.2.0 profile not upgraded: refs=%#v", refs)
+	}
+	if ops, _ := upgraded["operations"].([]any); len(ops) != 2 || ops[0] != "image_to_video" || ops[1] != "reference_to_video" {
+		t.Fatalf("upgraded operations mismatch: %#v", upgraded["operations"])
+	}
+
+	userKept := findVideo("minimax_h3_zm_u24")
+	userRefs := userKept["references"].(map[string]any)
+	if userRefs["maxImages"] != float64(3) {
+		t.Fatalf("user custom maxImages altered: %#v", userRefs)
+	}
+	if ops, _ := userKept["operations"].([]any); len(ops) != 2 || ops[1] != "image_to_video" {
+		t.Fatalf("user custom operations altered: %#v", userKept["operations"])
+	}
+}

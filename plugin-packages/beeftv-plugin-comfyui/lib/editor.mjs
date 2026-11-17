@@ -311,6 +311,7 @@ export function convertEditorGraph(file, objectInfo) {
   const root = buildScope(file.nodes, file.links, defs, "", null, null, null, 0);
   const graph = {};
   const fixedSeeds = new Set();
+  const comboOptions = {};
 
   const emitScope = (scope) => {
     for (const node of scope.nodes.values()) {
@@ -325,6 +326,15 @@ export function convertEditorGraph(file, objectInfo) {
 
       const key = `${scope.prefix}${id}`;
       const api = { class_type: node.type, inputs: {}, ...(node.title ? { _meta: { title: node.title } } : {}) };
+      for (const { name, spec } of specEntries(objectInfo[node.type]?.input)) {
+        const type = spec[0];
+        const opts = specOptions(spec);
+        if (Array.isArray(type)) {
+          comboOptions[`${key}.${name}`] = type.map(String);
+        } else if (type === "COMBO" && Array.isArray(opts.options)) {
+          comboOptions[`${key}.${name}`] = opts.options.map(String);
+        }
+      }
       // 转成输入口的控件带 widget 标记、仍然有值，不算连线口。
       const connectionNames = new Set((node.inputs ?? []).filter((inp) => !inp.widget).map((inp) => inp.name));
 
@@ -374,7 +384,7 @@ export function convertEditorGraph(file, objectInfo) {
   }
 
   if (Object.keys(graph).length === 0) throw new ComfyConversionError("这个工作流里没有能执行的节点");
-  return { graph, fixedSeeds };
+  return { graph, fixedSeeds, comboOptions };
 }
 
 /** 界面格式里需要查节点目录的节点类型，用来一次说清缺哪些节点包。 */

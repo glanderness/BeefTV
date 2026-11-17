@@ -6,6 +6,7 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/pricing"
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
@@ -163,7 +164,11 @@ func (item LocalChannelModel) PublicPrices() (map[string]any, *pricing.Table) {
 
 // PublicCatalogFromLocalSnapshot projects a desktop provider snapshot into the
 // sanitized public catalog without leaking upstream URLs, headers or keys.
-func PublicCatalogFromLocalSnapshot(body []byte) (*CatalogResponse, error) {
+func PublicCatalogFromLocalSnapshot(body []byte, workflow ...WorkflowLookup) (*CatalogResponse, error) {
+	var workflowLookup WorkflowLookup
+	if len(workflow) > 0 {
+		workflowLookup = workflow[0]
+	}
 	var snapshot struct {
 		Channels []struct {
 			ID   string `json:"id"`
@@ -193,6 +198,15 @@ func PublicCatalogFromLocalSnapshot(body []byte) (*CatalogResponse, error) {
 		}
 		declared := item.HasDeclaredCapability()
 		capabilityConfig := item.CapabilityConfig
+		hasVersion := item.VideoCapabilitiesVersion != nil && strings.TrimSpace(*item.VideoCapabilitiesVersion) != ""
+		if item.Capability == "video" && strings.TrimSpace(item.CapabilitySource) != "user" && !hasVersion && workflowLookup != nil {
+			if wf, ok := workflowLookup(string(cm.Protocol), protocol.CapabilityVideo, item.Model); ok {
+				if projected := DefaultModelCapabilityConfigForModel(string(cm.Protocol), item.Model); projected != nil && projected.Video != nil {
+					applyProtocolWorkflowVideoCapability(projected.Video, wf)
+					capabilityConfig = projected
+				}
+			}
+		}
 		if capabilityConfig == nil {
 			capabilityConfig = DefaultModelCapabilityConfigForModel(string(cm.Protocol), item.Model)
 		}

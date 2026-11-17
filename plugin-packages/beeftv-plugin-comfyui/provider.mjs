@@ -2,7 +2,6 @@
 // 提交时读出工作流、填进提示词和素材、换掉种子，交给 ComfyUI 排队；查询时看 /history，
 // 跑完后把输出文件的 /view 地址交给 BeefTV 下载。
 
-import { ComfyConversionError } from "./lib/editor.mjs";
 import {
   applyWorkflowParameters,
   inputTargets,
@@ -85,25 +84,15 @@ async function objectInfo(ctx, force = false) {
 
 async function prepare(ctx, raw) {
   if (!needsObjectInfo(raw)) return prepareWorkflow(raw, null);
-  let refreshed = false;
   let info = await objectInfo(ctx);
   let missing = missingNodeTypes(raw, info);
   if (missing.length > 0) {
     // 用户刚装好节点包再试时，缓存里还是旧目录。
     info = await objectInfo(ctx, true);
-    refreshed = true;
     missing = missingNodeTypes(raw, info);
   }
   if (missing.length > 0) throw new Error(`这台 ComfyUI 缺少节点：${missing.join("、")}。请先装好对应的节点包`);
-  try {
-    return prepareWorkflow(raw, info);
-  } catch (error) {
-    if (error instanceof ComfyConversionError && !refreshed) {
-      info = await objectInfo(ctx, true);
-      return prepareWorkflow(raw, info);
-    }
-    throw error;
-  }
+  return prepareWorkflow(raw, info);
 }
 
 function mediaBytes(reference) {
@@ -152,7 +141,13 @@ async function upload(ctx, reference, name) {
   form.append("subfolder", "beeftv");
   form.append("overwrite", "true");
   const saved = await comfyJSON(ctx, "/upload/image", { method: "POST", body: form });
-  return saved.subfolder ? `${saved.subfolder}/${saved.name}` : saved.name;
+  const annotated = saved.subfolder ? `${saved.subfolder}/${saved.name}` : saved.name;
+  const viewQuery = new URLSearchParams({
+    filename: saved.name,
+    subfolder: saved.subfolder ?? "",
+    type: saved.type ?? "input",
+  });
+  return { annotated, url: `${baseUrl(ctx)}/api/view?${viewQuery}` };
 }
 
 const KIND_LABEL = { image: "图片", video: "视频", audio: "音频" };
@@ -188,7 +183,8 @@ async function preparePrompt(request, ctx) {
     }
     // 给的素材比位置少时，其余位置用工作流里原来选的文件。
     for (const [index, reference] of supplied[kind].entries()) {
-      setInput(prepared.graph, slots[index], await upload(ctx, reference, `${key}-${kind}-${index + 1}`));
+      const uploaded = await upload(ctx, reference, `${key}-${kind}-${index + 1}`);
+      setInput(prepared.graph, slots[index], slots[index].mode === "url" ? uploaded.url : uploaded.annotated);
     }
   }
 

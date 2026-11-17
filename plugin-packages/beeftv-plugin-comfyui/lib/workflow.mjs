@@ -3,17 +3,19 @@
 
 import { convertEditorGraph, editorNodeTypes, extractAppMode, isEditorFormat } from "./editor.mjs";
 
-// 读素材的节点，以及存文件名的控件。
+// 读素材的节点，以及存文件名的控件和路径传递模式。
+// annotated: ComfyUI /upload/image 返回相对于 input 目录的 `beeftv/...`；
+// url: VHS_LoadVideoPath / VHS_LoadAudio 验证真实文件路径或 HTTP URL，传 `/api/view?...&type=input`。
 const LOADERS = {
-  LoadImage: { kind: "image", widget: "image" },
-  LoadImageMask: { kind: "image", widget: "image" },
-  LoadImageOutput: { kind: "image", widget: "image" },
-  LoadVideo: { kind: "video", widget: "file" },
-  VHS_LoadVideo: { kind: "video", widget: "video" },
-  VHS_LoadVideoPath: { kind: "video", widget: "video" },
-  LoadAudio: { kind: "audio", widget: "audio" },
-  VHS_LoadAudio: { kind: "audio", widget: "audio_file" },
-  VHS_LoadAudioUpload: { kind: "audio", widget: "audio" },
+  LoadImage: { kind: "image", widget: "image", mode: "annotated" },
+  LoadImageMask: { kind: "image", widget: "image", mode: "annotated" },
+  LoadImageOutput: { kind: "image", widget: "image", mode: "annotated" },
+  LoadVideo: { kind: "video", widget: "file", mode: "annotated" },
+  VHS_LoadVideo: { kind: "video", widget: "video", mode: "annotated" },
+  VHS_LoadVideoPath: { kind: "video", widget: "video", mode: "url" },
+  LoadAudio: { kind: "audio", widget: "audio", mode: "annotated" },
+  VHS_LoadAudio: { kind: "audio", widget: "audio_file", mode: "url" },
+  VHS_LoadAudioUpload: { kind: "audio", widget: "audio", mode: "annotated" },
 };
 
 // 产出结果的节点。
@@ -105,8 +107,8 @@ export function needsObjectInfo(raw) {
 /** 读出可执行的图、App Mode 设置和作者固定住的种子。 */
 export function prepareWorkflow(raw, objectInfo) {
   if (isEditorFormat(raw)) {
-    const { graph, fixedSeeds } = convertEditorGraph(raw, objectInfo ?? {});
-    return { graph, appMode: extractAppMode(raw, Object.keys(graph)), fixedSeeds };
+    const { graph, fixedSeeds, comboOptions } = convertEditorGraph(raw, objectInfo ?? {});
+    return { graph, appMode: extractAppMode(raw, Object.keys(graph)), fixedSeeds, comboOptions };
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("工作流文件不是 ComfyUI 的格式");
   const graph = {};
@@ -116,7 +118,7 @@ export function prepareWorkflow(raw, objectInfo) {
     }
   }
   if (Object.keys(graph).length === 0) throw new Error("工作流文件里没有能执行的节点");
-  return { graph, appMode: null, fixedSeeds: new Set() };
+  return { graph, appMode: null, fixedSeeds: new Set(), comboOptions: {} };
 }
 
 // 没设 App Mode 时，正向提示词是采样器 positive 口连着的那个文本节点。
@@ -173,7 +175,7 @@ export function inputTargets(prepared) {
       if (!node) continue;
       const loader = LOADERS[node.class_type];
       if (loader && loader.widget === input.widget) {
-        media[loader.kind].push({ nodeId: input.nodeId, widget: input.widget });
+        media[loader.kind].push({ nodeId: input.nodeId, widget: input.widget, mode: loader.mode ?? "annotated" });
       } else if (!prompt && typeof node.inputs[input.widget] === "string" && isPromptWidget(node, input.widget)) {
         prompt = { nodeId: input.nodeId, widget: input.widget, alsoBind: input.alsoBind ?? [] };
       }
@@ -182,7 +184,9 @@ export function inputTargets(prepared) {
   }
   for (const id of Object.keys(graph).sort(byNodeId)) {
     const loader = LOADERS[graph[id].class_type];
-    if (loader && loader.widget in graph[id].inputs) media[loader.kind].push({ nodeId: id, widget: loader.widget });
+    if (loader && loader.widget in graph[id].inputs) {
+      media[loader.kind].push({ nodeId: id, widget: loader.widget, mode: loader.mode ?? "annotated" });
+    }
   }
   return { prompt: positivePromptTarget(graph), media };
 }
@@ -212,8 +216,8 @@ export function setInput(graph, target, value) {
   }
 }
 
-const SIZE_GENERATOR_NODE = /^(Empty.*Latent|WanImageToVideo|WanFirstLastFrameToVideo|WanFunInpaintToVideo|HunyuanImageToVideo|LTXVImgToVideo)/i;
-const VIDEO_FRAME_NODE = /LatentVideo|ImageToVideo|ImgToVideo|VideoToVideo/i;
+const SIZE_GENERATOR_NODE = /^(Empty.*Latent|Wan\d*.*(?:ToVideo|Latent)|Hunyuan.*(?:ToVideo|Latent)|LTXV.*(?:ToVideo|Latent))/i;
+const VIDEO_FRAME_NODE = /^(Empty.*LatentVideo|Wan\d*.*(?:ToVideo|Latent)|Hunyuan.*(?:ToVideo|Latent)|LTXV.*(?:ToVideo|Latent)|.*(?:ImageToVideo|ImgToVideo|VideoToVideo))/i;
 
 function roundToStep(value, step) {
   return Math.max(step, Math.round(value / step) * step);
@@ -288,13 +292,18 @@ export function applyWorkflowParameters(prepared, request) {
   const hasDuration = Number.isFinite(duration) && duration > 0;
   if (!ratioInfo && !resInfo && !hasDuration) return;
 
-  const { graph, appMode } = prepared;
+  const { graph, appMode, comboOptions } = prepared;
+  const graphClasses = Object.values(graph).map((node) => node?.class_type);
+  const inferredKind = ["video", "image", "audio"].find((kind) => graphClasses.some((cls) => OUTPUTS[cls] === kind)) ?? "";
+  const capability = String(request?.capability || inferredKind).trim().toLowerCase();
+  const isVideo = capability === "video";
+  const appModeWidgets = new Set((appMode?.inputs ?? []).map((item) => `${item.nodeId}.${item.widget}`));
   const appModeSizeNodes = new Set(
     (appMode?.inputs ?? [])
       .filter((item) => item.widget === "width" || item.widget === "height")
       .map((item) => item.nodeId),
   );
-  const workflowFps = hasDuration ? detectWorkflowFps(graph) : 24;
+  const workflowFps = isVideo && hasDuration ? detectWorkflowFps(graph) : 24;
 
   for (const [id, node] of Object.entries(graph)) {
     const inputs = node.inputs ?? {};
@@ -302,13 +311,21 @@ export function applyWorkflowParameters(prepared, request) {
 
     if (ratioInfo) {
       for (const key of ["aspect_ratio", "ratio"]) {
-        if (typeof inputs[key] === "string" && /^(\d+(?:\.\d+)?:\d+(?:\.\d+)?|auto|adaptive)$/i.test(inputs[key].trim())) {
+        if (!isVideo && !appModeWidgets.has(`${id}.${key}`)) continue;
+        if (typeof inputs[key] !== "string") continue;
+        const allowed = comboOptions?.[`${id}.${key}`];
+        if (Array.isArray(allowed) && allowed.length > 0) {
+          const matched = allowed.find((opt) => opt.trim().toLowerCase() === ratioInfo.text.toLowerCase());
+          if (matched !== undefined) inputs[key] = matched;
+          continue;
+        }
+        if (/^(\d+(?:\.\d+)?:\d+(?:\.\d+)?|auto|adaptive)$/i.test(inputs[key].trim())) {
           inputs[key] = ratioInfo.text;
         }
       }
     }
 
-    if ((ratioInfo || resInfo) && (SIZE_GENERATOR_NODE.test(classType) || appModeSizeNodes.has(id)) && typeof inputs.width === "number" && typeof inputs.height === "number") {
+    if ((ratioInfo || resInfo) && ((isVideo && SIZE_GENERATOR_NODE.test(classType)) || appModeSizeNodes.has(id)) && typeof inputs.width === "number" && typeof inputs.height === "number") {
       const step = /LTX/i.test(classType) ? 32 : 16;
       if (resInfo?.exactW && resInfo?.exactH) {
         inputs.width = roundToStep(resInfo.exactW, step);
@@ -331,8 +348,8 @@ export function applyWorkflowParameters(prepared, request) {
       }
     }
 
-    if (hasDuration) {
-      for (const key of ["seconds", "duration", "video_duration", "audio_duration"]) {
+    if (isVideo && hasDuration && !(classType in LOADERS)) {
+      for (const key of ["seconds", "duration", "video_duration"]) {
         if (typeof inputs[key] === "number" && Number.isFinite(inputs[key])) {
           inputs[key] = duration;
         }

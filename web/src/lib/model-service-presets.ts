@@ -167,9 +167,13 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
         const definition = modelProtocolDefinition(existing.protocol, protocols);
         const usable = definition && definition.enabled !== false ? definition : undefined;
         const workflow = usable?.workflows?.find((w) => w.id === item.id && w.capability === "video");
-        const repairedCapabilityConfig =
-            workflow && !hasUserModelCapability(existing) && existing.capabilityConfig?.video?.ratios?.length
+        const projectedWorkflowConfig =
+            workflow && !hasUserModelCapability(existing)
                 ? defaultModelCapabilityConfig(usable!.value, item.id, protocols)
+                : undefined;
+        const repairedCapabilityConfig =
+            projectedWorkflowConfig && JSON.stringify(projectedWorkflowConfig) !== JSON.stringify(existing.capabilityConfig)
+                ? projectedWorkflowConfig
                 : existing.capabilityConfig;
         // 旧 ID 落盘时换成现在的 ID，下次打开就是新 ID。
         if (usable && (usable.value !== existing.protocol || usable.authType !== existing.authType || repairedCapabilityConfig !== existing.capabilityConfig)) {
