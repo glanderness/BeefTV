@@ -167,8 +167,13 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
         const definition = modelProtocolDefinition(existing.protocol, protocols);
         const usable = definition && definition.enabled !== false ? definition : undefined;
         const workflow = usable?.workflows?.find((w) => w.id === item.id && w.capability === "video");
+        const hasVersionedCapability = Boolean(
+            existing.videoCapabilitiesVersion?.trim()
+            || existing.imageCapabilitiesVersion?.trim()
+            || existing.mediaCapabilitiesVersion?.trim(),
+        );
         const projectedWorkflowConfig =
-            workflow && !hasUserModelCapability(existing)
+            workflow && !hasUserModelCapability(existing) && !hasVersionedCapability
                 ? defaultModelCapabilityConfig(usable!.value, item.id, protocols)
                 : undefined;
         const repairedCapabilityConfig =

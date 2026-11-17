@@ -326,15 +326,7 @@ export function convertEditorGraph(file, objectInfo) {
 
       const key = `${scope.prefix}${id}`;
       const api = { class_type: node.type, inputs: {}, ...(node.title ? { _meta: { title: node.title } } : {}) };
-      for (const { name, spec } of specEntries(objectInfo[node.type]?.input)) {
-        const type = spec[0];
-        const opts = specOptions(spec);
-        if (Array.isArray(type)) {
-          comboOptions[`${key}.${name}`] = type.map(String);
-        } else if (type === "COMBO" && Array.isArray(opts.options)) {
-          comboOptions[`${key}.${name}`] = opts.options.map(String);
-        }
-      }
+      collectNodeComboOptions(node.type, key, objectInfo, comboOptions);
       // 转成输入口的控件带 widget 标记、仍然有值，不算连线口。
       const connectionNames = new Set((node.inputs ?? []).filter((inp) => !inp.widget).map((inp) => inp.name));
 
@@ -385,6 +377,31 @@ export function convertEditorGraph(file, objectInfo) {
 
   if (Object.keys(graph).length === 0) throw new ComfyConversionError("这个工作流里没有能执行的节点");
   return { graph, fixedSeeds, comboOptions };
+}
+
+function collectNodeComboOptions(classType, keyPrefix, objectInfo, comboOptions) {
+  for (const { name, spec } of specEntries(objectInfo?.[classType]?.input)) {
+    const type = spec[0];
+    const opts = specOptions(spec);
+    if (Array.isArray(type)) {
+      comboOptions[`${keyPrefix}.${name}`] = type.map(String);
+    } else if (type === "COMBO" && Array.isArray(opts.options)) {
+      comboOptions[`${keyPrefix}.${name}`] = opts.options.map(String);
+    }
+  }
+}
+
+export function collectGraphComboOptions(graph, objectInfo) {
+  const comboOptions = {};
+  if (!graph || typeof graph !== "object" || !objectInfo || typeof objectInfo !== "object") {
+    return comboOptions;
+  }
+  for (const [id, node] of Object.entries(graph)) {
+    const classType = String(node?.class_type ?? "").trim();
+    if (!classType || !objectInfo[classType]?.input) continue;
+    collectNodeComboOptions(classType, id, objectInfo, comboOptions);
+  }
+  return comboOptions;
 }
 
 /** 界面格式里需要查节点目录的节点类型，用来一次说清缺哪些节点包。 */

@@ -340,6 +340,7 @@ describe("ComfyUI provider against a ComfyUI server", () => {
             Wan22ImageToVideoLatent: { input: { required: { width: ["INT", { default: 832 }], height: ["INT", { default: 480 }], length: ["INT", { default: 81 }], aspect_ratio: [["16:9", "9:16"], { default: "16:9" }] } } },
             WanFirstLastFrameToVideo: { input: { required: { width: ["INT", { default: 832 }], height: ["INT", { default: 480 }], length: ["INT", { default: 81 }] } } },
             SaveVideo: { input: { required: { video: ["VIDEO"], filename_prefix: ["STRING", { default: "vid" }] } } },
+            "CR Aspect Ratio": { input: { required: { aspect_ratio: [["16:9", "9:16", "1:1"], { default: "16:9" }] } } },
         };
         const submittedPrompts: Array<Record<string, { inputs: Record<string, unknown> }>> = [];
         const testWorkflows: Record<string, unknown> = {
@@ -351,6 +352,19 @@ describe("ComfyUI provider against a ComfyUI server", () => {
                 ],
                 links: [],
                 extra: { linearData: { inputs: [["root:5:width", "width"], ["root:5:height", "height"]], outputs: [9] } },
+            },
+            "img-app-ratio.app.json": {
+                nodes: [
+                    { id: 3, type: "CR Aspect Ratio", mode: 0, inputs: [], widgets_values: ["16:9"] },
+                    { id: 5, type: "EmptyLatentImage", mode: 0, inputs: [], widgets_values: [512, 512, 1] },
+                    { id: 9, type: "SaveImage", mode: 0, inputs: [{ name: "images", link: 1 }], widgets_values: ["out"] },
+                ],
+                links: [],
+                extra: { linearData: { inputs: [["root:3:aspect_ratio", "aspect_ratio"]], outputs: [9] } },
+            },
+            "api-wan-combo.json": {
+                "3": { class_type: "Wan22ImageToVideoLatent", inputs: { width: 832, height: 480, length: 81, aspect_ratio: "16:9" } },
+                "5": { class_type: "SaveVideo", inputs: { video: ["3", 0], filename_prefix: "vid" } },
             },
             "vhs-path-wan.json": {
                 nodes: [
@@ -409,6 +423,7 @@ describe("ComfyUI provider against a ComfyUI server", () => {
             expect(submittedPrompts[2]["2"].inputs.audio_file).toBe(`http://127.0.0.1:${localServer.port}/api/view?filename=t-vhs-audio-1.wav&subfolder=beeftv&type=input`);
             expect(submittedPrompts[2]["2"].inputs.duration).toBe(0);
             expect(submittedPrompts[2]["3"].inputs.aspect_ratio).toBe("16:9");
+            expect(submittedPrompts[2]["3"].inputs.width).toBe(1280);
             expect(submittedPrompts[2]["3"].inputs.height).toBe(720);
             expect(submittedPrompts[2]["3"].inputs.length).toBe(97);
             expect(submittedPrompts[2]["4"].inputs.height).toBe(720);
@@ -422,6 +437,24 @@ describe("ComfyUI provider against a ComfyUI server", () => {
             expect(submittedPrompts[3]["3"].inputs.aspect_ratio).toBe("9:16");
             expect(submittedPrompts[3]["3"].inputs.width).toBe(720);
             expect(submittedPrompts[3]["3"].inputs.height).toBe(1280);
+
+            // API-format workflows also inspect objectInfo combo options and keep width/height consistent with kept ratio.
+            await provider.submit(
+                { model: "api-wan-combo.json", capability: "video", aspectRatio: "21:9", resolution: "720p", duration: 6, extra: { idempotencyKey: "t-api-combo" } },
+                localCtx,
+            );
+            expect(submittedPrompts[4]["3"].inputs.aspect_ratio).toBe("16:9");
+            expect(submittedPrompts[4]["3"].inputs.width).toBe(1280);
+            expect(submittedPrompts[4]["3"].inputs.height).toBe(720);
+
+            // Image workflow binding only aspect_ratio in App Mode opts EmptyLatentImage into 9:16 1k resizing.
+            await provider.submit(
+                { model: "img-app-ratio.app.json", capability: "image", aspectRatio: "9:16", resolution: "1k", extra: { idempotencyKey: "t-img-ratio" } },
+                localCtx,
+            );
+            expect(submittedPrompts[5]["3"].inputs.aspect_ratio).toBe("9:16");
+            expect(submittedPrompts[5]["5"].inputs.width).toBe(1088);
+            expect(submittedPrompts[5]["5"].inputs.height).toBe(1920);
         } finally {
             localServer.stop(true);
         }

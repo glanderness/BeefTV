@@ -1,7 +1,7 @@
 // 把一份 ComfyUI 工作流变成这一次生成要提交的图：找出提示词和素材该填到哪里、
 // 换掉种子、记下要取哪些输出。节点分类表参考 Node Banana 的 src/lib/comfy/graph.ts（MIT）。
 
-import { convertEditorGraph, editorNodeTypes, extractAppMode, isEditorFormat } from "./editor.mjs";
+import { collectGraphComboOptions, convertEditorGraph, editorNodeTypes, extractAppMode, isEditorFormat } from "./editor.mjs";
 
 // 读素材的节点，以及存文件名的控件和路径传递模式。
 // annotated: ComfyUI /upload/image 返回相对于 input 目录的 `beeftv/...`；
@@ -118,7 +118,7 @@ export function prepareWorkflow(raw, objectInfo) {
     }
   }
   if (Object.keys(graph).length === 0) throw new Error("工作流文件里没有能执行的节点");
-  return { graph, appMode: null, fixedSeeds: new Set(), comboOptions: {} };
+  return { graph, appMode: null, fixedSeeds: new Set(), comboOptions: objectInfo ? collectGraphComboOptions(graph, objectInfo) : {} };
 }
 
 // 没设 App Mode 时，正向提示词是采样器 positive 口连着的那个文本节点。
@@ -303,48 +303,83 @@ export function applyWorkflowParameters(prepared, request) {
       .filter((item) => item.widget === "width" || item.widget === "height")
       .map((item) => item.nodeId),
   );
+  const appModeRatioNodes = new Set(
+    (appMode?.inputs ?? [])
+      .filter((item) => item.widget === "aspect_ratio" || item.widget === "ratio")
+      .map((item) => item.nodeId),
+  );
+  const hasAppModeRatioOptIn = appModeRatioNodes.size > 0;
   const workflowFps = isVideo && hasDuration ? detectWorkflowFps(graph) : 24;
 
-  for (const [id, node] of Object.entries(graph)) {
-    const inputs = node.inputs ?? {};
-    const classType = String(node.class_type ?? "");
-
-    if (ratioInfo) {
+  // 先处理各节点的比例下拉约束，再统一计算潜空间宽高，避免节点顺序影响比例一致性。
+  const keptNodeRatio = new Map();
+  let anyRatioAccepted = false;
+  let anyRatioRejected = false;
+  let workflowRejectedRatio;
+  if (ratioInfo) {
+    for (const [id, node] of Object.entries(graph)) {
+      const inputs = node.inputs ?? {};
       for (const key of ["aspect_ratio", "ratio"]) {
         if (!isVideo && !appModeWidgets.has(`${id}.${key}`)) continue;
         if (typeof inputs[key] !== "string") continue;
         const allowed = comboOptions?.[`${id}.${key}`];
         if (Array.isArray(allowed) && allowed.length > 0) {
           const matched = allowed.find((opt) => opt.trim().toLowerCase() === ratioInfo.text.toLowerCase());
-          if (matched !== undefined) inputs[key] = matched;
+          if (matched !== undefined) {
+            inputs[key] = matched;
+            anyRatioAccepted = true;
+          } else {
+            const kept = parseAspectRatio(inputs[key].trim())?.ratio ?? null;
+            keptNodeRatio.set(id, kept);
+            if (!anyRatioRejected) {
+              anyRatioRejected = true;
+              workflowRejectedRatio = kept;
+            }
+          }
           continue;
         }
         if (/^(\d+(?:\.\d+)?:\d+(?:\.\d+)?|auto|adaptive)$/i.test(inputs[key].trim())) {
           inputs[key] = ratioInfo.text;
+          anyRatioAccepted = true;
         }
       }
     }
+  }
 
-    if ((ratioInfo || resInfo) && ((isVideo && SIZE_GENERATOR_NODE.test(classType)) || appModeSizeNodes.has(id)) && typeof inputs.width === "number" && typeof inputs.height === "number") {
+  for (const [id, node] of Object.entries(graph)) {
+    const inputs = node.inputs ?? {};
+    const classType = String(node.class_type ?? "");
+    const shouldResizeLatent =
+      (isVideo && SIZE_GENERATOR_NODE.test(classType)) ||
+      appModeSizeNodes.has(id) ||
+      (hasAppModeRatioOptIn && SIZE_GENERATOR_NODE.test(classType)) ||
+      appModeRatioNodes.has(id);
+
+    if ((ratioInfo || resInfo) && shouldResizeLatent && typeof inputs.width === "number" && typeof inputs.height === "number") {
+      const keptOverride = keptNodeRatio.has(id)
+        ? keptNodeRatio.get(id)
+        : (anyRatioRejected && !anyRatioAccepted ? workflowRejectedRatio : undefined);
+      const ratioRejected = keptOverride !== undefined;
+      const fallbackRatio = inputs.width / Math.max(1, inputs.height);
+      const effectiveRatio = ratioRejected ? (keptOverride ?? fallbackRatio) : (ratioInfo?.ratio ?? fallbackRatio);
       const step = /LTX/i.test(classType) ? 32 : 16;
-      if (resInfo?.exactW && resInfo?.exactH) {
-        inputs.width = roundToStep(resInfo.exactW, step);
-        inputs.height = roundToStep(resInfo.exactH, step);
-      } else {
-        const targetRatio = ratioInfo?.ratio ?? inputs.width / Math.max(1, inputs.height);
-        if (resInfo?.shortSide) {
-          if (targetRatio >= 1) {
-            inputs.height = roundToStep(resInfo.shortSide, step);
-            inputs.width = roundToStep(resInfo.shortSide * targetRatio, step);
-          } else {
-            inputs.width = roundToStep(resInfo.shortSide, step);
-            inputs.height = roundToStep(resInfo.shortSide / targetRatio, step);
-          }
-        } else if (ratioInfo) {
-          const area = Math.max(step * step, inputs.width * inputs.height);
-          inputs.width = roundToStep(Math.sqrt(area * targetRatio), step);
-          inputs.height = roundToStep(Math.sqrt(area / targetRatio), step);
+      const nodeResInfo = parseResolutionTarget(resRaw, effectiveRatio);
+      const shortSide = nodeResInfo?.shortSide ?? (ratioRejected && nodeResInfo?.exactW && nodeResInfo?.exactH ? Math.min(nodeResInfo.exactW, nodeResInfo.exactH) : null);
+      if (!ratioRejected && nodeResInfo?.exactW && nodeResInfo?.exactH) {
+        inputs.width = roundToStep(nodeResInfo.exactW, step);
+        inputs.height = roundToStep(nodeResInfo.exactH, step);
+      } else if (shortSide) {
+        if (effectiveRatio >= 1) {
+          inputs.height = roundToStep(shortSide, step);
+          inputs.width = roundToStep(shortSide * effectiveRatio, step);
+        } else {
+          inputs.width = roundToStep(shortSide, step);
+          inputs.height = roundToStep(shortSide / effectiveRatio, step);
         }
+      } else if (ratioInfo && !ratioRejected) {
+        const area = Math.max(step * step, inputs.width * inputs.height);
+        inputs.width = roundToStep(Math.sqrt(area * effectiveRatio), step);
+        inputs.height = roundToStep(Math.sqrt(area / effectiveRatio), step);
       }
     }
 

@@ -83,7 +83,10 @@ async function objectInfo(ctx, force = false) {
 }
 
 async function prepare(ctx, raw) {
-  if (!needsObjectInfo(raw)) return prepareWorkflow(raw, null);
+  if (!needsObjectInfo(raw)) {
+    const info = await objectInfo(ctx).catch(() => null);
+    return prepareWorkflow(raw, info);
+  }
   let info = await objectInfo(ctx);
   let missing = missingNodeTypes(raw, info);
   if (missing.length > 0) {

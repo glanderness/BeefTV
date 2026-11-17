@@ -774,4 +774,26 @@ test("saved pre-2.2.0 AutoDL workflow profiles upgrade media bounds and operatio
     const userOverride = serviceModelProfile(savedChannel, { id: "minimax_h3_zm_u24" }, allProtocols);
     expect(userOverride.capabilitySource).toBe("user");
     expect(userOverride.capabilityConfig?.video?.operations).toEqual(["text_to_video", "image_to_video"]);
+
+    const serverOwnedBase = defaultModelCapabilityConfig("autodl-comfyui", "minimax_h3_image_audio_to_video");
+    serverOwnedBase.video!.ratios = ["16:9", "9:16"];
+    serverOwnedBase.video!.defaultRatio = "16:9";
+    serverOwnedBase.video!.operations = ["text_to_video", "reference_to_video"];
+    const serverOwnedChannel = createModelChannel({
+        id: "autodl-server-owned",
+        baseUrl: "https://autodl.art",
+        models: ["minimax_h3_zm_u24"],
+        modelProfiles: [
+            {
+                model: "minimax_h3_zm_u24",
+                capability: "video",
+                protocol: "autodl-comfyui",
+                videoCapabilitiesVersion: "gw-v1",
+                capabilityConfig: structuredClone(serverOwnedBase),
+            },
+        ],
+    });
+    const serverOwned = serviceModelProfile(serverOwnedChannel, { id: "minimax_h3_zm_u24" }, allProtocols);
+    expect(serverOwned.videoCapabilitiesVersion).toBe("gw-v1");
+    expect(serverOwned.capabilityConfig).toEqual(serverOwnedBase);
 });
