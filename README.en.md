@@ -43,11 +43,11 @@
 
 ## Recent updates
 
+- **[v2.3.1](https://github.com/glanderness/BeefTV/releases/tag/v2.3.1)** — Restore one-click channel setup compatibility for third-party desktop plugins, support live updates for built-in plugins and partner channels alongside new LL2 models, add the single-character replacement workflow, direct and batch storyboard asset binding, video-to-audio extraction, MCP call history, and prompt preset preferences, and ship storage migration rollback, domestic depth-runtime mirrors, and bundled macOS FFmpeg/ffprobe tools with corresponding open-source notices.
 - **[v2.3.0](https://github.com/glanderness/BeefTV/releases/tag/v2.3.0)** — Move four community plugins to on-demand marketplace installation and update ComfyUI and AutoDL workflow support, add stacked image generation history with side-by-side comparison and details, add video smart erase and fixed reference slot ordering, refine failure source navigation and retry confirmation, and improve desktop startup resilience and multi-video canvas zoom smoothness.
 - **[v2.2.5](https://github.com/glanderness/BeefTV/releases/tag/v2.2.5)** — Fix canvas uploads reverting to uploading overlays and replaced nodes being overwritten by stale tasks, fix desktop resource thumbnails, standalone storyboard generation, and batch download numbering, upgrade native video frame extraction and audio separation, and lift assistant skill size and count limits with paged line-by-line long-document reading.
 - **[v2.2.4](https://github.com/glanderness/BeefTV/releases/tag/v2.2.4)** — Fix Eagle library previews and downloads on desktop, support prefixless custom model URLs and editing/deleting manual models, and fix prompt backspace editing, asset library pagination counts, and local video previews in generation history.
 - **[v2.2.3](https://github.com/glanderness/BeefTV/releases/tag/v2.2.3)** — Add Seedream 5.5 image generation and fine-grained layer splitting, improve automatic first/last frame assignment and reference checks, fix upscale and subtitle-removal retry states and diagnostics, and add Yinsheng Yunshu Yisuan branding.
-- **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — Add live balances and online top-ups, refine generation cost estimates, and upgrade DeepSeek Harness collaboration and canvas video processing.
 
 [All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
 

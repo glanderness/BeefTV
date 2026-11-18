@@ -43,11 +43,11 @@
 
 ## 最近更新
 
+- **[v2.3.1](https://github.com/glanderness/BeefTV/releases/tag/v2.3.1)** — 修复桌面端第三方渠道插件「一键配置」兼容问题，支持官方内置插件与合作伙伴渠道在线热更新及 LL2 新模型，新增单人物替换工作流、分镜素材直连与多选批量关联、视频提取音频、MCP 调用记录与提示词预设偏好设置，补齐存储迁移异常回退、深度组件国内镜像加速以及 macOS 随包原生媒体工具与对应开源源码声明。
 - **[v2.3.0](https://github.com/glanderness/BeefTV/releases/tag/v2.3.0)** — 四款社区插件改为在插件市场按需安装并更新 ComfyUI 与 AutoDL 工作流支持，新增画布图片抽卡历史叠卡对比与生成信息栏、视频智能擦除与固定参考槽位顺序、生成报错定位与重试确认，提升桌面启动连接韧性与多视频画布缩放流畅度。
 - **[v2.2.5](https://github.com/glanderness/BeefTV/releases/tag/v2.2.5)** — 修复画布上传完成后偶发回退「上传中」与替换素材被旧任务覆盖，修复桌面端资源缩略图、独立分镜生成与批量下载编号，升级视频原生截帧与音视频分离，放开内置助手选用大型技能的大小与数量限制并支持长文档按行分段读取。
 - **[v2.2.4](https://github.com/glanderness/BeefTV/releases/tag/v2.2.4)** — 修复桌面端 Eagle 素材库预览与导入下载，支持自定义模型服务无 `/v1` 前缀地址与手动模型改删，修复提示词长按退格、个人资产库分页计数与生成历史本地视频预览。
 - **[v2.2.3](https://github.com/glanderness/BeefTV/releases/tag/v2.2.3)** — 接入 Seedream 5.5 图片生成与细粒度图层拆分，优化画布视频首尾帧自动识别与参考预检，修复超分与去字幕终态重试及诊断耗时显示，并补充银盛云枢壹算品牌图标与简介。
-- **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — 上线实时余额与在线充值，完善生成费用预估，升级 DeepSeek Harness 协同与画布视频处理。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
