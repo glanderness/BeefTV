@@ -23,17 +23,17 @@ function fixture(t, files) {
   return { run, read: name => readFileSync(join(root, name), 'utf8') };
 }
 
-test('hosted Ubuntu mirror lists stop selecting Azure while preserving repository metadata', t => {
+test('hosted Ubuntu mirror lists stop selecting Azure and EC2 mirrors while preserving repository metadata', t => {
   const sources = 'Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble noble-updates noble-security\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n';
   const f = fixture(t, {
     'sources.list.d/ubuntu.sources': sources,
-    'apt-mirrors.txt': 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\n',
-    'apt-mirrors-security.txt': 'https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n',
+    'apt-mirrors.txt': 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://archive.ubuntu.com/ubuntu/\tpriority:3\n',
+    'apt-mirrors-security.txt': 'https://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://us-west-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:2\n',
   });
   f.run();
   assert.equal(f.read('sources.list.d/ubuntu.sources'), sources);
-  assert.equal(f.read('apt-mirrors.txt'), 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\n');
-  assert.equal(f.read('apt-mirrors-security.txt'), 'https://archive.ubuntu.com/ubuntu/\tpriority:1\n');
+  assert.equal(f.read('apt-mirrors.txt'), 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://archive.ubuntu.com/ubuntu/\tpriority:3\n');
+  assert.equal(f.read('apt-mirrors-security.txt'), 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\n');
   const first = f.read('apt-mirrors.txt');
   f.run();
   assert.equal(f.read('apt-mirrors.txt'), first);
@@ -41,15 +41,15 @@ test('hosted Ubuntu mirror lists stop selecting Azure while preserving repositor
   assert.match(f.read('apt.conf.d/80beeftv-network'), /Acquire::https::Timeout "30";/);
 });
 
-test('direct list and deb822 sources switch only the exact Azure host', t => {
-  const unrelated = 'deb https://azureXarchive.ubuntu.com/ubuntu noble main\n';
+test('direct list and deb822 sources switch only exact Azure and EC2 hosts', t => {
+  const unrelated = 'deb https://azureXarchive.ubuntu.com/ubuntu noble main\ndeb https://ec2Xarchive.ubuntu.com/ubuntu noble main\n';
   const f = fixture(t, {
-    'sources.list': 'deb http://azure.archive.ubuntu.com/ubuntu noble main\n',
+    'sources.list': 'deb http://azure.archive.ubuntu.com/ubuntu noble main\ndeb http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble universe\n',
     'sources.list.d/ubuntu.sources': 'URIs: https://azure.archive.ubuntu.com/ubuntu/\nSuites: noble\n',
     'sources.list.d/other.list': unrelated,
   });
   f.run();
-  assert.equal(f.read('sources.list'), 'deb https://archive.ubuntu.com/ubuntu noble main\n');
+  assert.equal(f.read('sources.list'), 'deb https://archive.ubuntu.com/ubuntu noble main\ndeb https://archive.ubuntu.com/ubuntu noble universe\n');
   assert.equal(f.read('sources.list.d/ubuntu.sources'), 'URIs: https://archive.ubuntu.com/ubuntu/\nSuites: noble\n');
   assert.equal(f.read('sources.list.d/other.list'), unrelated);
 });

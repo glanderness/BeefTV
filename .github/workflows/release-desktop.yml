@@ -141,7 +141,7 @@ jobs:
               exit 1
             fi
             jobs_meta="$(gh api "repos/glanderness/BeefTV/actions/runs/$REUSE_BUILD_RUN_ID/jobs?per_page=100")"
-            for required_job in "Validate and open draft" "Build darwin-arm64" "Build darwin-amd64" "Build windows-amd64" "Build linux-amd64"; do
+            for required_job in "Validate and open draft" "Build darwin-arm64" "Build darwin-amd64" "Build windows-amd64" "Build linux-amd64" "Verify Windows installer lifecycle" "Verify Windows published upgrades"; do
               job_conclusion="$(jq -r --arg name "$required_job" '[.jobs[] | select(.name == $name)][0].conclusion // ""' <<< "$jobs_meta")"
               if [[ "$job_conclusion" != "success" ]]; then
                 echo "Reused build run $REUSE_BUILD_RUN_ID job '$required_job' did not succeed (conclusion: '$job_conclusion')."
@@ -264,17 +264,29 @@ jobs:
           - os: macos-latest
             platform: darwin-arm64
             wails_platform: darwin/arm64
-          - os: macos-15-intel
+            node_arch: arm64
+          - os: macos-latest
             platform: darwin-amd64
             wails_platform: darwin/amd64
+            node_arch: x64
           - os: windows-2022
             platform: windows-amd64
             wails_platform: windows/amd64
+            node_arch: x64
           - os: ubuntu-24.04
             platform: linux-amd64
             wails_platform: linux/amd64
+            node_arch: x64
     steps:
       - uses: actions/checkout@v4
+
+      - name: Ensure Rosetta 2 for Intel macOS target
+        if: matrix.platform == 'darwin-amd64'
+        run: |
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
 
       - uses: actions/download-artifact@v4
         with:
@@ -294,6 +306,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.22.1'
+          architecture: ${{ matrix.node_arch }}
 
       - name: Select bundled Node runtime
         shell: bash
@@ -430,6 +443,7 @@ jobs:
           python ../scripts/smoke-packaged-cli.py --archive "../dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"
 
       - name: Verify native installer lifecycle
+        if: runner.os != 'Windows'
         shell: bash
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
@@ -443,21 +457,18 @@ jobs:
           command=(python scripts/smoke-desktop-installer.py --platform "$PLATFORM" --installer "dist/BeefTV-${VERSION}-${PLATFORM}${suffix}" --payload "$payload")
           if [[ "$PLATFORM" == linux-* ]]; then xvfb-run -a dbus-run-session -- "${command[@]}"; else "${command[@]}"; fi
 
-      - name: Verify upgrades from released Windows clients
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: python scripts/test-windows-published-upgrade.py --archive "dist/BeefTV-${{ needs.preflight.outputs.version }}-windows-amd64.zip" --version "${{ needs.preflight.outputs.version }}" --output dist/windows-upgrade-evidence.json
-
       - name: Verify Linux desktop window from final archive
         if: runner.os == 'Linux'
         run: xvfb-run -a dbus-run-session -- python3 scripts/smoke-linux-desktop.py --archive "dist/BeefTV-${{ needs.preflight.outputs.version }}-linux-amd64.zip"
 
-      - name: Preserve Windows upgrade acceptance
-        if: always() && runner.os == 'Windows'
+      - name: Stage Windows desktop payload for parallel acceptance
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: windows-upgrade-evidence
-          path: dist/windows-upgrade-evidence.json
+          name: windows-desktop-payload
+          path: backend/cmd/desktop/build/bin
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Store platform zip for publication
         uses: actions/upload-artifact@v4
@@ -469,10 +480,76 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  verify-windows-installer:
+    name: Verify Windows installer lifecycle
+    needs: [preflight, build]
+    if: inputs.reuse_build_run_id == ''
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          architecture: x64
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows-amd64
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-desktop-payload
+          path: backend/cmd/desktop/build/bin
+      - name: Verify native Windows installer lifecycle
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f "backend/cmd/desktop/build/bin/BeefTV.exe"
+          test -f "dist/BeefTV-${VERSION}-windows-amd64-setup.exe"
+          python scripts/smoke-desktop-installer.py \
+            --platform windows-amd64 \
+            --installer "dist/BeefTV-${VERSION}-windows-amd64-setup.exe" \
+            --payload backend/cmd/desktop/build/bin
+
+  verify-windows-upgrade:
+    name: Verify Windows published upgrades
+    needs: [preflight, build]
+    if: inputs.reuse_build_run_id == ''
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows-amd64
+          path: dist
+      - name: Verify upgrades from released Windows clients
+        shell: pwsh
+        run: python scripts/test-windows-published-upgrade.py --archive "dist/BeefTV-${{ needs.preflight.outputs.version }}-windows-amd64.zip" --version "${{ needs.preflight.outputs.version }}" --output dist/windows-upgrade-evidence.json
+      - name: Preserve Windows upgrade acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-upgrade-evidence
+          path: dist/windows-upgrade-evidence.json
+
   publish:
     name: Sign feed and publish
-    needs: [preflight, build]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.reuse_build_run_id != '')) }}
+    needs: [preflight, build, verify-windows-installer, verify-windows-upgrade]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && ((needs.build.result == 'success' && needs.verify-windows-installer.result == 'success' && needs.verify-windows-upgrade.result == 'success') || (inputs.reuse_build_run_id != '' && needs.build.result == 'skipped' && needs.verify-windows-installer.result == 'skipped' && needs.verify-windows-upgrade.result == 'skipped')) }}
     outputs:
       activated: ${{ steps.activate.outcome == 'success' }}
     runs-on: ubuntu-latest

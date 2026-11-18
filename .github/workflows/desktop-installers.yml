@@ -41,20 +41,32 @@ jobs:
           - os: macos-latest
             platform: darwin-arm64
             target: darwin/arm64
-          - os: macos-15-intel
+            node_arch: arm64
+          - os: macos-latest
             platform: darwin-amd64
             target: darwin/amd64
+            node_arch: x64
           - os: windows-2022
             platform: windows-amd64
             target: windows/amd64
+            node_arch: x64
           - os: ubuntu-24.04
             platform: linux-amd64
             target: linux/amd64
+            node_arch: x64
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure Rosetta 2 for Intel macOS target
+        if: matrix.platform == 'darwin-amd64'
+        run: |
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          cache: true
           cache-dependency-path: backend/go.sum
       - uses: oven-sh/setup-bun@v2
         with:
@@ -62,6 +74,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.22.1'
+          architecture: ${{ matrix.node_arch }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

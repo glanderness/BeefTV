@@ -198,7 +198,7 @@ if [[ -x "$ENCODER_SOURCE" ]]; then
   chmod 755 "$ENCODER_DEST/ffmpeg"
   codesign --force --sign - "$ENCODER_DEST/ffmpeg"
 fi
-if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
+if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" ]] || { [[ "$AGENT_TARGET" == darwin/amd64 ]] && { [[ "$(uname -m)" == x86_64 ]] || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; }; }; then
   bash "$ROOT_DIR/scripts/test-media-runtime-macos.sh" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 fi
 
