@@ -312,6 +312,7 @@
         display: flex;
         gap: 9px;
         min-height: 48px;
+        min-width: 0;
         outline: none;
         padding: 6px 8px;
         text-align: left;

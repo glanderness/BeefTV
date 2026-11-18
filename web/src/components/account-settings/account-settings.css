@@ -16,7 +16,8 @@
 .account-settings-content h3 { margin: 0; font-size: var(--fs-body); font-weight: 500; }
 .account-settings-content p { margin: 6px 0 0; color: var(--muted-foreground); line-height: 1.7; overflow-wrap: anywhere; }
 .account-balance-identity { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
-.account-balance-identity > div { min-width: 0; }
+.account-balance-identity-meta { min-width: 0; }
+.account-balance-identity-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
 .account-balance-identity h3 { font-size: var(--fs-heading-lg); overflow-wrap: anywhere; }
 .account-balance-overview { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px; background: var(--surface-hover); border-radius: var(--r-lg); }
 .account-balance-label, .account-checkout-amount > span { color: var(--muted-foreground); font-size: var(--fs-body); }
@@ -106,7 +107,7 @@
 .account-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; }
 .account-settings-content > h2 + .account-setting-row { padding-top: 0; }
 .account-setting-row > div { min-width: 0; }
-.account-setting-row > .ant-btn { flex-shrink: 0; }
+.account-setting-row > :is(.ant-btn, .ant-switch) { flex-shrink: 0; }
 .account-setting-row > p { margin: 0; }
 .account-appearance-control.ant-segmented { font-size: var(--fs-body); font-weight: 500; }
 .account-model-connection { padding-top: 0; padding-bottom: 24px; }
@@ -144,6 +145,7 @@
     .account-plugins-toolbar .ant-input-affix-wrapper { flex: 1 1 160px; }
 }
 @media (max-width: 520px) {
+    .account-balance-identity { flex-wrap: wrap; align-items: flex-start; }
     .account-builtin-list { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {

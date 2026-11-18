@@ -22,7 +22,8 @@ import { buildGenerationConfig, buildImageGenerationMetadata, nodeReferenceImage
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
 import { DEFAULT_PORTRAIT_TEXTURE_SETTINGS } from "@/lib/canvas/canvas-portrait-texture";
-import { IMAGE_PROMPT_REVERSE, VIDEO_PROMPT_REVERSE } from "@/lib/prompts";
+import { getEffectiveReversePrompt } from "@/lib/reverse-prompt-preference";
+import { getTaskCompletionSoundEnabled, playTaskCompletionChime } from "@/lib/task-completion-sound";
 import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { generationErrorMessage } from "@/lib/generation-error";
@@ -43,7 +44,7 @@ const NODE_STATUS_IDLE = "idle" as const;
 
 export function buildReversePromptNodePair(node: CanvasNodeData, textModel?: string) {
     const isVideo = node.type === CanvasNodeType.Video;
-    const reverseInstruction = isVideo ? VIDEO_PROMPT_REVERSE : IMAGE_PROMPT_REVERSE;
+    const reverseInstruction = getEffectiveReversePrompt(isVideo ? "video" : "image");
     const gap = 96;
     const textSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
     const resultSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
@@ -373,6 +374,7 @@ export function useCanvasImageTools({
                     return;
                 }
                 if (failureCount > 0) message.error(hasSuccess ? "部分局部编辑失败" : representativeError || "局部编辑失败");
+                if (hasSuccess && getTaskCompletionSoundEnabled()) playTaskCompletionChime();
                 setNodes((current) => current.map((item) => {
                     if (item.id !== rootId) return item;
                     return {
@@ -456,6 +458,7 @@ export function useCanvasImageTools({
             const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata } };
             setNodes((current) => current.map((item) => item.id === childId ? finalizedNode : item));
             await operation.wait(persistMediaNodes([finalizedNode], [], {}));
+            if (getTaskCompletionSoundEnabled()) playTaskCompletionChime();
         } catch (error) {
             if (!operation.isCurrent()) return;
             if (isGenerationCanceled(error)) return;
@@ -538,6 +541,7 @@ export function useCanvasImageTools({
             const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: providerPrompt, ...generationMetadata, emotionEdit } };
             setNodes((current) => current.map((item) => item.id === childId ? finalizedNode : item));
             await operation.wait(persistMediaNodes([finalizedNode], [], {}));
+            if (getTaskCompletionSoundEnabled()) playTaskCompletionChime();
         } catch (error) {
             if (!operation.isCurrent()) return;
             if (isGenerationCanceled(error)) return;
