@@ -685,7 +685,7 @@ func TestCuratedBuiltinPluginHotUpdatesAndPersistsAcrossRestart(t *testing.T) {
 		t.Fatal("expected ResolvePackageFile to reject tampered hot-update file")
 	}
 	// 前端随后针对已失效旧 revision 上报的 load-error 不会把已回退的随包安全版标为 invalid。
-	afterStaleErr, staleErr := svcRestarted.SetLoadError("beeftv-plugin-ll2", "Failed to fetch dynamically imported module", hotRev)
+	afterStaleErr, staleErr := svcRestarted.SetLoadErrorAtRevision("beeftv-plugin-ll2", "Failed to fetch dynamically imported module", "import", hotRev)
 	if staleErr != nil || afterStaleErr.Status != StatusEnabled || afterStaleErr.Error != "" {
 		t.Fatalf("expected stale-revision SetLoadError after tamper rollback to keep shipped plugin enabled, got %+v err=%v", afterStaleErr, staleErr)
 	}
