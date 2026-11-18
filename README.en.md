@@ -183,13 +183,23 @@ BeefTV also includes project and personal asset libraries, asynchronous tasks, m
 
 See [Quick Start](QUICKSTART.md) for model setup and building from source, and the [desktop release guide](docs/desktop-release.md) for packaging requirements.
 
+## Commercial licensing and sponsorship
+
+For commercial use or derivative development based on BeefTV, please obtain official authorization from the BeefTV team. To learn about commercial licensing options, scan the QR code below to add me on WeCom and include **“BeefTV 授权”** in your contact request.
+
+BeefTV is also open to sponsorship. If you would like more people to discover and use your compute service or product through BeefTV, scan the WeCom QR code below and include “BeefTV 赞助” in your contact request.
+
+BeefTV has grown to over 2.5K stars, 480 forks, and a community of more than 2,000 members. The team has also established close partnerships with several sponsors.
+
+<img src="assets/readme/commercial-license-wecom.jpg" width="240" alt="WeCom QR code for BeefTV commercial licensing and sponsorship inquiries">
+
 ## Contributing and license
 
 Issues and pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow and testing requirements.
 
 The repository uses licenses with different scopes. Original content added under the new license, starting with the commit that first introduced it and subject to its terms, is covered by the [`BeefTV Source Available License 1.0`](LICENSE). Historical content released under MIT remains under the MIT terms retained in the same file. Upstream and third-party materials keep their respective licenses.
 
-The new license permits self-hosting, internal customization, and creating and selling works with BeefTV. Written authorization is required for commercial resale, rebranding and resale, paid deployment or custom delivery of covered software, and providing hosted features to third parties, whether free or paid. Independent tutorials, training, and general technical consulting may be paid services, but must not be used to deliver the software system indirectly. Contact us about authorization at [lucas@bf-labs.cn](mailto:lucas@bf-labs.cn).
+The new license permits self-hosting, internal customization, and creating and selling works with BeefTV. Written authorization is required for commercial resale, rebranding and resale, paid deployment or custom delivery of covered software, and providing hosted features to third parties, whether free or paid. Independent tutorials, training, and general technical consulting may be paid services, but must not be used to deliver the software system indirectly.
 
 The new restrictions do not apply retroactively to historical MIT content or override independently licensed third-party materials. This is a source-available license; the entire repository should not be treated as standard MIT or as an open source project under the OSI definition. See the [license guide](docs/content/docs/overview/licensing.mdx) for covered scenarios and boundaries, and [`NOTICE`](NOTICE) for upstream sources and third-party attributions.
 
