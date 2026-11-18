@@ -71,6 +71,8 @@ export function CanvasScriptNodeContent({
     onComposerHeightChange,
     onConnectStart,
     onScrollTopChange,
+    selectedCanvasNodeIds,
+    readOnly = false,
     workspaceMode = "professional",
 }: {
     node: CanvasNodeData;
@@ -101,6 +103,8 @@ export function CanvasScriptNodeContent({
     onComposerHeightChange: (height: number) => void;
     onConnectStart: (event: ReactPointerEvent, rowId: string, handleType: "source" | "target") => void;
     onScrollTopChange: (scrollTop: number) => void;
+    selectedCanvasNodeIds?: Iterable<string>;
+    readOnly?: boolean;
     workspaceMode?: CanvasWorkspaceMode;
 }) {
     const theme = canvasThemes[useActiveTheme()];
@@ -368,7 +372,13 @@ export function CanvasScriptNodeContent({
                             <CompactInput value={row[contentColumn]} placeholder={contentColumn === "videoMotionPrompt" ? "描述视频运动、镜头和动作" : contentColumn === "imageGenerationPrompt" ? "描述首帧画面" : "描述这一镜发生的事"} onChange={(value) => onUpdateRow(row.id, { [contentColumn]: value })} borderColor={theme.node.stroke} />
                             <CompactInput value={row.dialogue} placeholder="台词或旁白" onChange={(value) => onUpdateRow(row.id, { dialogue: value })} borderColor={theme.node.stroke} />
                             <div className="flex h-full min-w-0 items-center px-3">
-                                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
+                                <StoryboardAssetsCell
+                                    bindings={row.assetBindings || []}
+                                    nodes={nodes}
+                                    selectedCanvasNodeIds={selectedCanvasNodeIds}
+                                    limit={2}
+                                    onChange={readOnly ? undefined : (assetBindings) => onUpdateRow(row.id, { assetBindings })}
+                                />
                             </div>
                         </div>
                     ))

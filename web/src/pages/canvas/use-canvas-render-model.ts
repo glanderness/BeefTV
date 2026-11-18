@@ -524,6 +524,7 @@ export function useCanvasRenderModel({
         reduceMediaEffects,
         relatedHighlight,
         resourceReferenceByNodeId,
+        selectedNodeIds,
         selectedNodeBounds,
         selectedVideoNodes,
         semanticNodes,

@@ -147,6 +147,7 @@ export function CanvasProjectNodeContent({ node: contentNode, projectId, readOnl
             <CanvasScriptNodeContent
                 node={contentNode}
                 nodes={nodesRef.current}
+                readOnly={readOnly}
                 batch={visibleGenerationBatch(contentNode)}
                 pipeline={pipeline}
                 scale={viewportScale}

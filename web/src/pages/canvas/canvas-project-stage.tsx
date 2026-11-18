@@ -535,9 +535,12 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
                 onPackSelectionToFolder={packSelectedIntoFolder}
                 onCopySelection={copySelectedNodes}
                 onDeleteSelection={() => deleteNodes(selectedNodeIds)}
+                onBindStoryboardRows={readOnly ? undefined : generation.updateScriptRows}
                 extractingAudio={segmentRunningMode === "audio"}
+                extractingAudioNode={Boolean(mediaTools.extractingAudioNodeId)}
                 trimmingVideo={inlineTrimRunning}
                 onExtractAudioFromVideo={(node) => void extractAudioFromVideo(node)}
+                onExtractAudioNodeFromVideo={readOnly ? undefined : (node) => void mediaTools.extractPureAudioNodeFromVideo(node)}
             />
         </>
     );
