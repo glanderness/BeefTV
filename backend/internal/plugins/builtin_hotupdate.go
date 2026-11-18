@@ -16,8 +16,12 @@ import (
 
 const builtinBlobsSubdir = ".builtin-blobs"
 
+func isManagedBuiltinPluginID(id string) bool {
+	return isBundledBuiltinPlugin(id) || validCuratedBuiltinID(id)
+}
+
 func builtinBlobParentDir(dataDir, id string) (string, bool) {
-	if strings.TrimSpace(dataDir) == "" || !isBundledBuiltinPlugin(id) {
+	if strings.TrimSpace(dataDir) == "" || !isManagedBuiltinPluginID(id) {
 		return "", false
 	}
 	abs, err := filepath.Abs(filepath.Join(dataDir, "plugins", builtinBlobsSubdir, id))
@@ -225,7 +229,7 @@ func verifyHotUpdatedBuiltinDir(dataDir, id, recordedDir, expectedSHA string) (p
 
 func resolveBuiltinDirByRevision(dataDir, id, revision string) (string, bool) {
 	wantSHA := strings.ToLower(strings.TrimSpace(revision))
-	if !isBundledBuiltinPlugin(id) || !validPackageSHA256(wantSHA) {
+	if !isManagedBuiltinPluginID(id) || !validPackageSHA256(wantSHA) {
 		return "", false
 	}
 	if shippedDir, ok := BundledSampleDir(id); ok {
@@ -247,14 +251,10 @@ func resolveBuiltinDirByRevision(dataDir, id, revision string) (string, bool) {
 }
 
 func isHotUpdatedBuiltinRecord(dataDir, id string, record Record) bool {
-	if !isBundledBuiltinPlugin(id) || !IsBuiltInSource(record.Source) || strings.TrimSpace(record.PackageDir) == "" {
+	if !isManagedBuiltinPluginID(id) || !IsBuiltInSource(record.Source) || strings.TrimSpace(record.PackageDir) == "" {
 		return false
 	}
-	shippedDir, ok := BundledSampleDir(id)
-	if !ok {
-		return false
-	}
-	if sameCleanDir(record.PackageDir, shippedDir) {
+	if shippedDir, ok := BundledSampleDir(id); ok && sameCleanDir(record.PackageDir, shippedDir) {
 		return false
 	}
 	blobParent, ok := builtinBlobParentDir(dataDir, id)
@@ -273,6 +273,60 @@ func isHotUpdatedBuiltinRecord(dataDir, id string, record Record) bool {
 	}
 	rel, relErr := filepath.Rel(blobParent, absDir)
 	return relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func (c *Runtime) reconcileDynamicBuiltinOnBoot(record RegistryRecord) (RegistryRecord, bool) {
+	if c == nil || !IsBuiltInSource(record.Source) || !validCuratedBuiltinID(record.ID) || isBundledBuiltinPlugin(record.ID) {
+		return RegistryRecord{}, false
+	}
+	hotPkg, ok := verifyHotUpdatedBuiltinDir(c.dataDir, record.ID, record.PackageDir, record.PackageSHA256)
+	if !ok {
+		c.cleanupBuiltinBlobsOnBoot(record.ID, "", false)
+		// 本地动态包目录缺失或损坏时保留声明式协议定义并标记待修复，使已存渠道不断流且下一次合作伙伴同步自动重装修复。
+		var manifest protocol.Manifest
+		if len(record.Raw) > 0 && json.Unmarshal(record.Raw, &manifest) == nil && manifest.Metadata.ID == record.ID {
+			record.Source = OriginOfficial
+			record.PackageDir = ""
+			record.LoadError = firstNonBlank(record.LoadError, "官方合作伙伴扩展本地文件缺失或校验不一致，等待自动修复")
+			record.LoadErrorStage = "activate"
+			return record, true
+		}
+		return RegistryRecord{}, false
+	}
+	manifest := hotPkg.Manifest
+	if len(record.Raw) > 0 {
+		var previous protocol.Manifest
+		if err := json.Unmarshal(record.Raw, &previous); err == nil {
+			manifest.Metadata.Enabled = previous.Metadata.Enabled
+		}
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		return RegistryRecord{}, false
+	}
+	now := time.Now().UTC()
+	next := RegistryRecord{
+		ID:              record.ID,
+		Raw:             manifestData,
+		Source:          OriginOfficial,
+		PackageDir:      hotPkg.RootDir,
+		PackageSpec:     firstNonBlank(record.PackageSpec, hotPkg.PackageName, record.ID),
+		PackageSHA256:   hotPkg.SHA256,
+		ArchiveSHA256:   record.ArchiveSHA256,
+		PartnerPresetID: record.PartnerPresetID,
+		SkillDirs:       hotPkg.SkillDirs,
+		InstalledAt:     now,
+		UpdatedAt:       now,
+	}
+	next.LoadError, next.LoadErrorStage = retainedLoadError(record, next)
+	if !record.InstalledAt.IsZero() {
+		next.InstalledAt = record.InstalledAt
+	}
+	if !registryRecordContentChanged(record, next) {
+		next.UpdatedAt = record.UpdatedAt
+	}
+	c.cleanupBuiltinBlobsOnBoot(record.ID, hotPkg.SHA256, true)
+	return next, true
 }
 
 func (c *Runtime) preferHotUpdatedBuiltinOnBoot(id string, record RegistryRecord, shipped protocol.PluginPackage) (pkg protocol.PluginPackage, adoptedHot bool, recordStillValid bool) {
@@ -327,7 +381,7 @@ func (c *Runtime) rollbackHotUpdatedBuiltin(id string) (View, bool, error) {
 func (c *Runtime) rollbackHotUpdatedBuiltinLocked(id string, existing Record) (View, error) {
 	shippedRoot, ok := BundledSampleDir(id)
 	if !ok {
-		return View{}, fmt.Errorf("未找到内置插件 %q 的随包目录", id)
+		return c.quarantineDynamicBuiltinLocked(id, existing, "官方合作伙伴扩展校验异常，已自动停用")
 	}
 	shipped, err := protocol.ParsePluginPackageDir(shippedRoot)
 	if err != nil {
@@ -379,6 +433,61 @@ func (c *Runtime) rollbackHotUpdatedBuiltinLocked(id string, existing Record) (V
 	extras := persistExtras{}
 	if c.store != nil {
 		extras.platform = &model.PluginPlatformState{PluginID: id, Available: view.Status == StatusEnabled, CreatedAt: now, UpdatedAt: now}
+	}
+	if err := c.commitAndPublish(&stage, extras); err != nil {
+		c.abortUncommitted(&stage)
+		return View{}, err
+	}
+	if blobParent, ok := builtinBlobParentDir(c.dataDir, id); ok {
+		removeReadOnlyTree(blobParent)
+	}
+	return stage.view, nil
+}
+
+func (c *Runtime) quarantineDynamicBuiltinLocked(id string, existing Record, reason string) (View, error) {
+	var manifest protocol.Manifest
+	if err := json.Unmarshal(existing.Raw, &manifest); err != nil {
+		return View{}, err
+	}
+	manifest.Metadata.Enabled = existing.Metadata.Enabled
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		return View{}, err
+	}
+	stored, err := c.currentRecords()
+	if err != nil {
+		return View{}, err
+	}
+	now := time.Now().UTC()
+	errMsg := firstNonBlank(reason, "官方合作伙伴扩展本地文件校验异常，已隔离客户端脚本并等待自动修复")
+	for index := range stored {
+		if stored[index].ID == id {
+			stored[index].Raw = manifestData
+			stored[index].PackageDir = ""
+			stored[index].LoadError = errMsg
+			stored[index].LoadErrorStage = "activate"
+			stored[index].UpdatedAt = now
+			break
+		}
+	}
+	pluginsMap, registry, err := c.build(stored)
+	if err != nil {
+		return View{}, err
+	}
+	view, err := viewFromPlugins(pluginsMap, id)
+	if err != nil {
+		return View{}, err
+	}
+	stage := stagedMutation{
+		previousLive: c.captureLive(),
+		nextDisk:     stored,
+		nextPlugins:  pluginsMap,
+		nextRegistry: registry,
+		view:         view,
+	}
+	extras := persistExtras{}
+	if c.store != nil {
+		extras.platform = &model.PluginPlatformState{PluginID: id, Available: existing.Metadata.Enabled, CreatedAt: now, UpdatedAt: now}
 	}
 	if err := c.commitAndPublish(&stage, extras); err != nil {
 		c.abortUncommitted(&stage)

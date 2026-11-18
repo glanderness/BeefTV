@@ -17,6 +17,7 @@ import { ChannelRequestAddressLines } from "./channel-request-addresses";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 import { ModelLogo } from "@/components/model-logo";
 import beefTVAppIcon from "../../../../assets/app-icon.png";
+import { getBuiltinPresetsVersion, getPartnerIndicatorVersion, livePartnerSyncIssues, subscribeBuiltinPresets, subscribePartnerIndicator, unnoticedLivePartners } from "@/lib/builtin-service-presets";
 import { MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, channelAllowsEmptyAPIKey, mergeSavedServiceChannel, pluginServices, servicePresetFor } from "@/lib/model-service-presets";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
@@ -63,6 +64,14 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
     };
 
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
+    useSyncExternalStore(subscribePartnerIndicator, getPartnerIndicatorVersion, getPartnerIndicatorVersion);
+    useSyncExternalStore(subscribeBuiltinPresets, getBuiltinPresetsVersion, getBuiltinPresetsVersion);
+    const newPartners = unnoticedLivePartners(userChannels);
+    const newPartnerTitle = newPartners.length > 0 ? `合作伙伴新增：${newPartners.map((item) => item.name).join("、")}` : undefined;
+    const partnerSyncIssues = livePartnerSyncIssues();
+    const partnerSyncWarning = partnerSyncIssues.length > 0
+        ? partnerSyncIssues.map((item) => `${item.name}：${item.error}`).join("；")
+        : "";
     useEffect(() => {
         let cancelled = false;
         void fetchPluginProviderCatalog("user.custom-channel")
@@ -282,12 +291,14 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                     <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<RefreshCw className="size-4" />} loading={loadingChannelIds.includes("all")} disabled={loadingChannelIds.some((id) => id !== "all") || !userChannels.some(channel => !isTopazUpscaleChannel(channel))} onClick={() => void refreshAllModels()}>
                         拉取全部渠道模型
                     </Button>
-                    <Button type="primary" className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<Plus className="size-4" />} onClick={addChannel}>
+                    <Button type="primary" className="relative h-10 flex-1 sm:h-8 sm:flex-none" icon={<Plus className="size-4" />} title={newPartnerTitle} onClick={addChannel}>
                         添加模型服务
+                        {newPartners.length > 0 ? <span className="settings-partner-new-dot" aria-hidden="true" /> : null}
                     </Button>
                     </div>
                 )}
             />
+            {partnerSyncWarning ? <Alert className="mb-3" type="warning" showIcon title={partnerSyncWarning} /> : null}
             {userChannels.length ? (
                 <div className="settings-channel-list space-y-2">
                     {userChannels.map((channel) => {
@@ -497,8 +508,9 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                     compact
                     title="连接你的第一个模型服务"
                     action={
-                        <Button icon={<Plus className="size-4" />} onClick={addChannel}>
+                        <Button className="relative" icon={<Plus className="size-4" />} title={newPartnerTitle} onClick={addChannel}>
                             添加模型服务
+                            {newPartners.length > 0 ? <span className="settings-partner-new-dot" aria-hidden="true" /> : null}
                         </Button>
                     }
                 />

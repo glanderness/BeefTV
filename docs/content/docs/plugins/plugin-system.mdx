@@ -69,6 +69,7 @@ BeefTV 不使用 JS 沙箱隔离第三方脚本（`pi.extensions` 与本机进�
 
 - `GET /api/plugins/updates` 比较已安装版本和 npm 或精选列表上的版本，插件中心据此显示「更新到 vX」。
 - 精选列表 `plugins` 里带 `tarball` 和 `sha256` 的条目由 BeefTV 维护。后端启动一分钟后检查一次，之后每 6 小时检查一次，有新登记的版本就自动更新，并校验 `sha256`。用户安装时写明版本的（比如 `beeftv-plugin-example@1.0.0`）不自动更新；用户点更新时换成最新版，之后不再固定版本。
+- 精选列表 `builtins` 登记官方内置插件与合作渠道插件（`partner: true`）。处于 `from` 至 `until` 合作期内的渠道插件由后台自动校验 `sha256` 预装与热更新；`GET /api/plugins/partners` 只读返回合作状态、HTTPS 领 Key 链接与已校验缓存图标（管理员可通过 `POST /api/plugins/partners/sync` 触发同步）。合作期结束后从新建连接列表隐藏，已保存渠道继续可用。
 - 精选列表 `packages` 里只写 npm 包名，卡片信息从 npm 读，由用户自己更新。
 
 ## 自带的应用插件

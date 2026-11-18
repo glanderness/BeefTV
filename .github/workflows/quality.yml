@@ -256,7 +256,7 @@ jobs:
     if: needs.gates.outputs.web == 'true'
     name: Web checks (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

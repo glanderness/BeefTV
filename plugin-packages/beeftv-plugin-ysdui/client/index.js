@@ -655,6 +655,9 @@ export const BUILTIN_SERVICE_PRESET = {
   subtitle: "文本 · 多款主流图片 · 多款主流视频",
   icon: YSDUI_CHANNEL_ICON,
   baseUrl: DEFAULT_BASE_URL,
+  partner: true,
+  keysUrl: "https://www.ysdui.cn/",
+  websiteUrl: "https://www.ysdui.cn/",
   protocolPrefixes: ["ysdui-"],
   hosts: ["tokenhub.ysdui.cn", "ysdui.cn"],
   hostSuffixes: [".ysdui.cn"],
@@ -663,14 +666,17 @@ export const BUILTIN_SERVICE_PRESET = {
   presetDescription: "文本、图像与视频",
   providerIntro: YSDUI_PROVIDER_INTRO,
   declaresReferenceMediaTransport: true,
-  buildChannel: (args) =>
-    buildYsduiModelChannel({
+  buildChannel(args) {
+    return buildYsduiModelChannel({
       apiKey: args.apiKey,
       baseUrl: args.baseUrl,
       selectedModels: args.selectedModels,
       existingChannel: args.existingChannel,
-    }),
-  upgradeProfile: (profile) => upgradeYsduiModelProfile(profile),
+    });
+  },
+  upgradeProfile(profile) {
+    return upgradeYsduiModelProfile(profile);
+  },
 };
 
 export function activate(host) {

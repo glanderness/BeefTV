@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type publicHTTPSContextKey struct{}
@@ -94,4 +95,50 @@ func (outboundPolicyTransport) RoundTrip(req *http.Request) (*http.Response, err
 		return nil, err
 	}
 	return publicHTTPSTransport.RoundTrip(req)
+}
+
+func resolveStrictPublicHost(ctx context.Context, host string) ([]net.IP, error) {
+	host = normalizeOutboundHost(host)
+	addresses, err := resolveOutboundHostWithPolicy(ctx, host, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range addresses {
+		if blockedCustomRelayIP(ip) {
+			return nil, BadAuthRequest("外部资源地址不允许访问内网或保留地址")
+		}
+	}
+	return addresses, nil
+}
+
+// ValidateStrictPublicHTTPSURLContext 始终要求公网 HTTPS 地址（不受本机私网开关放行影响），拒绝内网、回环、CGNAT 与保留网段。
+func ValidateStrictPublicHTTPSURLContext(ctx context.Context, raw string) (*url.URL, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
+		return nil, BadAuthRequest("外部资源地址需要安全的 HTTPS 链接")
+	}
+	if _, err := resolveStrictPublicHost(ctx, parsed.Hostname()); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+var strictPublicHTTPSTransport = newOutboundTransport(resolveStrictPublicHost)
+
+// StrictPublicHTTPSClient 返回遵循本机显式代理配置、且直连时仅拨号已校验公网 IP 的只读 HTTPS 客户端。
+func StrictPublicHTTPSClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: strictPublicHTTPSTransport,
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxOutboundRedirects {
+				return BadAuthRequest("外部资源重定向次数过多")
+			}
+			_, err := ValidateStrictPublicHTTPSURLContext(req.Context(), req.URL.String())
+			return err
+		},
+	}
 }

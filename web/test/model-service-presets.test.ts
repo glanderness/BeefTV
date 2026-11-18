@@ -5,12 +5,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { applyFetchedChannelModelCatalog } from "../src/lib/channel-model-catalog";
 import { normalizeChannelBaseUrl } from "../src/lib/channel-url";
 import { ModelLogo } from "../src/components/model-logo";
-import { MODEL_SERVICE_PRESETS, builtinPresetIntro, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, ysduiProtocolsAvailable, pluginServices, mergeSavedServiceChannel, presetCatalogFor, serviceConnectionError, serviceModelProfile, servicePresetFor } from "../src/lib/model-service-presets";
+import { BUILTIN_PRESETS, applyPartnerCatalogMetadata, clearDynamicPartnerModulesForTest, getBuiltinPresetsVersion, getPartnerIndicatorVersion, livePartnerSyncIssues, markPartnersNoticed, nextActivePartnerWindowDelayMs, resetDynamicPartnersInMemoryForReloadTest, syncBuiltinPresetFromModule, unnoticedLivePartners } from "../src/lib/builtin-service-presets";
+import { clearTransientPartnerRetryForTest, nextTransientPartnerRetryDelayMs, recordTransientPartnerRetryForTest, syncPartnerCatalogFromBackend } from "../src/services/plugin-sync";
+import { MODEL_SERVICE_PRESETS, builtinPresetIntro, createPluginServiceChannel, createServicePresetChannel, ll2ProtocolsAvailable, ysduiProtocolsAvailable, partnerServicePresets, pluginServices, mergeSavedServiceChannel, presetCatalogFor, presetKeysUrl, presetPluginId, presetPromoText, serviceConnectionError, serviceModelProfile, servicePresetFor, standardServicePresets } from "../src/lib/model-service-presets";
 import { modelConnectionResultDetail, testChannelModelConnection } from "../src/lib/model-connection-test";
 import { channelValidationError, modelConfigChannelStatusLabel } from "../src/pages/settings/channel-settings-pane";
-import { removeManualModelEntry, updateManualModelEntry } from "../src/pages/settings/model-service-editor";
+import { refreshNewBuiltinDraftProfiles, removeManualModelEntry, updateManualModelEntry } from "../src/pages/settings/model-service-editor";
+import "../src/lib/plugins/plugin-client-loader";
 import { backendProviderConfig } from "../src/services/api/generation-task";
-import { configWithoutCachedSecrets, createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
+import { configWithoutCachedSecrets, createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } from "../src/stores/use-config-store";
 import { defaultModelCapabilityConfig, sanitizeServerImageCapability, sanitizeServerVideoCapability } from "../src/lib/model-capabilities";
 import { defaultProtocolForCapability, modelProtocolDefinition, type ModelProtocolDefinition } from "../src/lib/model-protocols";
 import { serviceCredentialGuide } from "../src/lib/service-credentials";
@@ -941,4 +944,348 @@ test("LL2 wan3.0-video and Super Vega user-edited profiles migrate 2160p/1440p w
     });
     const repairedDefault = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [validListBadDefault] } }).config.channels[0];
     expect(repairedDefault.modelProfiles?.[0]?.capabilityConfig?.video?.defaultResolution).toBe("1080P");
+});
+
+test("dynamic partner hot-onboards without desktop rebuild, renders cached icon and affiliate link, and hides on expiry while keeping saved channels working", async () => {
+    try {
+        // 拒绝伪造或抢占核心预设与已有合作伙伴预设 ID。
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-evil", {
+            BUILTIN_SERVICE_PRESET: {
+                id: "openai",
+                baseUrl: "https://evil.example",
+                models: [],
+                buildChannel: () => ({ models: [], modelProfiles: [] }),
+                upgradeProfile: (p: unknown) => p,
+            },
+        })).toBe(false);
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-evil", {
+            BUILTIN_SERVICE_PRESET: {
+                id: "ll2",
+                baseUrl: "https://evil.example",
+                models: [],
+                buildChannel: () => ({ models: [], modelProfiles: [] }),
+                upgradeProfile: (p: unknown) => p,
+            },
+        })).toBe(false);
+
+        const acmeModule = {
+            BUILTIN_SERVICE_PRESET: {
+                id: "acme",
+                name: "Acme 算力云",
+                subtitle: "文本 · 高清视频",
+                icon: "OpenAI",
+                baseUrl: "https://api.acme-cloud.example",
+                partner: true,
+                keysUrl: "https://untrusted-self-declared.example/ref",
+                protocolPrefixes: ["acme-"],
+                hosts: ["api.acme-cloud.example"],
+                hostSuffixes: [".acme-cloud.example"],
+                models: [{
+                    model: "acme-video-1",
+                    displayName: "Acme Video 1.0",
+                    capability: "video",
+                    protocol: "acme-video",
+                }],
+                presetDescription: "文本与视频",
+                buildChannel({ baseUrl }: { baseUrl: string }) {
+                    return {
+                        models: ["acme-video-1"],
+                        modelProfiles: [{
+                            model: "acme-video-1",
+                            displayName: "Acme Video 1.0",
+                            capability: "video",
+                            protocol: "acme-video",
+                        }],
+                        baseUrl,
+                    };
+                },
+                upgradeProfile<T extends { model?: string; protocol?: string }>(profile: T): T {
+                    if (profile?.model === "acme-video-1" && profile.protocol === "newapi") {
+                        return { ...profile, protocol: "acme-video" };
+                    }
+                    return profile;
+                },
+            },
+        };
+
+        // 动态新伙伴模块在后端权威 /api/plugins/partners 到达前激活时，仅暂存模块而不提前上线或暴露模块自报 keysUrl。
+        const prevConfigSnapshot = structuredClone(useConfigStore.getState().config);
+        useConfigStore.getState().replaceConfig({
+            ...defaultConfig,
+            channels: [createModelChannel({
+                id: "acme",
+                name: "Acme Legacy",
+                baseUrl: "https://api.acme-cloud.example",
+                models: ["acme-video-1"],
+                modelProfiles: [{ model: "acme-video-1", capability: "video", protocol: "newapi" }],
+            })],
+        });
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-acme", acmeModule)).toBe(false);
+        expect(partnerServicePresets().map((item) => item.id)).toEqual(["ll2", "ysdui"]);
+        expect(presetKeysUrl("acme")).toBeUndefined();
+        expect(useConfigStore.getState().config.channels[0]?.modelProfiles?.[0]?.protocol).toBe("newapi");
+
+        // 后端权威目录到达后立即重放暂存模块、自动触发已存渠道 upgradeProfile 迁移，并只采信服务端 presetId / live / keysUrl / iconUrl。
+        const activeSnapshot = [
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+            {
+                id: "beeftv-plugin-acme",
+                presetId: "acme",
+                name: "Acme 算力云",
+                live: true,
+                installed: true,
+                enabled: true,
+                keysUrl: "https://acme-cloud.example/register?invite=beeftv",
+                iconUrl: "/api/plugins/partners/beeftv-plugin-acme/icon?v=1234567890ab",
+                promoText: "注册即送体验算力",
+            },
+        ];
+        applyPartnerCatalogMetadata(activeSnapshot);
+        expect(useConfigStore.getState().config.channels[0]?.modelProfiles?.[0]?.protocol).toBe("acme-video");
+        useConfigStore.getState().replaceConfig(prevConfigSnapshot);
+
+        // 重复接收完全相同的 75 秒定时目录快照时严格幂等：不递增 builtinPresetsVersion，也不重置已打开编辑器的用户配置。
+        const versionAfterOnboarding = getBuiltinPresetsVersion();
+        applyPartnerCatalogMetadata(activeSnapshot);
+        applyPartnerCatalogMetadata(activeSnapshot);
+        expect(getBuiltinPresetsVersion()).toBe(versionAfterOnboarding);
+
+        // 当用户在新建服务编辑器中已修改预置模型参数或添加手动模型时，即使预设版本刷新也不会覆盖用户编辑。
+        const acmeProtocols = [...protocols, { value: "acme-video", capability: "video", authType: "bearer", enabled: true } as ModelProtocolDefinition];
+        const editedNewDraft = {
+            ...createServicePresetChannel("acme", "acme-open-editor", acmeProtocols),
+            models: ["acme-video-1", "acme-custom-2"],
+            modelProfiles: [
+                {
+                    model: "acme-video-1",
+                    capability: "video" as const,
+                    protocol: "acme-video",
+                    capabilitySource: "user" as const,
+                    defaultOptions: { duration: "10" },
+                },
+                {
+                    model: "acme-custom-2",
+                    capability: "text" as const,
+                    protocol: "chat-completion",
+                },
+            ],
+        };
+        const afterRefreshDraft = refreshNewBuiltinDraftProfiles(editedNewDraft, acmeProtocols);
+        expect(afterRefreshDraft.modelProfiles?.find((p) => p.model === "acme-video-1")?.defaultOptions).toEqual({ duration: "10" });
+        expect(afterRefreshDraft.modelProfiles?.some((p) => p.model === "acme-custom-2")).toBe(true);
+
+        expect(partnerServicePresets().map((item) => item.id)).toEqual(["ll2", "ysdui", "acme"]);
+        expect(standardServicePresets().map((item) => item.id)).toEqual(["compatible", "openai", "gemini", "ark"]);
+        expect(presetKeysUrl("acme")).toBe("https://acme-cloud.example/register?invite=beeftv");
+        expect(presetPluginId("acme")).toBe("beeftv-plugin-acme");
+        expect(presetPromoText("acme")).toBe("注册即送体验算力");
+
+        const acmePreset = partnerServicePresets().find((item) => item.id === "acme");
+        const renderedImgLogo = renderToStaticMarkup(createElement(ModelLogo, { icon: acmePreset?.icon, size: 24 }));
+        expect(renderedImgLogo).toContain('src="/api/plugins/partners/beeftv-plugin-acme/icon?v=1234567890ab"');
+
+        const acmeChannel = createServicePresetChannel("acme", "acme-user", acmeProtocols);
+        expect(acmeChannel.name).toBe("Acme 算力云");
+        expect(acmeChannel.baseUrl).toBe("https://api.acme-cloud.example");
+        expect(acmeChannel.models).toEqual(["acme-video-1"]);
+        expect(servicePresetFor(acmeChannel)).toBe("acme");
+
+        // 新合作伙伴红点：未保存且未浏览时提示，浏览后仅递增红点版本而不递增预设版本（避免重复拉取协议目录）。
+        expect(unnoticedLivePartners([acmeChannel]).map((item) => item.id)).not.toContain("acme");
+        expect(unnoticedLivePartners([]).map((item) => item.id)).toContain("acme");
+        const presetsVerBeforeNotice = getBuiltinPresetsVersion();
+        const indicatorVerBeforeNotice = getPartnerIndicatorVersion();
+        markPartnersNoticed(["ll2", "ysdui", "acme"]);
+        expect(getBuiltinPresetsVersion()).toBe(presetsVerBeforeNotice);
+        expect(getPartnerIndicatorVersion()).toBeGreaterThan(indicatorVerBeforeNotice);
+        expect(unnoticedLivePartners([])).toEqual([]);
+
+        // 模块自报 id 若与后端 registry presetId 不一致，拒绝注册绕过，防止脱离 until 下架管控。
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-acme", {
+            BUILTIN_SERVICE_PRESET: {
+                ...acmeModule.BUILTIN_SERVICE_PRESET,
+                id: "acme-spoofed",
+            },
+        })).toBe(false);
+
+        // 离线或本地回退的不完整目录（complete=false，即使含 retired 合成项）不会误删或隐藏已加载的动态伙伴预设与返佣链接。
+        applyPartnerCatalogMetadata([], { complete: false });
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-acme", presetId: "acme", name: "Acme 算力云", live: false, retired: true, installed: true, enabled: true },
+        ], { complete: false });
+        expect(partnerServicePresets().map((item) => item.id)).toContain("acme");
+        expect(presetKeysUrl("acme")).toBe("https://acme-cloud.example/register?invite=beeftv");
+
+        // 应用保持打开期间跨越 from / until 起止时间点（含东八区 YYYY-MM-DD 自然日）即时切换上下架，并给出最近切换时刻定时延迟。
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true },
+            {
+                id: "beeftv-plugin-acme",
+                presetId: "acme",
+                name: "Acme 算力云",
+                live: true,
+                installed: true,
+                enabled: true,
+                from: "2026-12-01",
+                until: "2026-12-02",
+                keysUrl: "https://acme-cloud.example/register?invite=beeftv",
+            },
+        ]);
+        const beforeFromMs = Date.parse("2026-11-30T23:59:59+08:00");
+        const duringWindowMs = Date.parse("2026-12-02T23:59:59+08:00");
+        const afterUntilMs = Date.parse("2026-12-03T00:00:00+08:00");
+        expect(nextActivePartnerWindowDelayMs(beforeFromMs)).toBe(1250);
+        expect(partnerServicePresets(undefined, beforeFromMs).map((item) => item.id)).toEqual(["ll2", "ysdui"]);
+        expect(partnerServicePresets(undefined, duringWindowMs).map((item) => item.id)).toEqual(["ll2", "ysdui", "acme"]);
+        expect(partnerServicePresets(undefined, afterUntilMs).map((item) => item.id)).toEqual(["ll2", "ysdui"]);
+        expect(partnerServicePresets("acme", afterUntilMs).map((item) => item.id)).toEqual(["ll2", "ysdui", "acme"]);
+        expect(servicePresetFor(acmeChannel)).toBe("acme");
+
+        // 当在期合作伙伴预装冲突或下载失败时，向前端暴露带类型的 installError 告警，重复快照保持版本幂等。
+        const conflictSnapshot = [
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+            { id: "beeftv-plugin-beta", presetId: "beta", name: "Beta 算力", live: true, installed: false, enabled: false, installError: "本地已安装同名非官方插件 beeftv-plugin-beta", installErrorKind: "conflict" },
+        ];
+        applyPartnerCatalogMetadata(conflictSnapshot);
+        expect(livePartnerSyncIssues()).toEqual([{
+            id: "beeftv-plugin-beta",
+            presetId: "beta",
+            name: "Beta 算力",
+            error: "本地已安装同名非官方插件 beeftv-plugin-beta",
+            kind: "conflict",
+        }]);
+        const verWithIssue = getBuiltinPresetsVersion();
+        applyPartnerCatalogMetadata(conflictSnapshot);
+        expect(getBuiltinPresetsVersion()).toBe(verWithIssue);
+
+        // 部分离线降级快照（complete=false）不会抹掉未出现在子集中的伙伴冲突告警。
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+        ], { complete: false });
+        expect(livePartnerSyncIssues().map((item) => item.id)).toEqual(["beeftv-plugin-beta"]);
+
+        // 瞬时安装失败安排真实的定时重试，不被动等待 15 分钟轮询。
+        let retryFired = false;
+        recordTransientPartnerRetryForTest("beeftv-plugin-beta", 60, () => { retryFired = true; });
+        expect(nextTransientPartnerRetryDelayMs()).not.toBeNull();
+        await new Promise((resolve) => setTimeout(resolve, 90));
+        expect(retryFired).toBe(true);
+        clearTransientPartnerRetryForTest();
+
+        // 从完整权威目录（complete=true）移除条目时，从活跃 BUILTIN_PRESETS 清理并清空返佣链接，但已安装伙伴在同会话与刷新后均保留名称/地址供老渠道编辑。
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+            { id: "beeftv-plugin-acme", presetId: "acme", name: "Acme 算力云", live: true, installed: true, enabled: true, keysUrl: "https://acme-cloud.example/register?invite=beeftv" },
+        ], { complete: true });
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+        ], { complete: true });
+        expect(BUILTIN_PRESETS.acme).toBeUndefined();
+        expect(presetKeysUrl("acme")).toBeUndefined();
+        expect(partnerServicePresets().map((item) => item.id)).toEqual(["ll2", "ysdui"]);
+        expect(servicePresetFor(acmeChannel)).toBe("acme");
+        const sameSessionRetired = partnerServicePresets("acme").find((item) => item.id === "acme");
+        expect(sameSessionRetired?.name).toBe("Acme 算力云");
+        expect(sameSessionRetired?.baseUrl).toBe("https://api.acme-cloud.example");
+        expect(MODEL_SERVICE_PRESETS.find((item) => item.id === "acme")?.name).toBe("Acme 算力云");
+        expect(livePartnerSyncIssues()).toEqual([]);
+
+        // 模拟页面重新加载：即便远端目录已完全移除 acme，凭已安装伙伴持久化记录仍以 live=false 恢复给老渠道，且不暴露任何返佣链接。
+        resetDynamicPartnersInMemoryForReloadTest();
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-acme", acmeModule)).toBe(true);
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+        ], { complete: true });
+        expect(partnerServicePresets().map((item) => item.id)).toEqual(["ll2", "ysdui"]);
+        expect(presetKeysUrl("acme")).toBeUndefined();
+        expect(servicePresetFor(acmeChannel)).toBe("acme");
+        const reloadedRetired = partnerServicePresets("acme").find((item) => item.id === "acme");
+        expect(reloadedRetired?.name).toBe("Acme 算力云");
+        expect(reloadedRetired?.baseUrl).toBe("https://api.acme-cloud.example");
+
+        // 测试插件包名后缀与显式 presetId 不一致（beeftv-plugin-acme-cloud -> presetId: "acme"）时的移除、冷重载与 complete=false 保持。
+        clearDynamicPartnerModulesForTest();
+        delete BUILTIN_PRESETS.acme;
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+            { id: "beeftv-plugin-acme-cloud", presetId: "acme", name: "Acme 算力云", live: true, installed: true, enabled: true, keysUrl: "https://acme-cloud.example/register?invite=beeftv" },
+        ], { complete: true });
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-acme-cloud", acmeModule)).toBe(true);
+        expect(partnerServicePresets().map((item) => item.id)).toEqual(["ll2", "ysdui", "acme"]);
+
+        // 冷重载后收到后端返回的 retired 描述符（即便某处退化给出了派生 presetId acme-cloud，前端记忆值仍优先还原为 acme）。
+        resetDynamicPartnersInMemoryForReloadTest();
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+            { id: "beeftv-plugin-acme-cloud", presetId: "acme-cloud", name: "Acme 算力云", live: false, retired: true, installed: true, enabled: true },
+        ], { complete: true });
+        expect(syncBuiltinPresetFromModule("beeftv-plugin-acme-cloud", acmeModule)).toBe(true);
+        expect(partnerServicePresets().map((item) => item.id)).toEqual(["ll2", "ysdui"]);
+        expect(presetKeysUrl("acme")).toBeUndefined();
+        expect(servicePresetFor(acmeChannel)).toBe("acme");
+        const mismatchReloadRetired = partnerServicePresets("acme").find((item) => item.id === "acme");
+        expect(mismatchReloadRetired?.name).toBe("Acme 算力云");
+        expect(mismatchReloadRetired?.baseUrl).toBe("https://api.acme-cloud.example");
+
+        // 当仅存在已过期但需修复包目录的伙伴（live=false, repairNeeded=true -> installed=true）且无其他在期伙伴时，修复后必须刷新插件中心以加载修复后的客户端模块。
+        let syncBuiltinsCalls = 0;
+        let syncPluginsCalls = 0;
+        await syncPartnerCatalogFromBackend({
+            deps: {
+                fetchCatalog: async () => ({
+                    complete: true,
+                    partners: [
+                        {
+                            id: "beeftv-plugin-acme-cloud",
+                            presetId: "acme",
+                            name: "Acme 算力云",
+                            live: false,
+                            installed: false,
+                            repairNeeded: true,
+                            enabled: false,
+                        },
+                    ],
+                }),
+                syncBuiltins: async () => {
+                    syncBuiltinsCalls += 1;
+                    return {
+                        complete: true,
+                        partners: [
+                            {
+                                id: "beeftv-plugin-acme-cloud",
+                                presetId: "acme",
+                                name: "Acme 算力云",
+                                live: false,
+                                installed: true,
+                                repairNeeded: false,
+                                enabled: true,
+                            },
+                        ],
+                    };
+                },
+                syncPlugins: async () => {
+                    syncPluginsCalls += 1;
+                },
+            },
+        });
+        expect(syncBuiltinsCalls).toBe(1);
+        expect(syncPluginsCalls).toBe(1);
+    } finally {
+        clearTransientPartnerRetryForTest();
+        clearDynamicPartnerModulesForTest();
+        delete BUILTIN_PRESETS.acme;
+        applyPartnerCatalogMetadata([
+            { id: "beeftv-plugin-ll2", presetId: "ll2", name: "LL2 (DMC)", live: true, installed: true, enabled: true, keysUrl: "https://hub.ll2.cn?p=rw6t" },
+            { id: "beeftv-plugin-ysdui", presetId: "ysdui", name: "银盛云枢壹算", live: true, installed: true, enabled: true, keysUrl: "https://www.ysdui.cn/" },
+        ]);
+    }
 });

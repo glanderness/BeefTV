@@ -16,6 +16,7 @@ import (
 	"infinite-canvas/backend/internal/bootstrap"
 	"infinite-canvas/backend/internal/desktopstorage"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/plugins"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -170,6 +171,21 @@ func (a *DesktopApp) OpenBeefTVX() error {
 		return err
 	}
 	wailsruntime.BrowserOpenURL(ctx, "https://x.com/beefnoode")
+	return nil
+}
+
+func (a *DesktopApp) OpenPartnerKeysURL(partnerID string) error {
+	ctx, err := a.dialogContext()
+	if err != nil {
+		return err
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	targetURL, err := plugins.ResolvePartnerKeysURL(lookupCtx, a.dataDir, partnerID)
+	if err != nil {
+		return err
+	}
+	wailsruntime.BrowserOpenURL(ctx, targetURL)
 	return nil
 }
 

@@ -189,6 +189,22 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		c.cleanupBuiltinBlobsOnBoot(id, pkg.SHA256, adoptedHot)
 		byID[id] = next
 	}
+	for id, record := range byID {
+		if _, shipped := builtInIDs[id]; shipped || !IsBuiltInSource(record.Source) || !validCuratedBuiltinID(id) {
+			continue
+		}
+		reconciled, valid := c.reconcileDynamicBuiltinOnBoot(record)
+		if !valid {
+			continue
+		}
+		builtInIDs[id] = struct{}{}
+		for resolvable := range resolvableProviderIDs(reconciled.Raw) {
+			if _, exists := shippedResolvable[resolvable]; !exists {
+				shippedResolvable[resolvable] = id
+			}
+		}
+		byID[id] = reconciled
+	}
 	missing := make([]RegistryRecord, 0, len(byID))
 	for _, record := range byID {
 		if !IsBuiltInSource(record.Source) {
