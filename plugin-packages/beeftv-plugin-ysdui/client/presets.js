@@ -851,6 +851,19 @@ export const YSDUI_PRESET_MODELS = [
   },
 ];
 
+function stableJson(value) {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return JSON.stringify(value ?? null);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  const keys = Object.keys(value)
+    .filter((k) => value[k] !== undefined)
+    .sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(",")}}`;
+}
+
 export function upgradeYsduiModelProfile(profile) {
   if (!profile || typeof profile !== "object") return profile;
   if (!String(profile.protocol || "").startsWith("ysdui-")) return profile;
@@ -864,7 +877,7 @@ export function upgradeYsduiModelProfile(profile) {
   if (!preset) return profile;
 
   if (profile.capabilitySource !== "user") {
-    if (JSON.stringify(profile.capabilityConfig) === JSON.stringify(preset.capabilityConfig)) {
+    if (stableJson(profile.capabilityConfig) === stableJson(preset.capabilityConfig)) {
       return profile;
     }
     return {

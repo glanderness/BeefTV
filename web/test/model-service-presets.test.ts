@@ -352,10 +352,10 @@ test("Ysdui service preset resolves all 4 Ysdui protocols when plugin is enabled
     }
 });
 
-test("LL2 service preset resolves all 6 LL2 protocols when plugin is enabled and fails closed when disabled", () => {
+test("LL2 service preset resolves all 7 LL2 protocols when plugin is enabled and fails closed when disabled", () => {
     const ll2Protocols = [
         ...protocols,
-        ...["ll2-seedance-video", "ll2-vidu-video", "ll2-minimax-video", "ll2-super-vega-video", "ll2-auto-hd-video"].map(
+        ...["ll2-wan3-video", "ll2-seedance-video", "ll2-vidu-video", "ll2-minimax-video", "ll2-super-vega-video", "ll2-auto-hd-video"].map(
             (value) => ({ value, capability: "video", authType: "bearer", enabled: true } as ModelProtocolDefinition),
         ),
     ];
@@ -367,8 +367,8 @@ test("LL2 service preset resolves all 6 LL2 protocols when plugin is enabled and
     expect(servicePresetFor(channel)).toBe("ll2");
     expect(channel.name).toBe("LL2 (DMC)");
     expect(channel.baseUrl).toBe("https://api.ll2.cn");
-    expect(channel.models).toHaveLength(9);
-    expect(catalog).toHaveLength(9);
+    expect(channel.models).toHaveLength(16);
+    expect(catalog).toHaveLength(16);
 
     const resolvedProtocols = new Set(
         catalog.map((item) => serviceModelProfile(channel, item, ll2Protocols).protocol),
@@ -380,6 +380,7 @@ test("LL2 service preset resolves all 6 LL2 protocols when plugin is enabled and
         "ll2-seedance-video",
         "ll2-super-vega-video",
         "ll2-vidu-video",
+        "ll2-wan3-video",
     ]);
 
     // When the LL2 plugin is disabled/missing, video models must not resolve to unavailable ll2-* protocols.
@@ -864,4 +865,80 @@ test("versioned ComfyUI module profiles preserve capabilityConfig across preset 
     const refreshedProfile = refreshed.modelProfiles?.find((p) => p.model === "custom.json");
     expect(refreshedProfile?.videoCapabilitiesVersion).toBe("gw-v1");
     expect(refreshedProfile?.capabilityConfig).toEqual(customConfig);
+});
+
+test("LL2 wan3.0-video and Super Vega user-edited profiles migrate 2160p/1440p without silent downgrade to 720P", () => {
+    const legacyLL2 = createModelChannel({
+        id: "ll2",
+        baseUrl: "https://api.ll2.cn",
+        models: ["wan3.0-video", "Super Vega 1.0-pro"],
+        modelProfiles: [
+            {
+                model: "wan3.0-video",
+                capability: "video",
+                protocol: "newapi",
+                capabilitySource: "user",
+                capabilityConfig: {
+                    version: 1,
+                    video: {
+                        ...defaultModelCapabilityConfig("newapi", "wan3.0-video").video!,
+                        resolutions: ["480p", "720p", "1080p", "1440p", "2160p"],
+                        defaultResolution: "2160p",
+                        ratios: ["16:9", "9:16", "21:9"],
+                        defaultRatio: "21:9",
+                    },
+                },
+            },
+            {
+                model: "Super Vega 1.0-pro",
+                capability: "video",
+                protocol: "ll2-super-vega-video",
+                capabilitySource: "user",
+                capabilityConfig: {
+                    version: 1,
+                    video: {
+                        ...defaultModelCapabilityConfig("newapi", "fixture").video!,
+                        resolutions: ["720p", "1440p", "2160p"],
+                        defaultResolution: "2160p",
+                    },
+                },
+            },
+        ],
+    });
+    const hydrated = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [legacyLL2] } }).config.channels[0];
+    const wan3 = hydrated.modelProfiles?.find((p) => p.model === "wan3.0-video");
+    expect(wan3?.protocol).toBe("ll2-wan3-video");
+    expect(wan3?.capabilityConfig?.video?.resolutions).toEqual(["480P", "720P", "1080P"]);
+    expect(wan3?.capabilityConfig?.video?.defaultResolution).toBe("1080P");
+    expect(wan3?.capabilityConfig?.video?.ratios).toEqual(["16:9", "9:16"]);
+    expect(wan3?.capabilityConfig?.video?.defaultRatio).toBe("16:9");
+
+    const vega = hydrated.modelProfiles?.find((p) => p.model === "Super Vega 1.0-pro");
+    expect(vega?.capabilityConfig?.video?.resolutions).toEqual(["720P", "2K", "4K"]);
+    expect(vega?.capabilityConfig?.video?.defaultResolution).toBe("4K");
+
+    // 当分辨率列表本身已是合法的 480P/720P/1080P 但 defaultResolution 仍是非法 2160p 时，同样修复为 1080P。
+    const validListBadDefault = createModelChannel({
+        id: "ll2",
+        baseUrl: "https://api.ll2.cn",
+        models: ["wan3.0-video"],
+        modelProfiles: [{
+            model: "wan3.0-video",
+            capability: "video",
+            protocol: "ll2-wan3-video",
+            capabilitySource: "user",
+            capabilityConfig: {
+                version: 1,
+                video: {
+                    ...defaultModelCapabilityConfig("newapi", "wan3.0-video").video!,
+                    resolutions: ["480P", "720P", "1080P"],
+                    defaultResolution: "2160p",
+                    ratios: ["16:9"],
+                    defaultRatio: "16:9",
+                },
+            },
+        }],
+    });
+    const repairedDefault = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [validListBadDefault] } }).config.channels[0];
+    expect(repairedDefault.modelProfiles?.[0]?.capabilityConfig?.video?.defaultResolution).toBe("1080P");
 });

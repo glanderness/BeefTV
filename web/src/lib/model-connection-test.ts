@@ -11,7 +11,7 @@ export async function testChannelModelConnection(channel: ModelChannel, model: s
     }
     const selectedModel = encodeChannelModel(channel.id, model);
     const rawProfile = channel.modelProfiles?.find((item) => item.model === model);
-    const modelProfile = rawProfile ? (upgradeBuiltinModelProfile(rawProfile) as typeof rawProfile) : undefined;
+    const modelProfile = rawProfile ? (upgradeBuiltinModelProfile(rawProfile, channel) as typeof rawProfile) : undefined;
     const limits = modelProfile?.capabilityConfig || defaultModelCapabilityConfig(protocol, model);
     const duration = limits?.video?.duration;
     const durations = duration?.values?.filter((value) => Number.isFinite(value) && value > 0) || [];

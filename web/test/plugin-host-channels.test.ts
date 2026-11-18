@@ -753,4 +753,79 @@ describe("plugin host channels capability", () => {
         expect(queuedErr).toContain("刷新读取超时");
         expect(rev).toBe(revBeforeFailRefresh);
     });
+
+    test("hydrateLocalModelConfig makes zero writes when Go-sorted JSON profiles need no migration, persists migrated LL2 profiles once, and recoverIfRevisionChanged reloads updated package revisions", async () => {
+        const { hydrateLocalModelConfig } = await import("../src/components/workspace/workspace-bootstrap-hydrator");
+        const { buildLL2ModelChannel } = await import("../../plugin-packages/beeftv-plugin-ll2/client/index.js");
+        const { recoverIfRevisionChanged } = await import("../src/lib/plugins/plugin-client-loader");
+        const { usePluginStore } = await import("../src/stores/use-plugin-store");
+
+        // Simulate Go encoding/json map marshaling (alphabetically sorted keys at every object depth)
+        function sortKeysDeep<T>(val: T): T {
+            if (!val || typeof val !== "object") return val;
+            if (Array.isArray(val)) return val.map(sortKeysDeep) as unknown as T;
+            const out: Record<string, unknown> = {};
+            for (const key of Object.keys(val as Record<string, unknown>).sort()) {
+                out[key] = sortKeysDeep((val as Record<string, unknown>)[key]);
+            }
+            return out as T;
+        }
+
+        const cleanLL2 = createModelChannel(buildLL2ModelChannel({ apiKey: "sk-ll2-clean", baseUrl: "https://api.ll2.cn" }) as Partial<AiConfig["channels"][number]>);
+        const goSortedCleanConfig = sortKeysDeep({
+            ...defaultConfig,
+            channels: [cleanLL2],
+        });
+        const cleanMock = installMockBackend(goSortedCleanConfig);
+        await hydrateLocalModelConfig();
+        expect(cleanMock.getWriteCount()).toBe(0);
+
+        // Now hydrate a legacy LL2 channel whose wan3.0-video fell back to newapi -> persists 1 migration write
+        const staleLL2 = createModelChannel({
+            id: "ll2",
+            name: "LL2 (DMC)",
+            baseUrl: "https://api.ll2.cn",
+            apiKey: "sk-ll2-stale",
+            models: ["wan3.0-video"],
+            modelProfiles: [{ model: "wan3.0-video", capability: "video", protocol: "newapi" }],
+        });
+        const staleMock = installMockBackend(sortKeysDeep({ ...defaultConfig, channels: [staleLL2] }));
+        await hydrateLocalModelConfig();
+        expect(staleMock.getWriteCount()).toBe(1);
+        expect(staleMock.getPersistedConfig().channels[0]?.modelProfiles?.[0]?.protocol).toBe("ll2-wan3-video");
+
+        // Subsequent hydrate of the persisted migrated config performs 0 writes
+        const afterMigrateMock = installMockBackend(sortKeysDeep(staleMock.getPersistedConfig()));
+        await hydrateLocalModelConfig();
+        expect(afterMigrateMock.getWriteCount()).toBe(0);
+
+        // Package plugin whose old @rev-A failed with 409 reloads @rev-B when backend returns enabled @rev-B
+        const oldManifest = {
+            id: "beeftv-plugin-story",
+            name: "Story",
+            version: "0.1.0",
+            revision: "1".repeat(64),
+            client: "./client/index.js",
+            description: "",
+            permissions: [],
+            contributes: {},
+        };
+        const newManifest = { ...oldManifest, version: "0.2.0", revision: "2".repeat(64) };
+        usePluginStore.getState().ensurePlugin(oldManifest);
+        usePluginStore.getState().setError("beeftv-plugin-story", "409 superseded");
+        recoverIfRevisionChanged("beeftv-plugin-story", oldManifest, {
+            manifest: newManifest,
+            source: "package",
+            fileName: "",
+            package: "pi-package",
+            sha256: "2".repeat(64),
+            installedAt: "",
+            updatedAt: "",
+            status: "enabled",
+            management: { origin: "package", kind: "application", activationScope: "system", configurationScope: "none" },
+        });
+        const updatedInst = usePluginStore.getState().installations.find((i) => i.manifest.id === "beeftv-plugin-story");
+        expect(updatedInst?.manifest.revision).toBe("2".repeat(64));
+        expect(updatedInst?.lastError).toBeUndefined();
+    });
 });

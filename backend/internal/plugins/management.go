@@ -124,10 +124,18 @@ func (s *Service) SetEnabled(id string, enabled bool) (View, error) {
 }
 
 func (s *Service) SetLoadError(id string, errText string, stage ...string) (View, error) {
+	stageVal := ""
+	if len(stage) > 0 {
+		stageVal = stage[0]
+	}
+	return s.SetLoadErrorAtRevision(id, errText, stageVal, "")
+}
+
+func (s *Service) SetLoadErrorAtRevision(id string, errText string, stage string, revision string) (View, error) {
 	if s == nil || s.runtime == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
-	plugin, err := s.runtime.SetLoadError(id, errText, stage...)
+	plugin, err := s.runtime.SetLoadErrorAtRevision(id, errText, stage, revision)
 	if err != nil {
 		return View{}, err
 	}

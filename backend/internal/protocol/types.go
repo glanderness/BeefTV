@@ -168,22 +168,22 @@ type Parameter struct {
 }
 
 type Metadata struct {
-	ID                      string            `json:"id"`
-	Version                 string            `json:"version"`
-	Name                    string            `json:"name"`
-	Vendor                  string            `json:"vendor"`
-	Description             string            `json:"description,omitempty"`
-	Categories              []Capability      `json:"categories"`
-	Scopes                  []Surface         `json:"scopes"`
-	Parameters              []Parameter       `json:"parameters,omitempty"`
-	Create                  string            `json:"-"`
-	Poll                    string            `json:"-"`
-	Cancel                  string            `json:"-"`
-	ContentType             string            `json:"-"`
-	Documentation           string            `json:"documentation,omitempty"`
-	LegacyAliases           []string          `json:"-"`
-	Enabled                 bool              `json:"enabled"`
-	Installable             bool              `json:"installable"`
+	ID                      string               `json:"id"`
+	Version                 string               `json:"version"`
+	Name                    string               `json:"name"`
+	Vendor                  string               `json:"vendor"`
+	Description             string               `json:"description,omitempty"`
+	Categories              []Capability         `json:"categories"`
+	Scopes                  []Surface            `json:"scopes"`
+	Parameters              []Parameter          `json:"parameters,omitempty"`
+	Create                  string               `json:"-"`
+	Poll                    string               `json:"-"`
+	Cancel                  string               `json:"-"`
+	ContentType             string               `json:"-"`
+	Documentation           string               `json:"documentation,omitempty"`
+	LegacyAliases           []string             `json:"-"`
+	Enabled                 bool                 `json:"enabled"`
+	Installable             bool                 `json:"installable"`
 	Execution               string               `json:"-"`
 	BaseURL                 string               `json:"-"`
 	RequiresPublicMediaURLs bool                 `json:"-"`
