@@ -80,3 +80,8 @@ func (r *Repository) ClaimImageSubmissionSend(row *model.ImageSubmission, owner 
 		return nil
 	})
 }
+
+func (r *Repository) RecordMediaSettlement(attemptID string, task model.Task, quota int64) error {
+	return r.db.Model(&model.ImageSubmission{}).Where("attempt_id = ? AND task_id = ? AND user_id = ?", attemptID, task.ID, task.UserID).
+		UpdateColumn("settled_quota", quota).Error
+}

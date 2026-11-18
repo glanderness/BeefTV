@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 29
+const CurrentSchemaVersion int64 = 30
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -58,7 +58,7 @@ func LocalModels() []any {
 		&model.Shot{}, &model.ShotRevision{}, &model.ShotArtifact{}, &model.ShotAssetReference{},
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
-		&model.AssistantTurn{},
+		&model.AssistantTurn{}, &model.MCPCall{},
 		&model.AssistantContinuation{},
 		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
@@ -145,6 +145,12 @@ func canonicalLocalMigrations() []localMigration {
 		// 失败类目在失败那一刻算一次并随任务保存；旧任务留空，读取时仍按旧文案归类。
 		{version: 29, name: "task-failure-category", apply: func(tx *gorm.DB) error {
 			return ensureSQLiteColumn(tx, "tasks", "error_code", "TEXT")
+		}},
+		{version: 30, name: "mcp-call-history", apply: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.MCPCall{}); err != nil {
+				return err
+			}
+			return ensureSQLiteColumn(tx, "image_submissions", "settled_quota", "INTEGER")
 		}},
 	}
 }
@@ -502,12 +508,23 @@ func requireReconciledSchema(db *gorm.DB) error {
 	if !hasTurnID {
 		return fmt.Errorf("本地 Agent 幂等或回合归属结构缺失")
 	}
-	for _, value := range []any{&model.ImageSubmission{}, &model.AgentOpRecord{}} {
+	version, err := currentSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	models := []any{&model.ImageSubmission{}, &model.AgentOpRecord{}}
+	if version >= 30 {
+		models = append(models, &model.MCPCall{})
+	}
+	for _, value := range models {
 		stmt := &gorm.Statement{DB: db}
 		if err := stmt.Parse(value); err != nil {
 			return err
 		}
 		for _, column := range stmt.Schema.DBNames {
+			if version < 30 && stmt.Schema.Table == "image_submissions" && column == "settled_quota" {
+				continue
+			}
 			has, err := sqliteHasColumn(db, stmt.Schema.Table, column)
 			if err != nil {
 				return err
@@ -529,10 +546,7 @@ func requireReconciledSchema(db *gorm.DB) error {
 			return fmt.Errorf("本地数据库索引 %s 定义不完整", index.name)
 		}
 	}
-	version, err := currentSchemaVersion(db)
-	if err != nil {
-		return err
-	}
+
 	if version >= 10 {
 		if err := requireAssistantTurnsSchema(db); err != nil {
 			return err

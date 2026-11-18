@@ -244,6 +244,14 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc agentOpsService, store *agentops.
 	})
 
 	r.POST("/ops/:op", func(c *gin.Context) {
+		if event := activityFor(c); event != nil {
+			if desc, ok := registry.Descriptor(c.Param("op")); ok {
+				event.call.Tool = desc.ID
+				if desc.SubmitsGeneration || desc.ID == "media.review" {
+					event.call.Billing = "unknown"
+				}
+			}
+		}
 		// 本机入口：只接受 loopback 来源，避免被浏览器跨站或外部主机调用。
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))

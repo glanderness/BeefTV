@@ -69,7 +69,7 @@ func TestExecuteMediaCommandsFallsBackToWavWhenMp3EncoderUnavailable(t *testing.
 	}
 
 	node := Node{ID: "audio", Role: "operation", OperationID: "video.audio", OperationVersion: 1, MediaType: "audio"}
-	candidates, err := MediaCommandCandidates(node, 1280, 720)
+	candidates, err := MediaCommandCandidates("", node, 1280, 720)
 	if err != nil {
 		t.Fatalf("MediaCommandCandidates: %v", err)
 	}

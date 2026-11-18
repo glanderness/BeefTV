@@ -216,14 +216,10 @@ func ensureMinimumPreviewFPS(ctx context.Context, previewPath string, configure 
 		return err
 	}
 	conformedPath := previewPath + ".30fps.mp4"
-	cmd := exec.CommandContext(ctx, ffmpeg,
-		"-y", "-hide_banner", "-loglevel", "error",
-		"-i", previewPath,
-		"-r", "30",
-		"-an", "-c:v", "libx264", "-crf", "18",
-		"-pix_fmt", "yuv420p", "-movflags", "+faststart",
-		conformedPath,
-	)
+	cmdArgs := []string{"-y", "-hide_banner", "-loglevel", "error", "-i", previewPath, "-r", "30", "-an"}
+	cmdArgs = append(cmdArgs, mediatools.PreferredH264VideoArgs(ffmpeg, "", "18", "6M", "10M")...)
+	cmdArgs = append(cmdArgs, "-movflags", "+faststart", conformedPath)
+	cmd := exec.CommandContext(ctx, ffmpeg, cmdArgs...)
 	if configure != nil {
 		configure(cmd)
 	} else {

@@ -34,6 +34,8 @@ type TaskOutput struct {
 type RunHost interface {
 	// Generate submits a generation step from the template's private recipe.
 	Generate(user, operation, recipeCipher string, n Node, nodes map[string]Node, steps map[string]*Step) (*model.Task, error)
+	ReplacementSegment(user, operation, cipher string, n Node, plan ReplacementPlan, index int, character string) (*model.Task, error)
+	ReplacementLimitsForNode(cipher, nodeID string) ReplacementLimits
 	Describe(user, operation string, n Node, resource string) (*model.Task, error)
 	Upscale(user, operation string, n Node, resource string) (*model.Task, error)
 	CanvasMedia(user, operation string, n Node, resource string) (*model.Task, error)
@@ -490,6 +492,20 @@ func (r *Runs) Advance(row *model.CanvasWorkflowRun) {
 			}
 			continue
 		}
+		if n.OperationID == CharacterReplacementOperation {
+			if err := r.advanceReplacement(row, n, d, steps, step); err != nil {
+				step.Status = "failed"
+				step.Error = r.host.FailureMessage(err.Error(), "", "")
+				run.Status, run.Error = "failed", step.Error
+			}
+			if r.save(row, run) != nil {
+				return
+			}
+			if run.Status == "failed" {
+				break
+			}
+			continue
+		}
 		var task *model.Task
 		if step.TaskID != "" {
 			task, e = r.repo.TaskForUser(row.UserID, step.TaskID)
@@ -576,10 +592,10 @@ func (r *Runs) Advance(row *model.CanvasWorkflowRun) {
 		if step != nil && step.Status == "succeeded" {
 			if step.ResourceID == "" && len(step.Candidates) > 1 {
 				for _, value := range step.Candidates {
-					run.Outputs = append(run.Outputs, Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: value.ResourceID})
+					run.Outputs = append(run.Outputs, Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: value.ResourceID, ReviewRequired: step.ReviewRequired})
 				}
 			} else {
-				run.Outputs = append(run.Outputs, Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: step.ResourceID, Text: step.Text})
+				run.Outputs = append(run.Outputs, Output{NodeID: id, MediaType: nodes[id].MediaType, ResourceID: step.ResourceID, Text: step.Text, ReviewRequired: step.ReviewRequired})
 			}
 		}
 	}
@@ -845,7 +861,7 @@ func (r *Runs) Retry(user, id string) (Run, error) {
 			if e != nil {
 				return Run{}, e
 			}
-			if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning {
+			if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning && (step.Replacement == nil || task.Status != model.TaskStatusSucceeded) {
 				if task, e = r.host.RetryStep(row, step.NodeID, task); e != nil {
 					return Run{}, e
 				}
@@ -877,12 +893,24 @@ func (r *Runs) Cancel(ctx context.Context, user, id string) (Run, error) {
 	if run.Status == "succeeded" || run.Status == "cancelled" {
 		return run, nil
 	}
+	var definition Definition
+	if e := json.Unmarshal([]byte(row.DefinitionJSON), &definition); e != nil {
+		return Run{}, e
+	}
+	replacementNodes := map[string]bool{}
+	for _, n := range definition.Nodes {
+		replacementNodes[n.ID] = n.OperationID == CharacterReplacementOperation
+	}
 	run.Status = "cancelled"
 	for i := range run.Steps {
 		step := &run.Steps[i]
 		if step.Status == "pending" || step.Status == "running" || step.Status == "waiting_selection" {
 			if step.TaskID == "" {
-				task, lookupErr := r.repo.TaskByClientOperation(user, StepOperation(row.ID, step.NodeID))
+				operation := StepOperation(row.ID, step.NodeID)
+				if replacementNodes[step.NodeID] {
+					operation = replacementNextOperation(operation, step.Replacement)
+				}
+				task, lookupErr := r.repo.TaskByClientOperation(user, operation)
 				if lookupErr != nil {
 					return Run{}, lookupErr
 				}

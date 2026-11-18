@@ -10,9 +10,6 @@ import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
 import { PromptPreferencesPane } from "./prompt-preferences-pane";
 import { StorageSettingsPane } from "./storage-settings-pane";
-import { DepthComponentsPanel } from "@/components/depth-components-panel";
-import { ReferenceStoragePane } from "./reference-storage-pane";
-import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
 
 type ConfigSectionKey = "channels" | "models" | "prompts" | "storage" | "diagnostics";
@@ -34,7 +31,6 @@ export default function SettingsPage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const shouldPromptContinue = searchParams.get("continue") === "1";
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
-    const hasDepthComponents = Boolean(getDesktopAppBinding()?.DepthComponentStatus);
     useLayoutEffect(() => {
         document.body.classList.add("app-user-overlays");
         return () => document.body.classList.remove("app-user-overlays");
@@ -91,16 +87,7 @@ export default function SettingsPage() {
         storage: (
             <SettingsPane>
                 <PageHeader title="存储设置" />
-                <div className="storage-settings-sections">
-                    <StorageSettingsPane />
-                    <ReferenceStoragePane />
-                    {hasDepthComponents ? (
-                        <section className="settings-section storage-settings-block space-y-4" aria-label="深度捕捉组件">
-                            <div className="settings-pane-header"><h2>深度捕捉组件</h2></div>
-                            <DepthComponentsPanel />
-                        </section>
-                    ) : null}
-                </div>
+                <StorageSettingsPane />
             </SettingsPane>
         ),
         models: (

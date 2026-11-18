@@ -23,7 +23,11 @@ func ResolveFFmpegBinary() (string, error) {
 // files maps opaque source ids to paths relative to the command working directory
 // (or absolute paths). Missing source files return nil so execution cannot succeed
 // after dropping content. This function does not re-select or reorder plan clips.
-func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string {
+func BuildFFmpegArgs(plan Plan, files map[string]string, target string, options ...EncodeOptions) []string {
+	var opts EncodeOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	if len(plan.Segments) == 0 {
 		return nil
 	}
@@ -40,6 +44,13 @@ func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string
 	if rate <= 0 {
 		rate = DefaultSampleRate
 	}
+	appendFileInput := func(dst []string, prefix []string, path string) []string {
+		if opts.ProtocolWhitelist != "" {
+			dst = append(dst, "-protocol_whitelist", opts.ProtocolWhitelist)
+		}
+		dst = append(dst, prefix...)
+		return append(dst, "-i", path)
+	}
 	args := []string{"-nostdin", "-y"}
 	filters := []string{}
 	labels := ""
@@ -54,12 +65,12 @@ func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string
 		case KindGap:
 			args = append(args, "-f", "lavfi", "-t", seconds, "-i", fmt.Sprintf("color=c=black:s=%dx%d:r=%d", width, height, fps))
 		case KindImage:
-			args = append(args, "-loop", "1", "-t", seconds, "-i", path)
+			args = appendFileInput(args, []string{"-loop", "1", "-t", seconds}, path)
 		default:
-			args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.SourceStartMs)/1000), "-t", seconds, "-i", path)
+			args = appendFileInput(args, []string{"-ss", fmt.Sprintf("%.3f", float64(seg.SourceStartMs)/1000), "-t", seconds}, path)
 		}
 		if seg.Kind == KindVideo && seg.HasAudio && !seg.Muted {
-			args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.SourceStartMs)/1000), "-t", seconds, "-i", path)
+			args = appendFileInput(args, []string{"-ss", fmt.Sprintf("%.3f", float64(seg.SourceStartMs)/1000), "-t", seconds}, path)
 		} else {
 			args = append(args, "-f", "lavfi", "-t", seconds, "-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", rate))
 		}
@@ -75,7 +86,7 @@ func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string
 		if path == "" {
 			return nil
 		}
-		args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.SourceStartMs)/1000), "-t", fmt.Sprintf("%.3f", float64(seg.DurationMs)/1000), "-i", path)
+		args = appendFileInput(args, []string{"-ss", fmt.Sprintf("%.3f", float64(seg.SourceStartMs)/1000), "-t", fmt.Sprintf("%.3f", float64(seg.DurationMs)/1000)}, path)
 		volume := seg.Volume
 		if seg.Muted {
 			volume = 0
@@ -84,7 +95,19 @@ func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string
 		mix += fmt.Sprintf("[extra%d]", i)
 	}
 	filters = append(filters, fmt.Sprintf("%samix=inputs=%d:duration=first:normalize=0,atrim=duration=%.3f[aout]", mix, len(plan.Audio)+1, float64(plan.DurationMs)/1000))
-	if plan.Output.BurnSubtitles && plan.SubtitleSRT != "" {
+	if plan.Output.BurnSubtitles && len(opts.SubtitleOverlays) > 0 {
+		baseIdx := 2*len(plan.Segments) + len(plan.Audio)
+		prev := "[vbase]"
+		for i, ov := range opts.SubtitleOverlays {
+			args = appendFileInput(args, nil, ov.Path)
+			next := "[vout]"
+			if i+1 < len(opts.SubtitleOverlays) {
+				next = fmt.Sprintf("[vsub%d]", i)
+			}
+			filters = append(filters, fmt.Sprintf("%s[%d:v]overlay=0:0:enable='between(t,%.3f,%.3f)'%s", prev, baseIdx+i, float64(ov.StartMs)/1000, float64(ov.EndMs)/1000, next))
+			prev = next
+		}
+	} else if plan.Output.BurnSubtitles && plan.SubtitleSRT != "" {
 		// SRT has no canvas geometry. Override libass's virtual canvas as well
 		// as font/margins, otherwise portrait captions inherit landscape scaling.
 		// Match the browser's logical height/24 size, capped for portrait width.
@@ -100,7 +123,13 @@ func BuildFFmpegArgs(plan Plan, files map[string]string, target string) []string
 	} else {
 		filters = append(filters, "[vbase]null[vout]")
 	}
-	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-t", fmt.Sprintf("%.3f", float64(plan.DurationMs)/1000), target)
+	videoCodec := opts.VideoCodecArgs
+	if len(videoCodec) == 0 {
+		videoCodec = []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"}
+	}
+	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[vout]", "-map", "[aout]")
+	args = append(args, videoCodec...)
+	args = append(args, "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-t", fmt.Sprintf("%.3f", float64(plan.DurationMs)/1000), target)
 	return args
 }
 

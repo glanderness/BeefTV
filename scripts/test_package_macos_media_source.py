@@ -20,10 +20,11 @@ class SourcePacketTest(unittest.TestCase):
         self.source.write_bytes(b"original source fixture")
         self.runtime = self.root / "runtime"
         self.runtime.mkdir()
-        for name, content in {"ffprobe": b"binary fixture", "LICENSE": b"license fixture", "README.txt": b"configure flags fixture"}.items():
+        for name, content in {"ffprobe": b"probe fixture", "ffmpeg": b"encoder fixture", "LICENSE": b"license fixture", "README.txt": b"configure flags fixture"}.items():
             (self.runtime / name).write_bytes(content)
         self.facts = {"sourceSHA256": hashlib.sha256(self.source.read_bytes()).hexdigest(),
                       "probeSHA256": hashlib.sha256((self.runtime / "ffprobe").read_bytes()).hexdigest(),
+                      "encoderSHA256": hashlib.sha256((self.runtime / "ffmpeg").read_bytes()).hexdigest(),
                       "target": "darwin/arm64", "sourceCommit": "fixture"}
         (self.runtime / "manifest.json").write_text(json.dumps(self.facts))
         self.output = self.root / "sources.tar.gz"
@@ -35,7 +36,9 @@ class SourcePacketTest(unittest.TestCase):
             entries = {item.name: archive.extractfile(item).read() for item in archive.getmembers()}
         self.assertEqual(entries["ffmpeg-source.tar.gz"], self.source.read_bytes())
         manifest = json.loads(entries["manifest.json"])
+        self.assertEqual(manifest["id"], "ffmpeg-darwin-arm64")
         self.assertEqual(manifest["binaryHashes"]["ffprobe"], self.facts["probeSHA256"])
+        self.assertEqual(manifest["binaryHashes"]["ffmpeg"], self.facts["encoderSHA256"])
         for entry in manifest["sources"]:
             self.assertEqual(hashlib.sha256(entries[entry["path"]]).hexdigest(), entry["sha256"])
         self.assertIn(b"./ffmpeg-source.tar.gz", entries[manifest["buildInstructions"]])

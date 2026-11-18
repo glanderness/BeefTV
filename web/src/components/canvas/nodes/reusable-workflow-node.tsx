@@ -46,6 +46,7 @@ export function ReusableWorkflowNode({ node, nodes, readOnly, dropTarget, onActi
     const [busy, setBusy] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [pickerOpen, setPickerOpen] = useState(false);
+    const [dismissedReviewRunId, setDismissedReviewRunId] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
     const active = useRef(true);
     useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
@@ -79,11 +80,13 @@ export function ReusableWorkflowNode({ node, nodes, readOnly, dropTarget, onActi
         const total = state.definition.nodes.filter(item => item.role === "input").length;
         const operations = state.definition.nodes.filter(isWorkflowOperation);
         const completed = operations.filter(item => run?.steps.some(step => step.nodeId === item.id && step.status === "succeeded")).length;
+        const replacementStage = running ? run?.steps.find(step => step.status === "running" && step.stage) : undefined;
+        const percent = replacementStage?.progress ?? (operations.length ? completed / operations.length * 100 : 0);
         return <div className="flex h-full w-full flex-col justify-between gap-3 rounded-[inherit] bg-[var(--surface-card)] p-5 text-foreground" data-canvas-no-drag data-canvas-no-zoom onMouseDown={stop} onPointerDown={stop} onDoubleClick={stop}>
             <div className="flex flex-wrap items-center gap-3 text-2xl"><span className="font-medium">{state.inputsChanged && run ? "输入已更新" : waitingSelection ? "等待选择图片" : run ? labels[run.status] : ready === total ? "素材已就绪" : "准备素材"}</span><span className="text-xl tabular-nums text-muted-foreground">{ready}/{total}</span></div>
             {waitingSelection ? <p className="text-sm text-muted-foreground">在“选择图片结果”节点中选择一张，随后继续处理。</p> : null}
             {state.error || run?.error ? <p role="alert" className="max-h-14 overflow-auto text-lg text-destructive" data-canvas-wheel-scroll>{state.error || run?.error}</p> : null}
-            <div className="flex items-center gap-3"><div role="progressbar" aria-label="工作流执行进度" aria-valuemin={0} aria-valuemax={operations.length} aria-valuenow={completed} className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-active)]"><div className="h-full rounded-full bg-[var(--workspace-accent)]" style={{ width: `${operations.length ? completed / operations.length * 100 : 0}%` }} /></div><span className="shrink-0 text-lg tabular-nums text-muted-foreground">步骤 {completed}/{operations.length}</span></div>
+            <div className="flex items-center gap-3"><div role="progressbar" aria-label="工作流执行进度" aria-valuemin={0} aria-valuemax={replacementStage ? 100 : operations.length} aria-valuenow={replacementStage ? percent : completed} className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-active)]"><div className="h-full rounded-full bg-[var(--workspace-accent)]" style={{ width: `${percent}%` }} /></div><span className="shrink-0 text-lg tabular-nums text-muted-foreground">{replacementStage ? `${replacementStage.stage} ${percent}%` : `步骤 ${completed}/${operations.length}`}</span></div>
             <div className="flex flex-wrap items-center justify-end gap-2" data-workflow-actions>
                 {onUpdate ? <Button type="text" className="mr-auto" disabled={readOnly || busy || running || Boolean(state.intent)} onClick={() => void onUpdate(node.id)}>版本 {state.templateRevision || 1} · 更新实例</Button> : null}
                 <Button size="large" style={{ fontSize: 20 }} type="primary" icon={running ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />} disabled={readOnly || busy || running || ready < total && !state.intent} loading={busy} onClick={() => { setBusy(true); void onAction(node.id, recoverOriginal ? "retry" : "start").finally(() => { if (active.current) setBusy(false); }); }}>{state.intent ? "确认上次提交" : running ? "运行中" : recoverOriginal ? "继续原任务" : run ? "重新运行" : "运行工作流"}</Button>
@@ -106,6 +109,9 @@ export function ReusableWorkflowNode({ node, nodes, readOnly, dropTarget, onActi
     const choices = step?.candidates?.filter(item => item.resourceId) || [];
     const selecting = step?.status === "waiting_selection" && control?.metadata?.reusableWorkflow?.run?.status === "running";
     const hasValue = slot.mediaType === "text" ? Boolean(node.metadata?.content) : Boolean(resourceId);
+    const activeRun = control?.metadata?.reusableWorkflow?.run;
+    const requiresReview = Boolean(activeRun?.outputs.some(output => output.nodeId === slot.nodeId && output.reviewRequired));
+    const showReviewHint = requiresReview && slot.status === "succeeded" && dismissedReviewRunId !== (activeRun?.id || "");
     const status = slot.role === "constant" ? "固定素材" : isInput ? hasValue ? "已添加" : "待添加" : labels[slot.status || "pending"] || "待运行";
     const candidates = nodes.filter(item => item.id !== node.id && item.type === slot.mediaType && item.metadata?.workflowSlot?.instanceId !== slot.instanceId && canvasNodeResourceId(item));
     const recipeNode = control?.metadata?.reusableWorkflow?.definition.nodes.find(item => item.id === slot.nodeId);
@@ -124,7 +130,8 @@ export function ReusableWorkflowNode({ node, nodes, readOnly, dropTarget, onActi
                     : isInput ? <button type="button" aria-label={`上传${node.title}`} disabled={locked || busy} className="flex h-full w-full flex-col items-center justify-center gap-2 border border-dashed border-border p-3 hover:bg-[var(--surface-hover)] disabled:opacity-50" onClick={() => inputRef.current?.click()}>{busy ? <LoaderCircle className="size-7 animate-spin" /> : <Plus className="size-8" />}<span className="text-xs text-muted-foreground">上传{mediaLabels[slot.mediaType]}或拖入画布素材</span></button>
                         : <div className="flex flex-col items-center gap-2 p-3 text-center text-muted-foreground">{slot.status === "running" ? <LoaderCircle className="size-7 animate-spin" /> : slot.status === "succeeded" ? <Check className="size-7" /> : <ImagePlus className="size-7" />}<span className="text-sm">{slot.status === "failed" ? "处理失败" : `${node.title}将在这里显示`}</span></div>}
         </div>
-        {exportable && onResultDrag ? <button type="button" className="shrink-0 cursor-grab px-1 py-1 text-left text-sm text-muted-foreground active:cursor-grabbing" aria-label={`拖出${node.title}到画布`} onMouseDown={stop} onPointerDown={startResultDrag}>拖出到画布</button> : null}
+        {showReviewHint ? <div className="flex shrink-0 items-center justify-between gap-2 px-1 text-xs text-muted-foreground" data-canvas-no-drag onMouseDown={stop} onPointerDown={stop}><span>建议先播放核对人物与音画同步</span><button type="button" className="shrink-0 text-foreground hover:underline" onClick={() => setDismissedReviewRunId(activeRun?.id || "dismissed")}>知道了</button></div> : null}
+        {exportable && onResultDrag ? <button type="button" className="shrink-0 cursor-grab px-1 py-1 text-left text-sm text-muted-foreground active:cursor-grabbing" aria-label={`拖出${node.title}到画布`} onMouseDown={stop} onPointerDown={(event) => { if (activeRun?.id) setDismissedReviewRunId(activeRun.id); startResultDrag(event); }}>拖出到画布</button> : null}
         {slot.error ? <p role="alert" className="line-clamp-2 break-words text-xs text-destructive" title={slot.error}>{slot.error}</p> : null}
         {isInput && slot.mediaType !== "text" ? <div className="flex items-center gap-1" data-canvas-no-drag onMouseDown={stop} onPointerDown={stop}>
             <Button type="text" size="small" icon={<Upload className="size-3.5" />} disabled={locked || busy} loading={busy} onClick={() => inputRef.current?.click()}>{hasValue ? "替换" : "上传"}</Button>

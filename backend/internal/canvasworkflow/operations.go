@@ -67,10 +67,12 @@ func Operations() []Operation {
 			out[i].Name = name
 		}
 	}
-	return append(append(out, MediaOperations()...), ImageWorkflowOperations()...)
+	out = append(out, MediaOperations()...)
+	out = append(out, ImageWorkflowOperations()...)
+	return append(out, characterReplacementOperation())
 }
 func OperationByID(id string) Operation {
-	for _, op := range Operations() {
+	for _, op := range append(Operations(), replacementLocalOperations()...) {
 		if op.ID == id {
 			return op
 		}
@@ -109,6 +111,9 @@ func ValidateOperation(n Node) error {
 		if !found {
 			return fmt.Errorf("节点 %s 不支持参数 %s", n.ID, key)
 		}
+	}
+	if op.ID == CharacterReplacementOperation {
+		return ValidateCharacterReplacement(n)
 	}
 	if op.ID == "video.trim" {
 		start := operationNumber(n.Config["startSeconds"])

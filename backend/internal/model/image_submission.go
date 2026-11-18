@@ -10,6 +10,7 @@ type ImageSubmission struct {
 	UserID           string    `gorm:"size:36;index" json:"-"`
 	RequestCipher    string    `gorm:"type:text" json:"-"`
 	QueryCipher      string    `gorm:"type:text" json:"-"`
+	SettledQuota     *int64    `json:"-"`
 	SendCount        int       `json:"-"`
 	ResponseAccepted bool      `json:"-"`
 	CreatedAt        time.Time `json:"-"`

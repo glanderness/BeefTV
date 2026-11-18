@@ -98,7 +98,7 @@ const saved: Array<{ apiKey: string; secretKey?: string; models: string[]; profi
 createRoot(document.getElementById("root")!).render(
     <ConfigProvider theme={getAntThemeConfig(dark)}>
         <App>
-            <ModelServiceEditor initial={channel} onClose={() => {}} onSave={async (savedChannel) => { saved.push({ apiKey: savedChannel.apiKey, secretKey: savedChannel.secretKey, models: savedChannel.models, profiles: (savedChannel.modelProfiles || []).map((profile) => ({ model: profile.model, capability: profile.capability })) }); }} />
+            <ModelServiceEditor initial={scenario === "new-service" ? undefined : channel} onClose={() => {}} onSave={async (savedChannel) => { saved.push({ apiKey: savedChannel.apiKey, secretKey: savedChannel.secretKey, models: savedChannel.models, profiles: (savedChannel.modelProfiles || []).map((profile) => ({ model: profile.model, capability: profile.capability })) }); }} />
         </App>
     </ConfigProvider>,
 );

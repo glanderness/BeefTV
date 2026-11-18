@@ -22,9 +22,9 @@ import { getEffectiveReversePrompt } from "@/lib/reverse-prompt-preference";
 
 const mediaLabels = { image: "图片", video: "视频", audio: "音频", text: "文本" };
 
-export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasConnections, readOnly, onClose, onSaved, onReturnToCanvas }: {
+export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasConnections, readOnly, addAfterSave = false, onClose, onSaved, onReturnToCanvas }: {
     initial: CanvasWorkflow; operations: WorkflowOperation[]; canvasNodes: CanvasNodeData[]; canvasConnections: CanvasConnection[];
-    readOnly: boolean; onClose(): void; onSaved(workflow: CanvasWorkflow): void; onReturnToCanvas(): void;
+    readOnly: boolean; addAfterSave?: boolean; onClose(): void; onSaved(workflow: CanvasWorkflow): void; onReturnToCanvas(): void;
 }) {
     const [initialDraft] = useState(() => {
         const value = structuredClone(initial);
@@ -36,7 +36,7 @@ export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasC
     });
     const [history, setHistory] = useState({ past: [] as CanvasWorkflow[], current: initialDraft, future: [] as CanvasWorkflow[] });
     const draft = history.current, definition = draft.definition;
-    const [selected, setSelected] = useState<string | undefined>(definition.nodes[0]?.id);
+    const [selected, setSelected] = useState<string | undefined>((addAfterSave ? definition.nodes.find(isWorkflowOperation) : definition.nodes[0])?.id);
     const [connecting, setConnecting] = useState<string>();
     const [error, setError] = useState("");
     const [saving, setSaving] = useState(false);
@@ -153,7 +153,7 @@ export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasC
                     {!readOnly ? <Button type="text" aria-label="添加工作流节点" aria-expanded={libraryOpen} icon={<Plus className="size-4" />} disabled={saving || uploading} onClick={() => setLibraryOpen(value => !value)}>添加</Button> : null}
                     <Button type="text" aria-label="撤销工作流编辑" icon={<Undo2 className="size-4" />} disabled={!history.past.length || saving || uploading} onClick={() => setHistory(current => ({ past: current.past.slice(0, -1), current: current.past.at(-1)!, future: [current.current, ...current.future] }))} />
                     <Button type="text" aria-label="重做工作流编辑" icon={<Redo2 className="size-4" />} disabled={!history.future.length || saving || uploading} onClick={() => setHistory(current => ({ past: [...current.past, current.current], current: current.future[0], future: current.future.slice(1) }))} />
-                    {!readOnly ? <Button type="primary" icon={<Save className="size-4" />} loading={saving} disabled={uploading} onClick={() => void save()}>保存</Button> : null}
+                    {!readOnly ? <Button type="primary" icon={<Save className="size-4" />} loading={saving} disabled={uploading} onClick={() => void save()}>{addAfterSave ? "保存并添加到画布" : "保存"}</Button> : null}
                     <Button type="text" aria-label="关闭工作流设定" icon={<X className="size-4" />} disabled={saving || uploading} onClick={close} />
                 </div>
             </header>
@@ -200,10 +200,11 @@ export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasC
                             <Button loading={uploading} disabled={readOnly || saving} onClick={() => fileInput.current?.click()}>上传{mediaLabels[node.mediaType]}</Button>
                             <input ref={fileInput} type="file" hidden accept={`${node.mediaType}/*`} onChange={event => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
                         </div> : null}
-                        {videoProfile?.references ? <p className="text-sm text-muted-foreground">所选模型：{modelOptions.find(option => option.value === node.config?.modelOption)?.label}；最多 {videoProfile.references.maxVideos || 0} 段参考视频，合计不超过 {videoProfile.references.maxVideoTotalDurationSeconds || "未声明"} 秒。原视频与深度结果分别计入总时长。</p> : null}
+                        {videoProfile?.references && node.operationId !== "video.replace-character" ? <p className="text-sm text-muted-foreground">所选模型：{modelOptions.find(option => option.value === node.config?.modelOption)?.label}；最多 {videoProfile.references.maxVideos || 0} 段参考视频，合计不超过 {videoProfile.references.maxVideoTotalDurationSeconds || "未声明"} 秒。原视频与深度结果分别计入总时长。</p> : null}
                         {fields.map(field => <label key={field.key} className="flex flex-col gap-2 text-sm">{field.label}
-                            {field.key === "modelOption" && workflowOperationId(node).startsWith("generate.") ? <Select aria-label="生成模型" showSearch optionFilterProp="label" value={node.config?.modelOption} options={modelOptions} disabled={readOnly || saving} onChange={value => { const profile = modelOptions.find(option => option.value === value)?.capabilities?.video; updateNode({config:{...node.config, modelOption:value, ...(profile ? {size:profile.defaultRatio || "16:9", vquality:profile.defaultResolution || profile.resolutions?.[0]} : {})}}); }} />
-                                : field.key === "vquality" || field.key === "size" && videoProfile ? <Select aria-label={field.label} value={node.config?.[field.key]} options={(field.key === "vquality" ? videoProfile?.resolutions || [] : videoProfile?.ratios || []).map(value => ({value,label:value}))} disabled={readOnly || saving} onChange={value => updateNode({config:{...node.config,[field.key]:value}})} />
+                            {field.key === "modelOption" && (workflowOperationId(node).startsWith("generate.") || node.operationId === "video.replace-character") ? <Select aria-label="生成模型" showSearch optionFilterProp="label" value={node.config?.modelOption} options={modelOptions} disabled={readOnly || saving} onChange={value => { const profile = modelOptions.find(option => option.value === value)?.capabilities?.video; const supported = (profile?.resolutions || []).map(item => item.toLowerCase()); const nextReplacementQuality = supported.length && !supported.includes("720p") && supported.includes("480p") ? "480p" : "720p"; const currentQuality = String(node.config?.vquality || ""); updateNode({config:{...node.config, modelOption:value, ...(node.operationId === "video.replace-character" ? {vquality: currentQuality && supported.includes(currentQuality.toLowerCase()) ? currentQuality : nextReplacementQuality} : profile ? {size:profile.defaultRatio || "16:9", ...(profile.defaultResolution || profile.resolutions?.[0] ? {vquality: profile.defaultResolution || profile.resolutions![0]} : {})} : {})}}); }} />
+                                : field.key === "vquality" && node.operationId === "video.replace-character" ? <Select aria-label={field.label} value={node.config?.[field.key]} options={(field.options || []).filter(opt => !videoProfile?.resolutions?.length || videoProfile.resolutions.some(res => res.toLowerCase() === String(opt.value).toLowerCase()))} disabled={readOnly || saving} onChange={value => updateNode({config:{...node.config,[field.key]:value}})} />
+                                : field.key === "vquality" && node.operationId !== "video.replace-character" || field.key === "size" && videoProfile ? <Select aria-label={field.label} value={node.config?.[field.key]} options={(field.key === "vquality" ? videoProfile?.resolutions || [] : videoProfile?.ratios || []).map(value => ({value,label:value}))} disabled={readOnly || saving} onChange={value => updateNode({config:{...node.config,[field.key]:value}})} />
                                 : field.key === "prompt" && workflowOperationId(node) === "image.describe" ? <Input.TextArea aria-label="反推要求" value={String(node.config?.prompt || "")} disabled={readOnly || saving} autoSize={{minRows:3,maxRows:8}} onChange={event => updateNode({config:{...node.config,prompt:event.target.value}})} /> : field.key === "prompt" ? <CanvasResourceMentionTextarea aria-label="工作流提示词" nodeSectionLabel="工作流节点" value={String(node.config?.prompt || "")} references={promptReferences} disabled={readOnly || saving} sendOnEnter={false} includeAssetLibrary={false} placeholder="输入 @ 选择工作流节点" containerClassName="min-h-32 max-h-64 overflow-y-auto rounded-md bg-[var(--bg-secondary)]" className="min-h-32 p-3 text-sm outline-none"
                                 onSelectReference={reference => {
                                     try {
@@ -219,7 +220,7 @@ export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasC
                                     <Select aria-label="时长参考视频" value={node.videoDurationSourceNodeId} options={durationOptions} disabled={readOnly || saving} onChange={value => updateNode({ videoDurationSourceNodeId: value })} />
                                     <span className="text-xs text-muted-foreground">使用所选视频的当前时长，秒数向上取整</span>
                                 </> : <InputNumber aria-label="固定时长（秒）" min={1} precision={0} value={typeof node.config?.videoSeconds === "number" ? node.config.videoSeconds : undefined} disabled={readOnly || saving} className="w-full" onChange={value => updateNode({ config: { ...node.config, videoSeconds: value ?? 1 } })} />}
-                            </> : field.type === "number" ? <InputNumber aria-label={field.label} min={field.min} max={field.max} value={typeof node.config?.[field.key] === "number" ? node.config[field.key] as number : undefined} disabled={readOnly || saving} className="w-full" onChange={value => updateNode({ config: { ...node.config, [field.key]: value ?? 0 } })} />
+                            </> : field.type === "number" ? <InputNumber aria-label={field.label} min={field.min} max={field.max} value={typeof node.config?.[field.key] === "number" ? node.config[field.key] as number : undefined} disabled={readOnly || saving} className="w-full" onChange={value => updateNode({ config: { ...node.config, [field.key]: value ?? (field.key === "maxSegments" ? 12 : field.min ?? 0) } })} />
                                 : field.type === "select" ? <Select aria-label={field.label} value={node.config?.[field.key]} options={field.options} disabled={readOnly || saving} onChange={value => updateNode({ config: { ...node.config, [field.key]: value } })} />
                                     : <Input.TextArea aria-label={field.label} value={String(node.config?.[field.key] ?? "")} disabled={readOnly || saving} autoSize={{ minRows: field.type === "textarea" ? 3 : 1, maxRows: 8 }} onChange={event => updateNode({ config: { ...node.config, [field.key]: event.target.value } })} />}
                         </label>)}

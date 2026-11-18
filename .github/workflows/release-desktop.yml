@@ -500,7 +500,7 @@ jobs:
           name: desktop-${{ matrix.platform }}
           path: |
             dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}*
-            dist/BeefTV-${{ needs.preflight.outputs.version }}-ffprobe-${{ matrix.platform }}-sources.tar.gz
+            dist/BeefTV-${{ needs.preflight.outputs.version }}-ffmpeg-${{ matrix.platform }}-sources.tar.gz
           retention-days: 7
           if-no-files-found: error
 
@@ -708,7 +708,7 @@ jobs:
       - name: Publish signed GitHub release
         run: |
           set -euo pipefail
-          gh release upload "$VERSION" --clobber "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb dist/BeefTV-"$VERSION"-ffprobe-darwin-*-sources.tar.gz dist/BeefTV-"$VERSION"-ffmpeg-wasm-sources.tar.gz
+          gh release upload "$VERSION" --clobber "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb dist/BeefTV-"$VERSION"-ffmpeg-darwin-*-sources.tar.gz dist/BeefTV-"$VERSION"-ffmpeg-wasm-sources.tar.gz
           gh release edit "$VERSION" --draft=false --latest
 
       - name: Activate verified R2 update feed

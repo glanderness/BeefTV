@@ -103,6 +103,7 @@ export type ReferenceStorageConfig = { enabled: boolean; endpoint: string; bucke
 
 declare global {
     interface Window {
+        runtime?: { BrowserOpenURL?: (url: string) => void };
         go?: {
             main?: {
                 DesktopApp?: DesktopRuntimeBinding;

@@ -1,6 +1,6 @@
 # BeefTV 桌面发布
 
-公开发布还须核对[媒体组件的许可与源码交付](media-source-distribution.md)。流水线会附带许可文件和 macOS ffprobe 源码包；预构建组件的完整源码材料仍需分发者落实，不能把构建成功视为已完成全部许可义务。
+公开发布还须核对[媒体组件的许可与源码交付](media-source-distribution.md)。流水线会附带许可文件和 macOS FFmpeg/ffprobe 源码包；预构建组件的完整源码材料仍需分发者落实，不能把构建成功视为已完成全部许可义务。
 
 生产桌面包使用仓库根目录的 `VERSION` 作为唯一版本源。发布脚本会把版本号、当前 Git 提交和 UTC 构建时间同时注入前端与 Go 后端，并生成不依赖 Vite 开发服务器的 Wails 应用包。
 
@@ -16,7 +16,7 @@
 ./scripts/build-beeftv-release.sh
 ```
 
-macOS 构建会从固定源码构建并校验原生媒体探测组件，不要求构建机预装 BeefTV。可用 `BEEFTV_FFMPEG_RUNTIME` 提供额外编码器，并用 `BEEFTV_FFMPEG_LICENSE` 指定许可文件（默认查找同目录 `ffmpeg.LICENSE`）；显式指定但缺失或不可执行时构建失败。打包时仍校验编码器目标架构和系统动态库依赖，公开分发须满足上方媒体组件交付要求。
+macOS 构建会从固定源码构建并校验原生 LGPL 媒体运行时（`ffmpeg` 与 `ffprobe`），不要求构建机预装 BeefTV 或第三方媒体库。打包时同步校验两个可执行文件的目标架构、SHA-256 哈希和系统动态库依赖，并将哈希写入 `sources.json` 与对应源码包；公开分发须满足上方媒体组件交付要求。
 
 如果系统没有全局 Go，可通过 `BEEFTV_GO_DIR` 指定本地工具链目录：
 

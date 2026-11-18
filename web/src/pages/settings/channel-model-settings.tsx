@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, App, Button, Popconfirm, Segmented, Tag, Tooltip } from "antd";
+import { Alert, App, Button, Input, Popconfirm, Segmented, Tag, Tooltip } from "antd";
 import { ReferenceMediaTransportFields } from "./reference-media-transport-fields";
-import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
+import { ChevronRight, FlaskConical, Search, Settings2 } from "lucide-react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
@@ -27,14 +27,17 @@ export function ChannelModelSettings({
     channel,
     onChange,
     draft = false,
+    compact = false,
     focusModel,
 }: {
     channel: ModelChannel;
     onChange: (profiles: ModelProfile[]) => void;
     draft?: boolean;
+    compact?: boolean;
     focusModel?: { model: string; token: number } | null;
 }) {
     const { message } = App.useApp();
+    const [search, setSearch] = useState("");
     const [testingModel, setTestingModel] = useState("");
     const [detecting, setDetecting] = useState(false);
     const [editorTab, setEditorTab] = useState("protocol");
@@ -196,29 +199,38 @@ export function ChannelModelSettings({
     const textRequestUrl = (model: string) => requestUrls?.text[effectiveTextProtocol(channel, model)];
     const activeRequestUrl = activeModel && activeCapability === "text" ? textRequestUrl(activeModel) : undefined;
 
+    const query = search.trim().toLowerCase();
+    const visibleRows = compact && query
+        ? rows.filter(({ model, displayName, capability }) => [model, displayName, capabilityLabel(capability)].some(value => value.toLowerCase().includes(query)))
+        : rows;
+
     return (
-        <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
+        <div className={compact ? "channel-editor-model-settings" : "mt-4"}>
+            {compact ? <div className="channel-editor-model-toolbar">
+                <h2>模型与能力</h2>
+                <Input aria-label="搜索模型" placeholder="搜索模型" allowClear prefix={<Search size={14} aria-hidden />}
+                    value={search} onChange={(event) => setSearch(event.target.value)} />
+            </div> : <div className="mb-2 flex items-center justify-between gap-3">
                 <div>
                     <div className="text-xs font-medium">模型能力</div>
                     <div className="mt-0.5 text-[var(--fs-tiny)] text-foreground/42">按服务商要求调整参数，也可以生成一次来验证连接。</div>
                 </div>
                 <span className="text-[var(--fs-tiny)] text-foreground/35">{channel.models.length} 个模型</span>
-            </div>
-            <div className="space-y-2">
-                {rows.map(({ model, protocol, capability, displayName }) => {
+            </div>}
+            <div className={compact ? "channel-editor-model-rows" : "space-y-2"}>
+                {visibleRows.map(({ model, protocol, capability, displayName }) => {
                     const requestPath = (capability === "text" ? textRequestUrl(model) : undefined) || modelProtocolDefinition(protocol, availableProtocols)?.create;
                     return (
-                        <div key={model} className="flex min-w-0 items-center gap-3 rounded-md bg-surface-active px-3 py-2.5 transition-colors hover:bg-surface-hover">
-                            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/65">
+                        <div key={model} className={compact ? "channel-editor-model-row" : "flex min-w-0 items-center gap-3 rounded-md bg-surface-active px-3 py-2.5 transition-colors hover:bg-surface-hover"}>
+                            {!compact && <span className="grid size-8 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/65">
                                 <Settings2 className="size-4" />
-                            </span>
-                            <div className="min-w-0 flex-1">
+                            </span>}
+                            <div className={compact ? "channel-editor-model-copy" : "min-w-0 flex-1"}>
                                 <div className="truncate text-xs font-medium" title={displayName === model ? model : `${displayName} (${model})`}>
                                     {displayName}
                                     {displayName !== model ? <span className="ml-1.5 font-mono text-[var(--fs-tiny)] font-normal text-foreground/45">{model}</span> : null}
                                 </div>
-                                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                                <div className={compact ? "channel-editor-model-meta" : "mt-1 flex min-w-0 flex-wrap items-center gap-1.5"}>
                                     <Tag className="mr-0 text-[var(--fs-tiny)]" bordered={false}>
                                         {capabilityLabel(capability)}
                                     </Tag>
@@ -227,12 +239,13 @@ export function ChannelModelSettings({
                                     </span>
                                 </div>
                             </div>
-                            <Button type="text" size="small" icon={<ChevronRight className="size-4" />} iconPosition="end" onClick={() => { setEditorTab("protocol"); setInterfaceOpen(false); setActiveModel(model); }}>
-                                配置使用
+                            <Button type={compact ? "default" : "text"} size="small" aria-label={compact ? `配置模型 ${model}` : undefined} icon={<ChevronRight className="size-4" />} iconPosition="end" onClick={() => { setEditorTab("protocol"); setInterfaceOpen(false); setActiveModel(model); }}>
+                                {compact ? "配置" : "配置使用"}
                             </Button>
                         </div>
                     );
                 })}
+                {!visibleRows.length && <p className="channel-editor-model-empty" role="status">没有匹配的模型</p>}
             </div>
             <ModelEditorModal
                 open={Boolean(activeModel)}

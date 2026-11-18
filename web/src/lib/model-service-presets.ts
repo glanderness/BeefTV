@@ -26,11 +26,13 @@ export const MODEL_SERVICE_PRESETS = [
             return BUILTIN_PRESETS[LL2_CHANNEL_ID]?.subtitle ?? "文本 · 多款主流视频 · 视频超分";
         },
         get icon() {
-            return BUILTIN_PRESETS[LL2_CHANNEL_ID]?.icon ?? "OpenAI";
+            const icon = BUILTIN_PRESETS[LL2_CHANNEL_ID]?.icon;
+            return icon && icon !== "OpenAI" ? icon : "LL2";
         },
         get baseUrl() {
             return BUILTIN_PRESETS[LL2_CHANNEL_ID]?.baseUrl ?? "https://api.ll2.cn";
         },
+        website: "https://hub.ll2.cn?p=rw6t",
         apiFormat: "openai",
     },
     {
@@ -47,6 +49,7 @@ export const MODEL_SERVICE_PRESETS = [
         get baseUrl() {
             return BUILTIN_PRESETS[YSDUI_CHANNEL_ID]?.baseUrl ?? "https://tokenhub.ysdui.cn";
         },
+        website: "https://www.ysdui.cn/",
         apiFormat: "openai",
     },
     { id: "openai", name: "OpenAI", subtitle: "文本 · 图片（Sora 已停用）", icon: "OpenAI", baseUrl: "https://api.openai.com/v1", apiFormat: "openai" },

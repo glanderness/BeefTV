@@ -80,6 +80,8 @@ beforeAll(async () => {
         target: "browser",
         define: {
             __APP_VERSION__: JSON.stringify(version),
+            "import.meta.env.VITE_APP_VERSION": JSON.stringify(version),
+            "import.meta.env.VITE_BUILD_COMMIT": '"test"',
             "import.meta.env.DEV": "false",
             "import.meta.env.PROD": "true",
             "import.meta.env.MODE": '"production"',
@@ -257,6 +259,31 @@ afterAll(async () => {
     topUpInfoGate.release();
     server?.stop(true);
     await browser?.close();
+}, 30000);
+
+test("account settings opens problem diagnostics as its own section without leaving the dialog", async () => {
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 }, reducedMotion: "reduce" });
+    try {
+        await page.route("**/api/diagnostics/preview", (route) => route.fulfill({
+            json: { code: 0, data: { taskCount: 3, apiCallCount: 5 } },
+        }));
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "登录 BeefTV", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        const diagnostics = modal.getByRole("button", { name: "问题诊断", exact: true });
+        const url = page.url();
+        await diagnostics.click();
+        expect(await diagnostics.getAttribute("aria-current")).toBe("page");
+        await modal.getByRole("heading", { name: "问题诊断", exact: true }).waitFor();
+        await modal.getByText("包含 3 个任务、5 次请求与前端日志。", { exact: true }).waitFor({ timeout: 5000 });
+        expect(await modal.getByRole("button", { name: "导出诊断包" }).isVisible()).toBe(true);
+        expect(await modal.getByRole("button", { name: "重新检查" }).isVisible()).toBe(true);
+        expect(page.url()).toBe(url);
+        await modal.getByRole("button", { name: "通用设置", exact: true }).click();
+        expect(await modal.getByText("连接诊断", { exact: true }).count()).toBe(0);
+    } finally {
+        await page.close();
+    }
 }, 30000);
 
 test("opening sidebar account modal never auto-starts OAuth; explicit login, changelog, and manual sync retry work", async () => {
