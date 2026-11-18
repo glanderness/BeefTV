@@ -32,6 +32,16 @@ function resolveTestRuntime() {
   return '';
 }
 
+function resolveTestTarget() {
+  const configured = process.env.BEEFTV_WAILS_PLATFORM?.trim();
+  if (configured) {
+    if (configured === 'darwin/x86_64') return 'darwin/amd64';
+    if (configured === 'linux/x86_64') return 'linux/amd64';
+    return configured;
+  }
+  return `${process.platform === 'win32' ? 'windows' : process.platform}/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
+}
+
 test('release rejects missing runtime and unsupported target', () => {
   expect(() => verifyRuntime('', 'darwin/arm64')).toThrow('required');
   expect(() => verifyRuntime('/missing', 'linux/arm64')).toThrow('Unsupported');
@@ -77,7 +87,7 @@ test('bundleNpmRuntime copies the npm CLI next to the bundled node on unix and w
 test('bundled runtime, locked dependencies, and paths with spaces', () => {
   const runtime = resolveTestRuntime();
   expect(runtime).toBeTruthy();
-  const target = `${process.platform === 'win32' ? 'windows' : process.platform}/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
+  const target = resolveTestTarget();
   const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv package test '));
   try {
     const runtimeCopy = path.join(scratch, 'runtime source with spaces');
@@ -116,7 +126,7 @@ test('bundled runtime, locked dependencies, and paths with spaces', () => {
 test('packaged server starts with local imports and makes zero model requests', async () => {
   const runtime = resolveTestRuntime();
   expect(runtime).toBeTruthy();
-  const target = `${process.platform === 'win32' ? 'windows' : process.platform}/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
+  const target = resolveTestTarget();
   const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv packaged server '));
   const requests = [];
   let modelRequests = 0;

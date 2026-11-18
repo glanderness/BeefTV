@@ -141,10 +141,25 @@ jobs:
               exit 1
             fi
             jobs_meta="$(gh api "repos/glanderness/BeefTV/actions/runs/$REUSE_BUILD_RUN_ID/jobs?per_page=100")"
-            for required_job in "Validate and open draft" "Build darwin-arm64" "Build darwin-amd64" "Build windows-amd64" "Build linux-amd64" "Verify Windows installer lifecycle" "Verify Windows published upgrades"; do
+            for required_job in "Validate and open draft" "Build darwin-arm64" "Build darwin-amd64" "Build windows-amd64" "Build linux-amd64"; do
               job_conclusion="$(jq -r --arg name "$required_job" '[.jobs[] | select(.name == $name)][0].conclusion // ""' <<< "$jobs_meta")"
               if [[ "$job_conclusion" != "success" ]]; then
                 echo "Reused build run $REUSE_BUILD_RUN_ID job '$required_job' did not succeed (conclusion: '$job_conclusion')."
+                exit 1
+              fi
+            done
+            for pair in \
+              "Verify Windows installer lifecycle|Verify native installer lifecycle" \
+              "Verify Windows published upgrades|Verify upgrades from released Windows clients"; do
+              job_name="${pair%%|*}"
+              legacy_step="${pair#*|}"
+              if jq -e --arg name "$job_name" '[.jobs[] | select(.name == $name)] | length > 0' <<< "$jobs_meta" >/dev/null; then
+                verdict="$(jq -r --arg name "$job_name" '[.jobs[] | select(.name == $name)][0].conclusion // ""' <<< "$jobs_meta")"
+              else
+                verdict="$(jq -r --arg step "$legacy_step" '[.jobs[] | select(.name == "Build windows-amd64") | (.steps // [])[] | select(.name == $step)][0].conclusion // ""' <<< "$jobs_meta")"
+              fi
+              if [[ "$verdict" != "success" ]]; then
+                echo "Reused build run $REUSE_BUILD_RUN_ID Windows gate '$job_name' did not succeed (conclusion: '$verdict')."
                 exit 1
               fi
             done
@@ -315,6 +330,8 @@ jobs:
 
       - name: Verify agent host packaging contract
         if: runner.os == 'Linux'
+        env:
+          BEEFTV_WAILS_PLATFORM: ${{ matrix.wails_platform }}
         shell: bash
         run: bun test scripts/package-agent-host.test.mjs
 
@@ -467,7 +484,7 @@ jobs:
         with:
           name: windows-desktop-payload
           path: backend/cmd/desktop/build/bin
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: error
 
       - name: Store platform zip for publication

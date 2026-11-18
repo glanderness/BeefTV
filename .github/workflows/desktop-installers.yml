@@ -83,6 +83,8 @@ jobs:
         run: |
           node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
       - name: Verify bundled Agent runtime
+        env:
+          BEEFTV_WAILS_PLATFORM: ${{ matrix.target }}
         shell: bash
         run: bun test scripts/package-agent-host.test.mjs
       - name: Linux desktop dependencies
