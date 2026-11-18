@@ -200,7 +200,7 @@ export function CanvasPresetPicker({
                                 type="button"
                                 disabled={!newPresetName.trim()}
                                 className="inline-flex h-6 cursor-pointer items-center justify-center rounded px-2.5 text-xs font-medium transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
-                                style={{ background: theme.accent.primary, color: "var(--user-action-foreground, #ffffff)" }}
+                                style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}
                                 onClick={confirmSaveNewPreset}
                             >
                                 保存
@@ -216,7 +216,7 @@ export function CanvasPresetPicker({
                         onClick={openSaveNameInput}
                     >
                         <Plus className="size-3.5 shrink-0" />
-                        <span className="min-w-0 truncate">＋ 保存当前提示词为预设</span>
+                        <span className="min-w-0 truncate">保存当前提示词为预设</span>
                     </button>
                 )
             ) : null}
@@ -255,7 +255,7 @@ export function CanvasPresetPicker({
                                         type="button"
                                         disabled={!editingPresetName.trim()}
                                         className="inline-flex h-6 shrink-0 cursor-pointer items-center justify-center rounded px-2 text-xs font-medium transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
-                                        style={{ background: theme.accent.primary, color: "var(--user-action-foreground, #ffffff)" }}
+                                        style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}
                                         onClick={() => confirmRenamePreset(preset.id)}
                                     >
                                         保存
