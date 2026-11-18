@@ -46,6 +46,7 @@ export type ModelChannel = {
     legacyIds?: string[];
     presetVersion?: number;
     credentialRef?: string;
+    ownerPluginId?: string;
     hasApiKey?: boolean;
     hasSecretKey?: boolean;
     concurrencyLimit?: number;
@@ -644,6 +645,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
+        publicAlias: channel?.publicAlias,
         sortOrder: channel?.sortOrder ?? 0,
         baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
         referenceAssetOrigin: channel?.referenceAssetOrigin?.trim() || undefined,
@@ -653,12 +655,15 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiFormat,
         interfaceType,
         models: uniqueRawModels(channel?.models || []),
+        modelAliases: channel?.modelAliases,
         scope: channel?.scope === "system" ? "system" : "user",
         enabled: channel?.enabled !== false,
         pinned: channel?.pinned === true,
         legacyIds: Array.isArray(channel?.legacyIds) ? channel.legacyIds.filter((id) => typeof id === "string" && id.trim()) : undefined,
         presetVersion: channel?.presetVersion,
         credentialRef: channel?.credentialRef,
+        ownerPluginId: typeof channel?.ownerPluginId === "string" && channel.ownerPluginId.trim() ? channel.ownerPluginId.trim() : undefined,
+        concurrencyLimit: typeof channel?.concurrencyLimit === "number" ? channel.concurrencyLimit : undefined,
         hasApiKey: channel?.hasApiKey,
         hasSecretKey: channel?.hasSecretKey,
         modelProfiles: channel?.modelProfiles?.map((item) => ({ ...item, protocol: normalizeModelProtocol(item.protocol) })),
