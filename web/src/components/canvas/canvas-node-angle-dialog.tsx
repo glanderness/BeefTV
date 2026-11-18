@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Slider } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { motion, useReducedMotion } from "motion/react";
@@ -8,6 +8,10 @@ import { CanvasAngleScene } from "@/components/canvas/canvas-angle-scene";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
+import { resolveMediaUrl } from "@/services/file-storage";
+import { resolvePreviewImageUrl } from "@/services/image-storage";
+import { peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
 export type CanvasImageAngleParams = {
@@ -35,11 +39,48 @@ function distanceLabel(value: number) {
     return "中景";
 }
 
-export function CanvasNodeAnglePanel({ dataUrl, onClose, onConfirm }: { dataUrl: string; onClose: () => void; onConfirm: (params: CanvasImageAngleParams) => void }) {
+export function CanvasNodeAnglePanel({
+    dataUrl,
+    storageKey: rawStorageKey,
+    onClose,
+    onConfirm,
+}: {
+    dataUrl: string;
+    storageKey?: string;
+    onClose: () => void;
+    onConfirm: (params: CanvasImageAngleParams) => void;
+}) {
     const theme = canvasThemes[useActiveTheme()];
     const reducedMotion = useReducedMotion();
     const [params, setParams] = useState(defaultParams);
     const [mode, setMode] = useState<"camera" | "skybox">("camera");
+    const storageKey = ownedResourceStorageKey(rawStorageKey, dataUrl);
+    const safeFallback = isProtectedResourceFileUrl(dataUrl) ? "" : dataUrl;
+    const [resolvedSrc, setResolvedSrc] = useState(() => (storageKey ? peekCachedResourceObjectUrl(storageKey) : "") || safeFallback);
+
+    useEffect(() => {
+        let cancelled = false;
+        const initial = (storageKey ? peekCachedResourceObjectUrl(storageKey) : "") || safeFallback;
+        setResolvedSrc(initial);
+        if (storageKey) {
+            const loader = storageKey.startsWith("image:")
+                ? resolvePreviewImageUrl(storageKey, dataUrl, { renderable: true })
+                : resolveMediaUrl(storageKey, dataUrl, { renderable: true });
+            void loader
+                .then((url) => {
+                    if (!cancelled) {
+                        setResolvedSrc(isProtectedResourceFileUrl(url) ? safeFallback : url || safeFallback);
+                    }
+                })
+                .catch(() => {
+                    if (!cancelled) setResolvedSrc(safeFallback);
+                });
+        }
+        return () => {
+            cancelled = true;
+        };
+    }, [dataUrl, safeFallback, storageKey]);
+
     const update = <Key extends keyof CanvasImageAngleParams>(key: Key, value: CanvasImageAngleParams[Key]) => setParams((current) => ({ ...current, [key]: value }));
     const activePreset = presets.find((preset) => preset.horizontalAngle === params.horizontalAngle && preset.pitchAngle === params.pitchAngle);
     const viewLabel = activePreset?.label || "自定义";
@@ -80,7 +121,7 @@ export function CanvasNodeAnglePanel({ dataUrl, onClose, onConfirm }: { dataUrl:
                         rotate={params.horizontalAngle}
                         tilt={params.pitchAngle}
                         distance={params.cameraDistance}
-                        imageSrc={dataUrl}
+                        imageSrc={resolvedSrc}
                         faceLabels={{
                             back: "背面",
                             right: "右侧",

@@ -171,7 +171,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
 
     return (
         <>
-            {angleNode?.metadata?.content ? (
+            {angleNode?.metadata?.content || angleNode?.metadata?.storageKey ? (
                 <CanvasNodePanelOverlay
                     node={angleNode}
                     viewport={viewport}
@@ -183,7 +183,8 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                     isDragging={isNodeDragging && Boolean(dragPreview?.nodeIds.has(angleNode.id))}
                 >
                     <CanvasNodeAnglePanel
-                        dataUrl={angleNode.metadata.content}
+                        dataUrl={angleNode.metadata?.content || ""}
+                        storageKey={angleNode.metadata?.storageKey}
                         onClose={() => setAngleNodeId(null)}
                         onConfirm={(params) => {
                             void generateAngleNode(angleNode, params);

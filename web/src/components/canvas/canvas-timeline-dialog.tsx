@@ -7,7 +7,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
 
-import { Clapperboard } from "lucide-react";
+import { ArrowLeft, Clapperboard } from "lucide-react";
 import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
 
 import {
@@ -68,9 +68,9 @@ type ClipDragMode = "move" | "trim-start" | "trim-end";
 
 type DragState =
     // 移动基于拖动起点快照计算：同轨让位会同时改动相邻片段，用快照才能保证整次拖动结果确定、不随帧叠加漂移。
-    | { mode: "move"; clipId: string; startClientX: number; originalStartMs: number; clips: TimelineClip[] }
-    | { mode: "trim-start"; clipId: string; startClientX: number; originalStartMs: number; originalDurationMs: number; originalSourceStartMs: number }
-    | { mode: "trim-end"; clipId: string; startClientX: number; originalStartMs: number; originalDurationMs: number }
+    | { mode: "move"; pointerId: number; startScrollLeft: number; captureElement: HTMLElement | null; clipId: string; startClientX: number; originalStartMs: number; clips: TimelineClip[] }
+    | { mode: "trim-start"; pointerId: number; startScrollLeft: number; captureElement: HTMLElement | null; clipId: string; startClientX: number; originalStartMs: number; originalDurationMs: number; originalSourceStartMs: number }
+    | { mode: "trim-end"; pointerId: number; startScrollLeft: number; captureElement: HTMLElement | null; clipId: string; startClientX: number; originalStartMs: number; originalDurationMs: number }
     | null;
 
 export function CanvasTimelineDialog({
@@ -108,6 +108,7 @@ export function CanvasTimelineDialog({
     const [saving, setSaving] = useState(false);
     const [exportPercent, setExportPercent] = useState(0);
     const [exportDetail, setExportDetail] = useState("");
+    const [clipDragging, setClipDragging] = useState(false);
     const dragRef = useRef<DragState>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const trackAreaRef = useRef<HTMLDivElement>(null);
@@ -142,6 +143,13 @@ export function CanvasTimelineDialog({
     const durationMs = Math.max(1_000, draft.durationMs);
     const [viewportWidth, setViewportWidth] = useState(900);
     const trackWidth = useMemo(() => getTimelineTrackWidth(durationMs, zoomLevel, viewportWidth), [durationMs, zoomLevel, viewportWidth]);
+
+    const clampPlayheadMs = useCallback((ms: number) => Math.min(durationMs, Math.max(0, Math.round(ms))), [durationMs]);
+
+    useEffect(() => {
+        if (playheadMs > durationMs) setPlayheadMs(durationMs);
+        else if (playheadMs < 0) setPlayheadMs(0);
+    }, [durationMs, playheadMs]);
 
     useEffect(() => {
         if (!open) return;
@@ -213,9 +221,10 @@ export function CanvasTimelineDialog({
     const moveClip = (clipId: string, candidateStartMs: number, snapshot: TimelineClip[]) => {
         const clip = snapshot.find((item) => item.id === clipId);
         if (!clip) return;
+        const clampedCandidateMs = Math.max(0, candidateStartMs);
         const snapped = snapEnabled
             ? computeSnap({
-                  candidateMs: candidateStartMs,
+                  candidateMs: clampedCandidateMs,
                   playheadMs,
                   clips: snapshot,
                   excludeClipId: clipId,
@@ -223,15 +232,29 @@ export function CanvasTimelineDialog({
                   thresholdPx: SNAP_THRESHOLD_PX,
                   enabled: true,
               })
-            : { snappedMs: candidateStartMs, targets: [] };
+            : { snappedMs: clampedCandidateMs, targets: [] };
         const nextStartMs = Math.max(0, Math.round(snapped.snappedMs));
-        const placement = planClipMove({
+        let placement = planClipMove({
             clipId,
             trackId: clip.trackId,
             startMs: nextStartMs,
             durationMs: clip.durationMs,
             clips: snapshot,
         });
+        if (!placement && nextStartMs < clip.startMs) {
+            const minLeftStartMs = snapshot
+                .filter((item) => item.trackId === clip.trackId && item.id !== clipId && item.startMs < clip.startMs)
+                .reduce((sum, item) => sum + item.durationMs, 0);
+            if (minLeftStartMs < clip.startMs) {
+                placement = planClipMove({
+                    clipId,
+                    trackId: clip.trackId,
+                    startMs: Math.max(nextStartMs, minLeftStartMs),
+                    durationMs: clip.durationMs,
+                    clips: snapshot,
+                });
+            }
+        }
         if (!placement) return;
         // 每帧都从快照重建整条轨道：只更新本帧涉及的片段，会把上一帧推开的片段留在它当时的位置，
         // 连续拖动（同一手势里先拖到 1s 再拖到 8s）就会让两个片段叠在一起。
@@ -292,18 +315,69 @@ export function CanvasTimelineDialog({
         updateClip(clipId, { durationMs: Math.round(newDurationMs) });
     };
 
+    const applyClipPointerMoveRef = useRef<(pointerId: number, clientX: number) => void>(() => undefined);
+
+    const finishClipDrag = useCallback((pointerId?: number) => {
+        const drag = dragRef.current;
+        if (!drag) return;
+        if (pointerId !== undefined && drag.pointerId !== pointerId) return;
+        dragRef.current = null;
+        setClipDragging(false);
+        const captureEl = drag.captureElement;
+        if (captureEl?.hasPointerCapture?.(drag.pointerId)) {
+            try {
+                captureEl.releasePointerCapture(drag.pointerId);
+            } catch {
+                // 指针已释放或未捕获时忽略
+            }
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!clipDragging) return;
+        const onWindowPointerMove = (event: PointerEvent) => applyClipPointerMoveRef.current(event.pointerId, event.clientX);
+        const onWindowPointerEnd = (event: PointerEvent) => finishClipDrag(event.pointerId);
+        const onWindowBlur = () => finishClipDrag();
+        window.addEventListener("pointermove", onWindowPointerMove);
+        window.addEventListener("pointerup", onWindowPointerEnd);
+        window.addEventListener("pointercancel", onWindowPointerEnd);
+        window.addEventListener("blur", onWindowBlur);
+        return () => {
+            window.removeEventListener("pointermove", onWindowPointerMove);
+            window.removeEventListener("pointerup", onWindowPointerEnd);
+            window.removeEventListener("pointercancel", onWindowPointerEnd);
+            window.removeEventListener("blur", onWindowBlur);
+        };
+    }, [clipDragging, finishClipDrag]);
+
+    useEffect(() => {
+        if (!open) finishClipDrag();
+        return () => finishClipDrag();
+    }, [finishClipDrag, open]);
+
     const handleClipPointerDown = (event: React.PointerEvent<HTMLDivElement>, clipId: string, mode: ClipDragMode) => {
         const clip = draft.clips.find((item) => item.id === clipId);
         if (!clip) return;
         event.preventDefault();
         event.stopPropagation();
-        (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+        const targetEl = event.currentTarget as HTMLElement;
+        const captureElement = targetEl.closest<HTMLElement>("[data-timeline-clip-id]") ?? targetEl;
+        try {
+            captureElement.setPointerCapture(event.pointerId);
+        } catch {
+            // 合成指针环境不支持捕获时忽略
+        }
+        const startScrollLeft = trackAreaRef.current?.scrollLeft ?? 0;
         setSelectedClipId(clipId);
+        setClipDragging(true);
         if (mode === "move") {
-            dragRef.current = { mode, clipId, startClientX: event.clientX, originalStartMs: clip.startMs, clips: draft.clips };
+            dragRef.current = { mode, pointerId: event.pointerId, startScrollLeft, captureElement, clipId, startClientX: event.clientX, originalStartMs: clip.startMs, clips: draft.clips };
         } else if (mode === "trim-start") {
             dragRef.current = {
                 mode,
+                pointerId: event.pointerId,
+                startScrollLeft,
+                captureElement,
                 clipId,
                 startClientX: event.clientX,
                 originalStartMs: clip.startMs,
@@ -311,15 +385,30 @@ export function CanvasTimelineDialog({
                 originalSourceStartMs: clip.sourceStartMs || 0,
             };
         } else {
-            dragRef.current = { mode, clipId, startClientX: event.clientX, originalStartMs: clip.startMs, originalDurationMs: clip.durationMs };
+            dragRef.current = { mode, pointerId: event.pointerId, startScrollLeft, captureElement, clipId, startClientX: event.clientX, originalStartMs: clip.startMs, originalDurationMs: clip.durationMs };
         }
     };
 
-    const handleClipPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const applyClipPointerMove = (pointerId: number, clientX: number) => {
         const drag = dragRef.current;
-        if (!drag) return;
-        if (!event.isPrimary) return;
-        const deltaMs = Math.round((event.clientX - drag.startClientX) / Math.max(pxPerMs, 1e-6));
+        if (!drag || pointerId !== drag.pointerId) return;
+        const container = trackAreaRef.current;
+        if (container) {
+            const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth);
+            if (maxScroll > 0) {
+                const containerRect = container.getBoundingClientRect();
+                const edgeZone = 28;
+                if (clientX < drag.startClientX && clientX < containerRect.left + edgeZone && container.scrollLeft > 0) {
+                    const step = Math.ceil((containerRect.left + edgeZone - clientX) * 0.6);
+                    container.scrollLeft = Math.max(0, container.scrollLeft - step);
+                } else if (clientX > drag.startClientX && clientX > containerRect.right - edgeZone && container.scrollLeft < maxScroll) {
+                    const step = Math.ceil((clientX - (containerRect.right - edgeZone)) * 0.6);
+                    container.scrollLeft = Math.min(maxScroll, container.scrollLeft + step);
+                }
+            }
+        }
+        const scrollDeltaPx = (container?.scrollLeft ?? 0) - drag.startScrollLeft;
+        const deltaMs = Math.round((clientX - drag.startClientX + scrollDeltaPx) / Math.max(pxPerMs, 1e-6));
         if (drag.mode === "move") {
             moveClip(drag.clipId, drag.originalStartMs + deltaMs, drag.clips);
         } else if (drag.mode === "trim-start") {
@@ -335,14 +424,14 @@ export function CanvasTimelineDialog({
             });
         }
     };
+    applyClipPointerMoveRef.current = applyClipPointerMove;
+
+    const handleClipPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+        applyClipPointerMove(event.pointerId, event.clientX);
+    };
 
     const handleClipPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-        dragRef.current = null;
-        try {
-            (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
-        } catch {
-            // 指针已释放或未捕获时忽略
-        }
+        finishClipDrag(event.pointerId);
     };
 
     const deleteSelectedClip = () => {
@@ -630,8 +719,28 @@ export function CanvasTimelineDialog({
             }));
     };
 
+    const resetPlayheadToStart = useCallback(() => {
+        setPreviewPlaying(false);
+        setPlayheadMs(0);
+        if (trackAreaRef.current) trackAreaRef.current.scrollLeft = 0;
+    }, []);
+
     const title = (
         <div className="flex min-w-0 items-center gap-2.5 pr-10">
+            <button
+                type="button"
+                disabled={saving || finalizingExport}
+                onClick={handleClose}
+                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium transition hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                style={{
+                    borderColor: theme.toolbar.border,
+                    background: theme.node.fill,
+                    color: theme.node.text,
+                }}
+            >
+                <ArrowLeft className="size-3.5" />
+                <span>返回</span>
+            </button>
             <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
                 <Clapperboard className="size-4" />
             </span>
@@ -654,6 +763,11 @@ export function CanvasTimelineDialog({
                 "--editor-button-line": theme.toolbar.border,
                 "--editor-clip-text": canvasThemes.dark.node.text,
             } as CSSProperties}
+            styles={{
+                container: { maxHeight: "calc(100dvh - 24px)", display: "flex", flexDirection: "column" },
+                header: { flexShrink: 0 },
+                body: { minHeight: 0, flex: "1 1 auto", display: "flex", flexDirection: "column", overflow: "hidden" },
+            }}
             title={title}
             open={open}
             centered
@@ -661,7 +775,7 @@ export function CanvasTimelineDialog({
             // Keep the desktop LibTV proportions while allowing the editor to
             // remain usable on narrow screens instead of rendering a clipped
             // fixed-width modal.
-            width="min(1360px, calc(100vw - 32px))"
+            width="min(1360px, calc(100vw - 24px))"
             destroyOnHidden
             onCancel={handleClose}
             afterOpenChange={(visible) => {
@@ -669,10 +783,11 @@ export function CanvasTimelineDialog({
             }}
             flush
         >
-            <div className="media-editor-body timeline-editor-body flex flex-col text-sm" style={{ color: theme.node.text }}>
+            <div className="media-editor-body timeline-editor-body flex min-h-0 flex-1 flex-col overflow-hidden text-sm" style={{ color: theme.node.text }}>
                 <CanvasTimelineToolbar
                     theme={theme}
                     playheadMs={playheadMs}
+                    onResetPlayhead={resetPlayheadToStart}
                     snapEnabled={snapEnabled}
                     onToggleSnap={() => setSnapEnabled((value) => !value)}
                     onZoomOut={() => setZoomLevel((value) => zoomOut(value))}
@@ -693,26 +808,39 @@ export function CanvasTimelineDialog({
                     uploadInputRef={uploadInputRef}
                 />
 
-                <CanvasTimelinePreview clips={draft.clips} tracks={draft.tracks} output={draft.output} nodes={nodes} playheadMs={playheadMs} playing={previewPlaying} theme={theme} onTogglePlay={() => setPreviewPlaying((value) => !value)} onRequestPause={() => setPreviewPlaying(false)} onPlayheadChange={setPlayheadMs} />
+                <div className="timeline-editor-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+                    <CanvasTimelinePreview
+                        clips={draft.clips}
+                        tracks={draft.tracks}
+                        output={draft.output}
+                        nodes={nodes}
+                        playheadMs={playheadMs}
+                        playing={previewPlaying}
+                        theme={theme}
+                        onTogglePlay={() => setPreviewPlaying((value) => !value)}
+                        onRequestPause={() => setPreviewPlaying(false)}
+                        onPlayheadChange={clampPlayheadMs}
+                    />
 
-                <CanvasTimelineTrackArea
-                    draft={draft}
-                    theme={theme}
-                    pxPerMs={pxPerMs}
-                    durationMs={durationMs}
-                    playheadMs={playheadMs}
-                    trackWidth={trackWidth}
-                    selectedClipId={selectedClipId}
-                    trackAreaRef={trackAreaRef}
-                    scrollRef={scrollRef}
-                    onSeek={(ms) => {
-                        setPreviewPlaying(false);
-                        setPlayheadMs(ms);
-                    }}
-                    onClipPointerDown={handleClipPointerDown}
-                    onClipPointerMove={handleClipPointerMove}
-                    onClipPointerUp={handleClipPointerUp}
-                />
+                    <CanvasTimelineTrackArea
+                        draft={draft}
+                        theme={theme}
+                        pxPerMs={pxPerMs}
+                        durationMs={durationMs}
+                        playheadMs={playheadMs}
+                        trackWidth={trackWidth}
+                        selectedClipId={selectedClipId}
+                        trackAreaRef={trackAreaRef}
+                        scrollRef={scrollRef}
+                        onSeek={(ms) => {
+                            setPreviewPlaying(false);
+                            setPlayheadMs(clampPlayheadMs(ms));
+                        }}
+                        onClipPointerDown={handleClipPointerDown}
+                        onClipPointerMove={handleClipPointerMove}
+                        onClipPointerUp={handleClipPointerUp}
+                    />
+                </div>
 
                 <CanvasTimelineInspector
                     draft={draft}

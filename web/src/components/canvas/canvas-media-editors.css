@@ -97,6 +97,11 @@
     border-radius: 10px;
     overflow: hidden;
 }
+.canvas-timeline-dialog .timeline-editor-body {
+    height: min(78dvh, 820px);
+    max-height: calc(100dvh - 96px);
+    min-height: 0;
+}
 .canvas-timeline-dialog .canvas-timeline-preview {
     border: 0;
     padding: 16px 20px;
@@ -163,6 +168,10 @@
     }
     .timeline-editor-tracks {
         margin-inline: 12px;
+    }
+    .canvas-timeline-dialog .timeline-editor-body {
+        height: calc(100dvh - 88px);
+        max-height: calc(100dvh - 88px);
     }
     .canvas-timeline-dialog .canvas-timeline-preview {
         flex-direction: column;
