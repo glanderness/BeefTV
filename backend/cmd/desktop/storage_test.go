@@ -12,7 +12,27 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func waitForMigrationIdle(t *testing.T, app *DesktopApp) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rt := app.runtime()
+		if rt != nil {
+			resume, err := rt.PrepareStorageMigration(context.Background())
+			if err == nil {
+				resume()
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for background startup tasks to become idle before migration")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 
 func TestNativeMigrationPreservesSQLiteProjectMediaAndEncryptedModelAfterRestart(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "profile")
@@ -95,6 +115,7 @@ func TestNativeMigrationPreservesSQLiteProjectMediaAndEncryptedModelAfterRestart
 	foreign := filepath.Join(t.TempDir(), "occupied")
 	_ = os.MkdirAll(foreign, 0700)
 	_ = os.WriteFile(filepath.Join(foreign, "foreign"), []byte("keep"), 0600)
+	waitForMigrationIdle(t, app)
 	if _, err = app.MigrateStorage(foreign); err == nil {
 		t.Fatal("accepted occupied target")
 	}
@@ -213,6 +234,7 @@ func TestMultiHopMigrationPersistsAcrossDefaultDataDirRestarts(t *testing.T) {
 	if err := os.WriteFile(markerPath, []byte("persisted-across-hops"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	waitForMigrationIdle(t, app1)
 	if _, err := app1.MigrateStorage(hop1); err != nil {
 		t.Fatalf("hop 1 MigrateStorage: %v", err)
 	}
@@ -244,6 +266,7 @@ func TestMultiHopMigrationPersistsAcrossDefaultDataDirRestarts(t *testing.T) {
 	if err := app2.start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitForMigrationIdle(t, app2)
 	if _, err := app2.MigrateStorage(hop2); err != nil {
 		t.Fatalf("hop 2 MigrateStorage: %v", err)
 	}
