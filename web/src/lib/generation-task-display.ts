@@ -32,7 +32,7 @@ export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
 
 export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
-    if (outcome && (outcome.phase === "retrievable" || isTaskOutcomeReconciling(outcome))) {
+    if (outcome && (outcome.phase === "retrievable" || isTaskOutcomeReconciling(outcome) || outcome.reason === "cancelled_result_unconfirmed")) {
         return taskOutcomeCopy(outcome).reason;
     }
     if (isGenerationTaskSubmissionUncertain(task)) return "为避免重复创建上游任务，未自动重试";

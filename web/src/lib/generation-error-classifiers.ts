@@ -78,7 +78,7 @@ export const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     timeout: { reason: "模型服务响应超时", action: "请稍后查询原任务，不要立即重新提交" },
     submission_uncertain: { reason: "提交结果尚未确认，上游任务可能仍在执行", action: "请先查询原任务状态，不要立即重新提交" },
     async_failed: { reason: "生成任务没有完成", action: "请查看详情后决定是否重试" },
-    cancelled: { reason: "任务已取消", action: "可按原输入重新提交" },
+    cancelled: { reason: "任务已取消", action: "请核对原任务的结果与扣费状态" },
     partial_success: { reason: "部分结果已生成，其余失败", action: "请查看已有结果后再决定是否补做" },
     download_failed: { reason: "生成结果还没取回", action: "点击「继续取回」可继续下载原结果，不会重新生成" },
     delivery_failed: { reason: "视频已生成，但暂时无法取回", action: "请联系支持恢复成片，恢复后点击「取回结果」；无需重新付费生成" },
