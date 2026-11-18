@@ -8,16 +8,17 @@ import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
+import { PromptPreferencesPane } from "./prompt-preferences-pane";
 import { StorageSettingsPane } from "./storage-settings-pane";
 import { DepthComponentsPanel } from "@/components/depth-components-panel";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
 
-type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics";
+type ConfigSectionKey = "channels" | "models" | "prompts" | "storage" | "diagnostics";
 
 export function isConfigSection(value: string | null): value is ConfigSectionKey {
-    return value === "channels" || value === "storage" || value === "diagnostics";
+    return value === "channels" || value === "prompts" || value === "storage" || value === "diagnostics";
 }
 
 export default function SettingsPage() {
@@ -79,6 +80,12 @@ export default function SettingsPage() {
                     </div>
                     <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} />
                 </div>
+            </SettingsPane>
+        ),
+        prompts: (
+            <SettingsPane>
+                <PageHeader title="提示词与反推指令" />
+                <PromptPreferencesPane />
             </SettingsPane>
         ),
         storage: (

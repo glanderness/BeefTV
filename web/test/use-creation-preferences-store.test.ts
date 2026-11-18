@@ -32,6 +32,15 @@ describe("useCreationPreferencesStore (#091)", () => {
         expect(autoNamed?.name).toBe("跟随镜头缓慢推进，穿过霓虹雨夜街道");
         expect(useCreationPreferencesStore.getState().preferences.customPresets).toHaveLength(2);
 
+        const renamed = useCreationPreferencesStore.getState().renameCustomPreset(created!.id, "  逆光人物眼神特写  ");
+        expect(renamed?.name).toBe("逆光人物眼神特写");
+        expect(useCreationPreferencesStore.getState().preferences.customPresets?.find((item) => item.id === created!.id)?.name).toBe("逆光人物眼神特写");
+
+        // Blank names or unknown IDs are safely rejected without corrupting state.
+        expect(useCreationPreferencesStore.getState().renameCustomPreset(created!.id, "   ")).toBeNull();
+        expect(useCreationPreferencesStore.getState().renameCustomPreset("custom:missing", "新名称")).toBeNull();
+        expect(useCreationPreferencesStore.getState().preferences.customPresets?.find((item) => item.id === created!.id)?.name).toBe("逆光人物眼神特写");
+
         const normalized = normalizeCreationComposerPreferences({
             customPresets: useCreationPreferencesStore.getState().preferences.customPresets,
         });

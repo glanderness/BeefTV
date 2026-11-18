@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -106,6 +107,7 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 			ID: id, Raw: manifestData, Source: OriginOfficial, FileName: entry.Name(),
 			PackagePath: packageName, PackageSHA256: hash, InstalledAt: now, UpdatedAt: now,
 		}
+		next.LoadError, next.LoadErrorStage = retainedLoadError(record, next)
 		if !record.InstalledAt.IsZero() {
 			next.InstalledAt = record.InstalledAt
 		}
@@ -161,10 +163,10 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 			PackageSpec:   pkg.PackageName,
 			PackageSHA256: pkg.SHA256,
 			SkillDirs:     pkg.SkillDirs,
-			LoadError:     record.LoadError,
 			InstalledAt:   now,
 			UpdatedAt:     now,
 		}
+		next.LoadError, next.LoadErrorStage = retainedLoadError(record, next)
 		if !record.InstalledAt.IsZero() {
 			next.InstalledAt = record.InstalledAt
 		}
@@ -208,7 +210,10 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 				if _, keep := retained[record.ID]; !keep {
 					continue
 				}
+				record = reconcileStoredRecordOnStartup(record)
 			}
+		} else {
+			record = reconcileStoredRecordOnStartup(record)
 		}
 		result = append(result, record)
 	}
@@ -256,4 +261,95 @@ func enableMergeTargets(byID map[string]RegistryRecord, targets []string) {
 			byID[id] = record
 		}
 	}
+}
+
+func reconcileStoredRecordOnStartup(record RegistryRecord) RegistryRecord {
+	now := time.Now().UTC()
+	if record.Source == OriginPackage && strings.TrimSpace(record.PackageDir) != "" {
+		if pkg, err := protocol.ParsePluginPackageDir(record.PackageDir); err == nil && pkg.Manifest.Metadata.ID == record.ID {
+			manifest := pkg.Manifest
+			if len(record.Raw) > 0 {
+				var previous protocol.Manifest
+				if json.Unmarshal(record.Raw, &previous) == nil {
+					manifest.Metadata.Enabled = previous.Metadata.Enabled
+				}
+			}
+			if manifestData, err := json.Marshal(manifest); err == nil {
+				updated := record
+				updated.Raw = manifestData
+				updated.PackageSHA256 = pkg.SHA256
+				updated.SkillDirs = pkg.SkillDirs
+				updated.LoadError, updated.LoadErrorStage = retainedLoadError(record, updated)
+				if registryRecordContentChanged(record, updated) {
+					updated.UpdatedAt = now
+				}
+				return updated
+			}
+		}
+	}
+	if strings.TrimSpace(record.LoadError) != "" && isTransientPluginLoadError(record.LoadError, record.LoadErrorStage) {
+		record.LoadError = ""
+		record.LoadErrorStage = ""
+		record.UpdatedAt = now
+	}
+	return record
+}
+
+func retainedLoadError(prev, next RegistryRecord) (string, string) {
+	trimmed := strings.TrimSpace(prev.LoadError)
+	if trimmed == "" || isTransientPluginLoadError(trimmed, prev.LoadErrorStage) {
+		return "", ""
+	}
+	prevSHA := strings.TrimSpace(prev.PackageSHA256)
+	nextSHA := strings.TrimSpace(next.PackageSHA256)
+	if prevSHA == "" || nextSHA == "" || prevSHA != nextSHA {
+		return "", ""
+	}
+	if !compactJSONEqual(prev.Raw, next.Raw) {
+		return "", ""
+	}
+	return trimmed, normalizeLoadErrorStage(prev.LoadErrorStage)
+}
+
+func compactJSONEqual(left, right []byte) bool {
+	var compactLeft, compactRight bytes.Buffer
+	if json.Compact(&compactLeft, left) != nil || json.Compact(&compactRight, right) != nil {
+		return bytes.Equal(left, right)
+	}
+	return bytes.Equal(compactLeft.Bytes(), compactRight.Bytes())
+}
+
+func isTransientPluginLoadError(errText string, stage string) bool {
+	normalizedStage := normalizeLoadErrorStage(stage)
+	if normalizedStage == "activate" {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(errText))
+	if lower == "" {
+		return false
+	}
+	for _, syntaxMarker := range []string{"syntaxerror", "referenceerror", "unexpected token"} {
+		if strings.Contains(lower, syntaxMarker) {
+			return false
+		}
+	}
+	if normalizedStage == "import" {
+		return true
+	}
+	for _, marker := range []string{
+		"failed to fetch dynamically imported module",
+		"error loading dynamically imported module",
+		"importing a module script failed",
+		"failed to fetch",
+		"load failed",
+		"networkerror",
+		"net::err_",
+		"econnrefused",
+		"connection refused",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }

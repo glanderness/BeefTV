@@ -21,6 +21,12 @@ PLATFORMS = {
     "darwin-arm64": ".dmg", "darwin-amd64": ".dmg",
     "windows-amd64": "-setup.exe", "linux-amd64": ".deb",
 }
+DEPTH_RUNTIME_VERSION = "depth-runtime-v2"
+DEPTH_MODEL_VERSION = "v1.5.5"
+DEPTH_MODEL_NAME = "video_depth_anything_vits.pth"
+DEPTH_MODEL_SIZE = 116440756
+DEPTH_MODEL_SHA256 = "13379300b739e659f076a59d52e9801bd8d38c541a7e71f73bbca4dcfb013609"
+DEPTH_RECORD_NAME = "beeftv-depth-mirror.json"
 RESUME_PREFIX_BYTES = 16 * 1024 * 1024
 ZIP_VERIFY_WORKERS = 4
 # The hourly CNB job retries a failed sync, so waiting must outlast one full retry.
@@ -199,7 +205,102 @@ def record_matches(record, release, expected):
         return False
 
 
+def _expected_tag_asset(release, tag, name, allow_pinned_model=False):
+    matches = [asset for asset in release.get("assets", []) if asset.get("name") == name]
+    if len(matches) != 1:
+        raise RuntimeError(f"Missing or duplicate official depth asset: {name}")
+    asset = matches[0]
+    expected_url = f"https://github.com/glanderness/BeefTV/releases/download/{tag}/{name}"
+    if (asset.get("state") != "uploaded" or type(asset.get("size")) is not int or not 1 < asset["size"] <= 2 * 1024 ** 3
+            or asset.get("browser_download_url") != expected_url):
+        raise RuntimeError(f"Invalid official depth asset metadata: {name}")
+    digest = asset.get("digest") or ""
+    sha256 = digest[7:] if re.fullmatch(r"sha256:[a-f0-9]{64}", digest) else ""
+    if allow_pinned_model:
+        if asset["size"] != DEPTH_MODEL_SIZE:
+            raise RuntimeError(f"Invalid official depth model size: {asset['size']}")
+        if not sha256 and not digest:
+            sha256 = DEPTH_MODEL_SHA256
+        if sha256 != DEPTH_MODEL_SHA256:
+            raise RuntimeError("Invalid official depth model SHA-256")
+    elif not sha256:
+        raise RuntimeError(f"Missing official depth asset SHA-256: {name}")
+    return {"name": name, "size": asset["size"], "sha256": sha256, "sourceVersion": tag}
+
+
+def expected_depth_assets(depth_release, model_release):
+    depth_url = f"https://github.com/glanderness/BeefTV/releases/tag/{DEPTH_RUNTIME_VERSION}"
+    model_url = f"https://github.com/glanderness/BeefTV/releases/tag/{DEPTH_MODEL_VERSION}"
+    if not depth_release or depth_release.get("tag_name") != DEPTH_RUNTIME_VERSION or depth_release.get("draft") or depth_release.get("html_url") != depth_url:
+        raise RuntimeError("Expected a published depth-runtime-v2 release")
+    if not model_release or model_release.get("tag_name") != DEPTH_MODEL_VERSION or model_release.get("draft") or model_release.get("html_url") != model_url:
+        raise RuntimeError("Expected a published v1.5.5 model release")
+    part_nums = [
+        int(m.group(1)) for asset in depth_release.get("assets", [])
+        if isinstance(asset, dict) and (m := re.fullmatch(r"beeftv-depth-runtime-v1-windows-amd64-cuda\.zip\.part-(\d{3})", asset.get("name") or ""))
+    ]
+    if not part_nums:
+        raise RuntimeError("Missing official Windows CUDA depth runtime parts")
+    max_part = max(part_nums)
+    names = [
+        "beeftv-depth-runtime-v1-windows-amd64-cpu.zip",
+        *(f"beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-{idx:03d}" for idx in range(1, max_part + 1)),
+        "depth-runtime-manifest.v2.json",
+    ]
+    return [
+        *(_expected_tag_asset(depth_release, DEPTH_RUNTIME_VERSION, name) for name in names),
+        _expected_tag_asset(model_release, DEPTH_MODEL_VERSION, DEPTH_MODEL_NAME, allow_pinned_model=True),
+    ]
+
+
+def depth_record_matches(record, depth_release, model_release, expected):
+    if not isinstance(record, dict) or any(record.get(key) != value for key, value in {
+        "schema": 1, "repository": REPO, "version": DEPTH_RUNTIME_VERSION,
+        "source": depth_release["html_url"], "modelSource": model_release["html_url"],
+        "verification": "anonymous-resume-sha256",
+    }.items()):
+        return False
+    try:
+        datetime.datetime.fromisoformat(record["verifiedAt"].replace("Z", "+00:00"))
+        assets = record["assets"]
+        return (len(assets) == len(expected) and all(isinstance(asset, dict) for asset in assets)
+                and all(sum(all(asset.get(key) == value for key, value in item.items()) for asset in assets) == 1 for item in expected))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
+def mirror_depth_runtime(token, fetch=request_json, sleep=time.sleep, now=time.monotonic, timeout=MIRROR_WAIT_SECONDS, verify_zips=verify_cnb_zips):
+    if not token:
+        raise RuntimeError("Missing repository secret BEEFTV_CNB_TRIGGER_TOKEN")
+    depth_release = fetch(GITHUB + DEPTH_RUNTIME_VERSION)
+    model_release = fetch(GITHUB + DEPTH_MODEL_VERSION)
+    expected = expected_depth_assets(depth_release, model_release)
+    try:
+        started = fetch(START, {"branch": "main", "event": "api_trigger_release", "env": {"BEEFTV_MIRROR_VERSION": DEPTH_RUNTIME_VERSION}}, token)
+        if not isinstance(started, dict) or started.get("success") is not True:
+            raise RuntimeError("CNB did not accept the mirror trigger")
+    except TriggerUncertain:
+        print("CNB trigger response was not confirmed; checking the public verification record without retriggering.")
+    deadline = now() + timeout
+    while now() < deadline:
+        try:
+            record = fetch(f"{PUBLIC}{DEPTH_RUNTIME_VERSION}/{DEPTH_RECORD_NAME}")
+            if depth_record_matches(record, depth_release, model_release, expected):
+                verify_zips(DEPTH_RUNTIME_VERSION, expected)
+                print(f"CNB depth mirror verified: {DEPTH_RUNTIME_VERSION} (all {len(expected)} official depth asset hashes match)")
+                return
+            if record is not None:
+                raise RuntimeError("CNB verification record does not match the official depth release")
+        except RuntimeError as error:
+            if str(error).startswith(("CNB verification", "CNB updater zip")):
+                raise
+        sleep(min(15, max(0, deadline - now())))
+    raise RuntimeError("CNB depth mirror was not verified before timeout. Retry only the mirror job.")
+
+
 def mirror(version, token, fetch=request_json, sleep=time.sleep, now=time.monotonic, timeout=MIRROR_WAIT_SECONDS, verify_zips=verify_cnb_zips):
+    if version == DEPTH_RUNTIME_VERSION:
+        return mirror_depth_runtime(token, fetch=fetch, sleep=sleep, now=now, timeout=timeout, verify_zips=verify_zips)
     vtuple = version_tuple(version)
     if vtuple < (2, 0, 3):
         raise RuntimeError("Expected a version at or after v2.0.3")

@@ -38,7 +38,7 @@ root.render(<App>{mode === "canvas" ?
     <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
         onCreateAssembledNode={async () => { receipt.created++; return node; }} /> :
-    mode === "canvas-drag" ?
+    mode === "canvas-drag" || mode === "canvas-mobile" ?
         <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
             onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
             onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :

@@ -235,6 +235,7 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 		if stored[index].ID == record.Metadata.ID {
 			stored[index].Raw = data
 			stored[index].LoadError = ""
+			stored[index].LoadErrorStage = ""
 			stored[index].UpdatedAt = time.Now().UTC()
 		}
 	}
@@ -255,7 +256,18 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 	}, nil
 }
 
-func (c *Runtime) SetLoadError(id string, errText string) (View, error) {
+func normalizeLoadErrorStage(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "import":
+		return "import"
+	case "activate":
+		return "activate"
+	default:
+		return ""
+	}
+}
+
+func (c *Runtime) SetLoadError(id string, errText string, stageOpt ...string) (View, error) {
 	if c == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
@@ -271,9 +283,15 @@ func (c *Runtime) SetLoadError(id string, errText string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
+	trimmedErr := strings.TrimSpace(errText)
+	stageVal := ""
+	if trimmedErr != "" && len(stageOpt) > 0 {
+		stageVal = normalizeLoadErrorStage(stageOpt[0])
+	}
 	for index := range stored {
 		if stored[index].ID == record.Metadata.ID {
-			stored[index].LoadError = strings.TrimSpace(errText)
+			stored[index].LoadError = trimmedErr
+			stored[index].LoadErrorStage = stageVal
 			stored[index].UpdatedAt = time.Now().UTC()
 		}
 	}

@@ -69,3 +69,9 @@ jobs:
           gh release create depth-runtime-v2 --draft --target "$GITHUB_SHA" --title 'Windows depth runtime v2 — CUDA community preview' --notes-file "$RUNNER_TEMP/notes.md"
           gh release upload depth-runtime-v2 dist/depth/*
           gh release edit depth-runtime-v2 --draft=false --prerelease --latest=false
+
+  mirror-cnb:
+    needs: publish
+    uses: ./.github/workflows/mirror-depth-cnb.yml
+    secrets:
+      BEEFTV_CNB_TRIGGER_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN }}

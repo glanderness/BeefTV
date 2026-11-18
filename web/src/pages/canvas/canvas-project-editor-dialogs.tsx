@@ -259,6 +259,8 @@ export function CanvasProjectEditorDialogs({
             <CanvasScriptEditor
                 node={activeScriptNode}
                 nodes={nodes}
+                selectedCanvasNodeIds={renderModel.selectedNodeIds}
+                readOnly={readOnly}
                 open={Boolean(activeScriptNode)}
                 onClose={() => dialogs.setScriptEditorNodeId(null)}
                 onUpdateRows={rows => { if (activeScriptNode) generation.replaceScriptRows(activeScriptNode.id, rows); }}

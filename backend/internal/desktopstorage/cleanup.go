@@ -1,6 +1,7 @@
 package desktopstorage
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -72,7 +73,8 @@ func VerifySnapshot(dir string, files map[string]string, allowMissing bool) erro
 }
 
 func MigrationLocation(root, current string) (Location, error) {
-	body, err := os.ReadFile(filepath.Join(root, locationFile))
+	root = filepath.Clean(strings.TrimSpace(root))
+	body, err := readLocationFile(filepath.Join(root, locationFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return Location{}, nil
 	}
@@ -80,7 +82,7 @@ func MigrationLocation(root, current string) (Location, error) {
 		return Location{}, err
 	}
 	var location Location
-	if err = json.Unmarshal(body, &location); err != nil {
+	if err = json.Unmarshal(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf")), &location); err != nil {
 		return Location{}, err
 	}
 	resolved, err := canonical(current)
@@ -91,7 +93,7 @@ func MigrationLocation(root, current string) (Location, error) {
 	if err != nil {
 		return Location{}, err
 	}
-	if resolved != stored {
+	if !pathsEqual(resolved, stored) {
 		return Location{}, nil
 	}
 	return location, nil

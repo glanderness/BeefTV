@@ -12,10 +12,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-var errDownloadStalled = errors.New("下载源长时间没有响应，请检查网络后继续下载")
+var (
+	errDownloadStalled     = errors.New("下载源长时间没有响应或传输过慢，请检查网络后继续下载")
+	errMirrorObjectMissing = errors.New("下载源未找到对应组件文件")
+
+	downloadIdleTimeout    = 30 * time.Second
+	downloadLowSpeedWindow = 20 * time.Second
+	downloadMinBytesPerSec = int64(32 << 10)
+)
 
 type Artifact struct {
 	URLs         []string       `json:"urls"`
@@ -75,7 +84,7 @@ func Download(ctx context.Context, artifact Artifact, target string, report func
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if errors.Is(err, errDownloadStalled) {
+				if errors.Is(err, errDownloadStalled) || errors.Is(err, errMirrorObjectMissing) {
 					break
 				}
 				continue
@@ -185,7 +194,7 @@ func publishVerifiedDownload(source, target string) error {
 }
 
 func downloadSource(ctx context.Context, source string, temporary string, total int64, report func(Progress)) error {
-	return downloadSourceWithIdleTimeout(ctx, source, temporary, total, report, 30*time.Second)
+	return downloadSourceWithIdleTimeout(ctx, source, temporary, total, report, downloadIdleTimeout)
 }
 
 func downloadSourceWithIdleTimeout(ctx context.Context, source string, temporary string, total int64, report func(Progress), idleTimeout time.Duration) error {
@@ -210,6 +219,9 @@ func downloadSourceWithIdleTimeout(ctx context.Context, source string, temporary
 		return err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
+		return fmt.Errorf("%w: HTTP %d", errMirrorObjectMissing, response.StatusCode)
+	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("下载源返回 HTTP %d", response.StatusCode)
 	}
@@ -225,22 +237,33 @@ func downloadSourceWithIdleTimeout(ctx context.Context, source string, temporary
 		return err
 	}
 	defer file.Close()
-	written := offset
+	var written atomic.Int64
+	written.Store(offset)
 	buffer := make([]byte, 256*1024)
-	// A live connection may stop delivering bytes without closing. Cancel only
-	// this source so the verified mirror can resume the existing partial file.
+	// A live connection may stop delivering bytes or trickle at a few KB/s without
+	// closing. Cancel only this source so the next verified mirror can resume the
+	// partial file with HTTP Range.
 	idle := time.AfterFunc(idleTimeout, cancel)
 	defer idle.Stop()
+	stopLowSpeed := startLowSpeedWatcher(sourceCtx, cancel, &written, offset, total, downloadLowSpeedWindow, downloadMinBytesPerSec)
+	defer stopLowSpeed()
 	for {
+		if sourceCtx.Err() != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			_ = file.Sync()
+			return errDownloadStalled
+		}
 		count, readErr := response.Body.Read(buffer)
 		if count > 0 {
 			idle.Reset(idleTimeout)
 			if _, err := file.Write(buffer[:count]); err != nil {
 				return err
 			}
-			written += int64(count)
+			current := written.Add(int64(count))
 			if report != nil {
-				report(Progress{Downloaded: written, Total: total, Source: source})
+				report(Progress{Downloaded: current, Total: total, Source: source})
 			}
 		}
 		if readErr == io.EOF {
@@ -248,12 +271,65 @@ func downloadSourceWithIdleTimeout(ctx context.Context, source string, temporary
 		}
 		if readErr != nil {
 			if ctx.Err() == nil && sourceCtx.Err() != nil {
+				_ = file.Sync()
 				return errDownloadStalled
 			}
 			return readErr
 		}
 	}
+	idle.Stop()
+	stopLowSpeed()
 	return file.Sync()
+}
+
+func startLowSpeedWatcher(
+	sourceCtx context.Context,
+	cancel context.CancelFunc,
+	written *atomic.Int64,
+	initial int64,
+	total int64,
+	window time.Duration,
+	minBytesPerSec int64,
+) func() {
+	if window <= 0 || minBytesPerSec <= 0 || initial >= total {
+		return func() {}
+	}
+	stopCh := make(chan struct{})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() { close(stopCh) })
+	}
+	go func() {
+		ticker := time.NewTicker(window)
+		defer ticker.Stop()
+		windowStart := time.Now()
+		windowBytes := initial
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-sourceCtx.Done():
+				return
+			case now := <-ticker.C:
+				current := written.Load()
+				if current >= total {
+					return
+				}
+				elapsed := now.Sub(windowStart)
+				minBytes := int64(float64(minBytesPerSec) * elapsed.Seconds())
+				if minBytes < 1 {
+					minBytes = 1
+				}
+				if current-windowBytes < minBytes {
+					cancel()
+					return
+				}
+				windowStart = now
+				windowBytes = current
+			}
+		}
+	}()
+	return stop
 }
 
 func verifyFile(path string, artifact Artifact) error {

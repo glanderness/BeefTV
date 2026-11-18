@@ -491,6 +491,7 @@ func registryRecordContentChanged(prev, next RegistryRecord) bool {
 		prev.PackageDir != next.PackageDir ||
 		prev.PackageSpec != next.PackageSpec ||
 		prev.LoadError != next.LoadError ||
+		prev.LoadErrorStage != next.LoadErrorStage ||
 		!stringSlicesEqual(prev.SkillDirs, next.SkillDirs)
 }
 

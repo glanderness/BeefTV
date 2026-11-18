@@ -21,7 +21,7 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { scheduleResourceBlobCache } from "@/services/resource-blob-cache";
-import { canvasImagePreviewSize } from "@/lib/canvas/canvas-image-preview-blob";
+import { canvasImagePreviewSize, subscribeDevicePixelRatio } from "@/lib/canvas/canvas-image-preview-blob";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { recordCanvasVideoDiagnostic } from "@/services/diagnostics/canvas-media-diagnostics";
@@ -704,13 +704,7 @@ function ImageContent({ node, theme, scale = 1, isBatchRoot, batchCount, batchPr
     const imageContainerRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(imageContainerRef);
     const [pixelRatio, setPixelRatio] = useState(() => typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
-    useEffect(() => {
-        const resolution = window.matchMedia(`(resolution: ${pixelRatio}dppx)`);
-        const update = () => setPixelRatio(window.devicePixelRatio || 1);
-        resolution.addEventListener("change", update);
-        window.addEventListener("resize", update);
-        return () => { resolution.removeEventListener("change", update); window.removeEventListener("resize", update); };
-    }, [pixelRatio]);
+    useEffect(() => subscribeDevicePixelRatio(setPixelRatio), []);
     const previewSize = resourceIdFromStorageKey(node.metadata?.storageKey)
         ? canvasImagePreviewSize(node.width, node.height, scale, pixelRatio, node.metadata?.naturalWidth || 0, node.metadata?.naturalHeight || 0, node.metadata?.mimeType || "") : undefined;
     const { url, loading, error, retry, fail } = useNodeResourceUrl(node, nearViewport, previewSize);

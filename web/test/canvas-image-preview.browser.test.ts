@@ -26,7 +26,7 @@ test("重复节点共用按屏幕尺寸生成的透明预览，放大切档且�
         const result = await page.evaluate(() => (window as any).checkImagePreviews());
         expect(result.uniqueUrls).toBe(1); expect(result.oneTierDraws).toBe(1); expect(result.allDraws).toBe(2);
         expect(result.small).toEqual([128,85]); expect(result.large).toEqual([1024,683]); expect(result.full).toEqual([1200,800]);
-        expect(result.differentTier).toBe(true); expect(result.originalUnchanged).toBe(true); expect(result.animatedUnchanged).toBe(true);
+        expect(result.differentTier).toBe(true); expect(result.fallbackMatchesLarger).toBe(true); expect(result.jpegMime).toBe("image/jpeg"); expect(result.originalUnchanged).toBe(true); expect(result.animatedUnchanged).toBe(true);
         expect(result.red).toEqual([255,0,0,255]); expect(result.transparent).toEqual([0,0,0,0]);
         expect(result.wideRed[0]).toBeGreaterThanOrEqual(254); expect(result.wideRed[1]).toBeLessThanOrEqual(1); expect(result.wideRed[2]).toBeLessThanOrEqual(1); expect(result.wideRed[3]).toBe(255);
         expect(result.tiers).toEqual([128,1024,2048,null,null,null]);

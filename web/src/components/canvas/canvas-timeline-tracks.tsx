@@ -14,6 +14,7 @@ export const TRACK_ROW_HEIGHT = 52;
 type CanvasTimelineToolbarProps = {
     theme: CanvasTheme;
     playheadMs: number;
+    onResetPlayhead?: () => void;
     snapEnabled: boolean;
     onToggleSnap: () => void;
     onZoomOut: () => void;
@@ -37,6 +38,7 @@ type CanvasTimelineToolbarProps = {
 export function CanvasTimelineToolbar({
     theme,
     playheadMs,
+    onResetPlayhead,
     snapEnabled,
     onToggleSnap,
     onZoomOut,
@@ -57,10 +59,17 @@ export function CanvasTimelineToolbar({
     uploadInputRef,
 }: CanvasTimelineToolbarProps) {
     return (
-        <div ref={toolbarRef} className="canvas-timeline-toolbar media-editor-toolbar flex flex-wrap items-center gap-2" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
-            <span className="min-w-24 rounded-md border px-2 py-1 text-xs font-semibold tabular-nums" style={{ borderColor: theme.toolbar.border, background: theme.node.fill, color: theme.accent.primary }}>
+        <div ref={toolbarRef} className="canvas-timeline-toolbar media-editor-toolbar flex shrink-0 flex-wrap items-center gap-2" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
+            <button
+                type="button"
+                title="回到时间线起点"
+                aria-label={`当前播放头 ${formatTimelineTime(playheadMs)}，点击回到起点`}
+                onClick={onResetPlayhead}
+                className="min-w-24 rounded-md border px-2 py-1 text-left text-xs font-semibold tabular-nums transition hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                style={{ borderColor: theme.toolbar.border, background: theme.node.fill, color: theme.accent.primary }}
+            >
                 {formatTimelineTime(playheadMs)}
-            </span>
+            </button>
             <Tooltip title={snapEnabled ? "关闭吸附" : "开启吸附"}>
                 <Button size="small" icon={<Scissors className="size-3.5" />} onClick={onToggleSnap}>
                     {snapEnabled ? "吸附开" : "吸附关"}
@@ -245,14 +254,14 @@ export function CanvasTimelineTrackArea({
                         >
                             {!isSubtitle ? (
                                 <div
-                                    className="absolute bottom-0 left-0 top-0 w-2 cursor-ew-resize opacity-0 hover:opacity-100"
+                                    className="absolute bottom-0 left-0 top-0 w-2 cursor-ew-resize touch-none opacity-0 hover:opacity-100"
                                     style={{ background: theme.timeline.handle }}
                                     onPointerDown={(event) => onClipPointerDown(event, clip.id, "trim-start")}
                                 />
                             ) : null}
                             <span className="pointer-events-none min-w-0 flex-1 truncate px-2">{clip.title || trackLabel(clip.trackId)}</span>
                             {!isSubtitle ? (
-                                <div className="absolute bottom-0 right-0 top-0 w-2 cursor-ew-resize opacity-0 hover:opacity-100" style={{ background: theme.timeline.handle }} onPointerDown={(event) => onClipPointerDown(event, clip.id, "trim-end")} />
+                                <div className="absolute bottom-0 right-0 top-0 w-2 cursor-ew-resize touch-none opacity-0 hover:opacity-100" style={{ background: theme.timeline.handle }} onPointerDown={(event) => onClipPointerDown(event, clip.id, "trim-end")} />
                             ) : null}
                         </div>
                     );
@@ -264,23 +273,23 @@ export function CanvasTimelineTrackArea({
 
     const sortedTracks = draft.tracks.slice().sort((a, b) => a.order - b.order);
     return (
-        <div className="timeline-editor-tracks flex min-h-0 flex-1">
-            <div className="flex w-44 shrink-0 flex-col border-r" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
+        <div className="timeline-editor-tracks flex min-h-44 flex-1">
+            <div className="flex w-24 shrink-0 flex-col border-r sm:w-44" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
                 <div className="shrink-0 border-b" style={{ height: 32, borderColor: theme.toolbar.border }} />
                 {sortedTracks.map((track) => (
-                    <div key={track.id} className="flex items-center gap-2 border-b px-3" style={{ height: TRACK_ROW_HEIGHT, borderColor: theme.toolbar.border }}>
+                    <div key={track.id} className="flex items-center gap-2 border-b px-2.5 sm:px-3" style={{ height: TRACK_ROW_HEIGHT, borderColor: theme.toolbar.border }}>
                         <span className="grid size-6 shrink-0 place-items-center rounded-md text-xs font-semibold" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
                             {track.kind === "video" ? "V" : track.kind === "audio" ? "A" : "S"}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-xs">{track.label}</span>
-                        {track.locked ? <Lock className="size-3 opacity-40" /> : <LockOpen className="size-3 opacity-40" />}
+                        {track.locked ? <Lock className="size-3 shrink-0 opacity-40" /> : <LockOpen className="size-3 shrink-0 opacity-40" />}
                     </div>
                 ))}
             </div>
 
             <div ref={trackAreaRef} className="thin-scrollbar min-w-0 flex-1 overflow-auto" data-canvas-no-zoom>
                 <div ref={scrollRef} style={{ width: trackWidth }} className="min-h-full">
-                    <CanvasTimelineRuler pxPerMs={pxPerMs} durationMs={durationMs} playheadMs={playheadMs} width={trackWidth} theme={theme} onSeek={onSeek} />
+                    <CanvasTimelineRuler pxPerMs={pxPerMs} durationMs={durationMs} playheadMs={playheadMs} width={trackWidth} theme={theme} scrollContainerRef={trackAreaRef} onSeek={onSeek} />
                     {sortedTracks.map((track) => renderTrackRow(track.id, track.label))}
                 </div>
             </div>

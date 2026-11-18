@@ -34,6 +34,26 @@ class ManifestTests(unittest.TestCase):
             payload = module.prepare(root)
             self.assertEqual(len(payload["runtimes"]), 2)
             self.assertEqual(len(payload["runtimes"]["windows-amd64/cuda"]["parts"]), 2)
+            cpu_name = "beeftv-depth-runtime-v1-windows-amd64-cpu.zip"
+            self.assertEqual(payload["runtimes"]["windows-amd64/cpu"]["urls"], [
+                module.COS_BASE + cpu_name,
+                module.R2_BASE + cpu_name,
+                module.GITHUB_BASE + cpu_name,
+            ])
+            part1_name = "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001"
+            self.assertEqual(payload["runtimes"]["windows-amd64/cuda"]["parts"][0]["urls"], [
+                module.COS_BASE + part1_name,
+                module.R2_BASE + part1_name,
+                module.GITHUB_BASE + part1_name,
+            ])
+            self.assertEqual(payload["model"]["urls"], [
+                module.COS_BASE + module.MODEL_NAME,
+                module.R2_BASE + module.MODEL_NAME,
+                module.MODEL_GITHUB_URL,
+            ])
+            with_cnb = module.prepare(root, include_cnb=True)
+            self.assertEqual(with_cnb["runtimes"]["windows-amd64/cpu"]["urls"][0], module.CNB_BASE + cpu_name)
+            self.assertEqual(with_cnb["model"]["urls"][0], module.CNB_BASE + module.MODEL_NAME)
             part = root / "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-002"
             part.write_bytes(b"xxxx")
             with self.assertRaisesRegex(ValueError, "hash mismatch"):

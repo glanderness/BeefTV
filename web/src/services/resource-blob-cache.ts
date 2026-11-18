@@ -53,8 +53,12 @@ export async function cacheResourceImagePreviewObjectUrl(storageKey: string, max
     const requestKey = target.key;
     const pending = inFlight.get(requestKey);
     if (pending) return pending;
-    // Decode one original at a time, sharing work across duplicated nodes.
+    // Decode one original at a time, sharing work across duplicated nodes, and
+    // yield between items so zooming into many cards does not block input frames.
     const task = imagePreviewQueue.catch(() => undefined).then(async () => {
+        if (typeof window !== "undefined") {
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        }
         const original = await getCachedResourceBlob(storageKey);
         if (!original) return "";
         sessionBlobs.set(originalTarget.key, original);
@@ -85,6 +89,22 @@ export function peekCachedResourceObjectUrl(storageKey: string, previewSize?: nu
         return objectUrls.get(`${userScope}:${resourceId}:canvas-preview-v2-p3-${previewSize}`) || "";
     }
     return objectUrls.get(`${userScope}:${resourceId}:file`) || "";
+}
+
+/** 放大退出概览层时先复用内存里已有的低档位缩略图占位，后台再平滑切到高档位清晰图。 */
+export function peekFallbackResourceImagePreviewUrl(storageKey: string, previewSize?: number) {
+    const exact = peekCachedResourceObjectUrl(storageKey, previewSize);
+    if (exact) return exact;
+    const resourceId = resourceIdFromStorageKey(storageKey);
+    if (!resourceId) return "";
+    const userScope = getActiveUserScope();
+    const maxCandidate = previewSize || 2048;
+    for (const tier of [2048, 1024, 512, 128]) {
+        if (tier >= maxCandidate) continue;
+        const candidate = objectUrls.get(`${userScope}:${resourceId}:canvas-preview-v2-p3-${tier}`);
+        if (candidate) return candidate;
+    }
+    return "";
 }
 
 export async function cacheResourceObjectUrl(storageKey: string, reload = false, priority = false) {

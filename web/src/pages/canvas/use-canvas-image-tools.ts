@@ -22,7 +22,7 @@ import { buildGenerationConfig, buildImageGenerationMetadata, nodeReferenceImage
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
 import { DEFAULT_PORTRAIT_TEXTURE_SETTINGS } from "@/lib/canvas/canvas-portrait-texture";
-import { IMAGE_PROMPT_REVERSE, VIDEO_PROMPT_REVERSE } from "@/lib/prompts";
+import { getEffectiveReversePrompt } from "@/lib/reverse-prompt-preference";
 import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { generationErrorMessage } from "@/lib/generation-error";
@@ -43,7 +43,7 @@ const NODE_STATUS_IDLE = "idle" as const;
 
 export function buildReversePromptNodePair(node: CanvasNodeData, textModel?: string) {
     const isVideo = node.type === CanvasNodeType.Video;
-    const reverseInstruction = isVideo ? VIDEO_PROMPT_REVERSE : IMAGE_PROMPT_REVERSE;
+    const reverseInstruction = getEffectiveReversePrompt(isVideo ? "video" : "image");
     const gap = 96;
     const textSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
     const resultSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];

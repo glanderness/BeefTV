@@ -86,8 +86,13 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 	}
 	defer a.migrationMu.Unlock()
 	a.setMigrationProgress(desktopstorage.Progress{Phase: "preparing", Detail: "正在检查存储目录与磁盘空间"})
-	if a.storageRoot == "" && strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")) != "" {
-		return desktopstorage.Usage{}, errors.New("请先移除 CANVAS_DESKTOP_DATA_DIR 环境变量，再在设置中迁移存储目录")
+	if a.storageRoot == "" {
+		if strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")) != "" {
+			return desktopstorage.Usage{}, errors.New("请先移除 CANVAS_DESKTOP_DATA_DIR 环境变量，再在设置中迁移存储目录")
+		}
+		if hasExplicitDataDirArg(os.Args[1:]) {
+			return desktopstorage.Usage{}, errors.New("请先移除 --data-dir 启动参数，再在设置中迁移存储目录")
+		}
 	}
 	a.mu.RLock()
 	source := a.dataDir
@@ -151,6 +156,12 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		old, openErr := openDesktopRuntime(context.Background(), source)
 		if openErr == nil {
 			a.installStorageRuntime(source, old)
+			if errors.Is(cause, desktopstorage.ErrLocationRollbackFailed) {
+				if rewriteErr := desktopstorage.Save(root, source, ""); rewriteErr == nil {
+					return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，已恢复原工作区并将存储目录设置重置回原目录。请查看错误详情\n\n%w", cause)
+				}
+				return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，当前会话已恢复原工作区，但存储目录设置可能已指向新目录，请先在存储设置核对并重新保存后再继续操作\n\n%w", cause)
+			}
 			return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，已恢复原工作区，存储目录未更改。请查看错误详情\n\n%w", cause)
 		}
 		return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，原数据已保留，但工作区未能重新打开。请重启 BeefTV\n\n%w", errors.Join(cause, openErr))
@@ -202,7 +213,7 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		_ = closeDesktopRuntime(context.Background(), next)
 		return restore(err)
 	}
-	if a.storageRoot == "" {
+	if a.usePlatformDownloads {
 		if err = configureDesktopTemp(target); err != nil {
 			_ = closeDesktopRuntime(context.Background(), next)
 			return restore(err)
@@ -210,8 +221,11 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 	}
 	if err := desktopstorage.SaveMigration(root, target, source, files); err != nil {
 		_ = closeDesktopRuntime(context.Background(), next)
-		if a.storageRoot == "" {
+		if a.usePlatformDownloads {
 			_ = configureDesktopTemp(source)
+		}
+		if errors.Is(err, desktopstorage.ErrLocationRollbackFailed) {
+			return restore(fmt.Errorf("存储目录设置保存校验失败且未能自动恢复原指针，请检查系统配置目录: %w", err))
 		}
 		return restore(fmt.Errorf("存储目录设置未保存，继续使用原目录: %w", err))
 	}
@@ -237,6 +251,7 @@ func (a *DesktopApp) installStorageRuntime(path string, runtime *bootstrap.Runti
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.dataDir = path
+	a.clearUpdater()
 	a.boot = desktopBootAttempt{
 		attemptAcquiredLock: true,
 		state: DesktopStartupState{
@@ -252,4 +267,13 @@ func (a *DesktopApp) installStorageRuntime(path string, runtime *bootstrap.Runti
 	desktopRuntimeRegistryMu.Lock()
 	desktopRuntimeRegistry[a] = runtime
 	desktopRuntimeRegistryMu.Unlock()
+}
+
+func hasExplicitDataDirArg(args []string) bool {
+	for _, arg := range args {
+		if arg == "--data-dir" || strings.HasPrefix(arg, "--data-dir=") {
+			return true
+		}
+	}
+	return false
 }

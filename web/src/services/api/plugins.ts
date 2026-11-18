@@ -73,8 +73,10 @@ export async function fetchPluginUpdates(signal?: AbortSignal) {
     return http.get<PluginUpdateCheck>("/plugins/updates", { signal, timeout: 15_000 });
 }
 
-export async function reportPluginLoadError(id: string, error: string) {
-    return http.post<{ status?: string }>(`/plugins/${encodeURIComponent(id)}/load-error`, { error });
+export type PluginLoadErrorStage = "import" | "activate";
+
+export async function reportPluginLoadError(id: string, error: string, stage?: PluginLoadErrorStage) {
+    return http.post<{ status?: string }>(`/plugins/${encodeURIComponent(id)}/load-error`, stage ? { error, stage } : { error });
 }
 
 export async function setUserPluginEnabled(id: string, enabled: boolean) {

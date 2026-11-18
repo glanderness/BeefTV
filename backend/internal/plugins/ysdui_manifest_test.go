@@ -167,7 +167,7 @@ func TestYsduiImageManifestFollowsPerModelDocumentation(t *testing.T) {
 			t.Fatalf("expected max_images clipped to 12 (15 - 3 refs), got %#v", clippedBody)
 		}
 
-		 fourteenRefs := make([]protocol.MediaReference, 14)
+		fourteenRefs := make([]protocol.MediaReference, 14)
 		for i := range fourteenRefs {
 			fourteenRefs[i] = protocol.MediaReference{URL: "https://cdn.example.test/ref.png"}
 		}

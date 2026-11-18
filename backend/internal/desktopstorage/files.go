@@ -26,3 +26,13 @@ func openMigrationFile(path string) (*os.File, error) {
 		time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 	}
 }
+
+func readLocationFile(path string) ([]byte, error) {
+	for attempt := 0; ; attempt++ {
+		body, err := os.ReadFile(path)
+		if err == nil || !fileInUse(err) || attempt == 2 {
+			return body, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 80 * time.Millisecond)
+	}
+}

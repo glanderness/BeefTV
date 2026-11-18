@@ -43,8 +43,11 @@ beforeEach(() => {
 });
 
 describe("image angle editor", () => {
-    test("anchors the 3D angle editor to the selected node and follows drag", async () => {
-        const angleNode = makeCanvasNode("angle-node-1", CanvasNodeType.Image, { content: "data:image/png;base64,img" });
+    test("anchors the 3D angle editor to the selected node, forwards storageKey, and follows drag", async () => {
+        const angleNode = makeCanvasNode("angle-node-1", CanvasNodeType.Image, {
+            content: "/api/resources/res-angle-1/file",
+            storageKey: "resource:res-angle-1",
+        });
         const closedValues: Array<string | null> = [];
         const generated: Array<{ id: string; params: unknown }> = [];
 
@@ -74,6 +77,8 @@ describe("image angle editor", () => {
         expect(panelOverlayCalls[0]?.dragOffset).toEqual({ x: 18, y: -12 });
         expect(panelOverlayCalls[0]?.isDragging).toBe(true);
         expect(anglePanelCalls).toHaveLength(1);
+        expect(anglePanelCalls[0]?.dataUrl).toBe("/api/resources/res-angle-1/file");
+        expect(anglePanelCalls[0]?.storageKey).toBe("resource:res-angle-1");
         expect(modalCalls).toHaveLength(0);
 
         (anglePanelCalls[0]?.onClose as () => void)();
@@ -81,5 +86,26 @@ describe("image angle editor", () => {
         (anglePanelCalls[0]?.onConfirm as (params: unknown) => void)({ yaw: 45 });
         await Promise.resolve();
         expect(generated).toEqual([{ id: "angle-node-1", params: { yaw: 45 } }]);
+    });
+
+    test("renders angle panel when image node stores only storageKey", () => {
+        const angleNode = makeCanvasNode("angle-node-2", CanvasNodeType.Image, {
+            content: "",
+            storageKey: "resource:res-angle-2",
+        });
+
+        renderToStaticMarkup(
+            createElement(
+                CanvasProjectStageOverlays,
+                createCanvasStageOverlayProps({
+                    angleNode,
+                    angleNodeId: angleNode.id,
+                }),
+            ),
+        );
+
+        expect(anglePanelCalls).toHaveLength(1);
+        expect(anglePanelCalls[0]?.dataUrl).toBe("");
+        expect(anglePanelCalls[0]?.storageKey).toBe("resource:res-angle-2");
     });
 });

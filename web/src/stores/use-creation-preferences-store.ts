@@ -52,6 +52,7 @@ type CreationPreferencesStore = {
     resetImageSettings: () => void;
     resetVideoSettings: () => void;
     saveCustomPreset: (input: { name?: string; description?: string; prompt: string; mode: CanvasGenerationMode; modes?: CanvasGenerationMode[] }) => CreationCustomPreset | null;
+    renameCustomPreset: (id: string, name: string) => CreationCustomPreset | null;
     removeCustomPreset: (id: string) => void;
 };
 
@@ -176,6 +177,31 @@ export const useCreationPreferencesStore = create<CreationPreferencesStore>()(
                     },
                 }));
                 return created;
+            },
+            renameCustomPreset: (id, name) => {
+                const cleanId = id.trim();
+                const cleanName = name.trim();
+                if (!cleanId || !cleanName) return null;
+                let updated: CreationCustomPreset | null = null;
+                set((state) => {
+                    const current = state.preferences.customPresets || [];
+                    const index = current.findIndex((item) => item.id === cleanId);
+                    if (index < 0) return state;
+                    const nextItem: CreationCustomPreset = {
+                        ...current[index]!,
+                        name: cleanName,
+                    };
+                    updated = nextItem;
+                    const next = [...current];
+                    next[index] = nextItem;
+                    return {
+                        preferences: {
+                            ...state.preferences,
+                            customPresets: next,
+                        },
+                    };
+                });
+                return updated;
             },
             removeCustomPreset: (id) =>
                 set((state) => {

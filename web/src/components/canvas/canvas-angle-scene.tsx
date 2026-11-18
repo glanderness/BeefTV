@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Image as ImageIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -38,6 +38,11 @@ function subjectBoxSize(naturalW: number, naturalH: number) {
     return { width: Math.max(20, Math.round(naturalW * scale)), height: Math.max(20, Math.round(naturalH * scale)) };
 }
 
+function cssUrlValue(url: string) {
+    const escaped = url.replace(/["\\\r\n\f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `);
+    return `url("${escaped}")`;
+}
+
 export function CanvasAngleScene({
     mode,
     rotate,
@@ -61,6 +66,7 @@ export function CanvasAngleScene({
 }) {
     const scale = visualScale(distance);
     const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+    const [failedSrc, setFailedSrc] = useState("");
     const [dragging, setDragging] = useState(false);
     const sceneRef = useRef<HTMLDivElement>(null);
     const dragPointer = useRef<number | null>(null);
@@ -72,8 +78,12 @@ export function CanvasAngleScene({
     tiltRef.current = onTiltChange;
     modeRef.current = mode;
 
+    const hasImage = Boolean(imageSrc && imageSrc !== failedSrc);
+
     useEffect(() => {
         setNaturalSize(null);
+        setFailedSrc("");
+        if (!imageSrc) return;
         let cancelled = false;
         const image = new Image();
         image.onload = () => {
@@ -82,9 +92,19 @@ export function CanvasAngleScene({
             const h = image.naturalHeight || image.height;
             if (w > 0 && h > 0) setNaturalSize({ w, h });
         };
+        image.onerror = () => {
+            if (!cancelled) setFailedSrc(imageSrc);
+        };
         image.src = imageSrc;
         return () => { cancelled = true; };
     }, [imageSrc]);
+
+    const handleImgLoad = (event: SyntheticEvent<HTMLImageElement>) => {
+        const el = event.currentTarget;
+        const w = el.naturalWidth || el.width;
+        const h = el.naturalHeight || el.height;
+        if (w > 0 && h > 0) setNaturalSize({ w, h });
+    };
 
     const subjectSize = useMemo(() => {
         if (!naturalSize) return { width: subjectMaxBox, height: subjectMaxBox };
@@ -92,11 +112,11 @@ export function CanvasAngleScene({
     }, [naturalSize]);
 
     const screenBg = useMemo<CSSProperties>(() => ({
-        backgroundImage: `url("${imageSrc}")`,
+        backgroundImage: hasImage ? cssUrlValue(imageSrc) : "none",
         backgroundSize: "contain",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
-    }), [imageSrc]);
+    }), [hasImage, imageSrc]);
 
     useEffect(() => {
         if (!dragging) return;
@@ -166,7 +186,15 @@ export function CanvasAngleScene({
                         <div className="canvas-angle-skybox-space" style={{ perspective: 900 }}>
                             <div className="canvas-angle-cube-wrap" style={{ transition: dragging ? "none" : undefined, transform: `scale(${scale}) rotateX(${-tilt}deg) rotateY(${rotate}deg)` }}>
                                 <div className="canvas-angle-cube" style={cubeStyle}>
-                                    <div className="canvas-angle-cube-face is-front has-image"><img src={imageSrc} alt="" draggable={false} /></div>
+                                    <div className={cn("canvas-angle-cube-face is-front", hasImage && "has-image")}>
+                                        {hasImage ? (
+                                            <img src={imageSrc} alt="" draggable={false} onLoad={handleImgLoad} onError={() => setFailedSrc(imageSrc)} />
+                                        ) : (
+                                            <span data-angle-placeholder className="grid size-full place-items-center text-[var(--mae-face-label)]">
+                                                <ImageIcon className="size-5" aria-hidden />
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="canvas-angle-cube-face is-back"><span>{faceLabels.back}</span></div>
                                     <div className="canvas-angle-cube-face is-right"><span>{faceLabels.right}</span></div>
                                     <div className="canvas-angle-cube-face is-left"><span>{faceLabels.left}</span></div>
@@ -186,7 +214,16 @@ export function CanvasAngleScene({
             <div ref={sceneRef} className={cn("canvas-angle-unified is-camera", dragging && "is-dragging")} style={{ perspective: 1200 }} onPointerDown={onPointerDown}>
                 <div className="canvas-angle-subject-wrap">
                     <div className="canvas-angle-subject" style={{ width: subjectSize.width, height: subjectSize.height, transition: dragging ? "none" : "transform 120ms ease-out", transform: `scale(${scale})` }}>
-                        <img src={imageSrc} alt="" draggable={false} />
+                        {hasImage ? (
+                            <img src={imageSrc} alt="" draggable={false} onLoad={handleImgLoad} onError={() => setFailedSrc(imageSrc)} />
+                        ) : (
+                            <span
+                                data-angle-placeholder
+                                className="grid size-full place-items-center rounded-[var(--r-xs,2px)] border border-[var(--mae-subject-border)] bg-[var(--mae-subject-bg)] text-[var(--mae-face-label)]"
+                            >
+                                <ImageIcon className="size-4" aria-hidden />
+                            </span>
+                        )}
                     </div>
                 </div>
                 <div className="canvas-angle-orbit" aria-hidden>

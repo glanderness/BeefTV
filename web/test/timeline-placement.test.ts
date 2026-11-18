@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { canPlaceAt, planClipMove } from "../src/lib/timeline/timeline-placement";
+import { canPlaceAt, planClipMove, resolveLeftClampedClipMove } from "../src/lib/timeline/timeline-placement";
 import type { TimelineClip } from "../src/types/timeline";
 
 const clip = (id: string, startMs: number, durationMs: number, trackId = "video"): TimelineClip => ({
@@ -71,5 +71,12 @@ describe("planClipMove 同轨让位", () => {
         expect(swapThird.get("second")).toBe(0);
         expect(swapThird.get("third")).toBe(4_000);
         expect(swapThird.get("first")).toBe(8_000);
+    });
+
+    it("向左快速回拖越界时仅贴靠最近无冲突右缘，不无故推动有间隙的相邻片段", () => {
+        const gapped = [clip("A", 0, 1_000), clip("C", 2_000, 3_000), clip("B", 6_000, 2_000)];
+        expect(planClipMove({ clipId: "B", trackId: "video", startMs: 500, durationMs: 2_000, clips: gapped })).toBeNull();
+        const clamped = resolveLeftClampedClipMove({ clipId: "B", trackId: "video", startMs: 500, durationMs: 2_000, clips: gapped })!;
+        expect([...clamped.entries()]).toEqual([["B", 5_000]]);
     });
 });
