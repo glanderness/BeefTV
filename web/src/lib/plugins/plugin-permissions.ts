@@ -32,6 +32,7 @@ export type ResolvedPluginPermissions = {
     canWriteCanvas: boolean;
     canWriteTimeline: boolean;
     canWriteSkill: boolean;
+    canWriteSettings: boolean;
     canRunText: boolean;
     canRunGeneration: boolean;
 };
@@ -46,6 +47,7 @@ export function resolvePluginPermissions(perms: ReadonlySet<string>): ResolvedPl
         canWriteCanvas,
         canWriteTimeline: perms.has("timeline.command") || perms.has("timeline.write") || canWriteCanvas,
         canWriteSkill: perms.has("skill.write") || canWriteCanvas,
+        canWriteSettings: perms.has("settings.write"),
         canRunText: perms.has("ai.text"),
         canRunGeneration: perms.has("generation.run"),
     };

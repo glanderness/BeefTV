@@ -68,6 +68,7 @@ export type DesktopRuntimeBinding = {
     CleanupPreviousStorage?: () => Promise<DesktopStorageUsage>;
     StartupState?: () => Promise<DesktopStartupState>;
     RetryStartup?: () => Promise<DesktopStartupState>;
+    RuntimeConfig?: () => Promise<DesktopRuntimeConfig>;
     ExportStartupDiagnostics?: (clientPayload: string) => Promise<string>;
     SaveDiagnosticBundle?: (fileName: string, data: string) => Promise<string>;
     RevealDiagnosticBundle?: () => Promise<void>;

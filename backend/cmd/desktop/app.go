@@ -135,6 +135,17 @@ func (a *DesktopApp) stop(ctx context.Context) error {
 	return closeDesktopRuntime(ctx, runtime)
 }
 
+// RuntimeConfig preserves the v2.2.x Wails binding for existing desktop plugins
+// that read local runtime credentials before migrating to host.channels.
+func (a *DesktopApp) RuntimeConfig() DesktopRuntimeConfig {
+	state := a.StartupState()
+	return DesktopRuntimeConfig{
+		BaseURL:          state.BaseURL,
+		LaunchToken:      state.LaunchToken,
+		UIBootstrapToken: state.UIBootstrapToken,
+	}
+}
+
 func (a *DesktopApp) OpenBeefTVGitHub() error {
 	ctx, err := a.dialogContext()
 	if err != nil {

@@ -87,7 +87,7 @@ BeefTV 不在独立 JS 沙箱里隔离插件代码（插件运行在同一页面
 | `usage.read` | 读取用量 |
 | `external.open` | 打开外部详情 |
 | `ui.slot` | 挂载界面扩展位 |
-| `settings.write` | 读写插件自身命名空间下的模型渠道设置（仅可信内置插件生效） |
+| `settings.write` | 读写本插件创建的自有命名空间模型渠道及探测在线模型目录（脱敏已保存密钥与请求头，不允许覆盖官方、历史官方标识、内置预设、系统内置、受管凭证或非本插件创建的渠道） |
 | `timeline.read` | 读取时间线（`editor.preview-renderer`、`editor.ai-assistant` 需要） |
 | `timeline.command`、`timeline.write` | 修改时间线（`editor.timeline-panel`、`editor.inspector`、`editor.asset-ingest`、`editor.subtitle-tool`、`editor.transcription-provider` 需要） |
 | `export.run` | 导出（`editor.export-renderer` 需要） |
@@ -170,6 +170,7 @@ BeefTV 不在独立 JS 沙箱里隔离插件代码（插件运行在同一页面
 | `host.assets.list()` | 当前已加载的素材 |
 | `host.storage.get/set/remove` | 插件自己的键值存储 |
 | `host.config.get/getAll/set` | 用户在插件设置里填的值 |
+| `host.channels.list/upsert/fetchCatalog` | 声明 `settings.write` 权限时，读取、一键写入本插件创建的自有命名空间模型渠道（允许 ID 形式：`<插件ID>`、`<去 beeftv-plugin- 前缀名>`、`<去前缀名>-channel`、`<插件ID>:*`；无归属标记但与目标 ID 同名且网关同源的存量渠道，在用户提交非空 API Key 时将归入该插件管理并覆盖更新，官方与历史官方渠道标识、内置预设、系统与受管凭证渠道及异源渠道均受保护不可覆盖）并探测上游模型列表 |
 | `host.ui.notify(message, level)` | 弹出提示，`level` 是 `info`、`success`、`warning`、`error` |
 | `host.ui.navigate(path)` | 跳转页面 |
 | `host.ui.requestInstallPlugin({ source, registry? })` | 打开安装确认框，用户确认后才会安装 |
