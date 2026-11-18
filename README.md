@@ -55,6 +55,8 @@
 
 感谢支持 BeefTV 持续发展的合作伙伴、赞助商与客户。
 
+如果你也想赞助 BeefTV 开源项目，为 AIGC 开源社区做一份贡献，可以具体参考[商用授权和赞助](#商用授权和赞助)。
+
 <table>
   <tr><th width="26%" align="center">鸣谢对象</th><th align="center">介绍</th></tr>
   <tr>

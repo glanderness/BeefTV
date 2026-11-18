@@ -55,6 +55,8 @@
 
 Thank you to the partners, sponsors, and customers supporting BeefTV's continued development.
 
+If you would also like to sponsor the BeefTV open source project and contribute to the AIGC open source community, see [Commercial licensing and sponsorship](#commercial-licensing-and-sponsorship).
+
 <table>
   <tr><th width="26%" align="center">Acknowledgements</th><th align="center">About</th></tr>
   <tr>
