@@ -27,7 +27,7 @@ permissions:
   contents: read
 concurrency:
   group: installers-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native:
@@ -41,20 +41,32 @@ jobs:
           - os: macos-latest
             platform: darwin-arm64
             target: darwin/arm64
-          - os: macos-15-intel
+            node_arch: arm64
+          - os: macos-15
             platform: darwin-amd64
             target: darwin/amd64
+            node_arch: x64
           - os: windows-2022
             platform: windows-amd64
             target: windows/amd64
+            node_arch: x64
           - os: ubuntu-24.04
             platform: linux-amd64
             target: linux/amd64
+            node_arch: x64
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure Rosetta 2 for Intel macOS target
+        if: matrix.platform == 'darwin-amd64'
+        run: |
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          cache: true
           cache-dependency-path: backend/go.sum
       - uses: oven-sh/setup-bun@v2
         with:
@@ -62,6 +74,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.22.1'
+          architecture: ${{ matrix.node_arch }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -69,7 +82,15 @@ jobs:
         shell: bash
         run: |
           node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
+      - name: Restore native host Node on PATH for cross-builds
+        if: matrix.platform == 'darwin-amd64'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          architecture: arm64
       - name: Verify bundled Agent runtime
+        env:
+          BEEFTV_WAILS_PLATFORM: ${{ matrix.target }}
         shell: bash
         run: bun test scripts/package-agent-host.test.mjs
       - name: Linux desktop dependencies

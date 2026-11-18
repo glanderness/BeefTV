@@ -68,24 +68,10 @@ if [[ -n "${BEEFTV_EXTRA_LDFLAGS:-}" ]]; then
   LDFLAGS="$LDFLAGS $BEEFTV_EXTRA_LDFLAGS"
 fi
 
-if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
-  host_arch="$(uname -m)"
-  case "$BEEFTV_WAILS_PLATFORM" in
-    darwin/amd64)
-      if [[ "$host_arch" == "arm64" ]]; then
-        export CGO_ENABLED=1
-        export CGO_CFLAGS="${CGO_CFLAGS:+$CGO_CFLAGS }-arch x86_64"
-        export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-arch x86_64"
-      fi
-      ;;
-    darwin/arm64)
-      if [[ "$host_arch" == "x86_64" ]]; then
-        export CGO_ENABLED=1
-        export CGO_CFLAGS="${CGO_CFLAGS:+$CGO_CFLAGS }-arch arm64"
-        export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-arch arm64"
-      fi
-      ;;
-  esac
+if [[ "$AGENT_TARGET" == darwin/* ]]; then
+  # Go's cgo driver passes the target -arch flag for GOARCH automatically;
+  # exporting -arch globally breaks Wails' host bindings compilation.
+  export CGO_ENABLED=1
 fi
 
 echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
@@ -198,7 +184,7 @@ if [[ -x "$ENCODER_SOURCE" ]]; then
   chmod 755 "$ENCODER_DEST/ffmpeg"
   codesign --force --sign - "$ENCODER_DEST/ffmpeg"
 fi
-if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
+if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" ]] || { [[ "$AGENT_TARGET" == darwin/amd64 ]] && { [[ "$(uname -m)" == x86_64 ]] || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; }; }; then
   bash "$ROOT_DIR/scripts/test-media-runtime-macos.sh" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 fi
 
@@ -224,6 +210,14 @@ if [[ ! -x "$CLI_BINARY" ]]; then
   echo "beeftv CLI was not built into the bundle: $CLI_BINARY" >&2
   exit 1
 fi
+EXPECTED_MAC_ARCH="${AGENT_TARGET##*/}"
+[[ "$EXPECTED_MAC_ARCH" != amd64 ]] || EXPECTED_MAC_ARCH=x86_64
+for bin_path in "$APP_BUNDLE/Contents/MacOS/BeefTV" "$CLI_BINARY"; do
+  file "$bin_path" | grep -q "$EXPECTED_MAC_ARCH" || {
+    echo "Wrong Mach-O architecture for $bin_path (expected $EXPECTED_MAC_ARCH): $(file "$bin_path")" >&2
+    exit 1
+  }
+done
 # Adding a Mach-O binary to Contents/MacOS invalidates the bundle signature.
 # Sign the CLI the same ad-hoc way the bundle is signed; the --deep bundle
 # signature below then covers it too.

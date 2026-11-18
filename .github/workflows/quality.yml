@@ -126,14 +126,24 @@ jobs:
   backend:
     needs: gates
     if: needs.gates.outputs.backend == 'true'
-    name: Backend checks
+    name: Backend checks (${{ matrix.slice }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [packages, app-1, app-2, app-3]
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - name: Record runner image version
+        run: echo "RUNNER_IMAGE_VERSION=${ImageVersion:-ubuntu}" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/beeftv-apt-backend
+          key: apt-backend-v2-${{ runner.os }}-${{ env.RUNNER_IMAGE_VERSION }}-ffmpeg-fontconfig-fonts-noto-cjk
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
@@ -150,11 +160,31 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
+          set -euo pipefail
           bash ../scripts/configure-ubuntu-apt.sh
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null || ! fc-list ':lang=zh-cn' | grep -q .; then
+          pkgs=(ffmpeg fontconfig fonts-noto-cjk)
+          deps_ready() {
+            local pkg
+            for pkg in "${pkgs[@]}"; do
+              [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == "install ok installed" ]] || return 1
+            done
+            ffmpeg -version >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1 && fc-list ':lang=zh-cn' | grep -q .
+          }
+          if ! deps_ready && compgen -G "$HOME/.cache/beeftv-apt-backend/*.deb" >/dev/null; then
+            sudo dpkg -i "$HOME/.cache/beeftv-apt-backend/"*.deb || true
+            if command -v fc-cache >/dev/null 2>&1; then
+              fc-cache -f || true
+            fi
+          fi
+          if ! deps_ready; then
+            mkdir -p "$HOME/.cache/beeftv-apt-backend"
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-noto-cjk
+            sudo apt-get -f install -y --no-install-recommends
+            sudo apt-get install -y --no-install-recommends -o APT::Keep-Downloaded-Packages=true -o Dir::Cache::Archives="$HOME/.cache/beeftv-apt-backend" "${pkgs[@]}"
             fc-cache -f
+            sudo rm -f "$HOME/.cache/beeftv-apt-backend/lock"
+            sudo rm -rf "$HOME/.cache/beeftv-apt-backend/partial"
+            sudo chown -R "$USER:$USER" "$HOME/.cache/beeftv-apt-backend"
           fi
           fc-match ':lang=zh-cn'
           ffmpeg -version
@@ -162,8 +192,29 @@ jobs:
       - name: Build official protocol packages
         run: sh ../plugin-packages/build-packages.sh
       - name: Run Go tests
-        run: go test ./...
+        run: |
+          case "${{ matrix.slice }}" in
+            packages)
+              all_pkgs="$(go list ./...)"
+              mapfile -t pkgs < <(grep -v '/internal/app$' <<< "$all_pkgs")
+              [[ "${#pkgs[@]}" -gt 0 ]]
+              go test "${pkgs[@]}"
+              ;;
+            app-1)
+              go test ./internal/app -run '^Test([A-H]|$)'
+              ;;
+            app-2)
+              go test ./internal/app -run '^Test[I-R]'
+              ;;
+            app-3)
+              go test ./internal/app -run '^Test[^A-R]'
+              ;;
+            *)
+              go test ./...
+              ;;
+          esac
       - name: Check dead code budget
+        if: matrix.slice == 'packages'
         run: node ../scripts/deadcode-budget.mjs
 
   agent-host:
@@ -203,14 +254,28 @@ jobs:
   web:
     needs: gates
     if: needs.gates.outputs.web == 'true'
-    name: Web checks
+    name: Web checks (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@v4
+      - name: Record runner image version
+        run: echo "RUNNER_IMAGE_VERSION=${ImageVersion:-ubuntu2404}" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/beeftv-apt-web
+          key: apt-web-v2-${{ runner.os }}-${{ env.RUNNER_IMAGE_VERSION }}-ffmpeg
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-${{ runner.os }}-${{ hashFiles('web/bun.lock') }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.9
@@ -218,22 +283,47 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
+          set -euo pipefail
           bash ../scripts/configure-ubuntu-apt.sh
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+          pkgs=(ffmpeg)
+          deps_ready() {
+            local pkg
+            for pkg in "${pkgs[@]}"; do
+              [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == "install ok installed" ]] || return 1
+            done
+            ffmpeg -version >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1
+          }
+          if ! deps_ready && compgen -G "$HOME/.cache/beeftv-apt-web/*.deb" >/dev/null; then
+            sudo dpkg -i "$HOME/.cache/beeftv-apt-web/"*.deb || true
+          fi
+          if ! deps_ready; then
+            mkdir -p "$HOME/.cache/beeftv-apt-web"
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg
+            sudo apt-get -f install -y --no-install-recommends
+            sudo apt-get install -y --no-install-recommends -o APT::Keep-Downloaded-Packages=true -o Dir::Cache::Archives="$HOME/.cache/beeftv-apt-web" "${pkgs[@]}"
+            sudo rm -f "$HOME/.cache/beeftv-apt-web/lock"
+            sudo rm -rf "$HOME/.cache/beeftv-apt-web/partial"
+            sudo chown -R "$USER:$USER" "$HOME/.cache/beeftv-apt-web"
           fi
           ffmpeg -version
           ffprobe -version
       - name: Lint retired Ant Design APIs
+        if: matrix.shard == 1
         run: bun run lint
       - name: Typecheck
+        if: matrix.shard == 1
         run: bun run typecheck
-      - name: Run tests
+      - name: Ensure Playwright Chromium browser
         run: |
-          bunx playwright install --with-deps chromium
-          bun run test
+          if ! bun -e 'import { chromium } from "playwright"; const b = await chromium.launch(); await b.close();' >/dev/null 2>&1; then
+            bunx playwright install --with-deps chromium
+          fi
+      - name: Run tests
+        env:
+          BEEFTV_TEST_SHARD: ${{ matrix.shard }}/4
+        run: bun run test
       - name: Run DeepSeek Harness plugin browser tests
+        if: matrix.shard == 4
         working-directory: plugins/deepseek-harness
         run: |
           ln -s ../../web/node_modules node_modules
@@ -242,9 +332,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: environment-check-screenshots-${{ github.sha }}
+          name: environment-check-screenshots-${{ github.sha }}-${{ matrix.shard }}
           path: output/environment-check/*.png
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
   docker:
     needs: gates
