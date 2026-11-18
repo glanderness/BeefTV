@@ -19,6 +19,8 @@ type MediaMetadata struct {
 	DurationMs         int64
 	VideoDurationMs    int64
 	FPS                float64
+	VideoFrames        int64
+	PixelAspectRatio   float64
 	VideoCodec         string
 	AudioCodec         string
 	HasAudio, HasVideo bool
@@ -42,7 +44,7 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 		return facts, err
 	}
 	cmd := exec.CommandContext(ctx, bin, "-v", "error", "-protocol_whitelist", "file,pipe",
-		"-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate,duration:format=duration,format_name", "-of", "json", path)
+		"-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate,nb_frames,sample_aspect_ratio,duration:format=duration,format_name", "-of", "json", path)
 	HideConsole(cmd)
 	output, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -59,6 +61,8 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			CodecType     string `json:"codec_type"`
 			CodecName     string `json:"codec_name"`
 			Width, Height int
+			FrameCount    string `json:"nb_frames"`
+			PixelAspect   string `json:"sample_aspect_ratio"`
 			AvgFrameRate  string `json:"avg_frame_rate"`
 			Duration      string `json:"duration"`
 		} `json:"streams"`
@@ -86,6 +90,11 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			}
 			if facts.Width == 0 {
 				facts.Width, facts.Height = stream.Width, stream.Height
+				facts.VideoFrames, _ = strconv.ParseInt(stream.FrameCount, 10, 64)
+				facts.PixelAspectRatio = probeFrameRate(strings.Replace(stream.PixelAspect, ":", "/", 1))
+				if facts.PixelAspectRatio == 0 {
+					facts.PixelAspectRatio = 1
+				}
 			}
 			if facts.FPS == 0 {
 				facts.FPS = probeFrameRate(stream.AvgFrameRate)

@@ -34,15 +34,16 @@ type tokenRequest struct {
 }
 
 type tokenSuccess struct {
-	APIKey     string  `json:"api_key"`
-	BaseURL    string  `json:"base_url"`
-	Market     string  `json:"market"`
-	Group      string  `json:"group"`
-	KeyName    string  `json:"key_name"`
-	TokenID    wireID  `json:"token_id"`
-	Account    Account `json:"account"`
-	BalanceCNY string  `json:"balance_cny"`
-	Quota      *int64  `json:"quota"`
+	APIKey       string  `json:"api_key"`
+	BaseURL      string  `json:"base_url"`
+	Market       string  `json:"market"`
+	Group        string  `json:"group"`
+	KeyName      string  `json:"key_name"`
+	TokenID      wireID  `json:"token_id"`
+	Account      Account `json:"account"`
+	BalanceCNY   string  `json:"balance_cny"`
+	Quota        *int64  `json:"quota"`
+	QuotaPerUnit int64   `json:"quota_per_unit"`
 }
 
 type completeRequest struct {
@@ -57,12 +58,13 @@ type oauthError struct {
 }
 
 type connectionView struct {
-	Market     string  `json:"market"`
-	Account    Account `json:"account"`
-	TokenID    wireID  `json:"token_id"`
-	KeyName    string  `json:"key_name"`
-	BalanceCNY string  `json:"balance_cny"`
-	Quota      *int64  `json:"quota"`
+	Market       string  `json:"market"`
+	Account      Account `json:"account"`
+	TokenID      wireID  `json:"token_id"`
+	KeyName      string  `json:"key_name"`
+	BalanceCNY   string  `json:"balance_cny"`
+	Quota        *int64  `json:"quota"`
+	QuotaPerUnit int64   `json:"quota_per_unit"`
 }
 
 type modelsPayload struct {

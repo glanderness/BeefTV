@@ -142,6 +142,17 @@ func Compile(host CompileHost, user string, d Definition, existing *model.Canvas
 			}
 			continue
 		}
+		if n.OperationID == CharacterReplacementOperation {
+			recipe := Recipe{Request: RecipeRequest{Type: "canvas_video", Input: map[string]any{"mode": "video", "config": map[string]any{}}}}
+			if _, err := SelectModel(host, n, &recipe); err != nil {
+				return CompileResult{}, err
+			}
+			if recipe.Request.Model != characterReplacementModel {
+				return CompileResult{}, BadRequest("人物替换需要已启用的 Seedance 2.0 Fast")
+			}
+			recipes[n.ID] = recipe
+			continue
+		}
 		if n.Role != "generation" && !strings.HasPrefix(n.OperationID, "generate.") {
 			if n.OperationID == "image.describe" {
 				if _, err := DescribeRequest(host, n, "", ""); err != nil {

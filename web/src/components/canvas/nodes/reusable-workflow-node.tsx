@@ -79,11 +79,13 @@ export function ReusableWorkflowNode({ node, nodes, readOnly, dropTarget, onActi
         const total = state.definition.nodes.filter(item => item.role === "input").length;
         const operations = state.definition.nodes.filter(isWorkflowOperation);
         const completed = operations.filter(item => run?.steps.some(step => step.nodeId === item.id && step.status === "succeeded")).length;
+        const replacementStage = running ? run?.steps.find(step => step.status === "running" && step.stage) : undefined;
+        const percent = replacementStage?.progress ?? (operations.length ? completed / operations.length * 100 : 0);
         return <div className="flex h-full w-full flex-col justify-between gap-3 rounded-[inherit] bg-[var(--surface-card)] p-5 text-foreground" data-canvas-no-drag data-canvas-no-zoom onMouseDown={stop} onPointerDown={stop} onDoubleClick={stop}>
             <div className="flex flex-wrap items-center gap-3 text-2xl"><span className="font-medium">{state.inputsChanged && run ? "输入已更新" : waitingSelection ? "等待选择图片" : run ? labels[run.status] : ready === total ? "素材已就绪" : "准备素材"}</span><span className="text-xl tabular-nums text-muted-foreground">{ready}/{total}</span></div>
             {waitingSelection ? <p className="text-sm text-muted-foreground">在“选择图片结果”节点中选择一张，随后继续处理。</p> : null}
             {state.error || run?.error ? <p role="alert" className="max-h-14 overflow-auto text-lg text-destructive" data-canvas-wheel-scroll>{state.error || run?.error}</p> : null}
-            <div className="flex items-center gap-3"><div role="progressbar" aria-label="工作流执行进度" aria-valuemin={0} aria-valuemax={operations.length} aria-valuenow={completed} className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-active)]"><div className="h-full rounded-full bg-[var(--workspace-accent)]" style={{ width: `${operations.length ? completed / operations.length * 100 : 0}%` }} /></div><span className="shrink-0 text-lg tabular-nums text-muted-foreground">步骤 {completed}/{operations.length}</span></div>
+            <div className="flex items-center gap-3"><div role="progressbar" aria-label="工作流执行进度" aria-valuemin={0} aria-valuemax={replacementStage ? 100 : operations.length} aria-valuenow={replacementStage ? percent : completed} className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-active)]"><div className="h-full rounded-full bg-[var(--workspace-accent)]" style={{ width: `${percent}%` }} /></div><span className="shrink-0 text-lg tabular-nums text-muted-foreground">{replacementStage ? `${replacementStage.stage} ${percent}%` : `步骤 ${completed}/${operations.length}`}</span></div>
             <div className="flex flex-wrap items-center justify-end gap-2" data-workflow-actions>
                 {onUpdate ? <Button type="text" className="mr-auto" disabled={readOnly || busy || running || Boolean(state.intent)} onClick={() => void onUpdate(node.id)}>版本 {state.templateRevision || 1} · 更新实例</Button> : null}
                 <Button size="large" style={{ fontSize: 20 }} type="primary" icon={running ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />} disabled={readOnly || busy || running || ready < total && !state.intent} loading={busy} onClick={() => { setBusy(true); void onAction(node.id, recoverOriginal ? "retry" : "start").finally(() => { if (active.current) setBusy(false); }); }}>{state.intent ? "确认上次提交" : running ? "运行中" : recoverOriginal ? "继续原任务" : run ? "重新运行" : "运行工作流"}</Button>
@@ -106,7 +108,8 @@ export function ReusableWorkflowNode({ node, nodes, readOnly, dropTarget, onActi
     const choices = step?.candidates?.filter(item => item.resourceId) || [];
     const selecting = step?.status === "waiting_selection" && control?.metadata?.reusableWorkflow?.run?.status === "running";
     const hasValue = slot.mediaType === "text" ? Boolean(node.metadata?.content) : Boolean(resourceId);
-    const status = slot.role === "constant" ? "固定素材" : isInput ? hasValue ? "已添加" : "待添加" : labels[slot.status || "pending"] || "待运行";
+    const requiresReview = control?.metadata?.reusableWorkflow?.run?.outputs.some(output => output.nodeId === slot.nodeId && output.reviewRequired);
+    const status = slot.role === "constant" ? "固定素材" : isInput ? hasValue ? "已添加" : "待添加" : requiresReview && slot.status === "succeeded" ? "待验收" : labels[slot.status || "pending"] || "待运行";
     const candidates = nodes.filter(item => item.id !== node.id && item.type === slot.mediaType && item.metadata?.workflowSlot?.instanceId !== slot.instanceId && canvasNodeResourceId(item));
     const recipeNode = control?.metadata?.reusableWorkflow?.definition.nodes.find(item => item.id === slot.nodeId);
     const modelSummary = recipeNode?.config?.modelOption ? [String(recipeNode.config.modelOption).split("::").at(-1), recipeNode.config.vquality, recipeNode.config.size].filter(Boolean).join(" · ") : "";

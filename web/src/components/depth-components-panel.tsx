@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Button, Progress, type App } from "antd";
 import { getDesktopAppBinding, type DepthComponentState } from "@/services/desktop-runtime";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -10,7 +10,7 @@ const statusText: Record<DepthComponentState["status"], string> = {
     paused: "下载已暂停", error: "安装未完成", unsupported: "当前设备暂不支持",
 };
 
-export function DepthComponentsPanel({ initialState, onReady, onCancel, onOpenSettings }: { initialState?: DepthComponentState; onReady?: () => void; onCancel?: () => Promise<void>; onOpenSettings?: () => void }) {
+export function DepthComponentsPanel({ initialState, onReady, onCancel, onOpenSettings, render }: { render?: (details: ReactNode, status: string) => ReactNode; initialState?: DepthComponentState; onReady?: () => void; onCancel?: () => Promise<void>; onOpenSettings?: () => void }) {
     const binding = getDesktopAppBinding();
     const [state, setState] = useState(initialState);
     const [busy, setBusy] = useState(false);
@@ -37,9 +37,11 @@ export function DepthComponentsPanel({ initialState, onReady, onCancel, onOpenSe
         finally { setBusy(false); }
     };
     const insufficient = Boolean(state && state.status !== "ready" && state.freeBytes < state.requiredBytes);
-    return <div className="space-y-3 text-sm" data-canvas-no-zoom data-canvas-wheel-scroll>
-        <p className="leading-6 text-foreground/70">视频在本机处理，确认后才会下载所需组件和模型。</p>
-        <p role="status">{state ? statusText[state.status] : error ? "组件信息暂时无法读取" : "正在检查组件信息…"}</p>
+    const details = <div className={render ? "storage-detail-sections" : "space-y-3 text-sm"} data-canvas-no-zoom data-canvas-wheel-scroll>
+        <div className={render ? "storage-detail-card" : "space-y-3"}>
+            <p role="status">{state ? statusText[state.status] : error ? "组件信息暂时无法读取" : "正在检查组件信息…"}</p>
+            <p className={render ? "storage-detail-note" : "leading-6 text-foreground/70"}>视频在本机处理，确认后才会下载所需组件和模型。</p>
+        </div>
         {state && state.status !== "unsupported" ? <>
             <div className="space-y-1 leading-6">
                 <p className="break-all">存放位置：{state.dataDir}</p>
@@ -64,6 +66,14 @@ export function DepthComponentsPanel({ initialState, onReady, onCancel, onOpenSe
         {error || state?.error ? <p role="alert" className="break-words text-destructive">{error || state?.error}</p> : null}
         {!state && error ? <Button onClick={() => void refresh(true)}>重新检查</Button> : null}
     </div>;
+    if (!render) return details;
+    let summary = state ? statusText[state.status] : "读取中…";
+    if (state && running(state) && state.downloadBytes > 0) {
+        summary += ` · ${Math.min(99, Math.floor(state.downloadedBytes / state.downloadBytes * 100))}%`;
+    }
+    if (insufficient && state?.status !== "unsupported" && !running(state)) summary += " · 空间不足";
+    if (error) summary = "读取或操作失败";
+    return render(details, summary);
 }
 
 type ModalAPI = ReturnType<typeof App.useApp>["modal"];

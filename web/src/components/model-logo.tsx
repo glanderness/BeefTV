@@ -5,6 +5,7 @@ import { Cpu, Search, X } from "lucide-react";
 import { toc } from "@lobehub/icons/es/toc";
 
 import { cn } from "@/lib/utils";
+import ll2Logo from "../../../assets/readme/partner-ll2.png";
 import { YSDUI_CHANNEL_ICON, YSDUI_CHANNEL_NAME, renderYsduiLogoSvg } from "../../../plugin-packages/beeftv-plugin-ysdui/client/index.js";
 
 type LobeIconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
@@ -65,6 +66,7 @@ export function ModelLogo({ icon, size = 18, className }: { icon?: string; size?
             cancelled = true;
         };
     }, [icon]);
+    if (icon === "LL2") return <img src={ll2Logo} alt="" width={size} height={size} className={cn("shrink-0 object-contain", className)} draggable={false} />;
     if (!Icon) return <Cpu className={cn("shrink-0 text-foreground/45", className)} size={size} aria-hidden />;
     return <Icon size={size} className={cn("shrink-0", className)} aria-hidden />;
 }

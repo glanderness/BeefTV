@@ -18,6 +18,11 @@ def package(source, runtime, target, output):
         raise ValueError("Source does not match the compiled ffprobe manifest")
     if hashlib.sha256((runtime / "ffprobe").read_bytes()).hexdigest() != facts["probeSHA256"]:
         raise ValueError("ffprobe does not match its build manifest")
+    binaries = {"ffprobe": facts["probeSHA256"]}
+    if "encoderSHA256" in facts:
+        if hashlib.sha256((runtime / "ffmpeg").read_bytes()).hexdigest() != facts["encoderSHA256"]:
+            raise ValueError("ffmpeg does not match its build manifest")
+        binaries["ffmpeg"] = facts["encoderSHA256"]
     platform = target.replace("/", "-")
     recipe = Path(__file__).with_name("package-media-runtime-macos.sh").read_bytes()
     files = {
@@ -32,7 +37,7 @@ def package(source, runtime, target, output):
     }
     manifest = {
         "schema": 1, "id": f"ffprobe-{platform}", "version": "8.0.1",
-        "license": "LGPL-2.1-or-later", "binaryHashes": {"ffprobe": facts["probeSHA256"]},
+        "license": "LGPL-2.1-or-later", "binaryHashes": binaries,
         "provenance": {"status": "built", "sourceCommit": facts["sourceCommit"], "target": target},
         "sources": [{"path": name, "sha256": hashlib.sha256(files[name]).hexdigest()}
                     for name in ["ffmpeg-source.tar.gz", "package-media-runtime-macos.sh"]],

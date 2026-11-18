@@ -96,7 +96,7 @@ if [[ "$AGENT_TARGET" == darwin/* ]]; then
   MEDIA_RUNTIME_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/beeftv-release-media.XXXXXX")"
   trap 'rm -rf "$MEDIA_RUNTIME_STAGE"' EXIT
   if [[ -n "${BEEFTV_MEDIA_RUNTIME:-}" ]]; then
-    bun -e 'const fs=require("fs"),crypto=require("crypto");const [root,target]=process.argv.slice(1);const m=JSON.parse(fs.readFileSync(root+"/manifest.json","utf8"));if(m.target!==target||crypto.createHash("sha256").update(fs.readFileSync(root+"/ffprobe")).digest("hex")!==m.probeSHA256)throw Error("Media runtime target or checksum mismatch")' "$BEEFTV_MEDIA_RUNTIME" "$AGENT_TARGET"
+    bun -e 'const fs=require("fs"),crypto=require("crypto");const [root,target]=process.argv.slice(1);const m=JSON.parse(fs.readFileSync(root+"/manifest.json","utf8"));const hash=name=>crypto.createHash("sha256").update(fs.readFileSync(root+"/"+name)).digest("hex");if(m.target!==target||hash("ffprobe")!==m.probeSHA256||(m.encoderSHA256&&hash("ffmpeg")!==m.encoderSHA256))throw Error("Media runtime target or checksum mismatch")' "$BEEFTV_MEDIA_RUNTIME" "$AGENT_TARGET"
     cp -R "$BEEFTV_MEDIA_RUNTIME" "$MEDIA_RUNTIME_STAGE/media-runtime"
   else
     bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
@@ -152,7 +152,7 @@ if [[ "$AGENT_TARGET" == linux/amd64 ]]; then
   LINUX_BUNDLE="$DESKTOP_DIR/build/bin/BeefTV-linux"
   mkdir -p "$LINUX_BUNDLE/plugin-packages" "$LINUX_BUNDLE/cli"
   mv "$DESKTOP_DIR/build/bin/BeefTV" "$LINUX_BUNDLE/BeefTV"
-  cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$LINUX_BUNDLE/plugin-packages/"
+  sh "$ROOT_DIR/plugin-packages/build-packages.sh" "$LINUX_BUNDLE/plugin-packages"
   cp "$ROOT_DIR/docs/linux-install.md" "$LINUX_BUNDLE/README.md"
   bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" "$LINUX_BUNDLE/agent-host"
   copy_bundled_plugin_dirs "$LINUX_BUNDLE/agent-host/bundled-plugins"
@@ -171,7 +171,7 @@ fi
 APP_BUNDLE="$DESKTOP_DIR/build/bin/BeefTV.app"
 PLUGIN_RESOURCE_DIR="$APP_BUNDLE/Contents/Resources/plugin-packages"
 mkdir -p "$PLUGIN_RESOURCE_DIR"
-cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$PLUGIN_RESOURCE_DIR/"
+sh "$ROOT_DIR/plugin-packages/build-packages.sh" "$PLUGIN_RESOURCE_DIR"
 
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
   "$APP_BUNDLE/Contents/Resources/agent-host"
@@ -182,7 +182,7 @@ bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" \
 # Reuse the explicitly supplied (or already installed) encoder, including its
 # license. The native workflow adapter must not rely on a Finder-launched PATH.
 ENCODER_SOURCE="${BEEFTV_FFMPEG_RUNTIME:-/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg}"
-if [[ -x "$ENCODER_SOURCE" ]]; then
+if [[ -x "$ENCODER_SOURCE" && ( -n "${BEEFTV_FFMPEG_RUNTIME:-}" || ! -x "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime/ffmpeg" ) ]]; then
   ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$ENCODER_SOURCE")/ffmpeg.LICENSE}"
   [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
   ENCODER_ARCH="${AGENT_TARGET##*/}"

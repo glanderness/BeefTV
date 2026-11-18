@@ -85,6 +85,7 @@ type persistedDevice struct {
 }
 
 type persistedState struct {
+	QuotaPerUnit            int64            `json:"quotaPerUnit,omitempty"`
 	AuthorizationOrigin     string           `json:"authorizationOrigin,omitempty"`
 	SchemaVersion           int              `json:"schemaVersion"`
 	Status                  string           `json:"status"`

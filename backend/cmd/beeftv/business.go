@@ -156,6 +156,9 @@ func (c *client) callBusiness(ctx context.Context, tool businessTool, args busin
 		return nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
+	if c.servingMCP {
+		req.Header.Set("X-BeefTV-MCP", "1")
+	}
 	req.Header.Set("X-Beeftv-Client", c.clientID)
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if c.ownerToken != "" {
@@ -387,7 +390,7 @@ func registerBusinessGateway(server *mcp.Server, c *client, tools []businessTool
 		"readOnly": map[string]any{"type": "boolean", "description": "true 只列只读接口，false 只列写接口；不填列全部"},
 	}, "additionalProperties": false}
 	server.AddTool(&mcp.Tool{Name: "business.list", Description: "列出 BeefTV 本地工作区的底层业务接口（素材库、文件夹、项目、任务、时间线、设置等），返回接口 ID、说明、方法、路径和参数结构。画布、素材、媒体、技能操作已有专门工具，覆盖不到时再用这里找接口，然后用 business.call 调用。", InputSchema: listSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
-		func(_ context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var filter struct {
 				Query    string `json:"query"`
 				ReadOnly *bool  `json:"readOnly"`
@@ -398,8 +401,12 @@ func registerBusinessGateway(server *mcp.Server, c *client, tools []businessTool
 				}
 			}
 			query := strings.ToLower(strings.TrimSpace(filter.Query))
+			available, err := c.businessTools(ctx)
+			if err != nil {
+				return toolError(err), nil
+			}
 			matched := make([]businessTool, 0, len(byID))
-			for _, tool := range tools {
+			for _, tool := range available {
 				if _, ok := byID[tool.ID]; !ok {
 					continue
 				}

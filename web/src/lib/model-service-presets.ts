@@ -11,8 +11,8 @@ import { DEFAULT_BASE_URL as YSDUI_DEFAULT_BASE_URL, YSDUI_CHANNEL_ICON, YSDUI_C
 
 export const MODEL_SERVICE_PRESETS = [
     { id: "compatible", name: "第三方模型服务", subtitle: "OpenAI 兼容 API · 中转服务", icon: "OpenAI", baseUrl: "", apiFormat: "openai" },
-    { id: LL2_CHANNEL_ID, name: LL2_CHANNEL_NAME, subtitle: "文本 · 多款主流视频 · 视频超分", icon: "OpenAI", baseUrl: LL2_DEFAULT_BASE_URL, apiFormat: "openai" },
-    { id: YSDUI_CHANNEL_ID, name: YSDUI_CHANNEL_NAME, subtitle: "文本 · 多款主流图片 · 多款主流视频", icon: YSDUI_CHANNEL_ICON, baseUrl: YSDUI_DEFAULT_BASE_URL, apiFormat: "openai" },
+    { id: LL2_CHANNEL_ID, name: LL2_CHANNEL_NAME, subtitle: "文本 · 多款主流视频 · 视频超分", icon: "LL2", baseUrl: LL2_DEFAULT_BASE_URL, website: "https://hub.ll2.cn?p=rw6t", apiFormat: "openai" },
+    { id: YSDUI_CHANNEL_ID, name: YSDUI_CHANNEL_NAME, subtitle: "文本 · 多款主流图片 · 多款主流视频", icon: YSDUI_CHANNEL_ICON, baseUrl: YSDUI_DEFAULT_BASE_URL, website: "https://www.ysdui.cn/", apiFormat: "openai" },
     { id: "openai", name: "OpenAI", subtitle: "文本 · 图片（Sora 已停用）", icon: "OpenAI", baseUrl: "https://api.openai.com/v1", apiFormat: "openai" },
     { id: "gemini", name: "Google Gemini", subtitle: "文本 · 图片（Veo 已停用）", icon: "Gemini", baseUrl: "https://generativelanguage.googleapis.com", apiFormat: "gemini" },
     { id: "ark", name: "火山方舟", subtitle: "文本 · 即梦图片 · Seedance 视频", icon: "Volcengine", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiFormat: "openai" },

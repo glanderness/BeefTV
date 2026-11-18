@@ -1,5 +1,5 @@
 import { Alert, App, Button, Form, Input, Popconfirm, Segmented, Select } from "antd";
-import { Bug, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Bug, ChevronDown, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
@@ -32,6 +32,8 @@ export { BeefTVConnectionActions } from "@/components/beeftv-connection-actions"
 import { mergeManagedBeefTVCatalog, withChannels } from "@/lib/managed-beeftv-catalog";
 export { mergeManagedBeefTVCatalog, shouldRefreshBeefTVCatalog, withChannels } from "@/lib/managed-beeftv-catalog";
 import { recordChannelDelete, recordChannelDeleteConfirmOpen } from "./model-settings-diagnostics";
+
+import "./channel-settings-editor.css";
 
 type UserChannelConnection = "openai" | "gemini";
 type ChannelSettingsPaneProps = {
@@ -370,27 +372,29 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                 {editing && (
                                     <ModelEditorModal
                                         open
+                                        rootClassName="channel-settings-editor"
                                         title={channel.id === newChannelId ? "新增自定义渠道" : "编辑自定义渠道"}
                                         subtitle={channel.name}
                                         onClose={closeChannelEditor}
                                         footer={
                                             <div className="model-editor-footer">
-                                                <span className="text-xs text-foreground/50">{localMode ? "更改实时保存到本地工作区" : "更改实时保存到云端渠道配置"}</span>
+                                                <span className="text-xs text-foreground/50">{localMode ? "自动保存到本地" : "自动保存到云端"}</span>
                                                 <div className="model-editor-footer-actions">
                                                     <Button loading={loadingChannelIds.includes(channel.id)} onClick={() => void refreshChannelModels(channel)}>
                                                         拉取模型
                                                     </Button>
-                                                    <Button onClick={closeChannelEditor}>完成</Button>
+                                                    <Button type="primary" onClick={closeChannelEditor}>完成</Button>
                                                 </div>
                                             </div>
                                         }
                                     >
-                                        <div className="model-editor-panel">
-                                            <section className="model-editor-section">
-                                                <div>
-                                                    <h2>连接信息</h2>
-                                                    <p className="mt-1 text-xs text-foreground/50">用于拉取模型目录并向当前渠道发起请求。</p>
-                                                </div>
+                                        <div className="model-editor-panel channel-editor-panel">
+                                            <details className="channel-editor-disclosure" open={!builtinBeefTV || undefined}>
+                                                <summary>
+                                                    <span>连接信息</span>
+                                                    {builtinBeefTV && <small>应用内置适配</small>}
+                                                    <ChevronDown size={14} aria-hidden />
+                                                </summary>
                                                 <div className="model-editor-connection-fields grid gap-3 sm:grid-cols-2">
                                                     <Form.Item label="渠道名称" htmlFor={`channel-${channel.id}-name`} className="mb-0 sm:col-span-1">
                                                         <Input
@@ -402,7 +406,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                                             onBlur={(event) => updateChannel(channel.id, { name: event.target.value.trim() || "未命名渠道" })}
                                                         />
                                                     </Form.Item>
-                                                    <Form.Item label="目录连接类型" className="mb-0 sm:col-span-1" extra={builtinBeefTV ? "应用内置适配" : "仅影响模型目录拉取。"}>
+                                                    <Form.Item label="目录连接类型" className="mb-0 sm:col-span-1" extra={builtinBeefTV ? undefined : "仅影响模型目录拉取。"}>
                                                         <Segmented<UserChannelConnection>
                                                             block
                                                             disabled={builtinBeefTV}
@@ -458,12 +462,13 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                                         <ChannelHeadersEditor value={channel.headers} onChange={(headers) => updateChannel(channel.id, { headers })} />
                                                     </div>
                                                 </div>
-                                            </section>
-                                            <section className="model-editor-section">
-                                                <div>
-                                                    <h2>模型与能力</h2>
-                                                    <p className="mt-1 text-xs text-foreground/50">维护渠道模型，并在单个模型中配置能力、接口格式和定价。</p>
-                                                </div>
+                                            </details>
+                                            <details className="channel-editor-disclosure" open={!channel.models.length || undefined}>
+                                                <summary>
+                                                    <span>管理模型列表</span>
+                                                    <small>{channel.models.length} 个模型</small>
+                                                    <ChevronDown size={14} aria-hidden />
+                                                </summary>
                                                 <Form.Item label="模型列表" htmlFor={`channel-${channel.id}-models`} className="mb-0">
                                                     <Select
                                                         id={`channel-${channel.id}-models`}
@@ -477,8 +482,8 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                                         onChange={(models) => updateChannel(channel.id, { models: uniqueModels(models) })}
                                                     />
                                                 </Form.Item>
-                                                <ChannelModelSettings channel={channel} onChange={(modelProfiles) => updateChannel(channel.id, { modelProfiles })} />
-                                            </section>
+                                            </details>
+                                            <ChannelModelSettings compact channel={channel} onChange={(modelProfiles) => updateChannel(channel.id, { modelProfiles })} />
                                         </div>
                                     </ModelEditorModal>
                                 )}

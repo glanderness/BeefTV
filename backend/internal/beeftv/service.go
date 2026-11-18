@@ -634,6 +634,7 @@ func (s *Service) acceptToken(ctx context.Context, deviceCode string, token toke
 	s.state.AssistantDefaultPending = true
 	s.state.Status = StatePending
 	s.balanceSeq++
+	s.state.QuotaPerUnit = token.QuotaPerUnit
 	s.state.Balance, s.state.BalanceCNY = normalizeRemoteBalance(token.BalanceCNY, token.Quota, BalanceUnknown, "")
 	s.state.LastError = ""
 	if err := s.persistState(s.state); err != nil {

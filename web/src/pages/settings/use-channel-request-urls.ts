@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { inferProtocolCapabilityFromModel } from "@/lib/model-protocols";
@@ -44,12 +44,13 @@ export function channelTextProtocols(channel: ModelChannel) {
  * 页面不另算一份，免得显示的和实际请求的不一致。
  */
 export function useChannelRequestUrls(baseUrl: string, apiFormat: string | undefined, protocols: string[]) {
-    const base = useDebouncedValue(baseUrl.trim(), 250);
+    const requestedBase = baseUrl.trim();
+    const base = useDebouncedValue(requestedBase, 250);
     const protocolKey = JSON.stringify([...new Set(protocols)].sort());
     const key = `${base}\u0000${apiFormat || ""}\u0000${protocolKey}`;
     const [urls, setUrls] = useState<{ key: string; value: ChannelRequestUrls } | null>(() => (cache.has(key) ? { key, value: cache.get(key)! } : null));
     useEffect(() => {
-        if (!base) return;
+        if (!base || base !== requestedBase) return;
         const cached = cache.get(key);
         if (cached) {
             setUrls({ key, value: cached });
@@ -66,6 +67,6 @@ export function useChannelRequestUrls(baseUrl: string, apiFormat: string | undef
                 // 地址只用于展示；后端暂时不可用时不显示，不影响保存和使用。
             });
         return () => request.abort();
-    }, [apiFormat, base, key, protocolKey]);
-    return useMemo(() => (base && urls?.key === key ? urls.value : null), [base, key, urls]);
+    }, [apiFormat, base, requestedBase, key, protocolKey]);
+    return base && base === requestedBase && urls?.key === key ? urls.value : null;
 }

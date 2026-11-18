@@ -14,6 +14,7 @@ import (
 const internalErrorMessage = "系统处理失败，请稍后重试"
 
 func ok(c *gin.Context, data any) {
+	captureMCPResult(c, data)
 	c.JSON(http.StatusOK, gin.H{"code": app.CodeOK, "data": data, "msg": "ok"})
 }
 

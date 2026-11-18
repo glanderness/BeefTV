@@ -27,44 +27,51 @@ tar -xzf "$archive" --strip-components=1 -C "$scratch/source"
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 flags=(--cc="$(xcrun --find clang)" --arch="$ffmpeg_arch" --target-os=darwin
   --host-cc="$(xcrun --find clang)" --host-cflags="-isysroot $sdk" --host-ldflags="-isysroot $sdk"
-  --disable-autodetect --disable-everything --disable-programs --enable-ffprobe
+  --disable-autodetect --disable-everything --disable-programs --enable-ffprobe --enable-ffmpeg
   --disable-network --enable-protocol=file,pipe
   --enable-demuxer=mov,matroska,mp3,wav,ogg,aac,flac,avi
+  --enable-decoder=aac,alac,h264,hevc,mpeg4,av1,vp8,vp9,opus,vorbis,prores,mjpeg,pcm_s16le,pcm_s24le
+  --enable-encoder=h264_videotoolbox,aac,wrapped_avframe,pcm_s16le
+  --enable-muxer=mov,mp4,null --enable-bsf=aac_adtstoasc,vp9_superframe,h264_mp4toannexb
+  --enable-filter=aformat,anull,apad,aresample,atrim,concat,format,fps,null,pad,rotate,scale,select,setpts,setsar,showinfo,tpad,transpose,trim,hflip,vflip
   --enable-parser=aac,h264,hevc,mpeg4video,mpegaudio,opus,vorbis,av1,vp9,vp8
   --disable-x86asm --disable-shared --enable-static --disable-doc --disable-debug
-  --disable-avdevice --disable-avfilter --disable-swresample --disable-swscale
+  --disable-avdevice --enable-avfilter --enable-swresample --enable-swscale
   --disable-iconv --disable-zlib --disable-bzlib --disable-lzma
-  --disable-securetransport --disable-videotoolbox --disable-audiotoolbox
+  --disable-securetransport --enable-videotoolbox --disable-audiotoolbox
   --extra-cflags="-arch $apple_arch -isysroot $sdk -mmacosx-version-min=11.0"
   --extra-ldflags="-arch $apple_arch -isysroot $sdk -mmacosx-version-min=11.0")
 if [[ "$(uname -m)" != "$apple_arch" ]]; then flags+=(--enable-cross-compile); fi
 (
   cd "$scratch/source"
   ./configure "${flags[@]}" > "$scratch/configure.log" 2>&1 || { cat "$scratch/configure.log"; tail -50 ffbuild/config.log; exit 1; }
-  make -j "$(sysctl -n hw.ncpu)" ffprobe > "$scratch/build.log" 2>&1 || { tail -80 "$scratch/build.log"; exit 1; }
+  make -j "$(sysctl -n hw.ncpu)" ffprobe ffmpeg > "$scratch/build.log" 2>&1 || { tail -80 "$scratch/build.log"; exit 1; }
 )
 stage="$scratch/media-runtime"
 mkdir "$stage"
-cp "$scratch/source/ffprobe" "$stage/ffprobe"
+cp "$scratch/source/ffprobe" "$scratch/source/ffmpeg" "$stage/"
 cp "$scratch/source/COPYING.LGPLv2.1" "$stage/LICENSE"
-chmod 755 "$stage/ffprobe"
+chmod 755 "$stage/ffprobe" "$stage/ffmpeg"
+file "$stage/ffmpeg" | grep -q "$apple_arch" || { echo "Wrong ffmpeg architecture" >&2; exit 1; }
 file "$stage/ffprobe" | grep -q "$apple_arch" || { echo "Wrong ffprobe architecture" >&2; exit 1; }
 # A release must not retain Homebrew or build-host dylib paths.
-otool -L "$stage/ffprobe" | tail -n +2 | while read -r dylib _; do
+otool -L "$stage/ffprobe" "$stage/ffmpeg" | awk '/^\t/ { print $1 }' | while read -r dylib _; do
   case "$dylib" in /usr/lib/*|/System/Library/*) ;; *) echo "Non-system dependency: $dylib" >&2; exit 1 ;; esac
 done
 if [[ "$(uname -m)" == "$apple_arch" ]]; then
-  "$stage/ffprobe" -version | head -1
+  "$stage/ffprobe" -version | sed -n '1p'
+  "$stage/ffmpeg" -version | sed -n '1p'
 fi
 printf 'FFmpeg source: %s\nSource SHA256: %s\nConfigure:' "$source_url" "$source_sha" > "$stage/README.txt"
 printf ' %q' "${flags[@]}" >> "$stage/README.txt"
-printf '\nBuild: make ffprobe\nLicense: LGPL-2.1-or-later\nNetwork protocols disabled; local file and pipe only.\n' >> "$stage/README.txt"
+printf '\nBuild: make ffprobe ffmpeg\nLicense: LGPL-2.1-or-later\nNetwork protocols disabled; local file and pipe only.\n' >> "$stage/README.txt"
 binary_sha="$(shasum -a 256 "$stage/ffprobe" | cut -d ' ' -f 1)"
-printf '{"sourceCommit":"%s","sourceURL":"%s","sourceSHA256":"%s","probeSHA256":"%s","target":"%s","license":"LGPL-2.1-or-later"}\n' "$source_commit" "$source_url" "$source_sha" "$binary_sha" "$target" > "$stage/manifest.json"
+encoder_sha="$(shasum -a 256 "$stage/ffmpeg" | cut -d ' ' -f 1)"
+printf '{"sourceCommit":"%s","sourceURL":"%s","sourceSHA256":"%s","probeSHA256":"%s","encoderSHA256":"%s","target":"%s","license":"LGPL-2.1-or-later"}\n' "$source_commit" "$source_url" "$source_sha" "$binary_sha" "$encoder_sha" "$target" > "$stage/manifest.json"
 mkdir -p "$(dirname "$destination")"
 cp -R "$stage" "$destination"
 if [[ -n "$source_output" ]]; then
   python3 "$(dirname "$0")/package-macos-media-source.py" \
     --source "$archive" --runtime "$destination" --target "$target" --output "$source_output"
 fi
-echo "Packaged local ffprobe for $target: $destination"
+echo "Packaged local FFmpeg and ffprobe for $target: $destination"

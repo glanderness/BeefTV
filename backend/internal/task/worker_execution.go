@@ -56,6 +56,37 @@ func ProcessCanvasMedia(
 	if json.Unmarshal([]byte(task.InputJSON), &input) != nil || !cw.IsMediaOperation(input.Node.OperationID) {
 		return FailTimelineTask(repo, logInfo, task, "处理失败", "媒体处理参数无效")
 	}
+	if cw.IsReplacementLocalOperation(input.Node.OperationID) {
+		worker := replacementMedia{resources: resources, openResource: openResource}
+		var result map[string]any
+		var err error
+		if input.Node.OperationID == cw.ReplacementPrepareOperation {
+			result, err = worker.prepareReplacement(task, ctx, input)
+		} else {
+			result, err = worker.finishReplacement(task, ctx, input)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			return FailTimelineTask(repo, logInfo, task, "人物替换处理失败", err.Error())
+		}
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		task.ResultJSON = string(raw)
+		task.Status, task.Progress, task.Stage = model.TaskStatusSucceeded, 100, "处理完成"
+		now := time.Now()
+		task.CompletedAt = &now
+		if err := repo.SaveTaskCompletion(task, model.TaskStatusRunning, nil); err != nil {
+			return err
+		}
+		if err := deliver(*task); err != nil {
+			_ = logFn(task.UserID, task.ID, "error", "人物替换结果交付待恢复", err.Error())
+		}
+		return nil
+	}
 	var clean func()
 	var artifact *os.File
 	defer func() {

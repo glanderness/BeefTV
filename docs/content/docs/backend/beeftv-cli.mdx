@@ -17,7 +17,7 @@ description: 不经助手直接批量调用本地工作区的随包 CLI：连接
 | Windows | `BeefTV.exe` 同级的 `cli\beeftv.exe` |
 | Linux | `BeefTV-linux/cli/beeftv`（deb 安装后 `/usr/bin/beeftv` 指向它） |
 
-侧栏的「BeefTV MCP」页底部有「命令行工具」，点「复制安装命令」拿到的就是接到 PATH 的命令；页面上的连接配置里也会带上随包 CLI 的绝对路径，以那里显示的为准。macOS 也可以直接接到 PATH：
+侧栏的「BeefTV MCP」页顶部有「命令行工具」，点「复制安装命令」拿到的就是接到 PATH 的命令；页面上的连接配置里也会带上随包 CLI 的绝对路径，以那里显示的为准。macOS 也可以直接接到 PATH：
 
 ```bash
 ln -sf '/Applications/BeefTV.app/Contents/MacOS/cli/beeftv' /usr/local/bin/beeftv
@@ -56,7 +56,7 @@ export BEEFTV_BASE_URL=http://127.0.0.1:8080/api
 
 ## 3. 凭据：生成一份连接配置
 
-凭据在侧栏的「BeefTV MCP」页生成。本机已安装 `claude` / `codex` 命令行时，Claude Code 和 Codex 可以直接点「接入」，BeefTV 会通过它们自己的命令行写入用户级配置，不需要手动复制；没有可用命令行时用「手动连接」。如果要把三个变量拿到终端或脚本里，在该行的「手动连接」→「新增连接」走手动流程；生成的内容是一段可直接粘贴的接入命令或 MCP 配置，里面已经包含三个变量：
+凭据在侧栏的「BeefTV MCP」页生成。本机已安装 `claude` / `codex` 命令行时，Claude Code 和 Codex 可以在对应行点「连接」，再点「接入」，BeefTV 会通过它们自己的命令行写入用户级配置，不需要手动复制；没有可用命令行时用「手动连接」。如果要把三个变量拿到终端或脚本里，打开对应客户端的侧栏，在「手动连接」下点「新增连接」；生成的内容是一段可直接粘贴的接入命令或 MCP 配置，里面已经包含三个变量：
 
 ```bash
 export BEEFTV_DATA_DIR=<工作区数据目录>

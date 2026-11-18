@@ -364,17 +364,17 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         </Form>
     </AppModal>;
     const selectedPreset = MODEL_SERVICE_PRESETS.find((item) => item.id === presetId)!;
+    const presetWebsite = "website" in selectedPreset ? selectedPreset.website : undefined;
     const pluginServiceList = pluginServices(protocols);
     const pluginService = pluginServiceList.find((item) => item.value === draft.interfaceType);
     const vendorList = vendorPresets(protocols);
     const vendor = !pluginService && presetId === "compatible" ? vendorPresetFor(draft, vendorList) : undefined;
-    const vendorsOpen = moreVendors || Boolean(vendor);
     const builtinReady = !isBuiltinPresetService(presetId) || builtinProtocolsAvailable(presetId, protocols);
     const builtinPluginWarning = isBuiltinPresetService(presetId) && !protocolLoading && !builtinReady
         ? `请先在左侧「插件」中心启用 ${selectedPreset.name} 插件，再使用预置模型与协议。`
         : "";
 
-    return <AppModal open centered width={1000} flush footer={null} title={null} closable={!saving} keyboard={!saving} mask={{ closable: false }} onCancel={() => { catalogRequest.current?.abort(); onClose(); }} rootClassName="model-service-modal">
+    return <AppModal open centered width={1000} flush footer={null} title={null} closable={!saving} keyboard={!saving} mask={{ closable: false }} onCancel={() => { catalogRequest.current?.abort(); onClose(); }} rootClassName={step === 0 ? "model-service-modal model-service-connection-modal" : "model-service-modal"}>
         <div className="model-service-header">
             <h2>{initial ? `管理 ${initial.name}` : "连接你的模型服务"}</h2>
             <ol className="model-service-steps" aria-label="接入步骤">
@@ -385,42 +385,49 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         <div className="model-service-body" aria-busy={busy} inert={busy}>
             {step === 0 ? <div className="model-service-connection">
                 <aside className="model-service-providers" aria-label="选择服务商">
-                    <p className="model-service-label">选择服务商</p>
                     {MODEL_SERVICE_PRESETS.map((preset) => {
                         const selected = !pluginService && !vendor && presetId === preset.id;
                         return <button key={preset.id} type="button" disabled={busy || Boolean(initial)} aria-pressed={selected} className="model-service-provider" onClick={() => choosePreset(preset.id)}>
                             <ModelLogo icon={preset.icon} size={24} />
-                            <span><strong>{preset.name}</strong><small>{preset.subtitle}</small></span>
-                            {selected && <Check size={15} />}
+                            <span>{preset.name}</span>
+                            {selected && <Check className="model-service-provider-check" size={15} aria-hidden />}
                         </button>;
                     })}
-                    {pluginServiceList.map((service) => {
-                        const selected = pluginService?.value === service.value;
-                        return <button key={service.value} type="button" disabled={busy || Boolean(initial)} aria-pressed={selected} className="model-service-provider" onClick={() => choosePluginService(service)}>
-                            <ModelLogo size={24} />
-                            <span><strong>{service.label}</strong><small>插件提供</small></span>
-                            {selected && <Check size={15} />}
-                        </button>;
-                    })}
-                    {vendorList.length > 0 && <div className="model-service-vendors">
-                        <button type="button" className="model-service-more" aria-expanded={vendorsOpen} disabled={Boolean(initial) && !vendor} onClick={() => setMoreVendors(!vendorsOpen)}>更多服务商<ChevronDown size={14} /></button>
-                        {vendorsOpen && <div className="model-service-vendor-list">
+                    {(vendorList.length > 0 || pluginServiceList.length > 0) && <div className="model-service-vendors" role="group" aria-label="其他服务商">
+                        <button type="button" className="model-service-more" aria-expanded={moreVendors} onClick={() => setMoreVendors(!moreVendors)}>更多服务商<ChevronDown size={14} /></button>
+                        {moreVendors && <div className="model-service-vendor-list">
                             {vendorList.map((preset) => {
                                 const selected = vendor?.id === preset.id;
                                 return <button key={preset.id} type="button" disabled={busy || Boolean(initial)} aria-pressed={selected} className="model-service-vendor" onClick={() => chooseVendor(preset)}>
                                     <span>{preset.label}</span>{selected && <Check size={14} />}
                                 </button>;
                             })}
+                            {pluginServiceList.map((service) => {
+                                const selected = pluginService?.value === service.value;
+                                return <button key={service.value} type="button" disabled={busy || Boolean(initial)} aria-pressed={selected} className="model-service-vendor" onClick={() => choosePluginService(service)}>
+                                    <span>{service.label}</span>{selected && <Check size={14} />}
+                                </button>;
+                            })}
                         </div>}
                     </div>}
-                    <div className="model-service-note"><ShieldCheck size={16} /><p>密钥保存在这台设备上。<br />生成费用由服务商结算。</p></div>
                 </aside>
                 <Form layout="vertical" requiredMark={false} className="model-service-fields" disabled={busy} onFinish={() => void fetchModels()}>
-                    <div className="model-service-form-title">{vendor ? <><ModelLogo size={28} /><div><h3>{vendor.label}</h3><p>填写 API Key 后读取模型。</p></div></> : pluginService ? <><ModelLogo size={28} /><div><h3>{pluginService.label}</h3><p>由插件接入。填好连接信息后，读取或手动添加这个服务能用的模型。</p></div></> : <><ModelLogo icon={selectedPreset.icon} size={28} /><div><h3>{selectedPreset.name}</h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}{builtinPresetIntro(presetId) && <p>{builtinPresetIntro(presetId)}</p>}{isBuiltinPresetService(presetId) && <p>已预置 {presetModelCount(presetId)} 款{builtinPresetDescription(presetId)}模型及协议，填写 API Key 后可直接「一键保存并启用」，或点「读取模型」拉取在线目录</p>}</div></>}</div>
+                    <div className="model-service-form-title">{vendor ? <><ModelLogo size={28} /><div><h3>{vendor.label}</h3><p>填写 API Key 后读取模型。</p></div></> : pluginService ? <><ModelLogo size={28} /><div><h3>{pluginService.label}</h3><p>由插件接入。填好连接信息后，读取或手动添加这个服务能用的模型。</p></div></> : <><ModelLogo key={selectedPreset.icon} icon={selectedPreset.icon} size={28} /><div><h3>
+                        {presetWebsite ? <a
+                            className="model-service-provider-website"
+                            href={presetWebsite}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(event) => {
+                                if (!window.runtime?.BrowserOpenURL) return;
+                                event.preventDefault();
+                                window.runtime.BrowserOpenURL(presetWebsite);
+                            }}
+                        >{selectedPreset.name}</a> : selectedPreset.name}
+                    </h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}{builtinPresetIntro(presetId) && <p>{builtinPresetIntro(presetId)}</p>}{isBuiltinPresetService(presetId) && <p>已预置 {presetModelCount(presetId)} 款{builtinPresetDescription(presetId)}模型及协议，填写 API Key 后可直接「一键保存并启用」，或点「读取模型」拉取在线目录</p>}</div></>}</div>
                     <Form.Item label="连接名称"><Input aria-label="连接名称" placeholder="例如：我的创作账号" value={draft.name} onChange={(event) => patch({ name: event.target.value })} /></Form.Item>
                     <Form.Item label={credential.apiKeyLabel} help={credential.apiKeyHelp}><Input.Password prefix={<KeyRound size={15} />} aria-label={credential.apiKeyLabel} autoComplete="new-password" placeholder={credential.apiKeyPlaceholder} value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
                     <Form.Item label="服务地址" help="默认自动补齐 /v1；若服务不带版本前缀，可在地址末尾加 #（例如 http://127.0.0.1#）"><Input aria-label="服务地址" inputMode="url" placeholder="https://api.example.com/v1" value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} /></Form.Item>
-                    {!pluginService && <ChannelRequestAddressBlocks channel={draft} />}
                     <button type="button" className="model-service-advanced" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><Settings2 size={15} />高级设置<ChevronDown size={14} /></button>
                     {advanced && <div className="model-service-advanced-fields">
                         <Form.Item label="素材服务地址（可选）" help="公网素材域名使用 HTTPS。本机、局域网或 CGNAT 可填写 HTTP，并可带端口。留空时只接受与 API 同主机的素材。"><Input aria-label="素材服务地址" inputMode="url" placeholder="https://assets.example.com" value={draft.referenceAssetOrigin || ""} onChange={(event) => patch({ referenceAssetOrigin: event.target.value })} /></Form.Item>
@@ -428,6 +435,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                         <Form.Item label={credential.secretKeyRequired ? `${credential.secretKeyLabel} · 必填` : "Secret Key（按需填写）"} help={credential.secretKeyHelp}><Input.Password aria-label={credential.secretKeyLabel} autoComplete="new-password" placeholder={credential.secretKeyRequired ? "粘贴 Secret Key" : ""} value={draft.secretKey} onChange={(event) => patch({ secretKey: event.target.value })} /></Form.Item>
                         <ChannelHeadersEditor value={draft.headers} onChange={(headers) => patch({ headers })} />
                     </div>}
+                    {!pluginService && <ChannelRequestAddressBlocks channel={draft} />}
+                    <div className="model-service-note"><ShieldCheck size={16} aria-hidden /><p>密钥保存在这台设备上。生成费用由服务商结算。</p></div>
                 </Form>
             </div> : <div className="model-service-models">
                 <div className="model-service-catalog-header"><div><h3>选择你要使用的模型</h3><p>{draft.name || "我的模型服务"} · {catalogRead ? "目录已读取" : "支持手动添加模型"}</p></div><Button icon={<Search size={14} />} loading={busy} disabled={protocolLoading} onClick={() => void fetchModels()}>读取模型</Button></div>

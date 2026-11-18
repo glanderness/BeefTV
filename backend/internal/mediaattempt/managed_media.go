@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
 	localtask "infinite-canvas/backend/internal/task"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -43,6 +44,12 @@ func (p managedMediaPort) Project(ctx context.Context, projection beeftv.MediaTa
 	task, ok := ctx.Value(TaskContext{}).(model.Task)
 	if !ok || p.service == nil {
 		return
+	}
+	if attempt, _ := ctx.Value(AttemptContext{}).(string); attempt != "" && projection.BillingState != nil && projection.ChargedQuota != nil &&
+		(*projection.BillingState == "settled" || *projection.BillingState == "refunded") && *projection.ChargedQuota >= 0 {
+		if err := p.service.repo.RecordMediaSettlement(attempt, task, *projection.ChargedQuota); err != nil {
+			log.Printf("record media settlement: %v", err)
+		}
 	}
 	if projection.TaskID != "" {
 		_ = p.service.repo.UpdateTaskImageJobID(task.ID, projection.TaskID)
@@ -246,7 +253,10 @@ func (s *Service) ManagedTaskQuery(ctx context.Context, task model.Task, row *mo
 	client := &beeftv.MediaClient{BaseURL: base, APIKey: strings.TrimPrefix(wire.Header.Get("Authorization"), "Bearer "), Headers: wire.Header.Clone()}
 	runtime, _ := generation.RuntimeFromContext(ctx)
 	client.AllowHTTPTest = runtime.Endpoints.BeefTVVideoBaseURL != ""
-	client.Project = managedMediaPort{service: s}.Project
+	client.Project = func(ctx context.Context, receipt beeftv.MediaTask) {
+		ctx = context.WithValue(ctx, AttemptContext{}, row.AttemptID)
+		managedMediaPort{service: s}.Project(context.WithValue(ctx, TaskContext{}, task), receipt)
+	}
 	client.Observe = func(req *http.Request, resp *http.Response, body []byte, startedAt time.Time, callErr error) {
 		if runtime.Receipts == nil {
 			return

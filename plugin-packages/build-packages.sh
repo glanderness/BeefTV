@@ -3,13 +3,15 @@ set -eu
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+output_dir=$(CDPATH= cd -- "${1:-$root_dir}" && pwd)
+
 node "$root_dir/embed-documentation.mjs"
 
 package_plugin() {
   package_id=$1
   package_dir="$root_dir/$package_id"
-  output_file="$root_dir/$package_id.beeftv-plugin"
-  temporary_file="$root_dir/.$package_id.beeftv-plugin.tmp"
+  output_file="$output_dir/$package_id.beeftv-plugin"
+  temporary_file="$output_dir/.$package_id.beeftv-plugin.tmp"
   rm -f "$temporary_file"
   (
     cd "$package_dir"

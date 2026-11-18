@@ -1,1 +1,1 @@
-export { AppDrawer, type AppDrawerProps } from "./app-drawer";
+export { AppDrawer, DetailDrawer, type AppDrawerProps } from "./app-drawer";

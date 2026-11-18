@@ -39,7 +39,6 @@ const BUILTIN_SIGNATURE_PROTOCOLS: Record<string, string> = {
 const ARK_AGENT_PLAN_PROTOCOLS = new Set(["volcengine-ark-agent-plan-video", "volcengine-ark-agent-plan-image"]);
 const ARK_NATIVE_PROTOCOLS = new Set(["volcengine-ark-video", "volcengine-ark-image"]);
 
-const STANDARD_KEY_HELP = "选择无鉴权协议（例如 Ollama）后可以留空。读取模型目录仍需要密钥。";
 const ARK_KEY_HELP = "方舟有两类 Key，不能混用：普通方舟 Key 配 /api/v3，Agent Plan 专属 Key 配 /api/plan/v3，一个连接只填一种。选好模型和协议后，这里会写明填哪一种。";
 const ARK_AGENT_PLAN_HELP = "只填 Agent Plan 专属 Key。填成普通方舟 Key 会调用失败，还可能多扣费。";
 const ARK_NATIVE_HELP = "普通方舟 Key，用于方舟原生接口（/api/v3）。Agent Plan 专属 Key 不要填在这里。";
@@ -148,9 +147,9 @@ export function serviceCredentialGuide(channel: CredentialChannel, protocols: Mo
     }
     if (kinds.has("ark-agent-plan")) return { kind: "ark-agent-plan", apiKeyLabel: "Agent Plan 专属 Key", apiKeyPlaceholder: "粘贴 Agent Plan 专属 Key", apiKeyHelp: ARK_AGENT_PLAN_HELP, secretKeyLabel: "Secret Key（SK）", secretKeyRequired: false };
     if (kinds.has("ark-native")) return { kind: "ark-native", apiKeyLabel: "方舟 API Key", apiKeyPlaceholder: "粘贴方舟 API Key", apiKeyHelp: ARK_NATIVE_HELP, secretKeyLabel: "Secret Key（SK）", secretKeyRequired: false };
-    // 插件接入的服务由插件读取模型，「目录仍需要密钥」那句对它不成立。
+    // 无需鉴权的插件服务可以明确提示密钥可留空。
     const pluginService = protocols.find((item) => item.module && item.value === channel.interfaceType);
     const apiKeyHelp = pluginService ? (pluginService.authType === "none" ? "这个服务不用密钥，可以留空。" : "")
-        : isArkHost(channel.baseUrl) ? ARK_KEY_HELP : STANDARD_KEY_HELP;
+        : isArkHost(channel.baseUrl) ? ARK_KEY_HELP : "";
     return { kind: "standard", apiKeyLabel: "API Key", apiKeyPlaceholder: "粘贴你的 API Key", apiKeyHelp, secretKeyLabel: "Secret Key（SK）", secretKeyRequired: false };
 }

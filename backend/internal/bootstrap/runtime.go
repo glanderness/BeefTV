@@ -247,6 +247,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		router.Use(desktopCORSMiddleware())
 	}
 	router.Use(canvasHandler.WorkspaceMiddleware(scope))
+	router.Use(canvasHandler.MCPActivityRecorder(repo, owner.ID, beefTVConnection.QuotaPerYuan))
 	// 本机可信凭据在组合根生成：owner 凭据与宿主凭据只在本机数据目录，0600。
 	agentops.EnsureAgentCredentials(svc.DataDir())
 	// 上次断开没有确认吊销的凭据在启动时再试一次；失败就保留记录，界面
@@ -276,6 +277,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		Eagle:              eagle.New(),
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
+	canvasHandler.RegisterMCPActivity(api, repo, owner.ID, svc, desktopTrust(launchToken, uiBootstrapToken))
 	businessCatalog := canvasHandler.NewBusinessCatalog(router.Routes())
 	canvasHandler.RegisterBusinessDiscovery(api, businessCatalog, svc)
 	router.NoRoute(func(c *gin.Context) {
@@ -303,6 +305,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 					_, _ = w.Write([]byte(`{"code":403,"reason":"invalid_external_identity","msg":"外部调用不能使用助手身份"}`))
 					return
 				}
+				r = canvasHandler.WithMCPClient(r, string(agentops.NormalizeClientKind(string(reg.Kind))), tool)
 				router.ServeHTTP(w, canvasHandler.WithExternalBusinessPrincipal(r, reg.Mode == agentops.ClientReadOnly))
 				return
 			}
@@ -311,6 +314,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 					protected.ServeHTTP(w, r)
 					return
 				}
+				r = canvasHandler.WithMCPClient(r, "local", tool)
 				router.ServeHTTP(w, canvasHandler.WithExternalBusinessPrincipal(r, false))
 				return
 			}
@@ -320,12 +324,12 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		// above use the same mounted catalog for discovery and authorization.
 		// Credential issuance and runtime administration retain desktop trust.
 		if isOpsEntryPath(r) && isLoopbackRemote(r.RemoteAddr) {
-			if _, ok := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); ok {
-				router.ServeHTTP(w, r)
+			if reg, ok := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); ok {
+				router.ServeHTTP(w, canvasHandler.WithMCPClient(r, string(agentops.NormalizeClientKind(string(reg.Kind))), canvasHandler.BusinessTool{}))
 				return
 			}
 			if r.Header.Get("X-Beeftv-Client") == "" && agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(r.Header.Get("X-Beeftv-Owner"))) && canvasHandler.IsLocalBusinessRequest(r) {
-				router.ServeHTTP(w, r)
+				router.ServeHTTP(w, canvasHandler.WithMCPClient(r, "local", canvasHandler.BusinessTool{}))
 				return
 			}
 		}

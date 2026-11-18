@@ -1,5 +1,5 @@
 import { Button, Segmented, Switch } from "antd";
-import { Database, Plug, Settings2, UserRound } from "lucide-react";
+import { Bug, Database, Plug, Settings2, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
@@ -13,6 +13,7 @@ import {
     playTaskCompletionChime,
     setTaskCompletionSoundEnabled,
 } from "@/lib/task-completion-sound";
+import DiagnosticsPanel from "@/pages/settings/diagnostics-panel";
 import { ModelDefaultGrid } from "@/pages/settings/model-default-grid";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -25,6 +26,7 @@ const sections = [
     { id: "general", label: "通用设置", icon: Settings2 },
     { id: "models", label: "模型", icon: Database },
     { id: "plugins", label: "内置插件", icon: Plug },
+    { id: "diagnostics", label: "问题诊断", icon: Bug },
 ] as const;
 type Section = typeof sections[number]["id"];
 
@@ -70,7 +72,6 @@ export function AccountSettingsModal({ open, onClose }: { open: boolean; onClose
                     </div>
                     <div className="account-setting-row"><div><h3>提示词与反推指令</h3><p>自定义图片反推、视频反推默认指令及平台提示词模板</p></div><Button onClick={() => goTo("/settings?section=prompts")}>打开</Button></div>
                     <div className="account-setting-row"><div><h3>存储设置</h3><p>管理素材、缓存与本地存储位置</p></div><Button onClick={() => goTo("/settings?section=storage")}>打开</Button></div>
-                    <div className="account-setting-row"><div><h3>连接诊断</h3><p>一键导出最近 7 天诊断包，或检查环境与请求记录</p></div><Button onClick={() => goTo("/settings?section=diagnostics")}>打开</Button></div>
                     <div className="account-setting-row"><div><h3>版本与更新日志</h3><p>{installedVersion ? `当前版本 ${installedVersion}，查看版本记录与第三方许可` : "查看版本记录与第三方许可"}</p></div><AppChangelogButton appearance="button" version={installedVersion} label="查看" /></div>
                 </> : null}
                 {active === "models" ? <>
@@ -80,6 +81,7 @@ export function AccountSettingsModal({ open, onClose }: { open: boolean; onClose
                     <ModelDefaultGrid config={config} onChange={(key, value) => updateConfig(key, value)} onOpenChannels={() => goTo("/settings?section=channels")} />
                 </> : null}
                 {active === "plugins" ? <AccountBuiltinPlugins onManage={() => goTo("/plugins")} /> : null}
+                {active === "diagnostics" ? <DiagnosticsPanel embedded /> : null}
             </section>
         </div>
     </AppModal>;
