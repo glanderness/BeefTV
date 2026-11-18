@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/desktopstorage"
@@ -28,7 +29,13 @@ const (
 
 var (
 	depthCNBRecordURL    = officialCNBBase + officialCNBRecordName
-	depthCNBProbeTimeout = 3 * time.Second
+	depthCNBProbeTimeout = 1500 * time.Millisecond
+	depthCNBCacheTTL     = 5 * time.Minute
+
+	cnbDepthCacheMu      sync.Mutex
+	cnbDepthCacheURL     string
+	cnbDepthCacheExpires time.Time
+	cnbDepthCacheAssets  map[string]verifiedCNBAsset
 )
 
 var ErrNotInstalled = errors.New("深度捕捉组件尚未安装，请在设置的存储页面下载后再使用")
@@ -199,11 +206,43 @@ func manifestHasOfficialDepthURLs(manifest *Manifest) bool {
 	return false
 }
 
+func cloneVerifiedCNBAssets(src map[string]verifiedCNBAsset) map[string]verifiedCNBAsset {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]verifiedCNBAsset, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 func fetchVerifiedCNBDepthAssets(ctx context.Context) map[string]verifiedCNBAsset {
 	target := strings.TrimSpace(depthCNBRecordURL)
 	if target == "" {
 		return nil
 	}
+	now := time.Now()
+	cnbDepthCacheMu.Lock()
+	if cnbDepthCacheURL == target && now.Before(cnbDepthCacheExpires) {
+		cached := cloneVerifiedCNBAssets(cnbDepthCacheAssets)
+		cnbDepthCacheMu.Unlock()
+		return cached
+	}
+	cnbDepthCacheMu.Unlock()
+
+	storeCache := func(result map[string]verifiedCNBAsset) map[string]verifiedCNBAsset {
+		if ctx.Err() != nil {
+			return result
+		}
+		cnbDepthCacheMu.Lock()
+		cnbDepthCacheURL = target
+		cnbDepthCacheExpires = time.Now().Add(depthCNBCacheTTL)
+		cnbDepthCacheAssets = cloneVerifiedCNBAssets(result)
+		cnbDepthCacheMu.Unlock()
+		return result
+	}
+
 	probeCtx, cancel := context.WithTimeout(ctx, depthCNBProbeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, target, nil)
@@ -214,22 +253,22 @@ func fetchVerifiedCNBDepthAssets(ctx context.Context) map[string]verifiedCNBAsse
 	req.Header.Set("User-Agent", "BeefTV-DepthRuntime")
 	resp, err := downloadClient.Do(req)
 	if err != nil {
-		return nil
+		return storeCache(nil)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return storeCache(nil)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	if err != nil {
-		return nil
+		return storeCache(nil)
 	}
 	var rec cnbDepthRecord
 	if json.Unmarshal(body, &rec) != nil {
-		return nil
+		return storeCache(nil)
 	}
 	if rec.Schema != 1 || rec.Repository != "beeftv-downloads/desktop" || rec.Version != "depth-runtime-v2" || rec.Verification != "anonymous-resume-sha256" {
-		return nil
+		return storeCache(nil)
 	}
 	verified := make(map[string]verifiedCNBAsset, len(rec.Assets))
 	for _, item := range rec.Assets {
@@ -240,7 +279,7 @@ func fetchVerifiedCNBDepthAssets(ctx context.Context) map[string]verifiedCNBAsse
 		}
 		verified[name] = verifiedCNBAsset{Size: item.Size, SHA256: sha}
 	}
-	return verified
+	return storeCache(verified)
 }
 
 func normalizeManifestMirrors(manifest *Manifest, verifiedCNB map[string]verifiedCNBAsset) {

@@ -14,6 +14,11 @@ import (
 
 const locationFile = "storage-location.json"
 
+var (
+	ErrLocationRollbackFailed = errors.New("回滚存储目录设置指针失败")
+	syncLocationDir           = syncDirectory
+)
+
 type Location struct {
 	DataDir       string            `json:"dataDir"`
 	PreviousDir   string            `json:"previousDir,omitempty"`
@@ -116,23 +121,36 @@ func saveLocation(root string, location Location) error {
 	if prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
 		return fmt.Errorf("读取既有存储目录设置失败: %w", prevErr)
 	}
-	rollback := func() {
+	rollback := func() error {
 		if !hadPrev {
-			_ = os.Remove(targetPath)
-			return
-		}
-		if tmp, err := os.CreateTemp(root, ".storage-location-rollback-*"); err == nil {
-			tmpPath := tmp.Name()
-			_, writeErr := tmp.Write(prevBytes)
-			syncErr := tmp.Sync()
-			closeErr := tmp.Close()
-			if writeErr == nil && syncErr == nil && closeErr == nil {
-				_ = replaceLocationFile(tmpPath, targetPath)
-				_ = syncDirectory(root)
-				return
+			if rmErr := os.Remove(targetPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				return rmErr
 			}
-			_ = os.Remove(tmpPath)
+			return nil
 		}
+		tmp, createErr := os.CreateTemp(root, ".storage-location-rollback-*")
+		if createErr != nil {
+			return createErr
+		}
+		tmpPath := tmp.Name()
+		_, writeErr := tmp.Write(prevBytes)
+		syncErr := tmp.Sync()
+		closeErr := tmp.Close()
+		if writeErr != nil || syncErr != nil || closeErr != nil {
+			_ = os.Remove(tmpPath)
+			return errors.Join(writeErr, syncErr, closeErr)
+		}
+		if repErr := replaceLocationFile(tmpPath, targetPath); repErr != nil {
+			_ = os.Remove(tmpPath)
+			return repErr
+		}
+		return syncLocationDir(root)
+	}
+	withRollback := func(cause error) error {
+		if rbErr := rollback(); rbErr != nil {
+			return fmt.Errorf("%w (%w: %v)", cause, ErrLocationRollbackFailed, rbErr)
+		}
+		return cause
 	}
 	file, err := os.CreateTemp(root, ".storage-location-*")
 	if err != nil {
@@ -156,18 +174,15 @@ func saveLocation(root string, location Location) error {
 	if err := replaceLocationFile(path, targetPath); err != nil {
 		return err
 	}
-	if err := syncDirectory(root); err != nil {
-		rollback()
-		return err
+	if err := syncLocationDir(root); err != nil {
+		return withRollback(err)
 	}
 	resolved, err := Resolve(root)
 	if err != nil {
-		rollback()
-		return fmt.Errorf("校验存储目录设置失败: %w", err)
+		return withRollback(fmt.Errorf("校验存储目录设置失败: %w", err))
 	}
 	if !SameLocation(resolved, location.DataDir) {
-		rollback()
-		return fmt.Errorf("存储目录设置读回不一致: 读回 %s，期望 %s", resolved, location.DataDir)
+		return withRollback(fmt.Errorf("存储目录设置读回不一致: 读回 %s，期望 %s", resolved, location.DataDir))
 	}
 	return nil
 }

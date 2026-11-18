@@ -239,7 +239,9 @@ def expected_depth_assets(depth_release, model_release):
         int(m.group(1)) for asset in depth_release.get("assets", [])
         if isinstance(asset, dict) and (m := re.fullmatch(r"beeftv-depth-runtime-v1-windows-amd64-cuda\.zip\.part-(\d{3})", asset.get("name") or ""))
     ]
-    max_part = max([3, *part_nums])
+    if not part_nums:
+        raise RuntimeError("Missing official Windows CUDA depth runtime parts")
+    max_part = max(part_nums)
     names = [
         "beeftv-depth-runtime-v1-windows-amd64-cpu.zip",
         *(f"beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-{idx:03d}" for idx in range(1, max_part + 1)),

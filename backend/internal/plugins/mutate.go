@@ -235,6 +235,7 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 		if stored[index].ID == record.Metadata.ID {
 			stored[index].Raw = data
 			stored[index].LoadError = ""
+			stored[index].LoadErrorStage = ""
 			stored[index].UpdatedAt = time.Now().UTC()
 		}
 	}

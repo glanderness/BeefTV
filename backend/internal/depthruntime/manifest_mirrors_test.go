@@ -105,12 +105,15 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 			Size: 10, SHA256: hash,
 		},
 	})
+	var cnbHits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/cnb-missing" {
+			cnbHits.Add(1)
 			http.NotFound(w, r)
 			return
 		}
 		if r.URL.Path == "/cnb-verified" {
+			cnbHits.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"schema": 1,
@@ -129,7 +132,14 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 	defer server.Close()
 
 	oldRecordURL := depthCNBRecordURL
-	t.Cleanup(func() { depthCNBRecordURL = oldRecordURL })
+	t.Cleanup(func() {
+		depthCNBRecordURL = oldRecordURL
+		cnbDepthCacheMu.Lock()
+		cnbDepthCacheURL = ""
+		cnbDepthCacheExpires = time.Time{}
+		cnbDepthCacheAssets = nil
+		cnbDepthCacheMu.Unlock()
+	})
 
 	// 1. Before CNB depth-runtime-v2 sync completes (404 record): COS leads, zero unverified CNB 404 URLs.
 	depthCNBRecordURL = server.URL + "/cnb-missing"
@@ -186,5 +196,19 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 	}
 	if !reflect.DeepEqual(manifest.Model.URLs, wantModel) {
 		t.Fatalf("model URLs = %#v, want %#v", manifest.Model.URLs, wantModel)
+	}
+
+	// 3. Repeated loadArtifacts within TTL reuses cached CNB probe without hitting network again.
+	beforeCachedCall := cnbHits.Load()
+	if _, _, err := loadArtifacts(context.Background(), EnsureOptions{
+		Platform:         "windows-amd64",
+		Variant:          "cuda",
+		ManifestURL:      server.URL + "/manifest.v2.json",
+		TrustedPublicKey: public,
+	}); err != nil {
+		t.Fatalf("loadArtifacts (cached CNB): %v", err)
+	}
+	if cnbHits.Load() != beforeCachedCall {
+		t.Fatalf("expected cached CNB probe (hits=%d), got hits=%d", beforeCachedCall, cnbHits.Load())
 	}
 }

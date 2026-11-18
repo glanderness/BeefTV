@@ -409,6 +409,16 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
         if (record.reason === "local_credential_failed") return { category: "local_credential", status: numericStatus(record.status), fromCode: true, retryable: false };
         if (record.reason === "local_disk_full") return { category: "local_disk_full", status: numericStatus(record.status), fromCode: true, retryable: false };
         if (record.reason === "local_storage_failed") return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
+        if (record.reason === "local_resource_write_failed") {
+            return { category: "input_inaccessible", reason: "本地参考素材保存失败，请检查本地资源目录后重试", action: "", status: numericStatus(record.status), fromCode: true, retryable: false };
+        }
+        if (record.reason === "reference_upload_forbidden") {
+            const st = numericStatus(record.status) || 403;
+            return { category: "input_inaccessible", reason: `参考素材上传被拒绝（HTTP ${st}），请检查对象存储密钥和存储桶权限后重试`, action: "", status: st, fromCode: true, retryable: false };
+        }
+        if (record.reason === "reference_public_read_failed") {
+            return { category: "input_inaccessible", reason: "参考素材已上传，但公网地址无法读取，请检查对象存储公开读取权限后重试", action: "", status: numericStatus(record.status), fromCode: true, retryable: false };
+        }
         if (record.name === "ApiError" && record.reason === "quota_exceeded") {
             return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
         }
@@ -485,7 +495,7 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     let classified = classifyText(text || (body && typeof body === "object" ? stringifyAllowlisted(body) : ""));
     if (body && typeof body === "object") {
         const fromObject = classifyText(stringifyAllowlisted(body));
-        if (fromObject.fromCode || (fromObject.category !== "unknown" && classified.category === "unknown")) {
+        if (fromObject.fromCode || fromObject.preserveOverHttpStatus || (fromObject.category !== "unknown" && classified.category === "unknown")) {
             classified = fromObject;
         } else {
             classified.providerCode ||= fromObject.providerCode;
@@ -499,10 +509,10 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     if (status === 402 && fields.code === "video_reservation_failed" && fields.message.startsWith("insufficient balance for this video request")) {
         classified = { ...classified, category: "quota_user", fromCode: true, reason: undefined, action: undefined };
     }
-    if (classified.category !== "unknown" && !classified.fromCode && !trustProviderMessageStatus(status)) {
+    if (classified.category !== "unknown" && !classified.fromCode && !classified.preserveOverHttpStatus && !trustProviderMessageStatus(status)) {
         classified = { ...classified, category: "unknown", reason: undefined, action: undefined, retryable: false };
     }
-    if (!classified.fromCode && (classified.category === "unknown" || classified.category === "malformed_response" || (classified.category === "invalid_params" && status && status !== 400 && status !== 422 && status !== 409)) && status) {
+    if (!classified.fromCode && !classified.preserveOverHttpStatus && (classified.category === "unknown" || classified.category === "malformed_response" || (classified.category === "invalid_params" && status && status !== 400 && status !== 422 && status !== 409)) && status) {
         classified = { ...classified, category: categoryFromHttpStatus(status), reason: undefined, action: undefined, status, retryable: false };
         if (status === 524) {
             classified.category = "timeout";
@@ -571,6 +581,7 @@ function classifyText(raw: string): Classified {
             category: "input_inaccessible",
             reason: storage.replace(/。$/, ""),
             action: "",
+            preserveOverHttpStatus: true,
             requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
             taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
             retryable: false,

@@ -328,18 +328,24 @@ func isTransientPluginLoadError(errText string, stage string) bool {
 	if lower == "" {
 		return false
 	}
-	if normalizedStage == "import" {
-		for _, syntaxMarker := range []string{"syntaxerror", "referenceerror", "unexpected token"} {
-			if strings.Contains(lower, syntaxMarker) {
-				return false
-			}
+	for _, syntaxMarker := range []string{"syntaxerror", "referenceerror", "unexpected token"} {
+		if strings.Contains(lower, syntaxMarker) {
+			return false
 		}
+	}
+	if normalizedStage == "import" {
 		return true
 	}
 	for _, marker := range []string{
 		"failed to fetch dynamically imported module",
 		"error loading dynamically imported module",
 		"importing a module script failed",
+		"failed to fetch",
+		"load failed",
+		"networkerror",
+		"net::err_",
+		"econnrefused",
+		"connection refused",
 	} {
 		if strings.Contains(lower, marker) {
 			return true

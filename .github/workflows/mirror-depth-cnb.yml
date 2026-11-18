@@ -1,0 +1,34 @@
+name: Mirror Depth Runtime to CNB
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      BEEFTV_CNB_TRIGGER_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-depth-cnb
+  cancel-in-progress: false
+
+jobs:
+  mirror-depth-cnb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      HAS_CNB_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN != '' }}
+    steps:
+      - name: Check out repository
+        if: env.HAS_CNB_TOKEN == 'true'
+        uses: actions/checkout@v4
+      - name: Run unit tests for CNB depth mirror script
+        if: env.HAS_CNB_TOKEN == 'true'
+        run: python3 -m unittest discover -s scripts -p 'test_mirror_desktop_cnb.py'
+      - name: Trigger CNB depth runtime sync and verify Range + SHA-256
+        if: env.HAS_CNB_TOKEN == 'true'
+        env:
+          BEEFTV_CNB_TRIGGER_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN }}
+        run: python3 scripts/mirror-desktop-cnb.py --version depth-runtime-v2

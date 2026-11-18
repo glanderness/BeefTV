@@ -156,6 +156,12 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		old, openErr := openDesktopRuntime(context.Background(), source)
 		if openErr == nil {
 			a.installStorageRuntime(source, old)
+			if errors.Is(cause, desktopstorage.ErrLocationRollbackFailed) {
+				if rewriteErr := desktopstorage.Save(root, source, ""); rewriteErr == nil {
+					return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，已恢复原工作区并将存储目录设置重置回原目录。请查看错误详情\n\n%w", cause)
+				}
+				return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，当前会话已恢复原工作区，但存储目录设置可能已指向新目录，请先在存储设置核对并重新保存后再继续操作\n\n%w", cause)
+			}
 			return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，已恢复原工作区，存储目录未更改。请查看错误详情\n\n%w", cause)
 		}
 		return desktopstorage.Usage{}, fmt.Errorf("迁移未完成，原数据已保留，但工作区未能重新打开。请重启 BeefTV\n\n%w", errors.Join(cause, openErr))
@@ -217,6 +223,9 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		_ = closeDesktopRuntime(context.Background(), next)
 		if a.usePlatformDownloads {
 			_ = configureDesktopTemp(source)
+		}
+		if errors.Is(err, desktopstorage.ErrLocationRollbackFailed) {
+			return restore(fmt.Errorf("存储目录设置保存校验失败且未能自动恢复原指针，请检查系统配置目录: %w", err))
 		}
 		return restore(fmt.Errorf("存储目录设置未保存，继续使用原目录: %w", err))
 	}

@@ -75,6 +75,23 @@ func TestBundledPluginRecoversFromTransientShutdownFetchAndVersionUpgrade(t *tes
 		}
 	}
 
+	// Legacy pre-upgrade records without LoadErrorStage also auto-clear Safari/Chromium fetch failures.
+	rtLegacy, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(rtLegacy, nil).SetLoadError("beeftv-plugin-market", "TypeError: Load failed"); err != nil {
+		t.Fatal(err)
+	}
+	afterLegacyRestart, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyView, found := ByID(New(afterLegacyRestart, nil).List(), "beeftv-plugin-market")
+	if !found || legacyView.Status != StatusEnabled || legacyView.Error != "" {
+		t.Fatalf("legacy stage-less transient error should clear on startup, got %+v", legacyView)
+	}
+
 	// An activate() runtime error with network-like text on unchanged SHA must NOT be auto-cleared.
 	rtActivate, err := NewRuntime(dataDir)
 	if err != nil {

@@ -2,6 +2,7 @@ package desktopstorage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,5 +119,39 @@ func TestSaveMigrationReplacesReadOnlyLocationAndVerifiesReadback(t *testing.T) 
 	gotAfterFail, err := Resolve(root)
 	if err != nil || !SameLocation(gotAfterFail, second) {
 		t.Fatalf("Resolve(root) after failed Save = %q, err=%v; want %q", gotAfterFail, err, second)
+	}
+
+	// Post-replace sync failure must roll back storage-location.json to previous bytes;
+	// if rollback sync itself also fails, ErrLocationRollbackFailed must surface.
+	third := filepath.Join(t.TempDir(), "third-target")
+	if err := os.MkdirAll(third, 0700); err != nil {
+		t.Fatal(err)
+	}
+	origSync := syncLocationDir
+	t.Cleanup(func() { syncLocationDir = origSync })
+
+	calls := 0
+	syncLocationDir = func(dir string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected post-replace dir sync failure")
+		}
+		return origSync(dir)
+	}
+	err = Save(root, third, second)
+	if err == nil || errors.Is(err, ErrLocationRollbackFailed) {
+		t.Fatalf("expected post-replace error with clean rollback, got %v", err)
+	}
+	gotAfterRollback, err := Resolve(root)
+	if err != nil || !SameLocation(gotAfterRollback, second) {
+		t.Fatalf("Resolve(root) after post-replace rollback = %q, err=%v; want %q", gotAfterRollback, err, second)
+	}
+
+	syncLocationDir = func(string) error {
+		return errors.New("persistent dir sync failure")
+	}
+	err = Save(root, third, second)
+	if !errors.Is(err, ErrLocationRollbackFailed) {
+		t.Fatalf("expected ErrLocationRollbackFailed when rollback sync fails, got %v", err)
 	}
 }

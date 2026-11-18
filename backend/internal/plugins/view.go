@@ -100,19 +100,19 @@ type Record struct {
 // RegistryRecord is the committed plugin registry row. Production stores it
 // in SystemSetting plugin_registry; plugin_registry.json is a one-time import.
 type RegistryRecord struct {
-	ID            string          `json:"id"`
-	Raw           json.RawMessage `json:"manifest"`
-	Source        string          `json:"source"`
-	FileName      string          `json:"fileName,omitempty"`
-	PackagePath   string          `json:"packagePath,omitempty"`
-	PackageSHA256 string          `json:"packageSha256,omitempty"`
-	PackageDir    string          `json:"packageDir,omitempty"`
-	PackageSpec   string          `json:"packageSpec,omitempty"`
+	ID             string          `json:"id"`
+	Raw            json.RawMessage `json:"manifest"`
+	Source         string          `json:"source"`
+	FileName       string          `json:"fileName,omitempty"`
+	PackagePath    string          `json:"packagePath,omitempty"`
+	PackageSHA256  string          `json:"packageSha256,omitempty"`
+	PackageDir     string          `json:"packageDir,omitempty"`
+	PackageSpec    string          `json:"packageSpec,omitempty"`
 	SkillDirs      []string        `json:"skillDirs,omitempty"`
 	LoadError      string          `json:"loadError,omitempty"`
 	LoadErrorStage string          `json:"loadErrorStage,omitempty"`
 	InstalledAt    time.Time       `json:"installedAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
 }
 
 func manifestView(raw []byte, metadata protocol.Metadata, source string) ManifestView {

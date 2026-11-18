@@ -261,6 +261,7 @@ export type Classified = {
     taskId?: string;
     status?: number;
     fromCode?: boolean;
+    preserveOverHttpStatus?: boolean;
     uncertain?: boolean;
     retryable?: boolean;
 };
