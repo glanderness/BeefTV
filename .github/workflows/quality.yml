@@ -172,7 +172,9 @@ jobs:
           }
           if ! deps_ready && compgen -G "$HOME/.cache/beeftv-apt-backend/*.deb" >/dev/null; then
             sudo dpkg -i "$HOME/.cache/beeftv-apt-backend/"*.deb || true
-            fc-cache -f
+            if command -v fc-cache >/dev/null 2>&1; then
+              fc-cache -f || true
+            fi
           fi
           if ! deps_ready; then
             mkdir -p "$HOME/.cache/beeftv-apt-backend"
@@ -193,7 +195,9 @@ jobs:
         run: |
           case "${{ matrix.slice }}" in
             packages)
-              mapfile -t pkgs < <(go list ./... | grep -v '/internal/app$')
+              all_pkgs="$(go list ./...)"
+              mapfile -t pkgs < <(grep -v '/internal/app$' <<< "$all_pkgs")
+              [[ "${#pkgs[@]}" -gt 0 ]]
               go test "${pkgs[@]}"
               ;;
             app-1)

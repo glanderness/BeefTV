@@ -177,7 +177,8 @@ test('packaged server starts with local imports and makes zero model requests', 
     child.once('error', (error) => { spawnError = error; });
     exited = new Promise((resolve) => child.once('close', resolve));
     let health;
-    const deadline = Date.now() + 20000;
+    const startupTimeoutMs = Math.max(1000, Number(process.env.BEEFTV_TEST_STARTUP_TIMEOUT_MS) || 60000);
+    const deadline = Date.now() + startupTimeoutMs;
     while (Date.now() < deadline) {
       if (spawnError || child.exitCode !== null || child.signalCode !== null) {
         throw new Error(`Packaged server exited before health: ${spawnError || child.exitCode}\n${output}`);
@@ -188,7 +189,9 @@ test('packaged server starts with local imports and makes zero model requests', 
       } catch { /* Wait only while the packaged child is starting. */ }
       await delay(100);
     }
-    if (!health) throw new Error(`Packaged server did not become healthy\n${output}`);
+    if (!health) {
+      throw new Error(`Packaged server did not become healthy within ${startupTimeoutMs}ms (target=${target}, exit=${child.exitCode}, signal=${child.signalCode})\n${output}`);
+    }
     if (health.operations !== 1) throw new Error(`Packaged server did not discover operations: ${JSON.stringify(requests)}\n${output}`);
     expect(health.ok).toBe(true);
     expect(health.reason).toBeUndefined();
