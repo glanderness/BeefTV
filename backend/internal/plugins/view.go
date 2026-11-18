@@ -108,9 +108,10 @@ type RegistryRecord struct {
 	PackageSHA256 string          `json:"packageSha256,omitempty"`
 	PackageDir    string          `json:"packageDir,omitempty"`
 	PackageSpec   string          `json:"packageSpec,omitempty"`
-	SkillDirs     []string        `json:"skillDirs,omitempty"`
-	LoadError     string          `json:"loadError,omitempty"`
-	InstalledAt   time.Time       `json:"installedAt"`
+	SkillDirs      []string        `json:"skillDirs,omitempty"`
+	LoadError      string          `json:"loadError,omitempty"`
+	LoadErrorStage string          `json:"loadErrorStage,omitempty"`
+	InstalledAt    time.Time       `json:"installedAt"`
 	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 

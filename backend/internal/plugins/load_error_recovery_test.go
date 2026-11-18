@@ -59,7 +59,7 @@ func TestBundledPluginRecoversFromTransientShutdownFetchAndVersionUpgrade(t *tes
 			t.Fatalf("NewRuntime: %v", err)
 		}
 		svc := New(rt, nil)
-		invalid, err := svc.SetLoadError("beeftv-plugin-market", transientErr)
+		invalid, err := svc.SetLoadError("beeftv-plugin-market", transientErr, "import")
 		if err != nil || invalid.Status != StatusInvalid {
 			t.Fatalf("SetLoadError(%q) = %+v, err=%v", transientErr, invalid, err)
 		}
@@ -73,6 +73,23 @@ func TestBundledPluginRecoversFromTransientShutdownFetchAndVersionUpgrade(t *tes
 		if !found || view.Status != StatusEnabled || view.Error != "" {
 			t.Fatalf("transient error %q was not cleared on startup: %+v", transientErr, view)
 		}
+	}
+
+	// An activate() runtime error with network-like text on unchanged SHA must NOT be auto-cleared.
+	rtActivate, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(rtActivate, nil).SetLoadError("beeftv-plugin-market", "TypeError: Failed to fetch", "activate"); err != nil {
+		t.Fatal(err)
+	}
+	afterActivateErr, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateView, found := ByID(New(afterActivateErr, nil).List(), "beeftv-plugin-market")
+	if !found || activateView.Status != StatusInvalid || activateView.Error == "" {
+		t.Fatalf("activate-stage error should remain invalid on unchanged SHA, got %+v", activateView)
 	}
 
 	// A genuine syntax error on the exact same SHA remains invalid across restart...

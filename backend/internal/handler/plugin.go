@@ -64,12 +64,13 @@ func RegisterPluginRoutes(r *gin.RouterGroup, center pluginCenter, hosted ...boo
 	catalogRoutes.POST("/:id/load-error", func(c *gin.Context) {
 		var request struct {
 			Error string `json:"error"`
+			Stage string `json:"stage"`
 		}
 		if err := c.ShouldBindJSON(&request); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		plugin, err := center.PluginDomain().SetLoadError(c.Param("id"), strings.TrimSpace(request.Error))
+		plugin, err := center.PluginDomain().SetLoadError(c.Param("id"), strings.TrimSpace(request.Error), request.Stage)
 		if err != nil {
 			failService(c, err)
 			return

@@ -208,14 +208,23 @@ export function playTaskCompletionChime(options?: {
     }
 }
 
-export function triggerSoundForCompletedTask(taskId?: string): boolean {
+export function triggerSoundForCompletedTask(taskId?: string, options?: { now?: number }): boolean {
     if (!getTaskCompletionSoundEnabled()) return false;
     const normalized = String(taskId || "").trim();
-    if (normalized) {
-        if (hasTaskCompletionSoundPlayed(normalized)) return false;
+    if (normalized && hasTaskCompletionSoundPlayed(normalized)) {
+        return false;
+    }
+    const now = options?.now ?? Date.now();
+    if (lastChimeAtMs > 0 && now - lastChimeAtMs < TASK_COMPLETION_CHIME_THROTTLE_MS) {
+        // Coalesce concurrent completions within the throttle window so delayed retries do not double-chime.
+        if (normalized) markTaskCompletionSoundPlayed(normalized);
+        return false;
+    }
+    const played = playTaskCompletionChime({ now });
+    if (played && normalized) {
         markTaskCompletionSoundPlayed(normalized);
     }
-    return playTaskCompletionChime();
+    return played;
 }
 
 export function resetTaskCompletionSoundStateForTests(): void {

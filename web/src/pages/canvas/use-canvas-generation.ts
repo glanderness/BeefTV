@@ -5,7 +5,6 @@ import { startOperation } from "@/stores/use-operation-progress";
 
 import { canCanvasNodeAcceptGenerationTask, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
 import { triggerAutoDownloadForCompletedTask } from "@/lib/auto-download-preference";
-import { getTaskCompletionSoundEnabled, triggerSoundForCompletedTask } from "@/lib/task-completion-sound";
 import { canRecoverTaskOutcome, notChargedTaskOutcome, readTaskOutcome, submissionUnknownTaskOutcome } from "@/lib/task-outcome";
 import { canvasNodeResourceId } from "@/lib/canvas/canvas-resource-id";
 import { bindBackendCanvasGenerationResult, CanvasGenerationDurableAckError, CanvasGenerationMaterializationError, CanvasGenerationOutputMissingError } from "@/services/canvas-generation-consumer";
@@ -341,7 +340,6 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     } : undefined,
                 });
                 if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
-                if (getTaskCompletionSoundEnabled()) triggerSoundForCompletedTask(task.id);
                 const boundNode = nodesRef.current.find((node) => node.id === nodeId);
                 if (boundNode && (boundNode.type === CanvasNodeType.Image || boundNode.type === CanvasNodeType.Video || boundNode.type === CanvasNodeType.Audio) && boundNode.metadata?.content) {
                     const outputIdx = boundNode.metadata?.taskOutputIndex;

@@ -4,7 +4,6 @@ import type { createReferenceLinkResolver } from "@/components/generation-refere
 import { explainGenerationError } from "@/lib/generation-error";
 import { normalizeImageValue, normalizeVideoValue, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { declaredOrOmniVideoCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
-import { getTaskCompletionSoundEnabled, triggerSoundForCompletedTask } from "@/lib/task-completion-sound";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { NewAsset } from "@/stores/use-asset-store";
@@ -402,7 +401,6 @@ export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
             if (!runtime.generationTaskMaterializedUrls(materialized)[0]) throw new Error("视频结果资源不可用");
         }
         updateOriginAssistant((item) => ({ ...item, status: "done" }));
-        if (getTaskCompletionSoundEnabled()) triggerSoundForCompletedTask(Array.from(boundTaskIds)[0]);
     } catch (error) {
         if (runtime.isGenerationTaskCancelled(error, requestLifecycle.signal)) {
             updateOriginAssistant((item) => ({ ...item, status: "cancelled", content: "已停止" }));

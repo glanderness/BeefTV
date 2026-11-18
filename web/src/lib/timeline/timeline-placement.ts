@@ -190,6 +190,32 @@ export function planClipMove(args: PlanClipMoveArgs): Map<string, number> | null
     return moved;
 }
 
+/**
+ * 快速向左回拖超出可让位空间时（planClipMove 返回 null），仅将被拖片段贴靠到
+ * [startMs, dragged.startMs) 区间内最靠左的无冲突空位，绝不推动其他片段。
+ */
+export function resolveLeftClampedClipMove(args: PlanClipMoveArgs): Map<string, number> | null {
+    const { clipId, trackId, startMs, durationMs, clips } = args;
+    const dragged = clips.find((clip) => clip.id === clipId);
+    if (!dragged || startMs >= dragged.startMs) return null;
+    const clampedTarget = Math.max(0, startMs);
+    const candidates = new Set<number>([clampedTarget]);
+    for (const other of clips) {
+        if (other.trackId !== trackId || other.id === clipId) continue;
+        const rightEdge = other.startMs + other.durationMs;
+        if (rightEdge > clampedTarget && rightEdge < dragged.startMs) {
+            candidates.add(rightEdge);
+        }
+    }
+    const sorted = Array.from(candidates).sort((a, b) => a - b);
+    for (const candidateStart of sorted) {
+        if (canPlaceAt({ trackId, startMs: candidateStart, durationMs, excludeClipId: clipId, clips }).ok) {
+            return new Map([[clipId, candidateStart]]);
+        }
+    }
+    return null;
+}
+
 /** 返回与候选区间碰撞的所有片段（按现有顺序，不排序）。 */
 export function findCollidingItems(args: CanPlaceAtArgs): TimelineClip[] {
     const { trackId, startMs, durationMs, excludeClipId, clips } = args;

@@ -176,24 +176,3 @@ test("PromptPreferencesPane edits and resets default image and video reverse-pro
         await context.close();
     }
 }, 30000);
-
-test("StorageSettingsPane toggles task completion sound notification cleanly without horizontal overflow", async () => {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-    const page = await context.newPage();
-    try {
-        await page.goto(`${server.url}?view=storage&dark=1`);
-        const soundSwitch = page.getByRole("switch", { name: "任务完成提示音" });
-        await soundSwitch.waitFor();
-        expect(await soundSwitch.getAttribute("aria-checked")).toBe("false");
-
-        await soundSwitch.click();
-        expect(await soundSwitch.getAttribute("aria-checked")).toBe("true");
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-
-        await page.reload();
-        await soundSwitch.waitFor();
-        expect(await soundSwitch.getAttribute("aria-checked")).toBe("true");
-    } finally {
-        await context.close();
-    }
-}, 30000);

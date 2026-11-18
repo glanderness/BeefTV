@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
-import { storyboardAssetRoleForNode } from "@/lib/canvas/canvas-storyboard-assets";
+import { defaultStoryboardRolePriority, storyboardAssetRoleForNode } from "@/lib/canvas/canvas-storyboard-assets";
 import { buildOrderedCanvasResourceReferences, canvasResourceMentionToken } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type StoryboardAssetBinding, type StoryboardRow } from "@/types/canvas";
 
@@ -67,19 +67,11 @@ export function reconcileStoryboardTargetConnections(
 
 export function bindingForConnectedNode(node: CanvasNodeData): StoryboardAssetBinding | null {
     const role = storyboardAssetRoleForNode(node);
-    return role ? { nodeId: node.id, role, priority: defaultRolePriority(role) } : null;
+    return role ? { nodeId: node.id, role, priority: defaultStoryboardRolePriority(role) } : null;
 }
 
 export function isStoryboardPreviewAsset(node: CanvasNodeData) {
     return node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Drawing || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio || node.metadata?.workflowKind === "character";
-}
-
-function defaultRolePriority(role: StoryboardAssetBinding["role"]) {
-    if (role === "character") return 100;
-    if (role === "environment") return 90;
-    if (role === "prop" || role === "weapon" || role === "wardrobe") return 80;
-    if (role === "motion" || role === "audio") return 70;
-    return 60;
 }
 
 export function syncBoundStoryboardNodesForRows(

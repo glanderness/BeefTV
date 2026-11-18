@@ -761,8 +761,19 @@ test("connected account balance pane supports direct switch-account, logout, and
         expect(startCalls).toBe(1);
         await modal.getByRole("button", { name: "退出登录", exact: true }).waitFor();
 
-        // Logout disconnects and returns to the unauthenticated login state.
+        // Logout requires explicit confirmation; cancelling keeps the account connected.
         await modal.getByRole("button", { name: "退出登录", exact: true }).click();
+        const confirmDialog = page.locator(".ant-modal-confirm");
+        await confirmDialog.waitFor();
+        await confirmDialog.getByRole("button", { name: /^取\s*消$/ }).click();
+        await confirmDialog.waitFor({ state: "hidden" });
+        expect(disconnectCalls).toBe(1);
+        expect(await modal.getByRole("button", { name: "退出登录", exact: true }).count()).toBe(1);
+
+        // Confirming logout disconnects and returns to the unauthenticated login state.
+        await modal.getByRole("button", { name: "退出登录", exact: true }).click();
+        await confirmDialog.waitFor();
+        await confirmDialog.getByRole("button", { name: /^退\s*出\s*登\s*录$/ }).click();
         await modal.getByRole("button", { name: /^登\s*录$/ }).waitFor();
         expect(disconnectCalls).toBe(2);
         expect(await modal.getByRole("button", { name: "切换账号", exact: true }).count()).toBe(0);

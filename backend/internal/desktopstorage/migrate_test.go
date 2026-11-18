@@ -110,9 +110,13 @@ func TestSaveMigrationReplacesReadOnlyLocationAndVerifiesReadback(t *testing.T) 
 	if err != nil || !SameLocation(got, second) {
 		t.Fatalf("Resolve with BOM = %q, err=%v; want %q", got, err, second)
 	}
-	// Saving a non-existent DataDir must fail readback verification instead of returning nil.
+	// Saving a non-existent DataDir must fail without overwriting the existing pointer.
 	missing := filepath.Join(t.TempDir(), "missing-target")
 	if err := Save(root, missing, second); err == nil {
-		t.Fatal("expected Save to fail readback verification for missing directory")
+		t.Fatal("expected Save to fail for missing directory")
+	}
+	gotAfterFail, err := Resolve(root)
+	if err != nil || !SameLocation(gotAfterFail, second) {
+		t.Fatalf("Resolve(root) after failed Save = %q, err=%v; want %q", gotAfterFail, err, second)
 	}
 }

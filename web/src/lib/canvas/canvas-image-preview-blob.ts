@@ -70,7 +70,9 @@ export async function createCanvasImagePreviewBlob(original: Blob, maxSize: numb
             image.onerror = () => reject(new Error("图片预览解码失败"));
             image.src = source;
         });
-        await image.decode?.().catch(() => undefined);
+        if (typeof image.decode === "function") {
+            await image.decode().catch(() => undefined);
+        }
         const ratio = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
         if (ratio === 1) return original;
         canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));

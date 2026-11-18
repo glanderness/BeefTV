@@ -96,12 +96,43 @@ func saveLocation(root string, location Location) error {
 	if root == "" || root == "." || !filepath.IsAbs(root) || location.DataDir == "" || location.DataDir == "." || !filepath.IsAbs(location.DataDir) || filepath.Dir(location.DataDir) == location.DataDir {
 		return errors.New("存储目录设置无效")
 	}
+	if info, err := os.Stat(location.DataDir); err != nil || !info.IsDir() {
+		return fmt.Errorf("存储目录无法访问，请连接对应磁盘后重试：%s", location.DataDir)
+	}
 	body, err := json.Marshal(location)
 	if err != nil {
 		return err
 	}
+	var decodedCheck Location
+	if err := json.Unmarshal(body, &decodedCheck); err != nil || !SameLocation(decodedCheck.DataDir, location.DataDir) {
+		return errors.New("存储目录设置校验失败")
+	}
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return err
+	}
+	targetPath := filepath.Join(root, locationFile)
+	prevBytes, prevErr := readLocationFile(targetPath)
+	hadPrev := prevErr == nil
+	if prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
+		return fmt.Errorf("读取既有存储目录设置失败: %w", prevErr)
+	}
+	rollback := func() {
+		if !hadPrev {
+			_ = os.Remove(targetPath)
+			return
+		}
+		if tmp, err := os.CreateTemp(root, ".storage-location-rollback-*"); err == nil {
+			tmpPath := tmp.Name()
+			_, writeErr := tmp.Write(prevBytes)
+			syncErr := tmp.Sync()
+			closeErr := tmp.Close()
+			if writeErr == nil && syncErr == nil && closeErr == nil {
+				_ = replaceLocationFile(tmpPath, targetPath)
+				_ = syncDirectory(root)
+				return
+			}
+			_ = os.Remove(tmpPath)
+		}
 	}
 	file, err := os.CreateTemp(root, ".storage-location-*")
 	if err != nil {
@@ -122,18 +153,20 @@ func saveLocation(root string, location Location) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	targetPath := filepath.Join(root, locationFile)
 	if err := replaceLocationFile(path, targetPath); err != nil {
 		return err
 	}
 	if err := syncDirectory(root); err != nil {
+		rollback()
 		return err
 	}
 	resolved, err := Resolve(root)
 	if err != nil {
+		rollback()
 		return fmt.Errorf("校验存储目录设置失败: %w", err)
 	}
 	if !SameLocation(resolved, location.DataDir) {
+		rollback()
 		return fmt.Errorf("存储目录设置读回不一致: 读回 %s，期望 %s", resolved, location.DataDir)
 	}
 	return nil

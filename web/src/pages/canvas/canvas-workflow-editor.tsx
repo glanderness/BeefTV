@@ -18,7 +18,7 @@ import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resour
 import { connectWorkflowPromptReference, normalizeWorkflowNodeMentions, remapWorkflowPromptMentions, validateWorkflowPromptMentions, workflowNodeMentionReferences } from "@/lib/canvas/workflow-node-mentions";
 import "./canvas-workflow.css";
 import { numberWorkflowNodeTitles } from "@/lib/canvas/workflow-editor";
-import { IMAGE_PROMPT_REVERSE } from "@/lib/prompts";
+import { getEffectiveReversePrompt } from "@/lib/reverse-prompt-preference";
 
 const mediaLabels = { image: "图片", video: "视频", audio: "音频", text: "文本" };
 
@@ -77,7 +77,7 @@ export function CanvasWorkflowEditor({ initial, operations, canvasNodes, canvasC
         setSelected(id);
     };
     const addOperation = (item: WorkflowOperation) => addNode({ title: item.name, role: "operation", mediaType: item.outputType, operationId: item.id, operationVersion: item.version,
-        config: { ...workflowOperationDefaults(item), ...(item.id.endsWith(".ai-upscale") ? { scale:2 } : {}), ...(item.id === "image.describe" ? { prompt:IMAGE_PROMPT_REVERSE } : {}) } });
+        config: { ...workflowOperationDefaults(item), ...(item.id.endsWith(".ai-upscale") ? { scale:2 } : {}), ...(item.id === "image.describe" ? { prompt:getEffectiveReversePrompt("image") } : {}) } });
     const addGeneration = (mediaType: WorkflowMediaType) => {
         const operation = operations.find(item => item.id === `generate.${mediaType}`);
         if (!operation) return;

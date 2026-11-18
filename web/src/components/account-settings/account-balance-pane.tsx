@@ -77,7 +77,7 @@ function formatBalanceDisplay(connected: boolean, balance?: string, balanceCny?:
 }
 
 export function AccountBalancePane() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const account = useBeefTVConnection();
     const { connection, busy, balanceRefreshFailed } = account;
     const connected = isBeefTVAuthenticated(connection);
@@ -380,14 +380,24 @@ export function AccountBalancePane() {
         }
     };
 
-    const handleLogout = async () => {
+    const handleLogout = () => {
         if (actionBusy) return;
-        setAccountActionBusy(true);
-        try {
-            await account.disconnect();
-        } finally {
-            setAccountActionBusy(false);
-        }
+        const identity = connection?.account?.email || name;
+        modal.confirm({
+            title: "确认退出登录？",
+            content: `退出当前账号（${identity}）后将断开 BeefTV 官方算力连接，本地画布与素材仍保留在本机。`,
+            okText: "退出登录",
+            cancelText: "取消",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                setAccountActionBusy(true);
+                try {
+                    await account.disconnect();
+                } finally {
+                    setAccountActionBusy(false);
+                }
+            },
+        });
     };
 
     return <>
@@ -399,7 +409,7 @@ export function AccountBalancePane() {
             {connected ? (
                 <div className="account-balance-identity-actions">
                     <Button disabled={actionBusy} onClick={() => void handleSwitchAccount()}>切换账号</Button>
-                    <Button disabled={actionBusy} onClick={() => void handleLogout()}>退出登录</Button>
+                    <Button disabled={actionBusy} onClick={handleLogout}>退出登录</Button>
                 </div>
             ) : (
                 <Button loading={busy} disabled={pending} onClick={() => void account.connect()}>{pending ? "等待授权" : "登录"}</Button>

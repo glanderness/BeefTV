@@ -69,3 +69,8 @@ jobs:
           gh release create depth-runtime-v2 --draft --target "$GITHUB_SHA" --title 'Windows depth runtime v2 — CUDA community preview' --notes-file "$RUNNER_TEMP/notes.md"
           gh release upload depth-runtime-v2 dist/depth/*
           gh release edit depth-runtime-v2 --draft=false --prerelease --latest=false
+      - name: Mirror depth runtime to CNB and verify anonymous Range + SHA-256
+        if: env.BEEFTV_CNB_TRIGGER_TOKEN != ''
+        env:
+          BEEFTV_CNB_TRIGGER_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN }}
+        run: python3 scripts/mirror-desktop-cnb.py --version depth-runtime-v2

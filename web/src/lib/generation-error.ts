@@ -571,7 +571,6 @@ function classifyText(raw: string): Classified {
             category: "input_inaccessible",
             reason: storage.replace(/。$/, ""),
             action: "",
-            fromCode: true,
             requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
             taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
             retryable: false,

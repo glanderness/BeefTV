@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
+import { useTimelineEdgeAutoScroll } from "@/components/canvas/use-timeline-edge-auto-scroll";
 import { formatTimelineTime, getRulerTickStep } from "@/lib/timeline/timeline-view";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
@@ -18,9 +19,8 @@ type CanvasTimelineRulerProps = {
 export function CanvasTimelineRuler({ pxPerMs, durationMs, playheadMs, width: _width, theme, scrollContainerRef, onSeek }: CanvasTimelineRulerProps) {
     const barRef = useRef<HTMLDivElement>(null);
     const activePointerIdRef = useRef<number | null>(null);
-    const lastClientXRef = useRef<number | null>(null);
-    const edgeScrollFrameRef = useRef<number | null>(null);
     const [scrubbing, setScrubbing] = useState(false);
+    const { updateEdgeAutoScroll, stopEdgeAutoScroll } = useTimelineEdgeAutoScroll(scrollContainerRef);
 
     const ticks = useMemo(() => {
         const stepMs = getRulerTickStep(pxPerMs);
@@ -31,13 +31,6 @@ export function CanvasTimelineRuler({ pxPerMs, durationMs, playheadMs, width: _w
             return { ms, x, major: index % 5 === 0 };
         });
     }, [durationMs, pxPerMs]);
-
-    const stopEdgeScroll = useCallback(() => {
-        if (edgeScrollFrameRef.current !== null) {
-            cancelAnimationFrame(edgeScrollFrameRef.current);
-            edgeScrollFrameRef.current = null;
-        }
-    }, []);
 
     const computeSeekAtClientX = useCallback(
         (clientX: number) => {
@@ -51,57 +44,11 @@ export function CanvasTimelineRuler({ pxPerMs, durationMs, playheadMs, width: _w
         [durationMs, onSeek, pxPerMs],
     );
 
-    const applyEdgeScrollStep = useCallback(
-        (clientX: number): boolean => {
-            const container = scrollContainerRef?.current;
-            if (!container || activePointerIdRef.current === null) return false;
-            const containerRect = container.getBoundingClientRect();
-            const edgeZone = 32;
-            if (clientX < containerRect.left + edgeZone && container.scrollLeft > 0) {
-                const step = Math.max(8, Math.ceil((containerRect.left + edgeZone - clientX) * 0.85));
-                container.scrollLeft = Math.max(0, container.scrollLeft - step);
-                return container.scrollLeft > 0;
-            }
-            if (clientX > containerRect.right - edgeZone) {
-                const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth);
-                if (container.scrollLeft < maxScroll) {
-                    const step = Math.max(8, Math.ceil((clientX - (containerRect.right - edgeZone)) * 0.85));
-                    container.scrollLeft = Math.min(maxScroll, container.scrollLeft + step);
-                    return container.scrollLeft < maxScroll;
-                }
-            }
-            return false;
-        },
-        [scrollContainerRef],
-    );
-
     const seekFromClientX = useCallback(
         (clientX: number, allowEdgeScroll: boolean) => {
-            lastClientXRef.current = clientX;
-            if (!allowEdgeScroll) {
-                stopEdgeScroll();
-                computeSeekAtClientX(clientX);
-                return;
-            }
-            const shouldContinue = applyEdgeScrollStep(clientX);
-            computeSeekAtClientX(clientX);
-            if (!shouldContinue) {
-                stopEdgeScroll();
-                return;
-            }
-            if (edgeScrollFrameRef.current === null) {
-                const tick = () => {
-                    edgeScrollFrameRef.current = null;
-                    const heldX = lastClientXRef.current;
-                    if (activePointerIdRef.current === null || heldX === null) return;
-                    const more = applyEdgeScrollStep(heldX);
-                    computeSeekAtClientX(heldX);
-                    if (more) edgeScrollFrameRef.current = requestAnimationFrame(tick);
-                };
-                edgeScrollFrameRef.current = requestAnimationFrame(tick);
-            }
+            updateEdgeAutoScroll(clientX, computeSeekAtClientX, allowEdgeScroll && activePointerIdRef.current !== null);
         },
-        [applyEdgeScrollStep, computeSeekAtClientX, stopEdgeScroll],
+        [computeSeekAtClientX, updateEdgeAutoScroll],
     );
 
     const finishScrub = useCallback(
@@ -110,8 +57,7 @@ export function CanvasTimelineRuler({ pxPerMs, durationMs, playheadMs, width: _w
             if (capturedId === null) return;
             if (pointerId !== undefined && pointerId !== capturedId) return;
             activePointerIdRef.current = null;
-            lastClientXRef.current = null;
-            stopEdgeScroll();
+            stopEdgeAutoScroll();
             setScrubbing(false);
             const el = barRef.current;
             if (el?.hasPointerCapture?.(capturedId)) {
@@ -122,7 +68,7 @@ export function CanvasTimelineRuler({ pxPerMs, durationMs, playheadMs, width: _w
                 }
             }
         },
-        [stopEdgeScroll],
+        [stopEdgeAutoScroll],
     );
 
     useEffect(() => {
@@ -148,10 +94,9 @@ export function CanvasTimelineRuler({ pxPerMs, durationMs, playheadMs, width: _w
     useEffect(
         () => () => {
             activePointerIdRef.current = null;
-            lastClientXRef.current = null;
-            stopEdgeScroll();
+            stopEdgeAutoScroll();
         },
-        [stopEdgeScroll],
+        [stopEdgeAutoScroll],
     );
 
     const clampedPlayheadMs = Math.min(Math.max(0, durationMs), Math.max(0, playheadMs));

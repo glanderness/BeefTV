@@ -88,5 +88,5 @@ func defaultFallbackManifest() *depthruntime.Manifest {
 }
 
 func componentSources(name, original string) []string {
-	return []string{componentCNBBase + name, componentCOSBase + name, componentR2Base + name, original}
+	return []string{componentCOSBase + name, componentR2Base + name, original}
 }

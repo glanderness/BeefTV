@@ -129,7 +129,7 @@ export async function activateClientPluginModule(
             [pluginId]: "invalid",
         });
         if (options?.reportBackendError !== false) {
-            void reportPluginLoadError(pluginId, message).catch(() => {
+            void reportPluginLoadError(pluginId, message, "activate").catch(() => {
                 // ignore network error in offline/test environments
             });
         }
@@ -188,7 +188,7 @@ export async function loadAndActivateClientPlugin(
                 ...state.runtimeStatuses,
                 [pluginId]: "invalid",
             });
-            void reportPluginLoadError(pluginId, message).catch(() => {});
+            void reportPluginLoadError(pluginId, message, "import").catch(() => {});
             return false;
         }
     })();

@@ -192,6 +192,74 @@ class MirrorTest(unittest.TestCase):
                    verify_zips=lambda v, zips: cnb.verify_cnb_zips(v, zips, opener=fake_opener))
         self.assertEqual(len(range_calls), 16)  # (4 full zips + 4 delta zips) * 2 Range requests each
 
+    def test_depth_runtime_v2_verifies_all_parts_and_pinned_model(self):
+        depth_names = [
+            "beeftv-depth-runtime-v1-windows-amd64-cpu.zip",
+            "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+            "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-002",
+            "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-003",
+            "depth-runtime-manifest.v2.json",
+        ]
+        depth_release = {
+            "tag_name": "depth-runtime-v2",
+            "draft": False,
+            "prerelease": True,
+            "html_url": "https://github.com/glanderness/BeefTV/releases/tag/depth-runtime-v2",
+            "assets": [
+                {
+                    "name": name,
+                    "state": "uploaded",
+                    "size": 64,
+                    "digest": "sha256:" + "c" * 64,
+                    "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/{name}",
+                }
+                for name in depth_names
+            ],
+        }
+        model_release = {
+            "tag_name": "v1.5.5",
+            "draft": False,
+            "prerelease": False,
+            "html_url": "https://github.com/glanderness/BeefTV/releases/tag/v1.5.5",
+            "assets": [{
+                "name": cnb.DEPTH_MODEL_NAME,
+                "state": "uploaded",
+                "size": cnb.DEPTH_MODEL_SIZE,
+                "digest": None,
+                "browser_download_url": f"https://github.com/glanderness/BeefTV/releases/download/v1.5.5/{cnb.DEPTH_MODEL_NAME}",
+            }],
+        }
+        expected = cnb.expected_depth_assets(depth_release, model_release)
+        self.assertEqual(len(expected), 6)
+        ready = {
+            "schema": 1,
+            "repository": cnb.REPO,
+            "version": "depth-runtime-v2",
+            "source": depth_release["html_url"],
+            "modelSource": model_release["html_url"],
+            "verification": "anonymous-resume-sha256",
+            "verifiedAt": "2026-11-18T00:00:00Z",
+            "assets": expected,
+        }
+        verified_items = []
+        cnb.mirror(
+            "depth-runtime-v2",
+            "test-token",
+            lambda url, *_: (
+                {"success": True} if url == cnb.START
+                else depth_release if url.endswith("/depth-runtime-v2")
+                else model_release if url.endswith("/v1.5.5")
+                else ready
+            ),
+            lambda _: None,
+            verify_zips=lambda ver, items: verified_items.extend((ver, len(items))),
+        )
+        self.assertEqual(verified_items, ["depth-runtime-v2", 6])
+        #Tampered model digest or size must fail closed
+        bad_model = {**model_release, "assets": [{**model_release["assets"][0], "size": 999}]}
+        with self.assertRaisesRegex(RuntimeError, "Invalid official depth model size"):
+            cnb.expected_depth_assets(depth_release, bad_model)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -149,6 +149,12 @@ export const CanvasNode = React.memo(function CanvasNode({
 }: CanvasNodeProps) {
     const theme = canvasThemes[useActiveTheme()];
     const [hovered, setHovered] = useState(false);
+    const pointerInsideRef = useRef(false);
+    const deferredHoverObserverRef = useRef<MutationObserver | null>(null);
+    useEffect(() => () => {
+        deferredHoverObserverRef.current?.disconnect();
+        deferredHoverObserverRef.current = null;
+    }, []);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title);
@@ -352,13 +358,40 @@ export const CanvasNode = React.memo(function CanvasNode({
                 contain: "layout style",
             }}
             onMouseEnter={(event) => {
-                if (event.currentTarget.closest('[data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]')) {
+                pointerInsideRef.current = true;
+                const el = event.currentTarget;
+                const interactingHost = el.closest('[data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]');
+                if (interactingHost) {
+                    deferredHoverObserverRef.current?.disconnect();
+                    if (typeof MutationObserver !== "undefined") {
+                        const observer = new MutationObserver(() => {
+                            if (!pointerInsideRef.current || !el.isConnected) {
+                                observer.disconnect();
+                                deferredHoverObserverRef.current = null;
+                                return;
+                            }
+                            if (!el.closest('[data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]')) {
+                                observer.disconnect();
+                                deferredHoverObserverRef.current = null;
+                                setHovered(true);
+                                onHoverStart(data.id);
+                            }
+                        });
+                        observer.observe(interactingHost, {
+                            attributes: true,
+                            attributeFilter: ["data-canvas-viewport-interacting", "data-canvas-node-dragging"],
+                        });
+                        deferredHoverObserverRef.current = observer;
+                    }
                     return;
                 }
                 setHovered(true);
                 onHoverStart(data.id);
             }}
             onMouseLeave={() => {
+                pointerInsideRef.current = false;
+                deferredHoverObserverRef.current?.disconnect();
+                deferredHoverObserverRef.current = null;
                 if (!hovered) return;
                 setHovered(false);
                 onHoverEnd(data.id);

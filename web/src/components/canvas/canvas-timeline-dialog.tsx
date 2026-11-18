@@ -8,6 +8,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
 
 import { ArrowLeft, Clapperboard } from "lucide-react";
+import { useTimelineEdgeAutoScroll } from "@/components/canvas/use-timeline-edge-auto-scroll";
 import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
 
 import {
@@ -19,7 +20,7 @@ import { CanvasTimelinePreview } from "./canvas-timeline-preview";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { buildTimelineFromNodes, isNodeInTimeline, syncTimelineSubtitleClips } from "@/lib/timeline/timeline-build";
-import { canPlaceAt, clampClipDurationByNeighbors, findNearestAvailablePlacement, planClipMove } from "@/lib/timeline/timeline-placement";
+import { canPlaceAt, clampClipDurationByNeighbors, findNearestAvailablePlacement, planClipMove, resolveLeftClampedClipMove } from "@/lib/timeline/timeline-placement";
 import { computeSnap } from "@/lib/timeline/timeline-snap";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
 import { MIN_CLIP_DURATION_MS, getFitTimelineZoom, getTimelineTrackWidth, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
@@ -112,6 +113,7 @@ export function CanvasTimelineDialog({
     const dragRef = useRef<DragState>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const trackAreaRef = useRef<HTMLDivElement>(null);
+    const { updateEdgeAutoScroll, stopEdgeAutoScroll } = useTimelineEdgeAutoScroll(trackAreaRef);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const toolbarRef = useRef<HTMLDivElement>(null);
     const addGroupProbeRef = useRef<HTMLDivElement>(null);
@@ -242,18 +244,13 @@ export function CanvasTimelineDialog({
             clips: snapshot,
         });
         if (!placement && nextStartMs < clip.startMs) {
-            const minLeftStartMs = snapshot
-                .filter((item) => item.trackId === clip.trackId && item.id !== clipId && item.startMs < clip.startMs)
-                .reduce((sum, item) => sum + item.durationMs, 0);
-            if (minLeftStartMs < clip.startMs) {
-                placement = planClipMove({
-                    clipId,
-                    trackId: clip.trackId,
-                    startMs: Math.max(nextStartMs, minLeftStartMs),
-                    durationMs: clip.durationMs,
-                    clips: snapshot,
-                });
-            }
+            placement = resolveLeftClampedClipMove({
+                clipId,
+                trackId: clip.trackId,
+                startMs: nextStartMs,
+                durationMs: clip.durationMs,
+                clips: snapshot,
+            });
         }
         if (!placement) return;
         // 每帧都从快照重建整条轨道：只更新本帧涉及的片段，会把上一帧推开的片段留在它当时的位置，
@@ -322,6 +319,7 @@ export function CanvasTimelineDialog({
         if (!drag) return;
         if (pointerId !== undefined && drag.pointerId !== pointerId) return;
         dragRef.current = null;
+        stopEdgeAutoScroll();
         setClipDragging(false);
         const captureEl = drag.captureElement;
         if (captureEl?.hasPointerCapture?.(drag.pointerId)) {
@@ -331,7 +329,7 @@ export function CanvasTimelineDialog({
                 // 指针已释放或未捕获时忽略
             }
         }
-    }, []);
+    }, [stopEdgeAutoScroll]);
 
     useEffect(() => {
         if (!clipDragging) return;
@@ -389,24 +387,10 @@ export function CanvasTimelineDialog({
         }
     };
 
-    const applyClipPointerMove = (pointerId: number, clientX: number) => {
+    const applyClipStepAtClientX = (clientX: number) => {
         const drag = dragRef.current;
-        if (!drag || pointerId !== drag.pointerId) return;
+        if (!drag) return;
         const container = trackAreaRef.current;
-        if (container) {
-            const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth);
-            if (maxScroll > 0) {
-                const containerRect = container.getBoundingClientRect();
-                const edgeZone = 28;
-                if (clientX < drag.startClientX && clientX < containerRect.left + edgeZone && container.scrollLeft > 0) {
-                    const step = Math.ceil((containerRect.left + edgeZone - clientX) * 0.6);
-                    container.scrollLeft = Math.max(0, container.scrollLeft - step);
-                } else if (clientX > drag.startClientX && clientX > containerRect.right - edgeZone && container.scrollLeft < maxScroll) {
-                    const step = Math.ceil((clientX - (containerRect.right - edgeZone)) * 0.6);
-                    container.scrollLeft = Math.min(maxScroll, container.scrollLeft + step);
-                }
-            }
-        }
         const scrollDeltaPx = (container?.scrollLeft ?? 0) - drag.startScrollLeft;
         const deltaMs = Math.round((clientX - drag.startClientX + scrollDeltaPx) / Math.max(pxPerMs, 1e-6));
         if (drag.mode === "move") {
@@ -423,6 +407,15 @@ export function CanvasTimelineDialog({
                 durationMs: drag.originalDurationMs,
             });
         }
+    };
+
+    const applyClipPointerMove = (pointerId: number, clientX: number) => {
+        const drag = dragRef.current;
+        if (!drag || pointerId !== drag.pointerId) return;
+        const allowScroll =
+            (clientX < drag.startClientX && (trackAreaRef.current?.scrollLeft ?? 0) > 0) ||
+            clientX > drag.startClientX;
+        updateEdgeAutoScroll(clientX, applyClipStepAtClientX, allowScroll);
     };
     applyClipPointerMoveRef.current = applyClipPointerMove;
 

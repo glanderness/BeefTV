@@ -105,11 +105,57 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 			Size: 10, SHA256: hash,
 		},
 	})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cnb-missing" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/cnb-verified" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"schema": 1,
+				"repository": "beeftv-downloads/desktop",
+				"version": "depth-runtime-v2",
+				"verification": "anonymous-resume-sha256",
+				"assets": [
+					{"name": "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001", "size": 10, "sha256": "` + hash + `"},
+					{"name": "video_depth_anything_vits.pth", "size": 10, "sha256": "` + hash + `"}
+				]
+			}`))
+			return
+		}
 		_, _ = w.Write(signed)
 	}))
 	defer server.Close()
 
+	oldRecordURL := depthCNBRecordURL
+	t.Cleanup(func() { depthCNBRecordURL = oldRecordURL })
+
+	// 1. Before CNB depth-runtime-v2 sync completes (404 record): COS leads, zero unverified CNB 404 URLs.
+	depthCNBRecordURL = server.URL + "/cnb-missing"
+	manifestNoCNB, artifactNoCNB, err := loadArtifacts(context.Background(), EnsureOptions{
+		Platform:         "windows-amd64",
+		Variant:          "cuda",
+		ManifestURL:      server.URL + "/manifest.v2.json",
+		TrustedPublicKey: public,
+	})
+	if err != nil {
+		t.Fatalf("loadArtifacts (no CNB): %v", err)
+	}
+	wantPart1NoCNB := []string{
+		"https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+		"https://updates.beefapi.com/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+		"https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+	}
+	if !reflect.DeepEqual(artifactNoCNB.Parts[0].URLs, wantPart1NoCNB) {
+		t.Fatalf("part[0] URLs without CNB = %#v, want %#v", artifactNoCNB.Parts[0].URLs, wantPart1NoCNB)
+	}
+	if strings.HasPrefix(manifestNoCNB.Model.URLs[0], "https://cnb.cool/") {
+		t.Fatalf("expected unverified CNB URL omitted from model URLs, got %#v", manifestNoCNB.Model.URLs)
+	}
+
+	// 2. Once CNB verification record matches size + SHA-256: CNB is promoted to #1 ahead of COS.
+	depthCNBRecordURL = server.URL + "/cnb-verified"
 	manifest, artifact, err := loadArtifacts(context.Background(), EnsureOptions{
 		Platform:         "windows-amd64",
 		Variant:          "cuda",
@@ -117,7 +163,7 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 		TrustedPublicKey: public,
 	})
 	if err != nil {
-		t.Fatalf("loadArtifacts: %v", err)
+		t.Fatalf("loadArtifacts (verified CNB): %v", err)
 	}
 	wantPart1 := []string{
 		"https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",

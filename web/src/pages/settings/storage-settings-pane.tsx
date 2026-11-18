@@ -2,12 +2,6 @@ import { useEffect, useState } from "react";
 import { App, Button, Input, Switch } from "antd";
 import { FolderOpen } from "lucide-react";
 import { getAutoDownloadGeneratedMedia, setAutoDownloadGeneratedMedia } from "@/lib/auto-download-preference";
-import {
-    getTaskCompletionSoundEnabled,
-    onTaskCompletionSoundChange,
-    playTaskCompletionChime,
-    setTaskCompletionSoundEnabled,
-} from "@/lib/task-completion-sound";
 import { onStorageNamespaceChange } from "@/lib/user-scope";
 import { getDesktopAppBinding, type DesktopStorageUsage } from "@/services/desktop-runtime";
 import {
@@ -38,10 +32,8 @@ export function StorageSettingsPane() {
     const [savingCanvasLimit, setSavingCanvasLimit] = useState(false);
     const [canvasLimitError, setCanvasLimitError] = useState("");
     const [autoDownloadGeneratedMedia, setAutoDownloadGeneratedMediaState] = useState<boolean>(() => getAutoDownloadGeneratedMedia());
-    const [taskCompletionSoundEnabled, setTaskCompletionSoundEnabledState] = useState<boolean>(() => getTaskCompletionSoundEnabled());
     const [errorSummary, ...errorDetails] = error.split("\n\n");
     useEffect(() => onStorageNamespaceChange(() => setAutoDownloadGeneratedMediaState(getAutoDownloadGeneratedMedia())), []);
-    useEffect(() => onTaskCompletionSoundChange(() => setTaskCompletionSoundEnabledState(getTaskCompletionSoundEnabled())), []);
     useEffect(() => {
         let active = true;
         void getCanvasDocumentLimitMB().then((limitMB) => {
@@ -189,24 +181,6 @@ export function StorageSettingsPane() {
                             setAutoDownloadGeneratedMedia(checked);
                             setAutoDownloadGeneratedMediaState(checked);
                             message.success(checked ? "已开启生成完成后自动下载" : "已关闭生成完成后自动下载");
-                        }}
-                    />
-                </div>
-                <div className="flex items-center justify-between gap-4 border-t border-border pt-4">
-                    <div className="min-w-0 space-y-1">
-                        <div className="text-sm font-medium">任务完成提示音</div>
-                        <p className="text-sm leading-6 text-foreground/60">
-                            画布或创作任务生成完成后播放轻柔提示音，多任务同时完成时自动合并提醒
-                        </p>
-                    </div>
-                    <Switch
-                        checked={taskCompletionSoundEnabled}
-                        aria-label="任务完成提示音"
-                        onChange={(checked) => {
-                            setTaskCompletionSoundEnabled(checked);
-                            setTaskCompletionSoundEnabledState(checked);
-                            if (checked) playTaskCompletionChime({ force: true });
-                            message.success(checked ? "已开启任务完成提示音" : "已关闭任务完成提示音");
                         }}
                     />
                 </div>
