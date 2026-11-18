@@ -67,6 +67,7 @@ export function taskAttentionReason(task: GenerationTask) {
             outcome.reason === "settlement_pending" ||
             outcome.reason === "billing_pending" ||
             outcome.reason === "reconcile_pending" ||
+            outcome.reason === "cancelled_result_unconfirmed" ||
             outcome.reason === "charged_result_unrecoverable" ||
             outcome.reason === "result_unrecoverable" ||
             outcome.reason === "no_result" ||
@@ -89,12 +90,14 @@ export function taskAttentionReason(task: GenerationTask) {
 }
 
 export function providerCancelStatusLabel(task: GenerationTask) {
+    const outcome = normalizeTaskOutcome(task.outcome);
+    if (outcome?.reason === "cancelled_result_unconfirmed") return taskOutcomeCopy(outcome).message;
     if (task.providerCancelStatus === "requested") return "已请求上游取消，正在等待确认";
     if (task.providerCancelStatus === "confirmed") return "上游已确认取消";
     if (task.providerCancelStatus === "uncertain") {
         return task.providerCancelError || "上游无法确认取消，状态待确认";
     }
-    return "任务已取消，可按原输入重新提交";
+    return "任务已取消，请核对原任务的结果与扣费状态";
 }
 
 export function statusDotClassName(target: TaskStatus | Pick<GenerationTask, "status" | "outcome">) {

@@ -127,8 +127,9 @@ function ActiveTaskCard({
     const showsProgress = generationTaskShowsProgress(task);
     const progress = showsProgress && typeof task.progress === "number" ? Math.max(0, Math.min(100, Math.round(task.progress))) : showsProgress && task.status === "queued" ? 0 : undefined;
     const startedAt = task.startedAt || task.createdAt;
-    const elapsedMs = Math.max(0, now - parseTime(startedAt));
-    const durationLabel = `${task.status === "queued" ? "已等待" : "已运行"} ${formatDuration(elapsedMs)}`;
+    const ended = task.status !== "queued" && task.status !== "running";
+    const elapsedMs = Math.max(0, (ended && task.completedAt ? parseTime(task.completedAt) : now) - parseTime(startedAt));
+    const durationLabel = `${task.status === "queued" ? "已等待" : ended ? "执行耗时" : "已运行"} ${formatDuration(elapsedMs)}`;
     const statusTone = task.status === "running" ? theme.accent.primary : theme.node.muted;
     const transition = reducedMotion ? { duration: 0 } : aceternityMotion.spring.panel;
 

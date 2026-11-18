@@ -136,6 +136,8 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 
 `phase` 为 `running`（排队或执行中）、`fetching`（结果正在入库）、`ready`（已保存）、`retrievable`（等待自动取回）或 `failed`。`regenerate` 为 `allowed`、`confirm` 或 `blocked`，分别表达可再次生成、可能重复付费需确认、任务仍在运行或正在等待取回结果暂不能重新生成。审核失败（`input_rejected`）不代表没扣钱，归为 `confirm`。`reason` 是机器原因，如 `task_running`、`result_ready`、`result_fetching`、`delivery_pending`、`image_recovery_pending`、`provider_result_pending`、`result_unrecoverable`、`no_result`、`input_rejected`、`evidence_unavailable`、`task_failed`。
 
+已取消的图片、视频、音频或超分任务若原提交结果仍未确认，返回 `phase=failed, regenerate=blocked, reason=cancelled_result_unconfirmed`，展示为“结果待确认”。取消已停止本地执行，该任务不进入自动结果恢复扫描，也不再出现在 `activeOnly=true` 列表；不能据此断言上游没有生成或没有扣费。用户需在原渠道核对结果与扣费，客户端不得重新提交或显示为“正在取回”。已确认无结果、已退款等结论仍按实际证据返回。任务执行耗时以 `completedAt` 为结束时间；画布无活跃任务时保留低频发现查询，以发现其他入口新建的任务。
+
 这些字段由已持久化的任务、派发、提交与交付事实计算，不解析错误文案；读证据失败不会当成没有结果。`running` 任务在进程重启、租约过期后仍显示 `running`，不改成 `cancelled`。任务的 `status`、`stage`、`resultState`、`outputs` 与旧客户端消费字段继续返回。图片订阅使用现有任务读取轮询，不新增独立推送协议；文本 SSE 的事件格式不变。
 
 后台可以自动按原成功回执恢复失败图片，包括没有路由记录的历史任务，然后走原下载与画布绑定流程。提交未确认且拥有已声明幂等协议的冻结图片请求时，只使用原请求字节、端点、Header（含原凭据身份）和原 `Idempotency-Key` 重发，不用当前输入重建请求，不创建新路由或生成任务。原 route attempt 的渠道必须仍可用；停用、删除、换源或换 token 时停止自动 POST，不借同模型的其他渠道重发，投影为 `failed + confirm`。当前渠道配置只用于发送前核对，不替换原请求。没有可验证的恢复证据、回执不完整或过期时，投影明确表示无法取回；没有结果不代表没有计费。
