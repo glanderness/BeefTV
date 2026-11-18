@@ -107,11 +107,11 @@ func ProcessCanvasMedia(
 		if format == "" {
 			return localasset.RecoveredArtifact{}, fmt.Errorf("此素材格式暂不支持自动处理")
 		}
-		candidates, err := cw.MediaCommandCandidates(input.Node, source.Width, source.Height)
+		bin, err := mediatools.ResolveFFmpeg()
 		if err != nil {
 			return localasset.RecoveredArtifact{}, err
 		}
-		bin, err := mediatools.ResolveFFmpeg()
+		candidates, err := cw.MediaCommandCandidates(bin, input.Node, source.Width, source.Height)
 		if err != nil {
 			return localasset.RecoveredArtifact{}, err
 		}

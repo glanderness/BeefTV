@@ -520,7 +520,12 @@ func (p preparedMedia) read(ctx context.Context, operation string, args mediaArg
 		mime, output = "audio/wav", filepath.Join(dir, "clip.wav")
 		command = append(command, "-vn", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le")
 	} else {
-		command = append(command, "-vf", "scale=640:-2", "-c:v", "libx264", "-preset", "fast", "-crf", "27", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart")
+		if !mediatools.SupportsH264Encode(bin) {
+			return MediaResult{}, PreconditionFailed("media_tool_unavailable", "本机媒体编码器缺少 H.264 视频编码支持", nil)
+		}
+		command = append(command, "-vf", "scale=640:-2")
+		command = append(command, mediatools.PreferredH264VideoArgs(bin, "fast", "27", "1500k", "2500k")...)
+		command = append(command, "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart")
 	}
 	if _, err := mediaCommand(ctx, bin, append(command, "-fs", strconv.FormatInt(maxMediaPartBytes+1, 10), "-y", output)...); err != nil {
 		return MediaResult{}, err
@@ -547,7 +552,14 @@ func (b *limitedMediaLog) Write(p []byte) (int, error) {
 }
 
 func mediaCommand(ctx context.Context, bin string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
+	safeArgs := make([]string, 0, len(args)+4)
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-i" && (i < 2 || args[i-2] != "-protocol_whitelist") {
+			safeArgs = append(safeArgs, "-protocol_whitelist", "file,pipe")
+		}
+		safeArgs = append(safeArgs, args[i])
+	}
+	cmd := exec.CommandContext(ctx, bin, safeArgs...)
 	mediatools.HideConsole(cmd)
 	var log limitedMediaLog
 	cmd.Stdout = &log

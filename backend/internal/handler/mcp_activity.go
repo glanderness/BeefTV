@@ -46,6 +46,7 @@ func MCPActivityRecorder(repo *repository.Repository, userID string, quotaPerYua
 			return
 		}
 		event.call.UserID = userID
+		event.call.CreatedAt = time.Now().UTC()
 		if len(event.taskIDs) > 0 {
 			event.call.QuotaPerYuan = quotaPerYuan()
 		}

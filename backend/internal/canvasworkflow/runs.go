@@ -35,6 +35,7 @@ type RunHost interface {
 	// Generate submits a generation step from the template's private recipe.
 	Generate(user, operation, recipeCipher string, n Node, nodes map[string]Node, steps map[string]*Step) (*model.Task, error)
 	ReplacementSegment(user, operation, cipher string, n Node, plan ReplacementPlan, index int, character string) (*model.Task, error)
+	ReplacementLimitsForNode(cipher, nodeID string) ReplacementLimits
 	Describe(user, operation string, n Node, resource string) (*model.Task, error)
 	Upscale(user, operation string, n Node, resource string) (*model.Task, error)
 	CanvasMedia(user, operation string, n Node, resource string) (*model.Task, error)

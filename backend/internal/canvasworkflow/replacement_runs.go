@@ -60,6 +60,20 @@ func replacementReference(host CompileHost, user, id, kind string) (map[string]a
 	return map[string]any{"id": r.ID, "resourceId": r.ID, "storageKey": "resource:" + r.ID, "type": kind, "mimeType": r.MimeType, "bytes": r.Size, "width": r.Width, "height": r.Height, "durationMs": r.DurationMs}, nil
 }
 
+func (h runHost) ReplacementLimitsForNode(cipher, nodeID string) ReplacementLimits {
+	if h.cfg.Compile != nil && cipher != "" {
+		if recipes, err := DecodeRecipes(h.cfg.Compile.DecryptSetting, cipher); err == nil {
+			if rec, ok := recipes[nodeID]; ok {
+				cfgMap, _ := rec.Request.Input["config"].(map[string]any)
+				if lim, limOK := ResolveReplacementCapability(stringValue(cfgMap["interfaceType"]), rec.Request.Model, cfgMap["capabilityConfig"]); limOK {
+					return lim
+				}
+			}
+		}
+	}
+	return DefaultReplacementLimits()
+}
+
 func (h runHost) ReplacementSegment(user, operation, cipher string, n Node, p ReplacementPlan, index int, character string) (*model.Task, error) {
 	host := h.cfg.Compile
 	recipes, err := DecodeRecipes(host.DecryptSetting, cipher)
@@ -86,11 +100,30 @@ func replacementRequest(host CompileHost, user, operation string, n Node, recipe
 	if e = json.Unmarshal(raw, &req); e != nil {
 		return req, e
 	}
-	if req.Model != characterReplacementModel || req.Input == nil {
+	if strings.TrimSpace(req.Model) == "" || req.Input == nil {
 		return req, BadRequest("人物替换模型配方无效，请重新保存模板")
 	}
 	if e = RefreshCredentials(host, req.Input, recipe.ChannelID); e != nil {
 		return req, e
+	}
+	config, _ := req.Input["config"].(map[string]any)
+	if config == nil {
+		return req, BadRequest("人物替换模型配置缺失")
+	}
+	limits, ok := ResolveReplacementCapability(stringValue(config["interfaceType"]), req.Model, config["capabilityConfig"])
+	if !ok {
+		return req, BadRequest("人物替换模型能力配置无效，请重新保存模板")
+	}
+	segSeconds := p.Segments[index].GenerationSeconds
+	if segSeconds < limits.MinSeconds || segSeconds > limits.MaxSeconds {
+		return req, BadRequest("人物替换片段时长超出所选模型支持范围")
+	}
+	quality := limits.DefaultQuality
+	if explicitQuality, hasQuality := n.Config["vquality"].(string); hasQuality && explicitQuality != "" {
+		if !limits.SupportsQuality(explicitQuality) {
+			return req, BadRequest("所选模型不支持 " + explicitQuality + " 清晰度")
+		}
+		quality = explicitQuality
 	}
 	video, e := replacementReference(host, user, p.Segments[index].ResourceID, "video")
 	if e != nil {
@@ -99,6 +132,28 @@ func replacementRequest(host CompileHost, user, operation string, n Node, recipe
 	image, e := replacementReference(host, user, character, "image")
 	if e != nil {
 		return req, e
+	}
+	if videoBytes, _ := video["bytes"].(int64); limits.MaxVideoBytes > 0 && videoBytes > limits.MaxVideoBytes {
+		return req, BadRequest("人物替换参考视频片段大小超出所选模型上限")
+	}
+	if vidW, okW := video["width"].(int); okW && vidW > 0 {
+		if vidW < limits.MinVideoWidth || vidW > limits.MaxVideoWidth {
+			return req, BadRequest("参考视频片段宽度超出所选模型范围")
+		}
+	}
+	if vidH, okH := video["height"].(int); okH && vidH > 0 {
+		if vidH < limits.MinVideoHeight || vidH > limits.MaxVideoHeight {
+			return req, BadRequest("参考视频片段高度超出所选模型范围")
+		}
+	}
+	if imageBytes, _ := image["bytes"].(int64); limits.MaxImageBytes > 0 && imageBytes > limits.MaxImageBytes {
+		return req, BadRequest("目标人物参考图大小超出所选模型上限")
+	}
+	if p.Height > 0 {
+		aspect := float64(p.Width) / float64(p.Height)
+		if aspect < limits.MinVideoAspect || aspect > limits.MaxVideoAspect {
+			return req, BadRequest("原视频画面比例超出所选模型支持范围")
+		}
 	}
 	prompt := "以参考视频1为唯一动作、镜头、时间顺序和场景依据，仅将其中唯一主要人物替换成参考图片1中的成年人物。保持参考图片1的同一身份、面部、发型和服装，全片一致。逐时刻保持参考视频人物的姿态、运动轨迹、肢体接触和遮挡关系，保留背景、道具、镜头运动与构图；不得重新编排动作，不得增加人物，不得出现原人物残影、肢体断裂、脸部漂移或闪烁。保持参考视频完整动作时序和画幅比例，从第一帧开始对齐；视频参考结束后保持最后画面。"
 	if text, ok := n.Config["instructions"].(string); ok && text != "" {
@@ -109,16 +164,9 @@ func replacementRequest(host CompileHost, user, operation string, n Node, recipe
 	req.Input["referenceVideos"] = []any{video}
 	req.Input["referenceImages"] = []any{image}
 	req.Input["metadata"] = map[string]any{"source": "canvas-workflow", "clientOperationId": operation, "videoEditOperation": "reference_to_video"}
-	config, _ := req.Input["config"].(map[string]any)
-	if config == nil {
-		return req, BadRequest("人物替换模型配置缺失")
-	}
-	config["videoSeconds"] = fmt.Sprint(p.Segments[index].GenerationSeconds)
+	config["videoSeconds"] = fmt.Sprint(segSeconds)
 	config["size"] = replacementRatio(p.Width, p.Height)
-	config["vquality"] = "720p"
-	if quality, ok := n.Config["vquality"].(string); ok {
-		config["vquality"] = quality
-	}
+	config["vquality"] = quality
 	config["generateAudio"] = false
 	return req, nil
 }
@@ -173,7 +221,12 @@ func (r *Runs) advanceReplacement(row *model.CanvasWorkflowRun, n Node, d Defini
 	}
 	if task == nil {
 		if state.Plan == nil {
-			local := Node{ID: n.ID, Role: "operation", MediaType: "text", OperationID: ReplacementPrepareOperation, OperationVersion: 1, Config: map[string]any{"maxSegments": 12}}
+			lim := DefaultReplacementLimits()
+			if r.host != nil {
+				lim = r.host.ReplacementLimitsForNode(row.RecipeCipher, n.ID)
+			}
+			limJSON, _ := json.Marshal(lim)
+			local := Node{ID: n.ID, Role: "operation", MediaType: "text", OperationID: ReplacementPrepareOperation, OperationVersion: 1, Config: map[string]any{"maxSegments": 12, "minSeconds": lim.MinSeconds, "maxSeconds": lim.MaxSeconds, "limits": string(limJSON)}}
 			if limit, ok := n.Config["maxSegments"]; ok {
 				local.Config["maxSegments"] = limit
 			}

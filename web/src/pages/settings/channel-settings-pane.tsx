@@ -373,7 +373,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                                     <ModelEditorModal
                                         open
                                         rootClassName="channel-settings-editor"
-                                        title={channel.id === newChannelId ? "新增自定义渠道" : "编辑自定义渠道"}
+                                        title={builtinBeefTV ? "编辑官方渠道" : channel.id === newChannelId ? "新增自定义渠道" : "编辑自定义渠道"}
                                         subtitle={channel.name}
                                         onClose={closeChannelEditor}
                                         footer={

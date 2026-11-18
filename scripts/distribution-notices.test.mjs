@@ -51,15 +51,35 @@ test("Windows notices use the packager's pinned build and source artifact receip
 test("macOS source download names and hashes match the generated packet", (t) => {
     const root = fixture(t);
     mkdirSync(resolve(root, "dist"));
-    const name = "BeefTV-v1.7.28-ffprobe-darwin-arm64-sources.tar.gz";
+    mkdirSync(resolve(root, "media-runtime"));
+    writeFileSync(resolve(root, "media-runtime", "manifest.json"), JSON.stringify({
+        probeSHA256: "probe-hash-fixture",
+        encoderSHA256: "encoder-hash-fixture",
+    }));
+    const name = "BeefTV-v1.7.28-ffmpeg-darwin-arm64-sources.tar.gz";
     writeFileSync(resolve(root, "dist", name), "source-packet");
-    const files = distributionNotices({ root, version: "v1.7.28", platform: "darwin-arm64" });
-    const source = JSON.parse(files.get("sources.json")).components[1].source;
+    const files = distributionNotices({ root, version: "v1.7.28", platform: "darwin-arm64", mediaRuntimeDir: resolve(root, "media-runtime") });
+    const darwinComponent = JSON.parse(files.get("sources.json")).components[1];
+    assert.equal(darwinComponent.id, "ffmpeg-darwin-arm64");
+    assert.deepEqual(darwinComponent.binaryHashes, { ffmpeg: "encoder-hash-fixture", ffprobe: "probe-hash-fixture" });
+    const source = darwinComponent.source;
     assert.equal(source.name, name);
     assert.equal(source.size, 13);
     assert.equal(source.sha256, createHash("sha256").update("source-packet").digest("hex"));
     assert.ok(source.url.endsWith(`/v1.7.28/${name}`));
     assert.ok(files.get("index.html").toString().includes(source.url));
+
+    // Verify BEEFTV_MEDIA_RUNTIME_DIR env fallback used by Vite frontend build.
+    const prevEnv = process.env.BEEFTV_MEDIA_RUNTIME_DIR;
+    process.env.BEEFTV_MEDIA_RUNTIME_DIR = resolve(root, "media-runtime");
+    try {
+        const viteFiles = distributionNotices({ root, version: "v1.7.28", platform: "darwin-arm64" });
+        const viteDarwin = JSON.parse(viteFiles.get("sources.json")).components[1];
+        assert.deepEqual(viteDarwin.binaryHashes, { ffmpeg: "encoder-hash-fixture", ffprobe: "probe-hash-fixture" });
+    } finally {
+        if (prevEnv === undefined) delete process.env.BEEFTV_MEDIA_RUNTIME_DIR;
+        else process.env.BEEFTV_MEDIA_RUNTIME_DIR = prevEnv;
+    }
 });
 
 test("WASM source links require the matching published core", (t) => {

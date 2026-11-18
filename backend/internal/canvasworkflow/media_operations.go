@@ -150,10 +150,21 @@ type MediaCommandSpec struct {
 	Mime string
 }
 
-func MediaCommandCandidates(n Node, width, height int) ([]MediaCommandSpec, error) {
+func MediaCommandCandidates(bin string, n Node, width, height int) ([]MediaCommandSpec, error) {
 	args, ext, mime, err := MediaCommand(n, width, height)
 	if err != nil {
 		return nil, err
+	}
+	if n.OperationID == "video.crop" && len(args) >= 2 && bin != "" {
+		if !mediatools.SupportsH264Encode(bin) {
+			return nil, fmt.Errorf("本机媒体编码器缺少 H.264 视频编码支持")
+		}
+		encode := append([]string{args[0], args[1]}, mediatools.PreferredH264VideoArgs(bin, "veryfast", "", "6M", "10M")...)
+		encode = append(encode, "-c:a", "aac", "-movflags", "+faststart")
+		return []MediaCommandSpec{{Args: encode, Ext: ext, Mime: mime}}, nil
+	}
+	if n.OperationID == "video.audio" && bin != "" && !mediatools.SupportsFFmpegEncoder(bin, "libmp3lame") {
+		return []MediaCommandSpec{{Args: []string{"-map", "0:a:0", "-vn", "-c:a", "pcm_s16le"}, Ext: ".wav", Mime: "audio/wav"}}, nil
 	}
 	candidates := []MediaCommandSpec{{Args: args, Ext: ext, Mime: mime}}
 	if n.OperationID == "video.audio" {

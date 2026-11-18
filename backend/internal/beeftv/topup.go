@@ -195,7 +195,9 @@ func (s *Service) applyRemoteConnectionViewIfCurrent(seq uint64, view connection
 	if strings.TrimSpace(view.Market) != "" {
 		s.state.Market = strings.TrimSpace(view.Market)
 	}
-	s.state.QuotaPerUnit = view.QuotaPerUnit
+	if view.QuotaPerUnit > 0 {
+		s.state.QuotaPerUnit = view.QuotaPerUnit
+	}
 	s.state.Balance, s.state.BalanceCNY = normalizeRemoteBalance(view.BalanceCNY, view.Quota, s.state.Balance, s.state.BalanceCNY)
 	_ = s.persistState(s.state)
 }

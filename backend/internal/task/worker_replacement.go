@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -30,11 +31,8 @@ func replacementEncoder(ctx context.Context, bin string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.Contains(string(out), " libx264 ") {
-		return []string{"-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p"}, nil
-	}
-	if strings.Contains(string(out), " h264_videotoolbox ") {
-		return []string{"-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", "6M", "-maxrate", "10M", "-bufsize", "10M", "-pix_fmt", "yuv420p"}, nil
+	if strings.Contains(string(out), " libx264 ") || strings.Contains(string(out), " h264_videotoolbox ") {
+		return mediatools.PreferredH264VideoArgs(bin, "fast", "18", "6M", "10M"), nil
 	}
 	return nil, fmt.Errorf("本机媒体运行时缺少 H.264 编码器")
 }
@@ -115,8 +113,27 @@ func (w replacementMedia) prepareReplacement(task *model.Task, ctx context.Conte
 	if n, ok := input.Node.Config["maxSegments"].(float64); ok {
 		limit = int(n)
 	}
-	displayWidth := int(math.Ceil(float64(facts.Width) * facts.PixelAspectRatio))
-	if _, err = cw.PlanCharacterReplacement(displayWidth, facts.Height, fps, estimated, nil, limit); err != nil {
+	lim := cw.DefaultReplacementLimits()
+	if rawLim, ok := input.Node.Config["limits"].(string); ok && rawLim != "" {
+		lim = cw.ReplacementLimits{}
+		if err = json.Unmarshal([]byte(rawLim), &lim); err != nil {
+			return nil, fmt.Errorf("人物替换能力约束无法解析")
+		}
+	}
+	if v, ok := input.Node.Config["minSeconds"].(float64); ok && v > 0 {
+		lim.MinSeconds = int(v)
+	}
+	if v, ok := input.Node.Config["maxSeconds"].(float64); ok && v > 0 {
+		lim.MaxSeconds = int(v)
+	}
+	if err = lim.Validate(); err != nil {
+		return nil, err
+	}
+	displayWidth, displayHeight := facts.DisplayDimensions()
+	if _, err = cw.PlanCharacterReplacement(displayWidth, displayHeight, fps, estimated, nil, limit, lim); err != nil {
+		return nil, err
+	}
+	if _, _, err = lim.ReferenceScaleDimensions(displayWidth, displayHeight); err != nil {
 		return nil, err
 	}
 	encoder, err := replacementEncoder(ctx, bin)
@@ -146,22 +163,23 @@ func (w replacementMedia) prepareReplacement(task *model.Task, ctx context.Conte
 		v, _ := strconv.ParseFloat(string(m[1]), 64)
 		cuts = append(cuts, int(math.Round(v*float64(fps))))
 	}
-	p, err := cw.PlanCharacterReplacement(normalizedFacts.Width, normalizedFacts.Height, fps, int(normalizedFacts.VideoFrames), cuts, limit)
+	p, err := cw.PlanCharacterReplacement(normalizedFacts.Width, normalizedFacts.Height, fps, int(normalizedFacts.VideoFrames), cuts, limit, lim)
 	if err != nil {
 		return nil, err
 	}
 	p.SourceResourceID = input.ResourceID
-	// Reference geometry meets provider bounds without changing the displayed aspect.
-	scale := math.Max(1, math.Max(300/float64(min(p.Width, p.Height)), math.Sqrt(409600/float64(p.Width*p.Height))))
-	scale = math.Min(scale, 2000/float64(max(p.Width, p.Height)))
-	rw, rh := int(math.Ceil(float64(p.Width)*scale/2))*2, int(math.Ceil(float64(p.Height)*scale/2))*2
+	rw, rh, err := lim.ReferenceScaleDimensions(p.Width, p.Height)
+	if err != nil {
+		return nil, err
+	}
 	videos := make([]map[string]any, 0, len(p.Segments))
 	for i := range p.Segments {
 		segment := p.Segments[i]
 		path := filepath.Join(dir, fmt.Sprintf("segment-%d.mp4", i))
 		var file *os.File
+		padSeconds := max(2, (segment.ReferenceFrames+fps-1)/fps)
 		resource, e := w.resources.RecoverOwned(task.UserID, fmt.Sprintf("%s:segment:%d", task.ID, i), func() (localasset.RecoveredArtifact, error) {
-			filter := fmt.Sprintf("trim=start_frame=%d:end_frame=%d,setpts=PTS-STARTPTS,scale=%d:%d,tpad=stop_mode=clone:stop_duration=2,trim=end_frame=%d", segment.ReferenceStartFrame, segment.ReferenceEndFrame, rw, rh, segment.ReferenceFrames)
+			filter := fmt.Sprintf("trim=start_frame=%d:end_frame=%d,setpts=PTS-STARTPTS,scale=%d:%d,tpad=stop_mode=clone:stop_duration=%d,trim=end_frame=%d", segment.ReferenceStartFrame, segment.ReferenceEndFrame, rw, rh, padSeconds, segment.ReferenceFrames)
 			args := []string{"-v", "error", "-nostdin", "-y", "-i", normalized, "-an", "-vf", filter}
 			args = append(args, encoder...)
 			args = append(args, "-movflags", "+faststart", path)
@@ -174,6 +192,9 @@ func (w replacementMedia) prepareReplacement(task *model.Task, ctx context.Conte
 			}
 			if f.VideoFrames != int64(segment.ReferenceFrames) {
 				return localasset.RecoveredArtifact{}, fmt.Errorf("参考片段帧数不完整")
+			}
+			if stat, statErr := os.Stat(path); statErr == nil && lim.MaxVideoBytes > 0 && stat.Size() > lim.MaxVideoBytes {
+				return localasset.RecoveredArtifact{}, fmt.Errorf("参考视频片段大小超出所选模型上限")
 			}
 			file, e = os.Open(path)
 			if e != nil {
@@ -248,7 +269,7 @@ func (w replacementMedia) finishReplacement(task *model.Task, ctx context.Contex
 			if !f.HasVideo || f.DurationMs*int64(p.FPS)+1000 < int64(needed)*1000 {
 				return localasset.RecoveredArtifact{}, fmt.Errorf("第%d个生成视频时长不足，不能补帧冒充完整替换", i+1)
 			}
-			args = append(args, "-protocol_whitelist", "file,pipe", "-i", path)
+			args = append(args, "-i", path)
 			filters = append(filters, fmt.Sprintf("[%d:v]fps=%d,trim=start_frame=%d:end_frame=%d,setpts=PTS-STARTPTS,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1[v%d]", i+1, p.FPS, segment.StartFrame-segment.ReferenceStartFrame, needed, p.Width, p.Height, p.Width, p.Height, i))
 			fmt.Fprintf(&labels, "[v%d]", i)
 		}

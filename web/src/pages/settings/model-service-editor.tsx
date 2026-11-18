@@ -132,6 +132,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                             ? { ...current, modelProfiles: presetCatalogFor(preset).map((item) => serviceModelProfile(current, item, items)) }
                             : current;
                     });
+                } else if (pluginServices(items).some((item) => item.value === initial.interfaceType) || (servicePresetFor(initial) === "compatible" && Boolean(vendorPresetFor(initial, vendorPresets(items))))) {
+                    setMoreVendors(true);
                 }
             })
             .catch(() => { if (alive.current) setError("无法读取模型能力，请关闭后重试"); })

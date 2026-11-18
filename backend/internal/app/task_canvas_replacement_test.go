@@ -123,8 +123,10 @@ func TestReplacementNativeDisplayGeometryAndFractionalFPS(t *testing.T) {
 			}
 			if tc.rotate {
 				rotated := filepath.Join(t.TempDir(), "rotated.mp4")
-				if _, err := exec.Command(bin, "-v", "error", "-y", "-i", path, "-c", "copy", "-metadata:s:v:0", "rotate=90", rotated).CombinedOutput(); err != nil {
-					t.Fatal(err)
+				if out, err := exec.Command(bin, "-v", "error", "-y", "-display_rotation:v:0", "90", "-i", path, "-c", "copy", rotated).CombinedOutput(); err != nil {
+					if _, legacyErr := exec.Command(bin, "-v", "error", "-y", "-i", path, "-c", "copy", "-metadata:s:v:0", "rotate=90", rotated).CombinedOutput(); legacyErr != nil {
+						t.Fatalf("rotate fixture: %s (%v / %v)", out, err, legacyErr)
+					}
 				}
 				path = rotated
 			}
@@ -161,5 +163,93 @@ func TestReplacementNativeDisplayGeometryAndFractionalFPS(t *testing.T) {
 				t.Fatalf("display geometry changed: %+v", result.Plan)
 			}
 		})
+	}
+}
+
+func TestReplacementPrepareHonorsMinRefSecondsAxisBoundsAndCorruptLimits(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip(err)
+	}
+	svc, db := newTimelineTaskTestService(t)
+	svc.dataDir = t.TempDir()
+	path := filepath.Join(t.TempDir(), "short1080p.mp4")
+	if out, err := exec.Command(bin, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30", "-t", "1.0", "-c:v", "libx264", "-pix_fmt", "yuv420p", path).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %s %v", out, err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, _ := file.Stat()
+	source, err := svc.resourceDomain().RecoverOwned("owner", "hd-short-source", func() (localasset.RecoveredArtifact, error) {
+		return localasset.RecoveredArtifact{Kind: "video", FileName: "short1080p.mp4", MimeType: "video/mp4", Size: info.Size(), Width: 1920, Height: 1080, DurationMs: 1000, Body: file}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1) Corrupt limits JSON must fail closed instead of falling back to defaults.
+	badNode := cw.Node{ID: "prepare", Role: "operation", OperationID: cw.ReplacementPrepareOperation, OperationVersion: 1, MediaType: "text", Config: map[string]any{"maxSegments": 12, "limits": "{corrupt"}}
+	badRaw, _ := json.Marshal(map[string]any{"node": badNode, "resourceId": source.ID})
+	badTask := model.Task{ID: "bad-limits", UserID: "owner", Type: model.TaskTypeCanvasMediaTransform, Status: model.TaskStatusRunning, InputJSON: string(badRaw)}
+	if err := db.Create(&badTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.taskWorker().processCanvasMedia(&badTask, context.Background())
+	if savedBad, _ := svc.repo.TaskForUser("owner", badTask.ID); savedBad == nil || savedBad.Status != model.TaskStatusFailed {
+		t.Fatalf("accepted corrupt limits JSON: %+v", savedBad)
+	}
+
+	// 2) Tight MaxVideoBytes must fail closed when encoded reference segment exceeds limit.
+	tinyLim := cw.DefaultReplacementLimits()
+	tinyLim.MaxVideoBytes = 64
+	tinyLimJSON, _ := json.Marshal(tinyLim)
+	tinyNode := cw.Node{ID: "prepare", Role: "operation", OperationID: cw.ReplacementPrepareOperation, OperationVersion: 1, MediaType: "text", Config: map[string]any{"maxSegments": 12, "limits": string(tinyLimJSON)}}
+	tinyRaw, _ := json.Marshal(map[string]any{"node": tinyNode, "resourceId": source.ID})
+	tinyTask := model.Task{ID: "tiny-bytes", UserID: "owner", Type: model.TaskTypeCanvasMediaTransform, Status: model.TaskStatusRunning, InputJSON: string(tinyRaw)}
+	if err := db.Create(&tinyTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.taskWorker().processCanvasMedia(&tinyTask, context.Background())
+	if savedTiny, _ := svc.repo.TaskForUser("owner", tinyTask.ID); savedTiny == nil || savedTiny.Status != model.TaskStatusFailed {
+		t.Fatalf("accepted segment exceeding MaxVideoBytes=64: %+v", savedTiny)
+	}
+
+	// 3) MinRefSeconds=4 on a 1s 1920x1080 clip with 1280x720..1920x1080 bounds must pad to 120 frames and preserve >=1280x720.
+	lim := cw.DefaultReplacementLimits()
+	lim.MinRefSeconds, lim.MinSeconds, lim.MaxSeconds = 4, 4, 10
+	lim.MinVideoWidth, lim.MinVideoHeight = 1280, 720
+	lim.MaxVideoWidth, lim.MaxVideoHeight = 1920, 1080
+	limJSON, _ := json.Marshal(lim)
+	okNode := cw.Node{ID: "prepare", Role: "operation", OperationID: cw.ReplacementPrepareOperation, OperationVersion: 1, MediaType: "text", Config: map[string]any{"maxSegments": 12, "minSeconds": 4, "maxSeconds": 10, "limits": string(limJSON)}}
+	okRaw, _ := json.Marshal(map[string]any{"node": okNode, "resourceId": source.ID})
+	okTask := model.Task{ID: "hd-minref4", UserID: "owner", Type: model.TaskTypeCanvasMediaTransform, Status: model.TaskStatusRunning, InputJSON: string(okRaw)}
+	if err := db.Create(&okTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.taskWorker().processCanvasMedia(&okTask, context.Background()); err != nil {
+		t.Fatalf("prepare MinRefSeconds=4 failed: %v", err)
+	}
+	saved, _ := svc.repo.TaskForUser("owner", okTask.ID)
+	if saved == nil || saved.Status != model.TaskStatusSucceeded {
+		t.Fatalf("prepare MinRefSeconds=4 failed: %+v", saved)
+	}
+	var result struct {
+		Plan cw.ReplacementPlan `json:"replacementPlan"`
+	}
+	if err := json.Unmarshal([]byte(saved.ResultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Plan.Segments) != 1 || result.Plan.Segments[0].ReferenceFrames != 120 {
+		t.Fatalf("expected 120 padded reference frames, got %+v", result.Plan)
+	}
+	segRes, segBody, err := svc.OpenResource("owner", result.Plan.Segments[0].ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segBody.Close()
+	if segRes.Width < 1280 || segRes.Width > 1920 || segRes.Height < 720 || segRes.Height > 1080 {
+		t.Fatalf("prepared segment dimensions violated 1280x720..1920x1080: %dx%d", segRes.Width, segRes.Height)
 	}
 }

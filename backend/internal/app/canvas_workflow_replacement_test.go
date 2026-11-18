@@ -121,3 +121,74 @@ func TestReplacementReconcilesChildrenAcrossCheckpointCrash(t *testing.T) {
 		t.Fatalf("duplicated child tasks: %d", count)
 	}
 }
+
+func TestReplacementSegmentRejectsOutOfBoundsReferenceVideoDimensionsAndBytes(t *testing.T) {
+	s, db, _ := workflowFixture(t)
+	if err := db.Create(&model.Resource{ID: "seg-small-dim", UserID: "owner", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Width: 640, Height: 360, Size: 256, DurationMs: 4000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Resource{ID: "seg-large-bytes", UserID: "owner", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Width: 1280, Height: 720, Size: 2048, DurationMs: 4000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	n := cw.Node{ID: "replace", Title: "Replace", Role: "operation", OperationID: cw.CharacterReplacementOperation, OperationVersion: 1, MediaType: "video", Config: map[string]any{"modelOption": "channel::custom-hd"}}
+	d := cw.Definition{Version: 1, Nodes: []cw.Node{
+		{ID: "source", Role: "input", Title: "原视频", MediaType: "video"},
+		{ID: "character", Role: "input", Title: "参考图", MediaType: "image"}, n,
+	}, OutputNodeIDs: []string{n.ID}, Edges: []cw.Edge{{From: "source", To: n.ID, ToPort: "video"}, {From: "character", To: n.ID, ToPort: "character"}}}
+	rawDefinition, _ := json.Marshal(d)
+	capCfg := map[string]any{
+		"video": map[string]any{
+			"operations":  []string{"reference_to_video"},
+			"resolutions": []string{"720p"},
+			"duration":    map[string]any{"selection": "range", "min": 4, "max": 10, "default": 5},
+			"references": map[string]any{
+				"minImages":      1,
+				"maxImages":      2,
+				"maxVideos":      1,
+				"maxVideoBytes":  512,
+				"minVideoWidth":  1280,
+				"minVideoHeight": 720,
+				"maxVideoWidth":  1920,
+				"maxVideoHeight": 1080,
+			},
+		},
+	}
+	recipesRaw, _ := json.Marshal(cw.RecipesByNode{
+		n.ID: {
+			Request: cw.RecipeRequest{
+				Type:  "canvas_video",
+				Model: "custom-hd",
+				Input: map[string]any{"config": map[string]any{"interfaceType": "volcengine-ark-video", "capabilityConfig": capCfg}},
+			},
+		},
+	})
+	cipher, err := s.encryptSettingSecret(string(recipesRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, segID := range []string{"seg-small-dim", "seg-large-bytes"} {
+		p := cw.ReplacementPlan{
+			Width:            1280,
+			Height:           720,
+			FPS:              30,
+			SourceResourceID: "old-action",
+			Segments:         []cw.ReplacementSegment{{ResourceID: segID, GenerationSeconds: 4, ReferenceFrames: 120, EndFrame: 120, ReferenceEndFrame: 120}},
+		}
+		state, _ := json.Marshal(cw.Run{Steps: []cw.Step{
+			{NodeID: "source", Status: "succeeded", ResourceID: "old-action"},
+			{NodeID: "character", Status: "succeeded", ResourceID: "new-person"},
+			{NodeID: n.ID, Status: "running", Replacement: &cw.ReplacementProgress{PrepareTaskID: "done-prep", Plan: &p}},
+		}})
+		row := model.CanvasWorkflowRun{ID: "reject-" + segID, UserID: "owner", ClientOperationID: "op-" + segID, Status: "running", DefinitionJSON: string(rawDefinition), StateJSON: string(state), RecipeCipher: cipher}
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		s.workflowRuns().Advance(&row)
+		if err := db.First(&row, "id = ?", row.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if row.Status != "failed" {
+			t.Fatalf("expected segment %s to be rejected, got status=%s state=%s", segID, row.Status, row.StateJSON)
+		}
+	}
+}

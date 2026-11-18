@@ -90,8 +90,23 @@ func (r *Renderer) Render(ctx context.Context, plan *Plan, progress Progress) (R
 			return fail(fmt.Errorf("写入字幕文件失败"))
 		}
 	}
+	hasFilterListing := mediatools.SupportsFFmpegFilter(ffmpegBin, "null")
+	if hasFilterListing && !mediatools.SupportsH264Encode(ffmpegBin) {
+		return fail(fmt.Errorf("本机媒体编码器缺少 H.264 视频编码支持"))
+	}
+	encodeOpts := EncodeOptions{
+		VideoCodecArgs:    mediatools.PreferredH264VideoArgs(ffmpegBin, "veryfast", "23", "6M", "10M"),
+		ProtocolWhitelist: "file,pipe",
+	}
+	if plan.Output.BurnSubtitles && plan.SubtitleSRT != "" && hasFilterListing && !mediatools.SupportsFFmpegFilter(ffmpegBin, "subtitles") {
+		overlays, overlayErr := RasterizeSubtitleOverlays(workDir, *plan)
+		if overlayErr != nil {
+			return fail(overlayErr)
+		}
+		encodeOpts.SubtitleOverlays = overlays
+	}
 	target := filepath.Join(workDir, renderOutputName)
-	args := BuildFFmpegArgs(*plan, files, target)
+	args := BuildFFmpegArgs(*plan, files, target, encodeOpts)
 	if len(args) == 0 {
 		return fail(fmt.Errorf("无法生成渲染命令"))
 	}

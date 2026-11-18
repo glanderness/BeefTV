@@ -147,8 +147,13 @@ func Compile(host CompileHost, user string, d Definition, existing *model.Canvas
 			if _, err := SelectModel(host, n, &recipe); err != nil {
 				return CompileResult{}, err
 			}
-			if recipe.Request.Model != characterReplacementModel {
-				return CompileResult{}, BadRequest("人物替换需要已启用的 Seedance 2.0 Fast")
+			cfgMap, _ := recipe.Request.Input["config"].(map[string]any)
+			limits, ok := ResolveReplacementCapability(stringValue(cfgMap["interfaceType"]), recipe.Request.Model, cfgMap["capabilityConfig"])
+			if !ok {
+				return CompileResult{}, BadRequest("人物替换所选模型缺少有效的参考视频、参考图或时长能力配置")
+			}
+			if quality, hasQuality := n.Config["vquality"].(string); hasQuality && quality != "" && !limits.SupportsQuality(quality) {
+				return CompileResult{}, BadRequest("所选模型不支持 " + quality + " 清晰度")
 			}
 			recipes[n.ID] = recipe
 			continue

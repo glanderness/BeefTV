@@ -14,13 +14,8 @@ if [[ "$AGENT_TARGET" == linux/* && ( "$HOST_OS" != linux || "$AGENT_TARGET" != 
   echo "Linux releases require a native Linux x64 host" >&2
   exit 1
 fi
-# A clean build host has no installed BeefTV. Only an explicitly supplied
-# encoder is a required input; the native probe packet is built below.
-if [[ "$AGENT_TARGET" == darwin/* && -n "${BEEFTV_FFMPEG_RUNTIME:-}" ]]; then
-  [[ -x "$BEEFTV_FFMPEG_RUNTIME" ]] || { echo "Explicit encoder is not executable: $BEEFTV_FFMPEG_RUNTIME" >&2; exit 1; }
-  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$BEEFTV_FFMPEG_RUNTIME")/ffmpeg.LICENSE}"
-  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
-fi
+# A clean build host has no installed BeefTV; the native LGPL media runtime
+# (ffmpeg + ffprobe) is built and verified from pinned source below.
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
 
 if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
@@ -95,14 +90,34 @@ echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 if [[ "$AGENT_TARGET" == darwin/* ]]; then
   MEDIA_RUNTIME_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/beeftv-release-media.XXXXXX")"
   trap 'rm -rf "$MEDIA_RUNTIME_STAGE"' EXIT
+  MACOS_SOURCE_PACKET="${BEEFTV_MEDIA_SOURCE_PACKET:-$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffmpeg-${AGENT_TARGET/\//-}-sources.tar.gz}"
   if [[ -n "${BEEFTV_MEDIA_RUNTIME:-}" ]]; then
-    bun -e 'const fs=require("fs"),crypto=require("crypto");const [root,target]=process.argv.slice(1);const m=JSON.parse(fs.readFileSync(root+"/manifest.json","utf8"));const hash=name=>crypto.createHash("sha256").update(fs.readFileSync(root+"/"+name)).digest("hex");if(m.target!==target||hash("ffprobe")!==m.probeSHA256||(m.encoderSHA256&&hash("ffmpeg")!==m.encoderSHA256))throw Error("Media runtime target or checksum mismatch")' "$BEEFTV_MEDIA_RUNTIME" "$AGENT_TARGET"
+    python3 - "$BEEFTV_MEDIA_RUNTIME" "$AGENT_TARGET" "$MACOS_SOURCE_PACKET" <<'PY'
+import hashlib, json, pathlib, sys, tarfile
+root, target, packet_path = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
+m = json.loads((root / "manifest.json").read_text())
+probe_sha = hashlib.sha256((root / "ffprobe").read_bytes()).hexdigest()
+enc_sha = hashlib.sha256((root / "ffmpeg").read_bytes()).hexdigest()
+if m.get("target") != target or not m.get("probeSHA256") or not m.get("encoderSHA256") or probe_sha != m["probeSHA256"] or enc_sha != m["encoderSHA256"]:
+    raise SystemExit("Media runtime target or checksum mismatch")
+if not packet_path.is_file():
+    raise SystemExit(f"Corresponding macOS media source packet is required: {packet_path}")
+with tarfile.open(packet_path, "r:gz") as archive:
+    pm = json.loads(archive.extractfile("manifest.json").read().decode("utf-8"))
+if pm.get("id") != f"ffmpeg-{target.replace('/', '-')}" or pm.get("provenance", {}).get("target") != target or pm.get("binaryHashes") != {"ffmpeg": enc_sha, "ffprobe": probe_sha}:
+    raise SystemExit("Corresponding macOS media source packet does not match media runtime")
+PY
+    if [[ "$MACOS_SOURCE_PACKET" != "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffmpeg-${AGENT_TARGET/\//-}-sources.tar.gz" ]]; then
+      mkdir -p "$ROOT_DIR/dist"
+      cp "$MACOS_SOURCE_PACKET" "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffmpeg-${AGENT_TARGET/\//-}-sources.tar.gz"
+    fi
     cp -R "$BEEFTV_MEDIA_RUNTIME" "$MEDIA_RUNTIME_STAGE/media-runtime"
   else
     bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
       "$MEDIA_RUNTIME_STAGE/media-runtime" "" \
-      "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+      "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffmpeg-${AGENT_TARGET/\//-}-sources.tar.gz"
   fi
+  export BEEFTV_MEDIA_RUNTIME_DIR="$MEDIA_RUNTIME_STAGE/media-runtime"
 fi
 
 mkdir -p "$DESKTOP_DIR/build"
@@ -178,26 +193,8 @@ bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
 copy_bundled_plugin_dirs "$APP_BUNDLE/Contents/Resources/agent-host/bundled-plugins"
 cp -R "$MEDIA_RUNTIME_STAGE/media-runtime" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" \
-  "$APP_BUNDLE/Contents/Resources/agent-host/licenses" "$VERSION_VALUE"
-# Reuse the explicitly supplied (or already installed) encoder, including its
-# license. The native workflow adapter must not rely on a Finder-launched PATH.
-ENCODER_SOURCE="${BEEFTV_FFMPEG_RUNTIME:-/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg}"
-if [[ -x "$ENCODER_SOURCE" && ( -n "${BEEFTV_FFMPEG_RUNTIME:-}" || ! -x "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime/ffmpeg" ) ]]; then
-  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$ENCODER_SOURCE")/ffmpeg.LICENSE}"
-  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
-  ENCODER_ARCH="${AGENT_TARGET##*/}"
-  [[ "$ENCODER_ARCH" != amd64 ]] || ENCODER_ARCH=x86_64
-  file "$ENCODER_SOURCE" | grep -q "$ENCODER_ARCH" || { echo "Wrong encoder architecture" >&2; exit 1; }
-  otool -L "$ENCODER_SOURCE" | tail -n +2 | while read -r dylib _; do
-    case "$dylib" in /usr/lib/*|/System/Library/*) ;; *) echo "Non-system encoder dependency: $dylib" >&2; exit 1 ;; esac
-  done
-  ENCODER_DEST="$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
-  cp "$ENCODER_SOURCE" "$ENCODER_DEST/ffmpeg"
-  cp "$ENCODER_LICENSE" "$ENCODER_DEST/ffmpeg.LICENSE"
-  if [[ -f "$(dirname "$ENCODER_SOURCE")/ffmpeg.README" ]]; then cp "$(dirname "$ENCODER_SOURCE")/ffmpeg.README" "$ENCODER_DEST/ffmpeg.README"; fi
-  chmod 755 "$ENCODER_DEST/ffmpeg"
-  codesign --force --sign - "$ENCODER_DEST/ffmpeg"
-fi
+  "$APP_BUNDLE/Contents/Resources/agent-host/licenses" "$VERSION_VALUE" "$ROOT_DIR/dist" \
+  "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
   bash "$ROOT_DIR/scripts/test-media-runtime-macos.sh" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 fi
@@ -241,9 +238,27 @@ if [[ -f "$APP_PLIST" ]] && command -v plutil >/dev/null 2>&1; then
 fi
 
 # The plist edit and the bundled CLI both invalidate Wails' ad-hoc signature;
-# sign the final bundle so the local install gate can verify it.
+# sign nested agent-host runtime if needed without re-signing media-runtime
+# binaries (already signed before recording SHA-256), then seal the outer bundle.
 if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$APP_BUNDLE"
+  find "$APP_BUNDLE/Contents/Resources/agent-host" -path "*/media-runtime" -prune -o -type f \( -name "node" -o -name "*.node" -o -name "*.dylib" \) -print0 | while IFS= read -r -d '' bin; do
+    codesign --force --sign - "$bin"
+  done
+  codesign --force --sign - "$APP_BUNDLE"
+  codesign --verify --deep --strict "$APP_BUNDLE"
 fi
+python3 - "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime" "$APP_BUNDLE/Contents/Resources/agent-host/licenses/sources.json" "$ROOT_DIR/web/dist/licenses/sources.json" <<'PY'
+import hashlib, json, pathlib, sys
+rt = pathlib.Path(sys.argv[1])
+actual = {
+    "ffmpeg": hashlib.sha256((rt / "ffmpeg").read_bytes()).hexdigest(),
+    "ffprobe": hashlib.sha256((rt / "ffprobe").read_bytes()).hexdigest(),
+}
+for raw_path in sys.argv[2:]:
+    sources = json.loads(pathlib.Path(raw_path).read_text())
+    comp = next(c for c in sources["components"] if c["id"].startswith("ffmpeg-darwin-"))
+    if comp.get("binaryHashes") != actual:
+        raise SystemExit(f"Final bundle binaryHashes mismatch in {raw_path}: {comp.get('binaryHashes')} != {actual}")
+PY
 
 echo "Release bundle: $APP_BUNDLE"

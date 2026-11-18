@@ -107,3 +107,26 @@ func TestRecentMCPCallsRetainsNewestPerWorkspace(t *testing.T) {
 		t.Fatalf("other workspace: %+v, %v", rows, err)
 	}
 }
+
+func TestRecordMCPCallMarksLocalMediaTransformAsFree(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&model.MCPCall{}, &model.Task{}, &model.RouteAttempt{}, &model.ImageSubmission{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	localTask := model.Task{ID: "local-1", UserID: "owner", Type: model.TaskTypeCanvasMediaTransform, Provider: "local", Status: model.TaskStatusSucceeded}
+	if err = db.Create(&localTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	call := model.MCPCall{UserID: "owner", Tool: "business_post_tasks", Billing: "unknown"}
+	if err = repo.RecordMCPCall(&call, []string{localTask.ID}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.RecentMCPCalls("owner")
+	if err != nil || len(rows) != 1 || rows[0].Billing != "none" || rows[0].AmountCNY != nil {
+		t.Fatalf("local task should have Billing=none: %+v, %v", rows, err)
+	}
+}

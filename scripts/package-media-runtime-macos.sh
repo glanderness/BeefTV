@@ -29,15 +29,15 @@ flags=(--cc="$(xcrun --find clang)" --arch="$ffmpeg_arch" --target-os=darwin
   --host-cc="$(xcrun --find clang)" --host-cflags="-isysroot $sdk" --host-ldflags="-isysroot $sdk"
   --disable-autodetect --disable-everything --disable-programs --enable-ffprobe --enable-ffmpeg
   --disable-network --enable-protocol=file,pipe
-  --enable-demuxer=mov,matroska,mp3,wav,ogg,aac,flac,avi
-  --enable-decoder=aac,alac,h264,hevc,mpeg4,av1,vp8,vp9,opus,vorbis,prores,mjpeg,pcm_s16le,pcm_s24le
-  --enable-encoder=h264_videotoolbox,aac,wrapped_avframe,pcm_s16le
-  --enable-muxer=mov,mp4,null --enable-bsf=aac_adtstoasc,vp9_superframe,h264_mp4toannexb
-  --enable-filter=aformat,anull,apad,aresample,atrim,concat,format,fps,null,pad,rotate,scale,select,setpts,setsar,showinfo,tpad,transpose,trim,hflip,vflip
-  --enable-parser=aac,h264,hevc,mpeg4video,mpegaudio,opus,vorbis,av1,vp9,vp8
+  --enable-demuxer=mov,matroska,mpegts,mpegps,m4v,mp3,wav,ogg,aac,ac3,eac3,dts,flac,avi,image2,image2pipe,image_png_pipe,image_jpeg_pipe,image_webp_pipe,image_bmp_pipe,gif,srt
+  --enable-decoder=aac,ac3,eac3,dca,alac,mp3,mp3float,flac,h264,hevc,mpeg1video,mpeg2video,mpeg4,av1,vp8,vp9,opus,vorbis,prores,mjpeg,png,webp,gif,bmp,rawvideo,wrapped_avframe,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_f32le,pcm_f64le,pcm_u8,pcm_mulaw,pcm_alaw,subrip,srt
+  --enable-encoder=h264_videotoolbox,aac,ac3,rawvideo,wrapped_avframe,pcm_s16le,pcm_s16be,pcm_s24le,pcm_f32le,pcm_u8,png,mjpeg
+  --enable-muxer=mov,mp4,null,image2,image2pipe,wav,adts,rawvideo,srt --enable-bsf=aac_adtstoasc,vp9_superframe,h264_mp4toannexb
+  --enable-filter=aformat,afade,adelay,amix,anull,anullsrc,apad,aresample,asetpts,atrim,blackdetect,color,concat,crop,format,fps,hflip,null,overlay,pad,rotate,scale,select,setpts,setsar,showinfo,silencedetect,sine,testsrc,testsrc2,tpad,transpose,trim,vflip,volume,volumedetect
+  --enable-parser=aac,ac3,dca,h264,hevc,mpegvideo,mpeg4video,mpegaudio,opus,vorbis,av1,vp9,vp8,png,mjpeg,webp,bmp
   --disable-x86asm --disable-shared --enable-static --disable-doc --disable-debug
-  --disable-avdevice --enable-avfilter --enable-swresample --enable-swscale
-  --disable-iconv --disable-zlib --disable-bzlib --disable-lzma
+  --enable-avdevice --enable-indev=lavfi --enable-avfilter --enable-swresample --enable-swscale
+  --disable-iconv --enable-zlib --disable-bzlib --disable-lzma
   --disable-securetransport --enable-videotoolbox --disable-audiotoolbox
   --extra-cflags="-arch $apple_arch -isysroot $sdk -mmacosx-version-min=11.0"
   --extra-ldflags="-arch $apple_arch -isysroot $sdk -mmacosx-version-min=11.0")
@@ -58,6 +58,11 @@ file "$stage/ffprobe" | grep -q "$apple_arch" || { echo "Wrong ffprobe architect
 otool -L "$stage/ffprobe" "$stage/ffmpeg" | awk '/^\t/ { print $1 }' | while read -r dylib _; do
   case "$dylib" in /usr/lib/*|/System/Library/*) ;; *) echo "Non-system dependency: $dylib" >&2; exit 1 ;; esac
 done
+# Sign before recording SHA-256 so final distributed binaries match manifest.json and sources.json.
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$stage/ffprobe" "$stage/ffmpeg"
+  codesign --verify --strict "$stage/ffprobe" "$stage/ffmpeg"
+fi
 if [[ "$(uname -m)" == "$apple_arch" ]]; then
   "$stage/ffprobe" -version | sed -n '1p'
   "$stage/ffmpeg" -version | sed -n '1p'

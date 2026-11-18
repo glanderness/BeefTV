@@ -106,17 +106,19 @@ export const CanvasWorkflowWorkspace = forwardRef<CanvasWorkflowsHandle, {
             if (!options.length) throw new Error("请先在模型配置中启用可用的 Seedance 2.0 Fast 模型，再添加此预设。");
             if (!alive.current) return;
             const preset = characterReplacementPreset;
-            if (options.length > 1) {
-                setEditing({ operations, addAfterSave: true, workflow: { ...preset, id: "", createdAt: "", updatedAt: "", revision: 1 } });
-                setLibraryOpen(false);
-                return;
-            }
+            const firstResolutions = options[0].capabilities?.video?.resolutions?.map(item => item.toLowerCase()) ?? [];
+            const defaultQuality = firstResolutions.length && !firstResolutions.includes("720p") && firstResolutions.includes("480p") ? "480p" : "720p";
             const definition = {
                 ...preset.definition,
                 nodes: preset.definition.nodes.map(node => node.operationId !== characterReplacementOperation ? node : {
-                    ...node, config: { ...node.config, modelOption: options[0].value },
+                    ...node, config: { ...node.config, modelOption: options[0].value, vquality: defaultQuality },
                 }),
             };
+            if (options.length > 1) {
+                setEditing({ operations, addAfterSave: true, workflow: { ...preset, definition, id: "", createdAt: "", updatedAt: "", revision: 1 } });
+                setLibraryOpen(false);
+                return;
+            }
             const workflow = await saveCanvasWorkflow({ ...preset, definition });
             if (!alive.current) return;
             setWorkflows(current => [workflow, ...current]);

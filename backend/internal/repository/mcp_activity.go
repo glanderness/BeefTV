@@ -12,21 +12,29 @@ func (r *Repository) RecordMCPCall(call *model.MCPCall, taskIDs []string) error 
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if len(taskIDs) > 0 {
 			var tasks []model.Task
-			if err := tx.Select("id, model, route_run").Where("user_id = ? AND id IN ?", call.UserID, taskIDs).Order("id").Find(&tasks).Error; err != nil {
+			if err := tx.Select("id, type, provider, model, route_run").Where("user_id = ? AND id IN ?", call.UserID, taskIDs).Order("id").Find(&tasks).Error; err != nil {
 				return err
 			}
 			names := []string{}
 			seen := map[string]bool{}
+			hasBillable := false
 			for _, task := range tasks {
 				call.Tasks = append(call.Tasks, model.MCPTaskRun{ID: task.ID, Run: task.RouteRun})
 				if task.Model != "" && !seen[task.Model] {
 					names = append(names, task.Model)
 					seen[task.Model] = true
 				}
+				if task.Provider != "local" && task.Type != model.TaskTypeCanvasMediaTransform {
+					hasBillable = true
+				}
 			}
 			call.ModelName = strings.Join(names, "、")
 			if len(tasks) == len(taskIDs) {
-				call.Billing = "tasks"
+				if hasBillable {
+					call.Billing = "tasks"
+				} else {
+					call.Billing = "none"
+				}
 			}
 		}
 		if err := tx.Create(call).Error; err != nil {

@@ -29,19 +29,34 @@ func runH264Transcode(ctx context.Context, src string, dst string) error {
 		}
 		return err
 	}
-	cmd := exec.CommandContext(ctx, binary, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-		"-threads", "2", "-i", src,
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+	if !mediatools.SupportsH264Encode(binary) {
+		if runtime.GOOS == "darwin" && strings.TrimSpace(os.Getenv(mediatools.FFmpegPathEnv)) == "" {
+			return runNativeH264Transcode(ctx, src, dst)
+		}
+		return fmt.Errorf("本机媒体编码器缺少 H.264 视频编码支持")
+	}
+	encodeArgs := mediatools.PreferredH264VideoArgs(binary, "veryfast", "23", "5M", "8M")
+	cmdArgs := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-threads", "2", "-protocol_whitelist", "file,pipe", "-i", src}
+	cmdArgs = append(cmdArgs, encodeArgs...)
+	cmdArgs = append(cmdArgs,
 		"-threads", "2", "-filter_threads", "1",
-		"-pix_fmt", "yuv420p", "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+		"-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
 		"-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-		dst)
+		dst,
+	)
+	cmd := exec.CommandContext(ctx, binary, cmdArgs...)
 	mediatools.HideConsole(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		_ = os.Remove(dst)
+		if runtime.GOOS == "darwin" && strings.TrimSpace(os.Getenv(mediatools.FFmpegPathEnv)) == "" {
+			if nativeErr := runNativeH264Transcode(ctx, src, dst); nativeErr == nil {
+				return nil
+			}
 		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {

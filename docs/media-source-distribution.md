@@ -8,7 +8,7 @@ BeefTV 保留现有 FFmpeg 媒体能力。根目录 `LICENSE` 中的新源码可
 | --- | --- | --- |
 | 浏览器 `@ffmpeg/core` | 0.12.10，GPL-2.0-or-later | Worker 中运行，提供剪辑、裁剪、合并、音频处理及导出 |
 | Windows FFmpeg/ffprobe | BtbN n8.1.3-18-g46d899d7a0-20261019，GPL-3.0-or-later | 独立命令行进程，通过参数和文件交换数据 |
-| macOS ffprobe | FFmpeg 8.0.1，LGPL-2.1-or-later | 从固定源码编译，关闭 GPL 特性与外部库，独立进程探测媒体 |
+| macOS FFmpeg/ffprobe | FFmpeg 8.0.1，LGPL-2.1-or-later | 从固定源码编译，关闭 GPL 特性与第三方外部库，独立进程探测与本地转码处理媒体 |
 | Windows 可选深度运行包 | 与桌面相同的固定 BtbN 构建；历史包还含 imageio-ffmpeg wheel 自带的 FFmpeg | Python 启动独立进程；后续构建移除未使用的 imageio-ffmpeg，保留 imageio |
 
 原生命令行工具和浏览器 WASM 的使用方式不同，需要分别判断组合分发的许可要求。独立进程、Worker 或单独下载均不能自动证明兼容；第三方清单也不能替代对应源码交付。
@@ -17,8 +17,8 @@ BeefTV 保留现有 FFmpeg 媒体能力。根目录 `LICENSE` 中的新源码可
 
 - 应用版本号 → 更新日志 → **第三方许可与源码**，可查看项目许可、第三方清单和 GPL/LGPL 全文。
 - Web 构建将这些文件写入 `/licenses/`；桌面包同时放在 `agent-host/licenses/`，macOS 位于应用的 `Contents/Resources/` 下，可离线读取。
-- `sources.json` 记录本次构建的平台、组件版本、许可和 WASM 文件哈希。`upstream` 是上游项目入口；`source` 仅记录本流水线实际生成的源码包，缺失时为 `null`，页面不生成不存在的下载链接。
-- macOS 构建 ffprobe 时同时生成 `BeefTV-vX.Y.Z-ffprobe-darwin-{arm64,amd64}-sources.tar.gz`，包含未经修改的源码、许可证、实际构建脚本、参数和二进制哈希。正式桌面流水线将它与安装包一同上传到同版本 GitHub Release。
+- `sources.json` 记录本次构建的平台、组件版本、许可和二进制/WASM 文件哈希。`upstream` 是上游项目入口；`source` 仅记录本流水线实际生成的源码包，缺失时为 `null`，页面不生成不存在的下载链接。
+- macOS 构建 `ffmpeg` 与 `ffprobe` 时同时生成 `BeefTV-vX.Y.Z-ffmpeg-darwin-{arm64,amd64}-sources.tar.gz`，包含未经修改的源码、许可证、实际构建脚本、参数以及两个可执行文件的哈希。正式桌面流水线将它与安装包一同上传到同版本 GitHub Release。
 - 浏览器核心的源码包 `BeefTV-vX.Y.Z-ffmpeg-wasm-sources.tar.gz` 包含 21 份固定提交的源码归档、许可证、上游编译脚本和离线构建说明。正式桌面流水线先生成源码包，再将其下载信息写入各平台许可页，并与安装包一起上传。普通本地/Web 构建只在实际提供该源码包时写入下载信息。
 - Windows 的版本、上游 ZIP、两个可执行文件、许可证与源码归档哈希统一固定在 `licenses/ffmpeg-windows.json`。桌面和深度构建都调用同一个媒体打包器，拒绝任意系统安装的 FFmpeg。两者随包保留 `LICENSE.txt`、完整 `manifest.json`，以及旧更新器要求的相同许可证副本 `LICENSE` 和 BeefTV 提供的 `README.txt`；深度运行包在压缩后再次校验 ZIP 内的六个文件，并将对应信息写入构建元数据。
 
@@ -26,7 +26,7 @@ BeefTV 保留现有 FFmpeg 媒体能力。根目录 `LICENSE` 中的新源码可
 
 ```sh
 bash scripts/package-media-runtime-macos.sh darwin/arm64 ./media-runtime \
-  ./ffmpeg-source.tar.gz ./BeefTV-vX.Y.Z-ffprobe-darwin-arm64-sources.tar.gz
+  ./ffmpeg-source.tar.gz ./BeefTV-vX.Y.Z-ffmpeg-darwin-arm64-sources.tar.gz
 ```
 
 这里记录哈希用于核对材料，不将工程校验等同于法律兼容性结论。
