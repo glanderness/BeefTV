@@ -4,7 +4,16 @@ import json
 from pathlib import Path
 import sys
 
-BASE = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/"
+CNB_BASE = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/"
+COS_BASE = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/"
+R2_BASE = "https://updates.beefapi.com/beeftv/components/depth-runtime-v2/"
+GITHUB_BASE = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/"
+MODEL_NAME = "video_depth_anything_vits.pth"
+MODEL_GITHUB_URL = f"https://github.com/glanderness/BeefTV/releases/download/v1.5.5/{MODEL_NAME}"
+
+
+def component_urls(name):
+    return [CNB_BASE + name, COS_BASE + name, R2_BASE + name, GITHUB_BASE + name]
 
 
 def verify_file(root, entry):
@@ -18,7 +27,7 @@ def verify_file(root, entry):
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     if digest != entry["sha256"]:
         raise ValueError("artifact hash mismatch")
-    return {"urls": [BASE + name], "size": entry["size"], "sha256": digest}
+    return {"urls": component_urls(name), "size": entry["size"], "sha256": digest}
 
 
 def prepare(root):
@@ -46,7 +55,12 @@ def prepare(root):
         artifact.update(files=meta["files"], expandedSize=meta["expandedSize"])
         runtimes[f"windows-amd64/{variant}"] = artifact
     return {"version": 2, "runtimes": runtimes, "model": {
-        "urls": ["https://github.com/glanderness/BeefTV/releases/download/v1.5.5/video_depth_anything_vits.pth"],
+        "urls": [
+            CNB_BASE + MODEL_NAME,
+            COS_BASE + MODEL_NAME,
+            R2_BASE + MODEL_NAME,
+            MODEL_GITHUB_URL,
+        ],
         "size": 116440756,
         "sha256": "13379300b739e659f076a59d52e9801bd8d38c541a7e71f73bbca4dcfb013609",
     }}

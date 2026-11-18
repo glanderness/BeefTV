@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"infinite-canvas/backend/internal/desktopstorage"
@@ -68,5 +69,39 @@ func TestWindowsOpenDesktopMigratesWithBusyScratch(t *testing.T) {
 				t.Fatal("desktop workspace not available after migration attempt")
 			}
 		})
+	}
+}
+
+func TestWindowsSaveMigrationRetriesTransientLocationLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "profile")
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	for _, dir := range []string{root, first, second} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := desktopstorage.SaveMigration(root, first, root, map[string]string{"db": "1"}); err != nil {
+		t.Fatal(err)
+	}
+	pointerPath := filepath.Join(root, "storage-location.json")
+	wide, err := windows.UTF16PtrFromString(pointerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := windows.CreateFile(wide, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = windows.CloseHandle(handle)
+	}()
+	if err := desktopstorage.SaveMigration(root, second, first, map[string]string{"db": "2"}); err != nil {
+		t.Fatalf("SaveMigration did not recover from transient lock: %v", err)
+	}
+	got, err := desktopstorage.Resolve(root)
+	if err != nil || got != second {
+		t.Fatalf("Resolve(root) = %q, err=%v", got, err)
 	}
 }

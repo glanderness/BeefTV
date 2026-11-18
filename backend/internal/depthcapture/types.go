@@ -24,6 +24,7 @@ const (
 	runtimeEnv  = "BEEFTV_DEPTH_RUNTIME"
 	manifestEnv = "BEEFTV_DEPTH_MANIFEST_URL"
 
+	componentCNBBase          = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/"
 	componentCOSBase          = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/"
 	componentR2Base           = "https://updates.beefapi.com/beeftv/components/depth-runtime-v2/"
 	componentGHBase           = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-mirrors-v1/"

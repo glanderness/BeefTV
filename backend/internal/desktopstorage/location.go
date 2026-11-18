@@ -1,12 +1,15 @@
 package desktopstorage
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 const locationFile = "storage-location.json"
@@ -22,13 +25,17 @@ func DefaultRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "BeefTV"), nil
+	return filepath.Clean(filepath.Join(root, "BeefTV")), nil
 }
 
 // The pointer stays in the system profile, independent of the selected data volume.
 // A missing selected volume must never silently create an empty workspace.
 func Resolve(root string) (string, error) {
-	body, err := os.ReadFile(filepath.Join(root, locationFile))
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "" || root == "." || !filepath.IsAbs(root) {
+		return "", errors.New("存储目录设置无效")
+	}
+	body, err := readLocationFile(filepath.Join(root, locationFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return root, nil
 	}
@@ -36,16 +43,38 @@ func Resolve(root string) (string, error) {
 		return "", fmt.Errorf("读取存储目录设置失败: %w", err)
 	}
 	var location Location
-	if err := json.Unmarshal(body, &location); err != nil {
+	if err := json.Unmarshal(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf")), &location); err != nil {
 		return "", fmt.Errorf("存储目录设置损坏: %w", err)
 	}
-	if !filepath.IsAbs(location.DataDir) {
+	dataDir := filepath.Clean(strings.TrimSpace(location.DataDir))
+	if dataDir == "" || dataDir == "." || !filepath.IsAbs(dataDir) || filepath.Dir(dataDir) == dataDir {
 		return "", errors.New("存储目录设置无效")
 	}
-	if info, err := os.Stat(location.DataDir); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("存储目录无法访问，请连接对应磁盘后重试：%s", location.DataDir)
+	if info, err := os.Stat(dataDir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("存储目录无法访问，请连接对应磁盘后重试：%s", dataDir)
 	}
-	return location.DataDir, nil
+	return dataDir, nil
+}
+
+func SameLocation(left, right string) bool {
+	left = filepath.Clean(strings.TrimSpace(left))
+	right = filepath.Clean(strings.TrimSpace(right))
+	if left == "" || right == "" || left == "." || right == "." {
+		return false
+	}
+	if pathsEqual(left, right) {
+		return true
+	}
+	cLeft, err1 := canonical(left)
+	cRight, err2 := canonical(right)
+	return err1 == nil && err2 == nil && pathsEqual(cLeft, cRight)
+}
+
+func pathsEqual(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func Save(root, dataDir, previousDir string) error {
@@ -57,6 +86,16 @@ func SaveMigration(root, dataDir, previousDir string, files map[string]string) e
 }
 
 func saveLocation(root string, location Location) error {
+	root = filepath.Clean(strings.TrimSpace(root))
+	location.DataDir = filepath.Clean(strings.TrimSpace(location.DataDir))
+	if strings.TrimSpace(location.PreviousDir) != "" {
+		location.PreviousDir = filepath.Clean(strings.TrimSpace(location.PreviousDir))
+	} else {
+		location.PreviousDir = ""
+	}
+	if root == "" || root == "." || !filepath.IsAbs(root) || location.DataDir == "" || location.DataDir == "." || !filepath.IsAbs(location.DataDir) || filepath.Dir(location.DataDir) == location.DataDir {
+		return errors.New("存储目录设置无效")
+	}
 	body, err := json.Marshal(location)
 	if err != nil {
 		return err
@@ -83,10 +122,36 @@ func saveLocation(root string, location Location) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := os.Rename(path, filepath.Join(root, locationFile)); err != nil {
+	targetPath := filepath.Join(root, locationFile)
+	if err := replaceLocationFile(path, targetPath); err != nil {
 		return err
 	}
+	if err := syncDirectory(root); err != nil {
+		return err
+	}
+	resolved, err := Resolve(root)
+	if err != nil {
+		return fmt.Errorf("校验存储目录设置失败: %w", err)
+	}
+	if !SameLocation(resolved, location.DataDir) {
+		return fmt.Errorf("存储目录设置读回不一致: 读回 %s，期望 %s", resolved, location.DataDir)
+	}
 	return nil
+}
+
+func replaceLocationFile(tempPath, targetPath string) error {
+	_ = os.Chmod(targetPath, 0600)
+	for attempt := 0; ; attempt++ {
+		err := os.Rename(tempPath, targetPath)
+		if err == nil {
+			return nil
+		}
+		if !retryableReplaceError(err) || attempt >= 5 {
+			return err
+		}
+		_ = os.Chmod(targetPath, 0600)
+		time.Sleep(time.Duration(attempt+1) * 40 * time.Millisecond)
+	}
 }
 
 func canonical(path string) (string, error) {

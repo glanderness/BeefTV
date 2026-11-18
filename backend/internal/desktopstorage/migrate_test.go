@@ -75,3 +75,44 @@ func TestMigrationRejectsOverlapExistingDataAndCancellation(t *testing.T) {
 		t.Fatal("source modified on failure")
 	}
 }
+
+func TestSaveMigrationReplacesReadOnlyLocationAndVerifiesReadback(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "profile")
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SaveMigration(root+string(filepath.Separator), first+string(filepath.Separator), root, map[string]string{"db": "abc"}); err != nil {
+		t.Fatalf("first SaveMigration: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(root, locationFile), 0400); err != nil {
+		t.Fatalf("chmod read-only: %v", err)
+	}
+	if err := SaveMigration(root, second, first, map[string]string{"db": "def"}); err != nil {
+		t.Fatalf("second SaveMigration over read-only pointer: %v", err)
+	}
+	got, err := Resolve(root + string(filepath.Separator))
+	if err != nil || got != second {
+		t.Fatalf("Resolve(root) = %q, err=%v; want %q", got, err, second)
+	}
+	// UTF-8 BOM and whitespace in storage-location.json must still resolve cleanly.
+	bomBody := append([]byte("\xef\xbb\xbf"), []byte(`{"dataDir":"  `+filepath.ToSlash(second)+`  "}`)...)
+	if err := os.Chmod(filepath.Join(root, locationFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, locationFile), bomBody, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Resolve(root)
+	if err != nil || !SameLocation(got, second) {
+		t.Fatalf("Resolve with BOM = %q, err=%v; want %q", got, err, second)
+	}
+	// Saving a non-existent DataDir must fail readback verification instead of returning nil.
+	missing := filepath.Join(t.TempDir(), "missing-target")
+	if err := Save(root, missing, second); err == nil {
+		t.Fatal("expected Save to fail readback verification for missing directory")
+	}
+}

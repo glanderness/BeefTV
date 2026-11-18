@@ -5,10 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"infinite-canvas/backend/internal/desktopstorage"
+)
+
+const (
+	officialCNBBase = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/"
+	officialCOSBase = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/"
+	officialR2Base  = "https://updates.beefapi.com/beeftv/components/depth-runtime-v2/"
+	officialGHBase  = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/"
+	officialModelGH = "https://github.com/glanderness/BeefTV/releases/download/v1.5.5/video_depth_anything_vits.pth"
 )
 
 var ErrNotInstalled = errors.New("深度捕捉组件尚未安装，请在设置的存储页面下载后再使用")
@@ -87,6 +98,7 @@ func loadArtifacts(ctx context.Context, options EnsureOptions) (Manifest, Artifa
 	if (windows && manifest.Version != 2) || (!windows && manifest.Version != 1) {
 		return Manifest{}, Artifact{}, fmt.Errorf("不支持的深度组件清单版本 %d", manifest.Version)
 	}
+	normalizeManifestMirrors(&manifest)
 	artifact := manifest.Runtime
 	if windows {
 		var ok bool
@@ -125,4 +137,104 @@ func installationPlan(dataDir string, artifact, model Artifact, archiveReady, mo
 	var err error
 	plan.FreeBytes, err = desktopstorage.FreeBytes(dataDir)
 	return plan, err
+}
+
+func normalizeManifestMirrors(manifest *Manifest) {
+	if manifest == nil {
+		return
+	}
+	manifest.Runtime = normalizeArtifactMirrors(manifest.Runtime)
+	manifest.Model = normalizeArtifactMirrors(manifest.Model)
+	if len(manifest.Runtimes) > 0 {
+		normalized := make(map[string]Artifact, len(manifest.Runtimes))
+		for key, item := range manifest.Runtimes {
+			normalized[key] = normalizeArtifactMirrors(item)
+		}
+		manifest.Runtimes = normalized
+	}
+}
+
+func normalizeArtifactMirrors(artifact Artifact) Artifact {
+	if len(artifact.URLs) > 0 {
+		artifact.URLs = normalizeOfficialURLs(artifact.URLs)
+	}
+	if len(artifact.Parts) > 0 {
+		parts := make([]ArtifactPart, len(artifact.Parts))
+		for index, part := range artifact.Parts {
+			part.URLs = normalizeOfficialURLs(part.URLs)
+			parts[index] = part
+		}
+		artifact.Parts = parts
+	}
+	return artifact
+}
+
+func normalizeOfficialURLs(urls []string) []string {
+	if len(urls) == 0 {
+		return urls
+	}
+	var fileName string
+	var buckets [5][]string
+	for _, raw := range urls {
+		bucket, name, ok := classifyOfficialDepthURL(raw)
+		if !ok {
+			return urls
+		}
+		if fileName == "" {
+			fileName = name
+		} else if fileName != name {
+			return urls
+		}
+		buckets[bucket] = append(buckets[bucket], strings.TrimSpace(raw))
+	}
+	if fileName == "" {
+		return urls
+	}
+	buckets[0] = append([]string{officialCNBBase + fileName}, buckets[0]...)
+	buckets[1] = append([]string{officialCOSBase + fileName}, buckets[1]...)
+	buckets[2] = append([]string{officialR2Base + fileName}, buckets[2]...)
+	if len(buckets[3]) == 0 {
+		if fileName == "video_depth_anything_vits.pth" {
+			buckets[3] = []string{officialModelGH}
+		} else {
+			buckets[3] = []string{officialGHBase + fileName}
+		}
+	}
+	seen := make(map[string]struct{}, len(urls)+4)
+	ordered := make([]string, 0, len(urls)+4)
+	for _, group := range buckets {
+		for _, candidate := range group {
+			if _, exists := seen[candidate]; exists {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			ordered = append(ordered, candidate)
+		}
+	}
+	return ordered
+}
+
+func classifyOfficialDepthURL(rawURL string) (bucket int, fileName string, ok bool) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return -1, "", false
+	}
+	base := path.Base(parsed.Path)
+	if base == "" || base == "." || base == "/" || strings.ContainsAny(base, `/\`) {
+		return -1, "", false
+	}
+	switch {
+	case parsed.Host == "cnb.cool" && strings.HasPrefix(parsed.Path, "/beeftv-downloads/"):
+		return 0, base, true
+	case parsed.Host == "beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com":
+		return 1, base, true
+	case parsed.Host == "updates.beefapi.com":
+		return 2, base, true
+	case parsed.Host == "github.com" && strings.HasPrefix(parsed.Path, "/glanderness/BeefTV/"):
+		return 3, base, true
+	case parsed.Host == "huggingface.co":
+		return 4, base, true
+	default:
+		return -1, "", false
+	}
 }

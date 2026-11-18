@@ -45,7 +45,7 @@ func (s *Service) componentOptions(platform, variant string) (depthruntime.Ensur
 			manifestURL = defaultWindowsManifestURL
 			name = "depth-runtime-manifest.v2.json"
 		}
-		mirrors = []string{componentR2Base + name, componentGHBase + name}
+		mirrors = []string{componentCNBBase + name, componentR2Base + name, componentGHBase + name}
 	}
 	var publicKey ed25519.PublicKey
 	var fallback *depthruntime.Manifest
@@ -88,5 +88,5 @@ func defaultFallbackManifest() *depthruntime.Manifest {
 }
 
 func componentSources(name, original string) []string {
-	return []string{componentCOSBase + name, componentR2Base + name, original}
+	return []string{componentCNBBase + name, componentCOSBase + name, componentR2Base + name, original}
 }
