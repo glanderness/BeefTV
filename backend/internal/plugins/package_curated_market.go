@@ -84,6 +84,8 @@ type curatedRegistryEntry struct {
 
 type curatedRegistryPayload struct {
 	Plugins []curatedRegistryEntry `json:"plugins"`
+	// Builtins 登记随桌面版预装的官方内置插件在线热更新包（带 SHA-256 校验），不混入插件市场未安装卡片。
+	Builtins []curatedRegistryEntry `json:"builtins,omitempty"`
 	// Packages 只写 npm 包名，名称、说明和版本从 npm 读，上架只需加一行。
 	// 已发布的旧版 BeefTV 不认这个键，会直接忽略，不会出现缺信息的卡片。
 	Packages []string `json:"packages"`
@@ -295,7 +297,7 @@ func lookupCuratedPluginEntry(ctx context.Context, idOrSpec, registry, cachePath
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return curatedRegistryEntry{}, false
 	}
-	for _, entry := range payload.Plugins {
+	for _, entry := range append(payload.Plugins, payload.Builtins...) {
 		if entry.ID == target || entry.PackageName == target || entry.Npm == target {
 			return entry, true
 		}

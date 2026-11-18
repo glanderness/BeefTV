@@ -75,8 +75,19 @@ export async function fetchPluginUpdates(signal?: AbortSignal) {
 
 export type PluginLoadErrorStage = "import" | "activate";
 
-export async function reportPluginLoadError(id: string, error: string, stage?: PluginLoadErrorStage) {
-    return http.post<{ status?: string }>(`/plugins/${encodeURIComponent(id)}/load-error`, stage ? { error, stage } : { error });
+export async function reportPluginLoadError(
+    id: string,
+    error: string,
+    stage?: PluginLoadErrorStage,
+    revision?: string,
+) {
+    const body: { error: string; stage?: PluginLoadErrorStage; revision?: string } = { error };
+    if (stage) body.stage = stage;
+    if (revision) body.revision = revision;
+    return http.post<{ plugin?: BackendPlugin; status?: string }>(
+        `/plugins/${encodeURIComponent(id)}/load-error`,
+        body,
+    );
 }
 
 export async function setUserPluginEnabled(id: string, enabled: boolean) {

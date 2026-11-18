@@ -62,15 +62,21 @@ func RegisterPluginRoutes(r *gin.RouterGroup, center pluginCenter, hosted ...boo
 		c.File(targetPath)
 	})
 	catalogRoutes.POST("/:id/load-error", func(c *gin.Context) {
+		// 仅允许当前已鉴权的工作区会话上报前端插件入口加载错误；热更新内置插件额外要求携带匹配的 revision 才会触发回退。
+		if _, err := currentUser(c, center); err != nil {
+			failService(c, err)
+			return
+		}
 		var request struct {
-			Error string `json:"error"`
-			Stage string `json:"stage"`
+			Error    string `json:"error"`
+			Stage    string `json:"stage"`
+			Revision string `json:"revision"`
 		}
 		if err := c.ShouldBindJSON(&request); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		plugin, err := center.PluginDomain().SetLoadError(c.Param("id"), strings.TrimSpace(request.Error), request.Stage)
+		plugin, err := center.PluginDomain().SetLoadErrorAtRevision(c.Param("id"), strings.TrimSpace(request.Error), request.Stage, strings.TrimSpace(request.Revision))
 		if err != nil {
 			failService(c, err)
 			return

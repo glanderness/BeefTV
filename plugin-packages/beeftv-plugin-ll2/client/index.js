@@ -1,297 +1,25 @@
 // BeefTV 内置插件：LL2 (DMC) 算力与视频渠道（beeftv-plugin-ll2）
 // 通过 app.settings 插槽提供一键 BYOK 配置面板，将 LL2 API Key 与预置协议模型一键同步至宿主「设置 -> 模型服务」。
 
-export const DEFAULT_BASE_URL = "https://api.ll2.cn";
-export const LL2_CHANNEL_ID = "ll2";
-export const LL2_CHANNEL_NAME = "LL2 (DMC)";
+import {
+  BUILTIN_SERVICE_PRESET,
+  DEFAULT_BASE_URL,
+  LL2_CHANNEL_ID,
+  LL2_CHANNEL_NAME,
+  LL2_PRESET_MODELS,
+  buildLL2ModelChannel,
+  upgradeLL2ModelProfile,
+} from "./presets.js";
 
-const DEFAULT_VIDEO_REFERENCES = {
-  promptMaxChars: 2000,
-  minImages: 0,
-  maxImages: 9,
-  maxImageBytes: 30 * 1024 * 1024,
-  minImageWidth: 0,
-  maxImageWidth: 0,
-  minImageHeight: 0,
-  maxImageHeight: 0,
-  minImageAspectRatio: 0,
-  maxImageAspectRatio: 0,
-  minImagePixels: 0,
-  maxImagePixels: 0,
-  maxVideos: 3,
-  maxVideoBytes: 200 * 1024 * 1024,
-  minVideoDurationSeconds: 0,
-  maxVideoDurationSeconds: 15,
-  maxVideoTotalDurationSeconds: 0,
-  minVideoWidth: 0,
-  maxVideoWidth: 0,
-  minVideoHeight: 0,
-  maxVideoHeight: 0,
-  minVideoAspectRatio: 0,
-  maxVideoAspectRatio: 0,
-  minVideoPixels: 0,
-  maxVideoPixels: 0,
-  minVideoFps: 0,
-  maxVideoFps: 0,
-  maxAudios: 3,
-  maxAudioBytes: 15 * 1024 * 1024,
-  minAudioDurationSeconds: 0,
-  maxAudioDurationSeconds: 15,
-  maxAudioTotalDurationSeconds: 0,
-  maxTotalReferences: 0,
+export {
+  BUILTIN_SERVICE_PRESET,
+  DEFAULT_BASE_URL,
+  LL2_CHANNEL_ID,
+  LL2_CHANNEL_NAME,
+  LL2_PRESET_MODELS,
+  buildLL2ModelChannel,
+  upgradeLL2ModelProfile,
 };
-
-export const LL2_PRESET_MODELS = [
-  {
-    model: "deepseek-v4.1-flash",
-    displayName: "DeepSeek V4.1 Flash",
-    family: "DeepSeek 文本",
-    capability: "text",
-    protocol: "chat-completion",
-    endpoint: "POST /v1/chat/completions",
-    capabilityConfig: {
-      version: 1,
-      text: {
-        references: { promptMaxChars: 12000, maxImages: 0, maxImageBytes: 0 },
-        streaming: true,
-        thinking: true,
-      },
-    },
-  },
-  {
-    model: "doubao-seedance-2-0-fast",
-    displayName: "Seedance 2.0 Fast",
-    family: "Seedance 2.0",
-    capability: "video",
-    protocol: "ll2-seedance-video",
-    endpoint: "POST /seedance/api/v3/contents/generations/tasks",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          minVideoDurationSeconds: 2,
-          minAudioDurationSeconds: 2,
-        },
-        duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 },
-        ratios: ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9", "adaptive"],
-        defaultRatio: "16:9",
-        resolutions: ["480p", "720p"],
-        defaultResolution: "720p",
-        generateAudio: { supported: true, default: true },
-        watermark: { supported: true, default: false },
-        returnLastFrame: { supported: true, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "doubao-seedance-2-0",
-    displayName: "Seedance 2.0",
-    family: "Seedance 2.0",
-    capability: "video",
-    protocol: "ll2-seedance-video",
-    endpoint: "POST /seedance/api/v3/contents/generations/tasks",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          minVideoDurationSeconds: 2,
-          minAudioDurationSeconds: 2,
-        },
-        duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 },
-        ratios: ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9", "adaptive"],
-        defaultRatio: "16:9",
-        resolutions: ["480p", "720p"],
-        defaultResolution: "720p",
-        generateAudio: { supported: true, default: true },
-        watermark: { supported: true, default: false },
-        returnLastFrame: { supported: true, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "viduq3-turbo",
-    displayName: "Vidu Q3 Turbo",
-    family: "Vidu Q3",
-    capability: "video",
-    protocol: "ll2-vidu-video",
-    endpoint: "POST /vidu/ent/v2/text2video",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 2,
-          maxVideos: 0,
-          maxAudios: 0,
-        },
-        duration: { selection: "range", min: 1, max: 16, step: 1, default: 5 },
-        ratios: ["16:9", "9:16", "4:3", "3:4", "1:1"],
-        defaultRatio: "16:9",
-        resolutions: ["540p", "720p", "1080p"],
-        defaultResolution: "720p",
-        generateAudio: { supported: true, default: true },
-        watermark: { supported: true, default: false },
-        operations: ["text_to_video", "image_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "viduq3-pro",
-    displayName: "Vidu Q3 Pro",
-    family: "Vidu Q3",
-    capability: "video",
-    protocol: "ll2-vidu-video",
-    endpoint: "POST /vidu/ent/v2/text2video",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 2,
-          maxVideos: 0,
-          maxAudios: 0,
-        },
-        duration: { selection: "range", min: 1, max: 16, step: 1, default: 5 },
-        ratios: ["16:9", "9:16", "4:3", "3:4", "1:1"],
-        defaultRatio: "16:9",
-        resolutions: ["540p", "720p", "1080p"],
-        defaultResolution: "720p",
-        generateAudio: { supported: true, default: true },
-        watermark: { supported: true, default: false },
-        operations: ["text_to_video", "image_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "MiniMax-H3",
-    displayName: "MiniMax H3",
-    family: "MiniMax H3",
-    capability: "video",
-    protocol: "ll2-minimax-video",
-    endpoint: "POST /v2/video_generation",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          maxVideoBytes: 50 * 1024 * 1024,
-        },
-        duration: {
-          selection: "enum",
-          values: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-          default: 5,
-        },
-        ratios: ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
-        defaultRatio: "16:9",
-        resolutions: ["768P"],
-        defaultResolution: "768P",
-        generateAudio: { supported: false, default: false },
-        watermark: { supported: false, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "Super Vega 1.0-pro-mini",
-    displayName: "Super Vega 1.0 Pro Mini",
-    family: "Super Vega",
-    capability: "video",
-    protocol: "ll2-super-vega-video",
-    endpoint: "POST /super-vega/tasks",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 7,
-          maxVideos: 1,
-          maxAudios: 0,
-        },
-        duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 },
-        ratios: ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9"],
-        defaultRatio: "16:9",
-        resolutions: ["720P", "1080P"],
-        defaultResolution: "720P",
-        generateAudio: { supported: true, default: true },
-        watermark: { supported: false, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "Super Vega 1.0-lite",
-    displayName: "Super Vega 1.0 Lite",
-    family: "Super Vega",
-    capability: "video",
-    protocol: "ll2-super-vega-video",
-    endpoint: "POST /super-vega/tasks",
-    capabilityConfig: {
-      version: 1,
-      video: {
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 7,
-          maxVideos: 1,
-          maxAudios: 0,
-        },
-        duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 },
-        ratios: ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9"],
-        defaultRatio: "16:9",
-        resolutions: ["768P", "1080P"],
-        defaultResolution: "768P",
-        generateAudio: { supported: false, default: false },
-        watermark: { supported: false, default: false },
-        operations: ["text_to_video", "image_to_video", "reference_to_video"],
-        defaultOperation: "text_to_video",
-      },
-    },
-  },
-  {
-    model: "auto-hd",
-    displayName: "Auto HD 视频超分",
-    family: "Auto HD 超分",
-    capability: "video",
-    protocol: "ll2-auto-hd-video",
-    endpoint: "POST /hd/tasks",
-    defaultOptions: {
-      testVideoUrl:
-        "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20241115/cqqkru/1.mp4",
-    },
-    capabilityConfig: {
-      version: 1,
-      video: {
-        durationSupported: false,
-        references: {
-          ...DEFAULT_VIDEO_REFERENCES,
-          maxImages: 0,
-          maxVideos: 1,
-          maxVideoBytes: 500 * 1024 * 1024,
-          maxVideoDurationSeconds: 300,
-          maxAudios: 0,
-        },
-        duration: { selection: "enum", values: [5], default: 5 },
-        ratios: [],
-        defaultRatio: "",
-        resolutions: ["1080p", "2k", "4k"],
-        defaultResolution: "1080p",
-        generateAudio: { supported: false, default: false },
-        watermark: { supported: false, default: false },
-        operations: ["reference_to_video"],
-        defaultOperation: "reference_to_video",
-      },
-    },
-  },
-];
 
 function getReact(host) {
   if (host?.React) return host.React;
@@ -300,83 +28,6 @@ function getReact(host) {
     return window.__BEEFTV_REACT__ || window.React || null;
   }
   return null;
-}
-
-export function upgradeLL2ModelProfile(profile) {
-  if (!profile || typeof profile !== "object") return profile;
-  if (!String(profile.protocol || "").startsWith("ll2-")) return profile;
-  const preset = LL2_PRESET_MODELS.find((item) => item.model === profile.model);
-  if (!preset) return profile;
-  let next = profile;
-  if (preset.defaultOptions?.testVideoUrl) {
-    const currentUrl = String(next.defaultOptions?.testVideoUrl || "");
-    if (!currentUrl || currentUrl.includes("cos.ap-guangzhou.myqcloud.com")) {
-      next = {
-        ...next,
-        defaultOptions: {
-          ...(next.defaultOptions || {}),
-          ...preset.defaultOptions,
-        },
-      };
-    }
-  }
-  const presetRes = preset.capabilityConfig?.video?.resolutions;
-  const currentRes = next.capabilityConfig?.video?.resolutions;
-  if (Array.isArray(presetRes) && Array.isArray(currentRes)) {
-    const validSet = new Set(presetRes);
-    if (currentRes.some((r) => !validSet.has(r))) {
-      const filtered = currentRes.filter((r) => validSet.has(r));
-      const resolutions = filtered.length > 0 ? filtered : [...presetRes];
-      const defaultResolution = validSet.has(next.capabilityConfig.video.defaultResolution)
-        ? next.capabilityConfig.video.defaultResolution
-        : preset.capabilityConfig.video.defaultResolution;
-      next = {
-        ...next,
-        capabilityConfig: {
-          ...next.capabilityConfig,
-          video: {
-            ...next.capabilityConfig.video,
-            resolutions,
-            defaultResolution,
-          },
-        },
-      };
-    }
-  }
-  return next;
-}
-
-export function buildLL2ModelChannel({ apiKey, baseUrl, selectedModels }) {
-  const cleanUrl = String(baseUrl || DEFAULT_BASE_URL).trim().replace(/\/+$/, "") || DEFAULT_BASE_URL;
-  const cleanKey = String(apiKey || "").trim();
-  const chosenSet = new Set(
-    Array.isArray(selectedModels) && selectedModels.length
-      ? selectedModels
-      : LL2_PRESET_MODELS.map((item) => item.model),
-  );
-  const activePresets = LL2_PRESET_MODELS.filter((item) => chosenSet.has(item.model));
-  const models = activePresets.map((item) => item.model);
-  const modelProfiles = activePresets.map((item) => ({
-    model: item.model,
-    displayName: item.displayName,
-    capability: item.capability,
-    protocol: item.protocol,
-    authType: "bearer",
-    ...(item.defaultOptions ? { defaultOptions: item.defaultOptions } : {}),
-    capabilityConfig: item.capabilityConfig,
-  }));
-
-  return {
-    id: LL2_CHANNEL_ID,
-    name: LL2_CHANNEL_NAME,
-    scope: "user",
-    baseUrl: cleanUrl,
-    apiKey: cleanKey,
-    hasApiKey: Boolean(cleanKey),
-    apiFormat: "openai",
-    models,
-    modelProfiles,
-  };
 }
 
 function createLL2SettingsPanel(host) {
@@ -514,6 +165,7 @@ function createLL2SettingsPanel(host) {
           apiKey: trimmedKey,
           baseUrl: trimmedUrl,
           selectedModels,
+          existingChannel,
         });
         if (!host?.channels?.upsert) {
           throw new Error("当前宿主版本不支持同步模型渠道");
@@ -541,7 +193,6 @@ function createLL2SettingsPanel(host) {
           padding: "4px 0",
         },
       },
-      // 顶部品牌介绍卡片
       h(
         "div",
         {
@@ -594,11 +245,10 @@ function createLL2SettingsPanel(host) {
               lineHeight: 1.6,
             },
           },
-          "只需填写一个 LL2 API Key，即可一键配置 DeepSeek V4.1、Seedance 2.0、Vidu Q3、MiniMax H3、Super Vega 1.0 与 Auto HD 视频超分共 6 套模型协议，不改动 BeefTV 原有默认模型配置。",
+          "只需填写一个 LL2 API Key，即可一键配置 DeepSeek V4.1、Wan 3.0、Seedance 2.0/2.5、Vidu Q3、MiniMax H3、Super Vega 1.0/1.5 与 Auto HD 视频超分共 7 套模型协议，不改动 BeefTV 原有默认模型配置。",
         ),
       ),
 
-      // 表单区
       h(
         "div",
         {
@@ -706,7 +356,6 @@ function createLL2SettingsPanel(host) {
         ),
       ),
 
-      // 预置模型与协议映射清单
       h(
         "div",
         {
@@ -850,7 +499,6 @@ function createLL2SettingsPanel(host) {
         ),
       ),
 
-      // 状态反馈区
       errorMessage
         ? h(
             "div",
@@ -910,7 +558,6 @@ function createLL2SettingsPanel(host) {
           )
         : null,
 
-      // 底部操作按钮
       h(
         "div",
         {
@@ -957,4 +604,4 @@ export function activate(host) {
   };
 }
 
-export default { activate };
+export default { activate, BUILTIN_SERVICE_PRESET };
