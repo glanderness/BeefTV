@@ -191,7 +191,9 @@ BeefTV is also open to sponsorship. If you would like more people to discover an
 
 BeefTV has grown to over 2.5K stars, 480 forks, and a community of more than 2,000 members. The team has also established close partnerships with several sponsors.
 
-<img src="assets/readme/commercial-license-wecom.jpg" width="240" alt="WeCom QR code for BeefTV commercial licensing and sponsorship inquiries">
+<p align="center">
+  <img src="assets/readme/commercial-license-wecom.jpg" width="200" alt="WeCom QR code for BeefTV commercial licensing and sponsorship inquiries">
+</p>
 
 ## Contributing and license
 

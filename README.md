@@ -191,7 +191,9 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 
 目前 BeefTV 已经取得了超过 2.5K stars、480 个 Fork，社群人数超过 2000 人，团队也已经与多家赞助企业达成了深度合作。
 
-<img src="assets/readme/commercial-license-wecom.jpg" width="240" alt="BeefTV 商用授权和赞助联系企业微信二维码">
+<p align="center">
+  <img src="assets/readme/commercial-license-wecom.jpg" width="200" alt="BeefTV 商用授权和赞助联系企业微信二维码">
+</p>
 
 ## 贡献与许可
 
