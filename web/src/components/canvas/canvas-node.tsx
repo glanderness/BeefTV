@@ -342,6 +342,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             data-media-operation-error={data.metadata?.mediaOperationError || undefined}
             data-node-hovered={hovered ? "true" : undefined}
             data-node-lod-pinned={lodPinned ? "true" : undefined}
+            data-reduce-media-effects={reduceMediaEffects ? "true" : undefined}
             data-asset-category={data.metadata?.assetCategory || undefined}
             className={`node-element absolute flex select-none flex-col ${dragOffset ? "cursor-grabbing" : data.type === CanvasNodeType.Drawing ? "cursor-pointer" : "cursor-default"} ${isSelected ? "z-[var(--z-node-toolbar)]" : isFocusRelated || isConnectionTarget ? "z-[var(--z-node-active)]" : "z-[var(--z-node)]"}`}
             style={{
@@ -350,11 +351,15 @@ export const CanvasNode = React.memo(function CanvasNode({
                 height: data.height,
                 contain: "layout style",
             }}
-            onMouseEnter={() => {
+            onMouseEnter={(event) => {
+                if (event.currentTarget.closest('[data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]')) {
+                    return;
+                }
                 setHovered(true);
                 onHoverStart(data.id);
             }}
             onMouseLeave={() => {
+                if (!hovered) return;
                 setHovered(false);
                 onHoverEnd(data.id);
             }}

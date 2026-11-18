@@ -17,31 +17,31 @@ function makeNodes(type: CanvasNodeType, count: number, prefix = type): CanvasNo
 describe("shouldReduceCanvasMediaEffects", () => {
     test("returns false in auto mode when total, media, and video node counts are below thresholds", () => {
         const nodes = [
-            ...makeNodes(CanvasNodeType.Video, 7, "v"),
-            ...makeNodes(CanvasNodeType.Image, 20, "img"),
+            ...makeNodes(CanvasNodeType.Video, 5, "v"),
+            ...makeNodes(CanvasNodeType.Image, 12, "img"),
             ...makeNodes(CanvasNodeType.Text, 10, "txt"),
         ];
         expect(shouldReduceCanvasMediaEffects("auto", nodes)).toBe(false);
     });
 
-    test("returns true in auto mode when videoCount reaches 8 even if total media < 32", () => {
+    test("returns true in auto mode when videoCount reaches 6 even if total media < 20", () => {
         const nodes = [
-            ...makeNodes(CanvasNodeType.Video, 8, "v"),
+            ...makeNodes(CanvasNodeType.Video, 6, "v"),
             ...makeNodes(CanvasNodeType.Image, 4, "img"),
         ];
         expect(shouldReduceCanvasMediaEffects("auto", nodes)).toBe(true);
     });
 
-    test("returns true in auto mode when mediaCount reaches 32", () => {
+    test("returns true in auto mode when mediaCount reaches 20", () => {
         const nodes = [
-            ...makeNodes(CanvasNodeType.Image, 28, "img"),
+            ...makeNodes(CanvasNodeType.Image, 16, "img"),
             ...makeNodes(CanvasNodeType.Audio, 4, "aud"),
         ];
         expect(shouldReduceCanvasMediaEffects("auto", nodes)).toBe(true);
     });
 
-    test("returns true in auto mode when total node count reaches 80", () => {
-        const nodes = makeNodes(CanvasNodeType.Text, 80, "txt");
+    test("returns true in auto mode when total node count reaches 48", () => {
+        const nodes = makeNodes(CanvasNodeType.Text, 48, "txt");
         expect(shouldReduceCanvasMediaEffects("auto", nodes)).toBe(true);
     });
 

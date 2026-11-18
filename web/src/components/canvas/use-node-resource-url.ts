@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildLibTVImagePreviewUrl, buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
 import { isProtectedResourceFileUrl, ownedResourceStorageKey, resourceIdFromStorageKey } from "@/services/api/resources";
-import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
+import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, peekFallbackResourceImagePreviewUrl } from "@/services/resource-blob-cache";
 import { resolveImageUrl } from "@/services/image-storage";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -24,7 +24,9 @@ export function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, preview
     const isRemoteResource = Boolean(resourceId);
     // 远程资源接口受登录/桌面令牌保护，原生 `<img>` 无法附带该令牌。
     // 重登后只能先通过 cacheResourceObjectUrl() 走鉴权下载，再挂载 Blob URL。
-    const synchronousUrl = eager && isRemoteResource && node.type === CanvasNodeType.Image ? peekCachedResourceObjectUrl(storageKey, previewSize) : "";
+    const synchronousUrl = eager && isRemoteResource && node.type === CanvasNodeType.Image
+        ? peekFallbackResourceImagePreviewUrl(storageKey, previewSize)
+        : "";
     // Inline data URLs are already local, but decoding thousands of them is
     // still expensive. Images must wait for the same viewport gate as remote
     // resources; otherwise DOM virtualization does not reduce image work.
