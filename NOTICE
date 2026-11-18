@@ -49,9 +49,10 @@ are preserved in Part B of LICENSE.
 
 BeefTV is developed on top of ddcat's Open AI Canvas, an AI filmmaking and
 short drama workspace. Foundational capabilities derived from this project
-include canvas node workflows, model provider integration, task and asset
-management, and community-contributed built-in plugins, which BeefTV adapts and
-extends for its local desktop application. The referenced release uses the MIT
+include canvas node workflows, declarative model protocol definitions, and task
+and asset management (with the community-contributed application plugins
+migrated to the external Sunnyender-org/beeftv-plugins repository), which BeefTV
+adapts and extends for its local desktop application. The referenced release uses the MIT
 License; its upstream copyright notices for basketikun and for ddcat and Open AI
 Canvas contributors are set out in Part B of LICENSE.
 
