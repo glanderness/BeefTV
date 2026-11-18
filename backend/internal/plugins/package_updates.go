@@ -55,6 +55,29 @@ func (s *Service) CheckUpdates(ctx context.Context, registry string) UpdateCheck
 		wg sync.WaitGroup
 	)
 	for _, item := range s.List() {
+		if isBundledBuiltinPlugin(item.Manifest.ID) && IsBuiltInSource(item.Source) {
+			entry, found := pinned[item.Manifest.ID]
+			if !found {
+				continue
+			}
+			latest := strings.TrimSpace(entry.Version)
+			if _, ok := parseVersionCore(latest); !ok {
+				continue
+			}
+			mu.Lock()
+			if newerVersion(latest, item.Manifest.Version) {
+				check.Updates = append(check.Updates, UpdateNotice{
+					ID:       item.Manifest.ID,
+					Version:  item.Manifest.Version,
+					Latest:   latest,
+					Official: true,
+				})
+			} else {
+				check.UpToDate = append(check.UpToDate, item.Manifest.ID)
+			}
+			mu.Unlock()
+			continue
+		}
 		if item.Source != OriginPackage {
 			continue
 		}
@@ -137,8 +160,9 @@ func pinnedCuratedEntries(raw []byte) map[string]curatedRegistryEntry {
 	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
 		return nil
 	}
-	pinned := make(map[string]curatedRegistryEntry, len(payload.Plugins))
-	for _, entry := range payload.Plugins {
+	allEntries := append(payload.Plugins, payload.Builtins...)
+	pinned := make(map[string]curatedRegistryEntry, len(allEntries))
+	for _, entry := range allEntries {
 		if strings.TrimSpace(entry.Tarball) == "" && strings.TrimSpace(entry.MirrorTarball) == "" {
 			continue
 		}

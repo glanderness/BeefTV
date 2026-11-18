@@ -267,9 +267,9 @@ export default function PluginsPage() {
         }
     };
 
-    // 文件夹里是用户自己的代码，「重新加载」不用确认；其他来源换的是别人发布的新代码。
+    // 文件夹里是用户自己的代码，官方内置插件走 SHA-256 校验过的官方源，两者直接更新；其他来源弹确认框。
     const handleUpdatePlugin = (plugin: BackendPlugin) => {
-        if (isLocalFolderSource(plugin.packageSpec)) {
+        if (isLocalFolderSource(plugin.packageSpec) || plugin.source === "official") {
             void updateInstalledPlugin(plugin.manifest.id);
             return;
         }
@@ -278,7 +278,7 @@ export default function PluginsPage() {
     };
 
     const handleUpdateConfirm = async (request: PluginInstallConfirmRequest) => {
-        const target = backendPlugins.find((plugin) => plugin.packageSpec === request.source);
+        const target = backendPlugins.find((plugin) => plugin.packageSpec === request.source || plugin.manifest.id === request.source);
         if (!target) {
             message.error("这个插件已经不在了，刷新后再试");
             return;
@@ -400,7 +400,7 @@ export default function PluginsPage() {
                                                                         title={!canToggle ? state?.blockedReason : undefined}
                                                                         onChange={(checked) => void togglePlugin(plugin, checked)}
                                                                     />
-                                                                    {remote?.source === "package" && remote.packageSpec ? (
+                                                                    {(remote?.source === "package" || updateCheck?.updates.some((item) => item.id === plugin.manifest.id)) && remote?.packageSpec ? (
                                                                         <PluginUpdateButton
                                                                             pluginId={plugin.manifest.id}
                                                                             packageSpec={remote.packageSpec}

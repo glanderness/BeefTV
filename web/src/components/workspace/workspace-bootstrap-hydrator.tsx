@@ -6,6 +6,7 @@ import { WorkspaceStartupError } from "@/components/workspace/workspace-startup-
 import { appPathname } from "@/lib/app-routing";
 import { isEmbeddedRuntime } from "@/lib/embedded-runtime";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
+import { hasBuiltinChannelProfileUpgrade } from "@/lib/builtin-service-presets";
 import { applyUserSession, localWorkspaceConfig } from "@/lib/user-session";
 import { getWorkspaceBootstrap, type WorkspaceBootstrapPayload } from "@/services/api/workspace";
 import { hydrateLocalCanvasProjectsFromBackend } from "@/services/local-workspace-repository";
@@ -165,6 +166,7 @@ export async function hydrateLocalModelConfig() {
     const result = await hydrateModelConfig();
     // 还有没保存的设置修改：界面保留它，等它保存，不用读回的旧快照覆盖。
     if (result.supersededByLocalEdit) return;
+    const profilesMigrated = hasBuiltinChannelProfileUpgrade(result.config?.channels);
     const normalizedConfig = localWorkspaceConfig(normalizeConfigSnapshot({ config: result.config }).config);
     applyingHydratedModelConfig = true;
     try {
@@ -172,7 +174,7 @@ export async function hydrateLocalModelConfig() {
     } finally {
         applyingHydratedModelConfig = false;
     }
-    if (shouldPersistHydratedModelConfig(result.health)) await commitModelConfig(normalizedConfig);
+    if (shouldPersistHydratedModelConfig(result.health) || profilesMigrated) await commitModelConfig(normalizedConfig);
 }
 
 export function shouldPersistHydratedModelConfig(health: string) {

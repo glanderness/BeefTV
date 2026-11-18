@@ -142,9 +142,13 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 			return nil, fmt.Errorf("官方插件 ID %q 重复", id)
 		}
 		builtInIDs[id] = struct{}{}
-		manifest := pkg.Manifest
 		record := byID[id]
-		if len(record.Raw) > 0 {
+		pkg, adoptedHot, recordStillValid := c.preferHotUpdatedBuiltinOnBoot(id, record, pkg)
+		for resolvable := range resolvableProviderIDs(pkg.ManifestRaw) {
+			shippedResolvable[resolvable] = id
+		}
+		manifest := pkg.Manifest
+		if len(record.Raw) > 0 && IsBuiltInSource(record.Source) {
 			var previous protocol.Manifest
 			if err := json.Unmarshal(record.Raw, &previous); err == nil {
 				manifest.Metadata.Enabled = previous.Metadata.Enabled
@@ -166,13 +170,23 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 			InstalledAt:   now,
 			UpdatedAt:     now,
 		}
-		next.LoadError, next.LoadErrorStage = retainedLoadError(record, next)
-		if !record.InstalledAt.IsZero() {
+		if !adoptedHot && IsBuiltInSource(record.Source) {
+			next.LoadError, next.LoadErrorStage = retainedLoadError(record, next)
+		}
+		if IsBuiltInSource(record.Source) && !record.InstalledAt.IsZero() {
 			next.InstalledAt = record.InstalledAt
 		}
-		if !registryRecordContentChanged(record, next) {
+		if IsBuiltInSource(record.Source) && !registryRecordContentChanged(record, next) {
 			next.UpdatedAt = record.UpdatedAt
 		}
+		if recordStillValid {
+			if note := deferralFor(record, next, snapshot); note != nil {
+				retained[id] = note
+				c.cleanupBuiltinBlobsOnBoot(id, record.PackageSHA256, !sameCleanDir(record.PackageDir, pkg.RootDir))
+				continue
+			}
+		}
+		c.cleanupBuiltinBlobsOnBoot(id, pkg.SHA256, adoptedHot)
 		byID[id] = next
 	}
 	missing := make([]RegistryRecord, 0, len(byID))

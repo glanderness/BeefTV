@@ -535,10 +535,121 @@ describe("plugin host slots, events, and lifecycle", () => {
         ).toBe(true);
         const builtChannel = ll2Mod.buildLL2ModelChannel({ apiKey: "sk-test-demo", baseUrl: "https://api.ll2.cn" });
         expect(builtChannel.id).toBe("ll2");
+        expect(builtChannel.models).toContain("wan3.0-video");
+        expect(builtChannel.models).toContain("wan3.0-video-prime");
         expect(builtChannel.models).toContain("doubao-seedance-2-0-fast");
+        expect(builtChannel.models).toContain("doubao-seedance-2-5");
         expect(builtChannel.models).toContain("Super Vega 1.0-pro-mini");
+        expect(builtChannel.models).toContain("Super Vega 1.5-pro");
         expect(builtChannel.models).toContain("auto-hd");
-        expect(builtChannel.modelProfiles).toHaveLength(9);
+        expect(builtChannel.modelProfiles).toHaveLength(16);
+
+        // 旧渠道上点「读取模型」误落到 newapi 且带 1440p/2160p/21:9 的 wan3.0-video 自动修复为 ll2-wan3-video
+        const repairedWan3 = ll2Mod.upgradeLL2ModelProfile(
+            {
+                model: "wan3.0-video",
+                capability: "video",
+                protocol: "newapi",
+                capabilityConfig: {
+                    version: 1,
+                    video: {
+                        resolutions: ["480p", "720p", "1080p", "1440p", "2160p"],
+                        defaultResolution: "480p",
+                        ratios: ["16:9", "21:9"],
+                        defaultRatio: "21:9",
+                    },
+                },
+            },
+            { id: "ll2", baseUrl: "https://api.ll2.cn" },
+        );
+        expect(repairedWan3.protocol).toBe("ll2-wan3-video");
+        expect(repairedWan3.capabilityConfig.video.resolutions).toEqual(["480P", "720P", "1080P"]);
+        expect(repairedWan3.capabilityConfig.video.ratios).not.toContain("21:9");
+
+        // 非 LL2 渠道上的同名模型绝不被误改协议
+        const foreignWan3 = ll2Mod.upgradeLL2ModelProfile(
+            { model: "wan3.0-video", capability: "video", protocol: "newapi-channel-2" },
+            { id: "foreign", baseUrl: "https://relay.example.com" },
+        );
+        expect(foreignWan3.protocol).toBe("newapi-channel-2");
+
+        // 热更新后的内置渠道模块激活时，宿主 BUILTIN_PRESETS 同步刷新新增模型
+        const { builtinPreset } = await import("@/lib/builtin-service-presets");
+        const prevLL2Preset = builtinPreset("ll2")!;
+        try {
+            await activateClientPluginModule(
+                "beeftv-plugin-ll2",
+                {
+                    activate: ll2Mod.activate,
+                    BUILTIN_SERVICE_PRESET: {
+                        ...ll2Mod.BUILTIN_SERVICE_PRESET,
+                        name: "LL2 (DMC Next)",
+                        subtitle: "文本 · 万相 3.0 · 超分",
+                        baseUrl: "https://api-next.ll2.cn",
+                        models: [
+                            ...ll2Mod.LL2_PRESET_MODELS,
+                            { model: "wan4.0-hot-video", displayName: "Wan 4.0 Hot", capability: "video", protocol: "ll2-wan3-video" },
+                        ],
+                    },
+                } as unknown as Parameters<typeof activateClientPluginModule>[1],
+                { reportBackendError: false },
+            );
+            expect(builtinPreset("ll2")?.models.some((m) => m.model === "wan4.0-hot-video")).toBe(true);
+            expect(builtinPreset("ll2")?.name).toBe("LL2 (DMC Next)");
+            expect(builtinPreset("ll2")?.baseUrl).toBe("https://api-next.ll2.cn");
+            const { MODEL_SERVICE_PRESETS, createServicePresetChannel } = await import("../src/lib/model-service-presets");
+            const liveLL2Preset = MODEL_SERVICE_PRESETS.find((item) => item.id === "ll2");
+            expect(liveLL2Preset?.name).toBe("LL2 (DMC Next)");
+            expect(liveLL2Preset?.subtitle).toBe("文本 · 万相 3.0 · 超分");
+            expect(liveLL2Preset?.baseUrl).toBe("https://api-next.ll2.cn");
+            const hotCreatedChannel = createServicePresetChannel("ll2", "ll2-hot-check");
+            expect(hotCreatedChannel.name).toBe("LL2 (DMC Next)");
+            expect(hotCreatedChannel.baseUrl).toBe("https://api-next.ll2.cn");
+            expect(hotCreatedChannel.models).toContain("wan4.0-hot-video");
+
+            // 验证插件激活只迁移本地用户渠道，绝不把 scope="system" 系统渠道写回本地配置，且无变更时不触发多余 replaceConfig。
+            const { createModelChannel, defaultConfig, useConfigStore } = await import("../src/stores/use-config-store");
+            const prevConfigSnapshot = useConfigStore.getState().config;
+            let replaceCount = 0;
+            const origReplace = useConfigStore.getState().replaceConfig;
+            useConfigStore.setState({
+                replaceConfig: (cfg) => {
+                    replaceCount += 1;
+                    origReplace(cfg);
+                },
+                config: {
+                    ...defaultConfig,
+                    channels: [
+                        createModelChannel({ id: "sys-managed", name: "系统渠道", baseUrl: "https://sys.example.com", scope: "system", models: ["sys-m1"] }),
+                        createModelChannel({
+                            id: "ll2",
+                            name: "LL2 (DMC)",
+                            baseUrl: "https://api.ll2.cn",
+                            scope: "user",
+                            models: ["wan3.0-video"],
+                            modelProfiles: [{ model: "wan3.0-video", capability: "video", protocol: "newapi" }],
+                        }),
+                    ],
+                },
+            });
+            try {
+                await activateClientPluginModule("beeftv-plugin-ll2", ll2Mod, { reportBackendError: false });
+                expect(replaceCount).toBe(1);
+                const afterMigration = useConfigStore.getState().config.channels;
+                expect(afterMigration.some((c) => c.scope === "system")).toBe(false);
+                expect(afterMigration.find((c) => c.id === "ll2")?.modelProfiles?.[0]?.protocol).toBe("ll2-wan3-video");
+
+                // 再次激活但渠道未发生任何变化时，不再调用 replaceConfig。
+                await activateClientPluginModule("beeftv-plugin-ll2", ll2Mod, { reportBackendError: false });
+                expect(replaceCount).toBe(1);
+            } finally {
+                useConfigStore.setState({ replaceConfig: origReplace, config: prevConfigSnapshot });
+            }
+        } finally {
+            await activateClientPluginModule("beeftv-plugin-ll2", ll2Mod, { reportBackendError: false });
+            expect(builtinPreset("ll2")?.models).toHaveLength(prevLL2Preset.models.length);
+            expect(builtinPreset("ll2")?.baseUrl).toBe("https://api.ll2.cn");
+        }
 
         expect(
             getPluginSlotEntries("app.settings").some((e) => e.pluginId === "beeftv-plugin-ysdui"),
@@ -741,5 +852,56 @@ describe("plugin host slots, events, and lifecycle", () => {
         }
         expect(disabledHtml).toContain('data-testid="canvas-disabled-plugin-node"');
         expect(disabledHtml).toContain("需要启用 媒体转换节点 插件");
+    });
+
+    test("clientEntryFor isolates @rev-<sha> path prefix so consecutive dynamic ESM imports reload nested ./presets.js instead of stale module map", async () => {
+        const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const { dirname, join } = await import("node:path");
+        const { pathToFileURL } = await import("node:url");
+        const { clientEntryFor } = await import("../src/lib/plugins/plugin-client-loader");
+        const revA = "a".repeat(64);
+        const revB = "b".repeat(64);
+        const entryA = clientEntryFor("beeftv-plugin-ll2", {
+            id: "beeftv-plugin-ll2",
+            name: "LL2",
+            version: "1.1.0",
+            revision: revA,
+            client: "./client/index.js",
+            description: "",
+            permissions: [],
+            contributes: {},
+        });
+        const entryB = clientEntryFor("beeftv-plugin-ll2", {
+            id: "beeftv-plugin-ll2",
+            name: "LL2",
+            version: "1.2.0",
+            revision: revB,
+            client: "./client/index.js",
+            description: "",
+            permissions: [],
+            contributes: {},
+        });
+        expect(entryA).toBe(`/api/plugins/beeftv-plugin-ll2/files/@rev-${revA}/client/index.js`);
+        expect(entryB).toBe(`/api/plugins/beeftv-plugin-ll2/files/@rev-${revB}/client/index.js`);
+
+        const tmpRoot = mkdtempSync(join(tmpdir(), "beeftv-rev-import-"));
+        try {
+            const pathA = join(tmpRoot, entryA!);
+            const pathB = join(tmpRoot, entryB!);
+            mkdirSync(dirname(pathA), { recursive: true });
+            mkdirSync(dirname(pathB), { recursive: true });
+            writeFileSync(pathA, 'import { MODELS } from "./presets.js"; export { MODELS };');
+            writeFileSync(join(dirname(pathA), "presets.js"), 'export const MODELS = ["wan3.0-video"];');
+            writeFileSync(pathB, 'import { MODELS } from "./presets.js"; export { MODELS };');
+            writeFileSync(join(dirname(pathB), "presets.js"), 'export const MODELS = ["wan3.0-video", "wan4.0-live"];');
+
+            const modA = (await import(pathToFileURL(pathA).href)) as { MODELS: string[] };
+            const modB = (await import(pathToFileURL(pathB).href)) as { MODELS: string[] };
+            expect(modA.MODELS).toEqual(["wan3.0-video"]);
+            expect(modB.MODELS).toEqual(["wan3.0-video", "wan4.0-live"]);
+        } finally {
+            rmSync(tmpRoot, { recursive: true, force: true });
+        }
     });
 });

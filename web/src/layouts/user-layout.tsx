@@ -49,8 +49,27 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     }, [pathname]);
 
     useEffect(() => {
-        // A failed read keeps the plugins remembered in this browser.
-        void syncPluginsFromBackend().catch(() => undefined);
+        let lastSyncedAt = Date.now();
+        const runSync = () => {
+            lastSyncedAt = Date.now();
+            // A failed read keeps the plugins remembered in this browser.
+            void syncPluginsFromBackend().catch(() => undefined);
+        };
+        runSync();
+        const initialUpdateTimer = window.setTimeout(runSync, 75_000);
+        const periodicTimer = window.setInterval(runSync, 6 * 60 * 60_000);
+        const onVisibleOrFocus = () => {
+            if (document.hidden || Date.now() - lastSyncedAt < 60_000) return;
+            runSync();
+        };
+        window.addEventListener("focus", onVisibleOrFocus);
+        document.addEventListener("visibilitychange", onVisibleOrFocus);
+        return () => {
+            window.clearTimeout(initialUpdateTimer);
+            window.clearInterval(periodicTimer);
+            window.removeEventListener("focus", onVisibleOrFocus);
+            document.removeEventListener("visibilitychange", onVisibleOrFocus);
+        };
     }, []);
 
     useEffect(() => {

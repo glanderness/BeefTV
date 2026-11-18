@@ -5,14 +5,53 @@ import { inferProtocolCapabilityFromModel, modelProtocolDefinition, modelProtoco
 import { cleanChannelBaseUrl, isRawChannelBaseUrl } from "@/lib/channel-url";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { serviceCredentialGuide } from "@/lib/service-credentials";
-import { BUILTIN_PRESETS, COMPATIBLE_CANDIDATES, builtinPreset, builtinProtocolsAvailable, upgradeBuiltinModelProfile } from "@/lib/builtin-service-presets";
-import { DEFAULT_BASE_URL as LL2_DEFAULT_BASE_URL, LL2_CHANNEL_ID, LL2_CHANNEL_NAME } from "../../../plugin-packages/beeftv-plugin-ll2/client/index.js";
-import { DEFAULT_BASE_URL as YSDUI_DEFAULT_BASE_URL, YSDUI_CHANNEL_ICON, YSDUI_CHANNEL_ID, YSDUI_CHANNEL_NAME } from "../../../plugin-packages/beeftv-plugin-ysdui/client/index.js";
+import {
+    BUILTIN_PRESETS,
+    COMPATIBLE_CANDIDATES,
+    LL2_CHANNEL_ID,
+    YSDUI_CHANNEL_ID,
+    builtinPreset,
+    builtinProtocolsAvailable,
+    upgradeBuiltinModelProfile,
+} from "@/lib/builtin-service-presets";
 
 export const MODEL_SERVICE_PRESETS = [
     { id: "compatible", name: "第三方模型服务", subtitle: "OpenAI 兼容 API · 中转服务", icon: "OpenAI", baseUrl: "", apiFormat: "openai" },
-    { id: LL2_CHANNEL_ID, name: LL2_CHANNEL_NAME, subtitle: "文本 · 多款主流视频 · 视频超分", icon: "LL2", baseUrl: LL2_DEFAULT_BASE_URL, website: "https://hub.ll2.cn?p=rw6t", apiFormat: "openai" },
-    { id: YSDUI_CHANNEL_ID, name: YSDUI_CHANNEL_NAME, subtitle: "文本 · 多款主流图片 · 多款主流视频", icon: YSDUI_CHANNEL_ICON, baseUrl: YSDUI_DEFAULT_BASE_URL, website: "https://www.ysdui.cn/", apiFormat: "openai" },
+    {
+        id: LL2_CHANNEL_ID,
+        get name() {
+            return BUILTIN_PRESETS[LL2_CHANNEL_ID]?.name ?? "LL2 (DMC)";
+        },
+        get subtitle() {
+            return BUILTIN_PRESETS[LL2_CHANNEL_ID]?.subtitle ?? "文本 · 多款主流视频 · 视频超分";
+        },
+        get icon() {
+            const icon = BUILTIN_PRESETS[LL2_CHANNEL_ID]?.icon;
+            return icon && icon !== "OpenAI" ? icon : "LL2";
+        },
+        get baseUrl() {
+            return BUILTIN_PRESETS[LL2_CHANNEL_ID]?.baseUrl ?? "https://api.ll2.cn";
+        },
+        website: "https://hub.ll2.cn?p=rw6t",
+        apiFormat: "openai",
+    },
+    {
+        id: YSDUI_CHANNEL_ID,
+        get name() {
+            return BUILTIN_PRESETS[YSDUI_CHANNEL_ID]?.name ?? "银盛云枢壹算 (OneAxis)";
+        },
+        get subtitle() {
+            return BUILTIN_PRESETS[YSDUI_CHANNEL_ID]?.subtitle ?? "文本 · 多款主流图片 · 多款主流视频";
+        },
+        get icon() {
+            return BUILTIN_PRESETS[YSDUI_CHANNEL_ID]?.icon ?? "Ysdui";
+        },
+        get baseUrl() {
+            return BUILTIN_PRESETS[YSDUI_CHANNEL_ID]?.baseUrl ?? "https://tokenhub.ysdui.cn";
+        },
+        website: "https://www.ysdui.cn/",
+        apiFormat: "openai",
+    },
     { id: "openai", name: "OpenAI", subtitle: "文本 · 图片（Sora 已停用）", icon: "OpenAI", baseUrl: "https://api.openai.com/v1", apiFormat: "openai" },
     { id: "gemini", name: "Google Gemini", subtitle: "文本 · 图片（Veo 已停用）", icon: "Gemini", baseUrl: "https://generativelanguage.googleapis.com", apiFormat: "gemini" },
     { id: "ark", name: "火山方舟", subtitle: "文本 · 即梦图片 · Seedance 视频", icon: "Volcengine", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiFormat: "openai" },
@@ -141,7 +180,7 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     const preset = channel.apiFormat === "gemini" ? "gemini" : servicePresetFor(channel);
     const plugin = builtinPreset(preset);
     const rawExisting = channel.modelProfiles?.find((profile) => profile.model === item.id);
-    const existing = rawExisting ? upgradeBuiltinModelProfile(rawExisting) : rawExisting;
+    const existing = rawExisting ? upgradeBuiltinModelProfile(rawExisting, channel) : rawExisting;
     if (existing?.protocol && !explicitCapability) {
         const matching = protocols.filter((p) => p.value === existing.protocol && p.enabled !== false);
         if (matching.some((p) => p.module)) {

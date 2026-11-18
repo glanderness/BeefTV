@@ -494,7 +494,7 @@ function reconcileChannelModelProfiles(channel: ModelChannel): ModelChannel {
     if (!channel.modelProfiles?.length) return channel;
     let changed = false;
     const modelProfiles = channel.modelProfiles.map((raw) => {
-        const profile = (upgradeBuiltinModelProfile(raw) as typeof raw) || raw, capability = modelProtocolCapability(profile.protocol);
+        const profile = (upgradeBuiltinModelProfile(raw, channel) as typeof raw) || raw, capability = modelProtocolCapability(profile.protocol);
         if (profile !== raw) changed = true;
         return !capability || capability === profile.capability ? profile : ((changed = true), { ...profile, capability });
     });

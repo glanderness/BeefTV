@@ -268,6 +268,14 @@ func normalizeLoadErrorStage(raw string) string {
 }
 
 func (c *Runtime) SetLoadError(id string, errText string, stageOpt ...string) (View, error) {
+	stageVal := ""
+	if len(stageOpt) > 0 {
+		stageVal = stageOpt[0]
+	}
+	return c.SetLoadErrorAtRevision(id, errText, stageVal, "")
+}
+
+func (c *Runtime) SetLoadErrorAtRevision(id string, errText string, stageRaw string, revision string) (View, error) {
 	if c == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
@@ -279,14 +287,26 @@ func (c *Runtime) SetLoadError(id string, errText string, stageOpt ...string) (V
 	if !ok {
 		return View{}, fmt.Errorf("插件 %q 不存在", id)
 	}
+	reportedRev := strings.TrimSpace(revision)
+	trimmedErr := strings.TrimSpace(errText)
+	if isHotUpdatedBuiltinRecord(c.dataDir, record.Metadata.ID, record) {
+		if reportedRev == "" || !strings.EqualFold(record.PackageSHA256, reportedRev) {
+			return viewFromRecord(record), nil
+		}
+		if trimmedErr != "" {
+			return c.rollbackHotUpdatedBuiltinLocked(record.Metadata.ID, record)
+		}
+	}
+	if reportedRev != "" && strings.TrimSpace(record.PackageSHA256) != "" && !strings.EqualFold(record.PackageSHA256, reportedRev) {
+		return viewFromRecord(record), nil
+	}
 	stored, err := c.currentRecords()
 	if err != nil {
 		return View{}, err
 	}
-	trimmedErr := strings.TrimSpace(errText)
 	stageVal := ""
-	if trimmedErr != "" && len(stageOpt) > 0 {
-		stageVal = normalizeLoadErrorStage(stageOpt[0])
+	if trimmedErr != "" {
+		stageVal = normalizeLoadErrorStage(stageRaw)
 	}
 	for index := range stored {
 		if stored[index].ID == record.Metadata.ID {

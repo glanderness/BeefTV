@@ -201,11 +201,37 @@ func (c *Runtime) InstallPackage(source, registry string) (View, error) {
 	existing, exists := c.plugins[id]
 	c.mu.RUnlock()
 	if exists && IsBuiltInSource(existing.Source) {
-		return View{}, packageError(http.StatusConflict, "plugin_id_reserved", fmt.Sprintf("内置插件 %q 不能通过安装包覆盖", id))
+		if isLocalPath || !isBundledBuiltinPlugin(id) || spec != id {
+			return View{}, packageError(http.StatusConflict, "plugin_id_reserved", fmt.Sprintf("内置插件 %q 不能通过安装包覆盖", id))
+		}
+		if !newerVersion(staged.Manifest.Metadata.Version, existing.Metadata.Version) {
+			return View{}, packageError(http.StatusConflict, "plugin_update_unsupported",
+				fmt.Sprintf("内置插件 %q 当前版本为 %s，无需覆盖为 %s", id, existing.Metadata.Version, staged.Manifest.Metadata.Version))
+		}
 	}
 	relRoot, err := filepath.Rel(stageDir, staged.RootDir)
 	if err != nil {
 		return View{}, err
+	}
+	if exists && IsBuiltInSource(existing.Source) && isBundledBuiltinPlugin(id) {
+		if note := deferralFor(
+			RegistryRecord{ID: id, Raw: existing.Raw},
+			RegistryRecord{ID: id, Raw: staged.ManifestRaw},
+			c.snapshotReferences(),
+		); note != nil {
+			return View{}, packageError(http.StatusConflict, "plugin_update_deferred", strings.Join(note.Reasons, "；"))
+		}
+		installed, cleanupBlob, blobErr := stageHotUpdatedBuiltinBlob(c.dataDir, id, stageDir, relRoot, staged.SHA256)
+		if blobErr != nil {
+			return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", blobErr.Error())
+		}
+		view, commitErr := c.commitPackageRecord(installed, id, existing, exists)
+		if commitErr != nil {
+			cleanupBlob()
+			return View{}, commitErr
+		}
+		pruneOtherBuiltinBlobs(c.dataDir, id, installed.SHA256, 1)
+		return view, nil
 	}
 
 	installRoot := filepath.Join(pluginsRoot, id)
@@ -291,6 +317,10 @@ func fetchPackageWithMirrorFallback(
 			return "", err
 		}
 		return fetch(ctx, tgzPath, registry, stageDir)
+	}
+	if isBundledBuiltinPlugin(basePkgName) {
+		return "", packageError(http.StatusConflict, "plugin_update_unsupported",
+			fmt.Sprintf("官方内置插件 %q 仅支持通过官方校验目录更新", basePkgName))
 	}
 
 	return fetch(ctx, spec, registry, stageDir)
@@ -553,10 +583,14 @@ func (c *Runtime) commitPackageRecord(pkg protocol.PluginPackage, spec string, e
 		return View{}, err
 	}
 	now := time.Now().UTC()
+	source := OriginPackage
+	if exists && IsBuiltInSource(existing.Source) && isBundledBuiltinPlugin(id) {
+		source = existing.Source
+	}
 	record := RegistryRecord{
 		ID:            id,
 		Raw:           manifestData,
-		Source:        OriginPackage,
+		Source:        source,
 		PackageDir:    pkg.RootDir,
 		PackageSpec:   spec,
 		PackageSHA256: pkg.SHA256,
@@ -619,9 +653,6 @@ func resolvePackageSource(source string) (string, string, bool, error) {
 		}
 		return abs, "", true, nil
 	}
-	if dir, ok := BundledSampleDir(source); ok {
-		return dir, source, true, nil
-	}
 	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") {
 		if strings.ContainsAny(source, " \t\r\n") {
 			return "", "", false, packageError(http.StatusBadRequest, "plugin_source_invalid", fmt.Sprintf("无效的插件地址 %q", source))
@@ -642,11 +673,15 @@ func (s *Service) UpdatePackage(id, registry string) (View, error) {
 	if s == nil || s.runtime == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
+	trimmedID := strings.TrimSpace(id)
 	s.runtime.mu.RLock()
-	record, ok := s.runtime.plugins[strings.TrimSpace(id)]
+	record, ok := s.runtime.plugins[trimmedID]
 	s.runtime.mu.RUnlock()
 	if !ok {
 		return View{}, packageError(http.StatusNotFound, "plugin_not_found", fmt.Sprintf("插件 %q 不存在", id))
+	}
+	if IsBuiltInSource(record.Source) && isBundledBuiltinPlugin(trimmedID) {
+		return s.InstallPackage(trimmedID, registry)
 	}
 	if record.Source != OriginPackage || strings.TrimSpace(record.PackageSpec) == "" {
 		return View{}, packageError(http.StatusConflict, "plugin_update_unsupported", fmt.Sprintf("插件 %q 不能在线更新", id))
