@@ -27,7 +27,7 @@ permissions:
   contents: read
 concurrency:
   group: installers-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native:
@@ -42,7 +42,7 @@ jobs:
             platform: darwin-arm64
             target: darwin/arm64
             node_arch: arm64
-          - os: macos-latest
+          - os: macos-15
             platform: darwin-amd64
             target: darwin/amd64
             node_arch: x64
@@ -82,6 +82,12 @@ jobs:
         shell: bash
         run: |
           node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
+      - name: Restore native host Node on PATH for cross-builds
+        if: matrix.platform == 'darwin-amd64'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          architecture: arm64
       - name: Verify bundled Agent runtime
         env:
           BEEFTV_WAILS_PLATFORM: ${{ matrix.target }}
