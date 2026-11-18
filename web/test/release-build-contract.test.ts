@@ -93,7 +93,10 @@ describe("desktop release build contract", () => {
         expect(script).toContain("-trimpath");
         expect(script).toContain("wails@v2.16.0 build");
         expect(script).toContain("Contents/Resources/plugin-packages");
-        expect(script).toContain('"$ROOT_DIR/plugin-packages/"*.beeftv-plugin');
+        expect(script).toContain('sh "$ROOT_DIR/plugin-packages/build-packages.sh" "$PLUGIN_RESOURCE_DIR"');
+        expect(script).toContain('sh "$ROOT_DIR/plugin-packages/build-packages.sh" "$LINUX_BUNDLE/plugin-packages"');
+        const packageBuilder = readFileSync(resolve(root, "plugin-packages/build-packages.sh"), "utf8");
+        expect(packageBuilder).toContain('output_file="$output_dir/$package_id.beeftv-plugin"');
     });
 
     test("keeps every source file required by the local release gate", () => {
