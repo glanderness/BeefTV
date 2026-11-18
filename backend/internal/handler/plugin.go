@@ -48,6 +48,44 @@ func RegisterPluginRoutes(r *gin.RouterGroup, center pluginCenter, hosted ...boo
 	catalogRoutes.GET("/packages/enabled", func(c *gin.Context) {
 		ok(c, gin.H{"packages": center.PluginDomain().EnabledPackages()})
 	})
+	catalogRoutes.GET("/partners", func(c *gin.Context) {
+		if _, err := currentUser(c, center); err != nil {
+			failService(c, err)
+			return
+		}
+		snapshot := center.PluginDomain().PartnerCatalogSnapshot(c.Request.Context(), c.Query("registry"))
+		ok(c, gin.H{"partners": snapshot.Partners, "complete": snapshot.Complete})
+	})
+	catalogRoutes.POST("/partners/sync", func(c *gin.Context) {
+		if _, allowed := requirePluginAdmin(c, center); !allowed {
+			return
+		}
+		var request struct {
+			Registry string `json:"registry"`
+		}
+		_ = c.ShouldBindJSON(&request)
+		syncErrors := center.PluginDomain().InstallMissingLiveBuiltins(c.Request.Context(), request.Registry)
+		snapshot := center.PluginDomain().PartnerCatalogSnapshot(c.Request.Context(), request.Registry)
+		ok(c, gin.H{
+			"partners": snapshot.Partners,
+			"complete": snapshot.Complete,
+			"errors":   syncErrors,
+		})
+	})
+	catalogRoutes.GET("/partners/:id/icon", func(c *gin.Context) {
+		targetPath, contentType, err := center.PluginDomain().ResolvePartnerIconFile(c.Param("id"), c.Query("v"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "public, max-age=3600")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
+		if contentType != "" {
+			c.Header("Content-Type", contentType)
+		}
+		c.File(targetPath)
+	})
 	catalogRoutes.GET("/:id/files/*filepath", func(c *gin.Context) {
 		targetPath, contentType, err := center.PluginDomain().ResolvePackageFile(c.Param("id"), c.Param("filepath"))
 		if err != nil {

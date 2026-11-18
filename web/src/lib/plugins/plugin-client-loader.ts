@@ -1,4 +1,4 @@
-import { hasBuiltinChannelProfileUpgrade, syncBuiltinPresetFromModule } from "@/lib/builtin-service-presets";
+import { hasBuiltinChannelProfileUpgrade, subscribeBuiltinPresets, syncBuiltinPresetFromModule } from "@/lib/builtin-service-presets";
 import { createBeefTVPluginHost } from "@/lib/plugins/plugin-host-runtime";
 import { getRegisteredPlugin, listRegisteredPlugins } from "@/lib/plugins/plugin-registry";
 import type { BeefTVPluginHost, PluginManifest, PluginManifestV2 } from "@/lib/plugins/plugin-types";
@@ -81,7 +81,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, pluginId: string
     });
 }
 
-function reconcileLocalChannelsAfterPresetSync(): void {
+export function reconcileLocalChannelsAfterPresetSync(): void {
     const configStore = useConfigStore.getState();
     if (!hasBuiltinChannelProfileUpgrade(configStore.config?.channels)) {
         return;
@@ -97,6 +97,9 @@ function reconcileLocalChannelsAfterPresetSync(): void {
             .catch(() => undefined);
     }
 }
+
+// 无论合作伙伴模块是在激活当下同步，还是等后端权威目录到达后延迟重放，只要内置预设变化就自动升级已存渠道档案。
+subscribeBuiltinPresets(reconcileLocalChannelsAfterPresetSync);
 
 export function recoverIfRevisionChanged(
     pluginId: string,
@@ -148,8 +151,8 @@ export async function activateClientPluginModule(
             timeoutMs,
             pluginId,
         );
-        if (options?.manifest?.trusted !== false && syncBuiltinPresetFromModule(pluginId, mod)) {
-            reconcileLocalChannelsAfterPresetSync();
+        if (options?.manifest?.trusted !== false) {
+            syncBuiltinPresetFromModule(pluginId, mod);
         }
 
         activeCleanups.set(pluginId, () => {

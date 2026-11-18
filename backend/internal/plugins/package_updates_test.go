@@ -72,10 +72,10 @@ func setCuratedRegistryForTest(raw string) {
 	curatedRegistryMemCache.Lock()
 	defer curatedRegistryMemCache.Unlock()
 	if raw == "" {
-		curatedRegistryMemCache.raw, curatedRegistryMemCache.fetchedAt = nil, time.Time{}
+		curatedRegistryMemCache.raw, curatedRegistryMemCache.fetchedAt, curatedRegistryMemCache.pinnedTest = nil, time.Time{}, false
 		return
 	}
-	curatedRegistryMemCache.raw, curatedRegistryMemCache.fetchedAt = []byte(raw), time.Now()
+	curatedRegistryMemCache.raw, curatedRegistryMemCache.fetchedAt, curatedRegistryMemCache.pinnedTest = []byte(raw), time.Now(), true
 }
 
 // installNamedForTest 按 npm 包名安装，假安装器把包名对到本地目录。

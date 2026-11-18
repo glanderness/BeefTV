@@ -52,6 +52,7 @@ export type DesktopUpdateState = {
 
 export type DesktopRuntimeBinding = {
     ConsumeSkillLink?: () => Promise<string>;
+    OpenPartnerKeysURL?: (partnerId: string) => Promise<void>;
     OpenSkillMarketURL?: (url: string) => Promise<void>;
     DepthComponentStatus?: (refresh: boolean) => Promise<DepthComponentState>;
     DownloadDepthComponents?: () => Promise<DepthComponentState>;

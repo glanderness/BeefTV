@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Button, Checkbox, Form, Input, Segmented, Select, Spin } from "antd";
-import { ArrowLeft, Check, ChevronDown, KeyRound, Pencil, Search, Settings2, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ExternalLink, KeyRound, Pencil, Search, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { ModelLogo } from "@/components/model-logo";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image-models";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
+import { getDesktopAppBinding } from "@/services/desktop-runtime";
+import { syncPartnerCatalogFromBackend } from "@/services/plugin-sync";
+import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { normalizeChannelBaseUrl } from "@/lib/channel-url";
-import { builtinProtocolsAvailable } from "@/lib/builtin-service-presets";
-import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, createPluginServiceChannel, createServicePresetChannel, createVendorPresetChannel, isBuiltinPresetService, isTopazUpscaleChannel, pluginServices, presetCatalogFor, presetModelCount, builtinPresetDescription, builtinPresetIntro, serviceConnectionError, serviceModelProfile, servicePresetFor, vendorPresetFor, vendorPresets, type ModelServicePresetId, type VendorPreset } from "@/lib/model-service-presets";
+import { builtinProtocolsAvailable, getBuiltinPresetsVersion, livePartnerSyncIssues, markPartnersNoticed, subscribeBuiltinPresets } from "@/lib/builtin-service-presets";
+import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, createPluginServiceChannel, createServicePresetChannel, createVendorPresetChannel, isBuiltinPresetService, isTopazUpscaleChannel, partnerServicePresets, pluginServices, presetCatalogFor, presetKeysUrl, presetModelCount, presetPluginId, presetPromoText, builtinPresetDescription, builtinPresetIntro, serviceConnectionError, serviceModelProfile, servicePresetFor, standardServicePresets, vendorPresetFor, vendorPresets, type ModelServicePresetId, type VendorPreset } from "@/lib/model-service-presets";
 import { capabilityForAssignedProtocol, hasUserModelCapability } from "@/lib/model-capabilities";
 import { serviceCredentialGuide } from "@/lib/service-credentials";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
@@ -75,6 +78,27 @@ export function updateManualModelEntry(options: {
     };
 }
 
+export function refreshNewBuiltinDraftProfiles(current: ModelChannel, protocols: ModelProtocolDefinition[]): ModelChannel {
+    const preset = servicePresetFor(current);
+    if (!isBuiltinPresetService(preset)) return current;
+    const presetItems = presetCatalogFor(preset);
+    const presetIds = new Set(presetItems.map((item) => item.id));
+    const existingByModel = new Map((current.modelProfiles || []).map((item) => [item.model, item]));
+    const refreshed = presetItems.map((item) => {
+        const previous = existingByModel.get(item.id);
+        if (previous && previous.protocol && (hasUserModelCapability(previous) || previous.defaultOptions)) {
+            return previous;
+        }
+        return serviceModelProfile(current, item, protocols);
+    });
+    const extras = (current.modelProfiles || []).filter((item) => !presetIds.has(item.model));
+    const nextProfiles = [...refreshed, ...extras];
+    if (JSON.stringify(current.modelProfiles || []) === JSON.stringify(nextProfiles)) {
+        return current;
+    }
+    return { ...current, modelProfiles: nextProfiles };
+}
+
 export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: ModelChannel; onClose: () => void; onSave: (channel: ModelChannel) => Promise<void> }) {
     const [draft, setDraft] = useState<ModelChannel>(() => initial ? structuredClone(initial) : { ...createModelChannel(), name: "", baseUrl: "" });
     const [presetId, setPresetId] = useState<ModelServicePresetId>(() => initial ? servicePresetFor(initial) : "compatible");
@@ -110,36 +134,42 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const [editingCapabilities, setEditingCapabilities] = useState(false);
     const [focusModel, setFocusModel] = useState<{ model: string; token: number } | null>(null);
     const alive = useRef(true);
+    const builtinPresetsRev = useSyncExternalStore(subscribeBuiltinPresets, getBuiltinPresetsVersion, getBuiltinPresetsVersion);
     const receipts = useModelConnectionTests((state) => state.receipts);
     // 凭证字段名跟着模型实际使用的协议走：AK/SK 签名和 Agent Plan 专属 Key
     // 都不能沿用「API Key」这一个名字。
     const credential = serviceCredentialGuide(draft, protocols);
 
     useEffect(() => {
+        if (initial && !isBuiltinPresetService(servicePresetFor(initial))) return;
+        void syncPartnerCatalogFromBackend({ retryFailed: true }).catch(() => undefined);
+    }, []);
+
+    useEffect(() => {
         alive.current = true;
+        return () => { alive.current = false; catalogRequest.current?.abort(); };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
         if (initial && isTopazUpscaleChannel(initial)) {
             setProtocolLoading(false);
-            return () => { alive.current = false; };
+            return () => { cancelled = true; };
         }
         void fetchPluginProviderCatalog("user.custom-channel")
             .then((items) => {
-                if (!alive.current) return;
+                if (cancelled || !alive.current) return;
                 setProtocols(items);
                 if (!initial) {
-                    setDraft((current) => {
-                        const preset = servicePresetFor(current);
-                        return isBuiltinPresetService(preset)
-                            ? { ...current, modelProfiles: presetCatalogFor(preset).map((item) => serviceModelProfile(current, item, items)) }
-                            : current;
-                    });
+                    setDraft((current) => refreshNewBuiltinDraftProfiles(current, items));
                 } else if (pluginServices(items).some((item) => item.value === initial.interfaceType) || (servicePresetFor(initial) === "compatible" && Boolean(vendorPresetFor(initial, vendorPresets(items))))) {
                     setMoreVendors(true);
                 }
             })
-            .catch(() => { if (alive.current) setError("无法读取模型能力，请关闭后重试"); })
-            .finally(() => { if (alive.current) setProtocolLoading(false); });
-        return () => { alive.current = false; catalogRequest.current?.abort(); };
-    }, []);
+            .catch(() => { if (!cancelled && alive.current) setError("无法读取模型能力，请关闭后重试"); })
+            .finally(() => { if (!cancelled && alive.current) setProtocolLoading(false); });
+        return () => { cancelled = true; };
+    }, [builtinPresetsRev]);
     // 需要两个密钥时，把已有的高级设置展开，否则用户只填了 AK 就点了保存。
     useEffect(() => {
         if (credential.secretKeyRequired) setAdvanced(true);
@@ -365,8 +395,11 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             <div className="flex justify-end gap-2"><Button onClick={onClose}>取消</Button><Button type="primary" htmlType="submit" loading={saving}>保存</Button></div>
         </Form>
     </AppModal>;
-    const selectedPreset = MODEL_SERVICE_PRESETS.find((item) => item.id === presetId)!;
-    const presetWebsite = "website" in selectedPreset ? selectedPreset.website : undefined;
+    const initialPresetId = initial ? servicePresetFor(initial) : undefined;
+    const partnerList = partnerServicePresets(initialPresetId);
+    const standardList = standardServicePresets();
+    const selectedPreset = MODEL_SERVICE_PRESETS.find((item) => item.id === presetId) ?? standardList[0];
+    const presetWebsite = selectedPreset.website;
     const pluginServiceList = pluginServices(protocols);
     const pluginService = pluginServiceList.find((item) => item.value === draft.interfaceType);
     const vendorList = vendorPresets(protocols);
@@ -375,6 +408,39 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const builtinPluginWarning = isBuiltinPresetService(presetId) && !protocolLoading && !builtinReady
         ? `请先在左侧「插件」中心启用 ${selectedPreset.name} 插件，再使用预置模型与协议。`
         : "";
+    const partnerSyncIssues = !initial ? livePartnerSyncIssues() : [];
+    const partnerSyncWarning = partnerSyncIssues.length > 0
+        ? partnerSyncIssues.map((item) => `${item.name}：${item.error}`).join("；")
+        : "";
+    const activeKeysUrl = !pluginService && !vendor ? presetKeysUrl(presetId) : undefined;
+    const activePromoText = !pluginService && !vendor ? presetPromoText(presetId) : undefined;
+    const activePartnerIdsKey = partnerList.map((item) => item.id).join(",");
+
+    useEffect(() => {
+        if (!initial && activePartnerIdsKey) {
+            markPartnersNoticed(activePartnerIdsKey.split(","));
+        }
+    }, [initial, activePartnerIdsKey]);
+
+    const openPartnerKeysPage = (event: React.MouseEvent<HTMLAnchorElement>) => {
+        const targetUrl = event.currentTarget.href;
+        const desktopOpen = isDesktopShellOrigin() ? getDesktopAppBinding()?.OpenPartnerKeysURL : undefined;
+        if (desktopOpen) {
+            event.preventDefault();
+            void desktopOpen(presetPluginId(presetId) || presetId).catch(() => {
+                if (window.runtime?.BrowserOpenURL && targetUrl) {
+                    window.runtime.BrowserOpenURL(targetUrl);
+                } else if (targetUrl) {
+                    window.open(targetUrl, "_blank", "noopener,noreferrer");
+                }
+            });
+            return;
+        }
+        if (window.runtime?.BrowserOpenURL && targetUrl) {
+            event.preventDefault();
+            window.runtime.BrowserOpenURL(targetUrl);
+        }
+    };
 
     return <AppModal open centered width={1000} flush footer={null} title={null} closable={!saving} keyboard={!saving} mask={{ closable: false }} onCancel={() => { catalogRequest.current?.abort(); onClose(); }} rootClassName={step === 0 ? "model-service-modal model-service-connection-modal" : "model-service-modal"}>
         <div className="model-service-header">
@@ -387,7 +453,19 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         <div className="model-service-body" aria-busy={busy} inert={busy}>
             {step === 0 ? <div className="model-service-connection">
                 <aside className="model-service-providers" aria-label="选择服务商">
-                    {MODEL_SERVICE_PRESETS.map((preset) => {
+                    {partnerList.length > 0 && <>
+                        <p className="model-service-section-label">合作伙伴</p>
+                        {partnerList.map((preset) => {
+                            const selected = !pluginService && !vendor && presetId === preset.id;
+                            return <button key={preset.id} type="button" disabled={busy || Boolean(initial)} aria-pressed={selected} className="model-service-provider" onClick={() => choosePreset(preset.id)}>
+                                <ModelLogo icon={preset.icon} size={24} />
+                                <span>{preset.name}</span>
+                                {selected && <Check className="model-service-provider-check" size={15} aria-hidden />}
+                            </button>;
+                        })}
+                    </>}
+                    <p className="model-service-section-label">{partnerList.length > 0 ? "通用与直连" : "选择服务商"}</p>
+                    {standardList.map((preset) => {
                         const selected = !pluginService && !vendor && presetId === preset.id;
                         return <button key={preset.id} type="button" disabled={busy || Boolean(initial)} aria-pressed={selected} className="model-service-provider" onClick={() => choosePreset(preset.id)}>
                             <ModelLogo icon={preset.icon} size={24} />
@@ -420,15 +498,11 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                             href={presetWebsite}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={(event) => {
-                                if (!window.runtime?.BrowserOpenURL) return;
-                                event.preventDefault();
-                                window.runtime.BrowserOpenURL(presetWebsite);
-                            }}
+                            onClick={openPartnerKeysPage}
                         >{selectedPreset.name}</a> : selectedPreset.name}
-                    </h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}{builtinPresetIntro(presetId) && <p>{builtinPresetIntro(presetId)}</p>}{isBuiltinPresetService(presetId) && <p>已预置 {presetModelCount(presetId)} 款{builtinPresetDescription(presetId)}模型及协议，填写 API Key 后可直接「一键保存并启用」，或点「读取模型」拉取在线目录</p>}</div></>}</div>
+                    </h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}{builtinPresetIntro(presetId) && <p>{builtinPresetIntro(presetId)}</p>}{activePromoText && <p>{activePromoText}</p>}{isBuiltinPresetService(presetId) && <p>已预置 {presetModelCount(presetId)} 款{builtinPresetDescription(presetId)}模型及协议，填写 API Key 后可直接「一键保存并启用」，或点「读取模型」拉取在线目录</p>}</div></>}</div>
                     <Form.Item label="连接名称"><Input aria-label="连接名称" placeholder="例如：我的创作账号" value={draft.name} onChange={(event) => patch({ name: event.target.value })} /></Form.Item>
-                    <Form.Item label={credential.apiKeyLabel} help={credential.apiKeyHelp}><Input.Password prefix={<KeyRound size={15} />} aria-label={credential.apiKeyLabel} autoComplete="new-password" placeholder={credential.apiKeyPlaceholder} value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
+                    <Form.Item className={activeKeysUrl ? "model-service-key-item" : undefined} label={activeKeysUrl ? <span className="model-service-key-label"><span>{credential.apiKeyLabel}</span><a href={activeKeysUrl} target="_blank" rel="noopener noreferrer" className="model-service-key-link" onClick={openPartnerKeysPage}>获取 API Key<ExternalLink size={12} aria-hidden /></a></span> : credential.apiKeyLabel} help={credential.apiKeyHelp}><Input.Password prefix={<KeyRound size={15} />} aria-label={credential.apiKeyLabel} autoComplete="new-password" placeholder={credential.apiKeyPlaceholder} value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
                     <Form.Item label="服务地址" help="默认自动补齐 /v1；若服务不带版本前缀，可在地址末尾加 #（例如 http://127.0.0.1#）"><Input aria-label="服务地址" inputMode="url" placeholder="https://api.example.com/v1" value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} /></Form.Item>
                     <button type="button" className="model-service-advanced" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><Settings2 size={15} />高级设置<ChevronDown size={14} /></button>
                     {advanced && <div className="model-service-advanced-fields">
@@ -458,10 +532,11 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             </div>}
         </div>
         {/* 提示放在滚动区外面：表单长的时候，滚到底部才看到的错误等于没提示。 */}
-        {(error || notice || credential.conflict || builtinPluginWarning) && <div className="model-service-feedback">
+        {(error || notice || credential.conflict || builtinPluginWarning || partnerSyncWarning) && <div className="model-service-feedback">
             {/* 凭证混用不等到点按钮才说：选完模型就应该看到要拆连接。 */}
             {(error || credential.conflict) && <Alert type="error" showIcon title={error || credential.conflict} />}
             {builtinPluginWarning && <Alert type="warning" showIcon title={builtinPluginWarning} />}
+            {partnerSyncWarning && <Alert type="warning" showIcon title={partnerSyncWarning} />}
             {notice && <Alert type="info" showIcon title={notice} />}
         </div>}
         <div className="model-service-footer">{step === 1 && <span>保存后，可在创作页选择这些模型</span>}<div>

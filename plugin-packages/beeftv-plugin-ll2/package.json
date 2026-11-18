@@ -1,6 +1,6 @@
 {
   "name": "beeftv-plugin-ll2",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "内置 LL2 (DMC) 算力与视频渠道插件，支持填写 API Key 一键同步 DeepSeek V4.1、Wan 3.0、Seedance 2.0/2.5、Vidu Q3、MiniMax H3、Super Vega 1.0/1.5 与 Auto HD 超分模型。",
   "type": "module",
   "main": "./client/index.js",

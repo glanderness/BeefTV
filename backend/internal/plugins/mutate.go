@@ -294,7 +294,11 @@ func (c *Runtime) SetLoadErrorAtRevision(id string, errText string, stageRaw str
 			return viewFromRecord(record), nil
 		}
 		if trimmedErr != "" {
-			return c.rollbackHotUpdatedBuiltinLocked(record.Metadata.ID, record)
+			if _, hasShipped := BundledSampleDir(record.Metadata.ID); hasShipped {
+				return c.rollbackHotUpdatedBuiltinLocked(record.Metadata.ID, record)
+			}
+			// 无随包副本的动态合作伙伴插件仅记录客户端加载错误状态（StatusInvalid），
+			// 不清空已校验包目录也不关闭 Metadata.Enabled，使声明式后端 HTTP 协议持续为已存渠道服务。
 		}
 	}
 	if reportedRev != "" && strings.TrimSpace(record.PackageSHA256) != "" && !strings.EqualFold(record.PackageSHA256, reportedRev) {

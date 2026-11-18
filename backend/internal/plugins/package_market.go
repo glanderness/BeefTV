@@ -62,8 +62,13 @@ func (c *Runtime) ResolvePackageFile(id string, filePath string) (string, string
 	} else {
 		if ok && isHotUpdatedBuiltinRecord(c.dataDir, trimmedID, record) {
 			if _, valid := verifyHotUpdatedBuiltinDir(c.dataDir, trimmedID, record.PackageDir, record.PackageSHA256); !valid {
-				_, _, _ = c.rollbackHotUpdatedBuiltin(trimmedID)
-				return "", "", packageError(http.StatusConflict, "plugin_package_tampered", fmt.Sprintf("内置插件 %q 热更新文件校验不一致，已回退至随包版本", trimmedID))
+				if _, _, rbErr := c.rollbackHotUpdatedBuiltin(trimmedID); rbErr != nil {
+					return "", "", rbErr
+				}
+				if _, hasShipped := BundledSampleDir(trimmedID); hasShipped {
+					return "", "", packageError(http.StatusConflict, "plugin_package_tampered", fmt.Sprintf("内置插件 %q 热更新文件校验不一致，已回退至随包版本", trimmedID))
+				}
+				return "", "", packageError(http.StatusConflict, "plugin_package_quarantined", fmt.Sprintf("合作伙伴插件 %q 本地文件缺失或校验不一致，已隔离客户端脚本并等待自动修复", trimmedID))
 			}
 		}
 		pkgDir = strings.TrimSpace(record.PackageDir)
