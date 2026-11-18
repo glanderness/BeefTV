@@ -25,7 +25,7 @@ fi
 mkdir "$scratch/source"
 tar -xzf "$archive" --strip-components=1 -C "$scratch/source"
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
-flags=(--cc="$(xcrun --find clang)" --arch="$ffmpeg_arch" --target-os=darwin
+flags=(--cc="$(xcrun --find clang) -arch $apple_arch" --arch="$ffmpeg_arch" --target-os=darwin
   --host-cc="$(xcrun --find clang)" --host-cflags="-isysroot $sdk" --host-ldflags="-isysroot $sdk"
   --disable-autodetect --disable-everything --disable-programs --enable-ffprobe --enable-ffmpeg
   --disable-network --enable-protocol=file,pipe
@@ -41,6 +41,7 @@ flags=(--cc="$(xcrun --find clang)" --arch="$ffmpeg_arch" --target-os=darwin
   --disable-securetransport --enable-videotoolbox --disable-audiotoolbox
   --extra-cflags="-arch $apple_arch -isysroot $sdk -mmacosx-version-min=11.0"
   --extra-ldflags="-arch $apple_arch -isysroot $sdk -mmacosx-version-min=11.0")
+if [[ "$apple_arch" == x86_64 ]]; then flags+=(--disable-inline-asm); fi
 if [[ "$(uname -m)" != "$apple_arch" ]]; then flags+=(--enable-cross-compile); fi
 (
   cd "$scratch/source"
