@@ -239,13 +239,13 @@ https://updates.beefapi.com/beeftv/desktop-update-v2.json
 
 Linux 发布任务会从最终 ZIP 解压执行随包 CLI，并在 Xvfb 中启动桌面程序，确认本地后端和可见窗口。当 PR 修改了打包脚本、媒体运行时或桌面更新器路径时，`Desktop installer checks` 工作流会提前执行原生打包、Xvfb 启动与 `.deb` 安装校验，不发布版本，也不调用付费模型。
 
-`v1.5.6` 及以前的更新器内置 GitHub 清单地址，更早期过渡版本曾内置已下线的旧版对象存储清单地址；若旧客户端无法访问历史清单地址，只需手动安装一次带 `updates.beefapi.com` 更新源的新版安装包，后续即可在应用内正常接收更新（用户数据目录保持不变）。
+`v1.5.6` 及以前的更新器内置 GitHub 清单地址；早期过渡版本曾内置旧版对象存储清单地址，该历史清单入口现已停更（停留在最后一次同步的版本，不再随新发版更新）。仍指向历史清单地址的旧客户端读取不会报错，但检查更新不会收到后续新版本；只需手动安装一次带 `updates.beefapi.com` 更新源的新版安装包，之后即可继续应用内更新（用户数据目录保持不变）。已无工作流引用的旧版对象存储发布密钥可在仓库配置中吊销。
 
 ### R2 发布配置
 
 使用 `beeftv-releases` 桶及自定义域名 `updates.beefapi.com`，只存放公开发行文件。Actions 使用 Secret `BEEFTV_R2_ACCESS_KEY_ID`、`BEEFTV_R2_SECRET_ACCESS_KEY` 和 Variable `BEEFTV_R2_ENDPOINT`，region 为 `auto`。更新签名密钥保持不变。版本对象长期缓存且不可变，最新清单禁止缓存；生产下载不使用限流的 `r2.dev` 开发域名。
 
-`scripts/publish-desktop-r2.py` 面向 R2 发布（`check-store`、`stage`、`activate`、`activate-v2`），复用 `update-release verify` 验签，并在每次操作前用随机探测对象验证存储端原生 `If-None-Match` / `If-Match` 条件写，检测到失效立即停发。由于自定义域名的 CDN 缓存命中可能忽略 `If-Match`，`stage` 和 `activate` 均从公开地址完整读取文件并核对大小与 SHA-256，`--verification-receipt "$RUNNER_TEMP/release-public-verification.json"` 仅在同一 GitHub 仓库/run/attempt/job 内校验发布输入绑定，不上传为产物，也不跨作业复用。
+`scripts/publish-desktop-r2.py` 面向 R2 发布（`check-store`、`stage`、`activate`、`activate-v2`），复用 `update-release verify` 验签，并在每次操作前用随机探测对象验证存储端原生 `If-None-Match` / `If-Match` 条件写，检测到失效立即停发。由于自定义域名的 CDN 缓存命中可能忽略 `If-Match`，`stage` 和 `activate` 均从公开地址完整读取文件并核对大小与 SHA-256。
 
 如果 GitHub 发布成功而存储激活失败，保留正式版本及所有不可变对象。先核查 R2 存储与公开入口，确认没有并发发布后再用同一版本原始清单重跑 `activate` / `activate-v2`。不要删除正式 tag 或重建不同内容的同版本包。条件写成功但最终回读失败时，新清单可能已经生效，不能把它当作未发布。已经安装新版本的客户端不自动降级。
 

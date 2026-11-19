@@ -355,50 +355,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p ../dist
-          python ../scripts/package-desktop-installer.py --platform "$PLATFORM" &
-          installer_pid=$!
-          trap 'kill "$installer_pid" 2>/dev/null || true' EXIT
-          input="cmd/desktop/build/bin"
-          if [[ "$PLATFORM" == darwin-* ]]; then
-            input="$input/BeefTV.app"
-          elif [[ "$PLATFORM" == linux-amd64 ]]; then
-            input="$input/BeefTV-linux"
-          fi
-          go run ./cmd/update-release package \
-            --platform "$PLATFORM" \
-            --input "$input" \
-            --output "../dist/BeefTV-${VERSION}-${PLATFORM}.zip"
-          if [[ -n "${PREVIOUS_VERSION:-}" ]] && python -c 'import os, re, sys; m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", os.environ["VERSION"]); sys.exit(0 if m and (int(m[1]), int(m[2]), int(m[3])) >= (2, 1, 0) else 1)'; then
-            if curl --fail --silent --show-error --location --retry 3 --max-time 60 \
-              "${UPDATER_DOWNLOAD_BASE}/${PREVIOUS_VERSION}/desktop-update.json" \
-              -o "$RUNNER_TEMP/prev-desktop-update.json" && \
-              go run ./cmd/update-release verify \
-                --envelope "$RUNNER_TEMP/prev-desktop-update.json" \
-                --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY" && \
-              curl --fail --silent --show-error --location --retry 3 --max-time 600 \
-                "${UPDATER_DOWNLOAD_BASE}/${PREVIOUS_VERSION}/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip" \
-                -o "$RUNNER_TEMP/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip"; then
-              go run ./cmd/update-release build-delta \
-                --platform "$PLATFORM" \
-                --from-version "$PREVIOUS_VERSION" \
-                --to-version "$VERSION" \
-                --from-zip "$RUNNER_TEMP/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip" \
-                --to-zip "../dist/BeefTV-${VERSION}-${PLATFORM}.zip" \
-                --output "../dist/BeefTV-${VERSION}-${PLATFORM}-from-${PREVIOUS_VERSION}.delta.zip"
-            else
-              echo "::warning::Previous release ${PREVIOUS_VERSION} ${PLATFORM} zip unavailable; skipping delta archive."
-            fi
-          fi
-          if ! wait "$installer_pid"; then
-            echo "::error::Native installer packaging failed"
-            exit 1
-          fi
-          trap - EXIT
-          python ../scripts/smoke-packaged-cli_test.py
-          python ../scripts/smoke-packaged-cli.py --archive "../dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"
+        run: bash ../scripts/package-desktop-release.sh
 
       - name: Verify native installer lifecycle
         shell: bash
@@ -517,44 +474,7 @@ jobs:
           PLATFORM: windows-amd64
           BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p ../dist
-          python ../scripts/package-desktop-installer.py --platform "$PLATFORM" &
-          installer_pid=$!
-          trap 'kill "$installer_pid" 2>/dev/null || true' EXIT
-          go run ./cmd/update-release package \
-            --platform "$PLATFORM" \
-            --input cmd/desktop/build/bin \
-            --output "../dist/BeefTV-${VERSION}-${PLATFORM}.zip"
-          if [[ -n "${PREVIOUS_VERSION:-}" ]] && python -c 'import os, re, sys; m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", os.environ["VERSION"]); sys.exit(0 if m and (int(m[1]), int(m[2]), int(m[3])) >= (2, 1, 0) else 1)'; then
-            if curl --fail --silent --show-error --location --retry 3 --max-time 60 \
-              "${UPDATER_DOWNLOAD_BASE}/${PREVIOUS_VERSION}/desktop-update.json" \
-              -o "$RUNNER_TEMP/prev-desktop-update.json" && \
-              go run ./cmd/update-release verify \
-                --envelope "$RUNNER_TEMP/prev-desktop-update.json" \
-                --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY" && \
-              curl --fail --silent --show-error --location --retry 3 --max-time 600 \
-                "${UPDATER_DOWNLOAD_BASE}/${PREVIOUS_VERSION}/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip" \
-                -o "$RUNNER_TEMP/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip"; then
-              go run ./cmd/update-release build-delta \
-                --platform "$PLATFORM" \
-                --from-version "$PREVIOUS_VERSION" \
-                --to-version "$VERSION" \
-                --from-zip "$RUNNER_TEMP/BeefTV-${PREVIOUS_VERSION}-${PLATFORM}.zip" \
-                --to-zip "../dist/BeefTV-${VERSION}-${PLATFORM}.zip" \
-                --output "../dist/BeefTV-${VERSION}-${PLATFORM}-from-${PREVIOUS_VERSION}.delta.zip"
-            else
-              echo "::warning::Previous release ${PREVIOUS_VERSION} ${PLATFORM} zip unavailable; skipping delta archive."
-            fi
-          fi
-          if ! wait "$installer_pid"; then
-            echo "::error::Native installer packaging failed"
-            exit 1
-          fi
-          trap - EXIT
-          python ../scripts/smoke-packaged-cli_test.py
-          python ../scripts/smoke-packaged-cli.py --archive "../dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"
+        run: bash ../scripts/package-desktop-release.sh
 
       - name: Stage Windows desktop payload for parallel acceptance
         uses: actions/upload-artifact@v4
@@ -690,6 +610,7 @@ jobs:
       - name: Check release publisher tooling
         run: |
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+          python3 -m unittest discover -s scripts -p 'test_package_desktop_release.py'
           cd backend
           go build -o "$RUNNER_TEMP/update-release" ./cmd/update-release
 
@@ -767,7 +688,6 @@ jobs:
           python3 scripts/publish-desktop-r2.py stage \
             --manifest dist/desktop-update.json --assets-dir dist --with-installers \
             "${v2_args[@]}" \
-            --verification-receipt "$RUNNER_TEMP/release-public-verification.json" \
             --verifier "$RUNNER_TEMP/update-release" --provider r2 \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"
@@ -783,7 +703,6 @@ jobs:
         run: |
           python3 scripts/publish-desktop-r2.py activate \
             --manifest dist/desktop-update.json --assets-dir dist --with-installers \
-            --verification-receipt "$RUNNER_TEMP/release-public-verification.json" \
             --verifier "$RUNNER_TEMP/update-release" --provider r2 \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"

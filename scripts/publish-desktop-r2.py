@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
-import urllib.error
 from urllib.parse import urlsplit
 import uuid
 
@@ -32,7 +31,6 @@ MAX_MANIFEST = 2 * 1024 * 1024
 GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
 R2_PUBLIC_BASE = "https://updates.beefapi.com/beeftv"
 CNB_PUBLIC_BASE = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download"
-PROBE_BYTES = 1024
 
 
 class PublishError(Exception):
@@ -155,57 +153,20 @@ class S3:
 
 
 class PublicHTTP:
-    def __init__(self, opener=urllib.request.urlopen, verified=None):
+    def __init__(self, opener=urllib.request.urlopen):
         self.opener = opener
-        self.verified = verified
 
     def check(self, url, expected_size, expected_hash, *, version):
         version_tuple(version)
         digest = hashlib.sha256()
         size = 0
-        prefix = b""
-        # Mutable feeds are always read in full, even if a receipt names them.
-        reusable = expected_size > PROBE_BYTES and not urlsplit(url).path.endswith(".json")
-        prior = self.verified.get(url) if reusable and self.verified is not None else None
         try:
             headers = {"Cache-Control": "no-cache", "User-Agent": f"BeefTV-Desktop-Updater/{version}"}
-            if prior is not None:
-                if (not isinstance(prior, dict) or prior.get("size") != expected_size
-                        or prior.get("sha256") != expected_hash
-                        or not isinstance(prior.get("etag"), str)
-                        or not re.fullmatch(r'"[^"\x00-\x20\x7f]+"', prior.get("etag", ""))
-                        or not isinstance(prior.get("prefixSHA256"), str)
-                        or not re.fullmatch(r"[a-f0-9]{64}", prior.get("prefixSHA256", ""))):
-                    raise PublishError("Public verification receipt does not match this asset")
-                # Prove the endpoint enforces the precondition, rather than
-                # accepting an implementation that echoes the supplied ETag.
-                mismatch = '"beeftv-mismatch-' + uuid.uuid4().hex + '"'
-                rejection = urllib.request.Request(url, headers={**headers, "Range": "bytes=0-0", "If-Match": mismatch})
-                try:
-                    with self.opener(rejection, timeout=60):
-                        raise PublishError("Public endpoint accepted a mismatched ETag")
-                except urllib.error.HTTPError as error:
-                    error.close()
-                    if error.code != 412:
-                        raise PublishError("Public endpoint did not confirm its ETag precondition") from None
-                headers.update({"Range": f"bytes=0-{PROBE_BYTES - 1}", "If-Match": prior["etag"]})
             request = urllib.request.Request(url, headers=headers)
             with self.opener(request, timeout=60) as response:
-                if prior is not None:
-                    if (response.status != 206 or response.headers.get("ETag") != prior["etag"]
-                            or response.headers.get("Content-Range") != f"bytes 0-{PROBE_BYTES - 1}/{expected_size}"
-                            or response.headers.get("Content-Length") != str(PROBE_BYTES)):
-                        raise PublishError("Previously verified public object changed or rejected its range probe")
-                    data = response.read(PROBE_BYTES + 1)
-                    if len(data) != PROBE_BYTES or hashlib.sha256(data).hexdigest() != prior["prefixSHA256"]:
-                        raise PublishError("Previously verified public object probe differs")
-                    return
                 if response.status != 200:
                     raise PublishError("Public object did not return HTTP 200")
-                etag = response.headers.get("ETag", "")
                 while chunk := response.read(1024 * 1024):
-                    if len(prefix) < PROBE_BYTES:
-                        prefix += chunk[:PROBE_BYTES - len(prefix)]
                     size += len(chunk)
                     if size > expected_size:
                         raise PublishError("Public object size mismatch")
@@ -214,47 +175,6 @@ class PublicHTTP:
             raise PublishError("Public object readback failed") from None
         if size != expected_size or digest.hexdigest() != expected_hash:
             raise PublishError("Public object size/hash mismatch")
-        if reusable and self.verified is not None and re.fullmatch(r'"[^"\x00-\x20\x7f]+"', etag):
-            self.verified[url] = {"size": size, "sha256": expected_hash, "etag": etag,
-                                  "prefixSHA256": hashlib.sha256(prefix).hexdigest()}
-
-
-def verification_binding(manifest, args):
-    owner = {name: os.environ.get(name, "") for name in
-             ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB")}
-    if not all(owner.values()):
-        raise PublishError("Verification receipts require the same GitHub run, attempt and job")
-    return {"schema": 1, "manifestSHA256": fingerprint(manifest)[1], "owner": owner,
-            "provider": args.provider, "endpoint": args.endpoint_url, "region": args.region,
-            "bucket": args.bucket, "publicBase": args.public_base}
-
-
-def read_verification_receipt(path, binding):
-    if not path.exists():
-        return {}  # A fresh invocation without proof must perform full checks.
-    if path.stat().st_size > MAX_MANIFEST:
-        raise PublishError("Public verification receipt is too large")
-    try:
-        receipt = json.loads(path.read_bytes())
-    except (ValueError, UnicodeError):
-        raise PublishError("Public verification receipt is not valid JSON") from None
-    if (not isinstance(receipt, dict) or any(receipt.get(k) != v for k, v in binding.items())
-            or not isinstance(receipt.get("objects"), dict)):
-        raise PublishError("Public verification receipt belongs to different release inputs or job")
-    return receipt["objects"]
-
-
-def write_verification_receipt(path, binding, objects):
-    # This local proof is never uploaded or shared across jobs. Publish it only
-    # after the entire stage succeeds; failed stages leave no usable receipt.
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
-        temporary = Path(output.name)
-        try:
-            json.dump({**binding, "objects": objects}, output)
-            output.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
 
 
 def require_github_release(payload, manifest, public):
@@ -516,8 +436,6 @@ def main():
     parser.add_argument("--manifest-v2", type=Path, help="Optional schema-2 manifest whose delta archives should be staged with stage")
     parser.add_argument("--assets-dir", type=Path)
     parser.add_argument("--with-installers", action="store_true")
-    parser.add_argument("--verification-receipt", type=Path,
-                        help="Same-job stage proof for bounded activation probes; never reuse across runs")
     parser.add_argument("--verifier", type=Path, help="Binary built from backend/cmd/update-release")
     parser.add_argument("--provider", choices=["r2"], default="r2")
     parser.add_argument("--endpoint-url", required=True)
@@ -529,8 +447,6 @@ def main():
     args.bucket = args.bucket or "beeftv-releases"
     args.public_base = args.public_base or R2_PUBLIC_BASE
     try:
-        if args.verification_receipt and args.command not in ("stage", "activate"):
-            raise PublishError("Verification receipts are only supported for stage and activate")
         if args.command == "activate-v2" and (args.provider != "r2" or args.with_installers):
             raise PublishError("activate-v2 requires R2 provider and no installer staging")
         store = storage_config(args.provider, args.endpoint_url, args.region, args.bucket, args.public_base)
@@ -556,23 +472,10 @@ def main():
                     raise PublishError("Manifest v2 is too large")
                 manifest_v2 = Path(directory) / "desktop-update-v2.json"
                 manifest_v2.write_bytes(args.manifest_v2.read_bytes())
-            binding, verified = None, None
-            if args.verification_receipt:
-                binding = verification_binding(manifest, args)
-                if args.command == "stage":
-                    args.verification_receipt.unlink(missing_ok=True)
-                    verified = {}
-                else:
-                    verified = read_verification_receipt(args.verification_receipt, binding)
-            # The R2 custom-domain cache can ignore If-Match on a cache hit, so
-            # R2 always rehashes full responses even when a receipt is supplied.
-            public = PublicHTTP(verified=None)
-            publisher = Publisher(store, public, args.verifier.resolve(), args.public_base)
+            publisher = Publisher(store, PublicHTTP(), args.verifier.resolve(), args.public_base)
             assets_dir = args.assets_dir or args.manifest.parent
             if args.command == "stage":
                 version = publisher.stage(manifest, assets_dir, args.with_installers, manifest_v2=manifest_v2)
-                if args.verification_receipt:
-                    write_verification_receipt(args.verification_receipt, binding, verified)
             elif args.command == "activate-v2":
                 version = publisher.activate_v2(manifest)
             else:

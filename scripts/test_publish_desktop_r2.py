@@ -62,8 +62,6 @@ class PublicationTests(unittest.TestCase):
         self.public_requests = []
         requests = self.public_requests
         self.transfers = []
-        self.range_mode = "normal"
-        self.etag_mode = "strong"
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -79,33 +77,11 @@ class PublicationTests(unittest.TestCase):
                 if content is None:
                     self.send_error(404)
                     return
-                etag = '"' + hashlib.sha256(content).hexdigest() + '"'
-                if fixture.range_mode == "echo" and self.headers.get("If-Match"):
-                    etag = self.headers['If-Match']
-                if fixture.etag_mode == "weak":
-                    etag = "W/" + etag
-                if self.headers.get("If-Match") not in (None, etag) and fixture.range_mode != "ignore-if-match":
-                    self.send_error(412)
-                    return
-                status = 200
-                if self.headers.get("Range") and fixture.range_mode != "ignored":
-                    status = 206
-                    total = len(content)
-                    content = content[:release.PROBE_BYTES]
-                    if fixture.range_mode == "corrupt-prefix":
-                        content = b"!" * len(content)
-                    if fixture.range_mode == "truncated":
-                        content = content[:7]
-                    self.send_response(status)
-                    self.send_header("Content-Range", f"bytes 0-{release.PROBE_BYTES - 1}/{total}")
-                    self.send_header("Content-Length", str(release.PROBE_BYTES))
-                else:
-                    self.send_response(status)
-                    self.send_header("Content-Length", str(len(content)))
-                if fixture.etag_mode != "missing":
-                    self.send_header("ETag", etag)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("ETag", '"' + hashlib.sha256(content).hexdigest() + '"')
                 self.end_headers()
-                fixture.transfers.append((self.path, status, len(content)))
+                fixture.transfers.append((self.path, 200, len(content)))
                 try:
                     self.wfile.write(content)
                 except (BrokenPipeError, ConnectionResetError):
@@ -243,70 +219,19 @@ class PublicationTests(unittest.TestCase):
         release.PublicHTTP().check(url, len(data), hashlib.sha256(data).hexdigest(), version="v1.5.8")
         self.assertEqual(self.public_requests[-1][1], "BeefTV-Desktop-Updater/v1.5.8")
 
-    def test_same_job_receipt_cuts_activation_to_1k_per_package_and_keeps_full_feeds(self):
+    def test_cli_stage_and_activate_rehash_full_objects_and_detect_tail_corruption(self):
         manifest = self.manifest(copies=512)
-        for suffix in ['darwin-arm64.dmg', 'darwin-amd64.dmg', 'windows-amd64-setup.exe', 'linux-amd64.deb']:
-            (self.root / ('BeefTV-v1.5.7-' + suffix)).write_bytes(suffix.encode() * 512)
-        verified = {}
-        self.publisher.public.verified = verified
-        self.publisher.stage(manifest, self.root, with_installers=True)
-        self.assertEqual(len(verified), 8)
-        package_bytes = sum(row['size'] for row in verified.values())
-        self.assertEqual(sum(n for path, _, n in self.transfers if not path.endswith('.json')), package_bytes)
-        self.assertEqual(sum(n for path, n in self.store.reads if not path.endswith('.json')), package_bytes)
-        receipt = self.root / 'receipt.json'
-        binding = {'schema': 1, 'manifestSHA256': release.fingerprint(manifest)[1], 'job': 'fixture'}
-        release.write_verification_receipt(receipt, binding, verified)
-        self.publisher.public = release.PublicHTTP(self.publisher.public.opener,
-                                                   release.read_verification_receipt(receipt, binding))
-        self.transfers.clear()
-        self.publisher.activate(manifest, self.root)
-        packages = [x for x in self.transfers if not x[0].endswith('.json')]
-        self.assertEqual(len(packages), 8)
-        self.assertTrue(all(status == 206 and size == 1024 for _, status, size in packages))
-        self.assertTrue(all(status == 200 for path, status, _ in self.transfers if path.endswith('.json')))
-        self.assertEqual(self.store.objects[release.LATEST], manifest.read_bytes())
-
-    def test_failed_stage_invalidates_old_receipt_and_unsupported_command_rejects_it(self):
-        manifest = self.manifest()
-        receipt = self.root / 'receipt.json'
-        receipt.write_text('old proof')
-        owner = dict(GITHUB_REPOSITORY='glanderness/BeefTV', GITHUB_RUN_ID='123',
-                     GITHUB_RUN_ATTEMPT='1', GITHUB_JOB='publish')
         argv = ['publish', 'stage', '--manifest', str(manifest), '--verifier', '/tmp/update-release',
-                '--endpoint-url', 'https://' + 'a' * 32 + '.r2.cloudflarestorage.com',
-                '--verification-receipt', str(receipt)]
-        with patch.dict(os.environ, owner), patch('sys.argv', argv), \
-                patch.object(release, 'storage_config'), patch.object(release, 'Publisher') as publisher, \
-                redirect_stderr(io.StringIO()):
-            publisher.return_value.stage.side_effect = release.PublishError('failed full check')
-            self.assertEqual(release.main(), 1)
-        self.assertFalse(receipt.exists())
-        argv[1] = 'activate-v2'
-        with patch('sys.argv', argv), patch.object(release, 'storage_config') as storage, \
-                redirect_stderr(io.StringIO()):
-            self.assertEqual(release.main(), 1)
-        storage.assert_not_called()
-
-    def test_r2_cli_rehashes_full_objects_even_with_a_receipt_and_cache_ignoring_if_match(self):
-        manifest = self.manifest(copies=512)
-        receipt = self.root / 'receipt.json'
-        owner = dict(GITHUB_REPOSITORY='glanderness/BeefTV', GITHUB_RUN_ID='123',
-                     GITHUB_RUN_ATTEMPT='1', GITHUB_JOB='publish')
-        argv = ['publish', 'stage', '--manifest', str(manifest), '--verifier', '/tmp/update-release',
-                '--endpoint-url', 'https://' + 'a' * 32 + '.r2.cloudflarestorage.com',
-                '--verification-receipt', str(receipt)]
+                '--endpoint-url', 'https://' + 'a' * 32 + '.r2.cloudflarestorage.com']
         http, publisher = release.PublicHTTP, release.Publisher
         self.store.check_conditions = Mock()
-        self.range_mode = 'ignore-if-match'
         def make_publisher(*args, **kwargs):
             return publisher(*args, **kwargs, release_check=lambda *a: None)
-        with patch.dict(os.environ, owner), patch.object(release, 'storage_config', return_value=self.store), \
-                patch.object(release, 'PublicHTTP', side_effect=lambda **kw: http(self.publisher.public.opener, **kw)), \
+        with patch.object(release, 'storage_config', return_value=self.store), \
+                patch.object(release, 'PublicHTTP', side_effect=lambda: http(self.publisher.public.opener)), \
                 patch.object(release, 'Publisher', side_effect=make_publisher), patch('builtins.print'):
             with patch('sys.argv', argv):
                 self.assertEqual(release.main(), 0)
-            self.assertEqual(json.loads(receipt.read_text())['objects'], {})
             self.transfers.clear()
             argv[1] = 'activate'
             with patch('sys.argv', argv):
@@ -320,88 +245,6 @@ class PublicationTests(unittest.TestCase):
             with patch('sys.argv', argv), redirect_stderr(io.StringIO()):
                 self.assertEqual(release.main(), 1)
             self.assertEqual(self.store.objects[release.LATEST], manifest.read_bytes())
-
-    def test_receipt_cannot_activate_changed_asset_or_suppressed_range(self):
-        for mode in ['changed', 'missing', 'ignored', 'corrupt-prefix', 'truncated', 'echo']:
-            with self.subTest(mode=mode):
-                self.store.objects.clear()
-                manifest = self.manifest(copies=512)
-                self.publisher.public.verified = {}
-                self.range_mode = 'normal'
-                self.publisher.stage(manifest, self.root)
-                if mode == 'changed':
-                    key = next(k for k in self.store.objects if k.endswith('.zip'))
-                    self.store.objects[key] = b'corrupt'
-                elif mode == 'missing':
-                    del self.store.objects[next(k for k in self.store.objects if k.endswith('.zip'))]
-                else:
-                    self.range_mode = mode
-                    if mode == 'echo':
-                        key = next(k for k in self.store.objects if k.endswith('.zip'))
-                        data = self.store.objects[key]
-                        self.store.objects[key] = data[:1024] + b'!' * (len(data) - 1024)
-                with self.assertRaises(release.PublishError):
-                    self.publisher.activate(manifest)
-                self.assertNotIn(release.LATEST, self.store.objects)
-
-    def test_no_strong_etag_or_missing_receipt_keeps_full_hash_verification(self):
-        for mode in ['weak', 'missing']:
-            with self.subTest(mode=mode):
-                self.etag_mode = mode
-                self.store.objects.clear()
-                self.publisher.public.verified = {}
-                manifest = self.manifest(copies=512)
-                self.publisher.stage(manifest, self.root)
-                self.assertEqual(self.publisher.public.verified, {})
-                self.publisher.public.verified = release.read_verification_receipt(self.root / 'absent.json', {})
-                self.transfers.clear()
-                self.publisher.activate(manifest)
-                self.assertTrue(all(status == 200 for _, status, _ in self.transfers))
-
-    def test_receipt_is_bound_to_signed_envelope_storage_and_exact_ci_attempt_job(self):
-        manifest = self.manifest()
-        args = Mock(provider='r2', endpoint_url='https://' + 'a' * 32 + '.r2.cloudflarestorage.com',
-                    region='auto', bucket='beeftv-releases', public_base='https://updates.beefapi.com/beeftv')
-        owner = dict(GITHUB_REPOSITORY='glanderness/BeefTV', GITHUB_RUN_ID='123',
-                     GITHUB_RUN_ATTEMPT='1', GITHUB_JOB='publish')
-        with patch.dict(os.environ, owner, clear=True):
-            binding = release.verification_binding(manifest, args)
-        receipt = self.root / 'receipt.json'
-        release.write_verification_receipt(receipt, binding, {})
-        for key in ['manifestSHA256', 'provider', 'endpoint', 'region', 'bucket', 'publicBase']:
-            with self.subTest(key=key), self.assertRaises(release.PublishError):
-                release.read_verification_receipt(receipt, {**binding, key: 'changed'})
-        for key in owner:
-            with self.subTest(key=key), self.assertRaises(release.PublishError):
-                release.read_verification_receipt(receipt, {**binding, 'owner': {**owner, key: 'changed'}})
-        with patch.dict(os.environ, {}, clear=True), self.assertRaises(release.PublishError):
-            release.verification_binding(manifest, args)
-
-    def test_failed_full_hash_cannot_create_verification_proof(self):
-        data = b'fixture' * 1024
-        self.store.objects['beeftv/asset.zip'] = data
-        public = release.PublicHTTP(self.publisher.public.opener, {})
-        with self.assertRaises(release.PublishError):
-            public.check('https://updates.beefapi.com/beeftv/asset.zip', len(data), '0' * 64, version='v1.5.7')
-        self.assertEqual(public.verified, {})
-
-    def test_malformed_receipt_is_reported_before_publisher_or_latest_write(self):
-        manifest = self.manifest()
-        receipt = self.root / 'receipt.json'
-        owner = dict(GITHUB_REPOSITORY='glanderness/BeefTV', GITHUB_RUN_ID='123',
-                     GITHUB_RUN_ATTEMPT='1', GITHUB_JOB='publish')
-        argv = ['publish', 'activate', '--manifest', str(manifest), '--verifier', '/tmp/update-release',
-                '--endpoint-url', 'https://' + 'a' * 32 + '.r2.cloudflarestorage.com', '--verification-receipt', str(receipt)]
-        for data in [b'{', b'\xff', b'null']:
-            with self.subTest(data=data):
-                receipt.write_bytes(data)
-                with patch.dict(os.environ, owner), patch('sys.argv', argv), \
-                        patch.object(release, 'storage_config'), patch.object(release, 'Publisher') as publisher, \
-                        redirect_stderr(io.StringIO()) as error:
-                    self.assertEqual(release.main(), 1)
-                publisher.assert_not_called()
-                self.assertNotIn('Traceback', error.getvalue())
-                self.assertNotIn(release.LATEST, self.store.objects)
 
     def test_incomplete_platform_set_cannot_activate(self):
         manifest = self.manifest(omit="windows-amd64")
