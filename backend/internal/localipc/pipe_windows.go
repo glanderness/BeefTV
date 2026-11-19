@@ -48,12 +48,31 @@ func newWindowsPipeConn(h windows.Handle, name string) net.Conn {
 	return &windowsPipeFileConn{file: os.NewFile(uintptr(h), name)}
 }
 
-func (c *windowsPipeFileConn) Read(b []byte) (int, error)         { return c.file.Read(b) }
-func (c *windowsPipeFileConn) Write(b []byte) (int, error)        { return c.file.Write(b) }
-func (c *windowsPipeFileConn) Close() error                       { return c.file.Close() }
-func (c *windowsPipeFileConn) SetDeadline(t time.Time) error      { return c.file.SetDeadline(t) }
-func (c *windowsPipeFileConn) SetReadDeadline(t time.Time) error  { return c.file.SetReadDeadline(t) }
-func (c *windowsPipeFileConn) SetWriteDeadline(t time.Time) error { return c.file.SetWriteDeadline(t) }
+func (c *windowsPipeFileConn) Read(b []byte) (int, error) {
+	n, err := c.file.Read(b)
+	return n, wrapPipeConnError("read", c.LocalAddr(), c.RemoteAddr(), err)
+}
+
+func (c *windowsPipeFileConn) Write(b []byte) (int, error) {
+	n, err := c.file.Write(b)
+	return n, wrapPipeConnError("write", c.LocalAddr(), c.RemoteAddr(), err)
+}
+
+func (c *windowsPipeFileConn) Close() error {
+	return wrapPipeConnError("close", c.LocalAddr(), c.RemoteAddr(), c.file.Close())
+}
+
+func (c *windowsPipeFileConn) SetDeadline(t time.Time) error {
+	return wrapPipeConnError("set", c.LocalAddr(), c.RemoteAddr(), c.file.SetDeadline(t))
+}
+
+func (c *windowsPipeFileConn) SetReadDeadline(t time.Time) error {
+	return wrapPipeConnError("set", c.LocalAddr(), c.RemoteAddr(), c.file.SetReadDeadline(t))
+}
+
+func (c *windowsPipeFileConn) SetWriteDeadline(t time.Time) error {
+	return wrapPipeConnError("set", c.LocalAddr(), c.RemoteAddr(), c.file.SetWriteDeadline(t))
+}
 func (c *windowsPipeFileConn) LocalAddr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
 }
