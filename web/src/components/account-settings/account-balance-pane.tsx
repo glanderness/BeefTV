@@ -485,10 +485,7 @@ export function AccountBalancePane() {
                 </label>
             ) : null}
             {availableMethods.length > 0 ? (
-                <div className="account-payment-section">
-                    <h3>支付方式</h3>
-                    <PaymentMethodPicker options={availableMethods} value={method} onChange={setMethod} />
-                </div>
+                <PaymentMethodPicker options={availableMethods} value={method} onChange={setMethod} />
             ) : null}
             <div className="account-recharge-total">
                 <div>
