@@ -71,7 +71,7 @@
     <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="32" alt="Infistar.cc 无限星河标志"><br><strong>Infistar.cc 无限星河</strong></td>
     <td>
       感谢 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc 无限星河</a> 赞助 BeefTV！提供多模型 API 服务，适合 AI 图片、视频、短剧及多媒体创作工作流。<br>
-      <strong>⚙ 兼容接入：</strong>在 BeefTV「模型配置」中添加自定义模型渠道，填写 Base URL、API Key 和模型名称，即可配置使用。<br>
+      <strong>⚙ 一键接入：</strong>在 BeefTV「设置 → 模型服务 → 连接你的模型服务 → 合作伙伴」中直接选择 <strong>无限星河 AI</strong>，填写 API Key 即可使用内置的 38 款文本、图片与视频预置模型。<br>
       <strong>✨ 多模型选择：</strong>聚合 Claude、GPT、Gemini、DeepSeek 及多种图片、视频生成模型，满足剧本、分镜、素材和成片制作需求。<br>
       <strong>🏷 价格与服务：</strong>部分模型低至官方定价的 0.1 折，支持人民币结算及技术支持，具体模型和价格以平台页面为准。<br>
       <strong>🎁 BeefTV 专属福利：</strong>通过 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">专属推广链接注册</a> 可领取 5 元体验额度，领取条件以活动页面为准。

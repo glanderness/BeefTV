@@ -71,7 +71,7 @@ If you would also like to sponsor the BeefTV open source project and contribute 
     <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="32" alt="Infistar.cc Infinite Star logo"><br><strong>Infistar.cc 无限星河</strong></td>
     <td>
       Thanks to <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc Infinite Star</a> for sponsoring BeefTV! Its multi-model API service supports AI image, video, short drama, and multimedia creation workflows.<br>
-      <strong>⚙ Integration:</strong> In BeefTV's model settings, add a custom model provider and enter the Base URL, API key, and model name to get started.<br>
+      <strong>⚙ One-click setup:</strong> Select <strong>Infistar AI (无限星河 AI)</strong> under BeefTV Settings → Model Services → Connect Your Model Service → Partners and enter your API key to use 38 built-in text, image, and video presets.<br>
       <strong>✨ Model selection:</strong> Access Claude, GPT, Gemini, DeepSeek, and a range of image and video generation models for scripts, storyboards, assets, and finished productions.<br>
       <strong>🏷 Pricing and service:</strong> Some models are available for as little as 1% of official pricing, with CNY settlement and technical support. Refer to the platform for available models and current pricing.<br>
       <strong>🎁 BeefTV exclusive offer:</strong> <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Register through the exclusive referral link</a> to receive CNY 5 in trial credits, subject to the campaign's eligibility terms.
