@@ -68,6 +68,16 @@ If you would also like to sponsor the BeefTV open source project and contribute 
     <td><a href="https://www.ysdui.cn/">Yinsheng Yunshu Yisuan</a> is a one-stop enterprise AI services platform under Yinsheng Communications Co., Ltd., providing compute resources and AI product solutions for businesses. Special thanks to Yinsheng Yunshu Yisuan for its compute resources and ecosystem support for this project.</td>
   </tr>
   <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="96" alt="Infistar.cc Infinite Star logo"><br><strong>Infistar.cc 无限星河</strong></td>
+    <td>
+      Thanks to <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc Infinite Star</a> for sponsoring BeefTV! Its multi-model API service supports AI image, video, short drama, and multimedia creation workflows.<br>
+      <strong>⚙ Integration:</strong> In BeefTV's model settings, add a custom model provider and enter the Base URL, API key, and model name to get started.<br>
+      <strong>✨ Model selection:</strong> Access Claude, GPT, Gemini, DeepSeek, and a range of image and video generation models for scripts, storyboards, assets, and finished productions.<br>
+      <strong>🏷 Pricing and service:</strong> Some models are available for as little as 1% of official pricing, with CNY settlement and technical support. Refer to the platform for available models and current pricing.<br>
+      <strong>🎁 BeefTV exclusive offer:</strong> <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Register through the exclusive referral link</a> to receive CNY 5 in trial credits, subject to the campaign's eligibility terms.
+    </td>
+  </tr>
+  <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
     <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises. Special thanks to Tencent Cloud for its compute resources and ecosystem support for this project.</td>
   </tr>

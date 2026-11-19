@@ -68,6 +68,16 @@
     <td><a href="https://www.ysdui.cn/">银盛·云枢壹算</a>是银盛通信有限公司旗下的企业级一站式 AI 服务平台，为企业提供算力支持与 AI 产品解决方案。感谢银盛·云枢壹算为本项目提供的算力支持与生态扶持。</td>
   </tr>
   <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="96" alt="Infistar.cc 无限星河标志"><br><strong>Infistar.cc 无限星河</strong></td>
+    <td>
+      感谢 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc 无限星河</a> 赞助 BeefTV！提供多模型 API 服务，适合 AI 图片、视频、短剧及多媒体创作工作流。<br>
+      <strong>⚙ 兼容接入：</strong>在 BeefTV「模型配置」中添加自定义模型渠道，填写 Base URL、API Key 和模型名称，即可配置使用。<br>
+      <strong>✨ 多模型选择：</strong>聚合 Claude、GPT、Gemini、DeepSeek 及多种图片、视频生成模型，满足剧本、分镜、素材和成片制作需求。<br>
+      <strong>🏷 价格与服务：</strong>部分模型低至官方定价的 0.1 折，支持人民币结算及技术支持，具体模型和价格以平台页面为准。<br>
+      <strong>🎁 BeefTV 专属福利：</strong>通过 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">专属推广链接注册</a> 可领取 5 元体验额度，领取条件以活动页面为准。
+    </td>
+  </tr>
+  <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="腾讯云图标"><br><strong>腾讯云</strong></td>
     <td><a href="https://cloud.tencent.com/">腾讯云</a>提供云计算、人工智能与音视频服务，覆盖媒体存储、处理和分发等场景，服务开发者与企业的应用建设。感谢腾讯云为本项目提供的算力支持以及生态扶持。</td>
   </tr>
