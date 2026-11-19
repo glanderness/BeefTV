@@ -5,7 +5,7 @@ description: 签名清单、打包布局、密钥、发布工作流、回滚和�
 
 # 桌面自动更新发布
 
-桌面自动更新只替换应用本身。项目、素材、设置、BeefTV 账号连接和自定义插件留在用户数据目录。新版本从广州 COS 读取签名清单和更新包，GitHub Release 保留同一份清单。已安装旧版仍可使用原更新地址，不经过业务云接口。
+桌面自动更新只替换应用本身。项目、素材、设置、BeefTV 账号连接和自定义插件留在用户数据目录。新版本从更新源读取签名清单和更新包（中国大陆优先 CNB 镜像、其他地区优先 Cloudflare R2），GitHub Release 保留同一份清单。仍指向历史清单入口的旧版客户端仍可读取历史清单，但不再获得后续新版本，手动安装一次新版后即可继续应用内更新，全程不经过业务云接口。
 
 `v1.5.2` 及以前的安装包没有更新器。给仓库补上清单，不会让已经装好的程序自己升级。用户需要先手动安装第一个带更新器的版本。
 
@@ -116,9 +116,9 @@ GitHub 仓库需配置 `BEEFTV_CNB_TRIGGER_TOKEN`，仅授权 `beeftv-downloads/
 
 1. 校验稳定版本、唯一 tag、密钥和 changelog。
 2. 创建 **draft** Release。
-3. 用现有脚本构建 macOS arm64、macOS amd64、Windows amd64，并注入 FeedURL 与公钥。
+3. 用现有脚本构建 macOS arm64、macOS amd64、Windows amd64、Linux amd64，并注入 FeedURL 与公钥。
 4. 按固定文件名打包 zip 并保存为 Actions 构建产物。
-5. 三个包都齐了之后才签名 `desktop-update.json`。
+5. 四个包都齐了之后才签名 `desktop-update.json` 与 `desktop-update-v2.json`。
 6. 把所有包和清单上传到 draft 后，发布并明确标记为 latest。此时更新源才指向这个完整版本。
 
 固定文件名：
@@ -127,7 +127,9 @@ GitHub 仓库需配置 `BEEFTV_CNB_TRIGGER_TOKEN`，仅授权 `beeftv-downloads/
 BeefTV-vX.Y.Z-darwin-arm64.zip
 BeefTV-vX.Y.Z-darwin-amd64.zip
 BeefTV-vX.Y.Z-windows-amd64.zip
+BeefTV-vX.Y.Z-linux-amd64.zip
 desktop-update.json
+desktop-update-v2.json
 ```
 
 同一版本的资源不可改写。已存在的 tag 或 Release（包括 draft）会让工作流失败。失败且从未公开的 draft，确认无人可下载后才能删除 draft 和 tag，再对同一版本重试。
