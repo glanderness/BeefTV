@@ -25,6 +25,7 @@ type VideoPlayerProps = {
     onCanPlay?: MediaPlayerProps["onCanPlay"];
     onPlay?: MediaPlayerProps["onPlay"];
     onError?: MediaPlayerProps["onError"];
+    onVideoMetadata?: (video: HTMLVideoElement) => void;
     onFirstFramePresented?: () => void;
 };
 
@@ -87,6 +88,7 @@ export function VideoPlayer({
     onCanPlay,
     onPlay,
     onError,
+    onVideoMetadata,
     onFirstFramePresented,
 }: VideoPlayerProps) {
     const { noAudio, probeVideoAudio } = useVideoAudioTrack(src, hasAudio);
@@ -191,6 +193,7 @@ export function VideoPlayer({
                 const provider = event.target.provider;
                 const media = isVideoProvider(provider) ? (provider.media as HTMLVideoElement) : undefined;
                 probeVideoAudio(media);
+                if (media) onVideoMetadata?.(media);
             }}
             onLoadedData={(event) => {
                 const provider = event.target.provider;

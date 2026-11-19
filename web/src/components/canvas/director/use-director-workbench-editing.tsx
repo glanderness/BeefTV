@@ -1,3 +1,4 @@
+import { hasDeleteOverlay } from "@/lib/canvas/canvas-keyboard-scope";
 import { App, type MenuProps } from "antd";
 import { Box, Camera, Circle, Cuboid, FileUp, Lightbulb, UserRound } from "lucide-react";
 import { nanoid } from "nanoid";
@@ -420,6 +421,7 @@ export function useDirectorWorkbenchEditing({
             if (shortcutsPaused) return;
             const action = resolveDirectorShortcut({ key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey, altKey: event.altKey, isInteractiveTarget: blocksDirectorShortcut(event.target) });
             if (!action) return;
+            if (action.kind === "delete-selected" && (event.repeat || event.isComposing || hasDeleteOverlay())) return;
             const handled = runShortcutRef.current(action);
             if (action.kind === "delete-selected") {
                 event.preventDefault();

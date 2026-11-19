@@ -557,7 +557,6 @@ export function CanvasTimelineDialog({
             startMs: playheadMs,
             durationMs: Math.round(clip.durationMs - cutMs),
             sourceStartMs: (clip.sourceStartMs || 0) + Math.round(cutMs),
-            sourceDurationMs: clip.sourceDurationMs !== undefined ? Math.max(0, Math.round(clip.sourceDurationMs - cutMs)) : Math.round(clip.durationMs - cutMs),
         };
         applyDraft((current) => ({ ...current, clips: [...current.clips.filter((item) => item.id !== clip.id), left, right] }));
         setSelectedClipId(left.id);
@@ -746,6 +745,7 @@ export function CanvasTimelineDialog({
     return (
         <AppModal
             className="canvas-timeline-dialog"
+            classNames={{ body: "text-sm" }}
             style={{
                 "--editor-bg": theme.node.panel,
                 "--editor-panel": theme.node.fill,
@@ -757,9 +757,9 @@ export function CanvasTimelineDialog({
                 "--editor-clip-text": canvasThemes.dark.node.text,
             } as CSSProperties}
             styles={{
-                container: { maxHeight: "calc(100dvh - 24px)", display: "flex", flexDirection: "column" },
+                container: { height: "min(820px, calc(100dvh - 24px))", display: "flex", flexDirection: "column" },
                 header: { flexShrink: 0 },
-                body: { minHeight: 0, flex: "1 1 auto", display: "flex", flexDirection: "column", overflow: "hidden" },
+                body: { minHeight: 0, flex: "1 1 0px", display: "flex", flexDirection: "column", overflow: "hidden", color: theme.node.text },
             }}
             title={title}
             open={open}
@@ -776,90 +776,88 @@ export function CanvasTimelineDialog({
             }}
             flush
         >
-            <div className="media-editor-body timeline-editor-body flex min-h-0 flex-1 flex-col overflow-hidden text-sm" style={{ color: theme.node.text }}>
-                <CanvasTimelineToolbar
-                    theme={theme}
+            <CanvasTimelineToolbar
+                theme={theme}
+                playheadMs={playheadMs}
+                onResetPlayhead={resetPlayheadToStart}
+                snapEnabled={snapEnabled}
+                onToggleSnap={() => setSnapEnabled((value) => !value)}
+                onZoomOut={() => setZoomLevel((value) => zoomOut(value))}
+                onZoomIn={() => setZoomLevel((value) => zoomIn(value))}
+                onFitZoom={() => setZoomLevel(getFitTimelineZoom(durationMs, viewportWidth))}
+                addGroupCollapsed={addGroupCollapsed}
+                addableNodes={addableNodes}
+                onAddNodeToTimeline={addNodeToTimeline}
+                onOpenAssetLibrary={onOpenAssetLibrary}
+                onOpenProjectAssets={onOpenProjectAssets}
+                onUploadFiles={(files) => void handleLocalUpload(files)}
+                onSplitClipAtPlayhead={splitClipAtPlayhead}
+                selectedClipId={selectedClipId}
+                onDeleteSelectedClip={deleteSelectedClip}
+                toolbarRef={toolbarRef}
+                moreBtnRef={moreBtnRef}
+                addGroupProbeRef={addGroupProbeRef}
+                uploadInputRef={uploadInputRef}
+            />
+
+            <div className="timeline-editor-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+                <CanvasTimelinePreview
+                    clips={draft.clips}
+                    tracks={draft.tracks}
+                    output={draft.output}
+                    nodes={nodes}
                     playheadMs={playheadMs}
-                    onResetPlayhead={resetPlayheadToStart}
-                    snapEnabled={snapEnabled}
-                    onToggleSnap={() => setSnapEnabled((value) => !value)}
-                    onZoomOut={() => setZoomLevel((value) => zoomOut(value))}
-                    onZoomIn={() => setZoomLevel((value) => zoomIn(value))}
-                    onFitZoom={() => setZoomLevel(getFitTimelineZoom(durationMs, viewportWidth))}
-                    addGroupCollapsed={addGroupCollapsed}
-                    addableNodes={addableNodes}
-                    onAddNodeToTimeline={addNodeToTimeline}
-                    onOpenAssetLibrary={onOpenAssetLibrary}
-                    onOpenProjectAssets={onOpenProjectAssets}
-                    onUploadFiles={(files) => void handleLocalUpload(files)}
-                    onSplitClipAtPlayhead={splitClipAtPlayhead}
-                    selectedClipId={selectedClipId}
-                    onDeleteSelectedClip={deleteSelectedClip}
-                    toolbarRef={toolbarRef}
-                    moreBtnRef={moreBtnRef}
-                    addGroupProbeRef={addGroupProbeRef}
-                    uploadInputRef={uploadInputRef}
+                    playing={previewPlaying}
+                    theme={theme}
+                    onTogglePlay={() => setPreviewPlaying((value) => !value)}
+                    onRequestPause={() => setPreviewPlaying(false)}
+                    onPlayheadChange={clampPlayheadMs}
                 />
 
-                <div className="timeline-editor-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
-                    <CanvasTimelinePreview
-                        clips={draft.clips}
-                        tracks={draft.tracks}
-                        output={draft.output}
-                        nodes={nodes}
-                        playheadMs={playheadMs}
-                        playing={previewPlaying}
-                        theme={theme}
-                        onTogglePlay={() => setPreviewPlaying((value) => !value)}
-                        onRequestPause={() => setPreviewPlaying(false)}
-                        onPlayheadChange={clampPlayheadMs}
-                    />
-
-                    <CanvasTimelineTrackArea
-                        draft={draft}
-                        theme={theme}
-                        pxPerMs={pxPerMs}
-                        durationMs={durationMs}
-                        playheadMs={playheadMs}
-                        trackWidth={trackWidth}
-                        selectedClipId={selectedClipId}
-                        trackAreaRef={trackAreaRef}
-                        scrollRef={scrollRef}
-                        onSeek={(ms) => {
-                            setPreviewPlaying(false);
-                            setPlayheadMs(clampPlayheadMs(ms));
-                        }}
-                        onClipPointerDown={handleClipPointerDown}
-                        onClipPointerMove={handleClipPointerMove}
-                        onClipPointerUp={handleClipPointerUp}
-                    />
-                </div>
-
-                <CanvasTimelineInspector
+                <CanvasTimelineTrackArea
                     draft={draft}
                     theme={theme}
+                    pxPerMs={pxPerMs}
                     durationMs={durationMs}
-                    exporting={exporting}
-                    exportPercent={exportPercent}
-                    exportDetail={exportDetail}
-                    finalizingExport={finalizingExport}
-                    saving={saving}
-                    hasVideoClips={hasVideoClips}
-                    selectedSubtitleClip={selectedSubtitleClip}
-                    selectedMediaClip={selectedMediaClip}
-                    onOpenSubtitleDialog={onOpenSubtitleDialog}
-                    onUpdateClip={updateClip}
-                    onUpdateSelectedMediaNumbers={updateSelectedMediaNumbers}
-                    onSplitClipAtPlayhead={splitClipAtPlayhead}
-                    onAbortExport={() => {
-                        if (!finalizingExportRef.current) exportControllerRef.current?.abort();
+                    playheadMs={playheadMs}
+                    trackWidth={trackWidth}
+                    selectedClipId={selectedClipId}
+                    trackAreaRef={trackAreaRef}
+                    scrollRef={scrollRef}
+                    onSeek={(ms) => {
+                        setPreviewPlaying(false);
+                        setPlayheadMs(clampPlayheadMs(ms));
                     }}
-                    onExport={() => void handleExport()}
-                    onCreateAssembledNode={() => void handleCreateAssembledNode()}
-                    onClose={handleClose}
-                    onSave={() => void handleSave()}
+                    onClipPointerDown={handleClipPointerDown}
+                    onClipPointerMove={handleClipPointerMove}
+                    onClipPointerUp={handleClipPointerUp}
                 />
             </div>
+
+            <CanvasTimelineInspector
+                draft={draft}
+                theme={theme}
+                durationMs={durationMs}
+                exporting={exporting}
+                exportPercent={exportPercent}
+                exportDetail={exportDetail}
+                finalizingExport={finalizingExport}
+                saving={saving}
+                hasVideoClips={hasVideoClips}
+                selectedSubtitleClip={selectedSubtitleClip}
+                selectedMediaClip={selectedMediaClip}
+                onOpenSubtitleDialog={onOpenSubtitleDialog}
+                onUpdateClip={updateClip}
+                onUpdateSelectedMediaNumbers={updateSelectedMediaNumbers}
+                onSplitClipAtPlayhead={splitClipAtPlayhead}
+                onAbortExport={() => {
+                    if (!finalizingExportRef.current) exportControllerRef.current?.abort();
+                }}
+                onExport={() => void handleExport()}
+                onCreateAssembledNode={() => void handleCreateAssembledNode()}
+                onClose={handleClose}
+                onSave={() => void handleSave()}
+            />
         </AppModal>
     );
 }

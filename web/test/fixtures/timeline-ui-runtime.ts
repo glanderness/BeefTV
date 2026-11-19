@@ -3,7 +3,7 @@ import type { TimelineRenderSource } from "../../src/lib/timeline/timeline-to-ff
 
 // Fault injection at the encoder/task boundary; the mounted React handlers remain real.
 export const receipt = {
-    local: [] as TimelineRenderSource[][], remote: [] as TimelineProject[],
+    local: [] as TimelineRenderSource[][], remote: [] as TimelineProject[], saved: [] as TimelineProject[],
     downloads: 0, created: 0, aborted: 0,
     failLocal: () => {}, failRemote: () => {},
 };

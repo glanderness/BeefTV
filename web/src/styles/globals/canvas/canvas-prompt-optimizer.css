@@ -524,12 +524,12 @@
     }
 
     .canvas-node-composer-prompt-tools { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-1); margin-bottom: var(--space-1); }
-    .canvas-prompt-font-control { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 2px; color: inherit; font-size: var(--fs-tiny); }
+    .canvas-prompt-font-control { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 2px; color: inherit; font-size: var(--canvas-composer-ui-fs, var(--fs-tiny)); }
     .canvas-prompt-font-control button { display: grid; place-items: center; width: 24px; height: 24px; border: 0; padding: 0; border-radius: var(--r-sm); background: transparent; color: inherit; }
     .canvas-prompt-font-control button:hover:not(:disabled) { background: rgba(128, 128, 128, 0.12); }
     .canvas-prompt-font-control button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
     .canvas-prompt-font-control button:disabled { opacity: .35; cursor: default; }
-    .canvas-prompt-font-control output { min-width: 20px; text-align: center; font-size: var(--fs-tiny); line-height: 1; font-variant-numeric: tabular-nums; }
+    .canvas-prompt-font-control output { min-width: 20px; text-align: center; font-size: inherit; line-height: var(--canvas-composer-ui-lh, 1); font-variant-numeric: tabular-nums; }
 
     .canvas-node-composer-mode {
         display: flex;
@@ -564,9 +564,9 @@
         margin-left: 6px;
         padding-left: 8px;
         border-left: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
-        font-size: var(--fs-tiny);
+        font-size: var(--canvas-composer-ui-fs, var(--fs-tiny));
         font-weight: 500;
-        line-height: 1;
+        line-height: var(--canvas-composer-ui-lh, 1);
         color: color-mix(in srgb, var(--cn-text) 62%, var(--canvas-composer-surface));
         white-space: nowrap;
     }

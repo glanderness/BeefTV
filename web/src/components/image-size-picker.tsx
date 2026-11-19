@@ -1,3 +1,4 @@
+import { ImageRatioGrid } from "./image-ratio-grid";
 import { useState } from "react";
 import "./image-size-picker.css";
 import { Input, Button } from "antd";
@@ -7,7 +8,7 @@ import { buildImageResolutionOptions, type ImageResolutionOption, type ImageReso
 
 import { resolveImageRequestSize, validateImageSize } from "@/services/api/image-validation";
 
-export function ImageSizePicker({ profile, size, quality, onChange }: { profile: ImageCapabilityConfig; size: string; quality?: string; onChange: (size: string, quality?: string) => void }) {
+export function ImageSizePicker({ profile, size, quality, onChange, presetsOnly = false }: { presetsOnly?: boolean; profile: ImageCapabilityConfig; size: string; quality?: string; onChange: (size: string, quality?: string) => void }) {
     const presets = imageSizePresets(profile).filter((preset) => imageTierAvailable(profile, preset.tier));
     const visibleTiers = IMAGE_RESOLUTIONS.filter((value) => presets.some((preset) => preset.tier === value));
     const [chosenTier, setChosenTier] = useState<ImageResolutionTier>("1k");
@@ -79,7 +80,7 @@ export function ImageSizePicker({ profile, size, quality, onChange }: { profile:
         const candidate = presets.find((preset) => preset.tier === next && preset.ratio === ratio);
         try {
             if (candidate) select(candidate);
-            else if (profile.size.allowCustom) select(makeCustom(next, ratio));
+            else if (!presetsOnly && profile.size.allowCustom) select(makeCustom(next, ratio));
             else {
                 const first = presets.find((preset) => preset.tier === next);
                 if (first) select(first);
@@ -144,26 +145,13 @@ export function ImageSizePicker({ profile, size, quality, onChange }: { profile:
                 </button>
             ) : null}
             {choices.length ? <div className="image-size-label">宽高比</div> : null}
-            <div className="image-size-ratios">
-                {choices.map((preset) => (
-                    <button
-                        type="button"
-                        key={`${preset.ratio}:${preset.size}`}
-                        title={`${preset.ratio} · ${preset.width} × ${preset.height}`}
-                        aria-pressed={size !== "auto" && active?.size === preset.size && active?.tier === tier}
-                        onClick={() => select(preset)}
-                    >
-                        <span className="image-size-ratio-icon" style={{ width: 24 * Math.min(1, preset.width / preset.height), height: 24 * Math.min(1, preset.height / preset.width) }} />
-                        <span>{preset.ratio}</span>
-                    </button>
-                ))}
-            </div>
-            {!choices.length ? <p className="image-size-hint">未配置预设尺寸{profile.size.allowCustom ? "，可输入自定义比例或尺寸" : ""}</p> : null}
-            <output aria-live="polite" className="image-size-output">
+            <ImageRatioGrid choices={choices} selectedSize={size !== "auto" && active?.tier === tier ? active.size : undefined} onSelect={select} />
+            {!choices.length ? <p className="image-size-hint">未配置预设尺寸{!presetsOnly && profile.size.allowCustom ? "，可输入自定义比例或尺寸" : ""}</p> : null}
+            {!presetsOnly && <output aria-live="polite" className="image-size-output">
                 {size === "auto" ? "尺寸由模型决定" : active ? `${active.ratio} · ${active.width} × ${active.height} px` : size.replace("x", " × ")}
-            </output>
-            {profile.size.parameter === "aspect_ratio" ? <p className="image-size-hint">尺寸为换算参考，实际像素由模型决定{!imageResolutionUsesQuality(profile) && visibleTiers.length <= 1 ? "；当前协议未配置独立分辨率" : ""}。</p> : null}
-            {profile.size.allowCustom ? (
+            </output>}
+            {!presetsOnly && profile.size.parameter === "aspect_ratio" ? <p className="image-size-hint">尺寸为换算参考，实际像素由模型决定{!imageResolutionUsesQuality(profile) && visibleTiers.length <= 1 ? "；当前协议未配置独立分辨率" : ""}。</p> : null}
+            {!presetsOnly && profile.size.allowCustom ? (
                 <details className="image-size-custom">
                     <summary>自定义比例或尺寸</summary>
                     <div className="image-size-custom-input">

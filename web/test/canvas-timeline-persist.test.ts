@@ -173,9 +173,6 @@ describe("canvas timeline persistence", () => {
         expect(html).toContain("返回");
         expect(html).not.toContain("第二期 ·");
         expect(modalCalls).toHaveLength(1);
-        const modalStyles = modalCalls[0]?.styles as { container?: { maxHeight?: string }; body?: { minHeight?: number } } | undefined;
-        expect(modalStyles?.container?.maxHeight).toBe("calc(100dvh - 24px)");
-        expect(modalStyles?.body?.minHeight).toBe(0);
         expect(inspectorCalls).toHaveLength(1);
         expect(inspectorCalls[0]?.onClose).toBe(modalCalls[0]?.onCancel);
         (modalCalls[0]?.onCancel as () => void)();

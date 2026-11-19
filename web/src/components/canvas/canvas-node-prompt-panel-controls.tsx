@@ -1,11 +1,11 @@
 import { Button, InputNumber } from "antd";
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { ArrowUp, LoaderCircle } from "lucide-react";
 
-import { GenerationCostLabel, useGenerationCostEstimate } from "@/components/generation/generation-cost-badge";
+import { GenerationCostLabel, useGenerationCostEstimateState } from "@/components/generation/generation-cost-badge";
 import { ModelPicker } from "@/components/model-picker";
 import { Tooltip } from "@/components/ui/base/tooltip";
-import { buildCanvasGenerationRequirements, buildGenerationConfig as buildNodeConfig } from "@/lib/canvas/canvas-generation-config";
+import { buildCanvasGenerationRequirements, buildGenerationConfig as buildNodeConfig, videoModelSelectionPatch } from "@/lib/canvas/canvas-generation-config";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { canvasNodeCostTarget, formatInlineCostEstimate, type InlineCostDisplay } from "@/lib/generation-cost-estimate";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
@@ -37,6 +37,7 @@ export type CanvasNodeGenerationPanelPreview = {
     resolvedRequirements: ModelRequirements;
     priceChannel: ModelChannel;
     costDisplay: InlineCostDisplay | null;
+    costRefreshing: boolean;
     currentModelCompatibilityError: string;
     livePreflightError: string;
     isSubmitDisabled: boolean;
@@ -67,7 +68,8 @@ export function useCanvasNodeGenerationPreview({
         () => resolveCanvasNodeGenerationPreview(node, mode, prompt, referenceNodes, referenceConnections, assets),
         [assets, mode, node, prompt, referenceConnections, referenceNodes],
     );
-    const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, inputSummary);
+    const preferredReferenceMode = useCreationPreferencesStore((state) => state.preferences.videoReferenceMode ?? "all");
+    const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, inputSummary, preferredReferenceMode);
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
     const availableModels = selectableModelsByCapability(config, mode);
     const resolvedRequirements: ModelRequirements = {
@@ -89,8 +91,13 @@ export function useCanvasNodeGenerationPreview({
         }),
         [config, mode, prompt, requirements.input?.characterCount, requirements.input?.imageCount, requirements.input?.videoCount],
     );
-    const costEstimate = useGenerationCostEstimate(costTarget, { refreshKey: priceChannel.modelProfiles?.length || 0 });
-    const costDisplay = useMemo(() => formatInlineCostEstimate(costEstimate), [costEstimate]);
+    const { estimate, previousEstimate } = useGenerationCostEstimateState(costTarget, { refreshKey: priceChannel.modelProfiles?.length || 0 });
+    const previousImagePrice = mode === "image" ? previousEstimate : null;
+    const costRefreshing = Boolean(previousImagePrice?.label);
+    const costDisplay = useMemo(() => {
+        const display = formatInlineCostEstimate(estimate || previousImagePrice);
+        return display && costRefreshing ? { ...display, tooltip: `正在更新，上一笔预估为 ${display.label}` } : display;
+    }, [estimate, previousImagePrice, costRefreshing]);
     const isSubmitDisabled = !isRunning && (!prompt.trim() || Boolean(currentModelCompatibilityError) || Boolean(livePreflightError));
     return {
         config,
@@ -99,6 +106,7 @@ export function useCanvasNodeGenerationPreview({
         resolvedRequirements,
         priceChannel,
         costDisplay,
+        costRefreshing,
         currentModelCompatibilityError,
         livePreflightError,
         isSubmitDisabled,
@@ -127,21 +135,21 @@ export function CanvasNodePromptWarnings({
     return (
         <>
             {currentModelCompatibilityError ? (
-                <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: "var(--status-warning)" }}>
+                <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words" style={{ color: "var(--status-warning)" }}>
                     当前模型（{configuredModelDisplayName(config, config.model)}）{currentModelCompatibilityError}，请切换兼容模型或调整已连接的参考素材。
                 </p>
             ) : livePreflightError ? (
-                <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: "var(--status-warning)" }}>
+                <p role="status" className="mx-2.5 my-2 whitespace-pre-wrap break-words" style={{ color: "var(--status-warning)" }}>
                     {livePreflightError}
                 </p>
             ) : null}
             {persistedPreflightError && persistedPreflightError !== livePreflightError ? (
-                <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
+                <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words" style={{ color: theme.accent.danger }}>
                     未开始生成：{persistedPreflightError}
                 </p>
             ) : null}
             {needsRecoverySection && (onOpenGenerationHistory || onCreateGenerationReplacement) ? (
-                <section aria-label="生成恢复" className="mx-2.5 my-2 text-[var(--fs-tiny)]">
+                <section aria-label="生成恢复" className="mx-2.5 my-2">
                     <p style={{ color: theme.node.muted }}>可以取回已有结果，或保留原节点、新建节点继续。</p>
                     <div className="mt-2 flex flex-wrap gap-2">
                         {onOpenGenerationHistory ? <Button className="min-h-10" onClick={onOpenGenerationHistory}>查看生成历史</Button> : null}
@@ -160,6 +168,7 @@ export function CanvasNodePromptFooterControls({
     node,
     globalConfig,
     preview,
+    presetControl,
     activeReferenceCount,
     canAutoMention,
     autoLinkEnabled,
@@ -183,6 +192,7 @@ export function CanvasNodePromptFooterControls({
     node: CanvasNodeData;
     globalConfig: AiConfig;
     preview: CanvasNodeGenerationPanelPreview;
+    presetControl: ReactNode;
     activeReferenceCount: number;
     canAutoMention: boolean;
     autoLinkEnabled: boolean;
@@ -201,7 +211,6 @@ export function CanvasNodePromptFooterControls({
     onSubmit: () => void;
 }) {
     const rememberImageSettings = useCreationPreferencesStore((state) => state.rememberImageSettings);
-    const rememberVideoSettings = useCreationPreferencesStore((state) => state.rememberVideoSettings);
     const { config, requirements, availableModels, resolvedRequirements, costDisplay, isSubmitDisabled } = preview;
     const monochromeAccent = theme.node.activeStroke;
     const actionLabel = isRunning ? "生成中" : "生成";
@@ -230,10 +239,10 @@ export function CanvasNodePromptFooterControls({
         );
         if (!costDisplay) return button;
         return (
-            <div className="inline-flex h-8 shrink-0 items-center rounded-full pl-2.5" style={{ background: "var(--canvas-composer-control-surface)" }}>
+            <div aria-busy={preview.costRefreshing || undefined} className="inline-flex h-8 shrink-0 items-center rounded-full pl-2.5" style={{ background: "var(--canvas-composer-control-surface)" }}>
                 <GenerationCostLabel
                     display={costDisplay}
-                    className="canvas-node-composer-submit-cost pr-1 text-[var(--fs-caption)] font-medium"
+                    className={`canvas-node-composer-submit-cost pr-1 font-medium${mode === "image" ? " canvas-image-submit-cost" : ""}`}
                     style={{ color: isSubmitDisabled ? theme.node.muted : theme.node.text }}
                 />
                 {button}
@@ -241,58 +250,156 @@ export function CanvasNodePromptFooterControls({
         );
     })();
 
+    const videoCapabilities = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
+
+    const settingsControl = simpleMode ? null : mode === "text" ? (
+        <Tooltip title="文本生成份数（默认 1，可在生成配置中调整）">
+            <InputNumber
+                size="small"
+                variant="borderless"
+                min={1}
+                max={15}
+                value={Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
+                onChange={(value) => onConfigChange(node.id, { textCount: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 1))) })}
+                aria-label="文本生成份数"
+                className="!w-14 !h-7 [&_.ant-input-number-input]:!text-[length:var(--canvas-composer-ui-fs)] [&_.ant-input-number-input]:!leading-[var(--canvas-composer-ui-lh)]"
+            />
+        </Tooltip>
+    ) : mode === "image" ? (
+        <CanvasImageSettingsPopover
+            config={config}
+            buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
+            onConfigChange={(key, value) => {
+                rememberImageSettings(imagePreferencePatch(key, value));
+                onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value });
+            }}
+            onMissingConfig={() => navigateToSettings({ continueCreation: true })}
+            onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
+        />
+    ) : mode === "video" ? (
+        <CanvasVideoSettingsPopover
+            config={config}
+            taskConstraints={videoSettingsConstraints(config, {
+                imageCount: requirements.input?.imageCount,
+                characterCount: requirements.input?.characterCount,
+                videoCount: requirements.input?.videoCount,
+                audioCount: requirements.input?.audioCount,
+            }, node.metadata)}
+            buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
+            onConfigChange={(key, value) => {
+                onConfigChange(node.id, videoConfigPatch(key, value));
+            }}
+        >
+            {h3Model ? (
+                <>
+                    <CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} />
+                    <CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} middleFrameSupported={middleFrameSupported} endFrameSupported={endFrameSupported} onChange={(patch) => onConfigChange(node.id, patch)} />
+                </>
+            ) : (requirements.input?.videoCount || 0) > 0 && (videoCapabilities?.operations.includes("extend") || videoCapabilities?.operations.includes("inpaint")) ? (
+                <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: theme.toolbar.border }}>
+                    <div style={{ color: theme.node.muted }}>参考视频模式</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                        {([
+                            { value: undefined, label: "参考生成" },
+                            { value: "extend", label: "视频续写" },
+                            { value: "inpaint", label: "视频局部修改" },
+                        ] as const).map((item) => {
+                            const active = (node.metadata?.videoEditOperation || undefined) === item.value;
+                            return (
+                                <button
+                                    key={item.label}
+                                    type="button"
+                                    className="h-8 cursor-pointer rounded-md px-1.5 transition-colors"
+                                    style={{ background: active ? theme.toolbar.activeBg : theme.toolbar.itemHover, color: theme.node.text }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={() => onConfigChange(node.id, { videoEditOperation: item.value, size: item.value ? "adaptive" : node.metadata?.size })}
+                                >
+                                    {item.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            ) : null}
+        </CanvasVideoSettingsPopover>
+    ) : mode === "audio" ? (
+        <CanvasAudioSettingsPopover
+            config={config}
+            buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
+            onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))}
+        />
+    ) : null;
+
+    const actions = (
+        <div className="canvas-node-composer-actions ml-auto flex min-w-0 items-center gap-1">
+            {presetControl}
+            <ReferenceToolsPopover
+                canAutoMention={canAutoMention}
+                autoLinkEnabled={autoLinkEnabled}
+                onAutoMention={onAutoMention}
+                onAutoLinkEnabledChange={onAutoLinkEnabledChange}
+                pickConnectActive={pickConnectActive}
+                onTogglePickConnect={onTogglePickConnect}
+                accent={monochromeAccent}
+                compact={simpleMode || !expanded}
+                label={autoLinkLabel}
+            />
+            {!simpleMode && (mode === "image" || mode === "video") ? (
+                <CanvasCameraControlPopover
+                    cameraControl={node.metadata?.cameraControl}
+                    onCameraControlChange={(cameraControl) => onConfigChange(node.id, { cameraControl })}
+                    theme={theme}
+                    compact={!expanded}
+                    label={mode === "video" ? "运镜" : undefined}
+                />
+            ) : null}
+            {settingsControl}
+            {submitControl}
+        </div>
+    );
+
     if (simpleMode) {
         return (
             <div className="canvas-node-composer-footer">
-                <span className="min-w-0 truncate px-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                <span className="min-w-0 truncate px-2" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
-                <ReferenceToolsPopover
-                    canAutoMention={canAutoMention}
-                    autoLinkEnabled={autoLinkEnabled}
-                    onAutoMention={onAutoMention}
-                    onAutoLinkEnabledChange={onAutoLinkEnabledChange}
-                    pickConnectActive={pickConnectActive}
-                    onTogglePickConnect={onTogglePickConnect}
-                    accent={monochromeAccent}
-                    compact
-                    label={autoLinkLabel}
-                />
-                {submitControl}
+                {actions}
             </div>
         );
     }
 
-    const videoCapabilities = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
-
     return (
         <div className="canvas-node-composer-footer">
-            <div className={expanded ? "min-w-0 flex-1" : costDisplay ? "canvas-node-composer-model !min-w-24" : "canvas-node-composer-model"}>
+            <div className="canvas-node-composer-model">
                 {availableModels.length ? (
                     <ModelPicker
-                        className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
-                        fullWidth
+                        className="!h-7 !min-w-0 !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
                         config={config}
                         value={config.model}
                         onChange={(model) => {
+                            if (mode === "video") {
+                                if (model !== config.model) onConfigChange(node.id, videoModelSelectionPatch(globalConfig, model));
+                                return;
+                            }
                             const patch = mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model };
-                            if (mode === "image" || mode === "video") {
+                            if (mode === "image") {
                                 const nextConfig = buildNodeConfig(globalConfig, { ...node, metadata: { ...node.metadata, ...patch } }, mode, { ...requirements, options: undefined });
-                                if (mode === "image") rememberImageSettings({ model: nextConfig.model, ratio: nextConfig.size, quality: nextConfig.quality, count: nextConfig.count, transparentBackground: nextConfig.transparentBackground });
-                                else rememberVideoSettings({ model: nextConfig.model, ratio: nextConfig.size, seconds: nextConfig.videoSeconds, videoQuality: nextConfig.vquality, generateAudio: nextConfig.videoGenerateAudio, watermark: nextConfig.videoWatermark });
+                                rememberImageSettings({ model: nextConfig.model, ratio: nextConfig.size, quality: nextConfig.quality, count: nextConfig.count, transparentBackground: nextConfig.transparentBackground });
                             }
                             onConfigChange(node.id, patch);
                         }}
                         capability={mode}
                         requirements={resolvedRequirements}
                         onMissingConfig={() => navigateToSettings({ section: "channels", continueCreation: true })}
-                        variant="creation"
+                        variant="canvas"
                         showConfiguredModelName
+                        showVideoPriceDetails={false}
                     />
                 ) : (
                     <button
                         type="button"
-                        className="canvas-composer-model-picker flex !h-7 w-full min-w-0 items-center px-2 text-left !text-[var(--fs-tiny)] !font-normal"
+                        className="canvas-composer-model-picker flex !h-7 min-w-0 items-center px-2 text-left !font-normal"
                         aria-label="暂无模型可用，连接内置算力"
                         title="暂无模型可用，连接内置算力"
                         onClick={() => navigateToSettings({ section: "channels", continueCreation: true })}
@@ -301,115 +408,7 @@ export function CanvasNodePromptFooterControls({
                     </button>
                 )}
             </div>
-            <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
-                <ReferenceToolsPopover
-                    canAutoMention={canAutoMention}
-                    autoLinkEnabled={autoLinkEnabled}
-                    onAutoMention={onAutoMention}
-                    onAutoLinkEnabledChange={onAutoLinkEnabledChange}
-                    pickConnectActive={pickConnectActive}
-                    onTogglePickConnect={onTogglePickConnect}
-                    accent={monochromeAccent}
-                    compact={!expanded}
-                    label={autoLinkLabel}
-                />
-                {mode === "text" ? (
-                    <Tooltip title="文本生成份数（默认 1，可在生成配置中调整）">
-                        <InputNumber
-                            size="small"
-                            min={1}
-                            max={15}
-                            value={Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
-                            onChange={(value) => onConfigChange(node.id, { textCount: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 1))) })}
-                            aria-label="文本生成份数"
-                            className="!w-14 !h-7 [&_.ant-input-number-input]:!text-[var(--fs-tiny)]"
-                        />
-                    </Tooltip>
-                ) : mode === "image" ? (
-                    <>
-                        <CanvasCameraControlPopover
-                            cameraControl={node.metadata?.cameraControl}
-                            onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })}
-                            theme={theme}
-                            compact={!expanded}
-                        />
-                        <CanvasImageSettingsPopover
-                            config={config}
-                            placement={expanded ? "topRight" : "topLeft"}
-                            buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                            onConfigChange={(key, value) => {
-                                rememberImageSettings(imagePreferencePatch(key, value));
-                                onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value });
-                            }}
-                            onMissingConfig={() => navigateToSettings({ continueCreation: true })}
-                            onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
-                        />
-                    </>
-                ) : mode === "video" ? (
-                    <>
-                        <CanvasCameraControlPopover
-                            cameraControl={node.metadata?.cameraControl}
-                            onCameraControlChange={(cameraControl) => onConfigChange(node.id, { cameraControl })}
-                            theme={theme}
-                            compact={!expanded}
-                            label="运镜"
-                        />
-                        <CanvasVideoSettingsPopover
-                            config={config}
-                            taskConstraints={videoSettingsConstraints(config, {
-                                imageCount: requirements.input?.imageCount,
-                                characterCount: requirements.input?.characterCount,
-                                videoCount: requirements.input?.videoCount,
-                                audioCount: requirements.input?.audioCount,
-                            }, node.metadata)}
-                            buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                            onConfigChange={(key, value) => {
-                                rememberVideoSettings(videoPreferencePatch(key, value));
-                                onConfigChange(node.id, videoConfigPatch(key, value));
-                            }}
-                        >
-                            {h3Model ? (
-                                <>
-                                    <CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} />
-                                    <CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} middleFrameSupported={middleFrameSupported} endFrameSupported={endFrameSupported} onChange={(patch) => onConfigChange(node.id, patch)} />
-                                </>
-                            ) : (requirements.input?.videoCount || 0) > 0 && (videoCapabilities?.operations.includes("extend") || videoCapabilities?.operations.includes("inpaint")) ? (
-                                <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: theme.toolbar.border }}>
-                                    <div className="text-[var(--fs-tiny)] font-semibold" style={{ color: theme.node.muted }}>参考视频模式</div>
-                                    <div className="grid grid-cols-3 gap-1.5">
-                                        {([
-                                            { value: undefined, label: "参考生成" },
-                                            { value: "extend", label: "视频续写" },
-                                            { value: "inpaint", label: "视频局部修改" },
-                                        ] as const).map((item) => {
-                                            const active = (node.metadata?.videoEditOperation || undefined) === item.value;
-                                            return (
-                                                <button
-                                                    key={item.label}
-                                                    type="button"
-                                                    className="h-8 cursor-pointer rounded-md px-1.5 text-[var(--fs-label)] font-medium transition-colors"
-                                                    style={{ background: active ? theme.toolbar.activeBg : theme.toolbar.itemHover, color: theme.node.text }}
-                                                    onMouseDown={(event) => event.stopPropagation()}
-                                                    onClick={() => onConfigChange(node.id, { videoEditOperation: item.value, size: item.value ? "adaptive" : node.metadata?.size })}
-                                                >
-                                                    {item.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ) : null}
-                        </CanvasVideoSettingsPopover>
-                    </>
-                ) : mode === "audio" ? (
-                    <CanvasAudioSettingsPopover
-                        config={config}
-                        buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                        onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))}
-                    />
-                ) : null}
-                {submitControl}
-            </div>
+            {actions}
         </div>
     );
 }
@@ -419,16 +418,6 @@ function imagePreferencePatch(key: keyof AiConfig, value: string) {
     if (key === "quality") return { quality: value };
     if (key === "count") return { count: String(Number(value) || 1) };
     if (key === "transparentBackground") return { transparentBackground: value };
-    return {};
-}
-
-function videoPreferencePatch(key: keyof AiConfig, value: string) {
-    if (key === "size") return { ratio: value };
-    if (key === "videoSeconds") return { seconds: value };
-    if (key === "vquality") return { videoQuality: value };
-    if (key === "videoGenerateAudio") return { generateAudio: value };
-    if (key === "videoWatermark") return { watermark: value };
-    if (key === "videoDraft") return { draft: value };
     return {};
 }
 

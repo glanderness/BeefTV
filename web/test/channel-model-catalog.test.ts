@@ -579,7 +579,7 @@ describe("public channel model catalog", () => {
         expect(panelHtml).not.toContain("尺寸");
     });
 
-    test("shows dimensions derived from the selected video resolution and ratio", () => {
+    test("shows video resolution and ratio controls without a pixel size readout", () => {
         const config = configForCatalog([omniCatalog], { videoSeconds: "10", size: "16:9", vquality: "1080" });
         const profile = config.channels[0]!.modelProfiles![0]!.capabilityConfig!.video!;
         profile.resolutions = ["720p", "1080p", "2160p"];
@@ -587,9 +587,10 @@ describe("public channel model catalog", () => {
 
         const panelHtml = renderToStaticMarkup(React.createElement(VideoSettingsPanel, { config, onConfigChange: () => undefined, theme: canvasThemes.dark }));
 
-        expect(panelHtml).toContain("1920");
-        expect(panelHtml).toContain("1080");
-        expect(panelHtml).not.toContain("1280");
+        expect(panelHtml).toContain("1080P");
+        expect(panelHtml).toContain("16:9");
+        expect(panelHtml).not.toContain(">W</span>");
+        expect(panelHtml).not.toContain(">H</span>");
     });
 
     test("shows the public display name in channel model settings instead of only the internal ID", () => {

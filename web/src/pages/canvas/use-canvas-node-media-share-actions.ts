@@ -7,7 +7,7 @@ import { resourceFileUrl, resourceIdFromStorageKey, syncResourceToArkPrivateAsse
 import { uploadImage } from "@/services/image-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
-import { copyImageToSystemClipboard } from "./canvas-project-clipboard";
+import { copyImageToSystemClipboard } from "@/services/image-clipboard";
 
 type UseCanvasNodeMediaShareActionsParams = {
     projectId: string;

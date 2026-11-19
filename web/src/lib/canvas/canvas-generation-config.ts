@@ -1,16 +1,16 @@
 import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionValue, type AiConfig } from "@/stores/use-config-store";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { isH3Model } from "@/lib/h3-video";
+import { isH3Model, isH3Style } from "@/lib/h3-video";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
-import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, isBeefTVModelRoute, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
 import { mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
-import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
-import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { savedVideoSettings, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
+import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoReferenceMode } from "@/types/canvas";
 
 // Preview counts may reserve character images; resolved counts contain the actual
 // representations. Callers choose their input summary for each validation stage.
-export function buildCanvasGenerationRequirements(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, input: ModelInputSummary): ModelRequirements {
+export function buildCanvasGenerationRequirements(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, input: ModelInputSummary, preferredReferenceMode?: CanvasVideoReferenceMode): ModelRequirements {
     const requestedConfig = {
         ...config,
         size: node?.metadata?.size ?? config.size,
@@ -29,14 +29,35 @@ export function buildCanvasGenerationRequirements(config: AiConfig, node: Canvas
         audioPitch: node?.metadata?.audioPitch ?? config.audioPitch,
         audioVolume: node?.metadata?.audioVolume ?? config.audioVolume,
     };
-    return resolvedCanvasGenerationRequirements(requestedConfig, node, mode, input);
+    return resolvedCanvasGenerationRequirements(requestedConfig, node, mode, input, preferredReferenceMode);
 }
 
-export function resolvedCanvasGenerationRequirements(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, input: ModelInputSummary): ModelRequirements {
+export function supportsCanvasVideoReferenceModes(config: AiConfig, model: string) {
+    const operations = declaredOrOmniVideoCapability(config, model)?.operations;
+    return Boolean(operations?.includes("image_to_video") && operations.includes("reference_to_video")
+        && !(isBeefTVModelRoute(model, config) && isH3Style(model)));
+}
+
+export function canvasVideoOperationPreference(config: AiConfig, node: CanvasNodeData | undefined, input: ModelInputSummary, preferredMode?: CanvasVideoReferenceMode, model = config.model) {
+    const metadata = node?.metadata;
+    if (metadata?.videoEditOperation) return metadata.videoEditOperation;
+    if (node?.type !== CanvasNodeType.Video || preferredMode !== "all"
+        || metadata?.videoStartFrameNodeId || metadata?.videoEndFrameNodeId
+        || !(input.imageCount || input.characterCount || input.videoCount)) return undefined;
+    return supportsCanvasVideoReferenceModes(config, model) ? "reference_to_video" : undefined;
+}
+
+export function resolvedCanvasGenerationRequirements(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, input: ModelInputSummary, preferredReferenceMode?: CanvasVideoReferenceMode): ModelRequirements {
+    const videoOperation = mode === "video" && preferredReferenceMode
+        ? canvasVideoOperationPreference(config, node, input, preferredReferenceMode,
+            resolveCanvasGenerationModel(config, node?.metadata?.model, mode)
+            || resolveCanvasGenerationModel(config, config.videoModel, mode)
+            || defaultConfig.videoModel)
+        : node?.metadata?.videoEditOperation;
     return {
         capability: mode,
         input,
-        videoOperation: node?.metadata?.videoEditOperation,
+        videoOperation,
         videoSeconds: mode === "video" ? config.videoSeconds : undefined,
         options: modelRequestOptions(config, mode),
     };
@@ -182,12 +203,13 @@ export function preferredMediaGeneratorMetadata(
             || resolveCanvasGenerationModel(config, config.videoModel, "video")
             || config.videoModel
             || defaultConfig.videoModel;
+        const saved = savedVideoSettings(prefs, preferredModel, config.videoModel);
         const requested = {
-            size: overrides.size ?? prefs.video.ratio,
-            videoSeconds: overrides.seconds ?? prefs.video.seconds,
-            vquality: overrides.vquality ?? prefs.video.videoQuality,
-            videoGenerateAudio: overrides.generateAudio ?? prefs.video.generateAudio,
-            videoWatermark: overrides.watermark ?? prefs.video.watermark,
+            size: overrides.size ?? saved?.ratio,
+            videoSeconds: overrides.seconds ?? saved?.seconds,
+            vquality: overrides.vquality ?? saved?.videoQuality,
+            videoGenerateAudio: overrides.generateAudio ?? saved?.generateAudio,
+            videoWatermark: overrides.watermark ?? saved?.watermark,
         };
         const model = resolveCompatibleModel(config, preferredModel, {
             capability: "video",
@@ -199,14 +221,30 @@ export function preferredMediaGeneratorMetadata(
         return mediaGeneratorMetadata({
             generationMode: "video",
             ...((prefs.video.model || model !== preferredModel) && model ? { model } : {}),
-            ...(prefs.video.ratio && normalized.size ? { size: normalized.size } : {}),
-            ...(prefs.video.seconds && normalized.videoSeconds ? { seconds: normalized.videoSeconds } : {}),
-            ...(prefs.video.videoQuality && normalized.vquality ? { vquality: normalized.vquality } : {}),
-            ...(prefs.video.generateAudio !== undefined ? { generateAudio: booleans.videoGenerateAudio } : {}),
-            ...(prefs.video.watermark !== undefined ? { watermark: booleans.videoWatermark } : {}),
+            ...(saved?.ratio && normalized.size ? { size: normalized.size } : {}),
+            ...(saved?.seconds && normalized.videoSeconds ? { seconds: normalized.videoSeconds } : {}),
+            ...(saved?.videoQuality && normalized.vquality ? { vquality: normalized.vquality } : {}),
+            ...(saved?.generateAudio !== undefined ? { generateAudio: booleans.videoGenerateAudio } : {}),
+            ...(saved?.watermark !== undefined ? { watermark: booleans.videoWatermark } : {}),
+            ...(saved?.draft !== undefined ? { draft: saved.draft } : {}),
+            ...(saved?.returnLastFrame !== undefined ? { returnLastFrame: saved.returnLastFrame } : {}),
+            ...(saved?.arkPrivateAssetUpload !== undefined ? { arkPrivateAssetUpload: saved.arkPrivateAssetUpload } : {}),
+            ...(saved?.h3Options ? { videoH3Options: saved.h3Options } : {}),
             ...overrides,
         });
     }
     return mediaGeneratorMetadata({ generationMode: mode, ...overrides });
 }
 
+
+
+// Replace model-specific fields together so an unsubmitted draft cannot leak into another model.
+export function videoModelSelectionPatch(config: AiConfig, model: string): Partial<CanvasNodeMetadata> {
+    const settings = preferredMediaGeneratorMetadata(config, "video", { model });
+    return {
+        model, size: settings.size, seconds: settings.seconds, vquality: settings.vquality,
+        generateAudio: settings.generateAudio, watermark: settings.watermark,
+        draft: settings.draft, returnLastFrame: settings.returnLastFrame,
+        videoH3Options: settings.videoH3Options, arkPrivateAssetUpload: settings.arkPrivateAssetUpload,
+    };
+}

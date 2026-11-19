@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, webkit, type Browser, type Page } from "playwright";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -29,15 +29,39 @@ beforeAll(async () => {
         if (url.pathname === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (url.pathname === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
         const mode = url.searchParams.get("mode");
-        const extraHead = mode === "canvas-mobile" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
+        const extraHead = mode === "canvas-layout" || mode === "canvas-mobile" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
         return new Response(`<!doctype html><meta charset="UTF-8">${extraHead}<div id="root"></div><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
-    browser = await chromium.launch({ executablePath, headless: true });
+    browser = process.env.BEEFTV_TEST_BROWSER === "webkit"
+        ? await webkit.launch({ headless: true })
+        : await chromium.launch({ executablePath, headless: true });
 }, 60_000);
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 
 const snapshot = (page: Page) => page.evaluate(() => (window as any).timelineFixture.receipt);
+
+test("CanvasTimelineDialog 桌面端预览和轨道可交互，能定位播放头并分割片段", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 800 } });
+    try {
+        await page.goto(`${server.url}?mode=canvas-layout`);
+        const preview = page.getByRole("button", { name: "播放预览" });
+        await preview.click({ trial: true, timeout: 3000 });
+        const clip = page.locator('[data-timeline-clip-id="clip-first"]');
+        await clip.click({ position: { x: 100, y: 15 }, timeout: 3000 });
+        expect(await clip.getAttribute("data-selected")).toBe("true");
+        await page.locator("[data-timeline-ruler]").click({ position: { x: 192, y: 12 } });
+        await page.getByRole("button", { name: "分割", exact: true }).click();
+        expect(await page.locator('[data-timeline-clip-kind="video"]').count()).toBe(3);
+        await page.getByRole("button", { name: /^保\s*存$/ }).click();
+        await page.waitForFunction(() => (window as any).timelineFixture.receipt.saved.length === 1);
+        const { saved } = await snapshot(page);
+        const right = saved[0].clips.find((item: { sourceStartMs?: number }) => item.sourceStartMs === 2000);
+        expect(right).toMatchObject({ startMs: 2000, durationMs: 2000, sourceDurationMs: 4000 });
+    } finally {
+        await page.close();
+    }
+}, 15_000);
 const clipLefts = async (page: Page) => page.evaluate(() => {
     const lefts: Record<string, number> = {};
     document.querySelectorAll("[data-timeline-clip-id]").forEach((element) => {

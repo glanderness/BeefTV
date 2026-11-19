@@ -65,7 +65,6 @@
     --canvas-composer-control-surface: color-mix(in srgb, var(--foreground) 5%, transparent);
     --canvas-composer-control-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
     --canvas-composer-shadow: var(--elevation-card);
-    --canvas-composer-settings-width: 138px;
     --canvas-mention-menu-max-height: 320px;
     --canvas-mention-search-height: 38px;
     --canvas-mention-item-height: 38px;

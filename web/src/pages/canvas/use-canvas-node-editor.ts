@@ -171,7 +171,8 @@ export function useCanvasNodeEditor({
             current.map((node) => {
                 if (node.id !== nodeId) return node;
                 const freeResize = !node.metadata?.freeResize;
-                if (freeResize || node.type !== CanvasNodeType.Image) return { ...node, metadata: { ...node.metadata, freeResize } };
+                if ((node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && node.metadata?.locked) return node;
+                if (freeResize || (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video)) return { ...node, metadata: { ...node.metadata, freeResize } };
                 const ratio = (node.metadata?.naturalWidth || node.width) / (node.metadata?.naturalHeight || node.height || 1);
                 const height = node.width / ratio;
                 return { ...node, height, position: { x: node.position.x, y: node.position.y + node.height / 2 - height / 2 }, metadata: { ...node.metadata, freeResize } };

@@ -110,6 +110,7 @@ function AudioSettingsPortal({
     return createPortal(
         <div
             ref={panelRef}
+            data-canvas-settings-popover
             className="canvas-image-settings-popover aceternity-floating-panel backdrop-blur-2xl"
             style={style}
             onPointerDown={(event) => event.stopPropagation()}

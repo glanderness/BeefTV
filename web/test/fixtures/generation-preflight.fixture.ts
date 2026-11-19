@@ -17,7 +17,10 @@ let hydrate: (context: any) => Promise<any> = async (context) => context;
 let executeVideo = async (input: any) => { dispatched++; input.bindGenerationTask(input.nodeId, { id: "task" }); };
 const react = await import("react");
 const clientDiagnostics = await import("@/services/diagnostics/client-diagnostics");
-mock.module("@/lib/canvas/canvas-generation-config", () => ({ resolvedCanvasGenerationRequirements: (config: any, node: any, capability: string, input: any) => ({ capability, input, videoSeconds: config.videoSeconds, videoOperation: node?.metadata?.videoEditOperation }) }));
+mock.module("@/lib/canvas/canvas-generation-config", () => ({
+    canvasVideoOperationPreference: (_config: any, node: any) => node?.metadata?.videoEditOperation,
+    supportsCanvasVideoReferenceModes: () => true,
+    resolvedCanvasGenerationRequirements: (config: any, node: any, capability: string, input: any) => ({ capability, input, videoSeconds: config.videoSeconds, videoOperation: node?.metadata?.videoEditOperation }) }));
 mock.module("react", () => ({ ...react, default: react.default, useCallback: (fn: any) => fn, useRef: (value: any) => ({ current: value }) }));
 mock.module("antd", () => ({ App: { useApp: () => ({ modal: { confirm: (input: any) => { confirmations.push(input); return { destroy: () => input.afterClose() }; } }, message: {
     error: (x: string) => errors.push(x), info() {}, warning() {},
@@ -32,7 +35,7 @@ mock.module("@/services/workspace-asset-read", () => ({ loadWorkspaceAssetsForUs
 mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () => ({ assets: [] }) } }));
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_id: any, _nodes: any, _edges: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: (context: any) => hydrate(context), compileNodeGenerationReferences: (context: any) => context }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", size: "1:1" }) }));
-mock.module("@/lib/canvas/canvas-project-generation", () => ({ MISSING_GENERATION_TASK_IDENTITY_DETAILS: "missing task identity", isGenerationCanceled: (error: any) => error?.name === "AbortError", buildVideoGenerationMetadata: () => ({ videoEditOperation: "text_to_video" }) }));
+mock.module("@/lib/canvas/canvas-project-generation", () => ({ MISSING_GENERATION_TASK_IDENTITY_DETAILS: "missing task identity", isGenerationCanceled: (error: any) => error?.name === "AbortError", buildVideoGenerationMetadata: (node: any) => ({ videoEditOperation: node?.metadata?.videoEditOperation || "text_to_video" }) }));
 mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => "", modelGroupReferenceLimits: () => undefined, modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));
@@ -86,17 +89,20 @@ hydrate = async (context) => context;
 await generate("video", "video", "private prompt");
 assert.equal(dispatched, 1);
 assert.equal(nodesRef.current[0].metadata.content, "old-result");
-const repeat = generate("video", "video", "private prompt");
+const repeat = generate("video", "video", "private prompt", { rememberVideoDefaults: true });
 await tick();
 assert.equal(confirmations.length, 1);
 confirmations[0].afterClose();
 await repeat;
 assert.equal(dispatched, 1);
 assert.equal(requests.size, 0);
-const confirmed = generate("video", "video", "private prompt");
+const { useCreationPreferencesStore } = await import("@/stores/use-creation-preferences-store");
+assert.equal(useCreationPreferencesStore.getState().preferences.video, undefined);
+const confirmed = generate("video", "video", "private prompt", { rememberVideoDefaults: true });
 await tick();
 confirmations[1].onOk();
 await confirmed;
+assert.equal(useCreationPreferencesStore.getState().preferences.video?.model, "fixture");
 assert.equal(dispatched, 2);
 assert.equal(loading.size, 0);
 assert.equal(progressEntries().length, 0, "dispatch must hand node progress to the generation task");
@@ -202,6 +208,20 @@ assert.equal(nodesRef.current[0].metadata.generationPreflightError, "结果待�
 nodesRef.current = [{ id: "concat-video", type: "video", metadata: { status: "success", videoEditOperation: "concat" } }];
 await generate("concat-video", "video", "concat prompt");
 assert.equal(nodesRef.current[0].metadata.generationPreflightError, "合并成片节点不直接重新生成，请重新选择源视频合并");
+
+const prefs = useCreationPreferencesStore.getState;
+hydrate = async (context) => context;
+nodesRef.current = [{ id: "video", type: "video", metadata: { videoEditOperation: "image_to_video" } }];
+executeVideo = async () => { throw new Error("generation failed"); };
+await generate("video", "video", "failed frames", { rememberVideoDefaults: true });
+assert.equal(prefs().preferences.videoReferenceMode, undefined);
+nodesRef.current = [{ id: "video", type: "video", metadata: { videoEditOperation: "image_to_video" } }];
+executeVideo = async () => {};
+await generate("video", "video", "successful frames", { rememberVideoDefaults: true });
+assert.equal(prefs().preferences.videoReferenceMode, "frames");
+nodesRef.current = [{ id: "video", type: "video", metadata: { videoEditOperation: "reference_to_video" } }];
+await generate("video", "video", "successful reference", { rememberVideoDefaults: true });
+assert.equal(prefs().preferences.videoReferenceMode, "all");
 
 console.log("PASS: source release during delivery, isolated result controller, newer request survives old completion");
 console.log("PASS: preflight lifecycle, duplicate lock, abort fencing, validation, closed dialog retry, private diagnostics");

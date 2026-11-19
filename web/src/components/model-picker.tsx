@@ -4,10 +4,11 @@ import { Popover } from "antd";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } from "@/lib/canvas/canvas-popover-layer";
-import { compatibleModelInGroup, configuredModelDisplayName, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
+import { compatibleModelInGroup, configuredModelDisplayName, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel, type DisplayModelGroup, type ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
-import { modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { isBuiltinBeefTVChannel, modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
+import { ModelProviderMenu, modelMenuSurface } from "@/components/model-provider-menu";
 import { ModelLogo } from "@/components/model-logo";
 import { portraitPriceLines, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
 
@@ -21,9 +22,10 @@ type ModelPickerProps = {
     fullWidth?: boolean;
     placeholder?: string;
     onMissingConfig?: () => void;
-    variant?: "default" | "creation";
+    variant?: "default" | "creation" | "canvas";
     requirements?: ModelRequirements;
     showConfiguredModelName?: boolean;
+    showVideoPriceDetails?: boolean;
 };
 
 export function ModelPicker({
@@ -39,7 +41,9 @@ export function ModelPicker({
     variant = "creation",
     requirements,
     showConfiguredModelName = false,
+    showVideoPriceDetails = true,
 }: ModelPickerProps) {
+    const providerMenu = variant === "canvas" && Boolean(capability);
     const pickerId = useId();
     // 双保险：即使 store merge 写出非法 theme，这里也兜底到 dark，避免 "reading 'node'" 崩溃
     const rawTheme = useActiveTheme();
@@ -53,19 +57,22 @@ export function ModelPicker({
     const options = useMemo(() => Array.from(new Set(selectableModelsByCapability(config, capability).filter(Boolean))), [capability, config]);
     const optionGroups = useMemo(() => {
         const channelGroups = config.channels
-            .map((channel) => ({
-                key: channel.id,
-                label: channel.name || "未命名渠道",
-                models: groupModelsByDisplayName(
-                    config,
-                    options.filter((model) => resolveModelChannel(config, model).id === channel.id),
-                ),
-            }))
+            .map((channel) => {
+                const models = options.filter((model) => resolveModelChannel(config, model).id === channel.id);
+                if (providerMenu && capability === "video" && isBuiltinBeefTVChannel(channel)) {
+                    models.sort((a, b) => builtinVideoModelRank(a) - builtinVideoModelRank(b));
+                }
+                return {
+                    key: channel.id,
+                    label: channel.name || "未命名渠道",
+                    models: groupModelsByDisplayName(config, models),
+                };
+            })
             .filter((group) => group.models.length);
         // options 已由当前有效渠道重建；任何无法解析渠道的旧值都直接丢弃，
         // 不再显示“其他模型 / 未指定渠道”这种不可用入口。
         return channelGroups;
-    }, [config, options]);
+    }, [config, options, capability, providerMenu]);
     const storedCurrent = value?.trim() || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
     const selectionRequirements = requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined;
@@ -76,7 +83,7 @@ export function ModelPicker({
     const portrait = seedancePortraitModel(current || storedCurrent);
     const portraitQuote = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
     const priceLines = portraitPriceLines(portraitQuote);
-    const creationVariant = variant === "creation";
+    const creationVariant = variant !== "default";
     const triggerLabel = current
         ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName))
         : portrait ? `${seedancePortraitLabel(storedCurrent)}（不可用）` : placeholder;
@@ -135,7 +142,7 @@ export function ModelPicker({
     };
     const focusMenuOption = (last = false) => {
         window.requestAnimationFrame(() => {
-            const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
+            const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)');
             const target = last ? buttons?.item((buttons?.length || 1) - 1) : buttons?.item(0);
             target?.focus();
         });
@@ -154,7 +161,7 @@ export function ModelPicker({
             return;
         }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)'));
         if (!buttons.length) return;
         event.preventDefault();
         const activeIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -170,7 +177,43 @@ export function ModelPicker({
         setActiveGroupKey(group.key);
         setPreviewedModel(groupCurrent?.models[0] || group.models[0]?.models[0] || "");
     };
-    const content = (
+    const renderModelOption = (modelGroup: DisplayModelGroup) => {
+        const selected = modelGroup.models.includes(current);
+        const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
+        const displayModel = model || (selected ? current : modelGroup.models[0]);
+        const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
+        return (
+            <button
+                key={modelGroup.key}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                aria-disabled={Boolean(disabledReason)}
+                disabled={Boolean(disabledReason)}
+                title={disabledReason || pickerModelOptionLabel(config, displayModel, showConfiguredModelName)}
+                className={providerMenu ? "provider-model-menu-row" : cn("canvas-model-picker-option disabled:cursor-not-allowed disabled:opacity-45", previewedModel === displayModel && "is-previewed")}
+                style={providerMenu ? undefined : { background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}
+                onMouseEnter={providerMenu ? undefined : () => setPreviewedModel(displayModel)}
+                onFocus={providerMenu ? undefined : () => setPreviewedModel(displayModel)}
+                onClick={() => {
+                    if (!model) return;
+                    onChange(model);
+                    setOpen(false);
+                    window.requestAnimationFrame(() => triggerRef.current?.focus());
+                }}
+            >
+                {providerMenu ? <span className="truncate">{pickerModelDisplayName(config, displayModel, showConfiguredModelName)}</span> : (
+                    <ModelLabel config={config} model={displayModel} showConfiguredModelName={showConfiguredModelName} />
+                )}
+                {selected ? <Check className="canvas-model-picker-option-check ml-1 shrink-0" style={{ color: theme.node.activeStroke }} /> : null}
+            </button>
+        );
+    };
+    const content = providerMenu && capability ? (
+        <div ref={menuRef} onKeyDown={handleMenuKeyDown} data-canvas-no-zoom onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
+            {optionGroups.length ? <ModelProviderMenu groups={optionGroups} current={current} capability={capability} theme={theme} renderOption={renderModelOption} /> : <div role="listbox" aria-label={placeholder} className="canvas-model-picker-empty provider-model-empty">{emptyModelLabel(config, capability)}</div>}
+        </div>
+    ) : (
         <div
             ref={menuRef}
             data-canvas-no-zoom
@@ -212,40 +255,7 @@ export function ModelPicker({
                     </div>
                     {optionGroups.filter((group) => group.key === activeGroupKey).map((group) => <section key={group.key} className="canvas-model-picker-group canvas-model-picker-model-pane min-w-0 overflow-hidden">
                         <div className="canvas-model-picker-options grid min-w-0 gap-1">
-                            {group.models.map((modelGroup) => {
-                                const selected = modelGroup.models.includes(current);
-                                const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
-                                const displayModel = model || (selected ? current : modelGroup.models[0]);
-                                const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
-                                return (
-                                    <button
-                                        key={modelGroup.key}
-                                        type="button"
-                                        role="option"
-                                        aria-selected={selected}
-                                        aria-disabled={Boolean(disabledReason)}
-                                        disabled={Boolean(disabledReason)}
-                                        title={disabledReason || pickerModelOptionLabel(config, displayModel, showConfiguredModelName)}
-                                        className={cn("canvas-model-picker-option disabled:cursor-not-allowed disabled:opacity-45", previewedModel === displayModel && "is-previewed")}
-                                        style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}
-                                        onMouseEnter={() => setPreviewedModel(displayModel)}
-                                        onFocus={() => setPreviewedModel(displayModel)}
-                                        onClick={() => {
-                                            if (!model) return;
-                                            onChange(model);
-                                            setOpen(false);
-                                            window.requestAnimationFrame(() => triggerRef.current?.focus());
-                                        }}
-                                    >
-                                        <ModelLabel
-                                            config={config}
-                                            model={displayModel}
-                                            showConfiguredModelName={showConfiguredModelName}
-                                        />
-                                        {selected ? <Check className="canvas-model-picker-option-check ml-1 shrink-0" style={{ color: theme.node.activeStroke }} /> : null}
-                                    </button>
-                                );
-                            })}
+                            {group.models.map(renderModelOption)}
                         </div>
                     </section>)}
                 </div>
@@ -266,7 +276,10 @@ export function ModelPicker({
                 placement="bottomLeft"
                 arrow={false}
                 content={content}
-                classNames={{
+                fresh={providerMenu}
+                destroyOnHidden={providerMenu}
+                styles={providerMenu ? { container: modelMenuSurface(theme) } : undefined}
+                classNames={providerMenu ? { root: cn("canvas-model-picker-popover", popoverClassName) } : {
                     root: cn("canvas-model-picker-popover", "creation-model-picker-popover", popoverClassName),
                     container: cn("canvas-composer-popover-surface", "creation-model-picker-surface"),
                     content: "canvas-composer-popover-content",
@@ -276,7 +289,7 @@ export function ModelPicker({
                     ref={triggerRef}
                     type="button"
                     className={cn("canvas-composer-model-picker", fullWidth ? "w-full" : "min-w-36 max-w-full", className)}
-                    aria-haspopup="listbox"
+                    aria-haspopup={providerMenu && optionGroups.length ? "dialog" : "listbox"}
                     aria-expanded={open}
                     aria-invalid={Boolean(currentCompatibilityError) || undefined}
                     aria-label={triggerLabel}
@@ -290,7 +303,7 @@ export function ModelPicker({
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
             </Popover>
-            {portrait || priceLines.length > 0 ? <Popover trigger="click" placement="topLeft" content={
+            {showVideoPriceDetails && (portrait || priceLines.length > 0) ? <Popover trigger="click" placement="topLeft" content={
                 <div className="max-w-[min(26rem,calc(100vw-3rem))] text-xs leading-relaxed" role="note">
                     {priceLines.length ? <><p>视频参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
                 </div>
@@ -301,6 +314,23 @@ export function ModelPicker({
             </Popover> : null}
         </div>
     );
+}
+
+const builtinVideoModelOrder = [
+    "seedance-2.0-fast",
+    "seedance-2.0-mini",
+    "seedance-2.0",
+    "seedance-2.5",
+    "wan3.0-video",
+    "minimax-h3",
+    "minimax-h3-max",
+    "minimax-h3-max-turbo",
+    "kling-video-v3",
+];
+
+function builtinVideoModelRank(model: string) {
+    const index = builtinVideoModelOrder.indexOf(modelOptionName(model).toLowerCase());
+    return index < 0 ? builtinVideoModelOrder.length : index;
 }
 
 function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {

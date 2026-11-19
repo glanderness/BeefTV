@@ -657,9 +657,11 @@ describe("canvas image node history stack & viewer workbench", () => {
         expect(resolveNodeToolbarPlacement(generationInfoTool, toolCtx).group).toBe("utility");
         expect(resolveNodeToolbarPlacement(nodeInfoTool, toolCtx).group).toBe("more");
         generationInfoTool.run(toolCtx);
+        expect(openedViewerNode).toBeNull();
+        expect(openedInspectorNode).toBe(node);
+        openedInspectorNode = null;
         nodeInfoTool.run(toolCtx);
-        expect(openedViewerNode?.id).toBe(node.id);
-        expect(openedInspectorNode?.id).toBe(node.id);
+        expect(openedInspectorNode).toBe(node);
 
         const shelfHtml = renderToStaticMarkup(
             <ConnectedReferenceShelf

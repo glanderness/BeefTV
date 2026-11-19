@@ -106,6 +106,14 @@ test("empty workflow editor keeps full canvas height, shrinks within 90vh with a
     await page.getByRole("button", { name: "添加视频生成节点" }).click();
     await page.getByRole("textbox", { name: "工作流节点名称" }).waitFor({ timeout: 5_000 });
 
+    await page.getByRole("button", { name: "生成模型", exact: true }).click();
+    const picker = page.getByRole("dialog", { name: "选择视频模型" });
+    const search = picker.getByRole("searchbox", { name: "搜索模型" });
+    await search.fill("missing");
+    await picker.getByText("没有匹配的模型").waitFor();
+    await search.fill("视频");
+    await picker.getByRole("option", { name: "默认视频模型" }).click();
+
     const expectedHeightAfterNode = Math.min(780, 727 * 0.76);
     const layoutAfterNode = await page.locator(".workflow-editor-layout").boundingBox();
     const propertiesAfterNode = await page.locator(".workflow-editor-properties").boundingBox();
@@ -123,3 +131,16 @@ test("empty workflow editor keeps full canvas height, shrinks within 90vh with a
     expect(outputCheckbox).not.toBeNull();
     expect(outputCheckbox!.y + outputCheckbox!.height).toBeLessThanOrEqual(propertiesAfterNode!.y + propertiesAfterNode!.height + 1);
 }, 30_000);
+
+test("删除工作流连线时保留图中选中的节点", async () => {
+    const editor = await browser.newPage();
+    try {
+        await editor.goto(new URL("?edge-delete", server.url).toString());
+        const edge = editor.getByRole("button", { name: /^删除连线：/ });
+        await edge.press("Delete", { timeout: 4000 });
+        await edge.waitFor({ state: "detached" });
+        expect(await editor.locator("[data-workflow-editor-node]").count()).toBe(2);
+    } finally {
+        await editor.close();
+    }
+}, 15000);

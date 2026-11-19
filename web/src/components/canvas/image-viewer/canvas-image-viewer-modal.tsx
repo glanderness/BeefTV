@@ -1,17 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { App } from "antd";
-import { Columns2, Download, Eye, PanelRightClose, PanelRightOpen, RotateCcw, SplitSquareHorizontal, Star, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Columns2, Eye, RotateCcw, SplitSquareHorizontal, Star, Trash2, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { activeImageHistoryIndex, getPrimarySwitchBlockReason, isActiveImageHistoryItem, resolveCanvasNodeImageHistory } from "@/lib/canvas/canvas-image-history";
 import { discoverNodeImageHistoryFromTasks, filterPersistableDiscoveredHistoryItems } from "@/lib/canvas/canvas-image-history-tasks";
-import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { mediaFileExtension } from "@/lib/canvas/canvas-media-download";
 import { extractOwnedResourceId } from "@/lib/canvas/canvas-resource-id";
 import { getResource, isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
 import { listGenerationTasks } from "@/services/api/task-center";
+import { downloadOwnedOrBrowserMedia, isWailsNativeShell, saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
+import { writeImageToClipboard } from "@/services/image-clipboard";
 import { resolveImageUrl } from "@/services/image-storage";
 import { cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -21,8 +22,8 @@ import type { CanvasImageHistoryItem, CanvasNodeData, CanvasNodeMetadata } from 
 import { CanvasImageCompareStage, type CanvasImageViewerMode, type ResolvedViewerImage } from "./canvas-image-compare-stage";
 import { CanvasImageInfoSidebar, type SupplementedMediaMetrics } from "./canvas-image-info-sidebar";
 
-const FOCUSABLE_SELECTOR =
-    "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+import { MediaExportMenu } from "./media-export-menu";
+import { CanvasMediaViewer } from "./canvas-media-viewer";
 
 export type CanvasImageViewerModalProps = {
     open: boolean;
@@ -57,7 +58,6 @@ export function CanvasImageViewerModal({
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const config = useEffectiveConfig();
-    const dialogRef = useRef<HTMLDivElement | null>(null);
     const filmstripRef = useRef<HTMLDivElement | null>(null);
     const spacePeekingRef = useRef(false);
 
@@ -175,7 +175,6 @@ export function CanvasImageViewerModal({
     const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
     const [failedUrlsById, setFailedUrlsById] = useState<Record<string, boolean>>({});
     const [retryNonce, setRetryNonce] = useState(0);
-    const [downloading, setDownloading] = useState(false);
     const [metricsById, setMetricsById] = useState<Record<string, SupplementedMediaMetrics>>({});
 
     useEffect(() => {
@@ -187,7 +186,6 @@ export function CanvasImageViewerModal({
         setResolvedUrls({});
         setFailedUrlsById({});
         setMetricsById({});
-        setDownloading(false);
         const defaultItem = (primaryIndex >= 0 ? items[primaryIndex] : items[items.length - 1]) || items[0];
         setSelectedId(defaultItem?.id || "");
         const anchorIndex = primaryIndex >= 0 ? primaryIndex : 0;
@@ -202,17 +200,6 @@ export function CanvasImageViewerModal({
         setZoom(1);
         setPan({ x: 0, y: 0 });
     }, [open, node?.id]);
-
-    useEffect(() => {
-        if (!open || typeof document === "undefined") return;
-        const previousFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        dialogRef.current?.focus({ preventScroll: true });
-        return () => {
-            if (previousFocused && previousFocused.isConnected) {
-                previousFocused.focus({ preventScroll: true });
-            }
-        };
-    }, [open]);
 
     const selectedIndex = useMemo(() => {
         const idx = items.findIndex((entry) => entry.id === selectedId);
@@ -339,34 +326,6 @@ export function CanvasImageViewerModal({
     useEffect(() => {
         if (!open) return;
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                onClose();
-                return;
-            }
-            if (event.key === "Tab" && dialogRef.current) {
-                const focusables = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-                if (!focusables.length) {
-                    event.preventDefault();
-                    dialogRef.current.focus({ preventScroll: true });
-                    return;
-                }
-                const first = focusables[0]!;
-                const last = focusables[focusables.length - 1]!;
-                const activeEl = document.activeElement as HTMLElement | null;
-                if (event.shiftKey && (!activeEl || activeEl === first || activeEl === dialogRef.current || !dialogRef.current.contains(activeEl))) {
-                    event.preventDefault();
-                    last.focus();
-                    return;
-                }
-                if (!event.shiftKey && (!activeEl || activeEl === last || !dialogRef.current.contains(activeEl))) {
-                    event.preventDefault();
-                    first.focus();
-                    return;
-                }
-                return;
-            }
             if (event.defaultPrevented) return;
             const target = event.target as HTMLElement | null;
             const inEditableControl = Boolean(
@@ -421,7 +380,7 @@ export function CanvasImageViewerModal({
             window.removeEventListener("keyup", handleKeyUp, false);
             window.removeEventListener("blur", handleWindowBlur);
         };
-    }, [activeItem, compareAnchorItem?.id, compareItem?.id, items, mode, onClose, open, primaryItem, selectedIndex]);
+    }, [activeItem, compareAnchorItem?.id, compareItem?.id, items, mode, open, primaryItem, selectedIndex]);
 
     if (!open || !activeItem) return null;
 
@@ -467,81 +426,61 @@ export function CanvasImageViewerModal({
     const stageBg = theme.canvas.background;
     const controlBg = theme.toolbar.itemHover;
 
-    const downloadCurrent = async () => {
-        if (downloading) return;
-        const target = inCompareMode && inspectTarget === "B" && compareItem ? compareItem : activeItem;
+    const loadOriginal = async () => {
+        const target = sidebarItem;
         let href = fullUrlFor(target);
         if (!href && target.storageKey) {
-            setDownloading(true);
-            try {
-                const reload = Boolean(failedUrlsById[target.id]) && Boolean(extractOwnedResourceId(target.storageKey, target.content));
-                const resolved = reload
-                    ? await cacheResourceObjectUrl(target.storageKey, true, true)
-                    : await resolveImageUrl(target.storageKey, "", { cacheMiss: true });
-                if (resolved && !isProtectedResourceFileUrl(resolved)) {
-                    href = resolved;
-                    resolvedUrlEntryIdsRef.current.add(target.id);
-                    setFailedUrlsById((prev) => (!prev[target.id] ? prev : { ...prev, [target.id]: false }));
-                    setResolvedUrls((prev) => ({ ...prev, [target.id]: resolved }));
-                }
-            } catch {
-                message.error("原图读取失败，请重试");
-                return;
-            } finally {
-                setDownloading(false);
+            const reload = failedUrlsById[target.id] && extractOwnedResourceId(target.storageKey, target.content);
+            href = reload
+                ? await cacheResourceObjectUrl(target.storageKey, true, true)
+                : await resolveImageUrl(target.storageKey, "", { cacheMiss: true });
+            if (href && !isProtectedResourceFileUrl(href)) {
+                resolvedUrlEntryIdsRef.current.add(target.id);
+                setFailedUrlsById((prev) => ({ ...prev, [target.id]: false }));
+                setResolvedUrls((prev) => ({ ...prev, [target.id]: href }));
             }
         }
-        if (!href) return;
-        const ext = mediaFileExtension(target.mimeType || metricsById[target.id]?.mimeType, target.content) || "png";
-        const baseName = `${node?.title || alt || "image"}-v${items.indexOf(target) + 1}.${ext}`;
-        const link = document.createElement("a");
-        link.href = href;
-        link.download = sanitizeDownloadFileName(baseName, "image");
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+        if (!href || isProtectedResourceFileUrl(href)) throw new Error("原图读取失败，请重试");
+        const response = await fetch(href);
+        if (!response.ok) throw new Error("原图读取失败，请重试");
+        return response.blob();
+    };
+    const downloadOriginal = async () => {
+        const target = sidebarItem;
+        const resourceId = extractOwnedResourceId(target.storageKey, target.content);
+        const nativeResource = resourceId && isWailsNativeShell();
+        const blob = nativeResource ? undefined : await loadOriginal();
+        const ext = mediaFileExtension(blob?.type || target.mimeType || metricsById[target.id]?.mimeType, target.content) || "png";
+        const fileName = `${node?.title || alt || "图片"}-v${items.indexOf(target) + 1}.${ext}`;
+        const status = blob ? await saveOwnedOrBrowserBlob(fileName, blob) : await downloadOwnedOrBrowserMedia({ fileName, resourceId });
+        if (status === "saved" && isWailsNativeShell()) message.success("已保存原图");
     };
 
-    const overlayRoot = typeof document !== "undefined"
-        ? document.querySelector<HTMLElement>(".app-user-overlays") || document.body
-        : null;
-    if (!overlayRoot) return null;
-
-    return createPortal(
-        <div
-            ref={dialogRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-label={node?.title ? `查看图片：${node.title}` : "查看图片"}
-            data-canvas-no-zoom
-            data-canvas-image-viewer
-            data-testid="canvas-image-viewer-modal"
-            className="fixed inset-0 z-[var(--z-modal,1100)] flex flex-col outline-none"
-            style={{ background: stageBg, color: theme.node.text }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-        >
-            <header
-                className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-4"
-                style={{ background: headerBg, borderColor: theme.toolbar.border }}
-            >
-                <div className="flex min-w-0 items-center gap-2.5" style={{ fontVariantNumeric: "tabular-nums" }}>
-                    <span className="truncate text-[16px] leading-[22px] font-medium">{node?.title || alt}</span>
+    return (
+        <CanvasMediaViewer
+            kind="图片"
+            testIdPrefix="canvas-image"
+            title={node?.title || alt}
+            theme={theme}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen((value) => !value)}
+            onClose={onClose}
+            titleDetails={
+                <>
                     {items.length > 1 ? (
-                        <span className="shrink-0 rounded-[var(--r-sm)] px-2 py-0.5 text-[12px] leading-[18px] font-medium" style={{ background: controlBg }}>
+                        <span className="shrink-0 rounded-[var(--r-sm)] px-2 py-0.5" style={{ background: controlBg }}>
                             第 {selectedIndex + 1} / {items.length} 版
                         </span>
                     ) : null}
                     {!inCompareMode && isViewingPrimary && items.length > 1 ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-[var(--r-sm)] px-2 py-0.5 text-[12px] leading-[18px] font-medium" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-[var(--r-sm)] px-2 py-0.5" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
                             <Star className="size-3 fill-current" />
                             当前主图
                         </span>
                     ) : null}
-                </div>
-
+                </>
+            }
+            controls={
                 <div className="flex items-center gap-2">
                     {items.length > 1 ? (
                         <div
@@ -563,7 +502,8 @@ export function CanvasImageViewerModal({
                                         type="button"
                                         data-testid={`canvas-image-mode-${entry.id}`}
                                         aria-pressed={active}
-                                        className="inline-flex h-7 items-center gap-1.5 rounded-[var(--r-sm)] px-2.5 text-[13px] leading-[20px] font-[550] transition-colors"
+                                        aria-label={entry.label}
+                                        className="inline-flex h-7 items-center gap-1.5 rounded-[var(--r-sm)] px-2.5 transition-colors"
                                         style={{
                                             background: active ? headerBg : "transparent",
                                             color: active ? theme.node.text : theme.node.muted,
@@ -599,7 +539,7 @@ export function CanvasImageViewerModal({
                         >
                             <ZoomOut className="size-3.5" />
                         </button>
-                        <span className="min-w-12 text-center text-[12px] leading-[18px] font-medium">{Math.round(zoom * 100)}%</span>
+                        <span className="min-w-12 text-center">{Math.round(zoom * 100)}%</span>
                         <button
                             type="button"
                             className="grid size-7 place-items-center rounded-[var(--r-sm)] hover:bg-black/6 dark:hover:bg-white/8"
@@ -619,15 +559,16 @@ export function CanvasImageViewerModal({
                         </button>
                     </div>
                 </div>
-
-                <div className="flex items-center gap-1.5">
+            }
+            actions={
+                <>
                     {!readOnly && node && onSelectPrimary && !inCompareMode && !isViewingPrimary ? (
                         <button
                             type="button"
                             data-testid="canvas-image-set-primary"
                             disabled={primarySwitchDisabled}
                             title={primarySwitchTitle}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-md)] px-3 text-[13px] leading-[20px] font-[550] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+                            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-md)] px-3 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
                             style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}
                             onClick={() => {
                                 if (primarySwitchDisabled) return;
@@ -651,7 +592,7 @@ export function CanvasImageViewerModal({
                         <button
                             type="button"
                             data-testid="canvas-image-peek-primary"
-                            className="hidden h-8 items-center rounded-[var(--r-md)] border px-2.5 text-[13px] leading-[20px] font-[550] sm:inline-flex"
+                            className="hidden h-8 items-center rounded-[var(--r-md)] border px-2.5 sm:inline-flex"
                             style={{ borderColor: theme.toolbar.border, background: controlBg }}
                             onPointerDown={() => setPeekingPrimary(true)}
                             onPointerUp={() => setPeekingPrimary(false)}
@@ -663,178 +604,146 @@ export function CanvasImageViewerModal({
                             按住对比主图
                         </button>
                     ) : null}
-                    <button
-                        type="button"
-                        data-testid="canvas-image-download"
-                        disabled={downloading}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-md)] border px-2.5 text-[13px] leading-[20px] font-[550] disabled:opacity-50"
-                        style={{ borderColor: theme.toolbar.border, background: controlBg }}
-                        aria-label="下载当前图片"
-                        title="下载当前图片"
-                        onClick={() => { void downloadCurrent(); }}
-                    >
-                        <Download className="size-3.5" />
-                        <span className="hidden sm:inline">下载</span>
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="canvas-image-toggle-sidebar"
-                        aria-pressed={sidebarOpen}
-                        aria-label={sidebarOpen ? "收起生成信息栏" : "展开生成信息栏"}
-                        title={sidebarOpen ? "收起生成信息" : "展开生成信息"}
-                        className="grid size-8 place-items-center rounded-[var(--r-md)] border"
-                        style={{ borderColor: theme.toolbar.border, background: sidebarOpen ? theme.toolbar.activeBg : controlBg }}
-                        onClick={() => setSidebarOpen((v) => !v)}
-                    >
-                        {sidebarOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="canvas-image-viewer-close"
-                        aria-label="关闭图片预览"
-                        className="grid size-8 place-items-center rounded-[var(--r-md)] hover:bg-black/6 dark:hover:bg-white/8"
-                        onClick={onClose}
-                    >
-                        <X className="size-4" />
-                    </button>
-                </div>
-            </header>
-
-            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                    <CanvasImageCompareStage
-                        mode={mode}
-                        activeImage={activeResolved}
-                        primaryImage={primaryResolved}
-                        compareImage={compareResolved}
-                        peekingPrimary={peekingPrimary}
-                        zoom={zoom}
-                        pan={pan}
-                        onZoomPanChange={(nextZoom, nextPan) => { setZoom(nextZoom); setPan(nextPan); }}
-                        onMeasuredSize={(id, width, height) => {
-                            if (!width || !height) return;
-                            setMetricsById((prev) => (prev[id]?.width === width && prev[id]?.height === height ? prev : { ...prev, [id]: { ...prev[id], width, height } }));
-                        }}
-                        onRetryImage={(id) => {
-                            resolvedUrlEntryIdsRef.current.delete(id);
-                            probedMetricEntryIdsRef.current.delete(id);
-                            urlRetryCountRef.current.set(id, 1);
-                            metricRetryCountRef.current.set(id, 0);
-                            setFailedUrlsById((prev) => ({ ...prev, [id]: false }));
-                            setRetryNonce((n) => n + 1);
-                        }}
+                    <MediaExportMenu
                         theme={theme}
-                        stageBackground={stageBg}
+                        onDownload={downloadOriginal}
+                        onCopy={async () => {
+                            await writeImageToClipboard(loadOriginal);
+                            message.success("图片已复制");
+                        }}
                     />
+                </>
+            }
+            sidebar={
+                <CanvasImageInfoSidebar
+                    node={node}
+                    item={sidebarItem}
+                    comparePartner={inCompareMode ? (inspectTarget === "A" ? compareItem : anchorItem) : null}
+                    inspectTarget={inspectTarget}
+                    onInspectTargetChange={setInspectTarget}
+                    inCompareMode={inCompareMode}
+                    supplemented={metricsById[sidebarItem.id]}
+                    config={config}
+                    theme={theme}
+                    readOnly={readOnly}
+                    onApplyParameters={(nodeId, patch) => {
+                        onApplyParameters?.(nodeId, patch);
+                        message.success("已回填到该节点生成面板");
+                        onClose();
+                    }}
+                    onOpenNodeInfo={onOpenNodeInfo ? (nodeId) => {
+                        onClose();
+                        onOpenNodeInfo(nodeId);
+                    } : undefined}
+                />
+            }
+        >
+            <CanvasImageCompareStage
+                mode={mode}
+                activeImage={activeResolved}
+                primaryImage={primaryResolved}
+                compareImage={compareResolved}
+                peekingPrimary={peekingPrimary}
+                zoom={zoom}
+                pan={pan}
+                onZoomPanChange={(nextZoom, nextPan) => { setZoom(nextZoom); setPan(nextPan); }}
+                onMeasuredSize={(id, width, height) => {
+                    if (!width || !height) return;
+                    setMetricsById((prev) => (prev[id]?.width === width && prev[id]?.height === height ? prev : { ...prev, [id]: { ...prev[id], width, height } }));
+                }}
+                onRetryImage={(id) => {
+                    resolvedUrlEntryIdsRef.current.delete(id);
+                    probedMetricEntryIdsRef.current.delete(id);
+                    urlRetryCountRef.current.set(id, 1);
+                    metricRetryCountRef.current.set(id, 0);
+                    setFailedUrlsById((prev) => ({ ...prev, [id]: false }));
+                    setRetryNonce((n) => n + 1);
+                }}
+                theme={theme}
+                stageBackground={stageBg}
+            />
 
-                    {items.length > 1 ? (
-                        <div
-                            ref={filmstripRef}
-                            data-testid="canvas-image-history-filmstrip"
-                            className="shrink-0 overflow-x-auto border-t px-4 py-2.5"
-                            style={{ background: headerBg, borderColor: theme.toolbar.border }}
-                        >
-                            <div className="mx-auto flex w-max items-center gap-2">
-                            {items.map((entry, idx) => {
-                                const isPrimary = Boolean(primaryItem && entry.id === primaryItem.id);
-                                const isSelectedSingle = !inCompareMode && entry.id === activeItem.id;
-                                const isCompareA = inCompareMode && entry.id === anchorItem.id;
-                                const isCompareB = inCompareMode && entry.id === compareItem?.id;
-                                const highlighted = isSelectedSingle || isCompareA || isCompareB;
-                                return (
-                                    <div key={entry.id} className="group/thumb relative shrink-0">
-                                        <button
-                                            type="button"
-                                            data-allow-space-peek="true"
-                                            data-testid={`canvas-image-filmstrip-item-${idx}`}
-                                            aria-label={`第 ${idx + 1} 版${isPrimary ? "（当前主图）" : ""}`}
-                                            aria-pressed={highlighted}
-                                            className="relative block size-14 overflow-hidden rounded-[var(--r-md)] border-2 transition-transform focus-visible:outline focus-visible:outline-2"
-                                            style={{
-                                                borderColor: highlighted ? theme.accent.primary : "transparent",
-                                                background: controlBg,
-                                                opacity: highlighted ? 1 : 0.72,
-                                            }}
-                                            onClick={() => {
-                                                if (!inCompareMode) {
-                                                    setSelectedId(entry.id);
-                                                } else if (entry.id !== anchorItem.id) {
-                                                    setCompareId(entry.id);
-                                                    setInspectTarget("B");
-                                                } else {
-                                                    setInspectTarget("A");
-                                                }
-                                            }}
-                                        >
-                                            <CachedResourceImage
-                                                storageKey={entry.storageKey}
-                                                src={entry.content || ""}
-                                                previewSize={128}
-                                                observerRootRef={filmstripRef}
-                                                alt={`第 ${idx + 1} 版缩略图`}
-                                                className="size-full object-cover"
-                                            />
-                                            <span
-                                                className="absolute bottom-0.5 left-0.5 rounded bg-black/68 px-1 text-[11px] leading-4 font-medium text-white"
-                                                style={{ fontVariantNumeric: "tabular-nums" }}
-                                            >
-                                                {isCompareA ? "A" : isCompareB ? "B" : idx + 1}
-                                            </span>
-                                            {isPrimary ? (
-                                                <span className="absolute right-0.5 top-0.5 grid size-4 place-items-center rounded-full bg-black/68 text-amber-300" title="当前主图">
-                                                    <Star className="size-2.5 fill-current" />
-                                                </span>
-                                            ) : null}
-                                        </button>
-                                        {!readOnly && node && onRemoveHistoryItem && !isPrimary && items.length > 1 ? (
-                                            <button
-                                                type="button"
-                                                data-testid={`canvas-image-remove-history-${idx}`}
-                                                aria-label={`移除第 ${idx + 1} 版历史记录`}
-                                                title="从节点历史移除"
-                                                className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border shadow-sm group-hover/thumb:grid"
-                                                style={{ background: headerBg, borderColor: theme.toolbar.border, color: theme.node.text }}
-                                                onClick={(event) => {
-                                                    event.stopPropagation();
-                                                    onRemoveHistoryItem(node.id, entry.id, discoveredItems);
-                                                }}
-                                            >
-                                                <Trash2 className="size-3" />
-                                            </button>
-                                        ) : null}
-                                    </div>
-                                );
-                            })}
+            {items.length > 1 ? (
+                <div
+                    ref={filmstripRef}
+                    data-testid="canvas-image-history-filmstrip"
+                    className="shrink-0 overflow-x-auto border-t px-4 py-2.5"
+                    style={{ background: headerBg, borderColor: theme.toolbar.border }}
+                >
+                    <div className="mx-auto flex w-max items-center gap-2">
+                    {items.map((entry, idx) => {
+                        const isPrimary = Boolean(primaryItem && entry.id === primaryItem.id);
+                        const isSelectedSingle = !inCompareMode && entry.id === activeItem.id;
+                        const isCompareA = inCompareMode && entry.id === anchorItem.id;
+                        const isCompareB = inCompareMode && entry.id === compareItem?.id;
+                        const highlighted = isSelectedSingle || isCompareA || isCompareB;
+                        return (
+                            <div key={entry.id} className="group/thumb relative shrink-0">
+                                <button
+                                    type="button"
+                                    data-allow-space-peek="true"
+                                    data-testid={`canvas-image-filmstrip-item-${idx}`}
+                                    aria-label={`第 ${idx + 1} 版${isPrimary ? "（当前主图）" : ""}`}
+                                    aria-pressed={highlighted}
+                                    className="relative block size-14 overflow-hidden rounded-[var(--r-md)] border-2 transition-transform focus-visible:outline focus-visible:outline-2"
+                                    style={{
+                                        borderColor: highlighted ? theme.accent.primary : "transparent",
+                                        background: controlBg,
+                                        opacity: highlighted ? 1 : 0.72,
+                                    }}
+                                    onClick={() => {
+                                        if (!inCompareMode) {
+                                            setSelectedId(entry.id);
+                                        } else if (entry.id !== anchorItem.id) {
+                                            setCompareId(entry.id);
+                                            setInspectTarget("B");
+                                        } else {
+                                            setInspectTarget("A");
+                                        }
+                                    }}
+                                >
+                                    <CachedResourceImage
+                                        storageKey={entry.storageKey}
+                                        src={entry.content || ""}
+                                        previewSize={128}
+                                        observerRootRef={filmstripRef}
+                                        alt={`第 ${idx + 1} 版缩略图`}
+                                        className="size-full object-cover"
+                                    />
+                                    <span
+                                        className="absolute bottom-0.5 left-0.5 rounded bg-black/68 px-1 text-white"
+                                        style={{ fontVariantNumeric: "tabular-nums" }}
+                                    >
+                                        {isCompareA ? "A" : isCompareB ? "B" : idx + 1}
+                                    </span>
+                                    {isPrimary ? (
+                                        <span className="absolute right-0.5 top-0.5 grid size-4 place-items-center rounded-full bg-black/68 text-amber-300" title="当前主图">
+                                            <Star className="size-2.5 fill-current" />
+                                        </span>
+                                    ) : null}
+                                </button>
+                                {!readOnly && node && onRemoveHistoryItem && !isPrimary && items.length > 1 ? (
+                                    <button
+                                        type="button"
+                                        data-testid={`canvas-image-remove-history-${idx}`}
+                                        aria-label={`移除第 ${idx + 1} 版历史记录`}
+                                        title="从节点历史移除"
+                                        className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border shadow-sm group-hover/thumb:grid"
+                                        style={{ background: headerBg, borderColor: theme.toolbar.border, color: theme.node.text }}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onRemoveHistoryItem(node.id, entry.id, discoveredItems);
+                                        }}
+                                    >
+                                        <Trash2 className="size-3" />
+                                    </button>
+                                ) : null}
                             </div>
-                        </div>
-                    ) : null}
+                        );
+                    })}
+                    </div>
                 </div>
-
-                {sidebarOpen ? (
-                    <CanvasImageInfoSidebar
-                        node={node}
-                        item={sidebarItem}
-                        comparePartner={inCompareMode ? (inspectTarget === "A" ? compareItem : anchorItem) : null}
-                        inspectTarget={inspectTarget}
-                        onInspectTargetChange={setInspectTarget}
-                        inCompareMode={inCompareMode}
-                        supplemented={metricsById[sidebarItem.id]}
-                        config={config}
-                        theme={theme}
-                        readOnly={readOnly}
-                        onApplyParameters={(nodeId, patch) => {
-                            onApplyParameters?.(nodeId, patch);
-                            message.success("已回填到该节点生成面板");
-                            onClose();
-                        }}
-                        onOpenNodeInfo={onOpenNodeInfo ? (nodeId) => {
-                            onClose();
-                            onOpenNodeInfo(nodeId);
-                        } : undefined}
-                    />
-                ) : null}
-            </div>
-        </div>,
-        overlayRoot,
+            ) : null}
+        </CanvasMediaViewer>
     );
 }

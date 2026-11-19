@@ -23,7 +23,7 @@ const dragProject: TimelineProject = {
     version: 2, durationMs: 8000,
     tracks: [{ id: "video", kind: "video", label: "视频1", order: 0 }, { id: "voice", kind: "audio", label: "音频1", order: 1 }],
     clips: [
-        { id: "clip-first", kind: "video", nodeId: "first", trackId: "video", startMs: 0, durationMs: 4000, title: "首个素材" },
+        { id: "clip-first", kind: "video", nodeId: "first", trackId: "video", startMs: 0, durationMs: 4000, sourceDurationMs: 4000, title: "首个素材" },
         { id: "clip-second", kind: "video", nodeId: "second", trackId: "video", startMs: 4000, durationMs: 4000, title: "第二个素材" },
     ],
 };
@@ -38,9 +38,9 @@ root.render(<App>{mode === "canvas" ?
     <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
         onCreateAssembledNode={async () => { receipt.created++; return node; }} /> :
-    mode === "canvas-drag" || mode === "canvas-mobile" ?
+    mode === "canvas-drag" || mode === "canvas-layout" || mode === "canvas-mobile" ?
         <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
-            onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
+            onSave={(timeline) => { receipt.saved.push(timeline); }} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
             onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :
         <EditorStoreProvider store={store} host={{ projectId: "fixture", assets: [], refreshAssets: async () => [] }}><EditorExport /></EditorStoreProvider>
 }</App>);

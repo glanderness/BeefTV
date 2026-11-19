@@ -85,7 +85,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     const screenTransform = `translateX(-50%) scale(var(--canvas-live-inverse-scale, ${inverseScale}))`;
     const barStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text };
 
-    return <div data-image-mask-edit-inline="true" className="absolute inset-0 z-[calc(var(--node-z-overlay)+3)] overflow-visible rounded-[inherit]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+    return <div data-canvas-keyboard-scope data-image-mask-edit-inline="true" className="absolute inset-0 z-[calc(var(--node-z-overlay)+3)] overflow-visible rounded-[inherit]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
         <canvas ref={maskCanvasRef} width={imageDimensions.width} height={imageDimensions.height} className="hidden" />
         <canvas ref={previewCanvasRef} width={imageDimensions.width} height={imageDimensions.height} aria-label="局部重绘蒙版" className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-[inherit]" onPointerDown={startDraw} onPointerMove={moveDraw} onPointerUp={stopDraw} onPointerCancel={stopDraw} />
 
@@ -106,7 +106,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
             <div className="relative">
                 <button type="button" aria-label="局部重绘设置" title="局部重绘设置" onClick={() => setSettingsOpen((value) => !value)} className="grid size-9 place-items-center rounded-xl transition hover:opacity-85" style={{ background: settingsOpen ? theme.toolbar.activeBg : "transparent", color: settingsOpen ? theme.toolbar.activeText : theme.toolbar.item }}><Settings2 className="size-4" /></button>
                 {settingsOpen ? <div className="absolute bottom-11 right-0 w-80 space-y-3 rounded-2xl border p-3 shadow-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
-                    <ModelPicker config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" fullWidth onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))} />
+                    <ModelPicker variant="canvas" config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" fullWidth onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))} />
                     <ImageSettingsPanel config={generationConfig} showTitle={false} showCount={false} className="space-y-3" theme={theme} onConfigChange={(key, value) => setGenerationConfig((current) => ({ ...current, [key]: value }))} />
                 </div> : null}
             </div>

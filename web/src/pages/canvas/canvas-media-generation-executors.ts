@@ -4,12 +4,12 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateMediaInPlace } from "@/lib/canvas/canvas-generation-layout";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { nextCanvasVersionLabel } from "@/lib/canvas/canvas-layout";
-import { buildAudioGenerationMetadata, buildVideoGenerationMetadata, clearInPlaceMediaOutputMetadata, generationReferenceUrls, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { buildAudioGenerationMetadata, clearInPlaceMediaOutputMetadata, generationReferenceUrls, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { projectCanvasGenerationSubmission, rebaseCanvasGenerationTarget } from "@/lib/canvas/canvas-generation-live-target";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
 
@@ -44,7 +44,7 @@ export async function executeVideoGeneration({
     retryContext,
     clientOperationId,
     onSubmissionPlan,
-}: CanvasGenerationExecution) {
+}: CanvasGenerationExecution, videoGenerationMetadata: CanvasNodeMetadata) {
     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
     const reuseSourceNode = canGenerateMediaInPlace(sourceNode, CanvasNodeType.Video);
     const isExistingVideoNode = sourceNode?.type === CanvasNodeType.Video && Boolean(sourceNode.metadata?.content) && !reuseSourceNode;
@@ -57,7 +57,6 @@ export async function executeVideoGeneration({
     }
     const versionRootId = isExistingVideoNode && sourceNode ? sourceNode.metadata?.versionOfNodeId || sourceNode.id : undefined;
     const parent = sourceNode?.position || { x: 0, y: 0 };
-    const videoGenerationMetadata = buildVideoGenerationMetadata(sourceNode, generationContext, generationConfig);
     const videoNode: CanvasNodeData = {
         id: videoId,
         type: CanvasNodeType.Video,

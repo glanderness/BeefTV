@@ -64,7 +64,7 @@ export function CanvasImageCropEditor({ imageUrl, imageDimensions, onCancel, onC
     return (
         <div
             ref={frameRef}
-            data-image-crop-inline="true"
+            data-canvas-keyboard-scope data-image-crop-inline="true"
             aria-label="图片裁切选区"
             className="absolute inset-0 z-[calc(var(--node-z-overlay)+2)] overflow-visible rounded-[inherit] select-none"
             onMouseDown={(event) => event.stopPropagation()}

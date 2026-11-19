@@ -38,9 +38,9 @@ describe("节点注册表——覆盖完整性", () => {
         expect(getNodeDefinition(CanvasNodeType.MediaConversion)).toBeUndefined();
     });
 
-    test("技能、生成配置和工作流容器节点不进创建菜单", () => {
+    test("技能、生成配置、工作流容器和超分节点不进创建菜单", () => {
         const hidden = BUILTIN_TYPES.filter((type) => !listCreatableNodeDefinitions().some((def) => def.type === type));
-        expect(hidden.sort()).toEqual([CanvasNodeType.Config, CanvasNodeType.Skill, CanvasNodeType.Workflow, CanvasNodeType.WorkflowControl].sort());
+        expect(hidden.sort()).toEqual([CanvasNodeType.Config, CanvasNodeType.Skill, CanvasNodeType.Workflow, CanvasNodeType.WorkflowControl, CanvasNodeType.Upscale].sort());
     });
 });
 
@@ -56,7 +56,7 @@ describe("节点注册表——几何", () => {
         expect(shouldKeepAspectRatio(node(CanvasNodeType.Image))).toBe(true);
         expect(shouldKeepAspectRatio(node(CanvasNodeType.Image, { freeResize: true }))).toBe(false);
         expect(shouldKeepAspectRatio(node(CanvasNodeType.Video))).toBe(true);
-        expect(shouldKeepAspectRatio(node(CanvasNodeType.Video, { freeResize: true }))).toBe(true);
+        expect(shouldKeepAspectRatio(node(CanvasNodeType.Video, { freeResize: true }))).toBe(false);
         for (const type of [CanvasNodeType.Text, CanvasNodeType.Drawing, CanvasNodeType.Script, CanvasNodeType.Skill, CanvasNodeType.Config, CanvasNodeType.Audio, CanvasNodeType.Frame]) {
             expect(shouldKeepAspectRatio(node(type))).toBe(false);
         }

@@ -70,7 +70,7 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                 if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); linkGesture.current = undefined; setLinkPoint(undefined); onCancelConnection(); return; }
                 if (event.key === "Delete" || event.key === "Backspace") {
                     event.preventDefault(); event.stopPropagation();
-                    if (selected && !readOnly) onDelete(selected);
+                    if (selected && !readOnly && !event.repeat) onDelete(selected);
                 }
             }}
             style={{ backgroundImage: `radial-gradient(${theme.canvas.dot} 1px, transparent 1px)`, backgroundSize: `${32 * view.k}px ${32 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
@@ -120,7 +120,18 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                         const sx = from.x + WIDTH + 6, sy = from.y + cardHeight(operationFor(source)) / 2;
                         const tx = to.x - 6, ty = to.y + portCenter() + port * 42;
                         const d = `M${sx},${sy} C${sx + 64},${sy} ${tx - 64},${ty} ${tx},${ty}`;
-                        return <g key={`${edge.fromNodeId}:${edge.toNodeId}:${index}`}><path d={d} fill="none" stroke={theme.node.muted} strokeWidth="1.5" /><path d={d} fill="none" stroke="transparent" strokeWidth="18" className="pointer-events-auto cursor-pointer" role="button" tabIndex={0} aria-label={`删除连线：${source?.title}到${target?.title}`} onPointerDown={event => event.stopPropagation()} onClick={() => onRemoveEdge(index)} onKeyDown={event => { if (event.key === "Enter" || event.key === "Delete") onRemoveEdge(index); }} /></g>;
+                        return <g key={`${edge.fromNodeId}:${edge.toNodeId}:${index}`}>
+                            <path d={d} fill="none" stroke={theme.node.muted} strokeWidth="1.5" />
+                            <path d={d} fill="none" stroke="transparent" strokeWidth="18" className="pointer-events-auto cursor-pointer"
+                                role="button" tabIndex={0} aria-disabled={readOnly} aria-label={`删除连线：${source?.title}到${target?.title}`}
+                                onPointerDown={event => event.stopPropagation()} onClick={() => { if (!readOnly) onRemoveEdge(index); }}
+                                onKeyDown={event => {
+                                    if (!["Enter", "Delete", "Backspace"].includes(event.key)) return;
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    if (!readOnly && !event.repeat && !event.nativeEvent.isComposing) onRemoveEdge(index);
+                                }} />
+                        </g>;
                     })}
                 </svg>
                 {definition.nodes.map(node => {
