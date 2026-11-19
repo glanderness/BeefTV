@@ -68,7 +68,7 @@ If you would also like to sponsor the BeefTV open source project and contribute 
     <td><a href="https://www.ysdui.cn/">Yinsheng Yunshu Yisuan</a> is a one-stop enterprise AI services platform under Yinsheng Communications Co., Ltd., providing compute resources and AI product solutions for businesses. Special thanks to Yinsheng Yunshu Yisuan for its compute resources and ecosystem support for this project.</td>
   </tr>
   <tr>
-    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="96" alt="Infistar.cc Infinite Star logo"><br><strong>Infistar.cc 无限星河</strong></td>
+    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="32" alt="Infistar.cc Infinite Star logo"><br><strong>Infistar.cc 无限星河</strong></td>
     <td>
       Thanks to <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc Infinite Star</a> for sponsoring BeefTV! Its multi-model API service supports AI image, video, short drama, and multimedia creation workflows.<br>
       <strong>⚙ Integration:</strong> In BeefTV's model settings, add a custom model provider and enter the Base URL, API key, and model name to get started.<br>

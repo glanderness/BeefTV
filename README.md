@@ -68,7 +68,7 @@
     <td><a href="https://www.ysdui.cn/">银盛·云枢壹算</a>是银盛通信有限公司旗下的企业级一站式 AI 服务平台，为企业提供算力支持与 AI 产品解决方案。感谢银盛·云枢壹算为本项目提供的算力支持与生态扶持。</td>
   </tr>
   <tr>
-    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="96" alt="Infistar.cc 无限星河标志"><br><strong>Infistar.cc 无限星河</strong></td>
+    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="32" alt="Infistar.cc 无限星河标志"><br><strong>Infistar.cc 无限星河</strong></td>
     <td>
       感谢 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc 无限星河</a> 赞助 BeefTV！提供多模型 API 服务，适合 AI 图片、视频、短剧及多媒体创作工作流。<br>
       <strong>⚙ 兼容接入：</strong>在 BeefTV「模型配置」中添加自定义模型渠道，填写 Base URL、API Key 和模型名称，即可配置使用。<br>
