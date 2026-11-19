@@ -134,8 +134,10 @@ func TestCrashRecoveryDialogActionCrossPlatform(t *testing.T) {
 		{"导出诊断包", "export"},
 		{"Yes", "export"},
 		{"Ok", "export"},
+		{"安全模式重载", "safe-reload"},
 		{"安全模式重启", "safe-reload"},
 		{"No", "safe-reload"},
+		{"继续等待", "cancel"},
 		{"取消", "cancel"},
 		{"Cancel", "cancel"},
 		{"", "cancel"},
@@ -143,6 +145,65 @@ func TestCrashRecoveryDialogActionCrossPlatform(t *testing.T) {
 	for _, tc := range cases {
 		if got := crashRecoveryDialogAction(tc.choice); got != tc.want {
 			t.Errorf("crashRecoveryDialogAction(%q) = %q, want %q", tc.choice, got, tc.want)
+		}
+	}
+}
+
+func TestRendererWatchdogRespectsBusyLeaseHiddenTransitionAndCooldown(t *testing.T) {
+	var state rendererWatchdogState
+	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+
+	// Fresh heartbeat: no prompt.
+	if state.evaluate(base.Add(20*time.Second), base, false, false) {
+		t.Fatal("fresh heartbeat must not trigger prompt")
+	}
+	// Legitimate 60s busy task (>35s normal timeout, <180s busy ceiling): no prompt.
+	if state.evaluate(base.Add(60*time.Second), base, false, true) {
+		t.Fatal("busy lease within busy timeout must not trigger prompt")
+	}
+	// Hidden stall is remembered without prompting while hidden.
+	if state.evaluate(base.Add(50*time.Second), base, true, false) {
+		t.Fatal("hidden window must not prompt immediately")
+	}
+	if !state.stalledWhileHidden {
+		t.Fatal("expected hidden stall to be tracked until visible")
+	}
+	// Returning visible while heartbeat is still stale triggers prompt once.
+	if !state.evaluate(base.Add(55*time.Second), base, false, false) {
+		t.Fatal("expected stale visible window after hidden stall to trigger prompt")
+	}
+	// Cooldown prevents dialog spam on subsequent 5s ticks.
+	if state.evaluate(base.Add(60*time.Second), base, false, false) {
+		t.Fatal("watchdog must respect cooldown after prompting")
+	}
+	// After cooldown expires and heartbeat is still stale, prompt can fire again.
+	if !state.evaluate(base.Add(95*time.Second), base, false, false) {
+		t.Fatal("expected watchdog to re-evaluate after cooldown")
+	}
+}
+
+func TestPruneStartupDiagnosticSnapshotsBoundsLastCrashZips(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 11, 20, 1, 0, 0, 0, time.UTC)
+	for i := 0; i < 8; i++ {
+		name := filepath.Join(dir, "beeftv-last-crash-diagnostics-"+string(rune('a'+i))+".zip")
+		if err := os.WriteFile(name, []byte("zip"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp := base.Add(time.Duration(i) * time.Minute)
+		_ = os.Chtimes(name, stamp, stamp)
+	}
+	pruneStartupDiagnosticSnapshots(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != maxAutoStartupBundles {
+		t.Fatalf("expected %d retained last-crash zips, got %d", maxAutoStartupBundles, len(entries))
+	}
+	for _, kept := range entries {
+		if kept.Name() < "beeftv-last-crash-diagnostics-d.zip" {
+			t.Fatalf("oldest last-crash zip was not pruned: %s", kept.Name())
 		}
 	}
 }

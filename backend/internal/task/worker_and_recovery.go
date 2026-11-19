@@ -117,6 +117,11 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 					}
 					if SkippableCanvasBindError(err, deps.Refusal) {
 						anyRefused = true
+						if isPermanentSkippableBindReason(reason) {
+							_ = deps.Repo.MarkTaskEffectRefused(task.UserID, task.ID, model.TaskEffectKindCanvasBind, task.ProjectID, target.NodeID, target.OutputIndex, reason, 0)
+						} else if reason != "" {
+							_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, reason)
+						}
 						continue
 					}
 					last = err
@@ -136,10 +141,23 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 	}
 	if deps.HasWorkspaceOps && deps.ExecuteMessageBind != nil {
 		for _, target := range msgTargets {
-			if settled, _ := deps.Repo.IsTaskEffectSettled(task.ID, model.TaskEffectKindMessageAttach, "", target.OutputIndex, target.ConversationID, target.MessageID); settled {
+			if terminal, _ := deps.Repo.IsTaskEffectTerminal(task.ID, model.TaskEffectKindMessageAttach, "", target.OutputIndex, target.ConversationID, target.MessageID); terminal {
 				continue
 			}
 			if err := deps.ExecuteMessageBind(task, target.ConversationID, target.MessageID, target.OutputIndex); err != nil {
+				if SkippableCanvasBindError(err, deps.Refusal) {
+					anyRefused = true
+					reason := ""
+					if deps.Refusal != nil {
+						reason, _ = deps.Refusal(err)
+					}
+					if isPermanentSkippableBindReason(reason) {
+						_ = deps.Repo.MarkMessageEffectRefused(task.UserID, task.ID, target.ConversationID, target.MessageID, target.OutputIndex, reason)
+					} else if reason != "" {
+						_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, reason)
+					}
+					continue
+				}
 				last = err
 				continue
 			}
@@ -149,8 +167,12 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 	if projectID := strings.TrimSpace(task.ProjectID); projectID != "" && deps.ReconcileTurnaround != nil {
 		deps.ReconcileTurnaround(task.UserID, projectID)
 	}
-	if !missing && last == nil && !anyRefused && (len(canvasIDs) == 0 || deps.HasWorkspaceOps) && (len(intents) > 0 || len(canvasTargets) > 0 || len(msgTargets) > 0 || TargetBindingFromInput(task.InputJSON).Empty()) {
+	if last != nil {
+		_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, last.Error())
+	} else if !missing && !anyRefused && (len(canvasIDs) == 0 || deps.HasWorkspaceOps) && (len(intents) > 0 || len(canvasTargets) > 0 || len(msgTargets) > 0 || TargetBindingFromInput(task.InputJSON).Empty()) {
 		_ = deps.Repo.MarkTaskEffectSettled(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, "", 0, "", "")
+	} else if !missing && anyRefused {
+		_ = deps.Repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindTaskBindSettled)
 	}
 	return last
 }
@@ -202,6 +224,18 @@ func RecoverPendingCanvasBindings(
 		}
 	}
 	return last
+}
+
+func isPermanentSkippableBindReason(reason string) bool {
+	switch reason {
+	case "conversation_deleted", "message_deleted", "message_mismatch", "conversation_mismatch",
+		"message_task_mismatch", "task_not_found", "task_foreign",
+		"resource_foreign", "asset_foreign", "unsupported_result_shape",
+		"effect_identity_mismatch":
+		return true
+	default:
+		return false
+	}
 }
 
 func SkippableCanvasBindError(err error, refusal func(error) (string, map[string]any)) bool {

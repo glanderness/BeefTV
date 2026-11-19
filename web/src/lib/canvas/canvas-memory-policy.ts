@@ -42,7 +42,22 @@ export function getCanvasMemoryMode(): CanvasMemoryMode {
     return currentMemoryMode;
 }
 
+function clearMemoryModeQueryParams() {
+    if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") return;
+    try {
+        const parsed = new URL(window.location.href);
+        if (!parsed.searchParams.has("safeMode") && !parsed.searchParams.has("memoryMode")) return;
+        parsed.searchParams.delete("safeMode");
+        parsed.searchParams.delete("memoryMode");
+        const nextUrl = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+        window.history.replaceState(window.history.state, "", nextUrl);
+    } catch {
+        // Ignore URL/history failures in non-browser environments.
+    }
+}
+
 export function setCanvasMemoryMode(mode: CanvasMemoryMode) {
+    clearMemoryModeQueryParams();
     if (currentMemoryMode === mode) return;
     currentMemoryMode = mode;
     if (typeof window !== "undefined") {

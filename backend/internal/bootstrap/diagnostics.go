@@ -23,21 +23,22 @@ func (r *Runtime) ExportDiagnosticsBundle(req diagnostics.ExportRequest) (*diagn
 	return r.service.DiagnosticsDomain().Export(owner.ID, req)
 }
 
-func (r *Runtime) RecordClientHeartbeat(hidden bool) {
+func (r *Runtime) RecordClientHeartbeat(hidden, busy bool) {
 	if r == nil {
 		return
 	}
 	r.clientHidden.Store(hidden)
+	r.clientBusy.Store(busy)
 	r.lastClientHeartbeat.Store(time.Now().UTC().UnixMilli())
 }
 
-func (r *Runtime) LastClientHeartbeat() (time.Time, bool) {
+func (r *Runtime) LastClientHeartbeat() (time.Time, bool, bool) {
 	if r == nil {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 	ms := r.lastClientHeartbeat.Load()
 	if ms <= 0 {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
-	return time.UnixMilli(ms).UTC(), r.clientHidden.Load()
+	return time.UnixMilli(ms).UTC(), r.clientHidden.Load(), r.clientBusy.Load()
 }

@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	GenerationDeliveryRecoveryInterval = 30 * time.Second
-	GenerationDownloadTimeout          = 15 * time.Minute
+	ProviderAndContinuationPollInterval = 5 * time.Second
+	GenerationDeliveryRecoveryInterval  = 30 * time.Second
+	GenerationDownloadTimeout           = 15 * time.Minute
 )
 
 func DeliveryPaused(stage string) bool {
@@ -144,7 +145,16 @@ func (s RepoStore) MarkDeliverySettled(userID, taskID string) error {
 	if s.Repo == nil {
 		return nil
 	}
+	// Clear any pending bind backoff so newly materialized outputs bind immediately.
+	_ = s.Repo.ClearPendingTaskEffectsByKind(taskID, model.TaskEffectKindTaskBindSettled)
 	return s.Repo.MarkTaskEffectSettled(userID, taskID, model.TaskEffectKindDeliverySettled, "", "", 0, "", "")
+}
+
+func (s RepoStore) RecordDeliveryAttemptFailure(userID, taskID, errMsg string) error {
+	if s.Repo == nil {
+		return nil
+	}
+	return s.Repo.RecordTaskEffectAttemptFailure(userID, taskID, model.TaskEffectKindDeliverySettled, "", errMsg)
 }
 
 func MapDeliveryStoreErr(err error) error {
@@ -325,6 +335,7 @@ func ResumeGenerationDownload(
 	if err := repo.SetGenerationDeliveryStage(task.UserID, task.ID, "正在取回结果"); err != nil {
 		return nil, err
 	}
+	_ = repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindDeliverySettled)
 	task.Stage = "正在取回结果"
 	if attach != nil {
 		attach(&task)

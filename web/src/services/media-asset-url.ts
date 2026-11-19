@@ -1,6 +1,6 @@
 import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { normalizeCanvasPreviewTier, type CanvasPreviewTier } from "@/lib/canvas/canvas-memory-policy";
-import { apiBaseURL, apiClient, http, type HttpRequestConfig } from "@/services/api/request";
+import { apiBaseURL, http, type HttpRequestConfig } from "@/services/api/request";
 import { getDesktopBootSnapshot } from "@/services/workspace-startup-state";
 
 export type MediaTicketResponse = {
@@ -17,9 +17,8 @@ export type ResolvedMediaStream = {
     compatible: boolean;
     mode: "loopback-ticket" | "same-origin-fallback";
     mimeType?: string;
+    expiresAtMs?: number;
 };
-
-const defaultAxiosAdapter = apiClient?.defaults?.adapter;
 
 type CachedTicket = {
     url: string;
@@ -30,42 +29,29 @@ type CachedTicket = {
 
 const ticketCache = new Map<string, CachedTicket>();
 const ticketInFlight = new Map<string, Promise<ResolvedMediaStream>>();
-const TICKET_REFRESH_MARGIN_MS = 120_000;
+export const MEDIA_TICKET_REFRESH_MARGIN_MS = 120_000;
 let directMediaAssetsOverride: boolean | null = null;
 
 export function setDirectMediaAssetsEnabled(enabled: boolean | null) {
     directMediaAssetsOverride = enabled;
 }
 
-function explicitDirectMediaAssetsEnabled(): boolean {
-    if (directMediaAssetsOverride !== null) return directMediaAssetsOverride;
-    return Boolean((globalThis as { __BEEFTV_DIRECT_MEDIA_ASSETS__?: boolean }).__BEEFTV_DIRECT_MEDIA_ASSETS__);
-}
-
 /**
  * Returns true when native `<img>` elements can load `/api/resources/:id/asset/...`
  * directly without attaching an `X-Desktop-Token` header via JavaScript fetch.
  *
- * - Inside the Wails desktop shell (`wails://` or `wails.localhost`), Go's
- *   same-origin `desktopAssetHandler` transparently injects the launch token.
- * - Explicit standalone servers / test opt-in can enable `__BEEFTV_DIRECT_MEDIA_ASSETS__`.
- * - Arbitrary localhost mock servers (such as unit/browser test harnesses that
- *   only mock `/api/resources/:id/file`) return false and never receive
- *   unauthorized `/asset` image requests.
+ * Inside the Wails desktop shell (`wails://` or `wails.localhost`), Go's
+ * same-origin `desktopAssetHandler` transparently injects the launch token.
  */
 export function canUseSameOriginResourceAsset(): boolean {
+    if (directMediaAssetsOverride !== null) return directMediaAssetsOverride;
     if (typeof window === "undefined") return false;
-    if (apiClient?.defaults?.adapter !== defaultAxiosAdapter) return false;
-    if (directMediaAssetsOverride === false) return false;
-    if (isDesktopShellOrigin(window.location)) return true;
-    return explicitDirectMediaAssetsEnabled();
+    return isDesktopShellOrigin(window.location);
 }
 
 export function canUseLoopbackMediaTicket(): boolean {
-    if (directMediaAssetsOverride === false) return false;
-    if (explicitDirectMediaAssetsEnabled()) return true;
+    if (directMediaAssetsOverride !== null) return directMediaAssetsOverride;
     if (typeof window === "undefined") return false;
-    if (apiClient?.defaults?.adapter !== defaultAxiosAdapter) return false;
     if (isDesktopShellOrigin(window.location)) return true;
     const mode = getDesktopBootSnapshot().transportMode;
     return mode === "loopback" || mode === "same-origin-fallback";
@@ -173,12 +159,13 @@ export async function resolveResourceMediaStream(
 
     const cacheKey = `${id}:${variant}`;
     const cached = ticketCache.get(cacheKey);
-    if (cached && cached.expiresAtMs - Date.now() > TICKET_REFRESH_MARGIN_MS) {
+    if (cached && cached.expiresAtMs - Date.now() > MEDIA_TICKET_REFRESH_MARGIN_MS) {
         return {
             url: cached.url,
             compatible: cached.compatible,
             mode: "loopback-ticket",
             mimeType: cached.mimeType,
+            expiresAtMs: cached.expiresAtMs,
         };
     }
 
@@ -209,6 +196,7 @@ export async function resolveResourceMediaStream(
             compatible,
             mode: "loopback-ticket",
             mimeType: res.mimeType,
+            expiresAtMs,
         };
     })().finally(() => {
         if (ticketInFlight.get(cacheKey) === task) {

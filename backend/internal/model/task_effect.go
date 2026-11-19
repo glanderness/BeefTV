@@ -14,6 +14,40 @@ const (
 	TaskEffectStatusSettled = "settled"
 )
 
+// RevisionWatchCanvasBindReasons are terminal canvas bind refusals that can
+// become eligible again once the target canvas's revision advances.
+// Shared as the single source of truth between Go refusal evaluation and SQL
+// pending-task queries.
+var RevisionWatchCanvasBindReasons = []string{
+	"node_deleted",
+	"node_task_mismatch",
+}
+
+// PermanentCanvasBindReasons are terminal canvas bind refusals determined
+// solely by the task itself (canvas edits cannot resolve them).
+var PermanentCanvasBindReasons = []string{
+	"node_mismatch",
+	"canvas_mismatch",
+}
+
+func IsRevisionWatchCanvasBindReason(reason string) bool {
+	for _, candidate := range RevisionWatchCanvasBindReasons {
+		if reason == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func IsPermanentCanvasBindReason(reason string) bool {
+	for _, candidate := range PermanentCanvasBindReasons {
+		if reason == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 // TaskEffect persists post-completion side-effect progress (delivery, canvas
 // node binding, conversation attachment) outside tasks.recovery_outcome so
 // background recovery never re-scans settled historical tasks or collides with

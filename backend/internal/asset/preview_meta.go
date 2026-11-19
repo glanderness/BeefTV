@@ -13,6 +13,7 @@ import (
 const (
 	jpegICCMaxChunkPayload = 65533 - 14 // APP2 length(2) + "ICC_PROFILE\x00"(12) + seq(1) + total(1)
 	maxICCProfileBytes     = 4 << 20    // 4 MiB safety cap for ICC metadata
+	maxPreviewHeaderBytes  = 5 << 20    // 5 MiB bounded metadata prefix read (EXIF + ICC + APNG/WebP headers)
 )
 
 var (
@@ -454,6 +455,41 @@ func imageHasAlpha(img image.Image) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// readPreviewMetadataHeader reads only the leading metadata prefix needed for
+// EXIF orientation, ICC profile, and APNG/WebP animation inspection without
+// buffering multi-tens-of-megabytes pixel payloads into Go heap.
+func readPreviewMetadataHeader(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, maxPreviewHeaderBytes))
+}
+
+// pngHeaderMayHaveAlpha inspects PNG IHDR color type and pre-IDAT tRNS chunk
+// from header bytes without decoding pixels.
+func pngHeaderMayHaveAlpha(data []byte) bool {
+	if !bytes.HasPrefix(data, pngSignature) || len(data) < len(pngSignature)+25 {
+		return false
+	}
+	// IHDR starts at byte 8: length(4) + "IHDR"(4) + width(4) + height(4) + bitDepth(1) + colorType(1)
+	if string(data[12:16]) == "IHDR" {
+		colorType := data[25]
+		if colorType == 4 || colorType == 6 {
+			return true
+		}
+	}
+	pos := len(pngSignature)
+	for pos+12 <= len(data) {
+		chunkLen := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+		chunkType := string(data[pos+4 : pos+8])
+		if chunkType == "tRNS" {
+			return true
+		}
+		if chunkType == "IDAT" || chunkLen < 0 || pos+12+chunkLen > len(data) {
+			return false
+		}
+		pos += 12 + chunkLen
 	}
 	return false
 }

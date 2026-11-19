@@ -137,7 +137,7 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 
 ### 本地工作区结构（桌面形态）
 
-桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前候选为 27，见 `backend/internal/database/local_schema.go`），
+桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前候选为 31，见 `backend/internal/database/local_schema.go`），
 与上面的托管版本序列相互独立。版本 11 由会话工作单独占用，本序列从 10 直接进入 12。
 
 版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键；版本 4/5 为任务的客户端操作编号补充结构；版本 6 `agent-operation-turn-attribution` 为 `agent_op_records` 增加可空的 `turn_id` 与索引，用于把内置助手一轮对话的写入回执归到该轮上。迁移只新增结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
@@ -301,3 +301,5 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 素材状态为 `archived` 时进入回收站。后台按“资源与请求策略”中的 `recycleBinRetentionDays` 定期扫描过期项；`0` 表示永久保留。自动清理与用户手动彻底删除复用同一 service 引用校验和 `resource_deletion_jobs` Outbox，仍被画布、项目、任务或其他业务记录引用的素材不会被删除。
 
 本地 schema v30 新增 `mcp_calls`，每个工作区保留最近 200 次 MCP 工具调用及关联任务运行编号。记录不保存工具参数或响应正文。`image_submissions.settled_quota` 保存对应尝试的官方媒体结算回执额度，空值表示尚无已确认金额。
+
+本地 schema v31 新增 `task_effects` Outbox 表（唯一索引 `idx_task_effects_identity` 与活跃任务部分索引 `idx_task_effects_active`），将任务完成后的交付、画布节点绑定与对话消息附加进度独立持久化在 `tasks.recovery_outcome` 之外，支持按 `next_attempt_at` 指数退避、记录画布修订号相关的终端拒绝并在空闲时零重扫；v31 迁移同时为升级前已完成的历史成功任务（不含正在取回结果中的任务）回填基线，避免升级首启重放历史绑定；就绪检查要求 `task_effects` 表与唯一索引完整，缺表或缺索引时拒绝 Ready。

@@ -35,21 +35,50 @@ func (w *RecoveryWakeup) Signal() {
 }
 
 func (w *RecoveryWakeup) RunLoop(ctx context.Context, interval time.Duration, step func()) {
-	step()
-	if interval <= 0 {
-		interval = GenerationDeliveryRecoveryInterval
+	w.RunSplitLoops(ctx, 0, interval, nil, nil, step)
+}
+
+// RunSplitLoops decouples fast active-provider/continuation polling (5s) from
+// the event-driven delivery/bind outbox safety-net cadence (30s + Signal).
+func (w *RecoveryWakeup) RunSplitLoops(
+	ctx context.Context,
+	fastInterval time.Duration,
+	slowInterval time.Duration,
+	skip func() bool,
+	fastStep func(),
+	slowStep func(),
+) {
+	run := func(step func()) {
+		if step == nil || ctx.Err() != nil || (skip != nil && skip()) {
+			return
+		}
+		step()
+	}
+	run(fastStep)
+	run(slowStep)
+	if slowInterval <= 0 {
+		slowInterval = GenerationDeliveryRecoveryInterval
 	}
 	ch := w.channel()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	slowTicker := time.NewTicker(slowInterval)
+	defer slowTicker.Stop()
+
+	var fastC <-chan time.Time
+	if fastStep != nil && fastInterval > 0 {
+		fastTicker := time.NewTicker(fastInterval)
+		defer fastTicker.Stop()
+		fastC = fastTicker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ch:
-			step()
-		case <-ticker.C:
-			step()
+			run(slowStep)
+		case <-fastC:
+			run(fastStep)
+		case <-slowTicker.C:
+			run(slowStep)
 		}
 	}
 }

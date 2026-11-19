@@ -21,11 +21,13 @@ import (
 )
 
 const (
-	crashSentinelFileName      = ".session-running"
-	rendererWatchdogInterval   = 5 * time.Second
-	rendererHeartbeatTimeout   = 25 * time.Second
-	rendererReloadBreakerLimit = 3
-	rendererReloadBreakerSpan  = 60 * time.Second
+	crashSentinelFileName        = ".session-running"
+	lastCrashReadyEventName      = "diagnostics:last-crash-ready"
+	rendererWatchdogInterval     = 5 * time.Second
+	rendererHeartbeatTimeout     = 35 * time.Second
+	rendererBusyHeartbeatTimeout = 180 * time.Second
+	rendererReloadBreakerLimit   = 3
+	rendererReloadBreakerSpan    = 60 * time.Second
 )
 
 type crashSentinelRecord struct {
@@ -94,7 +96,11 @@ func (a *DesktopApp) checkAndArmCrashSentinel(dataDir, fallbackTemp, launchID st
 			a.mu.Lock()
 			a.lastCrashDiagnosticPath = saved
 			a.lastDiagnosticPath = saved
+			wailsCtx := a.wailsCtx
 			a.mu.Unlock()
+			if wailsCtx != nil && wailsCtx.Value("frontend") != nil {
+				wailsruntime.EventsEmit(wailsCtx, lastCrashReadyEventName, saved)
+			}
 		}
 	}()
 }
@@ -135,8 +141,10 @@ func (a *DesktopApp) ExportRuntimeDiagnosticsToDownloads(clientPayload string) (
 	return a.ExportStartupDiagnostics(clientPayload)
 }
 
-// ReloadWindow reloads the WebView window. When safeMode is true, it navigates
-// to the root route with thumbnail-only safe-mode query parameters.
+// ReloadWindow reloads the WebView window. Before reloading it best-effort
+// invokes any registered frontend flush hook, and when safeMode is true it
+// preserves the active pathname/hash/query while adding safeMode=1 and
+// memoryMode=thumbnail-only.
 func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 	ctx, err := a.dialogContext()
 	if err != nil {
@@ -146,15 +154,26 @@ func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 		return nil
 	}
 	if safeMode {
-		wailsruntime.WindowExecJS(ctx, `window.location.href = "/?safeMode=1&memoryMode=thumbnail-only";`)
+		wailsruntime.WindowExecJS(ctx, `(function(){
+			try { if (typeof window.__BEEFTV_FLUSH_BEFORE_RELOAD__ === "function") { window.__BEEFTV_FLUSH_BEFORE_RELOAD__(); } } catch (_) {}
+			try {
+				var u = new URL(window.location.href);
+				u.searchParams.set("safeMode", "1");
+				u.searchParams.set("memoryMode", "thumbnail-only");
+				window.location.href = u.toString();
+			} catch (_) {
+				window.location.href = "/?safeMode=1&memoryMode=thumbnail-only";
+			}
+		})();`)
 		return nil
 	}
+	wailsruntime.WindowExecJS(ctx, `(function(){ try { if (typeof window.__BEEFTV_FLUSH_BEFORE_RELOAD__ === "function") { window.__BEEFTV_FLUSH_BEFORE_RELOAD__(); } } catch (_) {} })();`)
 	wailsruntime.WindowReload(ctx)
 	return nil
 }
 
-// RecordRendererReload evaluates the sliding-window circuit breaker (max 3
-// automatic reloads in 60s). Returns true if auto-reload is allowed.
+// allowAutomaticRendererReload evaluates the sliding-window circuit breaker
+// (max 3 recovery reloads in 60s). Returns false once the limit is reached.
 func (a *DesktopApp) allowAutomaticRendererReload(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -173,6 +192,43 @@ func (a *DesktopApp) allowAutomaticRendererReload(now time.Time) bool {
 	return true
 }
 
+type rendererWatchdogState struct {
+	stalledWhileHidden bool
+	promptCooldownTill time.Time
+}
+
+// evaluateRendererWatchdog decides whether the host should prompt the user for
+// unresponsive-renderer recovery. It never silently reloads an active session:
+// legitimate long tasks (busy lease) get an extended ceiling, and stalls that
+// begin while hidden are retained until the window becomes visible again.
+func (s *rendererWatchdogState) evaluate(now, lastBeat time.Time, hidden, busy bool) bool {
+	if lastBeat.IsZero() {
+		return false
+	}
+	timeout := rendererHeartbeatTimeout
+	if busy {
+		timeout = rendererBusyHeartbeatTimeout
+	}
+	stale := now.Sub(lastBeat) > timeout
+	if hidden {
+		if stale {
+			s.stalledWhileHidden = true
+		}
+		return false
+	}
+	if !stale {
+		s.stalledWhileHidden = false
+		return false
+	}
+	if !s.promptCooldownTill.IsZero() && now.Before(s.promptCooldownTill) {
+		return false
+	}
+	// Either stalled while visible or returned visible after stalling hidden.
+	s.stalledWhileHidden = false
+	s.promptCooldownTill = now.Add(timeout)
+	return true
+}
+
 func (a *DesktopApp) startRendererWatchdog(rt *bootstrap.Runtime) {
 	a.stopRendererWatchdog()
 	if rt == nil {
@@ -186,22 +242,22 @@ func (a *DesktopApp) startRendererWatchdog(rt *bootstrap.Runtime) {
 	go func() {
 		ticker := time.NewTicker(rendererWatchdogInterval)
 		defer ticker.Stop()
-		breakerTripped := false
+		var state rendererWatchdogState
+		promptCh := make(chan struct{}, 1)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				lastBeat, hidden := rt.LastClientHeartbeat()
-				if lastBeat.IsZero() || hidden {
-					// Renderer has not opted into heartbeats yet or window is hidden/minimized.
+				lastBeat, hidden, busy := rt.LastClientHeartbeat()
+				now := time.Now().UTC()
+				if !state.evaluate(now, lastBeat, hidden, busy) {
 					continue
 				}
-				if time.Since(lastBeat) <= rendererHeartbeatTimeout {
-					breakerTripped = false
-					continue
-				}
-				if breakerTripped {
+				select {
+				case promptCh <- struct{}{}:
+				default:
+					// A recovery dialog is already open.
 					continue
 				}
 				a.mu.RLock()
@@ -212,23 +268,24 @@ func (a *DesktopApp) startRendererWatchdog(rt *bootstrap.Runtime) {
 				_ = diagnostics.AppendBootLogEntry(dataDir, diagnostics.BootLogEntry{
 					ID:        newDesktopBootID("boot"),
 					LaunchID:  launchID,
-					Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+					Timestamp: now.Format(time.RFC3339Nano),
 					State:     "ready",
 					Phase:     "ready",
 					Reason:    "renderer_unresponsive",
 				})
-				if a.allowAutomaticRendererReload(time.Now().UTC()) {
-					rt.RecordClientHeartbeat(false)
-					if wailsCtx != nil && wailsCtx.Value("frontend") != nil {
-						log.Printf("检测到渲染进程无响应（>25s 未收到心跳），自动重新加载窗口")
-						wailsruntime.WindowReload(wailsCtx)
-					}
-					continue
+				repeated := !a.allowAutomaticRendererReload(now)
+				if repeated {
+					log.Printf("渲染进程在 60s 内连续无响应达到保护阈值，提示用户选择导出或安全模式")
+				} else {
+					log.Printf("检测到渲染进程超过 %s 未响应，提示用户选择继续等待、导出诊断包或安全模式重载", rendererHeartbeatTimeout)
 				}
-				breakerTripped = true
-				log.Printf("渲染进程在 60s 内连续异常 3 次，触发保护熔断")
 				if wailsCtx != nil && wailsCtx.Value("frontend") != nil {
-					go a.promptCrashRecoveryDialog(wailsCtx)
+					go func(isRepeated bool) {
+						defer func() { <-promptCh }()
+						a.promptCrashRecoveryDialog(wailsCtx, isRepeated)
+					}(repeated)
+				} else {
+					<-promptCh
 				}
 			}
 		}
@@ -249,25 +306,34 @@ func crashRecoveryDialogAction(choice string) string {
 	switch strings.TrimSpace(choice) {
 	case "导出诊断包", "Yes", "Ok":
 		return "export"
-	case "安全模式重启", "No":
+	case "安全模式重载", "安全模式重启", "No":
 		return "safe-reload"
 	default:
 		return "cancel"
 	}
 }
 
-func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context) {
-	message := "检测到界面在短时间内多次无响应或崩溃。是否立即直接导出后端诊断包到下载目录（不依赖页面）？"
+func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated bool) {
+	title := "页面暂时无响应"
+	message := "检测到界面长时间未响应。您可以继续等待当前操作完成，或直接由后台导出诊断包、以仅缩略图安全模式重载当前页面。"
+	if repeated {
+		title = "页面多次无响应"
+		message = "检测到界面在短时间内多次无响应或崩溃。建议先直接导出后端诊断包，或以仅缩略图安全模式重新加载。"
+	}
 	if runtime.GOOS == "windows" {
-		message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载窗口。"
+		if repeated {
+			message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」继续等待。"
+		} else {
+			message = "检测到界面长时间未响应。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」继续等待当前操作完成。"
+		}
 	}
 	choice, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
 		Type:          wailsruntime.QuestionDialog,
-		Title:         "页面多次无响应",
+		Title:         title,
 		Message:       message,
-		Buttons:       []string{"导出诊断包", "安全模式重启", "取消"},
-		DefaultButton: "导出诊断包",
-		CancelButton:  "取消",
+		Buttons:       []string{"导出诊断包", "安全模式重载", "继续等待"},
+		DefaultButton: "继续等待",
+		CancelButton:  "继续等待",
 	})
 	if err != nil {
 		return
@@ -275,7 +341,7 @@ func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context) {
 	switch crashRecoveryDialogAction(choice) {
 	case "export":
 		if path, exportErr := a.ExportRuntimeDiagnosticsToDownloads(""); exportErr != nil {
-			log.Printf("熔断后导出诊断包失败: %v", exportErr)
+			log.Printf("导出诊断包失败: %v", exportErr)
 		} else if path != "" {
 			_, _ = wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
 				Type:    wailsruntime.InfoDialog,

@@ -1,7 +1,7 @@
 import { App, Button, Input } from "antd";
 import { Select } from "@/components/ui/base/select";
 import { ChevronDown, Copy, Download, FolderOpen, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, useSyncExternalStore } from "react";
 
 import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBundle, type DiagnosticExportInput, type DiagnosticPreview } from "@/services/diagnostics/diagnostics-api";
 import { getClientDiagnosticSnapshot, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
@@ -10,7 +10,7 @@ import { clearVideoPreviewCache } from "@/services/api/resources";
 import { useCanvasMemoryMode, type CanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { getDesktopAppBinding } from "@/services/desktop-runtime";
+import { beginRendererBusyLease, getDesktopAppBinding, getDesktopBootSnapshot, subscribeDesktopBootSnapshot } from "@/services/desktop-runtime";
 import { EnvironmentChecks } from "./environment-checks";
 
 type DiagnosticsPanelProps = {
@@ -55,6 +55,7 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const [exportResult, setExportResult] = useState<ExportResultState | null>(null);
     const [clearingPreviews, setClearingPreviews] = useState(false);
     const [memoryMode, setMemoryMode] = useCanvasMemoryMode();
+    const bootSnapshot = useSyncExternalStore(subscribeDesktopBootSnapshot, getDesktopBootSnapshot, getDesktopBootSnapshot);
     const desktopBinding = getDesktopAppBinding();
     const openUpdateLogs = desktopBinding?.OpenUpdateLogDirectory;
     const revealBundle = desktopBinding?.RevealDiagnosticBundle;
@@ -87,6 +88,7 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const handleExport = async () => {
         setExporting(true);
         setExportResult(null);
+        const releaseBusy = beginRendererBusyLease();
         try {
             const input = await buildInput(range, description, taskId, projectId);
             if (typeof desktopBinding?.ExportRuntimeDiagnosticsToDownloads === "function") {
@@ -118,6 +120,7 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         } catch (error) {
             message.error(error instanceof Error ? error.message : "导出诊断包失败");
         } finally {
+            releaseBusy();
             setExporting(false);
         }
     };
@@ -138,8 +141,45 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
 
     const rangeLabel = rangeOptions.find((option) => option.value === range)?.label.replace("（推荐）", "") ?? "最近 7 天";
 
+    const showLastCrashNotice = bootSnapshot.uncleanPreviousShutdown || Boolean(bootSnapshot.lastCrashDiagnosticPath);
+
     const content = (
         <div className={embedded ? "space-y-4" : "max-h-[calc(100dvh-180px)] space-y-4 overflow-y-auto pt-3"}>
+            {showLastCrashNotice ? (
+                <section
+                    aria-label="上次异常退出诊断摘要"
+                    className="rounded-xl border border-border bg-muted/45 p-4"
+                    role="status"
+                >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                            <h3 className="text-[14px] leading-[22px] font-medium text-foreground">
+                                检测到上次异常退出
+                            </h3>
+                            <p className="mt-1 text-[12px] leading-[18px] text-foreground/70">
+                                {bootSnapshot.lastCrashDiagnosticPath
+                                    ? "后台已自动留存上次退出时的诊断摘要，可直接打开所在文件夹发送给支持人员。"
+                                    : "正在后台自动留存上次退出时的诊断摘要，稍后可在此打开或直接点击下方导出。"}
+                            </p>
+                            {bootSnapshot.lastCrashDiagnosticPath ? (
+                                <p className="mt-1.5 font-mono text-[12px] leading-[20px] text-foreground/70 [overflow-wrap:anywhere]">
+                                    保存位置：{bootSnapshot.lastCrashDiagnosticPath}
+                                </p>
+                            ) : null}
+                        </div>
+                        {bootSnapshot.lastCrashDiagnosticPath && revealBundle ? (
+                            <Button
+                                className="w-full shrink-0 sm:w-auto"
+                                icon={<FolderOpen className="size-4" />}
+                                onClick={() => void handleRevealBundle()}
+                            >
+                                打开诊断包所在文件夹
+                            </Button>
+                        ) : null}
+                    </div>
+                </section>
+            ) : null}
+
             <section
                 aria-label="一键导出诊断包"
                 className="rounded-xl border border-border bg-muted/45 p-4"

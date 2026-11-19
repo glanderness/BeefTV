@@ -575,3 +575,9 @@ export async function flushCanvasStorePersistence() {
 export function hasActiveCanvasStorePersistence() {
     return canvasStorageTails.size > 0 || canvasSaveTimers.size > 0;
 }
+
+if (typeof window !== "undefined") {
+    window.__BEEFTV_FLUSH_BEFORE_RELOAD__ = () => {
+        void flushCanvasStorePersistence();
+    };
+}

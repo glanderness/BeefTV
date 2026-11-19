@@ -112,3 +112,83 @@ func TestTaskEffectsOutboxEliminatesIdleRecoveryScansAndResumesOnCanvasChange(t 
 		t.Fatalf("expected 0 pending canvas bind tasks after resume settled, got %d", len(finalPending))
 	}
 }
+
+func TestTaskEffectsSkipsPausedTimedOutPermanentFailuresAndHonorsBackoff(t *testing.T) {
+	svc, canvasID, _ := newAssistantTurnService(t)
+	now := time.Now()
+
+	pausedTask := model.Task{
+		ID: "outbox-paused", UserID: "local", ProjectID: canvasID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "delivery_paused", Prompt: "已暂停下载",
+		ResultJSON: `{"images":[{"url":"https://example.com/paused.png"}]}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	timedOutTask := model.Task{
+		ID: "outbox-timed-out", UserID: "local", ProjectID: canvasID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "delivery_timed_out", Prompt: "下载超时",
+		ResultJSON: `{"images":[{"url":"https://example.com/timeout.png"}]}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	deletedConvTask := model.Task{
+		ID: "outbox-deleted-conv", UserID: "local", ProjectID: canvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, Stage: "任务完成", Prompt: "已删对话消息绑定",
+		InputJSON:  `{"mode":"text","metadata":{"conversationId":"missing-conv","messageId":"missing-msg"}}`,
+		ResultJSON: `{"mode":"text","text":"对话已删除"}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	backedOffTask := model.Task{
+		ID: "outbox-backoff", UserID: "local", ProjectID: canvasID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "正在取回结果", Prompt: "暂时失败退避",
+		ResultJSON: `{"images":[{"url":"https://example.com/transient.png"}]}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	for _, task := range []model.Task{pausedTask, timedOutTask, deletedConvTask, backedOffTask} {
+		if err := svc.repo.DB().Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Simulate transient delivery failure on backedOffTask -> schedules next_attempt_at > now.
+	if err := svc.repo.RecordTaskEffectAttemptFailure("local", backedOffTask.ID, model.TaskEffectKindDeliverySettled, canvasID, "temporary network timeout"); err != nil {
+		t.Fatal(err)
+	}
+	// Mark deletedConvTask delivery settled + permanently refused message attach.
+	if err := svc.repo.MarkTaskEffectSettled("local", deletedConvTask.ID, model.TaskEffectKindDeliverySettled, "", "", 0, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.MarkMessageEffectRefused("local", deletedConvTask.ID, "missing-conv", "missing-msg", 0, "conversation_deleted"); err != nil {
+		t.Fatal(err)
+	}
+
+	pendingDeliveries, err := svc.repo.PendingDeliveryTasks("", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pendingDeliveries) != 0 {
+		t.Fatalf("expected paused, timed-out, settled, and backed-off tasks to be excluded from PendingDeliveryTasks, got %+v", pendingDeliveries)
+	}
+
+	pendingBinds, err := svc.repo.PendingCanvasBindTasks("", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range pendingBinds {
+		if item.ID == deletedConvTask.ID {
+			t.Fatalf("permanently refused message attach task %s must not re-scan", deletedConvTask.ID)
+		}
+	}
+
+	// Moving next_attempt_at into the past makes backedOffTask eligible immediately.
+	if err := svc.repo.DB().Model(&model.TaskEffect{}).
+		Where("task_id = ? AND kind = ?", backedOffTask.ID, model.TaskEffectKindDeliverySettled).
+		Update("next_attempt_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	dueDeliveries, err := svc.repo.PendingDeliveryTasks("", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dueDeliveries) != 1 || dueDeliveries[0].ID != backedOffTask.ID {
+		t.Fatalf("expected due backed-off task %s to become eligible, got %+v", backedOffTask.ID, dueDeliveries)
+	}
+}

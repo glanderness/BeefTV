@@ -12,8 +12,6 @@ import (
 	"infinite-canvas/backend/internal/taskdelivery"
 )
 
-const generationDeliveryRecoveryInterval = taskdelivery.GenerationDeliveryRecoveryInterval
-
 func (s *Service) DeliverSucceededTask(task model.Task) error {
 	err := s.generationDeliverer().Deliver(task)
 	if bindErr := s.recoverCanvasTaskBindings(task); bindErr != nil {
@@ -65,16 +63,14 @@ func (s *Service) attachRecoveredProviderTask(task *model.Task) *model.Task {
 
 func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 	s.runWorkerLoop(func(ctx context.Context) {
-		s.deliveryWakeup.RunLoop(ctx, generationDeliveryRecoveryInterval, func() {
-			if ctx.Err() != nil || s.IsDraining() {
-				return
-			}
+		s.deliveryWakeup.RunSplitLoops(ctx, taskdelivery.ProviderAndContinuationPollInterval, taskdelivery.GenerationDeliveryRecoveryInterval, s.IsDraining, func() {
 			s.startImageRecoveryPass(ctx)
 			s.startVideoRecoveryPass(ctx)
+			s.recoverAssistantContinuations(ctx)
+		}, func() {
 			if err := s.RecoverIncompleteGenerationDeliveries(0); err != nil {
 				log.Printf("generation delivery recovery paused: worker_id=%s error=%v", s.workerID, err)
 			}
-			s.recoverAssistantContinuations(ctx)
 		})
 	})
 }

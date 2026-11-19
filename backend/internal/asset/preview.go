@@ -26,13 +26,17 @@ import (
 )
 
 const (
-	previewCacheVersion = "v1"
-	previewJPEGQuality  = 84
-	maxPreviewPixels    = 100_000_000
-	maxPreviewDimension = 16384
-	maxPreviewWorkers   = 3
-	prewarmQueueCap     = 64
-	DefaultAssetMaxChunkBytes int64 = 4 << 20 // 4 MiB cap for Wails AssetServer fallback ranges
+	previewCacheVersion          = "v1"
+	previewJPEGQuality           = 84
+	maxPreviewPixels             = 100_000_000
+	maxInProcessPreviewPixels    = 24_000_000 // >24MP scales via OS-isolated ffmpeg subprocess
+	maxInProcessPreviewFileBytes = 32 << 20   // >32MiB source files scale via ffmpeg subprocess
+	maxPreviewDimension          = 16384
+	maxPreviewWorkers            = 3
+	maxPreviewDecodeBudgetBytes  = 256 << 20 // 256 MiB global decode memory cap
+	minPreviewDecodeWeightBytes  = 16 << 20
+	subprocessPreviewWeightBytes = 64 << 20
+	DefaultAssetMaxChunkBytes    int64 = 4 << 20 // 4 MiB cap for Wails AssetServer fallback ranges
 )
 
 var allowedPreviewWidths = [...]int{256, 512, 1024, 2048}
@@ -51,26 +55,82 @@ type PreviewResult struct {
 	IsOriginal bool
 }
 
-type previewManager struct {
-	dataDir        string
-	flight         singleflight.Group
-	decodeSlots    chan struct{}
-	prewarmMu      sync.Mutex
-	prewarmRunning bool
-	prewarmCh      chan prewarmTask
+// decodeMemoryBudget bounds concurrent preview/poster work by BOTH estimated
+// decoded byte footprint and max worker concurrency, so concurrent large
+// images never spike Go RSS on low-RAM Windows machines.
+type decodeMemoryBudget struct {
+	mu          sync.Mutex
+	cond        *sync.Cond
+	limitBytes  int64
+	usedBytes   int64
+	limitSlots  int
+	activeSlots int
 }
 
-type prewarmTask struct {
-	userID     string
-	resourceID string
-	kind       string
+func newDecodeMemoryBudget(limitBytes int64, limitSlots int) *decodeMemoryBudget {
+	b := &decodeMemoryBudget{
+		limitBytes: limitBytes,
+		limitSlots: limitSlots,
+	}
+	b.cond = sync.NewCond(&b.mu)
+	return b
+}
+
+func (b *decodeMemoryBudget) Acquire(ctx context.Context, bytes int64) (func(), error) {
+	if b == nil {
+		return func() {}, nil
+	}
+	weight := bytes
+	if weight < minPreviewDecodeWeightBytes {
+		weight = minPreviewDecodeWeightBytes
+	}
+	if weight > b.limitBytes {
+		weight = b.limitBytes
+	}
+	stop := context.AfterFunc(ctx, func() {
+		b.mu.Lock()
+		b.cond.Broadcast()
+		b.mu.Unlock()
+	})
+	defer stop()
+
+	b.mu.Lock()
+	for {
+		if ctx.Err() != nil {
+			b.mu.Unlock()
+			return nil, ctx.Err()
+		}
+		if b.activeSlots < b.limitSlots && b.usedBytes+weight <= b.limitBytes {
+			b.activeSlots++
+			b.usedBytes += weight
+			b.mu.Unlock()
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					b.mu.Lock()
+					b.activeSlots--
+					b.usedBytes -= weight
+					b.cond.Broadcast()
+					b.mu.Unlock()
+				})
+			}, nil
+		}
+		b.cond.Wait()
+	}
+}
+
+type previewManager struct {
+	dataDir    string
+	flight     singleflight.Group
+	budget     *decodeMemoryBudget
+	scaleImage func(ctx context.Context, srcPath, dstPath string, maxSide, orientation int, outputPNG bool) error
 }
 
 func newPreviewManager(dataDir string) *previewManager {
 	return &previewManager{
-		dataDir:     strings.TrimSpace(dataDir),
-		decodeSlots: make(chan struct{}, maxPreviewWorkers),
-		prewarmCh:   make(chan prewarmTask, prewarmQueueCap),
+		dataDir:    strings.TrimSpace(dataDir),
+		budget:     newDecodeMemoryBudget(maxPreviewDecodeBudgetBytes, maxPreviewWorkers),
+		scaleImage: mediatools.ScaleImagePreview,
 	}
 }
 
@@ -277,12 +337,11 @@ func (s *Service) OpenVideoPoster(ctx context.Context, userID, resourceID string
 		if info, statErr := os.Stat(posterPath); statErr == nil && info.Mode().IsRegular() && info.Size() > 0 {
 			return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size()}, nil
 		}
-		select {
-		case s.previews.decodeSlots <- struct{}{}:
-			defer func() { <-s.previews.decodeSlots }()
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		release, acquireErr := s.previews.budget.Acquire(ctx, subprocessPreviewWeightBytes)
+		if acquireErr != nil {
+			return nil, acquireErr
 		}
+		defer release()
 		srcFile, openErr := s.blobs.Open(resource.ObjectKey)
 		if openErr != nil {
 			if errors.Is(openErr, os.ErrNotExist) {
@@ -315,54 +374,6 @@ func (s *Service) RemovePreviewCache(userID, resourceID string) {
 	dir := s.previewResourceDir(userID, resourceID)
 	if dir != "" {
 		_ = os.RemoveAll(dir)
-	}
-}
-
-func (s *Service) enqueuePreviewPrewarm(resource *model.Resource) {
-	if s == nil || s.previews == nil || s.previews.dataDir == "" || s.lifecycle == nil || resource == nil {
-		return
-	}
-	if resource.Provider != "local" || resource.Status != model.ResourceStatusReady {
-		return
-	}
-	if resource.Kind != "image" && resource.Kind != "video" {
-		return
-	}
-	select {
-	case s.previews.prewarmCh <- prewarmTask{userID: resource.UserID, resourceID: resource.ID, kind: resource.Kind}:
-	default:
-		return
-	}
-	s.previews.prewarmMu.Lock()
-	if s.previews.prewarmRunning {
-		s.previews.prewarmMu.Unlock()
-		return
-	}
-	s.previews.prewarmRunning = true
-	s.previews.prewarmMu.Unlock()
-	s.runBackground(s.drainPreviewPrewarm)
-}
-
-func (s *Service) drainPreviewPrewarm() {
-	for {
-		select {
-		case task := <-s.previews.prewarmCh:
-			ctx := context.Background()
-			switch task.kind {
-			case "image":
-				_, _ = s.OpenImagePreview(ctx, task.userID, task.resourceID, 512, PreviewColorPreserve)
-			case "video":
-				_, _ = s.OpenVideoPoster(ctx, task.userID, task.resourceID)
-			}
-		default:
-			s.previews.prewarmMu.Lock()
-			if len(s.previews.prewarmCh) == 0 {
-				s.previews.prewarmRunning = false
-				s.previews.prewarmMu.Unlock()
-				return
-			}
-			s.previews.prewarmMu.Unlock()
-		}
 	}
 }
 
@@ -424,13 +435,6 @@ func (s *Service) originalPreviewResult(resource *model.Resource) (*PreviewResul
 }
 
 func (s *Service) generateImagePreview(ctx context.Context, userID string, resource *model.Resource, tier int, color PreviewColorMode) (*PreviewResult, error) {
-	select {
-	case s.previews.decodeSlots <- struct{}{}:
-		defer func() { <-s.previews.decodeSlots }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
 	srcFile, err := s.blobs.Open(resource.ObjectKey)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -438,43 +442,85 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 		}
 		return nil, err
 	}
-	rawBytes, readErr := io.ReadAll(srcFile)
-	_ = srcFile.Close()
-	if readErr != nil {
-		return nil, readErr
+	srcPath := srcFile.Name()
+	info, statErr := srcFile.Stat()
+	if statErr != nil {
+		_ = srcFile.Close()
+		return nil, statErr
 	}
+	fileSize := info.Size()
 
-	// Never flatten animated GIF / APNG / animated WebP.
-	if isAnimatedImage(resource.MimeType, rawBytes) {
-		return s.originalPreviewResult(resource)
-	}
-
-	cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(rawBytes))
+	// Probe dimensions strictly from the stream header before allocating any
+	// full-image buffer or acquiring decode budget.
+	cfg, _, cfgErr := image.DecodeConfig(srcFile)
 	if cfgErr != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		_ = srcFile.Close()
 		return s.originalPreviewResult(resource)
 	}
-	if cfg.Width > maxPreviewDimension || cfg.Height > maxPreviewDimension || int64(cfg.Width)*int64(cfg.Height) > maxPreviewPixels {
+	pixels := int64(cfg.Width) * int64(cfg.Height)
+	if cfg.Width > maxPreviewDimension || cfg.Height > maxPreviewDimension || pixels > maxPreviewPixels {
+		_ = srcFile.Close()
 		return s.originalPreviewResult(resource)
 	}
 
-	orientation := extractJPEGEXIFOrientation(rawBytes)
+	if _, seekErr := srcFile.Seek(0, io.SeekStart); seekErr != nil {
+		_ = srcFile.Close()
+		return nil, seekErr
+	}
+	headerBytes, headerErr := readPreviewMetadataHeader(srcFile)
+	_ = srcFile.Close()
+	if headerErr != nil {
+		return nil, headerErr
+	}
+
+	lowerMime := strings.ToLower(strings.TrimSpace(resource.MimeType))
+	// Large GIFs (>5 MiB header cap) or detected multi-frame GIF/APNG/WebP are
+	// served untouched so animations are never flattened.
+	if (lowerMime == "image/gif" && fileSize > maxPreviewHeaderBytes) || isAnimatedImage(resource.MimeType, headerBytes) {
+		return s.originalPreviewResult(resource)
+	}
+
+	orientation := extractJPEGEXIFOrientation(headerBytes)
 	effW, effH := cfg.Width, cfg.Height
 	if orientation >= 5 && orientation <= 8 {
 		effW, effH = effH, effW
 	}
 	maxSide := max(effW, effH)
-	// If already at or below requested tier and no EXIF rotation needed and already JPEG/PNG, serve original directly.
-	lowerMime := strings.ToLower(strings.TrimSpace(resource.MimeType))
 	if maxSide <= tier && orientation <= 1 && (lowerMime == "image/jpeg" || lowerMime == "image/png" || lowerMime == "image/webp") {
 		return s.originalPreviewResult(resource)
 	}
 
-	decoded, _, decErr := image.Decode(bytes.NewReader(rawBytes))
+	var icc []byte
+	if color == PreviewColorPreserve {
+		icc = extractICCProfile(resource.MimeType, headerBytes)
+	}
+
+	// Oversized images (>24MP or >32MiB) scale in an OS-isolated ffmpeg
+	// subprocess so Go heap never spikes on 50–100MP photos.
+	if pixels > maxInProcessPreviewPixels || fileSize > maxInProcessPreviewFileBytes {
+		return s.generateImagePreviewViaSubprocess(ctx, userID, resource, srcPath, tier, color, orientation, pngHeaderMayHaveAlpha(headerBytes), icc)
+	}
+
+	// Reserve exact decoded RGBA budget before opening the pixel stream.
+	// We scale BEFORE EXIF rotation so orientation only allocates a tiny tier-sized buffer.
+	estimatedBytes := pixels*4 + int64(tier)*int64(tier)*4
+	release, acquireErr := s.previews.budget.Acquire(ctx, estimatedBytes)
+	if acquireErr != nil {
+		return nil, acquireErr
+	}
+	defer release()
+
+	decodeFile, openErr := s.blobs.Open(resource.ObjectKey)
+	if openErr != nil {
+		if errors.Is(openErr, os.ErrNotExist) {
+			return nil, ResourceFileMissing()
+		}
+		return nil, openErr
+	}
+	decoded, _, decErr := image.Decode(decodeFile)
+	_ = decodeFile.Close()
 	if decErr != nil {
 		return s.originalPreviewResult(resource)
-	}
-	if orientation > 1 {
-		decoded = applyOrientation(decoded, orientation)
 	}
 
 	bounds := decoded.Bounds()
@@ -487,10 +533,8 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 		draw.BiLinear.Scale(dst, dst.Rect, decoded, bounds, draw.Src, nil)
 		target = dst
 	}
-
-	var icc []byte
-	if color == PreviewColorPreserve {
-		icc = extractICCProfile(resource.MimeType, rawBytes)
+	if orientation > 1 {
+		target = applyOrientation(target, orientation)
 	}
 
 	hasAlpha := imageHasAlpha(target)
@@ -522,6 +566,55 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 		return nil, err
 	}
 	return &PreviewResult{Path: dstPath, MimeType: outMime, Size: int64(encoded.Len())}, nil
+}
+
+func (s *Service) generateImagePreviewViaSubprocess(
+	ctx context.Context,
+	userID string,
+	resource *model.Resource,
+	srcPath string,
+	tier int,
+	color PreviewColorMode,
+	orientation int,
+	outputPNG bool,
+	icc []byte,
+) (*PreviewResult, error) {
+	if s.previews == nil || s.previews.scaleImage == nil {
+		return s.originalPreviewResult(resource)
+	}
+	release, acquireErr := s.previews.budget.Acquire(ctx, subprocessPreviewWeightBytes)
+	if acquireErr != nil {
+		return nil, acquireErr
+	}
+	defer release()
+
+	ext, outMime := "jpg", "image/jpeg"
+	if outputPNG {
+		ext, outMime = "png", "image/png"
+	}
+	dstPath := s.previewFilePath(userID, resource.ID, tier, color, ext)
+	if err := s.previews.scaleImage(ctx, srcPath, dstPath, tier, orientation, outputPNG); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return s.originalPreviewResult(resource)
+	}
+	if len(icc) > 0 {
+		if outBytes, err := os.ReadFile(dstPath); err == nil && len(outBytes) > 0 {
+			var patched []byte
+			if outputPNG {
+				patched = injectPNGICC(outBytes, icc)
+			} else {
+				patched = injectJPEGICC(outBytes, icc)
+			}
+			_ = writeAtomicPreviewFile(dstPath, patched)
+		}
+	}
+	info, statErr := os.Stat(dstPath)
+	if statErr != nil || info.Size() == 0 {
+		return s.originalPreviewResult(resource)
+	}
+	return &PreviewResult{Path: dstPath, MimeType: outMime, Size: info.Size()}, nil
 }
 
 func fitPreviewBounds(w, h, maxSide int) (int, int) {

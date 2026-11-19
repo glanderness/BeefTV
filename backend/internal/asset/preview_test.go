@@ -240,6 +240,99 @@ func TestClampByteRangeAndMediaTickets(t *testing.T) {
 	if _, stillOK := store.Lookup(token); stillOK {
 		t.Fatal("expected expired ticket to fail lookup")
 	}
+
+	// Sliding TTL renewal extends active playback up to maxMediaTicketLifetime.
+	now = time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	activeTok, firstExp, err := store.Issue("user-1", "res-2", "original", "res-2.mp4", "video/mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = firstExp.Add(-5 * time.Minute) // Within renewal half-window
+	renewedEntry, ok := store.Lookup(activeTok)
+	if !ok || !renewedEntry.ExpiresAt.After(firstExp) {
+		t.Fatalf("expected active ticket sliding renewal past %v, got ok=%v exp=%v", firstExp, ok, renewedEntry.ExpiresAt)
+	}
+	// Hard lifetime cap still expires eventually.
+	now = time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC).Add(maxMediaTicketLifetime + time.Minute)
+	if _, stillOK := store.Lookup(activeTok); stillOK {
+		t.Fatal("expected ticket past maxMediaTicketLifetime to expire")
+	}
+}
+
+func TestDecodeMemoryBudgetEnforcesGlobalCapAndCancellation(t *testing.T) {
+	budget := newDecodeMemoryBudget(128<<20, 3)
+	release1, err := budget.Acquire(context.Background(), 96<<20)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	// Second 96 MiB request exceeds 128 MiB global cap and must block until
+	// first releases or context cancels.
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if _, err := budget.Acquire(cancelCtx, 96<<20); err == nil {
+		t.Fatal("expected second 96MiB acquire to block and time out under 128MiB budget")
+	}
+
+	// Once first releases, second acquires cleanly.
+	release1()
+	release2, err := budget.Acquire(context.Background(), 96<<20)
+	if err != nil {
+		t.Fatalf("acquire after release: %v", err)
+	}
+	release2()
+}
+
+func TestOversizedImageRoutesThroughSubprocessAndPreservesICC(t *testing.T) {
+	svc, _, _ := newTestDomain(t)
+	fakeP3 := []byte("oversized-display-p3-icc-payload-123456")
+
+	// Build a minimal valid JPEG whose SOF0 header declares 6000x5000 (30MP > 24MP)
+	// without allocating 30MP pixels in the test.
+	var jpegHeader bytes.Buffer
+	jpegHeader.Write([]byte{0xFF, 0xD8})                         // SOI
+	jpegHeader.Write([]byte{0xFF, 0xC0, 0x00, 0x11, 0x08})       // SOF0, len=17, 8-bit
+	_ = binary.Write(&jpegHeader, binary.BigEndian, uint16(5000)) // height
+	_ = binary.Write(&jpegHeader, binary.BigEndian, uint16(6000)) // width
+	jpegHeader.Write([]byte{0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01})
+	jpegHeader.Write([]byte{0xFF, 0xDA, 0x00, 0x02}) // SOS (Go jpeg.DecodeConfig scans up to SOS for APP14)
+	jpegHeader.Write([]byte{0xFF, 0xD9})             // EOI
+	oversized := injectJPEGICC(jpegHeader.Bytes(), fakeP3)
+	if cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(oversized)); cfgErr != nil || cfg.Width != 6000 || cfg.Height != 5000 {
+		t.Fatalf("synthetic oversized JPEG header invalid: cfg=%+v err=%v", cfg, cfgErr)
+	}
+
+	res, _, err := svc.Store("user-1", "image", "huge.jpg", "image/jpeg", int64(len(oversized)), 6000, 5000, 0, bytes.NewReader(oversized), nil)
+	if err != nil {
+		t.Fatalf("store oversized jpeg: %v", err)
+	}
+
+	subprocessCalled := false
+	smallOutput := buildTestJPEGWithEXIFAndICC(t, 512, 427, 1, nil)
+	svc.previews.scaleImage = func(_ context.Context, _ string, dstPath string, maxSide int, orientation int, outputPNG bool) error {
+		subprocessCalled = true
+		if maxSide != 512 || orientation != 1 || outputPNG {
+			t.Fatalf("unexpected subprocess args: maxSide=%d orientation=%d outputPNG=%v", maxSide, orientation, outputPNG)
+		}
+		return writeAtomicPreviewFile(dstPath, smallOutput)
+	}
+
+	preview, err := svc.OpenImagePreview(context.Background(), "user-1", res.ID, 512, PreviewColorPreserve)
+	if err != nil {
+		t.Fatalf("OpenImagePreview oversized: %v", err)
+	}
+	if !subprocessCalled {
+		t.Fatal("expected >24MP image to route through subprocess scaler instead of in-process Go decode")
+	}
+	if preview.IsOriginal || preview.MimeType != "image/jpeg" {
+		t.Fatalf("unexpected oversized preview result: %+v", preview)
+	}
+	outBytes, err := os.ReadFile(preview.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotICC := extractJPEGICC(outBytes); !bytes.Equal(gotICC, fakeP3) {
+		t.Fatalf("expected ICC re-injected after subprocess scale, got %q", gotICC)
+	}
 }
 
 // Compile guard for model reference used in helper checks.

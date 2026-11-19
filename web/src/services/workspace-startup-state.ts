@@ -35,6 +35,8 @@ export type DesktopBootSnapshot = {
     detail: string;
     dataDir: string;
     diagnosticPath: string;
+    uncleanPreviousShutdown: boolean;
+    lastCrashDiagnosticPath: string;
     transportMode: DesktopTransportMode;
     streamAvailable: boolean;
     failure: WorkspaceStartupFailure | null;
@@ -56,6 +58,8 @@ const INITIAL_SNAPSHOT: DesktopBootSnapshot = {
     detail: "",
     dataDir: "",
     diagnosticPath: "",
+    uncleanPreviousShutdown: false,
+    lastCrashDiagnosticPath: "",
     transportMode: "web",
     streamAvailable: true,
     failure: null,

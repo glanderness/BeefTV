@@ -1,6 +1,7 @@
 package taskdelivery
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,6 +119,8 @@ func (d *Deliverer) Deliver(task model.Task) error {
 		if latest, reloadErr := d.loadedOutputs(task.ID); reloadErr == nil && localtask.DeliveryComplete(task.ResultJSON, latest, task.Type) {
 			d.markSettled(task)
 		}
+	} else if !errors.Is(joined, context.Canceled) {
+		d.recordAttemptFailure(task, joined)
 	}
 	return joined
 }
@@ -126,9 +129,22 @@ type deliveryEffectSettler interface {
 	MarkDeliverySettled(userID, taskID string) error
 }
 
+type deliveryEffectBackoffRecorder interface {
+	RecordDeliveryAttemptFailure(userID, taskID, errMsg string) error
+}
+
 func (d *Deliverer) markSettled(task model.Task) {
 	if settler, ok := d.store.(deliveryEffectSettler); ok {
 		_ = settler.MarkDeliverySettled(task.UserID, task.ID)
+	}
+}
+
+func (d *Deliverer) recordAttemptFailure(task model.Task, err error) {
+	if err == nil {
+		return
+	}
+	if recorder, ok := d.store.(deliveryEffectBackoffRecorder); ok {
+		_ = recorder.RecordDeliveryAttemptFailure(task.UserID, task.ID, err.Error())
 	}
 }
 

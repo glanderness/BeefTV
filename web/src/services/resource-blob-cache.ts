@@ -153,13 +153,10 @@ export async function cacheResourceImagePreviewObjectUrl(storageKey: string, max
     return task;
 }
 
-/** 同步读取本会话内存中的直连或 Blob URL，命中时节点首帧即可上屏。 */
+/** 同步读取本会话内存中的 Blob URL，仅在真实内存命中时返回（不伪装未加载的直连预览为已缓存）。 */
 export function peekCachedResourceObjectUrl(storageKey: string, previewSize?: number) {
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return "";
-    if (canUseSameOriginResourceAsset()) {
-        return resourcePreviewAssetUrl(resourceId, previewSize);
-    }
     if (previewSize && [128, 256, 512, 1024, 2048].includes(previewSize)) {
         return memoryCache.get(cacheKeyFor(storageKey, `preview-${previewSize}`))?.url || "";
     }

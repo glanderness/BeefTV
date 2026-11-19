@@ -107,12 +107,16 @@ export type ReferenceStorageConfig = { enabled: boolean; endpoint: string; bucke
 
 declare global {
     interface Window {
-        runtime?: { BrowserOpenURL?: (url: string) => void };
+        runtime?: {
+            BrowserOpenURL?: (url: string) => void;
+            EventsOn?: (eventName: string, callback: (...data: unknown[]) => void) => () => void;
+        };
         go?: {
             main?: {
                 DesktopApp?: DesktopRuntimeBinding;
             };
         };
+        __BEEFTV_FLUSH_BEFORE_RELOAD__?: () => void;
     }
 }
 
@@ -126,19 +130,43 @@ let upgradeProbeTimer: ReturnType<typeof setInterval> | null = null;
 let currentDesktopApiBaseURL = "/api";
 let rendererHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let rendererHeartbeatVisibilityBound = false;
+let lastCrashEventBound = false;
 let legacyBlobPurgeTimer: ReturnType<typeof setTimeout> | null = null;
+let rendererBusyCount = 0;
 
 function sendRendererHeartbeat() {
     if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
     if (typeof globalThis.fetch !== "function") return;
     const hidden = typeof document !== "undefined" ? Boolean(document.hidden) : false;
+    const busy = rendererBusyCount > 0;
     const base = String(currentDesktopApiBaseURL || "/api").replace(/\/+$/u, "");
     void globalThis.fetch(`${base}/client-runtime/heartbeat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hidden }),
+        body: JSON.stringify({ hidden, busy }),
         credentials: "include",
     }).catch(() => undefined);
+}
+
+/**
+ * Marks the renderer as performing a legitimate long-running operation
+ * (e.g. large archive import/export) so the host watchdog uses its extended
+ * busy timeout instead of interrupting active work.
+ */
+export function beginRendererBusyLease(): () => void {
+    rendererBusyCount += 1;
+    if (rendererBusyCount === 1) {
+        sendRendererHeartbeat();
+    }
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        rendererBusyCount = Math.max(0, rendererBusyCount - 1);
+        if (rendererBusyCount === 0) {
+            sendRendererHeartbeat();
+        }
+    };
 }
 
 function ensureDesktopLifecycleHelpers() {
@@ -151,6 +179,17 @@ function ensureDesktopLifecycleHelpers() {
     if (!rendererHeartbeatVisibilityBound && typeof document !== "undefined") {
         rendererHeartbeatVisibilityBound = true;
         document.addEventListener("visibilitychange", sendRendererHeartbeat);
+    }
+    if (!lastCrashEventBound && typeof window.runtime?.EventsOn === "function") {
+        lastCrashEventBound = true;
+        window.runtime.EventsOn("diagnostics:last-crash-ready", (savedPath) => {
+            if (typeof savedPath === "string" && savedPath.trim()) {
+                updateDesktopBootSnapshot({
+                    uncleanPreviousShutdown: true,
+                    lastCrashDiagnosticPath: savedPath.trim(),
+                });
+            }
+        });
     }
     if (!legacyBlobPurgeTimer) {
         legacyBlobPurgeTimer = setTimeout(() => {
@@ -435,6 +474,8 @@ export async function bootstrapDesktopRuntime(options?: {
                 detail: stateCandidate.detail ?? prev.detail,
                 dataDir: stateCandidate.dataDir || prev.dataDir,
                 diagnosticPath: stateCandidate.diagnosticPath || prev.diagnosticPath,
+                uncleanPreviousShutdown: Boolean(stateCandidate.uncleanPreviousShutdown || prev.uncleanPreviousShutdown),
+                lastCrashDiagnosticPath: stateCandidate.lastCrashDiagnosticPath || prev.lastCrashDiagnosticPath,
             });
             if (stateCandidate.state === "failed") {
                 throw new DesktopStartupError({

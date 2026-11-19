@@ -414,7 +414,6 @@ func (s *Service) afterReady(resource *model.Resource) {
 	if s.lifecycle != nil {
 		s.lifecycle.RecordActivity(resource.UserID, "resource", 1)
 		s.lifecycle.AfterResourceReady(resource)
-		s.enqueuePreviewPrewarm(resource)
 	}
 }
 

@@ -6,6 +6,7 @@ export type ResourcePlaybackStream = {
     url: string;
     compatible: boolean;
     mode: "loopback-ticket" | "same-origin-fallback";
+    expiresAtMs?: number;
 };
 
 export type ResolvedVideoPlayback = string | ResourcePlayback | ResourcePlaybackStream;
@@ -64,6 +65,7 @@ async function tryResolveMediaStream(
             url: stream.url,
             compatible: stream.compatible,
             mode: stream.mode,
+            expiresAtMs: stream.expiresAtMs,
         };
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;

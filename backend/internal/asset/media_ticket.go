@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	defaultMediaTicketTTL = 20 * time.Minute
-	maxMediaTickets       = 2048
+	defaultMediaTicketTTL  = 20 * time.Minute
+	maxMediaTicketLifetime = 6 * time.Hour
+	maxMediaTickets        = 2048
 )
 
 // MediaTicket authorizes a single process-ephemeral, loopback-only GET/HEAD
@@ -21,6 +22,7 @@ type MediaTicket struct {
 	Variant    string
 	FileName   string
 	MimeType   string
+	IssuedAt   time.Time
 	ExpiresAt  time.Time
 }
 
@@ -56,6 +58,7 @@ func (s *MediaTicketStore) Issue(userID, resourceID, variant, fileName, mimeType
 		Variant:    normalizeMediaTicketVariant(variant),
 		FileName:   strings.TrimSpace(fileName),
 		MimeType:   strings.TrimSpace(mimeType),
+		IssuedAt:   now,
 		ExpiresAt:  expiresAt,
 	}
 
@@ -107,6 +110,27 @@ func (s *MediaTicketStore) Lookup(token string) (MediaTicket, bool) {
 		}
 		s.mu.Unlock()
 		return MediaTicket{}, false
+	}
+	// Sliding TTL renewal while active playback/seeking continues, bounded by
+	// maxMediaTicketLifetime so idle tickets still expire cleanly.
+	if s.ttl > 0 && entry.ExpiresAt.Sub(now) <= s.ttl/2 {
+		hardCap := entry.IssuedAt.Add(maxMediaTicketLifetime)
+		if entry.IssuedAt.IsZero() {
+			hardCap = now.Add(s.ttl)
+		}
+		renewed := now.Add(s.ttl)
+		if renewed.After(hardCap) {
+			renewed = hardCap
+		}
+		if renewed.After(entry.ExpiresAt) {
+			s.mu.Lock()
+			if current, exists := s.tickets[token]; exists && now.Before(current.ExpiresAt) && renewed.After(current.ExpiresAt) {
+				current.ExpiresAt = renewed
+				s.tickets[token] = current
+				entry = current
+			}
+			s.mu.Unlock()
+		}
 	}
 	return entry, true
 }

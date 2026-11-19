@@ -470,6 +470,16 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
     const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
     const [firstFramePresented, setFirstFramePresented] = useState(false);
     const [playbackError, setPlaybackError] = useState(false);
+    const resumeTimeRef = useRef(0);
+
+    const recoverVideoPlayback = () => {
+        const video = playerBoxRef.current?.querySelector("video");
+        if (video && Number.isFinite(video.currentTime) && video.currentTime > 0.5) {
+            resumeTimeRef.current = video.currentTime;
+        }
+        recordCanvasVideoDiagnostic(node, "playback_failed", video);
+        if (!requestCompatible()) setPlaybackError(true);
+    };
 
     useEffect(() => {
         setFirstFramePresented(false);
@@ -494,6 +504,13 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
         if (!video) return;
         const handleLoadedMetadata = () => {
             if (video.videoWidth <= 0 || video.videoHeight <= 0) return;
+            if (resumeTimeRef.current > 0.5) {
+                const targetTime = Number.isFinite(video.duration) && video.duration > 0
+                    ? Math.min(resumeTimeRef.current, Math.max(0, video.duration - 0.1))
+                    : resumeTimeRef.current;
+                resumeTimeRef.current = 0;
+                try { video.currentTime = targetTime; } catch { /* ignore seek before buffered */ }
+            }
             recordCanvasVideoDiagnostic(node, "metadata_loaded", video);
             setVideoSize({ width: video.videoWidth, height: video.videoHeight });
             const actualDurationMs = Number.isFinite(video.duration) && video.duration > 0 ? Math.round(video.duration * 1000) : undefined;
@@ -540,7 +557,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
     return (
         <div ref={playerBoxRef} className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[var(--node-radius)] bg-black" onErrorCapture={(event) => {
             // A failed <source> does not bubble a video error to Vidstack.
-            if (event.target instanceof HTMLSourceElement) { recordCanvasVideoDiagnostic(node, "playback_failed", playerBoxRef.current?.querySelector("video")); if (!requestCompatible()) setPlaybackError(true); }
+            if (event.target instanceof HTMLSourceElement) recoverVideoPlayback();
         }}>
             {node.metadata?.outputParameterWarning ? <div role="status" className="absolute left-2 right-2 top-2 z-[var(--node-z-overlay)] rounded-md px-3 py-2 text-xs leading-relaxed" style={{ background: theme.node.panel, color: theme.node.text }}>{node.metadata.outputParameterWarning}</div> : null}
             <div className={`absolute inset-0 ${presentation.showPoster ? "opacity-100" : "opacity-0"}`}>
@@ -550,7 +567,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
             {previewError ? <div role="status" className="absolute inset-0 z-[var(--node-z-overlay)] flex flex-col items-center justify-center gap-3 bg-black/80 px-4 text-center text-xs text-white/80"><span>{previewError}</span><button type="button" data-canvas-no-zoom className="rounded border px-3 py-1 focus-visible:outline" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlaybackError(false); retry(); }}>重新加载</button></div> : null}
             {mediaActive && url ? (
                 <div className={`absolute ${presentation.showVideo ? "opacity-100" : "pointer-events-none opacity-0"}`} style={{ width: fitWidth, height: Math.round(fitHeight) }}>
-                    <CanvasNodeVideoPlayer key={retryEpoch} src={url} mimeType={compatible ? "video/mp4" : node.metadata?.mimeType} title={node.title || "视频"} hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata" brandColor={theme.accent.primary} className="h-full w-full rounded-[var(--node-radius)] bg-black" dataCanvasNoZoom onFirstFramePresented={() => { setFirstFramePresented(true); recordCanvasVideoDiagnostic(node, "first_frame", playerBoxRef.current?.querySelector("video")); }} onError={() => { recordCanvasVideoDiagnostic(node, "playback_failed", playerBoxRef.current?.querySelector("video")); if (!requestCompatible()) setPlaybackError(true); }}>
+                    <CanvasNodeVideoPlayer key={retryEpoch} src={url} mimeType={compatible ? "video/mp4" : node.metadata?.mimeType} title={node.title || "视频"} hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata" brandColor={theme.accent.primary} className="h-full w-full rounded-[var(--node-radius)] bg-black" dataCanvasNoZoom onFirstFramePresented={() => { setFirstFramePresented(true); recordCanvasVideoDiagnostic(node, "first_frame", playerBoxRef.current?.querySelector("video")); }} onError={recoverVideoPlayback}>
                         {activeEntry && activeEntry.text.trim() ? <CanvasSubtitleOverlay text={activeEntry.text} highlight={activeHighlight} style={subtitleStyle} /> : null}
                     </CanvasNodeVideoPlayer>
                 </div>

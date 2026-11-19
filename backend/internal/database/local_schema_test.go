@@ -546,3 +546,52 @@ func TestCreationConversationsImportIndexRepairedWithoutNewMigration(t *testing.
 		t.Fatalf("repair added a migration: %d -> %d", len(ledgerBefore), len(ledgerAfter))
 	}
 }
+
+func TestV31TaskEffectsMigrationBackfillsHistoricalSucceededTasksAndValidatesSchema(t *testing.T) {
+	db := openHistorical(t, "preview-v9")
+	now := time.Now()
+	// Insert one historical succeeded task and one actively downloading task before migrating to v31.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at)
+		VALUES ('hist-done', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'old', '{"images":[]}', ?, ?)`, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at)
+		VALUES ('hist-inflight', 'local', 'canvas-1', 'canvas_image', 'succeeded', '正在取回结果', 'inflight', '{"images":[]}', ?, ?)`, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatalf("RequireLocalSchema after v31 failed: %v", err)
+	}
+
+	var doneEffects []model.TaskEffect
+	if err := db.Where("task_id = ?", "hist-done").Find(&doneEffects).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(doneEffects) != 2 {
+		t.Fatalf("expected 2 backfilled settled effects (delivery+bind) for hist-done, got %+v", doneEffects)
+	}
+	for _, effect := range doneEffects {
+		if effect.Status != model.TaskEffectStatusSettled || effect.Reason != "v31_migration_baseline" {
+			t.Fatalf("unexpected backfilled effect row: %+v", effect)
+		}
+	}
+
+	var inflightCount int64
+	if err := db.Model(&model.TaskEffect{}).Where("task_id = ?", "hist-inflight").Count(&inflightCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if inflightCount != 0 {
+		t.Fatalf("actively downloading task must not be backfilled as settled, got %d rows", inflightCount)
+	}
+
+	// Dropping task_effects must cause RequireLocalSchema to fail Ready.
+	if err := db.Exec("DROP TABLE task_effects").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err == nil {
+		t.Fatal("expected RequireLocalSchema to reject v31 database missing task_effects table")
+	}
+}

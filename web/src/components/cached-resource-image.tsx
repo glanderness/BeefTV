@@ -26,9 +26,14 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
     const localImageResource = Boolean(storageKey && !remoteResource);
     const storageBackedImage = remoteResource || localImageResource;
     const targetRef = useRef<HTMLSpanElement>(null);
-    const syncPreviewUrl = remoteResource && storageKey ? peekCachedResourceObjectUrl(storageKey, previewSize) : "";
+    const resourceId = remoteResource && storageKey ? resourceIdFromStorageKey(storageKey) : "";
+    const directDesktopAsset = Boolean(resourceId && canUseSameOriginResourceAsset());
+    const syncPreviewUrl = remoteResource && storageKey && !directDesktopAsset
+        ? peekCachedResourceObjectUrl(storageKey, previewSize)
+        : "";
+    const initialDirectUrl = eager && directDesktopAsset ? resourcePreviewAssetUrl(resourceId, previewSize) : "";
     const [nearViewport, setNearViewport] = useState(eager || !remoteResource || Boolean(syncPreviewUrl));
-    const [cachedSrc, setCachedSrc] = useState(syncPreviewUrl || (storageBackedImage ? "" : safeFallbackSrc));
+    const [cachedSrc, setCachedSrc] = useState(initialDirectUrl || syncPreviewUrl || (storageBackedImage ? "" : safeFallbackSrc));
     const [cacheFailed, setCacheFailed] = useState(false);
 
     useEffect(() => {

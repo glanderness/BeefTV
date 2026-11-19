@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { invalidateResourceMediaTicket } from "@/services/media-asset-url";
+import { invalidateResourceMediaTicket, MEDIA_TICKET_REFRESH_MARGIN_MS } from "@/services/media-asset-url";
 import { resolveResourceVideoPlayback } from "@/services/resource-video-playback";
 
 // All video surfaces share request ownership, loopback ticket streaming, decode fallback and Blob URL disposal.
@@ -13,6 +13,7 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
     const [compatibleTarget, setCompatibleTarget] = useState("");
     const [loadedIdentity, setLoadedIdentity] = useState("");
     const [retryEpoch, setRetryEpoch] = useState(0);
+    const streamMetaRef = useRef<{ identity: string; mode?: string; expiresAtMs?: number; autoRefreshedKey?: string }>({ identity: "" });
     const identity = JSON.stringify([storageKey, fallback]);
     const needsCompatible = compatibleTarget === identity;
     useEffect(() => { if (!active) setCompatibleTarget(""); }, [active]);
@@ -26,16 +27,27 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
         setCompatible(false);
         setUrl("");
         setLoading(active);
+        if (streamMetaRef.current.identity !== identity) {
+            streamMetaRef.current = { identity };
+        }
         if (!active) return;
         void resolveResourceVideoPlayback(storageKey, fallback, controller.signal, needsCompatible)
             .then((resolved) => {
                 if (cancelled) return;
                 if (typeof resolved === "string") {
+                    streamMetaRef.current = { identity };
                     setUrl(resolved);
                 } else if ("url" in resolved) {
+                    streamMetaRef.current = {
+                        identity,
+                        mode: resolved.mode,
+                        expiresAtMs: resolved.expiresAtMs,
+                        autoRefreshedKey: streamMetaRef.current.autoRefreshedKey,
+                    };
                     setCompatible(resolved.compatible);
                     setUrl(resolved.url);
                 } else {
+                    streamMetaRef.current = { identity };
                     ownedUrl = URL.createObjectURL(resolved.blob);
                     setCompatible(resolved.compatible);
                     setUrl(ownedUrl);
@@ -50,6 +62,25 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
 
     const requestCompatible = () => {
         const resourceId = resourceIdFromStorageKey(storageKey);
+        const meta = streamMetaRef.current;
+        const variant: "original" | "playback" = needsCompatible || (loadedIdentity === identity && compatible) ? "playback" : "original";
+        const refreshKey = `${identity}:${variant}:${retryEpoch}`;
+        // If a long-paused loopback ticket has expired (or is within the renewal margin),
+        // silently re-issue a fresh ticket for the same variant once before falling back
+        // to transcode or surfacing an error.
+        if (
+            resourceId &&
+            meta.identity === identity &&
+            meta.mode === "loopback-ticket" &&
+            meta.autoRefreshedKey !== refreshKey &&
+            (!meta.expiresAtMs || Date.now() >= meta.expiresAtMs - MEDIA_TICKET_REFRESH_MARGIN_MS)
+        ) {
+            meta.autoRefreshedKey = `${identity}:${variant}:${retryEpoch + 1}`;
+            invalidateResourceMediaTicket(resourceId, variant);
+            setError("");
+            setRetryEpoch((value) => value + 1);
+            return true;
+        }
         if (resourceId) invalidateResourceMediaTicket(resourceId);
         if (needsCompatible || (loadedIdentity === identity && compatible) || !storageKey.startsWith("resource:")) return false;
         setCompatibleTarget(identity);
@@ -61,6 +92,7 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
         retry: () => {
             const resourceId = resourceIdFromStorageKey(storageKey);
             if (resourceId) invalidateResourceMediaTicket(resourceId);
+            streamMetaRef.current.autoRefreshedKey = undefined;
             setError("");
             setRetryEpoch((value) => value + 1);
         },

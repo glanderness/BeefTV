@@ -156,7 +156,40 @@ func canonicalLocalMigrations() []localMigration {
 			if err := tx.AutoMigrate(&model.TaskEffect{}); err != nil {
 				return err
 			}
-			return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_task_effects_active ON task_effects(status, next_attempt_at, canvas_id) WHERE status IN ('pending', 'refused')`).Error
+			if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_task_effects_active ON task_effects(status, next_attempt_at, canvas_id) WHERE status IN ('pending', 'refused')`).Error; err != nil {
+				return err
+			}
+			// Backfill already-succeeded historical tasks (except tasks actively
+			// downloading at upgrade time) so upgrading workspaces never replay
+			// hundreds of old canvas binds or delivery scans on first launch.
+			if err := tx.Exec(`INSERT OR IGNORE INTO task_effects (
+				id, user_id, task_id, kind, canvas_id, node_id, output_index,
+				conversation_id, message_id, status, reason, refused_revision,
+				attempts, next_attempt_at, last_error, created_at, updated_at
+			)
+			SELECT
+				'v31-del-' || id, user_id, id, ?, COALESCE(project_id, ''), '', 0,
+				'', '', ?, 'v31_migration_baseline', 0,
+				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			FROM tasks
+			WHERE status = ? AND COALESCE(stage, '') <> '正在取回结果'`,
+				model.TaskEffectKindDeliverySettled, model.TaskEffectStatusSettled, model.TaskStatusSucceeded,
+			).Error; err != nil {
+				return err
+			}
+			return tx.Exec(`INSERT OR IGNORE INTO task_effects (
+				id, user_id, task_id, kind, canvas_id, node_id, output_index,
+				conversation_id, message_id, status, reason, refused_revision,
+				attempts, next_attempt_at, last_error, created_at, updated_at
+			)
+			SELECT
+				'v31-bind-' || id, user_id, id, ?, COALESCE(project_id, ''), '', 0,
+				'', '', ?, 'v31_migration_baseline', 0,
+				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			FROM tasks
+			WHERE status = ? AND COALESCE(stage, '') <> '正在取回结果'`,
+				model.TaskEffectKindTaskBindSettled, model.TaskEffectStatusSettled, model.TaskStatusSucceeded,
+			).Error
 		}},
 	}
 }
@@ -229,6 +262,11 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	if current >= 11 {
 		if err := ensureCreationConversationsIndexes(db); err != nil {
 			return fmt.Errorf("补齐创作对话索引: %w", err)
+		}
+	}
+	if current >= 31 {
+		if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_effects_active ON task_effects(status, next_attempt_at, canvas_id) WHERE status IN ('pending', 'refused')`).Error; err != nil {
+			return fmt.Errorf("补齐任务副作用活跃索引: %w", err)
 		}
 	}
 	return requireReconciledSchema(db)
@@ -472,6 +510,9 @@ func RequireLocalSchema(db *gorm.DB) error {
 	if version >= 13 && !db.Migrator().HasTable(&model.UserUploadReservation{}) {
 		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 	}
+	if version >= 31 && !db.Migrator().HasTable(&model.TaskEffect{}) {
+		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
+	}
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
 	}
@@ -521,6 +562,9 @@ func requireReconciledSchema(db *gorm.DB) error {
 	models := []any{&model.ImageSubmission{}, &model.AgentOpRecord{}}
 	if version >= 30 {
 		models = append(models, &model.MCPCall{})
+	}
+	if version >= 31 {
+		models = append(models, &model.TaskEffect{})
 	}
 	for _, value := range models {
 		stmt := &gorm.Statement{DB: db}
@@ -612,6 +656,23 @@ func requireReconciledSchema(db *gorm.DB) error {
 	if version >= 24 {
 		if !db.Migrator().HasTable(&model.CanvasWorkflowRevision{}) || !db.Migrator().HasColumn(&model.CanvasWorkflow{}, "revision") || !db.Migrator().HasColumn(&model.CanvasWorkflowRun{}, "template_revision") {
 			return fmt.Errorf("本地工作流版本结构缺失，请启用自动迁移")
+		}
+	}
+	if version >= 31 {
+		if !db.Migrator().HasTable(&model.TaskEffect{}) {
+			return fmt.Errorf("本地任务副作用表缺失，请启用自动迁移")
+		}
+		validIdentity, err := matchesSQLiteIndex(db, sqliteIndexContract{
+			table:   "task_effects",
+			name:    "idx_task_effects_identity",
+			columns: []string{"task_id", "kind", "node_id", "output_index", "conversation_id", "message_id"},
+			unique:  true,
+		})
+		if err != nil {
+			return err
+		}
+		if !validIdentity {
+			return fmt.Errorf("本地任务副作用唯一索引 idx_task_effects_identity 缺失或定义不完整")
 		}
 	}
 	return nil

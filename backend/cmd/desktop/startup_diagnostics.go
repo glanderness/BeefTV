@@ -252,7 +252,7 @@ func (a *DesktopApp) recordLastDiagnosticBundlePath(path string) {
 
 func (a *DesktopApp) resolveKnownDiagnosticBundlePath() string {
 	a.mu.RLock()
-	candidates := []string{a.lastDiagnosticPath, a.boot.state.DiagnosticPath}
+	candidates := []string{a.lastDiagnosticPath, a.lastCrashDiagnosticPath, a.boot.state.DiagnosticPath}
 	a.mu.RUnlock()
 	for _, raw := range candidates {
 		clean := filepath.Clean(strings.TrimSpace(raw))
@@ -383,17 +383,45 @@ func pruneStartupDiagnosticSnapshots(dir string) {
 	if err != nil {
 		return
 	}
-	var names []string
+	type namedEntry struct {
+		name    string
+		modTime time.Time
+	}
+	buckets := map[string][]namedEntry{
+		"startup":    nil,
+		"last-crash": nil,
+	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.Contains(entry.Name(), "startup-diagnostics-") && strings.HasSuffix(entry.Name(), ".zip") {
-			names = append(names, entry.Name())
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".zip") {
+			continue
 		}
+		var bucket string
+		switch {
+		case strings.Contains(entry.Name(), "startup-diagnostics-"):
+			bucket = "startup"
+		case strings.Contains(entry.Name(), "last-crash-diagnostics-"):
+			bucket = "last-crash"
+		default:
+			continue
+		}
+		var modTime time.Time
+		if info, statErr := entry.Info(); statErr == nil {
+			modTime = info.ModTime()
+		}
+		buckets[bucket] = append(buckets[bucket], namedEntry{name: entry.Name(), modTime: modTime})
 	}
-	if len(names) <= maxAutoStartupBundles {
-		return
-	}
-	sort.Strings(names)
-	for _, old := range names[:len(names)-maxAutoStartupBundles] {
-		_ = os.Remove(filepath.Join(dir, old))
+	for _, list := range buckets {
+		if len(list) <= maxAutoStartupBundles {
+			continue
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if !list[i].modTime.Equal(list[j].modTime) {
+				return list[i].modTime.Before(list[j].modTime)
+			}
+			return list[i].name < list[j].name
+		})
+		for _, old := range list[:len(list)-maxAutoStartupBundles] {
+			_ = os.Remove(filepath.Join(dir, old.name))
+		}
 	}
 }
