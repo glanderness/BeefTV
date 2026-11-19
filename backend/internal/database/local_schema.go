@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 30
+const CurrentSchemaVersion int64 = 31
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -58,7 +58,7 @@ func LocalModels() []any {
 		&model.Shot{}, &model.ShotRevision{}, &model.ShotArtifact{}, &model.ShotAssetReference{},
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
-		&model.AssistantTurn{}, &model.MCPCall{},
+		&model.AssistantTurn{}, &model.MCPCall{}, &model.TaskEffect{},
 		&model.AssistantContinuation{},
 		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
@@ -151,6 +151,12 @@ func canonicalLocalMigrations() []localMigration {
 				return err
 			}
 			return ensureSQLiteColumn(tx, "image_submissions", "settled_quota", "INTEGER")
+		}},
+		{version: 31, name: "task-effects-outbox", apply: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.TaskEffect{}); err != nil {
+				return err
+			}
+			return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_task_effects_active ON task_effects(status, next_attempt_at, canvas_id) WHERE status IN ('pending', 'refused')`).Error
 		}},
 	}
 }

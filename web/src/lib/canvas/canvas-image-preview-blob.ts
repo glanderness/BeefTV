@@ -1,7 +1,26 @@
-export function canvasImagePreviewSize(width: number, height: number, scale: number, dpr: number, naturalWidth: number, naturalHeight: number, mimeType: string) {
+import { getCanvasMemoryMode, type CanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
+
+export function canvasImagePreviewSize(
+    width: number,
+    height: number,
+    scale: number,
+    dpr: number,
+    naturalWidth: number,
+    naturalHeight: number,
+    mimeType: string,
+    memoryMode: CanvasMemoryMode = getCanvasMemoryMode(),
+): 128 | 256 | 512 | 1024 | 2048 | undefined {
+    if (memoryMode === "thumbnail-only") {
+        if (mimeType && /^image\/gif$/i.test(mimeType)) return undefined;
+        return 256;
+    }
+    if (memoryMode === "low-memory") {
+        if (mimeType && /^image\/gif$/i.test(mimeType)) return undefined;
+        return 512;
+    }
     if (!/^image\/(jpeg|png)$/i.test(mimeType) || !naturalWidth || !naturalHeight) return undefined;
     const required = Math.max(width, height) * scale * Math.max(1, dpr) * 2;
-    const tier = [128, 512, 1024, 2048].find((size) => size >= required);
+    const tier = ([128, 512, 1024, 2048] as const).find((size) => size >= required);
     return tier && tier < Math.max(naturalWidth, naturalHeight) ? tier : undefined;
 }
 
@@ -41,10 +60,14 @@ export function subscribeDevicePixelRatio(listener: (dpr: number) => void) {
     };
 }
 
-/** Disposable display pixels; never replace the original resource. */
+/**
+ * Disposable display pixels fallback for non-server / browser-local blobs.
+ * Backend-hosted resources use server-generated disk-cached previews instead
+ * of main-thread canvas.toBlob().
+ */
 export async function createCanvasImagePreviewBlob(original: Blob, maxSize: number): Promise<Blob> {
     const normalizedMime = original.type.toLowerCase();
-    if (normalizedMime !== "image/jpeg" && normalizedMime !== "image/png") return original;
+    if (normalizedMime !== "image/jpeg" && normalizedMime !== "image/png" && normalizedMime !== "image/webp") return original;
     // APNG keeps its animation. acTL precedes the first image-data chunk.
     if (normalizedMime === "image/png") {
         const header = new Uint8Array(await original.slice(0, 65536).arrayBuffer());
@@ -62,9 +85,10 @@ export async function createCanvasImagePreviewBlob(original: Blob, maxSize: numb
     const source = URL.createObjectURL(original);
     const canvas = document.createElement("canvas");
     try {
-        const context = canvas.getContext("2d", { colorSpace: "display-p3" });
-        // Preserve Mac wide-gamut images; unsupported engines keep the original.
-        if (!context || context.getContextAttributes?.().colorSpace !== "display-p3") return original;
+        const context =
+            canvas.getContext("2d", { colorSpace: "display-p3" }) ||
+            canvas.getContext("2d");
+        if (!context) return original;
         await new Promise<void>((resolve, reject) => {
             image.onload = () => resolve();
             image.onerror = () => reject(new Error("图片预览解码失败"));
@@ -80,13 +104,13 @@ export async function createCanvasImagePreviewBlob(original: Blob, maxSize: numb
         context.imageSmoothingEnabled = true;
         context.imageSmoothingQuality = "high";
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        const outputMime = normalizedMime === "image/jpeg" ? "image/jpeg" : "image/png";
-        const outputQuality = outputMime === "image/jpeg" ? 0.9 : undefined;
+        const outputMime = normalizedMime === "image/png" ? "image/png" : "image/jpeg";
+        const outputQuality = outputMime === "image/jpeg" ? 0.86 : undefined;
         return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("图片预览编码失败")), outputMime, outputQuality));
     } finally {
         image.onload = image.onerror = null;
         image.src = "";
         URL.revokeObjectURL(source);
-        canvas.width = canvas.height = 1;
+        canvas.width = canvas.height = 0;
     }
 }

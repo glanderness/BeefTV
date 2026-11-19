@@ -1,40 +1,85 @@
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { buildLibTVImagePreviewUrl } from "@/lib/canvas/libtv-import";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration, getCachedCanvasVideoPreviewBlob, hasCachedCanvasVideoPreview } from "@/services/canvas-video-preview";
+import { ownedResourceIdFromMediaRef, resourceIdFromStorageKey } from "@/services/api/resources";
+import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration, getCachedCanvasVideoPreviewBlob, hasCachedCanvasVideoPreview, resolveServerVideoPosterUrl } from "@/services/canvas-video-preview";
 import { resolveImageUrl } from "@/services/image-storage";
+import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
 import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 /**
- * Small display-only bitmaps for the overview canvas. They are derived from
- * the same cached previews the DOM cards use and never replace the original
- * resource or mutate the canvas document.
+ * Small display-only bitmaps for the overview canvas. Backed by a byte-budgeted
+ * LRU (`MAX_MEMORY_BYTES`) that explicitly closes `ImageBitmap` / zeroes canvas
+ * backing stores on eviction and canvas unmount so GPU VRAM stays bounded.
  */
-export type CanvasLodThumbnail = { source: CanvasImageSource; width: number; height: number };
+export type CanvasLodThumbnail = { source: CanvasImageSource; width: number; height: number; bytes?: number };
 
 type Entry = {
     state: "pending" | "ready" | "failed";
     thumbnail?: CanvasLodThumbnail;
+    bytes: number;
     failedAt?: number;
     listeners: Set<() => void>;
 };
 
 const THUMBNAIL_MAX_SIDE = 256;
-const MAX_ENTRIES = 600;
-const MAX_PREWARM_QUEUE = 64;
+const MAX_ENTRIES = 256;
+const MAX_MEMORY_BYTES = 32 * 1024 * 1024;
+const MAX_PREWARM_QUEUE = 48;
 const MAX_CONCURRENT_LOADS = 4;
 const FAILED_RETRY_DELAY_MS = 1000;
-// Persisted preview tier shared with the DOM image cards.
-const IMAGE_PREVIEW_TIER = 512;
+const IMAGE_PREVIEW_TIER = 256;
 
 const entries = new Map<string, Entry>();
+let totalMemoryBytes = 0;
 const queue: Array<{ key: string; node: CanvasNodeData }> = [];
 const prewarmQueue: Array<{ key: string; node: CanvasNodeData }> = [];
 const prewarmQueuedKeys = new Set<string>();
 let activeLoads = 0;
 let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
 let redrawListener: (() => void) | null = null;
+
+function disposeThumbnail(thumbnail?: CanvasLodThumbnail) {
+    if (!thumbnail) return;
+    const source = thumbnail.source as { close?: () => void; width?: number; height?: number } | undefined;
+    if (!source) return;
+    if (typeof source.close === "function") {
+        try {
+            source.close();
+        } catch {
+            // Ignore double-close errors.
+        }
+        return;
+    }
+    if (typeof HTMLCanvasElement !== "undefined" && source instanceof HTMLCanvasElement) {
+        source.width = 0;
+        source.height = 0;
+    }
+}
+
+function deleteEntry(key: string) {
+    const entry = entries.get(key);
+    if (!entry) return;
+    entries.delete(key);
+    totalMemoryBytes = Math.max(0, totalMemoryBytes - entry.bytes);
+    disposeThumbnail(entry.thumbnail);
+    entry.thumbnail = undefined;
+    entry.bytes = 0;
+}
+
+export function clearCanvasLodThumbnails() {
+    if (prewarmTimer !== null) {
+        clearTimeout(prewarmTimer);
+        prewarmTimer = null;
+    }
+    queue.length = 0;
+    prewarmQueue.length = 0;
+    prewarmQueuedKeys.clear();
+    for (const key of [...entries.keys()]) {
+        deleteEntry(key);
+    }
+    totalMemoryBytes = 0;
+}
 
 export function setCanvasLodRedrawListener(listener: (() => void) | null) {
     redrawListener = listener;
@@ -54,6 +99,7 @@ export function canvasLodThumbnailKey(node: CanvasNodeData) {
 }
 
 function canLoadVideoThumbnail(node: CanvasNodeData) {
+    if (resolveServerVideoPosterUrl(node)) return true;
     if (node.metadata?.videoPreview?.storageKey) return true;
     const persisted = canvasNodeVideoPreviewUrl(node);
     if (persisted && !canvasVideoPreviewNeedsHydration(node)) return true;
@@ -64,11 +110,6 @@ function isCanvasInteracting() {
     return typeof document !== "undefined" && Boolean(document.querySelector('[data-canvas-viewport-interacting="true"],[data-canvas-node-dragging="true"]'));
 }
 
-/**
- * Returns the bitmap when ready; otherwise queues one load and calls
- * `onReady` once it settles. Callers redraw from scratch, so a missed
- * notification only delays the thumbnail until the next frame.
- */
 export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void, allowQueue?: boolean): CanvasLodThumbnail | null | "failed" {
     const key = canvasLodThumbnailKey(node);
     if (!key) return null;
@@ -76,7 +117,6 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void,
     if (existing) {
         if (existing.state === "ready") {
             if (allowQueue !== false) {
-                // Refresh LRU position outside active gesture frames.
                 entries.delete(key);
                 entries.set(key, existing);
             }
@@ -84,9 +124,7 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void,
         }
         if (existing.state === "failed") {
             if (Date.now() - (existing.failedAt || 0) < FAILED_RETRY_DELAY_MS) return "failed";
-            // A transient download/decode failure must not poison the overview
-            // for the rest of the session. Retry on a later visible redraw.
-            entries.delete(key);
+            deleteEntry(key);
         } else {
             existing.listeners.add(onReady);
             return null;
@@ -95,7 +133,7 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void,
     const canQueue = allowQueue ?? !isCanvasInteracting();
     if (!canQueue) return null;
     if (node.type === CanvasNodeType.Video && !canLoadVideoThumbnail(node)) return null;
-    const entry: Entry = { state: "pending", listeners: new Set([onReady]) };
+    const entry: Entry = { state: "pending", bytes: 0, listeners: new Set([onReady]) };
     entries.set(key, entry);
     queue.push({ key, node });
     pumpQueue();
@@ -104,11 +142,11 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void,
 }
 
 function evictOverflow() {
-    if (entries.size <= MAX_ENTRIES) return;
+    if (entries.size <= MAX_ENTRIES && totalMemoryBytes <= MAX_MEMORY_BYTES) return;
     for (const [key, entry] of entries) {
-        if (entries.size <= MAX_ENTRIES) break;
+        if (entries.size <= MAX_ENTRIES && totalMemoryBytes <= MAX_MEMORY_BYTES) break;
         if (entry.state === "pending") continue;
-        entries.delete(key);
+        deleteEntry(key);
     }
 }
 
@@ -118,18 +156,24 @@ function pumpQueue() {
         return;
     }
     while (activeLoads < MAX_CONCURRENT_LOADS && queue.length) {
-        // Most recent requests are what the user is looking at now.
         const job = queue.pop()!;
         const entry = entries.get(job.key);
         if (!entry || entry.state !== "pending") continue;
         activeLoads += 1;
         void loadThumbnail(job.node)
             .then((thumbnail) => {
+                if (entries.get(job.key) !== entry) {
+                    disposeThumbnail(thumbnail || undefined);
+                    return;
+                }
                 entry.state = thumbnail ? "ready" : "failed";
                 entry.thumbnail = thumbnail || undefined;
+                entry.bytes = thumbnail?.bytes || 0;
+                totalMemoryBytes += entry.bytes;
                 if (!thumbnail) entry.failedAt = Date.now();
             })
             .catch(() => {
+                if (entries.get(job.key) !== entry) return;
                 entry.state = "failed";
                 entry.failedAt = Date.now();
             })
@@ -146,10 +190,6 @@ function pumpQueue() {
     }
 }
 
-/**
- * Low-priority background warmup for media thumbnails so the first zoom across
- * the overview threshold draws cached bitmaps instead of decoding in flight.
- */
 export function prewarmCanvasLodThumbnails(nodes: readonly CanvasNodeData[]) {
     if (typeof window === "undefined") return;
     for (const node of nodes) {
@@ -185,7 +225,7 @@ function schedulePrewarmStep() {
             const job = prewarmQueue.shift()!;
             prewarmQueuedKeys.delete(job.key);
             if (entries.has(job.key)) continue;
-            const entry: Entry = { state: "pending", listeners: new Set() };
+            const entry: Entry = { state: "pending", bytes: 0, listeners: new Set() };
             entries.set(job.key, entry);
             queue.push(job);
             pumpQueue();
@@ -206,22 +246,35 @@ async function resolveImageThumbnailUrl(node: CanvasNodeData) {
     const storageKey = metadata?.storageKey || "";
     const content = metadata?.content || "";
     const fallback = metadata?.previewContent || (metadata?.importSource?.provider === "libtv" ? buildLibTVImagePreviewUrl(content) : content);
-    if (resourceIdFromStorageKey(storageKey)) {
-        const large = Math.max(metadata?.naturalWidth || 0, metadata?.naturalHeight || 0) > IMAGE_PREVIEW_TIER;
-        if (large && /^image\/(jpeg|png)$/i.test(metadata?.mimeType || "")) {
-            return cacheResourceImagePreviewObjectUrl(storageKey, IMAGE_PREVIEW_TIER);
+    const resourceId = ownedResourceIdFromMediaRef(storageKey, content);
+    if (resourceId) {
+        if (canUseSameOriginResourceAsset()) {
+            return resourcePreviewAssetUrl(resourceId, IMAGE_PREVIEW_TIER);
         }
-        return cacheResourceObjectUrl(storageKey);
+        const large = Math.max(metadata?.naturalWidth || 0, metadata?.naturalHeight || 0) > IMAGE_PREVIEW_TIER;
+        if (large && /^image\/(jpeg|png|webp)$/i.test(metadata?.mimeType || "")) {
+            return cacheResourceImagePreviewObjectUrl(`resource:${resourceId}`, IMAGE_PREVIEW_TIER);
+        }
+        return cacheResourceObjectUrl(`resource:${resourceId}`);
     }
     if (storageKey) return resolveImageUrl(storageKey, fallback);
     return fallback;
 }
 
 async function loadVideoThumbnail(node: CanvasNodeData) {
+    const serverPoster = resolveServerVideoPosterUrl(node);
+    if (serverPoster) {
+        return rasterize(serverPoster);
+    }
     const previewKey = node.metadata?.videoPreview?.storageKey || "";
     const persisted = canvasNodeVideoPreviewUrl(node);
     if (previewKey) {
-        const url = resourceIdFromStorageKey(previewKey) ? await cacheResourceObjectUrl(previewKey) : await resolveImageUrl(previewKey, persisted);
+        const previewResId = resourceIdFromStorageKey(previewKey);
+        const url = previewResId
+            ? canUseSameOriginResourceAsset()
+                ? resourcePreviewAssetUrl(previewResId, IMAGE_PREVIEW_TIER)
+                : await cacheResourceObjectUrl(previewKey)
+            : await resolveImageUrl(previewKey, persisted);
         if (url) return rasterize(url);
     }
     if (persisted && !canvasVideoPreviewNeedsHydration(node)) return rasterize(persisted);
@@ -230,7 +283,7 @@ async function loadVideoThumbnail(node: CanvasNodeData) {
         try {
             const bitmap = await createImageBitmap(cachedBlob);
             try {
-                return rasterizeSource(bitmap, bitmap.width, bitmap.height);
+                return await rasterizeSource(bitmap, bitmap.width, bitmap.height);
             } finally {
                 bitmap.close?.();
             }
@@ -238,7 +291,6 @@ async function loadVideoThumbnail(node: CanvasNodeData) {
             // Fall through to object URL lease if ImageBitmap decode is unavailable.
         }
     }
-    // Same display-only poster lease as the DOM card; release once copied.
     const lease = acquireCanvasVideoPreview(node);
     try {
         const preview = await lease.promise;
@@ -249,20 +301,33 @@ async function loadVideoThumbnail(node: CanvasNodeData) {
     }
 }
 
-function rasterizeSource(source: CanvasImageSource, naturalWidth: number, naturalHeight: number): CanvasLodThumbnail | null {
+async function rasterizeSource(source: CanvasImageSource, naturalWidth: number, naturalHeight: number): Promise<CanvasLodThumbnail | null> {
     if (!naturalWidth || !naturalHeight) return null;
     const ratio = Math.min(1, THUMBNAIL_MAX_SIDE / Math.max(naturalWidth, naturalHeight));
     const width = Math.max(1, Math.round(naturalWidth * ratio));
     const height = Math.max(1, Math.round(naturalHeight * ratio));
+    const estimatedBytes = width * height * 4;
+    if (typeof createImageBitmap === "function") {
+        try {
+            const bitmap = await createImageBitmap(source as ImageBitmapSource, {
+                resizeWidth: width,
+                resizeHeight: height,
+                resizeQuality: "medium",
+            });
+            return { source: bitmap, width: naturalWidth, height: naturalHeight, bytes: estimatedBytes };
+        } catch {
+            // Fall back to small canvas if createImageBitmap resize options are unsupported.
+        }
+    }
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
     if (!context) return null;
     context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
+    context.imageSmoothingQuality = "medium";
     context.drawImage(source, 0, 0, width, height);
-    return { source: canvas, width: naturalWidth, height: naturalHeight };
+    return { source: canvas, width: naturalWidth, height: naturalHeight, bytes: estimatedBytes };
 }
 
 async function rasterize(url: string): Promise<CanvasLodThumbnail | null> {
@@ -271,7 +336,7 @@ async function rasterize(url: string): Promise<CanvasLodThumbnail | null> {
     try {
         image.src = url;
         await image.decode();
-        return rasterizeSource(image, image.naturalWidth, image.naturalHeight);
+        return await rasterizeSource(image, image.naturalWidth, image.naturalHeight);
     } finally {
         image.src = "";
     }

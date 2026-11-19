@@ -8,10 +8,15 @@ import (
 	"time"
 )
 
-// Only this owned scratch directory is disposable. Other cache files and .tmp
-// files may be durable data and must still be copied and verified.
+// Only owned scratch/regenerable cache directories are skipped during workspace
+// migration. Other cache files and .tmp files may be durable data and must still
+// be copied and verified.
 func skipScratch(root, path string, entry fs.DirEntry) bool {
-	return entry.IsDir() && path == filepath.Join(root, "cache", "tmp")
+	if !entry.IsDir() {
+		return false
+	}
+	return path == filepath.Join(root, "cache", "tmp") ||
+		path == filepath.Join(root, "cache", "previews")
 }
 
 func openMigrationFile(path string) (*os.File, error) {

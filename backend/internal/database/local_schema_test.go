@@ -441,8 +441,11 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if err := db.Order("version").Find(&ledger).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "mcp-call-history" {
+	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "task-effects-outbox" {
 		t.Fatalf("current identity: %+v", ledger[len(ledger)-1])
+	}
+	if !db.Migrator().HasTable(&model.TaskEffect{}) {
+		t.Fatal("v31 did not create task_effects")
 	}
 	foundV10 := false
 	for _, row := range ledger {

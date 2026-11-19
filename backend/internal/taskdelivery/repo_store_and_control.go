@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	GenerationDeliveryRecoveryInterval = 5 * time.Second
+	GenerationDeliveryRecoveryInterval = 30 * time.Second
 	GenerationDownloadTimeout          = 15 * time.Minute
 )
 
@@ -137,7 +137,14 @@ func (s RepoStore) CommitOwned(item OwnedDelivery) error {
 }
 
 func (s RepoStore) SucceededTasksForDelivery(afterID string, limit int) ([]model.Task, error) {
-	return s.Repo.SucceededTasksForDelivery(afterID, limit)
+	return s.Repo.PendingDeliveryTasks(afterID, limit)
+}
+
+func (s RepoStore) MarkDeliverySettled(userID, taskID string) error {
+	if s.Repo == nil {
+		return nil
+	}
+	return s.Repo.MarkTaskEffectSettled(userID, taskID, model.TaskEffectKindDeliverySettled, "", "", 0, "", "")
 }
 
 func MapDeliveryStoreErr(err error) error {

@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
@@ -66,7 +65,7 @@ func (s *Service) attachRecoveredProviderTask(task *model.Task) *model.Task {
 
 func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 	s.runWorkerLoop(func(ctx context.Context) {
-		recoverOnce := func() {
+		s.deliveryWakeup.RunLoop(ctx, generationDeliveryRecoveryInterval, func() {
 			if ctx.Err() != nil || s.IsDraining() {
 				return
 			}
@@ -76,18 +75,7 @@ func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 				log.Printf("generation delivery recovery paused: worker_id=%s error=%v", s.workerID, err)
 			}
 			s.recoverAssistantContinuations(ctx)
-		}
-		recoverOnce()
-		ticker := time.NewTicker(generationDeliveryRecoveryInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				recoverOnce()
-			}
-		}
+		})
 	})
 }
 

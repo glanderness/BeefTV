@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 
 import { canvasLodContainRect, canvasLodHitTest, type CanvasLodDragOffset } from "@/lib/canvas/canvas-lod";
-import { getCanvasLodThumbnail, setCanvasLodRedrawListener } from "@/lib/canvas/canvas-lod-thumbnails";
+import { clearCanvasLodThumbnails, getCanvasLodThumbnail, setCanvasLodRedrawListener } from "@/lib/canvas/canvas-lod-thumbnails";
 import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
 import { sortCanvasNodesByStackOrder, type CanvasNodeStackOrder } from "@/lib/canvas/canvas-node-stack-order";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -239,6 +239,7 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
         return () => {
             stopViewport();
             stopDrag();
+            clearCanvasLodThumbnails();
         };
     }, [draw, resolveContainer]);
 

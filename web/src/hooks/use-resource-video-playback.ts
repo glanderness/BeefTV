@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
+import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { invalidateResourceMediaTicket } from "@/services/media-asset-url";
 import { resolveResourceVideoPlayback } from "@/services/resource-video-playback";
 
-// All video surfaces share request ownership, decode fallback and Blob URL disposal.
+// All video surfaces share request ownership, loopback ticket streaming, decode fallback and Blob URL disposal.
 export function useResourceVideoPlayback(storageKey: string, fallback: string, active = true) {
     const [url, setUrl] = useState("");
     const [loading, setLoading] = useState(false);
@@ -28,11 +30,16 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
         void resolveResourceVideoPlayback(storageKey, fallback, controller.signal, needsCompatible)
             .then((resolved) => {
                 if (cancelled) return;
-                if (typeof resolved !== "string") {
+                if (typeof resolved === "string") {
+                    setUrl(resolved);
+                } else if ("url" in resolved) {
+                    setCompatible(resolved.compatible);
+                    setUrl(resolved.url);
+                } else {
                     ownedUrl = URL.createObjectURL(resolved.blob);
                     setCompatible(resolved.compatible);
                     setUrl(ownedUrl);
-                } else setUrl(resolved);
+                }
             })
             .catch((error) => {
                 if (!cancelled) setError(error instanceof Error ? error.message : "视频加载失败，请重新打开");
@@ -42,6 +49,8 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
     }, [active, fallback, storageKey, identity, needsCompatible, retryEpoch]);
 
     const requestCompatible = () => {
+        const resourceId = resourceIdFromStorageKey(storageKey);
+        if (resourceId) invalidateResourceMediaTicket(resourceId);
         if (needsCompatible || (loadedIdentity === identity && compatible) || !storageKey.startsWith("resource:")) return false;
         setCompatibleTarget(identity);
         return true;
@@ -49,6 +58,11 @@ export function useResourceVideoPlayback(storageKey: string, fallback: string, a
     const current = active && loadedIdentity === identity;
     return { url: current ? url : "", loading: active && (!current || loading), error: current ? error : "",
         compatible: current && compatible, requestCompatible, retryEpoch,
-        retry: () => { setError(""); setRetryEpoch((value) => value + 1); },
+        retry: () => {
+            const resourceId = resourceIdFromStorageKey(storageKey);
+            if (resourceId) invalidateResourceMediaTicket(resourceId);
+            setError("");
+            setRetryEpoch((value) => value + 1);
+        },
         fail: () => setError("视频暂时无法播放，请重新读取预览。") };
 }

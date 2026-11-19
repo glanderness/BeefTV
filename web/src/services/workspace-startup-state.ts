@@ -9,6 +9,8 @@ export type DesktopStartupState = {
     reason?: string;
     error?: string;
     diagnosticPath?: string;
+    uncleanPreviousShutdown?: boolean;
+    lastCrashDiagnosticPath?: string;
     baseURL?: string;
     launchToken?: string;
     uiBootstrapToken?: string;

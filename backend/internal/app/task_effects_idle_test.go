@@ -1,0 +1,114 @@
+package app
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
+)
+
+func TestTaskEffectsOutboxEliminatesIdleRecoveryScansAndResumesOnCanvasChange(t *testing.T) {
+	svc, canvasID, revision := newAssistantTurnService(t)
+	now := time.Now()
+	normalTask := model.Task{
+		ID: "outbox-normal", UserID: "local", ProjectID: canvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, Stage: "任务完成", Prompt: "正常绑定",
+		InputJSON:  `{"mode":"text","metadata":{"source":"canvas","nodeId":"node-outbox-normal"}}`,
+		ResultJSON: `{"mode":"text","text":"正常绑定完成"}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	switchedTask := model.Task{
+		ID: "outbox-switched", UserID: "local", ProjectID: canvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, Stage: "任务完成", Prompt: "被切换节点",
+		InputJSON:  `{"mode":"text","metadata":{"source":"canvas","nodeId":"node-outbox-switched"}}`,
+		ResultJSON: `{"mode":"text","text":"换回后绑定"}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	missingTask := model.Task{
+		ID: "outbox-missing-canvas", UserID: "local", ProjectID: "deleted-canvas-id", Type: "canvas_image",
+		Status:     model.TaskStatusSucceeded,
+		InputJSON:  `{"mode":"image","metadata":{"source":"canvas","nodeId":"ghost-node"}}`,
+		ResultJSON: `{"mode":"image","imageUrl":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	for _, task := range []model.Task{normalTask, switchedTask, missingTask} {
+		if err := svc.repo.DB().Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := json.Marshal(map[string]any{
+		"id": canvasID, "title": "outbox 验收", "revision": revision,
+		"nodes": []any{
+			map[string]any{"id": "node-outbox-normal", "type": "text", "title": "正常", "metadata": map[string]any{"taskId": normalTask.ID}},
+			map[string]any{"id": "node-outbox-switched", "type": "text", "title": "冲突", "metadata": map[string]any{"taskId": "other-task"}},
+		},
+		"connections": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpsertUserCanvasProject("local", raw); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass 1: settles normalTask, records refused for switchedTask, and records missing for missingTask.
+	if err := svc.RecoverIncompleteGenerationDeliveries(64); err != nil {
+		t.Fatalf("pass 1 failed: %v", err)
+	}
+
+	// After pass 1, idle SQL scans for pending delivery & pending canvas bind must return 0 rows!
+	pendingDeliveries, err := svc.repo.PendingDeliveryTasks("", 64)
+	if err != nil {
+		t.Fatalf("PendingDeliveryTasks error: %v", err)
+	}
+	if len(pendingDeliveries) != 0 {
+		t.Fatalf("expected 0 pending delivery tasks after settlement, got %d (%+v)", len(pendingDeliveries), pendingDeliveries)
+	}
+
+	pendingBinds, err := svc.repo.PendingCanvasBindTasks("", 64)
+	if err != nil {
+		t.Fatalf("PendingCanvasBindTasks error: %v", err)
+	}
+	if len(pendingBinds) != 0 {
+		t.Fatalf("expected 0 pending canvas bind tasks after settlement/refusal, got %d (%+v)", len(pendingBinds), pendingBinds)
+	}
+
+	// Pass 2 & Pass 3 must perform zero canvas.bind trace executions.
+	beforeTraces := canvasBindTraceCount(t, svc)
+	if err := svc.RecoverIncompleteGenerationDeliveries(64); err != nil {
+		t.Fatalf("pass 2 failed: %v", err)
+	}
+	if err := svc.RecoverIncompleteGenerationDeliveries(64); err != nil {
+		t.Fatalf("pass 3 failed: %v", err)
+	}
+	if afterTraces := canvasBindTraceCount(t, svc); afterTraces != beforeTraces {
+		t.Fatalf("idle recovery passes executed canvas.bind again: before=%d after=%d", beforeTraces, afterTraces)
+	}
+
+	// Verify settled effect exists for normalTask.
+	if settled, err := svc.repo.IsTaskEffectSettled(normalTask.ID, model.TaskEffectKindTaskBindSettled, "", 0, "", ""); err != nil || !settled {
+		t.Fatalf("expected normalTask task_bind_settled effect, settled=%v err=%v", settled, err)
+	}
+
+	// Re-point switchedTask's node back to switchedTask (bumping canvas revision).
+	// PendingCanvasBindTasks must immediately pick up switchedTask again!
+	setCanvasBindTestNodeTaskID(t, svc, canvasID, "node-outbox-switched", switchedTask.ID)
+	resumedPending, err := svc.repo.PendingCanvasBindTasks("", 64)
+	if err != nil {
+		t.Fatalf("PendingCanvasBindTasks after canvas edit error: %v", err)
+	}
+	if len(resumedPending) != 1 || resumedPending[0].ID != switchedTask.ID {
+		t.Fatalf("expected switchedTask to become pending after canvas revision advanced, got %+v", resumedPending)
+	}
+	if err := svc.RecoverIncompleteGenerationDeliveries(64); err != nil {
+		t.Fatalf("resume pass failed: %v", err)
+	}
+	finalPending, err := svc.repo.PendingCanvasBindTasks("", 64)
+	if err != nil {
+		t.Fatalf("PendingCanvasBindTasks after resume error: %v", err)
+	}
+	if len(finalPending) != 0 {
+		t.Fatalf("expected 0 pending canvas bind tasks after resume settled, got %d", len(finalPending))
+	}
+}

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
-import { isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
+import { isProtectedResourceFileUrl, ownedResourceStorageKey, resourceIdFromStorageKey } from "@/services/api/resources";
 import { resolveImageUrl } from "@/services/image-storage";
-import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey } from "@/services/canvas-video-preview";
+import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey, resolveServerVideoPosterUrl } from "@/services/canvas-video-preview";
+import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
 import { peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 
 type ResolvedPreview = {
@@ -34,12 +35,32 @@ function withLeasedOwner(reference: CanvasResourceReference, url: string, owner:
     return next;
 }
 
+function directReferencePreviewUrl(reference: CanvasResourceReference): string {
+    if (!canUseSameOriginResourceAsset()) return "";
+    if (reference.kind === "video") {
+        const posterKey = reference.previewStorageKey;
+        const posterResourceId = posterKey ? resourceIdFromStorageKey(posterKey) : "";
+        if (posterResourceId) return resourcePreviewAssetUrl(posterResourceId, 256);
+        if (reference.videoPreviewSource) {
+            const serverPoster = resolveServerVideoPosterUrl(reference.videoPreviewSource);
+            if (serverPoster) return serverPoster;
+        }
+        return "";
+    }
+    if (reference.drawingId) return "";
+    const storageKey = referenceStorageKey(reference);
+    const resourceId = storageKey ? resourceIdFromStorageKey(storageKey) : "";
+    if (!resourceId) return "";
+    return resourcePreviewAssetUrl(resourceId, 256);
+}
+
 export function useResolvedCanvasResourceReferences(references: CanvasResourceReference[], options?: { projectId?: string; videoPreviewEnabled?: boolean }) {
     const projectId = options?.projectId;
     const videoPreviewEnabled = options?.videoPreviewEnabled;
     const requests = useMemo(
         () => references.flatMap((reference) => {
             if (isActivelyLeasedReference(reference)) return [];
+            if (directReferencePreviewUrl(reference)) return [];
             const decodeVideo = videoPreviewEnabled ?? reference.active;
             const identity = previewIdentity(reference, projectId, decodeVideo);
             return identity ? [{ reference, decodeVideo, identity: JSON.stringify([reference.id, identity, reference.kind === "video" && decodeVideo]) }] : [];
@@ -92,6 +113,8 @@ export function useResolvedCanvasResourceReferences(references: CanvasResourceRe
     return useMemo(
         () => references.map((reference) => {
             if (isActivelyLeasedReference(reference)) return reference;
+            const directUrl = directReferencePreviewUrl(reference);
+            if (directUrl) return { ...reference, previewUrl: directUrl };
             const decodeVideo = videoPreviewEnabled ?? reference.active;
             const key = previewIdentity(reference, projectId, decodeVideo);
             const identity = key ? JSON.stringify([reference.id, key, reference.kind === "video" && decodeVideo]) : "";

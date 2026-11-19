@@ -1,6 +1,7 @@
 import { configureApiRuntime } from "@/services/api/request";
 import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { getEmbeddedHarnessConfig } from "@/lib/embedded-runtime";
+import { purgeLegacyResourceBlobIndexedDB } from "@/lib/diagnostics-storage";
 import {
     clearWorkspaceStartupFailure,
     DesktopStartupError,
@@ -70,7 +71,9 @@ export type DesktopRuntimeBinding = {
     StartupState?: () => Promise<DesktopStartupState>;
     RetryStartup?: () => Promise<DesktopStartupState>;
     RuntimeConfig?: () => Promise<DesktopRuntimeConfig>;
+    ExportRuntimeDiagnosticsToDownloads?: (clientPayload: string) => Promise<string>;
     ExportStartupDiagnostics?: (clientPayload: string) => Promise<string>;
+    ReloadWindow?: (safeMode: boolean) => Promise<void>;
     SaveDiagnosticBundle?: (fileName: string, data: string) => Promise<string>;
     RevealDiagnosticBundle?: () => Promise<void>;
     SaveEagleMedia?: (fileName: string, baseURL: string, itemID: string) => Promise<boolean>;
@@ -120,6 +123,42 @@ export function getDesktopAppBinding(): DesktopRuntimeBinding | undefined {
 let wrappedFetch: typeof fetch | undefined;
 let underlyingFetch: typeof fetch | undefined;
 let upgradeProbeTimer: ReturnType<typeof setInterval> | null = null;
+let currentDesktopApiBaseURL = "/api";
+let rendererHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let rendererHeartbeatVisibilityBound = false;
+let legacyBlobPurgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sendRendererHeartbeat() {
+    if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
+    if (typeof globalThis.fetch !== "function") return;
+    const hidden = typeof document !== "undefined" ? Boolean(document.hidden) : false;
+    const base = String(currentDesktopApiBaseURL || "/api").replace(/\/+$/u, "");
+    void globalThis.fetch(`${base}/client-runtime/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden }),
+        credentials: "include",
+    }).catch(() => undefined);
+}
+
+function ensureDesktopLifecycleHelpers() {
+    if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
+    if (!rendererHeartbeatTimer) {
+        sendRendererHeartbeat();
+        rendererHeartbeatTimer = setInterval(sendRendererHeartbeat, 10_000);
+        (rendererHeartbeatTimer as { unref?: () => void }).unref?.();
+    }
+    if (!rendererHeartbeatVisibilityBound && typeof document !== "undefined") {
+        rendererHeartbeatVisibilityBound = true;
+        document.addEventListener("visibilitychange", sendRendererHeartbeat);
+    }
+    if (!legacyBlobPurgeTimer) {
+        legacyBlobPurgeTimer = setTimeout(() => {
+            void purgeLegacyResourceBlobIndexedDB();
+        }, 3_000);
+        (legacyBlobPurgeTimer as { unref?: () => void }).unref?.();
+    }
+}
 
 function stopLoopbackUpgradeProbe() {
     if (!upgradeProbeTimer) return;
@@ -150,6 +189,7 @@ function isDesktopRuntimeConfig(value: unknown): value is DesktopRuntimeConfig {
 export function configureDesktopRuntime(config: DesktopRuntimeConfig) {
     stopLoopbackUpgradeProbe();
     const baseURL = config.baseURL.replace(/\/+$/u, "");
+    currentDesktopApiBaseURL = baseURL;
     configureApiRuntime(baseURL, config.launchToken, config.uiBootstrapToken);
     const baseFetch = getUnderlyingFetch();
     wrappedFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -173,6 +213,7 @@ export function configureDesktopRuntime(config: DesktopRuntimeConfig) {
         streamAvailable: true,
         failure: null,
     });
+    ensureDesktopLifecycleHelpers();
 }
 
 function startLoopbackUpgradeProbe(config: DesktopRuntimeConfig, probeTimeoutMs: number, intervalMs: number) {
@@ -213,6 +254,7 @@ export function configureSameOriginDesktopFallback(
 ) {
     stopLoopbackUpgradeProbe();
     restoreUnderlyingFetch();
+    currentDesktopApiBaseURL = "/api";
     configureApiRuntime("/api", upgradeCandidate?.launchToken, upgradeCandidate?.uiBootstrapToken);
     if (upgradeCandidate?.launchToken) {
         const baseFetch = getUnderlyingFetch();
@@ -239,6 +281,7 @@ export function configureSameOriginDesktopFallback(
         streamAvailable: false,
         failure: null,
     });
+    ensureDesktopLifecycleHelpers();
     recordStartupDiagnosticEvent({
         level: "warning",
         category: "environment",

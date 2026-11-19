@@ -94,10 +94,12 @@ func taskNodeIDs(task model.Task) []string {
 
 func (s *Service) collectCanvasBindings(userID string, tasks []model.Task, collected *collection) {
 	type canvasRead struct {
-		project *model.CanvasProject
-		err     error
+		project   *model.CanvasProject
+		err       error
+		invalid   bool
+		nodesByID map[string]map[string]any
 	}
-	cache := map[string]canvasRead{}
+	cache := map[string]*canvasRead{}
 	for _, task := range tasks {
 		if task.ProjectID == "" {
 			continue
@@ -108,7 +110,23 @@ func (s *Service) collectCanvasBindings(userID string, tasks []model.Task, colle
 			}
 			read, ok := cache[task.ProjectID]
 			if !ok {
-				read.project, read.err = s.store.CanvasProjectForUser(userID, task.ProjectID)
+				project, err := s.store.CanvasProjectForUser(userID, task.ProjectID)
+				read = &canvasRead{project: project, err: err}
+				if err == nil && project != nil {
+					var doc struct {
+						Nodes []map[string]any `json:"nodes"`
+					}
+					if json.Unmarshal([]byte(project.PayloadJSON), &doc) != nil {
+						read.invalid = true
+					} else {
+						read.nodesByID = make(map[string]map[string]any, len(doc.Nodes))
+						for _, node := range doc.Nodes {
+							if id, ok := node["id"].(string); ok && id != "" {
+								read.nodesByID[id] = node
+							}
+						}
+					}
+				}
 				cache[task.ProjectID] = read
 			}
 			collected.recordAuthError(read.err)
@@ -122,21 +140,14 @@ func (s *Service) collectCanvasBindings(userID string, tasks []model.Task, colle
 				record.CanvasStatus = "missing"
 			case read.err != nil || read.project == nil:
 				record.CanvasStatus = "unavailable"
+			case read.invalid:
+				record.Revision = read.project.Revision
+				record.CanvasStatus = "invalid"
 			default:
 				record.Revision = read.project.Revision
-				var doc struct {
-					Nodes []map[string]any `json:"nodes"`
-				}
-				if json.Unmarshal([]byte(read.project.PayloadJSON), &doc) != nil {
-					record.CanvasStatus = "invalid"
-					break
-				}
 				present, media := false, false
 				record.NodePresent = &present
-				for _, node := range doc.Nodes {
-					if node["id"] != nodeID {
-						continue
-					}
+				if node, found := read.nodesByID[nodeID]; found {
 					present = true
 					metadata, _ := node["metadata"].(map[string]any)
 					text := func(fields map[string]any, key string) string { value, _ := fields[key].(string); return value }
@@ -146,7 +157,6 @@ func (s *Service) collectCanvasBindings(userID string, tasks []model.Task, colle
 					record.NodeStatus = sanitizeIdentifier(text(metadata, "status"))
 					media = canvas.NodeHasMedia(node)
 					record.NodeHasMedia = &media
-					break
 				}
 			}
 			collected.CanvasBindings = append(collected.CanvasBindings, record)

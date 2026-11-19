@@ -116,7 +116,7 @@ describe("large canvas media rendering", () => {
         expect(canvasNodeContentSource).toContain("useVideoPlaybackUrl(node, mediaActive)");
         expect(canvasNodeContentSource).toContain("onMediaPlayRequest?.(node.id)");
         expect(canvasNodeContentSource).toContain('autoPlay preload="metadata"');
-        expect(canvasNodeContentSource).toContain("scheduleResourceBlobCache(node.metadata?.storageKey || \"\")");
+        expect(canvasNodeContentSource).not.toContain("scheduleResourceBlobCache(");
     });
 
     test("allows failed or empty first-frame requests to retry", () => {

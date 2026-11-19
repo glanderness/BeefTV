@@ -42,13 +42,22 @@ export type DiagnosticDownload = {
     fileName: string;
 };
 
+const DIAGNOSTIC_PREVIEW_TIMEOUT_MS = 60_000;
+const DIAGNOSTIC_EXPORT_TIMEOUT_MS = 120_000;
+
 export function previewDiagnosticBundle(input: DiagnosticExportInput) {
-    return http.post<DiagnosticPreview>("/diagnostics/preview", input);
+    return http.post<DiagnosticPreview>("/diagnostics/preview", input, { timeout: DIAGNOSTIC_PREVIEW_TIMEOUT_MS });
 }
 
 export async function exportDiagnosticBundle(input: DiagnosticExportInput): Promise<DiagnosticDownload> {
     try {
-        const response = await http.raw<Blob>({ method: "post", url: "/diagnostics/export", data: input, responseType: "blob" });
+        const response = await http.raw<Blob>({
+            method: "post",
+            url: "/diagnostics/export",
+            data: input,
+            responseType: "blob",
+            timeout: DIAGNOSTIC_EXPORT_TIMEOUT_MS,
+        });
         return {
             blob: response.data,
             bundleId: readHeader(response.headers, "x-diagnostic-bundle-id") || "",

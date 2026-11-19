@@ -1,7 +1,8 @@
 import { onStorageNamespaceChange } from "@/lib/user-scope";
 import { captureVideoPoster } from "@/lib/video-poster";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { ownedResourceIdFromMediaRef, resourceIdFromStorageKey } from "@/services/api/resources";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
+import { canUseSameOriginResourceAsset, resourcePosterAssetUrl } from "@/services/media-asset-url";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
 type VideoPreview = NonNullable<CanvasNodeMetadata["videoPreview"]>;
@@ -87,7 +88,14 @@ export function acquireCanvasVideoPreview(node: VideoPreviewSource) {
     } };
 }
 
+export function resolveServerVideoPosterUrl(node: VideoPreviewSource): string {
+    if (!canUseSameOriginResourceAsset()) return "";
+    const resourceId = ownedResourceIdFromMediaRef(node.metadata?.storageKey, node.metadata?.content);
+    return resourceId ? resourcePosterAssetUrl(resourceId) : "";
+}
+
 export function canvasVideoPreviewNeedsHydration(node: VideoPreviewSource) {
+    if (resolveServerVideoPosterUrl(node)) return false;
     const sourceKey = canvasVideoPreviewSourceKey(node);
     if (!sourceKey) return false;
     const preview = node.metadata?.videoPreview;

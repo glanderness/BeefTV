@@ -94,6 +94,7 @@ type Service struct {
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer
 	deliveryMu               sync.Mutex
+	deliveryWakeup           taskdelivery.RecoveryWakeup
 	deliveryProgress         *deliveryProgressRegistry
 	deliveryProgressOnce     sync.Once
 	referenceProgress        sync.Map

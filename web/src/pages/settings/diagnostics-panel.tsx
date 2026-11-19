@@ -7,6 +7,7 @@ import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBund
 import { getClientDiagnosticSnapshot, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
 import { DEFAULT_DIAGNOSTIC_RANGE, diagnosticRangeMilliseconds, type DiagnosticRange } from "@/services/diagnostics/diagnostic-window";
 import { clearVideoPreviewCache } from "@/services/api/resources";
+import { useCanvasMemoryMode, type CanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
@@ -34,6 +35,12 @@ const rangeOptions: { value: DiagnosticRange; label: string }[] = [
     { value: "30m", label: "最近 30 分钟" },
 ];
 
+const memoryModeOptions: { value: CanvasMemoryMode; label: string }[] = [
+    { value: "normal", label: "正常（自动按缩放清晰度加载）" },
+    { value: "low-memory", label: "低内存（最高 512px，关闭悬停预播）" },
+    { value: "thumbnail-only", label: "安全模式（仅 256px 缩略图）" },
+];
+
 export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const { taskId, projectId, embedded } = props;
     const open = embedded || props.open;
@@ -47,6 +54,7 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState<ExportResultState | null>(null);
     const [clearingPreviews, setClearingPreviews] = useState(false);
+    const [memoryMode, setMemoryMode] = useCanvasMemoryMode();
     const desktopBinding = getDesktopAppBinding();
     const openUpdateLogs = desktopBinding?.OpenUpdateLogDirectory;
     const revealBundle = desktopBinding?.RevealDiagnosticBundle;
@@ -80,7 +88,19 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         setExporting(true);
         setExportResult(null);
         try {
-            const download = await exportDiagnosticBundle(await buildInput(range, description, taskId, projectId));
+            const input = await buildInput(range, description, taskId, projectId);
+            if (typeof desktopBinding?.ExportRuntimeDiagnosticsToDownloads === "function") {
+                const savedPath = await desktopBinding.ExportRuntimeDiagnosticsToDownloads(JSON.stringify(input));
+                if (!savedPath) {
+                    message.info("已取消保存诊断包");
+                    return;
+                }
+                const match = savedPath.match(/DIAG_[A-Z0-9]+/u);
+                setExportResult({ bundleId: match?.[0] || "DIAG_LOCAL", savedPath });
+                message.success("诊断包已存至下载目录并自动打开所在文件夹，可直接发送给支持人员");
+                return;
+            }
+            const download = await exportDiagnosticBundle(input);
             let resolvedSavedPath = "";
             const saved = await downloadDiagnosticBundle(download, (path) => {
                 resolvedSavedPath = path;
@@ -255,6 +275,30 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
                             value={description}
                             onChange={(event) => setDescription(event.target.value)}
                             placeholder="例如：生成一直停在处理中。"
+                        />
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                            <span className="block text-[12px] leading-[18px] font-medium text-foreground">
+                                画布显存与预览模式
+                            </span>
+                            <span className="mt-0.5 block text-[12px] leading-[18px] text-foreground/70">
+                                低配置或大画布场景下可限制缩略图清晰度以显著降低内存占用。
+                            </span>
+                        </div>
+                        <Select
+                            ariaLabel="画布显存与预览模式"
+                            className="w-full sm:w-64"
+                            value={memoryMode}
+                            options={memoryModeOptions}
+                            onChange={(value) => {
+                                const next = memoryModeOptions.find((option) => option.value === value)?.value;
+                                if (next) {
+                                    setMemoryMode(next);
+                                    message.success("已切换画布预览模式");
+                                }
+                            }}
                         />
                     </div>
 

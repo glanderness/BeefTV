@@ -35,16 +35,22 @@ func (d *Deliverer) Deliver(task model.Task) error {
 	}
 	stored, loadErr := d.loadedOutputs(task.ID)
 	if loadErr == nil && localtask.DeliveryComplete(task.ResultJSON, stored, task.Type) {
+		d.markSettled(task)
 		return nil
 	}
 	outputs, unusable := localtask.InspectResultJSON(task.ResultJSON, task.Type)
 	if len(outputs) == 0 {
 		if unusable == "" {
+			d.markSettled(task)
 			return nil
 		}
-		return d.store.WithTx(func(tx Store) error {
+		err := d.store.WithTx(func(tx Store) error {
 			return d.commitUnsupported(tx, task, localtask.CanonicalOutput{OutputIndex: 0, ProviderArtifactRef: unusable}, unusable)
 		})
+		if err == nil {
+			d.markSettled(task)
+		}
+		return err
 	}
 	storedByIndex := map[int]localtask.CanonicalOutput{}
 	if loadErr == nil {
@@ -107,7 +113,23 @@ func (d *Deliverer) Deliver(task model.Task) error {
 		}
 		return nil
 	})
-	return errors.Join(txErr, persistErr)
+	joined := errors.Join(txErr, persistErr)
+	if joined == nil {
+		if latest, reloadErr := d.loadedOutputs(task.ID); reloadErr == nil && localtask.DeliveryComplete(task.ResultJSON, latest, task.Type) {
+			d.markSettled(task)
+		}
+	}
+	return joined
+}
+
+type deliveryEffectSettler interface {
+	MarkDeliverySettled(userID, taskID string) error
+}
+
+func (d *Deliverer) markSettled(task model.Task) {
+	if settler, ok := d.store.(deliveryEffectSettler); ok {
+		_ = settler.MarkDeliverySettled(task.UserID, task.ID)
+	}
 }
 
 func (d *Deliverer) RecoverIncomplete(limit int) error {
@@ -142,6 +164,7 @@ func (d *Deliverer) RecoverIncomplete(limit int) error {
 	for _, task := range tasks {
 		stored, loadErr := d.loadedOutputs(task.ID)
 		if loadErr == nil && localtask.DeliveryComplete(task.ResultJSON, stored, task.Type) {
+			d.markSettled(task)
 			continue
 		}
 		if err := d.Deliver(task); err != nil {

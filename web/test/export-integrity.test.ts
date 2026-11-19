@@ -3,6 +3,7 @@ import { unzipSync } from "fflate";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { getClientDiagnosticSnapshot, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
+import { installDiagnosticsStoreFactoryForTests } from "@/lib/diagnostics-storage";
 import { installLocalForageStoreFactoryForTests } from "@/lib/localforage-storage";
 
 const blobs = new Map<string, Blob>();
@@ -48,6 +49,12 @@ beforeEach(() => {
         getItem: async (key: string) => diagnosticRecords.get(`${storeName}:${key}`) ?? null,
         setItem: async (key: string, value: unknown) => { diagnosticRecords.set(`${storeName}:${key}`, value); return value; },
     }) as LocalForage);
+    installDiagnosticsStoreFactoryForTests(() => ({
+        ready: async () => {},
+        getItem: async (key: string) => diagnosticRecords.get(`diagnostics:${key}`) ?? null,
+        setItem: async (key: string, value: unknown) => { diagnosticRecords.set(`diagnostics:${key}`, value); return value; },
+        removeItem: async (key: string) => { diagnosticRecords.delete(`diagnostics:${key}`); },
+    }) as LocalForage);
     blobs.clear();
     restored.clear();
     unreadable.clear();
@@ -70,6 +77,7 @@ afterEach(async () => {
     finally {
         globalThis.window = originalWindow;
         installLocalForageStoreFactoryForTests();
+        installDiagnosticsStoreFactoryForTests();
     }
 });
 
