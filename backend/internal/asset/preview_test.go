@@ -260,7 +260,7 @@ func TestClampByteRangeAndMediaTickets(t *testing.T) {
 }
 
 func TestDecodeMemoryBudgetEnforcesGlobalCapAndCancellation(t *testing.T) {
-	budget := newDecodeMemoryBudget(128<<20, 3)
+	budget := newDecodeMemoryBudget(128 << 20)
 	release1, err := budget.Acquire(context.Background(), 96<<20)
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
@@ -323,7 +323,7 @@ func TestOversizedImageRoutesThroughSubprocessAndPreservesICC(t *testing.T) {
 	if !subprocessCalled {
 		t.Fatal("expected >24MP image to route through subprocess scaler instead of in-process Go decode")
 	}
-	if preview.IsOriginal || preview.MimeType != "image/jpeg" {
+	if preview.IsOriginal || !preview.Immutable || preview.MimeType != "image/jpeg" {
 		t.Fatalf("unexpected oversized preview result: %+v", preview)
 	}
 	outBytes, err := os.ReadFile(preview.Path)
@@ -332,6 +332,16 @@ func TestOversizedImageRoutesThroughSubprocessAndPreservesICC(t *testing.T) {
 	}
 	if gotICC := extractJPEGICC(outBytes); !bytes.Equal(gotICC, fakeP3) {
 		t.Fatalf("expected ICC re-injected after subprocess scale, got %q", gotICC)
+	}
+
+	// If subprocess scaling fails for an oversized image, OpenImagePreview must
+	// return an error rather than dumping a raw >24MP original into WebView2.
+	svc.RemovePreviewCache("user-1", res.ID)
+	svc.previews.scaleImage = func(_ context.Context, _ string, _ string, _ int, _ int, _ bool) error {
+		return os.ErrPermission
+	}
+	if _, err := svc.OpenImagePreview(context.Background(), "user-1", res.ID, 512, PreviewColorPreserve); err == nil {
+		t.Fatal("expected PreviewUnavailable error when oversized subprocess scale fails")
 	}
 }
 

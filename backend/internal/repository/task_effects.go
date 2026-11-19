@@ -218,13 +218,15 @@ func (r *Repository) PendingDeliveryTasks(afterID string, limit int) ([]model.Ta
 	now := time.Now()
 	query := r.db.Where(
 		`status = ? AND result_json <> ''
-		AND stage NOT IN ('delivery_paused', 'delivery_timed_out')
+		AND COALESCE(stage, '') NOT IN (?, ?)
 		AND NOT EXISTS (
 			SELECT 1 FROM task_effects te
 			WHERE te.task_id = tasks.id AND te.kind = ?
 			  AND (te.status = ? OR (te.status = ? AND te.next_attempt_at > ?))
 		)`,
 		model.TaskStatusSucceeded,
+		model.TaskStageDeliveryPaused,
+		model.TaskStageDeliveryTimedOut,
 		model.TaskEffectKindDeliverySettled,
 		model.TaskEffectStatusSettled,
 		model.TaskEffectStatusPending,

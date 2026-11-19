@@ -23,9 +23,12 @@ import (
 const (
 	crashSentinelFileName        = ".session-running"
 	lastCrashReadyEventName      = "diagnostics:last-crash-ready"
+	requestReloadEventName       = "desktop:request-reload"
 	rendererWatchdogInterval     = 5 * time.Second
 	rendererHeartbeatTimeout     = 35 * time.Second
 	rendererBusyHeartbeatTimeout = 180 * time.Second
+	rendererBusyMaxLeaseDuration = 10 * time.Minute
+	rendererGracefulReloadWait   = 1500 * time.Millisecond
 	rendererReloadBreakerLimit   = 3
 	rendererReloadBreakerSpan    = 60 * time.Second
 )
@@ -141,39 +144,68 @@ func (a *DesktopApp) ExportRuntimeDiagnosticsToDownloads(clientPayload string) (
 	return a.ExportStartupDiagnostics(clientPayload)
 }
 
-// ReloadWindow reloads the WebView window. Before reloading it best-effort
-// invokes any registered frontend flush hook, and when safeMode is true it
-// preserves the active pathname/hash/query while adding safeMode=1 and
-// memoryMode=thumbnail-only.
+// reloadWindowNative performs an immediate browser-process-level WindowReload
+// without executing any JS in the renderer, so recovery works reliably even
+// when the JS main thread is deadlocked or WebView2 is on a crash screen.
+// Safe mode is propagated via Go-side Runtime state and preserves the current route.
+func (a *DesktopApp) reloadWindowNative(safeMode bool) error {
+	ctx, err := a.dialogContext()
+	if err != nil {
+		return err
+	}
+	if rt := a.runtime(); rt != nil {
+		rt.RequestSafeMode(safeMode)
+	}
+	if ctx.Value("frontend") == nil {
+		return nil
+	}
+	wailsruntime.WindowReload(ctx)
+	return nil
+}
+
+// ReloadWindow reloads the WebView window. It arms safeMode in Go state,
+// notifies a live renderer to flush workspace saves (SQLite + IndexedDB +
+// settings) before reloading, and falls back to native browser-process reload
+// after 1.5s if the renderer is unresponsive.
 func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 	ctx, err := a.dialogContext()
 	if err != nil {
 		return err
 	}
+	rt := a.runtime()
+	if rt != nil {
+		rt.RequestSafeMode(safeMode)
+	}
 	if ctx.Value("frontend") == nil {
 		return nil
 	}
-	if safeMode {
-		wailsruntime.WindowExecJS(ctx, `(function(){
-			try { if (typeof window.__BEEFTV_FLUSH_BEFORE_RELOAD__ === "function") { window.__BEEFTV_FLUSH_BEFORE_RELOAD__(); } } catch (_) {}
-			try {
-				var u = new URL(window.location.href);
-				u.searchParams.set("safeMode", "1");
-				u.searchParams.set("memoryMode", "thumbnail-only");
-				window.location.href = u.toString();
-			} catch (_) {
-				window.location.href = "/?safeMode=1&memoryMode=thumbnail-only";
-			}
-		})();`)
-		return nil
+	var baselineBeat time.Time
+	if rt != nil {
+		baselineBeat, _, _, _ = rt.LastClientHeartbeat()
 	}
-	wailsruntime.WindowExecJS(ctx, `(function(){ try { if (typeof window.__BEEFTV_FLUSH_BEFORE_RELOAD__ === "function") { window.__BEEFTV_FLUSH_BEFORE_RELOAD__(); } } catch (_) {} })();`)
-	wailsruntime.WindowReload(ctx)
+	wailsruntime.EventsEmit(ctx, requestReloadEventName, map[string]any{"safeMode": safeMode})
+	go func() {
+		time.Sleep(rendererGracefulReloadWait)
+		if rt != nil {
+			latestBeat, _, _, _ := rt.LastClientHeartbeat()
+			// If the renderer already reloaded and sent a brand-new heartbeat
+			// after safeMode ack, do not reload a second time.
+			if safeMode && !rt.SafeModeRequested() {
+				return
+			}
+			if !safeMode && !latestBeat.IsZero() && latestBeat.After(baselineBeat) {
+				return
+			}
+		}
+		if ctx.Err() == nil && ctx.Value("frontend") != nil {
+			wailsruntime.WindowReload(ctx)
+		}
+	}()
 	return nil
 }
 
 // allowAutomaticRendererReload evaluates the sliding-window circuit breaker
-// (max 3 recovery reloads in 60s). Returns false once the limit is reached.
+// (max 3 recovery prompts in 60s). Returns false once the limit is reached.
 func (a *DesktopApp) allowAutomaticRendererReload(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -193,38 +225,32 @@ func (a *DesktopApp) allowAutomaticRendererReload(now time.Time) bool {
 }
 
 type rendererWatchdogState struct {
-	stalledWhileHidden bool
 	promptCooldownTill time.Time
 }
 
-// evaluateRendererWatchdog decides whether the host should prompt the user for
-// unresponsive-renderer recovery. It never silently reloads an active session:
-// legitimate long tasks (busy lease) get an extended ceiling, and stalls that
-// begin while hidden are retained until the window becomes visible again.
-func (s *rendererWatchdogState) evaluate(now, lastBeat time.Time, hidden, busy bool) bool {
-	if lastBeat.IsZero() {
+// evaluate decides whether the host should prompt the user for unresponsive
+// renderer recovery. It never silently reloads an active session: legitimate
+// long tasks (busy lease, capped at 10m to prevent leaked leases) get an
+// extended 180s ceiling, hidden windows defer prompting until visible, and
+// cooldown prevents repeated dialog spam.
+func (s *rendererWatchdogState) evaluate(now, lastBeat time.Time, hidden, busy bool, busySince time.Time) bool {
+	if lastBeat.IsZero() || hidden {
 		return false
+	}
+	effectiveBusy := busy
+	if effectiveBusy && !busySince.IsZero() && now.Sub(busySince) > rendererBusyMaxLeaseDuration {
+		effectiveBusy = false
 	}
 	timeout := rendererHeartbeatTimeout
-	if busy {
+	if effectiveBusy {
 		timeout = rendererBusyHeartbeatTimeout
 	}
-	stale := now.Sub(lastBeat) > timeout
-	if hidden {
-		if stale {
-			s.stalledWhileHidden = true
-		}
-		return false
-	}
-	if !stale {
-		s.stalledWhileHidden = false
+	if now.Sub(lastBeat) <= timeout {
 		return false
 	}
 	if !s.promptCooldownTill.IsZero() && now.Before(s.promptCooldownTill) {
 		return false
 	}
-	// Either stalled while visible or returned visible after stalling hidden.
-	s.stalledWhileHidden = false
 	s.promptCooldownTill = now.Add(timeout)
 	return true
 }
@@ -249,9 +275,9 @@ func (a *DesktopApp) startRendererWatchdog(rt *bootstrap.Runtime) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				lastBeat, hidden, busy := rt.LastClientHeartbeat()
+				lastBeat, hidden, busy, busySince := rt.LastClientHeartbeat()
 				now := time.Now().UTC()
-				if !state.evaluate(now, lastBeat, hidden, busy) {
+				if !state.evaluate(now, lastBeat, hidden, busy, busySince) {
 					continue
 				}
 				select {
@@ -313,28 +339,42 @@ func crashRecoveryDialogAction(choice string) string {
 	}
 }
 
-func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated bool) {
+// crashRecoveryDialogOptions builds platform-accurate native dialog options.
+// Wails v2 Windows QuestionDialog uses Win32 MB_YESNO (two buttons only,
+// DefaultButton matches "yes"/"no"), while macOS renders all three buttons.
+func crashRecoveryDialogOptions(goos string, repeated bool) wailsruntime.MessageDialogOptions {
 	title := "页面暂时无响应"
-	message := "检测到界面长时间未响应。您可以继续等待当前操作完成，或直接由后台导出诊断包、以仅缩略图安全模式重载当前页面。"
 	if repeated {
 		title = "页面多次无响应"
-		message = "检测到界面在短时间内多次无响应或崩溃。建议先直接导出后端诊断包，或以仅缩略图安全模式重新加载。"
 	}
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
+		message := "检测到界面长时间未响应。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；如需继续等待请直接关闭本弹窗。"
 		if repeated {
-			message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」继续等待。"
-		} else {
-			message = "检测到界面长时间未响应。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」继续等待当前操作完成。"
+			message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；如需继续等待请直接关闭本弹窗。"
+		}
+		return wailsruntime.MessageDialogOptions{
+			Type:          wailsruntime.QuestionDialog,
+			Title:         title,
+			Message:       message,
+			DefaultButton: "yes",
 		}
 	}
-	choice, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
+	message := "检测到界面长时间未响应。您可以继续等待当前操作完成，或直接由后台导出诊断包、以仅缩略图安全模式重载当前页面。"
+	if repeated {
+		message = "检测到界面在短时间内多次无响应或崩溃。建议先直接导出后端诊断包，或以仅缩略图安全模式重新加载。"
+	}
+	return wailsruntime.MessageDialogOptions{
 		Type:          wailsruntime.QuestionDialog,
 		Title:         title,
 		Message:       message,
 		Buttons:       []string{"导出诊断包", "安全模式重载", "继续等待"},
 		DefaultButton: "继续等待",
 		CancelButton:  "继续等待",
-	})
+	}
+}
+
+func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated bool) {
+	choice, err := wailsruntime.MessageDialog(ctx, crashRecoveryDialogOptions(runtime.GOOS, repeated))
 	if err != nil {
 		return
 	}
@@ -350,7 +390,7 @@ func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated boo
 			})
 		}
 	case "safe-reload":
-		_ = a.ReloadWindow(true)
+		_ = a.reloadWindowNative(true)
 	}
 }
 

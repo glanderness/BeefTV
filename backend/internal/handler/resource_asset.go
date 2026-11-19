@@ -170,9 +170,14 @@ func serveImmutablePreviewFile(c *gin.Context, result *asset.PreviewResult) {
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-	// Do not emit ETag / Last-Modified: Wails Windows strips conditional request
-	// headers, so immutable strong caching is the reliable cross-platform contract.
-	c.Header("Cache-Control", "private, max-age=31536000, immutable")
+	// Only set long-lived immutable caching on verified disk previews or
+	// intentionally original assets (already <= tier or animated). Transient
+	// fallbacks must never be pinned in browser cache for a year.
+	if result.Immutable {
+		c.Header("Cache-Control", "private, max-age=31536000, immutable")
+	} else {
+		c.Header("Cache-Control", "no-store")
+	}
 	c.Header("Content-Disposition", "inline")
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Content-Type", mimeType)

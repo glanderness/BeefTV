@@ -191,4 +191,60 @@ func TestTaskEffectsSkipsPausedTimedOutPermanentFailuresAndHonorsBackoff(t *test
 	if len(dueDeliveries) != 1 || dueDeliveries[0].ID != backedOffTask.ID {
 		t.Fatalf("expected due backed-off task %s to become eligible, got %+v", backedOffTask.ID, dueDeliveries)
 	}
+
+	// Verify NULL stage tasks are NOT accidentally filtered out by stage NOT IN.
+	if err := svc.repo.DB().Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at)
+		VALUES ('outbox-null-stage', 'local', ?, 'canvas_image', 'succeeded', NULL, 'null stage', '{"images":[{"url":"https://example.com/a.png"}]}', ?, ?)`,
+		canvasID, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	withNullStage, err := svc.repo.PendingDeliveryTasks("", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundNullStage := false
+	for _, item := range withNullStage {
+		if item.ID == "outbox-null-stage" {
+			foundNullStage = true
+		}
+	}
+	if !foundNullStage {
+		t.Fatalf("expected task with NULL stage to be returned by PendingDeliveryTasks, got %+v", withNullStage)
+	}
+
+	// Verify RecoverCanvasTaskBindings preserves task_bind_settled backoff row
+	// when a target hits a transient skippable error like resource_missing/output_not_ready.
+	transientTask := model.Task{
+		ID: "outbox-transient-bind", UserID: "local", ProjectID: canvasID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "暂时未就绪",
+		InputJSON:  `{"mode":"image","metadata":{"source":"canvas","nodeId":"node-transient"}}`,
+		ResultJSON: `{"mode":"image","images":[{"resourceId":"missing-res-1"}]}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := svc.repo.DB().Create(&transientTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.MarkTaskEffectSettled("local", transientTask.ID, model.TaskEffectKindDeliverySettled, "", "", 0, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Run full RecoverCanvasTaskBindings (output_not_ready because result row is absent).
+	_ = svc.recoverCanvasTaskBindings(transientTask)
+
+	var backoffRow model.TaskEffect
+	if err := svc.repo.DB().Where("task_id = ? AND kind = ?", transientTask.ID, model.TaskEffectKindTaskBindSettled).Take(&backoffRow).Error; err != nil {
+		t.Fatalf("expected transient bind failure to keep task_bind_settled backoff row, err=%v", err)
+	}
+	if backoffRow.Status != model.TaskEffectStatusPending || backoffRow.Attempts < 1 || !backoffRow.NextAttemptAt.After(time.Now()) {
+		t.Fatalf("expected pending backoff row with attempts>=1 and future next_attempt_at, got %+v", backoffRow)
+	}
+	// Before next_attempt_at, PendingCanvasBindTasks must NOT re-scan transientTask.
+	bindsDuringBackoff, err := svc.repo.PendingCanvasBindTasks("", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range bindsDuringBackoff {
+		if item.ID == transientTask.ID {
+			t.Fatalf("transientTask %s must be suppressed while backed off until %v", transientTask.ID, backoffRow.NextAttemptAt)
+		}
+	}
 }

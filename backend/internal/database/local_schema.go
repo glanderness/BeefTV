@@ -156,12 +156,13 @@ func canonicalLocalMigrations() []localMigration {
 			if err := tx.AutoMigrate(&model.TaskEffect{}); err != nil {
 				return err
 			}
-			if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_task_effects_active ON task_effects(status, next_attempt_at, canvas_id) WHERE status IN ('pending', 'refused')`).Error; err != nil {
-				return err
-			}
-			// Backfill already-succeeded historical tasks (except tasks actively
-			// downloading at upgrade time) so upgrading workspaces never replay
-			// hundreds of old canvas binds or delivery scans on first launch.
+			// Backfill settled baseline ONLY for historical succeeded tasks that
+			// finished well before upgrade (older than 1h), are not downloading/
+			// paused/timed out, and do not carry an active canvas_bind refusal
+			// waiting for a future canvas revision. This avoids an upgrade replay
+			// storm without swallowing active retries or revision-watched binds.
+			cutoff := time.Now().Add(-1 * time.Hour)
+			bindMarkerPattern := model.CanvasBindRecoveryPrefix + "%"
 			if err := tx.Exec(`INSERT OR IGNORE INTO task_effects (
 				id, user_id, task_id, kind, canvas_id, node_id, output_index,
 				conversation_id, message_id, status, reason, refused_revision,
@@ -172,8 +173,14 @@ func canonicalLocalMigrations() []localMigration {
 				'', '', ?, 'v31_migration_baseline', 0,
 				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			FROM tasks
-			WHERE status = ? AND COALESCE(stage, '') <> '正在取回结果'`,
-				model.TaskEffectKindDeliverySettled, model.TaskEffectStatusSettled, model.TaskStatusSucceeded,
+			WHERE status = ?
+			  AND completed_at IS NOT NULL AND completed_at < ?
+			  AND COALESCE(stage, '') NOT IN (?, ?, ?)
+			  AND COALESCE(recovery_outcome, '') NOT LIKE ?`,
+				model.TaskEffectKindDeliverySettled, model.TaskEffectStatusSettled,
+				model.TaskStatusSucceeded, cutoff,
+				model.TaskStageFetchingResult, model.TaskStageDeliveryPaused, model.TaskStageDeliveryTimedOut,
+				bindMarkerPattern,
 			).Error; err != nil {
 				return err
 			}
@@ -187,8 +194,14 @@ func canonicalLocalMigrations() []localMigration {
 				'', '', ?, 'v31_migration_baseline', 0,
 				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			FROM tasks
-			WHERE status = ? AND COALESCE(stage, '') <> '正在取回结果'`,
-				model.TaskEffectKindTaskBindSettled, model.TaskEffectStatusSettled, model.TaskStatusSucceeded,
+			WHERE status = ?
+			  AND completed_at IS NOT NULL AND completed_at < ?
+			  AND COALESCE(stage, '') NOT IN (?, ?, ?)
+			  AND COALESCE(recovery_outcome, '') NOT LIKE ?`,
+				model.TaskEffectKindTaskBindSettled, model.TaskEffectStatusSettled,
+				model.TaskStatusSucceeded, cutoff,
+				model.TaskStageFetchingResult, model.TaskStageDeliveryPaused, model.TaskStageDeliveryTimedOut,
+				bindMarkerPattern,
 			).Error
 		}},
 	}
@@ -262,11 +275,6 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	if current >= 11 {
 		if err := ensureCreationConversationsIndexes(db); err != nil {
 			return fmt.Errorf("补齐创作对话索引: %w", err)
-		}
-	}
-	if current >= 31 {
-		if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_effects_active ON task_effects(status, next_attempt_at, canvas_id) WHERE status IN ('pending', 'refused')`).Error; err != nil {
-			return fmt.Errorf("补齐任务副作用活跃索引: %w", err)
 		}
 	}
 	return requireReconciledSchema(db)

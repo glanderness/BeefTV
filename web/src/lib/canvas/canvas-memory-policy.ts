@@ -56,6 +56,14 @@ function clearMemoryModeQueryParams() {
     }
 }
 
+export function applySessionCanvasMemoryMode(mode: CanvasMemoryMode) {
+    if (currentMemoryMode === mode) return;
+    currentMemoryMode = mode;
+    for (const listener of listeners) {
+        listener(mode);
+    }
+}
+
 export function setCanvasMemoryMode(mode: CanvasMemoryMode) {
     clearMemoryModeQueryParams();
     if (currentMemoryMode === mode) return;

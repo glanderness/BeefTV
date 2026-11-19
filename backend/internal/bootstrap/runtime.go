@@ -65,6 +65,8 @@ type Runtime struct {
 	lastClientHeartbeat atomic.Int64
 	clientHidden        atomic.Bool
 	clientBusy          atomic.Bool
+	clientBusySince     atomic.Int64
+	safeModeRequested   atomic.Bool
 	closeOnce           sync.Once
 	backgroundDone      chan struct{}
 	closeErr            error
@@ -368,11 +370,15 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	}
 	api.POST("/client-runtime/heartbeat", func(c *gin.Context) {
 		var body struct {
-			Hidden bool `json:"hidden"`
-			Busy   bool `json:"busy"`
+			Hidden      bool `json:"hidden"`
+			Busy        bool `json:"busy"`
+			SafeModeAck bool `json:"safeModeAck"`
 		}
 		if c.Request.Body != nil && c.Request.ContentLength != 0 {
 			_ = c.ShouldBindJSON(&body)
+		}
+		if body.SafeModeAck {
+			rt.RequestSafeMode(false)
 		}
 		rt.RecordClientHeartbeat(body.Hidden, body.Busy)
 		c.Header("Cache-Control", "no-store")

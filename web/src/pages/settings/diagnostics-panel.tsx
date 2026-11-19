@@ -11,6 +11,7 @@ import { useCanvasMemoryMode, type CanvasMemoryMode } from "@/lib/canvas/canvas-
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { beginRendererBusyLease, getDesktopAppBinding, getDesktopBootSnapshot, subscribeDesktopBootSnapshot } from "@/services/desktop-runtime";
+import { updateDesktopBootSnapshot } from "@/services/workspace-startup-state";
 import { EnvironmentChecks } from "./environment-checks";
 
 type DiagnosticsPanelProps = {
@@ -68,6 +69,16 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
             return;
         }
         let cancelled = false;
+        if (bootSnapshot.uncleanPreviousShutdown && !bootSnapshot.lastCrashDiagnosticPath && typeof desktopBinding?.StartupState === "function") {
+            void desktopBinding.StartupState().then((fresh) => {
+                if (!cancelled && fresh?.lastCrashDiagnosticPath) {
+                    updateDesktopBootSnapshot({
+                        uncleanPreviousShutdown: true,
+                        lastCrashDiagnosticPath: fresh.lastCrashDiagnosticPath,
+                    });
+                }
+            }).catch(() => undefined);
+        }
         setLoadingPreview(true);
         void buildInput(range, undefined, taskId, projectId)
             .then(previewDiagnosticBundle)

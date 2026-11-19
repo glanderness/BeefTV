@@ -34,10 +34,6 @@ func (w *RecoveryWakeup) Signal() {
 	}
 }
 
-func (w *RecoveryWakeup) RunLoop(ctx context.Context, interval time.Duration, step func()) {
-	w.RunSplitLoops(ctx, 0, interval, nil, nil, step)
-}
-
 // RunSplitLoops decouples fast active-provider/continuation polling (5s) from
 // the event-driven delivery/bind outbox safety-net cadence (30s + Signal).
 func (w *RecoveryWakeup) RunSplitLoops(

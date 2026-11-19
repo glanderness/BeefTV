@@ -24,6 +24,7 @@ type DesktopStartupState struct {
 	DiagnosticPath          string `json:"diagnosticPath,omitempty"`
 	UncleanPreviousShutdown bool   `json:"uncleanPreviousShutdown,omitempty"`
 	LastCrashDiagnosticPath string `json:"lastCrashDiagnosticPath,omitempty"`
+	SafeModeRequested       bool   `json:"safeModeRequested,omitempty"`
 	BaseURL                 string `json:"baseURL,omitempty"`
 	LaunchToken             string `json:"launchToken,omitempty"`
 	UIBootstrapToken        string `json:"uiBootstrapToken,omitempty"`
@@ -50,6 +51,7 @@ func (a *DesktopApp) StartupState() DesktopStartupState {
 			DataDir:                 a.dataDir,
 			UncleanPreviousShutdown: a.uncleanPreviousSession,
 			LastCrashDiagnosticPath: a.lastCrashDiagnosticPath,
+			SafeModeRequested:       rt.SafeModeRequested(),
 			BaseURL:                 rt.BaseURL(),
 			LaunchToken:             rt.LaunchToken(),
 			UIBootstrapToken:        rt.UIBootstrapToken(),

@@ -150,6 +150,8 @@ func ScaleImagePreview(ctx context.Context, srcPath string, dstPath string, maxS
 
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-max_pixels", "268435456",
+		"-threads", "2",
 		"-noautorotate",
 		"-i", srcPath,
 		"-an", "-sn", "-dn",

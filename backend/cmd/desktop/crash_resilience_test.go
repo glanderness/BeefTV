@@ -149,36 +149,51 @@ func TestCrashRecoveryDialogActionCrossPlatform(t *testing.T) {
 	}
 }
 
-func TestRendererWatchdogRespectsBusyLeaseHiddenTransitionAndCooldown(t *testing.T) {
+func TestRendererWatchdogRespectsBusyLeaseMaxCapHiddenTransitionAndCooldown(t *testing.T) {
 	var state rendererWatchdogState
 	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 
 	// Fresh heartbeat: no prompt.
-	if state.evaluate(base.Add(20*time.Second), base, false, false) {
+	if state.evaluate(base.Add(20*time.Second), base, false, false, time.Time{}) {
 		t.Fatal("fresh heartbeat must not trigger prompt")
 	}
 	// Legitimate 60s busy task (>35s normal timeout, <180s busy ceiling): no prompt.
-	if state.evaluate(base.Add(60*time.Second), base, false, true) {
+	if state.evaluate(base.Add(60*time.Second), base, false, true, base) {
 		t.Fatal("busy lease within busy timeout must not trigger prompt")
 	}
-	// Hidden stall is remembered without prompting while hidden.
-	if state.evaluate(base.Add(50*time.Second), base, true, false) {
+	// A leaked busy lease older than 10m falls back to normal 35s timeout.
+	if !state.evaluate(base.Add(11*time.Minute), base.Add(10*time.Minute), false, true, base) {
+		t.Fatal("leaked busy lease exceeding 10m cap must fall back to 35s threshold")
+	}
+	state = rendererWatchdogState{}
+	// Hidden window does not prompt while hidden, then prompts as soon as visible with stale heartbeat.
+	if state.evaluate(base.Add(50*time.Second), base, true, false, time.Time{}) {
 		t.Fatal("hidden window must not prompt immediately")
 	}
-	if !state.stalledWhileHidden {
-		t.Fatal("expected hidden stall to be tracked until visible")
-	}
-	// Returning visible while heartbeat is still stale triggers prompt once.
-	if !state.evaluate(base.Add(55*time.Second), base, false, false) {
-		t.Fatal("expected stale visible window after hidden stall to trigger prompt")
+	if !state.evaluate(base.Add(55*time.Second), base, false, false, time.Time{}) {
+		t.Fatal("expected stale visible window after hidden period to trigger prompt")
 	}
 	// Cooldown prevents dialog spam on subsequent 5s ticks.
-	if state.evaluate(base.Add(60*time.Second), base, false, false) {
+	if state.evaluate(base.Add(60*time.Second), base, false, false, time.Time{}) {
 		t.Fatal("watchdog must respect cooldown after prompting")
 	}
 	// After cooldown expires and heartbeat is still stale, prompt can fire again.
-	if !state.evaluate(base.Add(95*time.Second), base, false, false) {
+	if !state.evaluate(base.Add(95*time.Second), base, false, false, time.Time{}) {
 		t.Fatal("expected watchdog to re-evaluate after cooldown")
+	}
+}
+
+func TestCrashRecoveryDialogOptionsMatchPlatformCapabilities(t *testing.T) {
+	winOpts := crashRecoveryDialogOptions("windows", false)
+	if strings.Contains(winOpts.Message, "点击「取消」") {
+		t.Fatalf("Windows MB_YESNO copy must not promise a non-existent Cancel button: %q", winOpts.Message)
+	}
+	if winOpts.DefaultButton != "yes" {
+		t.Fatalf("Windows DefaultButton = %q, want yes (non-destructive export)", winOpts.DefaultButton)
+	}
+	macOpts := crashRecoveryDialogOptions("darwin", false)
+	if len(macOpts.Buttons) != 3 || macOpts.DefaultButton != "继续等待" {
+		t.Fatalf("macOS dialog options mismatch: %+v", macOpts)
 	}
 }
 

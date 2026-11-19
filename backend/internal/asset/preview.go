@@ -21,22 +21,22 @@ import (
 
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
 const (
-	previewCacheVersion          = "v1"
-	previewJPEGQuality           = 84
-	maxPreviewPixels             = 100_000_000
-	maxInProcessPreviewPixels    = 24_000_000 // >24MP scales via OS-isolated ffmpeg subprocess
-	maxInProcessPreviewFileBytes = 32 << 20   // >32MiB source files scale via ffmpeg subprocess
-	maxPreviewDimension          = 16384
-	maxPreviewWorkers            = 3
-	maxPreviewDecodeBudgetBytes  = 256 << 20 // 256 MiB global decode memory cap
-	minPreviewDecodeWeightBytes  = 16 << 20
-	subprocessPreviewWeightBytes = 64 << 20
-	DefaultAssetMaxChunkBytes    int64 = 4 << 20 // 4 MiB cap for Wails AssetServer fallback ranges
+	previewCacheVersion           = "v1"
+	previewJPEGQuality            = 84
+	maxSubprocessPreviewPixels    = 256_000_000 // Hard ceiling matching ffmpeg -max_pixels
+	maxSubprocessPreviewDimension = 32768
+	maxInProcessPreviewPixels     = 24_000_000 // >24MP scales via OS-isolated ffmpeg subprocess
+	maxInProcessPreviewFileBytes  = 32 << 20   // >32MiB source files scale via ffmpeg subprocess
+	maxPreviewDecodeBudgetBytes   = 256 << 20  // 256 MiB global FIFO weighted decode memory cap
+	minPreviewDecodeWeightBytes   = 64 << 20   // Caps concurrent lightweight jobs to <=4
+	subprocessPosterWeightBytes   = 86 << 20   // Caps concurrent video posters to <=2
+	DefaultAssetMaxChunkBytes     int64 = 4 << 20 // 4 MiB cap for Wails AssetServer fallback ranges
 )
 
 var allowedPreviewWidths = [...]int{256, 512, 1024, 2048}
@@ -53,31 +53,23 @@ type PreviewResult struct {
 	MimeType   string
 	Size       int64
 	IsOriginal bool
+	Immutable  bool
 }
 
-// decodeMemoryBudget bounds concurrent preview/poster work by BOTH estimated
-// decoded byte footprint and max worker concurrency, so concurrent large
-// images never spike Go RSS on low-RAM Windows machines.
 type decodeMemoryBudget struct {
-	mu          sync.Mutex
-	cond        *sync.Cond
-	limitBytes  int64
-	usedBytes   int64
-	limitSlots  int
-	activeSlots int
+	limitBytes int64
+	sem        *semaphore.Weighted
 }
 
-func newDecodeMemoryBudget(limitBytes int64, limitSlots int) *decodeMemoryBudget {
-	b := &decodeMemoryBudget{
+func newDecodeMemoryBudget(limitBytes int64) *decodeMemoryBudget {
+	return &decodeMemoryBudget{
 		limitBytes: limitBytes,
-		limitSlots: limitSlots,
+		sem:        semaphore.NewWeighted(limitBytes),
 	}
-	b.cond = sync.NewCond(&b.mu)
-	return b
 }
 
 func (b *decodeMemoryBudget) Acquire(ctx context.Context, bytes int64) (func(), error) {
-	if b == nil {
+	if b == nil || b.sem == nil {
 		return func() {}, nil
 	}
 	weight := bytes
@@ -87,36 +79,13 @@ func (b *decodeMemoryBudget) Acquire(ctx context.Context, bytes int64) (func(), 
 	if weight > b.limitBytes {
 		weight = b.limitBytes
 	}
-	stop := context.AfterFunc(ctx, func() {
-		b.mu.Lock()
-		b.cond.Broadcast()
-		b.mu.Unlock()
-	})
-	defer stop()
-
-	b.mu.Lock()
-	for {
-		if ctx.Err() != nil {
-			b.mu.Unlock()
-			return nil, ctx.Err()
-		}
-		if b.activeSlots < b.limitSlots && b.usedBytes+weight <= b.limitBytes {
-			b.activeSlots++
-			b.usedBytes += weight
-			b.mu.Unlock()
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					b.mu.Lock()
-					b.activeSlots--
-					b.usedBytes -= weight
-					b.cond.Broadcast()
-					b.mu.Unlock()
-				})
-			}, nil
-		}
-		b.cond.Wait()
+	if err := b.sem.Acquire(ctx, weight); err != nil {
+		return nil, err
 	}
+	var once sync.Once
+	return func() {
+		once.Do(func() { b.sem.Release(weight) })
+	}, nil
 }
 
 type previewManager struct {
@@ -129,7 +98,7 @@ type previewManager struct {
 func newPreviewManager(dataDir string) *previewManager {
 	return &previewManager{
 		dataDir:    strings.TrimSpace(dataDir),
-		budget:     newDecodeMemoryBudget(maxPreviewDecodeBudgetBytes, maxPreviewWorkers),
+		budget:     newDecodeMemoryBudget(maxPreviewDecodeBudgetBytes),
 		scaleImage: mediatools.ScaleImagePreview,
 	}
 }
@@ -330,14 +299,14 @@ func (s *Service) OpenVideoPoster(ctx context.Context, userID, resourceID string
 	}
 	posterPath := s.posterFilePath(userID, resource.ID)
 	if info, err := os.Stat(posterPath); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
-		return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size()}, nil
+		return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size(), Immutable: true}, nil
 	}
 	key := fmt.Sprintf("poster:%s:%s", userID, resource.ID)
 	val, err, _ := s.previews.flight.Do(key, func() (any, error) {
 		if info, statErr := os.Stat(posterPath); statErr == nil && info.Mode().IsRegular() && info.Size() > 0 {
-			return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size()}, nil
+			return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size(), Immutable: true}, nil
 		}
-		release, acquireErr := s.previews.budget.Acquire(ctx, subprocessPreviewWeightBytes)
+		release, acquireErr := s.previews.budget.Acquire(ctx, subprocessPosterWeightBytes)
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
@@ -358,7 +327,7 @@ func (s *Service) OpenVideoPoster(ctx context.Context, userID, resourceID string
 		if statErr != nil || info.Size() == 0 {
 			return nil, errors.New("视频封面生成失败")
 		}
-		return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size()}, nil
+		return &PreviewResult{Path: posterPath, MimeType: "image/jpeg", Size: info.Size(), Immutable: true}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -407,13 +376,17 @@ func (s *Service) lookupCachedPreview(userID, resourceID string, tier int, color
 	} {
 		path := s.previewFilePath(userID, resourceID, tier, color, item.ext)
 		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
-			return &PreviewResult{Path: path, MimeType: item.mime, Size: info.Size()}
+			return &PreviewResult{Path: path, MimeType: item.mime, Size: info.Size(), Immutable: true}
 		}
 	}
 	return nil
 }
 
 func (s *Service) originalPreviewResult(resource *model.Resource) (*PreviewResult, error) {
+	return s.originalPreviewResultWithCache(resource, false)
+}
+
+func (s *Service) originalPreviewResultWithCache(resource *model.Resource, immutable bool) (*PreviewResult, error) {
 	file, err := s.blobs.Open(resource.ObjectKey)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -431,7 +404,7 @@ func (s *Service) originalPreviewResult(resource *model.Resource) (*PreviewResul
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-	return &PreviewResult{Path: path, MimeType: mimeType, Size: info.Size(), IsOriginal: true}, nil
+	return &PreviewResult{Path: path, MimeType: mimeType, Size: info.Size(), IsOriginal: true, Immutable: immutable}, nil
 }
 
 func (s *Service) generateImagePreview(ctx context.Context, userID string, resource *model.Resource, tier int, color PreviewColorMode) (*PreviewResult, error) {
@@ -455,12 +428,16 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 	cfg, _, cfgErr := image.DecodeConfig(srcFile)
 	if cfgErr != nil || cfg.Width <= 0 || cfg.Height <= 0 {
 		_ = srcFile.Close()
+		if fileSize > maxInProcessPreviewFileBytes {
+			return nil, PreviewUnavailable()
+		}
 		return s.originalPreviewResult(resource)
 	}
 	pixels := int64(cfg.Width) * int64(cfg.Height)
-	if cfg.Width > maxPreviewDimension || cfg.Height > maxPreviewDimension || pixels > maxPreviewPixels {
+	if cfg.Width > maxSubprocessPreviewDimension || cfg.Height > maxSubprocessPreviewDimension || pixels > maxSubprocessPreviewPixels {
 		_ = srcFile.Close()
-		return s.originalPreviewResult(resource)
+		// Refuse to hand an extreme (>256MP) raw original directly to WebView2.
+		return nil, PreviewUnavailable()
 	}
 
 	if _, seekErr := srcFile.Seek(0, io.SeekStart); seekErr != nil {
@@ -477,7 +454,7 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 	// Large GIFs (>5 MiB header cap) or detected multi-frame GIF/APNG/WebP are
 	// served untouched so animations are never flattened.
 	if (lowerMime == "image/gif" && fileSize > maxPreviewHeaderBytes) || isAnimatedImage(resource.MimeType, headerBytes) {
-		return s.originalPreviewResult(resource)
+		return s.originalPreviewResultWithCache(resource, true)
 	}
 
 	orientation := extractJPEGEXIFOrientation(headerBytes)
@@ -487,7 +464,7 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 	}
 	maxSide := max(effW, effH)
 	if maxSide <= tier && orientation <= 1 && (lowerMime == "image/jpeg" || lowerMime == "image/png" || lowerMime == "image/webp") {
-		return s.originalPreviewResult(resource)
+		return s.originalPreviewResultWithCache(resource, true)
 	}
 
 	var icc []byte
@@ -495,10 +472,10 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 		icc = extractICCProfile(resource.MimeType, headerBytes)
 	}
 
-	// Oversized images (>24MP or >32MiB) scale in an OS-isolated ffmpeg
-	// subprocess so Go heap never spikes on 50–100MP photos.
+	// Oversized images (>24MP or >32MiB, up to 256MP) scale in an OS-isolated
+	// ffmpeg subprocess so Go heap never spikes on 50–256MP photos.
 	if pixels > maxInProcessPreviewPixels || fileSize > maxInProcessPreviewFileBytes {
-		return s.generateImagePreviewViaSubprocess(ctx, userID, resource, srcPath, tier, color, orientation, pngHeaderMayHaveAlpha(headerBytes), icc)
+		return s.generateImagePreviewViaSubprocess(ctx, userID, resource, srcPath, pixels, tier, color, orientation, pngHeaderMayHaveAlpha(headerBytes), icc)
 	}
 
 	// Reserve exact decoded RGBA budget before opening the pixel stream.
@@ -520,6 +497,7 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 	decoded, _, decErr := image.Decode(decodeFile)
 	_ = decodeFile.Close()
 	if decErr != nil {
+		// Transient / unsupported decode fallback must never be pinned immutable.
 		return s.originalPreviewResult(resource)
 	}
 
@@ -565,7 +543,7 @@ func (s *Service) generateImagePreview(ctx context.Context, userID string, resou
 	if err := writeAtomicPreviewFile(dstPath, encoded.Bytes()); err != nil {
 		return nil, err
 	}
-	return &PreviewResult{Path: dstPath, MimeType: outMime, Size: int64(encoded.Len())}, nil
+	return &PreviewResult{Path: dstPath, MimeType: outMime, Size: int64(encoded.Len()), Immutable: true}, nil
 }
 
 func (s *Service) generateImagePreviewViaSubprocess(
@@ -573,6 +551,7 @@ func (s *Service) generateImagePreviewViaSubprocess(
 	userID string,
 	resource *model.Resource,
 	srcPath string,
+	pixels int64,
 	tier int,
 	color PreviewColorMode,
 	orientation int,
@@ -580,9 +559,16 @@ func (s *Service) generateImagePreviewViaSubprocess(
 	icc []byte,
 ) (*PreviewResult, error) {
 	if s.previews == nil || s.previews.scaleImage == nil {
-		return s.originalPreviewResult(resource)
+		return nil, PreviewUnavailable()
 	}
-	release, acquireErr := s.previews.budget.Acquire(ctx, subprocessPreviewWeightBytes)
+	// Weight subprocess reservation proportionally to source pixel decode footprint
+	// so huge 64MP–256MP photos serialize (1 at a time) instead of running 3 ffmpeg
+	// decoders concurrently on low-RAM Windows hosts.
+	weight := pixels * 4
+	if weight < subprocessPosterWeightBytes {
+		weight = subprocessPosterWeightBytes
+	}
+	release, acquireErr := s.previews.budget.Acquire(ctx, weight)
 	if acquireErr != nil {
 		return nil, acquireErr
 	}
@@ -597,7 +583,8 @@ func (s *Service) generateImagePreviewViaSubprocess(
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return s.originalPreviewResult(resource)
+		// Never silently dump a >24MP / >32MiB raw original into WebView2 or pin it immutable.
+		return nil, PreviewUnavailable()
 	}
 	if len(icc) > 0 {
 		if outBytes, err := os.ReadFile(dstPath); err == nil && len(outBytes) > 0 {
@@ -612,9 +599,9 @@ func (s *Service) generateImagePreviewViaSubprocess(
 	}
 	info, statErr := os.Stat(dstPath)
 	if statErr != nil || info.Size() == 0 {
-		return s.originalPreviewResult(resource)
+		return nil, PreviewUnavailable()
 	}
-	return &PreviewResult{Path: dstPath, MimeType: outMime, Size: info.Size()}, nil
+	return &PreviewResult{Path: dstPath, MimeType: outMime, Size: info.Size(), Immutable: true}, nil
 }
 
 func fitPreviewBounds(w, h, maxSide int) (int, int) {

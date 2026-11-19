@@ -27,18 +27,44 @@ func (r *Runtime) RecordClientHeartbeat(hidden, busy bool) {
 	if r == nil {
 		return
 	}
+	nowMs := time.Now().UTC().UnixMilli()
 	r.clientHidden.Store(hidden)
-	r.clientBusy.Store(busy)
-	r.lastClientHeartbeat.Store(time.Now().UTC().UnixMilli())
+	if busy {
+		if !r.clientBusy.Swap(true) || r.clientBusySince.Load() == 0 {
+			r.clientBusySince.Store(nowMs)
+		}
+	} else {
+		r.clientBusy.Store(false)
+		r.clientBusySince.Store(0)
+	}
+	r.lastClientHeartbeat.Store(nowMs)
 }
 
-func (r *Runtime) LastClientHeartbeat() (time.Time, bool, bool) {
+func (r *Runtime) LastClientHeartbeat() (time.Time, bool, bool, time.Time) {
 	if r == nil {
-		return time.Time{}, false, false
+		return time.Time{}, false, false, time.Time{}
 	}
 	ms := r.lastClientHeartbeat.Load()
 	if ms <= 0 {
-		return time.Time{}, false, false
+		return time.Time{}, false, false, time.Time{}
 	}
-	return time.UnixMilli(ms).UTC(), r.clientHidden.Load(), r.clientBusy.Load()
+	var busySince time.Time
+	if busyMs := r.clientBusySince.Load(); busyMs > 0 {
+		busySince = time.UnixMilli(busyMs).UTC()
+	}
+	return time.UnixMilli(ms).UTC(), r.clientHidden.Load(), r.clientBusy.Load(), busySince
+}
+
+func (r *Runtime) RequestSafeMode(enabled bool) {
+	if r == nil {
+		return
+	}
+	r.safeModeRequested.Store(enabled)
+}
+
+func (r *Runtime) SafeModeRequested() bool {
+	if r == nil {
+		return false
+	}
+	return r.safeModeRequested.Load()
 }

@@ -1,4 +1,5 @@
 import { configureApiRuntime } from "@/services/api/request";
+import { applySessionCanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { getEmbeddedHarnessConfig } from "@/lib/embedded-runtime";
 import { purgeLegacyResourceBlobIndexedDB } from "@/lib/diagnostics-storage";
@@ -116,7 +117,6 @@ declare global {
                 DesktopApp?: DesktopRuntimeBinding;
             };
         };
-        __BEEFTV_FLUSH_BEFORE_RELOAD__?: () => void;
     }
 }
 
@@ -130,22 +130,53 @@ let upgradeProbeTimer: ReturnType<typeof setInterval> | null = null;
 let currentDesktopApiBaseURL = "/api";
 let rendererHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let rendererHeartbeatVisibilityBound = false;
-let lastCrashEventBound = false;
+let desktopEventsBound = false;
 let legacyBlobPurgeTimer: ReturnType<typeof setTimeout> | null = null;
 let rendererBusyCount = 0;
+let pendingSafeModeAck = false;
+let reloadFlushInFlight = false;
+let beforeReloadFlusher: (() => Promise<void>) | null = null;
+
+/**
+ * Registers the workspace persistence flusher invoked before a graceful
+ * menu-triggered window reload. Kept as an injected hook so early desktop
+ * startup never imports application stores before boot finishes.
+ */
+export function registerBeforeReloadFlusher(flusher: (() => Promise<void>) | null) {
+    beforeReloadFlusher = flusher;
+}
 
 function sendRendererHeartbeat() {
     if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
     if (typeof globalThis.fetch !== "function") return;
     const hidden = typeof document !== "undefined" ? Boolean(document.hidden) : false;
     const busy = rendererBusyCount > 0;
+    const safeModeAck = pendingSafeModeAck;
     const base = String(currentDesktopApiBaseURL || "/api").replace(/\/+$/u, "");
     void globalThis.fetch(`${base}/client-runtime/heartbeat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hidden, busy }),
+        body: JSON.stringify({ hidden, busy, safeModeAck }),
         credentials: "include",
-    }).catch(() => undefined);
+    })
+        .then((res) => {
+            if (safeModeAck && res.ok) {
+                pendingSafeModeAck = false;
+            }
+        })
+        .catch(() => undefined);
+}
+
+async function flushAllWorkspacePersistenceBeforeReload() {
+    if (!beforeReloadFlusher) return;
+    try {
+        await Promise.race([
+            beforeReloadFlusher().catch(() => undefined),
+            waitMs(1_200),
+        ]);
+    } catch {
+        // Best-effort flush before reload; never block recovery.
+    }
 }
 
 /**
@@ -180,8 +211,8 @@ function ensureDesktopLifecycleHelpers() {
         rendererHeartbeatVisibilityBound = true;
         document.addEventListener("visibilitychange", sendRendererHeartbeat);
     }
-    if (!lastCrashEventBound && typeof window.runtime?.EventsOn === "function") {
-        lastCrashEventBound = true;
+    if (!desktopEventsBound && typeof window.runtime?.EventsOn === "function") {
+        desktopEventsBound = true;
         window.runtime.EventsOn("diagnostics:last-crash-ready", (savedPath) => {
             if (typeof savedPath === "string" && savedPath.trim()) {
                 updateDesktopBootSnapshot({
@@ -190,6 +221,26 @@ function ensureDesktopLifecycleHelpers() {
                 });
             }
         });
+        window.runtime.EventsOn("desktop:request-reload", () => {
+            if (reloadFlushInFlight) return;
+            reloadFlushInFlight = true;
+            void flushAllWorkspacePersistenceBeforeReload().finally(() => {
+                window.location.reload();
+            });
+        });
+        // Close the subscribe-after-emit window if Go already wrote the last-crash zip.
+        const snapshot = getDesktopBootSnapshot();
+        const binding = getDesktopAppBinding();
+        if (snapshot.uncleanPreviousShutdown && !snapshot.lastCrashDiagnosticPath && typeof binding?.StartupState === "function") {
+            void binding.StartupState().then((fresh) => {
+                if (fresh?.lastCrashDiagnosticPath) {
+                    updateDesktopBootSnapshot({
+                        uncleanPreviousShutdown: true,
+                        lastCrashDiagnosticPath: fresh.lastCrashDiagnosticPath,
+                    });
+                }
+            }).catch(() => undefined);
+        }
     }
     if (!legacyBlobPurgeTimer) {
         legacyBlobPurgeTimer = setTimeout(() => {
@@ -468,6 +519,10 @@ export async function bootstrapDesktopRuntime(options?: {
 
         if (stateCandidate) {
             const prev = getDesktopBootSnapshot();
+            if (stateCandidate.safeModeRequested) {
+                applySessionCanvasMemoryMode("thumbnail-only");
+                pendingSafeModeAck = true;
+            }
             updateDesktopBootSnapshot({
                 state: stateCandidate.state,
                 phase: stateCandidate.phase ?? prev.phase,

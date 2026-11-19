@@ -11,6 +11,7 @@ export type DesktopStartupState = {
     diagnosticPath?: string;
     uncleanPreviousShutdown?: boolean;
     lastCrashDiagnosticPath?: string;
+    safeModeRequested?: boolean;
     baseURL?: string;
     launchToken?: string;
     uiBootstrapToken?: string;

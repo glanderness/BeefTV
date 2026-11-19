@@ -12,6 +12,12 @@ const (
 	TaskEffectStatusPending = "pending"
 	TaskEffectStatusRefused = "refused"
 	TaskEffectStatusSettled = "settled"
+
+	// Canonical generation delivery stages shared across migrations, recovery
+	// queries, and delivery controllers.
+	TaskStageFetchingResult   = "正在取回结果"
+	TaskStageDeliveryPaused   = "delivery_paused"
+	TaskStageDeliveryTimedOut = "delivery_timed_out"
 )
 
 // RevisionWatchCanvasBindReasons are terminal canvas bind refusals that can

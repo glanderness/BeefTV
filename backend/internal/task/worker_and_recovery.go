@@ -58,6 +58,7 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 	}
 	var last error
 	anyRefused := false
+	anyTransientSkip := false
 	canvasTargets := CanvasBindTargets(task, intents)
 	msgTargets := MessageBindTargets(task, intents)
 	if missing {
@@ -120,6 +121,7 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 						if isPermanentSkippableBindReason(reason) {
 							_ = deps.Repo.MarkTaskEffectRefused(task.UserID, task.ID, model.TaskEffectKindCanvasBind, task.ProjectID, target.NodeID, target.OutputIndex, reason, 0)
 						} else if reason != "" {
+							anyTransientSkip = true
 							_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, reason)
 						}
 						continue
@@ -154,6 +156,7 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 					if isPermanentSkippableBindReason(reason) {
 						_ = deps.Repo.MarkMessageEffectRefused(task.UserID, task.ID, target.ConversationID, target.MessageID, target.OutputIndex, reason)
 					} else if reason != "" {
+						anyTransientSkip = true
 						_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, reason)
 					}
 					continue
@@ -171,8 +174,8 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 		_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, last.Error())
 	} else if !missing && !anyRefused && (len(canvasIDs) == 0 || deps.HasWorkspaceOps) && (len(intents) > 0 || len(canvasTargets) > 0 || len(msgTargets) > 0 || TargetBindingFromInput(task.InputJSON).Empty()) {
 		_ = deps.Repo.MarkTaskEffectSettled(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, "", 0, "", "")
-	} else if !missing && anyRefused {
-		_ = deps.Repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindTaskBindSettled)
+	} else if !missing && anyRefused && !anyTransientSkip {
+		_ = deps.Repo.ClearPendingTaskEffectsByKind(task.ID, model.TaskEffectKindTaskBindSettled)
 	}
 	return last
 }
