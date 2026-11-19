@@ -270,10 +270,14 @@ func TestReloadWindowAckPreventsDoubleReloadAndUnresponsiveFallsBack(t *testing.
 	}
 	firstSafeID := state.SafeModeRequestID
 
-	// Case 2: Stale safe-mode ack from an older request must NOT wipe a newer safe-mode request.
+	// Case 2: Zero or stale safe-mode ack from an older request must NOT wipe a newer safe-mode request.
 	secondSafeID := rt.RequestSafeMode(true)
 	if secondSafeID <= firstSafeID {
 		t.Fatalf("expected monotonic safeModeRequestID: %d <= %d", secondSafeID, firstSafeID)
+	}
+	rt.AckSafeMode(0)
+	if !rt.SafeModeRequested() {
+		t.Fatal("zero AckSafeMode(0) cleared active safe-mode request")
 	}
 	rt.AckSafeMode(firstSafeID)
 	if !rt.SafeModeRequested() {

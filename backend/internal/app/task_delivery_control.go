@@ -33,7 +33,7 @@ func (s *Service) beginGenerationDownload(userID, identity string, timeout time.
 			return s.SupportTrace().Start(taskSupportContext(parent, task), "generation.download", taskSupportFields(task))
 		},
 		supportFailureReason,
-		func(task model.Task) { _, _ = s.pauseGenerationDownload(task, "delivery_timed_out") },
+		func(task model.Task) { _, _ = s.pauseGenerationDownload(task, model.TaskStageDeliveryTimedOut) },
 		&s.deliveryDeadlines, &s.deliveryCancels, userID, identity, timeout,
 	)
 }

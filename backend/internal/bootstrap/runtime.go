@@ -385,7 +385,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		if body.ReloadAckID > 0 {
 			rt.AckReloadRequest(body.ReloadAckID)
 		}
-		if body.SafeModeAck || body.SafeModeAckID > 0 {
+		if body.SafeModeAckID > 0 {
 			rt.AckSafeMode(body.SafeModeAckID)
 		}
 		rt.RecordClientHeartbeat(body.Hidden, body.Busy)

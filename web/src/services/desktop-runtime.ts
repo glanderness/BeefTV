@@ -151,8 +151,8 @@ function sendRendererHeartbeat(extra?: { reloadAckId?: number }): Promise<void> 
     if (typeof globalThis.fetch !== "function") return Promise.resolve();
     const hidden = typeof document !== "undefined" ? Boolean(document.hidden) : false;
     const busy = rendererBusyCount > 0;
-    const ackId = pendingSafeModeAckId;
-    const safeModeAck = ackId !== null;
+    const ackId = pendingSafeModeAckId ?? 0;
+    const safeModeAck = ackId > 0;
     const reloadAckId = typeof extra?.reloadAckId === "number" && extra.reloadAckId > 0 ? extra.reloadAckId : 0;
     const base = String(currentDesktopApiBaseURL || "/api").replace(/\/+$/u, "");
     return globalThis.fetch(`${base}/client-runtime/heartbeat`, {
@@ -162,7 +162,7 @@ function sendRendererHeartbeat(extra?: { reloadAckId?: number }): Promise<void> 
             hidden,
             busy,
             safeModeAck,
-            safeModeAckId: ackId ?? 0,
+            safeModeAckId: ackId,
             reloadAckId,
         }),
         credentials: "include",
@@ -230,6 +230,11 @@ function ensureDesktopLifecycleHelpers() {
             }
         });
         window.runtime.EventsOn("desktop:request-reload", (payload?: unknown) => {
+            // Check in-flight guard BEFORE acking: a duplicate event while a
+            // flush is already running must not silently ack its requestId and
+            // disable Go's native fallback.
+            if (reloadFlushInFlight) return;
+            reloadFlushInFlight = true;
             const rawId = payload && typeof payload === "object" && "requestId" in payload
                 ? Number((payload as { requestId?: unknown }).requestId)
                 : 0;
@@ -239,11 +244,13 @@ function ensureDesktopLifecycleHelpers() {
             const ackPromise = reloadAckId > 0
                 ? Promise.race([sendRendererHeartbeat({ reloadAckId }), waitMs(500)])
                 : Promise.resolve();
-            if (reloadFlushInFlight) return;
-            reloadFlushInFlight = true;
             void ackPromise
                 .then(() => flushAllWorkspacePersistenceBeforeReload())
                 .finally(() => {
+                    // Reset flag before/after calling reload so if beforeunload
+                    // cancels navigation (user clicks Stay), subsequent menu
+                    // reload actions remain functional.
+                    reloadFlushInFlight = false;
                     window.location.reload();
                 });
         });
@@ -543,7 +550,9 @@ export async function bootstrapDesktopRuntime(options?: {
                 const reqId = typeof stateCandidate.safeModeRequestId === "number" && Number.isFinite(stateCandidate.safeModeRequestId)
                     ? Math.trunc(stateCandidate.safeModeRequestId)
                     : 0;
-                pendingSafeModeAckId = reqId;
+                if (reqId > 0) {
+                    pendingSafeModeAckId = reqId;
+                }
             }
             updateDesktopBootSnapshot({
                 state: stateCandidate.state,

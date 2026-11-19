@@ -45,6 +45,7 @@ func (a *DesktopApp) StartupState() DesktopStartupState {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if rt := a.runtime(); rt != nil {
+		safeModeID := rt.SafeModeRequestID()
 		return DesktopStartupState{
 			State:                   "ready",
 			Phase:                   "ready",
@@ -52,8 +53,8 @@ func (a *DesktopApp) StartupState() DesktopStartupState {
 			DataDir:                 a.dataDir,
 			UncleanPreviousShutdown: a.uncleanPreviousSession,
 			LastCrashDiagnosticPath: a.lastCrashDiagnosticPath,
-			SafeModeRequested:       rt.SafeModeRequested(),
-			SafeModeRequestID:       rt.SafeModeRequestID(),
+			SafeModeRequested:       safeModeID > 0,
+			SafeModeRequestID:       safeModeID,
 			BaseURL:                 rt.BaseURL(),
 			LaunchToken:             rt.LaunchToken(),
 			UIBootstrapToken:        rt.UIBootstrapToken(),

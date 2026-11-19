@@ -80,11 +80,7 @@ func (r *Runtime) SafeModeRequestID() uint64 {
 }
 
 func (r *Runtime) AckSafeMode(requestID uint64) {
-	if r == nil {
-		return
-	}
-	if requestID == 0 {
-		r.safeModeRequestID.Store(0)
+	if r == nil || requestID == 0 {
 		return
 	}
 	r.safeModeRequestID.CompareAndSwap(requestID, 0)
