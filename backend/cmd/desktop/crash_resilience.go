@@ -156,6 +156,10 @@ func (a *DesktopApp) reloadWindowNative(safeMode bool) error {
 	if rt := a.runtime(); rt != nil {
 		rt.RequestSafeMode(safeMode)
 	}
+	if a.nativeReloadFn != nil {
+		a.nativeReloadFn(ctx)
+		return nil
+	}
 	if ctx.Value("frontend") == nil {
 		return nil
 	}
@@ -164,42 +168,56 @@ func (a *DesktopApp) reloadWindowNative(safeMode bool) error {
 }
 
 // ReloadWindow reloads the WebView window. It arms safeMode in Go state,
-// notifies a live renderer to flush workspace saves (SQLite + IndexedDB +
-// settings) before reloading, and falls back to native browser-process reload
-// after 1.5s if the renderer is unresponsive.
+// notifies a live renderer to ack and flush workspace saves (SQLite + IndexedDB
+// + settings) before reloading, and falls back to native browser-process reload
+// after 1.5s ONLY if the renderer failed to ack the reload request.
 func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 	ctx, err := a.dialogContext()
 	if err != nil {
 		return err
 	}
 	rt := a.runtime()
+	var reqID uint64
 	if rt != nil {
 		rt.RequestSafeMode(safeMode)
+		reqID = rt.BeginReloadRequest()
 	}
-	if ctx.Value("frontend") == nil {
-		return nil
+	emitFn := a.emitReloadEvent
+	nativeFn := a.nativeReloadFn
+	if emitFn == nil {
+		if ctx.Value("frontend") == nil {
+			return nil
+		}
+		emitFn = func(c context.Context, payload map[string]any) {
+			wailsruntime.EventsEmit(c, requestReloadEventName, payload)
+		}
 	}
-	var baselineBeat time.Time
-	if rt != nil {
-		baselineBeat, _, _, _ = rt.LastClientHeartbeat()
+	if nativeFn == nil {
+		nativeFn = func(c context.Context) {
+			if c.Value("frontend") != nil {
+				wailsruntime.WindowReload(c)
+			}
+		}
 	}
-	wailsruntime.EventsEmit(ctx, requestReloadEventName, map[string]any{"safeMode": safeMode})
+	wait := a.gracefulReloadWait
+	if wait <= 0 {
+		wait = rendererGracefulReloadWait
+	}
+	emitFn(ctx, map[string]any{"safeMode": safeMode, "requestId": reqID})
 	go func() {
-		time.Sleep(rendererGracefulReloadWait)
-		if rt != nil {
-			latestBeat, _, _, _ := rt.LastClientHeartbeat()
-			// If the renderer already reloaded and sent a brand-new heartbeat
-			// after safeMode ack, do not reload a second time.
-			if safeMode && !rt.SafeModeRequested() {
-				return
-			}
-			if !safeMode && !latestBeat.IsZero() && latestBeat.After(baselineBeat) {
-				return
-			}
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
 		}
-		if ctx.Err() == nil && ctx.Value("frontend") != nil {
-			wailsruntime.WindowReload(ctx)
+		// Once the renderer explicitly acks this reload request, it owns the
+		// full multi-store flush and reload; never trigger a duplicate reload.
+		if rt != nil && reqID > 0 && rt.ReloadRequestAcked(reqID) {
+			return
 		}
+		nativeFn(ctx)
 	}()
 	return nil
 }
@@ -390,6 +408,15 @@ func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated boo
 			})
 		}
 	case "safe-reload":
+		// If the renderer recovered while the dialog was open, attempt a
+		// graceful flush-then-reload (still bounded by the 1.5s ack fallback);
+		// when heartbeat is stale, reload natively immediately.
+		if rt := a.runtime(); rt != nil {
+			if lastBeat, _, _, _ := rt.LastClientHeartbeat(); !lastBeat.IsZero() && time.Since(lastBeat) < rendererHeartbeatTimeout {
+				_ = a.ReloadWindow(true)
+				return
+			}
+		}
 		_ = a.reloadWindowNative(true)
 	}
 }

@@ -56,6 +56,9 @@ type DesktopApp struct {
 	openDirectory           func(path string) error
 	copyOwnedMedia          func(resourceID, destPath string) error
 	copyEagleMedia          func(baseURL, itemID, destPath string) error
+	emitReloadEvent         func(ctx context.Context, payload map[string]any)
+	nativeReloadFn          func(ctx context.Context)
+	gracefulReloadWait      time.Duration
 }
 
 // Wails reflects every field type reachable from a bound object. Keeping the

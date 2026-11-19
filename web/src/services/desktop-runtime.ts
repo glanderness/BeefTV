@@ -133,7 +133,7 @@ let rendererHeartbeatVisibilityBound = false;
 let desktopEventsBound = false;
 let legacyBlobPurgeTimer: ReturnType<typeof setTimeout> | null = null;
 let rendererBusyCount = 0;
-let pendingSafeModeAck = false;
+let pendingSafeModeAckId: number | null = null;
 let reloadFlushInFlight = false;
 let beforeReloadFlusher: (() => Promise<void>) | null = null;
 
@@ -146,22 +146,30 @@ export function registerBeforeReloadFlusher(flusher: (() => Promise<void>) | nul
     beforeReloadFlusher = flusher;
 }
 
-function sendRendererHeartbeat() {
-    if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
-    if (typeof globalThis.fetch !== "function") return;
+function sendRendererHeartbeat(extra?: { reloadAckId?: number }): Promise<void> {
+    if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return Promise.resolve();
+    if (typeof globalThis.fetch !== "function") return Promise.resolve();
     const hidden = typeof document !== "undefined" ? Boolean(document.hidden) : false;
     const busy = rendererBusyCount > 0;
-    const safeModeAck = pendingSafeModeAck;
+    const ackId = pendingSafeModeAckId;
+    const safeModeAck = ackId !== null;
+    const reloadAckId = typeof extra?.reloadAckId === "number" && extra.reloadAckId > 0 ? extra.reloadAckId : 0;
     const base = String(currentDesktopApiBaseURL || "/api").replace(/\/+$/u, "");
-    void globalThis.fetch(`${base}/client-runtime/heartbeat`, {
+    return globalThis.fetch(`${base}/client-runtime/heartbeat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hidden, busy, safeModeAck }),
+        body: JSON.stringify({
+            hidden,
+            busy,
+            safeModeAck,
+            safeModeAckId: ackId ?? 0,
+            reloadAckId,
+        }),
         credentials: "include",
     })
         .then((res) => {
-            if (safeModeAck && res.ok) {
-                pendingSafeModeAck = false;
+            if (safeModeAck && res.ok && pendingSafeModeAckId === ackId) {
+                pendingSafeModeAckId = null;
             }
         })
         .catch(() => undefined);
@@ -172,7 +180,7 @@ async function flushAllWorkspacePersistenceBeforeReload() {
     try {
         await Promise.race([
             beforeReloadFlusher().catch(() => undefined),
-            waitMs(1_200),
+            waitMs(8_000),
         ]);
     } catch {
         // Best-effort flush before reload; never block recovery.
@@ -203,13 +211,13 @@ export function beginRendererBusyLease(): () => void {
 function ensureDesktopLifecycleHelpers() {
     if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
     if (!rendererHeartbeatTimer) {
-        sendRendererHeartbeat();
-        rendererHeartbeatTimer = setInterval(sendRendererHeartbeat, 10_000);
+        void sendRendererHeartbeat();
+        rendererHeartbeatTimer = setInterval(() => { void sendRendererHeartbeat(); }, 10_000);
         (rendererHeartbeatTimer as { unref?: () => void }).unref?.();
     }
     if (!rendererHeartbeatVisibilityBound && typeof document !== "undefined") {
         rendererHeartbeatVisibilityBound = true;
-        document.addEventListener("visibilitychange", sendRendererHeartbeat);
+        document.addEventListener("visibilitychange", () => { void sendRendererHeartbeat(); });
     }
     if (!desktopEventsBound && typeof window.runtime?.EventsOn === "function") {
         desktopEventsBound = true;
@@ -221,12 +229,23 @@ function ensureDesktopLifecycleHelpers() {
                 });
             }
         });
-        window.runtime.EventsOn("desktop:request-reload", () => {
+        window.runtime.EventsOn("desktop:request-reload", (payload?: unknown) => {
+            const rawId = payload && typeof payload === "object" && "requestId" in payload
+                ? Number((payload as { requestId?: unknown }).requestId)
+                : 0;
+            const reloadAckId = Number.isFinite(rawId) && rawId > 0 ? Math.trunc(rawId) : 0;
+            // Immediately ack so Go cancels its 1.5s unresponsive-renderer fallback
+            // before we run the full multi-store workspace flush.
+            const ackPromise = reloadAckId > 0
+                ? Promise.race([sendRendererHeartbeat({ reloadAckId }), waitMs(500)])
+                : Promise.resolve();
             if (reloadFlushInFlight) return;
             reloadFlushInFlight = true;
-            void flushAllWorkspacePersistenceBeforeReload().finally(() => {
-                window.location.reload();
-            });
+            void ackPromise
+                .then(() => flushAllWorkspacePersistenceBeforeReload())
+                .finally(() => {
+                    window.location.reload();
+                });
         });
         // Close the subscribe-after-emit window if Go already wrote the last-crash zip.
         const snapshot = getDesktopBootSnapshot();
@@ -521,7 +540,10 @@ export async function bootstrapDesktopRuntime(options?: {
             const prev = getDesktopBootSnapshot();
             if (stateCandidate.safeModeRequested) {
                 applySessionCanvasMemoryMode("thumbnail-only");
-                pendingSafeModeAck = true;
+                const reqId = typeof stateCandidate.safeModeRequestId === "number" && Number.isFinite(stateCandidate.safeModeRequestId)
+                    ? Math.trunc(stateCandidate.safeModeRequestId)
+                    : 0;
+                pendingSafeModeAckId = reqId;
             }
             updateDesktopBootSnapshot({
                 state: stateCandidate.state,

@@ -557,6 +557,16 @@ func TestV31TaskEffectsMigrationBackfillsHistoricalSucceededTasksAndValidatesSch
 		VALUES ('hist-done', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'old', '{"images":[]}', ?, ?, ?)`, oldDoneAt, oldDoneAt, oldDoneAt).Error; err != nil {
 		t.Fatal(err)
 	}
+	// 1b. Legacy succeeded task with NULL completed_at but old updated_at -> must also be backfilled (prevents upgrade replay storm).
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-null-completed-old', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'legacy-null', '{"images":[]}', ?, ?, NULL)`, oldDoneAt, oldDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 1c. Recent succeeded task with NULL completed_at and recent updated_at -> must NOT be backfilled.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-null-completed-recent', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'recent-null', '{"images":[]}', ?, ?, NULL)`, recentDoneAt, recentDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
 	// 2. Actively downloading task -> must NOT be backfilled.
 	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
 		VALUES ('hist-inflight', 'local', 'canvas-1', 'canvas_image', 'succeeded', '正在取回结果', 'inflight', '{"images":[]}', ?, ?, ?)`, oldDoneAt, oldDoneAt, oldDoneAt).Error; err != nil {
@@ -593,20 +603,22 @@ func TestV31TaskEffectsMigrationBackfillsHistoricalSucceededTasksAndValidatesSch
 		t.Fatalf("RequireLocalSchema after v31 failed: %v", err)
 	}
 
-	var doneEffects []model.TaskEffect
-	if err := db.Where("task_id = ?", "hist-done").Find(&doneEffects).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(doneEffects) != 2 {
-		t.Fatalf("expected 2 backfilled settled effects (delivery+bind) for hist-done, got %+v", doneEffects)
-	}
-	for _, effect := range doneEffects {
-		if effect.Status != model.TaskEffectStatusSettled || effect.Reason != "v31_migration_baseline" {
-			t.Fatalf("unexpected backfilled effect row: %+v", effect)
+	for _, backfilledID := range []string{"hist-done", "hist-null-completed-old"} {
+		var doneEffects []model.TaskEffect
+		if err := db.Where("task_id = ?", backfilledID).Find(&doneEffects).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(doneEffects) != 2 {
+			t.Fatalf("expected 2 backfilled settled effects (delivery+bind) for %s, got %+v", backfilledID, doneEffects)
+		}
+		for _, effect := range doneEffects {
+			if effect.Status != model.TaskEffectStatusSettled || effect.Reason != "v31_migration_baseline" {
+				t.Fatalf("unexpected backfilled effect row for %s: %+v", backfilledID, effect)
+			}
 		}
 	}
 
-	for _, excludedID := range []string{"hist-inflight", "hist-paused", "hist-recent", "hist-refused"} {
+	for _, excludedID := range []string{"hist-null-completed-recent", "hist-inflight", "hist-paused", "hist-recent", "hist-refused"} {
 		var count int64
 		if err := db.Model(&model.TaskEffect{}).Where("task_id = ?", excludedID).Count(&count).Error; err != nil {
 			t.Fatal(err)

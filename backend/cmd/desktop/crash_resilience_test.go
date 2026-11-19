@@ -222,3 +222,92 @@ func TestPruneStartupDiagnosticSnapshotsBoundsLastCrashZips(t *testing.T) {
 		}
 	}
 }
+
+func TestReloadWindowAckPreventsDoubleReloadAndUnresponsiveFallsBack(t *testing.T) {
+	dataDir := t.TempDir()
+	app := newDesktopApp(dataDir)
+	app.downloadsDir = t.TempDir()
+	app.revealFile = func(string) error { return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.wailsCtx = ctx
+	if err := app.start(ctx); err != nil {
+		t.Fatalf("desktop app start failed: %v", err)
+	}
+	defer func() { _ = app.stop(context.Background()) }()
+
+	rt := app.runtime()
+	if rt == nil {
+		t.Fatal("expected active runtime")
+	}
+
+	// Case 1: Live renderer acks requestId -> slow flush/boot must NEVER trigger native fallback double-reload.
+	nativeCalls := 0
+	var emittedReqID uint64
+	app.gracefulReloadWait = 40 * time.Millisecond
+	app.emitReloadEvent = func(_ context.Context, payload map[string]any) {
+		if id, ok := payload["requestId"].(uint64); ok {
+			emittedReqID = id
+			rt.AckReloadRequest(id)
+		}
+	}
+	app.nativeReloadFn = func(context.Context) {
+		nativeCalls++
+	}
+	if err := app.ReloadWindow(true); err != nil {
+		t.Fatalf("ReloadWindow(true) failed: %v", err)
+	}
+	if emittedReqID == 0 {
+		t.Fatal("expected non-zero reload requestId in emitted event")
+	}
+	time.Sleep(90 * time.Millisecond)
+	if nativeCalls != 0 {
+		t.Fatalf("expected 0 native fallback reloads after renderer ack, got %d", nativeCalls)
+	}
+	state := app.StartupState()
+	if !state.SafeModeRequested || state.SafeModeRequestID == 0 {
+		t.Fatalf("expected SafeModeRequested=true with non-zero requestId, got %+v", state)
+	}
+	firstSafeID := state.SafeModeRequestID
+
+	// Case 2: Stale safe-mode ack from an older request must NOT wipe a newer safe-mode request.
+	secondSafeID := rt.RequestSafeMode(true)
+	if secondSafeID <= firstSafeID {
+		t.Fatalf("expected monotonic safeModeRequestID: %d <= %d", secondSafeID, firstSafeID)
+	}
+	rt.AckSafeMode(firstSafeID)
+	if !rt.SafeModeRequested() {
+		t.Fatal("stale AckSafeMode(firstSafeID) cleared newer safe-mode request")
+	}
+	rt.AckSafeMode(secondSafeID)
+	if rt.SafeModeRequested() {
+		t.Fatal("matching AckSafeMode(secondSafeID) failed to clear safe-mode request")
+	}
+
+	// Case 3: Unresponsive renderer never acks -> fallback native reload MUST fire once.
+	fallbackDone := make(chan struct{}, 1)
+	app.emitReloadEvent = func(context.Context, map[string]any) {
+		// Intentionally do NOT ack.
+	}
+	app.nativeReloadFn = func(context.Context) {
+		nativeCalls++
+		select {
+		case fallbackDone <- struct{}{}:
+		default:
+		}
+	}
+	if err := app.ReloadWindow(true); err != nil {
+		t.Fatalf("ReloadWindow(true) unresponsive case failed: %v", err)
+	}
+	select {
+	case <-fallbackDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected native fallback reload for unresponsive renderer")
+	}
+	if nativeCalls != 1 {
+		t.Fatalf("expected exactly 1 native fallback reload, got %d", nativeCalls)
+	}
+	if !rt.SafeModeRequested() {
+		t.Fatal("expected SafeModeRequested=true to remain armed for browser-level fallback reload")
+	}
+}

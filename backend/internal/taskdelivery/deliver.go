@@ -31,7 +31,7 @@ func (d *Deliverer) Deliver(task model.Task) error {
 	if d == nil || d.store == nil || strings.TrimSpace(task.ID) == "" || task.Status != model.TaskStatusSucceeded {
 		return nil
 	}
-	if task.Stage == "delivery_paused" || task.Stage == "delivery_timed_out" {
+	if DeliveryPaused(task.Stage) {
 		return nil
 	}
 	stored, loadErr := d.loadedOutputs(task.ID)

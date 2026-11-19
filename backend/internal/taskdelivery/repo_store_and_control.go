@@ -25,7 +25,7 @@ const (
 )
 
 func DeliveryPaused(stage string) bool {
-	return stage == "delivery_paused" || stage == "delivery_timed_out"
+	return stage == model.TaskStageDeliveryPaused || stage == model.TaskStageDeliveryTimedOut
 }
 
 func ModelTaskOutputs(outputs []localtask.CanonicalOutput) []model.TaskOutput {
@@ -116,7 +116,7 @@ func (s RepoStore) CommitOwned(item OwnedDelivery) error {
 		return err
 	}
 	task, err := s.Repo.Task(item.Result.TaskID)
-	if err != nil || (!DeliveryPaused(task.Stage) && task.Stage != "正在取回结果" && !strings.Contains(task.InputJSON, `"imageDeliveryCipher"`)) {
+	if err != nil || (!DeliveryPaused(task.Stage) && task.Stage != model.TaskStageFetchingResult && !strings.Contains(task.InputJSON, `"imageDeliveryCipher"`)) {
 		return err
 	}
 	rows, err := s.Repo.GenerationOutputResults(task.ID)
@@ -332,11 +332,11 @@ func ResumeGenerationDownload(
 			return nil, errors.New("正在停止取回，请稍后再试")
 		}
 	}
-	if err := repo.SetGenerationDeliveryStage(task.UserID, task.ID, "正在取回结果"); err != nil {
+	if err := repo.SetGenerationDeliveryStage(task.UserID, task.ID, model.TaskStageFetchingResult); err != nil {
 		return nil, err
 	}
 	_ = repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindDeliverySettled)
-	task.Stage = "正在取回结果"
+	task.Stage = model.TaskStageFetchingResult
 	if attach != nil {
 		attach(&task)
 	}

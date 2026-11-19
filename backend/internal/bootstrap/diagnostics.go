@@ -55,16 +55,66 @@ func (r *Runtime) LastClientHeartbeat() (time.Time, bool, bool, time.Time) {
 	return time.UnixMilli(ms).UTC(), r.clientHidden.Load(), r.clientBusy.Load(), busySince
 }
 
-func (r *Runtime) RequestSafeMode(enabled bool) {
+func (r *Runtime) RequestSafeMode(enabled bool) uint64 {
 	if r == nil {
-		return
+		return 0
 	}
-	r.safeModeRequested.Store(enabled)
+	if !enabled {
+		r.safeModeRequestID.Store(0)
+		return 0
+	}
+	id := r.safeModeRequestSeq.Add(1)
+	r.safeModeRequestID.Store(id)
+	return id
 }
 
 func (r *Runtime) SafeModeRequested() bool {
+	return r.SafeModeRequestID() > 0
+}
+
+func (r *Runtime) SafeModeRequestID() uint64 {
 	if r == nil {
+		return 0
+	}
+	return r.safeModeRequestID.Load()
+}
+
+func (r *Runtime) AckSafeMode(requestID uint64) {
+	if r == nil {
+		return
+	}
+	if requestID == 0 {
+		r.safeModeRequestID.Store(0)
+		return
+	}
+	r.safeModeRequestID.CompareAndSwap(requestID, 0)
+}
+
+func (r *Runtime) BeginReloadRequest() uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.reloadRequestSeq.Add(1)
+}
+
+func (r *Runtime) AckReloadRequest(requestID uint64) {
+	if r == nil || requestID == 0 {
+		return
+	}
+	for {
+		cur := r.reloadAckedID.Load()
+		if requestID <= cur {
+			return
+		}
+		if r.reloadAckedID.CompareAndSwap(cur, requestID) {
+			return
+		}
+	}
+}
+
+func (r *Runtime) ReloadRequestAcked(requestID uint64) bool {
+	if r == nil || requestID == 0 {
 		return false
 	}
-	return r.safeModeRequested.Load()
+	return r.reloadAckedID.Load() >= requestID
 }

@@ -174,7 +174,8 @@ func canonicalLocalMigrations() []localMigration {
 				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			FROM tasks
 			WHERE status = ?
-			  AND completed_at IS NOT NULL AND completed_at < ?
+			  AND COALESCE(completed_at, updated_at, created_at) IS NOT NULL
+			  AND COALESCE(completed_at, updated_at, created_at) < ?
 			  AND COALESCE(stage, '') NOT IN (?, ?, ?)
 			  AND COALESCE(recovery_outcome, '') NOT LIKE ?`,
 				model.TaskEffectKindDeliverySettled, model.TaskEffectStatusSettled,
@@ -195,7 +196,8 @@ func canonicalLocalMigrations() []localMigration {
 				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			FROM tasks
 			WHERE status = ?
-			  AND completed_at IS NOT NULL AND completed_at < ?
+			  AND COALESCE(completed_at, updated_at, created_at) IS NOT NULL
+			  AND COALESCE(completed_at, updated_at, created_at) < ?
 			  AND COALESCE(stage, '') NOT IN (?, ?, ?)
 			  AND COALESCE(recovery_outcome, '') NOT LIKE ?`,
 				model.TaskEffectKindTaskBindSettled, model.TaskEffectStatusSettled,
