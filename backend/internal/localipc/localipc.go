@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -213,4 +214,38 @@ func (c loopbackPipeConn) LocalAddr() net.Addr {
 
 func (c loopbackPipeConn) RemoteAddr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+}
+
+// wrapPipeConnError converts *os.File errors (notably *os.PathError wrapping
+// os.ErrDeadlineExceeded) into *net.OpError so net/http recognizes deadline
+// aborts via net.Error.Timeout() instead of treating abortPendingRead as a
+// fatal connection error that cancels the keep-alive connection context for
+// all subsequent requests.
+func wrapPipeConnError(op string, local, remote net.Addr, err error) error {
+	if err == nil || errors.Is(err, io.EOF) {
+		return err
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return err
+	}
+	unwrapped := err
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		unwrapped = os.ErrDeadlineExceeded
+	case errors.Is(err, os.ErrClosed):
+		unwrapped = net.ErrClosed
+	default:
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) && pathErr.Err != nil {
+			unwrapped = pathErr.Err
+		}
+	}
+	return &net.OpError{
+		Op:     op,
+		Net:    "pipe",
+		Source: local,
+		Addr:   remote,
+		Err:    unwrapped,
+	}
 }
