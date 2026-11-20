@@ -42,6 +42,7 @@ export type CanvasNodeOutcomeMetadata = {
     taskStage?: string;
     taskProviderRequestId?: string;
     providerRequestId?: string;
+    taskProviderCancelStatus?: string;
     status?: string;
     content?: string;
     storageKey?: string;

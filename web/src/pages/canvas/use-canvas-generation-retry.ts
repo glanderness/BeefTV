@@ -148,7 +148,7 @@ export function useCanvasGenerationRetry({
                 if (!modal?.confirm) {
                     return { confirmed: true, prompted: false, baseline };
                 }
-                const targetCopy = taskOutcomeCopy(targetOutcome);
+                const targetCopy = taskOutcomeCopy(targetOutcome, undefined, { providerCancelStatus: targetNode.metadata?.taskProviderCancelStatus });
                 const latestNode = nodesRef.current.find((item) => item.id === node.id) || node;
                 const promptTarget = !readOnly
                     ? resolveCanvasPromptEditTarget(latestNode, nodesRef.current, connectionsRef.current)
@@ -193,7 +193,7 @@ export function useCanvasGenerationRetry({
             if (!creativeInputFailure && retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error") {
                 const outcome = readNodeTaskOutcome(node.metadata);
                 if (isRegenerateBlocked(outcome)) {
-                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome).message;
+                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
@@ -246,7 +246,7 @@ export function useCanvasGenerationRetry({
                 const batchExplanation = nodeFailureExplanation(batchTarget.metadata);
                 const batchOutcome = readNodeTaskOutcome(batchTarget.metadata);
                 if (isRegenerateBlocked(batchOutcome)) {
-                    const reason = batchTarget.metadata?.errorDetails || taskOutcomeCopy(batchOutcome).message;
+                    const reason = batchTarget.metadata?.errorDetails || taskOutcomeCopy(batchOutcome, undefined, { providerCancelStatus: batchTarget.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
@@ -411,7 +411,7 @@ export function useCanvasGenerationRetry({
                 submittedInput = input;
                 const outcome = readNodeTaskOutcome(node.metadata);
                 if (isRegenerateBlocked(outcome)) {
-                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome).message;
+                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
@@ -467,7 +467,7 @@ export function useCanvasGenerationRetry({
                     if (creativeInputFailure && node.metadata?.taskId && node.metadata.status === "error") {
                         const outcome = readNodeTaskOutcome(node.metadata);
                         if (isRegenerateBlocked(outcome)) {
-                            const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome).message;
+                            const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
                             message?.warning?.(reason);
                             surfaceRetryFailure(node.id, reason, setNodes);
                             return;

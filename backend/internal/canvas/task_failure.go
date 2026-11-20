@@ -12,10 +12,11 @@ import (
 // TaskFailure is a failed generation task as its node shows it. Outcome is the
 // task's backend outcome, kept on the node so the UI decides retry from it.
 type TaskFailure struct {
-	TaskID     string
-	TaskStatus string
-	Message    string
-	Outcome    model.TaskOutcome
+	TaskID               string
+	TaskStatus           string
+	ProviderCancelStatus string
+	Message              string
+	Outcome              model.TaskOutcome
 }
 
 // generationAttemptFields describe one generation attempt on a node. A new
@@ -24,7 +25,7 @@ var generationAttemptFields = []string{
 	"taskId", "taskType", "taskOutcome", "taskOutcomeSource", "taskOutputIndex", "generationOutputNodeIds",
 	"taskClientOperationId", "generationSubmissionState", "retryOf", "attemptGroupId",
 	"taskStatus", "taskProgress", "taskStage", "taskProvider", "taskStartedAt", "taskCompletedAt", "taskDurationMs",
-	"taskErrorCode", "taskFailureDiagnostics", "taskProviderRequestId", "taskOfficialStatus", "taskReceiptRecorded",
+	"taskErrorCode", "taskFailureDiagnostics", "taskProviderRequestId", "taskProviderCancelStatus", "taskOfficialStatus", "taskReceiptRecorded",
 	"taskCreatedAt", "taskUpdatedAt", "processingLabel", "generationFailure", "generationPreflightError",
 	"error", "errorDetails", "generationErrorCode", "generationErrorSummary", "generationProviderCode",
 	"failedPromptFingerprint", "failedInputFingerprint", "resourceReloadAvailable",
@@ -48,6 +49,9 @@ func ApplyTaskFailureMetadata(metadata map[string]any, failure TaskFailure) bool
 		outcome["reconcileDeadline"] = failure.Outcome.ReconcileDeadline
 	}
 	fields := map[string]any{"taskId": failure.TaskID, "taskStatus": failure.TaskStatus, "status": "error", "taskOutcome": outcome}
+	if strings.TrimSpace(failure.ProviderCancelStatus) != "" {
+		fields["taskProviderCancelStatus"] = strings.TrimSpace(failure.ProviderCancelStatus)
+	}
 	if nodeString(metadata, "errorDetails") == "" {
 		fields["error"], fields["errorDetails"] = failure.Message, failure.Message
 	}
@@ -76,7 +80,7 @@ func (s *Service) RecordTaskFailures(userID, canvasID string, tasks []model.Task
 	operationKeys := make(map[string]string, len(tasks))
 	for i, task := range tasks {
 		if id := strings.TrimSpace(task.ID); id != "" && i < len(outcomes) {
-			byTask[id] = TaskFailure{TaskID: id, TaskStatus: string(task.Status), Message: task.Error, Outcome: outcomes[i]}
+			byTask[id] = TaskFailure{TaskID: id, TaskStatus: string(task.Status), ProviderCancelStatus: string(task.ProviderCancelStatus), Message: task.Error, Outcome: outcomes[i]}
 			if task.ClientOperationID != nil {
 				operationKeys[id] = strings.TrimSpace(*task.ClientOperationID)
 			}

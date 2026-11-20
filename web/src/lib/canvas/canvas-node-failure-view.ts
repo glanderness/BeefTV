@@ -92,7 +92,11 @@ class NodeFailureView implements CanvasNodeFailureView {
     }
 
     get outcome() { return this.read("outcome", () => readNodeTaskOutcome(this.node.metadata)); }
-    get copy() { return this.read("copy", () => taskOutcomeCopy(this.outcome, this.options?.nowMs)); }
+    get copy() {
+        return this.read("copy", () =>
+            taskOutcomeCopy(this.outcome, this.options?.nowMs, this.node.metadata?.taskProviderCancelStatus ? { providerCancelStatus: this.node.metadata.taskProviderCancelStatus } : undefined),
+        );
+    }
     get explanation() { return this.read("explanation", () => canvasNodeFailureExplanation(this.node)); }
     get regenerateBlocked() { return this.read("regenerateBlocked", () => isNodeRegenerateBlocked(this.node.metadata)); }
     get regenerateConfirm() { return this.read("regenerateConfirm", () => isNodeRegenerateConfirm(this.node.metadata)); }

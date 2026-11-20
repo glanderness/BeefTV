@@ -1933,6 +1933,25 @@ describe("canvasNodeFailureView", () => {
             expect(legacyFailedUnknownBilling.explanation.reason).toBe(legacyFailedUnknownBilling.copy.reason);
             expect(legacyFailedUnknownBilling.explanation.action).toBe(legacyFailedUnknownBilling.copy.action);
             expect(legacyFailedUnknownBilling.regenerateConfirm).toBe(true);
+
+            const canvasConfirmedCancel = canvasNodeFailureView(
+                node("canvas-confirmed-cancel-copy", {
+                    status: "error",
+                    taskId: "task-cancel-confirmed-1",
+                    taskStatus: "cancelled",
+                    taskProviderCancelStatus: "confirmed",
+                    taskOutcome: { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
+                    errorDetails: "任务已取消",
+                }),
+                { nowMs: NOW_MS },
+            );
+            expect(canvasConfirmedCancel.copy.badge).toBe("已取消");
+            expect(canvasConfirmedCancel.copy.reason).toBe("上游已确认取消，请核对渠道后台确认是否已扣费");
+            expect(canvasConfirmedCancel.copy.confirmContent).toContain("上游已确认取消");
+            expect(canvasConfirmedCancel.copy.confirmContent).not.toContain("无法确认渠道是否已执行");
+            expect(canvasConfirmedCancel.explanation.reason).toBe(canvasConfirmedCancel.copy.reason);
+            expect(canvasConfirmedCancel.explanation.action).toBe(canvasConfirmedCancel.copy.action);
+            expect(canvasConfirmedCancel.regenerateConfirm).toBe(true);
         } finally {
             Date.now = realNow;
         }

@@ -26,6 +26,7 @@ type taskRouteService interface {
 	Task(userID string, id string) (*model.Task, error)
 	TextReplay() *textreplay.Service
 	RetryTask(userID string, id string) (*model.Task, error)
+	RegenerateTask(userID string, id string, clientOperationID string) (*model.Task, error)
 	QueryFailedVideoTask(ctx context.Context, userID string, taskID string) (*app.ProviderTaskQueryResult, error)
 	CancelTask(ctx context.Context, userID string, id string) (*model.Task, error)
 	TaskLogs(userID string, id string) ([]model.TaskLog, error)
@@ -232,6 +233,37 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		task, err := svc.RetryTask(user.ID, c.Param("id"))
+		if err != nil {
+			var appErr *app.AppError
+			if errors.As(err, &appErr) {
+				failService(c, err)
+			} else {
+				fail(c, http.StatusBadRequest, err)
+			}
+			return
+		}
+		ok(c, task)
+	})
+	r.POST("/tasks/:id/regenerate", func(c *gin.Context) {
+		if !requireTrustedDesktopWritePrincipal(c, "任务只能由当前桌面界面重新生成") {
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var body struct {
+			ClientOperationID string `json:"clientOperationId"`
+		}
+		if c.Request.ContentLength > 0 {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+			if err := c.ShouldBindJSON(&body); err != nil {
+				fail(c, http.StatusBadRequest, err)
+				return
+			}
+		}
+		task, err := svc.RegenerateTask(user.ID, c.Param("id"), body.ClientOperationID)
 		if err != nil {
 			var appErr *app.AppError
 			if errors.As(err, &appErr) {

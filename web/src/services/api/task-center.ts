@@ -392,6 +392,14 @@ export function retryGenerationTask(id: string, options?: { signal?: AbortSignal
     });
 }
 
+export function regenerateGenerationTask(id: string, options?: { clientOperationId?: string; signal?: AbortSignal }) {
+    const body = options?.clientOperationId ? { clientOperationId: options.clientOperationId } : undefined;
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/regenerate`, body, { signal: options?.signal }).then((task) => {
+        publishGenerationTaskTelemetry(task);
+        return task;
+    });
+}
+
 export function recoverTask(id: string, options?: { signal?: AbortSignal }) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, options).then((task) => {
         publishGenerationTaskTelemetry(task);

@@ -66,6 +66,19 @@ export function taskOutcomeCopyForTask(
     return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus });
 }
 
+/**
+ * 任务中心点击重新生成时，若后端 outcome 要求确认（如 cancelled_result_unconfirmed /
+ * charged_result_unrecoverable / result_unrecoverable）或为图片任务（避免命中原任务
+ * 图片幂等守门），应走 `/tasks/:id/regenerate` 创建全新任务，保留原任务记录与回执。
+ */
+export function shouldUseTaskRegenerateEndpoint(
+    task: Pick<GenerationTask, "type" | "status" | "stage" | "errorCode" | "error" | "providerRequestId" | "outcome" | "outputs">,
+    outcome = readTaskOutcome(task),
+) {
+    if (outcome?.regenerate === "confirm") return true;
+    return task.type === "canvas_image";
+}
+
 export function taskAttentionReason(task: GenerationTask) {
     const outcome = normalizeTaskOutcome(task.outcome) ?? (task.status === "text_replay" ? readTaskOutcome(task) : undefined);
     if (outcome) {

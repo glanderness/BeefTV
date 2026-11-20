@@ -42,6 +42,7 @@ export function depthCaptureTaskMetadata(task: GenerationTask): CanvasNodeMetada
         generationErrorCode: undefined,
         model: task.model,
         taskProviderRequestId: inFlight ? undefined : task.providerRequestId,
+        taskProviderCancelStatus: inFlight ? undefined : task.providerCancelStatus,
         taskFailureDiagnostics: task.failureDiagnostics,
         taskCreatedAt: task.createdAt,
         taskUpdatedAt: inFlight ? undefined : task.updatedAt,
@@ -150,9 +151,10 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
             ? fallbackOutcome
             : undefined;
     const authoritative = explicitOutcome ?? legacyConfirmOutcome;
+    const copyOptions = node.metadata?.taskProviderCancelStatus ? { providerCancelStatus: node.metadata.taskProviderCancelStatus } : undefined;
     // This action opens saved history; it must never dispatch another generation.
     if (explicitOutcome?.reason === "result_target_unavailable" || (!explicitOutcome && explanation.category === "result_target_unavailable")) {
-        const copy = explicitOutcome ? taskOutcomeCopy(explicitOutcome) : undefined;
+        const copy = explicitOutcome ? taskOutcomeCopy(explicitOutcome, undefined, copyOptions) : undefined;
         return {
             ...explanation,
             ...(copy && !explanationMatchesAuthoritativeOutcome(explicitOutcome!, explanation) ? { reason: copy.reason, action: copy.action } : {}),
@@ -162,7 +164,7 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     }
     if (!canRecoverOrRetryDepthCapture(node)) {
         if (!authoritative) return explanation;
-        const copy = taskOutcomeCopy(authoritative);
+        const copy = taskOutcomeCopy(authoritative, undefined, copyOptions);
         const uncertain = isTaskOutcomeSubmissionUncertain(authoritative);
         const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(authoritative, explanation);
         return {
@@ -184,7 +186,7 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
         return { ...explanation, reason: "深度视频已生成，暂时未能显示在画布上", action: "点击「恢复结果」重新加载原任务", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };
     }
     if (authoritative && authoritative.phase === "failed" && (authoritative.regenerate === "confirm" || authoritative.regenerate === "blocked")) {
-        const copy = taskOutcomeCopy(authoritative);
+        const copy = taskOutcomeCopy(authoritative, undefined, copyOptions);
         const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(authoritative, explanation);
         return {
             ...explanation,

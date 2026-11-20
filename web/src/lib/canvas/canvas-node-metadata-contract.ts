@@ -35,6 +35,7 @@ export const GENERATION_TASK_LIFECYCLE_METADATA_KEYS = [
     "taskDurationMs",
     "taskErrorCode",
     "taskProviderRequestId",
+    "taskProviderCancelStatus",
     "taskOfficialStatus",
     "taskReceiptRecorded",
     "taskUpdatedAt",

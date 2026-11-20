@@ -17,7 +17,8 @@ import { formatTaskKind, generationTaskStatusLabel, operationOptions } from "@/l
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
-import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { createClientId } from "@/lib/client-id";
+import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, regenerateGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { canRecoverTaskOutcome, isRegenerateConfirm, isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -27,7 +28,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
+import { computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, shouldUseTaskRegenerateEndpoint, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -347,12 +348,15 @@ export default function TasksPage() {
             if (warning && !(await new Promise<boolean>((resolve) => {
                 modal.confirm({ ...warning, centered: true, onOk: () => resolve(true), onCancel: () => resolve(false), afterClose: () => resolve(false) });
             }))) return;
-            const next = await retryGenerationTask(id);
-            setTasks((items) => items.map((item) => (item.id === id ? next : item)));
-            setDetailTask((current) => (current?.id === id ? { ...current, ...next } : current));
+            const createNewTask = shouldUseTaskRegenerateEndpoint(detail, detailOutcome);
+            const next = createNewTask
+                ? await regenerateGenerationTask(id, { clientOperationId: createClientId() })
+                : await retryGenerationTask(id);
+            setTasks((items) => (createNewTask ? [next, ...items] : items.map((item) => (item.id === id ? next : item))));
+            setDetailTask((current) => (current?.id === id ? (createNewTask ? next : { ...current, ...next }) : current));
             setStatusFilter("active");
             setPage(1);
-            message.success("任务已重新入队");
+            message.success(createNewTask ? "已创建新任务重新生成" : "任务已重新入队");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "操作失败");
         } finally {

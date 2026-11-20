@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
-import { providerCancelStatusLabel, taskAttentionReason, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
+import { providerCancelStatusLabel, shouldUseTaskRegenerateEndpoint, taskAttentionReason, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
 import type { GenerationTask } from "@/services/api/task-center";
 
 test("cancelled image with unconfirmed result does not claim recovery is running", () => {
@@ -31,6 +31,13 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(confirmedModalCopy.confirmContent).not.toContain("无法确认渠道是否已执行");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined, providerCancelStatus: "confirmed" })).toBe("上游已确认取消");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined })).toBe("任务已取消，请核对原任务的结果与扣费状态");
+
+    // Task-center regenerate routing avoids old-task /retry image idempotency guard for confirm & image tasks.
+    expect(shouldUseTaskRegenerateEndpoint(task)).toBe(true);
+    expect(shouldUseTaskRegenerateEndpoint({ ...task, model: "topaz-standard-v2" })).toBe(true);
+    expect(shouldUseTaskRegenerateEndpoint({ ...task, outcome: { phase: "failed", regenerate: "allowed", reason: "refunded" } })).toBe(true);
+    expect(shouldUseTaskRegenerateEndpoint({ ...task, type: "canvas_video" })).toBe(true);
+    expect(shouldUseTaskRegenerateEndpoint({ ...task, type: "canvas_video", outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" } })).toBe(false);
 });
 
 for (const [stage, label] of [["delivery_paused", "已暂停取回结果"], ["delivery_timed_out", "下载超时，可继续取回原结果"]]) {
