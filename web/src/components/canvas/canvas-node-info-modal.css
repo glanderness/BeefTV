@@ -4,6 +4,7 @@
     --inspector-muted: #aaa;
     --inspector-control-bg: #303030;
     --inspector-control-hover-bg: #262626;
+    --inspector-control-active-hover-bg: #262626;
     --inspector-control-hover-ink: #ffffff;
     --inspector-input-bg: #1b1b1b;
     --inspector-input-border: transparent;
@@ -21,10 +22,11 @@
     --inspector-muted: #525866;
     --inspector-control-bg: rgba(17, 24, 39, 0.1);
     --inspector-control-hover-bg: rgba(17, 24, 39, 0.06);
+    --inspector-control-active-hover-bg: rgba(17, 24, 39, 0.15);
     --inspector-control-hover-ink: #111827;
     --inspector-input-bg: #f3f4f6;
     --inspector-input-border: rgba(17, 24, 39, 0.12);
-    --inspector-placeholder: #6b7280;
+    --inspector-placeholder: #5b6472;
     --inspector-disabled-bg: #f3f4f6;
     --inspector-disabled-ink: #6b7280;
     --inspector-tag-bg: #f3f4f6;
@@ -98,8 +100,9 @@
 }
 .canvas-node-info-modal .canvas-node-inspector-options button[aria-pressed="true"],
 .canvas-node-info-modal .canvas-node-inspector-tag-editor button { background: var(--inspector-control-bg); color: var(--inspector-ink); }
-.canvas-node-info-modal .canvas-node-inspector-options button:hover:not(:disabled),
-.canvas-node-info-modal .canvas-node-inspector-tag-editor button:hover:not(:disabled) { background: var(--inspector-control-hover-bg); color: var(--inspector-control-hover-ink); }
+.canvas-node-info-modal .canvas-node-inspector-options button:hover:not(:disabled) { background: var(--inspector-control-hover-bg); color: var(--inspector-control-hover-ink); }
+.canvas-node-info-modal .canvas-node-inspector-options button[aria-pressed="true"]:hover:not(:disabled),
+.canvas-node-info-modal .canvas-node-inspector-tag-editor button:hover:not(:disabled) { background: var(--inspector-control-active-hover-bg); color: var(--inspector-control-hover-ink); }
 .canvas-node-info-modal .canvas-node-inspector-options button:disabled { cursor: default; }
 .canvas-node-info-modal .canvas-node-inspector-tag-editor { display: flex; gap: 6px; }
 .canvas-node-info-modal .canvas-node-inspector-tag-editor input {

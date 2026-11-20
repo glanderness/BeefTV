@@ -29,7 +29,7 @@ beforeAll(async () => {
         if (url.pathname === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (url.pathname === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
         const mode = url.searchParams.get("mode");
-        const extraHead = mode === "canvas-layout" || mode === "canvas-mobile" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
+        const extraHead = mode === "canvas-layout" || mode === "canvas-mobile" || mode === "subtitle-theme" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
         return new Response(`<!doctype html><meta charset="UTF-8">${extraHead}<div id="root"></div><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
@@ -244,3 +244,46 @@ test("CanvasTimelineDialog 窄屏视口保持返回与底部按钮可见，标�
         await page.close();
     }
 }, 30_000);
+
+test("CanvasSubtitleDialog 跟随画布深浅主题切换，浅色下保持暗底字幕样例与可读文字", async () => {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
+    try {
+        await page.goto(`${server.url}?mode=subtitle-theme`);
+        await page.waitForSelector(".canvas-subtitle-dialog .ant-modal-container");
+        const readThemeState = () => page.evaluate(() => {
+            const modal = document.querySelector(".canvas-subtitle-dialog")!;
+            return {
+                bg: getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor,
+                paneBg: getComputedStyle(modal.querySelector(".media-editor-pane")!).backgroundColor,
+                bodyColor: getComputedStyle(modal.querySelector(".media-editor-body")!).color,
+                sampleBg: getComputedStyle(modal.querySelector(".subtitle-style-sample")!).backgroundColor,
+                textareaBg: getComputedStyle(modal.querySelector("textarea")!).backgroundColor,
+            };
+        });
+        await page.evaluate(() => (window as any).timelineFixture.setTheme("dark"));
+        await page.waitForFunction(() => getComputedStyle(document.querySelector(".canvas-subtitle-dialog .ant-modal-container")!).backgroundColor === "rgb(16, 17, 18)");
+        expect(await readThemeState()).toMatchObject({
+            bg: "rgb(16, 17, 18)",
+            paneBg: "rgb(25, 26, 28)",
+            bodyColor: "rgb(236, 238, 239)",
+            sampleBg: "rgb(16, 17, 18)",
+        });
+
+        await page.evaluate(() => (window as any).timelineFixture.setTheme("light"));
+        await page.waitForFunction(() => {
+            const modal = document.querySelector(".canvas-subtitle-dialog");
+            if (!modal) return false;
+            return getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor === "rgb(255, 255, 255)"
+                && getComputedStyle(modal.querySelector("textarea")!).backgroundColor === "rgb(255, 255, 255)";
+        });
+        expect(await readThemeState()).toEqual({
+            bg: "rgb(255, 255, 255)",
+            paneBg: "rgb(246, 248, 251)",
+            bodyColor: "rgb(17, 24, 39)",
+            sampleBg: "rgb(16, 17, 18)",
+            textareaBg: "rgb(255, 255, 255)",
+        });
+    } finally {
+        await page.close();
+    }
+}, 20_000);

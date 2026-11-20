@@ -1,9 +1,15 @@
+import { useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "antd";
+import { App, ConfigProvider } from "antd";
 import { EditorStoreProvider } from "../../src/components/editor/editor-context";
 import { createEditorStore } from "../../src/stores/editor/editor-store";
 import { EditorExport } from "../../src/lib/plugins/builtin/editor/editor-export";
+import { CanvasSubtitleDialog } from "../../src/components/canvas/canvas-subtitle-dialog";
 import { CanvasTimelineDialog } from "../../src/components/canvas/canvas-timeline-dialog";
+import { getAntThemeConfig } from "../../src/lib/app-theme";
+import { applySkinTheme } from "../../src/lib/skin-themes";
+import { useActiveTheme, useCanvasThemeStore } from "../../src/stores/canvas/use-canvas-theme-store";
+import { defaultConfig } from "../../src/stores/use-config-store";
 import { receipt } from "./timeline-ui-runtime";
 import type { CanvasNodeData } from "../../src/types/canvas";
 import type { TimelineProject } from "../../src/types/timeline";
@@ -28,13 +34,37 @@ const dragProject: TimelineProject = {
     ],
 };
 const dragNode = { id: "first", type: "video", title: "首个素材", metadata: {}, x: 0, y: 0, width: 320, height: 180 } as CanvasNodeData;
+const subtitleNode = {
+    id: "subtitle-video", type: "video", title: "字幕测试视频", x: 0, y: 0, width: 320, height: 180,
+    metadata: { subtitleEntries: [{ index: 1, startMs: 0, endMs: 2000, text: "第一句字幕内容" }] },
+} as CanvasNodeData;
+function SubtitleThemeHarness() {
+    const theme = useActiveTheme();
+    useLayoutEffect(() => {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        applySkinTheme("classic", theme);
+    }, [theme]);
+    return (
+        <ConfigProvider theme={getAntThemeConfig(theme === "dark")}>
+            <App>
+                <CanvasSubtitleDialog node={subtitleNode} open projectId="fixture" config={defaultConfig} onClose={() => root.unmount()} onSave={() => {}} />
+            </App>
+        </ConfigProvider>
+    );
+}
 const store = createEditorStore();
 store.getState().load(project);
 HTMLAnchorElement.prototype.click = function () { receipt.downloads++; };
 const root = createRoot(document.getElementById("root")!);
-Object.assign(window, { timelineFixture: { receipt, unmount: () => root.unmount() } });
+Object.assign(window, {
+    timelineFixture: {
+        receipt,
+        unmount: () => root.unmount(),
+        setTheme: (theme: "dark" | "light") => useCanvasThemeStore.setState({ active: true, theme, followGlobal: false }),
+    },
+});
 const mode = new URLSearchParams(location.search).get("mode");
-root.render(<App>{mode === "canvas" ?
+root.render(mode === "subtitle-theme" ? <SubtitleThemeHarness /> : <App>{mode === "canvas" ?
     <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
         onCreateAssembledNode={async () => { receipt.created++; return node; }} /> :

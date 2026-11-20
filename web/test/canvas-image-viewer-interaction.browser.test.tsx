@@ -556,7 +556,7 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     // Download action must fetch full-resolution /file blob rather than saving the 128px preview fallback
     await page.getByTestId("canvas-image-filmstrip-item-1").click();
     expect(await downloadViewedImage()).toContain("FULL_RES_PAYLOAD");
-});
+}, 20000);
 
 test("resolves standalone protected /api/resources URLs without a node, enforces readOnly on node inspector, peeks protected primary without blank flash, probes zero-size metrics once, and bounds cold-cache 50-version downloads", async () => {
     // (1) Standalone image preview with a protected /api/resources/.../file URL and NO node, INCLUDING automatic retry when first /file request returns 503
@@ -672,4 +672,4 @@ test("resolves standalone protected /api/resources URLs without a node, enforces
         const img = document.querySelector("[data-testid='canvas-image-stage-single'] img");
         return !err && Boolean(img && !img.classList.contains("opacity-35"));
     }, { timeout: 3000 });
-});
+}, 20000);

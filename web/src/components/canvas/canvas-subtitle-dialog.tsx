@@ -408,7 +408,7 @@ export function CanvasSubtitleDialog({ node, open, projectId, config, onClose, o
                     );
                 })
             ) : (
-                <div className="text-center text-xs opacity-45">
+                <div className="text-center text-xs text-[var(--editor-muted)]">
                     <ListPlus className="mx-auto mb-2 size-7" />
                     暂无字幕
                 </div>

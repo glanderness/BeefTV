@@ -77,6 +77,7 @@ export function CanvasImageViewerModal({
     const urlRetryCountRef = useRef<Map<string, number>>(new Map());
     const metricRetryCountRef = useRef<Map<string, number>>(new Map());
     const imageErrorTimersRef = useRef<Set<number>>(new Set());
+    const viewerSessionRef = useRef(0);
 
     useEffect(() => () => {
         for (const timer of imageErrorTimersRef.current) window.clearTimeout(timer);
@@ -99,12 +100,14 @@ export function CanvasImageViewerModal({
 
     useEffect(() => {
         if (!open || !rawDiscoveredItems.length) return;
+        let cancelled = false;
         for (const entry of rawDiscoveredItems) {
             const resourceId = extractOwnedResourceId(entry.storageKey, entry.content);
             if (!resourceId || probedDiscoveredResourceIdsRef.current.has(resourceId)) continue;
             probedDiscoveredResourceIdsRef.current.add(resourceId);
             void getResource(resourceId)
                 .then((res) => {
+                    if (cancelled) return;
                     if (res && (!res.status || res.status === "ready")) {
                         setReadyResourceIds((prev) => (prev.has(resourceId) ? prev : new Set(prev).add(resourceId)));
                         setMetricsById((prev) => ({
@@ -121,9 +124,13 @@ export function CanvasImageViewerModal({
                     }
                 })
                 .catch(() => {
+                    if (cancelled) return;
                     setMissingResourceIds((prev) => (prev.has(resourceId) ? prev : new Set(prev).add(resourceId)));
                 });
         }
+        return () => {
+            cancelled = true;
+        };
     }, [open, rawDiscoveredItems]);
 
     const persistableDiscoveredItems = useMemo(
@@ -175,6 +182,7 @@ export function CanvasImageViewerModal({
     const [metricsById, setMetricsById] = useState<Record<string, SupplementedMediaMetrics>>({});
 
     useEffect(() => {
+        viewerSessionRef.current += 1;
         for (const timer of imageErrorTimersRef.current) window.clearTimeout(timer);
         imageErrorTimersRef.current.clear();
         if (!open) {
@@ -229,6 +237,7 @@ export function CanvasImageViewerModal({
 
     useEffect(() => {
         if (!open) return;
+        const session = viewerSessionRef.current;
         const rawNeeded = mode === "single"
             ? [activeItem, primaryItem]
             : [compareAnchorItem, compareItem];
@@ -240,11 +249,14 @@ export function CanvasImageViewerModal({
         });
         const retryTimers: number[] = [];
         const scheduleUrlRetryOrFail = (entryId: string) => {
+            if (viewerSessionRef.current !== session) return;
             resolvedUrlEntryIdsRef.current.delete(entryId);
             const attempts = urlRetryCountRef.current.get(entryId) || 0;
             if (attempts < 1) {
                 urlRetryCountRef.current.set(entryId, attempts + 1);
-                const timer = window.setTimeout(() => setRetryNonce((n) => n + 1), 250);
+                const timer = window.setTimeout(() => {
+                    if (viewerSessionRef.current === session) setRetryNonce((n) => n + 1);
+                }, 250);
                 retryTimers.push(timer);
             } else {
                 resolvedUrlEntryIdsRef.current.add(entryId);
@@ -280,6 +292,7 @@ export function CanvasImageViewerModal({
                         : resolveImageUrl(entry.storageKey, fallback, { cacheMiss: true });
                     void resolver
                         .then((url) => {
+                            if (viewerSessionRef.current !== session) return;
                             const resolved = url && !isProtectedResourceFileUrl(url) ? url : fallback;
                             if (resolved) {
                                 setFailedUrlsById((prev) => (!prev[entry.id] ? prev : { ...prev, [entry.id]: false }));
@@ -289,6 +302,7 @@ export function CanvasImageViewerModal({
                             }
                         })
                         .catch(() => {
+                            if (viewerSessionRef.current !== session) return;
                             if (fallback) {
                                 setFailedUrlsById((prev) => (!prev[entry.id] ? prev : { ...prev, [entry.id]: false }));
                                 setResolvedUrls((prev) => (prev[entry.id] === fallback ? prev : { ...prev, [entry.id]: fallback }));
@@ -303,7 +317,7 @@ export function CanvasImageViewerModal({
                 probedMetricEntryIdsRef.current.add(entry.id);
                 void getResource(resourceId)
                     .then((res) => {
-                        if (!res) return;
+                        if (viewerSessionRef.current !== session || !res) return;
                         setMetricsById((prev) => {
                             const cur = prev[entry.id];
                             const nextWidth = res.width || cur?.width;
@@ -325,11 +339,14 @@ export function CanvasImageViewerModal({
                         });
                     })
                     .catch(() => {
+                        if (viewerSessionRef.current !== session) return;
                         const attempts = metricRetryCountRef.current.get(entry.id) || 0;
                         if (attempts < 1) {
                             metricRetryCountRef.current.set(entry.id, attempts + 1);
                             probedMetricEntryIdsRef.current.delete(entry.id);
-                            const timer = window.setTimeout(() => setRetryNonce((n) => n + 1), 250);
+                            const timer = window.setTimeout(() => {
+                                if (viewerSessionRef.current === session) setRetryNonce((n) => n + 1);
+                            }, 250);
                             retryTimers.push(timer);
                         }
                     });
@@ -481,6 +498,7 @@ export function CanvasImageViewerModal({
     const controlBg = theme.toolbar.itemHover;
 
     const loadOriginal = async () => {
+        const session = viewerSessionRef.current;
         const target = sidebarItem;
         const targetOwnedId = extractOwnedResourceId(target.storageKey, target.content);
         // Desktop stage renders disk-cached 2048px previews; download/copy must always fetch the lossless original.
@@ -493,14 +511,16 @@ export function CanvasImageViewerModal({
                 : await resolveImageUrl(target.storageKey, "", { cacheMiss: true });
             if (resolved && !isProtectedResourceFileUrl(resolved)) {
                 href = resolved;
-                if (!preferOriginalBlob) {
-                    resolvedUrlEntryIdsRef.current.add(target.id);
-                    setFailedUrlsById((prev) => (!prev[target.id] ? prev : { ...prev, [target.id]: false }));
-                    setResolvedUrls((prev) => ({ ...prev, [target.id]: resolved }));
-                } else if (failedUrlsById[target.id]) {
-                    resolvedUrlEntryIdsRef.current.delete(target.id);
-                    setFailedUrlsById((prev) => ({ ...prev, [target.id]: false }));
-                    setRetryNonce((n) => n + 1);
+                if (viewerSessionRef.current === session) {
+                    if (!preferOriginalBlob) {
+                        resolvedUrlEntryIdsRef.current.add(target.id);
+                        setFailedUrlsById((prev) => (!prev[target.id] ? prev : { ...prev, [target.id]: false }));
+                        setResolvedUrls((prev) => ({ ...prev, [target.id]: resolved }));
+                    } else if (failedUrlsById[target.id]) {
+                        resolvedUrlEntryIdsRef.current.delete(target.id);
+                        setFailedUrlsById((prev) => ({ ...prev, [target.id]: false }));
+                        setRetryNonce((n) => n + 1);
+                    }
                 }
             }
         }

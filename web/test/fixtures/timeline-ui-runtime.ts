@@ -41,6 +41,15 @@ export async function createTimelineRenderTask(input: { timeline: TimelineProjec
 export async function createTimelineTranscriptionTask() {
     throw new Error("渲染界面验收不应提交转写任务");
 }
+export async function getTranscriptionModels() {
+    return [];
+}
+export async function createGenerationTask() {
+    throw new Error("渲染界面验收不应提交生成任务");
+}
+export async function findGenerationTaskByOperation() {
+    return null;
+}
 export function waitForGenerationTask() {
     return new Promise((_resolve, reject) => {
         receipt.failRemote = () => reject(new Error("服务端字幕字体缺失，渲染失败"));
