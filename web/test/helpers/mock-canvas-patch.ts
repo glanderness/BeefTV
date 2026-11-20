@@ -126,7 +126,10 @@ function nodeUploadOverlayFlag(meta: Record<string, unknown> | undefined): boole
 }
 
 function nodeHasSettledUpload(node: Entity): boolean {
-    return nodeHasMedia(node) && metaStr(node.metadata, "status") !== "loading";
+    if (!nodeHasMedia(node)) return false;
+    const status = metaStr(node.metadata, "status");
+    if (status === "success") return true;
+    return !nodeUploadOverlayFlag(node.metadata) && status !== "loading" && status !== "error";
 }
 
 function mergePatchedNode(existing: Entity, incoming: Entity): { node: Entity; preserved: boolean } {
@@ -158,23 +161,20 @@ function mergePatchedNode(existing: Entity, incoming: Entity): { node: Entity; p
         return { node: merged, preserved: true };
     }
 
-    const incomingUploadingPlaceholder = nodeUploadOverlayFlag(incomingMeta) && (!nodeHasMedia(incoming) || incomingStatus === "loading");
-    if (nodeHasSettledUpload(existing) && incomingUploadingPlaceholder) {
-        const existingAttempt = metaStr(existingMeta, "fileUploadAttemptId");
-        const incomingAttempt = metaStr(incomingMeta, "fileUploadAttemptId");
-        const sameUpload = (existingAttempt !== "" && existingAttempt === incomingAttempt) || (!nodeHasMedia(incoming) && incomingAttempt === "");
-        if (sameUpload) {
-            const merged = structuredClone(incoming);
-            const meta: Record<string, unknown> = { ...(merged.metadata ?? {}) };
-            for (const key of SETTLED_UPLOAD_KEYS) {
-                if (existingMeta && key in existingMeta && existingMeta[key] !== undefined) {
-                    meta[key] = structuredClone(existingMeta[key]);
-                }
+    const incomingUploadingOverlay = nodeUploadOverlayFlag(incomingMeta) && !(nodeHasMedia(incoming) && incomingStatus === "success");
+    if (nodeHasSettledUpload(existing) && incomingUploadingOverlay) {
+        const merged = structuredClone(incoming);
+        const meta: Record<string, unknown> = { ...(merged.metadata ?? {}) };
+        for (const key of SETTLED_UPLOAD_KEYS) {
+            if (existingMeta && key in existingMeta && existingMeta[key] !== undefined) {
+                meta[key] = structuredClone(existingMeta[key]);
+            } else {
+                delete meta[key];
             }
-            for (const key of CLEARED_ERROR_KEYS) delete meta[key];
-            merged.metadata = meta;
-            return { node: merged, preserved: true };
         }
+        for (const key of CLEARED_ERROR_KEYS) delete meta[key];
+        merged.metadata = meta;
+        return { node: merged, preserved: true };
     }
 
     return { node: structuredClone(incoming), preserved: false };
@@ -186,7 +186,6 @@ function mergeEntitiesWithOverlap<T extends Entity>(
     expected: Record<string, Entity> | undefined,
     serverAdvanced: boolean,
     shouldDrop: (item: T) => boolean,
-    isExplicitDelete: (item: T) => boolean,
 ): { items: T[]; overlapped: boolean } {
     const byId = new Map<string, T>();
     const order: string[] = [];
@@ -194,13 +193,11 @@ function mergeEntitiesWithOverlap<T extends Entity>(
     for (const item of existing ?? []) {
         if (!item?.id) continue;
         if (shouldDrop(item)) {
-            if (isExplicitDelete(item)) {
-                const expectedBase = expected?.[item.id];
-                if (expectedBase) {
-                    if (!samePatchValue(item, expectedBase)) overlapped = true;
-                } else if (serverAdvanced) {
-                    overlapped = true;
-                }
+            const expectedBase = expected?.[item.id];
+            if (expectedBase) {
+                if (!samePatchValue(item, expectedBase)) overlapped = true;
+            } else if (serverAdvanced) {
+                overlapped = true;
             }
             continue;
         }
@@ -297,7 +294,6 @@ export function applyMockCanvasPatch<T extends Record<string, unknown>>(
             params.expectedConnections,
             serverAdvanced,
             (item) => deleteConns.has(item.id) || (item.fromNodeId ? deleteNodes.has(item.fromNodeId) : false) || (item.toNodeId ? deleteNodes.has(item.toNodeId) : false),
-            (item) => deleteConns.has(item.id),
         );
         (base as Record<string, unknown>).connections = connResult.items;
         if (connResult.overlapped) overlapped = true;
@@ -308,7 +304,6 @@ export function applyMockCanvasPatch<T extends Record<string, unknown>>(
             params.upsertChatSessions,
             params.expectedChatSessions,
             serverAdvanced,
-            (item) => deleteChats.has(item.id),
             (item) => deleteChats.has(item.id),
         );
         (base as Record<string, unknown>).chatSessions = chatResult.items;

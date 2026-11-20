@@ -456,4 +456,150 @@ func TestPatchUserCanvasDocument_ServerDeleteUpsertConnectionsChatsAndStaleSettl
 	if len(snapChats) != 1 || nodeString(snapChats[0].(map[string]any), "title") != "服务端会话" {
 		t.Fatalf("before_merge snapshot lost server chat session, got %+v", snapChats)
 	}
+
+	// 4. Server adds a new dangling edge attached to b1; client deletes b1 without knowing about it -> MUST capture before_merge!
+	curRaw3, _ := svc.UserCanvasProject(owner, "patch-c2")
+	var curDoc3 map[string]any
+	_ = json.Unmarshal(curRaw3, &curDoc3)
+	curDoc3["connections"] = []any{
+		map[string]any{"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "local-label"},
+		map[string]any{"id": "edge-server-new", "fromNodeId": "b1", "toNodeId": "a1", "label": "agent-edge"},
+	}
+	curDoc3["revision"] = resEdgeChat.Summary.Revision
+	edgeRaw3, _ := json.Marshal(curDoc3)
+	afterAgentEdge, _, err := svc.CommitUserCanvasDocument(owner, "patch-c2", resEdgeChat.Summary.Revision, edgeRaw3)
+	if err != nil {
+		t.Fatalf("server add dangling edge: %v", err)
+	}
+	resDangling, err := svc.PatchUserCanvasDocument(owner, "patch-c2", DocumentPatch{
+		BaseRevision:        resEdgeChat.Summary.Revision,
+		DeleteNodeIDs:       []string{"b1"},
+		DeleteConnectionIDs: []string{"edge-1"},
+		ExpectedNodes:       map[string]map[string]any{"b1": {"id": "b1", "type": "image", "title": "旧节点", "position": map[string]any{"x": 100, "y": 100}}},
+		ExpectedConnections: map[string]map[string]any{"edge-1": {"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "local-label"}},
+	})
+	if err != nil {
+		t.Fatalf("dangling edge delete patch failed: %v", err)
+	}
+	if !resDangling.SnapshotCaptured {
+		t.Fatalf("expected before_merge snapshot when node deletion drops a server-added dangling edge")
+	}
+	histDangling, _ := svc.CanvasHistory(owner, "patch-c2")
+	if len(histDangling.Snapshots) == 0 || histDangling.Snapshots[0].Reason != "before_merge" || histDangling.Snapshots[0].Revision != afterAgentEdge.Revision {
+		t.Fatalf("expected before_merge snapshot at rev %d, got %+v", afterAgentEdge.Revision, histDangling.Snapshots)
+	}
+}
+
+func TestPatchUserCanvasDocumentProtectsSettledMediaAgainstReplacementUploadPlaceholder(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	owner := "owner"
+
+	initial := map[string]any{
+		"id":       "patch-replace-upload",
+		"revision": 0,
+		"title":    "替换上传保护",
+		"nodes": []any{
+			map[string]any{
+				"id":       "n-up",
+				"type":     "image",
+				"title":    "原图",
+				"position": map[string]any{"x": 10, "y": 20},
+				"metadata": map[string]any{
+					"content":             "https://example.com/newer-settled.png",
+					"storageKey":          "res-newer-settled",
+					"status":              "success",
+					"resultOrigin":        "upload",
+					"fileUploadAttemptId": "up-1",
+				},
+			},
+		},
+		"connections":  []any{},
+		"chatSessions": []any{},
+	}
+	raw, _ := json.Marshal(initial)
+	created, err := svc.UpsertUserCanvasProject(owner, raw)
+	if err != nil {
+		t.Fatalf("create canvas: %v", err)
+	}
+
+	// Production applyInitialReplacementUploadPlaceholder shape:
+	// keeps OLD content/storageKey, omits status (undefined), sets fileUpload="uploading" and a NEW attemptId.
+	resPlaceholder, err := svc.PatchUserCanvasDocument(owner, "patch-replace-upload", DocumentPatch{
+		BaseRevision: created.Revision,
+		UpsertNodes: []map[string]any{
+			{
+				"id":       "n-up",
+				"type":     "image",
+				"title":    "用户改名",
+				"position": map[string]any{"x": 220, "y": 330},
+				"metadata": map[string]any{
+					"content":             "https://example.com/old-stale.png",
+					"storageKey":          "res-old-stale",
+					"fileUpload":          "uploading",
+					"fileUploadAttemptId": "up-replace-2",
+					"resultOrigin":        "upload",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("replacement placeholder patch failed: %v", err)
+	}
+	if !resPlaceholder.MediaPreserved || !resPlaceholder.SnapshotCaptured {
+		t.Fatalf("expected MediaPreserved=true & SnapshotCaptured=true, got %+v", resPlaceholder)
+	}
+	var gotDoc map[string]any
+	if err := json.Unmarshal(resPlaceholder.Document, &gotDoc); err != nil {
+		t.Fatalf("unmarshal placeholder doc: %v", err)
+	}
+	gotNode := findCanvasNode(gotDoc, "n-up")
+	meta := nodeMetadata(gotNode)
+	if nodeString(gotNode, "title") != "用户改名" {
+		t.Fatalf("expected incoming title to apply, got %q", nodeString(gotNode, "title"))
+	}
+	pos, _ := gotNode["position"].(map[string]any)
+	if pos["x"] != float64(220) || pos["y"] != float64(330) {
+		t.Fatalf("expected incoming position to apply, got %+v", pos)
+	}
+	if nodeString(meta, "content") != "https://example.com/newer-settled.png" || nodeString(meta, "storageKey") != "res-newer-settled" {
+		t.Fatalf("settled server media was overwritten by replacement placeholder: %+v", meta)
+	}
+	if _, hasFlag := meta["fileUpload"]; hasFlag {
+		t.Fatalf("expected active fileUpload overlay to be stripped when preserving settled media: %+v", meta)
+	}
+
+	// Once the replacement upload settles (drops fileUpload, sets status="success" and new media), it commits cleanly.
+	resSettled, err := svc.PatchUserCanvasDocument(owner, "patch-replace-upload", DocumentPatch{
+		BaseRevision: resPlaceholder.Summary.Revision,
+		UpsertNodes: []map[string]any{
+			{
+				"id":       "n-up",
+				"type":     "image",
+				"title":    "用户改名",
+				"position": map[string]any{"x": 220, "y": 330},
+				"metadata": map[string]any{
+					"content":             "https://example.com/final-replaced.png",
+					"storageKey":          "res-final-replaced",
+					"status":              "success",
+					"fileUploadAttemptId": "up-replace-2",
+					"resultOrigin":        "upload",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("settled replacement patch failed: %v", err)
+	}
+	if resSettled.MediaPreserved {
+		t.Fatalf("settled replacement upload should commit cleanly without MediaPreserved")
+	}
+	finalRaw, _ := svc.UserCanvasProject(owner, "patch-replace-upload")
+	var finalDoc map[string]any
+	if err := json.Unmarshal(finalRaw, &finalDoc); err != nil {
+		t.Fatalf("unmarshal final doc: %v", err)
+	}
+	finalMeta := nodeMetadata(findCanvasNode(finalDoc, "n-up"))
+	if nodeString(finalMeta, "content") != "https://example.com/final-replaced.png" || nodeString(finalMeta, "fileUploadAttemptId") != "up-replace-2" {
+		t.Fatalf("expected final settled replacement media, got %+v", finalMeta)
+	}
 }

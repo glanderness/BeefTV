@@ -128,6 +128,7 @@ mock.module("@/services/api/resources", () => ({
 
 const {
     adoptServerConfirmedGenerationPatch,
+    flushLocalWorkspace,
     hasUnconfirmedCanvasEdits,
     hydrateLocalCanvasProjectsFromBackend,
     markCanvasMergeOverlap,
@@ -400,6 +401,80 @@ describe("单用户版本冲突五类根因回归测试", () => {
         expect(server.patches).toHaveLength(2);
         expect(server.patches[1].params.forceHistorySnapshot).toBe(true);
         expect(server.patches[1].snapshotCaptured).toBe(true);
+    });
+
+    test("旧 force patch A 在途期间发生新重叠 B：A 回执不会清掉 B 的 forceHistorySnapshot 标记", async () => {
+        const baseNode = makeNode("n1", "标题", { type: "text" as never, metadata: { content: "原文本", status: "success" } });
+        const initial = makeCanvas("c1", 1, { nodes: [baseNode] });
+        server.projects.set("c1", structuredClone(initial) as unknown as Record<string, unknown>);
+        await saveCanvasOperationJournal({
+            userScope: scope,
+            canvasId: "c1",
+            confirmedRevision: 1,
+            confirmedSnapshot: structuredClone(initial),
+            inFlight: null,
+        });
+        recordCanvasDocumentBase(structuredClone(initial), scope);
+        useCanvasStore.setState({ projects: [structuredClone(initial)] });
+
+        // 1. Overlap A marks epoch 1 and kicks off force patch A, held in flight.
+        markCanvasMergeOverlap("c1", scope);
+        let releasePatch!: () => void;
+        let patchStarted!: () => void;
+        const patchStartedPromise = new Promise<void>((resolve) => { patchStarted = resolve; });
+        server.patchHold = new Promise<void>((resolve) => { releasePatch = resolve; });
+        server.onPatchStarted = () => { patchStarted(); };
+        useCanvasStore.getState().updateProject("c1", { title: "冲突A胜出" });
+        const savingA = syncLocalCanvasProjectToBackend("c1");
+        await patchStartedPromise;
+
+        // 2. While force patch A (epoch 1) is in flight, overlap B marks epoch 2 and updates live.
+        markCanvasMergeOverlap("c1", scope);
+        useCanvasStore.getState().updateProject("c1", { title: "冲突B胜出" });
+
+        // 3. Force patch A acks (epoch 1 < epoch 2, so epoch 2 MUST remain active).
+        server.patchHold = null;
+        releasePatch();
+        await savingA;
+        expect(server.patches[0].params.forceHistorySnapshot).toBe(true);
+
+        // 4. Subsequent save for B MUST STILL carry forceHistorySnapshot=true and capture snapshot!
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.patches).toHaveLength(2);
+        expect(server.patches[1].params.forceHistorySnapshot).toBe(true);
+        expect(server.patches[1].snapshotCaptured).toBe(true);
+    });
+
+    test("markCanvasMergeOverlap 后尚未保存即刷新重载，flush 后标记已持久化到 journal", async () => {
+        const baseNode = makeNode("n1", "标题", { type: "text" as never, metadata: { content: "原文本", status: "success" } });
+        const initial = makeCanvas("c1", 1, { nodes: [baseNode] });
+        server.projects.set("c1", structuredClone(initial) as unknown as Record<string, unknown>);
+        await saveCanvasOperationJournal({
+            userScope: scope,
+            canvasId: "c1",
+            confirmedRevision: 1,
+            confirmedSnapshot: structuredClone(initial),
+            inFlight: null,
+        });
+        recordCanvasDocumentBase(structuredClone(initial), scope);
+        useCanvasStore.setState({ projects: [structuredClone(initial)] });
+
+        // Overlap occurs on editor rebase / patch align, no backend save yet before reload.
+        markCanvasMergeOverlap("c1", scope);
+        useCanvasStore.getState().updateProject("c1", { title: "重载前本地胜出" });
+        await flushLocalWorkspace();
+
+        // Simulate immediate renderer reload before 500ms autosave fired.
+        const liveDraft = structuredClone(useCanvasStore.getState().openProject("c1")!);
+        resetCanvasOperationJournalMemory();
+        resetLocalCanvasBackendSaveState();
+        clearCanvasDocumentBase("c1", scope);
+        useCanvasStore.setState({ projects: [liveDraft] });
+
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.patches).toHaveLength(1);
+        expect(server.patches[0].params.forceHistorySnapshot).toBe(true);
+        expect(server.patches[0].snapshotCaptured).toBe(true);
     });
 
     test("冷缓存无基线时收到生成结果：合并本地节点与服务端产物，不触发暂停冲突", async () => {

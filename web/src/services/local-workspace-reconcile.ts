@@ -1,6 +1,6 @@
 import { applyExternalCanvasRevision, canvasDocumentBase, clearCanvasExternalRevisionConflict, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { pauseCanvasBackendSubmit, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
-import { clearCanvasPendingProjection, loadCanvasOperationJournal, markCanvasJournalForceHistorySnapshot, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
+import { clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
@@ -11,11 +11,11 @@ import {
     canvasDeleting,
     canvasSubmitBlocked,
     confirmRemoteDocument,
+    flushPendingCanvasOverlapWrite,
     incompleteCanvasProjection,
     invokeProjectionListener,
     markCanvasMergeOverlap,
     openLocalCanvasProject,
-    pendingForceHistorySnapshot,
     runProjectionStoreFlush,
     saveKey,
     withCanvasProjection,
@@ -70,9 +70,7 @@ export function alignLiveAfterConfirmedRemote(input: {
 }
 
 export async function persistProjectedCanvas(id: string, scope: string, identity: string | undefined, options: { throwOnFailure: boolean }) {
-    if (pendingForceHistorySnapshot.has(saveKey(scope, id))) {
-        await markCanvasJournalForceHistorySnapshot(id, scope).catch(() => {});
-    }
+    await flushPendingCanvasOverlapWrite(id, scope);
     if (!identity || !openLocalCanvasProject(id)) return;
     try {
         await runProjectionStoreFlush();

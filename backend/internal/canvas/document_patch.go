@@ -224,10 +224,6 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 				to := strings.TrimSpace(nodeString(item, "toNodeId"))
 				return deleteEdgeSet[id] || deleteNodeSet[from] || deleteNodeSet[to]
 			},
-			func(item map[string]any) bool {
-				id := strings.TrimSpace(nodeString(item, "id"))
-				return deleteEdgeSet[id]
-			},
 		)
 		doc["connections"] = mergedConns
 		if connOverlapped {
@@ -243,9 +239,6 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 			patch.UpsertChatSessions,
 			patch.ExpectedChatSessions,
 			serverAdvanced,
-			func(item map[string]any) bool {
-				return deleteSessionSet[strings.TrimSpace(nodeString(item, "id"))]
-			},
 			func(item map[string]any) bool {
 				return deleteSessionSet[strings.TrimSpace(nodeString(item, "id"))]
 			},
@@ -372,15 +365,20 @@ func nodeUploadOverlayFlag(meta map[string]any) bool {
 	return false
 }
 
-// Mirrors web/src/lib/canvas/canvas-node-metadata-contract.ts hasStaleSettledFileUploadFlag:
-// a node with settled media and non-loading status is settled even if a stale
-// fileUpload flag was left behind.
+// Mirrors web/src/lib/canvas/canvas-node-metadata-contract.ts:
+// a node has settled media when it carries media AND either has status=="success"
+// (even if a stale fileUpload flag was left behind, matching hasStaleSettledFileUploadFlag)
+// or has no active upload overlay with status neither "loading" nor "error".
 func nodeHasSettledUpload(node map[string]any) bool {
 	if !NodeHasMedia(node) {
 		return false
 	}
 	meta := nodeMetadata(node)
-	return nodeString(meta, "status") != "loading"
+	status := nodeString(meta, "status")
+	if status == "success" {
+		return true
+	}
+	return !nodeUploadOverlayFlag(meta) && status != "loading" && status != "error"
 }
 
 // mergePatchedNode protects server-bound generation outputs (media, text, or
@@ -415,26 +413,25 @@ func mergePatchedNode(existing, incoming map[string]any) (map[string]any, bool) 
 	}
 
 	// 2. Protect settled file upload (including nodes carrying a stale fileUpload flag)
-	// against an older uploading/interrupted placeholder.
-	incomingUploadingPlaceholder := nodeUploadOverlayFlag(incomingMeta) && (!NodeHasMedia(incoming) || incomingStatus == "loading")
-	if nodeHasSettledUpload(existing) && incomingUploadingPlaceholder {
-		existingAttempt := nodeString(existingMeta, "fileUploadAttemptId")
-		incomingAttempt := nodeString(incomingMeta, "fileUploadAttemptId")
-		sameUpload := (existingAttempt != "" && existingAttempt == incomingAttempt) || (!NodeHasMedia(incoming) && incomingAttempt == "")
-		if sameUpload {
-			merged := cloneNode(incoming)
-			meta := nodeMetadata(merged)
-			for _, key := range settledUploadOutputFields {
-				if value, ok := existingMeta[key]; ok {
-					meta[key] = value
-				}
-			}
-			for _, key := range boundGenerationClearedErrorFields {
+	// against any active/interrupted upload overlay — including replacement upload
+	// placeholders that keep old media with status omitted and a new fileUploadAttemptId —
+	// until the new upload settles and clears fileUpload.
+	incomingUploadingOverlay := nodeUploadOverlayFlag(incomingMeta) && !(NodeHasMedia(incoming) && incomingStatus == "success")
+	if nodeHasSettledUpload(existing) && incomingUploadingOverlay {
+		merged := cloneNode(incoming)
+		meta := nodeMetadata(merged)
+		for _, key := range settledUploadOutputFields {
+			if value, ok := existingMeta[key]; ok {
+				meta[key] = value
+			} else {
 				delete(meta, key)
 			}
-			merged["metadata"] = meta
-			return merged, true
 		}
+		for _, key := range boundGenerationClearedErrorFields {
+			delete(meta, key)
+		}
+		merged["metadata"] = meta
+		return merged, true
 	}
 
 	return incoming, false
@@ -515,7 +512,6 @@ func mergeEntitySliceWithOverlap(
 	expected map[string]map[string]any,
 	serverAdvanced bool,
 	shouldDrop func(map[string]any) bool,
-	isExplicitDelete func(map[string]any) bool,
 ) ([]any, bool) {
 	items, _ := raw.([]any)
 	byID := make(map[string]map[string]any, len(items)+len(upserts))
@@ -531,14 +527,12 @@ func mergeEntitySliceWithOverlap(
 			continue
 		}
 		if shouldDrop(item) {
-			if isExplicitDelete(item) {
-				if expectedBase, hasExpected := expected[id]; hasExpected {
-					if !reflect.DeepEqual(item, expectedBase) {
-						overlapped = true
-					}
-				} else if serverAdvanced {
+			if expectedBase, hasExpected := expected[id]; hasExpected {
+				if !reflect.DeepEqual(item, expectedBase) {
 					overlapped = true
 				}
+			} else if serverAdvanced {
+				overlapped = true
 			}
 			continue
 		}

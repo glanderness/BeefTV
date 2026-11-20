@@ -40,11 +40,37 @@ export const backendSaveTails = new Map<string, Promise<void>>();
 export const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const canvasProjectionLocks = new Map<string, Promise<void>>();
 export const canvasDeleting = new Set<string>();
-export const pendingForceHistorySnapshot = new Set<string>();
+export const pendingForceHistorySnapshotEpochs = new Map<string, number>();
+export const pendingOverlapJournalWrites = new Map<string, Promise<void>>();
 
 export function markCanvasMergeOverlap(id: string, scope = getActiveUserScope()) {
-    pendingForceHistorySnapshot.add(saveKey(scope, id));
-    void markCanvasJournalForceHistorySnapshot(id, scope).catch(() => {});
+    const key = saveKey(scope, id);
+    const journalEpoch = peekCanvasOperationJournal(id, scope)?.pendingForceHistorySnapshotEpoch ?? 0;
+    const nextEpoch = Math.max(pendingForceHistorySnapshotEpochs.get(key) ?? 0, journalEpoch) + 1;
+    pendingForceHistorySnapshotEpochs.set(key, nextEpoch);
+    const previous = pendingOverlapJournalWrites.get(key) ?? Promise.resolve();
+    const write = previous
+        .catch(() => undefined)
+        .then(() => markCanvasJournalForceHistorySnapshot(id, scope, nextEpoch))
+        .then(() => undefined, () => undefined);
+    const tracked = write.finally(() => {
+        if (pendingOverlapJournalWrites.get(key) === tracked) pendingOverlapJournalWrites.delete(key);
+    });
+    pendingOverlapJournalWrites.set(key, tracked);
+    return nextEpoch;
+}
+
+export async function flushPendingCanvasOverlapWrite(id: string, scope = getActiveUserScope()) {
+    const pending = pendingOverlapJournalWrites.get(saveKey(scope, id));
+    if (pending) await pending;
+}
+
+export async function flushAllPendingCanvasOverlapWrites(scope = getActiveUserScope()) {
+    const prefix = `${scope}\0`;
+    const pending = [...pendingOverlapJournalWrites.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, promise]) => promise);
+    if (pending.length > 0) await Promise.all(pending);
 }
 let projectionStoreFlush: () => Promise<void> = () => flushCanvasStorePersistence();
 

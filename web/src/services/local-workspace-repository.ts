@@ -35,12 +35,15 @@ import {
     canvasProjectionLocks,
     canvasSubmitBlocked,
     confirmRemoteDocument,
+    flushAllPendingCanvasOverlapWrites,
+    flushPendingCanvasOverlapWrite,
     getUnconfirmedCanvasDiagnostic,
     hasUnconfirmedCanvasEdits,
     incompleteCanvasProjection,
     markCanvasMergeOverlap,
     openLocalCanvasProject,
-    pendingForceHistorySnapshot,
+    pendingForceHistorySnapshotEpochs,
+    pendingOverlapJournalWrites,
     publishCanvasSaveProgress,
     recordServerConfirmedCanvas,
     saveKey,
@@ -128,18 +131,26 @@ async function applyAcceptedCanvasSave(
     submitted: CanvasProject,
     saved: CanvasSaveSummary,
     ackOperationId?: string,
-    consumedForceHistorySnapshot = false,
+    ackedForceHistorySnapshotEpoch?: number,
 ) {
     const scope = getActiveUserScope();
+    const key = saveKey(scope, id);
+    if (ackedForceHistorySnapshotEpoch) {
+        await flushPendingCanvasOverlapWrite(id, scope);
+    }
     const confirmed = saved.revision != null ? { ...submitted, revision: saved.revision, updatedAt: saved.updatedAt ?? submitted.updatedAt } : submitted;
     const pendingExternal = canvasExternalRevisionConflict(scope, id);
     const journal = await recordConfirmedCanvasCommit(confirmed, scope, {
         ...(ackOperationId ? { ackOperationId } : {}),
-        ...(consumedForceHistorySnapshot ? { clearForceHistorySnapshot: true } : {}),
+        ...(ackedForceHistorySnapshotEpoch ? { clearForceHistorySnapshotEpoch: ackedForceHistorySnapshotEpoch } : {}),
     });
     recordServerConfirmedCanvas(journal.confirmedSnapshot ?? confirmed, scope);
-    if (consumedForceHistorySnapshot) {
-        pendingForceHistorySnapshot.delete(saveKey(scope, id));
+    if (ackedForceHistorySnapshotEpoch) {
+        const currentMemEpoch = pendingForceHistorySnapshotEpochs.get(key) ?? 0;
+        const currentJournalEpoch = journal.pendingForceHistorySnapshotEpoch ?? 0;
+        if (currentMemEpoch <= ackedForceHistorySnapshotEpoch && currentJournalEpoch <= ackedForceHistorySnapshotEpoch) {
+            pendingForceHistorySnapshotEpochs.delete(key);
+        }
     }
     useCanvasStore.setState((state) => ({
         projects: state.projects.map((current) => current.id === id
@@ -233,16 +244,21 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
             throw error;
         }
     }
+    await flushPendingCanvasOverlapWrite(id, scope);
     const queued = await updateCanvasOperationJournal(id, scope, (current) => {
         if (current.inFlight) return;
         if (current.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, settled) && !current.inFlight) return;
         const expectedRevision = current.confirmedRevision || settled.revision || 0;
-        const forceHistorySnapshot = Boolean(current.pendingForceHistorySnapshot || pendingForceHistorySnapshot.has(saveKey(scope, id)));
-        const patch = current.confirmedSnapshot ? buildCanvasDocumentPatch(current.confirmedSnapshot, settled, { forceHistorySnapshot }) : null;
+        const forceEpoch = Math.max(
+            current.pendingForceHistorySnapshotEpoch ?? 0,
+            pendingForceHistorySnapshotEpochs.get(saveKey(scope, id)) ?? 0,
+        );
+        const patch = current.confirmedSnapshot ? buildCanvasDocumentPatch(current.confirmedSnapshot, settled, { forceHistorySnapshot: forceEpoch > 0 }) : null;
         if (current.confirmedSnapshot && !patch) return;
         const operationId = newCanvasCommitOperationId();
         return {
             ...current,
+            ...(forceEpoch > 0 ? { pendingForceHistorySnapshotEpoch: forceEpoch } : {}),
             inFlight: {
                 operationId,
                 expectedRevision,
@@ -251,6 +267,7 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
                     expectedRevision,
                     document: structuredClone(settled),
                     ...(patch ? { patch: structuredClone(patch) } : {}),
+                    ...(forceEpoch > 0 ? { forceHistorySnapshotEpoch: forceEpoch } : {}),
                 },
             },
         };
@@ -313,7 +330,10 @@ async function sendCanvasDocumentCommit(
                 updatedAt: result.result?.updatedAt ?? acceptedDoc.updatedAt,
                 revision,
             };
-            await applyAcceptedCanvasSave(id, acceptedDoc, saved, operationId, Boolean(payload.patch.forceHistorySnapshot));
+            const ackedForceEpoch = payload.patch.forceHistorySnapshot
+                ? (payload.forceHistorySnapshotEpoch ?? 1)
+                : undefined;
+            await applyAcceptedCanvasSave(id, acceptedDoc, saved, operationId, ackedForceEpoch);
             if (mergedDoc) {
                 const liveNow = openLocalCanvasProject(id);
                 const aligned = alignLiveAfterConfirmedRemote({
@@ -324,6 +344,7 @@ async function sendCanvasDocumentCommit(
                     hadLive: Boolean(liveNow),
                     onApplied: notifyCanvasRefresh,
                 });
+                await flushPendingCanvasOverlapWrite(id, scope);
                 if (aligned && liveNow && !sameCanvasDocument(aligned, mergedDoc)) {
                     scheduleLocalCanvasBackendSync(id);
                 }
@@ -506,7 +527,8 @@ export function resetLocalCanvasBackendSaveState() {
     backendSaveTails.clear();
     canvasProjectionLocks.clear();
     canvasDeleting.clear();
-    pendingForceHistorySnapshot.clear();
+    pendingForceHistorySnapshotEpochs.clear();
+    pendingOverlapJournalWrites.clear();
     serverConfirmedCanvasSnapshots.clear();
     setCanvasProjectionStoreFlushForTest(null);
 }
@@ -604,11 +626,12 @@ export function pendingExternalCanvasRevision(id: string) {
 }
 
 export async function flushLocalWorkspace() {
-    await flushCanvasStorePersistence();
+    await Promise.all([flushCanvasStorePersistence(), flushAllPendingCanvasOverlapWrites()]);
 }
 
 export async function flushLocalCanvasBackendSaves(): Promise<void> {
     const scope = getActiveUserScope();
+    await flushAllPendingCanvasOverlapWrites(scope);
     const prefix = `${scope}\0`;
     for (const [key, timer] of [...backendSaveTimers.entries()]) {
         if (!key.startsWith(prefix)) continue;
@@ -660,9 +683,10 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
         for (const id of selected) {
             try {
                 await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
+                await flushPendingCanvasOverlapWrite(id, scope);
                 await clearCanvasOperationJournal(id, scope);
                 clearCanvasDocumentBase(id, scope);
-                pendingForceHistorySnapshot.delete(saveKey(scope, id));
+                pendingForceHistorySnapshotEpochs.delete(saveKey(scope, id));
                 serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
                 clearCanvasBackendSaveProgress(id, scope);
                 deleted.push(id);
