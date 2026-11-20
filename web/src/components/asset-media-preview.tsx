@@ -69,7 +69,11 @@ function AssetVideoCover({ asset, alt, className, fallback, hoverPlayDelayMs }: 
             clearTimeout(retryTimer);
             observer?.disconnect();
             controller?.abort();
-            if (ownedUrl) URL.revokeObjectURL(ownedUrl);
+            if (ownedUrl) {
+                const revokedUrl = ownedUrl;
+                URL.revokeObjectURL(revokedUrl);
+                setCaptured(prev => prev.url === revokedUrl ? { identity: "", url: "" } : prev);
+            }
         };
     }, [directCover, content, identity, retryEpoch, storageKey]);
 

@@ -113,65 +113,98 @@ export function getCachedCanvasVideoPreviewBlob(node: VideoPreviewSource) {
 }
 
 /**
- * Capture a one-shot poster Object URL backed by the shared preview semaphore
- * (`MAX_CONCURRENT_PREVIEW_SOURCES`) and single-decoder `captureVideoPoster` queue,
- * with per-caller abort and deadline isolation so stalled videos never block others.
+ * Capture a one-shot poster Object URL backed by the shared poster cache,
+ * 2-slot `acquirePreviewSourceSlot` semaphore, and single-decoder `captureVideoPoster`
+ * queue. Queue wait is bounded only by the caller's AbortSignal; `timeoutMs` starts
+ * after a source slot is granted so large coverless grids never drop or starve cards.
  */
 export async function captureCanvasVideoPosterBlobUrl(
     node: VideoPreviewSource,
     options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<string> {
     const { signal, timeoutMs = 8_000 } = options;
-    if (signal?.aborted) throw signal.reason;
-    const controller = new AbortController();
-    const cancel = () => controller.abort(signal?.reason);
-    signal?.addEventListener("abort", cancel, { once: true });
-    const deadline = timeoutMs > 0
-        ? setTimeout(() => controller.abort(new DOMException("Video poster timed out", "TimeoutError")), timeoutMs)
-        : undefined;
-    const lease = acquireCanvasVideoPreview(node);
-    let rejectAborted: () => void = () => undefined;
-    const aborted = new Promise<never>((_, reject) => {
-        rejectAborted = () => {
-            lease.release();
-            reject(controller.signal.reason);
-        };
-        controller.signal.addEventListener("abort", rejectAborted, { once: true });
-    });
-    try {
-        const result = await Promise.race([lease.promise, aborted]);
-        controller.signal.throwIfAborted();
+    throwIfAborted(signal);
+    const requestKey = canvasDerivedPreviewSourceKey(node);
+    const cached = touchCachedPoster(requestKey);
+    if (cached) return URL.createObjectURL(cached.poster);
+    const inFlight = previewRequests.get(requestKey);
+    if (inFlight) {
+        const result = await awaitWithAbort(inFlight.promise, signal);
+        throwIfAborted(signal);
         const blob = result && getCachedCanvasVideoPreviewBlob(node);
-        return blob ? URL.createObjectURL(blob) : "";
-    } finally {
-        clearTimeout(deadline);
-        signal?.removeEventListener("abort", cancel);
-        controller.signal.removeEventListener("abort", rejectAborted);
-        lease.release();
+        if (blob) return URL.createObjectURL(blob);
     }
+    const captured = await capturePosterWithSharedSlot(node, requestKey, signal, timeoutMs);
+    throwIfAborted(signal);
+    return captured ? URL.createObjectURL(captured.poster) : "";
 }
 
 async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: string, signal?: AbortSignal): Promise<VideoPreview | null> {
-    const cached = posterBlobCache.get(requestKey);
+    const cached = touchCachedPoster(requestKey);
     if (cached) {
-        posterBlobCache.delete(requestKey);
-        posterBlobCache.set(requestKey, cached);
         await Promise.resolve();
         throwIfAborted(signal);
         return { ...cached.meta, content: URL.createObjectURL(cached.poster) };
     }
+    const captured = await capturePosterWithSharedSlot(node, requestKey, signal);
+    if (!captured) return null;
+    return {
+        ...captured.meta,
+        content: URL.createObjectURL(captured.poster),
+    };
+}
+
+function touchCachedPoster(requestKey: string): CachedPoster | undefined {
+    const cached = posterBlobCache.get(requestKey);
+    if (!cached) return undefined;
+    posterBlobCache.delete(requestKey);
+    posterBlobCache.set(requestKey, cached);
+    return cached;
+}
+
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(abortError());
+    let onAbort: () => void = () => undefined;
+    const aborted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(abortError());
+        signal.addEventListener("abort", onAbort, { once: true });
+    });
+    return Promise.race([promise, aborted]).finally(() => {
+        signal.removeEventListener("abort", onAbort);
+    });
+}
+
+async function capturePosterWithSharedSlot(
+    node: VideoPreviewSource,
+    requestKey: string,
+    signal?: AbortSignal,
+    workTimeoutMs = 0,
+): Promise<CachedPoster | null> {
     await waitForBrowserIdle(signal);
     const releaseSlot = await acquirePreviewSourceSlot(signal);
+    const workController = new AbortController();
+    const onParentAbort = () => workController.abort(signal?.reason ?? abortError());
+    if (signal?.aborted) {
+        releaseSlot();
+        throw abortError();
+    }
+    signal?.addEventListener("abort", onParentAbort, { once: true });
+    const deadline = workTimeoutMs > 0
+        ? setTimeout(() => workController.abort(new DOMException("Video poster timed out", "TimeoutError")), workTimeoutMs)
+        : undefined;
     let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
     try {
-        throwIfAborted(signal);
+        throwIfAborted(workController.signal);
+        const cached = touchCachedPoster(requestKey);
+        if (cached) return cached;
         const storageKey = node.metadata?.storageKey;
         const fallback = node.metadata?.content || "";
-        const source = await acquireCanvasVideoSource(storageKey, fallback, signal);
+        const source = await acquireCanvasVideoSource(storageKey, fallback, workController.signal);
         if (!source.url) { source.release(); return null; }
         let firstError: unknown;
         try {
-            captured = await captureVideoPoster(source.url, { signal, maxWidth: 400 });
+            captured = await captureVideoPoster(source.url, { signal: workController.signal, maxWidth: 400 });
         } catch (error) {
             firstError = error;
             captured = { width: 0, height: 0, capturedAtMs: 0 };
@@ -179,23 +212,25 @@ async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: 
             source.release();
         }
         if (!captured.poster) {
-            throwIfAborted(signal);
+            throwIfAborted(workController.signal);
             if (!resourceIdFromStorageKey(storageKey)) {
                 if (firstError) throw firstError;
                 return null;
             }
-            const compatibleSource = await acquireCanvasVideoSource(storageKey, fallback, signal, true);
+            const compatibleSource = await acquireCanvasVideoSource(storageKey, fallback, workController.signal, true);
             if (!compatibleSource.url) { compatibleSource.release(); return null; }
             try {
-                captured = await captureVideoPoster(compatibleSource.url, { signal, maxWidth: 400 });
+                captured = await captureVideoPoster(compatibleSource.url, { signal: workController.signal, maxWidth: 400 });
             } finally {
                 compatibleSource.release();
             }
         }
     } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener("abort", onParentAbort);
         releaseSlot();
     }
-    throwIfAborted(signal);
+    throwIfAborted(workController.signal);
     if (!captured.poster) return null;
     const meta: Omit<VideoPreview, "content"> = {
         width: captured.width,
@@ -211,11 +246,9 @@ async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: 
         const oldestKey = posterBlobCache.keys().next().value;
         if (oldestKey !== undefined) posterBlobCache.delete(oldestKey);
     }
-    posterBlobCache.set(requestKey, { poster: captured.poster, meta });
-    return {
-        ...meta,
-        content: URL.createObjectURL(captured.poster),
-    };
+    const entry: CachedPoster = { poster: captured.poster, meta };
+    posterBlobCache.set(requestKey, entry);
+    return entry;
 }
 
 function canvasVideoPreviewSourceKey(node: VideoPreviewSource) {
