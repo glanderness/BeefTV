@@ -223,6 +223,8 @@ func (a *DesktopApp) writeBatchItemExclusive(
 }
 
 func (a *DesktopApp) promptSaveDirectory(ctx context.Context) (string, error) {
+	endDialog := a.beginNativeDialog()
+	defer endDialog()
 	a.mu.RLock()
 	choose := a.chooseSaveDir
 	a.mu.RUnlock()

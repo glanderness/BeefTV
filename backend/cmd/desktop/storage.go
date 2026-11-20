@@ -73,6 +73,8 @@ func (a *DesktopApp) ChooseStorageDirectory() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	endDialog := a.beginNativeDialog()
+	defer endDialog()
 	path, err := wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{Title: "选择 BeefTV 数据存储文件夹"})
 	if err == nil && path != "" && filepath.Dir(path) == path {
 		path = filepath.Join(path, "BeefTV")

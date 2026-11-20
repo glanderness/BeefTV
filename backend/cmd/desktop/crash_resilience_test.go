@@ -154,46 +154,188 @@ func TestRendererWatchdogRespectsBusyLeaseMaxCapHiddenTransitionAndCooldown(t *t
 	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 
 	// Fresh heartbeat: no prompt.
-	if state.evaluate(base.Add(20*time.Second), base, false, false, time.Time{}) {
+	if state.evaluate(base.Add(20*time.Second), base, false, false, time.Time{}, false, time.Time{}) {
 		t.Fatal("fresh heartbeat must not trigger prompt")
 	}
 	// Legitimate 60s busy task (>35s normal timeout, <180s busy ceiling): no prompt.
-	if state.evaluate(base.Add(60*time.Second), base, false, true, base) {
+	if state.evaluate(base.Add(60*time.Second), base, false, true, base, false, time.Time{}) {
 		t.Fatal("busy lease within busy timeout must not trigger prompt")
 	}
 	// A leaked busy lease older than 10m falls back to normal 35s timeout.
-	if !state.evaluate(base.Add(11*time.Minute), base.Add(10*time.Minute), false, true, base) {
+	if !state.evaluate(base.Add(11*time.Minute), base.Add(10*time.Minute), false, true, base, false, time.Time{}) {
 		t.Fatal("leaked busy lease exceeding 10m cap must fall back to 35s threshold")
 	}
 	state = rendererWatchdogState{}
 	// Hidden window does not prompt while hidden, then prompts as soon as visible with stale heartbeat.
-	if state.evaluate(base.Add(50*time.Second), base, true, false, time.Time{}) {
+	if state.evaluate(base.Add(50*time.Second), base, true, false, time.Time{}, false, time.Time{}) {
 		t.Fatal("hidden window must not prompt immediately")
 	}
-	if !state.evaluate(base.Add(55*time.Second), base, false, false, time.Time{}) {
+	if !state.evaluate(base.Add(55*time.Second), base, false, false, time.Time{}, false, time.Time{}) {
 		t.Fatal("expected stale visible window after hidden period to trigger prompt")
 	}
 	// Cooldown prevents dialog spam on subsequent 5s ticks.
-	if state.evaluate(base.Add(60*time.Second), base, false, false, time.Time{}) {
+	if state.evaluate(base.Add(60*time.Second), base, false, false, time.Time{}, false, time.Time{}) {
 		t.Fatal("watchdog must respect cooldown after prompting")
 	}
 	// After cooldown expires and heartbeat is still stale, prompt can fire again.
-	if !state.evaluate(base.Add(95*time.Second), base, false, false, time.Time{}) {
+	if !state.evaluate(base.Add(95*time.Second), base, false, false, time.Time{}, false, time.Time{}) {
 		t.Fatal("expected watchdog to re-evaluate after cooldown")
 	}
 }
 
-func TestCrashRecoveryDialogOptionsMatchPlatformCapabilities(t *testing.T) {
-	winOpts := crashRecoveryDialogOptions("windows", false)
-	if strings.Contains(winOpts.Message, "点击「取消」") {
-		t.Fatalf("Windows MB_YESNO copy must not promise a non-existent Cancel button: %q", winOpts.Message)
+func TestRendererWatchdogPausesDuringNativeModalAndGrantsGraceWindow(t *testing.T) {
+	var state rendererWatchdogState
+	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+
+	// Native OS file/folder picker open for 2 minutes pauses WebView2 timers -> must NOT prompt.
+	if state.evaluate(base.Add(2*time.Minute), base, false, false, time.Time{}, true, time.Time{}) {
+		t.Fatal("watchdog must not prompt while a native modal dialog is open")
 	}
-	if winOpts.DefaultButton != "yes" {
-		t.Fatalf("Windows DefaultButton = %q, want yes (non-destructive export)", winOpts.DefaultButton)
+	// Immediately after the dialog closes, a fresh 35s grace window prevents a false alarm
+	// before the resumed JS timer delivers its next heartbeat.
+	closeAt := base.Add(2*time.Minute + 5*time.Second)
+	if state.evaluate(closeAt, base, false, false, time.Time{}, false, time.Time{}) {
+		t.Fatal("watchdog must grant post-modal grace immediately after modal closes")
+	}
+	if state.evaluate(closeAt.Add(30*time.Second), base, false, false, time.Time{}, false, time.Time{}) {
+		t.Fatal("watchdog must stay quiet during the 35s post-modal grace window")
+	}
+	// If the renderer stays frozen past the post-modal grace window with no new heartbeat,
+	// the watchdog must still prompt cleanly.
+	if !state.evaluate(closeAt.Add(36*time.Second), base, false, false, time.Time{}, false, time.Time{}) {
+		t.Fatal("expected watchdog to prompt after post-modal grace expires with no heartbeat")
+	}
+
+	// Explicit grace timestamp from beginNativeDialog() also suppresses a dialog that opened
+	// and closed between watchdog ticks.
+	state = rendererWatchdogState{}
+	graceUntil := base.Add(90 * time.Second)
+	if state.evaluate(base.Add(80*time.Second), base, false, false, time.Time{}, false, graceUntil) {
+		t.Fatal("watchdog must honor explicit nativeDialogGraceUntil")
+	}
+	if !state.evaluate(base.Add(95*time.Second), base, false, false, time.Time{}, false, graceUntil) {
+		t.Fatal("expected watchdog to prompt once explicit nativeDialogGraceUntil expires")
+	}
+}
+
+func TestDesktopAppNativeDialogTracksDepthAndGraceWindow(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	sawOpenDuringSave := false
+	app.chooseSavePath = func(_ context.Context, _ string) (string, error) {
+		open, _ := app.nativeModalState()
+		sawOpenDuringSave = open
+		return "", nil
+	}
+	if _, err := app.promptSavePath(context.Background(), "demo.mp4"); err != nil {
+		t.Fatalf("promptSavePath failed: %v", err)
+	}
+	if !sawOpenDuringSave {
+		t.Fatal("expected nativeModalState to report open=true while SaveFileDialog is active")
+	}
+	open, graceUntil := app.nativeModalState()
+	if open {
+		t.Fatal("expected nativeModalState open=false after SaveFileDialog closes")
+	}
+	if time.Until(graceUntil) <= 0 {
+		t.Fatalf("expected future nativeDialogGraceUntil after dialog closes, got %v", graceUntil)
+	}
+
+	sawOpenDuringDir := false
+	app.chooseSaveDir = func(_ context.Context) (string, error) {
+		open, _ := app.nativeModalState()
+		sawOpenDuringDir = open
+		return "", nil
+	}
+	if _, err := app.promptSaveDirectory(context.Background()); err != nil {
+		t.Fatalf("promptSaveDirectory failed: %v", err)
+	}
+	if !sawOpenDuringDir {
+		t.Fatal("expected nativeModalState to report open=true while OpenDirectoryDialog is active")
+	}
+}
+
+func TestCrashRecoveryDialogOptionsMatchPlatformCapabilities(t *testing.T) {
+	winTitle, winMsg := crashRecoveryDialogText("windows", false)
+	if winTitle == "" || !strings.Contains(winMsg, "点击「取消」") {
+		t.Fatalf("Windows MB_YESNOCANCEL copy must explain Cancel button: title=%q msg=%q", winTitle, winMsg)
+	}
+	for _, tc := range []struct {
+		code int32
+		want string
+	}{
+		{6, "Yes"},
+		{7, "No"},
+		{2, "Cancel"},
+		{0, ""},
+	} {
+		if got := windowsMessageBoxChoice(tc.code); got != tc.want {
+			t.Errorf("windowsMessageBoxChoice(%d) = %q, want %q", tc.code, got, tc.want)
+		}
 	}
 	macOpts := crashRecoveryDialogOptions("darwin", false)
 	if len(macOpts.Buttons) != 3 || macOpts.DefaultButton != "继续等待" {
 		t.Fatalf("macOS dialog options mismatch: %+v", macOpts)
+	}
+}
+
+func TestPromptCrashRecoveryDialogHandlesCancelExportAndReload(t *testing.T) {
+	dataDir := t.TempDir()
+	downloadsDir := t.TempDir()
+	app := newDesktopApp(dataDir)
+	app.downloadsDir = downloadsDir
+	app.revealFile = func(string) error { return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.wailsCtx = ctx
+	if err := app.start(ctx); err != nil {
+		t.Fatalf("desktop app start failed: %v", err)
+	}
+	defer func() { _ = app.stop(context.Background()) }()
+
+	nativeReloads := 0
+	app.nativeReloadFn = func(context.Context) { nativeReloads++ }
+
+	// 1. Cancel ("continue waiting"): must track modal open while shown, set grace window, and neither reload nor export.
+	sawOpen := false
+	app.showRecoveryDialog = func(_ context.Context, _ bool) (string, error) {
+		open, _ := app.nativeModalState()
+		sawOpen = open
+		return "Cancel", nil
+	}
+	app.promptCrashRecoveryDialog(ctx, false)
+	if !sawOpen {
+		t.Fatal("expected nativeModalState open=true while recovery dialog is displayed")
+	}
+	if open, grace := app.nativeModalState(); open || time.Until(grace) <= 0 {
+		t.Fatalf("expected open=false and future grace after Cancel, got open=%v grace=%v", open, grace)
+	}
+	if nativeReloads != 0 {
+		t.Fatalf("Cancel must not trigger reload, got %d", nativeReloads)
+	}
+	if entries, _ := os.ReadDir(downloadsDir); len(entries) != 0 {
+		t.Fatalf("Cancel must not export diagnostics, got %d files", len(entries))
+	}
+
+	// 2. No ("safe-reload"): triggers native safe-mode reload when heartbeat is stale/absent.
+	app.showRecoveryDialog = func(_ context.Context, _ bool) (string, error) {
+		return "No", nil
+	}
+	app.promptCrashRecoveryDialog(ctx, false)
+	if nativeReloads != 1 {
+		t.Fatalf("expected 1 native safe-mode reload on No, got %d", nativeReloads)
+	}
+
+	// 3. Yes ("export"): directly writes diagnostic zip to Downloads without reloading.
+	app.showRecoveryDialog = func(_ context.Context, _ bool) (string, error) {
+		return "Yes", nil
+	}
+	app.promptCrashRecoveryDialog(ctx, false)
+	entries, err := os.ReadDir(downloadsDir)
+	if err != nil || len(entries) != 1 || !strings.HasSuffix(entries[0].Name(), ".zip") {
+		t.Fatalf("expected 1 exported diagnostic zip on Yes, got %v (err=%v)", entries, err)
+	}
+	if nativeReloads != 1 {
+		t.Fatalf("Yes export must not trigger extra reload, got %d", nativeReloads)
 	}
 }
 

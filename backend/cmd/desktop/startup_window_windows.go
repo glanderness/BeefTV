@@ -46,9 +46,13 @@ type startupMonitorInfo struct {
 	flags         uint32
 }
 
+func startupWindowClassName() string {
+	return fmt.Sprintf("BeefTVMainWindow-%d", os.Getpid())
+}
+
 func configureStartupWindow(opts *options.App) {
 	// Locate this process's window after Wails has selected its initial monitor.
-	className := fmt.Sprintf("BeefTVMainWindow-%d", os.Getpid())
+	className := startupWindowClassName()
 	opts.Windows.WindowClassName = className
 	opts.StartHidden = true
 	var firstNavigation sync.Once
