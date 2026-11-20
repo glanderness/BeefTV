@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { zipSync } from "fflate";
 
-import { archiveMediaIdempotencyKey, assertRestoredCanvasMatches, restoreCanvasArchive, type CanvasArchiveRestoreHost } from "@/lib/canvas/canvas-archive-restore";
+import { archiveMediaIdempotencyKey, restoreCanvasArchive, type CanvasArchiveRestoreHost } from "@/lib/canvas/canvas-archive-restore";
 import { openCanvasArchive } from "@/lib/canvas/canvas-export";
 import { useOperationProgress } from "@/stores/use-operation-progress";
 import { ARCHIVE_MAX_ENTRY_BYTES, ARCHIVE_MAX_FILES, ARCHIVE_MAX_TOTAL_BYTES, createZip } from "@/lib/zip";
@@ -211,7 +211,7 @@ function memoryHost(overrides: Partial<CanvasArchiveRestoreHost> = {}) {
     return { host, folders, projects, media, drawings, deleted, deletedResources, binds, idempotencyKeys };
 }
 
-test("preflight rejects missing media, invalid project, version, duplicate IDs, and data/blob keys before writes", async () => {
+test("missing media degrades gracefully while preflight rejects invalid project, version, duplicate IDs, and data/blob keys before writes", async () => {
     const writes: string[] = [];
     const host = memoryHost({
         createFolder: (name) => {
@@ -231,7 +231,13 @@ test("preflight rejects missing media, invalid project, version, duplicate IDs, 
             }],
         }),
     }]);
-    await expect(restoreCanvasArchive(missing, host)).rejects.toThrow("missing.mp4");
+    const missingState = memoryHost();
+    const partial = await restoreCanvasArchive(missing, missingState.host);
+    expect(partial.count).toBe(1);
+    expect(partial.skippedFiles).toEqual([{ owner: "损坏画布", reference: "projects/broken/files/missing.mp4" }]);
+    expect(missingState.projects).toHaveLength(1);
+    expect(missingState.projects[0].nodes[0].metadata?.storageKey).toBeUndefined();
+    expect(missingState.projects[0].nodes[0].metadata?.content).toBe("");
     expect(writes).toEqual([]);
 
     const invalidProject = await createZip([{
@@ -381,36 +387,389 @@ test("archive media idempotency follows content, not source storage keys", async
     expect(next).not.toBe(first);
 });
 
-test("readback mismatch is an explicit restore failure", () => {
-    const intended = {
-        id: "imported-1",
-        folderId: "folder-1",
-        nodes: [videoNode("resource:new")],
-        timeline: timeline(),
-    };
-    expect(() => assertRestoredCanvasMatches(intended, { ...intended, id: "other" } as CanvasProject)).toThrow("画布未保存到工作区");
-    expect(() => assertRestoredCanvasMatches(intended, { ...intended, folderId: "other" } as CanvasProject)).toThrow("画布文件夹未保存到工作区");
-    expect(() => assertRestoredCanvasMatches(intended, { ...intended, timeline: undefined } as CanvasProject)).toThrow("画布时间线未保存到工作区");
+test("restore remaps imageHistory entries recursively, drops missing entries, and never alters text node prose", async () => {
+    const data = archiveData({
+        projects: [{
+            project: {
+                id: "old-canvas",
+                title: "历史与正文",
+                nodes: [
+                    {
+                        id: "img-1",
+                        type: "image",
+                        title: "角色图",
+                        position: { x: 0, y: 0 },
+                        width: 512,
+                        height: 512,
+                        metadata: {
+                            storageKey: "resource:old-active",
+                            content: "/api/resources/old-active/file",
+                            assetId: "foreign-active-asset",
+                            taskId: "foreign-active-task",
+                            imageHistory: [
+                                {
+                                    id: "hist-only:0",
+                                    storageKey: "resource:old-hist",
+                                    content: "http://127.0.0.1:19999/api/resources/old-hist/file",
+                                    assetId: "foreign-hist-asset",
+                                    taskId: "foreign-hist-task",
+                                    prompt: "旧版历史",
+                                },
+                                {
+                                    id: "hist-missing:0",
+                                    storageKey: "resource:old-missing",
+                                    content: "http://127.0.0.1:19999/api/resources/old-missing/file",
+                                    assetId: "foreign-missing-asset",
+                                    taskId: "foreign-missing-task",
+                                },
+                                {
+                                    id: "hist-active:0",
+                                    storageKey: "resource:old-active",
+                                    content: "/api/resources/old-active/file",
+                                    assetId: "foreign-active-asset",
+                                    taskId: "foreign-active-task",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        id: "text-note",
+                        type: "text",
+                        title: "笔记",
+                        position: { x: 600, y: 0 },
+                        width: 240,
+                        height: 120,
+                        metadata: {
+                            content: "接口示例：/api/resources/old-missing/file 与 /api/resources/doc-example/file",
+                        },
+                    },
+                ],
+                connections: [],
+            },
+            files: [
+                { storageKey: "resource:old-active", path: "projects/old-canvas/files/active.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-hist", path: "projects/old-canvas/files/hist.png", mimeType: "image/png", bytes: 4 },
+            ],
+            drawingDocuments: [],
+        }],
+    });
+    const zip = await createZip([
+        { name: "projects.json", data: JSON.stringify(data) },
+        { name: "projects/old-canvas/files/active.png", data: new Uint8Array([1, 2, 3, 4]) },
+        { name: "projects/old-canvas/files/hist.png", data: new Uint8Array([5, 6, 7, 8]) },
+    ]);
+    const state = memoryHost();
+    const result = await restoreCanvasArchive(zip, state.host);
+    expect(result.skippedFiles).toEqual([{ owner: "历史与正文", reference: "resource:old-missing" }]);
+    const img = state.projects[0].nodes.find((item) => item.id === "img-1")!;
+    expect(img.metadata?.storageKey).toStartWith("resource:res-");
+    expect(img.metadata?.assetId).toBe("asset-1");
+    expect(img.metadata?.taskId).toBeUndefined();
+    const history = img.metadata?.imageHistory || [];
+    expect(history).toHaveLength(2);
+    expect(history[0].storageKey).toStartWith("resource:res-");
+    expect(history[0].storageKey).not.toBe(img.metadata?.storageKey);
+    expect(history[0].content).not.toContain("19999");
+    expect(history[0].assetId).toBeUndefined();
+    expect(history[0].taskId).toBeUndefined();
+    expect(history[1].storageKey).toBe(img.metadata?.storageKey);
+    expect(history[1].assetId).toBe(img.metadata?.assetId);
+    expect(state.binds).toHaveLength(1);
+    const note = state.projects[0].nodes.find((item) => item.id === "text-note")!;
+    expect(note.metadata?.content).toBe("接口示例：/api/resources/old-missing/file 与 /api/resources/doc-example/file");
 });
 
-test("restore readback rejects missing text, layout, or director content even with identical media references", () => {
-    const intended = { id: "canvas", title: "原文", nodes: [textNode()], connections: [], directorScenes: [{ id: "scene", title: "场景" }] } as CanvasProject;
-    for (const patch of [
-        { title: "旧标题" },
-        { nodes: [{ ...textNode(), metadata: { content: "丢失的正文" } }] },
-        { nodes: [{ ...textNode(), position: { x: 99, y: 99 } }] },
-        { directorScenes: [] },
-        { connections: [{ id: "unexpected", source: "a", target: "b" }] },
-    ]) expect(() => assertRestoredCanvasMatches(intended, { ...intended, ...patch })).toThrow("画布内容未完整保存到工作区");
-    expect(() => assertRestoredCanvasMatches(intended, { ...intended, revision: 8, updatedAt: "server-time" })).not.toThrow();
+test("restore preserves text node prose even with a mapped file storageKey, remaps URL-only and suffix storageKey fields, and warns on missing folderId", async () => {
+    const data = archiveData({
+        folders: [],
+        projects: [{
+            project: {
+                id: "old-canvas",
+                title: "全量字段与缺失文件夹",
+                folderId: "missing-folder-id",
+                nodes: [
+                    {
+                        id: "script-doc",
+                        type: "text",
+                        title: "上传的剧本",
+                        position: { x: 0, y: 0 },
+                        width: 320,
+                        height: 200,
+                        metadata: {
+                            storageKey: "file:script-1",
+                            content: "第一幕：雨夜霓虹\n主角推开铁门。",
+                            prompt: "第一幕：雨夜霓虹\n主角推开铁门。",
+                            mimeType: "text/plain",
+                        },
+                    },
+                    {
+                        id: "url-only-img",
+                        type: "image",
+                        title: "仅URL图片",
+                        position: { x: 400, y: 0 },
+                        width: 512,
+                        height: 512,
+                        metadata: {
+                            content: "http://127.0.0.1:18888/api/resources/old-url-only/file",
+                        },
+                    },
+                    {
+                        id: "suffix-vid",
+                        type: "video",
+                        title: "带尾帧与遮罩的视频",
+                        position: { x: 960, y: 0 },
+                        width: 320,
+                        height: 180,
+                        metadata: {
+                            storageKey: "resource:old-vid",
+                            content: "/api/resources/old-vid/file",
+                            lastFrameStorageKey: "resource:old-last-frame",
+                            lastFrameUrl: "/api/resources/old-last-frame/file",
+                            directorCoverStorageKey: "image:old-dir-cover",
+                            directorCoverUrl: "data:image/png;base64,AAAA",
+                            drawingPreviewStorageKey: "resource:old-draw-preview",
+                            drawingPreviewUrl: "/api/resources/old-draw-preview/file",
+                            emotionEdit: { maskStorageKey: "resource:old-mask" },
+                            mediaConversion: { resultStorageKey: "resource:old-conv" },
+                        },
+                    },
+                ],
+                connections: [],
+            },
+            files: [
+                { storageKey: "file:script-1", path: "projects/old-canvas/files/script.txt", mimeType: "text/plain", bytes: 12 },
+                { storageKey: "resource:old-url-only", path: "projects/old-canvas/files/url-only.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-vid", path: "projects/old-canvas/files/vid.mp4", mimeType: "video/mp4", bytes: 4 },
+                { storageKey: "resource:old-last-frame", path: "projects/old-canvas/files/last.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "image:old-dir-cover", path: "projects/old-canvas/files/dir-cover.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-draw-preview", path: "projects/old-canvas/files/draw.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-mask", path: "projects/old-canvas/files/mask.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-conv", path: "projects/old-canvas/files/conv.png", mimeType: "image/png", bytes: 4 },
+            ],
+            drawingDocuments: [],
+        }],
+    });
+    const zip = await createZip([
+        { name: "projects.json", data: JSON.stringify(data) },
+        { name: "projects/old-canvas/files/script.txt", data: encoder.encode("第一幕：雨夜霓虹") },
+        { name: "projects/old-canvas/files/url-only.png", data: new Uint8Array([1, 2, 3, 4]) },
+        { name: "projects/old-canvas/files/vid.mp4", data: new Uint8Array([2, 3, 4, 5]) },
+        { name: "projects/old-canvas/files/last.png", data: new Uint8Array([3, 4, 5, 6]) },
+        { name: "projects/old-canvas/files/dir-cover.png", data: new Uint8Array([7, 8, 9, 10]) },
+        { name: "projects/old-canvas/files/draw.png", data: new Uint8Array([4, 5, 6, 7]) },
+        { name: "projects/old-canvas/files/mask.png", data: new Uint8Array([5, 6, 7, 8]) },
+        { name: "projects/old-canvas/files/conv.png", data: new Uint8Array([6, 7, 8, 9]) },
+    ]);
+    const state = memoryHost();
+    const result = await restoreCanvasArchive(zip, state.host);
+    expect(result.resourceIds).toHaveLength(8);
+    expect(result.skippedFiles).toEqual([{ owner: "全量字段与缺失文件夹", reference: "文件夹 missing-folder-id" }]);
+    expect(state.projects[0].folderId).toBeUndefined();
+
+    const scriptNode = state.projects[0].nodes.find((item) => item.id === "script-doc")!;
+    expect(scriptNode.metadata?.storageKey).toStartWith("resource:res-");
+    expect(scriptNode.metadata?.content).toBe("第一幕：雨夜霓虹\n主角推开铁门。");
+    expect(scriptNode.metadata?.prompt).toBe("第一幕：雨夜霓虹\n主角推开铁门。");
+
+    const urlOnlyNode = state.projects[0].nodes.find((item) => item.id === "url-only-img")!;
+    expect(urlOnlyNode.metadata?.storageKey).toStartWith("resource:res-");
+    expect(urlOnlyNode.metadata?.content).toStartWith("/api/resources/res-");
+    expect(urlOnlyNode.metadata?.content).not.toContain("18888");
+    expect(urlOnlyNode.metadata?.assetId).toBeTruthy();
+
+    const suffixNode = state.projects[0].nodes.find((item) => item.id === "suffix-vid")!;
+    expect(suffixNode.metadata?.storageKey).toStartWith("resource:res-");
+    expect(suffixNode.metadata?.lastFrameStorageKey).toStartWith("resource:res-");
+    expect(suffixNode.metadata?.lastFrameStorageKey).not.toBe("resource:old-last-frame");
+    expect(suffixNode.metadata?.lastFrameUrl).toContain(suffixNode.metadata!.lastFrameStorageKey!.slice("resource:".length));
+    expect(suffixNode.metadata?.lastFrameUrl).not.toBe(suffixNode.metadata?.content);
+    expect(suffixNode.metadata?.directorCoverStorageKey).toStartWith("resource:res-");
+    expect(suffixNode.metadata?.directorCoverUrl).toContain(suffixNode.metadata!.directorCoverStorageKey!.slice("resource:".length));
+    expect(suffixNode.metadata?.directorCoverUrl).not.toStartWith("data:");
+    expect(suffixNode.metadata?.drawingPreviewStorageKey).toStartWith("resource:res-");
+    expect(suffixNode.metadata?.drawingPreviewUrl).toContain(suffixNode.metadata!.drawingPreviewStorageKey!.slice("resource:".length));
+    expect(suffixNode.metadata?.drawingPreviewUrl).not.toBe(suffixNode.metadata?.content);
+    expect(suffixNode.metadata?.emotionEdit?.maskStorageKey).toStartWith("resource:res-");
+    expect(suffixNode.metadata?.mediaConversion?.resultStorageKey).toStartWith("resource:res-");
 });
 
-test("canonical restore readback permits local viewport differences without relaxing browser readback", () => {
-    const intended = { id: "canvas", nodes: [textNode()], viewport: { x: -17, y: 280, k: 0.38 } } as CanvasProject;
-    const saved = { ...intended, viewport: { x: 0, y: 0, k: 1 } };
-    expect(() => assertRestoredCanvasMatches(intended, saved, "backend")).not.toThrow();
-    expect(() => assertRestoredCanvasMatches(intended, saved)).toThrow("画布内容未完整保存到工作区");
-    expect(() => assertRestoredCanvasMatches(intended, { ...saved, nodes: [] }, "backend")).toThrow("画布内容未完整保存到工作区");
+test("restore preserves external CDN URLs and remaps bare resourceId fields in workflows and legacy metadata", async () => {
+    const remoteUrl = "https://cdn.example.com/api/resources/ext-id/file";
+    const data = archiveData({
+        folders: [],
+        projects: [{
+            project: {
+                id: "old-canvas",
+                title: "远端链接与裸资源ID",
+                nodes: [
+                    {
+                        id: "remote-img",
+                        type: "image",
+                        title: "外链图",
+                        position: { x: 0, y: 0 },
+                        width: 240,
+                        height: 240,
+                        metadata: {
+                            content: remoteUrl,
+                            referenceUrls: [remoteUrl],
+                        },
+                    },
+                    {
+                        id: "legacy-meta",
+                        type: "image",
+                        title: "旧版资源ID",
+                        position: { x: 260, y: 0 },
+                        width: 240,
+                        height: 240,
+                        metadata: {
+                            resourceId: "old-legacy-id",
+                            referenceResourceIds: ["old-legacy-id", "old-missing-ref"],
+                        } as unknown as CanvasProject["nodes"][number]["metadata"],
+                    },
+                    {
+                        id: "wf-node",
+                        type: "group",
+                        title: "工作流实例",
+                        position: { x: 520, y: 0 },
+                        width: 400,
+                        height: 300,
+                        metadata: {
+                            reusableWorkflow: {
+                                templateId: "tpl-1",
+                                definition: {
+                                    version: 1,
+                                    nodes: [
+                                        { id: "n1", title: "图1", mediaType: "image", role: "input", resourceId: "old-wf-def" },
+                                    ],
+                                    edges: [],
+                                    outputNodeIds: ["n1"],
+                                },
+                                run: {
+                                    id: "run-1",
+                                    templateId: "tpl-1",
+                                    templateName: "模板",
+                                    status: "succeeded",
+                                    steps: [{
+                                        nodeId: "n1",
+                                        title: "图1",
+                                        status: "succeeded",
+                                        taskId: "foreign-wf-task",
+                                        resourceId: "old-wf-run",
+                                        candidates: [{ resourceId: "old-wf-run" }, { resourceId: "old-missing-ref" }],
+                                    }],
+                                    outputs: [{ nodeId: "n1", mediaType: "image", resourceId: "old-wf-run" }],
+                                    createdAt: "2026-01-01T00:00:00Z",
+                                    updatedAt: "2026-01-01T00:00:00Z",
+                                },
+                                intent: {
+                                    clientOperationId: "op-1",
+                                    inputs: { n1: { resourceId: "old-wf-def" } },
+                                },
+                            },
+                        },
+                    },
+                ],
+                connections: [],
+            },
+            files: [
+                { storageKey: "resource:old-legacy-id", path: "projects/old-canvas/files/legacy.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-wf-def", path: "projects/old-canvas/files/wf-def.png", mimeType: "image/png", bytes: 4 },
+                { storageKey: "resource:old-wf-run", path: "projects/old-canvas/files/wf-run.png", mimeType: "image/png", bytes: 4 },
+            ],
+            drawingDocuments: [],
+        }],
+    });
+    const zip = await createZip([
+        { name: "projects.json", data: JSON.stringify(data) },
+        { name: "projects/old-canvas/files/legacy.png", data: new Uint8Array([1, 2, 3, 4]) },
+        { name: "projects/old-canvas/files/wf-def.png", data: new Uint8Array([2, 3, 4, 5]) },
+        { name: "projects/old-canvas/files/wf-run.png", data: new Uint8Array([3, 4, 5, 6]) },
+    ]);
+    const state = memoryHost();
+    const result = await restoreCanvasArchive(zip, state.host);
+    expect(result.resourceIds).toHaveLength(3);
+    expect(result.skippedFiles).toEqual([{ owner: "远端链接与裸资源ID", reference: "resource:old-missing-ref" }]);
+
+    const remote = state.projects[0].nodes.find((item) => item.id === "remote-img")!;
+    expect(remote.metadata?.content).toBe(remoteUrl);
+    expect((remote.metadata as Record<string, unknown>)?.referenceUrls).toEqual([remoteUrl]);
+    expect(remote.metadata?.storageKey).toBeUndefined();
+
+    const legacy = state.projects[0].nodes.find((item) => item.id === "legacy-meta")!.metadata as Record<string, unknown>;
+    expect(typeof legacy.resourceId).toBe("string");
+    expect(legacy.resourceId).toStartWith("res-");
+    expect(legacy.resourceId).not.toBe("old-legacy-id");
+    expect(legacy.referenceResourceIds).toEqual([legacy.resourceId]);
+
+    const wf = state.projects[0].nodes.find((item) => item.id === "wf-node")!.metadata!.reusableWorkflow!;
+    const newDefId = wf.definition.nodes[0].resourceId!;
+    const newRunId = wf.run!.steps[0].resourceId!;
+    expect(newDefId).toStartWith("res-");
+    expect(newDefId).not.toBe("old-wf-def");
+    expect(newRunId).toStartWith("res-");
+    expect(newRunId).not.toBe("old-wf-run");
+    expect(wf.run!.steps[0].taskId).toBeUndefined();
+    expect(wf.run!.steps[0].candidates).toEqual([{ resourceId: newRunId }, {}]);
+    expect(wf.run!.outputs[0].resourceId).toBe(newRunId);
+    expect(wf.intent!.inputs.n1.resourceId).toBe(newDefId);
+});
+
+test("restore uploads and remaps hosted-origin URL-only media when packaged in the archive while preserving un-packaged external CDN URLs", async () => {
+    const hostedUrl = "https://app.example.com/api/resources/old-hosted/file";
+    const externalUrl = "https://cdn.example.com/api/resources/ext-id/file";
+    const data = archiveData({
+        folders: [],
+        projects: [{
+            project: {
+                id: "old-canvas",
+                title: "托管域迁移与外链",
+                nodes: [
+                    {
+                        id: "hosted-img",
+                        type: "image",
+                        title: "托管域图片",
+                        position: { x: 0, y: 0 },
+                        width: 240,
+                        height: 240,
+                        metadata: { content: hostedUrl },
+                    },
+                    {
+                        id: "external-img",
+                        type: "image",
+                        title: "外链图片",
+                        position: { x: 260, y: 0 },
+                        width: 240,
+                        height: 240,
+                        metadata: { content: externalUrl },
+                    },
+                ],
+                connections: [],
+            },
+            files: [
+                { storageKey: "resource:old-hosted", path: "projects/old-canvas/files/hosted.png", mimeType: "image/png", bytes: 4 },
+            ],
+            drawingDocuments: [],
+        }],
+    });
+    const zip = await createZip([
+        { name: "projects.json", data: JSON.stringify(data) },
+        { name: "projects/old-canvas/files/hosted.png", data: new Uint8Array([9, 8, 7, 6]) },
+    ]);
+    const state = memoryHost();
+    const result = await restoreCanvasArchive(zip, state.host);
+    expect(result.resourceIds).toHaveLength(1);
+    expect(result.skippedFiles).toBeUndefined();
+    expect(state.media.size).toBe(1);
+    expect(Array.from(state.media.values())[0]).toEqual(new Uint8Array([9, 8, 7, 6]));
+
+    const hosted = state.projects[0].nodes.find((item) => item.id === "hosted-img")!;
+    expect(hosted.metadata?.storageKey).toBe(`resource:${result.resourceIds[0]}`);
+    expect(hosted.metadata?.content).toBe(`/api/resources/${result.resourceIds[0]}/file`);
+    expect(hosted.metadata?.assetId).toBeTruthy();
+
+    const external = state.projects[0].nodes.find((item) => item.id === "external-img")!;
+    expect(external.metadata?.content).toBe(externalUrl);
+    expect(external.metadata?.storageKey).toBeUndefined();
 });
 
 test("restore remaps director panorama, object, and screenshot media into the destination workspace", async () => {
@@ -517,7 +876,7 @@ test("drawing receipt must contain the saved snapshot", async () => {
     expect(state.projects).toEqual([]);
 });
 
-test("folder covers require archive bytes before any writes and restore under the new folder ID", async () => {
+test("missing folder cover degrades gracefully while present cover restores under the new folder ID", async () => {
     const data = archiveData({ folders: [{ id: "folder-old", name: "剧集", coverPath: "folders/old/cover.jpg", coverMimeType: "image/jpeg" }] });
     const archive = await openCanvasArchive(await validZip());
     archive.data = data as typeof archive.data;
@@ -525,11 +884,14 @@ test("folder covers require archive bytes before any writes and restore under th
     const state = memoryHost({ restoreFolderCover: async (id, blob) => {
         restored = { id, bytes: [...new Uint8Array(await blob.arrayBuffer())], mime: blob.type };
     } });
-    await expect(restoreCanvasArchive(archive, state.host)).rejects.toThrow("压缩包缺少文件夹封面");
-    expect(state.folders).toEqual([]);
+    const partial = await restoreCanvasArchive(archive, state.host);
+    expect(partial.skippedFiles).toEqual([{ owner: "剧集", reference: "folders/old/cover.jpg" }]);
+    expect(state.folders).toEqual([{ id: "folder-1", name: "剧集" }]);
+    expect(restored).toBeUndefined();
     archive.files.set("folders/old/cover.jpg", new Blob([new Uint8Array([7, 8, 9])]));
-    await restoreCanvasArchive(archive, state.host);
-    expect(restored).toEqual({ id: "folder-1", bytes: [7, 8, 9], mime: "image/jpeg" });
+    const full = await restoreCanvasArchive(archive, state.host);
+    expect(full.skippedFiles).toBeUndefined();
+    expect(restored).toEqual({ id: "folder-2", bytes: [7, 8, 9], mime: "image/jpeg" });
 });
 
 test("native canonical restore reports local saving rather than cloud synchronization", async () => {

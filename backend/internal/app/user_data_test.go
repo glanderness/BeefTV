@@ -206,236 +206,37 @@ func TestCanvasMediaAssetReferencesCollectsNodesAndTimeline(t *testing.T) {
 	}
 }
 
-func TestValidateCanvasMediaAssetsRejectsResourceWithoutAsset(t *testing.T) {
+func TestUpsertUserCanvasProjectAllowsUnboundAndMissingImageHistoryReferences(t *testing.T) {
 	svc, db, _ := newResourceDeletionTestService(t)
-	resource := model.Resource{
-		ID: "resource-canvas-orphan", UserID: "user-1", Status: model.ResourceStatusReady,
-		Provider: "local", ObjectKey: "users/user-1/image/orphan.png",
-	}
-	if err := db.Create(&resource).Error; err != nil {
+	if err := db.Create(&model.Resource{
+		ID: "res-active", UserID: "user-1", Status: model.ResourceStatusReady,
+		Provider: "local", ObjectKey: "users/user-1/image/active.png",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	raw := json.RawMessage(`{
-		"id":"canvas-1",
-		"nodes":[{"id":"node-1","type":"image","metadata":{"storageKey":"resource:resource-canvas-orphan","content":"/api/resources/resource-canvas-orphan/file"}}]
-	}`)
-
-	err := svc.validateCanvasMediaAssets("user-1", raw)
-	if err == nil || !strings.Contains(err.Error(), "尚未进入素材库") {
-		t.Fatalf("validateCanvasMediaAssets() error = %v", err)
-	}
-	if strings.Contains(err.Error(), "云端") {
-		t.Fatalf("resource validation leaked hosted wording: %v", err)
-	}
-}
-
-func TestValidateCanvasMediaAssetsHistoryInsertReusesOwnedAsset(t *testing.T) {
-	svc, db, _ := newResourceDeletionTestService(t)
-	resource := model.Resource{
-		ID: "audio-owned", UserID: "user-1", Status: model.ResourceStatusReady,
-		Provider: "local", ObjectKey: "users/user-1/audio/owned.mp3",
-	}
-	asset := model.Asset{ID: "asset-owned", UserID: "user-1", PayloadJSON: `{"id":"asset-owned","data":{"storageKey":"resource:audio-owned"}}`}
-	if err := db.Create(&resource).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&asset).Error; err != nil {
-		t.Fatal(err)
-	}
-	unbound := json.RawMessage(`{
-		"id":"canvas-1",
-		"nodes":[
-			{"id":"original","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned"}},
-			{"id":"history","type":"audio","metadata":{"storageKey":"resource:audio-owned","content":"/api/resources/audio-owned/file"}}
-		]
-	}`)
-	err := svc.validateCanvasMediaAssets("user-1", unbound)
-	if err == nil || !strings.Contains(err.Error(), "尚未进入素材库") {
-		t.Fatalf("history insert without reused assetId = %v", err)
-	}
-	bound := json.RawMessage(`{
-		"id":"canvas-1",
-		"nodes":[
-			{"id":"original","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned"}},
-			{"id":"history","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned","content":"/api/resources/audio-owned/file"}}
-		]
-	}`)
-	if err := svc.validateCanvasMediaAssets("user-1", bound); err != nil {
-		t.Fatalf("history insert reusing owned asset = %v", err)
-	}
-}
-
-func TestValidateCanvasMediaAssetsHistoryInsertRejectsCachedUnboundSibling(t *testing.T) {
-	svc, db, _ := newResourceDeletionTestService(t)
-	resource := model.Resource{
-		ID: "audio-owned", UserID: "user-1", Status: model.ResourceStatusReady,
-		Provider: "local", ObjectKey: "users/user-1/audio/owned.mp3",
-	}
-	asset := model.Asset{ID: "asset-owned", UserID: "user-1", PayloadJSON: `{"id":"asset-owned","data":{"storageKey":"resource:audio-owned"}}`}
-	if err := db.Create(&resource).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&asset).Error; err != nil {
-		t.Fatal(err)
-	}
-	cachedUnbound := json.RawMessage(`{
-		"id":"canvas-1",
-		"nodes":[
-			{"id":"original","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned"}},
-			{"id":"cached-history","type":"audio","metadata":{"storageKey":"resource:audio-owned","content":"/api/resources/audio-owned/file"}},
-			{"id":"inserted-history","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned"}}
-		]
-	}`)
-	err := svc.validateCanvasMediaAssets("user-1", cachedUnbound)
-	if err == nil || !strings.Contains(err.Error(), "尚未进入素材库") {
-		t.Fatalf("cached unbound sibling = %v", err)
-	}
-	repaired := json.RawMessage(`{
-		"id":"canvas-1",
-		"nodes":[
-			{"id":"original","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned"}},
-			{"id":"cached-history","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned","content":"/api/resources/audio-owned/file"}},
-			{"id":"inserted-history","type":"audio","metadata":{"assetId":"asset-owned","storageKey":"resource:audio-owned"}}
-		]
-	}`)
-	if err := svc.validateCanvasMediaAssets("user-1", repaired); err != nil {
-		t.Fatalf("history insert repairing cached sibling = %v", err)
-	}
-}
-
-func TestValidateCanvasMediaAssetsAcceptsMatchingNodeAndTimelineAssets(t *testing.T) {
-	svc, db, _ := newResourceDeletionTestService(t)
-	resources := []model.Resource{
-		{ID: "resource-node", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/node.png"},
-		{ID: "resource-timeline", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/video/timeline.mp4"},
-	}
-	assets := []model.Asset{
-		{ID: "asset-node", UserID: "user-1", PayloadJSON: `{"id":"asset-node","data":{"storageKey":"resource:resource-node"}}`},
-		{ID: "asset-timeline", UserID: "user-1", PayloadJSON: `{"id":"asset-timeline","data":{"url":"/api/resources/resource-timeline/file"}}`},
-	}
-	for index := range resources {
-		if err := db.Create(&resources[index]).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	for index := range assets {
-		if err := db.Create(&assets[index]).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	raw := json.RawMessage(`{
-		"id":"canvas-1",
-		"nodes":[{"id":"node-1","type":"image","metadata":{"assetId":"asset-node","storageKey":"resource:resource-node"}}],
-		"timeline":{"clips":[{"id":"clip-1","directMedia":{"kind":"video","assetId":"asset-timeline","storageKey":"resource:resource-timeline"}}]}
-	}`)
-
-	if err := svc.validateCanvasMediaAssets("user-1", raw); err != nil {
-		t.Fatalf("validateCanvasMediaAssets() error = %v", err)
-	}
-}
-
-func TestValidateCanvasMediaAssetsRejectsMismatchedAsset(t *testing.T) {
-	svc, db, _ := newResourceDeletionTestService(t)
-	resources := []model.Resource{
-		{ID: "resource-canvas", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/canvas.png"},
-		{ID: "resource-other", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/other.png"},
-	}
-	for index := range resources {
-		if err := db.Create(&resources[index]).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	asset := model.Asset{ID: "asset-wrong", UserID: "user-1", PayloadJSON: `{"data":{"storageKey":"resource:resource-other"}}`}
-	if err := db.Create(&asset).Error; err != nil {
-		t.Fatal(err)
-	}
-	raw := json.RawMessage(`{"nodes":[{"type":"image","metadata":{"assetId":"asset-wrong","storageKey":"resource:resource-canvas"}}]}`)
-
-	err := svc.validateCanvasMediaAssets("user-1", raw)
-	if err == nil || !strings.Contains(err.Error(), "不一致") {
-		t.Fatalf("validateCanvasMediaAssets() error = %v", err)
-	}
-	if strings.Contains(err.Error(), "云端") {
-		t.Fatalf("local resource validation leaked hosted wording: %v", err)
-	}
-}
-
-func TestValidateCanvasMediaAssetsValidatesImageHistoryEntries(t *testing.T) {
-	svc, db, _ := newResourceDeletionTestService(t)
-	resources := []model.Resource{
-		{ID: "res-active", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/active.png"},
-		{ID: "res-hist-bound", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/hist-bound.png"},
-		{ID: "res-hist-unbound", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/hist-unbound.png"},
-		{ID: "res-other", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/other.png"},
-	}
-	for index := range resources {
-		if err := db.Create(&resources[index]).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	assets := []model.Asset{
-		{ID: "asset-active", UserID: "user-1", PayloadJSON: `{"id":"asset-active","data":{"storageKey":"resource:res-active"}}`},
-		{ID: "asset-hist", UserID: "user-1", PayloadJSON: `{"id":"asset-hist","data":{"storageKey":"resource:res-hist-bound"}}`},
-		{ID: "asset-wrong", UserID: "user-1", PayloadJSON: `{"id":"asset-wrong","data":{"storageKey":"resource:res-other"}}`},
-	}
-	for index := range assets {
-		if err := db.Create(&assets[index]).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	validRaw := json.RawMessage(`{
 		"id":"canvas-hist",
+		"title":"含历史记录画布",
+		"revision":0,
 		"nodes":[{
 			"id":"node-1",
 			"type":"image",
 			"metadata":{
-				"assetId":"asset-active",
 				"storageKey":"resource:res-active",
+				"content":"/api/resources/res-active/file",
 				"imageHistory":[
-					{"id":"task-1:0","assetId":"asset-hist","storageKey":"resource:res-hist-bound"},
-					{"id":"task-2:0","storageKey":"resource:res-hist-unbound"}
+					{"id":"task-1:0","storageKey":"resource:res-active","content":"/api/resources/res-active/file"},
+					{"id":"task-2:0","storageKey":"resource:res-missing","content":"/api/resources/res-missing/file"}
 				]
 			}
-		}]
+		}],
+		"connections":[]
 	}`)
-	if err := svc.validateCanvasMediaAssets("user-1", validRaw); err != nil {
-		t.Fatalf("expected valid imageHistory (bound + server-unbound ready resource) to pass, got %v", err)
+	summary, err := svc.UpsertUserCanvasProject("user-1", raw)
+	if err != nil {
+		t.Fatalf("UpsertUserCanvasProject() error = %v", err)
 	}
-
-	mismatchedHistRaw := json.RawMessage(`{
-		"id":"canvas-hist",
-		"nodes":[{
-			"id":"node-1",
-			"type":"image",
-			"metadata":{
-				"assetId":"asset-active",
-				"storageKey":"resource:res-active",
-				"imageHistory":[
-					{"id":"task-1:0","assetId":"asset-wrong","storageKey":"resource:res-hist-bound"}
-				]
-			}
-		}]
-	}`)
-	if err := svc.validateCanvasMediaAssets("user-1", mismatchedHistRaw); err == nil || !strings.Contains(err.Error(), "不一致") {
-		t.Fatalf("expected mismatched imageHistory assetId to be rejected, got %v", err)
-	}
-
-	missingResourceHistRaw := json.RawMessage(`{
-		"id":"canvas-hist",
-		"nodes":[{
-			"id":"node-1",
-			"type":"image",
-			"metadata":{
-				"assetId":"asset-active",
-				"storageKey":"resource:res-active",
-				"imageHistory":[
-					{"id":"task-1:0","storageKey":"resource:res-missing"}
-				]
-			}
-		}]
-	}`)
-	if err := svc.validateCanvasMediaAssets("user-1", missingResourceHistRaw); err == nil || !strings.Contains(err.Error(), "不存在或尚未就绪") {
-		t.Fatalf("expected missing imageHistory resource to be rejected, got %v", err)
+	if summary.ID != "canvas-hist" || summary.Revision != 1 {
+		t.Fatalf("summary = %+v, want id=canvas-hist revision=1", summary)
 	}
 }
