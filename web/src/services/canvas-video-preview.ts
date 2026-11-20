@@ -18,8 +18,38 @@ export function canvasDerivedPreviewSourceKey(node: VideoPreviewSource) {
 type PreviewEntry = { refs: number; controller: AbortController; url?: string; promise: Promise<VideoPreview | null> };
 const previewRequests = new Map<string, PreviewEntry>();
 const posterBlobCache = new Map<string, CachedPoster>();
+const posterReadyListeners = new Map<string, Set<() => void>>();
 const MAX_ACTIVE_PREVIEWS = 32;
+let posterTimeoutOverrideMs: number | null = null;
 onStorageNamespaceChange(() => posterBlobCache.clear());
+
+export function setCanvasVideoPosterTimeoutForTests(timeoutMs: number | null) {
+    posterTimeoutOverrideMs = timeoutMs;
+}
+
+export function subscribeCanvasVideoPosterReady(node: VideoPreviewSource, listener: () => void) {
+    const requestKey = canvasDerivedPreviewSourceKey(node);
+    let listeners = posterReadyListeners.get(requestKey);
+    if (!listeners) {
+        listeners = new Set();
+        posterReadyListeners.set(requestKey, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+        const current = posterReadyListeners.get(requestKey);
+        if (!current) return;
+        current.delete(listener);
+        if (current.size === 0) posterReadyListeners.delete(requestKey);
+    };
+}
+
+function notifyCanvasVideoPosterReady(requestKey: string) {
+    const listeners = posterReadyListeners.get(requestKey);
+    if (!listeners) return;
+    for (const listener of Array.from(listeners)) {
+        listener();
+    }
+}
 const MAX_CONCURRENT_PREVIEW_SOURCES = 2;
 let activePreviewSources = 0;
 const previewSourceQueue: Array<() => void> = [];
@@ -122,7 +152,7 @@ export async function captureCanvasVideoPosterBlobUrl(
     node: VideoPreviewSource,
     options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<string> {
-    const { signal, timeoutMs = 8_000 } = options;
+    const { signal, timeoutMs = posterTimeoutOverrideMs ?? 8_000 } = options;
     throwIfAborted(signal);
     const requestKey = canvasDerivedPreviewSourceKey(node);
     const cached = touchCachedPoster(requestKey);
@@ -278,6 +308,7 @@ async function capturePosterWithSharedSlot(
     }
     const entry: CachedPoster = { poster: captured.poster, meta };
     posterBlobCache.set(requestKey, entry);
+    notifyCanvasVideoPosterReady(requestKey);
     return entry;
 }
 

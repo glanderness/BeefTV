@@ -6,17 +6,18 @@ import { AssetMediaPreview } from "../../src/components/asset-media-preview";
 import { setCanvasMemoryMode } from "../../src/lib/canvas/canvas-memory-policy";
 import { GenerationHistorySurface } from "../../src/pages/assets/assets-generation-history";
 import type { LibraryAsset } from "../../src/pages/assets/assets-shared";
-import { acquireCanvasVideoPreview, captureCanvasVideoPosterBlobUrl } from "../../src/services/canvas-video-preview";
+import { acquireCanvasVideoPreview, captureCanvasVideoPosterBlobUrl, setCanvasVideoPosterTimeoutForTests } from "../../src/services/canvas-video-preview";
 import { setDirectMediaAssetsEnabled } from "../../src/services/media-asset-url";
 import type { Asset } from "../../src/stores/use-asset-store";
 
 const poster = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="orange"/></svg>')}`;
 const portraitPoster = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="90" height="160"><rect width="90" height="160" fill="orange"/></svg>')}`;
 
-type FixtureParams = { count: number; poster: boolean; portrait: boolean; directPoster: boolean; lowMemory: boolean; protectedCoverFail: boolean; drawer: boolean; libraryCard: boolean };
+type FixtureParams = { count: number; poster: boolean; portrait: boolean; directPoster: boolean; lowMemory: boolean; protectedCoverFail: boolean; drawer: boolean; libraryCard: boolean; posterTimeoutMs: number; prestartCanvasPreview: boolean };
 const initialParams = (window as Window & { __fixture: FixtureParams }).__fixture;
 setDirectMediaAssetsEnabled(initialParams.directPoster);
 setCanvasMemoryMode(initialParams.lowMemory ? "low-memory" : "normal");
+setCanvasVideoPosterTimeoutForTests(initialParams.posterTimeoutMs > 0 ? initialParams.posterTimeoutMs : null);
 
 const previewApi = window as Window & {
     __previewJoin?: {
@@ -26,6 +27,9 @@ const previewApi = window as Window & {
     };
 };
 let activeCanvasLease: ReturnType<typeof acquireCanvasVideoPreview> | undefined;
+if (initialParams.prestartCanvasPreview) {
+    activeCanvasLease = acquireCanvasVideoPreview({ metadata: { storageKey: "resource:video-0-0", content: "/api/resources/video-0-0/file" } });
+}
 previewApi.__previewJoin = {
     startCanvasPreview(id: string) {
         activeCanvasLease?.release();

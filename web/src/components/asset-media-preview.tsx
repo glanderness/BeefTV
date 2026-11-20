@@ -4,7 +4,7 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { isVideoHoverPreviewAllowed, useCanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { bindCanvasVideoHoverPreview } from "@/lib/canvas/canvas-video-hover-preview";
 import { cn } from "@/lib/utils";
-import { captureCanvasVideoPosterBlobUrl, resolveServerVideoPosterUrl } from "@/services/canvas-video-preview";
+import { captureCanvasVideoPosterBlobUrl, getCachedCanvasVideoPreviewBlob, resolveServerVideoPosterUrl, subscribeCanvasVideoPosterReady } from "@/services/canvas-video-preview";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import type { Asset } from "@/stores/use-asset-store";
 
@@ -34,22 +34,38 @@ function AssetVideoCover({ asset, alt, className, fallback, hoverPlayDelayMs }: 
 
     useEffect(() => {
         if (directCover || !target.current || (!storageKey && !content)) return;
+        const previewNode = { metadata: { storageKey, content } };
         let ownedUrl = "";
         let controller: AbortController | undefined;
         let visible = false;
         let attempts = 0;
         let retryTimer: ReturnType<typeof setTimeout> | undefined;
+        let active = true;
+        const applyCapturedUrl = (url: string) => {
+            if (!url || !active || ownedUrl) {
+                if (url) URL.revokeObjectURL(url);
+                return;
+            }
+            clearTimeout(retryTimer);
+            ownedUrl = url;
+            setCaptured({ identity, url });
+        };
+        const unsubscribeReady = subscribeCanvasVideoPosterReady(previewNode, () => {
+            if (!active || ownedUrl) return;
+            const blob = getCachedCanvasVideoPreviewBlob(previewNode);
+            if (!blob) return;
+            applyCapturedUrl(URL.createObjectURL(blob));
+        });
         const load = () => {
             if (ownedUrl || attempts >= 2 || (controller && !controller.signal.aborted)) return;
             attempts++;
             const current = new AbortController();
             controller = current;
-            void captureCanvasVideoPosterBlobUrl({ metadata: { storageKey, content } }, { signal: current.signal }).then(url => {
-                if (current.signal.aborted) { if (url) URL.revokeObjectURL(url); return; }
-                ownedUrl = url;
-                setCaptured({ identity, url });
+            void captureCanvasVideoPosterBlobUrl(previewNode, { signal: current.signal }).then(url => {
+                if (current.signal.aborted || !active) { if (url) URL.revokeObjectURL(url); return; }
+                applyCapturedUrl(url);
             }).catch(() => undefined).finally(() => {
-                if (ownedUrl || current.signal.aborted) return;
+                if (ownedUrl || current.signal.aborted || !active) return;
                 current.abort();
                 if (visible && attempts < 2) retryTimer = setTimeout(load, 1_000);
             });
@@ -66,7 +82,9 @@ function AssetVideoCover({ asset, alt, className, fallback, hoverPlayDelayMs }: 
         if (observer) observer.observe(target.current);
         else { visible = true; load(); }
         return () => {
+            active = false;
             clearTimeout(retryTimer);
+            unsubscribeReady();
             observer?.disconnect();
             controller?.abort();
             if (ownedUrl) {

@@ -62,6 +62,8 @@ beforeAll(async () => {
             protectedCoverFail: url.searchParams.has("protectedCoverFail"),
             drawer: url.searchParams.has("drawer"),
             libraryCard: url.searchParams.has("libraryCard"),
+            posterTimeoutMs: Number(url.searchParams.get("posterTimeoutMs") || 0),
+            prestartCanvasPreview: url.searchParams.has("prestartCanvasPreview"),
         });
         return new Response(`<!doctype html><html><head><link rel="stylesheet" href="/harness.css"><style>.preview{display:block;width:100%;height:100%;object-fit:cover}</style></head><body><div id="root"></div><script>window.__fixture=${fixture}</script><script type="module" src="/harness.js"></script></body></html>`, { headers: { "Content-Type": "text/html" } });
     } });
@@ -249,32 +251,36 @@ test("library video card preserves hover scale transition and Generation History
     await page.waitForFunction(() => document.querySelectorAll("video").length === 0, null, { timeout: 5_000 });
 }, 15_000);
 
-test("joining a slow in-flight canvas preview respects timeout without aborting the canvas entry, then shares the cached poster", async () => {
+test("mounted card that times out joining a slow in-flight canvas preview recovers automatically without remount or extra downloads", async () => {
     stallFirst = true;
     const stalled = new Promise<void>(resolve => { notifyStall = resolve; });
-    await page.goto(`${server.url}?count=0`);
-    await page.evaluate(() => {
-        (window as Window & { __previewJoin?: { startCanvasPreview: (id: string) => void } }).__previewJoin?.startCanvasPreview("video-0-0");
-    });
+    // Prestart the shared canvas preview AND mount card video-0-0 immediately with a 200ms join timeout.
+    await page.goto(`${server.url}?count=1&prestartCanvasPreview&posterTimeoutMs=200`);
     await stalled;
+    await page.locator('[data-card="video-0-0"]').waitFor();
 
+    // Direct join respects the timeout without aborting the shared canvas preview.
     const startedAt = Date.now();
     const joinResult = await page.evaluate(() =>
         (window as Window & { __previewJoin?: { joinTimedPoster: (id: string, timeoutMs: number) => Promise<{ ok: boolean; errorName?: string }> } })
-            .__previewJoin!.joinTimedPoster("video-0-0", 250),
+            .__previewJoin!.joinTimedPoster("video-0-0", 200),
     );
     expect(joinResult).toEqual({ ok: false, errorName: "TimeoutError" });
     expect(Date.now() - startedAt).toBeLessThan(2_000);
 
-    // Releasing the stall allows the original canvas preview to complete undisturbed, and a mounted card reuses its cached poster with 0 extra downloads.
+    // Let both of the mounted card's active join attempts (t=0 and 1s retry) time out and exhaust retries while still mounted.
+    await page.waitForTimeout(1_600);
+    expect(await page.locator('[data-card="video-0-0"] img').count()).toBe(0);
+    expect(mediaRequests).toBe(1);
+
+    // Releasing the stall lets the shared canvas preview finish; the already-mounted card must hydrate automatically via poster-ready notification without remounting or refetching.
     releaseStall?.();
     const canvasCompleted = await page.evaluate(() =>
         (window as Window & { __previewJoin?: { awaitCanvasPreview: () => Promise<boolean> } })
             .__previewJoin!.awaitCanvasPreview(),
     );
     expect(canvasCompleted).toBe(true);
-    await page.getByRole("button", { name: "添加素材", exact: true }).click();
-    await page.waitForFunction(() => (document.querySelector('img[alt="video-0-0"]') as HTMLImageElement)?.naturalWidth > 0, null, { timeout: 3_000 });
+    await page.waitForFunction(() => (document.querySelector('[data-card="video-0-0"] img[alt="video-0-0"]') as HTMLImageElement)?.naturalWidth > 0, null, { timeout: 3_000 });
     expect(mediaRequests).toBe(1);
     expect(await page.locator("video").count()).toBe(0);
 }, 15_000);
