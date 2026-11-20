@@ -171,3 +171,180 @@ func TestInstallLockConcurrentRelease(t *testing.T) {
 		t.Fatalf("acquired=%d overlaps=%d lock remains=%v", acquired.Load(), overlaps.Load(), pathExists(path))
 	}
 }
+
+func TestStartupCleansLeftoverAtomicTempFileAndPreservesSymlinkTemp(t *testing.T) {
+	t.Run("regular-atomic-temp-file", func(t *testing.T) {
+		target, work, _, _ := completedUpdateFixture(t)
+		staleTmp := filepath.Join(work, atomicTempPrefix+"12345"+atomicTempSuffix)
+		if err := os.WriteFile(staleTmp, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(work) {
+			t.Fatalf("leftover atomic temp file wedged cleanup: %s", work)
+		}
+	})
+
+	t.Run("symlink-with-atomic-temp-name-preserved", func(t *testing.T) {
+		target, work, _, _ := completedUpdateFixture(t)
+		external := filepath.Join(t.TempDir(), "external.txt")
+		if err := os.WriteFile(external, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		linkTmp := filepath.Join(work, atomicTempPrefix+"symlink"+atomicTempSuffix)
+		if err := os.Symlink(external, linkTmp); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !pathExists(filepath.Join(work, "backup", "old-program")) {
+			t.Fatal("directory containing symlink temp entry must not be removed")
+		}
+	})
+}
+
+func TestStartupReclaimsAbortedPreparationWorkDirWithoutDeletingBackups(t *testing.T) {
+	abortedFixture := func(t *testing.T) (Target, string, HelperRequest) {
+		t.Helper()
+		parent := t.TempDir()
+		work, err := os.MkdirTemp(parent, ".beeftv-update-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := Target{Platform: "darwin-arm64", Path: filepath.Join(parent, appBundleName)}
+		if runtime.GOOS == "windows" {
+			target = Target{Platform: "windows-amd64", Path: filepath.Join(parent, windowsExeName)}
+		}
+		req := HelperRequest{
+			Schema:       helperRequestSchema,
+			ParentPID:    unusedPID(t),
+			Platform:     target.Platform,
+			TargetPath:   target.Path,
+			StagedPath:   filepath.Join(work, "payload"),
+			BackupPath:   filepath.Join(work, "backup"),
+			PreparedPath: filepath.Join(work, "prepared"),
+			ResultPath:   filepath.Join(work, "result.json"),
+		}
+		writeCleanupJSON(t, filepath.Join(work, "request.json"), req)
+		writeCleanupJSON(t, req.ResultPath, RecoveryState{Status: "prepared", Phase: "wait_parent", BackupPath: req.BackupPath})
+		if err := os.MkdirAll(req.StagedPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(req.StagedPath, "payload.bin"), []byte("new-payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return target, work, req
+	}
+
+	t.Run("reclaims-aborted-without-backup", func(t *testing.T) {
+		target, work, _ := abortedFixture(t)
+		if err := os.WriteFile(filepath.Join(work, abortedMarkerName), []byte("aborted\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(work) {
+			t.Fatalf("retained aborted workDir was not reclaimed: %s", work)
+		}
+	})
+
+	t.Run("preserves-aborted-when-backup-exists", func(t *testing.T) {
+		target, work, req := abortedFixture(t)
+		if err := os.WriteFile(filepath.Join(work, abortedMarkerName), []byte("aborted\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(req.BackupPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(req.BackupPath, "old-program"), []byte("recovery"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !pathExists(filepath.Join(req.BackupPath, "old-program")) {
+			t.Fatal("aborted cleanup must never remove a workDir with an existing backup")
+		}
+	})
+
+	t.Run("preserves-symlink-aborted-marker", func(t *testing.T) {
+		target, work, _ := abortedFixture(t)
+		external := filepath.Join(t.TempDir(), "external.txt")
+		if err := os.WriteFile(external, []byte("aborted\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(external, filepath.Join(work, abortedMarkerName)); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !pathExists(work) {
+			t.Fatal("symlink aborted marker must not trigger reclamation")
+		}
+	})
+
+	t.Run("reclaims-terminal-failed-without-backup-or-aborted-marker", func(t *testing.T) {
+		target, work, req := abortedFixture(t)
+		writeCleanupJSON(t, req.ResultPath, RecoveryState{Status: "failed", Phase: "wait_parent", BackupPath: req.BackupPath, Error: "等待应用退出超时"})
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(work) {
+			t.Fatalf("terminal failed workDir without backup was not reclaimed: %s", work)
+		}
+	})
+
+	t.Run("reclaims-rolled-back-with-empty-backup-dir", func(t *testing.T) {
+		target, work, req := abortedFixture(t)
+		if err := os.MkdirAll(req.BackupPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeCleanupJSON(t, req.ResultPath, RecoveryState{Status: "rolled_back", Phase: "replace", BackupPath: req.BackupPath, Restored: true})
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(work) {
+			t.Fatalf("rolled_back workDir with empty backup dir was not reclaimed: %s", work)
+		}
+	})
+
+	t.Run("reclaims-aborted-partial-request-without-result", func(t *testing.T) {
+		target, work, req := abortedFixture(t)
+		if err := os.Remove(req.ResultPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(work, "request.json"), []byte(`{"schema":1`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(work, abortedMarkerName), []byte("aborted\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(work) {
+			t.Fatalf("aborted workDir with partial request.json was not reclaimed: %s", work)
+		}
+	})
+
+	t.Run("preserves-in-progress-workdir-without-request-or-aborted", func(t *testing.T) {
+		target, work, req := abortedFixture(t)
+		if err := os.Remove(req.ResultPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(work, "request.json")); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanupCompletedUpdates(target, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !pathExists(work) {
+			t.Fatal("in-progress workDir without request.json or aborted marker must not be removed")
+		}
+	})
+}

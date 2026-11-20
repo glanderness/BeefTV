@@ -163,6 +163,9 @@ func TestWindowsAgentHostSwapAndRollback(t *testing.T) {
 			if err := RestoreBackup(req); err != nil {
 				t.Fatal(err)
 			}
+			if pathExists(req.BackupPath) {
+				t.Fatal("empty Windows backup directory should be removed after clean restore")
+			}
 			if err := RestoreBackup(req); err != nil {
 				t.Fatal(err)
 			}

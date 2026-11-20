@@ -81,3 +81,79 @@ func TestUpdateLogMissingUnreadableAndBounded(t *testing.T) {
 		t.Fatalf("lost line after oversized error: %+v", log)
 	}
 }
+
+func TestUpdateLogStructuredPrepFailureAndLocalizedRedaction(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	line := func(message string) string {
+		return now.Format(time.RFC3339) + " v2.3.2 " + message + "\n"
+	}
+	content := strings.Join([]string{
+		line("install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=start_helper reason=sharing_violation errno=32"),
+		line(`install preparation failed: step=start_helper reason=sharing_violation errno=32: fork/exec C:\Users\private-user\AppData\Local\BeefTV\.beeftv-update-1\BeefTV-update-helper.exe: 另一个程序正在使用此文件 token=private-token https://user:secret@example.com/path`),
+		line("install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=wait_prepared reason=install_locked exitCode=1"),
+		line(`install preparation failed: step=wait_prepared reason=install_locked exitCode=1: helper exited before signaling prepared: exit status 1`),
+		// Windows 64-bit NTSTATUS exit code (0xC0000005 = 3221225477) and negative Unix signal exit code.
+		line("install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=wait_prepared reason=helper_exited exitCode=3221225477"),
+		line(`install preparation failed: step=wait_prepared reason=helper_exited exitCode=3221225477: helper exited before signaling prepared: exit status 0xc0000005`),
+		line("install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=wait_prepared reason=helper_exited exitCode=-9"),
+		line("install failure phase=extracting completedFiles=12 totalFiles=100 timeout=false step=extract reason=disk_full errno=112"),
+		line(`install preparation failed: write C:\Users\private-user\AppData\file: 磁盘空间不足。`),
+		line(`install preparation failed: write C:\Users\private-user\AppData\file: There is not enough space on the disk.`),
+		line(`install preparation failed: open C:\Users\private-user\AppData\file: 拒绝访问。`),
+		line(`install preparation failed: fork/exec C:\Users\private-user\helper.exe: 另一个程序正在使用此文件，进程无法访问。`),
+		line(`install preparation failed: 更新包格式无效: 更新包缺少 BeefTV.exe`),
+		line(`install preparation failed: open C:\Users\private-user\mystery.bin: mysterious localized failure token=private-token`),
+		// Safe operational degradation notices pass through without leaking details.
+		line("install helper log unavailable"),
+		line("install helper did not exit; update files retained"),
+		line("install update files retained after cleanup failure"),
+		line(`install helper stopped: step=wait_prepared reason=timeout errno=32 exitCode=1: exit status 1 C:\Users\private-user\helper.log`),
+		// Unknown/unsafe tokens on install failure are stripped while preserving the safe base and any valid tokens.
+		line(`install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=start_helper path=C:\Users\private-user futureField=private-val`),
+		line(`install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=private_step reason=sharing_violation`),
+		line(`install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=private_step reason=private_reason`),
+	}, "")
+	if err := os.WriteFile(filepath.Join(dir, "update.log"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	window := timeWindow{From: now.Add(-time.Minute), To: now.Add(time.Minute)}
+	log := collectUpdateLog(dir, window)
+	if log.Status != "available" || log.Lines != 21 {
+		t.Fatalf("unexpected summary: %+v\n%s", log, log.Text)
+	}
+	for _, forbidden := range []string{"private", "secret", "token=", "example.com", `C:\Users`, "AppData", "BeefTV-update-helper", "mystery.bin", "futureField"} {
+		if strings.Contains(log.Text, forbidden) {
+			t.Fatalf("leaked %q in redacted update log:\n%s", forbidden, log.Text)
+		}
+	}
+	for _, expected := range []string{
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=start_helper reason=sharing_violation errno=32\n",
+		"install preparation failed: step=start_helper reason=sharing_violation errno=32\n",
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=wait_prepared reason=install_locked exitCode=1\n",
+		"install preparation failed: step=wait_prepared reason=install_locked exitCode=1\n",
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=wait_prepared reason=helper_exited exitCode=3221225477\n",
+		"install preparation failed: step=wait_prepared reason=helper_exited exitCode=3221225477\n",
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=wait_prepared reason=helper_exited exitCode=-9\n",
+		"install failure phase=extracting completedFiles=12 totalFiles=100 timeout=false step=extract reason=disk_full errno=112\n",
+		"install preparation failed: disk-full\n",
+		"install preparation failed: permission-denied\n",
+		"install preparation failed: sharing-violation\n",
+		"install preparation failed: invalid-archive\n",
+		"install preparation failed: details-redacted\n",
+		"install helper log unavailable\n",
+		"install helper did not exit; update files retained\n",
+		"install update files retained after cleanup failure\n",
+		"install helper stopped: step=wait_prepared reason=timeout errno=32 exitCode=1\n",
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false step=start_helper\n",
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false reason=sharing_violation\n",
+		"install failure phase=preparing completedFiles=0 totalFiles=0 timeout=false\n",
+	} {
+		if !strings.Contains(log.Text, expected) {
+			t.Fatalf("missing expected line %q in:\n%s", expected, log.Text)
+		}
+	}
+	if strings.Count(log.Text, "install preparation failed: disk-full\n") != 2 {
+		t.Fatalf("expected both zh-CN and English disk-full lines:\n%s", log.Text)
+	}
+}
