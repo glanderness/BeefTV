@@ -83,7 +83,7 @@ const BUILTIN_NODE_TRAITS = {
         label: "视频",
         icon: <Video />,
         minSize: MEDIA_NODE_MIN_SIZE,
-        keepAspectRatio: () => true,
+        keepAspectRatio: (node: CanvasNodeData) => !node.metadata?.freeResize,
         showInCreateMenu: true,
         resourceKind: (node: CanvasNodeData) => (node.metadata?.content || node.metadata?.storageKey ? "video" : null),
         generationMode: (node: CanvasNodeData) => canOpenCanvasNodePromptPanel(node) ? "video" : null,
@@ -165,7 +165,7 @@ const BUILTIN_NODE_TRAITS = {
     },
     [CanvasNodeType.BatchTable]: { label: "批量创作表", icon: <Table2 />, minSize: { width: 1080, height: 420 }, showInCreateMenu: true, acceptsInputKind: "image", inputKind: "text", resourceKind: () => null },
     [CanvasNodeType.Director]: { label: "导演台", icon: <Clapperboard />, minSize: { width: 320, height: 320 }, showInCreateMenu: true, resourceKind: () => null },
-    [CanvasNodeType.Upscale]: { label: "AI超分", icon: <WandSparkles />, minSize: { width: 360, height: 240 }, showInCreateMenu: true, resourceKind: () => null, acceptsInputKind: ["image", "video"] },
+    [CanvasNodeType.Upscale]: { label: "AI超分", icon: <WandSparkles />, minSize: { width: 360, height: 240 }, showInCreateMenu: false, resourceKind: () => null, acceptsInputKind: ["image", "video"] },
     [CanvasNodeType.ColorGrade]: {
         label: "调色",
         icon: <Palette />,

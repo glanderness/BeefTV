@@ -1,6 +1,7 @@
 import { useEffect, type Dispatch, type SetStateAction } from "react";
 
 import { isTextEditableTarget } from "@/lib/backspace-navigation-guard";
+import { hasCanvasKeyboardHost, hasDeleteOverlay } from "@/lib/canvas/canvas-keyboard-scope";
 import { ownsCanvasClipboard } from "@/lib/canvas/canvas-clipboard";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
@@ -67,12 +68,6 @@ export function canvasKeyboardEnabled({ projectLoaded, previewActive, directorNo
     return projectLoaded && !previewActive && !directorNodeId && !folderBrowserNodeId;
 }
 
-const CANVAS_KEYBOARD_HOST_SELECTOR = "[data-director-workbench='true'], [data-canvas-folder-browser], [data-canvas-image-viewer], .ant-image-preview-root, .ant-image-preview, .ant-image-preview-wrap";
-
-function canvasKeyboardHostMounted(root: { querySelector: (selector: string) => unknown }) {
-    return Boolean(root.querySelector(CANVAS_KEYBOARD_HOST_SELECTOR));
-}
-
 export function useCanvasKeyboard({
     pageUi,
     projectId,
@@ -113,16 +108,13 @@ export function useCanvasKeyboard({
     useEffect(() => {
         if (!enabled) return;
         const handleKeyDown = (event: KeyboardEvent) => {
-            // Unconsumed Backspace is a history back in the desktop webview and
-            // leaves the canvas route. Consume the default before any early
-            // return below (director, node toolbar, canvas controls) but keep
-            // propagation so their own handlers still receive the key.
-            if ((event.key === "Delete" || event.key === "Backspace") && !isTextEditableTarget(event.target)) event.preventDefault();
-            // Runtime guard complements the React `enabled` flag: the workbench
-            // and fullscreen folder browser own keyboard input whenever mounted,
-            // regardless of stale canvas selection.
-            if (canvasKeyboardHostMounted(document)) return;
+            if (event.defaultPrevented || event.isComposing) return;
+            // Let the editor handle its own key. The app-wide history guard at
+            // document capture still prevents WKWebView from navigating back.
+            if (hasCanvasKeyboardHost()) return;
             const target = event.target instanceof Element ? event.target : null;
+            const deleting = event.key === "Delete" || event.key === "Backspace";
+            if (deleting && !isTextEditableTarget(event.target)) event.preventDefault();
             if (target?.closest(".canvas-node-toolbar, .canvas-node-toolbar-menu")) return;
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
@@ -235,6 +227,11 @@ export function useCanvasKeyboard({
                 return;
             }
             if (event.key === "Delete" || event.key === "Backspace") {
+                // Clicking a static label can leave focus on the body. The mounted
+                // settings portal still owns the interaction independently of focus.
+                const controls = "[data-canvas-no-zoom], [role='dialog'], [role='menu'], [role='listbox'], [role='switch'], [role='slider']";
+                if (event.repeat || target?.closest(controls) || document.activeElement?.closest(controls)
+                    || hasDeleteOverlay() || hasCanvasTextSelection(window.getSelection())) return;
                 // Backspace has a browser-level history action when it is not
                 // consumed. Once the canvas handles deletion, do not let the
                 // same key continue to other listeners or navigate away from
@@ -266,7 +263,7 @@ export function useCanvasKeyboard({
         };
 
         const handlePaste = (event: ClipboardEvent) => {
-            if (event.defaultPrevented || canvasKeyboardHostMounted(document) || !ownsCanvasClipboard(event.target, document.activeElement)) return;
+            if (event.defaultPrevented || hasCanvasKeyboardHost() || !ownsCanvasClipboard(event.target, document.activeElement)) return;
             // 节点标记写入失败或仍在写入时避开旧系统图片，其余情况保持系统内容优先。
             event.preventDefault();
             const text = event.clipboardData?.getData("text/plain") || "";

@@ -28,7 +28,7 @@ function fixtureConfig() {
     }).config;
 }
 
-test("all canvas prompt footers omit the preset trigger", () => {
+test("only the node generation footer contains the preset trigger", () => {
     const config = fixtureConfig();
     const panelHtml = renderToStaticMarkup(
         createElement(
@@ -46,8 +46,8 @@ test("all canvas prompt footers omit the preset trigger", () => {
         ),
     );
     const panelFooter = panelHtml.slice(panelHtml.indexOf("canvas-node-composer-footer"));
-    expect(panelHtml).toContain("canvas-preset-picker-trigger");
-    expect(panelFooter).not.toContain("canvas-preset-picker-trigger");
+    expect(panelHtml.slice(0, panelHtml.indexOf("canvas-node-composer-footer"))).not.toContain("canvas-preset-picker-trigger");
+    expect(panelFooter).toContain("canvas-preset-picker-trigger");
 
     const composerHtml = renderToStaticMarkup(
         createElement(CanvasConfigComposer, {

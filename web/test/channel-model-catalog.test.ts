@@ -131,6 +131,16 @@ describe("public channel model catalog", () => {
         release();
         expect(await outcome).toMatchObject({ name: "BeefTVConnectionChangedError" });
     });
+    test("managed catalog refresh preserves server-delivered model order", async () => {
+        const serverOrder = ["seedance-2.0-fast", "seedance-2.0-mini", "seedance-2.0", "wan3.0-video", "minimax-h3", "kling-video-v3"];
+        apiClient.request = (async () => ({
+            status: 200,
+            data: { code: 0, data: { models: serverOrder.map((id) => ({ id, modelType: "video" })) }, msg: "" },
+        })) as typeof apiClient.request;
+        const result = await fetchChannelModels(createModelChannel({ id: "beeftv", credentialRef: "beeftv" }), true);
+        expect(result.models).toEqual(serverOrder);
+        expect(result.catalog.map((item) => item.id)).toEqual(serverOrder);
+    });
     test("managed catalog refresh persists through the trusted endpoint without accepting client credentials or prices", async () => {
         const requests: Array<{ url?: string; data?: unknown }> = [];
         apiClient.request = (async (request) => {
@@ -579,7 +589,7 @@ describe("public channel model catalog", () => {
         expect(panelHtml).not.toContain("尺寸");
     });
 
-    test("shows dimensions derived from the selected video resolution and ratio", () => {
+    test("shows video resolution and ratio controls without a pixel size readout", () => {
         const config = configForCatalog([omniCatalog], { videoSeconds: "10", size: "16:9", vquality: "1080" });
         const profile = config.channels[0]!.modelProfiles![0]!.capabilityConfig!.video!;
         profile.resolutions = ["720p", "1080p", "2160p"];
@@ -587,9 +597,10 @@ describe("public channel model catalog", () => {
 
         const panelHtml = renderToStaticMarkup(React.createElement(VideoSettingsPanel, { config, onConfigChange: () => undefined, theme: canvasThemes.dark }));
 
-        expect(panelHtml).toContain("1920");
-        expect(panelHtml).toContain("1080");
-        expect(panelHtml).not.toContain("1280");
+        expect(panelHtml).toContain("1080P");
+        expect(panelHtml).toContain("16:9");
+        expect(panelHtml).not.toContain(">W</span>");
+        expect(panelHtml).not.toContain(">H</span>");
     });
 
     test("shows the public display name in channel model settings instead of only the internal ID", () => {

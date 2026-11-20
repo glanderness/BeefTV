@@ -166,6 +166,9 @@ export function PanoramaNodeContent({ node, theme, reduceMediaEffects }: Panoram
                 {previewContent}
                 {createPortal(
                     <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="全景预览"
                         className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/[0.88] p-5 backdrop-blur-sm"
                         // portal 挂在 body，React 合成事件仍沿 React 树冒泡回画布容器；不标记
                         // data-canvas-no-zoom 会被 handlePointerDown 判为画布空白并 setPointerCapture，

@@ -718,7 +718,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
                                     capability="text"
                                     placeholder="选择优化模型"
 
-                                    variant="creation"
+                                    variant="canvas"
                                     className="canvas-prompt-optimizer-model-picker"
                                     popoverClassName="canvas-prompt-optimizer-model-popover"
                                 />

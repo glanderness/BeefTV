@@ -102,6 +102,8 @@ beforeAll(async () => {
                 }));
                 builder.onResolve({ filter: /^@\/components\/model-logo$/ }, () => ({ path: "model-logo", namespace: "test-icons" }));
                 builder.onLoad({ filter: /.*/, namespace: "test-icons" }, () => ({ contents: "export function ModelLogo() { return null; }", loader: "js" }));
+                builder.onResolve({ filter: /^@\/lib\/workspace-route-modules$/ }, () => ({ path: "workspace-route-modules", namespace: "test-preload" }));
+                builder.onLoad({ filter: /.*/, namespace: "test-preload" }, () => ({ contents: "export function preloadWorkspaceRoute() {}", loader: "js" }));
                 builder.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
             },
         }],
@@ -414,6 +416,74 @@ test("collapsing sidebar resets expanded social links without stealing focus fro
         await collapseBtn.click();
         const contactBtn = page.getByRole("button", { name: "联系我们" });
         expect(await contactBtn.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("social links show matching tooltips above the icons without changing their destinations", async () => {
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto(new URL("?utility", server.url).toString());
+        await page.getByRole("button", { name: "联系我们" }).click();
+
+        const website = page.getByRole("link", { name: "打开 BeefTV 官网" });
+        const officialX = page.getByRole("link", { name: "打开官方X账号" });
+        const github = page.getByRole("link", { name: "打开 BeefTV GitHub 仓库" });
+        for (const [link, label, href] of [
+            [website, "BeefTV 官网", "https://beeftv.app/"],
+            [github, "点点 star", "https://github.com/glanderness/BeefTV"],
+            [officialX, "官方X账号", "https://x.com/beefnoode"],
+        ] as const) {
+            expect(await link.getAttribute("href")).toBe(href);
+            expect(await link.getAttribute("title")).toBeNull();
+            await link.hover();
+            const tooltip = page.locator(".app-workspace-sidebar-tooltip").getByText(label, { exact: true });
+            await tooltip.waitFor({ state: "visible" });
+            const linkBounds = (await link.boundingBox())!;
+            await page.waitForFunction(({ label, linkTop }) =>
+                Array.from(document.querySelectorAll(".app-workspace-sidebar-tooltip .app-workspace-sidebar-tooltip-content")).some((hint) =>
+                    hint.textContent?.trim() === label && hint.getBoundingClientRect().bottom < linkTop,
+                ), { label, linkTop: linkBounds.y }, { timeout: 5000 });
+        }
+        await website.focus();
+        await page.locator(".app-workspace-sidebar-tooltip").getByText("BeefTV 官网", { exact: true }).waitFor({ state: "visible" });
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("sidebar utility icons show the shared tooltip above the control", async () => {
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.addInitScript(() => {
+            if (new URLSearchParams(location.search).has("browser")) return;
+            const update = async () => ({ status: "available", currentVersion: "v2.3.1", latestVersion: "v99.0.0" });
+            window.go = { main: { DesktopApp: { UpdateStatus: update, CheckForUpdate: update, DownloadUpdate: async () => { throw Error("Unexpected download"); }, InstallUpdate: async () => { throw Error("Unexpected install"); } } } } as typeof window.go;
+        });
+        await page.goto(new URL("?utility", server.url).toString());
+        const update = page.getByRole("button", { name: /下载并安装更新/ });
+        const theme = page.getByRole("button", { name: /切换到[浅深]色模式/ });
+        const themeLabel = (await theme.getAttribute("aria-label"))!;
+        for (const [button, label] of [[update, "当前有可用更新"], [theme, themeLabel]] as const) {
+            expect(await button.getAttribute("title")).toBeNull();
+            await button.hover();
+            const tooltip = page.locator(".app-workspace-sidebar-tooltip").getByText(label, { exact: true });
+            await tooltip.waitFor({ state: "visible" });
+            const hint = (await tooltip.boundingBox())!;
+            const control = (await button.boundingBox())!;
+            expect(hint.y + hint.height).toBeLessThan(control.y);
+        }
+        await theme.click();
+        const switchedLabel = themeLabel === "切换到浅色模式" ? "切换到深色模式" : "切换到浅色模式";
+        await page.locator(".app-workspace-sidebar-tooltip").getByText(switchedLabel, { exact: true }).waitFor({ state: "visible" });
+        await page.goto(new URL("?utility&browser", server.url).toString());
+        const unavailable = page.getByRole("button", { name: "当前环境不支持自动更新" });
+        expect(await unavailable.isDisabled()).toBe(true);
+        await page.locator(".app-workspace-update-trigger").hover();
+        await page.locator(".app-workspace-sidebar-tooltip").getByText("当前环境不支持自动更新", { exact: true }).waitFor({ state: "visible" });
     } finally {
         await page.close();
     }

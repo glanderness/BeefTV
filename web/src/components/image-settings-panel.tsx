@@ -1,15 +1,16 @@
 import { ImageSizePicker } from "./image-size-picker";
 import { imageResolutionUsesQuality } from "@/lib/image-size-presets";
-import { type ReactNode } from "react";
+import { type CSSProperties, type ReactNode } from "react";
 import { ConfigProvider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { buildImageResolutionOptions, formatImageResolutionSize } from "@/lib/image-resolution-tiers";
-import { modelCapabilityConfigFor, normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { type AiConfig } from "@/stores/use-config-store";
-import { seedreamFamily } from "@/lib/seedream-image";
+import { seedreamFamily, seedreamResolutionTiers } from "@/lib/seedream-image";
+import { SeedreamSizePicker } from "./seedream-size-picker";
 import { SeedreamSettings } from "./seedream-settings";
 
 const qualityOptions = [
@@ -65,6 +66,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const normalized = normalizeImageValue(profile, config);
     const quality = normalized.quality;
     const transparentBackground = normalized.transparentBackground === "true";
+    const countDisplay = imageCountDisplay(config, profile, seedream);
     const batchCounts = profile.generationOutputs?.filter((value) => value <= maxCount);
     const effectiveMaxCount = Math.min(maxCount, batchCounts?.length ? Math.max(...batchCounts) : profile.maxOutputs);
     const count = Math.max(1, Math.min(effectiveMaxCount, Number(normalized.count)));
@@ -74,8 +76,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     return (
         <ImageSettingsTheme theme={theme}>
             <div
-                className={className}
-                style={{ color: theme.node.text }}
+                className={`image-settings-panel ${className}`}
+                style={{ color: theme.node.text, "--image-active": theme.toolbar.activeBg, "--image-hover": theme.toolbar.itemHover, "--image-muted": theme.node.muted } as CSSProperties}
                 onMouseDown={(event) => {
                     event.stopPropagation();
                     if (event.target instanceof HTMLInputElement) return;
@@ -83,9 +85,12 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 }}
             >
                 {showTitle ? <div className="text-base font-semibold">图像设置</div> : null}
+                {showSize && (seedream && seedreamResolutionTiers(profile).length > 0
+                    ? <SeedreamSizePicker key={config.model} profile={profile} size={activeSize} layers={config.seedreamMode === "layers"} onChange={value => onConfigChange("size", value)} />
+                    : <ImageSizePicker presetsOnly key={config.model} profile={profile} size={activeSize} quality={quality} onChange={(size, nextQuality) => applyImageSizeSelection(onConfigChange, size, nextQuality)} />)}
                 {showQuality && profile.quality.supported && !imageResolutionUsesQuality(profile) ? <div className="space-y-2">
                     <SettingTitle color={theme.node.muted}>{isGrokResolutionQuality(profile) ? "分辨率" : "质量"}</SettingTitle>
-                    <div className={`grid gap-1.5 ${activeQualityOptions.length <= 2 ? "grid-cols-2" : "grid-cols-4"}`}>
+                    <div className="image-quality-grid">
 						{activeQualityOptions.map((item) => (
                             <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
                                 {item.label}
@@ -93,23 +98,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div> : null}
-                {showTransparent && profile.transparentBackground.supported && (!seedream || config.seedreamMode !== "layers") ? <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                        <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
-                        <div className="mt-1 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
-                            {seedream && seedream !== "5.5" ? "保留参考图中的透明区域，需要连接一张透明图片。" : "请求模型输出保留 Alpha 通道的 PNG"}
-                        </div>
-                    </div>
-                    <span title="是否支持透明背景由当前模型接口决定" onMouseDown={(event) => event.stopPropagation()}>
-                        <Switch
-                            size="sm"
-                            checked={transparentBackground}
-                            onChange={(checked) => { onConfigChange("transparentBackground", checked ? "true" : "false"); if (checked && seedream) onConfigChange("seedreamOutputFormat", "png"); }}
-                        />
-                    </span>
-                </div> : null}
-                {seedream ? <SeedreamSettings config={config} family={seedream} profile={profile} onChange={onConfigChange} theme={theme} /> : showSize ? <ImageSizePicker profile={profile} size={activeSize} quality={quality} onChange={(size, nextQuality) => applyImageSizeSelection(onConfigChange, size, nextQuality)} /> : null}
-                {!seedream && profile.sequentialGeneration?.supported ? (
+                {countDisplay.supportsGroups ? (
                     <label className="block space-y-1.5 text-xs">
                         <span>关联组图上限</span>
                         <input
@@ -129,25 +118,38 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 ) : null}
                 {showCount && profile.fixedOutputs ? (
                     <div className="space-y-2">
-                        <SettingTitle color={theme.node.muted}>{seedream ? "生成批次" : "生成张数"}</SettingTitle>
+                        <SettingTitle color={theme.node.muted}>{countDisplay.title}</SettingTitle>
                         <div className="grid grid-cols-3 gap-1.5">
                             {(batchCounts?.length ? batchCounts : [profile.fixedOutputs]).map((value) => <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>{value}</OptionPill>)}
                         </div>
-                        <div className="text-[var(--fs-label)]" style={{ color: theme.node.muted }}>每批 {profile.fixedOutputs} 张，共 {count / profile.fixedOutputs} 批；按实际批次计费</div>
+                        <div style={{ color: theme.node.muted }}>每批 {profile.fixedOutputs} 张，共 {count / profile.fixedOutputs} 批；按实际批次计费</div>
                     </div>
                 ) : showCount && effectiveMaxCount > 1 ? (
                     <div className="space-y-2">
-                        <SettingTitle color={theme.node.muted}>{seedream ? "生成批次" : "生成张数"}</SettingTitle>
+                        <SettingTitle color={theme.node.muted}>{countDisplay.title}</SettingTitle>
                         <div className="grid grid-cols-4 gap-1.5">
                             {Array.from({ length: Math.min(quickCount, effectiveMaxCount) }, (_, index) => index + 1).map((value) => (
                                 <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
                                     {value}
                                 </OptionPill>
                             ))}
-                            <CountInput value={count} quickCount={quickCount} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
+                            <CountInput label={`自定义${countDisplay.title}`} value={count} quickCount={quickCount} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
                         </div>
                     </div>
                 ) : null}
+                {(seedream || (showTransparent && profile.transparentBackground.supported)) && <section className="space-y-1.5">
+                    <SettingTitle color={theme.node.muted}>输出</SettingTitle>
+                    {showTransparent && profile.transparentBackground.supported && !(seedream && config.seedreamMode === "layers") && <>
+                        <div className="image-output-row"><span>透明背景</span>
+                            <Switch size="sm" aria-label="透明背景" checked={transparentBackground} onChange={checked => {
+                                onConfigChange("transparentBackground", String(checked));
+                                if (checked && seedream) onConfigChange("seedreamOutputFormat", "png");
+                            }} />
+                        </div>
+                        {transparentBackground && seedream && seedream !== "5.5" && <p className="image-size-hint">需要连接一张带透明区域的参考图。</p>}
+                    </>}
+                    {seedream && <SeedreamSettings family={seedream} profile={profile} config={config} onChange={onConfigChange} />}
+                </section>}
             </div>
         </ImageSettingsTheme>
     );
@@ -180,6 +182,15 @@ function isGrokResolutionQuality(profile: ImageCapabilityConfig) {
     return values.some((value) => ["1k", "2k", "4k"].includes(value));
 }
 
+export function imageCountDisplay(config: AiConfig, profile: ImageCapabilityConfig, seedream: string) {
+    const supportsGroups = profile.sequentialGeneration?.supported ?? Boolean(seedream && !["5.5", "pro", "flash"].includes(seedream));
+    if (seedream && config.seedreamMode === "layers") return { title: "拆分次数", unit: "次", supportsGroups: false };
+    if (supportsGroups && Number(config.seedreamMaxImages) > 1) {
+        return { title: "生成组数", unit: "组", supportsGroups, groupLimit: config.seedreamMaxImages };
+    }
+    return { title: "生成张数", unit: "张", supportsGroups };
+}
+
 export function imageSizeLabel(size: string, profile?: ImageCapabilityConfig) {
     const resolutionLabel = formatImageResolutionSize(size, profile?.size.presets || buildImageResolutionOptions([size]));
     return resolutionLabel !== size ? resolutionLabel : aspectOptions.find((item) => (item.size || item.value) === size || item.value === size)?.label || size;
@@ -190,7 +201,7 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
         <button
             aria-pressed={selected}
             type="button"
-			className="h-8 cursor-pointer rounded-full px-2 text-xs transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-40"
+			className="h-8 cursor-pointer rounded-md px-2 text-xs transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-40"
 			style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
 			disabled={disabled}
             onMouseDown={(event) => event.stopPropagation()}
@@ -201,20 +212,20 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
     );
 }
 
-function CountInput({ value, quickCount, max, theme, onChange }: { value: number; quickCount: number; max: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
+function CountInput({ label, value, quickCount, max, theme, onChange }: { label: string; value: number; quickCount: number; max: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     const commit = (input: HTMLInputElement) => {
         const next = Math.max(1, Math.min(max, Math.floor(Number(input.value) || 1)));
         input.value = String(next);
         onChange(next);
     };
     return (
-        <label className="flex h-8 overflow-hidden rounded-full text-xs" style={{ background: theme.toolbar.itemHover, color: theme.node.text }}>
+        <label className="flex h-8 overflow-hidden rounded-md text-xs" style={{ background: theme.toolbar.itemHover, color: theme.node.text }}>
             <input
                 key={value > quickCount ? `custom-${value}` : "quick"}
                 type="number"
                 min={1}
                 max={max}
-                aria-label="自定义生成张数"
+                aria-label={label}
                 placeholder="输入"
                 className="min-w-0 flex-1 bg-transparent px-2 text-center outline-none placeholder:text-current placeholder:opacity-55 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 style={{ color: theme.node.text, WebkitTextFillColor: theme.node.text }}

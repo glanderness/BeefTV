@@ -26,6 +26,7 @@ import {
 export async function hydrateLocalCanvasProjectsFromBackend() {
     const scope = getActiveUserScope();
     const attempt = beginCanvasHydration();
+    const previouslyLoadedIds = new Set(useCanvasStore.getState().projects.map((project) => project.id));
     let failure = "";
     try {
         const summaries: Array<Pick<CanvasProject, "id">> = [];
@@ -48,9 +49,6 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             return normalizeCanvasProjectGraph(detail.project);
         }))).filter((project): project is CanvasProject => Boolean(project));
         if (projects.length === 0) return false;
-        const current = useCanvasStore.getState().projects;
-        const byId = new Map(current.map((project) => [project.id, project]));
-        const existedIds = new Set(current.map((project) => project.id));
         for (const [index, project] of projects.entries()) {
             // Warm journals can resolve entirely in microtasks. Give React a
             // render turn between batches so large libraries cannot exhaust
@@ -64,21 +62,18 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             } catch (error) {
                 if (!(error instanceof CanvasJournalError) && !(error instanceof CanvasProjectionError)) throw error;
             }
-            const applied = await applyBackendCanvasRead(byId.get(project.id), project, existedIds.has(project.id));
-            if (existedIds.has(project.id) && !openLocalCanvasProject(project.id)) {
-                byId.delete(project.id);
-                continue;
+            const local = openLocalCanvasProject(project.id);
+            if ((!local && previouslyLoadedIds.has(project.id)) || canvasDeleting.has(saveKey(scope, project.id))) continue;
+            // Each read reconciles against the live canvas under its projection lock.
+            // Replaying those snapshots at the end of the list would discard edits
+            // made while later canvases were loading, even at the same revision.
+            const applied = await applyBackendCanvasRead(local, project);
+            if (!local && !openLocalCanvasProject(project.id) && !canvasDeleting.has(saveKey(scope, project.id))) {
+                // A failed journal write can return the readable document without
+                // publishing it. Keep the library entry available for first open.
+                applyLiveCanvasProject(project.id, applied, true);
             }
-            byId.set(project.id, applied);
         }
-        // A user may create a canvas while this older backend snapshot is
-        // loading. Keep projects added after `byId` was captured.
-        useCanvasStore.setState((state) => ({
-            projects: [
-                ...state.projects.filter((project) => !byId.has(project.id)),
-                ...byId.values(),
-            ],
-        }));
         await flushCanvasStorePersistence();
         return true;
     } catch (error) {

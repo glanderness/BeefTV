@@ -386,7 +386,7 @@ function PromptTemplateDialog({ isOpen, title, description, value, defaultValue,
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 backdrop-blur-[2px]" data-canvas-no-zoom onClick={onClose}>
+        <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 backdrop-blur-[2px]" data-canvas-no-zoom onClick={onClose}>
             <div
                 className="w-[560px] max-w-[calc(100vw-32px)] rounded-[var(--r-xl)] border shadow-2xl"
                 style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text }}

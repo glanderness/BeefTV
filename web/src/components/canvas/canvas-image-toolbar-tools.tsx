@@ -35,6 +35,7 @@ type ImageToolDefinition = {
     section?: string;
     description?: string;
     active?: (node: CanvasNodeData) => boolean;
+    disabled?: (node: CanvasNodeData) => boolean;
     run: (node: CanvasNodeData, handlers: ImageToolHandlers) => void;
 };
 
@@ -69,9 +70,10 @@ const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "resize",
-        label: "锁定宽高比",
+        label: (node) => node.metadata?.freeResize ? "锁定宽高比" : "解除宽高比锁定",
         section: "节点管理",
         active: (node) => !node.metadata?.freeResize,
+        disabled: (node) => Boolean(node.metadata?.locked),
         icon: (node) => (node.metadata?.freeResize ? <LockOpen className="size-3.5" /> : <Lock className="size-3.5" />),
         group: "more",
         order: 70,
@@ -206,6 +208,7 @@ export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageTool
         section: tool.section,
         description: tool.description,
         active: tool.active?.(node),
+        disabled: tool.disabled?.(node),
         onClick: () => tool.run(node, handlers),
     }));
 }
