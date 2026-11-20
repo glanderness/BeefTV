@@ -1,6 +1,6 @@
 import { canvasDocumentBase, canvasDurableSnapshot, canvasExternalRevisionConflict, flushCanvasStorePersistence, recordCanvasDocumentBase, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, setCanvasBackendSaveProgress } from "@/services/canvas-revision-conflict";
-import { peekCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
+import { markCanvasJournalForceHistorySnapshot, peekCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { canvasUnconfirmedDiagnostic, canvasUnconfirmedReason, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
@@ -40,6 +40,45 @@ export const backendSaveTails = new Map<string, Promise<void>>();
 export const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const canvasProjectionLocks = new Map<string, Promise<void>>();
 export const canvasDeleting = new Set<string>();
+export const pendingForceHistorySnapshotEpochs = new Map<string, number>();
+export const pendingOverlapJournalWrites = new Map<string, Promise<void>>();
+
+export function markCanvasMergeOverlap(id: string, scope = getActiveUserScope()) {
+    const key = saveKey(scope, id);
+    const journalEpoch = peekCanvasOperationJournal(id, scope)?.pendingForceHistorySnapshotEpoch ?? 0;
+    const nextEpoch = Math.max(pendingForceHistorySnapshotEpochs.get(key) ?? 0, journalEpoch) + 1;
+    pendingForceHistorySnapshotEpochs.set(key, nextEpoch);
+    const previous = pendingOverlapJournalWrites.get(key) ?? Promise.resolve();
+    const write = previous
+        .catch(() => undefined)
+        .then(() => markCanvasJournalForceHistorySnapshot(id, scope, nextEpoch))
+        .then(() => undefined, () => undefined);
+    const tracked = write.finally(() => {
+        if (pendingOverlapJournalWrites.get(key) === tracked) pendingOverlapJournalWrites.delete(key);
+    });
+    pendingOverlapJournalWrites.set(key, tracked);
+    return nextEpoch;
+}
+
+export async function flushPendingCanvasOverlapWrite(id: string, scope = getActiveUserScope()) {
+    const key = saveKey(scope, id);
+    for (;;) {
+        const pending = pendingOverlapJournalWrites.get(key);
+        if (!pending) return;
+        await pending;
+    }
+}
+
+export async function flushAllPendingCanvasOverlapWrites(scope = getActiveUserScope()) {
+    const prefix = `${scope}\0`;
+    for (;;) {
+        const pending = [...pendingOverlapJournalWrites.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([, promise]) => promise);
+        if (pending.length === 0) return;
+        await Promise.all(pending);
+    }
+}
 let projectionStoreFlush: () => Promise<void> = () => flushCanvasStorePersistence();
 
 export function setCanvasProjectionStoreFlushForTest(flush: (() => Promise<void>) | null) {

@@ -1,4 +1,5 @@
 import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
+import { preserveUntouchedStoredNodes } from "@/lib/canvas/canvas-document-patch";
 import { canvasDocumentMatchesFields, sameCanvasDocumentValue } from "@/lib/canvas/canvas-document-equality";
 import { rebaseCanvasDocumentThreeWay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
@@ -19,7 +20,7 @@ import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { hasUnconfirmedCanvasEdits, holdExternalCanvasRevisionForEditor, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { hasUnconfirmedCanvasEdits, markCanvasMergeOverlap, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
@@ -120,19 +121,25 @@ function sameEditorDocument(left: EditorDocument, right: EditorDocument) {
         && sameJson(left.chatSessions, right.chatSessions);
 }
 
-/** 助手会话按会话三路合并；同一会话两边都改过时抛错。 */
-function mergeIncomingChatSessions(project: CanvasProject, base: CanvasAssistantSession[], incoming: CanvasAssistantSession[], live: CanvasAssistantSession[]) {
+/** 助手会话按会话确定性三路合并；同一会话两边都改过时保留本地会话，同时合并另一侧的其余会话。 */
+function mergeIncomingChatSessions(
+    project: CanvasProject,
+    base: CanvasAssistantSession[],
+    incoming: CanvasAssistantSession[],
+    live: CanvasAssistantSession[],
+    onConflict?: () => void,
+) {
     if (sameJson(base, incoming) || sameJson(live, incoming)) return live;
     if (sameJson(live, base)) return incoming;
     const document = (chatSessions: CanvasAssistantSession[]): CanvasProject => ({ ...project, nodes: [], connections: [], chatSessions });
     const merged = rebaseCanvasDocumentThreeWay({ base: document(base), local: document(live), remote: document(incoming) });
-    if (merged.conflict) throw new Error("助手会话在别处也改过，已保留本地会话");
+    if (merged.conflict) onConflict?.();
     return merged.project.chatSessions || [];
 }
 
 /**
  * 把 base→incoming 这段别处写入的变化并到编辑器内容上：节点和连线逐个三路合并，
- * 助手会话逐个合并，当前会话只在编辑器没换过时跟随。同一处两边都改过时抛错，调用方保留编辑器内容。
+ * 助手会话逐个合并，当前会话只在编辑器没换过时跟随。同一处两边都改过时确定性保留本地编辑并通知记录合并前快照。
  * `observed` 是编辑器对 base 的那份节点，用来判断本地真改动；`adopted` 是要采用的 incoming 节点（默认原样）。
  */
 function mergeIncomingEditorDocument(
@@ -140,7 +147,7 @@ function mergeIncomingEditorDocument(
     base: EditorDocument,
     incoming: EditorDocument,
     live: EditorDocument,
-    options: { observed?: CanvasNodeData[] | null; adopted?: CanvasNodeData[] } = {},
+    options: { observed?: CanvasNodeData[] | null; adopted?: CanvasNodeData[]; onConflict?: () => void } = {},
 ): EditorDocument {
     const adopted = options.adopted ?? incoming.nodes;
     const graph = mergeCanvasRefreshPatch(
@@ -148,11 +155,12 @@ function mergeIncomingEditorDocument(
         { ...project, nodes: adopted, connections: incoming.connections },
         live.nodes,
         live.connections,
+        { onConflict: options.onConflict },
     );
     return {
         nodes: carryGenerationRecoveryRestore(graph.nodes, adopted),
         connections: graph.connections,
-        chatSessions: mergeIncomingChatSessions(project, base.chatSessions, incoming.chatSessions, live.chatSessions),
+        chatSessions: mergeIncomingChatSessions(project, base.chatSessions, incoming.chatSessions, live.chatSessions, options.onConflict),
         activeChatId: live.activeChatId === base.activeChatId ? incoming.activeChatId : live.activeChatId,
     };
 }
@@ -298,15 +306,7 @@ export function useCanvasProjectLifecycle({
             chatSessionsRef.current = merged.chatSessions;
             setChatSessions((current) => {
                 if (current === from.chatSessions || !base) return merged.chatSessions;
-                try {
-                    return mergeIncomingChatSessions(incoming, base.chatSessions || [], incoming.chatSessions || [], current);
-                } catch {
-                    // Keep the newer local sessions; the next editor write merges against the store again.
-                    // The editor's node baseline already holds the incoming nodes, so replaying
-                    // base→incoming onto it changes no node; only the sessions are merged again.
-                    observedStoreRef.current = base;
-                    return current;
-                }
+                return mergeIncomingChatSessions(incoming, base.chatSessions || [], incoming.chatSessions || [], current);
             });
         }
         if (merged.activeChatId !== from.activeChatId) {
@@ -320,41 +320,31 @@ export function useCanvasProjectLifecycle({
     /**
      * Merge a document another writer put in the store into the editor.
      * Without a base the incoming document replaces the editor content.
-     * Same-field conflicts keep the editor content, hold the newer version and pause submits.
-     * Local edits are told apart against the editor's own copy of the base, so open
-     * normalization is never taken for one. Incoming content is taken as it is (running
-     * uploads and tasks stay running); with `openRules` (the read that opens the canvas)
-     * it is restored by the normal open rules. Editor content is never re-normalized.
+     * Overlapping field edits deterministically keep the live editor value while
+     * adopting non-overlapping server updates so single-user autosave never stalls.
      */
     const adoptIncomingEditorDocument = (base: CanvasProject | undefined, incoming: CanvasProject, options: { openRules?: boolean } = {}) => {
         const live = liveEditorDocument();
         const observed = observedContentRef.current;
         let merged: EditorDocument;
         let baseline: EditorDocument | null = null;
-        try {
-            if (base) {
-                const baseDocument = editorDocumentOf(base);
-                const incomingDocument = editorDocumentOf(incoming);
-                const nodes = {
-                    observed: base === observedStoreRef.current ? observed?.nodes ?? null : null,
-                    adopted: options.openRules ? openCanvasNodes(incoming).nodes : incoming.nodes,
-                };
-                merged = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, live, nodes);
-                // Advance only the observed incoming fields; edits in live refs still
-                // differ from this baseline and must be persisted by the autosave effect.
-                if (observed) baseline = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, editorDocumentOf(observed), nodes);
-            } else {
-                merged = editorDocumentOf(incoming);
-                baseline = merged;
-            }
-        } catch (error) {
-            // Keep the local edits on screen, but never let autosave silently
-            // write this stale graph over the server: surface the newer version
-            // and pause submits until the user picks it.
-            traceCanvasGraph("editor.refresh.conflict", { previous: base, incoming, live: { id: projectId, nodes: live.nodes, connections: live.connections } });
-            console.warn("画布外部改动与本地编辑冲突，已保留本地编辑", { id: projectId, error });
-            holdExternalCanvasRevisionForEditor(incoming);
-            return false;
+        if (base) {
+            const baseDocument = editorDocumentOf(base);
+            const incomingDocument = editorDocumentOf(incoming);
+            const nodes = {
+                observed: base === observedStoreRef.current ? observed?.nodes ?? null : null,
+                adopted: options.openRules ? openCanvasNodes(incoming).nodes : incoming.nodes,
+            };
+            merged = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, live, {
+                ...nodes,
+                onConflict: () => markCanvasMergeOverlap(projectId),
+            });
+            // Advance only the observed incoming fields; edits in live refs still
+            // differ from this baseline and must be persisted by the autosave effect.
+            if (observed) baseline = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, editorDocumentOf(observed), nodes);
+        } else {
+            merged = editorDocumentOf(incoming);
+            baseline = merged;
         }
         traceCanvasGraph("editor.refresh", { previous: base, incoming, live: { id: projectId, nodes: live.nodes, connections: live.connections }, merged: { id: projectId, nodes: merged.nodes, connections: merged.connections } });
         if (observed && baseline) observedContentRef.current = { ...observed, ...baseline };
@@ -380,21 +370,16 @@ export function useCanvasProjectLifecycle({
             return { next: snapshot, merged: false };
         }
         const live = liveEditorDocument();
-        try {
-            // Local edits are told apart against the editor's own copy of the base.
-            const merged = mergeIncomingEditorDocument(stored, baseDocument, storedDocument, live, { observed: observedContentRef.current?.nodes ?? null });
-            if (sameEditorDocument(merged, snapshot)) return { next: snapshot, merged: false };
-            traceCanvasGraph("editor.write.rebase", { previous: base, incoming: stored, live: { id: projectId, nodes: live.nodes, connections: live.connections }, merged: { id: projectId, nodes: merged.nodes, connections: merged.connections } });
-            showMergedEditorDocument(merged, live, base, stored);
-            return { next: { ...snapshot, ...merged }, merged: true };
-        } catch (error) {
-            // Both sides changed the same content: the store keeps the editor
-            // content as the local draft, the newer version is held and submits pause.
-            traceCanvasGraph("editor.write.conflict", { previous: base, incoming: stored, live: { id: projectId, nodes: live.nodes, connections: live.connections } });
-            console.warn("本地画布已在别处改动，与编辑器里的修改冲突，已保留编辑器内容", { id: projectId, error });
-            holdExternalCanvasRevisionForEditor(stored);
-            return { next: snapshot, merged: false };
-        }
+        // Local edits are told apart against the editor's own copy of the base.
+        const merged = mergeIncomingEditorDocument(stored, baseDocument, storedDocument, live, {
+            observed: observedContentRef.current?.nodes ?? null,
+            onConflict: () => markCanvasMergeOverlap(projectId),
+        });
+        observedStoreRef.current = stored;
+        if (sameEditorDocument(merged, snapshot)) return { next: snapshot, merged: false };
+        traceCanvasGraph("editor.write.rebase", { previous: base, incoming: stored, live: { id: projectId, nodes: live.nodes, connections: live.connections }, merged: { id: projectId, nodes: merged.nodes, connections: merged.connections } });
+        showMergedEditorDocument(merged, live, base, stored);
+        return { next: { ...snapshot, ...merged }, merged: true };
     };
 
     useEffect(() => {
@@ -597,9 +582,10 @@ export function useCanvasProjectLifecycle({
         // last saw it (for example the opened backend graph landing). Carry those
         // changes instead of writing this render's older copy over them.
         const { next } = reconcileEditorSnapshot(snapshot);
-        observedContentRef.current = next;
-        const patch = { nodes: next.nodes, connections: next.connections, chatSessions: next.chatSessions, activeChatId: next.activeChatId, appearance: canvasAppearance, backgroundMode, showImageInfo };
         const stored = storedEditorProject();
+        const nodesForStore = preserveUntouchedStoredNodes(observedContentRef.current?.nodes, stored?.nodes, next.nodes);
+        observedContentRef.current = next;
+        const patch = { nodes: nodesForStore, connections: next.connections, chatSessions: next.chatSessions, activeChatId: next.activeChatId, appearance: canvasAppearance, backgroundMode, showImageInfo };
         // 远端结果投影到编辑器不是一次本地编辑，避免改写时间戳并触发反向保存。
         if (stored && canvasDocumentMatchesFields(stored, patch)) {
             observedStoreRef.current = stored;
@@ -652,8 +638,10 @@ export function useCanvasProjectLifecycle({
             if (observedContentRef.current && !canvasDocumentMatchesFields(observedContentRef.current, snapshot)) {
                 traceCanvasGraph("editor.leaveFlush", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
                 const { next } = reconcileEditorSnapshot(snapshot);
+                const stored = storedEditorProject();
+                const nodesForStore = preserveUntouchedStoredNodes(observedContentRef.current?.nodes, stored?.nodes, next.nodes);
                 updateProject(projectId, {
-                    nodes: next.nodes,
+                    nodes: nodesForStore,
                     connections: next.connections,
                     chatSessions: next.chatSessions,
                     activeChatId: next.activeChatId,
@@ -729,8 +717,10 @@ export function useCanvasProjectLifecycle({
         if (observedContentRef.current && !canvasDocumentMatchesFields(observedContentRef.current, snapshot)) {
             traceCanvasGraph("editor.explicitSave", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
             const { next } = reconcileEditorSnapshot(snapshot);
+            const stored = storedEditorProject();
+            const nodesForStore = preserveUntouchedStoredNodes(observedContentRef.current?.nodes, stored?.nodes, next.nodes);
             updateProject(projectId, {
-                nodes: next.nodes,
+                nodes: nodesForStore,
                 connections: next.connections,
                 chatSessions: next.chatSessions,
                 activeChatId: next.activeChatId,

@@ -185,6 +185,9 @@ func (s *operationSession) RemoveUserCanvasStoryboardRows(u, cid, nid string, id
 func (s *operationSession) CommitUserCanvasDocument(u, cid string, rev int64, doc json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
 	return s.canvas.CommitUserCanvasDocument(u, cid, rev, doc)
 }
+func (s *operationSession) PatchUserCanvasDocument(u, cid string, patch canvas.DocumentPatch) (canvas.DocumentPatchResult, error) {
+	return s.canvas.PatchUserCanvasDocument(u, cid, patch)
+}
 func (s *operationSession) WorkspaceTask(u, id string) (*model.Task, error) {
 	return operations.WorkspaceTask(s.repo, u, id)
 }

@@ -33,6 +33,9 @@ func (d *timelineDomain) OwnedAsset(user, id string) (*model.Asset, error) {
 	}
 	return &model.Asset{ID: id, UserID: user, PayloadJSON: `{"resourceId":"media"}`}, nil
 }
+func (d *timelineDomain) PatchUserCanvasDocument(string, string, canvas.DocumentPatch) (canvas.DocumentPatchResult, error) {
+	panic("unused")
+}
 func (d *timelineDomain) CommitUserCanvasDocument(user, id string, revision int64, raw json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
 	var doc map[string]any
 	json.Unmarshal(d.doc, &doc)

@@ -22,14 +22,9 @@ describe("本地画布保存状态", () => {
         });
     });
 
-    test("冲突时显示未保存，给出「使用最新版本」并说明会先存草稿", () => {
+    test("本地模式不再进入版本冲突锁定，只展示正常保存与失败重试状态", () => {
         const view = canvasSyncStatusView(true, { phase: "conflict", message: "画布已被其他入口修改，本次改动未提交；现有内容已保留在本机" });
-        expect(view.label).toBe("版本冲突 · 未保存");
-        expect(view.tone).toBe("failed");
-        expect(view.action).toBe("use-latest");
-        expect(view.note).toContain("草稿");
-        // 本地模式不把内部入口说法带给用户。
-        expect(`${view.detail}${view.note}`).not.toContain("入口");
+        expect(view).toEqual({ label: "已保存在本地", tone: "saved", detail: "画布已保存在本机。" });
     });
 });
 

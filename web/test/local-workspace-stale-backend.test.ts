@@ -160,6 +160,7 @@ mock.module("@/lib/user-scope", () => ({
 }));
 
 mock.module("@/lib/canvas/canvas-content", () => ({
+    stripCanvasNodeBookkeeping: (node: any) => node,
     normalizeCanvasProjectGraph: (proj: any) => ({
         ...proj,
         nodes: Array.isArray(proj?.nodes) ? proj.nodes : [],
@@ -200,6 +201,7 @@ mock.module("@/services/api/request", () => ({
 
 mock.module("@/services/api/operations", () => ({
     commitCanvasDocument: async () => ({ revision: 1, result: {} }),
+    patchCanvasDocument: async () => ({ revision: 1, result: {} }),
 }));
 
 class MockCanvasJournalError extends Error {
@@ -246,6 +248,7 @@ mock.module("@/services/canvas-operation-journal", () => ({
             if (current.pendingProjection?.identity !== identity) return;
             return { ...current, pendingProjection: null };
         }),
+    markCanvasJournalForceHistorySnapshot: async () => undefined,
     abandonCanvasInFlight: async () => {},
     clearCanvasOperationJournal: async (id: string) => {
         journalMemory.delete(id);

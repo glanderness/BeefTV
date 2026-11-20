@@ -11,8 +11,10 @@ import {
     canvasDeleting,
     canvasSubmitBlocked,
     confirmRemoteDocument,
+    flushPendingCanvasOverlapWrite,
     incompleteCanvasProjection,
     invokeProjectionListener,
+    markCanvasMergeOverlap,
     openLocalCanvasProject,
     runProjectionStoreFlush,
     saveKey,
@@ -47,24 +49,28 @@ export function alignLiveAfterConfirmedRemote(input: {
         return decision.kind === "apply" ? decision.project : live;
     }
     if (!input.base) {
-        pauseForExternalCandidate(input.id, input.remote, input.scope);
-        return live;
+        const emptyBase: CanvasProject = { ...input.remote, nodes: [], connections: [], chatSessions: [] };
+        const settled = settleInFlightGenerationOverlay({ base: emptyBase, local: live, remote: input.remote });
+        const rebased = rebaseCanvasDocumentThreeWay({ base: emptyBase, local: settled, remote: input.remote });
+        if (rebased.conflict) markCanvasMergeOverlap(input.id, input.scope);
+        applyLiveCanvasProject(input.id, rebased.project, false);
+        clearCanvasExternalRevisionConflict(input.scope, input.id);
+        resumeCanvasBackendSubmit(input.id, input.scope);
+        invokeProjectionListener(input.onApplied, rebased.project, live);
+        return rebased.project;
     }
     const settled = settleInFlightGenerationOverlay({ base: input.base, local: live, remote: input.remote });
     const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: settled, remote: input.remote });
+    if (rebased.conflict) markCanvasMergeOverlap(input.id, input.scope);
     applyLiveCanvasProject(input.id, rebased.project, false);
-    // Clear before notifying: the editor may hold this revision from inside the
-    // listener when its own unsaved edits conflict, and that hold must survive.
-    if (!rebased.conflict) {
-        clearCanvasExternalRevisionConflict(input.scope, input.id);
-        resumeCanvasBackendSubmit(input.id, input.scope);
-    }
+    clearCanvasExternalRevisionConflict(input.scope, input.id);
+    resumeCanvasBackendSubmit(input.id, input.scope);
     invokeProjectionListener(input.onApplied, rebased.project, live);
-    if (rebased.conflict) pauseForExternalCandidate(input.id, input.remote, input.scope);
     return rebased.project;
 }
 
 export async function persistProjectedCanvas(id: string, scope: string, identity: string | undefined, options: { throwOnFailure: boolean }) {
+    await flushPendingCanvasOverlapWrite(id, scope);
     if (!identity || !openLocalCanvasProject(id)) return;
     try {
         await runProjectionStoreFlush();
@@ -124,15 +130,6 @@ export function holdExternalCanvasRevisionForEditor(project: CanvasProject, scop
     pauseForExternalCandidate(project.id, candidate, scope);
 }
 
-/** 不改任何状态，只判断本地相对已确认基线的改动能否和服务端改动三路合并。 */
-function remoteRebaseConflicts(base: CanvasProject | null, live: CanvasProject, remote: CanvasProject) {
-    if (sameCanvasDocument(live, remote)) return false;
-    if (!base) return true;
-    if (sameCanvasDocument(live, base)) return false;
-    const settled = settleInFlightGenerationOverlay({ base, local: live, remote });
-    return rebaseCanvasDocumentThreeWay({ base, local: settled, remote }).conflict;
-}
-
 type RemoteReconcileOutcome =
     | { kind: "stale" | "held" | "deferred" | "skipped" }
     | { kind: "applied"; project: CanvasProject | undefined; unconfirmed: boolean };
@@ -167,11 +164,6 @@ export async function reconcileRemoteCanvasUnlocked(input: {
         ?? journal?.confirmedSnapshot
         ?? canvasDocumentBase(id, scope)?.snapshot
         ?? null;
-    const live = openLocalCanvasProject(id);
-    if (live && remoteRebaseConflicts(base, live, remote)) {
-        pauseForExternalCandidate(id, remote, scope);
-        return { kind: "held" };
-    }
     let confirmed;
     try {
         confirmed = await confirmRemoteDocument(remote, scope);
@@ -189,8 +181,6 @@ export async function reconcileRemoteCanvasUnlocked(input: {
         onApplied: input.onApplied,
     });
     await persistProjectedCanvas(id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false });
-    // 等待日记写入期间用户可能又改了同一字段：合并时会转成冲突暂停。
-    if (canvasSubmitBlocked(id, scope)) return { kind: "held" };
     const current = openLocalCanvasProject(id);
     const confirmedSnapshot = confirmed.confirmedSnapshot ?? remote;
     return { kind: "applied", project, unconfirmed: Boolean(current && !sameCanvasDocument(current, confirmedSnapshot)) };

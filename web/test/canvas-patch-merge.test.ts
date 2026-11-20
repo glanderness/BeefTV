@@ -16,7 +16,9 @@ test("refresh during regeneration keeps the new submission and merges unrelated 
     const merged = mergeCanvasRefreshPatch(previous, { ...previous, nodes: [late] }, [retry], []);
     expect(merged.nodes[0].title).toBe(late.title);
     expect(merged.nodes[0].metadata).toEqual(retry.metadata);
-    expect(() => mergeCanvasRefreshPatch(previous, { ...previous, nodes: [{ ...late, metadata: { ...late.metadata, prompt: "另一处修改" } }] }, [retry], [])).toThrow("冲突");
+    const overlapped = mergeCanvasRefreshPatch(previous, { ...previous, nodes: [{ ...late, metadata: { ...late.metadata, prompt: "另一处修改" } }] }, [retry], []);
+    expect(overlapped.nodes[0].title).toBe(late.title);
+    expect(overlapped.nodes[0].metadata).toEqual(retry.metadata);
 });
 
 test("failed Agent task patches only its node and unlocks generation", () => {
@@ -86,8 +88,9 @@ test("full Agent refresh removes unchanged nodes but preserves conflicting local
     const incoming = { ...previous, nodes: [remaining] };
     expect(mergeCanvasRefreshPatch(previous, incoming, previous.nodes, []).nodes).toEqual([remaining]);
     const local = { ...node, title: "Unsaved local title" };
-    expect(() => mergeCanvasRefreshPatch(previous, incoming, [local, remaining], [])).toThrow("冲突");
-    expect(local.title).toBe("Unsaved local title");
+    const merged = mergeCanvasRefreshPatch(previous, incoming, [local, remaining], []);
+    expect(merged.nodes.map((item) => item.id)).toEqual([node.id, remaining.id]);
+    expect(merged.nodes[0].title).toBe("Unsaved local title");
 });
 
 test("remote delete applies when the editor copy only gained node timestamps", () => {
@@ -97,8 +100,11 @@ test("remote delete applies when the editor copy only gained node timestamps", (
     const previous = { ...project, nodes: [text] };
     const incoming = { ...project, nodes: [] };
     expect(mergeCanvasRefreshPatch(previous, incoming, [stamped], []).nodes).toEqual([]);
-    expect(() => mergeCanvasRefreshPatch(previous, incoming, [{ ...stamped, title: "本地改过的标题" }], [])).toThrow("冲突");
-    expect(() => mergeCanvasRefreshPatch(previous, incoming, [{ ...stamped, metadata: { ...text.metadata, updatedAt: "2026-09-14T00:00:00.000Z" } as never }], [])).toThrow("冲突");
+    const editedTitle = mergeCanvasRefreshPatch(previous, incoming, [{ ...stamped, title: "本地改过的标题" }], []);
+    expect(editedTitle.nodes).toHaveLength(1);
+    expect(editedTitle.nodes[0].title).toBe("本地改过的标题");
+    const editedMeta = mergeCanvasRefreshPatch(previous, incoming, [{ ...stamped, metadata: { ...text.metadata, updatedAt: "2026-09-14T00:00:00.000Z" } as never }], []);
+    expect(editedMeta.nodes).toHaveLength(1);
 });
 
 test("remote update applies when the editor copy only gained node timestamps", () => {

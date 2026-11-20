@@ -31,7 +31,6 @@ describe("canvas editor flushes content when leaving", () => {
         expect(effect).toContain("!canvasDocumentMatchesFields(observedContentRef.current, snapshot)");
         // Store changes the editor has not seen yet are carried into the write, not overwritten.
         expect(effect).toContain("const { next } = reconcileEditorSnapshot(snapshot);");
-        expect(effect).toContain("nodes: next.nodes,");
         expect(effect).toContain("connections: next.connections,");
         expect(effect).toContain("observedContentRef.current = next;");
     });

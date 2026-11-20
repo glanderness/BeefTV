@@ -31,6 +31,10 @@ func (p *deliverProbe) UserCanvasProject(user, id string) (json.RawMessage, erro
 	return p.doc, nil
 }
 
+func (p *deliverProbe) PatchUserCanvasDocument(string, string, canvas.DocumentPatch) (canvas.DocumentPatchResult, error) {
+	panic("unused")
+}
+
 func (p *deliverProbe) CommitUserCanvasDocument(user, id string, revision int64, raw json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
 	var doc map[string]any
 	if json.Unmarshal(p.doc, &doc) != nil || canvasRevision(doc) != revision {

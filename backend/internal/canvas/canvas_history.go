@@ -26,24 +26,29 @@ func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasPr
 }
 
 func SaveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, items []model.Asset, reason string) error {
+	_, err := saveDocumentWithHistoryAndAssets(repo, before, after, items, reason)
+	return err
+}
+
+func saveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, items []model.Asset, reason string) (bool, error) {
 	cutoff := after.UpdatedAt.Add(-canvasHistoryInterval)
-	force := reason == "before_restore"
+	force := reason == "before_restore" || reason == "before_merge"
 	var snapshot *model.CanvasSnapshot
 	var resourceIDs []string
 	if before != nil {
 		capture, err := repo.ShouldCaptureCanvasSnapshot(after.ID, before.Revision, cutoff, force)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if capture {
 			snapshot, resourceIDs, err = buildCanvasSnapshot(before, *after, reason)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if !force && len(resourceIDs) > 0 {
 				resourceIDs, err = repo.ReadyResourceIDs(resourceIDs)
 				if err != nil {
-					return err
+					return false, err
 				}
 			}
 		}
@@ -52,7 +57,7 @@ func SaveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model
 	if force {
 		refs := map[string]struct{}{}
 		if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, refs); err != nil {
-			return err
+			return false, err
 		}
 		restoredIDs = assets.SortedIDs(refs)
 	}
@@ -61,9 +66,15 @@ func SaveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model
 		historyLimit = max(1, min(canvasHistoryLimit, (128<<20)/len(before.PayloadJSON)))
 	}
 	if len(items) > 0 {
-		return repo.SaveAssetsAndCanvasWithSnapshot(items, after, snapshot, resourceIDs, restoredIDs, cutoff, historyLimit, force)
+		if err := repo.SaveAssetsAndCanvasWithSnapshot(items, after, snapshot, resourceIDs, restoredIDs, cutoff, historyLimit, force); err != nil {
+			return false, err
+		}
+		return snapshot != nil, nil
 	}
-	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, restoredIDs, cutoff, historyLimit, force)
+	if err := repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, restoredIDs, cutoff, historyLimit, force); err != nil {
+		return false, err
+	}
+	return snapshot != nil, nil
 }
 
 func canvasRevisionConflict() error {

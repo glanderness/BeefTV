@@ -56,6 +56,7 @@ func TestMCPClientLoop(t *testing.T) {
 	registry := operations.NewRegistry(nil, nil)
 	operations.RegisterDefaultOps(registry)
 	excluded := map[string]bool{
+		"canvas.document.patch":       true,
 		"conversation.message.attach": true,
 		"skill.publish.prepare":       true,
 		"skill.publish.status":        true,

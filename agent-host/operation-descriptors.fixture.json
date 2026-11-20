@@ -149,6 +149,70 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.document.patch",
+    "summary": "按节点/连线增量提交画布改动并在服务端原子合并",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "baseRevision": {
+          "type": "integer"
+        },
+        "canvasId": {
+          "type": "string"
+        },
+        "deleteChatSessionIds": {
+          "type": "array"
+        },
+        "deleteConnectionIds": {
+          "type": "array"
+        },
+        "deleteNodeIds": {
+          "type": "array"
+        },
+        "expectedChatSessions": {
+          "type": "object"
+        },
+        "expectedConnections": {
+          "type": "object"
+        },
+        "expectedFields": {
+          "type": "object"
+        },
+        "expectedNodes": {
+          "type": "object"
+        },
+        "fields": {
+          "type": "object"
+        },
+        "forceHistorySnapshot": {
+          "type": "boolean"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "upsertChatSessions": {
+          "type": "array"
+        },
+        "upsertConnections": {
+          "type": "array"
+        },
+        "upsertNodes": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "canvasId",
+        "baseRevision",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.edge.create",
     "summary": "连接两个节点",
     "readOnly": false,
