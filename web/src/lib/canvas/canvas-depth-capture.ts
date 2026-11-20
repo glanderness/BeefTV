@@ -1,5 +1,5 @@
 import { explainGenerationError, generationFailureMetadata, INPUT_REJECTED_ERROR_CATEGORIES, type GenerationErrorCategory, type GenerationFailureExplanation } from "@/lib/generation-error";
-import { deliveryPendingTaskOutcome, isTaskOutcomeReconciling, isTaskOutcomeSubmissionUncertain, readTaskOutcome, taskOutcomeCopy, type TaskOutcome } from "@/lib/task-outcome";
+import { deliveryPendingTaskOutcome, isTaskOutcomeReconciling, isTaskOutcomeSubmissionUncertain, readNodeTaskOutcome, readTaskOutcome, taskOutcomeCopy, type TaskOutcome } from "@/lib/task-outcome";
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
@@ -137,6 +137,16 @@ function explanationMatchesAuthoritativeOutcome(outcome: TaskOutcome, explanatio
 export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     const explicitOutcome = authoritativeNodeOutcome(node.metadata);
     const explanation = nodeFailureExplanation(node.metadata);
+    const fallbackOutcome = explicitOutcome ? undefined : readNodeTaskOutcome(node.metadata);
+    const legacyCancelledConfirmOutcome =
+        fallbackOutcome &&
+        fallbackOutcome.phase === "failed" &&
+        fallbackOutcome.regenerate === "confirm" &&
+        (fallbackOutcome.reason === "cancelled_result_unconfirmed" ||
+            (node.metadata?.taskStatus === "cancelled" && explanation.category !== "cancelled"))
+            ? fallbackOutcome
+            : undefined;
+    const authoritative = explicitOutcome ?? legacyCancelledConfirmOutcome;
     // This action opens saved history; it must never dispatch another generation.
     if (explicitOutcome?.reason === "result_target_unavailable" || (!explicitOutcome && explanation.category === "result_target_unavailable")) {
         const copy = explicitOutcome ? taskOutcomeCopy(explicitOutcome) : undefined;
@@ -148,10 +158,10 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
         };
     }
     if (!canRecoverOrRetryDepthCapture(node)) {
-        if (!explicitOutcome) return explanation;
-        const copy = taskOutcomeCopy(explicitOutcome);
-        const uncertain = isTaskOutcomeSubmissionUncertain(explicitOutcome);
-        const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(explicitOutcome, explanation);
+        if (!authoritative) return explanation;
+        const copy = taskOutcomeCopy(authoritative);
+        const uncertain = isTaskOutcomeSubmissionUncertain(authoritative);
+        const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(authoritative, explanation);
         return {
             ...explanation,
             ...(keepRefinedCopy
@@ -161,7 +171,7 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
                       action: copy.action,
                   }),
             uncertain,
-            blockManualRetry: explicitOutcome.regenerate === "blocked",
+            blockManualRetry: authoritative.regenerate === "blocked",
         };
     }
     if (node.metadata?.taskStage === "已暂停，等待手动继续") {
@@ -170,16 +180,16 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     if (explicitOutcome ? explicitOutcome.phase === "retrievable" || explicitOutcome.phase === "ready" : node.metadata?.taskStatus === "succeeded") {
         return { ...explanation, reason: "深度视频已生成，暂时未能显示在画布上", action: "点击「恢复结果」重新加载原任务", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };
     }
-    if (explicitOutcome && explicitOutcome.phase === "failed" && (explicitOutcome.regenerate === "confirm" || explicitOutcome.regenerate === "blocked")) {
-        const copy = taskOutcomeCopy(explicitOutcome);
-        const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(explicitOutcome, explanation);
+    if (authoritative && authoritative.phase === "failed" && (authoritative.regenerate === "confirm" || authoritative.regenerate === "blocked")) {
+        const copy = taskOutcomeCopy(authoritative);
+        const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(authoritative, explanation);
         return {
             ...explanation,
             ...(keepRefinedCopy ? {} : { reason: copy.reason, action: copy.action }),
-            uncertain: isTaskOutcomeSubmissionUncertain(explicitOutcome),
-            retryable: explicitOutcome.regenerate !== "blocked",
+            uncertain: isTaskOutcomeSubmissionUncertain(authoritative),
+            retryable: authoritative.regenerate !== "blocked",
             blockAutomaticRetry: true,
-            blockManualRetry: explicitOutcome.regenerate === "blocked",
+            blockManualRetry: authoritative.regenerate === "blocked",
         };
     }
     return {

@@ -73,7 +73,7 @@ export function taskAttentionReason(task: GenerationTask) {
             outcome.reason === "no_result" ||
             (!task.error && !task.errorCode && task.status !== "cancelled")
         ) {
-            return taskOutcomeCopy(outcome).message;
+            return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).message;
         }
     }
     if (!outcome && task.status === "cancelled") return providerCancelStatusLabel(task);
@@ -85,7 +85,7 @@ export function taskAttentionReason(task: GenerationTask) {
     if (text.startsWith("{") || text.startsWith("[")) return explanation.reason || "生成失败，打开详情查看原因";
     if (explanation.moderation) return explanation.message;
     if (task.error || task.errorCode) return explanation.message;
-    if (outcome) return taskOutcomeCopy(outcome).message;
+    if (outcome) return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).message;
     return task.stage || "生成失败，打开详情查看原因";
 }
 
@@ -93,7 +93,7 @@ export function providerCancelStatusLabel(task: GenerationTask) {
     const outcome = normalizeTaskOutcome(task.outcome);
     if (task.providerCancelStatus === "confirmed") {
         return outcome?.reason === "cancelled_result_unconfirmed"
-            ? "上游已确认取消，请核对渠道后台确认是否已扣费"
+            ? taskOutcomeCopy(outcome, undefined, { providerCancelStatus: "confirmed" }).reason
             : "上游已确认取消";
     }
     if (outcome?.reason === "cancelled_result_unconfirmed") return taskOutcomeCopy(outcome).message;

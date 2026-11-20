@@ -87,6 +87,43 @@ func TestComputeOutcome(t *testing.T) {
 			t.BeefUsageState = &u
 			t.BeefBillingState = &b
 		}), "", OutcomeFacts{}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"取消后usage=failed优先于残留billing=settled保持allowed", with(func(t *model.Task) {
+			u := "failed"
+			b := "settled"
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-cancelled-failed-settled"
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{}, want("failed", "allowed", "task_failed")},
+		{"非取消usage=failed优先于残留billing=settled保持allowed且不重入retrievable", with(func(t *model.Task) {
+			u := "failed"
+			b := "settled"
+			t.Type = "canvas_video"
+			t.ProviderRequestID = "vid-failed-settled"
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{}, want("failed", "allowed", "task_failed")},
+		{"终态恢复usage=failed优先于残留billing=settled保持allowed", with(func(t *model.Task) {
+			u := "failed"
+			b := "settled"
+			t.Type = "canvas_video"
+			t.ProviderRequestID = "vid-terminal-failed-settled"
+			t.RecoveryOutcome = &noResult
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{}, want("failed", "allowed", "no_result")},
+		{"usage=failed但billing仍reserved时继续阻塞待结算", with(func(t *model.Task) {
+			u := "failed"
+			b := "reserved"
+			dl := "2026-04-20T12:15:00Z"
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-failed-reserved"
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+			t.BeefReconcileDeadline = &dl
+		}), "", OutcomeFacts{}, Outcome{Phase: "failed", Regenerate: "blocked", Reason: "settlement_pending", ReconcileDeadline: "2026-04-20T12:15:00Z"}},
 		{"视频已接受尚无ProviderRequestID失败后等待上游结果取回", with(func(t *model.Task) {
 			t.Type = "canvas_video"
 		}), "", OutcomeFacts{DispatchState: "accepted"}, want("retrievable", "blocked", "provider_result_pending")},

@@ -175,7 +175,10 @@ func computeProviderSettlementOutcome(task model.Task) (Outcome, bool) {
 		}
 		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
 	}
-	if billingState == "settled" {
+	if usageState == "failed" && !task.MediaSettlementPending() {
+		return Outcome{Phase: "failed", Regenerate: "allowed", Reason: providerRefundedFailureReason(task)}, true
+	}
+	if billingState == "settled" && usageState != "failed" {
 		if terminalRecovery || task.Status == model.TaskStatusCancelled {
 			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
 		}
@@ -184,7 +187,7 @@ func computeProviderSettlementOutcome(task model.Task) (Outcome, bool) {
 	if task.MediaSettlementPending() {
 		return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
 	}
-	if usageState == "failed" || billingState == "refunded" {
+	if billingState == "refunded" {
 		return Outcome{Phase: "failed", Regenerate: "allowed", Reason: providerRefundedFailureReason(task)}, true
 	}
 

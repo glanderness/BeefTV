@@ -345,17 +345,43 @@ func TestActiveOnlyTasksEndpointRetainsCancelledTaskWhenEvidenceUnreadable(t *te
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	task := model.Task{
-		ID:        "cancelled-unreadable",
-		UserID:    owner.ID,
-		ProjectID: "unreadable-canvas",
-		Type:      "canvas_image",
-		Status:    model.TaskStatusCancelled,
-		Stage:     "任务已取消",
-		CreatedAt: now,
-		UpdatedAt: now,
+	noResult := "no_result"
+	unrecoverable := "unrecoverable"
+	tasks := []model.Task{
+		{
+			ID:        "cancelled-unreadable",
+			UserID:    owner.ID,
+			ProjectID: "unreadable-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusCancelled,
+			Stage:     "任务已取消",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:              "cancelled-terminal-unreadable",
+			UserID:          owner.ID,
+			ProjectID:       "unreadable-canvas",
+			Type:            "canvas_video",
+			Status:          model.TaskStatusCancelled,
+			Stage:           "任务已取消",
+			RecoveryOutcome: &noResult,
+			CreatedAt:       now.Add(time.Second),
+			UpdatedAt:       now.Add(time.Second),
+		},
+		{
+			ID:              "failed-terminal-unreadable",
+			UserID:          owner.ID,
+			ProjectID:       "unreadable-canvas",
+			Type:            "canvas_image",
+			Status:          model.TaskStatusFailed,
+			Stage:           "任务失败",
+			RecoveryOutcome: &unrecoverable,
+			CreatedAt:       now.Add(2 * time.Second),
+			UpdatedAt:       now.Add(2 * time.Second),
+		},
 	}
-	if err := h.db.Create(&task).Error; err != nil {
+	if err := h.db.Create(&tasks).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := h.db.Exec("DROP TABLE route_attempts").Error; err != nil {
@@ -372,11 +398,16 @@ func TestActiveOnlyTasksEndpointRetainsCancelledTaskWhenEvidenceUnreadable(t *te
 	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
-	if len(env.Data) != 1 || env.Data[0].ID != task.ID {
-		t.Fatalf("activeOnly unreadable tasks=%+v, want [%s]", env.Data, task.ID)
-	}
+	gotIDs := make([]string, 0, len(env.Data))
 	wantOutcome := model.TaskOutcome{Phase: "retrievable", Regenerate: "blocked", Reason: "evidence_unavailable"}
-	if env.Data[0].Outcome == nil || *env.Data[0].Outcome != wantOutcome {
-		t.Fatalf("unreadable outcome=%+v, want %+v", env.Data[0].Outcome, wantOutcome)
+	for _, item := range env.Data {
+		gotIDs = append(gotIDs, item.ID)
+		if item.Outcome == nil || *item.Outcome != wantOutcome {
+			t.Fatalf("unreadable task %s outcome=%+v, want %+v", item.ID, item.Outcome, wantOutcome)
+		}
+	}
+	wantIDs := []string{"failed-terminal-unreadable", "cancelled-terminal-unreadable", "cancelled-unreadable"}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("activeOnly unreadable ids=%v, want %v", gotIDs, wantIDs)
 	}
 }

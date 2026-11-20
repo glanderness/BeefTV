@@ -260,7 +260,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
     if (metadata.status === "success" && Boolean(metadata.content || metadata.storageKey)) {
         return readyTaskOutcome();
     }
-    if (taskStatus === "cancelled") {
+    if (taskStatus === "failed" || taskStatus === "cancelled" || taskStatus === "text_replay") {
         return readLegacyTerminalOutcome({
             status: taskStatus,
             stage: taskStage,
@@ -274,7 +274,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
         }
         return runningTaskOutcome();
     }
-    if (metadata.status === "error" || taskStatus === "failed" || taskStatus === "text_replay" || errorCode || metadata.errorDetails) {
+    if (metadata.status === "error" || errorCode || metadata.errorDetails) {
         return readLegacyTerminalOutcome({
             status: taskStatus || "failed",
             stage: taskStage,
@@ -410,11 +410,15 @@ export function formatReconcileDeadlineCopy(reconcileDeadline?: string, nowMs = 
     return `BeefTV 正在核对上次提交，预计 ${formatClockTime(deadlineMs)} 前有结论`;
 }
 
+export type TaskOutcomeCopyOptions = {
+    providerCancelStatus?: string;
+};
+
 /**
  * 根据 `TaskOutcome` 生成面向用户的中文状态、提示与确认弹窗文案。
  * 严格遵守不泄露上游平台内部名、渠道 ID 或内部字段名。
  */
-export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()): TaskOutcomeCopy {
+export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now(), options?: TaskOutcomeCopyOptions): TaskOutcomeCopy {
     if (!outcome) {
         return {
             badge: "生成失败",
@@ -508,6 +512,18 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
             }
             if (outcome.regenerate === "confirm") {
                 if (outcome.reason === "cancelled_result_unconfirmed") {
+                    if (options?.providerCancelStatus === "confirmed") {
+                        const reason = "上游已确认取消，请核对渠道后台确认是否已扣费";
+                        const action = "核对扣费后可重新生成";
+                        return {
+                            badge: "已取消",
+                            reason,
+                            action,
+                            message: `${reason}。${action}。`,
+                            confirmTitle: "确认重新生成？",
+                            confirmContent: "上游已确认取消本次任务，但仍无法确认渠道是否已扣费，重新生成可能会再扣一次。",
+                        };
+                    }
                     const reason = "任务已取消，无法确认上游是否已生成或扣费";
                     const action = "可先到渠道后台核对原请求状态，确认后可重新生成";
                     return {

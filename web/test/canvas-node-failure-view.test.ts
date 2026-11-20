@@ -1883,6 +1883,42 @@ describe("canvasNodeFailureView", () => {
             expect(depthCancelledUnconfirmed.regenerateConfirm).toBe(true);
             expect(depthCancelledUnconfirmed.explanation.blockAutomaticRetry).toBe(true);
             expect(depthCancelledUnconfirmed.explanation.blockManualRetry).toBe(false);
+
+            const legacyCancelledWithProviderReq = canvasNodeFailureView(
+                node("legacy-cancelled-provider-req-stale-network", {
+                    status: "error",
+                    taskId: "legacy-cancel-1",
+                    taskStatus: "cancelled",
+                    taskProviderRequestId: "req-1",
+                    errorDetails: "Failed to fetch",
+                }),
+                { nowMs: NOW_MS },
+            );
+            expect(legacyCancelledWithProviderReq.outcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" });
+            expect(legacyCancelledWithProviderReq.explanation.reason).toBe(legacyCancelledWithProviderReq.copy.reason);
+            expect(legacyCancelledWithProviderReq.explanation.action).toBe(legacyCancelledWithProviderReq.copy.action);
+            expect(legacyCancelledWithProviderReq.regenerateConfirm).toBe(true);
+
+            const legacyDepthCancelled = canvasNodeFailureView(
+                node(
+                    "legacy-depth-cancelled-stale-network",
+                    {
+                        status: "error",
+                        depthSourceNodeId: "source-depth-legacy",
+                        taskType: "depth_capture",
+                        taskId: "legacy-depth-cancel-1",
+                        taskStatus: "cancelled",
+                        taskProviderRequestId: "req-depth-1",
+                        errorDetails: "Failed to fetch",
+                    },
+                    CanvasNodeType.Video,
+                ),
+                { nowMs: NOW_MS },
+            );
+            expect(legacyDepthCancelled.outcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" });
+            expect(legacyDepthCancelled.explanation.reason).toBe(legacyDepthCancelled.copy.reason);
+            expect(legacyDepthCancelled.explanation.action).toBe(legacyDepthCancelled.copy.action);
+            expect(legacyDepthCancelled.regenerateConfirm).toBe(true);
         } finally {
             Date.now = realNow;
         }

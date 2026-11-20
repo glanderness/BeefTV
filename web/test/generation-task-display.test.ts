@@ -19,7 +19,12 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(generationTaskShowsProgress(task)).toBe(false);
     expect(taskAttentionReason(task)).toContain("核对原请求状态");
     expect(providerCancelStatusLabel(task)).toContain("核对原请求状态");
-    expect(providerCancelStatusLabel({ ...task, providerCancelStatus: "confirmed" })).toBe("上游已确认取消，请核对渠道后台确认是否已扣费");
+    const confirmedTask = { ...task, providerCancelStatus: "confirmed" as const };
+    expect(generationTaskStatusLabel(confirmedTask)).toBe("已取消");
+    expect(generationTaskStageLabel(confirmedTask)).toBe("上游已确认取消，请核对渠道后台确认是否已扣费");
+    expect(taskAttentionReason(confirmedTask)).toContain("上游已确认取消");
+    expect(taskAttentionReason(confirmedTask)).not.toContain("无法确认上游是否已生成");
+    expect(providerCancelStatusLabel(confirmedTask)).toBe("上游已确认取消，请核对渠道后台确认是否已扣费");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined, providerCancelStatus: "confirmed" })).toBe("上游已确认取消");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined })).toBe("任务已取消，请核对原任务的结果与扣费状态");
 });
