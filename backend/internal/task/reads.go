@@ -69,6 +69,10 @@ type evidenceHealthStore interface {
 	EvidenceReadable() bool
 }
 
+type unreadableEvidenceFallbackStore interface {
+	ListTerminalForUnreadableEvidenceAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error)
+}
+
 type batchProviderRequestIDStore interface {
 	LatestProviderRequestIDs(taskIDs []string) (map[string]string, error)
 }
@@ -202,27 +206,65 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 		}
 		if !evidenceReadable && len(collected) < want {
 			// Active candidates (queued/running/retrievable) are always prioritized first.
-			// When evidence storage is unreadable, top up remaining slots from a bounded
-			// recent page so fail-closed evidence_unavailable rows stay visible without
-			// hiding older genuinely active tasks or scanning full history.
-			recent, err := s.store.List(userID, want, options.ProjectID, false)
-			if err != nil {
-				return nil, err
-			}
-			s.hydrateOutcomeProviderRequestIDs(recent)
-			projected, err := presentSummaries(s.deps.Present, recent)
-			if err != nil {
-				return nil, err
-			}
-			for _, summary := range projected {
-				if _, dup := seen[summary.ID]; dup {
-					continue
-				}
-				if isActiveTaskSummary(summary) {
-					collected = append(collected, summary)
-					seen[summary.ID] = struct{}{}
-					if len(collected) >= want {
+			// When evidence storage is unreadable, cursor-page only failed/cancelled rows
+			// (skipping succeeded history) up to the remaining `want` budget so older
+			// evidence_unavailable tasks are not crowded out by newer completed tasks.
+			if fallback, ok := s.store.(unreadableEvidenceFallbackStore); ok {
+				var fbCreatedAt *time.Time
+				var fbID string
+				for len(collected) < want {
+					batch, err := fallback.ListTerminalForUnreadableEvidenceAfter(userID, options.ProjectID, fbCreatedAt, fbID, pageSize)
+					if err != nil {
+						return nil, err
+					}
+					if len(batch) == 0 {
 						break
+					}
+					s.hydrateOutcomeProviderRequestIDs(batch)
+					projected, err := presentSummaries(s.deps.Present, batch)
+					if err != nil {
+						return nil, err
+					}
+					for _, summary := range projected {
+						if _, dup := seen[summary.ID]; dup {
+							continue
+						}
+						if isActiveTaskSummary(summary) {
+							collected = append(collected, summary)
+							seen[summary.ID] = struct{}{}
+							if len(collected) >= want {
+								break
+							}
+						}
+					}
+					if len(batch) < pageSize {
+						break
+					}
+					last := batch[len(batch)-1]
+					cursorTime := last.CreatedAt
+					fbCreatedAt = &cursorTime
+					fbID = last.ID
+				}
+			} else {
+				recent, err := s.store.List(userID, want, options.ProjectID, false)
+				if err != nil {
+					return nil, err
+				}
+				s.hydrateOutcomeProviderRequestIDs(recent)
+				projected, err := presentSummaries(s.deps.Present, recent)
+				if err != nil {
+					return nil, err
+				}
+				for _, summary := range projected {
+					if _, dup := seen[summary.ID]; dup {
+						continue
+					}
+					if isActiveTaskSummary(summary) {
+						collected = append(collected, summary)
+						seen[summary.ID] = struct{}{}
+						if len(collected) >= want {
+							break
+						}
 					}
 				}
 			}

@@ -55,6 +55,27 @@ func (r *Repository) ActiveCandidateTasksAfter(userID string, projectID string, 
 	return tasks, err
 }
 
+// TerminalTasksForUnreadableEvidenceAfter pages only failed/cancelled rows that
+// the healthy activeOnly SQL filter excluded, skipping succeeded tasks so newer
+// completed history cannot crowd out older evidence_unavailable rows.
+func (r *Repository) TerminalTasksForUnreadableEvidenceAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error) {
+	var tasks []model.Task
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	query := r.db.Select(taskSummarySelectColumns).
+		Where("user_id = ?", userID).
+		Where("status IN ?", []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
+	if strings.TrimSpace(projectID) != "" {
+		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
+	}
+	if beforeCreatedAt != nil {
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", *beforeCreatedAt, *beforeCreatedAt, beforeID)
+	}
+	err := query.Order("created_at desc, id desc").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
 func (r *Repository) LatestProviderRequestIDsForTasks(taskIDs []string) (map[string]string, error) {
 	result := make(map[string]string, len(taskIDs))
 	if len(taskIDs) == 0 {

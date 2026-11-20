@@ -601,3 +601,91 @@ func TestActiveOnlyEvidenceUnreadablePrioritizesOlderActiveTasksAndDetectsMissin
 		t.Fatalf("second activeOnly degraded item outcome = %+v, want evidence_unavailable", env.Data[1].Outcome)
 	}
 }
+
+func TestActiveOnlyEvidenceProbeDetectsMissingAttemptNumberAndCallLogUserIDAndSurfacesOlderCancelledBeyondSucceeded(t *testing.T) {
+	cases := []struct {
+		name  string
+		breakSQL []string
+	}{
+		{
+			name: "missing route_attempts.attempt_number",
+			breakSQL: []string{
+				"DROP TABLE route_attempts",
+				"CREATE TABLE route_attempts (id TEXT PRIMARY KEY, task_id TEXT, route_run INTEGER, channel_id TEXT, dispatch_state TEXT, started_at DATETIME)",
+			},
+		},
+		{
+			name: "missing api_call_logs.user_id",
+			breakSQL: []string{
+				"DROP TABLE api_call_logs",
+				"CREATE TABLE api_call_logs (id TEXT PRIMARY KEY, task_id TEXT, capability TEXT, request_kind TEXT, method TEXT, status TEXT, provider_request_id TEXT, created_at DATETIME)",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newRetiredAgentHarness(t)
+			owner, err := h.svc.WorkspaceOwner("local")
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := time.Now().UTC().Add(-time.Hour)
+			noResult := "no_result"
+			seed := []model.Task{
+				{
+					ID:              "older-cancelled-evidence",
+					UserID:          owner.ID,
+					ProjectID:       "probe-canvas",
+					Type:            "canvas_image",
+					Status:          model.TaskStatusCancelled,
+					Stage:           "任务已取消",
+					RecoveryOutcome: &noResult,
+					CreatedAt:       base,
+					UpdatedAt:       base,
+				},
+			}
+			for i := 0; i < 60; i++ {
+				ts := base.Add(time.Duration(i+1) * time.Second)
+				seed = append(seed, model.Task{
+					ID:         fmt.Sprintf("newer-succeeded-text-%02d", i),
+					UserID:     owner.ID,
+					ProjectID:  "probe-canvas",
+					Type:       "canvas_text",
+					Status:     model.TaskStatusSucceeded,
+					Stage:      "已完成",
+					ResultJSON: `{"text":"ok"}`,
+					CreatedAt:  ts,
+					UpdatedAt:  ts,
+				})
+			}
+			if err := h.db.CreateInBatches(&seed, 100).Error; err != nil {
+				t.Fatal(err)
+			}
+			for _, stmt := range tc.breakSQL {
+				if err := h.db.Exec(stmt).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			if repository.New(h.db).EvidenceReadable() {
+				t.Fatalf("EvidenceReadable() = true for %s, want false", tc.name)
+			}
+			resp := h.do(t, http.MethodGet, "/api/tasks?projectId=probe-canvas&pageSize=10&activeOnly=true", nil)
+			if resp.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+			}
+			var env struct {
+				Data []model.Task `json:"data"`
+			}
+			if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+				t.Fatal(err)
+			}
+			if len(env.Data) != 1 || env.Data[0].ID != "older-cancelled-evidence" {
+				t.Fatalf("activeOnly degraded data = %+v, want [older-cancelled-evidence]", env.Data)
+			}
+			if env.Data[0].Outcome == nil || env.Data[0].Outcome.Reason != "evidence_unavailable" {
+				t.Fatalf("outcome = %+v, want evidence_unavailable", env.Data[0].Outcome)
+			}
+		})
+	}
+}

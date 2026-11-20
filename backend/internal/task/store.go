@@ -94,6 +94,13 @@ func (s repoStore) EvidenceReadable() bool {
 	return s.repo.EvidenceReadable()
 }
 
+func (s repoStore) ListTerminalForUnreadableEvidenceAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error) {
+	if err := s.require(); err != nil {
+		return nil, err
+	}
+	return s.repo.TerminalTasksForUnreadableEvidenceAfter(userID, projectID, beforeCreatedAt, beforeID, limit)
+}
+
 func (s repoStore) Logs(userID, id string) ([]model.TaskLog, error) {
 	if err := s.require(); err != nil {
 		return nil, err
