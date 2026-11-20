@@ -3,7 +3,7 @@ import { useMemo } from "react";
 
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import { collectCanvasStoryboardTargets } from "@/components/canvas/canvas-context-menu-storyboard";
-import { batchDownloadCanvasMediaNodes, collectDownloadableMediaNodes } from "@/lib/canvas/canvas-batch-download";
+import { collectDownloadableMediaNodes, runCanvasBatchDownloadWithFeedback } from "@/lib/canvas/canvas-batch-download";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { applyAssetsToStoryboardRows, collectSelectedBindableAssetNodes } from "@/lib/canvas/canvas-storyboard-assets";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type CanvasWorkspaceMode, type ContextMenuState, type Position, type StoryboardRow } from "@/types/canvas";
@@ -84,19 +84,7 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
     if (!menu) return null;
     const downloadableSelectionCount = props.downloadableSelectionCount ?? downloadableNodes.length;
     const handleBatchDownloadSelection = props.onBatchDownloadSelection ?? (() => {
-        if (!downloadableNodes.length) {
-            message.warning("所选节点中没有可下载的媒体素材");
-            return;
-        }
-        void batchDownloadCanvasMediaNodes(downloadableNodes).then(({ downloaded, failed }) => {
-            if (failed === 0) {
-                message.success(`已批量下载 ${downloaded} 个素材`);
-            } else if (downloaded > 0) {
-                message.warning(`已下载 ${downloaded} 个素材，${failed} 个下载失败`);
-            } else {
-                message.warning("素材下载失败，请稍后重试");
-            }
-        });
+        void runCanvasBatchDownloadWithFeedback(downloadableNodes, message);
     });
     const menuPosition = () => menu.type === "canvas" ? menu.position : screenToCanvas(menu.x, menu.y);
     return (

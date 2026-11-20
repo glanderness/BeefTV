@@ -1,7 +1,7 @@
-import { saveAs } from "file-saver";
 import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
+import { downloadBrowserMediaSafely } from "@/services/desktop-media-save";
 
 export const AUTO_DOWNLOAD_GENERATED_MEDIA_KEY = "beeftv.autoDownloadGeneratedMedia";
 export const AUTO_DOWNLOADED_TASK_IDS_SESSION_KEY = "beeftv.autoDownloadedTaskIds";
@@ -112,10 +112,7 @@ function unmarkTaskAutoDownloaded(taskId: string): void {
 }
 
 async function silentBrowserAutoDownload(options: { fileName: string; resourceId?: string; browserUrl?: string }): Promise<"saved"> {
-    const browserUrl = options.browserUrl?.trim();
-    if (!browserUrl) throw new Error("没有可自动下载的文件地址");
-    saveAs(browserUrl, sanitizeDownloadFileName(options.fileName));
-    return "saved";
+    return downloadBrowserMediaSafely(options);
 }
 
 export async function triggerAutoDownloadForCompletedTask(input: {

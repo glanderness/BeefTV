@@ -79,6 +79,8 @@ export type DesktopRuntimeBinding = {
     RevealDiagnosticBundle?: () => Promise<void>;
     SaveEagleMedia?: (fileName: string, baseURL: string, itemID: string) => Promise<boolean>;
     SaveOwnedMedia?: (fileName: string, resourceID: string) => Promise<boolean>;
+    ChooseOwnedMediaBatchDirectory?: () => Promise<string>;
+    SaveOwnedMediaBatch?: (items: DesktopOwnedMediaBatchItem[], dirToken: string) => Promise<DesktopOwnedMediaBatchResult>;
     SaveOwnedArtifact?: (fileName: string, data: string) => Promise<boolean>;
     SaveOwnedArchive?: (fileName: string, entries: Array<{ name: string; resourceId?: string; data?: string }>) => Promise<boolean>;
     UpdateStatus?: () => Promise<DesktopUpdateState>;
@@ -93,6 +95,9 @@ export type DesktopRuntimeBinding = {
 };
 
 export type DesktopStorageUsage = { dataDir: string; usedBytes: number; freeBytes: number; previousDir?: string; previousBytes?: number };
+export type DesktopOwnedMediaBatchItem = { fileName: string; resourceId?: string; data?: string };
+export type DesktopOwnedMediaBatchFailure = { fileName: string; reason: string };
+export type DesktopOwnedMediaBatchResult = { saved: number; failed: number; cancelled?: boolean; directory?: string; failures?: DesktopOwnedMediaBatchFailure[] };
 export type DesktopMigrationProgress = { phase: "preparing" | "transferring" | "processing" | "done"; detail: string; loadedBytes: number; totalBytes: number; completedFiles: number; totalFiles: number };
 export type DepthComponentState = {
     status: "not_installed" | "downloading" | "installing" | "ready" | "paused" | "error" | "unsupported";

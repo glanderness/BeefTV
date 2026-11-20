@@ -19,7 +19,7 @@ import {
     X,
 } from "lucide-react";
 
-import { batchDownloadCanvasMediaNodes, collectDownloadableMediaNodes } from "@/lib/canvas/canvas-batch-download";
+import { collectDownloadableMediaNodes, runCanvasBatchDownloadWithFeedback, useCanvasBatchDownloadPending } from "@/lib/canvas/canvas-batch-download";
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -55,7 +55,7 @@ export function CanvasFolderBrowserModal({
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editingNodeTitle, setEditingNodeTitle] = useState("");
     const [query, setQuery] = useState("");
-    const [downloading, setDownloading] = useState(false);
+    const downloading = useCanvasBatchDownloadPending();
     const overlayRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
@@ -125,15 +125,7 @@ export function CanvasFolderBrowserModal({
 
     const handleDownloadAll = async () => {
         if (!downloadableNodes.length || downloading) return;
-        setDownloading(true);
-        try {
-            const { downloaded, failed } = await batchDownloadCanvasMediaNodes(downloadableNodes);
-            if (failed === 0) message.success(`已批量下载 ${downloaded} 个素材`);
-            else if (downloaded > 0) message.warning(`已下载 ${downloaded} 个素材，${failed} 个下载失败`);
-            else message.warning("素材下载失败，请稍后重试");
-        } finally {
-            setDownloading(false);
-        }
+        await runCanvasBatchDownloadWithFeedback(downloadableNodes, message);
     };
 
     const handleBackdropClick = (event: React.MouseEvent<HTMLElement>) => {
