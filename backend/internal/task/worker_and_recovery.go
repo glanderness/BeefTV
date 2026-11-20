@@ -57,11 +57,28 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 		return err
 	}
 	var last error
+	anyRefused := false
+	anyTransientSkip := false
+	canvasTargets := CanvasBindTargets(task, intents)
+	msgTargets := MessageBindTargets(task, intents)
 	if missing {
 		if HasCanvasBindMarker(task.RecoveryOutcome) {
 			last = deps.Repo.UpdateCanvasBindRecovery(task.UserID, task.ID, nil)
 		}
+		for _, canvasID := range canvasIDs {
+			_ = deps.Repo.UpsertTaskEffect(model.TaskEffect{
+				UserID:   task.UserID,
+				TaskID:   task.ID,
+				Kind:     model.TaskEffectKindCanvasMissing,
+				CanvasID: canvasID,
+				NodeID:   canvasID,
+				Status:   model.TaskEffectStatusPending,
+				Reason:   "canvas_missing",
+			})
+		}
+		_ = deps.Repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindTaskBindSettled)
 	} else {
+		_ = deps.Repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindCanvasMissing)
 		if len(canvasIDs) > 0 && deps.PrepareSeedream != nil {
 			if err := deps.PrepareSeedream(task); err != nil {
 				return err
@@ -72,12 +89,19 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 				last = err
 			} else if HasWorkflowOutputIntent(task.InputJSON) && deps.DeliverAndIntents != nil {
 				intents = deps.DeliverAndIntents(task)
+				canvasTargets = CanvasBindTargets(task, intents)
+				msgTargets = MessageBindTargets(task, intents)
 			}
 		}
 		if len(canvasIDs) > 0 && deps.HasWorkspaceOps {
 			pass := NewCanvasBindPass(task.RecoveryOutcome)
-			for _, target := range CanvasBindTargets(task, intents) {
+			for _, target := range canvasTargets {
+				if settled, _ := deps.Repo.IsTaskEffectSettled(task.ID, model.TaskEffectKindCanvasBind, target.NodeID, target.OutputIndex, "", ""); settled {
+					pass.Bound(target.NodeID, target.OutputIndex)
+					continue
+				}
 				if pass.Skip(target.NodeID, target.OutputIndex, CanvasRevisionFromRepo(deps.Repo, task)) {
+					anyRefused = true
 					continue
 				}
 				if err := deps.ExecuteCanvasBind(task, target.NodeID, target.OutputIndex); err != nil {
@@ -85,13 +109,28 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 					if deps.Refusal != nil {
 						reason, details = deps.Refusal(err)
 					}
-					if pass.Refused(target.NodeID, target.OutputIndex, reason, details) || SkippableCanvasBindError(err, deps.Refusal) {
+					if pass.Refused(target.NodeID, target.OutputIndex, reason, details) {
+						anyRefused = true
+						if marker, ok := NewCanvasBindRefusal(target.NodeID, target.OutputIndex, reason, details); ok {
+							_ = deps.Repo.MarkTaskEffectRefused(task.UserID, task.ID, model.TaskEffectKindCanvasBind, task.ProjectID, target.NodeID, target.OutputIndex, marker.Reason, marker.Revision)
+						}
+						continue
+					}
+					if SkippableCanvasBindError(err, deps.Refusal) {
+						anyRefused = true
+						if isPermanentSkippableBindReason(reason) {
+							_ = deps.Repo.MarkTaskEffectRefused(task.UserID, task.ID, model.TaskEffectKindCanvasBind, task.ProjectID, target.NodeID, target.OutputIndex, reason, 0)
+						} else if reason != "" {
+							anyTransientSkip = true
+							_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, reason)
+						}
 						continue
 					}
 					last = err
 					continue
 				}
 				pass.Bound(target.NodeID, target.OutputIndex)
+				_ = deps.Repo.MarkTaskEffectSettled(task.UserID, task.ID, model.TaskEffectKindCanvasBind, task.ProjectID, target.NodeID, target.OutputIndex, "", "")
 			}
 			if marker, changed, err := pass.Finish(); err != nil {
 				last = err
@@ -103,14 +142,40 @@ func RecoverCanvasTaskBindings(deps CanvasBindDeps, task model.Task) error {
 		}
 	}
 	if deps.HasWorkspaceOps && deps.ExecuteMessageBind != nil {
-		for _, target := range MessageBindTargets(task, intents) {
-			if err := deps.ExecuteMessageBind(task, target.ConversationID, target.MessageID, target.OutputIndex); err != nil {
-				last = err
+		for _, target := range msgTargets {
+			if terminal, _ := deps.Repo.IsTaskEffectTerminal(task.ID, model.TaskEffectKindMessageAttach, "", target.OutputIndex, target.ConversationID, target.MessageID); terminal {
+				continue
 			}
+			if err := deps.ExecuteMessageBind(task, target.ConversationID, target.MessageID, target.OutputIndex); err != nil {
+				if SkippableCanvasBindError(err, deps.Refusal) {
+					anyRefused = true
+					reason := ""
+					if deps.Refusal != nil {
+						reason, _ = deps.Refusal(err)
+					}
+					if isPermanentSkippableBindReason(reason) {
+						_ = deps.Repo.MarkMessageEffectRefused(task.UserID, task.ID, target.ConversationID, target.MessageID, target.OutputIndex, reason)
+					} else if reason != "" {
+						anyTransientSkip = true
+						_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, reason)
+					}
+					continue
+				}
+				last = err
+				continue
+			}
+			_ = deps.Repo.MarkTaskEffectSettled(task.UserID, task.ID, model.TaskEffectKindMessageAttach, "", "", target.OutputIndex, target.ConversationID, target.MessageID)
 		}
 	}
 	if projectID := strings.TrimSpace(task.ProjectID); projectID != "" && deps.ReconcileTurnaround != nil {
 		deps.ReconcileTurnaround(task.UserID, projectID)
+	}
+	if last != nil {
+		_ = deps.Repo.RecordTaskEffectAttemptFailure(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, last.Error())
+	} else if !missing && !anyRefused && (len(canvasIDs) == 0 || deps.HasWorkspaceOps) && (len(intents) > 0 || len(canvasTargets) > 0 || len(msgTargets) > 0 || TargetBindingFromInput(task.InputJSON).Empty()) {
+		_ = deps.Repo.MarkTaskEffectSettled(task.UserID, task.ID, model.TaskEffectKindTaskBindSettled, task.ProjectID, "", 0, "", "")
+	} else if !missing && anyRefused && !anyTransientSkip {
+		_ = deps.Repo.ClearPendingTaskEffectsByKind(task.ID, model.TaskEffectKindTaskBindSettled)
 	}
 	return last
 }
@@ -132,7 +197,7 @@ func RecoverPendingCanvasBindings(
 	cursorMu.Lock()
 	currentAfter := *afterID
 	cursorMu.Unlock()
-	tasks, err := repo.SucceededTasksForDelivery(currentAfter, limit)
+	tasks, err := repo.PendingCanvasBindTasks(currentAfter, limit)
 	if err != nil {
 		if BindInfrastructureUnavailable(err) {
 			return nil
@@ -140,7 +205,7 @@ func RecoverPendingCanvasBindings(
 		return err
 	}
 	if len(tasks) == 0 && currentAfter != "" {
-		tasks, err = repo.SucceededTasksForDelivery("", limit)
+		tasks, err = repo.PendingCanvasBindTasks("", limit)
 		if err != nil {
 			if BindInfrastructureUnavailable(err) {
 				return nil
@@ -162,6 +227,18 @@ func RecoverPendingCanvasBindings(
 		}
 	}
 	return last
+}
+
+func isPermanentSkippableBindReason(reason string) bool {
+	switch reason {
+	case "conversation_deleted", "message_deleted", "message_mismatch", "conversation_mismatch",
+		"message_task_mismatch", "task_not_found", "task_foreign",
+		"resource_foreign", "asset_foreign", "unsupported_result_shape",
+		"effect_identity_mismatch":
+		return true
+	default:
+		return false
+	}
 }
 
 func SkippableCanvasBindError(err error, refusal func(error) (string, map[string]any)) bool {

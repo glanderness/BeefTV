@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ImgHTMLAttributes, type ReactNode, type RefObject } from "react";
 
 import { isProtectedResourceFileUrl, ownedResourceStorageKey, resourceIdFromStorageKey } from "@/services/api/resources";
+import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
 import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { resolveImageUrl } from "@/services/image-storage";
 
 type CachedResourceImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
     storageKey?: string;
     src?: string;
-    previewSize?: 128 | 512 | 1024 | 2048;
+    previewSize?: 128 | 256 | 512 | 1024 | 2048;
     observerRootRef?: RefObject<HTMLElement | null>;
     fallback?: ReactNode;
     loadingFallback?: ReactNode;
@@ -25,9 +26,14 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
     const localImageResource = Boolean(storageKey && !remoteResource);
     const storageBackedImage = remoteResource || localImageResource;
     const targetRef = useRef<HTMLSpanElement>(null);
-    const syncPreviewUrl = remoteResource && storageKey ? peekCachedResourceObjectUrl(storageKey, previewSize) : "";
+    const resourceId = remoteResource && storageKey ? resourceIdFromStorageKey(storageKey) : "";
+    const directDesktopAsset = Boolean(resourceId && canUseSameOriginResourceAsset());
+    const syncPreviewUrl = remoteResource && storageKey && !directDesktopAsset
+        ? peekCachedResourceObjectUrl(storageKey, previewSize)
+        : "";
+    const initialDirectUrl = eager && directDesktopAsset ? resourcePreviewAssetUrl(resourceId, previewSize) : "";
     const [nearViewport, setNearViewport] = useState(eager || !remoteResource || Boolean(syncPreviewUrl));
-    const [cachedSrc, setCachedSrc] = useState(syncPreviewUrl || (storageBackedImage ? "" : safeFallbackSrc));
+    const [cachedSrc, setCachedSrc] = useState(initialDirectUrl || syncPreviewUrl || (storageBackedImage ? "" : safeFallbackSrc));
     const [cacheFailed, setCacheFailed] = useState(false);
 
     useEffect(() => {
@@ -78,6 +84,19 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
         setCacheFailed(false);
 
         if (remoteResource && storageKey) {
+            if (canUseSameOriginResourceAsset()) {
+                if (!nearViewport) {
+                    setCachedSrc("");
+                    return () => {
+                        cancelled = true;
+                    };
+                }
+                const resourceId = resourceIdFromStorageKey(storageKey);
+                setCachedSrc(resourcePreviewAssetUrl(resourceId, previewSize));
+                return () => {
+                    cancelled = true;
+                };
+            }
             const syncHit = peekCachedResourceObjectUrl(storageKey, previewSize);
             if (syncHit) {
                 setCachedSrc(syncHit);

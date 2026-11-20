@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 30
+const CurrentSchemaVersion int64 = 31
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -58,7 +58,7 @@ func LocalModels() []any {
 		&model.Shot{}, &model.ShotRevision{}, &model.ShotArtifact{}, &model.ShotAssetReference{},
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
-		&model.AssistantTurn{}, &model.MCPCall{},
+		&model.AssistantTurn{}, &model.MCPCall{}, &model.TaskEffect{},
 		&model.AssistantContinuation{},
 		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
@@ -151,6 +151,60 @@ func canonicalLocalMigrations() []localMigration {
 				return err
 			}
 			return ensureSQLiteColumn(tx, "image_submissions", "settled_quota", "INTEGER")
+		}},
+		{version: 31, name: "task-effects-outbox", apply: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.TaskEffect{}); err != nil {
+				return err
+			}
+			// Backfill settled baseline ONLY for historical succeeded tasks that
+			// finished well before upgrade (older than 1h), are not downloading/
+			// paused/timed out, and do not carry an active canvas_bind refusal
+			// waiting for a future canvas revision. This avoids an upgrade replay
+			// storm without swallowing active retries or revision-watched binds.
+			cutoff := time.Now().Add(-1 * time.Hour)
+			bindMarkerPattern := model.CanvasBindRecoveryPrefix + "%"
+			if err := tx.Exec(`INSERT OR IGNORE INTO task_effects (
+				id, user_id, task_id, kind, canvas_id, node_id, output_index,
+				conversation_id, message_id, status, reason, refused_revision,
+				attempts, next_attempt_at, last_error, created_at, updated_at
+			)
+			SELECT
+				'v31-del-' || id, user_id, id, ?, COALESCE(project_id, ''), '', 0,
+				'', '', ?, 'v31_migration_baseline', 0,
+				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			FROM tasks
+			WHERE status = ?
+			  AND COALESCE(completed_at, updated_at, created_at) IS NOT NULL
+			  AND COALESCE(completed_at, updated_at, created_at) < ?
+			  AND COALESCE(stage, '') NOT IN (?, ?, ?)
+			  AND COALESCE(recovery_outcome, '') NOT LIKE ?`,
+				model.TaskEffectKindDeliverySettled, model.TaskEffectStatusSettled,
+				model.TaskStatusSucceeded, cutoff,
+				model.TaskStageFetchingResult, model.TaskStageDeliveryPaused, model.TaskStageDeliveryTimedOut,
+				bindMarkerPattern,
+			).Error; err != nil {
+				return err
+			}
+			return tx.Exec(`INSERT OR IGNORE INTO task_effects (
+				id, user_id, task_id, kind, canvas_id, node_id, output_index,
+				conversation_id, message_id, status, reason, refused_revision,
+				attempts, next_attempt_at, last_error, created_at, updated_at
+			)
+			SELECT
+				'v31-bind-' || id, user_id, id, ?, COALESCE(project_id, ''), '', 0,
+				'', '', ?, 'v31_migration_baseline', 0,
+				0, CURRENT_TIMESTAMP, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			FROM tasks
+			WHERE status = ?
+			  AND COALESCE(completed_at, updated_at, created_at) IS NOT NULL
+			  AND COALESCE(completed_at, updated_at, created_at) < ?
+			  AND COALESCE(stage, '') NOT IN (?, ?, ?)
+			  AND COALESCE(recovery_outcome, '') NOT LIKE ?`,
+				model.TaskEffectKindTaskBindSettled, model.TaskEffectStatusSettled,
+				model.TaskStatusSucceeded, cutoff,
+				model.TaskStageFetchingResult, model.TaskStageDeliveryPaused, model.TaskStageDeliveryTimedOut,
+				bindMarkerPattern,
+			).Error
 		}},
 	}
 }
@@ -466,6 +520,9 @@ func RequireLocalSchema(db *gorm.DB) error {
 	if version >= 13 && !db.Migrator().HasTable(&model.UserUploadReservation{}) {
 		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 	}
+	if version >= 31 && !db.Migrator().HasTable(&model.TaskEffect{}) {
+		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
+	}
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
 	}
@@ -515,6 +572,9 @@ func requireReconciledSchema(db *gorm.DB) error {
 	models := []any{&model.ImageSubmission{}, &model.AgentOpRecord{}}
 	if version >= 30 {
 		models = append(models, &model.MCPCall{})
+	}
+	if version >= 31 {
+		models = append(models, &model.TaskEffect{})
 	}
 	for _, value := range models {
 		stmt := &gorm.Statement{DB: db}
@@ -606,6 +666,23 @@ func requireReconciledSchema(db *gorm.DB) error {
 	if version >= 24 {
 		if !db.Migrator().HasTable(&model.CanvasWorkflowRevision{}) || !db.Migrator().HasColumn(&model.CanvasWorkflow{}, "revision") || !db.Migrator().HasColumn(&model.CanvasWorkflowRun{}, "template_revision") {
 			return fmt.Errorf("本地工作流版本结构缺失，请启用自动迁移")
+		}
+	}
+	if version >= 31 {
+		if !db.Migrator().HasTable(&model.TaskEffect{}) {
+			return fmt.Errorf("本地任务副作用表缺失，请启用自动迁移")
+		}
+		validIdentity, err := matchesSQLiteIndex(db, sqliteIndexContract{
+			table:   "task_effects",
+			name:    "idx_task_effects_identity",
+			columns: []string{"task_id", "kind", "node_id", "output_index", "conversation_id", "message_id"},
+			unique:  true,
+		})
+		if err != nil {
+			return err
+		}
+		if !validIdentity {
+			return fmt.Errorf("本地任务副作用唯一索引 idx_task_effects_identity 缺失或定义不完整")
 		}
 	}
 	return nil

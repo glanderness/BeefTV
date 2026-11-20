@@ -1,167 +1,218 @@
-import { RESOURCE_BLOB_META_STORE_NAME, RESOURCE_BLOBS_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
+import { purgeLegacyResourceBlobIndexedDB } from "@/lib/diagnostics-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { getResourceBlob, resourceIdFromStorageKey } from "@/services/api/resources";
 import { createCanvasImagePreviewBlob } from "@/lib/canvas/canvas-image-preview-blob";
+import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
 
-type ResourceCacheMeta = {
+export { purgeLegacyResourceBlobIndexedDB };
+
+/**
+ * Bounded in-memory LRU cache for callers that genuinely need raw Blob bytes
+ * (reference uploads, browser-only zip exports, or fallback when direct
+ * same-origin asset serving is unavailable).
+ *
+ * Backend-hosted resources are NEVER mirrored into IndexedDB: the local Go
+ * backend (`data/resources/` + `data/cache/previews/`) is the single source
+ * of truth on disk. Browser-local mode (`image_files` / `media_files`) is
+ * untouched and lives in `local-image-repository` / `local-media-repository`.
+ */
+type MemoryEntry = {
     key: string;
-    userScope: string;
-    resourceId: string;
-    version: string;
-    size: number;
-    mimeType: string;
-    lastAccessedAt: number;
+    blob: Blob;
+    bytes: number;
+    url?: string;
 };
 
-const blobStore = localForageInstance(RESOURCE_BLOBS_STORE_NAME);
-const metaStore = localForageInstance(RESOURCE_BLOB_META_STORE_NAME);
-const objectUrls = new Map<string, string>();
-const sessionBlobs = new Map<string, Blob>();
-const inFlight = new Map<string, Promise<string>>();
-const persistedReads = new Map<string, Promise<Blob | null>>();
-const scheduled = new Set<string>();
-const cacheMetaTouchWarnings = new Set<string>();
-const metaTouchedAt = new Map<string, number>();
-const downloadQueue: Array<{ key?: string; run: () => void }> = [];
-let activeDownloads = 0;
-let persistQueue: Promise<void> = Promise.resolve();
-let imagePreviewQueue: Promise<unknown> = Promise.resolve();
-const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
-const FALLBACK_CACHE_BYTES = 512 * 1024 * 1024;
-const MIN_CACHE_BYTES = 64 * 1024 * 1024;
-const MAX_CACHE_ENTRIES = 500;
-const TOUCH_INTERVAL_MS = 10 * 60 * 1000;
-const BUDGET_REFRESH_MS = 5 * 60 * 1000;
-// The local HTTP/1 server shares the browser's connection pool with task APIs.
-// Leave connections available for submitting, cancelling and querying tasks.
+const MAX_MEMORY_BYTES = 128 * 1024 * 1024;
+const MAX_MEMORY_ENTRIES = 128;
 const MAX_CONCURRENT_DOWNLOADS = 4;
 
+const memoryCache = new Map<string, MemoryEntry>();
+let memoryBytes = 0;
+
+const inFlight = new Map<string, Promise<string>>();
+const downloadQueue: Array<{ key?: string; run: () => void }> = [];
+let activeDownloads = 0;
+let imagePreviewQueue: Promise<unknown> = Promise.resolve();
+
+function cacheKeyFor(storageKey: string, version = "file") {
+    const resourceId = resourceIdFromStorageKey(storageKey);
+    if (!resourceId) return "";
+    return `${getActiveUserScope()}:${resourceId}:${version}`;
+}
+
+function touchEntry(key: string): MemoryEntry | undefined {
+    const entry = memoryCache.get(key);
+    if (!entry) return undefined;
+    memoryCache.delete(key);
+    memoryCache.set(key, entry);
+    return entry;
+}
+
+function deleteEntry(key: string) {
+    const entry = memoryCache.get(key);
+    if (!entry) return;
+    memoryCache.delete(key);
+    memoryBytes = Math.max(0, memoryBytes - entry.bytes);
+    if (entry.url) {
+        URL.revokeObjectURL(entry.url);
+    }
+}
+
+function storeEntry(key: string, blob: Blob, replaceUrl = false): string {
+    const existing = memoryCache.get(key);
+    if (existing) {
+        if (!replaceUrl && existing.blob === blob && existing.url) {
+            touchEntry(key);
+            return existing.url;
+        }
+        deleteEntry(key);
+    }
+    const bytes = Math.max(0, blob.size || 0);
+    // Do not evict the whole cache for a single giant blob (> half budget);
+    // return an ephemeral object URL without retaining the blob in LRU memory.
+    if (bytes > MAX_MEMORY_BYTES / 2) {
+        return URL.createObjectURL(blob);
+    }
+    evictForBudget(bytes);
+    const url = URL.createObjectURL(blob);
+    memoryCache.set(key, { key, blob, bytes, url });
+    memoryBytes += bytes;
+    return url;
+}
+
+function evictForBudget(incomingBytes: number) {
+    while (memoryCache.size > 0 && (memoryBytes + incomingBytes > MAX_MEMORY_BYTES || memoryCache.size >= MAX_MEMORY_ENTRIES)) {
+        const oldestKey = memoryCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        deleteEntry(oldestKey);
+    }
+}
+
+export function clearResourceMemoryCache() {
+    for (const entry of memoryCache.values()) {
+        if (entry.url) URL.revokeObjectURL(entry.url);
+    }
+    memoryCache.clear();
+    memoryBytes = 0;
+}
+
+export function resourceMemoryCacheStats() {
+    return { entries: memoryCache.size, bytes: memoryBytes, maxBytes: MAX_MEMORY_BYTES };
+}
+
+export function primeResourceImagePreviewForTests(storageKey: string, maxSize: number, blob: Blob) {
+    const key = cacheKeyFor(storageKey, `preview-${maxSize}`);
+    if (!key) return "";
+    return storeEntry(key, blob, true);
+}
+
 export async function getCachedResourceObjectUrl(storageKey: string) {
-    const target = cacheTarget(storageKey, getActiveUserScope());
-    if (!target) return "";
-    return readCachedObjectUrl(target);
+    const key = cacheKeyFor(storageKey);
+    if (!key) return "";
+    const entry = touchEntry(key);
+    if (!entry) return "";
+    if (!entry.url) entry.url = URL.createObjectURL(entry.blob);
+    return entry.url;
 }
 
 export async function cacheResourceImagePreviewObjectUrl(storageKey: string, maxSize: number, reload = false) {
-    const originalTarget = cacheTarget(storageKey, getActiveUserScope());
-    if (!originalTarget || ![128, 512, 1024, 2048].includes(maxSize)) return "";
-    const version = `canvas-preview-v2-p3-${maxSize}`;
-    const target = { ...originalTarget, version, key: `${getActiveUserScope()}:${originalTarget.resourceId}:${version}` };
-    if (reload) await cacheResourceObjectUrl(storageKey, true);
-    const cached = reload ? "" : await readCachedObjectUrl(target);
-    if (cached) return cached;
-    const requestKey = target.key;
-    const pending = inFlight.get(requestKey);
+    const resourceId = resourceIdFromStorageKey(storageKey);
+    if (!resourceId) return "";
+    if (canUseSameOriginResourceAsset()) {
+        return resourcePreviewAssetUrl(resourceId, maxSize, "preserve", reload ? Date.now() : undefined);
+    }
+    if (![128, 256, 512, 1024, 2048].includes(maxSize)) return "";
+    const key = cacheKeyFor(storageKey, `preview-${maxSize}`);
+    if (!reload) {
+        const hit = touchEntry(key);
+        if (hit?.url) return hit.url;
+    }
+    const pending = inFlight.get(key);
     if (pending) return pending;
-    // Decode one original at a time, sharing work across duplicated nodes, and
-    // yield between items so zooming into many cards does not block input frames.
-    const task = imagePreviewQueue.catch(() => undefined).then(async () => {
-        if (typeof window !== "undefined") {
-            await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-        }
-        const original = await getCachedResourceBlob(storageKey);
-        if (!original) return "";
-        sessionBlobs.set(originalTarget.key, original);
-        const preview = await createCanvasImagePreviewBlob(original, maxSize);
-        if (preview === original) return objectUrl(originalTarget.key, original);
-        sessionBlobs.set(target.key, preview);
-        void enqueuePersist(target, preview);
-        const previous = objectUrls.get(target.key);
-        if (reload) objectUrls.delete(target.key);
-        const url = objectUrl(target.key, preview);
-        if (reload && previous) URL.revokeObjectURL(previous);
-        return url;
-    }).catch((error) => {
-        console.warn("图片预览生成失败，保留原图显示", { resourceId: target.resourceId, error });
-        return cacheResourceObjectUrl(storageKey);
-    }).finally(() => inFlight.delete(requestKey));
-    inFlight.set(requestKey, task);
+
+    const task = imagePreviewQueue
+        .catch(() => undefined)
+        .then(async () => {
+            if (typeof window !== "undefined") {
+                await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+            }
+            const original = await getCachedResourceBlob(storageKey, false);
+            if (!original) return "";
+            const preview = await createCanvasImagePreviewBlob(original, maxSize);
+            if (preview === original) return storeEntry(cacheKeyFor(storageKey), original, reload);
+            return storeEntry(key, preview, reload);
+        })
+        .catch((error) => {
+            console.warn("图片预览生成失败，保留原图显示", { resourceId, error });
+            return cacheResourceObjectUrl(storageKey, reload);
+        })
+        .finally(() => inFlight.delete(key));
+    inFlight.set(key, task);
     imagePreviewQueue = task;
     return task;
 }
 
-/** 同步读取本会话内存中的 Blob URL，命中时节点首帧即可上屏，不必等 IndexedDB 异步读取。 */
+/** 同步读取本会话内存中的 Blob URL，仅在真实内存命中时返回（不伪装未加载的直连预览为已缓存）。 */
 export function peekCachedResourceObjectUrl(storageKey: string, previewSize?: number) {
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return "";
-    const userScope = getActiveUserScope();
-    if (previewSize && [128, 512, 1024, 2048].includes(previewSize)) {
-        return objectUrls.get(`${userScope}:${resourceId}:canvas-preview-v2-p3-${previewSize}`) || "";
+    if (previewSize && [128, 256, 512, 1024, 2048].includes(previewSize)) {
+        return memoryCache.get(cacheKeyFor(storageKey, `preview-${previewSize}`))?.url || "";
     }
-    return objectUrls.get(`${userScope}:${resourceId}:file`) || "";
+    return memoryCache.get(cacheKeyFor(storageKey))?.url || "";
 }
 
-/** 放大退出概览层时先复用内存里已有的低档位缩略图占位，后台再平滑切到高档位清晰图。 */
 export function peekFallbackResourceImagePreviewUrl(storageKey: string, previewSize?: number) {
     const exact = peekCachedResourceObjectUrl(storageKey, previewSize);
     if (exact) return exact;
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return "";
-    const userScope = getActiveUserScope();
     const maxCandidate = previewSize || 2048;
-    for (const tier of [2048, 1024, 512, 128]) {
+    for (const tier of [2048, 1024, 512, 256, 128]) {
         if (tier >= maxCandidate) continue;
-        const candidate = objectUrls.get(`${userScope}:${resourceId}:canvas-preview-v2-p3-${tier}`);
-        if (candidate) return candidate;
+        const hit = memoryCache.get(cacheKeyFor(storageKey, `preview-${tier}`));
+        if (hit?.url) return hit.url;
     }
     return "";
 }
 
 export async function cacheResourceObjectUrl(storageKey: string, reload = false, priority = false) {
-    const target = cacheTarget(storageKey, getActiveUserScope());
-    if (!target) return "";
-    const requestKey = target.key;
+    const key = cacheKeyFor(storageKey);
+    if (!key) return "";
     if (reload) {
-        // Explicit image decode recovery must bypass both memory and IndexedDB.
-        await inFlight.get(requestKey)?.catch(() => undefined);
-        const blob = await withDownloadSlot(() => downloadResourceBlob(storageKey, target), priority);
+        await inFlight.get(key)?.catch(() => undefined);
+        const blob = await withDownloadSlot(() => getResourceBlob(storageKey), priority);
         if (!blob) return "";
-        const oldUrl = objectUrls.get(target.key);
-        objectUrls.delete(target.key);
-        const url = objectUrl(target.key, blob);
-        if (oldUrl) URL.revokeObjectURL(oldUrl);
-        return url;
+        return storeEntry(key, blob, true);
     }
-    const cached = await readCachedObjectUrl(target);
-    if (cached) return cached;
-    const pending = inFlight.get(requestKey);
+    const hit = touchEntry(key);
+    if (hit?.url) return hit.url;
+
+    const pending = inFlight.get(key);
     if (pending) {
         if (priority) {
-            const index = downloadQueue.findIndex((job) => job.key === requestKey);
+            const index = downloadQueue.findIndex((job) => job.key === key);
             if (index > 0) downloadQueue.unshift(...downloadQueue.splice(index, 1));
         }
         return pending;
     }
 
-    const task = withDownloadSlot(() => downloadAndCacheResource(storageKey, target), priority, requestKey).finally(() => inFlight.delete(requestKey));
-    inFlight.set(requestKey, task);
+    const task = withDownloadSlot(async () => {
+        const blob = await getResourceBlob(storageKey);
+        if (!blob) return "";
+        return storeEntry(key, blob);
+    }, priority, key).finally(() => inFlight.delete(key));
+    inFlight.set(key, task);
     return task;
 }
 
 /**
- * 播放器先使用支持 Range 的资源 URL 起播；确认用户实际播放后，再延迟下载完整 Blob。
- * 这样不会让 IndexedDB 缓存阻塞首帧，同时后续打开可直接复用本地 Object URL。
+ * Retired: video/audio streams directly over loopback HTTP Range tickets
+ * instead of mirroring multi-hundred-MB files into browser memory or IndexedDB.
  */
-export function scheduleResourceBlobCache(storageKey: string, delayMs = 4_000) {
-    const requestKey = `${getActiveUserScope()}:${storageKey}`;
-    if (!resourceIdFromStorageKey(storageKey) || scheduled.has(requestKey)) return;
-    scheduled.add(requestKey);
-    const run = () => {
-        void Promise.resolve().then(() => {
-            return cacheResourceObjectUrl(storageKey);
-        })
-            .catch((error) => {
-                // 这是播放后的后台缓存优化，不应让播放器失败；但下载/持久化异常必须可观测。
-                console.warn("后台缓存资源 Blob 失败", { storageKey, error });
-                return "";
-            })
-            .finally(() => scheduled.delete(requestKey));
-    };
-    if (typeof window === "undefined") {
-        run();
-        return;
-    }
-    window.setTimeout(run, Math.max(0, delayMs));
+export function scheduleResourceBlobCache(_storageKey: string, _delayMs = 4_000) {
+    // Intentionally no-op.
 }
 
 function withDownloadSlot<T>(task: () => Promise<T>, priority = false, key?: string) {
@@ -184,234 +235,36 @@ function runDownloadQueue() {
 }
 
 export async function primeResourceBlobCache(storageKey: string, blob: Blob) {
-    const target = cacheTarget(storageKey, getActiveUserScope());
-    if (!target) return "";
-    sessionBlobs.set(target.key, blob);
-    const url = objectUrl(target.key, blob);
-    if (blob.size <= MAX_CACHE_BYTES) void enqueuePersist(target, blob);
-    return url;
+    const key = cacheKeyFor(storageKey);
+    if (!key) return "";
+    // Do not pin huge videos in memory right after upload; Go disk storage serves them via Range.
+    if (blob.size > 16 * 1024 * 1024) return "";
+    return storeEntry(key, blob);
 }
 
-export async function getCachedResourceBlob(storageKey: string) {
-    const target = cacheTarget(storageKey, getActiveUserScope());
-    if (!target) return null;
-    const sessionBlob = sessionBlobs.get(target.key);
-    if (sessionBlob) return sessionBlob;
-    const cached = await readPersistedBlob(target);
-    if (cached) {
-        touchCacheMetaSafely(target);
-        return cached;
-    }
-    await cacheResourceObjectUrl(storageKey, false, true);
-    const result = sessionBlobs.get(target.key) || await readPersistedBlob(target);
-    return result;
-}
-
-async function downloadAndCacheResource(storageKey: string, target: ResourceCacheMeta) {
-    const blob = await downloadResourceBlob(storageKey, target);
-    if (!blob) return "";
-    return objectUrl(target.key, blob);
-}
-
-async function downloadResourceBlob(storageKey: string, target: ResourceCacheMeta) {
-    const blob = await getResourceBlob(storageKey);
-    if (!blob) return null;
-    sessionBlobs.set(target.key, blob);
-    if (blob.size <= MAX_CACHE_BYTES) void enqueuePersist(target, blob);
-    return blob;
-}
-
-function enqueuePersist(target: ResourceCacheMeta, blob: Blob) {
-    const task = persistQueue.then(() => persistBlob(target, blob));
-    // IndexedDB 缓存是读性能优化，不得反向判定服务端资源上传失败；但失败必须可观测，
-    // 并把队列恢复为 fulfilled，避免一个坏条目永久阻断后续缓存写入。
-    const observed = task.catch((error) => {
-        console.warn("媒体缓存持久化失败，当前会话仍可继续读取", { resourceId: target.resourceId, version: target.version, error });
-    });
-    persistQueue = observed;
-    return observed;
-}
-
-async function persistBlob(target: ResourceCacheMeta, blob: Blob) {
-    // 不尝试写入超过当前缓存预算的单个媒体，避免触发浏览器配额异常和无效的全量淘汰。
-    if (blob.size > (await cacheBudget())) return;
-    await evictFor(blob.size, target.key);
-
-    const write = async () => {
-        await blobStore.setItem(target.key, blob);
-        await metaStore.setItem(target.key, {
-            ...target,
-            size: blob.size,
-            mimeType: blob.type || target.mimeType,
-            lastAccessedAt: Date.now(),
-        });
-    };
-
-    try {
-        await write();
-        invalidateCacheStats();
-        return;
-    } catch (firstError) {
-        // 第一次失败通常意味着浏览器配额不足；激进淘汰后只允许再尝试一次，
-        // 避免缓存层无限重试拖慢资源读取，也不把缓存失败误报成服务端资源失败。
-        await evictFor(blob.size, target.key, true);
+export async function getCachedResourceBlob(storageKey: string, priority = true) {
+    const key = cacheKeyFor(storageKey);
+    if (!key) return null;
+    const hit = touchEntry(key);
+    if (hit) return hit.blob;
+    const url = await cacheResourceObjectUrl(storageKey, false, priority);
+    const loaded = touchEntry(key);
+    if (loaded) return loaded.blob;
+    // Large blobs (> half budget) bypassed LRU storage; fetch directly without pinning.
+    if (url.startsWith("blob:")) {
         try {
-            await write();
-            invalidateCacheStats();
-            return;
-        } catch (retryError) {
-            const cleanupResults = await Promise.allSettled([blobStore.removeItem(target.key), metaStore.removeItem(target.key)]);
-            const cleanupError = cleanupResults.find((result): result is PromiseRejectedResult => result.status === "rejected")?.reason;
-            if (cleanupError) {
-                console.error("媒体缓存写入失败后的清理也失败", {
-                    resourceId: target.resourceId,
-                    version: target.version,
-                    firstError,
-                    retryError,
-                    cleanupError,
-                });
-            }
-            throw retryError;
+            const response = await fetch(url);
+            return await response.blob();
+        } finally {
+            URL.revokeObjectURL(url);
         }
     }
-}
-
-async function readCachedObjectUrl(target: ResourceCacheMeta) {
-    const existing = objectUrls.get(target.key);
-    if (existing) {
-        touchCacheMetaSafely(target);
-        return existing;
-    }
-    const blob = sessionBlobs.get(target.key) || await readPersistedBlob(target);
-    if (!blob) return "";
-    touchCacheMetaSafely(target);
-    return objectUrl(target.key, blob);
-}
-
-function readPersistedBlob(target: ResourceCacheMeta) {
-    // Restoring duplicate nodes must share the IndexedDB read too, before the
-    // object URL exists. Large Blob replies otherwise cross WebKit IPC once
-    // per node even though their bytes and storage key are identical.
-    const requestKey = target.key;
-    const pending = persistedReads.get(requestKey);
-    if (pending) return pending;
-    const read = blobStore.getItem<Blob>(target.key).catch((error) => {
-        console.warn("媒体缓存读取失败，重新下载资源", { resourceId: target.resourceId, error });
-        return null;
-    }).finally(() => persistedReads.delete(requestKey));
-    persistedReads.set(requestKey, read);
-    return read;
-}
-
-function cacheTarget(storageKey: string, userScope: string): ResourceCacheMeta | null {
-    const resourceId = resourceIdFromStorageKey(storageKey);
-    if (!resourceId) return null;
-    // 本地桌面工作区没有登录用户，guest 只是本地命名空间，不代表
-    // 禁止访问资源。资源文件接口本身仍负责桌面令牌鉴权。
-    // resource ID 是不可变资源的稳定标识，文件接口本身负责鉴权。
-    // 缓存初始化不能先对每个资源读取一遍元数据，否则首屏会重新形成 N+1 请求。
-    const version = "file";
-    return {
-        key: `${userScope}:${resourceId}:${version}`,
-        userScope,
-        resourceId,
-        version,
-        size: 0,
-        mimeType: "application/octet-stream",
-        lastAccessedAt: Date.now(),
-    };
-}
-
-async function touchCacheMeta(target: ResourceCacheMeta) {
-    const now = Date.now();
-    // 同一会话内重复访问不落 IndexedDB：淘汰扫描在写入时才需要元数据，
-    // 内存时间戳足够让高频读取跳过跨进程 I/O。
-    const lastTouchedAt = metaTouchedAt.get(target.key);
-    if (lastTouchedAt && now - lastTouchedAt < TOUCH_INTERVAL_MS) return;
-    metaTouchedAt.set(target.key, now);
-    const current = await metaStore.getItem<ResourceCacheMeta>(target.key);
-    if (!current || now - current.lastAccessedAt < TOUCH_INTERVAL_MS) return;
-    await metaStore.setItem(target.key, { ...current, lastAccessedAt: now });
-}
-
-
-function touchCacheMetaSafely(target: ResourceCacheMeta) {
-    void touchCacheMeta(target).catch((error) => {
-        // 访问时间只服务于缓存淘汰，不影响资源读取；失败可降级，但不能无痕吞掉。
-        if (cacheMetaTouchWarnings.has(target.key)) return;
-        cacheMetaTouchWarnings.add(target.key);
-        console.warn("更新资源缓存访问时间失败", { storageKey: target.key, error });
-    });
-}
-
-// 条目数/字节数与存储配额在内存中跟踪，常规写入只做 O(1) 检查，
-// 只有接近预算才执行全量 LRU 扫描，避免每张图持久化都 iterate 全部元数据。
-let cacheStats: { count: number; bytes: number } | null = null;
-let cachedBudget: { value: number; at: number } | null = null;
-
-async function evictFor(incomingBytes: number, protectedKey: string, aggressive = false) {
-    const entryCount = await metaStore.length().catch(() => 0);
-    const budget = aggressive ? Math.max(MIN_CACHE_BYTES, (await cacheBudget()) / 2) : await cacheBudget();
-    // 常规写入只在统计可信或明显未接近阈值时跳过全表扫描；写入会使内存统计失效，
-    // 因此不会用可能过时的字节数做永久放行。
-    if (!aggressive) {
-        if (cacheStats && cacheStats.count < MAX_CACHE_ENTRIES && cacheStats.bytes + incomingBytes <= budget) return;
-        if (!cacheStats && entryCount < MAX_CACHE_ENTRIES - 10 && incomingBytes < budget / 10) return;
-    }
-    const metas: ResourceCacheMeta[] = [];
-    await metaStore.iterate<ResourceCacheMeta, void>((value) => {
-        if (value?.key) metas.push(value);
-    });
-    let total = metas.reduce((sum, item) => sum + Math.max(0, item.size || 0), 0);
-    let count = metas.length;
-    // 当前页面正在使用的 Blob URL 不能在 LRU 清理时撤销，否则已渲染节点会立即变成失效资源。
-    const candidates = metas.filter((item) => item.key !== protectedKey && !objectUrls.has(item.key) && !sessionBlobs.has(item.key)).sort((a, b) => a.lastAccessedAt - b.lastAccessedAt);
-    for (const candidate of candidates) {
-        if (total + incomingBytes <= budget && count < MAX_CACHE_ENTRIES) break;
-        await removeCacheEntry(candidate);
-        total -= Math.max(0, candidate.size || 0);
-        count -= 1;
-    }
-    cacheStats = { count, bytes: total };
-}
-
-function invalidateCacheStats() {
-    cacheStats = null;
-}
-
-async function removeCacheEntry(meta: ResourceCacheMeta) {
-    const url = objectUrls.get(meta.key);
-    if (url) URL.revokeObjectURL(url);
-    objectUrls.delete(meta.key);
-    sessionBlobs.delete(meta.key);
-    await Promise.all([blobStore.removeItem(meta.key), metaStore.removeItem(meta.key)]);
-}
-
-async function cacheBudget() {
-    // 配额估计是跨进程调用且会话内基本稳定，短暂缓存避免每张图一次 IPC 往返。
-    if (cachedBudget && Date.now() - cachedBudget.at < BUDGET_REFRESH_MS) return cachedBudget.value;
-    let value = FALLBACK_CACHE_BYTES;
-    if (navigator.storage?.estimate) {
-        const estimate = await navigator.storage.estimate().catch(() => null);
-        if (estimate?.quota) value = Math.min(MAX_CACHE_BYTES, Math.max(MIN_CACHE_BYTES, Math.floor(estimate.quota * 0.2)));
-    }
-    cachedBudget = { value, at: Date.now() };
-    return value;
-}
-
-function objectUrl(key: string, blob: Blob) {
-    const existing = objectUrls.get(key);
-    if (existing) return existing;
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(key, url);
-    return url;
+    return null;
 }
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
     window.addEventListener("pagehide", (event) => {
         if (event.persisted) return;
-        objectUrls.forEach((url) => URL.revokeObjectURL(url));
-        objectUrls.clear();
-        sessionBlobs.clear();
+        clearResourceMemoryCache();
     });
 }

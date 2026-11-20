@@ -14,6 +14,7 @@ import {
     configureSameOriginDesktopFallback,
     DesktopStartupError,
     getDesktopBootSnapshot,
+    registerBeforeReloadFlusher,
     resetDesktopBootSnapshot,
 } from "@/services/desktop-runtime";
 import {
@@ -494,4 +495,102 @@ test("initializeWorkspaceState never fabricates a local session on bootstrap fai
     });
     expect(fallbackPayload.description).toBe("startup_failure:desktop_boot:workspace_locked");
     expect(fallbackPayload.clientEvents).toEqual([]);
+});
+
+test("desktop:request-reload checks in-flight guard before acking and resets after cancelled navigation", async () => {
+    const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+    const reloadAckIds: number[] = [];
+    let reloadCalls = 0;
+    let releaseFirstFlush!: () => void;
+    let flushCount = 0;
+
+    Object.assign(globalThis, {
+        window: {
+            location: {
+                protocol: "http:",
+                hostname: "wails.localhost",
+                host: "wails.localhost",
+                reload: () => {
+                    reloadCalls += 1;
+                },
+            },
+            runtime: {
+                EventsOn: (name: string, cb: (...args: unknown[]) => void) => {
+                    eventHandlers.set(name, cb);
+                    return () => eventHandlers.delete(name);
+                },
+            },
+            go: {
+                main: {
+                    DesktopApp: {
+                        StartupState: async () => ({
+                            state: "ready" as const,
+                            phase: "ready",
+                            baseURL: "http://127.0.0.1:43131/api",
+                            launchToken: "reload-test-token",
+                            uiBootstrapToken: "reload-ui-token",
+                        }),
+                    },
+                },
+            },
+        },
+    });
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/health/live")) {
+            return new Response(JSON.stringify({ code: 0, data: { status: "ok" }, msg: "ok" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+        if (url.endsWith("/client-runtime/heartbeat")) {
+            const rawBody = input instanceof Request ? await input.clone().text() : String(init?.body || "{}");
+            const body = JSON.parse(rawBody || "{}") as { reloadAckId?: number };
+            if (body.reloadAckId) reloadAckIds.push(body.reloadAckId);
+            return new Response(JSON.stringify({ code: 0, data: { ok: true }, msg: "" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+        return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    registerBeforeReloadFlusher(async () => {
+        flushCount += 1;
+        if (flushCount === 1) {
+            await new Promise<void>((resolve) => {
+                releaseFirstFlush = resolve;
+            });
+        }
+    });
+
+    try {
+        expect(await bootstrapDesktopRuntime({ loopbackProbeTimeoutMs: 50, loopbackRetryDelaysMs: [] })).toBe(true);
+        const onReload = eventHandlers.get("desktop:request-reload");
+        expect(typeof onReload).toBe("function");
+
+        // Trigger first reload (slow flush holds reloadFlushInFlight=true)
+        onReload!({ safeMode: true, requestId: 101 });
+        await new Promise((r) => setTimeout(r, 15));
+        expect(reloadAckIds).toEqual([101]);
+
+        // Duplicate event while first flush is still in flight MUST NOT ack requestId 102
+        onReload!({ safeMode: true, requestId: 102 });
+        await new Promise((r) => setTimeout(r, 15));
+        expect(reloadAckIds).toEqual([101]);
+
+        // Finish first flush; simulate user cancelling beforeunload (page stays alive)
+        releaseFirstFlush();
+        await new Promise((r) => setTimeout(r, 20));
+        expect(reloadCalls).toBe(1);
+
+        // Next user reload attempt MUST succeed (flag was reset, requestId 103 acked & reloaded)
+        onReload!({ safeMode: true, requestId: 103 });
+        await new Promise((r) => setTimeout(r, 25));
+        expect(reloadAckIds).toEqual([101, 103]);
+        expect(reloadCalls).toBe(2);
+    } finally {
+        registerBeforeReloadFlusher(null);
+    }
 });

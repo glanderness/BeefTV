@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
 import { createTransferSampler, type CanvasOperationTarget, type OperationProgress } from "@/lib/operation-progress";
+import { beginRendererBusyLease } from "@/services/desktop-runtime";
 
 type ProgressStore = { entries: Record<string, OperationProgress>; remove: (id: string) => void };
 export const useOperationProgress = create<ProgressStore>((set) => ({
@@ -16,6 +17,7 @@ export function startOperation(title: string, options: { detail?: string; totalB
     const id = nanoid();
     const startedAt = Date.now();
     const sample = createTransferSampler(startedAt);
+    const releaseBusy = beginRendererBusyLease();
     let finished = false;
     let lastReport = 0;
     const update = (patch: Partial<OperationProgress>) => {
@@ -32,6 +34,7 @@ export function startOperation(title: string, options: { detail?: string; totalB
     const settle = (phase: "done" | "error", detail: string) => {
         update({ phase, detail, bytesPerSecond: 0 });
         finished = true;
+        releaseBusy();
         if (phase === "done") setTimeout(() => useOperationProgress.getState().remove(id), 4500);
     };
     return {
@@ -45,6 +48,6 @@ export function startOperation(title: string, options: { detail?: string; totalB
         },
         done: (detail = "处理完成") => settle("done", detail),
         fail: (detail = "处理没有完成，请重试") => settle("error", detail),
-        dismiss: () => { finished = true; useOperationProgress.getState().remove(id); },
+        dismiss: () => { finished = true; releaseBusy(); useOperationProgress.getState().remove(id); },
     };
 }

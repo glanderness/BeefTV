@@ -42,6 +42,10 @@ type DesktopApp struct {
 	downloadsDir            string
 	usePlatformDownloads    bool
 	lastDiagnosticPath      string
+	uncleanPreviousSession  bool
+	lastCrashDiagnosticPath string
+	watchdogStop            context.CancelFunc
+	reloadHistory           []time.Time
 	wailsCtx                context.Context
 	pendingSkillLink        string
 	boot                    desktopBootAttempt
@@ -52,6 +56,9 @@ type DesktopApp struct {
 	openDirectory           func(path string) error
 	copyOwnedMedia          func(resourceID, destPath string) error
 	copyEagleMedia          func(baseURL, itemID, destPath string) error
+	emitReloadEvent         func(ctx context.Context, payload map[string]any)
+	nativeReloadFn          func(ctx context.Context)
+	gracefulReloadWait      time.Duration
 }
 
 // Wails reflects every field type reachable from a bound object. Keeping the
@@ -118,6 +125,7 @@ func openDesktopRuntimeWithPhase(ctx context.Context, dataDir string, onPhase fu
 }
 
 func (a *DesktopApp) stop(ctx context.Context) error {
+	a.stopRendererWatchdog()
 	a.mu.Lock()
 	runtime := a.runtime()
 	a.boot = desktopBootAttempt{
@@ -133,7 +141,9 @@ func (a *DesktopApp) stop(ctx context.Context) error {
 	desktopRuntimeRegistryMu.Unlock()
 	a.clearUpdater()
 	a.mu.Unlock()
-	return closeDesktopRuntime(ctx, runtime)
+	err := closeDesktopRuntime(ctx, runtime)
+	a.clearCrashSentinel()
+	return err
 }
 
 // RuntimeConfig preserves the v2.2.x Wails binding for existing desktop plugins

@@ -59,12 +59,20 @@ type Runtime struct {
 	pipeListener     net.Listener
 	pipePath         string
 	httpServer       *http.Server
-	serveErr         chan error
-	started          atomic.Bool
-	closed           atomic.Bool
-	closeOnce        sync.Once
-	backgroundDone   chan struct{}
-	closeErr         error
+	serveErr            chan error
+	started             atomic.Bool
+	closed              atomic.Bool
+	lastClientHeartbeat atomic.Int64
+	clientHidden        atomic.Bool
+	clientBusy          atomic.Bool
+	clientBusySince     atomic.Int64
+	safeModeRequestSeq  atomic.Uint64
+	safeModeRequestID   atomic.Uint64
+	reloadRequestSeq    atomic.Uint64
+	reloadAckedID       atomic.Uint64
+	closeOnce           sync.Once
+	backgroundDone      chan struct{}
+	closeErr            error
 }
 
 func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
@@ -291,6 +299,10 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	}
 	clients := agentops.NewClientRegistry(svc.DataDir())
 	rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/media/") {
+			serveLoopbackMediaTicket(w, r, svc.ResourceService(), svc.PlaybackService())
+			return
+		}
 		if tool, allowed := businessCatalog.Match(r.Method, r.URL.Path); allowed && isLoopbackRemote(r.RemoteAddr) {
 			if reg, valid := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); valid {
 				if reg.Mode == agentops.ClientReadOnly && !tool.ReadOnly {
@@ -345,7 +357,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		}
 		protected.ServeHTTP(w, r)
 	})
-	return &Runtime{
+	rt := &Runtime{
 		workspaceLock:    workspaceLock,
 		cfg:              cfg,
 		db:               db,
@@ -358,7 +370,29 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		beefTV:           beefTVConnection,
 		assistantHost:    assistantHost,
 		serveErr:         make(chan error, 1),
-	}, nil
+	}
+	api.POST("/client-runtime/heartbeat", func(c *gin.Context) {
+		var body struct {
+			Hidden        bool   `json:"hidden"`
+			Busy          bool   `json:"busy"`
+			SafeModeAck   bool   `json:"safeModeAck"`
+			SafeModeAckID uint64 `json:"safeModeAckId"`
+			ReloadAckID   uint64 `json:"reloadAckId"`
+		}
+		if c.Request.Body != nil && c.Request.ContentLength != 0 {
+			_ = c.ShouldBindJSON(&body)
+		}
+		if body.ReloadAckID > 0 {
+			rt.AckReloadRequest(body.ReloadAckID)
+		}
+		if body.SafeModeAckID > 0 {
+			rt.AckSafeMode(body.SafeModeAckID)
+		}
+		rt.RecordClientHeartbeat(body.Hidden, body.Busy)
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"ok": true}, "msg": ""})
+	})
+	return rt, nil
 }
 
 // wirePluginPackages connects installed plugin packages to the skill catalog

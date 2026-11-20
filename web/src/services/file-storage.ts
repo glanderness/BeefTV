@@ -4,6 +4,7 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { captureVideoPoster, detectVideoAudioTrackFromBlob } from "@/lib/video-poster";
 import { ownedResourceStorageKey, renderableMediaUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, resolveResourceUrl, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
 import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
+import { canUseLoopbackMediaTicket, resolveResourceMediaStream } from "@/services/media-asset-url";
 import { uploadImage, type UploadedImage } from "@/services/image-storage";
 import { createChannelTransport } from "@/services/api/channel-transport";
 import { useConfigStore } from "@/stores/use-config-store";
@@ -152,10 +153,15 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "", option
     }
     const resourceId = resourceIdFromStorageKey(effectiveStorageKey);
     if (resourceId) {
+        if (options?.renderable && canUseLoopbackMediaTicket()) {
+            try {
+                const stream = await resolveResourceMediaStream(resourceId, "original");
+                if (stream?.url) return stream.url;
+            } catch {
+                // Fall back to budgeted memory blob if media-ticket is unavailable.
+            }
+        }
         const cached = await getCachedResourceObjectUrl(effectiveStorageKey).catch(() => "");
-        // A native <video> cannot attach the desktop launch token. If the
-        // resource is not already cached, eagerly fetch it through the
-        // authenticated client and hand the player a Blob URL.
         if (cached) return cached;
         const hydrated = await cacheResourceObjectUrl(effectiveStorageKey).catch(() => "");
         return hydrated || (options?.renderable ? safeFallback : resourceFileUrl(resourceId));

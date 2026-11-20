@@ -268,6 +268,10 @@ func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, 
 	return canvasProjectPayload(*project)
 }
 
+func (s *Service) UserCanvasProjectRevision(userID string, id string) (int64, error) {
+	return s.repo.CanvasProjectRevision(userID, id)
+}
+
 func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
 	return s.upsertUserCanvasProjectWithHistory(userID, raw, "automatic")
 }

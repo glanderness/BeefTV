@@ -24,6 +24,7 @@ type CanvasImageCompareStageProps = {
     pan: { x: number; y: number };
     onZoomPanChange: (zoom: number, pan: { x: number; y: number }) => void;
     onMeasuredSize?: (id: string, width: number, height: number) => void;
+    onImageError?: (id: string) => void;
     onRetryImage?: (id: string) => void;
     theme: CanvasTheme;
     stageBackground: string;
@@ -42,6 +43,7 @@ export function CanvasImageCompareStage({
     pan,
     onZoomPanChange,
     onMeasuredSize,
+    onImageError,
     onRetryImage,
     theme,
     stageBackground,
@@ -165,6 +167,7 @@ export function CanvasImageCompareStage({
                                 item={item}
                                 theme={theme}
                                 onMeasuredSize={onMeasuredSize}
+                                onImageError={onImageError}
                             />
                         </div>
                         {item.failed ? (
@@ -213,6 +216,7 @@ export function CanvasImageCompareStage({
                                         onMeasuredSize?.(rightImage.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
                                     }
                                 }}
+                                onError={() => onImageError?.(rightImage.id)}
                             />
                         ) : !rightImage.failed ? (
                             <span role="status" className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>
@@ -236,6 +240,7 @@ export function CanvasImageCompareStage({
                                         onMeasuredSize?.(leftImage.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
                                     }
                                 }}
+                                onError={() => onImageError?.(leftImage.id)}
                             />
                         ) : !leftImage.failed ? (
                             <span role="status" className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>
@@ -322,6 +327,7 @@ export function CanvasImageCompareStage({
                     item={displayedSingle}
                     theme={theme}
                     onMeasuredSize={onMeasuredSize}
+                    onImageError={onImageError}
                 />
             </div>
             {displayedSingle.failed ? (
@@ -342,10 +348,12 @@ function StageImageSurface({
     item,
     theme,
     onMeasuredSize,
+    onImageError,
 }: {
     item: ResolvedViewerImage;
     theme: CanvasTheme;
     onMeasuredSize?: (id: string, width: number, height: number) => void;
+    onImageError?: (id: string) => void;
 }) {
     return (
         <>
@@ -360,6 +368,7 @@ function StageImageSurface({
                             onMeasuredSize?.(item.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
                         }
                     }}
+                    onError={() => onImageError?.(item.id)}
                 />
             ) : !item.failed ? (
                 <span role="status" className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>

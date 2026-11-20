@@ -284,7 +284,11 @@ func (s *Service) deleteTrustedObject(userID string, resource *model.Resource) e
 	}
 	switch provider {
 	case "", "local":
-		return s.DeleteLocalObject(resource.ObjectKey)
+		if err := s.DeleteLocalObject(resource.ObjectKey); err != nil {
+			return err
+		}
+		s.RemovePreviewCache(userID, resource.ID)
+		return nil
 	default:
 		return nil
 	}

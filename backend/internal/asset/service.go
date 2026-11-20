@@ -89,18 +89,23 @@ type Service struct {
 	lifecycle    Lifecycle
 	localStorage bool
 	dataDir      string
+	previews     *previewManager
+	tickets      *MediaTicketStore
 	sessionMu    sync.Mutex
 	sessions     map[string]*chunkedUploadSession
 }
 
 func NewService(deps Dependencies) *Service {
+	dataDir := strings.TrimSpace(deps.DataDir)
 	svc := &Service{
 		repo:         deps.Repository,
 		blobs:        deps.Blobs,
 		quota:        deps.Quota,
 		lifecycle:    deps.Lifecycle,
 		localStorage: deps.LocalStorage,
-		dataDir:      strings.TrimSpace(deps.DataDir),
+		dataDir:      dataDir,
+		previews:     newPreviewManager(dataDir),
+		tickets:      NewMediaTicketStore(),
 		sessions:     map[string]*chunkedUploadSession{},
 	}
 	if svc.dataDir != "" {
@@ -403,11 +408,13 @@ func (s *Service) resourceForUploadKey(userID string, uploadKey *string) (*model
 }
 
 func (s *Service) afterReady(resource *model.Resource) {
-	if s == nil || s.lifecycle == nil || resource == nil {
+	if s == nil || resource == nil {
 		return
 	}
-	s.lifecycle.RecordActivity(resource.UserID, "resource", 1)
-	s.lifecycle.AfterResourceReady(resource)
+	if s.lifecycle != nil {
+		s.lifecycle.RecordActivity(resource.UserID, "resource", 1)
+		s.lifecycle.AfterResourceReady(resource)
+	}
 }
 
 func (s *Service) workerID() string {

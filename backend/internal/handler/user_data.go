@@ -256,6 +256,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		ok(c, gin.H{"resource": resource})
 	})
 	registerResourceDeriveRoutes(r, owners, resources, usage)
+	registerResourceAssetRoutes(r, owners, resources, playback)
 	r.GET("/resources/:id/file", func(c *gin.Context) {
 		user, err := currentUser(c, owners)
 		if err != nil {
@@ -580,15 +581,11 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 			failService(c, err)
 			return
 		}
-		project, err := canvasData.UserCanvasProject(user.ID, c.Param("id"))
+		revision, err := canvasData.UserCanvasProjectRevision(user.ID, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		var initial struct {
-			Revision int64 `json:"revision"`
-		}
-		_ = json.Unmarshal(project, &initial)
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
@@ -597,27 +594,29 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		if !ok {
 			return
 		}
-		_, _ = fmt.Fprintf(c.Writer, "event: ready\ndata: {\"revision\":%d}\n\n", initial.Revision)
+		_, _ = fmt.Fprintf(c.Writer, "event: ready\ndata: {\"revision\":%d}\n\n", revision)
 		flusher.Flush()
-		last := initial.Revision
-		ticker := time.NewTicker(250 * time.Millisecond)
+		last := revision
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
+		heartbeat := time.NewTicker(15 * time.Second)
+		defer heartbeat.Stop()
 		for {
 			select {
 			case <-c.Request.Context().Done():
 				return
+			case <-heartbeat.C:
+				_, _ = fmt.Fprint(c.Writer, ": keepalive\n\n")
+				flusher.Flush()
 			case <-ticker.C:
-				latest, readErr := canvasData.UserCanvasProject(user.ID, c.Param("id"))
+				latest, readErr := canvasData.UserCanvasProjectRevision(user.ID, c.Param("id"))
 				if readErr != nil {
 					return
 				}
-				var state struct {
-					Revision int64 `json:"revision"`
-				}
-				if json.Unmarshal(latest, &state) != nil || state.Revision <= last {
+				if latest <= last {
 					continue
 				}
-				last = state.Revision
+				last = latest
 				_, _ = fmt.Fprintf(c.Writer, "event: canvas.updated\ndata: {\"revision\":%d}\n\n", last)
 				flusher.Flush()
 			}

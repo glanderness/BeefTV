@@ -124,3 +124,15 @@ test("zooming out reuses pre-rendered margin until exceeded, then mounts newly v
     expect(refreshed.lodActive).toBe(false);
     expect(refreshed.dom).toEqual(["center", "edge"]);
 });
+
+test("hovering or selecting a visible node never reorders mounted DOM nodes", () => {
+    const fixture = nodes(12);
+    const viewport = { x: 0, y: 0, k: 1 };
+    const idle = renderModel(fixture, { viewport });
+    expect(idle.dom.length).toBeGreaterThan(4);
+    const middleId = idle.dom[Math.floor(idle.dom.length / 2)];
+    const hovered = renderModel(fixture, { viewport, pinned: new Set([middleId]) });
+    const selected = renderModel(fixture, { viewport, selectedNodeIds: new Set([middleId]), pinned: new Set([middleId]) });
+    expect(hovered.dom).toEqual(idle.dom);
+    expect(selected.dom).toEqual(idle.dom);
+});

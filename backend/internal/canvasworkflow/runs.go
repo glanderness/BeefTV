@@ -198,7 +198,7 @@ func textOutput(task *model.Task) string {
 }
 
 func deliveryPaused(stage string) bool {
-	return stage == "delivery_paused" || stage == "delivery_timed_out"
+	return stage == model.TaskStageDeliveryPaused || stage == model.TaskStageDeliveryTimedOut
 }
 
 func (r *Runs) resource(user, id, kind string) (*model.Resource, error) {
