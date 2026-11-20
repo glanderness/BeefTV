@@ -170,6 +170,12 @@
         "deleteNodeIds": {
           "type": "array"
         },
+        "expectedChatSessions": {
+          "type": "object"
+        },
+        "expectedConnections": {
+          "type": "object"
+        },
         "expectedFields": {
           "type": "object"
         },

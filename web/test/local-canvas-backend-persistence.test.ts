@@ -205,6 +205,7 @@ mock.module("@/services/canvas-operation-journal", () => ({
             };
         }),
     clearCanvasPendingProjection: async () => undefined,
+    markCanvasJournalForceHistorySnapshot: async () => undefined,
     abandonCanvasInFlight: async () => {},
     clearCanvasOperationJournal: async (id: string) => {
         journalMemory.delete(id);

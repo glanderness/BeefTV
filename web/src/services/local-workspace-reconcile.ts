@@ -1,6 +1,6 @@
 import { applyExternalCanvasRevision, canvasDocumentBase, clearCanvasExternalRevisionConflict, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { pauseCanvasBackendSubmit, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
-import { clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
+import { clearCanvasPendingProjection, loadCanvasOperationJournal, markCanvasJournalForceHistorySnapshot, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
@@ -13,6 +13,7 @@ import {
     confirmRemoteDocument,
     incompleteCanvasProjection,
     invokeProjectionListener,
+    markCanvasMergeOverlap,
     openLocalCanvasProject,
     pendingForceHistorySnapshot,
     runProjectionStoreFlush,
@@ -51,7 +52,7 @@ export function alignLiveAfterConfirmedRemote(input: {
         const emptyBase: CanvasProject = { ...input.remote, nodes: [], connections: [], chatSessions: [] };
         const settled = settleInFlightGenerationOverlay({ base: emptyBase, local: live, remote: input.remote });
         const rebased = rebaseCanvasDocumentThreeWay({ base: emptyBase, local: settled, remote: input.remote });
-        if (rebased.conflict) pendingForceHistorySnapshot.add(saveKey(input.scope, input.id));
+        if (rebased.conflict) markCanvasMergeOverlap(input.id, input.scope);
         applyLiveCanvasProject(input.id, rebased.project, false);
         clearCanvasExternalRevisionConflict(input.scope, input.id);
         resumeCanvasBackendSubmit(input.id, input.scope);
@@ -60,7 +61,7 @@ export function alignLiveAfterConfirmedRemote(input: {
     }
     const settled = settleInFlightGenerationOverlay({ base: input.base, local: live, remote: input.remote });
     const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: settled, remote: input.remote });
-    if (rebased.conflict) pendingForceHistorySnapshot.add(saveKey(input.scope, input.id));
+    if (rebased.conflict) markCanvasMergeOverlap(input.id, input.scope);
     applyLiveCanvasProject(input.id, rebased.project, false);
     clearCanvasExternalRevisionConflict(input.scope, input.id);
     resumeCanvasBackendSubmit(input.id, input.scope);
@@ -69,6 +70,9 @@ export function alignLiveAfterConfirmedRemote(input: {
 }
 
 export async function persistProjectedCanvas(id: string, scope: string, identity: string | undefined, options: { throwOnFailure: boolean }) {
+    if (pendingForceHistorySnapshot.has(saveKey(scope, id))) {
+        await markCanvasJournalForceHistorySnapshot(id, scope).catch(() => {});
+    }
     if (!identity || !openLocalCanvasProject(id)) return;
     try {
         await runProjectionStoreFlush();

@@ -97,6 +97,8 @@ export function buildCanvasDocumentPatch(
         Object.keys(fields).length > 0;
     if (!hasChanges) return null;
     const expectedNodes = nodesDiff.expectedById;
+    const expectedConnections = connDiff.expectedById;
+    const expectedChatSessions = chatDiff.expectedById;
     return {
         canvasId: live.id,
         baseRevision: base.revision ?? 0,
@@ -108,6 +110,8 @@ export function buildCanvasDocumentPatch(
         ...(chatDiff.deletedIds.length ? { deleteChatSessionIds: chatDiff.deletedIds } : {}),
         ...(Object.keys(fields).length ? { fields } : {}),
         ...(Object.keys(expectedNodes).length ? { expectedNodes } : {}),
+        ...(Object.keys(expectedConnections).length ? { expectedConnections } : {}),
+        ...(Object.keys(expectedChatSessions).length ? { expectedChatSessions } : {}),
         ...(Object.keys(expectedFields).length ? { expectedFields } : {}),
         ...(options.forceHistorySnapshot ? { forceHistorySnapshot: true } : {}),
     };

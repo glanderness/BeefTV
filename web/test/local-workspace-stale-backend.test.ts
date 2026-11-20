@@ -248,6 +248,7 @@ mock.module("@/services/canvas-operation-journal", () => ({
             if (current.pendingProjection?.identity !== identity) return;
             return { ...current, pendingProjection: null };
         }),
+    markCanvasJournalForceHistorySnapshot: async () => undefined,
     abandonCanvasInFlight: async () => {},
     clearCanvasOperationJournal: async (id: string) => {
         journalMemory.delete(id);

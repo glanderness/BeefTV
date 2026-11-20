@@ -39,6 +39,7 @@ export type CanvasOperationJournal = {
     confirmedSnapshot: CanvasProject | null;
     inFlight: CanvasInFlightCommit | null;
     pendingProjection: CanvasPendingProjection | null;
+    pendingForceHistorySnapshot?: boolean;
 };
 
 export class CanvasJournalError extends Error {
@@ -153,6 +154,7 @@ function parseCanvasOperationJournal(raw: unknown, scope: string, canvasId: stri
         confirmedSnapshot: parseConfirmedSnapshot(raw.confirmedSnapshot, canvasId),
         inFlight: parseInFlight(raw.inFlight, canvasId),
         pendingProjection: parsePendingProjection(raw.pendingProjection, canvasId),
+        ...(raw.pendingForceHistorySnapshot === true ? { pendingForceHistorySnapshot: true } : {}),
     };
 }
 
@@ -236,15 +238,23 @@ export async function updateCanvasOperationJournal(
 export async function recordConfirmedCanvasCommit(
     project: CanvasProject,
     scope = getActiveUserScope(),
-    options: { ackOperationId?: string; unflushedProjection?: boolean } = {},
+    options: { ackOperationId?: string; unflushedProjection?: boolean; clearForceHistorySnapshot?: boolean } = {},
 ) {
     return updateCanvasOperationJournal(project.id, scope, (current) => {
         const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
             ? project.revision
             : current.confirmedRevision;
         const ackMatches = Boolean(options.ackOperationId && current.inFlight?.operationId === options.ackOperationId);
+        const nextForceHistory = options.clearForceHistorySnapshot ? undefined : current.pendingForceHistorySnapshot;
+        const forceChanged = nextForceHistory !== current.pendingForceHistorySnapshot;
         if (incomingRevision < current.confirmedRevision) {
-            if (ackMatches && current.inFlight) return { ...current, inFlight: null };
+            if ((ackMatches && current.inFlight) || forceChanged) {
+                return {
+                    ...current,
+                    inFlight: ackMatches ? null : current.inFlight,
+                    ...(nextForceHistory ? { pendingForceHistorySnapshot: true } : { pendingForceHistorySnapshot: undefined }),
+                };
+            }
             return;
         }
         if (
@@ -252,7 +262,13 @@ export async function recordConfirmedCanvasCommit(
             && current.confirmedSnapshot
             && sameCanvasDocument(current.confirmedSnapshot, project)
         ) {
-            if (ackMatches && current.inFlight) return { ...current, inFlight: null };
+            if ((ackMatches && current.inFlight) || forceChanged) {
+                return {
+                    ...current,
+                    inFlight: ackMatches ? null : current.inFlight,
+                    ...(nextForceHistory ? { pendingForceHistorySnapshot: true } : { pendingForceHistorySnapshot: undefined }),
+                };
+            }
             return;
         }
         const confirmedSnapshot = structuredClone(project);
@@ -272,7 +288,15 @@ export async function recordConfirmedCanvasCommit(
             confirmedSnapshot,
             inFlight: ackMatches ? null : current.inFlight,
             pendingProjection,
+            ...(nextForceHistory ? { pendingForceHistorySnapshot: true } : { pendingForceHistorySnapshot: undefined }),
         };
+    });
+}
+
+export async function markCanvasJournalForceHistorySnapshot(canvasId: string, scope = getActiveUserScope()) {
+    return updateCanvasOperationJournal(canvasId, scope, (current) => {
+        if (current.pendingForceHistorySnapshot) return;
+        return { ...current, pendingForceHistorySnapshot: true };
     });
 }
 

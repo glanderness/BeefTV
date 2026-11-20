@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { sameCanvasContent, sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { buildCanvasDocumentPatch, preserveUntouchedStoredNodes } from "@/lib/canvas/canvas-document-patch";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -9,11 +9,13 @@ import { applyMockCanvasPatch, type MockCanvasPatchParams } from "./helpers/mock
 const stored = new Map<string, string>();
 const server = {
     projects: new Map<string, Record<string, unknown>>(),
-    patches: [] as Array<{ opId?: string; params: MockCanvasPatchParams }>,
+    patches: [] as Array<{ opId?: string; params: MockCanvasPatchParams; snapshotCaptured: boolean; noOp: boolean }>,
     commits: [] as Array<{ opId?: string; params: Record<string, unknown> }>,
     puts: 0,
     getGates: new Map<string, Promise<void>>(),
     onGetStarted: null as ((id: string) => void) | null,
+    patchHold: null as Promise<void> | null,
+    onPatchStarted: null as (() => void) | null,
 };
 
 class ApiError extends Error {
@@ -67,21 +69,25 @@ mock.module("@/services/api/request", () => ({
             const current = server.projects.get(id) ?? null;
             const nextRev = ((current?.revision as number) ?? 0) + 1;
             if (path === "/ops/canvas.document.patch") {
-                server.patches.push({ opId: body.opId, params: structuredClone(body.params ?? {}) });
-                const { document, serverAdvanced, mediaPreserved } = applyMockCanvasPatch(current, body.params ?? {}, nextRev);
+                server.onPatchStarted?.();
+                if (server.patchHold) await server.patchHold;
+                const { document, serverAdvanced, mediaPreserved, snapshotCaptured, noOp } = applyMockCanvasPatch(current, body.params ?? {}, nextRev);
+                const appliedRev = noOp ? ((current?.revision as number) ?? 0) : nextRev;
+                server.patches.push({ opId: body.opId, params: structuredClone(body.params ?? {}), snapshotCaptured, noOp });
                 server.projects.set(id, document);
                 return {
                     op: "canvas.document.patch",
                     opId: body.opId,
                     replayed: false,
                     caller: "manual",
-                    revision: nextRev,
+                    revision: appliedRev,
                     result: {
                         canvasId: id,
-                        revision: nextRev,
+                        revision: appliedRev,
                         updatedAt: "2026-01-01T00:00:00.000Z",
                         serverAdvanced,
                         mediaPreserved,
+                        snapshotCaptured,
                         ...(serverAdvanced || mediaPreserved ? { document: structuredClone(document) } : {}),
                     },
                 };
@@ -124,6 +130,7 @@ const {
     adoptServerConfirmedGenerationPatch,
     hasUnconfirmedCanvasEdits,
     hydrateLocalCanvasProjectsFromBackend,
+    markCanvasMergeOverlap,
     refreshLocalCanvasProjectIfChanged,
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
@@ -176,6 +183,8 @@ beforeEach(() => {
     server.puts = 0;
     server.getGates.clear();
     server.onGetStarted = null;
+    server.patchHold = null;
+    server.onPatchStarted = null;
     resetCanvasOperationJournalMemory();
     resetLocalCanvasBackendSaveState();
     useSyncProgressStore.getState().clearAll();
@@ -242,6 +251,7 @@ describe("canvas-document-patch 单元测试", () => {
         const liveWithTimestamps = makeCanvas("c1", 2, { nodes: stampedNodes });
 
         expect(sameCanvasDocument(serverDoc, liveWithTimestamps)).toBe(true);
+        expect(sameCanvasContent(serverDoc, liveWithTimestamps)).toBe(true);
         expect(buildCanvasDocumentPatch(serverDoc, liveWithTimestamps)).toBeNull();
 
         server.projects.set("c1", structuredClone(serverDoc) as unknown as Record<string, unknown>);
@@ -341,6 +351,55 @@ describe("单用户版本冲突五类根因回归测试", () => {
         expect(server.patches).toHaveLength(1);
         expect(server.patches[0].params.baseRevision).toBe(2);
         expect(server.patches[0].params.forceHistorySnapshot).toBe(true);
+        expect(server.patches[0].snapshotCaptured).toBe(true);
+    });
+
+    test("旧在途 patch 回执不能清掉期间产生的重叠快照标记，重载后仍携带 forceHistorySnapshot", async () => {
+        const baseNode = makeNode("n1", "标题", { type: "text" as never, metadata: { content: "原文本", status: "success" } });
+        const initial = makeCanvas("c1", 1, { nodes: [baseNode] });
+        server.projects.set("c1", structuredClone(initial) as unknown as Record<string, unknown>);
+        await saveCanvasOperationJournal({
+            userScope: scope,
+            canvasId: "c1",
+            confirmedRevision: 1,
+            confirmedSnapshot: structuredClone(initial),
+            inFlight: null,
+        });
+        recordCanvasDocumentBase(structuredClone(initial), scope);
+        useCanvasStore.setState({ projects: [structuredClone(initial)] });
+
+        // 1. Start an older patch (without forceHistorySnapshot) and hold it in flight.
+        let releasePatch!: () => void;
+        let patchStarted!: () => void;
+        const patchStartedPromise = new Promise<void>((resolve) => { patchStarted = resolve; });
+        server.patchHold = new Promise<void>((resolve) => { releasePatch = resolve; });
+        server.onPatchStarted = () => { patchStarted(); };
+        useCanvasStore.getState().updateProject("c1", { title: "编辑A" });
+        const savingA = syncLocalCanvasProjectToBackend("c1");
+        await patchStartedPromise;
+
+        // 2. While A is in flight, a merge overlap occurs and user makes edit B.
+        markCanvasMergeOverlap("c1", scope);
+        useCanvasStore.getState().updateProject("c1", { title: "编辑B" });
+
+        // 3. Old patch A acknowledges (it did NOT carry forceHistorySnapshot).
+        server.patchHold = null;
+        releasePatch();
+        await savingA;
+        expect(server.patches[0].params.forceHistorySnapshot).toBeUndefined();
+
+        // 4. Simulate renderer reload (memory cleared, IndexedDB journal + live draft kept).
+        const liveDraft = structuredClone(useCanvasStore.getState().openProject("c1")!);
+        resetCanvasOperationJournalMemory();
+        resetLocalCanvasBackendSaveState();
+        clearCanvasDocumentBase("c1", scope);
+        useCanvasStore.setState({ projects: [liveDraft] });
+
+        // 5. After reload, saving B MUST still carry forceHistorySnapshot=true and trigger snapshotCaptured=true!
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.patches).toHaveLength(2);
+        expect(server.patches[1].params.forceHistorySnapshot).toBe(true);
+        expect(server.patches[1].snapshotCaptured).toBe(true);
     });
 
     test("冷缓存无基线时收到生成结果：合并本地节点与服务端产物，不触发暂停冲突", async () => {

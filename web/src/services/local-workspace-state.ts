@@ -1,6 +1,6 @@
 import { canvasDocumentBase, canvasDurableSnapshot, canvasExternalRevisionConflict, flushCanvasStorePersistence, recordCanvasDocumentBase, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, setCanvasBackendSaveProgress } from "@/services/canvas-revision-conflict";
-import { peekCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
+import { markCanvasJournalForceHistorySnapshot, peekCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { canvasUnconfirmedDiagnostic, canvasUnconfirmedReason, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
@@ -44,6 +44,7 @@ export const pendingForceHistorySnapshot = new Set<string>();
 
 export function markCanvasMergeOverlap(id: string, scope = getActiveUserScope()) {
     pendingForceHistorySnapshot.add(saveKey(scope, id));
+    void markCanvasJournalForceHistorySnapshot(id, scope).catch(() => {});
 }
 let projectionStoreFlush: () => Promise<void> = () => flushCanvasStorePersistence();
 

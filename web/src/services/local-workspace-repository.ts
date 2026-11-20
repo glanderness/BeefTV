@@ -123,13 +123,24 @@ function syncLocalCanvasProject(id: string): Promise<void> {
     return tail;
 }
 
-async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, saved: CanvasSaveSummary, ackOperationId?: string) {
+async function applyAcceptedCanvasSave(
+    id: string,
+    submitted: CanvasProject,
+    saved: CanvasSaveSummary,
+    ackOperationId?: string,
+    consumedForceHistorySnapshot = false,
+) {
     const scope = getActiveUserScope();
     const confirmed = saved.revision != null ? { ...submitted, revision: saved.revision, updatedAt: saved.updatedAt ?? submitted.updatedAt } : submitted;
     const pendingExternal = canvasExternalRevisionConflict(scope, id);
-    const journal = await recordConfirmedCanvasCommit(confirmed, scope, ackOperationId ? { ackOperationId } : {});
+    const journal = await recordConfirmedCanvasCommit(confirmed, scope, {
+        ...(ackOperationId ? { ackOperationId } : {}),
+        ...(consumedForceHistorySnapshot ? { clearForceHistorySnapshot: true } : {}),
+    });
     recordServerConfirmedCanvas(journal.confirmedSnapshot ?? confirmed, scope);
-    pendingForceHistorySnapshot.delete(saveKey(scope, id));
+    if (consumedForceHistorySnapshot) {
+        pendingForceHistorySnapshot.delete(saveKey(scope, id));
+    }
     useCanvasStore.setState((state) => ({
         projects: state.projects.map((current) => current.id === id
             ? {
@@ -226,7 +237,7 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
         if (current.inFlight) return;
         if (current.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, settled) && !current.inFlight) return;
         const expectedRevision = current.confirmedRevision || settled.revision || 0;
-        const forceHistorySnapshot = pendingForceHistorySnapshot.has(saveKey(scope, id));
+        const forceHistorySnapshot = Boolean(current.pendingForceHistorySnapshot || pendingForceHistorySnapshot.has(saveKey(scope, id)));
         const patch = current.confirmedSnapshot ? buildCanvasDocumentPatch(current.confirmedSnapshot, settled, { forceHistorySnapshot }) : null;
         if (current.confirmedSnapshot && !patch) return;
         const operationId = newCanvasCommitOperationId();
@@ -302,7 +313,7 @@ async function sendCanvasDocumentCommit(
                 updatedAt: result.result?.updatedAt ?? acceptedDoc.updatedAt,
                 revision,
             };
-            await applyAcceptedCanvasSave(id, acceptedDoc, saved, operationId);
+            await applyAcceptedCanvasSave(id, acceptedDoc, saved, operationId, Boolean(payload.patch.forceHistorySnapshot));
             if (mergedDoc) {
                 const liveNow = openLocalCanvasProject(id);
                 const aligned = alignLiveAfterConfirmedRemote({

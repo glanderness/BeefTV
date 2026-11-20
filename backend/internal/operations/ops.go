@@ -84,7 +84,7 @@ func RegisterDefaultOps(r *Registry) {
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})
 	r.Register(Op{ExternalOnly: true, ReplaySafe: true, ID: "canvas.document.patch", Summary: "按节点/连线增量提交画布改动并在服务端原子合并", Scope: ScopeCanvas,
-		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"baseRevision":{"type":"integer"},"upsertNodes":{"type":"array"},"deleteNodeIds":{"type":"array"},"upsertConnections":{"type":"array"},"deleteConnectionIds":{"type":"array"},"upsertChatSessions":{"type":"array"},"deleteChatSessionIds":{"type":"array"},"fields":{"type":"object"},"expectedNodes":{"type":"object"},"expectedFields":{"type":"object"},"forceHistorySnapshot":{"type":"boolean"}},"required":["canvasId","baseRevision"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"baseRevision":{"type":"integer"},"upsertNodes":{"type":"array"},"deleteNodeIds":{"type":"array"},"upsertConnections":{"type":"array"},"deleteConnectionIds":{"type":"array"},"upsertChatSessions":{"type":"array"},"deleteChatSessionIds":{"type":"array"},"fields":{"type":"object"},"expectedNodes":{"type":"object"},"expectedConnections":{"type":"object"},"expectedChatSessions":{"type":"object"},"expectedFields":{"type":"object"},"forceHistorySnapshot":{"type":"boolean"}},"required":["canvasId","baseRevision"]}`),
 		Handler: opCanvasDocumentPatch})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止", ReadOnly: true, Scope: ScopeCanvas,
@@ -733,6 +733,8 @@ func opCanvasDocumentPatch(ctx *Context, params json.RawMessage) (any, error) {
 		DeleteChatSessionIDs []string                  `json:"deleteChatSessionIds"`
 		Fields               map[string]any            `json:"fields"`
 		ExpectedNodes        map[string]map[string]any `json:"expectedNodes"`
+		ExpectedConnections  map[string]map[string]any `json:"expectedConnections"`
+		ExpectedChatSessions map[string]map[string]any `json:"expectedChatSessions"`
 		ExpectedFields       map[string]any            `json:"expectedFields"`
 		ForceHistorySnapshot bool                      `json:"forceHistorySnapshot"`
 	}
@@ -752,6 +754,8 @@ func opCanvasDocumentPatch(ctx *Context, params json.RawMessage) (any, error) {
 		DeleteChatSessionIDs: args.DeleteChatSessionIDs,
 		Fields:               args.Fields,
 		ExpectedNodes:        args.ExpectedNodes,
+		ExpectedConnections:  args.ExpectedConnections,
+		ExpectedChatSessions: args.ExpectedChatSessions,
 		ExpectedFields:       args.ExpectedFields,
 		ForceHistorySnapshot: args.ForceHistorySnapshot,
 	})

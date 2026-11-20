@@ -29,6 +29,8 @@ type DocumentPatch struct {
 	DeleteChatSessionIDs []string                  `json:"deleteChatSessionIds,omitempty"`
 	Fields               map[string]any            `json:"fields,omitempty"`
 	ExpectedNodes        map[string]map[string]any `json:"expectedNodes,omitempty"`
+	ExpectedConnections  map[string]map[string]any `json:"expectedConnections,omitempty"`
+	ExpectedChatSessions map[string]map[string]any `json:"expectedChatSessions,omitempty"`
 	ExpectedFields       map[string]any            `json:"expectedFields,omitempty"`
 	ForceHistorySnapshot bool                      `json:"forceHistorySnapshot,omitempty"`
 }
@@ -179,6 +181,10 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 		cloned := cloneNode(incoming)
 		prev, exists := existingByID[id]
 		if !exists {
+			// If client expected this node to exist, the server deleted it since baseRevision.
+			if _, hadExpected := patch.ExpectedNodes[id]; hadExpected {
+				overlapped = true
+			}
 			existingByID[id] = cloned
 			orderedIDs = append(orderedIDs, id)
 			continue
@@ -207,20 +213,47 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 	// 2. Connections: drop deleted edges and edges dangling from deleted nodes, then upsert.
 	deleteEdgeSet := toIDSet(patch.DeleteConnectionIDs)
 	if len(deleteNodeSet) > 0 || len(deleteEdgeSet) > 0 || len(patch.UpsertConnections) > 0 {
-		doc["connections"] = mergeEntitySlice(doc["connections"], patch.UpsertConnections, func(item map[string]any) bool {
-			id := strings.TrimSpace(nodeString(item, "id"))
-			from := strings.TrimSpace(nodeString(item, "fromNodeId"))
-			to := strings.TrimSpace(nodeString(item, "toNodeId"))
-			return deleteEdgeSet[id] || deleteNodeSet[from] || deleteNodeSet[to]
-		})
+		mergedConns, connOverlapped := mergeEntitySliceWithOverlap(
+			doc["connections"],
+			patch.UpsertConnections,
+			patch.ExpectedConnections,
+			serverAdvanced,
+			func(item map[string]any) bool {
+				id := strings.TrimSpace(nodeString(item, "id"))
+				from := strings.TrimSpace(nodeString(item, "fromNodeId"))
+				to := strings.TrimSpace(nodeString(item, "toNodeId"))
+				return deleteEdgeSet[id] || deleteNodeSet[from] || deleteNodeSet[to]
+			},
+			func(item map[string]any) bool {
+				id := strings.TrimSpace(nodeString(item, "id"))
+				return deleteEdgeSet[id]
+			},
+		)
+		doc["connections"] = mergedConns
+		if connOverlapped {
+			overlapped = true
+		}
 	}
 
 	// 3. Chat sessions: drop deleted and upsert touched sessions.
 	if len(patch.DeleteChatSessionIDs) > 0 || len(patch.UpsertChatSessions) > 0 {
 		deleteSessionSet := toIDSet(patch.DeleteChatSessionIDs)
-		doc["chatSessions"] = mergeEntitySlice(doc["chatSessions"], patch.UpsertChatSessions, func(item map[string]any) bool {
-			return deleteSessionSet[strings.TrimSpace(nodeString(item, "id"))]
-		})
+		mergedChats, chatOverlapped := mergeEntitySliceWithOverlap(
+			doc["chatSessions"],
+			patch.UpsertChatSessions,
+			patch.ExpectedChatSessions,
+			serverAdvanced,
+			func(item map[string]any) bool {
+				return deleteSessionSet[strings.TrimSpace(nodeString(item, "id"))]
+			},
+			func(item map[string]any) bool {
+				return deleteSessionSet[strings.TrimSpace(nodeString(item, "id"))]
+			},
+		)
+		doc["chatSessions"] = mergedChats
+		if chatOverlapped {
+			overlapped = true
+		}
 	}
 
 	// 4. Top-level fields (never overwrite server-owned identity/timestamps/revision/viewport or entity lists).
@@ -316,9 +349,9 @@ func nodeHasBoundOutput(node map[string]any) bool {
 	return false
 }
 
-// nodeUploadInProgress recognizes both the production string metadata.fileUpload
+// nodeUploadOverlayFlag recognizes both the production string metadata.fileUpload
 // ("uploading", or "error" with interrupted upload overlay) and legacy map shapes.
-func nodeUploadInProgress(meta map[string]any) bool {
+func nodeUploadOverlayFlag(meta map[string]any) bool {
 	if meta == nil {
 		return false
 	}
@@ -337,6 +370,17 @@ func nodeUploadInProgress(meta map[string]any) bool {
 		return status == "uploading" || status == "pending" || status == "processing"
 	}
 	return false
+}
+
+// Mirrors web/src/lib/canvas/canvas-node-metadata-contract.ts hasStaleSettledFileUploadFlag:
+// a node with settled media and non-loading status is settled even if a stale
+// fileUpload flag was left behind.
+func nodeHasSettledUpload(node map[string]any) bool {
+	if !NodeHasMedia(node) {
+		return false
+	}
+	meta := nodeMetadata(node)
+	return nodeString(meta, "status") != "loading"
 }
 
 // mergePatchedNode protects server-bound generation outputs (media, text, or
@@ -370,10 +414,10 @@ func mergePatchedNode(existing, incoming map[string]any) (map[string]any, bool) 
 		return merged, true
 	}
 
-	// 2. Protect settled file upload against an older uploading/interrupted placeholder.
-	// Note: settled uploaded images/videos do not always set status:"success" (buildSettledUploadNodeMetadata).
-	existingSettledUpload := NodeHasMedia(existing) && !nodeUploadInProgress(existingMeta) && nodeString(existingMeta, "status") != "loading"
-	if existingSettledUpload && nodeUploadInProgress(incomingMeta) {
+	// 2. Protect settled file upload (including nodes carrying a stale fileUpload flag)
+	// against an older uploading/interrupted placeholder.
+	incomingUploadingPlaceholder := nodeUploadOverlayFlag(incomingMeta) && (!NodeHasMedia(incoming) || incomingStatus == "loading")
+	if nodeHasSettledUpload(existing) && incomingUploadingPlaceholder {
 		existingAttempt := nodeString(existingMeta, "fileUploadAttemptId")
 		incomingAttempt := nodeString(incomingMeta, "fileUploadAttemptId")
 		sameUpload := (existingAttempt != "" && existingAttempt == incomingAttempt) || (!NodeHasMedia(incoming) && incomingAttempt == "")
@@ -465,17 +509,37 @@ func sameEffectiveCanvasDoc(left, right map[string]any) bool {
 	return true
 }
 
-func mergeEntitySlice(raw any, upserts []map[string]any, shouldDrop func(map[string]any) bool) []any {
+func mergeEntitySliceWithOverlap(
+	raw any,
+	upserts []map[string]any,
+	expected map[string]map[string]any,
+	serverAdvanced bool,
+	shouldDrop func(map[string]any) bool,
+	isExplicitDelete func(map[string]any) bool,
+) ([]any, bool) {
 	items, _ := raw.([]any)
 	byID := make(map[string]map[string]any, len(items)+len(upserts))
 	order := make([]string, 0, len(items)+len(upserts))
+	overlapped := false
 	for _, entry := range items {
 		item, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
 		id := strings.TrimSpace(nodeString(item, "id"))
-		if id == "" || shouldDrop(item) {
+		if id == "" {
+			continue
+		}
+		if shouldDrop(item) {
+			if isExplicitDelete(item) {
+				if expectedBase, hasExpected := expected[id]; hasExpected {
+					if !reflect.DeepEqual(item, expectedBase) {
+						overlapped = true
+					}
+				} else if serverAdvanced {
+					overlapped = true
+				}
+			}
 			continue
 		}
 		byID[id] = item
@@ -489,10 +553,24 @@ func mergeEntitySlice(raw any, upserts []map[string]any, shouldDrop func(map[str
 		if id == "" || shouldDrop(entry) {
 			continue
 		}
-		if _, exists := byID[id]; !exists {
+		cloned := cloneNode(entry)
+		prev, exists := byID[id]
+		if !exists {
+			if _, hadExpected := expected[id]; hadExpected {
+				overlapped = true
+			}
 			order = append(order, id)
+			byID[id] = cloned
+			continue
 		}
-		byID[id] = cloneNode(entry)
+		if expectedBase, hasExpected := expected[id]; hasExpected {
+			if !reflect.DeepEqual(prev, expectedBase) && !reflect.DeepEqual(prev, cloned) {
+				overlapped = true
+			}
+		} else if serverAdvanced && !reflect.DeepEqual(prev, cloned) {
+			overlapped = true
+		}
+		byID[id] = cloned
 	}
 	out := make([]any, 0, len(order))
 	for _, id := range order {
@@ -500,7 +578,7 @@ func mergeEntitySlice(raw any, upserts []map[string]any, shouldDrop func(map[str
 			out = append(out, item)
 		}
 	}
-	return out
+	return out, overlapped
 }
 
 func toIDSet(ids []string) map[string]bool {

@@ -317,3 +317,143 @@ func TestPatchUserCanvasDocument_DisjointOverlapUploadLifecycleAndHistory(t *tes
 		t.Fatalf("viewport-only patch bumped revision %d -> %d", revBeforeNoop, noopViewport.Summary.Revision)
 	}
 }
+
+func TestPatchUserCanvasDocument_ServerDeleteUpsertConnectionsChatsAndStaleSettledUpload(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	owner := "owner"
+
+	nodeA := map[string]any{
+		"id": "a1", "type": "text", "title": "节点A",
+		"position": map[string]any{"x": float64(0), "y": float64(0)},
+		"width":    float64(200), "height": float64(120),
+		"metadata": map[string]any{"content": "a0", "status": "success"},
+	}
+	nodeB := map[string]any{
+		"id": "b1", "type": "image", "title": "带旧上传标记的已结算图",
+		"position": map[string]any{"x": float64(300), "y": float64(0)},
+		"width":    float64(300), "height": float64(300),
+		// Stale fileUpload:"uploading" left on an already-settled upload (mirrors hasStaleSettledFileUploadFlag).
+		"metadata": map[string]any{
+			"status":              "success",
+			"content":             "https://example.com/settled-stale.png",
+			"fileUpload":          "uploading",
+			"fileUploadAttemptId": "up-stale-1",
+			"resultOrigin":        "upload",
+		},
+	}
+	edge1 := map[string]any{"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "old"}
+	chat1 := map[string]any{"id": "chat-1", "title": "会话1", "messages": []any{map[string]any{"id": "m1", "content": "hi"}}}
+
+	initial := map[string]any{
+		"id":           "patch-c2",
+		"revision":     0,
+		"title":        "边界测试",
+		"nodes":        []any{nodeA, nodeB},
+		"connections":  []any{edge1},
+		"chatSessions": []any{chat1},
+	}
+	raw, _ := json.Marshal(initial)
+	created, err := svc.UpsertUserCanvasProject(owner, raw)
+	if err != nil {
+		t.Fatalf("create canvas: %v", err)
+	}
+
+	// 1. Stale settled upload (status=success + media + stale fileUpload:"uploading") MUST be protected against an older empty uploading overlay.
+	resStale, err := svc.PatchUserCanvasDocument(owner, "patch-c2", DocumentPatch{
+		BaseRevision: created.Revision,
+		UpsertNodes: []map[string]any{
+			{
+				"id": "b1", "type": "image", "title": "改了标题",
+				"position": map[string]any{"x": float64(320), "y": float64(10)},
+				"width":    float64(300), "height": float64(300),
+				"metadata": map[string]any{"fileUpload": "uploading", "fileUploadAttemptId": "up-stale-1", "fileUploadProgress": 20},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("stale settled upload patch failed: %v", err)
+	}
+	if !resStale.MediaPreserved {
+		t.Fatalf("expected MediaPreserved=true for settled upload with stale fileUpload flag")
+	}
+	var docAfterStale map[string]any
+	_ = json.Unmarshal(resStale.Document, &docAfterStale)
+	gotB := findCanvasNode(docAfterStale, "b1")
+	gotBMeta := nodeMetadata(gotB)
+	if nodeString(gotB, "title") != "改了标题" ||
+		nodeString(gotBMeta, "content") != "https://example.com/settled-stale.png" ||
+		gotBMeta["fileUpload"] != nil {
+		t.Fatalf("stale settled upload not preserved/cleaned: %+v", gotB)
+	}
+
+	// 2. Server deletes a1; client upserts a1 with ExpectedNodes["a1"] -> MUST capture before_merge snapshot!
+	curRaw, _ := svc.UserCanvasProject(owner, "patch-c2")
+	var curDoc map[string]any
+	_ = json.Unmarshal(curRaw, &curDoc)
+	curDoc["nodes"] = []any{gotB}
+	curDoc["revision"] = resStale.Summary.Revision
+	delRaw, _ := json.Marshal(curDoc)
+	afterServerDel, _, err := svc.CommitUserCanvasDocument(owner, "patch-c2", resStale.Summary.Revision, delRaw)
+	if err != nil {
+		t.Fatalf("server delete a1: %v", err)
+	}
+	resRevive, err := svc.PatchUserCanvasDocument(owner, "patch-c2", DocumentPatch{
+		BaseRevision: created.Revision,
+		UpsertNodes: []map[string]any{
+			{
+				"id": "a1", "type": "text", "title": "本地改了A",
+				"position": map[string]any{"x": float64(50), "y": float64(50)},
+				"width":    float64(200), "height": float64(120),
+				"metadata": map[string]any{"content": "a1-local", "status": "success"},
+			},
+		},
+		ExpectedNodes: map[string]map[string]any{"a1": nodeA},
+	})
+	if err != nil {
+		t.Fatalf("revive patch failed: %v", err)
+	}
+	if !resRevive.SnapshotCaptured {
+		t.Fatalf("expected before_merge snapshot when upserting server-deleted node with ExpectedNodes")
+	}
+	histRevive, _ := svc.CanvasHistory(owner, "patch-c2")
+	if len(histRevive.Snapshots) == 0 || histRevive.Snapshots[0].Reason != "before_merge" || histRevive.Snapshots[0].Revision != afterServerDel.Revision {
+		t.Fatalf("expected before_merge snapshot at rev %d, got %+v", afterServerDel.Revision, histRevive.Snapshots)
+	}
+
+	// 3. Server edits edge-1 and chat-1; client concurrently updates them with ExpectedConnections/ExpectedChatSessions -> MUST capture before_merge!
+	curRaw2, _ := svc.UserCanvasProject(owner, "patch-c2")
+	var curDoc2 map[string]any
+	_ = json.Unmarshal(curRaw2, &curDoc2)
+	curDoc2["connections"] = []any{map[string]any{"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "server-label"}}
+	curDoc2["chatSessions"] = []any{map[string]any{"id": "chat-1", "title": "服务端会话", "messages": []any{map[string]any{"id": "m1", "content": "server"}}}}
+	curDoc2["revision"] = resRevive.Summary.Revision
+	mutRaw, _ := json.Marshal(curDoc2)
+	afterServerMut, _, err := svc.CommitUserCanvasDocument(owner, "patch-c2", resRevive.Summary.Revision, mutRaw)
+	if err != nil {
+		t.Fatalf("server mutate edge/chat: %v", err)
+	}
+	resEdgeChat, err := svc.PatchUserCanvasDocument(owner, "patch-c2", DocumentPatch{
+		BaseRevision:         created.Revision,
+		UpsertConnections:    []map[string]any{{"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "local-label"}},
+		ExpectedConnections:  map[string]map[string]any{"edge-1": edge1},
+		UpsertChatSessions:   []map[string]any{{"id": "chat-1", "title": "本地会话", "messages": []any{map[string]any{"id": "m1", "content": "local"}}}},
+		ExpectedChatSessions: map[string]map[string]any{"chat-1": chat1},
+	})
+	if err != nil {
+		t.Fatalf("edge/chat overlap patch failed: %v", err)
+	}
+	if !resEdgeChat.SnapshotCaptured {
+		t.Fatalf("expected before_merge snapshot on overlapping connection/chatSession edit")
+	}
+	histEC, _ := svc.CanvasHistory(owner, "patch-c2")
+	if len(histEC.Snapshots) == 0 || histEC.Snapshots[0].Reason != "before_merge" || histEC.Snapshots[0].Revision != afterServerMut.Revision {
+		t.Fatalf("expected before_merge snapshot at rev %d, got %+v", afterServerMut.Revision, histEC.Snapshots)
+	}
+	fullECSnap, _ := svc.CanvasHistorySnapshot(owner, "patch-c2", histEC.Snapshots[0].ID)
+	var ecSnapDoc map[string]any
+	_ = json.Unmarshal([]byte(fullECSnap.PayloadJSON), &ecSnapDoc)
+	snapChats, _ := ecSnapDoc["chatSessions"].([]any)
+	if len(snapChats) != 1 || nodeString(snapChats[0].(map[string]any), "title") != "服务端会话" {
+		t.Fatalf("before_merge snapshot lost server chat session, got %+v", snapChats)
+	}
+}

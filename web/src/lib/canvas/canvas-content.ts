@@ -1,10 +1,37 @@
 import { canonicalize } from "json-canonicalize";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
+const OPEN_RECOVERY_PLACEHOLDER_ERROR = "正在从任务中心恢复生成状态...";
+
+/**
+ * Strip editor-only open/bookkeeping decorations from a node so content hashes,
+ * document equality (`sameCanvasDocument`/`sameCanvasContent`), and incremental
+ * patches (`buildCanvasDocumentPatch`) all agree on what counts as an actual edit.
+ */
+export function stripCanvasNodeBookkeeping<T>(node: T): T {
+    if (!node || typeof node !== "object") return node;
+    const record = node as Record<string, unknown>;
+    const hasTimestamps = "createdAt" in record || "updatedAt" in record;
+    const rawMeta = record.metadata as Record<string, unknown> | undefined;
+    const hasOpenPlaceholder = Boolean(
+        rawMeta &&
+        rawMeta.status === "loading" &&
+        rawMeta.errorDetails === OPEN_RECOVERY_PLACEHOLDER_ERROR,
+    );
+    if (!hasTimestamps && !hasOpenPlaceholder) return node;
+    const { createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = record;
+    if (hasOpenPlaceholder && rawMeta) {
+        const { errorDetails: _placeholder, ...cleanMeta } = rawMeta;
+        return { ...rest, metadata: cleanMeta } as T;
+    }
+    return rest as T;
+}
+
 // These fields describe local viewing / synchronization, not an edit to the document.
 export function canvasContentSnapshot(project: CanvasProject) {
     const { viewport: _viewport, updatedAt: _updatedAt, revision: _revision, remoteContentHash: _hash, ...content } = project;
-    return { ...content, projectId: content.projectId || undefined };
+    const nodes = Array.isArray(content.nodes) ? content.nodes.map((node) => stripCanvasNodeBookkeeping(node)) : content.nodes;
+    return { ...content, nodes, projectId: content.projectId || undefined };
 }
 
 export function normalizeCanvasProjectGraph(project: CanvasProject): CanvasProject {
@@ -74,39 +101,6 @@ function isEmptyDefaultValue(value: unknown) {
     return value === "";
 }
 
-const OPEN_RECOVERY_PLACEHOLDER_ERROR = "正在从任务中心恢复生成状态...";
-
-/**
- * Strip editor-only open/bookkeeping decorations from a node so document equality
- * checks (`sameCanvasDocument`) and incremental patches (`buildCanvasDocumentPatch`)
- * agree on what counts as an actual user edit.
- */
-export function stripCanvasNodeBookkeeping<T>(node: T): T {
-    if (!node || typeof node !== "object") return node;
-    const record = node as Record<string, unknown>;
-    const hasTimestamps = "createdAt" in record || "updatedAt" in record;
-    const rawMeta = record.metadata as Record<string, unknown> | undefined;
-    const hasOpenPlaceholder = Boolean(
-        rawMeta &&
-        rawMeta.status === "loading" &&
-        rawMeta.errorDetails === OPEN_RECOVERY_PLACEHOLDER_ERROR,
-    );
-    if (!hasTimestamps && !hasOpenPlaceholder) return node;
-    const { createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = record;
-    if (hasOpenPlaceholder && rawMeta) {
-        const { errorDetails: _placeholder, ...cleanMeta } = rawMeta;
-        return { ...rest, metadata: cleanMeta } as T;
-    }
-    return rest as T;
-}
-
-function normalizeDocumentComparisonValue(key: string, value: unknown): unknown {
-    if (key === "nodes" && Array.isArray(value)) {
-        return value.map((item) => stripCanvasNodeBookkeeping(item));
-    }
-    return value;
-}
-
 export function sameCanvasDocument(left: CanvasProject | undefined, right: CanvasProject | undefined) {
     if (left === right) return true;
     if (!left || !right) return false;
@@ -121,9 +115,7 @@ export function sameCanvasDocument(left: CanvasProject | undefined, right: Canva
             if (isEmptyDefaultValue(present)) continue;
             return false;
         }
-        const leftVal = normalizeDocumentComparisonValue(key, a[key]);
-        const rightVal = normalizeDocumentComparisonValue(key, b[key]);
-        if (leftVal !== rightVal && canonicalize(leftVal) !== canonicalize(rightVal)) return false;
+        if (a[key] !== b[key] && canonicalize(a[key]) !== canonicalize(b[key])) return false;
     }
     return true;
 }

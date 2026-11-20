@@ -1,3 +1,5 @@
+import { canonicalize } from "json-canonicalize";
+import { stripCanvasNodeBookkeeping } from "@/lib/canvas/canvas-content";
 import {
     GENERATION_BIND_METADATA_KEYS,
     GENERATION_ERROR_METADATA_KEYS,
@@ -18,6 +20,8 @@ export type MockCanvasPatchParams = {
     deleteChatSessionIds?: string[];
     fields?: Record<string, unknown>;
     expectedNodes?: Record<string, Entity>;
+    expectedConnections?: Record<string, Entity>;
+    expectedChatSessions?: Record<string, Entity>;
     expectedFields?: Record<string, unknown>;
     forceHistorySnapshot?: boolean;
 };
@@ -32,6 +36,14 @@ const PROTECTED_DOC_FIELDS = new Set([
     "nodes",
     "connections",
     "chatSessions",
+]);
+
+const IGNORED_NOOP_DOC_FIELDS = new Set([
+    "revision",
+    "createdAt",
+    "updatedAt",
+    "viewport",
+    "remoteContentHash",
 ]);
 
 const BOUND_GENERATION_OUTPUT_KEYS = [
@@ -59,6 +71,31 @@ function metaStr(meta: Record<string, unknown> | undefined, key: string): string
     return typeof val === "string" ? val.trim() : "";
 }
 
+function isPatchEmpty(v: unknown): boolean {
+    if (v === null || v === undefined || v === "") return true;
+    if (Array.isArray(v)) return v.length === 0;
+    if (typeof v === "object") return Object.keys(v as Record<string, unknown>).length === 0;
+    return false;
+}
+
+function samePatchValue(left: unknown, right: unknown): boolean {
+    if (isPatchEmpty(left) && isPatchEmpty(right)) return true;
+    if (left === right) return true;
+    return canonicalize(left) === canonicalize(right);
+}
+
+function sameNormalizedNode(left: Entity, right: Entity): boolean {
+    return samePatchValue(stripCanvasNodeBookkeeping(left), stripCanvasNodeBookkeeping(right));
+}
+
+function sameEffectiveCanvasDoc(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+    for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+        if (IGNORED_NOOP_DOC_FIELDS.has(key)) continue;
+        if (!samePatchValue(left[key], right[key])) return false;
+    }
+    return true;
+}
+
 function nodeHasMedia(node: Entity): boolean {
     const meta = node.metadata;
     if (!meta) return false;
@@ -73,7 +110,7 @@ function nodeHasBoundOutput(node: Entity): boolean {
     return Boolean(meta.storyboard && typeof meta.storyboard === "object");
 }
 
-function nodeUploadInProgress(meta: Record<string, unknown> | undefined): boolean {
+function nodeUploadOverlayFlag(meta: Record<string, unknown> | undefined): boolean {
     if (!meta) return false;
     if (typeof meta.fileUpload === "string") {
         const status = meta.fileUpload.trim().toLowerCase();
@@ -86,6 +123,10 @@ function nodeUploadInProgress(meta: Record<string, unknown> | undefined): boolea
         return status === "uploading" || status === "pending" || status === "processing";
     }
     return false;
+}
+
+function nodeHasSettledUpload(node: Entity): boolean {
+    return nodeHasMedia(node) && metaStr(node.metadata, "status") !== "loading";
 }
 
 function mergePatchedNode(existing: Entity, incoming: Entity): { node: Entity; preserved: boolean } {
@@ -117,8 +158,8 @@ function mergePatchedNode(existing: Entity, incoming: Entity): { node: Entity; p
         return { node: merged, preserved: true };
     }
 
-    const existingSettledUpload = nodeHasMedia(existing) && !nodeUploadInProgress(existingMeta) && metaStr(existingMeta, "status") !== "loading";
-    if (existingSettledUpload && nodeUploadInProgress(incomingMeta)) {
+    const incomingUploadingPlaceholder = nodeUploadOverlayFlag(incomingMeta) && (!nodeHasMedia(incoming) || incomingStatus === "loading");
+    if (nodeHasSettledUpload(existing) && incomingUploadingPlaceholder) {
         const existingAttempt = metaStr(existingMeta, "fileUploadAttemptId");
         const incomingAttempt = metaStr(incomingMeta, "fileUploadAttemptId");
         const sameUpload = (existingAttempt !== "" && existingAttempt === incomingAttempt) || (!nodeHasMedia(incoming) && incomingAttempt === "");
@@ -139,39 +180,70 @@ function mergePatchedNode(existing: Entity, incoming: Entity): { node: Entity; p
     return { node: structuredClone(incoming), preserved: false };
 }
 
-function mergeEntities<T extends Entity>(
+function mergeEntitiesWithOverlap<T extends Entity>(
     existing: readonly T[] | undefined,
     upserts: readonly T[] | undefined,
+    expected: Record<string, Entity> | undefined,
+    serverAdvanced: boolean,
     shouldDrop: (item: T) => boolean,
-): T[] {
+    isExplicitDelete: (item: T) => boolean,
+): { items: T[]; overlapped: boolean } {
     const byId = new Map<string, T>();
     const order: string[] = [];
+    let overlapped = false;
     for (const item of existing ?? []) {
-        if (!item?.id || shouldDrop(item)) continue;
+        if (!item?.id) continue;
+        if (shouldDrop(item)) {
+            if (isExplicitDelete(item)) {
+                const expectedBase = expected?.[item.id];
+                if (expectedBase) {
+                    if (!samePatchValue(item, expectedBase)) overlapped = true;
+                } else if (serverAdvanced) {
+                    overlapped = true;
+                }
+            }
+            continue;
+        }
         byId.set(item.id, structuredClone(item));
         order.push(item.id);
     }
     for (const item of upserts ?? []) {
         if (!item?.id || shouldDrop(item)) continue;
-        if (!byId.has(item.id)) order.push(item.id);
-        byId.set(item.id, structuredClone(item));
+        const cloned = structuredClone(item);
+        const prev = byId.get(item.id);
+        if (!prev) {
+            if (expected && Object.hasOwn(expected, item.id)) overlapped = true;
+            order.push(item.id);
+            byId.set(item.id, cloned);
+            continue;
+        }
+        const expectedBase = expected?.[item.id];
+        if (expectedBase) {
+            if (!samePatchValue(prev, expectedBase) && !samePatchValue(prev, cloned)) overlapped = true;
+        } else if (serverAdvanced && !samePatchValue(prev, cloned)) {
+            overlapped = true;
+        }
+        byId.set(item.id, cloned);
     }
-    return order.map((id) => byId.get(id)!);
+    return { items: order.map((id) => byId.get(id)!), overlapped };
 }
 
 /**
- * Faithfully mirrors backend `PatchUserCanvasDocument` entity/field delta merging,
- * protected field filtering, and generation/upload output preservation.
+ * Faithfully mirrors backend `PatchUserCanvasDocument`: entity/field delta merging,
+ * per-entity expected overlap & forceHistorySnapshot detection, protected field
+ * filtering, generation/upload output preservation, and no-op revision skipping.
  */
 export function applyMockCanvasPatch<T extends Record<string, unknown>>(
     current: T | null,
     params: MockCanvasPatchParams,
     nextRevision: number,
-): { document: T; serverAdvanced: boolean; mediaPreserved: boolean } {
-    const base = structuredClone(current ?? ({ id: params.canvasId ?? "c1", nodes: [], connections: [], chatSessions: [] } as unknown as T));
+): { document: T; serverAdvanced: boolean; mediaPreserved: boolean; snapshotCaptured: boolean; noOp: boolean } {
+    const currentSnapshot = structuredClone(current ?? ({ id: params.canvasId ?? "c1", nodes: [], connections: [], chatSessions: [] } as unknown as T));
+    const base = structuredClone(currentSnapshot);
     const currentRevision = typeof base.revision === "number" ? base.revision : 0;
     const serverAdvanced = currentRevision > (params.baseRevision ?? 0);
     let mediaPreserved = false;
+    let overlapped = Boolean(params.forceHistorySnapshot);
     const deleteNodes = new Set(params.deleteNodeIds ?? []);
     const deleteConns = new Set(params.deleteConnectionIds ?? []);
     const deleteChats = new Set(params.deleteChatSessionIds ?? []);
@@ -180,7 +252,16 @@ export function applyMockCanvasPatch<T extends Record<string, unknown>>(
         const byId = new Map<string, Entity>();
         const order: string[] = [];
         for (const item of (base.nodes as Entity[] | undefined) ?? []) {
-            if (!item?.id || deleteNodes.has(item.id)) continue;
+            if (!item?.id) continue;
+            if (deleteNodes.has(item.id)) {
+                const expectedBase = params.expectedNodes?.[item.id];
+                if (expectedBase) {
+                    if (!sameNormalizedNode(item, expectedBase)) overlapped = true;
+                } else if (serverAdvanced && nodeHasBoundOutput(item)) {
+                    overlapped = true;
+                }
+                continue;
+            }
             byId.set(item.id, structuredClone(item));
             order.push(item.id);
         }
@@ -188,36 +269,66 @@ export function applyMockCanvasPatch<T extends Record<string, unknown>>(
             if (!incoming?.id || deleteNodes.has(incoming.id)) continue;
             const prev = byId.get(incoming.id);
             if (!prev) {
+                if (params.expectedNodes && Object.hasOwn(params.expectedNodes, incoming.id)) overlapped = true;
                 order.push(incoming.id);
                 byId.set(incoming.id, structuredClone(incoming));
                 continue;
             }
             const merged = mergePatchedNode(prev, incoming);
-            if (merged.preserved) mediaPreserved = true;
+            if (merged.preserved) {
+                mediaPreserved = true;
+                overlapped = true;
+            } else {
+                const expectedBase = params.expectedNodes?.[incoming.id];
+                if (expectedBase) {
+                    if (!sameNormalizedNode(prev, expectedBase) && !sameNormalizedNode(prev, merged.node)) overlapped = true;
+                } else if (serverAdvanced && !samePatchValue(prev, merged.node)) {
+                    overlapped = true;
+                }
+            }
             byId.set(incoming.id, merged.node);
         }
         (base as Record<string, unknown>).nodes = order.map((id) => byId.get(id)!);
     }
     if (deleteNodes.size > 0 || deleteConns.size > 0 || (params.upsertConnections?.length ?? 0) > 0) {
-        (base as Record<string, unknown>).connections = mergeEntities(
+        const connResult = mergeEntitiesWithOverlap(
             base.connections as Array<Entity & { fromNodeId?: string; toNodeId?: string }> | undefined,
             params.upsertConnections,
+            params.expectedConnections,
+            serverAdvanced,
             (item) => deleteConns.has(item.id) || (item.fromNodeId ? deleteNodes.has(item.fromNodeId) : false) || (item.toNodeId ? deleteNodes.has(item.toNodeId) : false),
+            (item) => deleteConns.has(item.id),
         );
+        (base as Record<string, unknown>).connections = connResult.items;
+        if (connResult.overlapped) overlapped = true;
     }
     if (deleteChats.size > 0 || (params.upsertChatSessions?.length ?? 0) > 0) {
-        (base as Record<string, unknown>).chatSessions = mergeEntities(
+        const chatResult = mergeEntitiesWithOverlap(
             base.chatSessions as Entity[] | undefined,
             params.upsertChatSessions,
+            params.expectedChatSessions,
+            serverAdvanced,
+            (item) => deleteChats.has(item.id),
             (item) => deleteChats.has(item.id),
         );
+        (base as Record<string, unknown>).chatSessions = chatResult.items;
+        if (chatResult.overlapped) overlapped = true;
     }
     for (const [key, value] of Object.entries(params.fields ?? {})) {
         if (PROTECTED_DOC_FIELDS.has(key)) continue;
+        if (params.expectedFields && Object.hasOwn(params.expectedFields, key)) {
+            if (!samePatchValue(base[key], params.expectedFields[key]) && !samePatchValue(base[key], value)) overlapped = true;
+        } else if (serverAdvanced && !samePatchValue(base[key], value)) {
+            overlapped = true;
+        }
         if (value === null && key !== "activeChatId") delete (base as Record<string, unknown>)[key];
         else (base as Record<string, unknown>)[key] = structuredClone(value);
     }
     (base as Record<string, unknown>).id = params.canvasId ?? base.id ?? "c1";
+    if (sameEffectiveCanvasDoc(currentSnapshot, base)) {
+        (currentSnapshot as Record<string, unknown>).revision = currentRevision;
+        return { document: currentSnapshot, serverAdvanced, mediaPreserved, snapshotCaptured: false, noOp: true };
+    }
     (base as Record<string, unknown>).revision = nextRevision;
-    return { document: base, serverAdvanced, mediaPreserved };
+    return { document: base, serverAdvanced, mediaPreserved, snapshotCaptured: overlapped, noOp: false };
 }
