@@ -19,11 +19,14 @@ mock.module("file-saver", () => ({
 }));
 
 const {
+    downloadBrowserMediaSafely,
     downloadOwnedOrBrowserMedia,
+    isSafeDirectBrowserDownloadUrl,
     isWailsNativeShell,
     MAX_OWNED_ARTIFACT_BYTES,
     reportOwnedMediaSave,
     saveOwnedNativeArchiveFiles,
+    saveOwnedNativeMediaBatch,
     saveOwnedOrBrowserBlob,
     saveOwnedOrBrowserVideoBlob,
 } = await import("@/services/desktop-media-save");
@@ -304,5 +307,83 @@ describe("native video export resource save", () => {
         apiClient.defaults.adapter = async () => { requests++; throw new Error("unexpected upload"); };
         expect(await saveOwnedOrBrowserVideoBlob("clip.mp4", new Blob(["video"]))).toBe("saved");
         expect(requests).toBe(0);
+    });
+
+    test("native media batch save streams resource IDs, passes directory token, and honors cancellation", async () => {
+        const calls: Array<{ items: Array<{ fileName: string; resourceId?: string; data?: string }>; token: string }> = [];
+        Object.assign(globalThis, {
+            window: {
+                location: { protocol: "wails:" },
+                go: {
+                    main: {
+                        DesktopApp: {
+                            SaveOwnedMediaBatch: async (items: Array<{ fileName: string; resourceId?: string; data?: string }>, token: string) => {
+                                calls.push({ items, token });
+                                return { saved: items.length, failed: 0, cancelled: false, directory: "/tmp/out" };
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        expect(isWailsNativeShell()).toBe(true);
+        const outcome = await saveOwnedNativeMediaBatch([
+            { fileName: "../01:shot?.mp4", resourceId: "res-1" },
+            { fileName: "02_note.png", blob: new Blob(["abc"], { type: "image/png" }) },
+            { fileName: "03_empty.png" },
+        ], "dir-token-1");
+        expect(outcome).toEqual({
+            saved: 2,
+            failed: 1,
+            cancelled: false,
+            failures: [{ fileName: "03_empty.png", reason: "缺少可保存的本地内容" }],
+        });
+        expect(calls).toEqual([{
+            token: "dir-token-1",
+            items: [
+                { fileName: "01_shot.mp4", resourceId: "res-1" },
+                { fileName: "02_note.png", data: "YWJj" },
+            ],
+        }]);
+
+        window.go!.main!.DesktopApp!.SaveOwnedMediaBatch = async () => ({ saved: 0, failed: 0, cancelled: true });
+        expect(await saveOwnedNativeMediaBatch([{ fileName: "01_shot.mp4", resourceId: "res-1" }])).toEqual({
+            saved: 0,
+            failed: 0,
+            cancelled: true,
+        });
+    });
+
+    test("safe browser download allowlist blocks loopback, private LAN, and protected API URLs", async () => {
+        Object.assign(globalThis, { window: { location: { protocol: "http:" } } });
+        expect(isSafeDirectBrowserDownloadUrl("blob:http://127.0.0.1:3000/abc")).toBe(true);
+        expect(isSafeDirectBrowserDownloadUrl("data:image/png;base64,AA==")).toBe(true);
+        expect(isSafeDirectBrowserDownloadUrl("https://cdn.example.com/a.mp4")).toBe(true);
+        expect(isSafeDirectBrowserDownloadUrl("http://127.0.0.1:54321/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("http://127.0.0.2:8080/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("http://0.0.0.0:8080/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("http://localhost.:8080/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("http://[::ffff:127.0.0.1]:8080/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("http://192.168.1.20/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("/\\127.0.0.1:8080/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("/\t/127.0.0.1:8080/raw.mp4")).toBe(false);
+        expect(isSafeDirectBrowserDownloadUrl("/api/resources/res-1/file")).toBe(false);
+
+        const loaded: string[] = [];
+        await downloadBrowserMediaSafely({
+            fileName: "clip.mp4",
+            browserUrl: "http://127.0.0.1:54321/api/resources/res-auth/file",
+            loadResourceBlob: async (storageKey) => {
+                loaded.push(storageKey);
+                return new Blob(["mp4"], { type: "video/mp4" });
+            },
+        });
+        expect(loaded).toEqual(["resource:res-auth"]);
+        expect(saveAsCalls).toHaveLength(1);
+        expect(saveAsCalls[0]?.[0]).toBeInstanceOf(Blob);
+
+        await expect(
+            downloadBrowserMediaSafely({ fileName: "bad.mp4", browserUrl: "http://0.0.0.0:8080/raw.mp4" }),
+        ).rejects.toThrow("当前链接无法直接下载");
     });
 });

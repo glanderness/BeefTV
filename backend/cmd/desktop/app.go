@@ -31,6 +31,10 @@ type DesktopApp struct {
 	mu                      sync.RWMutex
 	migrationMu             sync.Mutex
 	workspaceLockMu         sync.Mutex
+	batchSaveMu             sync.Mutex
+	batchDirToken           string
+	batchDirPath            string
+	batchDirExpiresAt       time.Time
 	migrating               bool
 	migrationCancel         context.CancelFunc
 	migrationProgress       desktopstorage.Progress
@@ -51,6 +55,7 @@ type DesktopApp struct {
 	boot                    desktopBootAttempt
 	openRuntime             func(ctx context.Context, dataDir string, onPhase func(phase, detail string)) (*bootstrap.Runtime, error)
 	chooseSavePath          func(ctx context.Context, fileName string) (string, error)
+	chooseSaveDir           func(ctx context.Context) (string, error)
 	resolveDownloadsDir     func() string
 	revealFile              func(path string) error
 	openDirectory           func(path string) error
@@ -128,6 +133,9 @@ func (a *DesktopApp) stop(ctx context.Context) error {
 	a.stopRendererWatchdog()
 	a.mu.Lock()
 	runtime := a.runtime()
+	a.batchDirToken = ""
+	a.batchDirPath = ""
+	a.batchDirExpiresAt = time.Time{}
 	a.boot = desktopBootAttempt{
 		state: DesktopStartupState{State: "idle", DataDir: a.dataDir},
 	}
@@ -302,6 +310,32 @@ func (a *DesktopApp) copyMedia(resourceID, destPath string) error {
 		return errors.New("本地后端尚未就绪")
 	}
 	return runtime.CopyOwnedResourceTo(resourceID, destPath)
+}
+
+func (a *DesktopApp) copyMediaExclusive(resourceID, destPath string) error {
+	a.mu.RLock()
+	copyFn := a.copyOwnedMedia
+	a.mu.RUnlock()
+	if copyFn != nil {
+		file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return os.ErrExist
+			}
+			return errors.New("无法写入所选位置")
+		}
+		_ = file.Close()
+		if err := copyFn(resourceID, destPath); err != nil {
+			_ = os.Remove(destPath)
+			return err
+		}
+		return nil
+	}
+	runtime := a.runtime()
+	if runtime == nil {
+		return errors.New("本地后端尚未就绪")
+	}
+	return runtime.CopyOwnedResourceExclusive(resourceID, destPath)
 }
 
 func (a *DesktopApp) copyEagle(baseURL, itemID, destPath string) error {

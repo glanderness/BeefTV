@@ -45,7 +45,7 @@ func (r *Runtime) WriteOwnedArchiveTo(ctx context.Context, entries []OwnedArchiv
 			return errors.New("导出文件没有内容")
 		}
 		inlineBytes += len(entry.Data)
-		if inlineBytes > maxOwnedArtifactBytes {
+		if inlineBytes > MaxOwnedArtifactBytes {
 			return errors.New("本地附加文件过大，请先保存素材后再导出")
 		}
 	}

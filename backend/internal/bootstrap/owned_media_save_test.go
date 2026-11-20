@@ -71,7 +71,7 @@ func TestSanitizeSaveFileNameDoesNotSplitChineseRunes(t *testing.T) {
 	if !strings.HasSuffix(got, ".mp4") {
 		t.Fatalf("missing extension: %q", got)
 	}
-	if len(got) > maxSaveFileNameBytes {
+	if len(got) > MaxSaveFileNameBytes {
 		t.Fatalf("len(%q) = %d", got, len(got))
 	}
 	for _, r := range got[:len(got)-4] {
@@ -151,10 +151,60 @@ func TestWriteOwnedFileAtomicallyReplacesDestOnlyAfterSuccess(t *testing.T) {
 }
 
 func TestWriteOwnedArtifactRejectsOversizedPayload(t *testing.T) {
-	err := WriteOwnedArtifact(filepath.Join(t.TempDir(), "out.zip"), make([]byte, maxOwnedArtifactBytes+1))
+	err := WriteOwnedArtifact(filepath.Join(t.TempDir(), "out.zip"), make([]byte, MaxOwnedArtifactBytes+1))
 	if err == nil {
 		t.Fatal("expected oversized artifact to be rejected")
 	}
+}
+
+func TestWriteOwnedArtifactExclusiveRefusesOverwriteAndCleansFailedWrite(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "keep.bin")
+	if err := os.WriteFile(dest, []byte("EXISTING"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteOwnedArtifactExclusive(dest, []byte("NEW")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("WriteOwnedArtifactExclusive on existing file = %v, want os.ErrExist", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != "EXISTING" {
+		t.Fatalf("existing file after exclusive attempt = %q err=%v", got, err)
+	}
+
+	failedDest := filepath.Join(dir, "partial.bin")
+	if err := writeOwnedFileExclusive(failedDest, &failAfterReader{err: errors.New("boom")}); err == nil {
+		t.Fatal("expected exclusive write failure")
+	}
+	if _, err := os.Lstat(failedDest); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed exclusive write left partial file: %v", err)
+	}
+	assertNoSaveTemps(t, dir)
+
+	freshDest := filepath.Join(dir, "fresh.bin")
+	if err := WriteOwnedArtifactExclusive(freshDest, []byte("ATOMIC")); err != nil {
+		t.Fatalf("WriteOwnedArtifactExclusive fresh = %v", err)
+	}
+	if raw, err := os.ReadFile(freshDest); err != nil || string(raw) != "ATOMIC" {
+		t.Fatalf("fresh file = %q err=%v", raw, err)
+	}
+	assertNoSaveTemps(t, dir)
+
+	// Force link-less filesystem fallback (e.g. FAT32/exFAT) and verify atomic publish + no-clobber.
+	origLink := linkOwnedFile
+	linkOwnedFile = func(string, string) error { return errors.New("operation not supported") }
+	defer func() { linkOwnedFile = origLink }()
+
+	if err := WriteOwnedArtifactExclusive(dest, []byte("OVERWRITE")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("fallback exclusive on existing = %v, want os.ErrExist", err)
+	}
+	fallbackDest := filepath.Join(dir, "fallback.bin")
+	if err := WriteOwnedArtifactExclusive(fallbackDest, []byte("FALLBACK-ATOMIC")); err != nil {
+		t.Fatalf("fallback WriteOwnedArtifactExclusive = %v", err)
+	}
+	if raw, err := os.ReadFile(fallbackDest); err != nil || string(raw) != "FALLBACK-ATOMIC" {
+		t.Fatalf("fallback file = %q err=%v", raw, err)
+	}
+	assertNoSaveTemps(t, dir)
 }
 
 func TestReplaceFileLeavesAdjacentOldFileAlone(t *testing.T) {

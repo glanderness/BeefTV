@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, Download, FolderOpen, Layers3, Video } from 
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { CanvasFolderPreview } from "@/components/canvas/canvas-folder-preview";
-import { batchDownloadCanvasMediaNodes, collectDownloadableMediaNodes } from "@/lib/canvas/canvas-batch-download";
+import { collectDownloadableMediaNodes, runCanvasBatchDownloadWithFeedback, useCanvasBatchDownloadPending } from "@/lib/canvas/canvas-batch-download";
 import { FRAME_HEADER_HEIGHT, FRAME_PADDING, isCanvasFolderNode } from "@/lib/canvas/canvas-frame";
 import { canvasNodeVideoPreviewStorageKey, canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -53,6 +53,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     onHoverEnd?: (nodeId: string) => void;
 }) {
     const { message } = App.useApp();
+    const batchDownloading = useCanvasBatchDownloadPending();
     const theme = canvasThemes[useActiveTheme()];
     const collapsed = Boolean(data.metadata?.frame?.collapsed);
     const folder = isCanvasFolderNode(data);
@@ -318,18 +319,15 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     {!linkedFolder && downloadableFolderNodes.length > 0 ? (
                         <button
                             type="button"
-                            className="flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition hover:bg-white/10"
+                            disabled={batchDownloading}
+                            className="flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition hover:bg-white/10 disabled:opacity-45"
                             title="批量下载文件夹内媒体素材"
                             onClick={() => {
-                                void batchDownloadCanvasMediaNodes(downloadableFolderNodes).then(({ downloaded, failed }) => {
-                                    if (failed === 0) message.success(`已批量下载 ${downloaded} 个素材`);
-                                    else if (downloaded > 0) message.warning(`已下载 ${downloaded} 个素材，${failed} 个下载失败`);
-                                    else message.warning("素材下载失败，请稍后重试");
-                                });
+                                void runCanvasBatchDownloadWithFeedback(downloadableFolderNodes, message);
                             }}
                         >
                             <Download className="size-3.5" />
-                            <span>下载</span>
+                            <span>{batchDownloading ? "下载中..." : "下载"}</span>
                         </button>
                     ) : null}
                 </div>
