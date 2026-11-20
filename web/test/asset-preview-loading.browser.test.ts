@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
+import { compileAppStyles } from "./helpers/app-styles";
 
 let browser: Browser;
 let page: Page;
@@ -23,12 +23,17 @@ beforeAll(async () => {
         builder.onResolve({ filter: /^@\// }, args => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
     } }], define: { "import.meta.env": '{"VITE_CANVAS_LOCAL_MODE":"false"}', "process.env.NODE_ENV": '"production"' } });
     if (!build.success) throw new Error(build.logs.join("\n"));
-    const script = await build.outputs[0].text();
-    const previewCSS = readFileSync(import.meta.dir + "/../src/styles/assets-reference-baseline.css", "utf8");
+    const script = await build.outputs.find(output => output.path.endsWith(".js"))!.text();
+    const rawCss = await build.outputs.find(output => output.path.endsWith(".css"))?.text();
+    const appCss = await compileAppStyles(rawCss ? [rawCss] : []);
     server = Bun.serve({ port: 0, idleTimeout: 30, async fetch(request) {
         const url = new URL(request.url);
         const path = url.pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
+        if (path === "/harness.css") return new Response(appCss, { headers: { "Content-Type": "text/css" } });
+        if (/^\/api\/resources\/broken-cover-[^/]+\/(file|asset\/.+)$/.test(path)) {
+            return new Response("broken cover", { status: 500 });
+        }
         if (/^\/api\/resources\/[^/]+\/asset\/poster\.jpg$/.test(path)) {
             posterRequests++;
             if (failServerPoster) return new Response("poster unavailable", { status: 500 });
@@ -54,8 +59,11 @@ beforeAll(async () => {
             portrait: url.searchParams.has("portrait"),
             directPoster: url.searchParams.has("directPoster"),
             lowMemory: url.searchParams.has("lowMemory"),
+            protectedCoverFail: url.searchParams.has("protectedCoverFail"),
+            drawer: url.searchParams.has("drawer"),
+            libraryCard: url.searchParams.has("libraryCard"),
         });
-        return new Response(`<style>.preview{display:block;width:100%;height:100%;object-fit:cover}${previewCSS}</style><div id="root"></div><script>window.__fixture=${fixture}</script><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
+        return new Response(`<!doctype html><html><head><link rel="stylesheet" href="/harness.css"><style>.preview{display:block;width:100%;height:100%;object-fit:cover}</style></head><body><div id="root"></div><script>window.__fixture=${fixture}</script><script type="module" src="/harness.js"></script></body></html>`, { headers: { "Content-Type": "text/html" } });
     } });
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || chromium.executablePath(), headless: true });
 }, 60_000);
@@ -94,25 +102,37 @@ test("missing posters hydrate as images with bounded media work and release the 
     await page.getByRole("button", { name: "点击响应 1", exact: true }).waitFor();
 }, 30_000);
 
-test("detail posters retain the existing contain fit and height limit", async () => {
+test("detail portrait posters retain contain fit and 320px height limit under real app styles", async () => {
     await page.goto(`${server.url}?poster&portrait&count=1`);
     const image = page.getByRole("img", { name: "video-0-0", exact: true });
     await image.waitFor();
-    expect(await image.evaluate(element => getComputedStyle(element).objectFit)).toBe("contain");
-    expect(await image.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(320);
+    const metrics = await image.evaluate((element: HTMLImageElement) => {
+        const rect = element.getBoundingClientRect();
+        return {
+            objectFit: getComputedStyle(element).objectFit,
+            height: rect.height,
+            naturalWidth: element.naturalWidth,
+            naturalHeight: element.naturalHeight,
+        };
+    });
+    expect(metrics.objectFit).toBe("contain");
+    expect(metrics.height).toBeLessThanOrEqual(320);
+    expect(metrics.naturalHeight).toBeGreaterThan(metrics.naturalWidth);
 });
 
-test("a stalled video cannot monopolize poster loading for later ready cards", async () => {
+test("a stalled video does not head-of-line block later ready cards on the shared 2-slot preview pool", async () => {
     stallFirst = true;
     const stalled = new Promise<void>(resolve => { notifyStall = resolve; });
     await page.goto(`${server.url}?count=1`);
     await stalled;
+    const startedAt = Date.now();
     await page.getByRole("button", { name: "添加素材", exact: true }).click();
-    await page.waitForFunction(() => (document.querySelector('img[alt="video-0-1"]') as HTMLImageElement)?.naturalWidth > 0, null, { timeout: 14_000 });
+    await page.waitForFunction(() => (document.querySelector('img[alt="video-0-1"]') as HTMLImageElement)?.naturalWidth > 0, null, { timeout: 5_000 });
+    expect(Date.now() - startedAt).toBeLessThan(4_000);
     await page.getByRole("button", { name: "点击响应 0", exact: true }).click();
     await page.getByRole("button", { name: "点击响应 1", exact: true }).waitFor();
     expect(await page.locator("video").count()).toBe(0);
-}, 20_000);
+}, 15_000);
 
 test("hover owns one decoder and leaving or navigating releases its source", async () => {
     await page.goto(`${server.url}?poster&count=2`);
@@ -181,4 +201,40 @@ test("low-memory mode disables hover video preview decoders", async () => {
     expect(await page.locator("video").count()).toBe(0);
 });
 
-afterAll(async () => { releaseStall?.(); await page?.close(); await browser?.close(); server?.stop(true); });
+test("failed protected coverUrl falls back to server poster in desktop mode and frame capture in web mode", async () => {
+    await page.goto(`${server.url}?protectedCoverFail&directPoster&count=1`);
+    await page.waitForFunction(() => {
+        const img = document.querySelector('img[alt="video-0-0"]') as HTMLImageElement | null;
+        return Boolean(img && img.src.includes("/api/resources/video-0-0/asset/poster.jpg?variant=poster") && img.naturalWidth > 0);
+    }, null, { timeout: 5_000 });
+    expect(posterRequests).toBe(1);
+    expect(mediaRequests).toBe(0);
+
+    await page.goto(`${server.url}?protectedCoverFail&count=1`);
+    await page.waitForFunction(() => {
+        const img = document.querySelector('img[alt="video-0-0"]') as HTMLImageElement | null;
+        return Boolean(img && img.src.startsWith("blob:") && img.naturalWidth > 0);
+    }, null, { timeout: 10_000 });
+    expect(mediaRequests).toBe(1);
+    expect(await page.locator("video").count()).toBe(0);
+}, 15_000);
+
+test("library video card preserves hover scale transition and Generation History drawer plays and cleans up video", async () => {
+    await page.goto(`${server.url}?poster&libraryCard&count=1`);
+    const frame = page.locator('[data-card="video-0-0"] .asset-media-preview-frame');
+    await frame.waitFor();
+    const transitionProperty = await frame.evaluate(el => getComputedStyle(el).transitionProperty);
+    expect(transitionProperty).toContain("transform");
+
+    await page.goto(`${server.url}?drawer`);
+    const card = page.getByRole("button", { name: "查看生成结果：历史视频成片" });
+    await card.waitFor();
+    expect(await page.locator("video").count()).toBe(0);
+    await card.click();
+    await page.locator(".assets-generation-preview-drawer [aria-label='视频播放控制']").waitFor({ state: "visible" });
+    await page.waitForFunction(() => (document.querySelector(".assets-generation-preview-drawer video")?.readyState || 0) >= 2, null, { timeout: 5_000 });
+    await page.locator(".assets-generation-preview-drawer .ant-drawer-close").click();
+    await page.waitForFunction(() => document.querySelectorAll("video").length === 0, null, { timeout: 5_000 });
+}, 15_000);
+
+afterAll(async () => { releaseStall?.(); await page?.close(); await browser?.close(); server?.stop(true); }, 15_000);

@@ -112,6 +112,45 @@ export function getCachedCanvasVideoPreviewBlob(node: VideoPreviewSource) {
     return posterBlobCache.get(requestKey)?.poster || null;
 }
 
+/**
+ * Capture a one-shot poster Object URL backed by the shared preview semaphore
+ * (`MAX_CONCURRENT_PREVIEW_SOURCES`) and single-decoder `captureVideoPoster` queue,
+ * with per-caller abort and deadline isolation so stalled videos never block others.
+ */
+export async function captureCanvasVideoPosterBlobUrl(
+    node: VideoPreviewSource,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string> {
+    const { signal, timeoutMs = 8_000 } = options;
+    if (signal?.aborted) throw signal.reason;
+    const controller = new AbortController();
+    const cancel = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", cancel, { once: true });
+    const deadline = timeoutMs > 0
+        ? setTimeout(() => controller.abort(new DOMException("Video poster timed out", "TimeoutError")), timeoutMs)
+        : undefined;
+    const lease = acquireCanvasVideoPreview(node);
+    let rejectAborted: () => void = () => undefined;
+    const aborted = new Promise<never>((_, reject) => {
+        rejectAborted = () => {
+            lease.release();
+            reject(controller.signal.reason);
+        };
+        controller.signal.addEventListener("abort", rejectAborted, { once: true });
+    });
+    try {
+        const result = await Promise.race([lease.promise, aborted]);
+        controller.signal.throwIfAborted();
+        const blob = result && getCachedCanvasVideoPreviewBlob(node);
+        return blob ? URL.createObjectURL(blob) : "";
+    } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener("abort", cancel);
+        controller.signal.removeEventListener("abort", rejectAborted);
+        lease.release();
+    }
+}
+
 async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: string, signal?: AbortSignal): Promise<VideoPreview | null> {
     const cached = posterBlobCache.get(requestKey);
     if (cached) {
