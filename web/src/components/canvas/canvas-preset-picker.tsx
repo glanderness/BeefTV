@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Input, Popover } from "antd";
+import { Input, Popover, Tooltip } from "antd";
 import { LayoutTemplate, Pencil, Plus, Search, Trash2, WandSparkles } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -341,7 +341,8 @@ export function CanvasPresetPicker({
         </div>
     );
 
-    return (
+    const triggerLabel = appearance === "quiet" ? "预设" : "打开提示词预设";
+    const picker = (
         <Popover
             open={actualOpen}
             onOpenChange={setOpen}
@@ -355,13 +356,19 @@ export function CanvasPresetPicker({
                 type="button"
                 className={`canvas-preset-picker-trigger ${appearance === "quiet" ? "canvas-node-composer-header-action" : ""} inline-flex shrink-0 items-center justify-center gap-1 rounded-lg transition focus-visible:outline-none ${compact ? "size-6" : dense ? "h-6 px-1.5" : "h-7 px-2"}`}
                 style={appearance === "quiet" ? undefined : { background: theme.accent.primarySoft, color: theme.accent.primary }}
-                title={appearance === "quiet" ? "预设" : "打开提示词预设"}
-                aria-label={appearance === "quiet" ? "预设" : "打开提示词预设"}
+                title={compact ? undefined : triggerLabel}
+                aria-label={triggerLabel}
                 aria-expanded={actualOpen}
             >
                 {appearance === "quiet" ? <LayoutTemplate className="size-3" /> : <WandSparkles className={dense ? "size-3" : "size-3.5"} />}
-                {compact ? null : <span className="text-[var(--fs-tiny)] font-medium">预设</span>}
+                {compact ? null : <span className={appearance === "quiet" ? "font-medium" : "text-[var(--fs-tiny)] font-medium"}>预设</span>}
             </button>
         </Popover>
     );
+
+    return compact ? (
+        <Tooltip title={actualOpen ? null : triggerLabel} trigger={["hover", "focus"]} mouseEnterDelay={0.12}>
+            <span className="inline-flex shrink-0">{picker}</span>
+        </Tooltip>
+    ) : picker;
 }

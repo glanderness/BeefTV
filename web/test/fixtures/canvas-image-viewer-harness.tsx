@@ -464,7 +464,7 @@ function HarnessApp() {
 
     return (
         <QueryClientProvider client={queryClient}>
-            <ConfigProvider theme={getAntThemeConfig(colorTheme)}>
+            <ConfigProvider theme={getAntThemeConfig(colorTheme === "dark")}>
                 <AntApp>
                     <div className="app-user-overlays" />
                     <button type="button" id="outside-trigger" onClick={() => setOpen(true)}>

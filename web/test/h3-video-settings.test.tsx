@@ -16,13 +16,13 @@ function renderDuration(seconds: string, continuous: boolean) {
     return renderToStaticMarkup(<VideoSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={() => {}} />);
 }
 
-test("shared video settings preserve exact H3 fractional duration in both inputs", () => {
+test("shared video settings show a saved H3 fractional duration until the user selects a whole second", () => {
     for (const seconds of ["0.925", "10.92"]) {
         const html = renderDuration(seconds, true);
-        expect(html.match(/value="\d+(?:\.\d+)?"/g)?.filter((value) => value === `value="${seconds}"`)).toHaveLength(2);
-        expect(html).toContain('min="0.92"');
-        expect(html).toContain('step="any"');
-        expect(html).toContain('inputMode="decimal"');
+        expect(html).toContain(`aria-valuetext="${seconds} 秒"`);
+        expect(html).toContain('min="1"');
+        expect(html).toContain('step="1"');
+        expect(html).not.toContain('type="number"');
     }
 });
 
@@ -30,7 +30,7 @@ test("integer H3 duration keeps the shared whole-second controls", () => {
     const html = renderDuration("5", false);
     expect(html).toContain('min="5"');
     expect(html).toContain('step="1"');
-    expect(html).toContain('inputMode="numeric"');
+    expect(html).toContain('type="range"');
     expect(html).not.toContain('step="any"');
 });
 

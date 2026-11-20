@@ -6,7 +6,6 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
-import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -96,19 +95,15 @@ type ComposerHeaderProps = {
     isRunning: boolean;
     isPortraitTexture: boolean;
     activeReferences: CanvasResourceReference[];
-    skillReferences: CanvasResourceReference[];
     monochromeAccent: string;
     theme: CanvasTheme;
     videoModeState?: Parameters<typeof VideoReferenceModeSwitch>[0]["state"];
-    expandedPresetOpen: boolean;
-    onExpandedPresetOpenChange: (open: boolean) => void;
     promptActionEntries: ReturnType<typeof usePluginSlot<"canvas.promptActions">>;
     canOptimizePrompt: boolean;
     canExpandPrompt: boolean;
     onNodeMouseDown?: (event: ReactPointerEvent, nodeId: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onSelectVideoReferenceMode: (nextMode: "frames" | "all") => void;
-    onSelectPreset: (preset: CanvasPromptPreset) => void;
     onUpdatePrompt: (value: string) => void;
     onOpenOptimizer: () => void;
     onExpandPrompt: () => void;
@@ -124,19 +119,15 @@ export function CanvasNodePromptComposerHeader({
     isRunning,
     isPortraitTexture,
     activeReferences,
-    skillReferences,
     monochromeAccent,
     theme,
     videoModeState,
-    expandedPresetOpen,
-    onExpandedPresetOpenChange,
     promptActionEntries,
     canOptimizePrompt,
     canExpandPrompt,
     onNodeMouseDown,
     onConfigChange,
     onSelectVideoReferenceMode,
-    onSelectPreset,
     onUpdatePrompt,
     onOpenOptimizer,
     onExpandPrompt,
@@ -163,24 +154,12 @@ export function CanvasNodePromptComposerHeader({
                     <span className="grid size-3.5 shrink-0 place-items-center" style={{ color: monochromeAccent }}>
                         <GenerationModeIcon mode={mode} />
                     </span>
-                    <span className="truncate text-[var(--fs-tiny)] font-medium">{modeDisplayName(mode)}生成</span>
+                    <span className="truncate font-medium">{modeDisplayName(mode)}生成</span>
                     {activeReferenceCount > 0 ? <span className="canvas-node-composer-reference-heading">{referenceShelfHeading(activeReferences)}</span> : null}
                     {expanded && videoModeState ? <VideoReferenceModeSwitch state={videoModeState} theme={theme} onSelectMode={onSelectVideoReferenceMode} onChange={(patch) => onConfigChange(node.id, patch)} /> : null}
                 </div>
             )}
             <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
-                {expanded ? (
-                    <CanvasPresetPicker
-                        mode={mode}
-                        skillReferences={skillReferences}
-                        open={expandedPresetOpen}
-                        onOpenChange={onExpandedPresetOpenChange}
-                        onSelect={onSelectPreset}
-                        currentPrompt={prompt}
-                        appearance="quiet"
-                        dense
-                    />
-                ) : null}
                 {expanded ? <CanvasPromptFontControl /> : null}
                 {promptActionEntries
                     .filter((entry) => !entry.payload.optimizer && entry.payload.id !== "prompt-optimizer")
@@ -209,7 +188,7 @@ export function CanvasNodePromptComposerHeader({
                                 disabled={isRunning}
                             >
                                 {entry.payload.icon ?? <WandSparkles className="size-3" />}
-                                <span className="text-[var(--fs-tiny)] font-medium">{entry.payload.label}</span>
+                                <span className="font-medium">{entry.payload.label}</span>
                             </button>
                         );
                     })}
@@ -217,7 +196,7 @@ export function CanvasNodePromptComposerHeader({
                     <Tooltip title="用 AI 润色提示词">
                         <button type="button" className="canvas-node-composer-header-action inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5" onClick={onOpenOptimizer} aria-label="润色提示词">
                             <WandSparkles className="size-3" />
-                            <span className="text-[var(--fs-tiny)] font-medium">润色</span>
+                            <span className="font-medium">润色</span>
                         </button>
                     </Tooltip>
                 ) : null}
@@ -354,9 +333,9 @@ export function CanvasNodePromptEditorSection({
                     onContentSizeChange={onContentSizeChange}
                     containerClassName="min-h-0 flex-1"
                     className={expanded
-                        ? "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 text-[var(--fs-body-lg)] leading-6 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
-                        : "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2.5 py-1.5 text-[var(--fs-body)] leading-5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"}
-                    style={{ color: theme.node.text, outline: "none", boxShadow: "none", fontSize, lineHeight: `${Math.round(fontSize * 1.5)}px` }}
+                        ? "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
+                        : "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2.5 py-1.5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"}
+                    style={{ color: theme.node.text, outline: "none", boxShadow: "none", fontSize, lineHeight: "var(--canvas-composer-ui-lh, 1.5)" }}
                     placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
                     aria-label={`${modeDisplayName(mode)}提示词`}
                 />

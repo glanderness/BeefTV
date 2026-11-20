@@ -283,3 +283,50 @@
         gap: 8px;
     }
 }
+
+/* Canvas image controls use the same density and selection treatment as video. */
+.image-settings-panel {
+    --ratio-icon-size: 16px;
+    font-size: var(--fs-caption);
+    font-weight: 500;
+}
+.image-settings-panel :is(.image-size-label, .image-size-hint, .image-size-error, button, input, label, .ant-btn, .ant-btn span) {
+    font-size: inherit;
+    font-weight: inherit;
+}
+.image-settings-panel .image-size-picker { gap: 4px; }
+.image-settings-panel .image-size-label { color: var(--image-muted); }
+.image-settings-panel .image-size-label:not(:first-child) { margin-top: 8px; }
+.image-settings-panel .image-size-ratios {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3px;
+}
+.image-settings-panel :is(.image-size-tiers button, .image-size-ratios button, .image-size-auto) {
+    min-height: 32px;
+    padding: 0 4px;
+    border-radius: 6px;
+    background: transparent;
+    box-shadow: none;
+    flex-direction: row;
+}
+.image-settings-panel :is(.image-size-tiers button, .image-size-ratios button, .image-size-auto):hover:enabled { background: var(--image-hover); }
+.image-settings-panel :is(.image-size-tiers button, .image-size-ratios button, .image-size-auto)[aria-pressed="true"] { background: var(--image-active); }
+.image-settings-panel .image-size-ratio-icon { opacity: 1; }
+.image-settings-panel .image-quality-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+    gap: 4px;
+}
+.image-output-row, .image-setting-inline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 30px;
+    gap: 8px;
+}
+.image-output-row {
+    background: var(--image-hover);
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+.image-setting-inline .image-size-tiers { width: 58%; }

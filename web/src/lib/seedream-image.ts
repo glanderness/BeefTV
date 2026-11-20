@@ -1,3 +1,4 @@
+import { IMAGE_RATIOS } from "./image-size-presets";
 import type { ImageCapabilityConfig } from "./model-capabilities";
 
 // 与后端 providerpreset.SeedreamFamily 保持同一套识别规则：国内官方型号带
@@ -27,4 +28,31 @@ export function seedreamImageCapability(model: string): ImageCapabilityConfig | 
         sequentialGeneration: { supported: !modern, default: false },
         responseFormat: { supported: true }, outputFormat: { supported: modern || family === "lite" }, maxOutputs: 15,
     };
+}
+
+export function seedreamResolutionTiers(profile: ImageCapabilityConfig) {
+    return profile.size.values.filter(value => /^\d+(?:\.\d+)?K$/i.test(value));
+}
+
+// A named tier lets the provider choose the aspect ratio. Selecting a ratio
+// at that tier sends explicit pixel dimensions.
+export function seedreamSizePresets(tiers: string[]) {
+    return tiers.flatMap(tier => IMAGE_RATIOS.map(ratio => {
+        const [w, h] = ratio.split(":").map(Number);
+        const rawUnit = Math.floor(parseFloat(tier) * 1024 / Math.sqrt(w * h));
+        const unit = (w % 2 !== 0 || h % 2 !== 0) ? rawUnit - (rawUnit % 2) : rawUnit;
+        const width = w * unit;
+        const height = h * unit;
+        return { tier, ratio, width, height, size: `${width}x${height}` };
+    }));
+}
+
+export function seedreamSizeLabel(profile: ImageCapabilityConfig, size: string, layers: boolean) {
+    const tiers = seedreamResolutionTiers(profile);
+    const value = size.trim().toLowerCase();
+    const tier = tiers.find(option => option.toLowerCase() === value);
+    if (layers && value === "auto") return "跟随原图";
+    if (tier) return layers ? tier : `自适应 · ${tier}`;
+    const preset = seedreamSizePresets(tiers).find(option => option.size === value);
+    return preset ? `${preset.ratio} · ${preset.tier}` : undefined;
 }

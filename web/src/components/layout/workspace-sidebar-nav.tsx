@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSPrope
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { BrandLogoFrame } from "@/components/brand/brand-logo";
+import { WorkspaceSidebarTooltip } from "./workspace-sidebar-tooltip";
 import { WorkspaceSidebarUpdate } from "@/components/layout/workspace-sidebar-update";
 import { WorkspaceSidebarAccount } from "@/components/layout/workspace-sidebar-account";
 import { WorkspaceSidebarSocialLinks } from "@/components/layout/workspace-sidebar-social-links";
@@ -262,6 +263,7 @@ function NavGroup({ group, activeId, onNavigate, onOpenSearch, collapsed }: { gr
 export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExpand, onCollapse }: { collapsed: boolean; onNavigate: () => void; onOpenSearch: () => void; onExpand: () => void; onCollapse: () => void }) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
+    const themeActionLabel = theme === "dark" ? "切换到浅色模式" : "切换到深色模式";
     const { pathname } = useLocation();
     const [searchParams] = useSearchParams();
     const features = useUserStore((state) => state.features);
@@ -336,9 +338,13 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
                 <WorkspaceSidebarSocialLinks collapsed={collapsed} onExpand={onExpand} />
                 <div className={cn("app-workspace-sidebar-utility-row", collapsed && "is-collapsed")}>
                     <WorkspaceSidebarUpdate collapsed={collapsed} leading={<WorkspaceSidebarAccount collapsed={collapsed} />} />
-                    <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="app-workspace-theme-action">
-                        {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-                    </AnimatedThemeToggler>
+                    <WorkspaceSidebarTooltip title={themeActionLabel}>
+                        <span className="app-workspace-theme-trigger">
+                            <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={themeActionLabel} className="app-workspace-theme-action">
+                                {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                            </AnimatedThemeToggler>
+                        </span>
+                    </WorkspaceSidebarTooltip>
                 </div>
             </div>
         </div>

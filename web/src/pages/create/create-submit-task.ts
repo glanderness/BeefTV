@@ -1,3 +1,4 @@
+import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import type { App } from "antd";
 
 import type { createReferenceLinkResolver } from "@/components/generation-reference-links";
@@ -377,6 +378,7 @@ export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
             if (failedCount) toast.warning(`${resultUrls.length} 张图片已生成，${failedCount} 批生成或保存失败`);
             updateOriginAssistant((item) => ({ ...item, content: failedCount ? `${resultUrls.length} 张图片已生成，${failedCount} 张失败` : "图片已生成" }));
         } else {
+            if (!retryContext) useCreationPreferencesStore.getState().confirmVideoSettings(requestConfig);
             const result = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTask({
                 resolveReferenceLinks,
                 mode: "video",

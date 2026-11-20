@@ -64,10 +64,13 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             }
             const local = openLocalCanvasProject(project.id);
             if ((!local && previouslyLoadedIds.has(project.id)) || canvasDeleting.has(saveKey(scope, project.id))) continue;
-            // Reconcile each canvas against live state under its projection lock
-            // instead of replaying an older `byId` map over concurrent edits.
-            const applied = await applyBackendCanvasRead(local, project, Boolean(local));
+            // Each read reconciles against the live canvas under its projection lock.
+            // Replaying those snapshots at the end of the list would discard edits
+            // made while later canvases were loading, even at the same revision.
+            const applied = await applyBackendCanvasRead(local, project);
             if (!local && !openLocalCanvasProject(project.id) && !canvasDeleting.has(saveKey(scope, project.id))) {
+                // A failed journal write can return the readable document without
+                // publishing it. Keep the library entry available for first open.
                 applyLiveCanvasProject(project.id, applied, true);
             }
         }

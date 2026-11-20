@@ -246,7 +246,6 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
         handleLodNodePointerDown,
         mediaShareActions,
         openCanvasNodeVersions,
-        openFrameAnalysisOrCreate,
         pasteAtPosition,
         renderCanvasNodeContent,
         retryCanvasNode,
@@ -439,7 +438,6 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
                             onAddText={() => createNode(CanvasNodeType.Text)}
                             onChooseStyle={() => setStylePickerOpen(true)}
                             onAddScript={() => createNode(CanvasNodeType.Script)}
-                            onAddFrame={openFrameAnalysisOrCreate}
                             onAddFolder={createFolder}
                             onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                             onAddExtensionNode={(type) => createNode(type)}

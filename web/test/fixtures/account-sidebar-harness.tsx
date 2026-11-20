@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App, Button, ConfigProvider, Select } from "antd";
 import { MemoryRouter } from "react-router";
 import { BeefTVConnectionProvider } from "@/components/layout/beeftv-connection-provider";
+import { WorkspaceSidebarNav } from "@/components/layout/workspace-sidebar-nav";
 import { WorkspaceSidebarAccount } from "@/components/layout/workspace-sidebar-account";
 import { WorkspaceSidebarSocialLinks } from "@/components/layout/workspace-sidebar-social-links";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -30,6 +31,8 @@ globalsStyle.textContent = inlineLocalCssImports(rawGlobalsCss, (specifier) => {
     .replace(/^@(?:import|source|custom-variant)\b[^\n]*$/gm, "")
     .replace(/^@theme\s+[^{]*\{[\s\S]*?\n\}/gm, "")
     .replace(/@apply\b[^;\n]*;/g, "");
+// The raw fixture CSS does not compile Tailwind utilities.
+globalsStyle.textContent += ".sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }";
 document.head.prepend(globalsStyle);
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
@@ -62,6 +65,7 @@ function Harness() {
     const activeTheme = useThemeStore((state) => state.theme);
     const appearance = useAppearanceStore((state) => state.appearance);
     const dark = activeTheme === "dark";
+    const showFullSidebar = new URLSearchParams(location.search).has("utility");
     const showMarket = location.pathname === "/market";
 
     useLayoutEffect(() => {
@@ -91,6 +95,10 @@ function Harness() {
                                         RegistrySelect={Select}
                                         installedPlugins={[]}
                                     />
+                                ) : showFullSidebar ? (
+                                    <div style={{ width: 240, height: 680, display: "flex" }}>
+                                        <WorkspaceSidebarNav collapsed={collapsed} onNavigate={() => {}} onOpenSearch={() => {}} onExpand={() => setCollapsed(false)} onCollapse={() => setCollapsed(true)} />
+                                    </div>
                                 ) : (
                                     <>
                                         <Button onClick={() => setCollapsed((value) => !value)}>切换侧栏收起</Button>

@@ -21,9 +21,6 @@ describe("canvas developing features", () => {
         expect(scriptCommand).toBeDefined();
         expect(scriptCommand?.disabledReason).toBeUndefined();
         expect(scriptCommand?.badge).toBeUndefined();
-        const smartEditCommand = addNodeMenuCommands.find((cmd) => cmd.id === "smart-edit");
-        expect(smartEditCommand?.label).toBe("智能剪辑");
-        expect(smartEditCommand?.disabledReason).toBe(CANVAS_DEVELOPING_LABEL);
         expect(addNodeMenuCommands.some((cmd) => cmd.id === CanvasNodeType.MediaConversion)).toBeFalse();
     });
 });

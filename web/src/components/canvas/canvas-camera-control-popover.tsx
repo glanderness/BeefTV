@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Camera } from "lucide-react";
+import { Tooltip } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal/app-modal";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -19,21 +20,27 @@ export function CanvasCameraControlPopover({ cameraControl, onCameraControlChang
     const cameraEnabled = cameraControl?.enabled === true;
     return (
         <>
-            <button
-                type="button"
-                className={`canvas-node-composer-camera-tools-trigger inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 text-[var(--fs-tiny)] transition-colors ${compact ? "is-compact h-7" : "h-8"}`}
-                style={{
-                    background: cameraEnabled ? `${theme.node.activeStroke}66` : theme.node.fill,
-                    color: cameraEnabled ? theme.node.panel : theme.node.text,
-                }}
-                aria-pressed={cameraEnabled}
-                aria-label={label}
-                title={`${label}${cameraEnabled ? " · 已启用" : ""}`}
-                onClick={() => setOpen(true)}
+            <Tooltip
+                title={open ? null : cameraEnabled ? "摄像机控制 · 已启用" : "摄像机控制"}
+                trigger={["hover", "focus"]}
+                mouseEnterDelay={0.12}
             >
-                <Camera className="size-3.5" />
-                {!compact ? <span>{label}</span> : null}
-            </button>
+                <button
+                    type="button"
+                    className={`canvas-node-composer-camera-tools-trigger inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 text-[var(--fs-tiny)] transition-colors ${compact ? "is-compact h-7" : "h-8"}`}
+                    style={{
+                        background: cameraEnabled ? `${theme.node.activeStroke}66` : undefined,
+                        color: cameraEnabled ? theme.node.panel : theme.node.text,
+                    }}
+                    aria-pressed={cameraEnabled}
+                    aria-label={label}
+                    aria-haspopup="dialog"
+                    onClick={() => setOpen(true)}
+                >
+                    <Camera className="size-3.5" />
+                    {!compact ? <span>{label}</span> : null}
+                </button>
+            </Tooltip>
             {open ? (
                 <AppModal title={null} closable={false} open centered footer={null} width={780} flush onCancel={() => setOpen(false)}>
                     <CanvasNodeCameraPanel

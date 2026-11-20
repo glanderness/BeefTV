@@ -9,7 +9,7 @@ const confirmations: { onOk: () => void }[] = [];
 const dispatched: any[] = [];
 const react = await import("react");
 const clientDiagnostics = await import("@/services/diagnostics/client-diagnostics");
-mock.module("@/lib/canvas/canvas-generation-config", () => ({ resolvedCanvasGenerationRequirements: (config: any, node: any, capability: string, input: any) => ({ capability, input, videoSeconds: config.videoSeconds, videoOperation: node?.metadata?.videoEditOperation }) }));
+mock.module("@/lib/canvas/canvas-generation-config", () => ({ canvasVideoOperationPreference: () => undefined, supportsCanvasVideoReferenceModes: () => false, resolvedCanvasGenerationRequirements: (config: any, node: any, capability: string, input: any) => ({ capability, input, videoSeconds: config.videoSeconds, videoOperation: node?.metadata?.videoEditOperation }) }));
 mock.module("react", () => ({ ...react, default: react.default, useCallback: (fn: any) => fn, useRef: (value: any) => ({ current: value }) }));
 mock.module("antd", () => ({ App: { useApp: () => ({ modal: { confirm: (input: any) => { confirmations.push(input); return { destroy() {} }; } }, message: { loading: () => {}, destroy: () => {}, error: (x: string) => { throw Error(x); }, info: () => {}, warning: () => {} } }) } }));
 // Only suppress event recording; task/operation dependencies retain real trace helpers.

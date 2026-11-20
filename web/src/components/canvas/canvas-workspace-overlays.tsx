@@ -1,4 +1,3 @@
-import { Scissors } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { useMemo } from "react";
@@ -201,14 +200,6 @@ export function buildConnectionCreateMenuSpec(
         title: isBatch ? "引用所选节点生成" : "引用该节点生成",
         commands: [
             ...baseCommands,
-            {
-                id: "smart-edit",
-                label: "智能剪辑",
-                icon: <Scissors className="h-4 w-4" aria-hidden />,
-                section: "node",
-                disabledReason: "暂不可用",
-                onClick: () => {},
-            },
             command("director", "导演台", CanvasNodeType.Config, "暂不可用"),
             command("script", "脚本", CanvasNodeType.Script, "暂不可用"),
         ],
@@ -220,7 +211,7 @@ export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, co
     const menuRef = useRef<HTMLDivElement>(null);
     const { bringToFront, zIndex } = useCanvasOverlayLayer("connection-create-menu", "var(--z-modal-overlay)");
     const menuWidth = Math.min(216, viewportSize.width - 24);
-    const menuHeight = pending.connection.handleType === "target" ? 248 : 390;
+    const menuHeight = pending.connection.handleType === "target" ? 248 : 350;
     const gap = 12;
     const initialPosition = getConnectionMenuPosition(pending.position, viewport, viewportSize, menuWidth, menuHeight, gap);
     const { title, commands } = useMemo(
@@ -264,7 +255,7 @@ export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, co
             onFocusCapture={bringToFront}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            <CanvasCreateMenu commands={commands} layout="list" title={title} showSearch={false} showSectionTitles={false} showResources={false} />
+            <CanvasCreateMenu commands={commands} layout="list" title={title} showSectionTitles={false} showResources={false} />
         </motion.div>
     );
 }

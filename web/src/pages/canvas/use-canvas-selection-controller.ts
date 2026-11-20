@@ -7,6 +7,7 @@ import { applyCanvasSelectionStrategy, canvasSelectionHitsBounds, createCanvasSe
 import { canExportWorkflowResult, workflowAtPoint } from "@/lib/canvas/reusable-workflow-instance";
 import { canvasNodeResourceId } from "@/lib/canvas/canvas-resource-id";
 import { canvasNodeBounds } from "@/lib/canvas/canvas-spatial-index";
+import { useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
 import type { CanvasNodeData, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
@@ -172,12 +173,19 @@ export function useCanvasSelectionController({
         event.stopPropagation();
         if (event.button !== 0) return;
         if (onBatchConnectionTarget?.(event, nodeId)) return;
+        const currentNodes = nodesRef.current;
+        const clickedNode = currentNodes.find((node) => node.id === nodeId);
+        const pickTargetId = useCanvasPickConnectStore.getState().pickConnectTargetNodeId;
+        if (pickTargetId && pickTargetId !== nodeId && pickTargetId === pageUi.getState().dialogNodeId) {
+            // Only source nodes are picked. The prompt's own node can still be dragged.
+            event.preventDefault();
+            if (clickedNode) onNodeClick(clickedNode);
+            return;
+        }
         // Paint order is session-local UI state. Update it once at the start
         // of a real node interaction so dragging also survives deselection.
         onNodeBringToFront?.(nodeId);
         pageUi.getState().setSelectedConnectionId(null);
-        const currentNodes = nodesRef.current;
-        const clickedNode = currentNodes.find((node) => node.id === nodeId);
         const nextSelected = new Set(selectedNodeIdsRef.current);
         const isAltDuplicate = event.altKey && !event.shiftKey && !event.metaKey && !event.ctrlKey && !clickedNode?.metadata?.locked;
         const isSubtractClick = event.altKey && !isAltDuplicate;

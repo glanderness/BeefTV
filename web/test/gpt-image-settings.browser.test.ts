@@ -34,6 +34,7 @@ test("GPT Image 39档在设置面板均能点击并原值提交，明暗主题�
             await page.route("https://**", (route) => route.abort());
             await page.goto(`${server.url}?theme=${theme}`);
             expect(await page.locator(".image-size-tiers").evaluate((element) => getComputedStyle(element).display)).toBe("grid");
+            expect(await page.locator(".image-settings-panel :is(details, .image-size-output)").count()).toBe(0);
             expect(await page.getByTestId("creation-labels").textContent()).toBe("超高、最高");
             expect(await page.getByRole("button", { name: "自动", exact: true }).count()).toBe(0);
             expect(await page.getByRole("button", { name: "低", exact: true }).getAttribute("aria-pressed")).toBe("true");
@@ -66,14 +67,42 @@ test("GPT Image 39档在设置面板均能点击并原值提交，明暗主题�
                     }
                 }
             }
+            await page.getByRole("combobox", { name: "模型" }).selectOption("beeftv::dola-seedream-5-0-pro-260628");
+            const button = (name: string) => page.getByRole("button", { name, exact: true });
+            await button("1.5K").click();
+            expect(await page.getByText("自定义尺寸", { exact: true }).count()).toBe(0);
+            await button("16:9").click();
+            expect(await button("1.5K").getAttribute("aria-pressed")).toBe("true");
+            const selected = JSON.parse((await page.getByTestId("selection").textContent())!);
+            const [w, h] = selected.size.split("x").map(Number);
+            expect(w / h).toBeCloseTo(16 / 9);
+            expect(await button("16:9").evaluate(el => [getComputedStyle(el).fontSize, getComputedStyle(el).fontWeight])).toEqual(["12px", "500"]);
+            await page.getByRole("switch", { name: "透明背景" }).click();
+            expect(await button("JPEG").isDisabled()).toBe(true);
+            const layers = page.getByRole("switch", { name: "图层拆分" });
+            await layers.click();
+            expect(await button("跟随原图").getAttribute("aria-pressed")).toBe("true");
+            expect(await button("16:9").count()).toBe(0);
+            await layers.click();
+            expect(await button("2K").getAttribute("aria-pressed")).toBe("true");
+            await button("自适应").click();
+            await button("快速").click();
+            await button("校验请求").click();
+            await page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent === "已校验");
+            expect((requests.at(-1)! as { input: { config: Record<string, unknown> } }).input.config)
+                .toMatchObject({ size: "2K", seedreamMode: "image", seedreamOptimize: "fast" });
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
             expect(errors).toEqual([]);
             if (process.env.GPT_IMAGE_SETTINGS_SCREENSHOTS) {
                 mkdirSync(process.env.GPT_IMAGE_SETTINGS_SCREENSHOTS, { recursive: true });
                 await page.screenshot({ path: `${process.env.GPT_IMAGE_SETTINGS_SCREENSHOTS}/${theme}-${width}.png`, fullPage: true });
             }
+            await page.getByRole("combobox", { name: "模型" }).selectOption("beeftv::doubao-seedream-5-0-260128");
+            await page.getByText("生成张数", { exact: true }).waitFor();
+            await page.getByRole("spinbutton", { name: "关联组图上限", exact: true }).fill("4");
+            await page.getByText("生成组数", { exact: true }).waitFor();
             await page.close();
         }
-        expect(requests.length).toBe(80);
+        expect(requests.length).toBe(82);
     } finally { await browser.close(); server.stop(true); }
 }, 90000);

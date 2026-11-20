@@ -305,7 +305,6 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 	if err != nil {
 		return DocumentPatchResult{}, err
 	}
-	mergedRaw = s.reconcileCanvasRawMediaAssetsIfNeeded(userID, existing, mergedRaw)
 
 	reason := "automatic"
 	if overlapped {

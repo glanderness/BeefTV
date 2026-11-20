@@ -1,5 +1,6 @@
+import { CanvasCatalogModelPicker } from "@/components/canvas/canvas-catalog-model-picker";
 import { useEffect, useRef, useState } from "react";
-import { Button, Select } from "antd";
+import { Button } from "antd";
 import { BeefTVConnectionChangedError } from "@/services/api/beeftv-connection";
 import { getTranscriptionModels } from "@/services/api/timeline-tasks";
 import {
@@ -61,7 +62,7 @@ export function CanvasTranscriptionControls({
         try {
             const result = await getTranscriptionModels();
             if (!mountedRef.current || request !== requestRef.current) return;
-            setModels(result.map((item) => ({ value: item.id, label: `${item.displayName || item.id} · BeefTV` })));
+            setModels(result.map((item) => ({ value: item.id, label: item.displayName || item.id })));
             if (!result.length) setStatus("当前连接没有可用的云端转写模型");
         } catch (error) {
             if (mountedRef.current && request === requestRef.current && !(error instanceof BeefTVConnectionChangedError)) setStatus(error instanceof Error ? error.message : "读取转写模型失败");
@@ -122,7 +123,7 @@ export function CanvasTranscriptionControls({
     return (
         <div className="media-editor-transcription flex flex-col gap-2" style={{ borderColor: "var(--workspace-border)" }}>
             <div className="flex flex-wrap items-center gap-2">
-                <Select aria-label="转写模型" size="small" className="min-w-[200px] flex-1" value={model} onChange={setModel} disabled={disabled || loading} options={[{ value: "", label: "本地 whisper.cpp" }, ...models]} />
+                <div className="min-w-[200px] flex-1"><CanvasCatalogModelPicker label="转写模型" capability="audio" preferenceKey="transcription" value={model} onChange={setModel} disabled={disabled || loading} options={[{ value: "", label: "本地 whisper.cpp", provider: "local" }, ...models.map(item => ({ ...item, provider: "beeftv" }))]} /></div>
                 <Button size="small" disabled={disabled} loading={loading} onClick={() => void refresh()}>
                     刷新转写模型
                 </Button>
@@ -130,13 +131,19 @@ export function CanvasTranscriptionControls({
                     自动转写字幕
                 </Button>
             </div>
-            <p className="text-xs opacity-60">{!resourceId ? "素材上传完成后即可自动转写。" : model ? "音频将上传到云端识别，并按所选模型计费；转写结果会替换当前字幕草稿。" : "使用本地 whisper.cpp 识别，音视频不出本机；转写结果会替换当前字幕草稿。"}</p>
+            <p className="text-xs text-[var(--editor-muted)]">
+                {!resourceId
+                    ? "素材上传完成后即可自动转写。"
+                    : model
+                        ? "音频会上传至云端并按模型计费，转写将替换当前草稿。"
+                        : "使用本地 whisper.cpp 识别，音视频不出本机；转写结果会替换当前字幕草稿。"}
+            </p>
             {status && (
                 <p role="status" className="text-xs">
                     {status}
                 </p>
             )}
-            {running && <p className="text-xs opacity-60">关闭窗口后，转写任务仍会继续，可在任务中心查看。</p>}
+            {running && <p className="text-xs text-[var(--editor-muted)]">关闭窗口后，转写任务仍会继续，可在任务中心查看。</p>}
         </div>
     );
 }

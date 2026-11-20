@@ -9,7 +9,7 @@ import { buildVideoGenerationMetadata, isGenerationCanceled, MISSING_GENERATION_
 import { buildConfirmedGenerationConfig } from "./canvas-assistant-proposal-execution";
 import type { ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 import { canReleaseCanvasGenerationSource, canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
-import { resolvedCanvasGenerationRequirements } from "@/lib/canvas/canvas-generation-config";
+import { canvasVideoOperationPreference, resolvedCanvasGenerationRequirements, supportsCanvasVideoReferenceModes } from "@/lib/canvas/canvas-generation-config";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { buildCameraPrompt } from "@/lib/canvas/camera-prompt-library";
@@ -27,7 +27,7 @@ import { findGenerationTaskByOperation, queryGenerationTask, waitForGenerationTa
 import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoReferenceMode } from "@/types/canvas";
 
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
@@ -38,6 +38,7 @@ import { createReferenceLinkResolver } from "@/components/generation-reference-l
 import { emitPluginEvent } from "@/lib/plugins/plugin-events";
 import { runGenerationBeforeSubmitHooks } from "@/lib/plugins/slot-registry";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
+import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { startOperation } from "@/stores/use-operation-progress";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
@@ -64,6 +65,7 @@ const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
 export type CanvasNodeGenerationOptions = {
+    rememberVideoDefaults?: boolean;
     confirmedModelKey?: string;
     confirmedInputs?: ConfirmedGenerationInputs;
     /** 一次确认的稳定身份。重复提交必须复用，服务端据此回读原任务。 */
@@ -157,6 +159,10 @@ export function useCanvasGenerationExecutor({
                         let inputAssets = frozen.assets;
                         const inputSkills = frozen.skills;
                         const sourceNode = inputNodes.find((node) => node.id === nodeId);
+                        const rememberVideoReferenceMode = options?.rememberVideoDefaults && sourceNode?.type === CanvasNodeType.Video;
+                        const preferredReferenceMode = rememberVideoReferenceMode
+                            ? useCreationPreferencesStore.getState().preferences.videoReferenceMode ?? "all"
+                            : undefined;
                         const pendingSubmissions = nodesRef.current.filter((node) => (node.id === nodeId || node.metadata?.generatedFromNodeId === nodeId) && ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || ""));
                         if (pendingSubmissions.length) {
                             startGenerationRequest(nodeId, nodeId, nodeId, controller);
@@ -283,7 +289,7 @@ export function useCanvasGenerationExecutor({
                                 promptOnly,
                                 { preserveMediaBindings: mode === "video" },
                             );
-                            const requirements = generationModelRequirements(mode, baseContext, sourceNode, generationConfig, true);
+                            const requirements = generationModelRequirements(mode, baseContext, sourceNode, generationConfig, preferredReferenceMode, true);
                             if (requirements?.input) {
                                 const { imageCount = 0, videoCount = 0, audioCount = 0, characterCount = 0 } = requirements.input;
                                 refSummary = `refs=i:${imageCount},v:${videoCount},a:${audioCount},c:${characterCount}`;
@@ -292,7 +298,7 @@ export function useCanvasGenerationExecutor({
                             selectedModel = generationConfig.model;
                             const referenceLimits = modelGroupReferenceLimits(inputConfig, generationConfig.model, mode, requirements);
                             rawGenerationContext = await waitForCanvasPreparation(() => hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, mode, mode === "video" && Boolean(referenceLimits?.maxAudios), !promptOnly && mode !== "audio", referenceLimits), controller.signal);
-                            const hydratedRequirements = generationModelRequirements(mode, rawGenerationContext, sourceNode, generationConfig);
+                            const hydratedRequirements = generationModelRequirements(mode, rawGenerationContext, sourceNode, generationConfig, preferredReferenceMode);
                             if (hydratedRequirements?.input) {
                                 const { imageCount = 0, videoCount = 0, audioCount = 0, characterCount = 0 } = hydratedRequirements.input;
                                 refSummary = `refs=i:${imageCount},v:${videoCount},a:${audioCount},c:${characterCount}`;
@@ -314,8 +320,20 @@ export function useCanvasGenerationExecutor({
                             return;
                         }
                         let effectivePrompt = skillExecution.prompt.trim();
+                        let videoGenerationMetadata: CanvasNodeMetadata | undefined;
                         if (mode === "video") {
-                            rawGenerationContext = compileNodeGenerationReferences({ ...rawGenerationContext, prompt: effectivePrompt }, generationConfig, buildVideoGenerationMetadata(sourceNode, rawGenerationContext, generationConfig).videoEditOperation);
+                            const operation = canvasVideoOperationPreference(generationConfig, sourceNode, {
+                                textCount: rawGenerationContext.textCount,
+                                imageCount: rawGenerationContext.imageCount,
+                                videoCount: rawGenerationContext.videoCount,
+                                audioCount: rawGenerationContext.audioCount,
+                                characterCount: rawGenerationContext.characterReferences.length,
+                            }, preferredReferenceMode);
+                            const videoSource = sourceNode && operation !== sourceNode.metadata?.videoEditOperation
+                                ? { ...sourceNode, metadata: { ...sourceNode.metadata, videoEditOperation: operation } }
+                                : sourceNode;
+                            videoGenerationMetadata = buildVideoGenerationMetadata(videoSource, rawGenerationContext, generationConfig);
+                            rawGenerationContext = compileNodeGenerationReferences({ ...rawGenerationContext, prompt: effectivePrompt }, generationConfig, videoGenerationMetadata.videoEditOperation);
                             effectivePrompt = rawGenerationContext.prompt;
                         }
                         stage = "parameters";
@@ -402,7 +420,7 @@ export function useCanvasGenerationExecutor({
                             prompt: effectivePrompt,
                             model: generationConfig.model,
                             options: modelRequestOptions(generationConfig, mode),
-                            operation: sourceNode?.metadata?.videoEditOperation,
+                            operation: videoGenerationMetadata?.videoEditOperation ?? sourceNode?.metadata?.videoEditOperation,
                             audioInstructions: generationConfig.audioInstructions,
                             promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation,
                             promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables,
@@ -423,7 +441,7 @@ export function useCanvasGenerationExecutor({
                             ...resolveModelRequestConfig(generationConfig, generationConfig.model),
                             videoCount: generationContext.referenceVideos.length,
                             ratio: generationConfig.size,
-                            operation: sourceNode?.metadata?.videoEditOperation,
+                            operation: videoGenerationMetadata?.videoEditOperation ?? sourceNode?.metadata?.videoEditOperation,
                         }) : undefined;
                         if (ratioWarning) {
                             stage = "ratio_confirmation";
@@ -436,6 +454,9 @@ export function useCanvasGenerationExecutor({
                         }
 
                         controller.signal.throwIfAborted();
+                        if (mode === "video" && options?.rememberVideoDefaults) {
+                            useCreationPreferencesStore.getState().confirmVideoSettings(generationConfig, sourceNode?.metadata?.videoH3Options);
+                        }
                         stage = "dispatch";
                         preparationProgress?.dismiss();
                         diagnostic("generation_dispatch_started");
@@ -548,7 +569,15 @@ export function useCanvasGenerationExecutor({
 
                         try {
                             if (mode === "image") await executeImageGeneration(execution);
-                            else if (mode === "video") await executeVideoGeneration(execution);
+                            else if (videoGenerationMetadata) {
+                                await executeVideoGeneration(execution, videoGenerationMetadata);
+                                if (rememberVideoReferenceMode && supportsCanvasVideoReferenceModes(generationConfig, generationConfig.model)) {
+                                    const operation = videoGenerationMetadata.videoEditOperation;
+                                    if (operation === "reference_to_video" || operation === "image_to_video") {
+                                        useCreationPreferencesStore.getState().rememberVideoReferenceMode(operation === "reference_to_video" ? "all" : "frames");
+                                    }
+                                }
+                            }
                             else if (mode === "audio") await executeAudioGeneration(execution);
                             else await executeTextGeneration(execution);
                             emitPluginEvent("generation.completed", { nodeId, nodeType: mode });
@@ -633,6 +662,7 @@ function generationModelRequirements(
     input: Pick<Awaited<ReturnType<typeof hydrateNodeGenerationContext>>, "textCount" | "imageCount" | "videoCount" | "audioCount" | "characterReferences">,
     sourceNode: CanvasNodeData | undefined,
     config: ReturnType<typeof useEffectiveConfig>,
+    preferredReferenceMode?: CanvasVideoReferenceMode,
     includeCharacterMinimum = false,
 ): ModelRequirements {
     return resolvedCanvasGenerationRequirements(config, sourceNode, mode, {
@@ -641,5 +671,5 @@ function generationModelRequirements(
             videoCount: input.videoCount,
             audioCount: input.audioCount,
             characterCount: includeCharacterMinimum ? input.characterReferences.length : 0,
-    });
+    }, preferredReferenceMode);
 }

@@ -15,7 +15,7 @@ test("workflow directory exposes only first-release executable operations", () =
 });
 
 test("workflow processing labels match canvas action names", () => {
-    const expected: Record<string,string> = {"image.crop":"裁切","image.resize":"调整尺寸","image.describe":"反推提示词","image.ai-upscale":"AI超分","video.ai-upscale":"AI超分","video.frame":"关键帧截取","video.audio":"音视频分离","video.trim":"视频剪辑","video.crop":"画面裁切","video.depth":"深度动作捕捉","video.merge":"合并选中视频"};
+    const expected: Record<string,string> = {"image.crop":"裁切","image.resize":"调整尺寸","image.describe":"反推提示词","image.ai-upscale":"AI超分","video.ai-upscale":"AI超分","video.frame":"关键帧截取","video.audio":"音视频分离","video.trim":"视频裁剪","video.crop":"画面裁切","video.depth":"深度动作捕捉","video.merge":"合并选中视频"};
     const operations = Object.keys(expected).map(id=>({id,name:"旧名称",version:1,outputType:"image" as const,inputs:[],fields:[]}));
     for (const entry of listCanvasWorkflowCapabilities(operations)) {
         expect(entry.name).toBe(expected[entry.operation!.id]);

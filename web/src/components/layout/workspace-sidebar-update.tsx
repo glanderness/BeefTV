@@ -20,6 +20,7 @@ import {
 import { useDesktopUpdate } from "@/hooks/use-desktop-update";
 import DiagnosticsPanel from "@/pages/settings/diagnostics-panel";
 
+import { WorkspaceSidebarTooltip } from "./workspace-sidebar-tooltip";
 import "./workspace-sidebar-update.css";
 
 type UpdateStatusLine = { title: string; detail: string; percent: number | null; tone: "active" | "paused" };
@@ -67,7 +68,9 @@ export function WorkspaceSidebarUpdate({ collapsed, leading }: { collapsed: bool
     const elapsed = usePhaseElapsed(busy, persistBusy ? "saving" : `${state.status}:${state.phase ?? ""}`);
     const slow = elapsed >= 30 && (persistBusy || state.status === "installing" || state.phase === "verifying");
     const amount = state.totalBytes > 0 ? desktopUpdateProgressLabel(state) : "";
-    const tooltip = line ? [line.title, amount, line.detail].filter(Boolean).join("\n") : updateLabel;
+    const tooltip = enabled && state.status === "available" && !persistBusy
+        ? "当前有可用更新"
+        : line ? [line.title, amount, line.detail].filter(Boolean).join("\n") : updateLabel;
     const showBar = !persistBusy && ((state.status === "downloading" && state.phase !== "verifying") || (state.status === "installing" && state.phase === "extracting") || (line?.tone === "paused" && line.percent !== null));
     const barPercent = state.phase === "extracting" ? line?.percent ?? null : percent;
     const handleUpdate = () => {
@@ -92,9 +95,13 @@ export function WorkspaceSidebarUpdate({ collapsed, leading }: { collapsed: bool
                 <Popover open={collapsed && Boolean(line)} content={collapsed ? statusContent : null} placement="rightBottom" arrow={false} rootClassName="app-workspace-update-popover">
                 <div className="app-workspace-update-progress" role="status" aria-live="polite">
                     {!line ? <span className="sr-only">{updateLabel}</span> : null}
-                    <button type="button" className={cn("app-workspace-update-action", showControls && "has-update", busy && "is-busy")} disabled={!enabled || busy} onClick={() => void handleUpdate()} aria-label={updateLabel} title={tooltip}>
-                        {busy ? <LoaderCircle className="size-4 animate-spin" strokeWidth={1.8} aria-hidden="true" /> : state.status === "error" ? <RotateCcw className="size-4" strokeWidth={1.8} aria-hidden="true" /> : <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />}
-                    </button>
+                    <WorkspaceSidebarTooltip title={tooltip}>
+                        <span className="app-workspace-update-trigger">
+                            <button type="button" className={cn("app-workspace-update-action", showControls && "has-update", busy && "is-busy")} disabled={!enabled || busy} onClick={() => void handleUpdate()} aria-label={updateLabel}>
+                                {busy ? <LoaderCircle className="size-4 animate-spin" strokeWidth={1.8} aria-hidden="true" /> : state.status === "error" ? <RotateCcw className="size-4" strokeWidth={1.8} aria-hidden="true" /> : <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />}
+                            </button>
+                        </span>
+                    </WorkspaceSidebarTooltip>
                 </div>
                 </Popover>
                 {!collapsed ? statusContent : null}

@@ -61,7 +61,7 @@
     .canvas-composer-model-picker {
         align-items: center;
         appearance: none;
-        background: color-mix(in srgb, var(--workspace-surface-strong) 94%, var(--workspace-accent) 6%);
+        background: var(--canvas-composer-footer-control-bg, color-mix(in srgb, var(--workspace-surface-strong) 94%, var(--workspace-accent) 6%));
         border: 0;
         border-radius: 9px;
         color: var(--foreground);
@@ -250,7 +250,7 @@
     }
 
     .canvas-generation-settings-trigger.ant-btn {
-        background: color-mix(in srgb, var(--workspace-surface-strong) 94%, var(--workspace-accent) 6%) !important;
+        background: var(--canvas-composer-footer-control-bg, color-mix(in srgb, var(--workspace-surface-strong) 94%, var(--workspace-accent) 6%)) !important;
         border: 0 !important;
         color: var(--foreground) !important;
         cursor: pointer;
@@ -271,7 +271,7 @@
 
     html:not(.dark) .canvas-composer-model-picker,
     html:not(.dark) .canvas-generation-settings-trigger.ant-btn {
-        background: rgba(15, 23, 42, 0.045) !important;
+        background: var(--canvas-composer-footer-control-bg, rgba(15, 23, 42, 0.045)) !important;
         color: #1f2937 !important;
     }
 
@@ -421,6 +421,30 @@
         padding: 18px;
     }
 
+    .video-duration-range {
+        appearance: none;
+        height: 24px;
+        border-radius: var(--r-sm);
+        background: linear-gradient(to right, var(--video-duration-progress) var(--video-duration-fill), var(--video-duration-track) var(--video-duration-fill));
+        padding-inline: 5px;
+    }
+
+    .video-duration-range::-webkit-slider-thumb {
+        appearance: none;
+        width: 4px;
+        height: 14px;
+        border-radius: 2px;
+        background: var(--video-duration-thumb);
+    }
+
+    .video-duration-range::-moz-range-thumb {
+        width: 4px;
+        height: 14px;
+        border: 0;
+        border-radius: 2px;
+        background: var(--video-duration-thumb);
+    }
+
     .canvas-image-settings-popover .ant-popover-inner-content {
         max-height: calc(100vh - 96px);
         overflow-y: auto;
@@ -512,4 +536,41 @@
         /* Keep the hover bridge from covering the node's external title. */
         pointer-events: none;
     }
+
+    .provider-model-menu,
+    .model-provider-options,
+    .provider-model-empty,
+    .canvas-video-settings-popover {
+        font-size: var(--fs-caption);
+        font-weight: 500;
+    }
+
+    .provider-model-menu { position: relative; width: min(250px, calc(100vw - 40px)); }
+    .provider-model-options, .model-provider-options {
+        display: grid;
+        gap: 2px;
+        max-height: min(350px, 45dvh);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+    }
+    .provider-model-options { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--provider-model-border); }
+    .model-provider-options { width: min(176px, calc(100vw - 40px)); }
+    .provider-model-menu-row {
+        display: flex;
+        width: 100%;
+        min-height: 32px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+    .provider-model-menu-row:is(:hover, :focus-visible, [aria-selected="true"], [aria-checked="true"]) { background: var(--provider-model-active); }
+    .provider-model-menu-row:disabled { opacity: .45; cursor: not-allowed; }
+    .provider-model-menu-row svg { width: 14px; height: 14px; flex-shrink: 0; }
 }

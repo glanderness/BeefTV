@@ -3,6 +3,7 @@ import { applyMockCanvasPatch, type MockCanvasPatchParams } from "./helpers/mock
 
 const stored = new Map<string, string>();
 const server = { document: null as Record<string, unknown> | null, revision: 0, posts: [] as Array<{ path: string; expectedRevision?: number; baseRevision?: number }> };
+let library: CanvasProject[] = [];
 type RefreshListener = (project: never, previous: never) => void;
 const refreshListeners = new Set<RefreshListener>();
 
@@ -27,7 +28,9 @@ mock.module("@/services/api/request", () => ({
     apiBaseURL: "/api",
     compactApiParams: (params: Record<string, unknown>) => params,
     http: {
-        get: async () => ({ project: server.document }),
+        get: async (path: string) => path === "/canvas-projects"
+            ? { projects: library.map(({ id }) => ({ id })), hasMore: false }
+            : { project: library.find(({ id }) => path === `/canvas-projects/${id}`) ?? server.document },
         put: async (_path: string, body: { project: Record<string, unknown> }) => {
             server.revision += 1;
             server.document = { ...body.project, revision: server.revision };
@@ -88,6 +91,7 @@ mock.module("@/services/api/resources", () => ({
 }));
 
 const {
+    hydrateLocalCanvasProjectsFromBackend,
     refreshLocalCanvasProjectIfChanged,
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
@@ -148,6 +152,7 @@ async function confirmedAssistantCanvas() {
 
 beforeEach(() => {
     stored.clear();
+    library = [];
     refreshListeners.clear();
     resetCanvasOperationJournalMemory();
     resetLocalCanvasBackendSaveState();
@@ -212,4 +217,32 @@ describe("外部撤销到达编辑器", () => {
         expect(server.posts.at(-1)?.path).toBe("/ops/canvas.document.patch");
         expect((server.document?.nodes as CanvasNodeData[]).map((node) => node.title)).toEqual(["用户刚改的标题"]);
     });
+});
+
+test("后台刷新多个画布时保留先刷新画布刚刚写入的同版本草稿", async () => {
+    await confirmedAssistantCanvas();
+    const store = useCanvasStore.getState();
+    const first = store.openProject("c1")!;
+    library = [first, { ...canvas(1, []), id: "c2" }];
+    let edited = false;
+    const unsubscribe = useCanvasStore.subscribe((state) => {
+        if (edited || !state.openProject("c2")) return;
+        edited = true;
+        store.updateProject("c1", { nodes: [{ ...first.nodes[0], title: "刷新期间的新标题" }, first.nodes[1]] });
+    });
+
+    try {
+        expect(await hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+    } finally {
+        unsubscribe();
+    }
+
+    expect(edited).toBe(true);
+    expect(store.openProject("c1")?.revision).toBe(first.revision);
+    expect(store.openProject("c1")?.nodes[0]?.title).toBe("刷新期间的新标题");
+    expect(store.openProject("c2")).toBeDefined();
+    expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+    await syncLocalCanvasProjectToBackend("c1");
+    expect(server.posts.at(-1)?.baseRevision ?? server.posts.at(-1)?.expectedRevision).toBe(first.revision);
+    expect((server.document?.nodes as CanvasNodeData[])[0]?.title).toBe("刷新期间的新标题");
 });

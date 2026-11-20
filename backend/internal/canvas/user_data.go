@@ -318,9 +318,6 @@ func (s *Service) upsertUserCanvasProjectAndPayloadWithCapture(userID string, ra
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
 		}
-		if err := s.validateCanvasMediaAssetsWithBaseline(userID, raw, existing, candidateAssets); err != nil {
-			return err
-		}
 		if len(candidateAssets) > 0 {
 			created, err := s.Library().PrepareAssetWrites(userID, candidateAssets)
 			if err != nil {

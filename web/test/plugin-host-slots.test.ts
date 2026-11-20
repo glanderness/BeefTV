@@ -390,7 +390,6 @@ describe("plugin host slots, events, and lifecycle", () => {
         const resolvedMenu = resolveAddNodeMenuCommands(emptyMenuContext);
         const conversionCmds = resolvedMenu.filter((cmd) => cmd.label === "转换");
         expect(conversionCmds).toHaveLength(1);
-        expect(resolvedMenu.filter((cmd) => cmd.id === "smart-edit")).toHaveLength(1);
 
         const activations: Array<{ nodeId: string; nodeType: string; projectId?: string }> = [];
         const off = host.events.on("canvas.node:activate", (payload) => {

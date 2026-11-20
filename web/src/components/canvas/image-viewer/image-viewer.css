@@ -1,0 +1,58 @@
+[data-canvas-media-viewer] {
+    z-index: var(--z-toast, 500);
+    font: 500 13px/20px var(--font-sans, system-ui, sans-serif);
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+[data-canvas-media-viewer] button,
+[data-canvas-media-viewer] summary,
+[data-canvas-media-viewer] dt,
+[data-canvas-media-viewer] dd {
+    font: inherit;
+    letter-spacing: inherit;
+}
+
+[data-canvas-media-viewer] .viewer-heading {
+    font-size: 16px;
+    line-height: 22px;
+}
+
+.media-export-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    min-width: 136px;
+    padding: 4px;
+    border: 1px solid;
+    border-radius: var(--r-md);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 16%);
+}
+
+.media-export-menu button {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--r-sm);
+}
+
+.media-export-menu button:is(:hover, :focus-visible) {
+    background: var(--viewer-item-hover);
+}
+
+.media-viewer-video-stage {
+    display: grid;
+    flex: 1;
+    min-height: 0;
+    margin: clamp(8px, 2vw, 24px);
+    place-items: center;
+    container-type: size;
+}
+
+.media-viewer-video-frame {
+    position: relative;
+    max-height: 100%;
+}
