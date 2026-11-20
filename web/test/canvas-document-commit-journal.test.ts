@@ -381,26 +381,52 @@ describe("画布文档提交日记", () => {
         expect(peekCanvasOperationJournal("c1")?.confirmedRevision).toBe(77);
     });
 
-    test("unconfirmed generationEffectKeys are stripped from cache writes while confirmed keys and manual deletions survive", async () => {
+    test("unconfirmed generationEffectKeys do not survive crash/reload to block post-reload recovery, while confirmed node/session keys and manual deletions survive", async () => {
+        const { applyGenerationConsumerEffect, generationEffectApplied } = await import("@/services/generation-consumer-dedupe");
         await useCanvasStore.persist.rehydrate();
         const nodes = [
-            node("n1", "One", { metadata: { generationEffectKeys: ["confirmed-key"] } }),
+            node("n1", "One", { metadata: { generationEffectKeys: ["confirmed-node-key"] } }),
             node("n2", "Two"),
         ];
-        await seedConfirmed(canvas("基线", 1, { nodes, connections: [connection("e", "n1", "n2")] }));
+        const sessions = [{ id: "s1", title: "会话", messages: [], generationEffectKeys: ["confirmed-session-key"] }];
+        await seedConfirmed(canvas("基线", 1, { nodes, connections: [connection("e", "n1", "n2")], chatSessions: sessions }));
         await flushCanvasStorePersistence();
+
+        // Optimistically stamp unconfirmed node & session keys before server ack, alongside a manual edge deletion.
         useCanvasStore.getState().updateProject("c1", {
             nodes: [
-                { ...nodes[0]!, metadata: { generationEffectKeys: ["confirmed-key", "not-confirmed"] } },
-                { ...nodes[1]!, metadata: { generationEffectKeys: ["also-unconfirmed"] } },
+                { ...nodes[0]!, metadata: { generationEffectKeys: ["confirmed-node-key", "unacked-node-effect"] } },
+                { ...nodes[1]!, metadata: { generationEffectKeys: ["unacked-n2-effect"] } },
+            ] as never,
+            chatSessions: [
+                { ...sessions[0]!, generationEffectKeys: ["confirmed-session-key", "unacked-session-effect"] },
             ] as never,
             connections: [],
         });
         await flushCanvasStorePersistence();
-        const durable = canvasDurableSnapshot(activeScope, "c1");
-        expect(durable?.connections).toEqual([]);
-        expect(durable?.nodes[0]?.metadata?.generationEffectKeys).toEqual(["confirmed-key"]);
-        expect(durable?.nodes[1]?.metadata?.generationEffectKeys).toBeUndefined();
+
+        // Simulate crash + reload before server ack: clear memory and rehydrate from browser cache.
+        withCanvasStorePersistenceSuppressed(() => useCanvasStore.setState({ projects: [] }));
+        resetCanvasOperationJournalMemory();
+        resetLocalCanvasBackendSaveState();
+        await useCanvasStore.persist.rehydrate();
+
+        const rehydrated = useCanvasStore.getState().openProject("c1")!;
+        expect(rehydrated.connections).toEqual([]);
+        expect(generationEffectApplied(rehydrated.nodes[0]!.metadata || {}, "confirmed-node-key")).toBe(true);
+        expect(generationEffectApplied(rehydrated.nodes[0]!.metadata || {}, "unacked-node-effect")).toBe(false);
+        expect(rehydrated.nodes[1]!.metadata?.generationEffectKeys).toBeUndefined();
+        expect(generationEffectApplied(rehydrated.chatSessions[0]!, "confirmed-session-key")).toBe(true);
+        expect(generationEffectApplied(rehydrated.chatSessions[0]!, "unacked-session-effect")).toBe(false);
+
+        // Post-reload task recovery must still apply the unacked effect onto n2 instead of deduping it away.
+        const recovered = applyGenerationConsumerEffect(
+            rehydrated.nodes[1]!.metadata || {},
+            "unacked-n2-effect",
+            (meta) => ({ ...meta, status: "success", content: "https://media/recovered.png" }),
+        );
+        expect(recovered.applied).toBe(true);
+        expect(recovered.value.content).toBe("https://media/recovered.png");
     });
 
     test("non-desktop browser cache writes preserve concurrent tab edits and deletions without resurrecting deleted canvases", async () => {

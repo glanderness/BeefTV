@@ -124,3 +124,45 @@ test("project-level cross-tab merge preserves concurrent edits and additions wit
         "c4:Tab B 新建",
     ]);
 });
+
+test("viewport-only cache writes preserve another tab's newer document edits on the same canvas", () => {
+    const c1Base = makeProject("c1", "初始标题");
+    const initial = {
+        state: { projects: [c1Base] },
+        version: 0,
+        storageRevision: 1,
+        deletedProjectIds: {},
+    };
+
+    // Tab B edits c1's title and adds a node.
+    const c1TabB: CanvasProject = {
+        ...c1Base,
+        title: "Tab B 改了内容",
+        nodes: [{ id: "n-from-b", type: "text" as never, title: "新节点", position: { x: 10, y: 20 }, width: 200, height: 120 }],
+    };
+    const afterTabB = mergeCanvasStorageProjects({
+        durable: initial,
+        baseProjects: [c1Base],
+        localProjects: [c1TabB],
+        baseRevision: 1,
+    });
+
+    // Tab A only pans/zooms viewport and toggles showImageInfo on c1 (no content edits).
+    const c1TabAViewportOnly: CanvasProject = {
+        ...c1Base,
+        viewport: { x: 320, y: -140, k: 0.65 },
+        showImageInfo: true,
+    };
+    const afterTabA = mergeCanvasStorageProjects({
+        durable: afterTabB.document,
+        baseProjects: [c1Base],
+        localProjects: [c1TabAViewportOnly],
+        baseRevision: 1,
+    });
+
+    const merged = afterTabA.document.state.projects[0]!;
+    expect(merged.title).toBe("Tab B 改了内容");
+    expect(merged.nodes.map((node) => node.id)).toEqual(["n-from-b"]);
+    expect(merged.viewport).toEqual({ x: 320, y: -140, k: 0.65 });
+    expect(merged.showImageInfo).toBe(true);
+});

@@ -1,6 +1,6 @@
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { normalizeAssetCategory } from "@/lib/asset-category";
-import { normalizeCanvasProjectGraph, sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { normalizeCanvasProjectGraph, sameCanvasDocument } from "@/lib/canvas/canvas-content";
 
 export type CanvasStorageDocument = {
     state: { projects: CanvasProject[] };
@@ -65,9 +65,8 @@ export function parseCanvasStorageDocument(value: string | null, fallback: Canva
     };
 }
 
-function projectChangedLocally(local: CanvasProject, base: CanvasProject) {
-    return !sameCanvasContent(local, base)
-        || JSON.stringify(local.viewport) !== JSON.stringify(base.viewport)
+function viewPreferencesChanged(local: CanvasProject, base: CanvasProject) {
+    return JSON.stringify(local.viewport) !== JSON.stringify(base.viewport)
         || JSON.stringify(local.appearance) !== JSON.stringify(base.appearance)
         || local.backgroundMode !== base.backgroundMode
         || local.showImageInfo !== base.showImageInfo;
@@ -76,6 +75,7 @@ function projectChangedLocally(local: CanvasProject, base: CanvasProject) {
 /**
  * Project-level cross-tab merge for non-desktop browser IndexedDB cache writes:
  * - Preserves concurrent edits made to other canvases in another tab.
+ * - Preserves another tab's document edits on the same canvas when this tab only changed view preferences.
  * - Preserves canvases newly created in another tab.
  * - Prevents stale tabs from resurrecting canvases deleted in another tab.
  */
@@ -115,8 +115,16 @@ export function mergeCanvasStorageProjects(input: {
             continue;
         }
         seen.add(local.id);
-        if (base && durable && !projectChangedLocally(local, base)) {
-            projects.push(durable);
+        if (base && durable && sameCanvasDocument(local, base)) {
+            projects.push(viewPreferencesChanged(local, base)
+                ? {
+                    ...durable,
+                    viewport: local.viewport,
+                    appearance: local.appearance,
+                    backgroundMode: local.backgroundMode,
+                    showImageInfo: local.showImageInfo,
+                }
+                : durable);
             continue;
         }
         projects.push(local);

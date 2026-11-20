@@ -23,6 +23,16 @@ let remoteProject: any;
 let remoteProjects: any[] = [];
 let failurePath = "";
 let remotePages: any[][] | null = null;
+const remoteDetailsById = new Map<string, any>();
+
+class MockApiError extends Error {
+    status?: number;
+    constructor(message: string, status?: number) {
+        super(message);
+        this.name = "ApiError";
+        this.status = status;
+    }
+}
 
 const emptyJournal = (id: string) => ({
     userScope: "guest",
@@ -155,12 +165,21 @@ mock.module("@/lib/canvas/canvas-document-rebase", () => ({
 }));
 
 mock.module("@/services/api/request", () => ({
-    ApiError: class ApiError extends Error {},
+    ApiError: MockApiError,
     compactApiParams: (params: Record<string, unknown>) => params,
     serializeApiParams: () => "",
     http: {
         get: async (path: string, options?: any) => {
             if (path === failurePath) throw new Error("read failed");
+            if (path.startsWith("/canvas-projects/")) {
+                const id = decodeURIComponent(path.slice("/canvas-projects/".length));
+                if (remoteDetailsById.has(id)) {
+                    const entry = remoteDetailsById.get(id);
+                    if (entry === "404") throw new MockApiError("画布不存在", 404);
+                    if (entry === "500") throw new MockApiError("服务暂不可用", 500);
+                    return { project: entry };
+                }
+            }
             if (remotePages) {
                 const page = options?.params?.page || 1;
                 if (path === "/canvas-projects") return { projects: remotePages[page - 1] || [], hasMore: page < remotePages.length };
@@ -251,6 +270,7 @@ const project = (overrides: Partial<Project> = {}): Project => ({
 beforeEach(() => {
     resetProjects([]);
     setRemoteProject(undefined);
+    remoteDetailsById.clear();
     journalMemory.clear();
 });
 
@@ -315,16 +335,88 @@ describe("local workspace stale backend protection", () => {
         expect(projects[0].nodes).toEqual([{ id: "remote-node" }]);
     });
 
-    it("prunes cached server-backed canvases deleted on backend while retaining unsaved local drafts", async () => {
-        const kept = project({ id: "canvas-kept", revision: 2 });
-        const deletedGhost = project({ id: "canvas-deleted-elsewhere", revision: 4 });
-        const unsavedDraft = project({ id: "canvas-unsaved-draft", revision: 0 });
-        resetProjects([kept, deletedGhost, unsavedDraft]);
-        bases.set(deletedGhost.id, { revision: 4, snapshot: deletedGhost });
-        setRemoteProject(kept);
+    it("does not prune cached canvases when backend returns an empty list", async () => {
+        const cached = project({ id: "canvas-cached", revision: 3 });
+        resetProjects([cached]);
+        bases.set(cached.id, { revision: 3, snapshot: cached });
+        setRemoteProject(undefined);
+
+        expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(false);
+        expect(projects.map((item) => item.id)).toEqual(["canvas-cached"]);
+    });
+
+    it("keeps a canvas omitted from a paginated list when per-ID verification returns 200", async () => {
+        const page1 = project({ id: "canvas-p1", revision: 2 });
+        const shifted = project({ id: "canvas-shifted", revision: 2, title: "旧标题" });
+        const shiftedRemote = project({ id: "canvas-shifted", revision: 3, title: "翻页期间刚改名" });
+        resetProjects([page1, shifted]);
+        bases.set(page1.id, { revision: 2, snapshot: page1 });
+        bases.set(shifted.id, { revision: 2, snapshot: shifted });
+        setRemotePages([[page1]]);
+        remoteDetailsById.set(shifted.id, shiftedRemote);
 
         expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
-        expect(projects.map((item) => item.id).sort()).toEqual(["canvas-kept", "canvas-unsaved-draft"]);
-        expect(bases.has(deletedGhost.id)).toBe(false);
+        expect(projects.find((item) => item.id === shifted.id)?.title).toBe("翻页期间刚改名");
+    });
+
+    it("prunes clean server-backed canvases only on authoritative per-ID 404 while preserving unsaved, dirty, and in-flight canvases", async () => {
+        const kept = project({ id: "canvas-kept", revision: 2 });
+        const cleanDeleted = project({ id: "canvas-clean-deleted", revision: 4 });
+        const dirtyDeleted = project({ id: "canvas-dirty-deleted", revision: 4, nodes: [{ id: "unsaved-local-node" }] });
+        const inFlightDeleted = project({ id: "canvas-inflight-deleted", revision: 4 });
+        const unsavedDraft = project({ id: "canvas-unsaved-draft", revision: 0 });
+        resetProjects([kept, cleanDeleted, dirtyDeleted, inFlightDeleted, unsavedDraft]);
+        bases.set(cleanDeleted.id, { revision: 4, snapshot: cleanDeleted });
+        bases.set(dirtyDeleted.id, { revision: 4, snapshot: project({ id: "canvas-dirty-deleted", revision: 4, nodes: [] }) });
+        bases.set(inFlightDeleted.id, { revision: 4, snapshot: inFlightDeleted });
+        journalMemory.set(inFlightDeleted.id, { ...emptyJournal(inFlightDeleted.id), inFlight: { operationId: "op-1", expectedRevision: 4 } });
+        setRemoteProject(kept);
+        remoteDetailsById.set(cleanDeleted.id, "404");
+        remoteDetailsById.set(dirtyDeleted.id, "404");
+        remoteDetailsById.set(inFlightDeleted.id, "404");
+
+        expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+        expect(projects.map((item) => item.id).sort()).toEqual([
+            "canvas-dirty-deleted",
+            "canvas-inflight-deleted",
+            "canvas-kept",
+            "canvas-unsaved-draft",
+        ]);
+        expect(bases.has(cleanDeleted.id)).toBe(false);
+    });
+
+    it("handles list/detail 404 races without failing hydration of remaining canvases", async () => {
+        const surviving = project({ id: "canvas-surviving", revision: 2 });
+        const raced = project({ id: "canvas-raced-delete", revision: 2 });
+        resetProjects([surviving, raced]);
+        bases.set(raced.id, { revision: 2, snapshot: raced });
+        setRemotePages([[surviving, raced]]);
+        remoteDetailsById.set(surviving.id, surviving);
+        remoteDetailsById.set(raced.id, "404");
+
+        expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+        expect(projects.map((item) => item.id)).toEqual(["canvas-surviving"]);
+    });
+
+    it("direct open evicts a clean ghost on 404, keeps dirty drafts on 404, and falls back to cache on 500", async () => {
+        const cleanGhost = project({ id: "ghost-clean", revision: 3 });
+        const dirtyGhost = project({ id: "ghost-dirty", revision: 3, nodes: [{ id: "local-edit" }] });
+        const offlineCanvas = project({ id: "offline-canvas", revision: 3 });
+        resetProjects([cleanGhost, dirtyGhost, offlineCanvas]);
+        bases.set(cleanGhost.id, { revision: 3, snapshot: cleanGhost });
+        bases.set(dirtyGhost.id, { revision: 3, snapshot: project({ id: "ghost-dirty", revision: 3, nodes: [] }) });
+        bases.set(offlineCanvas.id, { revision: 3, snapshot: offlineCanvas });
+        remoteDetailsById.set(cleanGhost.id, "404");
+        remoteDetailsById.set(dirtyGhost.id, "404");
+        remoteDetailsById.set(offlineCanvas.id, "500");
+
+        expect(await repository.openLocalCanvasProjectFromBackend(cleanGhost.id)).toBeNull();
+        expect(projects.some((item) => item.id === cleanGhost.id)).toBe(false);
+
+        const keptDirty = await repository.openLocalCanvasProjectFromBackend(dirtyGhost.id);
+        expect(keptDirty?.nodes).toEqual([{ id: "local-edit" }]);
+
+        const keptOffline = await repository.openLocalCanvasProjectFromBackend(offlineCanvas.id);
+        expect(keptOffline?.id).toBe(offlineCanvas.id);
     });
 });
