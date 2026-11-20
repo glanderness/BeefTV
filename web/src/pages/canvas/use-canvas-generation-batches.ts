@@ -5,11 +5,12 @@ import { nanoid } from "nanoid";
 import { generationBatchStatus } from "@/lib/canvas/canvas-generation-batch";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { buildGenerationConfig, createGenerationRetryContext, generationTaskMetadata, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { nodeRequiresFreshSubmission } from "@/lib/task-outcome";
 import { listGenerationTasks } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
-import type { CanvasGenerationBatch, CanvasGenerationBatchItem, CanvasGenerationBatchMode, CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasGenerationBatch, type CanvasGenerationBatchItem, type CanvasGenerationBatchMode, type CanvasNodeData } from "@/types/canvas";
 
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
@@ -281,6 +282,15 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
                     retryableItems.map(async (item) => {
                         const retryNode = nodeById.get(item.nodeId);
                         if (!retryNode?.metadata?.taskId) return;
+                        const nodeTaskType =
+                            retryNode.type === CanvasNodeType.Image
+                                ? "canvas_image"
+                                : retryNode.type === CanvasNodeType.Video
+                                  ? "canvas_video"
+                                  : retryNode.type === CanvasNodeType.Audio
+                                    ? "canvas_audio"
+                                    : undefined;
+                        if (nodeRequiresFreshSubmission(retryNode.metadata, { nodeTaskType })) return;
                         retryContexts.set(item.nodeId, await createGenerationRetryContext(retryNode.metadata.taskId, retryNode.metadata.attemptGroupId));
                     }),
                 );

@@ -1,5 +1,7 @@
 import { explainGenerationError } from "@/lib/generation-error";
-import { isTaskRegenerateBlocked, normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { operationLabelByValue } from "@/lib/generation-task-display";
+import { isTaskRegenerateBlocked, normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy, taskRequiresFreshSubmission } from "@/lib/task-outcome";
+import { ApiError } from "@/services/api/request";
 import { isActiveGenerationTask, type GenerationTask, type TaskStatus } from "@/services/api/task-center";
 import { modelDisplayName, type AiConfig } from "@/stores/use-config-store";
 
@@ -68,24 +70,136 @@ export function taskOutcomeCopyForTask(
 
 /**
  * 判断任务中心是否不能就地复用原任务 `/tasks/:id/retry`（需保留原任务记录与图片幂等回执，改为新提交）：
- * - `outcome.regenerate === "confirm"`（含 `cancelled_result_unconfirmed`、`charged_result_unrecoverable`、`result_unrecoverable`、`input_rejected` 与计费不明任务）
- * - 阶段/错误码标明提交未确认（`submission_unknown`、`submission_uncertain`）
- * - 图片任务且无明确未扣费证据（避免命中后端 `ValidateImageTaskRetry` 图片幂等守门）
+ * - 命中共享 `taskRequiresFreshSubmission`（`outcome.regenerate === "confirm"`、`submission_unknown`/`submission_uncertain`、`providerCancelStatus === "requested"`、或无明确未扣费证据的 `canvas_image`）
+ * - `outcome.reason === "input_rejected"`，或任务失败分类在后端 `BlocksRetry` / 内容审核守门内
  */
 export function taskCenterRetryRequiresNewSubmission(
-    task: Pick<GenerationTask, "type" | "status" | "stage" | "errorCode" | "error" | "providerRequestId" | "outcome" | "outputs">,
+    task: Pick<GenerationTask, "type" | "status" | "stage" | "errorCode" | "error" | "providerRequestId" | "providerCancelStatus" | "outcome" | "outputs">,
     outcome = readTaskOutcome(task),
 ) {
-    if (outcome?.regenerate === "confirm") return true;
-    if (task.stage === "submission_unknown" || task.errorCode === "submission_uncertain") return true;
-    if (task.type === "canvas_image" && outcome?.reason !== "not_charged" && outcome?.reason !== "request_not_sent") {
-        return true;
+    if (taskRequiresFreshSubmission(task, outcome)) return true;
+    if (outcome?.reason === "input_rejected") return true;
+    if (task.errorCode || task.error) {
+        const explanation = explainGenerationError(
+            { code: task.errorCode, message: task.error },
+            { stage: task.stage },
+        );
+        if (explanation.moderation) return true;
+        if (task.stage !== "请求尚未提交" && explanation.blockManualRetry) return true;
     }
     return false;
 }
 
 export function canBatchRetryTaskInTaskCenter(task: GenerationTask) {
     return isTaskFailed(task) && !isTaskRegenerateBlocked(task) && !taskCenterRetryRequiresNewSubmission(task);
+}
+
+export type TaskCanvasAvailability = "available" | "missing" | "unreachable";
+
+export type TaskCenterNewSubmissionRoute =
+    | { kind: "navigate_canvas"; canvasId: string }
+    | { kind: "prefill_video_modal"; values: { operation: string; prompt: string; model: string; projectId?: string } }
+    | { kind: "warn"; message: string }
+    | { kind: "error"; message: string };
+
+const TEXT_ONLY_VIDEO_MODAL_OPERATIONS = new Set(["text_to_video", "compare_versions"]);
+
+function isCanvasNotFoundError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { name?: unknown; status?: unknown };
+    return (error instanceof ApiError || candidate.name === "ApiError") && candidate.status === 404;
+}
+
+export async function checkTaskCanvasAvailability(
+    projectId: string,
+    canvasById: ReadonlyMap<string, unknown>,
+    readCanvasFromBackend: (id: string) => Promise<unknown>,
+): Promise<TaskCanvasAvailability> {
+    if (canvasById.has(projectId)) return "available";
+    try {
+        await readCanvasFromBackend(projectId);
+        return "available";
+    } catch (error) {
+        return isCanvasNotFoundError(error) ? "missing" : "unreachable";
+    }
+}
+
+function hasNonEmptyMediaOrSpecialParams(inputJson?: string): boolean {
+    const trimmed = inputJson?.trim();
+    if (!trimmed) return false;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(trimmed);
+    } catch {
+        return true;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return true;
+    const input = parsed as Record<string, unknown>;
+    if (Array.isArray(input.referenceImages) && input.referenceImages.length > 0) return true;
+    if (Array.isArray(input.referenceVideos) && input.referenceVideos.length > 0) return true;
+    if (Array.isArray(input.referenceAudios) && input.referenceAudios.length > 0) return true;
+    if (input.mask || input.upscale || input.subtitleErase) return true;
+    return false;
+}
+
+export function canPrefillVideoCreateModal(
+    task: Pick<GenerationTask, "type" | "operation" | "inputJson">,
+): { allowed: boolean; operation: string } {
+    if (!task.type.startsWith("video_")) return { allowed: false, operation: "" };
+    const operation = (task.operation || task.type.replace(/^video_/, "")).trim();
+    if (!operation || !operationLabelByValue.has(operation)) return { allowed: false, operation };
+    if (!task.inputJson?.trim() && !TEXT_ONLY_VIDEO_MODAL_OPERATIONS.has(operation)) return { allowed: false, operation };
+    if (hasNonEmptyMediaOrSpecialParams(task.inputJson)) return { allowed: false, operation };
+    return { allowed: true, operation };
+}
+
+export function resolveTaskCenterNewSubmissionRoute(
+    task: Pick<GenerationTask, "type" | "operation" | "prompt" | "model" | "projectId" | "inputJson" | "clientContext">,
+    copyMessage: string,
+    canvasAvailability?: TaskCanvasAvailability,
+): TaskCenterNewSubmissionRoute {
+    const projectId = task.projectId?.trim();
+    if (projectId) {
+        const availability = canvasAvailability ?? "missing";
+        if (availability === "unreachable") {
+            return { kind: "error", message: "暂时无法确认原画布状态，请稍后重试" };
+        }
+        if (availability === "missing") {
+            return { kind: "warn", message: `${copyMessage} 原画布已不存在，请在创作页或新建画布后重新生成` };
+        }
+        if (!task.type.startsWith("video_") || task.clientContext?.nodeId) {
+            return { kind: "navigate_canvas", canvasId: projectId };
+        }
+        const prefill = canPrefillVideoCreateModal(task);
+        if (!prefill.allowed) {
+            return { kind: "warn", message: `${copyMessage} 原任务包含参考素材或专用参数，请前往对应画布或原创作入口重新生成` };
+        }
+        return {
+            kind: "prefill_video_modal",
+            values: {
+                operation: prefill.operation,
+                prompt: task.prompt || "",
+                model: task.model || "",
+                projectId,
+            },
+        };
+    }
+    if (task.type.startsWith("video_")) {
+        const prefill = canPrefillVideoCreateModal(task);
+        if (!prefill.allowed) {
+            return { kind: "warn", message: `${copyMessage} 原任务包含参考素材或专用参数，任务中心无法直接携带原素材重建，请前往原创作入口重新提交` };
+        }
+        return {
+            kind: "prefill_video_modal",
+            values: {
+                operation: prefill.operation,
+                prompt: task.prompt || "",
+                model: task.model || "",
+                projectId: undefined,
+            },
+        };
+    }
+    return { kind: "warn", message: `${copyMessage} 请前往原创作页或新建画布后重新生成` };
 }
 
 export function taskAttentionReason(task: GenerationTask) {

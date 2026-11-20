@@ -20,6 +20,7 @@ import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/g
 import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { canRecoverTaskOutcome, isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
+import { readLocalCanvasProjectFromBackend } from "@/services/local-workspace-hydration";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -27,7 +28,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { canBatchRetryTaskInTaskCenter, computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, taskCenterRetryRequiresNewSubmission, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
+import { canBatchRetryTaskInTaskCenter, checkTaskCanvasAvailability, computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, resolveTaskCenterNewSubmissionRoute, shouldFastPollTaskCenter, taskCenterRetryRequiresNewSubmission, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -101,6 +102,7 @@ export default function TasksPage() {
     const [taskLogs, setTaskLogs] = useState<TaskLog[]>([]);
     const [logsLoading, setLogsLoading] = useState(false);
     const [detailIncomplete, setDetailIncomplete] = useState(false);
+    const [extraProjectOption, setExtraProjectOption] = useState<{ label: string; value: string } | null>(null);
     const [mediaPreview, setMediaPreview] = useState<{ url: string; kind: "image" | "video"; title: string } | null>(null);
     const [tasks, setTasks] = useState<GenerationTask[]>([]);
     const [tasksIncomplete, setTasksIncomplete] = useState(false);
@@ -109,10 +111,16 @@ export default function TasksPage() {
     const tasksRef = useRef<GenerationTask[]>([]);
     const canvasById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     const domainProjectNameById = useMemo(() => new Map(domainProjects.map((item) => [item.project.id, item.project.name])), [domainProjects]);
-    const projectOptions = useMemo(() => projects.map((project) => {
-        const projectName = project.projectId ? domainProjectNameById.get(project.projectId) : "";
-        return { label: projectName ? `${project.title || "未命名画布"} · ${projectName}` : project.title || "未命名画布", value: project.id };
-    }), [domainProjectNameById, projects]);
+    const projectOptions = useMemo(() => {
+        const options = projects.map((project) => {
+            const projectName = project.projectId ? domainProjectNameById.get(project.projectId) : "";
+            return { label: projectName ? `${project.title || "未命名画布"} · ${projectName}` : project.title || "未命名画布", value: project.id };
+        });
+        if (extraProjectOption && !projects.some((project) => project.id === extraProjectOption.value)) {
+            options.push(extraProjectOption);
+        }
+        return options;
+    }, [domainProjectNameById, extraProjectOption, projects]);
     const modelOptions = useMemo(() => Array.from(new Set(tasks.map((task) => formatModelName(effectiveConfig, task)).filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN")), [effectiveConfig, tasks]);
     const filteredTasks = useMemo(() => tasks.filter((task) => matchesTaskCenterStatusFilter(task, statusFilter)).filter((task) => {
         if (projectFilter !== "all" && task.projectId !== projectFilter) return false;
@@ -327,9 +335,17 @@ export default function TasksPage() {
             }
             if (taskCenterRetryRequiresNewSubmission(detail, detailOutcome)) {
                 const copy = taskOutcomeCopyForTask(detail, detailOutcome);
-                const hasCanvas = Boolean(detail.projectId && canvasById.has(detail.projectId));
-                if (hasCanvas && detail.projectId) {
-                    const targetCanvasId = detail.projectId;
+                let loadedCanvasTitle = "";
+                const targetProjectId = detail.projectId?.trim();
+                const canvasAvailability = targetProjectId
+                    ? await checkTaskCanvasAvailability(targetProjectId, canvasById, async (canvasId) => {
+                          const loaded = await readLocalCanvasProjectFromBackend(canvasId);
+                          loadedCanvasTitle = loaded.title || "未命名画布";
+                          return loaded;
+                      })
+                    : undefined;
+                const route = resolveTaskCenterNewSubmissionRoute(detail, copy.message, canvasAvailability);
+                if (route.kind === "navigate_canvas") {
                     const goToCanvas = await new Promise<boolean>((resolve) => {
                         modal.confirm({
                             title: copy.confirmTitle || "请回到画布重新生成",
@@ -344,11 +360,11 @@ export default function TasksPage() {
                     });
                     if (goToCanvas) {
                         setDetailTask(null);
-                        navigate(`/canvas/${encodeURIComponent(targetCanvasId)}`);
+                        navigate(`/canvas/${encodeURIComponent(route.canvasId)}`);
                     }
                     return;
                 }
-                if (detail.type.startsWith("video_")) {
+                if (route.kind === "prefill_video_modal") {
                     const createFresh = await new Promise<boolean>((resolve) => {
                         modal.confirm({
                             title: copy.confirmTitle || "确认重新生成？",
@@ -362,19 +378,20 @@ export default function TasksPage() {
                         });
                     });
                     if (createFresh) {
-                        const operation = detail.operation || detail.type.replace(/^video_/, "") || "text_to_video";
-                        form.setFieldsValue({
-                            operation,
-                            prompt: detail.prompt || "",
-                            model: detail.model || "",
-                            projectId: undefined,
-                        });
+                        if (route.values.projectId && !canvasById.has(route.values.projectId)) {
+                            setExtraProjectOption({ label: loadedCanvasTitle || route.values.projectId, value: route.values.projectId });
+                        }
+                        form.setFieldsValue(route.values);
                         setDetailTask(null);
                         setCreateOpen(true);
                     }
                     return;
                 }
-                message.warning(`${copy.message} 原画布已不存在，请在创作页或新建画布后重新生成`);
+                if (route.kind === "error") {
+                    message.error(route.message);
+                    return;
+                }
+                message.warning(route.message);
                 return;
             }
             const portraitError = portraitTaskRetryError(detail.inputJson, detail.model);

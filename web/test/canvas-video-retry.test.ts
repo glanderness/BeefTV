@@ -806,3 +806,135 @@ test("audio submittedReferences & retry baseline, charge warning preservation, a
         consumerSpy.mockRestore();
     }
 });
+
+test("allowed canvas_image and allowed submission_unknown/submission_uncertain video submit fresh without retryOf or /retry", async () => {
+    const readyChannel = {
+        ...defaultConfig.channels[0]!,
+        id: "beeftv",
+        pinned: true,
+        baseUrl: "https://api.example.com",
+        apiKey: "test-key",
+        hasApiKey: true,
+        models: ["fixture-image-model", "fixture-video-model"],
+    };
+    const buildConfigSpy = spyOn(canvasProjectGeneration, "buildGenerationConfig").mockReturnValue({
+        ...defaultConfig,
+        model: "fixture-image-model",
+        imageModel: "fixture-image-model",
+        videoModel: "fixture-video-model",
+        baseUrl: "https://api.example.com",
+        apiKey: "test-key",
+        channels: [readyChannel],
+    });
+    const storedRetrySpy = spyOn(canvasVideoRetry, "retryStoredCanvasVideo").mockResolvedValue({
+        id: "should-not-replay",
+        type: "canvas_video",
+        status: "succeeded",
+    } as GenerationTask);
+    const retryContextSpy = spyOn(canvasProjectGeneration, "createGenerationRetryContext").mockResolvedValue({
+        retryOf: "should-not-be-used",
+        attemptGroupId: "group-1",
+        clientOperationId: "retry:should-not-be-used",
+    });
+    const consumerCalls: Array<Record<string, unknown>> = [];
+    const consumerSpy = spyOn(canvasProjectGeneration, "runCanvasGenerationTaskToConsumer").mockImplementation(async (input) => {
+        consumerCalls.push(input as unknown as Record<string, unknown>);
+        return { id: `fresh-task-${consumerCalls.length}`, type: input.mode === "image" ? "canvas_image" : "canvas_video", status: "succeeded" } as GenerationTask;
+    });
+
+    const allowedAcceptedImage: CanvasNodeData = {
+        id: "img-refunded-accepted",
+        type: CanvasNodeType.Image,
+        title: "已退款生图",
+        position: { x: 0, y: 0 },
+        width: 280,
+        height: 180,
+        metadata: {
+            status: "error",
+            taskId: "img-task-accepted-1",
+            taskType: "canvas_image",
+            prompt: "赛博朋克雨夜巷口",
+            generationType: "text",
+            taskOutcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" },
+        },
+    };
+    const allowedSubmissionUnknownVideo: CanvasNodeData = {
+        id: "vid-allowed-sub-unknown",
+        type: CanvasNodeType.Video,
+        title: "提交不明已退款视频",
+        position: { x: 320, y: 0 },
+        width: 320,
+        height: 180,
+        metadata: {
+            status: "error",
+            taskId: "vid-task-sub-unknown-1",
+            taskType: "canvas_video",
+            taskStage: "submission_unknown",
+            prompt: "镜头缓慢推近霓虹招牌",
+            taskOutcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" },
+        },
+    };
+    const allowedSubmissionUncertainVideo: CanvasNodeData = {
+        id: "vid-allowed-sub-uncertain",
+        type: CanvasNodeType.Video,
+        title: "错误码提交不明视频",
+        position: { x: 660, y: 0 },
+        width: 320,
+        height: 180,
+        metadata: {
+            status: "error",
+            taskId: "vid-task-sub-uncertain-2",
+            taskType: "canvas_video",
+            generationErrorCode: "submission_uncertain",
+            prompt: "人物转身看向雨幕",
+            taskOutcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" },
+        },
+    };
+
+    const nodesRef = { current: [allowedAcceptedImage, allowedSubmissionUnknownVideo, allowedSubmissionUncertainVideo] };
+    let retry!: ReturnType<typeof useCanvasGenerationRetry>;
+    function Harness() {
+        retry = useCanvasGenerationRetry({
+            projectId: "project-fresh-submit",
+            addedSkills: [],
+            assets: [],
+            nodesRef,
+            connectionsRef: { current: [] },
+            setNodes: (updater) => {
+                nodesRef.current = typeof updater === "function" ? updater(nodesRef.current) : updater;
+            },
+            setRunningNodeId: () => {},
+            startGenerationRequest: () => new AbortController(),
+            finishGenerationRequest: () => {},
+            bindGenerationTask: () => {},
+            applyGenerationTaskResult: async () => {},
+            regenerateImageBatch: async () => {},
+        });
+        return null;
+    }
+
+    try {
+        renderToStaticMarkup(createElement(Harness));
+
+        await retry(allowedAcceptedImage);
+        await retry(allowedSubmissionUnknownVideo);
+        await retry(allowedSubmissionUncertainVideo);
+
+        expect(storedRetrySpy).not.toHaveBeenCalled();
+        expect(retryContextSpy).not.toHaveBeenCalled();
+        expect(consumerCalls).toHaveLength(3);
+        for (const call of consumerCalls) {
+            expect(call.retryOf).toBeUndefined();
+            expect(typeof call.clientOperationId).toBe("string");
+            expect(String(call.clientOperationId)).not.toStartWith("retry:");
+        }
+        expect(consumerCalls[0]?.mode).toBe("image");
+        expect(consumerCalls[1]?.mode).toBe("video");
+        expect(consumerCalls[2]?.mode).toBe("video");
+    } finally {
+        buildConfigSpy.mockRestore();
+        storedRetrySpy.mockRestore();
+        retryContextSpy.mockRestore();
+        consumerSpy.mockRestore();
+    }
+});

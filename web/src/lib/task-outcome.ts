@@ -370,6 +370,50 @@ export function isNodeRegenerateConfirm(metadata?: CanvasNodeOutcomeMetadata | n
     return isRegenerateConfirm(readNodeTaskOutcome(metadata));
 }
 
+export type FreshSubmissionSource = {
+    type?: string;
+    stage?: string;
+    errorCode?: string;
+    providerCancelStatus?: string;
+    outcome?: TaskOutcome | null;
+};
+
+/**
+ * 判断重新生成是否必须按新提交处理（分配新的 `clientOperationId`、不写 `retryOf`、不调用就地 `/tasks/:id/retry`）：
+ * - `outcome.regenerate === "confirm"`（如取消未确认、已扣费不可取回、审核/参数拒绝等）
+ * - 阶段/错误码标明提交未确认，或上游取消请求仍在进行中（`submission_unknown`、`submission_uncertain`、`providerCancelStatus === "requested"`）
+ * - `canvas_image` 且缺少明确未扣费/未发送证据（避免命中后端 `ValidateImageTaskRetry` 图片幂等守门）
+ */
+export function taskRequiresFreshSubmission(
+    source: FreshSubmissionSource,
+    outcome: TaskOutcome | null | undefined = normalizeTaskOutcome(source.outcome),
+): boolean {
+    if (outcome?.regenerate === "confirm") return true;
+    if (source.stage === "submission_unknown" || source.errorCode === "submission_uncertain") return true;
+    if (source.providerCancelStatus === "requested") return true;
+    if (source.type === "canvas_image" && outcome?.reason !== "not_charged" && outcome?.reason !== "request_not_sent") {
+        return true;
+    }
+    return false;
+}
+
+export function nodeRequiresFreshSubmission(
+    metadata?: CanvasNodeOutcomeMetadata | null,
+    options?: { nodeTaskType?: string; outcome?: TaskOutcome | null },
+): boolean {
+    const outcome = options && "outcome" in options ? options.outcome : readNodeTaskOutcome(metadata);
+    return taskRequiresFreshSubmission(
+        {
+            type: metadata?.taskType || options?.nodeTaskType,
+            stage: metadata?.taskStage,
+            errorCode: metadata?.generationErrorCode,
+            providerCancelStatus: metadata?.taskProviderCancelStatus,
+            outcome,
+        },
+        outcome,
+    );
+}
+
 function extractNodeMetadata(target?: { metadata?: CanvasNodeOutcomeMetadata | null } | CanvasNodeOutcomeMetadata | null): CanvasNodeOutcomeMetadata | undefined {
     if (!target) return undefined;
     if ("metadata" in target && target.metadata && typeof target.metadata === "object") {
