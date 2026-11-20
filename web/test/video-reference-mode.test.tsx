@@ -44,6 +44,13 @@ describe("resolveVideoReferenceModeState", () => {
         expect(switchedToAll.canSelectFrames).toBe(true);
         expect(switchedToAll.startFrameNodeId).toBeUndefined();
         expect(switchedToAll.endFrameNodeId).toBeUndefined();
+
+        const refs = makeImageRefs(2);
+        expect(resolveVideoReferenceModeState({ references: refs, preferredMode: "all" }).mode).toBe("all");
+        expect(resolveVideoReferenceModeState({ references: refs, preferredMode: "frames" }).startFrameNodeId).toBe("img-1");
+        expect(resolveVideoReferenceModeState({
+            references: refs, preferredMode: "all", metadata: { videoEditOperation: "image_to_video" },
+        }).mode).toBe("frames");
     });
 
     test("3 张及以上参考图或包含视频/音频时自动锁定全能参考并给出禁用原因", () => {
@@ -505,7 +512,7 @@ describe("buildVideoGenerationMetadata default frame roles", () => {
 });
 
 describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
-    test("首尾帧模式渲染 [首尾帧 | 全能参考] 切换器、缩略图首帧/尾帧角标与 ⇄ 互换按钮", () => {
+    test("首尾帧模式渲染 [全能参考 | 首尾帧] 切换器、缩略图首帧/尾帧角标与 ⇄ 互换按钮", () => {
         const refs = makeImageRefs(2);
         const state = resolveVideoReferenceModeState({ references: refs });
         const switchHtml = renderToStaticMarkup(
@@ -513,6 +520,7 @@ describe("VideoReferenceModeSwitch & ConnectedReferenceShelf UI", () => {
         );
         expect(switchHtml).toContain("首尾帧");
         expect(switchHtml).toContain("全能参考");
+        expect(switchHtml.indexOf("全能参考模式")).toBeLessThan(switchHtml.indexOf("首尾帧模式"));
 
         const shelfHtml = renderToStaticMarkup(
             <ConnectedReferenceShelf

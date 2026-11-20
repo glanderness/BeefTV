@@ -68,7 +68,7 @@
 }
 
 
-.app-workspace-sidebar-utility-row:not(.is-collapsed) > .app-workspace-theme-action {
+.app-workspace-sidebar-utility-row:not(.is-collapsed) > .app-workspace-theme-trigger {
     grid-column: 5;
     justify-self: center;
     align-self: start;
@@ -135,6 +135,15 @@
     margin-left: auto;
 }
 
+.app-workspace-update-trigger,
+.app-workspace-theme-trigger {
+    display: inline-flex;
+}
+
+.app-workspace-update-action:disabled {
+    pointer-events: none;
+}
+
 .app-workspace-update-action,
 .app-workspace-social-action,
 .app-workspace-theme-action {
@@ -157,15 +166,20 @@
     height: 16px;
 }
 
-.app-workspace-github-tooltip .ant-tooltip-inner {
+.app-workspace-sidebar-tooltip .app-workspace-sidebar-tooltip-content {
     border: 1px solid var(--border);
     border-radius: var(--r-md);
     padding: 7px 10px;
     background: var(--popover);
     box-shadow: var(--elevation-overlay);
+    color: var(--user-ink, var(--foreground));
+    font-size: var(--fs-caption);
+    font-weight: 500;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
 }
 
-.app-workspace-github-tooltip .ant-tooltip-arrow::before {
+.app-workspace-sidebar-tooltip .ant-tooltip-arrow::before {
     background: var(--popover);
 }
 
@@ -173,10 +187,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: var(--user-ink, var(--foreground));
-    font-size: var(--fs-caption);
-    font-weight: 500;
-    white-space: nowrap;
 }
 
 .app-workspace-github-hint svg {

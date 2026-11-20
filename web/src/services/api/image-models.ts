@@ -106,8 +106,9 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
             const existing = catalog.get(entry.id);
             catalog.set(entry.id, existing || entry);
         }
-        const models = Array.from(catalog.keys()).sort((a, b) => a.localeCompare(b));
-        const sortedCatalog = Array.from(catalog.values()).sort((a, b) => a.id.localeCompare(b.id));
+        // Managed BeefTV catalog order is server-curated; preserve it instead of sorting alphabetically.
+        const models = managed ? Array.from(catalog.keys()) : Array.from(catalog.keys()).sort((a, b) => a.localeCompare(b));
+        const sortedCatalog = managed ? Array.from(catalog.values()) : Array.from(catalog.values()).sort((a, b) => a.id.localeCompare(b.id));
         return { models, catalog: sortedCatalog };
     } catch (error) {
         // The backend has already classified and sanitized catalogue errors.

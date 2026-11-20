@@ -476,7 +476,6 @@ function AddNodeContextMenu({
             onAddVideo: () => onAddNode(CanvasNodeType.Video, createPosition),
             onAddAudio: () => onAddNode(CanvasNodeType.Audio, createPosition),
             onAddScript: () => onAddNode(CanvasNodeType.Script, createPosition),
-            onAddFrame: () => onAddNode(CanvasNodeType.Frame, createPosition),
             onAddFolder,
             onAddDrawing: () => onAddNode(CanvasNodeType.Drawing, createPosition),
             onAddExtensionNode: (type) => onAddNode(type, createPosition),

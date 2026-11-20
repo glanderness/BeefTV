@@ -3,7 +3,7 @@ import { CANVAS_IMAGE_SLOT_KIND_SOURCE } from "@/lib/canvas/canvas-resource-refe
 import { isH3Model, isH3Style } from "@/lib/h3-video";
 import { videoReferencesForOperation, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { isBeefTVModelRoute } from "@/lib/model-selection";
-import type { CanvasNodeMetadata } from "@/types/canvas";
+import type { CanvasNodeMetadata, CanvasVideoReferenceMode } from "@/types/canvas";
 
 export { isBeefTVModelRoute };
 
@@ -16,7 +16,7 @@ export type VideoReferenceCandidate = {
 };
 
 export type VideoReferenceModeState = {
-    mode: "frames" | "all";
+    mode: CanvasVideoReferenceMode;
     canSelectFrames: boolean;
     canSelectAll: boolean;
     framesDisabledReason?: string;
@@ -141,6 +141,7 @@ export function resolveVideoReferenceCapabilities(
 
 export function resolveVideoReferenceModeState({
     metadata,
+    preferredMode,
     references,
     endFrameSupported = true,
     referenceVideoSupported = true,
@@ -150,6 +151,7 @@ export function resolveVideoReferenceModeState({
     prompt = "",
 }: {
     metadata?: CanvasNodeMetadata;
+    preferredMode?: CanvasVideoReferenceMode;
     references: VideoReferenceCandidate[];
     endFrameSupported?: boolean;
     referenceVideoSupported?: boolean;
@@ -191,9 +193,11 @@ export function resolveVideoReferenceModeState({
     }
     const allDisabledReason = !canSelectAll ? "当前模型仅支持首帧/首尾帧模式，不支持全能参考" : undefined;
 
-    const mode: "frames" | "all" = !canSelectAll
+    const prefersAll = metadata?.videoEditOperation === "reference_to_video"
+        || (!metadata?.videoEditOperation && !metadata?.videoStartFrameNodeId && !metadata?.videoEndFrameNodeId && preferredMode === "all");
+    const mode: CanvasVideoReferenceMode = !canSelectAll
         ? "frames"
-        : !canSelectFrames || metadata?.videoEditOperation === "reference_to_video"
+        : !canSelectFrames || prefersAll
           ? "all"
           : "frames";
 

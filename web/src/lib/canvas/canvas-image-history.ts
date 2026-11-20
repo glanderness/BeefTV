@@ -444,8 +444,7 @@ export function restoreNodeMediaFromLatestImageHistory(node: CanvasNodeData, ass
         },
     };
     const plan = planPrimaryImageHistorySwitch(idleBase, latest, assets);
-    // Never synchronously commit an owned resource lacking an Asset ID onto top-level metadata,
-    // which ValidateCanvasMediaAssets would reject; leave the node idle with its history badge visible.
+    // Keep the node idle with its history badge visible if switching requires an asynchronous asset ensure.
     if (!plan.ok || plan.needsAssetEnsure) {
         return {
             ...idleBase,

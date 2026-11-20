@@ -13,7 +13,7 @@ type Listener = (event: KeyboardEvent) => void;
 type Internals = { H: unknown };
 
 const internals = (React as unknown as { __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: Internals }).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
-const globalNames = ["window", "document", "Element", "HTMLInputElement", "HTMLTextAreaElement", "HTMLSelectElement"] as const;
+const globalNames = ["window", "document", "getComputedStyle", "Element", "HTMLInputElement", "HTMLTextAreaElement", "HTMLSelectElement"] as const;
 const g = globalThis as Record<string, unknown>;
 
 class FakeElement {
@@ -110,7 +110,8 @@ beforeEach(() => {
     g.HTMLInputElement = FakeInput;
     g.HTMLTextAreaElement = FakeTextArea;
     g.HTMLSelectElement = FakeSelect;
-    g.document = { querySelector: (selector: string) => (directorMounted && selector.includes("data-director-workbench") ? {} : null) };
+    g.document = { querySelectorAll: (selector: string) => directorMounted && selector.includes("data-director-workbench") ? [{ getClientRects: () => [{}] }] : [] };
+    g.getComputedStyle = () => ({ visibility: "visible" });
     g.window = {
         addEventListener: (type: string, listener: Listener) => { if (type === "keydown") keydownListeners.push(listener); },
         removeEventListener: (type: string, listener: Listener) => { if (type === "keydown") keydownListeners = keydownListeners.filter((entry) => entry !== listener); },
@@ -143,9 +144,9 @@ describe("canvas Backspace never falls through to webview history back", () => {
         expect(deleted).toHaveLength(0);
     });
 
-    test("Backspace while the director workbench is mounted is default-prevented and left to the director", () => {
+    test("canvas yields Backspace to the mounted director and the app-wide navigation guard", () => {
         directorMounted = true;
-        expect(press("Backspace", new FakeElement("BUTTON"))).toEqual({ defaultPrevented: true, propagationStopped: false });
+        expect(press("Backspace", new FakeElement("BUTTON"))).toEqual({ defaultPrevented: false, propagationStopped: false });
         expect(deleted).toHaveLength(0);
     });
 

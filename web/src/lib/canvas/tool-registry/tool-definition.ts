@@ -37,7 +37,6 @@ export type ToolbarHandlers = {
     onAddVideo: () => void;
     onAddAudio: () => void;
     onAddScript: () => void;
-    onAddFrame: () => void;
     onAddFolder: () => void;
     onAddDrawing: () => void;
     onAddWorkflow: () => void;
@@ -151,7 +150,6 @@ export type AddNodeMenuContext = {
         | "onAddVideo"
         | "onAddAudio"
         | "onAddScript"
-        | "onAddFrame"
         | "onAddFolder"
         | "onAddDrawing"
         | "onAddWorkflow"

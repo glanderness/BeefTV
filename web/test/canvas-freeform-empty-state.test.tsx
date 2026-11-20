@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CanvasFreeformEmptyState } from "@/components/canvas/canvas-short-drama-entry";
-import type { CanvasCreateCommand } from "@/components/canvas/canvas-create-menu";
+import { CanvasCreateMenu, type CanvasCreateCommand } from "@/components/canvas/canvas-create-menu";
 import { CanvasNodeContent } from "@/components/canvas/canvas-node-content";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -54,24 +54,25 @@ describe("BeefTV freeform canvas empty state", () => {
         expect(markup).not.toContain("6 积分");
     });
 
-    test("keeps the primary add-node order aligned with the LibTV palette", () => {
+    test("renders the six primary nodes and preserves the resource entries", () => {
         const noop = () => {};
         const context: AddNodeMenuContext = {
             workspaceMode: "professional",
             isProjectLinked: false,
             handlers: {
                 onAddText: noop, onAddImage: noop, onAddVideo: noop, onAddAudio: noop, onAddScript: noop,
-                onAddFrame: noop, onAddFolder: noop, onAddDrawing: noop, onAddWorkflow: noop, onAddExtensionNode: noop,
+                onAddFolder: noop, onAddDrawing: noop, onAddWorkflow: noop, onAddExtensionNode: noop,
                 onChooseStyle: noop, onOpenDirector: noop, onUpload: noop, onOpenMyAssets: noop, onOpenProjectCharacters: noop,
             },
         };
-        const labels = resolveAddNodeMenuCommands(context).filter((command) => command.section === "node").slice(0, 8).map((command) => command.label);
-        expect(labels).toEqual(["文本", "图片", "视频", "AI超分", "音频", "导演台", "智能剪辑", "逐帧拉片"]);
-        const commandsByLabel = new Map(resolveAddNodeMenuCommands(context).map((command) => [command.label, command]));
-        for (const label of ["智能剪辑", "逐帧拉片"]) {
-            expect(commandsByLabel.get(label)?.disabledReason).toBe("正在开发");
-        }
-        expect(commandsByLabel.get("脚本")?.disabledReason).toBeUndefined();
+        const menu = resolveAddNodeMenuCommands(context);
+        const markup = renderToStaticMarkup(<CanvasCreateMenu layout="list" commands={menu.map(command => ({
+            ...command, onClick: () => command.run(context),
+        }))} />);
+        const labels = [...markup.matchAll(/<button[^>]* title="([^"]+)"/g)].map(match => match[1]);
+        expect(labels).toEqual(["图片", "视频", "文本", "音频", "导演台", "分镜脚本", "上传", "从生成历史选择", "素材库"]);
+        expect(markup).not.toContain("添加节点");
+        expect(markup).not.toContain("搜索节点");
     });
 
     test("opens the existing director templates from the professional add-node menu", () => {
@@ -82,7 +83,7 @@ describe("BeefTV freeform canvas empty state", () => {
             isProjectLinked: false,
             handlers: {
                 onAddText: noop, onAddImage: noop, onAddVideo: noop, onAddAudio: noop, onAddScript: noop,
-                onAddFrame: noop, onAddFolder: noop, onAddDrawing: noop, onAddWorkflow: noop, onAddExtensionNode: noop,
+                onAddFolder: noop, onAddDrawing: noop, onAddWorkflow: noop, onAddExtensionNode: noop,
                 onChooseStyle: noop, onOpenDirector: () => { opened = true; }, onUpload: noop, onOpenMyAssets: noop, onOpenProjectCharacters: noop,
             },
         };

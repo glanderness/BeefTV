@@ -63,9 +63,6 @@ func (s *Service) canvasDomainWithTx(tx *gorm.DB) *canvas.Service {
 	repo := s.repo.WithTx(tx)
 	return canvas.New(repo, newCanvasHostWithRepo(s, repo))
 }
-func (s *Service) validateCanvasMediaAssets(u string, raw json.RawMessage) error {
-	return s.canvasDomain().ValidateCanvasMediaAssets(u, raw)
-}
 func (s *Service) UserAssets(u string) ([]json.RawMessage, error) {
 	return s.canvasDomain().UserAssets(u)
 }

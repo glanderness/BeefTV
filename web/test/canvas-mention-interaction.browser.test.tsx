@@ -373,19 +373,23 @@ test("expanded modal allows pointer selection of references and image/video para
         await menu.waitFor({ state: "hidden" });
         expect(await page.locator("#expanded-prompt").textContent()).toContain("@[asset:asset-prop-1]");
 
-        await dialog.locator('[data-testid="image-settings"] button').click();
+        const imageSettingsButton = dialog.locator('[data-testid="image-settings"] button');
+        await imageSettingsButton.click();
         const settings = page.locator(".canvas-image-settings-popover");
         await settings.waitFor({ state: "visible" });
         expect(await settings.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(layer);
         await settings.getByRole("button", { name: "9:16", exact: true }).click();
         expect(await page.locator("#parameter-update").textContent()).toBe("image:size:1024x1824");
 
+        // The fixture mounts both variants, while each canvas composer has only one.
+        await imageSettingsButton.click();
+        await settings.waitFor({ state: "hidden" });
         await dialog.locator('[data-testid="video-settings"] button').click();
         await settings.waitFor({ state: "visible" });
         expect(await settings.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(layer);
-        await settings.getByRole("spinbutton", { name: "视频时长（秒）" }).fill("8");
-        await settings.getByRole("spinbutton", { name: "视频时长（秒）" }).press("Enter");
-        expect(await page.locator("#parameter-update").textContent()).toBe("video:videoSeconds:8");
+        const seconds = layer === 1200 ? 8 : 9;
+        await settings.getByRole("slider", { name: "视频时长（秒）" }).fill(String(seconds));
+        expect(await page.locator("#parameter-update").textContent()).toBe(`video:videoSeconds:${seconds}`);
         await dialog.getByRole("button", { name: "Close", exact: true }).click();
         await dialog.waitFor({ state: "hidden" });
     }

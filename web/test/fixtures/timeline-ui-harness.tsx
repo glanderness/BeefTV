@@ -1,9 +1,15 @@
+import { useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "antd";
+import { App, ConfigProvider } from "antd";
 import { EditorStoreProvider } from "../../src/components/editor/editor-context";
 import { createEditorStore } from "../../src/stores/editor/editor-store";
 import { EditorExport } from "../../src/lib/plugins/builtin/editor/editor-export";
+import { CanvasSubtitleDialog } from "@/components/canvas/canvas-subtitle-dialog";
 import { CanvasTimelineDialog } from "../../src/components/canvas/canvas-timeline-dialog";
+import { getAntThemeConfig } from "@/lib/app-theme";
+import { applySkinTheme } from "@/lib/skin-themes";
+import { useActiveTheme, useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
+import { defaultConfig } from "@/stores/use-config-store";
 import { receipt } from "./timeline-ui-runtime";
 import type { CanvasNodeData } from "../../src/types/canvas";
 import type { TimelineProject } from "../../src/types/timeline";
@@ -23,24 +29,48 @@ const dragProject: TimelineProject = {
     version: 2, durationMs: 8000,
     tracks: [{ id: "video", kind: "video", label: "视频1", order: 0 }, { id: "voice", kind: "audio", label: "音频1", order: 1 }],
     clips: [
-        { id: "clip-first", kind: "video", nodeId: "first", trackId: "video", startMs: 0, durationMs: 4000, title: "首个素材" },
+        { id: "clip-first", kind: "video", nodeId: "first", trackId: "video", startMs: 0, durationMs: 4000, sourceDurationMs: 4000, title: "首个素材" },
         { id: "clip-second", kind: "video", nodeId: "second", trackId: "video", startMs: 4000, durationMs: 4000, title: "第二个素材" },
     ],
 };
 const dragNode = { id: "first", type: "video", title: "首个素材", metadata: {}, x: 0, y: 0, width: 320, height: 180 } as CanvasNodeData;
+const subtitleNode = {
+    id: "subtitle-video", type: "video", title: "字幕测试视频", x: 0, y: 0, width: 320, height: 180,
+    metadata: { subtitleEntries: [{ index: 1, startMs: 0, endMs: 2000, text: "第一句字幕内容" }] },
+} as CanvasNodeData;
+function SubtitleThemeHarness() {
+    const theme = useActiveTheme();
+    useLayoutEffect(() => {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        applySkinTheme("classic", theme);
+    }, [theme]);
+    return (
+        <ConfigProvider theme={getAntThemeConfig(theme === "dark")}>
+            <App>
+                <CanvasSubtitleDialog node={subtitleNode} open projectId="fixture" config={defaultConfig} onClose={() => root.unmount()} onSave={() => {}} />
+            </App>
+        </ConfigProvider>
+    );
+}
 const store = createEditorStore();
 store.getState().load(project);
 HTMLAnchorElement.prototype.click = function () { receipt.downloads++; };
 const root = createRoot(document.getElementById("root")!);
-Object.assign(window, { timelineFixture: { receipt, unmount: () => root.unmount() } });
+Object.assign(window, {
+    timelineFixture: {
+        receipt,
+        unmount: () => root.unmount(),
+        setTheme: (theme: "dark" | "light") => useCanvasThemeStore.setState({ active: true, theme, followGlobal: false }),
+    },
+});
 const mode = new URLSearchParams(location.search).get("mode");
-root.render(<App>{mode === "canvas" ?
+root.render(mode === "subtitle-theme" ? <SubtitleThemeHarness /> : <App>{mode === "canvas" ?
     <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
         onCreateAssembledNode={async () => { receipt.created++; return node; }} /> :
-    mode === "canvas-drag" || mode === "canvas-mobile" ?
+    mode === "canvas-drag" || mode === "canvas-layout" || mode === "canvas-mobile" ?
         <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
-            onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
+            onSave={(timeline) => { receipt.saved.push(timeline); }} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
             onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :
         <EditorStoreProvider store={store} host={{ projectId: "fixture", assets: [], refreshAssets: async () => [] }}><EditorExport /></EditorStoreProvider>
 }</App>);

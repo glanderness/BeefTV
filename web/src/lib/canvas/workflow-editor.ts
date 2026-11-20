@@ -11,7 +11,7 @@ export function workflowDurationSources(definition: WorkflowDefinition, nodeId: 
 export function genericWorkflowNodeTitle(node: WorkflowNode, operations: WorkflowOperation[] = []) {
     const labels = { image: "图片", video: "视频", audio: "音频", text: "文本" };
     const id = workflowOperationId(node);
-    if (isWorkflowOperation(node)) return operations.find(item => item.id === id)?.name || ({ "video.depth": "深度提取", "video.trim": "视频剪辑", "video.merge": "视频拼接", "image.crop": "图片裁切", "image.resize": "调整图片尺寸", "video.crop": "视频画面裁切", "video.frame": "截取视频帧", "video.audio": "提取视频音频" } as Record<string, string>)[id] || `${id.startsWith("generate.") || node.role === "generation" ? "生成" : "处理"}${labels[node.mediaType]}`;
+    if (isWorkflowOperation(node)) return operations.find(item => item.id === id)?.name || ({ "video.depth": "深度提取", "video.trim": "视频裁剪", "video.merge": "视频拼接", "image.crop": "图片裁切", "image.resize": "调整图片尺寸", "video.crop": "视频画面裁切", "video.frame": "截取视频帧", "video.audio": "提取视频音频" } as Record<string, string>)[id] || `${id.startsWith("generate.") || node.role === "generation" ? "生成" : "处理"}${labels[node.mediaType]}`;
     return `${labels[node.mediaType]}${node.role === "input" ? "输入" : "参考"}`;
 }
 

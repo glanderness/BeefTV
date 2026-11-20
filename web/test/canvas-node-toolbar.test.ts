@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildImageToolbarTools } from "@/components/canvas/canvas-image-toolbar-tools";
+import { resolveMediaNodeSettingsTools } from "@/components/canvas/canvas-video-toolbar-tools";
 import { resolveNodeToolbarPlacement, resolveToolbarTools, type ToolContext, type ToolbarHandlers } from "@/lib/canvas/tool-registry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
@@ -72,6 +73,7 @@ describe("canvas node toolbar model", () => {
         const emptyTools = resolveToolbarTools("node-hover", ctx, null);
         expect(emptyTools.some((tool) => tool.id === "extractAudio")).toBe(false);
         expect(emptyTools.some((tool) => tool.id === "uploadVideo")).toBe(false);
+        expect(emptyTools.some((tool) => tool.id === "generationInfo")).toBe(false);
         ctx.nodeMetadata = { content: "video.mp4" };
         const uploadedTools = resolveToolbarTools("node-hover", ctx, null);
         expect(resolveNodeToolbarPlacement(uploadedTools.find((tool) => tool.id === "uploadVideo")!, ctx).group).toBe("more");
@@ -94,11 +96,19 @@ describe("canvas node toolbar model", () => {
 
     test("keeps video primary actions compact and moves secondary processing into a menu", () => {
         const ctx = createNodeContext({ id: "video", type: CanvasNodeType.Video, title: "视频", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { content: "video.mp4" } });
+        const opened: CanvasNodeData[] = [];
+        ctx.handlers = { onNodeInfo: (node) => opened.push(node) } as ToolbarHandlers;
         const tools = resolveToolbarTools("node-hover", ctx, null);
         const groups = new Map(tools.map((tool) => [tool.id, resolveNodeToolbarPlacement(tool, ctx).group]));
 
         expect([...groups].filter(([, group]) => group === "primary").map(([id]) => id)).toEqual(["trimRegenerate", "subtitles"]);
         expect([...groups].filter(([, group]) => group === "process").map(([id]) => id)).toEqual(["extractFrames", "extractAudio"]);
+        const generationInfo = tools.find((tool) => tool.id === "generationInfo")!;
+        expect(generationInfo.displayLabel).toBe("生成信息");
+        expect(groups.get("generationInfo")).toBe("utility");
+        expect(resolveNodeToolbarPlacement(generationInfo, ctx).order).toBeLessThan(resolveNodeToolbarPlacement(tools.find((tool) => tool.id === "download")!, ctx).order);
+        generationInfo.run(ctx);
+        expect(opened).toEqual([ctx.node]);
         expect(groups.get("download")).toBe("utility");
         expect(groups.get("timeline")).toBe("workspace");
         expect(groups.get("uploadVideo")).toBe("more");
@@ -538,7 +548,7 @@ describe("canvas node toolbar model", () => {
         };
 
         expect(displayLabel("subtitles")).toBe("字幕");
-        expect(displayLabel("timeline")).toBe("进入剪辑");
+        expect(displayLabel("timeline")).toBe("剪辑");
         expect(displayLabel("extractFrames")).toBe("关键帧截取");
         expect(displayLabel("extractAudio")).toBe("音视频分离");
     });
@@ -549,7 +559,7 @@ describe("canvas node toolbar model", () => {
         const received: CanvasNodeData[] = [];
         ctx.handlers = { onNodeTimeline: (target) => received.push(target) } as ToolbarHandlers;
         const timeline = resolveToolbarTools("node-hover", ctx, null).find((tool) => tool.id === "timeline");
-        expect(timeline?.displayLabel).toBe("进入剪辑");
+        expect(timeline?.displayLabel).toBe("剪辑");
         expect(resolveNodeToolbarPlacement(timeline!, ctx).group).toBe("workspace");
         timeline?.run(ctx);
         expect(received).toEqual([node]);
@@ -589,48 +599,78 @@ describe("canvas node toolbar model", () => {
         expect(canQuickReferenceCanvasMediaNode(base(CanvasNodeType.Text, { content: "hello" }))).toBe(false);
     });
 
-    test("video toolbar keeps extraction actions inline on wide viewports and folds them into 视频处理 on split/compact viewports", async () => {
+    test("image settings follow the shared menu order and show the current lock state", () => {
+        const node: CanvasNodeData = { id: "image", type: CanvasNodeType.Image, title: "图片", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { content: "image.png" } };
+        const settingsFor = (target: CanvasNodeData) => {
+            const ctx = createNodeContext(target);
+            const registryTools = resolveToolbarTools("node-hover", ctx, null).map((tool) => {
+                const label = tool.displayLabel ?? tool.label;
+                return {
+                    id: tool.id,
+                    label: typeof label === "function" ? label(ctx) : label,
+                    icon: null,
+                    ...resolveNodeToolbarPlacement(tool, ctx),
+                    onClick: () => tool.run(ctx),
+                };
+            });
+            return resolveMediaNodeSettingsTools([...registryTools, ...buildImageToolbarTools(target, {} as never)], "image");
+        };
+
+        expect(settingsFor(node).map((tool) => tool.label)).toEqual(["替换图片", "解除宽高比锁定", "锁定尺寸和位置", "节点信息"]);
+        const locked = settingsFor({ ...node, metadata: { ...node.metadata, locked: true, freeResize: true } });
+        expect(locked[1]).toMatchObject({ label: "锁定宽高比", disabled: true });
+        expect(locked[2].label).toBe("解锁尺寸和位置");
+    });
+
+    test("video toolbar keeps processing and post-production actions in their menus at every width", async () => {
         const { resolveVideoToolbarSections } = await import("../src/components/canvas/canvas-video-toolbar-tools");
         const node: CanvasNodeData = { id: "video", type: CanvasNodeType.Video, title: "视频", position: { x: 0, y: 0 }, width: 320, height: 568, metadata: { storageKey: "resource:vid-1" } };
         const ctx = createNodeContext(node);
         let extractedNode: CanvasNodeData | undefined;
+        const settingsCalls: string[] = [];
+        const postProductionCalls: string[] = [];
         const presets: string[] = [];
         ctx.handlers = {
             onNodeExtractAudioFromVideo: (target) => { extractedNode = target; },
+            onNodeSubtitles: (target) => postProductionCalls.push(`subtitles:${target.id}`),
+            onNodeTimeline: (target) => postProductionCalls.push(`timeline:${target.id}`),
+            onNodeUpload: (target) => settingsCalls.push(`replace:${target.id}`),
+            onNodeToggleFreeResize: (target) => settingsCalls.push(`resize:${target.id}`),
+            onNodeInfo: (target) => settingsCalls.push(`info:${target.id}`),
+            onNodeToggleLocked: (target) => settingsCalls.push(`lock:${target.id}`),
         } as ToolbarHandlers;
         const registryToolbarTools = resolveToolbarTools("node-hover", ctx, null).map((tool) => {
             const placement = resolveNodeToolbarPlacement(tool, ctx);
+            const label = tool.displayLabel || tool.label;
             return {
                 id: tool.id,
-                label: typeof tool.displayLabel === "function" ? tool.displayLabel(ctx) : tool.displayLabel || "",
+                label: typeof label === "function" ? label(ctx) : label,
                 icon: null,
                 group: placement.group,
                 order: placement.order,
                 onClick: () => tool.run(ctx),
             };
         });
-        const workspaceTools = registryToolbarTools.filter((tool) => tool.group === "workspace");
-
         const wide = resolveVideoToolbarSections({
             containerWidth: 1080,
             registryToolbarTools,
-            workspaceTools,
-            hasQuickReference: true,
             canDraftToFinal: false,
             onExtractVideoFrames: (preset) => presets.push(preset),
         });
         expect(wide.videoCompact).toBe(false);
-        expect(wide.inlineAudioTool?.id).toBe("extractAudio");
-        expect(wide.inlineSubtitleTool?.id).toBe("subtitles");
+        expect(wide.videoSettingsTools.map((tool) => tool.label)).toEqual(["替换视频", "解除宽高比锁定", "锁定尺寸和位置", "节点信息"]);
+        wide.videoSettingsTools.forEach((tool) => tool.onClick());
+        expect(settingsCalls).toEqual(["replace:video", "resize:video", "lock:video", "info:video"]);
+        expect(wide.videoPostProductionTools.map((tool) => [tool.id, tool.label])).toEqual([["subtitles", "字幕"], ["timeline", "剪辑"]]);
         expect(wide.inlineKeyframeTools.map((t) => t.id)).toEqual(["keyframe-current", "keyframe-first", "keyframe-last"]);
-        expect(wide.videoProcessingTools.some((t) => t.id === "extractAudio")).toBe(false);
+        expect(wide.videoProcessingTools.slice(0, 4).map((tool) => tool.label)).toEqual([
+            "视频裁剪", "画面裁切", "音视频分离", "视频去字幕",
+        ]);
 
         // Exact boundary check: requiredWidth - 1 folds, requiredWidth stays inline.
         const justBelow = resolveVideoToolbarSections({
             containerWidth: wide.requiredWidth - 1,
             registryToolbarTools,
-            workspaceTools,
-            hasQuickReference: true,
             canDraftToFinal: false,
             onExtractVideoFrames: (preset) => presets.push(preset),
         });
@@ -638,19 +678,15 @@ describe("canvas node toolbar model", () => {
         const exactFit = resolveVideoToolbarSections({
             containerWidth: wide.requiredWidth,
             registryToolbarTools,
-            workspaceTools,
-            hasQuickReference: true,
             canDraftToFinal: false,
             onExtractVideoFrames: (preset) => presets.push(preset),
         });
         expect(exactFit.videoCompact).toBe(false);
 
-        // Enabling 转高清成片 widens requiredWidth so a 920px split pane folds before clipping.
+        // A pane that fits the regular toolbar must fold when 转高清成片 is added.
         const draftWideCheck = resolveVideoToolbarSections({
-            containerWidth: 920,
+            containerWidth: wide.requiredWidth,
             registryToolbarTools,
-            workspaceTools,
-            hasQuickReference: true,
             canDraftToFinal: true,
             onExtractVideoFrames: (preset) => presets.push(preset),
         });
@@ -658,21 +694,25 @@ describe("canvas node toolbar model", () => {
         expect(draftWideCheck.videoProcessingTools.some((t) => t.id === "extractAudio")).toBe(true);
 
         const compact = resolveVideoToolbarSections({
-            containerWidth: 680,
+            containerWidth: 580,
             registryToolbarTools,
-            workspaceTools,
-            hasQuickReference: true,
             canDraftToFinal: false,
             onExtractVideoFrames: (preset) => presets.push(preset),
         });
         expect(compact.videoCompact).toBe(true);
-        expect(compact.inlineAudioTool).toBeUndefined();
-        expect(compact.inlineSubtitleTool).toBeUndefined();
+        expect(compact.videoSettingsTools).toEqual(wide.videoSettingsTools);
+        expect(compact.videoPostProductionTools).toEqual(wide.videoPostProductionTools);
+        compact.videoPostProductionTools.forEach((tool) => tool.onClick());
+        expect(postProductionCalls).toEqual(["subtitles:video", "timeline:video"]);
         expect(compact.inlineKeyframeTools).toEqual([]);
-        expect(compact.inlineWorkspaceTools).toEqual([]);
+        expect(compact.videoProcessingTools.slice(0, 3).map((tool) => tool.id)).toEqual(["keyframe-current", "keyframe-first", "keyframe-last"]);
+        for (const sections of [wide, compact]) {
+            expect(sections.videoProcessingTools.some((tool) => tool.id === "subtitles" || tool.id === "timeline")).toBe(false);
+        }
 
         const foldedAudio = compact.videoProcessingTools.find((t) => t.id === "extractAudio");
         expect(foldedAudio?.label).toBe("音视频分离");
+        expect(compact.videoProcessingTools.filter((tool) => tool.id === "extractAudio")).toHaveLength(1);
         foldedAudio?.onClick();
         expect(extractedNode).toBe(node);
 

@@ -41,6 +41,12 @@ async function open(width = 1280, dark = false) {
     return page;
 }
 
+async function selectScenario(page: Page, label: string) {
+    const settings = page.getByRole("button", { name: /^高级设置/, expanded: true });
+    if (await settings.isVisible()) await settings.click();
+    await page.getByRole("navigation", { name: "验证场景" }).getByRole("button", { name: label, exact: true }).click();
+}
+
 async function assertLocked(page: Page, frame = "首帧", savedSize = "9:16") {
     await page.getByRole("button", { name: new RegExp(`高级设置：.*随${frame}图片`) }).click();
     const panel = page.locator(".canvas-image-settings-popover");
@@ -53,7 +59,10 @@ async function assertLocked(page: Page, frame = "首帧", savedSize = "9:16") {
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
     expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    expect(await panel.evaluate((element) => getComputedStyle(element).getPropertyValue("--fs-label").trim())).toBe("11px");
+    expect(await panel.getByText(help, { exact: true }).evaluate((element) => {
+        const { fontSize, fontWeight } = getComputedStyle(element);
+        return { fontSize, fontWeight };
+    })).toEqual({ fontSize: "12px", fontWeight: "500" });
 }
 
 async function assertCharacterWarning(page: Page) {
@@ -67,31 +76,31 @@ test("actual prompt panel updates keyframe hints, reconnects and changes H3 mode
     const page = await open();
     try {
         await assertLocked(page);
-        await page.getByRole("button", { name: "只用尾帧", exact: true }).click();
+        await selectScenario(page, "只用尾帧");
         await assertLocked(page, "尾帧");
-        await page.getByRole("button", { name: "首尾帧", exact: true }).click();
+        await selectScenario(page, "首尾帧");
         await assertLocked(page);
-        await page.getByRole("button", { name: "断开图片", exact: true }).click();
+        await selectScenario(page, "断开图片");
         await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
         await page.locator(".canvas-image-settings-popover").getByRole("button", { name: "16:9", exact: true }).click();
         expect(await page.getByTestId("saved-size").textContent()).toBe("16:9");
-        await page.getByRole("button", { name: "接入图片", exact: true }).click();
+        await selectScenario(page, "接入图片");
         await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
-        await page.getByRole("button", { name: "minimax-h3-max", exact: true }).click();
+        await selectScenario(page, "minimax-h3-max");
         await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
-        await page.getByRole("button", { name: "minimax-h3", exact: true }).click();
+        await selectScenario(page, "minimax-h3");
         await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
-        await page.getByRole("button", { name: "指定首帧", exact: true }).click();
-        await page.getByRole("button", { name: "加入角色卡", exact: true }).click();
+        await selectScenario(page, "指定首帧");
+        await selectScenario(page, "加入角色卡");
         await assertCharacterWarning(page);
-        await page.getByRole("button", { name: "只用尾帧", exact: true }).click();
+        await selectScenario(page, "只用尾帧");
         await assertCharacterWarning(page);
-        await page.getByRole("button", { name: "普通参考", exact: true }).click();
+        await selectScenario(page, "普通参考");
         await page.getByRole("button", { name: /高级设置：.*16:9/ }).click();
         await page.locator(".canvas-image-settings-popover").getByRole("button", { name: "9:16", exact: true }).click();
         expect(await page.getByTestId("saved-size").textContent()).toBe("9:16");
-        await page.getByRole("button", { name: "minimax-h3-max-turbo", exact: true }).click();
-        await page.getByRole("button", { name: "仅角色卡", exact: true }).click();
+        await selectScenario(page, "minimax-h3-max-turbo");
+        await selectScenario(page, "仅角色卡");
         await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
         await page.getByText("首尾帧生成时，比例随实际参考图；多素材参考生成使用所选比例。", { exact: true }).waitFor();
         expect(errors).toEqual([]);
@@ -118,16 +127,27 @@ test("Max and Turbo reference ratios remain editable alongside H3 advanced contr
     const page = await open();
     try {
         for (const model of ["minimax-h3-max", "minimax-h3-max-turbo"]) {
-            await page.getByRole("button", { name: model, exact: true }).click();
-            await page.getByRole("button", { name: "普通参考", exact: true }).click();
+            await selectScenario(page, model);
+            await selectScenario(page, "普通参考");
             await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
             const panel = page.locator(".canvas-image-settings-popover");
             await panel.getByRole("button", { name: "16:9", exact: true }).click();
             expect(await page.getByTestId("saved-size").textContent()).toBe("16:9");
             await panel.getByRole("button", { name: "9:16", exact: true }).click();
             await panel.getByText("MiniMax H3 高级设置", { exact: true }).click();
-            await panel.getByRole("spinbutton", { name: "随机种子", exact: true }).fill("42");
-            await panel.getByRole("spinbutton", { name: "随机种子", exact: true }).press("Tab");
+            const seed = panel.getByRole("spinbutton", { name: "随机种子", exact: true });
+            await seed.fill("42");
+            await seed.press("Tab");
+            await panel.getByRole("combobox", { name: "提示词增强" }).click();
+            const qualityMode = page.locator(".canvas-h3-option-popup").getByText("高质量", { exact: true });
+            await qualityMode.waitFor();
+            for (const control of [seed, qualityMode]) {
+                expect(await control.evaluate(element => {
+                    const { fontSize, fontWeight } = getComputedStyle(element);
+                    return { fontSize, fontWeight };
+                })).toEqual({ fontSize: "12px", fontWeight: "500" });
+            }
+            await qualityMode.click();
             expect(await page.getByTestId("saved-seed").textContent()).toBe("42");
             await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
         }
@@ -138,17 +158,17 @@ test("Max and Turbo reference ratios remain editable alongside H3 advanced contr
 test("Styles keyframes lock ratios and unresolved character views leave them editable", async () => {
     const page = await open();
     try {
-        await page.getByRole("button", { name: "加入角色卡", exact: true }).click();
+        await selectScenario(page, "加入角色卡");
         await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
         const panel = page.locator(".canvas-image-settings-popover");
         await panel.getByText("首尾帧生成时，比例随实际参考图；多素材参考生成使用所选比例。", { exact: true }).waitFor();
         await panel.getByRole("button", { name: "16:9", exact: true }).click();
         expect(await page.getByTestId("saved-size").textContent()).toBe("16:9");
-        await page.getByRole("button", { name: "断开图片", exact: true }).click();
-        await page.getByRole("button", { name: "接入图片", exact: true }).click();
-        await page.getByRole("button", { name: "H3 手绘", exact: true }).click();
+        await selectScenario(page, "断开图片");
+        await selectScenario(page, "接入图片");
+        await selectScenario(page, "H3 手绘");
         await assertLocked(page, "首帧", "16:9");
-        await page.getByRole("button", { name: "断开图片", exact: true }).click();
+        await selectScenario(page, "断开图片");
         await page.getByRole("button", { name: /高级设置：.*16:9/ }).click();
         await panel.getByRole("button", { name: "9:16", exact: true }).click();
         expect(await page.getByTestId("saved-size").textContent()).toBe("9:16");

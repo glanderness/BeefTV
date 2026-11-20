@@ -1,7 +1,6 @@
 package creation
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -34,13 +33,6 @@ type Quota interface {
 	ValidateCanvas(userID string, repo *repository.Repository, creating bool, delta int64) error
 }
 
-// Media rejects canvas documents that point at unowned or unreadied assets.
-// The repository must be the MutateCreationRun transaction, not the root
-// connection, so concurrent asset/resource deletion is visible to the write.
-type Media interface {
-	ValidateDocument(userID string, repo *repository.Repository, raw json.RawMessage) error
-}
-
 // TaskKinds identifies generation modes that creation refuses to quote.
 type TaskKinds interface {
 	UsesTextReplay(input map[string]any) bool
@@ -52,7 +44,6 @@ type Dependencies struct {
 	Tasks       Tasks
 	Secrets     Secrets
 	Quota       Quota
-	Media       Media
 	Kinds       TaskKinds
 	StorageLock sync.Locker
 	FormatTask  func(model.Task) *model.Task
@@ -64,7 +55,6 @@ type Host interface {
 	Tasks
 	Protect(input map[string]any) error
 	ValidateCanvas(userID string, repo *repository.Repository, creating bool, delta int64) error
-	ValidateDocument(userID string, repo *repository.Repository, raw json.RawMessage) error
 	UsesTextReplay(input map[string]any) bool
 	StorageLock() sync.Locker
 	FormatTask(model.Task) *model.Task
@@ -83,7 +73,7 @@ func (h hostAdapter) ValidateRun(userID string, repo *repository.Repository, cre
 func NewFromHost(repo *repository.Repository, host Host) *Service {
 	a := hostAdapter{host}
 	return New(repo, Dependencies{
-		Tasks: a, Secrets: a, Quota: a, Media: a, Kinds: a,
+		Tasks: a, Secrets: a, Quota: a, Kinds: a,
 		StorageLock: host.StorageLock(), FormatTask: host.FormatTask, NewID: kernel.NewID,
 	})
 }
@@ -103,13 +93,12 @@ func (d Dependencies) newID() string {
 }
 
 type HostConfig struct {
-	StorageLock      sync.Locker
-	PrepareTask      func(userID string, req localtask.CreateRequest) (*model.Task, error)
-	RuntimePolicy    func(repo *repository.Repository) (platform.RuntimePolicySetting, error)
-	ProtectSecrets   func(input any) error
-	ValidateDocument func(userID string, repo *repository.Repository, raw json.RawMessage) error
-	UsesTextReplay   func(input map[string]any) bool
-	FormatTask       func(model.Task) *model.Task
+	StorageLock    sync.Locker
+	PrepareTask    func(userID string, req localtask.CreateRequest) (*model.Task, error)
+	RuntimePolicy  func(repo *repository.Repository) (platform.RuntimePolicySetting, error)
+	ProtectSecrets func(input any) error
+	UsesTextReplay func(input map[string]any) bool
+	FormatTask     func(model.Task) *model.Task
 }
 
 type configHost struct{ cfg HostConfig }
@@ -142,12 +131,6 @@ func ValidateCanvasWithPolicy(u string, repo *repository.Repository, creating bo
 		return err
 	}
 	return resource.ValidateStructuredStorageQuota(usage, "canvas", creating, delta, canvas.ApplyDocumentLimitToPolicy(repo, p.Resource))
-}
-func (h configHost) ValidateDocument(u string, repo *repository.Repository, raw json.RawMessage) error {
-	if repo == nil {
-		return kernel.NewAppError(kernel.CodeInternal, "画布媒体校验缺少事务仓储")
-	}
-	return h.cfg.ValidateDocument(u, repo, raw)
 }
 func (h configHost) UsesTextReplay(input map[string]any) bool { return h.cfg.UsesTextReplay(input) }
 func (h configHost) StorageLock() sync.Locker                 { return h.cfg.StorageLock }

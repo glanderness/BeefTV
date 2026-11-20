@@ -455,7 +455,7 @@ export function CanvasScriptNodeContent({
                 <div className="flex min-w-0 items-center justify-end gap-2" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     <Tooltip title="脚本生成需要文本理解与结构化输出能力，仅展示文本模型；视频/图片模型无法生成分镜表" placement="topLeft">
                         <div className="mr-auto min-w-36 max-w-56 flex-1">
-                            <ModelPicker
+                            <ModelPicker variant="canvas"
                                 className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
                                 fullWidth
                                 config={generationConfig}

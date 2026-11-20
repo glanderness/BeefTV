@@ -288,9 +288,13 @@ export default function CanvasPage() {
                 },
             });
             hideLoading();
-            message.success(result.storage === "backend"
-                ? `已导入 ${result.count} 个画布`
-                : `已导入 ${result.count} 个画布并保存到本地`);
+            if (result.skippedFiles?.length) {
+                message.warning(`已导入 ${result.count} 个画布，跳过 ${result.skippedFiles.length} 项缺失内容`);
+            } else {
+                message.success(result.storage === "backend"
+                    ? `已导入 ${result.count} 个画布`
+                    : `已导入 ${result.count} 个画布并保存到本地`);
+            }
         } catch (error) {
             hideLoading();
             console.error("导入画布失败", error);

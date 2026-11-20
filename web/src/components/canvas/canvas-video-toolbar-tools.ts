@@ -16,17 +16,13 @@ export type ToolbarTool = {
 };
 
 // Conservative horizontal footprint (including 20px outer margin) for the core
-// video dock items (AI超分 + 视频二创 + 视频处理 + 音视频分离 + 字幕 + 关键帧截取 + 3 utility icons).
-export const VIDEO_TOOLBAR_BASE_WIDTH = 700;
-const QUICK_REFERENCE_BUTTON_WIDTH = 96;
+// video dock items (AI超分 + 关键帧截取 + 视频二创 + 视频处理 + 视频后期 + 视频设置 + 3 utility icons).
+export const VIDEO_TOOLBAR_BASE_WIDTH = 796;
 const DRAFT_TO_FINAL_BUTTON_WIDTH = 112;
-const WORKSPACE_TOOL_BUTTON_WIDTH = 96;
 
 export type VideoToolbarInput = {
     containerWidth: number;
     registryToolbarTools: ToolbarTool[];
-    workspaceTools: ToolbarTool[];
-    hasQuickReference?: boolean;
     canDraftToFinal?: boolean;
     onExtractVideoFrames: (preset: "current" | "first" | "last") => void;
 };
@@ -35,37 +31,44 @@ export type VideoToolbarSections = {
     videoCompact: boolean;
     requiredWidth: number;
     videoProcessingTools: ToolbarTool[];
-    inlineAudioTool?: ToolbarTool;
-    inlineSubtitleTool?: ToolbarTool;
+    videoSettingsTools: ToolbarTool[];
+    videoPostProductionTools: ToolbarTool[];
     inlineKeyframeTools: ToolbarTool[];
-    inlineWorkspaceTools: ToolbarTool[];
 };
 
-const BASE_PROCESSING_IDS = new Set([
+const VIDEO_PROCESSING_IDS = [
     "trimRegenerate",
     "cropVideo",
+    "extractAudio",
     "subtitleErase",
     "watermarkErase",
     "privacyProtect",
     "depthCapture",
-]);
+];
+const VIDEO_POST_PRODUCTION_IDS = ["subtitles", "timeline"];
+
+function selectTools(tools: ToolbarTool[], ids: string[]) {
+    return ids.flatMap((id) => {
+        const tool = tools.find((entry) => entry.id === id);
+        return tool ? [tool] : [];
+    });
+}
+
+export function resolveMediaNodeSettingsTools(tools: ToolbarTool[], media: "image" | "video") {
+    const [replace, aspectRatio] = media === "image" ? ["replace", "resize"] : ["uploadVideo", "video-aspect-ratio"];
+    return selectTools(tools, [replace, aspectRatio, "node-lock", "info"]);
+}
 
 /**
- * Video nodes expose 8–10 labeled actions on wide screens (~800–1000px depending on
- * optional「引用生成」and「转高清成片」buttons). Compute the conservative required width
- * from active optional slots so secondary extraction and timeline actions fold into
- *「视频处理」before the dock can clip against `maxWidth: calc(100% - 20px)`.
+ * Include draft conversion in the width so keyframe extraction folds into
+ *「视频处理」before the dock runs out of space.
  */
 export function resolveVideoToolbarSections(input: VideoToolbarInput): VideoToolbarSections {
-    const requiredWidth =
-        VIDEO_TOOLBAR_BASE_WIDTH
-        + (input.hasQuickReference ? QUICK_REFERENCE_BUTTON_WIDTH : 0)
-        + (input.canDraftToFinal ? DRAFT_TO_FINAL_BUTTON_WIDTH : 0)
-        + input.workspaceTools.length * WORKSPACE_TOOL_BUTTON_WIDTH;
+    const requiredWidth = VIDEO_TOOLBAR_BASE_WIDTH + (input.canDraftToFinal ? DRAFT_TO_FINAL_BUTTON_WIDTH : 0);
     const videoCompact = input.containerWidth < requiredWidth;
-    const baseProcessing = input.registryToolbarTools.filter((tool) => BASE_PROCESSING_IDS.has(tool.id));
-    const videoAudioTool = input.registryToolbarTools.find((tool) => tool.id === "extractAudio");
-    const videoSubtitleTool = input.registryToolbarTools.find((tool) => tool.id === "subtitles");
+    const videoProcessingTools = selectTools(input.registryToolbarTools, VIDEO_PROCESSING_IDS);
+    const videoSettingsTools = resolveMediaNodeSettingsTools(input.registryToolbarTools, "video");
+    const videoPostProductionTools = selectTools(input.registryToolbarTools, VIDEO_POST_PRODUCTION_IDS);
     const videoKeyframeTool = input.registryToolbarTools.find((tool) => tool.id === "extractFrames");
     const keyframeTools: ToolbarTool[] = videoKeyframeTool
         ? [
@@ -75,31 +78,12 @@ export function resolveVideoToolbarSections(input: VideoToolbarInput): VideoTool
           ]
         : [];
 
-    if (!videoCompact) {
-        return {
-            videoCompact: false,
-            requiredWidth,
-            videoProcessingTools: baseProcessing,
-            inlineAudioTool: videoAudioTool,
-            inlineSubtitleTool: videoSubtitleTool,
-            inlineKeyframeTools: keyframeTools,
-            inlineWorkspaceTools: input.workspaceTools,
-        };
-    }
-
     return {
-        videoCompact: true,
+        videoCompact,
         requiredWidth,
-        videoProcessingTools: [
-            ...baseProcessing,
-            ...(videoAudioTool ? [videoAudioTool] : []),
-            ...(videoSubtitleTool ? [videoSubtitleTool] : []),
-            ...keyframeTools,
-            ...input.workspaceTools,
-        ],
-        inlineAudioTool: undefined,
-        inlineSubtitleTool: undefined,
-        inlineKeyframeTools: [],
-        inlineWorkspaceTools: [],
+        videoSettingsTools,
+        videoPostProductionTools,
+        videoProcessingTools: videoCompact ? [...keyframeTools, ...videoProcessingTools] : videoProcessingTools,
+        inlineKeyframeTools: videoCompact ? [] : keyframeTools,
     };
 }

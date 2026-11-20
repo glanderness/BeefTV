@@ -19,6 +19,17 @@ function svgResponse(width: number, height: number, fill: string, label: string)
     return new Response(svg, { headers: { "Content-Type": "image/svg+xml" } });
 }
 
+async function downloadViewedImage() {
+    await page.getByRole("button", { name: "下载与复制图片" }).click();
+    const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("button", { name: "下载原图" }).click(),
+    ]);
+    const path = await download.path();
+    if (!path) throw new Error("图片下载没有生成文件");
+    return { fileName: download.suggestedFilename(), payload: await Bun.file(path).text() };
+}
+
 beforeAll(async () => {
     const plugins: BunPlugin[] = [
         {
@@ -374,6 +385,38 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     expect(focusedTestId).toBe("canvas-image-filmstrip-item-1");
     await expect(page.locator("[data-testid='canvas-image-prompt-box']").textContent()).resolves.toContain("PROMPT V2 PORTRAIT");
 
+    // Export the inspected version in compare mode, even when single mode last displayed a different version.
+    await page.getByTestId("canvas-image-mode-side-by-side").click();
+    await page.getByRole("button", { name: "图 A" }).click();
+    expect((await downloadViewedImage()).payload).toContain("FULL_RES_PAYLOAD");
+    await page.getByRole("button", { name: "图 B" }).click();
+    expect((await downloadViewedImage()).payload).toContain("V2");
+    // Pressing Escape while the export menu is open must dismiss only the menu, not the whole viewer.
+    // Also verify the fullscreen viewer stacks above canvas overlays (--z-canvas-overlay-active=150, --z-popover=200)
+    // while remaining below AntD modals (1000) so Node Info opens on top of the viewer.
+    const viewerZIndex = await page.getByTestId("canvas-image-viewer-modal").evaluate((el) => Number(getComputedStyle(el).zIndex));
+    expect(viewerZIndex).toBeGreaterThan(200);
+    expect(viewerZIndex).toBeLessThan(1000);
+    await page.getByRole("button", { name: "下载与复制图片" }).click();
+    await page.getByRole("button", { name: "下载原图" }).waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "下载原图" }).waitFor({ state: "hidden" });
+    expect(await page.getByTestId("canvas-image-viewer-modal").isVisible()).toBe(true);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.getByRole("button", { name: "下载与复制图片" }).click();
+    await page.getByRole("button", { name: "复制图片", exact: true }).click();
+    await page.getByText("图片已复制", { exact: true }).waitFor();
+    const copiedSize = await page.evaluate(async () => {
+        const [item] = await navigator.clipboard.read();
+        const bitmap = await createImageBitmap(await item!.getType("image/png"));
+        const size = [bitmap.width, bitmap.height];
+        bitmap.close();
+        return size;
+    });
+    expect(copiedSize).toEqual([900, 1600]);
+    await page.getByTestId("canvas-image-mode-single").click();
+    await page.getByTestId("canvas-image-filmstrip-item-1").click();
+
     // (1) Hold Space while filmstrip button is focused -> peeks primary (v0), release Space -> returns to v2 without clicking button
     const nonPrimaryAlt = await page.locator("[data-testid='canvas-image-stage-single'] img").getAttribute("alt");
     expect(nonPrimaryAlt).toBe("第 2 版");
@@ -461,6 +504,26 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     await page.locator("[data-testid='canvas-image-open-node-info']").click();
     expect(await page.evaluate(() => window.__viewerHarness!.getOpenedNodeInfoId())).toBe("node-viewer-test");
     await page.waitForSelector(".canvas-node-info-modal");
+    const inspector = page.locator(".canvas-node-info-modal");
+    const presentation = await inspector.evaluate((modal) => ({
+        background: getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor,
+        sizes: [...new Set(Array.from(modal.querySelectorAll(".inspector-title span, h3, dt, dd, summary, input, form button, .inspector-text")).map((element) => getComputedStyle(element).fontSize))],
+    }));
+    expect(presentation).toEqual({ background: "rgb(16, 16, 16)", sizes: ["12px"] });
+    // Switching to light theme must update the node inspector surface and keep readable dark text.
+    await page.evaluate(() => window.__viewerHarness!.setColorTheme("light"));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".canvas-node-info-modal .ant-modal-container")!).backgroundColor === "rgb(255, 255, 255)");
+    const lightPresentation = await inspector.evaluate((modal) => ({
+        background: getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor,
+        textColor: getComputedStyle(modal.querySelector(".inspector-body")!).color,
+    }));
+    expect(lightPresentation).toEqual({ background: "rgb(255, 255, 255)", textColor: "rgb(17, 24, 39)" });
+    await page.evaluate(() => window.__viewerHarness!.setColorTheme("dark"));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".canvas-node-info-modal .ant-modal-container")!).backgroundColor === "rgb(16, 16, 16)");
+    const details = inspector.locator("details");
+    expect(await details.getAttribute("open")).toBeNull();
+    await details.locator("summary").click();
+    await details.getByText("node-viewer-test", { exact: true }).waitFor();
     await page.locator(".canvas-node-inspector-options button", { hasText: "场景" }).click();
     await page.locator(".canvas-node-inspector-tag-editor input").fill("场景: 古石殿");
     await page.locator(".canvas-node-inspector-tag-editor button").click();
@@ -491,31 +554,11 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     expect(perfFileRequests.length).toBeLessThanOrEqual(1);
 
     // Download action must fetch full-resolution /file blob rather than saving the 128px preview fallback
-    const download = await page.evaluate(async () => {
-        let capturedHref = "";
-        let fileName = "";
-        const origClick = HTMLAnchorElement.prototype.click;
-        HTMLAnchorElement.prototype.click = function () {
-            capturedHref = this.href;
-            fileName = this.download;
-        };
-        try {
-            // Switch to item 1 (perf-02) and immediately click download BEFORE full-res finishes resolving
-            (document.querySelector("[data-testid='canvas-image-filmstrip-item-1']") as HTMLElement).click();
-            (document.querySelector("[data-testid='canvas-image-download']") as HTMLElement).click();
-            const deadline = Date.now() + 3000;
-            while (!capturedHref && Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 25));
-            }
-            const payload = capturedHref ? await (await fetch(capturedHref)).text() : "";
-            return { fileName, payload };
-        } finally {
-            HTMLAnchorElement.prototype.click = origClick;
-        }
-    });
+    await page.getByTestId("canvas-image-filmstrip-item-1").click();
+    const download = await downloadViewedImage();
     expect(download.fileName).toBe("50版性能测试节点.png");
     expect(download.payload).toContain("FULL_RES_PAYLOAD");
-});
+}, 20000);
 
 test("resolves standalone protected /api/resources URLs without a node, enforces readOnly on node inspector, peeks protected primary without blank flash, probes zero-size metrics once, and bounds cold-cache 50-version downloads", async () => {
     // (1) Standalone image preview with a protected /api/resources/.../file URL and NO node, INCLUDING automatic retry when first /file request returns 503
@@ -625,27 +668,10 @@ test("resolves standalone protected /api/resources URLs without a node, enforces
     await page.locator("[data-testid='canvas-image-filmstrip-item-0']").click();
     await page.waitForSelector("[data-testid='canvas-image-stage-error']", { timeout: 5000 });
     permFailHealthy = true;
-    const recoveredViaDownload = await page.evaluate(async () => {
-        let href = "";
-        const origClick = HTMLAnchorElement.prototype.click;
-        HTMLAnchorElement.prototype.click = function () {
-            href = this.href;
-        };
-        try {
-            (document.querySelector("[data-testid='canvas-image-download']") as HTMLElement).click();
-            const deadline = Date.now() + 3000;
-            while (!href && Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 25));
-            }
-            return href ? await (await fetch(href)).text() : "";
-        } finally {
-            HTMLAnchorElement.prototype.click = origClick;
-        }
-    });
-    expect(recoveredViaDownload).toContain("RECOVERED_FULL_RES");
+    expect((await downloadViewedImage()).payload).toContain("RECOVERED_FULL_RES");
     await page.waitForFunction(() => {
         const err = document.querySelector("[data-testid='canvas-image-stage-error']");
         const img = document.querySelector("[data-testid='canvas-image-stage-single'] img");
         return !err && Boolean(img && !img.classList.contains("opacity-35"));
     }, { timeout: 3000 });
-});
+}, 20000);

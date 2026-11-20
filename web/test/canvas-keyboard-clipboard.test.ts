@@ -32,7 +32,6 @@ let saved: Record<string, unknown> = {};
 let keydownListeners: Listener[] = [];
 let pasteListeners: Listener[] = [];
 let activeElement: unknown = null;
-let directorMounted = false;
 let cleanup: (() => void) | undefined;
 let state: { pasteSystem: number; pasteCopied: number; preferCopied: boolean };
 
@@ -121,12 +120,11 @@ beforeEach(() => {
     keydownListeners = [];
     pasteListeners = [];
     activeElement = null;
-    directorMounted = false;
     state = { pasteSystem: 0, pasteCopied: 0, preferCopied: false };
     g.Element = FakeElement;
     g.document = {
         get activeElement() { return activeElement; },
-        querySelector: (selector: string) => (directorMounted && selector.includes("data-director-workbench") ? {} : null),
+        querySelectorAll: () => [],
     };
     g.window = {
         addEventListener: (type: string, listener: Listener) => {

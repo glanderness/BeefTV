@@ -3,7 +3,7 @@ import type { TimelineRenderSource } from "../../src/lib/timeline/timeline-to-ff
 
 // Fault injection at the encoder/task boundary; the mounted React handlers remain real.
 export const receipt = {
-    local: [] as TimelineRenderSource[][], remote: [] as TimelineProject[],
+    local: [] as TimelineRenderSource[][], remote: [] as TimelineProject[], saved: [] as TimelineProject[],
     downloads: 0, created: 0, aborted: 0,
     failLocal: () => {}, failRemote: () => {},
 };
@@ -40,6 +40,15 @@ export async function createTimelineRenderTask(input: { timeline: TimelineProjec
 }
 export async function createTimelineTranscriptionTask() {
     throw new Error("渲染界面验收不应提交转写任务");
+}
+export async function getTranscriptionModels() {
+    return [];
+}
+export async function createGenerationTask() {
+    throw new Error("渲染界面验收不应提交生成任务");
+}
+export async function findGenerationTaskByOperation() {
+    return null;
 }
 export function waitForGenerationTask() {
     return new Promise((_resolve, reject) => {

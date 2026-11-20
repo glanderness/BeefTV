@@ -151,6 +151,7 @@
     }
 
     .canvas-node-composer-footer {
+        --canvas-composer-footer-control-bg: transparent;
         display: flex;
         min-width: 0;
         align-items: center;
@@ -161,27 +162,42 @@
     }
 
     .canvas-node-composer-model {
-        min-width: 148px;
-        max-width: 220px;
-        flex: 1 1 220px;
+        width: max-content;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .canvas-node-composer-model .canvas-composer-model-picker {
+        display: grid;
+        grid-template-columns: minmax(0, max-content) auto;
+        width: max-content;
+        max-width: 200px;
+    }
+
+    .canvas-node-composer-model .canvas-model-picker-label > .truncate {
+        flex-basis: auto;
     }
 
     .canvas-node-composer-settings-trigger {
         height: 28px !important;
-        width: var(--canvas-composer-settings-width) !important;
+        width: max-content;
+        max-width: min(200px, 100%);
         justify-content: flex-start !important;
         border: 0 !important;
         border-radius: var(--r-md) !important;
         padding-inline: var(--space-2) !important;
         box-shadow: none !important;
-        font-size: var(--fs-tiny) !important;
+        font-size: var(--canvas-composer-ui-fs, var(--fs-tiny)) !important;
         font-weight: 400 !important;
     }
 
     .canvas-node-composer-reference-tools-trigger {
-        width: auto !important;
         min-width: 28px !important;
         justify-content: center !important;
+    }
+
+    .canvas-node-composer-footer :is(.canvas-node-composer-reference-tools-trigger, .canvas-node-composer-camera-tools-trigger):is(:hover, :focus-visible) {
+        background: var(--canvas-composer-control-hover);
     }
 
     .canvas-node-composer-reference-tools-trigger.is-compact {
@@ -216,7 +232,7 @@
         gap: var(--space-1) !important;
         border: 0 !important;
         border-radius: var(--r-full) !important;
-        background: var(--canvas-composer-control-surface) !important;
+        background: var(--canvas-composer-footer-control-bg, var(--canvas-composer-control-surface)) !important;
         padding: calc(var(--space-1) / 2) !important;
         box-shadow: none !important;
         font-size: var(--fs-tiny) !important;
@@ -241,8 +257,17 @@
         white-space: nowrap;
     }
 
+    .canvas-image-submit-cost {
+        min-inline-size: 6.5em;
+        justify-content: center;
+    }
+
+    .canvas-node-composer-settings-trigger {
+        font-variant-numeric: tabular-nums;
+    }
+
     .canvas-node-composer-submit-cost > :first-child {
-        font-size: var(--fs-label);
+        font-size: var(--canvas-composer-ui-fs, var(--fs-label));
     }
 
     .canvas-node-composer-submit-action {
@@ -322,6 +347,10 @@
         vertical-align: baseline;
         user-select: none;
         transform: translateY(var(--canvas-mention-chip-offset-y));
+    }
+
+    .canvas-node-composer-type .canvas-resource-inline-mention {
+        font-size: inherit;
     }
 
     .canvas-resource-inline-skill-icon {
