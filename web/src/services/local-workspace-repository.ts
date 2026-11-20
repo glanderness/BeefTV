@@ -1,10 +1,10 @@
-import { acceptCanvasExternalRevisionCandidate, applyExternalCanvasRevision, canvasDocumentBase, canvasExternalRevisionConflict, clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { canvasDocumentBase, clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { ApiError, http } from "@/services/api/request";
 import { commitCanvasDocument, patchCanvasDocument } from "@/services/api/operations";
 import { buildCanvasDocumentPatch } from "@/lib/canvas/canvas-document-patch";
 import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
-import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, clearCanvasBackendSaveProgress, isCanvasRevisionConflict, isCanvasSubmitControlError, preserveCanvasConflictDraft, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
+import { CanvasBackendSubmitPausedError, clearCanvasBackendSaveProgress, isCanvasRevisionConflict, isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
 import { CanvasJournalError, clearCanvasOperationJournal, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal, type CanvasCommitPayload } from "@/services/canvas-operation-journal";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -20,7 +20,6 @@ import {
 } from "./local-workspace-hydration";
 import {
     alignLiveAfterConfirmedRemote,
-    holdExternalCanvasRevisionForEditor,
     persistProjectedCanvas,
     reconcileRemoteCanvasUnlocked,
     replayPendingCanvasProjection,
@@ -33,7 +32,6 @@ import {
     canvasDeleting,
     CanvasProjectionError,
     canvasProjectionLocks,
-    canvasSubmitBlocked,
     confirmRemoteDocument,
     flushAllPendingCanvasOverlapWrites,
     flushPendingCanvasOverlapWrite,
@@ -60,7 +58,6 @@ export {
     CanvasProjectionError,
     getUnconfirmedCanvasDiagnostic,
     hasUnconfirmedCanvasEdits,
-    holdExternalCanvasRevisionForEditor,
     hydrateLocalCanvasProjectsFromBackend,
     markCanvasMergeOverlap,
     openLocalCanvasProject,
@@ -139,7 +136,6 @@ async function applyAcceptedCanvasSave(
         await flushPendingCanvasOverlapWrite(id, scope);
     }
     const confirmed = saved.revision != null ? { ...submitted, revision: saved.revision, updatedAt: saved.updatedAt ?? submitted.updatedAt } : submitted;
-    const pendingExternal = canvasExternalRevisionConflict(scope, id);
     const journal = await recordConfirmedCanvasCommit(confirmed, scope, {
         ...(ackOperationId ? { ackOperationId } : {}),
         ...(ackedForceHistorySnapshotEpoch ? { clearForceHistorySnapshotEpoch: ackedForceHistorySnapshotEpoch } : {}),
@@ -161,9 +157,6 @@ async function applyAcceptedCanvasSave(
             }
             : current),
     }));
-    if (!pendingExternal && !canvasExternalRevisionConflict(scope, id)) {
-        resumeCanvasBackendSubmit(id, scope);
-    }
     const pending = journal.pendingProjection;
     if (pending) {
         const savedRevision = saved.revision ?? confirmed.revision ?? 0;
@@ -209,11 +202,11 @@ async function commitLiveCanvasDocumentUnlocked(id: string) {
         if (outcome === "rebased") retriesLeft -= 1;
         sent = true;
     }
-    if (canvasDeleting.has(saveKey(scope, id)) || canvasSubmitBlocked(id, scope)) {
+    if (canvasDeleting.has(saveKey(scope, id))) {
         const live = openLocalCanvasProject(id);
         const current = peekCanvasOperationJournal(id, scope);
         if (sent && live && current?.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, live) && !current.inFlight) return;
-        throw new CanvasBackendSubmitPausedError(canvasDeleting.has(saveKey(scope, id)) ? "画布正在删除，未提交" : "画布有未处理的外部改动，本次未提交");
+        throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
     }
     for (;;) {
         const confirmed = peekCanvasOperationJournal(id, scope)?.confirmedSnapshot ?? null;
@@ -575,54 +568,6 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
     } catch {
         return undefined;
     }
-}
-
-/**
- * 用户显式选择以最新内容为准：用冲突时保留的远端候选替换本地文档。
- *
- * 候选本身就是服务端已确认的内容，因此这里只把它落到本地并更新基线，
- * 不再回写一次服务端（回写只会平白推进 revision，甚至在服务端又变化时被拒）。
- * 替换前先把本地内容存成草稿；草稿没存成就不替换。
- * 提交被拒但还没有候选时，先读一次服务端最新内容作为候选。
- */
-export async function acceptExternalCanvasRevision(id: string) {
-    return withCanvasProjection(getActiveUserScope(), id, () => acceptExternalCanvasRevisionUnlocked(id));
-}
-
-async function acceptExternalCanvasRevisionUnlocked(id: string) {
-    const scope = getActiveUserScope();
-    if (!canvasExternalRevisionConflict(scope, id) && canvasBackendSubmitPaused(id, scope) && openLocalCanvasProject(id)) {
-        const remote = await readLocalCanvasProjectFromBackend(id);
-        if (remote.id === id && openLocalCanvasProject(id)) applyExternalCanvasRevision(remote, { hasUnsyncedEdits: true, scope });
-    }
-    const conflict = canvasExternalRevisionConflict(scope, id);
-    if (!conflict) return undefined;
-    const candidate = conflict.candidate;
-    const live = openLocalCanvasProject(id);
-    if (live && !sameCanvasDocument(live, candidate)) {
-        await preserveCanvasConflictDraft(id, live, scope, { required: true });
-    }
-    const journal = await recordConfirmedCanvasCommit(candidate, scope, { unflushedProjection: true });
-    await updateCanvasOperationJournal(id, scope, (current) => {
-        if (!current.inFlight) return;
-        return { ...current, inFlight: null };
-    });
-    recordServerConfirmedCanvas(journal.confirmedSnapshot ?? candidate, scope);
-    const decision = acceptCanvasExternalRevisionCandidate(id, {
-        scope,
-        onApplied: (project) => {
-            notifyCanvasRefresh(project, undefined);
-        },
-    });
-    if (!decision || decision.kind !== "apply") return undefined;
-    resumeCanvasBackendSubmit(id, scope);
-    await persistProjectedCanvas(id, scope, journal.pendingProjection?.identity, { throwOnFailure: false });
-    return decision.project;
-}
-
-/** 该画布是否存在被本地编辑挡住的外部改动。 */
-export function pendingExternalCanvasRevision(id: string) {
-    return canvasExternalRevisionConflict(getActiveUserScope(), id);
 }
 
 export async function flushLocalWorkspace() {

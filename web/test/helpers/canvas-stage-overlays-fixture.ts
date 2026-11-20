@@ -196,7 +196,6 @@ export function createCanvasStageProps(overrides: OverlayStageFixtureOverrides =
         historyState: { canUndo: false, canRedo: false } as CanvasProjectStageProps["historyState"],
         undoCanvas: noop,
         redoCanvas: noop,
-        reloadLatestCanvasProject: noopAsync,
         openVersions: noop,
         toggleVersions: noop,
         nodeGraphContext: {} as CanvasProjectStageProps["nodeGraphContext"],

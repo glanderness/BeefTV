@@ -40,7 +40,6 @@ import {
     type ProjectAsset,
     type ProjectAssetFolder,
 } from "@/services/api/projects";
-import { hasRemoteUserDataSyncSession, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useAssetStore, type Asset, type AssetCategory, type AssetStatus, type EntityAsset, type ImageAsset } from "@/stores/use-asset-store";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -340,7 +339,6 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const bindImagesMutation = useMutation({
         mutationFn: async ({ selectedAssetId, selectedItem }: { selectedAssetId: string; selectedItem?: AssetLibraryPickerItem }) => {
             if (!imageAsset) throw new Error("未选择角色");
-            if (hasRemoteUserDataSyncSession()) await saveRemoteUserDataNow();
             const latest = useAssetStore.getState().assets;
             const pickerItem = selectedItem || imagePickerItems.find((item) => item.id === selectedAssetId);
             const selected = pickerItem?.asset || latest.find((asset) => asset.id === selectedAssetId) || (pickerItem?.external ? await externalAssetSources.importExternalAsset(pickerItem.external) : undefined);

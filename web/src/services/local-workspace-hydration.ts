@@ -1,8 +1,8 @@
-import { clearCanvasExternalRevisionConflict, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { http } from "@/services/api/request";
 import { beginCanvasHydration, finishCanvasHydration } from "./canvas-hydration-health";
 import { restoreCanvasHistory } from "@/services/api/workspace-data";
-import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
+import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
 import { CanvasJournalError, loadCanvasOperationJournal, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeCanvasProjectGraph } from "@/lib/canvas/canvas-content";
@@ -181,8 +181,6 @@ async function restoreLocalCanvasProjectFromHistoryUnlocked(
         pendingProjection: null,
     }));
     recordServerConfirmedCanvas(backendProject, scope);
-    clearCanvasExternalRevisionConflict(scope, id);
-    resumeCanvasBackendSubmit(id, scope);
     applyLiveCanvasProject(id, backendProject, true);
     await runProjectionStoreFlush();
     const live = openLocalCanvasProject(id);

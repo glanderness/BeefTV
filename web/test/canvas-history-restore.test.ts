@@ -103,9 +103,8 @@ mock.module("@/services/api/resources", () => ({
 }));
 
 const { restoreLocalCanvasProjectFromHistory, openLocalCanvasProjectFromBackend, resetLocalCanvasBackendSaveState, setCanvasProjectionStoreFlushForTest } = await import("@/services/local-workspace-repository");
-const { useCanvasStore, recordCanvasDocumentBase, canvasDocumentBase, clearCanvasExternalRevisionConflict } = await import("@/stores/canvas/use-canvas-store");
+const { useCanvasStore, recordCanvasDocumentBase, canvasDocumentBase } = await import("@/stores/canvas/use-canvas-store");
 const { loadCanvasOperationJournal, peekCanvasOperationJournal, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay } = await import("@/services/canvas-operation-journal");
-const { canvasBackendSubmitPaused, pauseCanvasBackendSubmit } = await import("@/services/canvas-revision-conflict");
 const { useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 
 function canvas(title: string, revision: number, patch: Record<string, unknown> = {}) {
@@ -163,7 +162,6 @@ beforeEach(() => {
     server.hold = null;
     server.postStarted = 0;
     useSyncProgressStore.getState().clearAll();
-    clearCanvasExternalRevisionConflict("guest", "c1");
     useCanvasStore.setState({ projects: [canvas("当前稿", 21) as never] });
     recordCanvasDocumentBase(canvas("当前稿", 21) as never);
 });

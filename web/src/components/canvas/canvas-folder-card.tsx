@@ -8,7 +8,7 @@ import { readCanvasLibraryCover } from "@/lib/canvas/canvas-library-cover";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { CanvasLibrarySummary } from "@/services/api/workspace-data";
-import { hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
+import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { cn } from "@/lib/utils";
 
@@ -111,7 +111,6 @@ export function CanvasFolderCard({ project, projectName, folders = [], onMoveToF
             await loadCanvasProjectForEditing(project.id);
             renameProject(project.id, editingTitle);
             await flushCanvasStorePersistence();
-            if (hasRemoteUserDataSyncSession()) await saveRemoteUserDataNow();
         } catch (error) { message.error(error instanceof Error ? error.message : "重命名失败"); }
     };
 

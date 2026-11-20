@@ -15,8 +15,8 @@ import { useUserStore } from "@/stores/use-user-store";
 import { recordConfirmedCanvasCommit } from "../../src/services/canvas-operation-journal";
 import { applyGenerationConsumerEffect } from "../../src/services/generation-consumer-dedupe";
 import { attachNodeEffectKey } from "../../src/services/generation-task-materializer";
-import { hasUnconfirmedCanvasEdits, pendingExternalCanvasRevision } from "../../src/services/local-workspace-repository";
-import { canvasBackendSubmitPaused } from "../../src/services/canvas-revision-conflict";
+import { hasUnconfirmedCanvasEdits } from "../../src/services/local-workspace-repository";
+import { projectSyncProgress } from "../../src/stores/use-sync-progress-store";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
 import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
@@ -142,7 +142,7 @@ function Harness() {
         setNodes(next);
     });
     (harness as any).chatIds = () => chatSessionsRef.current.map(session => session.id);
-    (harness as any).held = () => ({ paused: canvasBackendSubmitPaused("c1"), candidateTitle: (pendingExternalCanvasRevision("c1")?.candidate.nodes[0] as CanvasNodeData | undefined)?.title ?? null });
+    (harness as any).held = () => ({ paused: projectSyncProgress("c1")?.phase === "conflict", candidateTitle: null });
     (harness as any).title = () => nodesRef.current.find(node => node.id === "n0")?.title;
     (harness as any).nodeState = (id: string) => { const node = nodesRef.current.find(item => item.id === id); return node ? { title: node.title, metadata: node.metadata } : null; };
     // Another writer adds a node to the stored canvas without telling the editor.

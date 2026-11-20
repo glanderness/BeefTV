@@ -77,30 +77,7 @@ mock.module("@/stores/canvas/use-canvas-store", () => ({
         },
     },
     flushCanvasStorePersistence: async () => {},
-    applyExternalCanvasRevision: (remote: any, options: any) => {
-        const local = projects.find((item: any) => item.id === remote.id);
-        if (options?.hasUnsyncedEdits) {
-            return {
-                kind: "keep-local",
-                projectId: remote.id,
-                candidate: remote,
-                localRevision: local?.revision ?? 0,
-                remoteRevision: remote.revision ?? 0,
-            };
-        }
-        const merged = local ? { ...remote, viewport: local.viewport } : remote;
-        projects = projects.some((item: any) => item.id === merged.id)
-            ? projects.map((item: any) => (item.id === merged.id ? merged : item))
-            : [...projects, merged];
-        options?.onApplied?.(merged, local);
-        return { kind: "apply", project: merged, localRevision: local?.revision ?? 0, remoteRevision: merged.revision ?? 0 };
-    },
-    acceptCanvasExternalRevisionCandidate: () => undefined,
-    clearCanvasExternalRevisionConflict: () => {},
     canvasDurableSnapshot: () => undefined,
-    canvasExternalRevisionConflict: () => undefined,
-    canvasExternalRevisionVersion: () => 0,
-    subscribeCanvasExternalRevision: () => () => {},
     recordCanvasDocumentBase: (proj: any) => {
         bases.set(proj.id, { revision: proj.revision ?? 0, snapshot: proj });
     },
@@ -129,11 +106,6 @@ mock.module("@/services/canvas-revision-conflict", () => ({
     CanvasBackendSubmitPausedError: MockCanvasBackendSubmitPausedError,
     isCanvasRevisionConflict: () => false,
     isCanvasSubmitControlError: (error: unknown) => error instanceof MockCanvasBackendSubmitPausedError,
-    canvasBackendSubmitPaused: () => false,
-    pauseCanvasBackendSubmit: () => {},
-    resumeCanvasBackendSubmit: () => {},
-    handleRejectedCanvasBackendSave: async () => false,
-    preserveCanvasConflictDraft: async () => {},
     setCanvasBackendSaveProgress: () => {},
     clearCanvasBackendSaveProgress: () => {},
 }));

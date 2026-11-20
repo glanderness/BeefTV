@@ -2,12 +2,11 @@ import { create } from "zustand";
 import { persist, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
-import { sameCanvasContent, sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { sameCanvasContent } from "@/lib/canvas/canvas-content";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault } from "@/lib/canvas/canvas-appearance";
-import { decideExternalCanvasRevision } from "@/lib/canvas/canvas-external-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
-import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
+import { scopedLocalStorage } from "@/lib/user-scope";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import type { ViewportTransform } from "@/types/canvas";
 import {
@@ -15,7 +14,6 @@ import {
     CANVAS_STORE_KEY,
     canvasDocumentBase,
     canvasDurableSnapshot,
-    canvasMemoryStates,
     clearCanvasDocumentBase,
     commitPendingCanvasStorePersistenceLocked,
     createCanvasPersistStorage,
@@ -24,7 +22,6 @@ import {
     pendingCanvasStorePersistence,
     recordCanvasDocumentBase,
     recordCanvasStorageDocument,
-    registerCanvasGenerationPersistenceAttempt,
     samePersistenceValue,
     withCanvasStorePersistenceLock,
     withCanvasStorePersistenceSuppressed,
@@ -44,7 +41,6 @@ export {
     pendingCanvasStorePersistence,
     recordCanvasDocumentBase,
     recordCanvasStorageDocument,
-    registerCanvasGenerationPersistenceAttempt,
     withCanvasStorePersistenceLock,
     withCanvasStorePersistenceSuppressed,
     type CanvasFolder,
@@ -129,130 +125,6 @@ function cloneCanvasValue<T>(value: T): T {
         if (typeof value === "object") return { ...value } as T;
         return value;
     }
-}
-
-export type CanvasExternalRevisionConflict = {
-    projectId: string;
-    localRevision: number;
-    remoteRevision: number;
-    detectedAt: string;
-    /** 被挡下的外部内容：保留为候选，用户选择「以最新为准」时使用它。 */
-    candidate: CanvasProject;
-};
-
-type CanvasExternalRevisionState = {
-    conflicts: Map<string, CanvasExternalRevisionConflict>;
-    version: number;
-};
-
-const canvasExternalRevisionState: CanvasExternalRevisionState = { conflicts: new Map(), version: 0 };
-const canvasExternalRevisionListeners = new Set<() => void>();
-
-function canvasExternalRevisionKey(scope: string, projectId: string) {
-    return `${scope}\0${projectId}`;
-}
-
-export function canvasExternalRevisionVersion() {
-    return canvasExternalRevisionState.version;
-}
-
-export function subscribeCanvasExternalRevision(listener: () => void) {
-    canvasExternalRevisionListeners.add(listener);
-    return () => { canvasExternalRevisionListeners.delete(listener); };
-}
-
-function publishCanvasExternalRevision() {
-    canvasExternalRevisionState.version += 1;
-    for (const listener of [...canvasExternalRevisionListeners]) listener();
-}
-
-export function canvasExternalRevisionConflict(scope: string, projectId: string) {
-    const key = canvasExternalRevisionKey(scope, projectId);
-    const conflict = canvasExternalRevisionState.conflicts.get(key);
-    if (!conflict) return undefined;
-    const localRevision = useCanvasStore.getState().projects.find((project) => project.id === projectId)?.revision ?? 0;
-    if (localRevision > conflict.remoteRevision) {
-        canvasExternalRevisionState.conflicts.delete(key);
-        return undefined;
-    }
-    return conflict;
-}
-
-export function clearCanvasExternalRevisionConflict(scope: string, projectId: string) {
-    if (!canvasExternalRevisionState.conflicts.delete(canvasExternalRevisionKey(scope, projectId))) return;
-    publishCanvasExternalRevision();
-}
-
-function markCanvasExternalRevisionConflict(scope: string, conflict: CanvasExternalRevisionConflict) {
-    const key = canvasExternalRevisionKey(scope, conflict.projectId);
-    const previous = canvasExternalRevisionState.conflicts.get(key);
-    if (previous && previous.localRevision === conflict.localRevision && previous.remoteRevision === conflict.remoteRevision && sameCanvasDocument(previous.candidate, conflict.candidate)) return;
-    canvasExternalRevisionState.conflicts.set(key, conflict);
-    publishCanvasExternalRevision();
-}
-
-type ApplyExternalCanvasRevisionOptions = {
-    scope?: string;
-    hasUnsyncedEdits: boolean;
-    onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void;
-};
-
-export function applyExternalCanvasRevision(remote: CanvasProject, options: ApplyExternalCanvasRevisionOptions) {
-    const scope = options.scope ?? getActiveUserScope();
-    const previous = useCanvasStore.getState().projects.find((project) => project.id === remote.id)
-        ?? canvasMemoryStates.get(scope)?.projects.find((project) => project.id === remote.id);
-    return applyCanvasExternalDecision(scope, decideExternalCanvasRevision({
-        remote,
-        local: previous,
-        hasLocalEdits: options.hasUnsyncedEdits,
-    }), previous, options.onApplied);
-}
-
-export function acceptCanvasExternalRevisionCandidate(
-    projectId: string,
-    options: { scope?: string; onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void } = {},
-) {
-    const scope = options.scope ?? getActiveUserScope();
-    const conflict = canvasExternalRevisionState.conflicts.get(canvasExternalRevisionKey(scope, projectId));
-    if (!conflict) return undefined;
-    const previous = useCanvasStore.getState().projects.find((project) => project.id === projectId);
-    return applyCanvasExternalDecision(scope, decideExternalCanvasRevision({
-        remote: conflict.candidate,
-        local: previous,
-        hasLocalEdits: false,
-    }), previous, options.onApplied);
-}
-
-function applyCanvasExternalDecision(
-    scope: string,
-    decision: ReturnType<typeof decideExternalCanvasRevision>,
-    previous: CanvasProject | undefined,
-    onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void,
-) {
-    if (decision.kind === "keep-local") {
-        markCanvasExternalRevisionConflict(scope, {
-            projectId: decision.projectId,
-            localRevision: decision.localRevision,
-            remoteRevision: decision.remoteRevision,
-            detectedAt: new Date().toISOString(),
-            candidate: decision.candidate,
-        });
-        return decision;
-    }
-    const applied = decision.project;
-    useCanvasStore.setState((state) => ({
-        projects: state.projects.some((project) => project.id === applied.id)
-            ? state.projects.map((project) => project.id === applied.id ? applied : project)
-            : [...state.projects, applied],
-    }));
-    canvasMemoryStates.set(scope, { projects: useCanvasStore.getState().projects });
-    clearCanvasExternalRevisionConflict(scope, applied.id);
-    try {
-        onApplied?.(applied, previous);
-    } catch (error) {
-        console.error("画布刷新通知失败", { id: applied.id, error });
-    }
-    return decision;
 }
 
 const canvasStorage = createCanvasPersistStorage<CanvasStore>();

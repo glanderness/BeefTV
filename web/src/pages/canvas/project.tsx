@@ -197,7 +197,7 @@ function InfiniteCanvasPage() {
         [cleanupAssetImages, getHistoryCleanupContext],
     );
 
-    const { loadError, retryLoad, addedSkills, clearCanvasFiles, createAndOpenCanvas, currentProject, deleteCurrentProject, renameCurrentProject, reloadLatestCanvasProject, restoreCanvasProjectVersion, saveCanvasProject, forceSaveCanvasProject, updateProject } = useCanvasProjectLifecycle({
+    const { loadError, retryLoad, addedSkills, clearCanvasFiles, createAndOpenCanvas, currentProject, deleteCurrentProject, renameCurrentProject, restoreCanvasProjectVersion, saveCanvasProject, forceSaveCanvasProject, updateProject } = useCanvasProjectLifecycle({
         adoptNodes,
         projectId,
         projectLoaded,
@@ -588,7 +588,7 @@ function InfiniteCanvasPage() {
                                             setScriptEditorNodeId(null);
                                         }
                                     }}
-                                    syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
+                                    syncStatus={<CanvasSyncStatus projectId={projectId} onOpenVersions={openVersions} />}
                                     readOnly={readOnly}
                                     onDuplicateProject={projectMenu.duplicateCurrentProject}
                                     versionsOpen={versions.open}
@@ -665,7 +665,6 @@ function InfiniteCanvasPage() {
                                 historyState={historyState}
                                 undoCanvas={undoCanvas}
                                 redoCanvas={redoCanvas}
-                                reloadLatestCanvasProject={reloadLatestCanvasProject}
                                 openVersions={openVersions}
                                 toggleVersions={toggleVersions}
                                 nodeGraphContext={nodeGraphContext}

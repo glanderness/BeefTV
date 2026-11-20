@@ -1,5 +1,4 @@
-import { applyExternalCanvasRevision, canvasDocumentBase, clearCanvasExternalRevisionConflict, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { pauseCanvasBackendSubmit, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
+import { canvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
@@ -9,7 +8,6 @@ import {
     applyLiveCanvasProject,
     CanvasProjectionError,
     canvasDeleting,
-    canvasSubmitBlocked,
     confirmRemoteDocument,
     flushPendingCanvasOverlapWrite,
     incompleteCanvasProjection,
@@ -38,33 +36,21 @@ export function alignLiveAfterConfirmedRemote(input: {
         return input.remote;
     }
     if (sameCanvasDocument(live, input.remote) || (input.base && sameCanvasDocument(live, input.base))) {
-        const decision = applyExternalCanvasRevision(input.remote, {
-            scope: input.scope,
-            hasUnsyncedEdits: false,
-            onApplied: (project, previous) => {
-                resumeCanvasBackendSubmit(input.id, input.scope);
-                invokeProjectionListener(input.onApplied, project, previous);
-            },
-        });
-        return decision.kind === "apply" ? decision.project : live;
+        const applied: CanvasProject = {
+            ...input.remote,
+            viewport: live.viewport || input.remote.viewport,
+            appearance: live.appearance || input.remote.appearance,
+            backgroundMode: live.backgroundMode || input.remote.backgroundMode,
+        };
+        applyLiveCanvasProject(input.id, applied, true);
+        invokeProjectionListener(input.onApplied, applied, live);
+        return applied;
     }
-    if (!input.base) {
-        const emptyBase: CanvasProject = { ...input.remote, nodes: [], connections: [], chatSessions: [] };
-        const settled = settleInFlightGenerationOverlay({ base: emptyBase, local: live, remote: input.remote });
-        const rebased = rebaseCanvasDocumentThreeWay({ base: emptyBase, local: settled, remote: input.remote });
-        if (rebased.conflict) markCanvasMergeOverlap(input.id, input.scope);
-        applyLiveCanvasProject(input.id, rebased.project, false);
-        clearCanvasExternalRevisionConflict(input.scope, input.id);
-        resumeCanvasBackendSubmit(input.id, input.scope);
-        invokeProjectionListener(input.onApplied, rebased.project, live);
-        return rebased.project;
-    }
-    const settled = settleInFlightGenerationOverlay({ base: input.base, local: live, remote: input.remote });
-    const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: settled, remote: input.remote });
+    const mergeBase: CanvasProject = input.base ?? { ...input.remote, nodes: [], connections: [], chatSessions: [] };
+    const settled = settleInFlightGenerationOverlay({ base: mergeBase, local: live, remote: input.remote });
+    const rebased = rebaseCanvasDocumentThreeWay({ base: mergeBase, local: settled, remote: input.remote });
     if (rebased.conflict) markCanvasMergeOverlap(input.id, input.scope);
     applyLiveCanvasProject(input.id, rebased.project, false);
-    clearCanvasExternalRevisionConflict(input.scope, input.id);
-    resumeCanvasBackendSubmit(input.id, input.scope);
     invokeProjectionListener(input.onApplied, rebased.project, live);
     return rebased.project;
 }
@@ -114,35 +100,17 @@ export function selectPreferredCanvasProject(local: CanvasProject | null | undef
     return local;
 }
 
-export function pauseForExternalCandidate(id: string, remote: CanvasProject, scope: string) {
-    applyExternalCanvasRevision(remote, { hasUnsyncedEdits: true, scope });
-    pauseCanvasBackendSubmit(id, scope);
-}
-
-/**
- * 编辑器里的未保存编辑与刚投影的外部内容冲突时调用：编辑器保留本地内容，
- * 服务端内容留作候选（顶栏出现「使用最新版本」），并暂停自动提交，
- * 避免下一次自动保存把旧画面写回服务端。
- */
-export function holdExternalCanvasRevisionForEditor(project: CanvasProject, scope = getActiveUserScope()) {
-    const confirmed = canvasDocumentBase(project.id, scope);
-    const candidate = confirmed && confirmed.revision >= (project.revision ?? 0) ? confirmed.snapshot : project;
-    pauseForExternalCandidate(project.id, candidate, scope);
-}
-
 type RemoteReconcileOutcome =
-    | { kind: "stale" | "held" | "deferred" | "skipped" }
+    | { kind: "stale" | "deferred" | "skipped" }
     | { kind: "applied"; project: CanvasProject | undefined; unconfirmed: boolean };
 
 /**
  * 在投影锁内把一份更新的服务端文档并进本地。调用方必须已持有该画布的投影锁。
  *
  * - 不比已确认版本新：忽略（读取可能早于本机提交回执）。
- * - 已处于冲突暂停：只更新候选，等用户决定。
  * - 日记里有结果未知的在途提交：先不合并，必须用原 operationId 重放拿到真实回执。
- * - 本地和服务端改的是不同字段：按已确认基线三路合并，两边都保留；本地改动仍算未确认，
- *   由下一次提交带着新的 expectedRevision 写回。
- * - 同一字段两边都改过，或没有可用基线：本地内容和日记都不动，服务端文档留作候选并暂停自动提交。
+ * - 其余情况一律按已确认基线确定性三路合并：不同字段两边都保留，同字段重叠时保留本地并记
+ *   merge overlap 标记，由下一次增量 patch 在服务端合并前留存 before_merge 历史快照。
  */
 export async function reconcileRemoteCanvasUnlocked(input: {
     id: string;
@@ -155,10 +123,6 @@ export async function reconcileRemoteCanvasUnlocked(input: {
     if (canvasDeleting.has(saveKey(scope, id))) return { kind: "skipped" };
     const journal = peekCanvasOperationJournal(id, scope);
     if (journal?.confirmedSnapshot && typeof remote.revision === "number" && remote.revision <= journal.confirmedRevision) return { kind: "stale" };
-    if (canvasSubmitBlocked(id, scope)) {
-        pauseForExternalCandidate(id, remote, scope);
-        return { kind: "held" };
-    }
     if (journal?.inFlight) return { kind: "deferred" };
     const base = journal?.pendingProjection?.base
         ?? journal?.confirmedSnapshot
@@ -232,7 +196,6 @@ export async function applyBackendCanvasRead(
             || (backend.revision ?? 0) !== recorded.revision
             || !sameCanvasDocument(backend, recorded.snapshot);
         if (serverMoved) {
-            // 本地有未确认编辑而服务端也变了：能三路合并就两边都保留，真冲突才留候选并暂停。
             const outcome = await reconcileRemoteCanvasUnlocked({ id: backend.id, remote: backend, hadLive });
             if (outcome.kind === "applied") return outcome.project ?? openLocalCanvasProject(backend.id) ?? currentLocal;
         }

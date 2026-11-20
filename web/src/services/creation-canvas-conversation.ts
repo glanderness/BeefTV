@@ -1,7 +1,7 @@
 import type { CanvasAssistantMessage, CanvasAssistantSession } from "@/types/canvas";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
+import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject } from "@/services/workspace-project-repository";
 
 type SourceMessage = {
@@ -52,10 +52,6 @@ export async function continueCreationConversationOnCanvas(source: SourceConvers
         id = project.id;
         await flushCanvasStorePersistence();
         assertScope();
-        if (hasRemoteUserDataSyncSession()) {
-            try { await saveRemoteUserDataNow(); }
-            catch (cause) { syncError = cause; }
-        }
     } else {
         const session: CanvasAssistantSession = { id: sessionId, title: source.title, createdAt: source.messages[0].createdAt, updatedAt: source.updatedAt, messages };
         const created = await createWorkspaceCanvasProject(source.title || "创作画布", undefined, { chatSessions: [session], activeChatId: sessionId });
