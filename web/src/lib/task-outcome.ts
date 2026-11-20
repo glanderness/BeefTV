@@ -20,6 +20,7 @@ export type TaskOutcomeCopy = {
 
 export type TaskOutcomeSource = {
     outcome?: TaskOutcome | null;
+    type?: string;
     status?: string;
     stage?: string;
     errorCode?: string;
@@ -34,6 +35,7 @@ export type TaskOutcomeSource = {
 export type CanvasNodeOutcomeMetadata = {
     taskOutcome?: TaskOutcome | null;
     taskId?: string;
+    taskType?: string;
     taskClientOperationId?: string;
     generationSubmissionState?: string;
     taskStatus?: string;
@@ -159,9 +161,10 @@ type LegacyTerminalOutcomeInput = {
     stage: string;
     errorCode: string;
     providerRequestId: string;
+    taskType: string;
 };
 
-function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId }: LegacyTerminalOutcomeInput): TaskOutcome {
+function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId, taskType }: LegacyTerminalOutcomeInput): TaskOutcome {
     if (errorCode === "result_target_unavailable") {
         return resultTargetUnavailableTaskOutcome();
     }
@@ -179,14 +182,18 @@ function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId
         if (status === "cancelled") {
             return cancelledResultUnconfirmedTaskOutcome();
         }
-        if (status === "failed") {
+        if (status === "failed" || status === "") {
             return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
         }
     }
     if (errorCode === "request_not_sent" || stage === "request_not_sent") {
         return notChargedTaskOutcome();
     }
-    if (status === "cancelled" || status === "text_replay") {
+    if (taskType === "depth_capture") {
+        return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+    }
+    // 与后端 ComputeOutcome 一致：已持久化失败/取消/text_replay 任务在无明确未发出证据时默认要求确认重生成。
+    if (status === "failed" || status === "cancelled" || status === "text_replay") {
         return { phase: "failed", regenerate: "confirm", reason: "task_failed" };
     }
     return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
@@ -205,6 +212,7 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
     const embedded = normalizeTaskOutcome(record.outcome);
     if (embedded) return embedded;
 
+    const taskType = typeof record.type === "string" ? record.type.trim() : "";
     const status = typeof record.status === "string" ? record.status.trim() : "";
     const stage = typeof record.stage === "string" ? record.stage.trim() : "";
     const errorCode = typeof record.errorCode === "string" ? record.errorCode.trim() : "";
@@ -231,6 +239,7 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
             stage,
             errorCode,
             providerRequestId,
+            taskType,
         });
     }
     return undefined;
@@ -246,6 +255,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
     const explicit = normalizeTaskOutcome(metadata.taskOutcome);
     if (explicit) return explicit;
 
+    const taskType = typeof metadata.taskType === "string" ? metadata.taskType.trim() : "";
     const taskStatus = typeof metadata.taskStatus === "string" ? metadata.taskStatus.trim() : "";
     const taskStage = typeof metadata.taskStage === "string" ? metadata.taskStage.trim() : "";
     const errorCode = typeof metadata.generationErrorCode === "string" ? metadata.generationErrorCode.trim() : "";
@@ -266,6 +276,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
             stage: taskStage,
             errorCode,
             providerRequestId,
+            taskType,
         });
     }
     if (metadata.status === "loading" || taskStatus === "queued" || taskStatus === "running") {
@@ -276,10 +287,11 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
     }
     if (metadata.status === "error" || errorCode || metadata.errorDetails) {
         return readLegacyTerminalOutcome({
-            status: taskStatus || "failed",
+            status: taskStatus,
             stage: taskStage,
             errorCode,
             providerRequestId,
+            taskType,
         });
     }
     if (taskStatus === "succeeded") {

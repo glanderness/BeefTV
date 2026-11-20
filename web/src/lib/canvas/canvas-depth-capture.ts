@@ -138,15 +138,18 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     const explicitOutcome = authoritativeNodeOutcome(node.metadata);
     const explanation = nodeFailureExplanation(node.metadata);
     const fallbackOutcome = explicitOutcome ? undefined : readNodeTaskOutcome(node.metadata);
-    const legacyCancelledConfirmOutcome =
+    const legacyConfirmOutcome =
         fallbackOutcome &&
         fallbackOutcome.phase === "failed" &&
         fallbackOutcome.regenerate === "confirm" &&
+        fallbackOutcome.reason !== "input_rejected" &&
         (fallbackOutcome.reason === "cancelled_result_unconfirmed" ||
+            node.metadata?.taskStatus === "failed" ||
+            node.metadata?.taskStatus === "text_replay" ||
             (node.metadata?.taskStatus === "cancelled" && explanation.category !== "cancelled"))
             ? fallbackOutcome
             : undefined;
-    const authoritative = explicitOutcome ?? legacyCancelledConfirmOutcome;
+    const authoritative = explicitOutcome ?? legacyConfirmOutcome;
     // This action opens saved history; it must never dispatch another generation.
     if (explicitOutcome?.reason === "result_target_unavailable" || (!explicitOutcome && explanation.category === "result_target_unavailable")) {
         const copy = explicitOutcome ? taskOutcomeCopy(explicitOutcome) : undefined;

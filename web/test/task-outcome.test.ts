@@ -55,6 +55,10 @@ describe("task-outcome", () => {
         expect(readTaskOutcome({ status: "cancelled", errorCode: "submission_uncertain" })).toEqual(outcome);
         expect(readTaskOutcome({ status: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
         expect(isRegenerateConfirm(readTaskOutcome({ status: "cancelled" }))).toBe(true);
+        expect(readTaskOutcome({ status: "failed" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isRegenerateConfirm(readTaskOutcome({ status: "failed" }))).toBe(true);
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
         expect(readTaskOutcome({ status: "cancelled", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
         expect(readTaskOutcome({ status: "cancelled", stage: "request_not_sent" })).toEqual(notChargedTaskOutcome());
 
@@ -65,7 +69,9 @@ describe("task-outcome", () => {
         expect(isNodeRegenerateConfirm({ taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toBe(true);
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toEqual(outcome);
-        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isNodeRegenerateConfirm({ status: "loading", taskStatus: "failed" })).toBe(true);
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed", taskType: "depth_capture" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed", taskProviderRequestId: "req-1" })).toEqual({ phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" });
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "text_replay" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
         expect(readNodeTaskOutcome({ taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });

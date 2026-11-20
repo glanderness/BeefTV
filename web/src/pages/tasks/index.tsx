@@ -18,7 +18,7 @@ import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
 import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
-import { canRecoverTaskOutcome, isRegenerateConfirm, isTaskRegenerateBlocked, readTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { canRecoverTaskOutcome, isRegenerateConfirm, isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -27,7 +27,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, taskMediaKind } from "./task-shared";
+import { computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -312,7 +312,7 @@ export default function TasksPage() {
         }
         const currentTask = tasksRef.current.find((task) => task.id === id);
         if (currentTask && isTaskRegenerateBlocked(currentTask)) {
-            message.warning(taskOutcomeCopy(readTaskOutcome(currentTask)).message);
+            message.warning(taskOutcomeCopyForTask(currentTask).message);
             return;
         }
         setActingId(id);
@@ -322,11 +322,11 @@ export default function TasksPage() {
             const detail = await queryGenerationTask(id);
             const detailOutcome = readTaskOutcome(detail);
             if (isTaskRegenerateBlocked(detail)) {
-                message.warning(taskOutcomeCopy(detailOutcome).message);
+                message.warning(taskOutcomeCopyForTask(detail, detailOutcome).message);
                 return;
             }
             if (isRegenerateConfirm(detailOutcome)) {
-                const copy = taskOutcomeCopy(detailOutcome);
+                const copy = taskOutcomeCopyForTask(detail, detailOutcome);
                 const confirmed = await new Promise<boolean>((resolve) => {
                     modal.confirm({
                         title: copy.confirmTitle || "确认重新生成？",

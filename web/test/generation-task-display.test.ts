@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
-import { providerCancelStatusLabel, taskAttentionReason } from "@/pages/tasks/task-shared";
+import { providerCancelStatusLabel, taskAttentionReason, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
 import type { GenerationTask } from "@/services/api/task-center";
 
 test("cancelled image with unconfirmed result does not claim recovery is running", () => {
@@ -25,6 +25,10 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(taskAttentionReason(confirmedTask)).toContain("上游已确认取消");
     expect(taskAttentionReason(confirmedTask)).not.toContain("无法确认上游是否已生成");
     expect(providerCancelStatusLabel(confirmedTask)).toBe("上游已确认取消，请核对渠道后台确认是否已扣费");
+    const confirmedModalCopy = taskOutcomeCopyForTask(confirmedTask);
+    expect(confirmedModalCopy.confirmTitle).toBe("确认重新生成？");
+    expect(confirmedModalCopy.confirmContent).toContain("上游已确认取消");
+    expect(confirmedModalCopy.confirmContent).not.toContain("无法确认渠道是否已执行");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined, providerCancelStatus: "confirmed" })).toBe("上游已确认取消");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined })).toBe("任务已取消，请核对原任务的结果与扣费状态");
 });

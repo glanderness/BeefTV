@@ -59,6 +59,13 @@ export function shouldFastPollTaskCenter(tasks: readonly GenerationTask[]) {
     return tasks.some((task) => !isTaskFailed(task) && isTaskBadgeActive(task));
 }
 
+export function taskOutcomeCopyForTask(
+    task: Pick<GenerationTask, "status" | "stage" | "errorCode" | "error" | "providerRequestId" | "providerCancelStatus" | "outcome" | "type" | "outputs">,
+    outcome = readTaskOutcome(task),
+) {
+    return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus });
+}
+
 export function taskAttentionReason(task: GenerationTask) {
     const outcome = normalizeTaskOutcome(task.outcome) ?? (task.status === "text_replay" ? readTaskOutcome(task) : undefined);
     if (outcome) {

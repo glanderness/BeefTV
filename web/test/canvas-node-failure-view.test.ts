@@ -1919,6 +1919,20 @@ describe("canvasNodeFailureView", () => {
             expect(legacyDepthCancelled.explanation.reason).toBe(legacyDepthCancelled.copy.reason);
             expect(legacyDepthCancelled.explanation.action).toBe(legacyDepthCancelled.copy.action);
             expect(legacyDepthCancelled.regenerateConfirm).toBe(true);
+
+            const legacyFailedUnknownBilling = canvasNodeFailureView(
+                node("legacy-failed-unknown-billing-stale-network", {
+                    status: "error",
+                    taskId: "legacy-fail-1",
+                    taskStatus: "failed",
+                    errorDetails: "Failed to fetch",
+                }),
+                { nowMs: NOW_MS },
+            );
+            expect(legacyFailedUnknownBilling.outcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+            expect(legacyFailedUnknownBilling.explanation.reason).toBe(legacyFailedUnknownBilling.copy.reason);
+            expect(legacyFailedUnknownBilling.explanation.action).toBe(legacyFailedUnknownBilling.copy.action);
+            expect(legacyFailedUnknownBilling.regenerateConfirm).toBe(true);
         } finally {
             Date.now = realNow;
         }
