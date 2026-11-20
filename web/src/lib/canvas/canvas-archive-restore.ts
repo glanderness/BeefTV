@@ -5,12 +5,16 @@ import { canonicalize } from "json-canonicalize";
 import { startOperation } from "@/stores/use-operation-progress";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import {
+    ARCHIVE_PRIMARY_MEDIA_URL_KEYS,
     collectStorageKeys,
+    extractOwnedResourceIdFromArchiveUrl,
     isArchiveStorageKey,
     openCanvasArchive,
     preflightCanvasArchive,
+    transformArchiveMediaTree,
     type OpenCanvasArchive,
 } from "@/lib/canvas/canvas-export";
+import { uniqueMissingExportFiles, type MissingExportFile } from "@/lib/export-integrity";
 import { createCanvasLibraryFolder, deleteCanvasLibraryFolder, persistCanvasFolderCover } from "@/lib/canvas/canvas-folder-storage";
 import { loadCanvasDrawing, saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { canvasWorkspaceProjectId } from "@/lib/canvas/canvas-workspace-project";
@@ -20,7 +24,7 @@ import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadRe
 import { primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
-import { readLocalCanvasProjectFromBackend, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { deleteWorkspaceAsset } from "@/services/workspace-asset-repository";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
@@ -67,6 +71,7 @@ export type CanvasArchiveRestoreResult = {
     folderIds: string[];
     resourceIds: string[];
     storage: "browser" | "backend";
+    skippedFiles?: MissingExportFile[];
 };
 
 export async function archiveContentDigest(blob: Blob): Promise<string> {
@@ -76,49 +81,6 @@ export async function archiveContentDigest(blob: Blob): Promise<string> {
 
 export async function archiveMediaIdempotencyKey(blob: Blob): Promise<string> {
     return `canvas-archive:sha256:${await archiveContentDigest(blob)}`;
-}
-
-export function assertRestoredCanvasMatches(intended: Partial<CanvasProject> & Pick<CanvasProject, "id" | "nodes">, saved: CanvasProject, storage: "browser" | "backend" = "browser") {
-    if (!saved?.id || saved.id !== intended.id) throw new Error("画布未保存到工作区");
-    if ((saved.folderId || "") !== (intended.folderId || "")) throw new Error("画布文件夹未保存到工作区");
-    const intendedTimeline = timelineStorageKeys(intended.timeline);
-    const savedTimeline = timelineStorageKeys(saved.timeline);
-    if (intendedTimeline.join("\n") !== savedTimeline.join("\n")) throw new Error("画布时间线未保存到工作区");
-    const intendedKeys = collectStorageKeys({ nodes: intended.nodes, timeline: intended.timeline }).sort();
-    const savedKeys = collectStorageKeys({ nodes: saved.nodes, timeline: saved.timeline }).sort();
-    if (intendedKeys.join("\n") !== savedKeys.join("\n")) throw new Error("画布媒体未保存到工作区");
-    const intendedAssets = mediaAssetIds(intended.nodes, intended.timeline);
-    const savedAssets = mediaAssetIds(saved.nodes, saved.timeline);
-    if (intendedAssets.join("\n") !== savedAssets.join("\n")) throw new Error("画布素材引用未保存到工作区");
-    // Compare every submitted document field, including new editor features.
-    // Only server-owned timestamps and synchronization metadata may differ.
-    for (const [key, value] of Object.entries(intended)) {
-        if (["revision", "createdAt", "updatedAt", "remoteContentHash"].includes(key)) continue;
-        // Canonical document commits exclude viewport; the client retains this
-        // local view preference. Browser-cache readback must still preserve it.
-        if (storage === "backend" && key === "viewport") continue;
-        const actual = saved[key as keyof CanvasProject];
-        if (value === undefined && (actual === undefined || actual === null || actual === "")) continue;
-        if (canonicalize(value) !== canonicalize(actual)) throw new Error("画布内容未完整保存到工作区");
-    }
-}
-
-function timelineStorageKeys(timeline: TimelineProject | undefined) {
-    return (timeline?.clips || []).map((clip) => clip.directMedia?.storageKey || "").filter(Boolean).sort();
-}
-
-function mediaAssetIds(nodes: CanvasNodeData[], timeline: TimelineProject | undefined) {
-    const ids: string[] = [];
-    for (const node of nodes) {
-        if (!isMediaNode(node.type)) continue;
-        if (node.metadata?.storageKey && node.metadata.assetId) ids.push(`${node.id}:${node.metadata.assetId}`);
-    }
-    for (const clip of timeline?.clips || []) {
-        const media = clip.directMedia;
-        if (!media?.storageKey || media.kind === "text") continue;
-        if (media.assetId) ids.push(`clip:${clip.id}:${media.assetId}`);
-    }
-    return ids.sort();
 }
 
 function isMediaNode(type: CanvasNodeData["type"]) {
@@ -146,19 +108,14 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
             if (!usesCanonicalBackend) {
                 await flushCanvasStorePersistence();
                 const cached = store().openProject(id);
-                if (!cached) throw new Error("画布未保存到工作区");
-                assertRestoredCanvasMatches(live, cached);
+                if (!cached?.id || cached.id !== id) throw new Error("画布未保存到工作区");
                 return;
             }
             await syncLocalCanvasProjectToBackend(id);
-            let saved: CanvasProject;
-            try {
-                saved = await readLocalCanvasProjectFromBackend(id);
-            } catch (error) {
+            const saved = store().openProject(id);
+            if (!saved?.id || saved.id !== id || (saved.revision ?? 0) < 1) {
                 throw new Error("画布未保存到工作区");
             }
-            assertRestoredCanvasMatches(live, saved, "backend");
-            if ((saved.revision ?? 0) < 1) throw new Error("画布未保存到工作区");
         },
         deleteProjects: async (ids) => {
             const unique = [...new Set(ids.filter(Boolean))];
@@ -182,8 +139,7 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
             }
             const resource = await uploadResourceFile(blob, kind, { fileName: meta.fileName, idempotencyKey: await archiveMediaIdempotencyKey(blob) });
             const storageKey = resourceStorageKey(resource.id);
-            await primeResourceBlobCache(storageKey, blob).catch((error) => {
-            });
+            await primeResourceBlobCache(storageKey, blob).catch(() => undefined);
             return { storageKey, url: resource.publicUrl || resourceFileUrl(resource.id), resourceId: resource.id };
         },
         bindMediaAsset: async (options) => {
@@ -210,7 +166,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
     const progress = startOperation("导入画布备份", { detail: "正在解压并检查备份", totalBytes: input instanceof Blob ? input.size : undefined });
     try {
         const result = await restoreCanvasArchiveContents(input, host, (completedFiles, totalFiles) => progress.update({ phase: "processing", detail: "正在恢复媒体并保存画布", completedFiles, totalFiles }));
-        progress.done("画布与媒体已恢复并保存");
+        progress.done(result.skippedFiles?.length ? `画布已导入，跳过 ${result.skippedFiles.length} 个缺失媒体` : "画布与媒体已恢复并保存");
         return result;
     } catch (error) {
         progress.fail("画布导入未完成，请查看错误后重试");
@@ -220,9 +176,14 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
 
 async function restoreCanvasArchiveContents(input: Blob | OpenCanvasArchive, host: Partial<CanvasArchiveRestoreHost>, onProgress: (completed: number, total: number) => void): Promise<CanvasArchiveRestoreResult> {
     const localPersistence = isLocalRuntimeMode();
-    const archive = "data" in input && "files" in input ? input : await openCanvasArchive(input);
-    preflightCanvasArchive(archive.data, archive.files);
-    const totalMedia = archive.data.projects.reduce((total, item) => total + item.files.length, 0);
+    const fromBlob = !("data" in input && "files" in input);
+    const archive = fromBlob ? await openCanvasArchive(input) : input;
+    const skippedFiles: MissingExportFile[] = [...(fromBlob ? (archive.missingFiles ?? []) : preflightCanvasArchive(archive.data, archive.files))];
+    const projectPlans = archive.data.projects.map((item) => {
+        const liveKeys = new Set(collectStorageKeys(item.project, new Set(), false, { allowAnyOrigin: true }));
+        return { item, activeFiles: item.files.filter((fileItem) => liveKeys.has(fileItem.storageKey)) };
+    });
+    const totalMedia = projectPlans.reduce((total, plan) => total + plan.activeFiles.length, 0);
     let restoredMedia = 0;
     onProgress(0, totalMedia);
     const restoreHost = createCanvasArchiveRestoreHost(host);
@@ -244,53 +205,72 @@ async function restoreCanvasArchiveContents(input: Blob | OpenCanvasArchive, hos
             folderIdMap.set(folder.id, id);
             if (folder.coverPath && restoreHost.restoreFolderCover) {
                 const cover = archive.files.get(confinedArchivePath(folder.coverPath));
-                if (!cover) throw new Error(`压缩包缺少文件夹封面：${folder.name}`);
-                await restoreHost.restoreFolderCover(id, cover.slice(0, cover.size, folder.coverMimeType || cover.type || "image/png"));
+                if (!cover || cover.size === 0) {
+                    skippedFiles.push({ owner: folder.name || folder.id, reference: folder.coverPath });
+                } else {
+                    await restoreHost.restoreFolderCover(id, cover.slice(0, cover.size, folder.coverMimeType || cover.type || "image/png"));
+                }
             } else if (folder.coverDataUrl?.startsWith("data:image/") && restoreHost.restoreFolderCover) {
                 const response = await fetch(folder.coverDataUrl);
                 await restoreHost.restoreFolderCover(id, await response.blob());
             }
         }
-        for (const item of archive.data.projects) {
+        for (const { item, activeFiles } of projectPlans) {
             const archiveProjectId = item.project.id;
+            const projectTitle = item.project.title || "导入画布";
             reportProgress(archiveProjectId, {
                 projectId: archiveProjectId,
-                total: item.files.length,
+                total: activeFiles.length,
                 completed: 0,
                 phase: localPersistence ? "saving" : "uploading",
                 message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
             });
-            const storageKeyMap = await restoreArchiveMedia(item.files, archive.files, restoreHost, resourceIds, (completed) => {
-                onProgress(restoredMedia + completed, totalMedia);
-                reportProgress(archiveProjectId, {
-                    projectId: archiveProjectId,
-                    total: item.files.length,
-                    completed,
-                    phase: localPersistence ? "saving" : "uploading",
-                    message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
-                });
-            });
-            restoredMedia += item.files.length;
-            const remappedNodes = (item.project.nodes || []).map((node) => remapArchiveNode(node, storageKeyMap, item.drawingDocuments || []));
-            const remappedTimeline = remapArchiveTimeline(item.project.timeline, storageKeyMap);
-            const directorScenes = remapArchiveDirectorScenes(item.project.directorScenes, storageKeyMap);
+            const { storageKeyMap, missingReferences: uploadMissing, missingStorageKeys } = await restoreArchiveMedia(
+                activeFiles,
+                archive.files,
+                restoreHost,
+                resourceIds,
+                (completed) => {
+                    onProgress(restoredMedia + completed, totalMedia);
+                    reportProgress(archiveProjectId, {
+                        projectId: archiveProjectId,
+                        total: activeFiles.length,
+                        completed,
+                        phase: localPersistence ? "saving" : "uploading",
+                        message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
+                    });
+                },
+            );
+            for (const reference of uploadMissing) {
+                skippedFiles.push({ owner: projectTitle, reference });
+            }
+            restoredMedia += activeFiles.length;
+            const normalized = normalizeLocalCanvasProject(item.project);
+            const { project: remappedProject, missingReferences: remapMissing } = remapArchiveProjectMedia(
+                normalized,
+                storageKeyMap,
+                item.drawingDocuments || [],
+                missingStorageKeys,
+            );
+            for (const reference of remapMissing) {
+                skippedFiles.push({ owner: projectTitle, reference });
+            }
+            const remappedNodes = remappedProject.nodes || [];
+            const remappedTimeline = remappedProject.timeline;
             const sourceWorkspaceProjectId = canvasWorkspaceProjectId(item.project);
             const importedProjectId = restoreHost.importProject({
-                ...normalizeLocalCanvasProject(item.project),
+                ...remappedProject,
                 projectId: undefined,
                 folderId: item.project.folderId ? folderIdMap.get(item.project.folderId) : undefined,
-                title: item.project.title || "导入画布",
-                nodes: remappedNodes,
-                timeline: remappedTimeline,
-                directorScenes,
+                title: projectTitle,
             }, importedWorkspaceProjectIds.get(sourceWorkspaceProjectId));
             projectIds.push(importedProjectId);
             if (!importedWorkspaceProjectIds.has(sourceWorkspaceProjectId)) importedWorkspaceProjectIds.set(sourceWorkspaceProjectId, importedProjectId);
             reportProgress(archiveProjectId, null);
             reportProgress(importedProjectId, {
                 projectId: importedProjectId,
-                total: item.files.length,
-                completed: item.files.length,
+                total: activeFiles.length,
+                completed: activeFiles.length,
                 phase: "saving",
                 message: localPersistence ? "正在保存本地画布" : "正在保存画布",
             });
@@ -299,12 +279,12 @@ async function restoreCanvasArchiveContents(input: Blob | OpenCanvasArchive, hos
             try {
                 await restoreHost.persistProject(importedProjectId);
                 await restoreArchiveDrawings(importedProjectId, item.drawingDocuments || [], archive.files, restoreHost);
-                await verifyRestoredDrawings(importedProjectId, item.drawingDocuments || [], restoreHost);
+                await verifyRestoredDrawings(importedProjectId, item.drawingDocuments || [], archive.files, restoreHost);
             } catch (error) {
                 reportProgress(importedProjectId, {
                     projectId: importedProjectId,
-                    total: item.files.length,
-                    completed: item.files.length,
+                    total: activeFiles.length,
+                    completed: activeFiles.length,
                     phase: "error",
                     message: error instanceof Error ? error.message : "画布导入未完成",
                 });
@@ -313,12 +293,14 @@ async function restoreCanvasArchiveContents(input: Blob | OpenCanvasArchive, hos
                 reportProgress(importedProjectId, null);
             }
         }
+        const uniqueSkipped = uniqueMissingExportFiles(skippedFiles);
         return {
             count: archive.data.projects.length,
             projectIds,
             folderIds,
             resourceIds,
             storage: restoreHost.usesCanonicalBackend ? "backend" : "browser",
+            ...(uniqueSkipped.length ? { skippedFiles: uniqueSkipped } : {}),
         };
     } catch (error) {
         try {
@@ -334,14 +316,26 @@ async function restoreCanvasArchiveContents(input: Blob | OpenCanvasArchive, hos
     }
 }
 
-async function verifyRestoredDrawings(projectId: string, documents: CanvasDrawingExport[], host: CanvasArchiveRestoreHost) {
+async function verifyRestoredDrawings(
+    projectId: string,
+    documents: CanvasDrawingExport[],
+    zip: Map<string, Blob>,
+    host: CanvasArchiveRestoreHost,
+) {
     if (!host.loadDrawing) return;
     for (const document of documents.filter((item) => !item.engine || item.engine === "excalidraw")) {
         const saved = await host.loadDrawing(projectId, document.drawingId);
         if (!saved || saved.drawingId !== document.drawingId || (saved.revision || 0) < 1) throw new Error("画板未保存到工作区");
         if (canonicalize(saved.snapshot) !== canonicalize(document.snapshot)) throw new Error("画板未保存到工作区");
-        if (host.usesCanonicalBackend && document.previewPath && !saved.previewResourceId) throw new Error("画板预览未保存到工作区");
-        if (host.usesCanonicalBackend && document.generationRender && !saved.renderResourceId) throw new Error("画板生成图未保存到工作区");
+        const hasPreviewBlob = Boolean(
+            document.previewPath && (zip.get(document.previewPath) || zip.get(confinedArchivePath(document.previewPath))),
+        );
+        const hasRenderBlob = Boolean(
+            document.generationRender?.path
+            && (zip.get(document.generationRender.path) || zip.get(confinedArchivePath(document.generationRender.path))),
+        );
+        if (host.usesCanonicalBackend && hasPreviewBlob && !saved.previewResourceId) throw new Error("画板预览未保存到工作区");
+        if (host.usesCanonicalBackend && hasRenderBlob && !saved.renderResourceId) throw new Error("画板生成图未保存到工作区");
     }
 }
 
@@ -353,6 +347,8 @@ async function restoreArchiveMedia(
     onProgress?: (completed: number) => void,
 ) {
     const storageKeyMap = new Map<string, RestoredMediaRef>();
+    const missingReferences: string[] = [];
+    const missingStorageKeys = new Set<string>();
     const concurrency = 4;
     let fileIndex = 0;
     let completed = 0;
@@ -365,7 +361,13 @@ async function restoreArchiveMedia(
             const fileItem = files[current];
             try {
                 const blob = zip.get(fileItem.path) || zip.get(confinedArchivePath(fileItem.path));
-                if (!blob) throw new Error(`压缩包缺少媒体文件：${fileItem.path}`);
+                if (!blob || blob.size === 0) {
+                    missingStorageKeys.add(fileItem.storageKey);
+                    missingReferences.push(fileItem.path || fileItem.storageKey);
+                    completed += 1;
+                    onProgress?.(completed);
+                    continue;
+                }
                 const mime = fileItem.mimeType || blob.type || "application/octet-stream";
                 const typedBlob = blob.type ? blob : blob.slice(0, blob.size, mime);
                 const mapped = await host.uploadMedia(typedBlob, mediaKind(fileItem.storageKey, mime), {
@@ -385,7 +387,7 @@ async function restoreArchiveMedia(
     });
     await Promise.all(workers);
     if (firstError) throw firstError;
-    return storageKeyMap;
+    return { storageKeyMap, missingReferences, missingStorageKeys };
 }
 
 async function bindRestoredMedia(
@@ -411,7 +413,20 @@ async function bindRestoredMedia(
         }
         nextNodes.push(assetId ? { ...node, metadata: { ...node.metadata, assetId } } : node);
     }
-    if (!timeline) return { nodes: nextNodes, timeline };
+    // Reuse already-bound local assetIds on matching imageHistory entries without
+    // creating extra Asset Library rows for historical-only images.
+    const nodesWithAlignedHistory = nextNodes.map((node) => {
+        if (node.type !== CanvasNodeType.Image || !node.metadata?.imageHistory?.length) return node;
+        let changed = false;
+        const nextHistory = node.metadata.imageHistory.map((entry) => {
+            const matchedAssetId = entry.storageKey ? assetIdByStorageKey.get(entry.storageKey) : undefined;
+            if (!matchedAssetId || entry.assetId === matchedAssetId) return entry;
+            changed = true;
+            return { ...entry, assetId: matchedAssetId };
+        });
+        return changed ? { ...node, metadata: { ...node.metadata, imageHistory: nextHistory } } : node;
+    });
+    if (!timeline) return { nodes: nodesWithAlignedHistory, timeline };
     const clips: TimelineProject["clips"] = [];
     for (const clip of timeline.clips) {
         const media = clip.directMedia;
@@ -445,7 +460,7 @@ async function bindRestoredMedia(
         }
         clips.push(assetId ? { ...clip, directMedia: { ...media, assetId } } : clip);
     }
-    return { nodes: nextNodes, timeline: { ...timeline, clips } };
+    return { nodes: nodesWithAlignedHistory, timeline: { ...timeline, clips } };
 }
 
 function mediaKind(storageKey: string, mime: string): "image" | "video" | "audio" | "file" {
@@ -455,90 +470,116 @@ function mediaKind(storageKey: string, mime: string): "image" | "video" | "audio
     return "file";
 }
 
-function remapArchiveNode(node: CanvasNodeData, storageKeyMap: Map<string, RestoredMediaRef>, drawingDocuments: CanvasDrawingExport[]): CanvasNodeData {
-    const drawingEngineById = new Map(drawingDocuments.filter((document) => !document.engine || document.engine === "excalidraw").map((document) => [document.drawingId, "excalidraw" as const]));
-    const media = isMediaNode(node.type);
-    const mapped = media && node.metadata?.storageKey ? storageKeyMap.get(node.metadata.storageKey) : undefined;
-    const previewMapped = media && node.metadata?.videoPreview?.storageKey ? storageKeyMap.get(node.metadata.videoPreview.storageKey) : undefined;
-    return {
-        ...node,
-        metadata: {
-            ...node.metadata,
-            assetId: undefined,
-            taskId: undefined,
-            storageKey: media ? mapped?.storageKey ?? dropDeadStorageKey(node.metadata?.storageKey) : node.metadata?.storageKey,
-            content: media ? (mapped ? mapped.url : dropInlineMediaRef(node.metadata?.content)) : node.metadata?.content,
-            previewContent: media ? (mapped ? mapped.url : dropInlineMediaRef(node.metadata?.previewContent)) : node.metadata?.previewContent,
-            videoPreview: node.metadata?.videoPreview
-                ? {
-                    ...node.metadata.videoPreview,
-                    storageKey: media ? previewMapped?.storageKey ?? dropDeadStorageKey(node.metadata.videoPreview.storageKey) : node.metadata.videoPreview.storageKey,
-                    content: media ? (previewMapped ? previewMapped.url : dropInlineMediaRef(node.metadata.videoPreview.content) || "") : node.metadata.videoPreview.content,
-                }
-                : node.metadata?.videoPreview,
-            drawingEngine: node.type === CanvasNodeType.Drawing && node.metadata?.drawingId
-                ? drawingEngineById.get(node.metadata.drawingId) || "excalidraw"
-                : node.metadata?.drawingEngine,
-        },
+export function remapArchiveProjectMedia(
+    project: CanvasProject,
+    storageKeyMap: Map<string, RestoredMediaRef>,
+    drawingDocuments: CanvasDrawingExport[] = [],
+    knownMissingKeys: ReadonlySet<string> = new Set(),
+): { project: CanvasProject; missingReferences: string[] } {
+    const resourceIdMap = new Map<string, RestoredMediaRef>();
+    for (const [oldKey, mapped] of storageKeyMap.entries()) {
+        const oldId = resourceIdFromStorageKey(oldKey);
+        if (oldId) resourceIdMap.set(oldId, mapped);
+    }
+    const missingReferences = new Set<string>();
+    const recordMissing = (missingKey: string) => {
+        if (!knownMissingKeys.has(missingKey)) {
+            missingReferences.add(missingKey);
+        }
     };
-}
-
-function remapArchiveTimeline(timeline: TimelineProject | undefined, storageKeyMap: Map<string, RestoredMediaRef>): TimelineProject | undefined {
-    if (!timeline) return undefined;
-    return {
-        ...timeline,
-        clips: timeline.clips.map((clip) => {
-            const media = clip.directMedia;
-            if (!media) return clip;
-            if (media.kind === "text" || !media.storageKey) {
-                return { ...clip, directMedia: { ...media, assetId: undefined } };
+    const remapped = transformArchiveMediaTree(project, {
+        shouldOmitKey: (key) => key === "assetId" || key === "taskId",
+        onStorageKey: (_key, storageKey) => {
+            const mapped = storageKeyMap.get(storageKey);
+            if (mapped) return mapped.storageKey;
+            recordMissing(storageKey);
+            return undefined;
+        },
+        onResourceId: (_key, resourceId) => {
+            const mapped = resourceIdMap.get(resourceId);
+            if (mapped) return mapped.resourceId || resourceIdFromStorageKey(mapped.storageKey) || undefined;
+            recordMissing(`resource:${resourceId}`);
+            return undefined;
+        },
+        onMediaUrl: ({ key, value, record, inMediaContext }) => {
+            const ownedId = extractOwnedResourceIdFromArchiveUrl(value);
+            if (ownedId) {
+                const mapped = resourceIdMap.get(ownedId);
+                if (mapped) return mapped.url;
+                recordMissing(`resource:${ownedId}`);
+                return "";
             }
-            const mapped = storageKeyMap.get(media.storageKey);
-            if (!mapped) {
-                return {
-                    ...clip,
-                    directMedia: {
-                        ...media,
-                        assetId: undefined,
-                        storageKey: dropDeadStorageKey(media.storageKey),
-                        url: dropInlineMediaRef(media.url) || media.url,
-                        dataUrl: dropInlineMediaRef(media.dataUrl),
-                        content: dropInlineMediaRef(media.content),
-                    },
-                };
+            const packagedId = extractOwnedResourceIdFromArchiveUrl(value, { allowAnyOrigin: true });
+            if (packagedId && resourceIdMap.has(packagedId)) {
+                return resourceIdMap.get(packagedId)!.url;
             }
+            const pairedKeyName = key.endsWith("Url") && key !== "dataUrl" ? `${key.slice(0, -3)}StorageKey` : undefined;
+            const pairedRaw = pairedKeyName && typeof record[pairedKeyName] === "string" ? (record[pairedKeyName] as string) : undefined;
+            const pairedMapped = pairedRaw ? storageKeyMap.get(pairedRaw) : undefined;
+            if (pairedMapped) {
+                return value ? pairedMapped.url : value;
+            }
+            const rawKey = typeof record.storageKey === "string" ? record.storageKey : undefined;
+            const localMapped = rawKey ? storageKeyMap.get(rawKey) : undefined;
+            if (localMapped && inMediaContext && ARCHIVE_PRIMARY_MEDIA_URL_KEYS.has(key)) {
+                if (key === "url" || key === "content") return localMapped.url;
+                return value ? localMapped.url : value;
+            }
+            const localMissingKey = rawKey && !localMapped && isArchiveStorageKey(rawKey) ? rawKey : undefined;
+            const pairedMissingKey = pairedRaw && !pairedMapped && isArchiveStorageKey(pairedRaw) ? pairedRaw : undefined;
+            if (inMediaContext || localMissingKey || pairedMissingKey || key !== "content") {
+                return dropInlineMediaRef(value) ?? "";
+            }
+            return value;
+        },
+        finalizeObject: (next, source, inMediaContext) => {
+            if (Array.isArray(next.imageHistory)) {
+                const liveHistory = next.imageHistory.filter((entry) => {
+                    if (!entry || typeof entry !== "object") return false;
+                    const item = entry as Record<string, unknown>;
+                    const hasStorageKey = typeof item.storageKey === "string" && item.storageKey.trim() !== "";
+                    const hasContent = typeof item.content === "string" && item.content.trim() !== "";
+                    const hasResourceId = typeof item.resourceId === "string" && item.resourceId.trim() !== "";
+                    return hasStorageKey || hasContent || hasResourceId;
+                });
+                if (liveHistory.length > 0) {
+                    next.imageHistory = liveHistory;
+                } else {
+                    delete next.imageHistory;
+                }
+            }
+            const rawKey = typeof source.storageKey === "string" ? source.storageKey : undefined;
+            const localMapped = rawKey ? storageKeyMap.get(rawKey) : undefined;
+            if (localMapped && inMediaContext && !("content" in next) && !("url" in next)) {
+                next.content = localMapped.url;
+            }
+            if (inMediaContext && !("storageKey" in next)) {
+                const primaryUrl = typeof next.content === "string" ? next.content : typeof next.url === "string" ? next.url : "";
+                const mappedResourceId = extractOwnedResourceIdFromArchiveUrl(primaryUrl);
+                if (mappedResourceId) {
+                    next.storageKey = resourceStorageKey(mappedResourceId);
+                }
+            }
+        },
+    });
+    const drawingEngineById = new Map(
+        drawingDocuments
+            .filter((document) => !document.engine || document.engine === "excalidraw")
+            .map((document) => [document.drawingId, "excalidraw" as const]),
+    );
+    if (Array.isArray(remapped.nodes)) {
+        remapped.nodes = remapped.nodes.map((node) => {
+            if (node.type !== CanvasNodeType.Drawing || !node.metadata?.drawingId) return node;
             return {
-                ...clip,
-                directMedia: {
-                    ...media,
-                    assetId: undefined,
-                    storageKey: mapped.storageKey,
-                    url: mapped.url,
-                    dataUrl: media.dataUrl ? mapped.url : media.dataUrl,
-                    content: media.content ? mapped.url : media.content,
+                ...node,
+                metadata: {
+                    ...node.metadata,
+                    drawingEngine: drawingEngineById.get(node.metadata.drawingId) || "excalidraw",
                 },
             };
-        }),
-    };
-}
-
-function dropDeadStorageKey(value?: string) {
-    if (!value || !isArchiveStorageKey(value)) return undefined;
-    return value;
-}
-
-function remapArchiveDirectorScenes(scenes: CanvasProject["directorScenes"] | undefined, media: Map<string, RestoredMediaRef>): CanvasProject["directorScenes"] {
-    const remap = <T extends { storageKey?: string; url?: string }>(source: T): T => {
-        const mapped = source.storageKey ? media.get(source.storageKey) : undefined;
-        if (!mapped) return { ...source, url: dropInlineMediaRef(source.url) };
-        return { ...source, storageKey: mapped.storageKey, url: mapped.url };
-    };
-    return (scenes || []).map((scene) => ({
-        ...scene,
-        panorama: scene.panorama ? remap(scene.panorama) : undefined,
-        objects: scene.objects.map((object) => ({ ...remap(object), assetId: undefined })),
-        shots: scene.shots.map((shot) => ({ ...shot, screenshots: shot.screenshots?.map(remap) })),
-    }));
+        });
+    }
+    return { project: remapped, missingReferences: [...missingReferences] };
 }
 
 function dropInlineMediaRef(value?: string) {

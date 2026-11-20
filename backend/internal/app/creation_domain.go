@@ -1,9 +1,6 @@
 package app
 
 import (
-	"encoding/json"
-
-	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/creation"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -12,9 +9,6 @@ func (s *Service) Creation() *creation.Service { return s.creationDomain() }
 func (s *Service) creationDomain() *creation.Service {
 	return creation.NewFromConfig(s.repo, creation.HostConfig{
 		StorageLock: &s.storageMu, PrepareTask: s.CreateLocalTask, RuntimePolicy: s.runtimePolicyWithRepo, ProtectSecrets: s.protectTaskSecrets,
-		ValidateDocument: func(u string, repo *repository.Repository, raw json.RawMessage) error {
-			return canvas.New(repo, newCanvasHostWithRepo(s, repo)).ValidateCanvasMediaAssets(u, raw)
-		},
 		UsesTextReplay: isTextReplayTaskRequest, FormatTask: taskForOutput,
 	})
 }

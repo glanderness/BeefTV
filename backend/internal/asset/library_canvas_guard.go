@@ -10,9 +10,8 @@ import (
 )
 
 type CanvasMediaReference struct {
-	AssetID     string
-	ResourceID  string
-	FromHistory bool
+	AssetID    string
+	ResourceID string
 }
 
 func CanvasMediaReferences(raw json.RawMessage) ([]CanvasMediaReference, error) {
@@ -63,9 +62,8 @@ func CanvasMediaReferences(raw json.RawMessage) ([]CanvasMediaReference, error) 
 					continue
 				}
 				references = append(references, CanvasMediaReference{
-					AssetID:     strings.TrimSpace(hist.AssetID),
-					ResourceID:  histResID,
-					FromHistory: true,
+					AssetID:    strings.TrimSpace(hist.AssetID),
+					ResourceID: histResID,
 				})
 			}
 		}
@@ -116,7 +114,7 @@ func (l *Library) guardCanvasReferences(userID string, items []model.Asset, repl
 			return kernel.BadAuthRequest(parseMessage)
 		}
 		for _, reference := range references {
-			if reference.FromHistory && reference.AssetID == "" {
+			if reference.AssetID == "" {
 				continue
 			}
 			if replacement {

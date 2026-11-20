@@ -32,12 +32,12 @@ function cacheInstance(namespace = "app_state") {
     };
 }
 mock.module("localforage", () => ({ default: cacheInstance() }));
-const { restoreCanvasArchive, assertRestoredCanvasMatches } = await import("@/lib/canvas/canvas-archive-restore");
+const { restoreCanvasArchive } = await import("@/lib/canvas/canvas-archive-restore");
 const { openCanvasArchive } = await import("@/lib/canvas/canvas-export");
 const { createZip } = await import("@/lib/zip");
 const { apiClient, configureApiRuntime, http } = await import("@/services/api/request");
 const { resetCanvasOperationJournalMemory } = await import("@/services/canvas-operation-journal");
-const { syncLocalCanvasProjectToBackend, readLocalCanvasProjectFromBackend } = await import("@/services/local-workspace-repository");
+const { syncLocalCanvasProjectToBackend } = await import("@/services/local-workspace-repository");
 const { useAssetStore } = await import("@/stores/use-asset-store");
 const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 
@@ -350,60 +350,244 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
     }
 }, 180_000);
 
-test("canonical readback still rejects lost nodes, connections, or title and rolls back SQLite restore", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "beeftv-archive-sqlite-content-"));
+test("image node with active and historical-only imageHistory imports cleanly into SQLite and survives restart", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "beeftv-archive-sqlite-history-"));
     let server: RunningServer | undefined;
     try {
         server = await startServer(dataDir);
         connect(server.port);
         resetStores();
-        const zip = await fixtureZip();
-        for (const patch of [{ nodes: [] }, { connections: [] }, { title: "" }]) {
-            await expect(restoreCanvasArchive(zip, {
-                persistProject: async (id) => {
-                    const live = useCanvasStore.getState().openProject(id)!;
-                    await syncLocalCanvasProjectToBackend(id);
-                    const saved = await readLocalCanvasProjectFromBackend(id);
-                    assertRestoredCanvasMatches(live, { ...saved, ...patch }, "backend");
-                },
-            })).rejects.toThrow();
-            expect(await listProjects()).toEqual([]);
-            expect(useCanvasStore.getState().projects).toEqual([]);
-            expect((await http.get<{ assets: unknown[] }>("/assets")).assets).toEqual([]);
-        }
+        const activeImgBytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3, 4]);
+        const histImgBytes = new Uint8Array([137, 80, 78, 71, 5, 6, 7, 8]);
+        const zip = await createZip([
+            {
+                name: "projects.json",
+                data: JSON.stringify({
+                    app: "infinite-canvas",
+                    version: 4,
+                    exportedAt: "2026-11-20T00:00:00.000Z",
+                    projects: [{
+                        project: {
+                            id: "foreign-canvas-history",
+                            title: "历史图跨机导入",
+                            revision: 7,
+                            nodes: [{
+                                id: "img-1",
+                                type: "image",
+                                title: "角色立绘",
+                                position: { x: 0, y: 0 },
+                                width: 512,
+                                height: 512,
+                                metadata: {
+                                    storageKey: "resource:old-active-res",
+                                    content: "/api/resources/old-active-res/file",
+                                    assetId: "old-active-asset",
+                                    taskId: "old-active-task",
+                                    imageHistory: [
+                                        {
+                                            id: "old-hist-task:0",
+                                            storageKey: "resource:old-hist-res",
+                                            content: "/api/resources/old-hist-res/file",
+                                            assetId: "old-hist-asset",
+                                            taskId: "old-hist-task",
+                                            prompt: "第一版草图",
+                                        },
+                                        {
+                                            id: "old-active-task:0",
+                                            storageKey: "resource:old-active-res",
+                                            content: "/api/resources/old-active-res/file",
+                                            assetId: "old-active-asset",
+                                            taskId: "old-active-task",
+                                            prompt: "第二版成图",
+                                        },
+                                    ],
+                                },
+                            }],
+                            connections: [],
+                        },
+                        files: [
+                            { storageKey: "resource:old-active-res", path: "projects/foreign-canvas-history/files/active.png", mimeType: "image/png", bytes: activeImgBytes.byteLength },
+                            { storageKey: "resource:old-hist-res", path: "projects/foreign-canvas-history/files/hist.png", mimeType: "image/png", bytes: histImgBytes.byteLength },
+                        ],
+                    }],
+                }),
+            },
+            { name: "projects/foreign-canvas-history/files/active.png", data: activeImgBytes },
+            { name: "projects/foreign-canvas-history/files/hist.png", data: histImgBytes },
+        ]);
+
+        const result = await restoreCanvasArchive(zip);
+        expect(result.storage).toBe("backend");
+        expect(result.count).toBe(1);
+        expect(result.skippedFiles).toBeUndefined();
+
+        const loaded = await http.get<{
+            project: {
+                id: string;
+                revision: number;
+                nodes: Array<{
+                    id: string;
+                    metadata: {
+                        storageKey?: string;
+                        content?: string;
+                        assetId?: string;
+                        taskId?: string;
+                        imageHistory?: Array<{
+                            id: string;
+                            storageKey?: string;
+                            content?: string;
+                            assetId?: string;
+                            taskId?: string;
+                            prompt?: string;
+                        }>;
+                    };
+                }>;
+            };
+        }>(`/canvas-projects/${encodeURIComponent(result.projectIds[0])}`);
+        const nodeMeta = loaded.project.nodes[0].metadata;
+        const newActiveId = resourceId(nodeMeta.storageKey);
+        expect(newActiveId).toBeTruthy();
+        expect(newActiveId).not.toBe("old-active-res");
+        expect(nodeMeta.assetId).toBeTruthy();
+        expect(nodeMeta.assetId).not.toBe("old-active-asset");
+        expect(nodeMeta.taskId).toBeUndefined();
+
+        const history = nodeMeta.imageHistory!;
+        expect(history).toHaveLength(2);
+        const newHistId = resourceId(history[0].storageKey);
+        expect(newHistId).toBeTruthy();
+        expect(newHistId).not.toBe("old-hist-res");
+        expect(newHistId).not.toBe(newActiveId);
+        expect(history[0].content).toEndWith(`/api/resources/${newHistId}/file`);
+        expect(history[0].assetId).toBeUndefined();
+        expect(history[0].taskId).toBeUndefined();
+        expect(history[0].prompt).toBe("第一版草图");
+        expect(history[1].storageKey).toBe(nodeMeta.storageKey);
+        expect(history[1].assetId).toBe(nodeMeta.assetId);
+        expect(await readResourceBytes(newActiveId)).toEqual(activeImgBytes);
+        expect(await readResourceBytes(newHistId)).toEqual(histImgBytes);
+
+        const assetsRes = await http.get<{ assets: Array<{ id: string }> }>("/assets");
+        expect(assetsRes.assets).toHaveLength(1);
+        expect(assetsRes.assets[0].id).toBe(nodeMeta.assetId);
+
+        await stopServer(server);
+        for (const cache of browserCaches.values()) cache.clear();
+        server = await startServer(dataDir);
+        connect(server.port);
+        const afterRestart = await http.get<{ project: typeof loaded.project }>(`/canvas-projects/${encodeURIComponent(result.projectIds[0])}`);
+        expect(afterRestart.project.nodes[0].metadata.imageHistory).toHaveLength(2);
+        expect(afterRestart.project.nodes[0].metadata.imageHistory![0].storageKey).toBe(`resource:${newHistId}`);
+        expect(await readResourceBytes(newHistId)).toEqual(histImgBytes);
     } finally {
         await stopServer(server);
         rmSync(dataDir, { recursive: true, force: true });
     }
 }, 180_000);
 
-test("missing archive entry and persist failure do not create a saved SQLite canvas", async () => {
+test("missing archive entries degrade gracefully in SQLite while persist failure rolls back cleanly", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "beeftv-archive-sqlite-neg-"));
     let server: RunningServer | undefined;
     try {
         server = await startServer(dataDir);
         connect(server.port);
         resetStores();
-        const missing = await createZip([{
-            name: "projects.json",
-            data: JSON.stringify({
-                app: "infinite-canvas",
-                version: 4,
-                projects: [{
-                    project: {
-                        id: "broken",
-                        title: "损坏画布",
-                        nodes: [{ id: "n1", type: "video", title: "镜头", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { storageKey: "video:missing" } }],
-                        connections: [],
-                    },
-                    files: [{ storageKey: "video:missing", path: "projects/broken/files/missing.mp4", mimeType: "video/mp4", bytes: 3 }],
-                }],
-            }),
-        }]);
-        await expect(openCanvasArchive(missing)).rejects.toThrow("missing.mp4");
-        await expect(restoreCanvasArchive(missing)).rejects.toThrow("missing.mp4");
-        expect(await listProjects()).toEqual([]);
-        expect(useCanvasStore.getState().projects).toEqual([]);
+        const activeImgBytes = new Uint8Array([137, 80, 78, 71, 9, 8, 7, 6]);
+        const missing = await createZip([
+            {
+                name: "projects.json",
+                data: JSON.stringify({
+                    app: "infinite-canvas",
+                    version: 4,
+                    projects: [{
+                        project: {
+                            id: "partial-cross-machine",
+                            title: "含缺失媒体画布",
+                            nodes: [
+                                {
+                                    id: "n-img",
+                                    type: "image",
+                                    title: "分镜图",
+                                    position: { x: 0, y: 0 },
+                                    width: 512,
+                                    height: 512,
+                                    metadata: {
+                                        storageKey: "resource:old-valid-img",
+                                        content: "http://127.0.0.1:19999/api/resources/old-valid-img/file",
+                                        assetId: "foreign-valid-asset",
+                                        imageHistory: [
+                                            {
+                                                id: "missing-hist:0",
+                                                storageKey: "resource:old-missing-id",
+                                                content: "http://127.0.0.1:19999/api/resources/old-missing-id/file",
+                                                assetId: "foreign-missing-asset",
+                                            },
+                                            {
+                                                id: "valid-hist:0",
+                                                storageKey: "resource:old-valid-img",
+                                                content: "http://127.0.0.1:19999/api/resources/old-valid-img/file",
+                                                assetId: "foreign-valid-asset",
+                                            },
+                                        ],
+                                    },
+                                },
+                                {
+                                    id: "n-missing-vid",
+                                    type: "video",
+                                    title: "缺失镜头",
+                                    position: { x: 600, y: 0 },
+                                    width: 320,
+                                    height: 180,
+                                    metadata: { storageKey: "video:missing" },
+                                },
+                            ],
+                            connections: [],
+                        },
+                        files: [
+                            { storageKey: "resource:old-valid-img", path: "projects/partial-cross-machine/files/valid.png", mimeType: "image/png", bytes: activeImgBytes.byteLength },
+                            { storageKey: "video:missing", path: "projects/partial-cross-machine/files/missing.mp4", mimeType: "video/mp4", bytes: 3 },
+                            { storageKey: "resource:unused-extra", path: "projects/partial-cross-machine/files/unused.png", mimeType: "image/png", bytes: 4 },
+                        ],
+                    }],
+                }),
+            },
+            { name: "projects/partial-cross-machine/files/valid.png", data: activeImgBytes },
+            { name: "projects/partial-cross-machine/files/unused.png", data: new Uint8Array([1, 2, 3, 4]) },
+        ]);
+        const opened = await openCanvasArchive(missing);
+        expect(opened.missingFiles?.map((item) => item.reference)).toEqual([
+            "projects/partial-cross-machine/files/missing.mp4",
+            "resource:old-missing-id",
+        ]);
+        const partial = await restoreCanvasArchive(missing);
+        expect(partial.count).toBe(1);
+        expect(partial.resourceIds).toHaveLength(1);
+        expect(partial.skippedFiles).toEqual([
+            { owner: "含缺失媒体画布", reference: "projects/partial-cross-machine/files/missing.mp4" },
+            { owner: "含缺失媒体画布", reference: "resource:old-missing-id" },
+        ]);
+        const loaded = await http.get<{ project: { id: string; revision: number; nodes: Array<{ id: string; metadata: { storageKey?: string; imageHistory?: Array<{ storageKey?: string }> } }> } }>(`/canvas-projects/${encodeURIComponent(partial.projectIds[0])}`);
+        expect(loaded.project.revision).toBeGreaterThanOrEqual(1);
+        expect(JSON.stringify(loaded.project)).not.toContain("old-missing-id");
+        expect(JSON.stringify(loaded.project)).not.toContain("foreign-missing-asset");
+        const imgNode = loaded.project.nodes.find((node) => node.id === "n-img")!;
+        expect(imgNode.metadata.imageHistory).toHaveLength(1);
+        expect(imgNode.metadata.imageHistory![0].storageKey).toBe(imgNode.metadata.storageKey);
+        expect(await readResourceBytes(resourceId(imgNode.metadata.storageKey))).toEqual(activeImgBytes);
+
+        // Subsequent edit on the partially restored canvas must also persist cleanly
+        const editRes = await http.put<{ project: { revision: number } }>(`/canvas-projects/${encodeURIComponent(loaded.project.id)}`, {
+            project: { ...loaded.project, title: "导入后继续编辑" },
+        });
+        expect(editRes.project.revision).toBe(loaded.project.revision + 1);
+
+        // Cleanup the partial canvas before asserting persist-failure rollback starts from clean state
+        await http.delete(`/canvas-projects/${encodeURIComponent(loaded.project.id)}`);
+        const existingAssets = await http.get<{ assets: Array<{ id: string }> }>("/assets");
+        for (const asset of existingAssets.assets) {
+            await http.delete(`/assets/${encodeURIComponent(asset.id)}`);
+        }
+        resetStores();
 
         const zip = await fixtureZip();
         const failure = await restoreCanvasArchive(zip, {

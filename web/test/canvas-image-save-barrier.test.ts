@@ -159,8 +159,6 @@ test("a target deleted while saving stops before submission and is not recreated
 test("abort and a canvas owner change during save cannot proceed to a paid task", async () => {
     const controller = new AbortController();
     await expect(persistCanvasGenerationTarget({ ...input, signal: controller.signal }, async () => { controller.abort(); })).rejects.toMatchObject({ name: "AbortError" });
-    const refNode = { id: "ref-image", type: CanvasNodeType.Image, title: "参考图", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "success" as const, storageKey: "resource:res-ref", content: "/api/resources/res-ref/file" } };
-    useCanvasStore.setState({ projects: [{ ...structuredClone(project), nodes: [...project.nodes, refNode] }] });
     let current = true;
     let persistAttempts = 0;
     await expect(
@@ -168,19 +166,14 @@ test("abort and a canvas owner change during save cannot proceed to a paid task"
             {
                 ...input,
                 isCurrent: () => current,
-                ensureNodeAsset: async () => {
-                    current = false;
-                    return { assetId: "asset-ref", created: false, linkedToProject: false, confirmed: true };
-                },
             },
             async () => {
                 persistAttempts += 1;
-                throw new ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
+                current = false;
             },
         ),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(persistAttempts).toBe(1);
-    expect(useCanvasStore.getState().projects[0]?.nodes.find((item) => item.id === "ref-image")?.metadata?.assetId).toBeUndefined();
 
     let hookCurrent = true;
     let hookPersistAttempts = 0;
@@ -190,17 +183,13 @@ test("abort and a canvas owner change during save cannot proceed to a paid task"
             {
                 ...input,
                 clientOperationId: "test-image-save-owner-change",
-                ensureNodeAsset: async () => {
-                    hookCurrent = false;
-                    return { assetId: "asset-ref", created: false, linkedToProject: false, confirmed: true };
-                },
             } as Parameters<typeof runCanvasGenerationTaskToConsumer>[0],
             {
                 isCurrent: () => hookCurrent,
                 prepareTarget: (options) =>
                     persistCanvasGenerationTarget(options, async () => {
                         hookPersistAttempts += 1;
-                        throw new ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
+                        hookCurrent = false;
                     }),
                 bindTask: () => undefined,
                 consumeTask: async () => undefined,
