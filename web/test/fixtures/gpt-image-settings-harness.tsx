@@ -7,11 +7,11 @@ import { defaultModelCapabilityConfig } from "../../src/lib/model-capabilities";
 import { submitBackendGenerationTask } from "../../src/services/api/generation-task";
 import { qualityOptions } from "../../src/pages/create/creation-types";
 
-const models = ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"];
+const models = ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "dola-seedream-5-0-pro-260628", "doubao-seedream-5-0-260128"];
 const legacyProfile = defaultModelCapabilityConfig("openai-image", "gpt-image-2");
 legacyProfile.image!.quality = { supported: true, values: ["auto", "low", "medium", "high"], default: "auto" };
 const channel = createModelChannel({ id: "beeftv", baseUrl: "https://beeftv.app/v1", apiKey: "fixture-only", models,
-    modelProfiles: models.map((model) => ({ model, capability: "image", protocol: "openai-image", capabilityConfig: legacyProfile })) });
+    modelProfiles: models.map((model) => ({ model, capability: "image", protocol: "openai-image", capabilityConfig: model.includes("seedream") ? defaultModelCapabilityConfig("openai-image", model) : legacyProfile })) });
 
 function Harness() {
     const [config, setConfig] = useState<AiConfig>(() => normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "beeftv::gpt-image-2", imageModel: "beeftv::gpt-image-2", quality: "auto", size: "1024x1024", count: "1" } }).config);

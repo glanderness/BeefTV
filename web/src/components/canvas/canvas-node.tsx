@@ -15,7 +15,6 @@ import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 import { canNodeAcceptInputConnection, canNodeOutputConnection, getNodeMinSize, shouldKeepAspectRatio } from "@/lib/canvas/node-registry";
 import { CanvasNodeContent } from "./canvas-node-content";
 import { CanvasVideoCropEditor, type CanvasVideoCropRect } from "./canvas-video-crop-dialog";
@@ -150,6 +149,12 @@ export const CanvasNode = React.memo(function CanvasNode({
 }: CanvasNodeProps) {
     const theme = canvasThemes[useActiveTheme()];
     const [hovered, setHovered] = useState(false);
+    const pointerInsideRef = useRef(false);
+    const deferredHoverObserverRef = useRef<MutationObserver | null>(null);
+    useEffect(() => () => {
+        deferredHoverObserverRef.current?.disconnect();
+        deferredHoverObserverRef.current = null;
+    }, []);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title);
@@ -343,6 +348,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             data-media-operation-error={data.metadata?.mediaOperationError || undefined}
             data-node-hovered={hovered ? "true" : undefined}
             data-node-lod-pinned={lodPinned ? "true" : undefined}
+            data-reduce-media-effects={reduceMediaEffects ? "true" : undefined}
             data-asset-category={data.metadata?.assetCategory || undefined}
             className={`node-element absolute flex select-none flex-col ${dragOffset ? "cursor-grabbing" : data.type === CanvasNodeType.Drawing ? "cursor-pointer" : "cursor-default"} ${isSelected ? "z-[var(--z-node-toolbar)]" : isFocusRelated || isConnectionTarget ? "z-[var(--z-node-active)]" : "z-[var(--z-node)]"}`}
             style={{
@@ -351,11 +357,42 @@ export const CanvasNode = React.memo(function CanvasNode({
                 height: data.height,
                 contain: "layout style",
             }}
-            onMouseEnter={() => {
+            onMouseEnter={(event) => {
+                pointerInsideRef.current = true;
+                const el = event.currentTarget;
+                const interactingHost = el.closest('[data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]');
+                if (interactingHost) {
+                    deferredHoverObserverRef.current?.disconnect();
+                    if (typeof MutationObserver !== "undefined") {
+                        const observer = new MutationObserver(() => {
+                            if (!pointerInsideRef.current || !el.isConnected) {
+                                observer.disconnect();
+                                deferredHoverObserverRef.current = null;
+                                return;
+                            }
+                            if (!el.closest('[data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]')) {
+                                observer.disconnect();
+                                deferredHoverObserverRef.current = null;
+                                setHovered(true);
+                                onHoverStart(data.id);
+                            }
+                        });
+                        observer.observe(interactingHost, {
+                            attributes: true,
+                            attributeFilter: ["data-canvas-viewport-interacting", "data-canvas-node-dragging"],
+                        });
+                        deferredHoverObserverRef.current = observer;
+                    }
+                    return;
+                }
                 setHovered(true);
                 onHoverStart(data.id);
             }}
             onMouseLeave={() => {
+                pointerInsideRef.current = false;
+                deferredHoverObserverRef.current?.disconnect();
+                deferredHoverObserverRef.current = null;
+                if (!hovered) return;
                 setHovered(false);
                 onHoverEnd(data.id);
             }}
@@ -832,7 +869,6 @@ function nodeTypeIcon(type: CanvasNodeTypeId) {
     if (type === CanvasNodeType.Script) return Clapperboard;
     if (type === CanvasNodeType.Config) return Settings2;
     if (type === CanvasNodeType.Skill) return BookOpenCheck;
-    if (type === ART_CRITIQUE_NODE_TYPE) return ScanSearch;
     return FileText;
 }
 

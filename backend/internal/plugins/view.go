@@ -12,19 +12,21 @@ import (
 // center. Protocol-specific runtime data stays nested under Manifest so the
 // public plugin contract can grow without adding another center API.
 type View struct {
-	Manifest    ManifestView   `json:"manifest"`
-	Source      string         `json:"source"`
-	FileName    string         `json:"fileName"`
-	Package     string         `json:"package"`
-	PackageDir  string         `json:"packageDir,omitempty"`
-	PackageSpec string         `json:"packageSpec,omitempty"`
-	SkillDirs   []string       `json:"skillDirs,omitempty"`
-	SHA256      string         `json:"sha256"`
-	InstalledAt time.Time      `json:"installedAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
-	Status      string         `json:"status"`
-	Error       string         `json:"error,omitempty"`
-	Management  ManagementView `json:"management"`
+	Manifest        ManifestView   `json:"manifest"`
+	Source          string         `json:"source"`
+	FileName        string         `json:"fileName"`
+	Package         string         `json:"package"`
+	PackageDir      string         `json:"packageDir,omitempty"`
+	PackageSpec     string         `json:"packageSpec,omitempty"`
+	SkillDirs       []string       `json:"skillDirs,omitempty"`
+	SHA256          string         `json:"sha256"`
+	ArchiveSHA256   string         `json:"archiveSha256,omitempty"`
+	PartnerPresetID string         `json:"partnerPresetId,omitempty"`
+	InstalledAt     time.Time      `json:"installedAt"`
+	UpdatedAt       time.Time      `json:"updatedAt"`
+	Status          string         `json:"status"`
+	Error           string         `json:"error,omitempty"`
+	Management      ManagementView `json:"management"`
 	// Retention is set only for a plugin this release no longer ships but that
 	// saved configuration or unfinished tasks still need.
 	Retention *RetentionView `json:"retention,omitempty"`
@@ -79,20 +81,22 @@ type AdminStateView struct {
 
 // Record is the in-memory installed plugin snapshot owned by Runtime.
 type Record struct {
-	Raw           []byte
-	Metadata      protocol.Metadata
-	Source        string
-	FileName      string
-	PackagePath   string
-	PackageSHA256 string
-	PackageDir    string
-	PackageSpec   string
-	SkillDirs     []string
-	SHA256        string
-	InstalledAt   time.Time
-	UpdatedAt     time.Time
-	Status        string
-	Error         string
+	Raw             []byte
+	Metadata        protocol.Metadata
+	Source          string
+	FileName        string
+	PackagePath     string
+	PackageSHA256   string
+	PackageDir      string
+	PackageSpec     string
+	SkillDirs       []string
+	SHA256          string
+	ArchiveSHA256   string
+	PartnerPresetID string
+	InstalledAt     time.Time
+	UpdatedAt       time.Time
+	Status          string
+	Error           string
 	// Retention is derived on startup and deliberately not persisted.
 	Retention *RetentionView
 }
@@ -100,18 +104,21 @@ type Record struct {
 // RegistryRecord is the committed plugin registry row. Production stores it
 // in SystemSetting plugin_registry; plugin_registry.json is a one-time import.
 type RegistryRecord struct {
-	ID            string          `json:"id"`
-	Raw           json.RawMessage `json:"manifest"`
-	Source        string          `json:"source"`
-	FileName      string          `json:"fileName,omitempty"`
-	PackagePath   string          `json:"packagePath,omitempty"`
-	PackageSHA256 string          `json:"packageSha256,omitempty"`
-	PackageDir    string          `json:"packageDir,omitempty"`
-	PackageSpec   string          `json:"packageSpec,omitempty"`
-	SkillDirs     []string        `json:"skillDirs,omitempty"`
-	LoadError     string          `json:"loadError,omitempty"`
-	InstalledAt   time.Time       `json:"installedAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	ID              string          `json:"id"`
+	Raw             json.RawMessage `json:"manifest"`
+	Source          string          `json:"source"`
+	FileName        string          `json:"fileName,omitempty"`
+	PackagePath     string          `json:"packagePath,omitempty"`
+	PackageSHA256   string          `json:"packageSha256,omitempty"`
+	ArchiveSHA256   string          `json:"archiveSha256,omitempty"`
+	PartnerPresetID string          `json:"partnerPresetId,omitempty"`
+	PackageDir      string          `json:"packageDir,omitempty"`
+	PackageSpec     string          `json:"packageSpec,omitempty"`
+	SkillDirs       []string        `json:"skillDirs,omitempty"`
+	LoadError       string          `json:"loadError,omitempty"`
+	LoadErrorStage  string          `json:"loadErrorStage,omitempty"`
+	InstalledAt     time.Time       `json:"installedAt"`
+	UpdatedAt       time.Time       `json:"updatedAt"`
 }
 
 func manifestView(raw []byte, metadata protocol.Metadata, source string) ManifestView {
@@ -141,19 +148,21 @@ func viewFromRecord(item Record) View {
 	manifest := manifestView(item.Raw, item.Metadata, item.Source)
 	manifest.Revision = item.PackageSHA256
 	return View{
-		Manifest:    manifest,
-		Source:      item.Source,
-		FileName:    item.FileName,
-		Package:     protocol.PluginPackageFormat,
-		PackageDir:  item.PackageDir,
-		PackageSpec: item.PackageSpec,
-		SkillDirs:   cloneStringSlice(item.SkillDirs),
-		SHA256:      item.SHA256,
-		InstalledAt: item.InstalledAt,
-		UpdatedAt:   item.UpdatedAt,
-		Status:      item.Status,
-		Error:       item.Error,
-		Retention:   cloneRetention(item.Retention),
+		Manifest:        manifest,
+		Source:          item.Source,
+		FileName:        item.FileName,
+		Package:         protocol.PluginPackageFormat,
+		PackageDir:      item.PackageDir,
+		PackageSpec:     item.PackageSpec,
+		SkillDirs:       cloneStringSlice(item.SkillDirs),
+		SHA256:          item.SHA256,
+		ArchiveSHA256:   item.ArchiveSHA256,
+		PartnerPresetID: item.PartnerPresetID,
+		InstalledAt:     item.InstalledAt,
+		UpdatedAt:       item.UpdatedAt,
+		Status:          item.Status,
+		Error:           item.Error,
+		Retention:       cloneRetention(item.Retention),
 	}
 }
 

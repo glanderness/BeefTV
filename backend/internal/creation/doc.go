@@ -8,6 +8,6 @@
 // storyboard paths remain the product surface; they are not a retired Agent.
 //
 // The package must not import internal/app. Cross-domain work (task quoting,
-// secret protection, quota, canvas media guards) enters through typed ports so
+// secret protection, quota) enters through typed ports so
 // the adapter can map TaskRequest.PrepareOnly onto task.CreateRequest.
 package creation

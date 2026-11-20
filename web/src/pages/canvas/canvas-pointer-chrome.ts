@@ -31,3 +31,8 @@ export function resolvePromptDialogNode(candidate: CanvasNodeData | null | undef
 export function isCanvasPointerMoving(isNodeDragging: boolean, dragPreview: { nodeIds: ReadonlySet<string> } | null | undefined): boolean {
     return isNodeDragging || Boolean(dragPreview?.nodeIds.size);
 }
+
+export function shouldMountCanvasPromptPanel(nodeId: string, isNodeMoving: boolean, pickTargetId: string | null): boolean {
+    // Keep the pick session alive while its prompt panel is hidden during a drag.
+    return !isNodeMoving || nodeId === pickTargetId;
+}

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasPresetPicker } from "@/components/canvas/canvas-preset-picker";
-import { normalizeCreationComposerPreferences, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
+import { defaultConfig } from "@/stores/use-config-store";
+import { savedVideoSettings, normalizeCreationComposerPreferences, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 
 describe("useCreationPreferencesStore (#091)", () => {
     const initialPreferences = useCreationPreferencesStore.getState().preferences;
@@ -32,6 +33,15 @@ describe("useCreationPreferencesStore (#091)", () => {
         expect(autoNamed?.name).toBe("跟随镜头缓慢推进，穿过霓虹雨夜街道");
         expect(useCreationPreferencesStore.getState().preferences.customPresets).toHaveLength(2);
 
+        const renamed = useCreationPreferencesStore.getState().renameCustomPreset(created!.id, "  逆光人物眼神特写  ");
+        expect(renamed?.name).toBe("逆光人物眼神特写");
+        expect(useCreationPreferencesStore.getState().preferences.customPresets?.find((item) => item.id === created!.id)?.name).toBe("逆光人物眼神特写");
+
+        // Blank names or unknown IDs are safely rejected without corrupting state.
+        expect(useCreationPreferencesStore.getState().renameCustomPreset(created!.id, "   ")).toBeNull();
+        expect(useCreationPreferencesStore.getState().renameCustomPreset("custom:missing", "新名称")).toBeNull();
+        expect(useCreationPreferencesStore.getState().preferences.customPresets?.find((item) => item.id === created!.id)?.name).toBe("逆光人物眼神特写");
+
         const normalized = normalizeCreationComposerPreferences({
             customPresets: useCreationPreferencesStore.getState().preferences.customPresets,
         });
@@ -45,7 +55,7 @@ describe("useCreationPreferencesStore (#091)", () => {
         expect(useCreationPreferencesStore.getState().preferences.customPresets).toBeUndefined();
     });
 
-    test("resets image and video default parameters independently", () => {
+    test("resetting image settings preserves video preferences", () => {
         useCreationPreferencesStore.setState({
             preferences: {
                 promptFontSize: 16,
@@ -64,9 +74,28 @@ describe("useCreationPreferencesStore (#091)", () => {
         });
         expect(useCreationPreferencesStore.getState().preferences.promptFontSize).toBe(16);
 
-        useCreationPreferencesStore.getState().resetVideoSettings();
-        expect(useCreationPreferencesStore.getState().preferences.video).toBeUndefined();
-        expect(useCreationPreferencesStore.getState().preferences.promptFontSize).toBe(16);
+    });
+
+    test("confirmed video settings survive reload and are isolated by channel and model", () => {
+        useCreationPreferencesStore.setState({ preferences: {} });
+        const store = useCreationPreferencesStore.getState();
+        const a = { ...defaultConfig, model: "a::video", videoSeconds: "5", videoReturnLastFrame: "true" };
+        const b = { ...a, model: "b::video", videoSeconds: "10" };
+        store.confirmVideoSettings(a, { seed: 42 });
+        store.rememberModelProvider("video", "b");
+        store.rememberModelProvider("image", "a");
+        store.rememberVideoReferenceMode("frames");
+        store.confirmVideoSettings(b);
+        const prefs = normalizeCreationComposerPreferences(JSON.parse(JSON.stringify(useCreationPreferencesStore.getState().preferences)));
+        expect(savedVideoSettings(prefs, a.model, b.model)).toMatchObject({ seconds: "5", returnLastFrame: "true", h3Options: { seed: 42 } });
+        expect(savedVideoSettings(prefs, b.model, b.model)?.seconds).toBe("10");
+        expect(savedVideoSettings(prefs, "a::other", b.model)).toBeUndefined();
+        expect(prefs.video).toEqual({ model: b.model });
+        expect(prefs.videoReferenceMode).toBe("frames");
+        expect(prefs.providers).toEqual({ video: "b", image: "a" });
+        expect(normalizeCreationComposerPreferences({ video: { providerId: "legacy" } }).providers).toEqual({ video: "legacy" });
+        store.confirmVideoSettings({ ...a, videoSeconds: "7" });
+        expect(useCreationPreferencesStore.getState().preferences.videoByModel?.[a.model]?.seconds).toBe("7");
     });
 
     test("CanvasPresetPicker renders trigger button cleanly", () => {

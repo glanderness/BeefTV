@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -120,13 +121,17 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 			PayloadHash: req.PayloadHash, Status: "running", TurnID: strings.TrimSpace(req.TurnID),
 			CallerKind: strings.TrimSpace(req.CallerKind), ClientID: strings.TrimSpace(req.ClientID),
 			ClientLabel: strings.TrimSpace(req.ClientLabel)}
-		if err := tx.Create(&record).Error; err != nil {
-			if !isDuplicateKey(err) {
-				return AsError(err)
-			}
+		createRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
+		if createRes.Error != nil && !isDuplicateKey(createRes.Error) {
+			return AsError(createRes.Error)
+		}
+		if createRes.Error != nil || createRes.RowsAffected == 0 {
 			var existing model.AgentOpRecord
 			if findErr := tx.Where("user_id = ? AND op_id = ?", req.UserID, req.OpID).First(&existing).Error; findErr != nil {
-				return AsError(err)
+				if createRes.Error != nil {
+					return AsError(createRes.Error)
+				}
+				return AsError(findErr)
 			}
 			if existing.Status != "succeeded" {
 				return Conflict("operation_in_progress",
@@ -216,13 +221,17 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 		ClientLabel: strings.TrimSpace(req.ClientLabel), CreatedAt: time.Now().UTC()}
 	executionToken := record.CreatedAt
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&record).Error; err != nil {
-			if !isDuplicateKey(err) {
-				return AsError(err)
-			}
+		createRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
+		if createRes.Error != nil && !isDuplicateKey(createRes.Error) {
+			return AsError(createRes.Error)
+		}
+		if createRes.Error != nil || createRes.RowsAffected == 0 {
 			var existing model.AgentOpRecord
 			if findErr := tx.Where("user_id = ? AND op_id = ?", req.UserID, req.OpID).First(&existing).Error; findErr != nil {
-				return AsError(err)
+				if createRes.Error != nil {
+					return AsError(createRes.Error)
+				}
+				return AsError(findErr)
 			}
 			if !payloadHashAccepted(existing.PayloadHash, req) || existing.Op != req.Op {
 				return Conflict("operation_id_reused_with_different_payload",

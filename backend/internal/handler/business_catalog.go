@@ -36,6 +36,12 @@ func externalBusiness(c *gin.Context) (externalBusinessPrincipal, bool) {
 }
 
 func businessRouteAllowed(method, p string) bool {
+	if method == http.MethodHead {
+		return false
+	}
+	if p == "/resources/:id/media-ticket" || p == "/resources/:id/asset" || strings.HasPrefix(p, "/resources/:id/asset/") {
+		return false
+	}
 	// Public market reads are ordinary discovery. Publishing grants, private
 	// drafts and the two confirmation actions remain on the desktop UI path.
 	if p == "/skills/market" || strings.HasPrefix(p, "/skills/market/") {

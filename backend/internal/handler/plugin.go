@@ -48,6 +48,44 @@ func RegisterPluginRoutes(r *gin.RouterGroup, center pluginCenter, hosted ...boo
 	catalogRoutes.GET("/packages/enabled", func(c *gin.Context) {
 		ok(c, gin.H{"packages": center.PluginDomain().EnabledPackages()})
 	})
+	catalogRoutes.GET("/partners", func(c *gin.Context) {
+		if _, err := currentUser(c, center); err != nil {
+			failService(c, err)
+			return
+		}
+		snapshot := center.PluginDomain().PartnerCatalogSnapshot(c.Request.Context(), c.Query("registry"))
+		ok(c, gin.H{"partners": snapshot.Partners, "complete": snapshot.Complete})
+	})
+	catalogRoutes.POST("/partners/sync", func(c *gin.Context) {
+		if _, allowed := requirePluginAdmin(c, center); !allowed {
+			return
+		}
+		var request struct {
+			Registry string `json:"registry"`
+		}
+		_ = c.ShouldBindJSON(&request)
+		syncErrors := center.PluginDomain().InstallMissingLiveBuiltins(c.Request.Context(), request.Registry)
+		snapshot := center.PluginDomain().PartnerCatalogSnapshot(c.Request.Context(), request.Registry)
+		ok(c, gin.H{
+			"partners": snapshot.Partners,
+			"complete": snapshot.Complete,
+			"errors":   syncErrors,
+		})
+	})
+	catalogRoutes.GET("/partners/:id/icon", func(c *gin.Context) {
+		targetPath, contentType, err := center.PluginDomain().ResolvePartnerIconFile(c.Param("id"), c.Query("v"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "public, max-age=3600")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
+		if contentType != "" {
+			c.Header("Content-Type", contentType)
+		}
+		c.File(targetPath)
+	})
 	catalogRoutes.GET("/:id/files/*filepath", func(c *gin.Context) {
 		targetPath, contentType, err := center.PluginDomain().ResolvePackageFile(c.Param("id"), c.Param("filepath"))
 		if err != nil {
@@ -62,14 +100,21 @@ func RegisterPluginRoutes(r *gin.RouterGroup, center pluginCenter, hosted ...boo
 		c.File(targetPath)
 	})
 	catalogRoutes.POST("/:id/load-error", func(c *gin.Context) {
+		// 仅允许当前已鉴权的工作区会话上报前端插件入口加载错误；热更新内置插件额外要求携带匹配的 revision 才会触发回退。
+		if _, err := currentUser(c, center); err != nil {
+			failService(c, err)
+			return
+		}
 		var request struct {
-			Error string `json:"error"`
+			Error    string `json:"error"`
+			Stage    string `json:"stage"`
+			Revision string `json:"revision"`
 		}
 		if err := c.ShouldBindJSON(&request); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		plugin, err := center.PluginDomain().SetLoadError(c.Param("id"), strings.TrimSpace(request.Error))
+		plugin, err := center.PluginDomain().SetLoadErrorAtRevision(c.Param("id"), strings.TrimSpace(request.Error), request.Stage, strings.TrimSpace(request.Revision))
 		if err != nil {
 			failService(c, err)
 			return
@@ -291,96 +336,101 @@ func RegisterPluginRoutes(r *gin.RouterGroup, center pluginCenter, hosted ...boo
 		ok(c, gin.H{"deleted": true})
 	})
 
-	pluginRoutes.GET("/eagle/library", func(c *gin.Context) {
-		if _, allowed := requireEnabledPlugin(c, center, plugins.EagleAssetConnector); !allowed {
-			return
-		}
-		library, err := requestEagle(c).Library(c.Query("baseUrl"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		library.LibraryPath = ""
-		ok(c, gin.H{"library": library})
-	})
-	pluginRoutes.GET("/eagle/items", func(c *gin.Context) {
-		if _, allowed := requireEnabledPlugin(c, center, plugins.EagleAssetConnector); !allowed {
-			return
-		}
-		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "60"))
-		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		items, err := requestEagle(c).Items(c.Query("baseUrl"), eagle.ItemQuery{FolderID: c.Query("folderId"), Keyword: c.Query("keyword"), Limit: limit, Offset: offset})
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"items": items})
-	})
-	pluginRoutes.GET("/eagle/items/:itemId/file", func(c *gin.Context) {
-		if _, allowed := requireEnabledPlugin(c, center, plugins.EagleAssetConnector); !allowed {
-			return
-		}
-		file, err := requestEagle(c).OpenFile(c.Query("baseUrl"), c.Param("itemId"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		defer file.Body.Close()
-		c.Header("Cache-Control", "private, no-store")
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
-		c.DataFromReader(http.StatusOK, file.Size, file.MimeType, file.Body, nil)
-	})
-	pluginRoutes.GET("/eagle/items/:itemId/thumbnail", func(c *gin.Context) {
-		if _, allowed := requireEnabledPlugin(c, center, plugins.EagleAssetConnector); !allowed {
-			return
-		}
-		file, err := requestEagle(c).OpenThumbnail(c.Query("baseUrl"), c.Param("itemId"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		defer file.Body.Close()
-		c.Header("Cache-Control", "private, max-age=60")
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.DataFromReader(http.StatusOK, file.Size, file.MimeType, file.Body, nil)
-	})
-	pluginRoutes.POST("/eagle/items", func(c *gin.Context) {
-		if _, allowed := requireEnabledPlugin(c, center, plugins.EagleAssetConnector); !allowed {
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 160<<20)
-		var request eagle.AddItemRequest
-		if err := c.ShouldBindJSON(&request); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		item, err := requestEagle(c).AddItem(c.Query("baseUrl"), request)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"item": item})
-	})
-	pluginRoutes.POST("/eagle/folders", func(c *gin.Context) {
-		if _, allowed := requireEnabledPlugin(c, center, plugins.EagleAssetConnector); !allowed {
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		var request struct {
-			Name     string `json:"name"`
-			ParentID string `json:"parentId"`
-		}
-		if err := c.ShouldBindJSON(&request); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		if err := requestEagle(c).CreateFolder(c.Query("baseUrl"), request.Name, request.ParentID); err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"created": true})
-	})
+	registerEaglePluginRoutes := func(group *gin.RouterGroup) {
+		group.GET("/library", func(c *gin.Context) {
+			if _, allowed := requireEnabledAnyPlugin(c, center, plugins.EagleAssetConnector, plugins.EagleAssetConnectorLegacy); !allowed {
+				return
+			}
+			library, err := requestEagle(c).Library(c.Query("baseUrl"))
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			library.LibraryPath = ""
+			ok(c, gin.H{"library": library})
+		})
+		group.GET("/items", func(c *gin.Context) {
+			if _, allowed := requireEnabledAnyPlugin(c, center, plugins.EagleAssetConnector, plugins.EagleAssetConnectorLegacy); !allowed {
+				return
+			}
+			limit, _ := strconv.Atoi(c.DefaultQuery("limit", "60"))
+			offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+			items, err := requestEagle(c).Items(c.Query("baseUrl"), eagle.ItemQuery{FolderID: c.Query("folderId"), Keyword: c.Query("keyword"), Limit: limit, Offset: offset})
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			ok(c, gin.H{"items": items})
+		})
+		group.GET("/items/:itemId/file", func(c *gin.Context) {
+			if _, allowed := requireEnabledAnyPlugin(c, center, plugins.EagleAssetConnector, plugins.EagleAssetConnectorLegacy); !allowed {
+				return
+			}
+			file, err := requestEagle(c).OpenFile(c.Query("baseUrl"), c.Param("itemId"))
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			defer file.Body.Close()
+			c.Header("Cache-Control", "private, no-store")
+			c.Header("X-Content-Type-Options", "nosniff")
+			c.Header("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
+			c.DataFromReader(http.StatusOK, file.Size, file.MimeType, file.Body, nil)
+		})
+		group.GET("/items/:itemId/thumbnail", func(c *gin.Context) {
+			if _, allowed := requireEnabledAnyPlugin(c, center, plugins.EagleAssetConnector, plugins.EagleAssetConnectorLegacy); !allowed {
+				return
+			}
+			file, err := requestEagle(c).OpenThumbnail(c.Query("baseUrl"), c.Param("itemId"))
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			defer file.Body.Close()
+			c.Header("Cache-Control", "private, max-age=60")
+			c.Header("X-Content-Type-Options", "nosniff")
+			c.DataFromReader(http.StatusOK, file.Size, file.MimeType, file.Body, nil)
+		})
+		group.POST("/items", func(c *gin.Context) {
+			if _, allowed := requireEnabledAnyPlugin(c, center, plugins.EagleAssetConnector, plugins.EagleAssetConnectorLegacy); !allowed {
+				return
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 160<<20)
+			var request eagle.AddItemRequest
+			if err := c.ShouldBindJSON(&request); err != nil {
+				fail(c, http.StatusBadRequest, err)
+				return
+			}
+			item, err := requestEagle(c).AddItem(c.Query("baseUrl"), request)
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			ok(c, gin.H{"item": item})
+		})
+		group.POST("/folders", func(c *gin.Context) {
+			if _, allowed := requireEnabledAnyPlugin(c, center, plugins.EagleAssetConnector, plugins.EagleAssetConnectorLegacy); !allowed {
+				return
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+			var request struct {
+				Name     string `json:"name"`
+				ParentID string `json:"parentId"`
+			}
+			if err := c.ShouldBindJSON(&request); err != nil {
+				fail(c, http.StatusBadRequest, err)
+				return
+			}
+			if err := requestEagle(c).CreateFolder(c.Query("baseUrl"), request.Name, request.ParentID); err != nil {
+				failService(c, err)
+				return
+			}
+			ok(c, gin.H{"created": true})
+		})
+	}
+	registerEaglePluginRoutes(pluginRoutes.Group("/beeftv-plugin-eagle-asset-connector"))
+	registerEaglePluginRoutes(pluginRoutes.Group("/eagle"))
+	registerEaglePluginRoutes(pluginRoutes.Group("/eagle-asset-connector"))
 }
 
 func requestEagle(c *gin.Context) *eagle.Client {
@@ -431,16 +481,22 @@ func pluginToggle(center pluginCenter, enabled bool) gin.HandlerFunc {
 	}
 }
 
-func requireEnabledPlugin(c *gin.Context, center pluginCenter, pluginID string) (*model.User, bool) {
+func requireEnabledAnyPlugin(c *gin.Context, center pluginCenter, pluginIDs ...string) (*model.User, bool) {
 	user, err := currentUser(c, center)
-	if err == nil {
-		err = center.RequirePluginForUser(user.ID, pluginID)
-	}
 	if err != nil {
 		failService(c, err)
 		return nil, false
 	}
-	return user, true
+	var firstErr error
+	for _, pluginID := range pluginIDs {
+		if reqErr := center.RequirePluginForUser(user.ID, pluginID); reqErr == nil {
+			return user, true
+		} else if firstErr == nil {
+			firstErr = reqErr
+		}
+	}
+	failService(c, firstErr)
+	return nil, false
 }
 
 func requirePluginAdmin(c *gin.Context, center pluginCenter) (*model.User, bool) {

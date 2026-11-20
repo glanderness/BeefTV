@@ -40,11 +40,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	dataDir, err := defaultDataDir()
+	dataDir, storageRoot, err := resolveDesktopStorage()
 	if err != nil {
 		log.Fatal(err)
 	}
 	app := newDesktopApp(dataDir)
+	app.storageRoot = storageRoot
 	app.usePlatformDownloads = true
 	for _, arg := range os.Args[1:] {
 		if strings.HasPrefix(arg, "beeftv:") {
@@ -130,6 +131,7 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 			Assets:  assets,
 			Handler: desktopAssetHandler{app: app},
 		},
+		Menu:      desktopApplicationMenu(app),
 		OnStartup: app.startup,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: skillInstanceID(app.dataDir),
@@ -154,26 +156,61 @@ func prepareDesktopApp(app *DesktopApp) error {
 }
 
 func defaultDataDir() (string, error) {
+	dataDir, _, err := resolveDesktopStorage()
+	return dataDir, err
+}
+
+func resolveDesktopStorage() (string, string, error) {
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		if arg == "--data-dir" {
 			if i+1 == len(os.Args) {
-				return "", fmt.Errorf("--data-dir 需要明确的绝对目录")
+				return "", "", fmt.Errorf("--data-dir 需要明确的绝对目录")
 			}
-			return explicitDesktopDataDir(os.Args[i+1])
+			dir, err := explicitDesktopDataDir(os.Args[i+1])
+			if err != nil {
+				return "", "", err
+			}
+			return dir, matchingDefaultStorageRoot(dir), nil
 		}
 		if strings.HasPrefix(arg, "--data-dir=") {
-			return explicitDesktopDataDir(strings.TrimPrefix(arg, "--data-dir="))
+			dir, err := explicitDesktopDataDir(strings.TrimPrefix(arg, "--data-dir="))
+			if err != nil {
+				return "", "", err
+			}
+			return dir, matchingDefaultStorageRoot(dir), nil
 		}
 	}
 	if override := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")); override != "" {
-		return override, nil
+		return override, "", nil
 	}
 	root, err := desktopstorage.DefaultRoot()
 	if err != nil {
-		return "", fmt.Errorf("定位用户应用数据目录: %w", err)
+		return "", "", fmt.Errorf("定位用户应用数据目录: %w", err)
 	}
-	return desktopstorage.Resolve(root)
+	dataDir, err := desktopstorage.Resolve(root)
+	if err != nil {
+		return "", "", err
+	}
+	return dataDir, root, nil
+}
+
+func matchingDefaultStorageRoot(explicitDir string) string {
+	if strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")) != "" {
+		return ""
+	}
+	root, err := desktopstorage.DefaultRoot()
+	if err != nil {
+		return ""
+	}
+	resolved, err := desktopstorage.Resolve(root)
+	if err != nil {
+		return ""
+	}
+	if desktopstorage.SameLocation(explicitDir, resolved) {
+		return root
+	}
+	return ""
 }
 
 func explicitDesktopDataDir(dir string) (string, error) {

@@ -7,7 +7,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const escapeHTML = (text) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-export function distributionNotices({ root = repo, version, platform = "web", heavyMedia = true, sourcesDir = resolve(root, "dist") }) {
+export function distributionNotices({ root = repo, version, platform = "web", heavyMedia = true, sourcesDir = resolve(root, "dist"), mediaRuntimeDir = process.env.BEEFTV_MEDIA_RUNTIME_DIR || "" }) {
     if (!/^v?\d+\.\d+\.\d+(?:[.-][\w.-]+)?$/.test(version)) throw new Error("Invalid distribution version");
     version = `v${version.replace(/^v/, "")}`;
     if (!["web", "darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"].includes(platform)) throw new Error("Invalid distribution platform");
@@ -24,8 +24,16 @@ export function distributionNotices({ root = repo, version, platform = "web", he
             binaryHashes: { wasm: sha256(wasm), javascript: sha256(js) },
             upstream: "https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1" });
     }
-    if (platform.startsWith("darwin-")) required.push({ id: `ffprobe-${platform}`, version: "8.0.1", license: "LGPL-2.1-or-later",
-        upstream: "https://github.com/FFmpeg/FFmpeg/tree/894da5ca7d742e4429ffb2af534fcda0103ef593" });
+    if (platform.startsWith("darwin-")) {
+        const darwinComponent = { id: `ffmpeg-${platform}`, version: "8.0.1", license: "LGPL-2.1-or-later",
+            upstream: "https://github.com/FFmpeg/FFmpeg/tree/894da5ca7d742e4429ffb2af534fcda0103ef593" };
+        if (mediaRuntimeDir) {
+            const manifest = JSON.parse(readFileSync(resolve(mediaRuntimeDir, "manifest.json"), "utf8"));
+            if (!manifest.encoderSHA256 || !manifest.probeSHA256) throw new Error("macOS media runtime manifest is missing binary hashes");
+            darwinComponent.binaryHashes = { ffmpeg: manifest.encoderSHA256, ffprobe: manifest.probeSHA256 };
+        }
+        required.push(darwinComponent);
+    }
     if (platform === "windows-amd64") {
         const windows = JSON.parse(readFileSync(resolve(root, "licenses/ffmpeg-windows.json"), "utf8"));
         files.set("ffmpeg-windows.json", Buffer.from(JSON.stringify(windows, null, 2) + "\n"));
@@ -35,7 +43,7 @@ export function distributionNotices({ root = repo, version, platform = "web", he
     }
     const components = required.map((component) => {
         // Only advertise packets produced by the source packaging steps.
-        if (!component.id.startsWith("ffprobe-darwin-") && component.id !== "ffmpeg-wasm") return { ...component, source: null };
+        if (!component.id.startsWith("ffmpeg-darwin-") && component.id !== "ffmpeg-wasm") return { ...component, source: null };
         const name = `BeefTV-${version}-${component.id}-sources.tar.gz`;
         const source = resolve(sourcesDir, name);
         const bytes = existsSync(source) ? readFileSync(source) : null;
@@ -82,8 +90,8 @@ document.addEventListener("click", (event) => {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    const [platform, destination, version, sourcesDir] = process.argv.slice(2);
-    if (!destination || !version) throw new Error(`Usage: ${basename(process.argv[1])} platform destination version [sources-dir]`);
+    const [platform, destination, version, sourcesDir, mediaRuntimeDir] = process.argv.slice(2);
+    if (!destination || !version) throw new Error(`Usage: ${basename(process.argv[1])} platform destination version [sources-dir] [media-runtime-dir]`);
     mkdirSync(destination, { recursive: true });
-    for (const [name, bytes] of distributionNotices({ platform, version, sourcesDir, heavyMedia: process.env.BEEFTV_FULL_MEDIA_RESOURCES !== "0" })) writeFileSync(resolve(destination, name), bytes);
+    for (const [name, bytes] of distributionNotices({ platform, version, sourcesDir, mediaRuntimeDir, heavyMedia: process.env.BEEFTV_FULL_MEDIA_RESOURCES !== "0" })) writeFileSync(resolve(destination, name), bytes);
 }

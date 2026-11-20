@@ -1,0 +1,138 @@
+.channel-settings-editor .ant-modal {
+    max-width: min(880px, calc(100vw - 24px));
+}
+
+.channel-settings-editor .ant-modal-header,
+.channel-settings-editor .ant-modal-footer {
+    padding: 12px 20px;
+}
+
+.channel-settings-editor .model-editor-subtitle {
+    margin-top: 2px;
+}
+
+.channel-settings-editor .channel-editor-panel {
+    align-content: start;
+    gap: 12px;
+    padding: 8px 20px 16px;
+}
+
+.channel-editor-disclosure {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+}
+
+.channel-editor-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 6px 12px;
+    font-weight: 500;
+    cursor: pointer;
+    list-style: none;
+}
+
+.channel-editor-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.channel-editor-disclosure > summary > small {
+    flex: 1;
+    color: var(--muted-foreground);
+    font-weight: 400;
+}
+
+.channel-editor-disclosure > summary > svg {
+    margin-inline-start: auto;
+    color: var(--muted-foreground);
+}
+
+.channel-editor-disclosure[open] > summary > svg {
+    rotate: 180deg;
+}
+
+.channel-editor-disclosure > :not(summary) {
+    padding: 2px 12px 12px;
+}
+
+.channel-editor-model-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-block: 2px 10px;
+}
+
+.channel-editor-model-toolbar h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.channel-editor-model-toolbar .ant-input-affix-wrapper {
+    width: min(224px, 100%);
+}
+
+.channel-editor-model-rows {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--card-surface);
+}
+
+.channel-editor-model-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+}
+
+.channel-editor-model-copy {
+    display: grid;
+    flex: 1;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+    align-items: center;
+    gap: 4px 12px;
+    min-width: 0;
+}
+
+.channel-editor-model-meta {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 6px;
+}
+
+.channel-editor-model-row + .channel-editor-model-row {
+    border-top: 1px solid var(--border);
+}
+
+.channel-editor-model-row .ant-btn {
+    flex: none;
+}
+
+.channel-editor-model-empty {
+    margin: 0;
+    padding: 16px 12px;
+    color: var(--muted-foreground);
+}
+
+@media (max-width: 680px) {
+    .channel-editor-model-copy {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .channel-settings-editor .ant-modal-header,
+    .channel-settings-editor .ant-modal-footer,
+    .channel-settings-editor .channel-editor-panel {
+        padding-inline: 14px;
+    }
+
+    .channel-editor-model-toolbar .ant-input-affix-wrapper {
+        width: 100%;
+    }
+}

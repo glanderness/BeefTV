@@ -16,12 +16,32 @@ import (
 type MediaMetadata struct {
 	FormatName         string
 	Width, Height      int
+	Rotation           int
 	DurationMs         int64
 	VideoDurationMs    int64
 	FPS                float64
+	VideoFrames        int64
+	PixelAspectRatio   float64
 	VideoCodec         string
 	AudioCodec         string
 	HasAudio, HasVideo bool
+}
+
+func (m MediaMetadata) DisplayDimensions() (int, int) {
+	par := m.PixelAspectRatio
+	if par <= 0 {
+		par = 1
+	}
+	w := int(math.Ceil(float64(m.Width) * par))
+	h := m.Height
+	rot := m.Rotation % 360
+	if rot < 0 {
+		rot += 360
+	}
+	if rot == 90 || rot == 270 {
+		return h, w
+	}
+	return w, h
 }
 
 // ProbeLocal only accepts an existing local regular file. Protocol restrictions
@@ -42,7 +62,7 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 		return facts, err
 	}
 	cmd := exec.CommandContext(ctx, bin, "-v", "error", "-protocol_whitelist", "file,pipe",
-		"-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate,duration:format=duration,format_name", "-of", "json", path)
+		"-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate,nb_frames,sample_aspect_ratio,duration:stream_tags=rotate:stream_side_data=rotation:format=duration,format_name", "-of", "json", path)
 	HideConsole(cmd)
 	output, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -59,8 +79,16 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			CodecType     string `json:"codec_type"`
 			CodecName     string `json:"codec_name"`
 			Width, Height int
+			FrameCount    string `json:"nb_frames"`
+			PixelAspect   string `json:"sample_aspect_ratio"`
 			AvgFrameRate  string `json:"avg_frame_rate"`
 			Duration      string `json:"duration"`
+			Tags          struct {
+				Rotate string `json:"rotate"`
+			} `json:"tags"`
+			SideDataList []struct {
+				Rotation float64 `json:"rotation"`
+			} `json:"side_data_list"`
 		} `json:"streams"`
 		Format struct {
 			FormatName string `json:"format_name"`
@@ -86,6 +114,22 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			}
 			if facts.Width == 0 {
 				facts.Width, facts.Height = stream.Width, stream.Height
+				facts.VideoFrames, _ = strconv.ParseInt(stream.FrameCount, 10, 64)
+				facts.PixelAspectRatio = probeFrameRate(strings.Replace(stream.PixelAspect, ":", "/", 1))
+				if facts.PixelAspectRatio == 0 {
+					facts.PixelAspectRatio = 1
+				}
+				for _, sd := range stream.SideDataList {
+					if sd.Rotation != 0 && !math.IsNaN(sd.Rotation) && !math.IsInf(sd.Rotation, 0) {
+						facts.Rotation = int(math.Round(sd.Rotation))
+						break
+					}
+				}
+				if facts.Rotation == 0 && strings.TrimSpace(stream.Tags.Rotate) != "" {
+					if rot, rotErr := strconv.ParseFloat(strings.TrimSpace(stream.Tags.Rotate), 64); rotErr == nil && !math.IsNaN(rot) && !math.IsInf(rot, 0) {
+						facts.Rotation = int(math.Round(rot))
+					}
+				}
 			}
 			if facts.FPS == 0 {
 				facts.FPS = probeFrameRate(stream.AvgFrameRate)

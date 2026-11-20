@@ -170,6 +170,7 @@ describe("canvas timeline persistence", () => {
         );
 
         expect(html).toContain("多轨时间线");
+        expect(html).toContain("返回");
         expect(html).not.toContain("第二期 ·");
         expect(modalCalls).toHaveLength(1);
         expect(inspectorCalls).toHaveLength(1);

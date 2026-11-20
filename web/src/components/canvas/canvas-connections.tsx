@@ -71,16 +71,16 @@ export const ConnectionPath = React.memo(function ConnectionPath({
                     <stop offset="100%" stopColor={theme.accent.primary} stopOpacity={0} />
                 </linearGradient>
             </defs> : null}
-            {/* 光晕仅用于主动选中；悬停只调整已有主线，避免长连线的大面积模糊重绘。 */}
+            {/* 纯矢量半透明外晕：不使用 SVG/CSS blur filter，避免大画布缩放时分配数百 MB GPU 模糊纹理。 */}
             {showEmphasis ? <path
                 d={pathD}
                 stroke={theme.accent.primary}
-                strokeWidth="8"
+                strokeWidth="7"
                 vectorEffect="non-scaling-stroke"
-                strokeOpacity={0.18}
+                strokeOpacity={0.14}
                 fill="none"
                 strokeLinecap="round"
-                style={{ pointerEvents: "none", filter: "blur(3px)" }}
+                style={{ pointerEvents: "none" }}
             /> : null}
             <path
                 data-connection-id={connection.id}

@@ -5,21 +5,22 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
-import { generationErrorMessage } from "@/lib/generation-error";
+import { explainGenerationError, generationErrorMessage } from "@/lib/generation-error";
+import { confirmCreationRetryIfNeeded } from "@/lib/generation-failure-ux";
+import { normalizeTaskOutcome } from "@/lib/task-outcome";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue } from "@/lib/model-capabilities";
 import { hasDeclaredModelCapability, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
 import type { Skill } from "@/services/api/skills";
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
+import { savedVideoSettings, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
-import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
-import { createPluginHostContext } from "@/services/plugin-host";
-import { usePluginStore } from "@/stores/use-plugin-store";
+import { syncActiveClientPlugins } from "@/lib/plugins/plugin-client-loader";
+import { usePluginSlot } from "@/lib/plugins/slot-registry";
 import { buildCreationMentionReferences, creationReferenceKindMessage, creationReferenceLimitsFor, fitCreationAttachmentsToLimits, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromAudioAsset, creationAttachmentFromExternalAsset, creationAttachmentFromVideoAsset, creationAttachmentKind, removeCreationAttachment, type CreationAttachment } from "./creation-assets";
 import { defaultCreationMode, type CreationMessage, type CreationMode, type CreationRetryContext, type CreationShotRailEntry } from "./creation-types";
@@ -66,14 +67,15 @@ export function useCreatePageController() {
     const composerPreferencesHydrated = useCreationPreferencesStore((state) => state.hydrated);
     const rememberMode = useCreationPreferencesStore((state) => state.rememberMode);
     const rememberImageSettings = useCreationPreferencesStore((state) => state.rememberImageSettings);
-    const rememberVideoSettings = useCreationPreferencesStore((state) => state.rememberVideoSettings);
     const initialComposerPreferences = useCreationPreferencesStore.getState().preferences;
-    const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
-    const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
-    const promptOptimizerProvider = useMemo<PromptOptimizerProvider | null>(() => {
-        if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
-        return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, config));
-    }, [config, promptOptimizerEnabled, promptOptimizerInstallation]);
+    useEffect(() => {
+        syncActiveClientPlugins();
+    }, []);
+    const promptActionEntries = usePluginSlot("canvas.promptActions");
+    const promptOptimizerProvider = useMemo<PromptOptimizerProvider | null>(
+        () => promptActionEntries.find((entry) => Boolean(entry.payload.optimizer) || entry.payload.id === "prompt-optimizer")?.payload.optimizer ?? null,
+        [promptActionEntries],
+    );
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
@@ -221,11 +223,6 @@ export function useCreatePageController() {
             if (saved.image.quality) setQuality(saved.image.quality);
             if (saved.image.count) setCount(saved.image.count);
         }
-        if (nextMode === "video" && saved.video) {
-            if (saved.video.ratio) setRatio(saved.video.ratio);
-            if (saved.video.seconds) setSeconds(saved.video.seconds);
-            if (saved.video.videoQuality) setVideoQuality(saved.video.videoQuality);
-        }
         setComposerPreferencesInitialized(true);
     }, [composerPreferencesHydrated, composerPreferencesInitialized, requestedMode]);
 
@@ -250,7 +247,7 @@ export function useCreatePageController() {
 
     useEffect(() => {
         if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "video") return;
-        const saved = useCreationPreferencesStore.getState().preferences.video;
+        const saved = savedVideoSettings(useCreationPreferencesStore.getState().preferences, selectedModel, config.videoModel);
         const normalized = normalizeVideoValue(videoProfile, {
             seconds: saved?.seconds || String(videoProfile.duration.default),
             ratio: saved?.ratio,
@@ -303,20 +300,14 @@ export function useCreatePageController() {
     const setComposerRatio = (value: string) => {
         setRatio(value);
         if (mode === "image") rememberImageSettings({ ratio: value });
-        if (mode === "video") rememberVideoSettings({ ratio: value });
     };
     const setComposerSeconds = (value: string) => {
         setSeconds(value);
         setComposerNotice("");
-        if (mode === "video") rememberVideoSettings({ seconds: value });
     };
     const setComposerQuality = (value: string) => {
         setQuality(value);
         if (mode === "image") rememberImageSettings({ quality: value });
-    };
-    const setComposerVideoQuality = (value: string) => {
-        setVideoQuality(value);
-        if (mode === "video") rememberVideoSettings({ videoQuality: value });
     };
     const setComposerCount = (value: string) => {
         setCount(value);
@@ -500,12 +491,26 @@ export function useCreatePageController() {
         setVideoQuality(nextSettings.videoQuality);
         setCount(nextSettings.count);
         if (nextMode === "image") rememberImageSettings({ ratio: nextSettings.ratio, quality: nextSettings.quality, count: nextSettings.count });
-        if (nextMode === "video") rememberVideoSettings({ ratio: nextSettings.ratio, seconds: nextSettings.seconds, videoQuality: nextSettings.videoQuality });
     };
 
     const retryFailedMessage = async (item: CreationMessage, index: number) => {
         const previous = item.role === "assistant" ? activeConversation?.messages[index - 1] : item;
         if (!previous?.content || busy) return;
+        const outcome = normalizeTaskOutcome(item.taskOutcome);
+        const explanation = explainGenerationError(
+            item.generationErrorCode ? { code: item.generationErrorCode, message: item.error } : item.error,
+            { stage: outcome ? undefined : item.generationStage },
+        );
+        const confirmed = await confirmCreationRetryIfNeeded({
+            category: explanation.category,
+            outcome,
+            modalConfirm: modal?.confirm,
+            onEditDraft: () => {
+                if (!promptRef.current.trim()) restoreMessageDraft(previous);
+                window.requestAnimationFrame(() => composerFocusRef.current?.focus());
+            },
+        });
+        if (!confirmed) return;
         const retryOf = item.taskIds?.[0];
         const restoreForRetry = () => {
             followLatestMessageRef.current = true;
@@ -543,6 +548,7 @@ export function useCreatePageController() {
         const previous = item.role === "assistant" ? activeConversation?.messages[index - 1] : item;
         if (!previous?.content || busy) return;
         restoreMessageDraft(previous);
+        window.requestAnimationFrame(() => composerFocusRef.current?.focus());
     };
 
     const handleThreadScroll = () => {
@@ -595,7 +601,7 @@ export function useCreatePageController() {
         quality,
         setQuality: setComposerQuality,
         videoQuality,
-        setVideoQuality: setComposerVideoQuality,
+        setVideoQuality,
         count,
         setCount: setComposerCount,
         textStreaming,

@@ -1,13 +1,13 @@
-import { type ReactNode } from "react";
+import { type CSSProperties, type ReactNode } from "react";
 import type { VideoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { Switch } from "@/components/ui/base/switch";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceRatioOptions } from "@/lib/seedance-video";
+import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceRatioOptions } from "@/lib/seedance-video";
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, sortVideoResolutionOptions, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
-import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, videoSupportsTaskTypeConstraints, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, sortVideoResolutionOptions } from "@/lib/video-generation-options";
+import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationAllowed, videoDurationOptions, videoSupportsTaskTypeConstraints, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const sizeOptions = [
@@ -42,7 +42,6 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const seconds = normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds;
     const resolution = resolveVideoResolutionValue(profile, config.vquality);
     const ratio = resolveVideoRatioValue(profile, config.size);
-    const dimensions = videoDimensionsForRatioAndResolution(ratio, resolution);
     const sizeSupported = profile.ratios.length > 0;
     const configuredResolutions = sortVideoResolutionOptions(profile.resolutions).map((value) => ({ value, label: formatVideoResolutionLabel(value) }));
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
@@ -55,7 +54,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-                {showTitle ? <div className="text-sm font-semibold">视频设置</div> : null}
+                {showTitle ? <div>视频设置</div> : null}
                 {configuredResolutions.length ? (
                     <SettingGroup title="分辨率" color={theme.node.muted}>
                         <div className="grid grid-cols-3 gap-1.5">
@@ -74,24 +73,17 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <SettingGroup title={taskConstraints?.ratioLabel ? "比例" : "尺寸"} color={theme.node.muted}>
                         {taskConstraints?.ratioLabel ? (
                             <div className="rounded-md px-2.5 py-2" style={{ background: theme.toolbar.itemHover }}>
-                                <p className="text-[length:var(--fs-body)] font-medium">{taskConstraints.ratioLabel}</p>
-                                {taskConstraints.ratioHelp ? <p className="mt-1 text-[length:var(--fs-caption)] leading-relaxed" style={{ color: theme.node.muted }}>{taskConstraints.ratioHelp}</p> : null}
+                                <p>{taskConstraints.ratioLabel}</p>
+                                {taskConstraints.ratioHelp ? <p className="mt-1 leading-relaxed" style={{ color: theme.node.muted }}>{taskConstraints.ratioHelp}</p> : null}
                             </div>
                         ) : <>
-                        {taskConstraints?.ratioHelp ? <p className="text-[length:var(--fs-caption)] leading-relaxed" style={{ color: theme.node.muted }}>{taskConstraints.ratioHelp}</p> : null}
-                        {dimensions ? (
-                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
-                                <DimensionValue prefix="W" value={dimensions.width} theme={theme} />
-                                <span className="text-xs opacity-45">×</span>
-                                <DimensionValue prefix="H" value={dimensions.height} theme={theme} />
-                            </div>
-                        ) : null}
+                        {taskConstraints?.ratioHelp ? <p className="leading-relaxed" style={{ color: theme.node.muted }}>{taskConstraints.ratioHelp}</p> : null}
                         <div className="grid grid-cols-3 gap-1.5">
                             {profile.ratios.map((value) => (
                                 <button
                                     key={value}
                                     type="button"
-                                    className="flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md px-1 text-[var(--fs-label)] font-medium transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
+                                    className="flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md px-1 transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
                                     style={{ background: ratio === value ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
                                     onMouseDown={(event) => event.stopPropagation()}
                                     onClick={() => onConfigChange("size", value)}
@@ -104,9 +96,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </>}
                     </SettingGroup>
                 ) : null}
-                {profile.durationSupported !== false ? <SettingGroup title="秒数" color={theme.node.muted}>
-                    {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
-                </SettingGroup> : null}
+                {profile.durationSupported !== false ? <VideoDurationControl profile={profile} value={Number(seconds)} locked={taskConstraints?.durationLocked} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} /> : null}
                 {profile.generateAudio.supported || profile.watermark.supported || draftSupported || returnLastFrameSupported ? (
                     <SettingGroup title="输出" color={theme.node.muted}>
                         <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
@@ -126,11 +116,11 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 }
 
 function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig }) {
-    const seconds = normalizeVideoDuration(config.videoSeconds);
+    const seconds = normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds;
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-                {showTitle ? <div className="text-sm font-semibold">视频设置</div> : null}
+                {showTitle ? <div>视频设置</div> : null}
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-1.5">
                         {profile.ratios.map((value) => (
@@ -140,9 +130,7 @@ function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, show
                         ))}
                     </div>
                 </SettingGroup>
-                <SettingGroup title="秒数" color={theme.node.muted}>
-                    <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
-                </SettingGroup>
+                {profile.durationSupported !== false ? <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} /> : null}
             </div>
         </ImageSettingsTheme>
     );
@@ -152,7 +140,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
     const model = modelOptionName(config.model || config.videoModel);
     const resolution = normalizeSeedanceResolution(config.vquality, model);
     const ratio = taskConstraints?.ratioLabel ? "adaptive" : normalizeSeedanceRatio(config.size);
-    const duration = normalizeSeedanceDuration(config.videoSeconds);
+    const duration = Number(normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
     const draftSupported = Boolean(profile.draft?.supported);
@@ -165,9 +153,9 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-                {showTitle ? <div className="text-sm font-semibold">视频设置</div> : null}
+                {showTitle ? <div>视频设置</div> : null}
                 {videoSupportsTaskTypeConstraints(profile) ? (
-                    <p className="text-xs leading-relaxed" style={{ color: theme.node.muted }}>
+                    <p className="leading-relaxed" style={{ color: theme.node.muted }}>
                         首尾帧和延长模式的比例跟随素材；编辑模式还会跟随原视频时长。需要自由设置时，请选择参考生成。
                     </p>
                 ) : null}
@@ -195,7 +183,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                                     key={item.value}
                                     type="button"
                                     disabled={Boolean(taskConstraints?.ratioLabel)}
-                                    className="flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[var(--fs-tiny)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
+                                    className="flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md px-1 leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
                                     style={{ background: ratio === item.value ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
                                     onMouseDown={(event) => event.stopPropagation()}
                                     onClick={() => onConfigChange("size", item.value)}
@@ -209,9 +197,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                         })}
                     </div>
                 </SettingGroup>
-                <SettingGroup title="时长" color={theme.node.muted}>
-                    {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={duration} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
-                </SettingGroup>
+                {profile.durationSupported !== false ? <VideoDurationControl profile={profile} value={duration} locked={taskConstraints?.durationLocked} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} /> : null}
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
                         {profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
@@ -266,7 +252,7 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
             type="button"
             disabled={disabled}
             aria-pressed={selected}
-            className="h-8 cursor-pointer whitespace-nowrap rounded-md px-1 text-[var(--fs-label)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-35"
+            className="h-8 cursor-pointer whitespace-nowrap rounded-md px-1 leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 disabled:cursor-not-allowed disabled:opacity-35"
             style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={onClick}
@@ -279,7 +265,7 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
 function SettingGroup({ title, color, children }: { title: string; color: string; children: ReactNode }) {
     return (
         <div className="space-y-1.5">
-            <div className="text-[var(--fs-tiny)] font-semibold" style={{ color }}>
+            <div style={{ color }}>
                 {title}
             </div>
             {children}
@@ -287,121 +273,61 @@ function SettingGroup({ title, color, children }: { title: string; color: string
     );
 }
 
-function DimensionValue({ prefix, value, theme }: { prefix: string; value: number; theme: CanvasTheme }) {
-    return (
-        <div className="flex h-8 overflow-hidden rounded-md text-[var(--fs-label)]" style={{ background: theme.toolbar.itemHover, color: theme.node.text }}>
-            <span className="grid w-7 place-items-center" style={{ color: theme.node.muted }}>
-                {prefix}
-            </span>
-            <span className="min-w-0 flex-1 px-2 leading-8 tabular-nums">{value}</span>
-        </div>
-    );
-}
+function VideoDurationControl({ profile, value, locked, theme, onChange }: { profile: VideoCapabilityConfig; value: number; locked?: boolean; theme: CanvasTheme; onChange: (value: number) => void }) {
+    const durations = videoDurationOptions(profile);
+    const options = durations.filter((seconds) => Number.isInteger(seconds) && seconds > 0 && videoDurationAllowed(profile, seconds)).sort((a, b) => a - b);
+    if (!locked && !options.length && !durations.includes(-1) && !profile.duration.continuous) return null;
 
-function DurationInput({ value, min, max, theme, onChange, continuous = false }: { value: number; min: number; max?: number; theme: CanvasTheme; onChange: (value: number) => void; continuous?: boolean }) {
-    const commit = (input: HTMLInputElement) => {
-        const parsed = Number(input.value);
-        const candidate = continuous ? (input.value.trim() && Number.isFinite(parsed) ? parsed : value || min) : parsed || value || min;
-        const next = Math.min(max || Number.POSITIVE_INFINITY, Math.max(min, continuous ? candidate : Math.floor(candidate)));
-        input.value = String(next);
-        onChange(next);
-    };
+    const automatic = value === -1;
+    const manualValue = automatic ? profile.duration.default : value;
+    // Keep saved fractional durations until the slider is moved to a whole second.
+    const index = options.reduce((closest, seconds, i) => Math.abs(seconds - manualValue) < Math.abs(options[closest] - manualValue) ? i : closest, 0);
+    const display = locked ? "随原视频" : automatic ? "自动" : `${value} 秒`;
+    const canSwitchToAuto = !locked && options.length > 0 && durations.includes(-1);
+    const step = options.length > 1 ? options[1] - options[0] : 1;
+    const uniform = options.every((seconds, i) => seconds === options[0] + i * step);
+    const thumbIndex = automatic ? 0 : index;
+    const sliderValue = uniform ? options[thumbIndex] : thumbIndex;
+    const fill = automatic ? 0 : (index / Math.max(1, options.length - 1)) * 100;
 
-    return (
-        <label className="flex h-8 w-20 shrink-0 items-center overflow-hidden rounded-md border text-[var(--fs-label)]" style={{ background: theme.toolbar.itemHover, borderColor: theme.toolbar.border, color: theme.node.text }}>
-            <input
-                key={`${min}-${value}`}
-                type="number"
-                inputMode={continuous ? "decimal" : "numeric"}
-                step={continuous ? "any" : 1}
-                min={min}
-                max={max}
-                defaultValue={value}
-                aria-label="视频时长（秒）"
-                className="min-w-0 flex-1 bg-transparent pl-2 text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                onBlur={(event) => commit(event.currentTarget)}
-                onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                }}
-                onMouseDown={(event) => event.stopPropagation()}
-            />
-            <span className="shrink-0 px-1.5" style={{ color: theme.node.muted }}>
-                秒
-            </span>
-        </label>
-    );
-}
-
-function VideoDurationControl({ profile, value, theme, disabled, onChange }: { profile: VideoCapabilityConfig; value: number; theme: CanvasTheme; disabled?: (value: number) => boolean; onChange: (value: number) => void }) {
-    if (profile.duration.selection === "range") {
-        const min = profile.duration.fractionalMin ?? (profile.duration.min || VIDEO_DURATION_MIN);
-        const max = Math.max(min, profile.duration.max || min);
-        const step = Math.max(1, profile.duration.step || 1);
-        const normalized = profile.duration.continuous
-            ? Math.max(min, Math.min(max, Number.isFinite(value) ? value : profile.duration.default))
-            : normalizeDurationValue(value, profile.duration.default, min, max, step);
-        return (
-            <DurationRangeControl
-                value={normalized}
-                min={min}
-                max={max}
-                step={profile.duration.continuous ? "any" : step}
-                continuous={profile.duration.continuous}
-                theme={theme}
-                onChange={(next) => {
-                    if (!disabled?.(next)) onChange(next);
-                }}
-            />
-        );
-    }
-
-    const options = videoDurationOptions(profile);
-    return (
-        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(options.length, 4)}, minmax(0, 1fr))` }}>
-            {options.map((option) => (
-                <OptionPill key={option} selected={normalizedNumber(value) === option} disabled={disabled?.(option)} theme={theme} onClick={() => onChange(option)}>
-                    {option === -1 ? "自动" : `${option}s`}
-                </OptionPill>
-            ))}
-        </div>
-    );
-}
-
-function DurationRangeControl({ value, min, max, step, theme, onChange, continuous }: { value: number; min: number; max: number; step: number | "any"; theme: CanvasTheme; onChange: (value: number) => void; continuous?: boolean }) {
     return (
         <div className="space-y-1.5">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-h-6 items-center justify-between gap-2">
+                <span style={{ color: theme.node.muted }}>视频时长</span>
+                <div className="flex items-center gap-2">
+                    {canSwitchToAuto ? <OptionPill selected={automatic} theme={theme} onClick={() => onChange(automatic ? options[index] : -1)}>自动</OptionPill> : null}
+                    {canSwitchToAuto && automatic ? null : <span className="tabular-nums">{display}</span>}
+                </div>
+            </div>
+            {!locked && options.length > 1 ? (
                 <input
-                    type="range"
-                    min={min}
-                    max={max}
-                    step={step}
-                    value={value}
                     aria-label="视频时长（秒）"
-                    className="video-duration-range h-8 min-w-0 flex-1"
-                    style={{ accentColor: theme.accent.primary }}
-                    onChange={(event) => onChange(Number(event.target.value))}
-                    onMouseDown={(event) => event.stopPropagation()}
+                    aria-valuetext={display}
+                    type="range"
+                    min={uniform ? options[0] : 0}
+                    max={uniform ? options[options.length - 1] : options.length - 1}
+                    step={uniform ? step : 1}
+                    value={sliderValue}
+                    className="video-duration-range block w-full cursor-pointer"
+                    style={{
+                        "--video-duration-fill": `${fill}%`,
+                        "--video-duration-track": theme.toolbar.itemHover,
+                        "--video-duration-progress": theme.toolbar.activeBg,
+                        "--video-duration-thumb": theme.node.text,
+                    } as CSSProperties}
+                    onClick={(event) => {
+                        if (!automatic || event.detail === 0) return;
+                        const selected = event.currentTarget.valueAsNumber;
+                        onChange(uniform ? selected : options[selected]);
+                    }}
+                    onChange={(event) => {
+                        const selected = event.currentTarget.valueAsNumber;
+                        onChange(uniform ? selected : options[selected]);
+                    }}
                 />
-                <DurationInput value={value} min={min} max={max} theme={theme} onChange={onChange} continuous={continuous} />
-            </div>
-            <div className="flex justify-between px-0.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
-                <span>{min}s</span>
-                <span>{max}s</span>
-            </div>
+            ) : null}
         </div>
     );
-}
-
-function normalizeDurationValue(value: number, fallback: number, min: number, max: number, step: number) {
-    const candidate = Number.isFinite(value) ? value : fallback;
-    const clamped = Math.min(max, Math.max(min, Math.floor(candidate)));
-    const maxStep = Math.max(0, Math.floor((max - min) / step));
-    return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
-}
-
-function normalizedNumber(value: number) {
-    return Number.isFinite(value) ? Math.floor(value) : 0;
 }
 
 function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {
@@ -425,7 +351,7 @@ function ratioPreview(ratio: string) {
 function SwitchRow({ label, checked, theme, onChange }: { label: string; checked: boolean; theme: CanvasTheme; onChange: (checked: boolean) => void }) {
     return (
         <div className="flex h-8 items-center justify-between gap-2">
-            <span className="min-w-0 whitespace-nowrap text-[var(--fs-label)]" style={{ color: theme.node.text }}>
+            <span className="min-w-0 whitespace-nowrap" style={{ color: theme.node.text }}>
                 {label}
             </span>
             <span className="shrink-0" onMouseDown={(event) => event.stopPropagation()}>

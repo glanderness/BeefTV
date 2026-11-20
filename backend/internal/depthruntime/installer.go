@@ -235,6 +235,9 @@ func fetchManifest(ctx context.Context, rawURL string, signed bool, public ed255
 			lastErr = fmt.Errorf("深度组件清单返回 HTTP %d", response.StatusCode)
 			_ = response.Body.Close()
 			cancel()
+			if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
+				break
+			}
 			continue
 		}
 		var decodeErr error

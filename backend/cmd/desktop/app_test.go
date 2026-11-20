@@ -26,6 +26,9 @@ import (
 // token before the frontend can make its first authenticated API request.
 func TestDesktopAppStartsRuntimeOnLoopback(t *testing.T) {
 	app := newDesktopApp(t.TempDir())
+	if idle := app.RuntimeConfig(); idle != (DesktopRuntimeConfig{}) {
+		t.Fatalf("RuntimeConfig before start = %#v, want empty", idle)
+	}
 	if err := app.start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -36,8 +39,15 @@ func TestDesktopAppStartsRuntimeOnLoopback(t *testing.T) {
 	if config.LaunchToken == "" {
 		t.Fatal("launch token must be available before the frontend loads")
 	}
+	legacy := app.RuntimeConfig()
+	if legacy.BaseURL != config.BaseURL || legacy.LaunchToken != config.LaunchToken || legacy.UIBootstrapToken != config.UIBootstrapToken {
+		t.Fatalf("RuntimeConfig = %#v, want match with StartupState %#v", legacy, config)
+	}
 	if err := app.stop(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if stopped := app.RuntimeConfig(); stopped != (DesktopRuntimeConfig{}) {
+		t.Fatalf("RuntimeConfig after stop = %#v, want empty", stopped)
 	}
 }
 
@@ -191,7 +201,7 @@ func TestDesktopAppBoundMethodsStayTiny(t *testing.T) {
 		names = append(names, typ.Method(i).Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "ConsumeSkillLink", "DepthComponentStatus", "DownloadDepthComponents", "DownloadUpdate", "ExportStartupDiagnostics", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "OpenSkillMarketURL", "OpenUpdateLogDirectory", "PauseDepthComponentDownload", "ReferenceStorageSettings", "ReferenceUploadStatus", "RetryStartup", "RevealDiagnosticBundle", "SaveDiagnosticBundle", "SaveEagleMedia", "SaveOwnedArchive", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StartupState", "StorageMigrationStatus", "StorageSettings", "TestReferenceStorage", "UpdateStatus", "UploadReferenceMedia"}) {
+	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "ConsumeSkillLink", "DepthComponentStatus", "DownloadDepthComponents", "DownloadUpdate", "ExportRuntimeDiagnosticsToDownloads", "ExportStartupDiagnostics", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "OpenPartnerKeysURL", "OpenSkillMarketURL", "OpenUpdateLogDirectory", "PauseDepthComponentDownload", "ReferenceStorageSettings", "ReferenceUploadStatus", "ReloadWindow", "RetryStartup", "RevealDiagnosticBundle", "RuntimeConfig", "SaveDiagnosticBundle", "SaveEagleMedia", "SaveOwnedArchive", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StartupState", "StorageMigrationStatus", "StorageSettings", "TestReferenceStorage", "UpdateStatus", "UploadReferenceMedia"}) {
 		t.Fatalf("bound methods = %v", names)
 	}
 }

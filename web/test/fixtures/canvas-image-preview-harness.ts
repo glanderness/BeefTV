@@ -1,4 +1,4 @@
-import { cacheResourceImagePreviewObjectUrl, getCachedResourceBlob, primeResourceBlobCache } from "../../src/services/resource-blob-cache";
+import { cacheResourceImagePreviewObjectUrl, getCachedResourceBlob, peekFallbackResourceImagePreviewUrl, primeResourceBlobCache } from "../../src/services/resource-blob-cache";
 import { canvasImagePreviewSize, createCanvasImagePreviewBlob } from "../../src/lib/canvas/canvas-image-preview-blob";
 import { setActiveUserScope } from "../../src/lib/user-scope";
 import React from "react";
@@ -55,9 +55,13 @@ Object.assign(window, { async checkImagePreviews() {
     const wideProbe=document.createElement("canvas");wideProbe.width=128;wideProbe.height=64;
     const widePixels=wideProbe.getContext("2d",{colorSpace:"display-p3"})!;widePixels.drawImage(wideImage.image,0,0);
     const wideRed=[...widePixels.getImageData(10,10,1,1,{colorSpace:"display-p3"}).data];
+    const jpegOriginal = await new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/jpeg", 0.92));
+    const jpegPreview = await createCanvasImagePreviewBlob(jpegOriginal, 512);
+    const fallback2048 = peekFallbackResourceImagePreviewUrl(key, 2048);
     return { uniqueUrls: new Set(urls).size, oneTierDraws, allDraws: draws,
         small: [small.width, small.height], large: [large.width, large.height], full: [full.width, full.height],
-        differentTier: larger !== urls[0], red, transparent, originalUnchanged: await hash(originalBytes) === await hash(await retained!.arrayBuffer()),
+        differentTier: larger !== urls[0], fallbackMatchesLarger: fallback2048 === larger, jpegMime: jpegPreview.type,
+        red, transparent, originalUnchanged: await hash(originalBytes) === await hash(await retained!.arrayBuffer()),
         animatedUnchanged: await createCanvasImagePreviewBlob(animated, 128) === animated, wideRed,
         tiers: [canvasImagePreviewSize(420,280,.05,1,4096,2731,"image/png"), canvasImagePreviewSize(420,280,1,1,4096,2731,"image/png"), canvasImagePreviewSize(420,280,1,2,4096,2731,"image/png"), canvasImagePreviewSize(420,280,6,1,4096,2731,"image/png"), canvasImagePreviewSize(420,280,.05,1,0,0,"image/png"), canvasImagePreviewSize(420,280,.05,1,4096,2731,"image/gif")].map(v => v ?? null) };
 } });

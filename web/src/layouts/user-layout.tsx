@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button, ConfigProvider } from "antd";
 
@@ -19,7 +19,13 @@ import { useWorkspaceButtonFeedback } from "@/hooks/use-workspace-button-feedbac
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { notifyExternalCanvasEvent } from "@/services/canvas-external-writes";
 import { hydrateLocalCanvasProjectsFromBackend, openLocalCanvasProjectFromBackend, refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
-import { syncPluginsFromBackend } from "@/services/plugin-sync";
+import {
+    getBuiltinPresetsVersion,
+    nextActivePartnerWindowDelayMs,
+    notifyPartnerWindowBoundaryCrossed,
+    subscribeBuiltinPresets,
+} from "@/lib/builtin-service-presets";
+import { syncPartnerCatalogFromBackend, syncPluginsFromBackend } from "@/services/plugin-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import "@/styles/workspace-product.css";
 
@@ -48,10 +54,48 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         publishEmbeddedContext({ route: pathname, selectedNodeIds: [] });
     }, [pathname]);
 
+    const partnerPresetsRev = useSyncExternalStore(subscribeBuiltinPresets, getBuiltinPresetsVersion, getBuiltinPresetsVersion);
+
     useEffect(() => {
-        // A failed read keeps the plugins remembered in this browser.
-        void syncPluginsFromBackend().catch(() => undefined);
+        let lastSyncedAt = Date.now();
+        const runFullSync = () => {
+            lastSyncedAt = Date.now();
+            // A failed read keeps the plugins remembered in this browser.
+            void syncPluginsFromBackend().catch(() => undefined);
+            void syncPartnerCatalogFromBackend().catch(() => undefined);
+        };
+        const runPartnerSync = () => {
+            lastSyncedAt = Date.now();
+            void syncPartnerCatalogFromBackend().catch(() => undefined);
+        };
+        runFullSync();
+        const initialUpdateTimer = window.setTimeout(runFullSync, 75_000);
+        const partnerPeriodicTimer = window.setInterval(runPartnerSync, 15 * 60_000);
+        const periodicTimer = window.setInterval(runFullSync, 6 * 60 * 60_000);
+        const onVisibleOrFocus = () => {
+            if (document.hidden || Date.now() - lastSyncedAt < 60_000) return;
+            runFullSync();
+        };
+        window.addEventListener("focus", onVisibleOrFocus);
+        document.addEventListener("visibilitychange", onVisibleOrFocus);
+        return () => {
+            window.clearTimeout(initialUpdateTimer);
+            window.clearInterval(partnerPeriodicTimer);
+            window.clearInterval(periodicTimer);
+            window.removeEventListener("focus", onVisibleOrFocus);
+            document.removeEventListener("visibilitychange", onVisibleOrFocus);
+        };
     }, []);
+
+    useEffect(() => {
+        const boundaryDelay = nextActivePartnerWindowDelayMs();
+        if (boundaryDelay === null) return;
+        const timer = window.setTimeout(() => {
+            notifyPartnerWindowBoundaryCrossed();
+            void syncPartnerCatalogFromBackend().catch(() => undefined);
+        }, boundaryDelay);
+        return () => window.clearTimeout(timer);
+    }, [partnerPresetsRev]);
 
     useEffect(() => {
         if (!isLocalWorkspaceMode()) return;

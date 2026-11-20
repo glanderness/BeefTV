@@ -24,6 +24,7 @@ type CanvasImageCompareStageProps = {
     pan: { x: number; y: number };
     onZoomPanChange: (zoom: number, pan: { x: number; y: number }) => void;
     onMeasuredSize?: (id: string, width: number, height: number) => void;
+    onImageError?: (id: string) => void;
     onRetryImage?: (id: string) => void;
     theme: CanvasTheme;
     stageBackground: string;
@@ -42,6 +43,7 @@ export function CanvasImageCompareStage({
     pan,
     onZoomPanChange,
     onMeasuredSize,
+    onImageError,
     onRetryImage,
     theme,
     stageBackground,
@@ -165,6 +167,7 @@ export function CanvasImageCompareStage({
                                 item={item}
                                 theme={theme}
                                 onMeasuredSize={onMeasuredSize}
+                                onImageError={onImageError}
                             />
                         </div>
                         {item.failed ? (
@@ -213,9 +216,10 @@ export function CanvasImageCompareStage({
                                         onMeasuredSize?.(rightImage.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
                                     }
                                 }}
+                                onError={() => onImageError?.(rightImage.id)}
                             />
                         ) : !rightImage.failed ? (
-                            <span role="status" className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>
+                            <span role="status" style={{ color: theme.node.muted }}>
                                 正在加载图片…
                             </span>
                         ) : null}
@@ -236,9 +240,10 @@ export function CanvasImageCompareStage({
                                         onMeasuredSize?.(leftImage.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
                                     }
                                 }}
+                                onError={() => onImageError?.(leftImage.id)}
                             />
                         ) : !leftImage.failed ? (
-                            <span role="status" className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>
+                            <span role="status" style={{ color: theme.node.muted }}>
                                 正在加载图片…
                             </span>
                         ) : null}
@@ -322,6 +327,7 @@ export function CanvasImageCompareStage({
                     item={displayedSingle}
                     theme={theme}
                     onMeasuredSize={onMeasuredSize}
+                    onImageError={onImageError}
                 />
             </div>
             {displayedSingle.failed ? (
@@ -330,7 +336,7 @@ export function CanvasImageCompareStage({
                 </div>
             ) : null}
             {peekingPrimary ? (
-                <div className="pointer-events-none absolute left-4 top-4 rounded-md bg-black/70 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-md">
+                <div className="pointer-events-none absolute left-4 top-4 rounded-md bg-black/70 px-2.5 py-1 text-white backdrop-blur-md">
                     正在查看当前主图（松开恢复）
                 </div>
             ) : null}
@@ -342,10 +348,12 @@ function StageImageSurface({
     item,
     theme,
     onMeasuredSize,
+    onImageError,
 }: {
     item: ResolvedViewerImage;
     theme: CanvasTheme;
     onMeasuredSize?: (id: string, width: number, height: number) => void;
+    onImageError?: (id: string) => void;
 }) {
     return (
         <>
@@ -360,9 +368,10 @@ function StageImageSurface({
                             onMeasuredSize?.(item.id, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
                         }
                     }}
+                    onError={() => onImageError?.(item.id)}
                 />
             ) : !item.failed ? (
-                <span role="status" className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>
+                <span role="status" style={{ color: theme.node.muted }}>
                     正在加载图片…
                 </span>
             ) : null}
@@ -388,14 +397,14 @@ function StageFailureCard({
             style={{ background: theme.node.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={(e) => e.stopPropagation()}
         >
-            <span className="text-[13px] leading-[20px]" style={{ color: theme.node.muted }}>
+            <span style={{ color: theme.node.muted }}>
                 {label}
             </span>
             {onRetryImage ? (
                 <button
                     type="button"
                     data-testid="canvas-image-stage-retry"
-                    className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-md)] border px-3 text-[13px] leading-[20px] font-[550]"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-md)] border px-3"
                     style={{ borderColor: theme.toolbar.border, background: theme.toolbar.itemHover, color: theme.node.text }}
                     onClick={() => onRetryImage(itemId)}
                 >
@@ -420,10 +429,10 @@ function StageCornerTag({
 }) {
     return (
         <div
-            className={`pointer-events-none absolute top-3 z-20 inline-flex items-center gap-1.5 rounded-md bg-black/68 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-md ${position === "left" ? "left-3" : "right-3"}`}
+            className={`pointer-events-none absolute top-3 z-20 inline-flex items-center gap-1.5 rounded-md bg-black/68 px-2.5 py-1 text-white backdrop-blur-md ${position === "left" ? "left-3" : "right-3"}`}
             style={{ fontVariantNumeric: "tabular-nums" }}
         >
-            <span className="inline-grid size-4 place-items-center rounded bg-white/20 text-[11px] font-semibold leading-none">{tag}</span>
+            <span className="inline-grid size-4 place-items-center rounded bg-white/20">{tag}</span>
             <span>{label}</span>
             {isPrimary ? <span className="text-white/75">· 主图</span> : null}
         </div>

@@ -37,8 +37,18 @@ func ResourceMissing() error {
 	return kernel.BadAuthRequest("资源不存在")
 }
 
+func ResourceNotFound() error {
+	return kernel.NotFound("资源不存在")
+}
+
 func ResourceFileMissing() error {
 	return kernel.NotFound("本地媒体文件不存在或已丢失")
+}
+
+func PreviewUnavailable() error {
+	err := kernel.NewAppError(http.StatusServiceUnavailable, "图片尺寸过大或预览生成暂不可用，请稍后重试")
+	err.Retryable = true
+	return err
 }
 
 func UnreadableAssetDocument(kind string) error {

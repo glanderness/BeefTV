@@ -77,7 +77,7 @@ function formatBalanceDisplay(connected: boolean, balance?: string, balanceCny?:
 }
 
 export function AccountBalancePane() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const account = useBeefTVConnection();
     const { connection, busy, balanceRefreshFailed } = account;
     const connected = isBeefTVAuthenticated(connection);
@@ -104,6 +104,7 @@ export function AccountBalancePane() {
     const [modalMode, setModalMode] = useState<"confirm" | "waiting">("confirm");
     const [submitting, setSubmitting] = useState(false);
     const [checkingOrder, setCheckingOrder] = useState(false);
+    const [accountActionBusy, setAccountActionBusy] = useState(false);
     const [pendingOrder, setPendingOrder] = useState<BeefTVTopUpCheckoutResult | null>(null);
     const [orderHint, setOrderHint] = useState("");
     const reconcileBusy = useRef(false);
@@ -366,14 +367,53 @@ export function AccountBalancePane() {
     const activeMethodKey = showingWaitingOrder ? pendingOrder.paymentMethod : method;
     const currentMethodLabel = ALL_PAYMENT_OPTIONS.find((item) => item.key === activeMethodKey)?.label || "在线支付";
     const displayedBalanceCny = connection?.balanceCny;
+    const actionBusy = busy || accountActionBusy;
+
+    const handleSwitchAccount = async () => {
+        if (actionBusy) return;
+        setAccountActionBusy(true);
+        try {
+            await account.disconnect();
+            await account.connect();
+        } finally {
+            setAccountActionBusy(false);
+        }
+    };
+
+    const handleLogout = () => {
+        if (actionBusy) return;
+        const identity = connection?.account?.email || name;
+        modal.confirm({
+            title: "确认退出登录？",
+            content: `退出当前账号（${identity}）后将断开 BeefTV 官方算力连接，本地画布与素材仍保留在本机。`,
+            okText: "退出登录",
+            cancelText: "取消",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                setAccountActionBusy(true);
+                try {
+                    await account.disconnect();
+                } finally {
+                    setAccountActionBusy(false);
+                }
+            },
+        });
+    };
 
     return <>
         <div className="account-balance-identity">
-            <div><h3>{connected ? name : "登录 BeefTV"}</h3>
+            <div className="account-balance-identity-meta"><h3>{connected ? name : "登录 BeefTV"}</h3>
                 {connected && connection?.account?.email && name !== connection.account.email ? <p>{connection.account.email}</p> : null}
                 {connection?.state !== "connected" ? <p role="status" aria-live="polite">{beefTVConnectionLabel(connection)}</p> : null}
             </div>
-            {!connected ? <Button loading={busy} disabled={pending} onClick={() => void account.connect()}>{pending ? "等待授权" : "登录"}</Button> : null}
+            {connected ? (
+                <div className="account-balance-identity-actions">
+                    <Button disabled={actionBusy} onClick={() => void handleSwitchAccount()}>切换账号</Button>
+                    <Button disabled={actionBusy} onClick={handleLogout}>退出登录</Button>
+                </div>
+            ) : (
+                <Button loading={busy} disabled={pending} onClick={() => void account.connect()}>{pending ? "等待授权" : "登录"}</Button>
+            )}
         </div>
         {pending ? <div className="account-login-actions">
             {connection?.verificationUri ? <Button onClick={() => { void navigator.clipboard.writeText(connection.verificationUri!).then(() => message.success("授权地址已复制")).catch(() => message.error("复制失败，请重试")); }}>复制授权地址</Button> : null}
@@ -445,10 +485,7 @@ export function AccountBalancePane() {
                 </label>
             ) : null}
             {availableMethods.length > 0 ? (
-                <div className="account-payment-section">
-                    <h3>支付方式</h3>
-                    <PaymentMethodPicker options={availableMethods} value={method} onChange={setMethod} />
-                </div>
+                <PaymentMethodPicker options={availableMethods} value={method} onChange={setMethod} />
             ) : null}
             <div className="account-recharge-total">
                 <div>

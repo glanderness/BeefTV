@@ -6,7 +6,7 @@ import (
 )
 
 func isSeedanceConstraintPluginID(id string) bool {
-	return id == "volcengine-ark-seedance" || id == "volcengine-ark-video" || id == "volcengine-ark-agent-plan-video" || id == "seedance-videos-compatible"
+	return id == "volcengine-ark-seedance" || id == "volcengine-ark-video" || id == "volcengine-ark-agent-plan-video" || id == "seedance-videos-compatible" || id == "ll2-seedance-video"
 }
 
 func hasExplicitTaskTypeConstraints(r GenerationRequest) bool {
@@ -123,7 +123,7 @@ func NormalizeSeedanceTaskOptions(r GenerationRequest) GenerationRequest {
 				r.Duration = -1
 			}
 		}
-	if locked {
+		if locked {
 			r.AspectRatio = "adaptive"
 		}
 	}

@@ -11,7 +11,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -35,33 +34,6 @@ func (q *testQuota) ValidateCanvas(string, *repository.Repository, bool, int64) 
 type testSecrets struct{}
 
 func (testSecrets) Protect(map[string]any) error { return nil }
-
-type testMedia struct{}
-
-func (testMedia) ValidateDocument(string, *repository.Repository, json.RawMessage) error {
-	return nil
-}
-
-type txMedia struct{}
-
-func (txMedia) ValidateDocument(userID string, repo *repository.Repository, raw json.RawMessage) error {
-	if repo == nil {
-		return Conflict("media validation missing transaction repository")
-	}
-	return canvas.New(repo, nil).ValidateCanvasMediaAssets(userID, raw)
-}
-
-type recordingMedia struct {
-	repo *repository.Repository
-}
-
-func (m *recordingMedia) ValidateDocument(_ string, repo *repository.Repository, _ json.RawMessage) error {
-	m.repo = repo
-	if repo == nil {
-		return Conflict("media validation missing transaction repository")
-	}
-	return nil
-}
 
 type failingSecrets struct{}
 
@@ -140,7 +112,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{db: db, repo: repository.New(db), quota: &testQuota{}, user: "user", clock: time.Now()}
 	h.tasks = &testTasks{repo: h.repo}
 	h.svc = New(h.repo, Dependencies{
-		Tasks: h.tasks, Secrets: testSecrets{}, Quota: h.quota, Media: testMedia{}, Kinds: testKinds{},
+		Tasks: h.tasks, Secrets: testSecrets{}, Quota: h.quota, Kinds: testKinds{},
 		Now: func() time.Time { return h.clock }, NewID: kernel.NewID,
 	})
 	if err = db.Create(&model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "受控测试"}).Error; err != nil {
@@ -537,75 +509,6 @@ func TestConcurrentExecuteCreatesOneTask(t *testing.T) {
 	var count int64
 	if err = h.db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 1 {
 		t.Fatalf("expected one task, got %d: %v", count, err)
-	}
-}
-
-func TestCommitCanvasMediaUsesTransactionRepository(t *testing.T) {
-	h := newHarness(t)
-	media := &recordingMedia{}
-	h.svc.deps.Media = media
-	canvasID, hash, raw := seedApprovedCanvas(t, h)
-	if _, err := h.svc.CommitCanvas(h.user, h.runID, Command{Guard: h.guard, ExpectedSnapshotHash: hash, Document: raw}); err != nil {
-		t.Fatal(err)
-	}
-	if media.repo == nil || media.repo == h.repo {
-		t.Fatal("media validation used the root repository")
-	}
-	before, err := h.repo.CanvasProjectForUser(h.user, canvasID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.svc.deps.Media = txMedia{}
-	if err = h.db.Create(&model.Resource{ID: "res-1", UserID: h.user, Status: model.ResourceStatusReady, Kind: "media", MimeType: "image/png", Size: 12}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = h.db.Create(&model.Asset{ID: "asset-1", UserID: h.user, Kind: "image", PayloadJSON: `{"storageKey":"resource:res-1"}`}).Error; err != nil {
-		t.Fatal(err)
-	}
-	doc, err := parseDocument(before.PayloadJSON)
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc["nodes"] = []any{map[string]any{"id": "img", "type": "image", "title": "图", "metadata": map[string]any{
-		"assetId": "asset-1", "storageKey": "resource:res-1", "content": "/api/resources/res-1/file",
-	}}}
-	injected, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before.PayloadJSON = string(injected)
-	if err = h.db.Save(before).Error; err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := h.svc.CanvasSnapshot(h.user, h.runID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = h.svc.CommitCanvas(h.user, h.runID, Command{Guard: h.guard, ExpectedSnapshotHash: snapshot["snapshotHash"].(string), Document: injected}); err != nil {
-		t.Fatal(err)
-	}
-	if err = h.db.Delete(&model.Asset{}, "id = ?", "asset-1").Error; err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err = h.svc.CanvasSnapshot(h.user, h.runID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc = snapshot["document"].(map[string]any)
-	doc["updatedAt"] = time.Now().Format(time.RFC3339Nano)
-	stale, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = h.svc.CommitCanvas(h.user, h.runID, Command{Guard: h.guard, ExpectedSnapshotHash: snapshot["snapshotHash"].(string), Document: stale}); err == nil {
-		t.Fatal("commit accepted a document after its asset was deleted")
-	}
-	after, err := h.repo.CanvasProjectForUser(h.user, canvasID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.PayloadJSON != string(injected) {
-		t.Fatal("failed media validation mutated canvas")
 	}
 }
 

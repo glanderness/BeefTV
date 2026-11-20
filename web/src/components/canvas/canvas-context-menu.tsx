@@ -2,12 +2,11 @@ import { AnimatePresence } from "motion/react";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
     ArrowLeft,
-    AtSign,
     AudioLines,
     Check,
     ChevronRight,
+    Clapperboard,
     Clipboard,
-    CloudUpload,
     Copy,
     Download,
     FolderOpen,
@@ -16,8 +15,8 @@ import {
     Info,
     Layers3,
     LayoutTemplate,
-    Link2,
     Maximize2,
+    Music2,
     PanelTop,
     Pencil,
     Plus,
@@ -30,6 +29,7 @@ import {
 } from "lucide-react";
 
 import { CanvasCreateMenu, type CanvasCreateCommand } from "@/components/canvas/canvas-create-menu";
+import { CanvasStoryboardBindSubmenu, type CanvasStoryboardMenuTarget } from "@/components/canvas/canvas-context-menu-storyboard";
 import { ASSET_CATEGORY_OPTIONS } from "@/lib/asset-category";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
@@ -90,9 +90,14 @@ type CanvasNodeContextMenuProps = {
     onDeleteSelection?: () => void;
     downloadableSelectionCount?: number;
     onBatchDownloadSelection?: () => void;
+    bindableAssetCount?: number;
+    storyboardTargets?: CanvasStoryboardMenuTarget[];
+    onBindAssetsToStoryboardShots?: (scriptNodeId: string, rowIds: string[]) => void;
     extractingAudio?: boolean;
+    extractingAudioNode?: boolean;
     trimmingVideo?: boolean;
     onExtractAudio?: () => void;
+    onExtractAudioNode?: () => void;
 };
 
 export function CanvasNodeContextMenu({
@@ -138,13 +143,19 @@ export function CanvasNodeContextMenu({
     onDeleteSelection,
     downloadableSelectionCount = 0,
     onBatchDownloadSelection,
+    bindableAssetCount = 0,
+    storyboardTargets = [],
+    onBindAssetsToStoryboardShots,
     extractingAudio = false,
+    extractingAudioNode = false,
     trimmingVideo = false,
     onExtractAudio,
+    onExtractAudioNode,
 }: CanvasNodeContextMenuProps) {
     const theme = canvasThemes[useActiveTheme()];
     const [addOpen, setAddOpen] = useState(false);
     const [categoryOpen, setCategoryOpen] = useState(false);
+    const [storyboardOpen, setStoryboardOpen] = useState(false);
 
     useEffect(() => {
         const close = (event: PointerEvent) => {
@@ -155,6 +166,7 @@ export function CanvasNodeContextMenu({
         const closeOnEscape = (event: KeyboardEvent) => {
             if (event.key !== "Escape") return;
             if (categoryOpen) setCategoryOpen(false);
+            else if (storyboardOpen) setStoryboardOpen(false);
             else onClose();
         };
         window.addEventListener("pointerdown", close);
@@ -163,11 +175,12 @@ export function CanvasNodeContextMenu({
             window.removeEventListener("pointerdown", close);
             window.removeEventListener("keydown", closeOnEscape);
         };
-    }, [categoryOpen, onClose]);
+    }, [categoryOpen, onClose, storyboardOpen]);
 
     useEffect(() => {
         setAddOpen(menu.type === "canvas" && Boolean(menu.createOpen));
         setCategoryOpen(false);
+        setStoryboardOpen(false);
     }, [menu]);
 
     const runAction = (action: () => void) => {
@@ -192,6 +205,16 @@ export function CanvasNodeContextMenu({
     const canCopyMediaUrl = Boolean(isMedia && hasNodeContent);
     const assetCategory = node ? canvasNodeAssetCategory(node) : "other";
     const hasMultiSelection = selectedCount >= 2;
+    const canBindToStoryboard = Boolean(bindableAssetCount > 0 && storyboardTargets.length > 0 && onBindAssetsToStoryboardShots);
+    const storyboardMenuButton = canBindToStoryboard ? (
+        <MenuButton
+            icon={<Clapperboard className="size-4" />}
+            label="关联至分镜镜头"
+            detail={bindableAssetCount > 1 ? `批量关联 ${bindableAssetCount} 个素材` : undefined}
+            chevron
+            onClick={() => setStoryboardOpen(true)}
+        />
+    ) : null;
     const position = getContextMenuPosition(menu, hasMultiSelection);
     const pluginContextMenuEntries = usePluginSlot("canvas.contextMenu");
     const pluginContextTarget = menu.type === "canvas" ? "canvas" : hasMultiSelection ? "selection" : "node";
@@ -224,7 +247,14 @@ export function CanvasNodeContextMenu({
             >
                 <div className="absolute inset-x-8 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${theme.toolbar.border}, transparent)` }} />
                 <div className="thin-scrollbar min-h-0 overflow-y-auto">
-                    {menu.type === "node" && isMedia && categoryOpen && onSetAssetCategory ? (
+                    {storyboardOpen && canBindToStoryboard && onBindAssetsToStoryboardShots ? (
+                        <CanvasStoryboardBindSubmenu
+                            targets={storyboardTargets}
+                            assetCount={bindableAssetCount}
+                            onBack={() => setStoryboardOpen(false)}
+                            onBindShots={(scriptNodeId, rowIds) => runAction(() => onBindAssetsToStoryboardShots(scriptNodeId, rowIds))}
+                        />
+                    ) : menu.type === "node" && isMedia && categoryOpen && onSetAssetCategory ? (
                         <>
                             <MenuHeader title="资产分类" description={node?.title || nodeTypeLabel(node)} onBack={() => setCategoryOpen(false)} />
                             <MenuSection label="项目用途" />
@@ -237,6 +267,7 @@ export function CanvasNodeContextMenu({
                             <MenuHeader title="画布命令" />
                             {hasMultiSelection ? (
                                 <>
+                                    {storyboardMenuButton}
                                     <MenuButton icon={<FolderPlus className="size-4" />} label="收纳到文件夹" detail="合并进新建画布文件夹" disabled={!onPackSelectionToFolder} onClick={() => onPackSelectionToFolder && runAction(onPackSelectionToFolder)} />
                                     <MenuButton icon={<LayoutTemplate className="size-4" />} label="自适应整理画布" detail="保持相对布局并加大边距" disabled={!onSpreadSelection} onClick={() => onSpreadSelection && runAction(onSpreadSelection)} />
                                     <MenuButton icon={<Download className="size-4" />} label={downloadableSelectionCount ? `批量下载素材 (${downloadableSelectionCount})` : "批量下载素材"} disabled={!downloadableSelectionCount || !onBatchDownloadSelection} onClick={() => onBatchDownloadSelection && runAction(onBatchDownloadSelection)} />
@@ -256,6 +287,7 @@ export function CanvasNodeContextMenu({
                         <>
                             <MenuHeader title={`已选 ${selectedCount} 个节点`} />
                             <MenuSection label="选区" />
+                            {storyboardMenuButton}
                             <MenuButton icon={<FolderPlus />} label="收纳到文件夹" detail="合并进新建画布文件夹" disabled={!onPackSelectionToFolder} onClick={() => onPackSelectionToFolder && runAction(onPackSelectionToFolder)} />
                             <MenuButton icon={<LayoutTemplate />} label="自适应整理画布" detail="保持相对布局并加大边距" disabled={!onSpreadSelection} onClick={() => onSpreadSelection && runAction(onSpreadSelection)} />
                             <MenuButton icon={<Download />} label={downloadableSelectionCount ? `批量下载素材 (${downloadableSelectionCount})` : "批量下载素材"} disabled={!downloadableSelectionCount || !onBatchDownloadSelection} onClick={() => onBatchDownloadSelection && runAction(onBatchDownloadSelection)} />
@@ -270,6 +302,7 @@ export function CanvasNodeContextMenu({
                                     <MenuHeader title="角色卡" description={node?.metadata?.characterName || node?.title} />
                                     <MenuSection label="角色引用" />
                                     <MenuButton icon={<UserRound />} label="查看角色详情" onClick={() => runAction(onEditText)} />
+                                    {storyboardMenuButton}
                                     <MenuDivider />
                                     <MenuSection label="节点" />
                                             <MenuButton icon={<Copy />} label="复制角色引用" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
@@ -287,6 +320,7 @@ export function CanvasNodeContextMenu({
                                                 disabled={!canOpenPreview && !(node?.metadata?.imageHistory?.length)}
                                                 onClick={() => runAction(onViewMedia)}
                                             />
+                                            {storyboardMenuButton}
                                             {onNodeInfo ? <MenuButton icon={<Tags />} label="节点信息与标签" onClick={() => runAction(onNodeInfo)} /> : null}
                                             {onSetAssetCategory ? <MenuButton icon={<Tags />} label="资产分类" chevron onClick={() => setCategoryOpen(true)} /> : null}
                                             <MenuButton icon={<Copy />} label="复制节点" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
@@ -294,14 +328,24 @@ export function CanvasNodeContextMenu({
                                     ) : (
                                         <>
                                             <MenuButton icon={<Maximize2 />} label="全景预览" disabled={!canOpenPreview} onClick={() => runAction(onViewMedia)} />
+                                            {onExtractAudioNode ? (
+                                                <MenuButton
+                                                    icon={<Music2 />}
+                                                    label={extractingAudioNode ? "正在提取音频" : "提取音频为节点"}
+                                                    detail="仅保留声音，避免参考画面串脸"
+                                                    disabled={!hasVideoPayload || extractingAudioNode || extractingAudio || trimmingVideo}
+                                                    onClick={() => runAction(onExtractAudioNode)}
+                                                />
+                                            ) : null}
                                             {workspaceMode !== "simple" && onExtractAudio ? (
                                                 <MenuButton
                                                     icon={<AudioLines />}
                                                     label={extractingAudio ? "正在分离音视频" : "音视频分离"}
-                                                    disabled={!hasVideoPayload || extractingAudio || trimmingVideo}
+                                                    disabled={!hasVideoPayload || extractingAudio || extractingAudioNode || trimmingVideo}
                                                     onClick={() => runAction(onExtractAudio)}
                                                 />
                                             ) : null}
+                                            {storyboardMenuButton}
                                             {onSetAssetCategory ? <MenuButton icon={<Tags />} label="资产分类" chevron onClick={() => setCategoryOpen(true)} /> : null}
                                             <MenuButton icon={<Copy />} label="复制节点" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                         </>
@@ -331,6 +375,7 @@ export function CanvasNodeContextMenu({
                                     ) : (
                                         <MenuButton icon={<FolderPlus />} label="保存到我的素材" disabled={!canSaveAsset} onClick={() => runAction(onSaveAsset)} />
                                     )}
+                                    {isAudio || isDrawing ? storyboardMenuButton : null}
                                     {isText ? <MenuButton icon={<Maximize2 />} label="放大编辑" onClick={() => runAction(onEditText)} /> : null}
                                     {isDrawing ? <MenuButton icon={<Pencil />} label="打开绘图" onClick={() => runAction(onOpenDrawing)} /> : null}
                                     {isText ? <MenuButton icon={<ImageIcon />} label="用文本生图" disabled={!canGenerateFromText} onClick={() => runAction(onGenerateImage)} /> : null}
@@ -350,7 +395,7 @@ export function CanvasNodeContextMenu({
                             <MenuButton icon={<Trash2 className="size-4" />} label="删除连接" danger onClick={() => runAction(onDelete)} />
                         </>
                     )}
-                    {!categoryOpen && visiblePluginMenuItems.length > 0 ? (
+                    {!categoryOpen && !storyboardOpen && visiblePluginMenuItems.length > 0 ? (
                         <>
                             <MenuDivider />
                             <MenuSection label="插件扩展" />
@@ -431,7 +476,6 @@ function AddNodeContextMenu({
             onAddVideo: () => onAddNode(CanvasNodeType.Video, createPosition),
             onAddAudio: () => onAddNode(CanvasNodeType.Audio, createPosition),
             onAddScript: () => onAddNode(CanvasNodeType.Script, createPosition),
-            onAddFrame: () => onAddNode(CanvasNodeType.Frame, createPosition),
             onAddFolder,
             onAddDrawing: () => onAddNode(CanvasNodeType.Drawing, createPosition),
             onAddExtensionNode: (type) => onAddNode(type, createPosition),

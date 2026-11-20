@@ -1,3 +1,4 @@
+import { hasCanvasKeyboardHost } from "@/lib/canvas/canvas-keyboard-scope";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { resolveCanvasAppearance, resolveCanvasGridColor, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
@@ -178,7 +179,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
     useEffect(() => {
         if (!interactive) return;
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.code !== "Space") return;
+            if (event.code !== "Space" || hasCanvasKeyboardHost()) return;
             if (event.target instanceof Element && event.target.closest("input,textarea,select,button,[contenteditable='true']")) return;
             event.preventDefault();
             spacePressedRef.current = true;

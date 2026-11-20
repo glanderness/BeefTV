@@ -39,6 +39,7 @@ type UpdateCheck struct {
 const (
 	officialUpdateDelay    = time.Minute
 	officialUpdateInterval = 6 * time.Hour
+	partnerSyncMaxInterval = 30 * time.Minute
 	npmSummaryTTL          = 10 * time.Minute
 )
 
@@ -55,6 +56,35 @@ func (s *Service) CheckUpdates(ctx context.Context, registry string) UpdateCheck
 		wg sync.WaitGroup
 	)
 	for _, item := range s.List() {
+		if isManagedBuiltinPluginID(item.Manifest.ID) && IsBuiltInSource(item.Source) {
+			entry, found := pinned[item.Manifest.ID]
+			if !found {
+				continue
+			}
+			latest := strings.TrimSpace(entry.Version)
+			if _, ok := parseVersionCore(latest); !ok {
+				continue
+			}
+			expectedSHA := strings.ToLower(strings.TrimSpace(entry.SHA256))
+			shaReplaced := !isBundledBuiltinPlugin(item.Manifest.ID) &&
+				latest == strings.TrimSpace(item.Manifest.Version) &&
+				validPackageSHA256(expectedSHA) &&
+				strings.TrimSpace(item.ArchiveSHA256) != "" &&
+				!strings.EqualFold(expectedSHA, strings.TrimSpace(item.ArchiveSHA256))
+			mu.Lock()
+			if newerVersion(latest, item.Manifest.Version) || shaReplaced {
+				check.Updates = append(check.Updates, UpdateNotice{
+					ID:       item.Manifest.ID,
+					Version:  item.Manifest.Version,
+					Latest:   latest,
+					Official: true,
+				})
+			} else {
+				check.UpToDate = append(check.UpToDate, item.Manifest.ID)
+			}
+			mu.Unlock()
+			continue
+		}
 		if item.Source != OriginPackage {
 			continue
 		}
@@ -89,31 +119,45 @@ func (s *Service) CheckUpdates(ctx context.Context, registry string) UpdateCheck
 	return check
 }
 
-// RunOfficialUpdates 启动一分钟后开始，每 6 小时把精选插件更新到精选列表登记的版本。
+// RunOfficialUpdates 启动数秒后先同步在期合作伙伴插件，随后一分钟起每 6 小时把精选插件更新到登记版本。
 // 失败只记日志，下一轮再试；ctx 结束时停下。
 func (s *Service) RunOfficialUpdates(ctx context.Context) {
 	if s == nil {
 		return
 	}
-	timer := time.NewTimer(officialUpdateDelay)
+	partnerBootTimer := time.NewTimer(5 * time.Second)
+	defer partnerBootTimer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-partnerBootTimer.C:
+		s.InstallMissingLiveBuiltins(ctx, "")
+	}
+	timer := time.NewTimer(s.NextPartnerSyncDelay(officialUpdateDelay, time.Now()))
 	defer timer.Stop()
+	lastFullCheck := time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
 		}
-		for _, notice := range s.CheckUpdates(ctx, "").Updates {
-			if !notice.Official || ctx.Err() != nil {
-				continue
+		s.InstallMissingLiveBuiltins(ctx, "")
+		now := time.Now()
+		if lastFullCheck.IsZero() || now.Sub(lastFullCheck) >= officialUpdateInterval {
+			lastFullCheck = now
+			for _, notice := range s.CheckUpdates(ctx, "").Updates {
+				if !notice.Official || ctx.Err() != nil {
+					continue
+				}
+				if _, err := s.UpdatePackage(notice.ID, ""); err != nil {
+					log.Printf("自动更新插件 %s 到 %s 失败：%v", notice.ID, notice.Latest, err)
+					continue
+				}
+				log.Printf("插件 %s 已自动更新到 %s", notice.ID, notice.Latest)
 			}
-			if _, err := s.UpdatePackage(notice.ID, ""); err != nil {
-				log.Printf("自动更新插件 %s 到 %s 失败：%v", notice.ID, notice.Latest, err)
-				continue
-			}
-			log.Printf("插件 %s 已自动更新到 %s", notice.ID, notice.Latest)
 		}
-		timer.Reset(officialUpdateInterval)
+		timer.Reset(s.NextPartnerSyncDelay(partnerSyncMaxInterval, time.Now()))
 	}
 }
 
@@ -137,8 +181,9 @@ func pinnedCuratedEntries(raw []byte) map[string]curatedRegistryEntry {
 	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
 		return nil
 	}
-	pinned := make(map[string]curatedRegistryEntry, len(payload.Plugins))
-	for _, entry := range payload.Plugins {
+	allEntries := append(payload.Plugins, payload.Builtins...)
+	pinned := make(map[string]curatedRegistryEntry, len(allEntries))
+	for _, entry := range allEntries {
 		if strings.TrimSpace(entry.Tarball) == "" && strings.TrimSpace(entry.MirrorTarball) == "" {
 			continue
 		}

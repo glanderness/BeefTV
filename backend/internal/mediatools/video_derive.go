@@ -343,7 +343,11 @@ func SeparateVideoAudio(ctx context.Context, srcPath string, outDir string) (*Se
 		var audioArgs []string
 		audioName, audioMime, audioArgs = buildAudioOutputSpec(facts.AudioCodec, outDir, plan[0])
 		audioPath = filepath.Join(outDir, audioName)
-		videoArgs := buildMutedVideoOutputArgs(facts.VideoCodec, mutedPath, plan[1])
+		videoArgs, videoCodecErr := buildMutedVideoOutputArgs(ffmpegBin, facts.VideoCodec, mutedPath, plan[1])
+		if videoCodecErr != nil {
+			lastRunErr = videoCodecErr
+			continue
+		}
 
 		args := append([]string{"-protocol_whitelist", "file,pipe", "-i", srcPath}, audioArgs...)
 		args = append(args, videoArgs...)
@@ -437,14 +441,19 @@ func buildAudioOutputSpec(codec string, outDir string, allowCopy bool) (fileName
 	return fileName, "audio/wav", []string{"-map", "0:a:0", "-vn", "-c:a", "pcm_s16le", filepath.Join(outDir, fileName)}
 }
 
-func buildMutedVideoOutputArgs(codec string, outPath string, allowCopy bool) []string {
+func buildMutedVideoOutputArgs(ffmpegBin string, codec string, outPath string, allowCopy bool) ([]string, error) {
 	if allowCopy {
 		switch codec {
 		case "h264", "hevc", "mpeg4", "av1":
-			return []string{"-map", "0:V:0", "-an", "-c:v", "copy", "-movflags", "+faststart", outPath}
+			return []string{"-map", "0:V:0", "-an", "-c:v", "copy", "-movflags", "+faststart", outPath}, nil
 		}
 	}
-	return []string{"-map", "0:V:0", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outPath}
+	if !SupportsH264Encode(ffmpegBin) {
+		return nil, fmt.Errorf("%w：本机媒体编码器缺少 H.264 视频编码支持", ErrMediaProcessFailed)
+	}
+	args := []string{"-map", "0:V:0", "-an"}
+	args = append(args, PreferredH264VideoArgs(ffmpegBin, "veryfast", "20", "6M", "10M")...)
+	return append(args, "-movflags", "+faststart", outPath), nil
 }
 
 var (

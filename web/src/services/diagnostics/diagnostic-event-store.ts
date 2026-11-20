@@ -32,6 +32,7 @@ export function createDiagnosticEventStore(options: {
     launchId: string;
     now?: () => number;
     timeoutMs?: number;
+    snapshotTimeoutMs?: number;
 }) {
     const now = options.now ?? Date.now;
     const scopes = new Map<string, ScopeState>();
@@ -135,19 +136,30 @@ export function createDiagnosticEventStore(options: {
             const state = current;
             const capturedEpoch = epoch;
             if (!state) throw new Error("诊断记录尚未初始化");
-            await state.ready;
-            await state.writes;
+            const deadlineMs = options.snapshotTimeoutMs ?? 500;
+            let timedOut = false;
+            await Promise.race([
+                Promise.all([state.ready, state.writes]).then(() => undefined),
+                new Promise<void>((resolve) => {
+                    const timer = setTimeout(() => {
+                        timedOut = true;
+                        resolve();
+                    }, deadlineMs);
+                    (timer as { unref?: () => void }).unref?.();
+                }),
+            ]);
             if (current !== state || epoch !== capturedEpoch) throw new Error("账号已切换，请重新导出诊断包");
             trim(state);
             const events = this.events(range);
+            const persisted = !timedOut && state.persisted;
             const coverage: ClientDiagnosticCoverage = {
-                status: state.readErrorCount || state.writeErrorCount || state.droppedCount || state.expiredCount ? "partial" : state.persisted ? "available" : "unavailable",
+                status: timedOut || state.readErrorCount || state.writeErrorCount || state.droppedCount || state.expiredCount ? "partial" : persisted ? "available" : "unavailable",
                 launchId: options.launchId,
                 sessionCount: new Set(state.events.map(event => event.launchId).filter(Boolean)).size,
                 retainedCount: state.events.length, exportedCount: events.length,
                 droppedCount: state.droppedCount, expiredCount: state.expiredCount, writeErrorCount: state.writeErrorCount, readErrorCount: state.readErrorCount,
                 oldestAt: state.events[0]?.timestamp, newestAt: state.events.at(-1)?.timestamp,
-                ...limits, persisted: state.persisted,
+                ...limits, persisted,
             };
             return { events, coverage };
         },

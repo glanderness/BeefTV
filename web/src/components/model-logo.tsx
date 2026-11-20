@@ -5,6 +5,7 @@ import { Cpu, Search, X } from "lucide-react";
 import { toc } from "@lobehub/icons/es/toc";
 
 import { cn } from "@/lib/utils";
+import ll2Logo from "../../../assets/readme/partner-ll2.png";
 import { YSDUI_CHANNEL_ICON, YSDUI_CHANNEL_NAME, renderYsduiLogoSvg } from "../../../plugin-packages/beeftv-plugin-ysdui/client/index.js";
 
 type LobeIconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
@@ -49,12 +50,18 @@ function loadIcon(icon?: string) {
     return promise;
 }
 
+function isImageUrlIcon(icon?: string): boolean {
+    return Boolean(icon && /^(?:https?:\/\/|\/|data:image\/)/i.test(icon));
+}
+
 export function ModelLogo({ icon, size = 18, className }: { icon?: string; size?: number; className?: string }) {
     const [Icon, setIcon] = useState<LobeIconComponent | undefined>(() => (icon ? iconRegistry.get(icon) : undefined));
+    const [imgFailed, setImgFailed] = useState(false);
     useEffect(() => {
         let cancelled = false;
+        setImgFailed(false);
         setIcon(() => (icon ? iconRegistry.get(icon) : undefined));
-        if (!icon || iconRegistry.has(icon) || !iconLoaders[icon])
+        if (!icon || isImageUrlIcon(icon) || iconRegistry.has(icon) || !iconLoaders[icon])
             return () => {
                 cancelled = true;
             };
@@ -65,6 +72,22 @@ export function ModelLogo({ icon, size = 18, className }: { icon?: string; size?
             cancelled = true;
         };
     }, [icon]);
+    if (icon === "LL2") return <img src={ll2Logo} alt="" width={size} height={size} className={cn("shrink-0 object-contain", className)} draggable={false} />;
+    if (icon && isImageUrlIcon(icon) && !imgFailed) {
+        return (
+            <img
+                src={icon}
+                alt=""
+                width={size}
+                height={size}
+                style={{ width: size, height: size }}
+                className={cn("shrink-0 object-contain", className)}
+                draggable={false}
+                onError={() => setImgFailed(true)}
+                aria-hidden
+            />
+        );
+    }
     if (!Icon) return <Cpu className={cn("shrink-0 text-foreground/45", className)} size={size} aria-hidden />;
     return <Icon size={size} className={cn("shrink-0", className)} aria-hidden />;
 }

@@ -231,20 +231,22 @@ func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.R
 			packageSHA256 = pluginHash(data)
 		}
 		plugins[metadata.ID] = Record{
-			Raw:           append([]byte(nil), data...),
-			Metadata:      metadata,
-			Source:        storedRecord.Source,
-			FileName:      storedRecord.FileName,
-			PackagePath:   storedRecord.PackagePath,
-			PackageSHA256: packageSHA256,
-			PackageDir:    storedRecord.PackageDir,
-			PackageSpec:   storedRecord.PackageSpec,
-			SkillDirs:     cloneStringSlice(storedRecord.SkillDirs),
-			SHA256:        packageSHA256,
-			InstalledAt:   storedRecord.InstalledAt,
-			UpdatedAt:     storedRecord.UpdatedAt,
-			Status:        StatusInvalid,
-			Error:         strings.TrimSpace(storedRecord.LoadError),
+			Raw:             append([]byte(nil), data...),
+			Metadata:        metadata,
+			Source:          storedRecord.Source,
+			FileName:        storedRecord.FileName,
+			PackagePath:     storedRecord.PackagePath,
+			PackageSHA256:   packageSHA256,
+			PackageDir:      storedRecord.PackageDir,
+			PackageSpec:     storedRecord.PackageSpec,
+			SkillDirs:       cloneStringSlice(storedRecord.SkillDirs),
+			SHA256:          packageSHA256,
+			ArchiveSHA256:   strings.ToLower(strings.TrimSpace(storedRecord.ArchiveSHA256)),
+			PartnerPresetID: strings.TrimSpace(storedRecord.PartnerPresetID),
+			InstalledAt:     storedRecord.InstalledAt,
+			UpdatedAt:       storedRecord.UpdatedAt,
+			Status:          StatusInvalid,
+			Error:           strings.TrimSpace(storedRecord.LoadError),
 		}
 	}
 	registry, err := protocol.NewRegistry()
@@ -270,6 +272,14 @@ func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.R
 		}
 		if record.Error != "" {
 			record.Status = StatusInvalid
+			// 官方内置与合作伙伴插件若处于启用状态，即使前端客户端入口异常，仍保留纯声明式 HTTP 协议适配器，防止已有用户渠道断流。
+			if IsBuiltInSource(record.Source) && record.Metadata.Enabled {
+				for _, adapter := range adapters {
+					if _, isModule := adapter.(protocol.ModuleProvider); !isModule {
+						_ = registry.Register(adapter)
+					}
+				}
+			}
 			plugins[id] = record
 			continue
 		}
@@ -491,6 +501,7 @@ func registryRecordContentChanged(prev, next RegistryRecord) bool {
 		prev.PackageDir != next.PackageDir ||
 		prev.PackageSpec != next.PackageSpec ||
 		prev.LoadError != next.LoadError ||
+		prev.LoadErrorStage != next.LoadErrorStage ||
 		!stringSlicesEqual(prev.SkillDirs, next.SkillDirs)
 }
 

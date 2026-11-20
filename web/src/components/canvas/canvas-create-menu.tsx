@@ -1,11 +1,11 @@
 import { motion, useReducedMotion } from "motion/react";
-import { Search, X } from "lucide-react";
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode } from "react";
 
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
+import { CanvasNodeType } from "@/types/canvas";
 
 export type CanvasCreateCommand = {
     id: string;
@@ -17,33 +17,22 @@ export type CanvasCreateCommand = {
     onClick: () => void;
 };
 
-export function CanvasCreateMenu({ commands, layout = "grid", title = "添加节点", showSearch = layout === "list", showSectionTitles = true, showResources = true }: { commands: CanvasCreateCommand[]; layout?: "grid" | "list"; title?: string; showSearch?: boolean; showSectionTitles?: boolean; showResources?: boolean }) {
+const advancedNodeIds = new Set<string>([CanvasNodeType.Drawing, "folder", CanvasNodeType.BatchTable]);
+
+export function CanvasCreateMenu({ commands, layout = "grid", title, showSectionTitles = true, showResources = true }: { commands: CanvasCreateCommand[]; layout?: "grid" | "list"; title?: string; showSectionTitles?: boolean; showResources?: boolean }) {
     const theme = canvasThemes[useActiveTheme()];
-    const [searchOpen, setSearchOpen] = useState(false);
-    const [query, setQuery] = useState("");
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    const visibleCommands = useMemo(() => {
-        const filtered = normalizedQuery
-            ? commands.filter((command) => `${command.label} ${command.badge || ""}`.toLocaleLowerCase().includes(normalizedQuery))
-            : commands;
-        // LibTV's default list keeps the primary creation/import flow compact.
-        // Advanced node types remain available through the same search box, so
-        // hiding them here changes presentation without removing capability.
-        if (layout === "list" && !normalizedQuery) {
-            const advancedLabels = new Set(["绘图", "文件夹", "批量创作表"]);
-            return filtered.filter((command) => !advancedLabels.has(command.label));
-        }
-        return filtered;
-    }, [commands, layout, normalizedQuery]);
-    const projectCommands = visibleCommands.filter((command) => command.section === "project");
-    const nodeCommands = visibleCommands.filter((command) => command.section === "node");
-    const workflowCommands = visibleCommands.filter((command) => command.section === "workflow");
-    const resourceCommands = visibleCommands.filter((command) => command.section === "resource");
+    const heading = title ?? (layout === "grid" ? "添加节点" : undefined);
+    const projectCommands = commands.filter((command) => command.section === "project");
+    const nodeCommands = commands.filter((command) =>
+        command.section === "node" && (layout !== "list" || !advancedNodeIds.has(command.id)),
+    );
+    const workflowCommands = commands.filter((command) => command.section === "workflow");
+    const resourceCommands = commands.filter((command) => command.section === "resource");
 
     return (
         <div>
-            <header className="flex min-h-7 items-center justify-between gap-2 border-b pb-2" style={{ borderColor: theme.toolbar.border }}>
-                <h2 className="font-semibold leading-none" style={{ fontSize: "var(--fs-caption)" }}>{title}</h2>
+            {heading && <header className="flex min-h-7 items-center justify-between gap-2 border-b pb-2" style={{ borderColor: theme.toolbar.border }}>
+                <h2 className="font-semibold leading-none" style={{ fontSize: "var(--fs-caption)" }}>{heading}</h2>
                 {layout !== "list" && projectCommands.map((command) => (
                     <button
                         key={command.id}
@@ -59,36 +48,7 @@ export function CanvasCreateMenu({ commands, layout = "grid", title = "添加节
                         <span className="whitespace-nowrap">{command.label}</span>
                     </button>
                 ))}
-                {layout === "list" && showSearch ? (
-                    <button
-                        type="button"
-                        className="ml-auto grid size-6 shrink-0 place-items-center rounded-[var(--dock-item-radius)] opacity-65 transition-opacity hover:opacity-100 focus-visible:ring-2"
-                        style={{ color: theme.node.muted, "--tw-ring-color": theme.node.muted } as CSSProperties}
-                        aria-label={searchOpen ? "关闭节点搜索" : "搜索节点"}
-                        title={searchOpen ? "关闭节点搜索" : "搜索节点"}
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={() => { setSearchOpen((value) => !value); if (searchOpen) setQuery(""); }}
-                    >
-                        {searchOpen ? <X className="size-3.5" /> : <Search className="size-3.5" />}
-                    </button>
-                ) : null}
-            </header>
-
-            {layout === "list" && searchOpen ? (
-                <div className="mt-2 flex h-7 items-center gap-1.5 rounded-[var(--dock-item-radius)] border px-2" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
-                    <Search className="size-3.5 shrink-0 opacity-50" />
-                    <input
-                        autoFocus
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        onKeyDown={(event) => { if (event.key === "Escape") { setQuery(""); setSearchOpen(false); } }}
-                        className="min-w-0 flex-1 bg-transparent text-[var(--fs-tiny)] outline-none placeholder:opacity-45"
-                        style={{ color: theme.node.text }}
-                        placeholder="搜索节点"
-                        aria-label="搜索节点"
-                    />
-                </div>
-            ) : null}
+            </header>}
 
             {showSectionTitles ? <MenuSection title="创作节点" color={theme.node.muted} /> : null}
             {layout === "list" ? <CanvasCreateCommandList commands={nodeCommands} /> : <CanvasCreateCommandGrid commands={nodeCommands} variant="node" />}

@@ -3,16 +3,19 @@ import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import { apiClient, http } from "@/services/api/request";
 import { getClientDiagnosticEvents, getClientDiagnosticSnapshot, getDiagnosticTraceId, initializeClientDiagnostics, recordDiagnosticEvent, setDiagnosticUserScope, taskDiagnosticHeaders } from "@/services/diagnostics/client-diagnostics";
 import { parseDiagnosticTraceparent } from "@/services/diagnostics/diagnostic-trace";
+import { installDiagnosticsStoreFactoryForTests } from "@/lib/diagnostics-storage";
 import { installLocalForageStoreFactoryForTests } from "@/lib/localforage-storage";
 
 const originalWindow = globalThis.window;
 const originalAdapter = apiClient.defaults.adapter;
-afterAll(() => { apiClient.defaults.adapter = originalAdapter; globalThis.window = originalWindow; installLocalForageStoreFactoryForTests(); });
+afterAll(() => { apiClient.defaults.adapter = originalAdapter; globalThis.window = originalWindow; installLocalForageStoreFactoryForTests(); installDiagnosticsStoreFactoryForTests(); });
 const traceA = "a".repeat(32), traceB = "b".repeat(32);
 
 test("concurrent task creation preserves explicit W3C context and binds each task to its own trace", async () => {
     const records = new Map<string, unknown>();
-    installLocalForageStoreFactoryForTests(() => ({ ready: async () => {}, getItem: async (key: string) => records.get(key) ?? null, setItem: async (key: string, value: unknown) => { records.set(key, value); return value; } }) as any);
+    const memoryForage = () => ({ ready: async () => {}, getItem: async (key: string) => records.get(key) ?? null, setItem: async (key: string, value: unknown) => { records.set(key, value); return value; }, removeItem: async (key: string) => { records.delete(key); } }) as any;
+    installLocalForageStoreFactoryForTests(memoryForage);
+    installDiagnosticsStoreFactoryForTests(memoryForage);
     Object.assign(globalThis, { window: { addEventListener() {}, location: { pathname: "/canvas", href: "http://localhost/canvas", origin: "http://localhost" }, localStorage: { getItem: () => null } } });
     initializeClientDiagnostics();
     setDiagnosticUserScope("trace-concurrency");

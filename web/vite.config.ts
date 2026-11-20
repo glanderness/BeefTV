@@ -47,7 +47,7 @@ function pruneOptionalMediaPlugin() {
 }
 
 function licenseNoticesPlugin(): Plugin {
-    const notices = () => distributionNotices({ version: appVersion, heavyMedia: heavyMediaEnabled, platform: process.env.BEEFTV_DIST_PLATFORM || "web" });
+    const notices = () => distributionNotices({ version: appVersion, heavyMedia: heavyMediaEnabled, platform: process.env.BEEFTV_DIST_PLATFORM || "web", mediaRuntimeDir: process.env.BEEFTV_MEDIA_RUNTIME_DIR || "" });
     return {
         name: "beeftv-license-notices",
         configureServer(server) {

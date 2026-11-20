@@ -112,12 +112,7 @@ func (state CanvasBindRecovery) Outcome() (*string, error) {
 // IsTerminalCanvasBindReason reports refusals that retrying cannot change
 // until the canvas (or the task) changes.
 func IsTerminalCanvasBindReason(reason string) bool {
-	switch reason {
-	case "node_deleted", "node_task_mismatch", "node_mismatch", "canvas_mismatch":
-		return true
-	default:
-		return false
-	}
+	return model.IsRevisionWatchCanvasBindReason(reason) || model.IsPermanentCanvasBindReason(reason)
 }
 
 // NewCanvasBindRefusal builds the marker for one refused target from the bind
@@ -129,7 +124,7 @@ func NewCanvasBindRefusal(nodeID string, outputIndex int, reason string, details
 		return CanvasBindRecoveryTarget{}, false
 	}
 	marker := CanvasBindRecoveryTarget{NodeID: nodeID, OutputIndex: outputIndex, Reason: reason}
-	if reason == "node_deleted" || reason == "node_task_mismatch" {
+	if model.IsRevisionWatchCanvasBindReason(reason) {
 		binding, _ := details["canvasBinding"].(map[string]any)
 		switch value := binding["revision"].(type) {
 		case int64:
@@ -152,7 +147,7 @@ func NewCanvasBindRefusal(nodeID string, outputIndex int, reason string, details
 // does not try to predict which edits make the bind succeed. node_mismatch and
 // canvas_mismatch are decided from the task alone.
 func (target CanvasBindRecoveryTarget) StillRefused(currentRevision func() (int64, error)) bool {
-	if target.Reason != "node_deleted" && target.Reason != "node_task_mismatch" {
+	if !model.IsRevisionWatchCanvasBindReason(target.Reason) {
 		return true
 	}
 	if target.Revision <= 0 {

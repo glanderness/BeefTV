@@ -20,7 +20,9 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { isFileUploadOverlayActive } from "@/lib/canvas/canvas-file-upload";
 import { isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
+import { useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
 import { CanvasNodeType } from "@/types/canvas";
+import { shouldMountCanvasPromptPanel } from "./canvas-pointer-chrome";
 import { CanvasProjectSelectionToolbar } from "./canvas-project-selection-toolbar";
 import type { CanvasProjectStageProps } from "./canvas-project-stage";
 
@@ -71,6 +73,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
     const selectedNodeIds = pageUi((state) => state.selectedNodeIds);
     const nodeImageSettingsOpen = pageUi((state) => state.nodeImageSettingsOpen);
     const setDialogNodeId = pageUi((state) => state.setDialogNodeId);
+    const pickTargetId = useCanvasPickConnectStore((state) => state.pickConnectTargetNodeId);
     const {
         changeSnapToGrid,
         focusMode,
@@ -171,7 +174,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
 
     return (
         <>
-            {angleNode?.metadata?.content ? (
+            {angleNode?.metadata?.content || angleNode?.metadata?.storageKey ? (
                 <CanvasNodePanelOverlay
                     node={angleNode}
                     viewport={viewport}
@@ -183,7 +186,8 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                     isDragging={isNodeDragging && Boolean(dragPreview?.nodeIds.has(angleNode.id))}
                 >
                     <CanvasNodeAnglePanel
-                        dataUrl={angleNode.metadata.content}
+                        dataUrl={angleNode.metadata?.content || ""}
+                        storageKey={angleNode.metadata?.storageKey}
                         onClose={() => setAngleNodeId(null)}
                         onConfirm={(params) => {
                             void generateAngleNode(angleNode, params);
@@ -229,11 +233,12 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
             dialogNode.type !== CanvasNodeType.Drawing &&
             dialogNode.type !== CanvasNodeType.Panorama &&
             !selectionBox &&
-            !isCanvasNodeMoving ? (
+            shouldMountCanvasPromptPanel(dialogNode.id, isCanvasNodeMoving, pickTargetId) ? (
                 <CanvasNodePanelOverlay
                     node={dialogNode}
                     viewport={viewport}
                     containerRef={containerRef}
+                    className={isCanvasNodeMoving ? "invisible" : undefined}
                     panelHeight={dialogNode.type === CanvasNodeType.Text ? 148 : undefined}
                     allowOverflow={dialogNode.type !== CanvasNodeType.Config}
                     // Media composers follow the LibTV layout: keep the prompt

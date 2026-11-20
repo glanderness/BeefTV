@@ -166,8 +166,7 @@ export type ConnectionCreateNodeType =
     | CanvasNodeType.Video
     | CanvasNodeType.Audio
     | CanvasNodeType.Drawing
-    | CanvasNodeType.Config
-    | CanvasNodeType.MediaConversion;
+    | CanvasNodeType.Config;
 
 export function buildConnectionCreateMenuSpec(
     pending: PendingConnectionCreate,
@@ -201,7 +200,6 @@ export function buildConnectionCreateMenuSpec(
         title: isBatch ? "引用所选节点生成" : "引用该节点生成",
         commands: [
             ...baseCommands,
-            command("smart-edit", "智能剪辑", CanvasNodeType.MediaConversion, "暂不可用"),
             command("director", "导演台", CanvasNodeType.Config, "暂不可用"),
             command("script", "脚本", CanvasNodeType.Script, "暂不可用"),
         ],
@@ -213,7 +211,7 @@ export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, co
     const menuRef = useRef<HTMLDivElement>(null);
     const { bringToFront, zIndex } = useCanvasOverlayLayer("connection-create-menu", "var(--z-modal-overlay)");
     const menuWidth = Math.min(216, viewportSize.width - 24);
-    const menuHeight = pending.connection.handleType === "target" ? 248 : 390;
+    const menuHeight = pending.connection.handleType === "target" ? 248 : 350;
     const gap = 12;
     const initialPosition = getConnectionMenuPosition(pending.position, viewport, viewportSize, menuWidth, menuHeight, gap);
     const { title, commands } = useMemo(
@@ -257,7 +255,7 @@ export function CanvasConnectionCreateMenu({ pending, viewport, viewportSize, co
             onFocusCapture={bringToFront}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            <CanvasCreateMenu commands={commands} layout="list" title={title} showSearch={false} showSectionTitles={false} showResources={false} />
+            <CanvasCreateMenu commands={commands} layout="list" title={title} showSectionTitles={false} showResources={false} />
         </motion.div>
     );
 }

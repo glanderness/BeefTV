@@ -28,7 +28,6 @@ class MockApiError extends Error {
 
 let puts: Array<{ path: string; body: any }> = [];
 let putError: Error | null = null;
-let putGuard: ((path: string, body: any) => Error | null) | null = null;
 let putGate: Promise<void> = Promise.resolve();
 let putStarted = 0;
 let localMode = true;
@@ -36,7 +35,6 @@ let localMode = true;
 const resetPuts = () => {
     puts = [];
     putError = null;
-    putGuard = null;
     putGate = Promise.resolve();
     putStarted = 0;
 };
@@ -126,10 +124,6 @@ async function writeOp(path: string, body: any) {
     await putGate;
     if (putError) throw putError;
     const proj = body?.project ?? body?.params?.document;
-    if (putGuard) {
-        const guarded = putGuard(path, { project: proj, ...body });
-        if (guarded) throw guarded;
-    }
     puts.push({ path, body: { ...body, project: proj } });
     return proj;
 }
@@ -480,62 +474,6 @@ describe("persistCanvasDocument http", () => {
         expect((caught as Error).message).toBe("画布保存失败，请重试");
         expect(puts).toEqual([]);
         expect(projects[0].nodes.map((node: { title: string }) => node.title)).toEqual(["旁白"]);
-    });
-
-    it("desktop PUT that inspects canvas media rejects unbound history nodes and rolls back", async () => {
-        putGuard = (_path: string, body: { project?: { nodes?: Array<{ metadata?: { assetId?: string; storageKey?: string } }> } }) => {
-            for (const node of body.project?.nodes || []) {
-                const storageKey = String(node.metadata?.storageKey || "");
-                if (storageKey.startsWith("resource:") && !node.metadata?.assetId) {
-                    return new MockApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
-                }
-            }
-            return null;
-        };
-        const original = { ...originalAudioNode, metadata: { ...originalAudioNode.metadata, assetId: "asset-owned" } };
-        resetProjects([{ ...project, nodes: [original] }]);
-        let caught: unknown;
-        try {
-            await repository.persistCanvasDocument(project.id, { nodes: [original, historyAudioNode] });
-        } catch (error) {
-            caught = error;
-        }
-        expect((caught as Error).message).toContain("尚未进入素材库");
-        expect(puts).toEqual([]);
-        expect(
-            projects[0].nodes.map((node: { title: string; metadata?: { assetId?: string } }) => ({
-                title: node.title,
-                assetId: node.metadata?.assetId || "",
-            })),
-        ).toEqual([{ title: "旁白", assetId: "asset-owned" }]);
-    });
-
-    it("desktop PUT that inspects canvas media accepts history nodes that reuse the owned assetId", async () => {
-        putGuard = (_path: string, body: { project?: { nodes?: Array<{ metadata?: { assetId?: string; storageKey?: string } }> } }) => {
-            for (const node of body.project?.nodes || []) {
-                const storageKey = String(node.metadata?.storageKey || "");
-                if (storageKey.startsWith("resource:") && !node.metadata?.assetId) {
-                    return new MockApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
-                }
-            }
-            return null;
-        };
-        const original = { ...originalAudioNode, metadata: { ...originalAudioNode.metadata, assetId: "asset-owned" } };
-        const history = { ...historyAudioNode, metadata: { ...historyAudioNode.metadata, assetId: "asset-owned" } };
-        resetProjects([{ ...project, nodes: [original] }]);
-        await repository.persistCanvasDocument(project.id, { nodes: [original, history] });
-        expect(puts).toHaveLength(1);
-        expect(puts[0].path).toBe("/ops/canvas.document.commit");
-        expect(puts[0].body.assets).toBeUndefined();
-        expect(
-            puts[0].body.project.nodes.map((node: { title: string; metadata?: { assetId?: string } }) => ({
-                title: node.title,
-                assetId: node.metadata?.assetId,
-            })),
-        ).toEqual([
-            { title: "旁白", assetId: "asset-owned" },
-            { title: "历史音频", assetId: "asset-owned" },
-        ]);
     });
 
     it("deferred PUT rejection keeps intervening unrelated edits and drops the optimistic nodes patch", async () => {

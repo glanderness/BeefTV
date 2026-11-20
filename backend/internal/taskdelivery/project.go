@@ -49,7 +49,7 @@ func ProjectWithFacts(task model.Task, stored []localtask.CanonicalOutput, loadE
 		if got, ok := byIndex[output.OutputIndex]; ok {
 			output = got
 		}
-		if output.MaterializedAssetID == "" && (task.Stage == "delivery_paused" || task.Stage == "delivery_timed_out") {
+		if output.MaterializedAssetID == "" && DeliveryPaused(task.Stage) {
 			output.MaterializationErrorCode = task.Stage
 		}
 		merged = append(merged, localtask.BindOutput(output, task.ID, localtask.OutputBinding(task, output.OutputIndex)))
@@ -64,7 +64,7 @@ func ProjectWithFacts(task model.Task, stored []localtask.CanonicalOutput, loadE
 	// Ready outputs are authoritative even when an older delivery left a stale stage.
 	if task.Status == model.TaskStatusSucceeded && state == localtask.ResultStateReady && len(merged) > 0 {
 		switch stage {
-		case "正在取回结果", "delivery_paused", "delivery_timed_out":
+		case model.TaskStageFetchingResult, model.TaskStageDeliveryPaused, model.TaskStageDeliveryTimedOut:
 			stage = "生成完成"
 		}
 	}

@@ -421,3 +421,5 @@ BeefTV 官方算力的 Seedance 视频任务由本机后端上传参考素材后
 本地素材分片上传以 `X-Idempotency-Key` 复用当前用户的上传会话。`POST /api/resources/uploads` 返回 `uploadId`、`chunkSize`、`chunkCount` 和 `received`（已完整保存的分片索引）；客户端重试时查询同一会话并跳过这些分片，最后仍须调用 `complete` 确认资源保存成功。此恢复只适用于仍有效的会话，不保证应用重启或会话过期后继续上传。
 
 托管参考素材共用 `/v1/media/uploads`：客户端申请时传 `resumable: true`，按 API 返回的单 PUT 或 COS/R2 原生分片计划上传。分片断流后查询同票据 `/resume`，跳过已收完整的片段；确认丢失时复用原票据 `/complete`，最终仍核验整文件大小、SHA-256 和类型。取消或最终失败会尽力 `/abort` 清理。文件流式散列与上传，不能 seek 的来源才暂存到临时文件；不新增通用文件上限。沿用系统和环境代理。所有重试均发生在模型提交前，不重复发生成请求。
+
+`GET /api/agent-clients/activity` 使用与客户端管理相同的桌面信任校验，返回当前工作区最近十次 MCP 工具调用。每行包含时间、客户端类型、工具、费用状态，以及可用时的模型与已结算金额（人民币）。

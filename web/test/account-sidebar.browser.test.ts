@@ -25,6 +25,7 @@ function createGate() {
 
 let connectionState = "disconnected";
 let startCalls = 0;
+let disconnectCalls = 0;
 let connectionReads = 0;
 let catalogReads = 0;
 let failCatalogReads = 0;
@@ -48,6 +49,7 @@ let checkoutOpenError = "";
 beforeEach(() => {
     connectionState = "disconnected";
     startCalls = 0;
+    disconnectCalls = 0;
     connectionReads = 0;
     catalogReads = 0;
     failCatalogReads = 0;
@@ -78,6 +80,8 @@ beforeAll(async () => {
         target: "browser",
         define: {
             __APP_VERSION__: JSON.stringify(version),
+            "import.meta.env.VITE_APP_VERSION": JSON.stringify(version),
+            "import.meta.env.VITE_BUILD_COMMIT": '"test"',
             "import.meta.env.DEV": "false",
             "import.meta.env.PROD": "true",
             "import.meta.env.MODE": '"production"',
@@ -98,6 +102,8 @@ beforeAll(async () => {
                 }));
                 builder.onResolve({ filter: /^@\/components\/model-logo$/ }, () => ({ path: "model-logo", namespace: "test-icons" }));
                 builder.onLoad({ filter: /.*/, namespace: "test-icons" }, () => ({ contents: "export function ModelLogo() { return null; }", loader: "js" }));
+                builder.onResolve({ filter: /^@\/lib\/workspace-route-modules$/ }, () => ({ path: "workspace-route-modules", namespace: "test-preload" }));
+                builder.onLoad({ filter: /.*/, namespace: "test-preload" }, () => ({ contents: "export function preloadWorkspaceRoute() {}", loader: "js" }));
                 builder.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
             },
         }],
@@ -185,6 +191,11 @@ beforeAll(async () => {
                 connectionState = "cancelled";
                 return ok({ state: connectionState, hasCredential: false });
             }
+            if (path.endsWith("/beeftv/connection/disconnect")) {
+                disconnectCalls += 1;
+                connectionState = "disconnected";
+                return ok({ state: connectionState, hasCredential: false, account: null });
+            }
             if (path.endsWith("/beeftv/connection")) {
                 connectionReads += 1;
                 const snapshotState = connectionState;
@@ -250,6 +261,31 @@ afterAll(async () => {
     topUpInfoGate.release();
     server?.stop(true);
     await browser?.close();
+}, 30000);
+
+test("account settings opens problem diagnostics as its own section without leaving the dialog", async () => {
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 }, reducedMotion: "reduce" });
+    try {
+        await page.route("**/api/diagnostics/preview", (route) => route.fulfill({
+            json: { code: 0, data: { taskCount: 3, apiCallCount: 5 } },
+        }));
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "登录 BeefTV", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        const diagnostics = modal.getByRole("button", { name: "问题诊断", exact: true });
+        const url = page.url();
+        await diagnostics.click();
+        expect(await diagnostics.getAttribute("aria-current")).toBe("page");
+        await modal.getByRole("heading", { name: "问题诊断", exact: true }).waitFor();
+        await modal.getByText("包含 3 个任务、5 次请求与前端日志。", { exact: true }).waitFor({ timeout: 5000 });
+        expect(await modal.getByRole("button", { name: "导出诊断包" }).isVisible()).toBe(true);
+        expect(await modal.getByRole("button", { name: "重新检查" }).isVisible()).toBe(true);
+        expect(page.url()).toBe(url);
+        await modal.getByRole("button", { name: "通用设置", exact: true }).click();
+        expect(await modal.getByText("连接诊断", { exact: true }).count()).toBe(0);
+    } finally {
+        await page.close();
+    }
 }, 30000);
 
 test("opening sidebar account modal never auto-starts OAuth; explicit login, changelog, and manual sync retry work", async () => {
@@ -380,6 +416,74 @@ test("collapsing sidebar resets expanded social links without stealing focus fro
         await collapseBtn.click();
         const contactBtn = page.getByRole("button", { name: "联系我们" });
         expect(await contactBtn.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("social links show matching tooltips above the icons without changing their destinations", async () => {
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto(new URL("?utility", server.url).toString());
+        await page.getByRole("button", { name: "联系我们" }).click();
+
+        const website = page.getByRole("link", { name: "打开 BeefTV 官网" });
+        const officialX = page.getByRole("link", { name: "打开官方X账号" });
+        const github = page.getByRole("link", { name: "打开 BeefTV GitHub 仓库" });
+        for (const [link, label, href] of [
+            [website, "BeefTV 官网", "https://beeftv.app/"],
+            [github, "点点 star", "https://github.com/glanderness/BeefTV"],
+            [officialX, "官方X账号", "https://x.com/beefnoode"],
+        ] as const) {
+            expect(await link.getAttribute("href")).toBe(href);
+            expect(await link.getAttribute("title")).toBeNull();
+            await link.hover();
+            const tooltip = page.locator(".app-workspace-sidebar-tooltip").getByText(label, { exact: true });
+            await tooltip.waitFor({ state: "visible" });
+            const linkBounds = (await link.boundingBox())!;
+            await page.waitForFunction(({ label, linkTop }) =>
+                Array.from(document.querySelectorAll(".app-workspace-sidebar-tooltip .app-workspace-sidebar-tooltip-content")).some((hint) =>
+                    hint.textContent?.trim() === label && hint.getBoundingClientRect().bottom < linkTop,
+                ), { label, linkTop: linkBounds.y }, { timeout: 5000 });
+        }
+        await website.focus();
+        await page.locator(".app-workspace-sidebar-tooltip").getByText("BeefTV 官网", { exact: true }).waitFor({ state: "visible" });
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("sidebar utility icons show the shared tooltip above the control", async () => {
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.addInitScript(() => {
+            if (new URLSearchParams(location.search).has("browser")) return;
+            const update = async () => ({ status: "available", currentVersion: "v2.3.1", latestVersion: "v99.0.0" });
+            window.go = { main: { DesktopApp: { UpdateStatus: update, CheckForUpdate: update, DownloadUpdate: async () => { throw Error("Unexpected download"); }, InstallUpdate: async () => { throw Error("Unexpected install"); } } } } as typeof window.go;
+        });
+        await page.goto(new URL("?utility", server.url).toString());
+        const update = page.getByRole("button", { name: /下载并安装更新/ });
+        const theme = page.getByRole("button", { name: /切换到[浅深]色模式/ });
+        const themeLabel = (await theme.getAttribute("aria-label"))!;
+        for (const [button, label] of [[update, "当前有可用更新"], [theme, themeLabel]] as const) {
+            expect(await button.getAttribute("title")).toBeNull();
+            await button.hover();
+            const tooltip = page.locator(".app-workspace-sidebar-tooltip").getByText(label, { exact: true });
+            await tooltip.waitFor({ state: "visible" });
+            const hint = (await tooltip.boundingBox())!;
+            const control = (await button.boundingBox())!;
+            expect(hint.y + hint.height).toBeLessThan(control.y);
+        }
+        await theme.click();
+        const switchedLabel = themeLabel === "切换到浅色模式" ? "切换到深色模式" : "切换到浅色模式";
+        await page.locator(".app-workspace-sidebar-tooltip").getByText(switchedLabel, { exact: true }).waitFor({ state: "visible" });
+        await page.goto(new URL("?utility&browser", server.url).toString());
+        const unavailable = page.getByRole("button", { name: "当前环境不支持自动更新" });
+        expect(await unavailable.isDisabled()).toBe(true);
+        await page.locator(".app-workspace-update-trigger").hover();
+        await page.locator(".app-workspace-sidebar-tooltip").getByText("当前环境不支持自动更新", { exact: true }).waitFor({ state: "visible" });
     } finally {
         await page.close();
     }
@@ -728,6 +832,57 @@ test("slow topup/info response cannot overwrite a newer reconciled balance from 
         await page.waitForTimeout(200);
         expect(await modal.innerText()).toContain("¥ 128.50");
         expect(await modal.innerText()).not.toContain("¥ 28.50");
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("connected account balance pane supports direct switch-account, logout, and task completion sound toggle", async () => {
+    connectionState = "connected";
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "BeefTV 账户：测试账号", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        await modal.waitFor();
+        await modal.getByText("¥ 28.50").waitFor();
+
+        // Switch account disconnects first and immediately starts a new connection flow.
+        await modal.getByRole("button", { name: "切换账号", exact: true }).click();
+        const pollDeadline = Date.now() + 5000;
+        while ((disconnectCalls < 1 || startCalls < 1) && Date.now() < pollDeadline) {
+            await page.waitForTimeout(25);
+        }
+        expect(disconnectCalls).toBe(1);
+        expect(startCalls).toBe(1);
+        await modal.getByRole("button", { name: "退出登录", exact: true }).waitFor();
+
+        // Logout requires explicit confirmation; cancelling keeps the account connected.
+        await modal.getByRole("button", { name: "退出登录", exact: true }).click();
+        const confirmDialog = page.locator(".ant-modal-confirm");
+        await confirmDialog.waitFor();
+        await confirmDialog.getByRole("button", { name: /^取\s*消$/ }).click();
+        await confirmDialog.waitFor({ state: "hidden" });
+        expect(disconnectCalls).toBe(1);
+        expect(await modal.getByRole("button", { name: "退出登录", exact: true }).count()).toBe(1);
+
+        // Confirming logout disconnects and returns to the unauthenticated login state.
+        await modal.getByRole("button", { name: "退出登录", exact: true }).click();
+        await confirmDialog.waitFor();
+        await confirmDialog.getByRole("button", { name: /^退\s*出\s*登\s*录$/ }).click();
+        await modal.getByRole("button", { name: /^登\s*录$/ }).waitFor();
+        expect(disconnectCalls).toBe(2);
+        expect(await modal.getByRole("button", { name: "切换账号", exact: true }).count()).toBe(0);
+        expect(await modal.getByRole("button", { name: "退出登录", exact: true }).count()).toBe(0);
+
+        // General settings exposes the task completion sound switch (default off).
+        await modal.getByRole("button", { name: "通用设置", exact: true }).click();
+        const soundSwitch = modal.getByRole("switch", { name: "任务完成提示音" });
+        await soundSwitch.waitFor();
+        expect(await soundSwitch.getAttribute("aria-checked")).toBe("false");
+        await soundSwitch.click();
+        expect(await soundSwitch.getAttribute("aria-checked")).toBe("true");
     } finally {
         await page.close();
     }

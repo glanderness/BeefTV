@@ -4,6 +4,7 @@ import { MoreHorizontal, Plus, RefreshCw, Scan, Settings2, Trash2, Workflow, X }
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { compileCanvasWorkflow } from "@/lib/canvas/reusable-workflow";
 import { deleteCanvasWorkflow, getWorkflowEditor, listWorkflowOperations, listCanvasWorkflows, saveCanvasWorkflow, type CanvasWorkflow, type WorkflowDefinition, type WorkflowOperation } from "@/services/api/canvas-workflows";
+import { characterReplacementOperation, characterReplacementPreset } from "@/lib/canvas/character-replacement-preset";
 import { abstractWorkflowDefinition } from "@/lib/canvas/workflow-editor";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { CanvasWorkflowSave } from "./canvas-workflow-save";
@@ -28,7 +29,7 @@ export const CanvasWorkflowWorkspace = forwardRef<CanvasWorkflowsHandle, {
     const [adding, setAdding] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-    const [editing, setEditing] = useState<{ workflow: CanvasWorkflow; operations: WorkflowOperation[] }>();
+    const [editing, setEditing] = useState<{ workflow: CanvasWorkflow; operations: WorkflowOperation[]; addAfterSave?: boolean }>();
     const [openingEditor, setOpeningEditor] = useState<string>();
     const [deleting, setDeleting] = useState<string>();
     const setLibraryOpen = (next: boolean) => { setOpen(next); if (!next) setDeleting(undefined); onOpenChange(next); };
@@ -92,6 +93,43 @@ export const CanvasWorkflowWorkspace = forwardRef<CanvasWorkflowsHandle, {
         } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : "无法创建工作流"); }
         finally { if (alive.current) setOpeningEditor(undefined); }
     };
+    const usePreset = async () => {
+        if (readOnly || adding || openingEditor) return;
+        setAdding("character-replacement-preset");
+        setError("");
+        try {
+            const { operations } = await listWorkflowOperations();
+            const operation = operations.find(item => item.id === characterReplacementOperation);
+            if (!operation) throw new Error("当前版本暂不支持单人物替换");
+            if (operation.unavailableReason) throw new Error(operation.unavailableReason);
+            const options = operation.fields.find(field => field.key === "modelOption")?.options ?? [];
+            if (!options.length) throw new Error("请先在模型配置中启用可用的 Seedance 2.0 Fast 模型，再添加此预设。");
+            if (!alive.current) return;
+            const preset = characterReplacementPreset;
+            const firstResolutions = options[0].capabilities?.video?.resolutions?.map(item => item.toLowerCase()) ?? [];
+            const defaultQuality = firstResolutions.length && !firstResolutions.includes("720p") && firstResolutions.includes("480p") ? "480p" : "720p";
+            const definition = {
+                ...preset.definition,
+                nodes: preset.definition.nodes.map(node => node.operationId !== characterReplacementOperation ? node : {
+                    ...node, config: { ...node.config, modelOption: options[0].value, vquality: defaultQuality },
+                }),
+            };
+            if (options.length > 1) {
+                setEditing({ operations, addAfterSave: true, workflow: { ...preset, definition, id: "", createdAt: "", updatedAt: "", revision: 1 } });
+                setLibraryOpen(false);
+                return;
+            }
+            const workflow = await saveCanvasWorkflow({ ...preset, definition });
+            if (!alive.current) return;
+            setWorkflows(current => [workflow, ...current]);
+            await onInstantiate(workflow);
+            if (alive.current) setLibraryOpen(false);
+        } catch (cause) {
+            if (alive.current) setError(cause instanceof Error ? cause.message : "添加预设失败");
+        } finally {
+            if (alive.current) setAdding(null);
+        }
+    };
     const content = <section className="canvas-assistant-panel" aria-label="工作流库" data-canvas-no-zoom data-canvas-no-drag data-canvas-wheel-scroll>
         <header className="canvas-assistant-header">
             <h2>工作流</h2>
@@ -102,6 +140,20 @@ export const CanvasWorkflowWorkspace = forwardRef<CanvasWorkflowsHandle, {
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5 pt-2">
             {error ? <Alert type="error" title={error} showIcon /> : null}
             {!readOnly ? <Button block type="text" className="!h-9 !rounded-lg !bg-muted hover:!bg-accent" icon={<Plus className="size-4" />} onClick={() => void create()} disabled={Boolean(openingEditor)} loading={openingEditor === "new"}>新建工作流</Button> : null}
+            <section aria-label="官方预设" className="flex flex-col gap-2">
+                <h3 className="text-xs text-muted-foreground">官方预设</h3>
+                <article className="flex items-center gap-3 rounded-xl bg-muted/50 p-3">
+                    <Workflow className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium">{characterReplacementPreset.name}</div>
+                        <p className="whitespace-pre-line text-xs leading-relaxed text-muted-foreground">{characterReplacementPreset.description}</p>
+                    </div>
+                    <Tooltip title="添加到画布"><Button type="text" size="small" className="shrink-0"
+                        aria-label="添加官方单人物替换工作流到画布" icon={<Plus className="size-4" />}
+                        disabled={readOnly || Boolean(adding) || Boolean(openingEditor)} loading={adding === "character-replacement-preset"}
+                        onClick={() => void usePreset()} /></Tooltip>
+                </article>
+            </section>
             <div className="flex flex-col gap-2" aria-busy={loading}>
                 {loading && !workflows.length ? <div className="grid min-h-32 place-items-center"><Spin size="small" /></div> : workflows.length ? workflows.map(workflow => <article key={workflow.id} className="flex items-center gap-3 rounded-xl bg-muted/50 p-3 transition-colors hover:bg-muted motion-reduce:transition-none" aria-label={workflow.name}>
                     <Workflow className="size-5 shrink-0 text-muted-foreground" aria-hidden />
@@ -120,7 +172,7 @@ export const CanvasWorkflowWorkspace = forwardRef<CanvasWorkflowsHandle, {
         </div>
     </section>;
     return <>
-        {editing ? <CanvasWorkflowEditor key={`${editing.workflow.id}:${editing.workflow.revision}`} initial={editing.workflow} operations={editing.operations} canvasNodes={nodes} canvasConnections={connections} readOnly={readOnly} onClose={() => { setEditing(undefined); setLibraryOpen(true); }} onReturnToCanvas={() => { setEditing(undefined); setLibraryOpen(false); }} onSaved={workflow => { setWorkflows(current => [workflow, ...current.filter(item => item.id !== workflow.id)]); setEditing(undefined); setLibraryOpen(true); }} /> : null}
+        {editing ? <CanvasWorkflowEditor key={`${editing.workflow.id}:${editing.workflow.revision}`} initial={editing.workflow} operations={editing.operations} addAfterSave={editing.addAfterSave} canvasNodes={nodes} canvasConnections={connections} readOnly={readOnly} onClose={() => { setEditing(undefined); setLibraryOpen(true); }} onReturnToCanvas={() => { setEditing(undefined); setLibraryOpen(false); }} onSaved={workflow => { setWorkflows(current => [workflow, ...current.filter(item => item.id !== workflow.id)]); setEditing(undefined); setLibraryOpen(true); if (editing.addAfterSave) void add(workflow); }} /> : null}
         {draft ? <CanvasWorkflowSave initial={draft.definition} externalCount={draft.externalCount} onClose={() => setDraft(null)} onSave={save} /> : null}
         {open && visible ? dockable ? <aside className="canvas-assistant-sidebar" style={{ width: 380, flexBasis: 380 }} aria-label="工作流">{content}</aside>
             : <AppDrawer flush open placement="right" title={null} closable={false} size="min(380px, 92vw)" onClose={() => setLibraryOpen(false)} aria-label="工作流">{content}</AppDrawer> : null}

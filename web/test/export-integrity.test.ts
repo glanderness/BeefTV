@@ -3,6 +3,7 @@ import { unzipSync } from "fflate";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { getClientDiagnosticSnapshot, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
+import { installDiagnosticsStoreFactoryForTests } from "@/lib/diagnostics-storage";
 import { installLocalForageStoreFactoryForTests } from "@/lib/localforage-storage";
 
 const blobs = new Map<string, Blob>();
@@ -28,7 +29,7 @@ mock.module("@/lib/canvas/canvas-drawing-storage", () => ({
 }));
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 
-const { exportCanvasProjects, exportCanvasProjectsByIds, openCanvasArchive } = await import("@/lib/canvas/canvas-export");
+const { collectStorageKeys, exportCanvasProjects, exportCanvasProjectsByIds, openCanvasArchive } = await import("@/lib/canvas/canvas-export");
 const { exportAssets, readAssetPackage } = await import("@/pages/assets/asset-transfer");
 const { createZip, readZip } = await import("@/lib/zip");
 const { archiveFileExtension, ExportIntegrityError } = await import("@/lib/export-integrity");
@@ -47,6 +48,12 @@ beforeEach(() => {
         ready: async () => {},
         getItem: async (key: string) => diagnosticRecords.get(`${storeName}:${key}`) ?? null,
         setItem: async (key: string, value: unknown) => { diagnosticRecords.set(`${storeName}:${key}`, value); return value; },
+    }) as LocalForage);
+    installDiagnosticsStoreFactoryForTests(() => ({
+        ready: async () => {},
+        getItem: async (key: string) => diagnosticRecords.get(`diagnostics:${key}`) ?? null,
+        setItem: async (key: string, value: unknown) => { diagnosticRecords.set(`diagnostics:${key}`, value); return value; },
+        removeItem: async (key: string) => { diagnosticRecords.delete(`diagnostics:${key}`); },
     }) as LocalForage);
     blobs.clear();
     restored.clear();
@@ -70,6 +77,7 @@ afterEach(async () => {
     finally {
         globalThis.window = originalWindow;
         installLocalForageStoreFactoryForTests();
+        installDiagnosticsStoreFactoryForTests();
     }
 });
 
@@ -319,7 +327,7 @@ test("empty workspace ZIP opens with no media writes", async () => {
     expect(restored.size).toBe(0);
 });
 
-test("missing media and corrupt canvas ZIP fail before writing restored files", async () => {
+test("missing media reports skipped files on open while corrupt canvas ZIP fails before writing restored files", async () => {
     restored.clear();
     const missing = await createZip([{
         name: "projects.json",
@@ -330,7 +338,8 @@ test("missing media and corrupt canvas ZIP fail before writing restored files", 
             projects: [{ project: { id: "broken", title: "损坏画布", nodes: [] }, files: [{ storageKey: "video:missing", path: "projects/broken/files/missing.mp4", mimeType: "video/mp4", bytes: 3 }] }],
         }),
     }]);
-    await expect(openCanvasArchive(new File([missing], "missing.zip"))).rejects.toThrow("missing.mp4");
+    const opened = await openCanvasArchive(new File([missing], "missing.zip"));
+    expect(opened.missingFiles).toEqual([{ owner: "损坏画布", reference: "projects/broken/files/missing.mp4" }]);
     expect(restored.size).toBe(0);
 
     const corrupt = await createZip([{ name: "projects.json", data: "{not-json" }]);
@@ -380,4 +389,108 @@ test("exportCanvasProjectsByIds rejects when any requested canvas fails to load 
         exportCanvasProjectsByIds(["broken-id"], () => brokenMedia),
     ).rejects.toThrow(ExportIntegrityError);
     expect(saved).toHaveLength(0);
+});
+
+test("export ignores external remote URLs matching /api/resources path and packages bare resourceId refs", async () => {
+    blobs.set("resource:wf-def-res", new Blob(["wf-def"], { type: "image/png" }));
+    blobs.set("resource:wf-run-res", new Blob(["wf-run"], { type: "image/png" }));
+    blobs.set("resource:legacy-res", new Blob(["legacy"], { type: "image/png" }));
+    const remoteUrl = "https://cdn.example.com/api/resources/ext-id/file";
+    const canvas = {
+        id: "remote-and-workflow",
+        title: "远端URL与工作流资源",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        nodes: [
+            {
+                id: "remote-img",
+                type: "image",
+                title: "远端图片",
+                position: { x: 0, y: 0 },
+                width: 200,
+                height: 200,
+                metadata: {
+                    content: remoteUrl,
+                    referenceUrls: [remoteUrl],
+                },
+            },
+            {
+                id: "legacy-img",
+                type: "image",
+                title: "旧版元数据",
+                position: { x: 240, y: 0 },
+                width: 200,
+                height: 200,
+                metadata: {
+                    resourceId: "legacy-res",
+                },
+            },
+            {
+                id: "wf-group",
+                type: "group",
+                title: "复用工作流",
+                position: { x: 480, y: 0 },
+                width: 400,
+                height: 300,
+                metadata: {
+                    reusableWorkflow: {
+                        templateId: "tpl-1",
+                        definition: {
+                            version: 1,
+                            nodes: [{ id: "in-1", title: "输入", mediaType: "image", role: "input", resourceId: "wf-def-res" }],
+                            edges: [],
+                            outputNodeIds: ["in-1"],
+                        },
+                        run: {
+                            id: "run-1",
+                            templateId: "tpl-1",
+                            templateName: "模板",
+                            status: "succeeded",
+                            steps: [{ nodeId: "in-1", title: "输入", status: "succeeded", resourceId: "wf-run-res" }],
+                            outputs: [{ nodeId: "in-1", mediaType: "image", resourceId: "wf-run-res" }],
+                            createdAt: "2026-01-01T00:00:00Z",
+                            updatedAt: "2026-01-01T00:00:00Z",
+                        },
+                    },
+                },
+            },
+        ],
+        connections: [],
+    } as unknown as CanvasProject;
+
+    expect(collectStorageKeys(canvas).sort()).toEqual([
+        "resource:legacy-res",
+        "resource:wf-def-res",
+        "resource:wf-run-res",
+    ]);
+
+    expect(await exportCanvasProjects([canvas], "远端与工作流")).toBe("saved");
+    expect(saved).toHaveLength(1);
+    const opened = await openCanvasArchive(new File([Buffer.from(saved[0].data, "base64")], "wf.zip"));
+    expect(opened.missingFiles).toBeUndefined();
+    expect(opened.data.projects[0].files.map((item) => item.storageKey).sort()).toEqual([
+        "resource:legacy-res",
+        "resource:wf-def-res",
+        "resource:wf-run-res",
+    ]);
+    const exportedRemote = opened.data.projects[0].project.nodes.find((node) => node.id === "remote-img");
+    expect(exportedRemote?.metadata?.content).toBe(remoteUrl);
+    expect((exportedRemote?.metadata as Record<string, unknown>)?.referenceUrls).toEqual([remoteUrl]);
+
+    // Missing bare resourceId is stripped cleanly under allowMissingMedia while remote CDN URL remains intact.
+    blobs.delete("resource:wf-run-res");
+    saved.length = 0;
+    const skipped: Array<{ owner: string; reference: string }> = [];
+    expect(await exportCanvasProjects([canvas], "缺失工作流资源", {
+        allowMissingMedia: true,
+        onSkippedFiles: (items) => skipped.push(...items),
+    })).toBe("saved");
+    expect(skipped).toEqual([{ owner: "远端URL与工作流资源", reference: "resource:wf-run-res" }]);
+    const resilient = await openCanvasArchive(new File([Buffer.from(saved[0].data, "base64")], "wf-resilient.zip"));
+    const resilientWf = resilient.data.projects[0].project.nodes.find((node) => node.id === "wf-group")?.metadata?.reusableWorkflow;
+    expect(resilientWf?.definition.nodes[0]?.resourceId).toBe("wf-def-res");
+    expect(resilientWf?.run?.steps[0]?.resourceId).toBeUndefined();
+    expect(resilientWf?.run?.outputs[0]?.resourceId).toBeUndefined();
+    const resilientRemote = resilient.data.projects[0].project.nodes.find((node) => node.id === "remote-img");
+    expect(resilientRemote?.metadata?.content).toBe(remoteUrl);
 });

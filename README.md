@@ -43,17 +43,19 @@
 
 ## 最近更新
 
+- **[v2.3.2](https://github.com/glanderness/BeefTV/releases/tag/v2.3.2)** — 修复 Windows 桌面端内置创作助手在连续对话中无法读取或操作画布（提示请求被中断、返回失败）的问题，并在特别鸣谢补充「Infistar 无限星河」合作伙伴一键接入说明。
+- **[v2.3.1](https://github.com/glanderness/BeefTV/releases/tag/v2.3.1)** — 修复桌面端第三方渠道插件「一键配置」兼容问题，支持官方内置插件与合作伙伴渠道在线热更新及 LL2 新模型，新增单人物替换工作流、分镜素材直连与多选批量关联、视频提取音频、MCP 调用记录与提示词预设偏好设置，补齐存储迁移异常回退、深度组件国内镜像加速以及 macOS 随包原生媒体工具与对应开源源码声明。
+- **[v2.3.0](https://github.com/glanderness/BeefTV/releases/tag/v2.3.0)** — 四款社区插件改为在插件市场按需安装并更新 ComfyUI 与 AutoDL 工作流支持，新增画布图片抽卡历史叠卡对比与生成信息栏、视频智能擦除与固定参考槽位顺序、生成报错定位与重试确认，提升桌面启动连接韧性与多视频画布缩放流畅度。
 - **[v2.2.5](https://github.com/glanderness/BeefTV/releases/tag/v2.2.5)** — 修复画布上传完成后偶发回退「上传中」与替换素材被旧任务覆盖，修复桌面端资源缩略图、独立分镜生成与批量下载编号，升级视频原生截帧与音视频分离，放开内置助手选用大型技能的大小与数量限制并支持长文档按行分段读取。
 - **[v2.2.4](https://github.com/glanderness/BeefTV/releases/tag/v2.2.4)** — 修复桌面端 Eagle 素材库预览与导入下载，支持自定义模型服务无 `/v1` 前缀地址与手动模型改删，修复提示词长按退格、个人资产库分页计数与生成历史本地视频预览。
-- **[v2.2.3](https://github.com/glanderness/BeefTV/releases/tag/v2.2.3)** — 接入 Seedream 5.5 图片生成与细粒度图层拆分，优化画布视频首尾帧自动识别与参考预检，修复超分与去字幕终态重试及诊断耗时显示，并补充银盛云枢壹算品牌图标与简介。
-- **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — 上线实时余额与在线充值，完善生成费用预估，升级 DeepSeek Harness 协同与画布视频处理。
-- **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — 新增银盛云枢壹算渠道插件，改版插件与账户设置，改善画布预览及生成报错与重试。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
 ## 特别鸣谢
 
 感谢支持 BeefTV 持续发展的合作伙伴、赞助商与客户。
+
+如果你也想赞助 BeefTV 开源项目，为 AIGC 开源社区做一份贡献，可以具体参考[商用授权和赞助](#商用授权和赞助)。
 
 <table>
   <tr><th width="26%" align="center">鸣谢对象</th><th align="center">介绍</th></tr>
@@ -64,6 +66,16 @@
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-ysdui.png" width="32" height="32" alt="银盛·云枢壹算图标"><br><strong>银盛·云枢壹算</strong></td>
     <td><a href="https://www.ysdui.cn/">银盛·云枢壹算</a>是银盛通信有限公司旗下的企业级一站式 AI 服务平台，为企业提供算力支持与 AI 产品解决方案。感谢银盛·云枢壹算为本项目提供的算力支持与生态扶持。</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="32" alt="Infistar.cc 无限星河标志"><br><strong>Infistar.cc 无限星河</strong></td>
+    <td>
+      感谢 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc 无限星河</a> 赞助 BeefTV！提供多模型 API 服务，适合 AI 图片、视频、短剧及多媒体创作工作流。<br>
+      <strong>⚙ 一键接入：</strong>在 BeefTV「设置 → 模型服务 → 连接你的模型服务 → 合作伙伴」中直接选择 <strong>无限星河 AI</strong>，填写 API Key 即可使用内置的 38 款文本、图片与视频预置模型。<br>
+      <strong>✨ 多模型选择：</strong>聚合 Claude、GPT、Gemini、DeepSeek 及多种图片、视频生成模型，满足剧本、分镜、素材和成片制作需求。<br>
+      <strong>🏷 价格与服务：</strong>部分模型低至官方定价的 0.1 折，支持人民币结算及技术支持，具体模型和价格以平台页面为准。<br>
+      <strong>🎁 BeefTV 专属福利：</strong>通过 <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">专属推广链接注册</a> 可领取 5 元体验额度，领取条件以活动页面为准。
+    </td>
   </tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="腾讯云图标"><br><strong>腾讯云</strong></td>
@@ -183,13 +195,25 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 
 模型配置与源码构建见 [快速开始](QUICKSTART.md)，打包要求见[桌面发布文档](docs/desktop-release.md)。
 
+## 商用授权和赞助
+
+如需基于BeefTV进行商用或二次开发，请取得BeefTV团队官方授权，想了解具体商用授权方案，请扫描下方二维码添加我的企业微信，并备注 **“BeefTV 授权”**。
+
+同时 BeefTV 目前已经开放了赞助渠道。如果你也想让自己的算力渠道或者产品通过 BeefTV 被更多人看见并用上，可以扫描下方的企业微信二维码，并备注“BeefTV 赞助”。
+
+目前 BeefTV 已经取得了超过 2.5K stars、480 个 Fork，社群人数超过 2000 人，团队也已经与多家赞助企业达成了深度合作。
+
+<p align="center">
+  <img src="assets/readme/commercial-license-wecom.jpg" width="200" alt="BeefTV 商用授权和赞助联系企业微信二维码">
+</p>
+
 ## 贡献与许可
 
 欢迎提交 Issue 和 Pull Request。开发流程与测试要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
 仓库采用分范围许可：自首次引入新许可的提交起，符合授权条件的新增原创内容适用 [`BeefTV Source Available License 1.0`](LICENSE)；已按 MIT 发布的历史内容继续适用同文件保留的 MIT 条款，上游和第三方材料保留各自许可。
 
-新许可允许自部署、内部二开及使用 BeefTV 制作并销售作品；对其覆盖的软件进行商业转售、套壳销售、收费部署或定制交付，以及免费或收费向第三方提供托管功能，均需事先书面授权。独立教程、培训和一般技术咨询可收费，不能借此变相交付软件系统。授权联系：[lucas@bf-labs.cn](mailto:lucas@bf-labs.cn)。
+新许可允许自部署、内部二开及使用 BeefTV 制作并销售作品；对其覆盖的软件进行商业转售、套壳销售、收费部署或定制交付，以及免费或收费向第三方提供托管功能，均需事先书面授权。独立教程、培训和一般技术咨询可收费，不能借此变相交付软件系统。
 
 新限制不追溯适用于历史 MIT 内容，也不覆盖第三方独立许可的材料。这是一份源码可用许可，不能将整个仓库视为标准 MIT 或 OSI 定义的开源项目。具体场景及覆盖边界见[许可说明](docs/content/docs/overview/licensing.mdx)，上游来源与第三方归属见 [`NOTICE`](NOTICE)。
 
@@ -197,7 +221,7 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 
 BeefTV 的开发基于并参考了以下开源项目与技术：
 
-- **[影策 Open AI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**（https://github.com/ddcat-ai/open-ai-canvas）：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理及社区内置插件等基础能力来自该项目，并在此基础上持续改进优化为本地应用版本。再次感谢 [ddcat](https://github.com/ddcat-ai) 及所有 Open AI Canvas 贡献者对开源 AIGC 社区作出的贡献。
+- **[影策 Open AI Canvas](https://github.com/ddcat-ai/open-ai-canvas)**：面向 AI 影视与短剧创作的工作台。BeefTV 是基于该项目进行二次开发，画布节点编排、模型渠道接入、任务与素材管理及社区内置插件等基础能力来自该项目，并在此基础上持续改进优化为本地应用版本。再次感谢 [ddcat](https://github.com/ddcat-ai) 及所有 Open AI Canvas 贡献者对开源 AIGC 社区作出的贡献。
   
 - **[basketikun 的 infinite-canvas](https://github.com/basketikun/infinite-canvas)**：将无限画布与 AI 图片创作结合的开源工作台。BeefTV 参考了其无限画布整体架构，并沿用了部分画布代码与技术能力，包括节点拖拽与缩放、连线、撤销重做、画布导入导出等。感谢 [basketikun](https://github.com/basketikun) 及所有贡献者。
   

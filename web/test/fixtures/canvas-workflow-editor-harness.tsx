@@ -63,6 +63,19 @@ const operations: WorkflowOperation[] = [
     },
 ];
 
+const linkedWorkflow: CanvasWorkflow = {
+    ...emptyWorkflow,
+    definition: {
+        version: 1,
+        nodes: [
+            { id: "source", role: "input", mediaType: "video", title: "源视频" },
+            { id: "output", role: "operation", mediaType: "video", title: "结果", operationId: "generate.video", operationVersion: 1 },
+        ],
+        edges: [{ fromNodeId: "source", toNodeId: "output", toPort: "referenceVideos" }],
+        outputNodeIds: ["output"],
+    },
+};
+
 const noop = () => {};
 
 createRoot(document.getElementById("root")!).render(
@@ -70,7 +83,7 @@ createRoot(document.getElementById("root")!).render(
         <ConfigProvider theme={{ token: { motion: false } }} button={{ autoInsertSpace: false }}>
             <App>
                 <CanvasWorkflowEditor
-                    initial={emptyWorkflow}
+                    initial={location.search === "?edge-delete" ? linkedWorkflow : emptyWorkflow}
                     operations={operations}
                     canvasNodes={[]}
                     canvasConnections={[]}

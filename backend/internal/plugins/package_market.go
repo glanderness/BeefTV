@@ -32,14 +32,51 @@ func (c *Runtime) ResolvePackageFile(id string, filePath string) (string, string
 		return "", "", fmt.Errorf("插件运行时未初始化")
 	}
 	trimmedID := strings.TrimSpace(id)
+	trimmed := strings.TrimSpace(filePath)
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	trimmed = strings.TrimPrefix(trimmed, "./")
+	requestedRev := ""
+	if strings.HasPrefix(trimmed, "@rev-") {
+		slashIdx := strings.IndexByte(trimmed, '/')
+		if slashIdx < 0 {
+			return "", "", packageError(http.StatusBadRequest, "plugin_file_path_invalid", fmt.Sprintf("无效的插件文件路径 %q", filePath))
+		}
+		requestedRev = strings.ToLower(strings.TrimPrefix(trimmed[:slashIdx], "@rev-"))
+		if !validPackageSHA256(requestedRev) {
+			return "", "", packageError(http.StatusBadRequest, "plugin_file_path_invalid", fmt.Sprintf("无效的插件版本前缀 %q", filePath))
+		}
+		trimmed = trimmed[slashIdx+1:]
+	}
+
 	c.mu.RLock()
 	record, ok := c.plugins[trimmedID]
 	c.mu.RUnlock()
-	pkgDir := strings.TrimSpace(record.PackageDir)
-	if !ok || pkgDir == "" {
-		if candidate, found := BundledSampleDir(trimmedID); found {
-			pkgDir = candidate
+	pkgDir := ""
+	if requestedRev != "" && (!ok || !strings.EqualFold(record.PackageSHA256, requestedRev)) {
+		if revDir, found := resolveBuiltinDirByRevision(c.dataDir, trimmedID, requestedRev); found {
+			pkgDir = revDir
 			ok = true
+		} else {
+			return "", "", packageError(http.StatusConflict, "plugin_revision_superseded", fmt.Sprintf("插件 %q 版本已更新或失效", trimmedID))
+		}
+	} else {
+		if ok && isHotUpdatedBuiltinRecord(c.dataDir, trimmedID, record) {
+			if _, valid := verifyHotUpdatedBuiltinDir(c.dataDir, trimmedID, record.PackageDir, record.PackageSHA256); !valid {
+				if _, _, rbErr := c.rollbackHotUpdatedBuiltin(trimmedID); rbErr != nil {
+					return "", "", rbErr
+				}
+				if _, hasShipped := BundledSampleDir(trimmedID); hasShipped {
+					return "", "", packageError(http.StatusConflict, "plugin_package_tampered", fmt.Sprintf("内置插件 %q 热更新文件校验不一致，已回退至随包版本", trimmedID))
+				}
+				return "", "", packageError(http.StatusConflict, "plugin_package_quarantined", fmt.Sprintf("合作伙伴插件 %q 本地文件缺失或校验不一致，已隔离客户端脚本并等待自动修复", trimmedID))
+			}
+		}
+		pkgDir = strings.TrimSpace(record.PackageDir)
+		if !ok || pkgDir == "" {
+			if candidate, found := BundledSampleDir(trimmedID); found {
+				pkgDir = candidate
+				ok = true
+			}
 		}
 	}
 	if !ok {
@@ -48,9 +85,6 @@ func (c *Runtime) ResolvePackageFile(id string, filePath string) (string, string
 	if pkgDir == "" {
 		return "", "", packageError(http.StatusNotFound, "plugin_file_not_found", fmt.Sprintf("插件 %q 不包含静态文件目录", id))
 	}
-	trimmed := strings.TrimSpace(filePath)
-	trimmed = strings.TrimPrefix(trimmed, "/")
-	trimmed = strings.TrimPrefix(trimmed, "./")
 	if trimmed == "" || strings.ContainsRune(trimmed, '\\') || path.IsAbs(trimmed) {
 		return "", "", packageError(http.StatusBadRequest, "plugin_file_path_invalid", fmt.Sprintf("无效的插件文件路径 %q", filePath))
 	}

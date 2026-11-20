@@ -8,21 +8,21 @@ import { estimateGenerationCost, type CostEstimate, type CostEstimateTarget, typ
 
 export type CostEstimateFetcher = (targets: CostEstimateTarget[], signal?: AbortSignal) => Promise<GenerationCostEstimate>;
 
-export function useGenerationCostEstimate(
+export function useGenerationCostEstimateState(
     target: CostEstimateTarget | null,
     options?: {
         debounceMs?: number;
         fetcher?: CostEstimateFetcher;
         refreshKey?: string | number;
     },
-): CostEstimate | null {
+) {
     const targetKey = useMemo(() => (target ? JSON.stringify(target) : ""), [target]);
     const debounceMs = options?.debounceMs ?? (target?.kind === "audio" ? 220 : 60);
     const fetcherRef = useRef<CostEstimateFetcher>(options?.fetcher ?? estimateGenerationCost);
     fetcherRef.current = options?.fetcher ?? estimateGenerationCost;
     const refreshKey = options?.refreshKey ?? "";
     const requestKey = targetKey ? `${targetKey}::${String(refreshKey)}` : "";
-    const [state, setState] = useState<{ requestKey: string; estimate: CostEstimate | null }>({ requestKey: "", estimate: null });
+    const [state, setState] = useState<{ requestKey: string; modelKey?: string; estimate: CostEstimate | null }>({ requestKey: "", estimate: null });
 
     useEffect(() => {
         if (!targetKey || !requestKey) {
@@ -36,11 +36,11 @@ export function useGenerationCostEstimate(
                 .then((result) => {
                     if (controller.signal.aborted) return;
                     const first = Array.isArray(result?.items) ? (result.items[0] ?? null) : null;
-                    setState({ requestKey, estimate: first });
+                    setState({ requestKey, modelKey: parsed.modelKey, estimate: first });
                 })
                 .catch(() => {
                     if (controller.signal.aborted) return;
-                    setState({ requestKey, estimate: null });
+                    setState({ requestKey, modelKey: parsed.modelKey, estimate: null });
                 });
         }, debounceMs);
         return () => {
@@ -49,8 +49,11 @@ export function useGenerationCostEstimate(
         };
     }, [debounceMs, requestKey, targetKey]);
 
-    if (!requestKey || state.requestKey !== requestKey) return null;
-    return state.estimate;
+    const current = Boolean(requestKey) && requestKey === state.requestKey;
+    return {
+        estimate: current ? state.estimate : null,
+        previousEstimate: !current && target?.modelKey && target.modelKey === state.modelKey ? state.estimate : null,
+    };
 }
 
 export function GenerationCostLabel({
@@ -94,7 +97,7 @@ export function GenerationCostBadge({
     className?: string;
     style?: CSSProperties;
 }) {
-    const estimate = useGenerationCostEstimate(target, { fetcher, refreshKey });
+    const { estimate } = useGenerationCostEstimateState(target, { fetcher, refreshKey });
     const display = useMemo(() => formatInlineCostEstimate(estimate, { hideVariableRate }), [estimate, hideVariableRate]);
     if (!display) return null;
     return <GenerationCostLabel display={display} className={className} style={style} />;

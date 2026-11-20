@@ -43,17 +43,19 @@
 
 ## Recent updates
 
+- **[v2.3.2](https://github.com/glanderness/BeefTV/releases/tag/v2.3.2)** — Fix the Windows desktop issue where the built-in assistant could not read or modify the canvas across keep-alive turns on local named pipes, and add the Infistar partner acknowledgement with one-click setup details.
+- **[v2.3.1](https://github.com/glanderness/BeefTV/releases/tag/v2.3.1)** — Restore one-click channel setup compatibility for third-party desktop plugins, support live updates for built-in plugins and partner channels alongside new LL2 models, add the single-character replacement workflow, direct and batch storyboard asset binding, video-to-audio extraction, MCP call history, and prompt preset preferences, and ship storage migration rollback, domestic depth-runtime mirrors, and bundled macOS FFmpeg/ffprobe tools with corresponding open-source notices.
+- **[v2.3.0](https://github.com/glanderness/BeefTV/releases/tag/v2.3.0)** — Move four community plugins to on-demand marketplace installation and update ComfyUI and AutoDL workflow support, add stacked image generation history with side-by-side comparison and details, add video smart erase and fixed reference slot ordering, refine failure source navigation and retry confirmation, and improve desktop startup resilience and multi-video canvas zoom smoothness.
 - **[v2.2.5](https://github.com/glanderness/BeefTV/releases/tag/v2.2.5)** — Fix canvas uploads reverting to uploading overlays and replaced nodes being overwritten by stale tasks, fix desktop resource thumbnails, standalone storyboard generation, and batch download numbering, upgrade native video frame extraction and audio separation, and lift assistant skill size and count limits with paged line-by-line long-document reading.
 - **[v2.2.4](https://github.com/glanderness/BeefTV/releases/tag/v2.2.4)** — Fix Eagle library previews and downloads on desktop, support prefixless custom model URLs and editing/deleting manual models, and fix prompt backspace editing, asset library pagination counts, and local video previews in generation history.
-- **[v2.2.3](https://github.com/glanderness/BeefTV/releases/tag/v2.2.3)** — Add Seedream 5.5 image generation and fine-grained layer splitting, improve automatic first/last frame assignment and reference checks, fix upscale and subtitle-removal retry states and diagnostics, and add Yinsheng Yunshu Yisuan branding.
-- **[v2.2.2](https://github.com/glanderness/BeefTV/releases/tag/v2.2.2)** — Add live balances and online top-ups, refine generation cost estimates, and upgrade DeepSeek Harness collaboration and canvas video processing.
-- **[v2.2.1](https://github.com/glanderness/BeefTV/releases/tag/v2.2.1)** — Add the Yinsheng Yunshu Yisuan provider plugin, redesign plugin and account settings, and improve canvas previews, generation errors, and retries.
 
 [All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
 
 ## Special thanks
 
 Thank you to the partners, sponsors, and customers supporting BeefTV's continued development.
+
+If you would also like to sponsor the BeefTV open source project and contribute to the AIGC open source community, see [Commercial licensing and sponsorship](#commercial-licensing-and-sponsorship).
 
 <table>
   <tr><th width="26%" align="center">Acknowledgements</th><th align="center">About</th></tr>
@@ -64,6 +66,16 @@ Thank you to the partners, sponsors, and customers supporting BeefTV's continued
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-ysdui.png" width="32" height="32" alt="Yinsheng Yunshu Yisuan icon"><br><strong>银盛·云枢壹算</strong></td>
     <td><a href="https://www.ysdui.cn/">Yinsheng Yunshu Yisuan</a> is a one-stop enterprise AI services platform under Yinsheng Communications Co., Ltd., providing compute resources and AI product solutions for businesses. Special thanks to Yinsheng Yunshu Yisuan for its compute resources and ecosystem support for this project.</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-infistar.png" width="32" alt="Infistar.cc Infinite Star logo"><br><strong>Infistar.cc 无限星河</strong></td>
+    <td>
+      Thanks to <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Infistar.cc Infinite Star</a> for sponsoring BeefTV! Its multi-model API service supports AI image, video, short drama, and multimedia creation workflows.<br>
+      <strong>⚙ One-click setup:</strong> Select <strong>Infistar AI (无限星河 AI)</strong> under BeefTV Settings → Model Services → Connect Your Model Service → Partners and enter your API key to use 38 built-in text, image, and video presets.<br>
+      <strong>✨ Model selection:</strong> Access Claude, GPT, Gemini, DeepSeek, and a range of image and video generation models for scripts, storyboards, assets, and finished productions.<br>
+      <strong>🏷 Pricing and service:</strong> Some models are available for as little as 1% of official pricing, with CNY settlement and technical support. Refer to the platform for available models and current pricing.<br>
+      <strong>🎁 BeefTV exclusive offer:</strong> <a href="https://www.infistar.cc/register?aff=KBR9PG8Z&amp;ref_source=link">Register through the exclusive referral link</a> to receive CNY 5 in trial credits, subject to the campaign's eligibility terms.
+    </td>
   </tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
@@ -183,13 +195,25 @@ BeefTV also includes project and personal asset libraries, asynchronous tasks, m
 
 See [Quick Start](QUICKSTART.md) for model setup and building from source, and the [desktop release guide](docs/desktop-release.md) for packaging requirements.
 
+## Commercial licensing and sponsorship
+
+For commercial use or derivative development based on BeefTV, please obtain official authorization from the BeefTV team. To learn about commercial licensing options, scan the QR code below to add me on WeCom and include **“BeefTV 授权”** in your contact request.
+
+BeefTV is also open to sponsorship. If you would like more people to discover and use your compute service or product through BeefTV, scan the WeCom QR code below and include “BeefTV 赞助” in your contact request.
+
+BeefTV has grown to over 2.5K stars, 480 forks, and a community of more than 2,000 members. The team has also established close partnerships with several sponsors.
+
+<p align="center">
+  <img src="assets/readme/commercial-license-wecom.jpg" width="200" alt="WeCom QR code for BeefTV commercial licensing and sponsorship inquiries">
+</p>
+
 ## Contributing and license
 
 Issues and pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow and testing requirements.
 
 The repository uses licenses with different scopes. Original content added under the new license, starting with the commit that first introduced it and subject to its terms, is covered by the [`BeefTV Source Available License 1.0`](LICENSE). Historical content released under MIT remains under the MIT terms retained in the same file. Upstream and third-party materials keep their respective licenses.
 
-The new license permits self-hosting, internal customization, and creating and selling works with BeefTV. Written authorization is required for commercial resale, rebranding and resale, paid deployment or custom delivery of covered software, and providing hosted features to third parties, whether free or paid. Independent tutorials, training, and general technical consulting may be paid services, but must not be used to deliver the software system indirectly. Contact us about authorization at [lucas@bf-labs.cn](mailto:lucas@bf-labs.cn).
+The new license permits self-hosting, internal customization, and creating and selling works with BeefTV. Written authorization is required for commercial resale, rebranding and resale, paid deployment or custom delivery of covered software, and providing hosted features to third parties, whether free or paid. Independent tutorials, training, and general technical consulting may be paid services, but must not be used to deliver the software system indirectly.
 
 The new restrictions do not apply retroactively to historical MIT content or override independently licensed third-party materials. This is a source-available license; the entire repository should not be treated as standard MIT or as an open source project under the OSI definition. See the [license guide](docs/content/docs/overview/licensing.mdx) for covered scenarios and boundaries, and [`NOTICE`](NOTICE) for upstream sources and third-party attributions.
 
@@ -197,7 +221,7 @@ The new restrictions do not apply retroactively to historical MIT content or ove
 
 BeefTV builds on and draws from the following open source projects and technologies:
 
-- **[影策 Open AI Canvas (Yingce Open AI Canvas)](https://github.com/ddcat-ai/open-ai-canvas)** (https://github.com/ddcat-ai/open-ai-canvas): A workspace for AI filmmaking and short drama creation. BeefTV is developed on top of this project. Foundational capabilities such as canvas node workflows, model provider integration, task and asset management, and community-contributed built-in plugins come from this project and continue to be refined and optimized into a local desktop app. Thanks again to [ddcat](https://github.com/ddcat-ai) and all Open AI Canvas contributors for their contributions to the open source AIGC community.
+- **[影策 Open AI Canvas (Yingce Open AI Canvas)](https://github.com/ddcat-ai/open-ai-canvas)**: A workspace for AI filmmaking and short drama creation. BeefTV is developed on top of this project. Foundational capabilities such as canvas node workflows, model provider integration, task and asset management, and community-contributed built-in plugins come from this project and continue to be refined and optimized into a local desktop app. Thanks again to [ddcat](https://github.com/ddcat-ai) and all Open AI Canvas contributors for their contributions to the open source AIGC community.
 - **[basketikun's infinite-canvas](https://github.com/basketikun/infinite-canvas)**: An open source workspace combining an infinite canvas with AI image creation. BeefTV draws on its overall infinite canvas architecture and reuses parts of its canvas code and capabilities, including node dragging and zooming, connections, undo/redo, and canvas import/export. Thanks to [basketikun](https://github.com/basketikun) and all contributors.
 - **[Pi (Pi Agent)](https://github.com/earendil-works/pi)**: A lightweight, extensible agent framework providing the agent execution loop, tool calling, and session management. BeefTV's built-in Agent is built on Pi, with adaptations and extensions for video creation, including canvas operations, creative planning, and skill management. Thanks to Pi's authors, [maintainers](https://github.com/earendil-works), and all contributors.
 

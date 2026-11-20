@@ -43,8 +43,8 @@ requirements; listing the component here is not a compatibility determination.
 ### Native FFmpeg tools
 
 Windows desktop bundles BtbN's FFmpeg/ffprobe n8.1.3-18-g46d899d7a0-20261019 build under
-GPL-3.0-or-later. macOS bundles a locally compiled FFmpeg 8.0.1 ffprobe with
-external libraries and GPL features disabled, under LGPL-2.1-or-later.
+GPL-3.0-or-later. macOS bundles locally compiled FFmpeg 8.0.1 `ffmpeg` and `ffprobe`
+executables with external third-party libraries and GPL features disabled, under LGPL-2.1-or-later.
 Their original notices are retained in `agent-host/media-runtime`; additional
 license texts and a versioned source index are in `agent-host/licenses`.
 New Windows depth runtime builds use the same pinned executables and retain
@@ -141,14 +141,15 @@ attribution condition are recorded in NOTICE.
 
 ### Workflow graph helpers adapted from Node Banana
 
-Workflow conversion, App Mode reading, and node classification helpers in
-`plugin-packages/beeftv-plugin-comfyui/lib/editor.mjs`,
-`plugin-packages/beeftv-plugin-comfyui/lib/workflow.mjs`, and
-`plugin-packages/beeftv-plugin-runninghub/lib/targets.mjs` are adapted from Node
-Banana (<https://github.com/shrimbly/node-banana>, MIT License, Copyright (c)
-2026 William Falloon). Full MIT permission notices ship in
-`plugin-packages/beeftv-plugin-comfyui/THIRD_PARTY_NOTICES.md` and
-`plugin-packages/beeftv-plugin-runninghub/THIRD_PARTY_NOTICES.md`.
+Workflow conversion, App Mode reading, and node classification helpers in the
+external marketplace packages `beeftv-plugin-comfyui`
+(`plugins/beeftv-plugin-comfyui/lib/editor.mjs`,
+`plugins/beeftv-plugin-comfyui/lib/workflow.mjs`) and
+`beeftv-plugin-runninghub` (`plugins/beeftv-plugin-runninghub/lib/targets.mjs`),
+published via `Sunnyender-org/beeftv-plugins`, are adapted from Node Banana
+(<https://github.com/shrimbly/node-banana>, MIT License, Copyright (c) 2026
+William Falloon). Full MIT permission notices ship inside each package's own
+`THIRD_PARTY_NOTICES.md`.
 
 ### Field mappings derived from LiteLLM
 

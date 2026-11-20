@@ -16,6 +16,7 @@ import (
 	"infinite-canvas/backend/internal/bootstrap"
 	"infinite-canvas/backend/internal/desktopstorage"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/plugins"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -41,6 +42,10 @@ type DesktopApp struct {
 	downloadsDir            string
 	usePlatformDownloads    bool
 	lastDiagnosticPath      string
+	uncleanPreviousSession  bool
+	lastCrashDiagnosticPath string
+	watchdogStop            context.CancelFunc
+	reloadHistory           []time.Time
 	wailsCtx                context.Context
 	pendingSkillLink        string
 	boot                    desktopBootAttempt
@@ -51,6 +56,9 @@ type DesktopApp struct {
 	openDirectory           func(path string) error
 	copyOwnedMedia          func(resourceID, destPath string) error
 	copyEagleMedia          func(baseURL, itemID, destPath string) error
+	emitReloadEvent         func(ctx context.Context, payload map[string]any)
+	nativeReloadFn          func(ctx context.Context)
+	gracefulReloadWait      time.Duration
 }
 
 // Wails reflects every field type reachable from a bound object. Keeping the
@@ -117,6 +125,7 @@ func openDesktopRuntimeWithPhase(ctx context.Context, dataDir string, onPhase fu
 }
 
 func (a *DesktopApp) stop(ctx context.Context) error {
+	a.stopRendererWatchdog()
 	a.mu.Lock()
 	runtime := a.runtime()
 	a.boot = desktopBootAttempt{
@@ -132,7 +141,20 @@ func (a *DesktopApp) stop(ctx context.Context) error {
 	desktopRuntimeRegistryMu.Unlock()
 	a.clearUpdater()
 	a.mu.Unlock()
-	return closeDesktopRuntime(ctx, runtime)
+	err := closeDesktopRuntime(ctx, runtime)
+	a.clearCrashSentinel()
+	return err
+}
+
+// RuntimeConfig preserves the v2.2.x Wails binding for existing desktop plugins
+// that read local runtime credentials before migrating to host.channels.
+func (a *DesktopApp) RuntimeConfig() DesktopRuntimeConfig {
+	state := a.StartupState()
+	return DesktopRuntimeConfig{
+		BaseURL:          state.BaseURL,
+		LaunchToken:      state.LaunchToken,
+		UIBootstrapToken: state.UIBootstrapToken,
+	}
 }
 
 func (a *DesktopApp) OpenBeefTVGitHub() error {
@@ -159,6 +181,21 @@ func (a *DesktopApp) OpenBeefTVX() error {
 		return err
 	}
 	wailsruntime.BrowserOpenURL(ctx, "https://x.com/beefnoode")
+	return nil
+}
+
+func (a *DesktopApp) OpenPartnerKeysURL(partnerID string) error {
+	ctx, err := a.dialogContext()
+	if err != nil {
+		return err
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	targetURL, err := plugins.ResolvePartnerKeysURL(lookupCtx, a.dataDir, partnerID)
+	if err != nil {
+		return err
+	}
+	wailsruntime.BrowserOpenURL(ctx, targetURL)
 	return nil
 }
 

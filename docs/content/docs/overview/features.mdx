@@ -141,7 +141,7 @@ Windows 安装包自带视频处理工具，无需另外安装 FFmpeg。预览�
 
 ## AI 提示词优化器
 
-提示词优化器是一个内置 AI 能力插件，用于把模糊的生图或生视频想法整理成可以直接使用的提示词。它复用宿主已经配置的文本模型和渠道，不在浏览器中保存或拼接第三方密钥。
+提示词优化器通过社区插件仓库 `Sunnyender-org/beeftv-plugins` 中的外置插件 `beeftv-plugin-prompt-optimizer` 提供，用于把模糊的生图或生视频想法整理成可以直接使用的提示词。它复用宿主已经配置的文本模型和渠道，不在浏览器中保存或拼接第三方密钥。
 
 ### 使用入口
 
@@ -173,10 +173,10 @@ Windows 安装包自带视频处理工具，无需另外安装 FFmpeg。预览�
 
 ### 相关实现
 
-- `web/src/lib/plugins/builtin/prompt-optimizer.ts`：插件清单、优化方式和模型适配策略。
+- `Sunnyender-org/beeftv-plugins`（`plugins/beeftv-plugin-prompt-optimizer/`）：插件清单、优化方式和模型适配策略。
 - `web/src/components/canvas/canvas-prompt-optimizer-drawer.tsx`：聊天面板、拖动缩放和结果采用交互。
-- `web/src/services/plugin-host.ts`：将插件文本请求接入宿主现有模型渠道。
-- `web/src/pages/create/index.tsx`、`web/src/components/canvas/canvas-node-prompt-panel.tsx`：两个入口的接入。
+- `web/src/lib/plugins/plugin-host-capabilities.ts`：向插件按权限开放 `ai.text.requestToolResponse`，复用宿主现有模型渠道。
+- `web/src/pages/create/use-create-page-controller.ts`、`web/src/components/canvas/canvas-node-prompt-panel.tsx`：经由 `canvas.promptActions` 挂点接入。
 
 ## 首页图片预览与画布同款查看器
 
@@ -213,18 +213,18 @@ Windows 安装包自带视频处理工具，无需另外安装 FFmpeg。预览�
 
 ## Eagle 外部素材库
 
-内置 Eagle 插件可以从用户配置的 Eagle 服务读取素材、文件夹和标签，并将素材映射为工作台可引用的外部资源。
+通过 `Sunnyender-org/beeftv-plugins` 中的外置社区插件 `beeftv-plugin-eagle-asset-connector`，工作台可从用户配置的 Eagle 服务读取素材、文件夹和标签，并将素材导入为本地工作台资源。
 
 ### 当前能力
 
-- 支持按文件夹、关键词和素材类型查询 Eagle 素材。
+- 支持按文件夹、关键词和素材类型分页查询 Eagle 素材。
 - 素材没有文件夹或标签时，仍返回稳定的空集合，工作台可以继续展示和引用素材。
 - 保留素材的文件夹路径、标签、扩展名、尺寸、大小和修改时间等排障与展示信息。
 
 ### 相关实现
 
-- `backend/internal/eagle/`：Eagle 客户端、响应解析与路径处理。
-- `web/src/lib/plugins/builtin/eagle.ts`：外部素材映射、预览和引用处理。
+- `backend/internal/eagle/` 与 `backend/internal/handler/plugin.go`（`/api/plugins/beeftv-plugin-eagle-asset-connector/*`）：Eagle 客户端、响应解析与代理路由。
+- `Sunnyender-org/beeftv-plugins`（`plugins/beeftv-plugin-eagle-asset-connector/`）：外部素材来源、素材库页面与桌面端原文件保存接入。
 
 ## 自由空白画布起点
 
@@ -281,7 +281,7 @@ Windows 安装包自带视频处理工具，无需另外安装 FFmpeg。预览�
 
 画布左上角菜单提供「保存」与「强制覆盖保存」两个手动入口。「保存」与 ⌘/Ctrl+S 等价：先写入浏览器本地缓存，再触发云端同步；云端失败时保留本地结果并排队自动重试，适合平板等无键盘设备手动落盘。
 
-「强制覆盖保存」用于云端同步反复失败（如提示“画布媒体与素材库记录不一致”）时的显式恢复，操作前有确认弹窗。执行时以本地画布为准覆盖云端版本：先按服务端素材记录校验所有画布媒体节点与时间线片段声明的素材绑定，不一致时重绑到引用同一资源的素材（缺失则按节点新建），再按“素材先于画布”的顺序整体推送；素材远端版本冲突时采纳远端为基线继续用本地覆盖。后端“画布资源必须被其素材记录引用”的不变式保持不变，强制覆盖通过前端对齐绑定完成，不绕过校验。
+「强制覆盖保存」用于本地与服务端状态出现偏差时的显式恢复，操作前有确认弹窗。执行时以本地画布为准覆盖保存：先核对并补齐画布媒体节点与时间线片段声明的素材绑定，再按“素材先于画布”的顺序整体推送；素材版本冲突时采纳服务端为基线继续用本地覆盖。
 
 ### 相关实现
 

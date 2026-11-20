@@ -1,3 +1,4 @@
+import { CanvasCatalogModelPicker } from "@/components/canvas/canvas-catalog-model-picker";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button, InputNumber, Select, Segmented } from "antd";
 import { Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
@@ -139,7 +140,7 @@ export function UpscaleNodeContent({ node, theme }: { node: CanvasNodeData; them
         return <div className="space-y-3" key={mediaType}>
             <div className="text-[var(--fs-tiny)] font-medium">{mediaType === "image" ? "图片" : "视频"}</div>
             <Segmented block aria-label={`${mediaType === "image" ? "图片" : "视频"}超分模式`} value={selected.mode} options={modes.map(item => ({ label: modeLabels[item.mode], value: item.mode }))} onChange={mode => { const next = modes.find(item => item.mode === mode); const firstModel = next?.modelOptions?.[0]?.id || next?.models[0] || ""; patch({ [mediaType]: { ...selected, mode, model: firstModel, ...(mediaType === "image" ? { outputFormat: next?.outputFormats[0] || "png" } : {}) } }); }} />
-            {options.length > 1 ? <Select getPopupContainer={trigger => trigger.parentElement || document.body} className="w-full" aria-label={`${mediaType === "image" ? "图片" : "视频"}增强模型`} value={activeModel} options={options.map(opt => ({ label: opt.label, value: opt.id }))} onChange={model => patch({ [mediaType]: { ...selected, model } })} /> : null}
+            {options.length > 1 ? <CanvasCatalogModelPicker capability={mediaType} label={`${mediaType === "image" ? "图片" : "视频"}增强模型`} value={activeModel} options={options.map(opt => ({ label: opt.label, value: opt.id, provider: "beeftv" }))} onChange={model => patch({ [mediaType]: { ...selected, model } })} /> : null}
             {mediaType === "image" && capability?.outputFormats.length ? <Select getPopupContainer={trigger => trigger.parentElement || document.body} className="w-full" aria-label="图片输出格式" value={settings.image.outputFormat || capability.outputFormats[0]} options={capability.outputFormats.map(format => ({ label: format.toUpperCase(), value: format }))} onChange={outputFormat => patch({ image: { ...settings.image, outputFormat } })} /> : null}
             {selected.mode === "generative" ? <p style={{ color: theme.node.muted }}>细节重建可能改变纹理与面部细节。</p> : null}
         </div>;
@@ -173,7 +174,7 @@ export function UpscaleNodeContent({ node, theme }: { node: CanvasNodeData; them
             </> : "提交前获取费用"}</div> : null}
             {Object.keys(estimates).length ? <details><summary className="cursor-pointer" style={{ color: theme.node.muted }}>超分后的分辨率</summary><div className="mt-2 space-y-1">{inputs.map(input => { const estimate = estimates[input.id]; return estimate ? <div key={input.id} className="flex gap-2"><span className="min-w-0 flex-1 truncate">{input.title}</span><span className="shrink-0 tabular-nums">{estimate.output.width} × {estimate.output.height}</span></div> : null; })}</div></details> : null}
             <div className="space-y-3">
-                <Select getPopupContainer={trigger => trigger.parentElement || document.body} className="w-full" aria-label="超分模型" placeholder="暂无可用超分模型" disabled={!officialConnected} value={channelId || undefined} options={officialConnected ? [{ label: "BeefTV超分模型", value: "beeftv" }] : []} onChange={channelId => patch({ channelId })} />
+                <CanvasCatalogModelPicker capability="image" label="超分模型" placeholder="暂无可用超分模型" disabled={!officialConnected} value={channelId || undefined} options={officialConnected ? [{ label: "BeefTV超分模型", value: "beeftv", provider: "beeftv" }] : []} onChange={channelId => patch({ channelId })} />
                 {!officialConnected ? <p role="status" style={{ color: theme.node.muted }}>暂无可用超分模型，请连接 BeefTV 内置的官方算力。<a href="#/settings?section=channels" className="ml-1 underline">连接官方算力</a></p> : capabilities && !hasAvailableMode ? <p role="status" style={{ color: theme.node.muted }}>暂无可用超分模型，请刷新模型目录或更换输入素材类型。</p> : null}
             </div>
             {notice ? <p role="alert" className="break-words" style={{ color: "var(--status-error)" }}>{notice}</p> : null}

@@ -82,3 +82,18 @@ export function connectAgentIntegration(kind: AgentIntegrationKind) {
 export function disconnectAgentIntegration(kind: AgentIntegrationKind) {
     return http.delete<{ integration: AgentIntegration; warning?: string }>(`/agent-clients/integrations/${encodeURIComponent(kind)}`);
 }
+
+export type MCPCall = {
+    id: number;
+    at: string;
+    client: AgentClientKind | "local";
+    tool: string;
+    failed?: boolean;
+    model?: string;
+    billing: "none" | "replay" | "tasks" | "unknown";
+    amountCny?: number;
+};
+
+export function listRecentMCPCalls(signal?: AbortSignal) {
+    return http.get<MCPCall[]>("/agent-clients/activity", { signal });
+}

@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { App, Button, Input, Switch } from "antd";
-import { FolderOpen } from "lucide-react";
+import { DetailDrawer } from "@/components/ui/product/app-drawer";
+import { StorageRow } from "./storage-layout";
+import { ReferenceStoragePane } from "./reference-storage-pane";
+import { DepthComponentsPanel } from "@/components/depth-components-panel";
+import { Box, FolderOpen, HardDrive } from "lucide-react";
 import { getAutoDownloadGeneratedMedia, setAutoDownloadGeneratedMedia } from "@/lib/auto-download-preference";
 import { onStorageNamespaceChange } from "@/lib/user-scope";
 import { getDesktopAppBinding, type DesktopStorageUsage } from "@/services/desktop-runtime";
@@ -22,6 +26,9 @@ export function StorageSettingsPane() {
     const { message, modal } = App.useApp();
     const binding = getDesktopAppBinding();
     const hasNativeStorage = Boolean(binding?.StorageSettings && binding.MigrateStorage);
+    const [directoryOpen, setDirectoryOpen] = useState(false);
+    const [depthOpen, setDepthOpen] = useState(false);
+    const [editingLimit, setEditingLimit] = useState(false);
     const [usage, setUsage] = useState<DesktopStorageUsage>();
     const [target, setTarget] = useState("");
     const [busy, setBusy] = useState(false);
@@ -39,7 +46,6 @@ export function StorageSettingsPane() {
         void getCanvasDocumentLimitMB().then((limitMB) => {
             if (!active) return;
             setSavedCanvasLimit(limitMB);
-            setCanvasLimitInput(String(limitMB));
         });
         if (hasNativeStorage) {
             void binding
@@ -71,6 +77,7 @@ export function StorageSettingsPane() {
             const next = await updateCanvasDocumentLimitMB(parsed);
             setSavedCanvasLimit(next);
             setCanvasLimitInput(String(next));
+            setEditingLimit(false);
             message.success(next === 0 ? "已设为不限制单画布容量" : `单画布容量上限已设为 ${next} MB`);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -159,117 +166,84 @@ export function StorageSettingsPane() {
                 }
             },
         });
+    const currentLimit = savedCanvasLimit === 0 ? "不限制" : `${savedCanvasLimit} MB`;
+    const errorNotice = error && <div role="alert" className="storage-error">
+        <p>{errorSummary}</p>
+        {errorDetails.length > 0 && <details><summary>错误详情</summary><p>{errorDetails.join("\n\n")}</p></details>}
+    </div>;
     return (
-        <>
-            <section className="settings-section storage-settings-block space-y-4" aria-label="生成结果保存设置">
-                <div className="settings-pane-header">
-                    <div className="min-w-0">
-                        <h2>生成结果保存</h2>
-                    </div>
+        <div className="storage-settings-sections">
+            <section aria-labelledby="storage-local-title">
+                <h2 id="storage-local-title">本地存储</h2>
+                <div className="storage-list">
+                    {hasNativeStorage && <StorageRow name="工作区目录" value={<>
+                        <span>{usage?.dataDir || (error ? "无法读取目录" : "正在读取…")}</span>
+                        {usage && <small>数据占用 {size(usage.usedBytes)} · 磁盘可用 {size(usage.freeBytes)}</small>}
+                    </>} action={<Button size="small" disabled={busy} onClick={() => setDirectoryOpen(true)}>更改目录</Button>} />}
+                    {usage?.previousDir && binding?.CleanupPreviousStorage && <StorageRow name="待清理的原目录"
+                        value={<>{usage.previousDir}<small>{cleanupInterrupted ? "原目录可能已部分清理，请保留当前存储目录。" : `可释放约 ${size(usage.previousBytes || 0)}`}</small></>}
+                        action={<Button size="small" danger disabled={busy} onClick={cleanup} aria-label="清理原目录，释放磁盘空间">清理</Button>} />}
+                    {error && !directoryOpen && errorNotice}
+                    <StorageRow name="单画布容量上限" value={editingLimit ? <div className="storage-limit">
+                        <Input aria-label="单画布容量上限（MB）" autoFocus inputMode="numeric" suffix="MB" value={canvasLimitInput}
+                            onChange={(event) => setCanvasLimitInput(event.target.value)} disabled={savingCanvasLimit}
+                            onPressEnter={() => void applyCanvasLimit(canvasLimitInput)} />
+                        <Button size="small" disabled={savingCanvasLimit} onClick={() => void applyCanvasLimit("0")}>不限制</Button>
+                        <small>当前生效上限：{currentLimit} · 默认 {DEFAULT_CANVAS_DOCUMENT_LIMIT_MB} MB</small>
+                        {canvasLimitError && <p role="alert" className="storage-error">{canvasLimitError}</p>}
+                    </div> : currentLimit} action={editingLimit ? <>
+                        <Button size="small" disabled={savingCanvasLimit} onClick={() => setEditingLimit(false)}>取消</Button>
+                        <Button size="small" type="primary" aria-label="保存容量设置" loading={savingCanvasLimit} onClick={() => void applyCanvasLimit(canvasLimitInput)}>保存</Button>
+                    </> : <Button size="small" aria-label="编辑单画布容量上限" onClick={() => {
+                        setCanvasLimitInput(String(savedCanvasLimit));
+                        setCanvasLimitError("");
+                        setEditingLimit(true);
+                    }}>编辑</Button>} />
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0 space-y-1">
-                        <div className="text-sm font-medium">生成完成后自动下载到本地</div>
-                        <p className="text-sm leading-6 text-foreground/60">
-                            画布生图、生视频、生音频任务完成后，自动将结果文件保存到浏览器默认下载目录
-                        </p>
-                    </div>
-                    <Switch
-                        checked={autoDownloadGeneratedMedia}
-                        aria-label="生成完成后自动下载到本地"
-                        onChange={(checked) => {
+            </section>
+            <section aria-labelledby="storage-files-title">
+                <h2 id="storage-files-title">文件与组件</h2>
+                <div className="storage-list">
+                    <StorageRow name="自动下载生成结果" value="图片、视频和音频保存到默认下载目录" action={
+                        <Switch checked={autoDownloadGeneratedMedia} aria-label="生成完成后自动下载到本地" onChange={(checked) => {
                             setAutoDownloadGeneratedMedia(checked);
                             setAutoDownloadGeneratedMediaState(checked);
                             message.success(checked ? "已开启生成完成后自动下载" : "已关闭生成完成后自动下载");
-                        }}
-                    />
+                        }} />
+                    } />
+                    <ReferenceStoragePane />
+                    {binding?.DepthComponentStatus && <DepthComponentsPanel render={(details, status) => <>
+                        <StorageRow name="深度捕捉组件" value={status} action={
+                            <Button size="small" aria-label="管理深度捕捉组件" onClick={() => setDepthOpen(true)}>管理</Button>
+                        } />
+                        <DetailDrawer rootClassName="storage-drawer" icon={<Box size={22} />} title="深度捕捉组件" open={depthOpen} onClose={() => setDepthOpen(false)}>{details}</DetailDrawer>
+                    </>} />}
                 </div>
             </section>
-            <section className="settings-section storage-settings-block space-y-4" aria-label="画布容量设置">
-                <div className="settings-pane-header">
-                    <div className="min-w-0">
-                        <h2>画布容量设置</h2>
-                    </div>
+            {hasNativeStorage && <DetailDrawer rootClassName="storage-drawer" icon={<HardDrive size={22} />} title="更改工作区目录"
+                open={directoryOpen} busy={busy} onClose={() => { setDirectoryOpen(false); setTarget(""); }}>
+                <div className="storage-detail-sections">
+                    <section className="storage-detail-card">
+                        <h3>当前目录</h3>
+                        <p className="storage-detail-path">{usage?.dataDir || "暂时无法读取"}</p>
+                    </section>
+                    <section className="storage-detail-section">
+                        <div className="storage-detail-heading">
+                            <label htmlFor="storage-target">新存储目录</label>
+                            <Button size="small" icon={<FolderOpen size={15} />} onClick={choose} disabled={busy}>选择文件夹</Button>
+                        </div>
+                        <Input id="storage-target" value={target} onChange={(event) => setTarget(event.target.value)}
+                            placeholder="输入路径或选择空文件夹" disabled={busy} />
+                        <p className="storage-detail-note">迁移期间请暂停工作区操作。完成后应用将重新载入，原目录会保留，核对项目和素材后可手动清理。</p>
+                        {errorNotice}
+                        <div className="storage-buttons">
+                            <Button type="primary" onClick={migrate} loading={busy} disabled={!usage || !target.trim() || target.trim() === usage.dataDir}>
+                                {busy ? "正在迁移并校验文件…" : "迁移旧数据并使用新目录"}
+                            </Button>
+                        </div>
+                    </section>
                 </div>
-                <p className="text-sm leading-6 text-foreground/60">
-                    当前生效上限：{savedCanvasLimit === 0 ? "不限制" : `${savedCanvasLimit} MB`}（默认 {DEFAULT_CANVAS_DOCUMENT_LIMIT_MB} MB，填 0 表示不限制）。长剧多集或大图资产项目可按需自由调大，无需删节点腾空间。
-                </p>
-                <label className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="shrink-0 text-sm">单画布容量上限（MB）：</span>
-                    <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-                        <Input
-                            className="min-w-0 flex-1"
-                            aria-label="单画布容量上限（MB）"
-                            inputMode="numeric"
-                            value={canvasLimitInput}
-                            onChange={(event) => setCanvasLimitInput(event.target.value)}
-                            placeholder={`${DEFAULT_CANVAS_DOCUMENT_LIMIT_MB}（填 0 表示不限制）`}
-                            disabled={savingCanvasLimit}
-                        />
-                        <Button type="primary" loading={savingCanvasLimit} onClick={() => void applyCanvasLimit(canvasLimitInput)}>
-                            保存容量设置
-                        </Button>
-                        <Button disabled={savingCanvasLimit} onClick={() => void applyCanvasLimit("0")}>
-                            不限制
-                        </Button>
-                    </div>
-                </label>
-                {canvasLimitError ? (
-                    <p role="alert" className="text-sm text-destructive break-words">
-                        {canvasLimitError}
-                    </p>
-                ) : null}
-            </section>
-            {hasNativeStorage ? (
-                <section className="settings-section storage-settings-block space-y-4" aria-label="本地存储">
-                    <div className="settings-pane-header">
-                        <div className="min-w-0">
-                            <h2>本地存储</h2>
-                        </div>
-                    </div>
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 text-sm">
-                        <div className="min-w-0 break-all">当前目录：{usage?.dataDir || "正在读取…"}</div>
-                        {usage ? (
-                            <p className="shrink-0 text-foreground/60">
-                                数据占用 {size(usage.usedBytes)} · 磁盘剩余 {size(usage.freeBytes)}
-                            </p>
-                        ) : null}
-                    </div>
-                    <label className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="shrink-0 text-sm">新存储目录：</span>
-                        <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-                            <Input className="min-w-0 flex-1" aria-label="新存储目录" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="例如 D:\BeefTV" disabled={busy} />
-                            <Button icon={<FolderOpen className="size-4" />} onClick={choose} disabled={busy}>
-                                选择文件夹
-                            </Button>
-                        </div>
-                    </label>
-                    <p className="text-sm leading-6 text-foreground/60">请选择空文件夹。迁移期间请暂停操作；完成后会重新载入。原目录会保留，请确认项目和素材完整后再清理。</p>
-                    {error ? (
-                        <div role="alert" className="text-sm text-destructive break-words">
-                            <p>{errorSummary}</p>
-                            {errorDetails.length > 0 ? (
-                                <details className="mt-2">
-                                    <summary className="cursor-pointer">错误详情</summary>
-                                    <p className="mt-2 break-all whitespace-pre-wrap">{errorDetails.join("\n\n")}</p>
-                                </details>
-                            ) : null}
-                        </div>
-                    ) : null}
-                    <Button type="primary" onClick={migrate} loading={busy} disabled={!usage || !target.trim() || target.trim() === usage.dataDir}>
-                        {busy ? "正在迁移并校验文件…" : "迁移旧数据并使用新目录"}
-                    </Button>
-                    {usage?.previousDir && binding?.CleanupPreviousStorage ? (
-                        <div className="space-y-2 border-t border-border pt-4">
-                            <p className="text-sm break-all">待清理的原目录：{usage.previousDir}。</p>
-                            {cleanupInterrupted ? <p className="text-sm">清理未完成，原目录可能已部分清理。请保留当前存储目录。</p> : null}
-                            <Button danger disabled={busy} onClick={cleanup}>
-                                清理原目录，释放磁盘空间
-                            </Button>
-                        </div>
-                    ) : null}
-                </section>
-            ) : null}
-        </>
+            </DetailDrawer>}
+        </div>
     );
 }

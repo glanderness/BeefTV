@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	GenerationDeliveryRecoveryInterval = 5 * time.Second
-	GenerationDownloadTimeout          = 15 * time.Minute
+	ProviderAndContinuationPollInterval = 5 * time.Second
+	GenerationDeliveryRecoveryInterval  = 30 * time.Second
+	GenerationDownloadTimeout           = 15 * time.Minute
 )
 
 func DeliveryPaused(stage string) bool {
-	return stage == "delivery_paused" || stage == "delivery_timed_out"
+	return stage == model.TaskStageDeliveryPaused || stage == model.TaskStageDeliveryTimedOut
 }
 
 func ModelTaskOutputs(outputs []localtask.CanonicalOutput) []model.TaskOutput {
@@ -115,7 +116,7 @@ func (s RepoStore) CommitOwned(item OwnedDelivery) error {
 		return err
 	}
 	task, err := s.Repo.Task(item.Result.TaskID)
-	if err != nil || (!DeliveryPaused(task.Stage) && task.Stage != "正在取回结果" && !strings.Contains(task.InputJSON, `"imageDeliveryCipher"`)) {
+	if err != nil || (!DeliveryPaused(task.Stage) && task.Stage != model.TaskStageFetchingResult && !strings.Contains(task.InputJSON, `"imageDeliveryCipher"`)) {
 		return err
 	}
 	rows, err := s.Repo.GenerationOutputResults(task.ID)
@@ -137,7 +138,23 @@ func (s RepoStore) CommitOwned(item OwnedDelivery) error {
 }
 
 func (s RepoStore) SucceededTasksForDelivery(afterID string, limit int) ([]model.Task, error) {
-	return s.Repo.SucceededTasksForDelivery(afterID, limit)
+	return s.Repo.PendingDeliveryTasks(afterID, limit)
+}
+
+func (s RepoStore) MarkDeliverySettled(userID, taskID string) error {
+	if s.Repo == nil {
+		return nil
+	}
+	// Clear any pending bind backoff so newly materialized outputs bind immediately.
+	_ = s.Repo.ClearPendingTaskEffectsByKind(taskID, model.TaskEffectKindTaskBindSettled)
+	return s.Repo.MarkTaskEffectSettled(userID, taskID, model.TaskEffectKindDeliverySettled, "", "", 0, "", "")
+}
+
+func (s RepoStore) RecordDeliveryAttemptFailure(userID, taskID, errMsg string) error {
+	if s.Repo == nil {
+		return nil
+	}
+	return s.Repo.RecordTaskEffectAttemptFailure(userID, taskID, model.TaskEffectKindDeliverySettled, "", errMsg)
 }
 
 func MapDeliveryStoreErr(err error) error {
@@ -315,10 +332,11 @@ func ResumeGenerationDownload(
 			return nil, errors.New("正在停止取回，请稍后再试")
 		}
 	}
-	if err := repo.SetGenerationDeliveryStage(task.UserID, task.ID, "正在取回结果"); err != nil {
+	if err := repo.SetGenerationDeliveryStage(task.UserID, task.ID, model.TaskStageFetchingResult); err != nil {
 		return nil, err
 	}
-	task.Stage = "正在取回结果"
+	_ = repo.ClearTaskEffectsByKind(task.ID, model.TaskEffectKindDeliverySettled)
+	task.Stage = model.TaskStageFetchingResult
 	if attach != nil {
 		attach(&task)
 	}

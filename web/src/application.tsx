@@ -11,8 +11,11 @@ import { RouterProvider } from "react-router";
 import { AppProviders } from "@/components/layout/app-providers";
 import { installBackspaceNavigationGuard } from "@/lib/backspace-navigation-guard";
 import { router } from "@/router";
+import { registerBeforeReloadFlusher } from "@/services/desktop-runtime";
+import { persistWorkspaceBeforeDesktopInstall } from "@/services/desktop-update";
 
 installBackspaceNavigationGuard();
+registerBeforeReloadFlusher(persistWorkspaceBeforeDesktopInstall);
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 

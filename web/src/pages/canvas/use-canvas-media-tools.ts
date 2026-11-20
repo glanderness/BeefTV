@@ -17,6 +17,7 @@ import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { persistOwnedCanvasMediaNodes } from "@/lib/canvas/canvas-media-persist";
+import { extractVideoAudioToCanvasNode } from "@/lib/canvas/extract-video-audio";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { getMediaBlob, resolveMediaUrl } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -72,6 +73,8 @@ export function useCanvasMediaTools({
     const [panoramaConfigNodeId, setPanoramaConfigNodeId] = useState<string | null>(null);
     const [subtitleEraseNodeId, setSubtitleEraseNodeId] = useState<string | null>(null);
     const [subtitleEraseInitialType, setSubtitleEraseInitialType] = useState<SmartEraseType>("subtitle");
+    const [extractingAudioNodeId, setExtractingAudioNodeId] = useState<string | null>(null);
+    const extractingAudioNodeRef = useRef(false);
     const projectIdRef = useRef(projectId);
     const depthObserversRef = useRef(new Set<AbortController>());
     projectIdRef.current = projectId;
@@ -81,6 +84,8 @@ export function useCanvasMediaTools({
     useEffect(() => {
         setPanoramaConfigNodeId(null);
         setSubtitleEraseNodeId(null);
+        extractingAudioNodeRef.current = false;
+        setExtractingAudioNodeId(null);
     }, [projectId]);
 
     useEffect(() => () => {
@@ -537,6 +542,53 @@ export function useCanvasMediaTools({
         }
     }, [beginMediaOperation, connectionsRef, message, persistMediaNodes, setConnections, setNodes]);
 
+    const extractPureAudioNodeFromVideo = useCallback(async (node: CanvasNodeData) => {
+        const operation = beginMediaOperation();
+        if (!operation.isCurrent() || extractingAudioNodeRef.current) return;
+        if (!node.metadata?.content && !node.metadata?.storageKey) {
+            message.warning("视频节点为空，无法提取音频");
+            return;
+        }
+        extractingAudioNodeRef.current = true;
+        setExtractingAudioNodeId(node.id);
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
+        const progress = startUploadStatus("提取音频为节点", "解码视频音轨并保存 WAV", 3);
+        try {
+            const { audioNode, connection, durationMs } = await operation.wait(
+                extractVideoAudioToCanvasNode(node, nodesRef.current, { signal: operation.signal }),
+            );
+            operation.run(() => progress.update("写入画布音频节点", 2));
+            const updatedCurrent = durationMs > 0 && !node.metadata?.durationMs
+                ? nodesRef.current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, durationMs } } : item))
+                : nodesRef.current;
+            const nextNodes = [...updatedCurrent, audioNode];
+            const nextConnections = [...connectionsRef.current, connection];
+            const selection = new Set([audioNode.id]);
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            selectedNodeIdsRef.current = selection;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            pageUi.getState().setSelectedNodeIds(selection);
+            pageUi.getState().setSelectedConnectionId(null);
+            await operation.wait(persistMediaNodes([audioNode], [connection], { signal: operation.signal }));
+            operation.run(() => progress.done("已提取独立音频节点"));
+            message.success("已提取纯音频节点，引用声音时不会带入原视频画面");
+        } catch (error) {
+            if (!operation.isCurrent()) return;
+            const details = error instanceof Error ? error.message : "音频提取失败";
+            operation.run(() => progress.fail(details));
+            message.error(details);
+        } finally {
+            operation.dispose();
+            if (operation.isCurrent()) {
+                extractingAudioNodeRef.current = false;
+                setExtractingAudioNodeId(null);
+            }
+        }
+    }, [beginMediaOperation, connectionsRef, message, nodesRef, pageUi, persistMediaNodes, selectedNodeIdsRef, setConnections, setNodes, startUploadStatus]);
+
     const { clearDeletedVideoNodes, ...videoTools } = useCanvasVideoTools({
         pageUi,
         projectId,
@@ -596,6 +648,8 @@ export function useCanvasMediaTools({
         addPanoramaCaptureNode,
         panoramaConfigNodeId,
         setPanoramaConfigNodeId,
+        extractingAudioNodeId,
+        extractPureAudioNodeFromVideo,
         ...imageTools,
         ...videoTools,
     };

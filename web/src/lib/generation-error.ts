@@ -172,30 +172,22 @@ export function generationErrorCode(error: unknown) {
     return explained.category === "unknown" ? undefined : explained.errorCode;
 }
 
+export const INPUT_REJECTED_ERROR_CATEGORIES: ReadonlySet<GenerationErrorCategory> = new Set([
+    "moderation_input", "moderation_reference", "moderation_output",
+    "invalid_params", "context_too_long", "input_inaccessible", "input_too_large",
+]);
+
 export function generationFailureMetadata(error: unknown, prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []): GenerationFailureMetadata {
     const explained = explainGenerationError(error);
-    const inputFingerprint = generationInputFingerprint(prompt, references);
-    const taskFailureDiagnostics =
-        error && typeof error === "object" && "failureDiagnostics" in error && error.failureDiagnostics && typeof error.failureDiagnostics === "object"
-            ? (error.failureDiagnostics as GenerationFailureDiagnostics)
-            : undefined;
-    if (!explained.moderation) {
-        return {
-            errorDetails: explained.message,
-            generationErrorSummary: explained.summary,
-            generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode,
-            generationProviderCode: explained.providerCode,
-            taskFailureDiagnostics,
-        };
-    }
+    const taskFailureDiagnostics = error && typeof error === "object" && "failureDiagnostics" in error && error.failureDiagnostics && typeof error.failureDiagnostics === "object" ? (error.failureDiagnostics as GenerationFailureDiagnostics) : undefined;
+    const trackInput = explained.moderation || INPUT_REJECTED_ERROR_CATEGORIES.has(explained.category);
     return {
         errorDetails: explained.message,
-        generationErrorSummary: undefined,
-        generationErrorCode: explained.errorCode,
+        generationErrorSummary: explained.moderation ? undefined : explained.summary,
+        generationErrorCode: explained.moderation || explained.category !== "unknown" ? explained.errorCode : undefined,
         generationProviderCode: explained.providerCode,
         taskFailureDiagnostics,
-        failedPromptFingerprint: generationPromptFingerprint(prompt),
-        failedInputFingerprint: inputFingerprint,
+        ...(trackInput ? { failedPromptFingerprint: generationPromptFingerprint(prompt), failedInputFingerprint: generationInputFingerprint(prompt, references) } : {}),
     };
 }
 
@@ -256,8 +248,7 @@ export function generationInputFingerprint(prompt: string, references: Array<str
             return item.id || "";
         })
         .map((item) => item.trim())
-        .filter(Boolean)
-        .sort();
+        .filter(Boolean);
     return generationPromptFingerprint(`${prompt.trim()}\n${referenceKeys.join("\n")}`);
 }
 
@@ -418,6 +409,16 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
         if (record.reason === "local_credential_failed") return { category: "local_credential", status: numericStatus(record.status), fromCode: true, retryable: false };
         if (record.reason === "local_disk_full") return { category: "local_disk_full", status: numericStatus(record.status), fromCode: true, retryable: false };
         if (record.reason === "local_storage_failed") return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
+        if (record.reason === "local_resource_write_failed") {
+            return { category: "input_inaccessible", reason: "本地参考素材保存失败，请检查本地资源目录后重试", action: "", status: numericStatus(record.status), fromCode: true, retryable: false };
+        }
+        if (record.reason === "reference_upload_forbidden") {
+            const st = numericStatus(record.status) || 403;
+            return { category: "input_inaccessible", reason: `参考素材上传被拒绝（HTTP ${st}），请检查对象存储密钥和存储桶权限后重试`, action: "", status: st, fromCode: true, retryable: false };
+        }
+        if (record.reason === "reference_public_read_failed") {
+            return { category: "input_inaccessible", reason: "参考素材已上传，但公网地址无法读取，请检查对象存储公开读取权限后重试", action: "", status: numericStatus(record.status), fromCode: true, retryable: false };
+        }
         if (record.name === "ApiError" && record.reason === "quota_exceeded") {
             return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
         }
@@ -494,7 +495,7 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     let classified = classifyText(text || (body && typeof body === "object" ? stringifyAllowlisted(body) : ""));
     if (body && typeof body === "object") {
         const fromObject = classifyText(stringifyAllowlisted(body));
-        if (fromObject.fromCode || (fromObject.category !== "unknown" && classified.category === "unknown")) {
+        if (fromObject.fromCode || fromObject.preserveOverHttpStatus || (fromObject.category !== "unknown" && classified.category === "unknown")) {
             classified = fromObject;
         } else {
             classified.providerCode ||= fromObject.providerCode;
@@ -508,10 +509,10 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     if (status === 402 && fields.code === "video_reservation_failed" && fields.message.startsWith("insufficient balance for this video request")) {
         classified = { ...classified, category: "quota_user", fromCode: true, reason: undefined, action: undefined };
     }
-    if (classified.category !== "unknown" && !classified.fromCode && !trustProviderMessageStatus(status)) {
+    if (classified.category !== "unknown" && !classified.fromCode && !classified.preserveOverHttpStatus && !trustProviderMessageStatus(status)) {
         classified = { ...classified, category: "unknown", reason: undefined, action: undefined, retryable: false };
     }
-    if (!classified.fromCode && (classified.category === "unknown" || classified.category === "malformed_response" || (classified.category === "invalid_params" && status && status !== 400 && status !== 422 && status !== 409)) && status) {
+    if (!classified.fromCode && !classified.preserveOverHttpStatus && (classified.category === "unknown" || classified.category === "malformed_response" || (classified.category === "invalid_params" && status && status !== 400 && status !== 422 && status !== 409)) && status) {
         classified = { ...classified, category: categoryFromHttpStatus(status), reason: undefined, action: undefined, status, retryable: false };
         if (status === 524) {
             classified.category = "timeout";
@@ -574,7 +575,18 @@ function classifyText(raw: string): Classified {
         return { category: "malformed_response", retryable: false };
     }
     const storage = resourceStorageFailureMessage(text);
-    if (storage) return { category: "input_inaccessible", reason: storage.replace(/。$/, ""), action: "", retryable: false };
+    if (storage) {
+        const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";
+        return {
+            category: "input_inaccessible",
+            reason: storage.replace(/。$/, ""),
+            action: "",
+            preserveOverHttpStatus: true,
+            requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+            taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+            retryable: false,
+        };
+    }
     const fields = extractProviderFields(text);
     // Inspect only the error message, never JSON request echoes or debug fields.
     const databaseMessage = fields.code || fields.type || fields.message || fields.status || /^[{[]/.test(text) ? fields.message : text;
@@ -784,14 +796,36 @@ function confirmedReferencePreparation(classified: Classified) {
     return Boolean(copy && !classified.uncertain && classified.category === "provider_unavailable" && classified.reason === copy.reason && classified.action === copy.action);
 }
 
-function resourceStorageFailureMessage(value: string) {
-    if (!value) return "";
-    if (isLocalRuntimeMode() && /(?:参考(?:图片|媒体)上传失败|OSS 上传失败|对象存储|腾讯云 COS|七牛云)/i.test(value)) {
+const LOCAL_DISK_FULL_STORAGE_SIGNAL = /(?:no space left on device|not enough space on the disk|disk full|database or disk is full|本地磁盘空间不足)/i;
+const LOCAL_RESOURCE_WRITE_FAILURE = /(?:(?:create|set|write|sync|close|publish|resolve)\s+local\s+resource|local\s+resource\s+(?:body|path|parent|root|store|object\s+key)|本地参考素材保存失败|本地资源目录(?:不可用|无法(?:访问|写入|读取|创建)|写入失败|保存失败|权限)|(?:保存|写入)(?:文件|参考素材|参考图片|参考媒体)?到本地资源目录(?:失败)?|写入桌面资源目录失败|(?:图片|媒体)保存未完成[，,]?\s*请检查本机存储空间)/i;
+const REMOTE_OBJECT_STORAGE_SIGNAL = /(?:(?:OSS|COS|S3|R2)\s*上传失败|\b(?:OSS|COS|S3|R2)\s+upload\s+failed\b|对象存储|腾讯云\s*COS|阿里云\s*OSS|七牛云)/i;
+const REMOTE_REFERENCE_UPLOAD_SIGNAL = /(?:参考(?:图片|图|媒体|视频|音频|素材)(?:\s*\d+\s*)?(?:预)?上传(?:文件)?失败|素材已上传[，,]?\s*但公网地址(?:无法访问|不可读取)|公网地址未返回上传的素材)/i;
+
+function resourceStorageFailureMessage(rawValue: string) {
+    if (!rawValue) return "";
+    const trimmed = rawValue.trim();
+    const value = /^[{[]/.test(trimmed) ? extractProviderFields(trimmed).message : trimmed;
+    if (!value || LOCAL_DISK_FULL_STORAGE_SIGNAL.test(value)) return "";
+    if (isLocalRuntimeMode() && LOCAL_RESOURCE_WRITE_FAILURE.test(value) && !REMOTE_OBJECT_STORAGE_SIGNAL.test(value)) {
         return "本地参考素材保存失败，请检查本地资源目录后重试。";
     }
     if (/\bUserDisable\b/i.test(value)) return "对象存储账号已停用，请检查或更换对象存储配置。";
-    if (/(?:参考(?:图片|媒体)上传失败|OSS 上传失败|对象存储|腾讯云 COS|七牛云)/i.test(value)) {
-        return "参考素材上传到对象存储失败，请检查对象存储配置后重试。";
+    if (REMOTE_OBJECT_STORAGE_SIGNAL.test(value) || REMOTE_REFERENCE_UPLOAD_SIGNAL.test(value)) {
+        if (/(?:公网地址(?:无法访问|不可读取)|公网地址未返回上传的素材|公开读取)/i.test(value)) {
+            return "参考素材已上传，但公网地址无法读取，请检查对象存储公开读取权限后重试。";
+        }
+        const rejectedStatus = value.match(/(?:拒绝上传|上传被拒绝)[（(]\s*HTTP\s*(\d{3})\s*[)）]/i)?.[1];
+        if (rejectedStatus || /(?:HTTP\s*403|\bstatus(?:\s*code)?\s*[:=]?\s*403\b|\b403\s+Forbidden\b|\bAccessDenied\b|\bSignatureDoesNotMatch\b|对象存储请求签名失败|对象存储拒绝上传)/i.test(value)) {
+            const statusLabel = rejectedStatus || "403";
+            return `参考素材上传被拒绝（HTTP ${statusLabel}），请检查对象存储密钥和存储桶权限后重试。`;
+        }
+        if (/(?:尚未启用参考素材对象存储|请先启用参考素材对象存储|对象存储配置(?:损坏|无法解密|无法读取|不可用))/i.test(value)) {
+            return "参考素材对象存储配置不可用，请检查存储设置后重试。";
+        }
+        if (REMOTE_OBJECT_STORAGE_SIGNAL.test(value) && !isNetworkText(value) && !/(?:网络|连接|超时)/i.test(value)) {
+            return "参考素材上传到对象存储失败，请检查网络连接或对象存储配置后重试。";
+        }
+        return "参考素材上传失败，请检查网络连接或对象存储配置后重试。";
     }
     return "";
 }

@@ -301,3 +301,103 @@ func TestDownloadRejectsReleasePartsWhoseSizesDoNotAddUp(t *testing.T) {
 		t.Fatal("mismatched release part total was accepted")
 	}
 }
+
+func TestDownloadSkipsMissingMirrorWithoutRetrying404Or410(t *testing.T) {
+	payload := []byte("verified domestic fallback payload")
+	sum := sha256.Sum256(payload)
+	var hits404, hits410, hitsOK int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/missing-404":
+			hits404++
+			http.NotFound(w, r)
+		case "/gone-410":
+			hits410++
+			w.WriteHeader(http.StatusGone)
+		default:
+			hitsOK++
+			_, _ = w.Write(payload)
+		}
+	}))
+	defer server.Close()
+
+	target := filepath.Join(t.TempDir(), "runtime.zip")
+	err := Download(context.Background(), Artifact{
+		URLs:   []string{server.URL + "/missing-404", server.URL + "/gone-410", server.URL + "/cos-ready"},
+		Size:   int64(len(payload)),
+		SHA256: hex.EncodeToString(sum[:]),
+	}, target, nil)
+	if err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if hits404 != 1 || hits410 != 1 || hitsOK != 1 {
+		t.Fatalf("expected 1 hit per mirror without 404/410 retries, got 404=%d 410=%d ok=%d", hits404, hits410, hitsOK)
+	}
+}
+
+func TestTrickleMirrorAbortsOnSustainedLowSpeedAndResumesNextMirror(t *testing.T) {
+	origWindow, origRate := downloadLowSpeedWindow, downloadMinBytesPerSec
+	downloadLowSpeedWindow = 40 * time.Millisecond
+	downloadMinBytesPerSec = 64 << 10
+	t.Cleanup(func() {
+		downloadLowSpeedWindow = origWindow
+		downloadMinBytesPerSec = origRate
+	})
+
+	payload := []byte(strings.Repeat("verified-depth-chunk-", 32))
+	sum := sha256.Sum256(payload)
+	slowHits, fastHits := 0, 0
+	var resumedRange string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow-r2" {
+			slowHits++
+			w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+			flusher := w.(http.Flusher)
+			// Trickle a few bytes every 10ms so idle timeout never fires, while
+			// throughput stays far below downloadMinBytesPerSec.
+			for offset := 0; offset < 64; offset += 8 {
+				if _, err := w.Write(payload[offset : offset+8]); err != nil {
+					return
+				}
+				flusher.Flush()
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			<-r.Context().Done()
+			return
+		}
+		fastHits++
+		resumedRange = r.Header.Get("Range")
+		var start int
+		if _, err := fmt.Sscanf(resumedRange, "bytes=%d-", &start); err != nil || start <= 0 || start >= len(payload) {
+			t.Errorf("expected non-empty partial Range resume, got %q", resumedRange)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(payload)
+			return
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(payload[start:])
+	}))
+	defer server.Close()
+
+	target := filepath.Join(t.TempDir(), "model.pth")
+	err := Download(context.Background(), Artifact{
+		URLs:   []string{server.URL + "/slow-r2", server.URL + "/fast-cos"},
+		Size:   int64(len(payload)),
+		SHA256: hex.EncodeToString(sum[:]),
+	}, target, nil)
+	if err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if slowHits != 1 || fastHits != 1 || resumedRange == "" {
+		t.Fatalf("slowHits=%d fastHits=%d range=%q", slowHits, fastHits, resumedRange)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("published mismatch: err=%v len=%d", err, len(got))
+	}
+}

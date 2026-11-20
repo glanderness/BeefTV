@@ -1,6 +1,6 @@
 import { Button, Modal } from "antd";
 import { XCircle } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { TaskDetailItem } from "./canvas-project-feedback";
@@ -8,13 +8,10 @@ import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/gen
 import { canRecoverTaskOutcome, readTaskOutcome } from "@/lib/task-outcome";
 import { formatTaskLog, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasImageHistoryItem, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
-import { AppModal } from "@/components/ui/product/app-modal";
+import { CanvasVideoViewer } from "@/components/canvas/image-viewer/canvas-video-viewer";
 
-const DialogVideoPlayer = lazy(() => import("@/components/video-player").then((module) => ({ default: module.VideoPlayer })));
 import { modelDisplayName, useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveImageUrl } from "@/services/image-storage";
-import { resolveMediaUrl } from "@/services/file-storage";
-import { buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
 
 type CanvasProjectStatusDialogsProps = {
     projectId?: string;
@@ -95,22 +92,9 @@ export function CanvasProjectStatusDialogs({ projectId, readOnly, theme, task, t
             </Modal>
 
 
-            <AppModal
-                title="视频预览"
-                open={Boolean(previewNode?.metadata?.content && previewNode.type === CanvasNodeType.Video)}
-                centered
-                onCancel={onClosePreview}
-                footer={null}
-                width="min(1200px, calc(100vw - 32px))"
-                flush
-                styles={{ body: { display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "84vh", overflow: "hidden", background: "var(--workspace-canvas-deep)" } }}
-            >
-                {previewSource && previewNode?.type === CanvasNodeType.Video ? (
-                    <Suspense fallback={null}>
-                        <DialogVideoPlayer src={previewSource} mimeType={previewNode.metadata?.mimeType} title={previewNode.title || "视频预览"} hasAudio={typeof previewNode.metadata?.hasAudio === "boolean" ? previewNode.metadata.hasAudio : undefined} className="max-h-[84vh] max-w-full bg-black" />
-                    </Suspense>
-                ) : null}
-            </AppModal>
+            {previewNode?.type === CanvasNodeType.Video ? (
+                <CanvasVideoViewer key={previewNode.id} node={previewNode} onClose={onClosePreview} onOpenNodeInfo={onOpenNodeInfo} />
+            ) : null}
 
             {previewNode?.type === CanvasNodeType.Image && (previewSource || previewNode.metadata?.imageHistory?.length) ? (
                 <CanvasImagePreview
@@ -152,21 +136,18 @@ function useResolvedPreviewSource(node: CanvasNodeData | null) {
     const [source, setSource] = useState("");
     useEffect(() => {
         let cancelled = false;
-        if (!node || (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video)) {
+        if (!node || node.type !== CanvasNodeType.Image) {
             setSource("");
             return;
         }
         const content = node.metadata?.content || "";
-        const fallback = node.type === CanvasNodeType.Image
-            ? node.metadata?.previewContent || content
-            : node.metadata?.importSource?.provider === "libtv" ? buildLibTVVideoSourceUrl(content) : content;
+        const fallback = node.metadata?.previewContent || content;
         if (!node.metadata?.storageKey) {
             setSource(fallback);
             return;
         }
         setSource("");
-        const resolve = node.type === CanvasNodeType.Image ? resolveImageUrl : resolveMediaUrl;
-        void resolve(node.metadata.storageKey, fallback, { cacheMiss: true })
+        void resolveImageUrl(node.metadata.storageKey, fallback, { cacheMiss: true })
             .then((resolved) => { if (!cancelled) setSource(resolved || fallback); })
             .catch(() => { if (!cancelled) setSource(fallback); });
         return () => { cancelled = true; };

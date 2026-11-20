@@ -181,7 +181,7 @@ export function useCanvasProjectActions({
         autoArrangeCanvasNodes,
     } = nodeOperations;
     const { cancelSelectionBox, deselectCanvas, handleNodeMouseDown, nodeDropTargetId } = selectionController;
-    const { recoverAIUpscale, retryDepthCaptureNode, setAnnotationNodeId, setCropNodeId, setFrameDialogNodeId, setMaskEditNodeId } = mediaTools;
+    const { recoverAIUpscale, retryDepthCaptureNode, setAnnotationNodeId, setCropNodeId, setMaskEditNodeId } = mediaTools;
     const { handleConfigNodeChange, handleFrameToggle } = nodeEditor;
 
     const styles = useCanvasStyleWorkflow({
@@ -496,14 +496,6 @@ export function useCanvasProjectActions({
         }
         focusCanvasNode(styleNode.id);
     }, [focusCanvasNode, message, nodesRef]);
-    const openFrameAnalysisOrCreate = useCallback(() => {
-        const selectedVideo = nodesRef.current.find((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Video);
-        if (selectedVideo) {
-            setFrameDialogNodeId(selectedVideo.id);
-            return;
-        }
-        message.info("请先选中一个视频节点，再打开逐帧拉片");
-    }, [message, nodesRef, selectedNodeIds, setFrameDialogNodeId]);
     const freeformCreateCommands = useCanvasCreateCommands({
         workspaceMode,
         isProjectLinked: Boolean(shortDramaEnabled && currentProject?.projectId),
@@ -513,7 +505,6 @@ export function useCanvasProjectActions({
             onAddVideo: () => createNode(CanvasNodeType.Video),
             onAddAudio: () => createNode(CanvasNodeType.Audio),
             onAddScript: () => createNode(CanvasNodeType.Script),
-            onAddFrame: openFrameAnalysisOrCreate,
             onAddFolder: createFolder,
             onAddDrawing: () => createNode(CanvasNodeType.Drawing),
             onAddWorkflow: () => createNode(CanvasNodeType.Config),
@@ -580,7 +571,6 @@ export function useCanvasProjectActions({
         handleLodNodeContextMenu,
         handleLodNodeDoubleClick,
         locateProjectStyleNode,
-        openFrameAnalysisOrCreate,
         emptyCanvasState,
     };
 }

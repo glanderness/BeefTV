@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
-import type { CanvasGenerationMode } from "@/types/canvas";
+import type { AiConfig, ModelCapability } from "@/stores/use-config-store";
+import type { H3VideoOptions } from "@/lib/h3-video";
+import type { CanvasGenerationMode, CanvasVideoReferenceMode } from "@/types/canvas";
 
 export type CreationModePreference = "text" | "image" | "video";
 
@@ -22,6 +24,9 @@ export type CreationVideoPreferences = {
     generateAudio?: string;
     watermark?: string;
     draft?: string;
+    returnLastFrame?: string;
+    arkPrivateAssetUpload?: string;
+    h3Options?: H3VideoOptions;
 };
 
 export type CreationCustomPreset = {
@@ -37,6 +42,9 @@ export type CreationComposerPreferences = {
     mode?: CreationModePreference;
     image?: CreationImagePreferences;
     video?: CreationVideoPreferences;
+    providers?: Partial<Record<ModelCapability | "transcription", string>>;
+    videoReferenceMode?: CanvasVideoReferenceMode;
+    videoByModel?: Record<string, CreationVideoPreferences>;
     customPresets?: CreationCustomPreset[];
 };
 
@@ -48,15 +56,17 @@ type CreationPreferencesStore = {
     rememberMode: (mode: CreationModePreference) => void;
     rememberPromptFontSize: (fontSize: number) => void;
     rememberImageSettings: (settings: CreationImagePreferences) => void;
-    rememberVideoSettings: (settings: CreationVideoPreferences) => void;
+    rememberModelProvider: (capability: ModelCapability | "transcription", providerId: string) => void;
+    rememberVideoReferenceMode: (mode: CanvasVideoReferenceMode) => void;
+    confirmVideoSettings: (config: AiConfig, h3Options?: H3VideoOptions) => void;
     resetImageSettings: () => void;
-    resetVideoSettings: () => void;
     saveCustomPreset: (input: { name?: string; description?: string; prompt: string; mode: CanvasGenerationMode; modes?: CanvasGenerationMode[] }) => CreationCustomPreset | null;
+    renameCustomPreset: (id: string, name: string) => CreationCustomPreset | null;
     removeCustomPreset: (id: string) => void;
 };
 
 export const CREATION_PREFERENCES_STORE_KEY = "open_ai_canvas:creation_preferences";
-export const DEFAULT_PROMPT_FONT_SIZE = 14;
+export const DEFAULT_PROMPT_FONT_SIZE = 12;
 export const MIN_PROMPT_FONT_SIZE = 12;
 export const MAX_PROMPT_FONT_SIZE = 28;
 
@@ -91,6 +101,9 @@ function normalizeVideoPreferences(value: unknown): CreationVideoPreferences | u
         ...(nonEmptyString(raw.videoQuality) ? { videoQuality: raw.videoQuality } : {}),
         ...(nonEmptyString(raw.generateAudio) ? { generateAudio: raw.generateAudio } : {}),
         ...(nonEmptyString(raw.watermark) ? { watermark: raw.watermark } : {}),
+        ...(nonEmptyString(raw.arkPrivateAssetUpload) ? { arkPrivateAssetUpload: raw.arkPrivateAssetUpload } : {}),
+        ...(nonEmptyString(raw.returnLastFrame) ? { returnLastFrame: raw.returnLastFrame } : {}),
+        ...(raw.h3Options && typeof raw.h3Options === "object" && !Array.isArray(raw.h3Options) ? { h3Options: raw.h3Options as H3VideoOptions } : {}),
         ...(nonEmptyString(raw.draft) ? { draft: raw.draft } : {}),
     };
     return Object.keys(preferences).length ? preferences : undefined;
@@ -124,14 +137,40 @@ export function normalizeCreationComposerPreferences(value: unknown): CreationCo
     const raw = value as Record<string, unknown>;
     const image = normalizeImagePreferences(raw.image);
     const video = normalizeVideoPreferences(raw.video);
+    const providers: Partial<Record<ModelCapability | "transcription", string>> = {};
+    if (raw.video && typeof raw.video === "object" && "providerId" in raw.video && nonEmptyString(raw.video.providerId)) {
+        providers.video = raw.video.providerId;
+    }
+    if (raw.providers && typeof raw.providers === "object") {
+        for (const [key, id] of Object.entries(raw.providers)) {
+            if ((key === "transcription" || VALID_GENERATION_MODES.has(key as CanvasGenerationMode)) && nonEmptyString(id)) providers[key as ModelCapability | "transcription"] = id;
+        }
+    }
+    const videoByModel: Record<string, CreationVideoPreferences> = {};
+    if (raw.videoByModel && typeof raw.videoByModel === "object") {
+        for (const [model, entry] of Object.entries(raw.videoByModel)) {
+            const settings = normalizeVideoPreferences(entry);
+            if (settings && model.includes("::")) videoByModel[model] = settings;
+        }
+    }
     const customPresets = normalizeCustomPresets(raw.customPresets);
     return {
         ...(typeof raw.promptFontSize === "number" && Number.isFinite(raw.promptFontSize) ? { promptFontSize: normalizePromptFontSize(raw.promptFontSize) } : {}),
         ...(raw.mode === "text" || raw.mode === "image" || raw.mode === "video" ? { mode: raw.mode } : {}),
         ...(image ? { image } : {}),
         ...(video ? { video } : {}),
+        ...(raw.videoReferenceMode === "all" || raw.videoReferenceMode === "frames" ? { videoReferenceMode: raw.videoReferenceMode } : {}),
+        ...(Object.keys(providers).length ? { providers } : {}),
+        ...(Object.keys(videoByModel).length ? { videoByModel } : {}),
         ...(customPresets ? { customPresets } : {}),
     };
+}
+
+export function savedVideoSettings(preferences: CreationComposerPreferences, model: string, defaultModel: string) {
+    const saved = preferences.videoByModel?.[model];
+    if (saved) return saved;
+    const legacy = preferences.video;
+    return model === (legacy?.model || defaultModel) ? legacy : undefined;
 }
 
 export const useCreationPreferencesStore = create<CreationPreferencesStore>()(
@@ -144,15 +183,27 @@ export const useCreationPreferencesStore = create<CreationPreferencesStore>()(
                 if (Number.isFinite(fontSize)) set((state) => ({ preferences: { ...state.preferences, promptFontSize: normalizePromptFontSize(fontSize) } }));
             },
             rememberImageSettings: (settings) => set((state) => ({ preferences: { ...state.preferences, image: { ...state.preferences.image, ...settings } } })),
-            rememberVideoSettings: (settings) => set((state) => ({ preferences: { ...state.preferences, video: { ...state.preferences.video, ...settings } } })),
+            rememberModelProvider: (capability, providerId) => set(({ preferences }) => ({
+                preferences: { ...preferences, providers: { ...preferences.providers, [capability]: providerId } },
+            })),
+            rememberVideoReferenceMode: (mode) => set(({ preferences }) => ({ preferences: { ...preferences, videoReferenceMode: mode } })),
+            confirmVideoSettings: (config, h3Options) => set(({ preferences }) => {
+                if (!config.model) return { preferences };
+                const videoByModel = { ...preferences.videoByModel };
+                const previous = preferences.video;
+                // Keep the legacy model's settings when the first confirmed run uses a different model.
+                if (previous?.model && !videoByModel[previous.model]) videoByModel[previous.model] = previous;
+                videoByModel[config.model] = {
+                    ratio: config.size, seconds: config.videoSeconds, videoQuality: config.vquality,
+                    generateAudio: config.videoGenerateAudio, watermark: config.videoWatermark,
+                    draft: config.videoDraft, returnLastFrame: config.videoReturnLastFrame,
+                    arkPrivateAssetUpload: config.videoArkPrivateAssetUpload, h3Options,
+                };
+                return { preferences: { ...preferences, video: { model: config.model }, videoByModel } };
+            }),
             resetImageSettings: () =>
                 set((state) => {
                     const { image: _image, ...rest } = state.preferences;
-                    return { preferences: rest };
-                }),
-            resetVideoSettings: () =>
-                set((state) => {
-                    const { video: _video, ...rest } = state.preferences;
                     return { preferences: rest };
                 }),
             saveCustomPreset: ({ name, description, prompt, mode, modes }) => {
@@ -176,6 +227,31 @@ export const useCreationPreferencesStore = create<CreationPreferencesStore>()(
                     },
                 }));
                 return created;
+            },
+            renameCustomPreset: (id, name) => {
+                const cleanId = id.trim();
+                const cleanName = name.trim();
+                if (!cleanId || !cleanName) return null;
+                let updated: CreationCustomPreset | null = null;
+                set((state) => {
+                    const current = state.preferences.customPresets || [];
+                    const index = current.findIndex((item) => item.id === cleanId);
+                    if (index < 0) return state;
+                    const nextItem: CreationCustomPreset = {
+                        ...current[index]!,
+                        name: cleanName,
+                    };
+                    updated = nextItem;
+                    const next = [...current];
+                    next[index] = nextItem;
+                    return {
+                        preferences: {
+                            ...state.preferences,
+                            customPresets: next,
+                        },
+                    };
+                });
+                return updated;
             },
             removeCustomPreset: (id) =>
                 set((state) => {

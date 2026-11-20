@@ -96,7 +96,7 @@ export function CanvasProjectNodePrompt({ node: panelNode, projectId, videoModel
             onAddReference={referenceActions.addTextReference}
             onPromptChange={handleNodePromptChange}
             onConfigChange={handleConfigNodeChange}
-            onGenerate={handleGenerateNode}
+            onGenerate={(id, mode, prompt) => handleGenerateNode(id, mode, prompt, { rememberVideoDefaults: true })}
             onOpenGenerationHistory={() => setGenerationHistoryOpen(true)}
             onCreateGenerationReplacement={createGenerationReplacement}
             onRemoveReference={handleRemoveNodeReference}

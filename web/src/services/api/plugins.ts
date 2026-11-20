@@ -65,6 +65,34 @@ export async function updatePluginPackage(id: string, registry?: string) {
     return result.plugin;
 }
 
+export type PartnerCatalogItem = {
+    id: string;
+    presetId: string;
+    name: string;
+    live: boolean;
+    retired?: boolean;
+    installed: boolean;
+    repairNeeded?: boolean;
+    enabled: boolean;
+    iconPending?: boolean;
+    installError?: string;
+    installErrorKind?: "conflict" | "transient" | string;
+    from?: string;
+    until?: string;
+    keysUrl?: string;
+    websiteUrl?: string;
+    iconUrl?: string;
+    promoText?: string;
+};
+
+export async function fetchPartnerCatalog(signal?: AbortSignal) {
+    return http.get<{ partners: PartnerCatalogItem[]; complete?: boolean }>("/plugins/partners", { signal, timeout: 10_000 });
+}
+
+export async function syncPartnerBuiltins(registry?: string) {
+    return http.post<{ partners: PartnerCatalogItem[]; complete?: boolean; errors?: Record<string, string> }>("/plugins/partners/sync", { registry }, { timeout: PACKAGE_INSTALL_TIMEOUT_MS });
+}
+
 export type PluginUpdateNotice = { id: string; version: string; latest: string; official?: boolean };
 /** updates 是有新版本的插件，upToDate 是确认已是最新的插件；两边都不在的插件没法比较版本。 */
 export type PluginUpdateCheck = { updates: PluginUpdateNotice[]; upToDate: string[] };
@@ -73,8 +101,21 @@ export async function fetchPluginUpdates(signal?: AbortSignal) {
     return http.get<PluginUpdateCheck>("/plugins/updates", { signal, timeout: 15_000 });
 }
 
-export async function reportPluginLoadError(id: string, error: string) {
-    return http.post<{ status?: string }>(`/plugins/${encodeURIComponent(id)}/load-error`, { error });
+export type PluginLoadErrorStage = "import" | "activate";
+
+export async function reportPluginLoadError(
+    id: string,
+    error: string,
+    stage?: PluginLoadErrorStage,
+    revision?: string,
+) {
+    const body: { error: string; stage?: PluginLoadErrorStage; revision?: string } = { error };
+    if (stage) body.stage = stage;
+    if (revision) body.revision = revision;
+    return http.post<{ plugin?: BackendPlugin; status?: string }>(
+        `/plugins/${encodeURIComponent(id)}/load-error`,
+        body,
+    );
 }
 
 export async function setUserPluginEnabled(id: string, enabled: boolean) {

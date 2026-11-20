@@ -268,6 +268,10 @@ func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, 
 	return canvasProjectPayload(*project)
 }
 
+func (s *Service) UserCanvasProjectRevision(userID string, id string) (int64, error) {
+	return s.repo.CanvasProjectRevision(userID, id)
+}
+
 func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
 	return s.upsertUserCanvasProjectWithHistory(userID, raw, "automatic")
 }
@@ -307,9 +311,6 @@ func (s *Service) upsertUserCanvasProjectAndPayload(userID string, raw json.RawM
 		existing, existingErr := s.repo.CanvasProjectForUser(userID, project.ID)
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
-		}
-		if err := s.validateCanvasMediaAssetsWithBaseline(userID, raw, existing, candidateAssets); err != nil {
-			return err
 		}
 		if len(candidateAssets) > 0 {
 			created, err := s.Library().PrepareAssetWrites(userID, candidateAssets)

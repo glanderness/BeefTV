@@ -85,6 +85,16 @@ type TopUpReconcileResult struct {
 	Connection Summary `json:"connection"`
 }
 
+// QuotaPerYuan returns the enterprise wallet scale supplied by the server.
+func (s *Service) QuotaPerYuan() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.state.hasCredential() {
+		return 0
+	}
+	return s.state.QuotaPerUnit
+}
+
 func normalizeRemoteBalance(rawCNY string, quota *int64, fallbackBalance, fallbackCNY string) (string, string) {
 	trimmed := strings.TrimSpace(rawCNY)
 	validCNY := validCNYBalancePattern.MatchString(trimmed)
@@ -184,6 +194,9 @@ func (s *Service) applyRemoteConnectionViewIfCurrent(seq uint64, view connection
 	}
 	if strings.TrimSpace(view.Market) != "" {
 		s.state.Market = strings.TrimSpace(view.Market)
+	}
+	if view.QuotaPerUnit > 0 {
+		s.state.QuotaPerUnit = view.QuotaPerUnit
 	}
 	s.state.Balance, s.state.BalanceCNY = normalizeRemoteBalance(view.BalanceCNY, view.Quota, s.state.Balance, s.state.BalanceCNY)
 	_ = s.persistState(s.state)

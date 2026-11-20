@@ -41,6 +41,9 @@ func TestComponentManifestMirrorsRespectExplicitOverride(t *testing.T) {
 			if options.ManifestURL != componentCOSBase+name || !reflect.DeepEqual(options.ManifestMirrors, []string{componentR2Base + name, componentGHBase + name}) {
 				t.Fatalf("default sources: %+v", options)
 			}
+			if platform == "darwin-arm64" && (options.FallbackManifest == nil || !strings.HasPrefix(options.FallbackManifest.Runtime.URLs[0], componentCOSBase) || !strings.HasPrefix(options.FallbackManifest.Model.URLs[0], componentCOSBase)) {
+				t.Fatalf("fallback domestic order: %+v", options.FallbackManifest)
+			}
 		}
 	}
 }

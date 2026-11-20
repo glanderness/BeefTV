@@ -2,6 +2,7 @@ package desktopstorage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,5 +74,84 @@ func TestMigrationRejectsOverlapExistingDataAndCancellation(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(source, "config"))
 	if err != nil || string(body) != "keep" {
 		t.Fatal("source modified on failure")
+	}
+}
+
+func TestSaveMigrationReplacesReadOnlyLocationAndVerifiesReadback(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "profile")
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SaveMigration(root+string(filepath.Separator), first+string(filepath.Separator), root, map[string]string{"db": "abc"}); err != nil {
+		t.Fatalf("first SaveMigration: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(root, locationFile), 0400); err != nil {
+		t.Fatalf("chmod read-only: %v", err)
+	}
+	if err := SaveMigration(root, second, first, map[string]string{"db": "def"}); err != nil {
+		t.Fatalf("second SaveMigration over read-only pointer: %v", err)
+	}
+	got, err := Resolve(root + string(filepath.Separator))
+	if err != nil || got != second {
+		t.Fatalf("Resolve(root) = %q, err=%v; want %q", got, err, second)
+	}
+	// UTF-8 BOM and whitespace in storage-location.json must still resolve cleanly.
+	bomBody := append([]byte("\xef\xbb\xbf"), []byte(`{"dataDir":"  `+filepath.ToSlash(second)+`  "}`)...)
+	if err := os.Chmod(filepath.Join(root, locationFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, locationFile), bomBody, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Resolve(root)
+	if err != nil || !SameLocation(got, second) {
+		t.Fatalf("Resolve with BOM = %q, err=%v; want %q", got, err, second)
+	}
+	// Saving a non-existent DataDir must fail without overwriting the existing pointer.
+	missing := filepath.Join(t.TempDir(), "missing-target")
+	if err := Save(root, missing, second); err == nil {
+		t.Fatal("expected Save to fail for missing directory")
+	}
+	gotAfterFail, err := Resolve(root)
+	if err != nil || !SameLocation(gotAfterFail, second) {
+		t.Fatalf("Resolve(root) after failed Save = %q, err=%v; want %q", gotAfterFail, err, second)
+	}
+
+	// Post-replace sync failure must roll back storage-location.json to previous bytes;
+	// if rollback sync itself also fails, ErrLocationRollbackFailed must surface.
+	third := filepath.Join(t.TempDir(), "third-target")
+	if err := os.MkdirAll(third, 0700); err != nil {
+		t.Fatal(err)
+	}
+	origSync := syncLocationDir
+	t.Cleanup(func() { syncLocationDir = origSync })
+
+	calls := 0
+	syncLocationDir = func(dir string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected post-replace dir sync failure")
+		}
+		return origSync(dir)
+	}
+	err = Save(root, third, second)
+	if err == nil || errors.Is(err, ErrLocationRollbackFailed) {
+		t.Fatalf("expected post-replace error with clean rollback, got %v", err)
+	}
+	gotAfterRollback, err := Resolve(root)
+	if err != nil || !SameLocation(gotAfterRollback, second) {
+		t.Fatalf("Resolve(root) after post-replace rollback = %q, err=%v; want %q", gotAfterRollback, err, second)
+	}
+
+	syncLocationDir = func(string) error {
+		return errors.New("persistent dir sync failure")
+	}
+	err = Save(root, third, second)
+	if !errors.Is(err, ErrLocationRollbackFailed) {
+		t.Fatalf("expected ErrLocationRollbackFailed when rollback sync fails, got %v", err)
 	}
 }

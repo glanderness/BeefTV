@@ -147,6 +147,7 @@ export function CanvasProjectNodeContent({ node: contentNode, projectId, readOnl
             <CanvasScriptNodeContent
                 node={contentNode}
                 nodes={nodesRef.current}
+                readOnly={readOnly}
                 batch={visibleGenerationBatch(contentNode)}
                 pipeline={pipeline}
                 scale={viewportScale}
@@ -203,7 +204,7 @@ export function CanvasProjectNodeContent({ node: contentNode, projectId, readOnl
             onComposerToggle={() => setDialogNodeId((current) => (current === contentNode.id ? null : contentNode.id))}
             onGenerate={(nodeId) => {
                 const target = nodesRef.current.find((item) => item.id === nodeId);
-                void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "");
+                void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "", { rememberVideoDefaults: true });
             }}
             workspaceMode={workspaceMode}
         />

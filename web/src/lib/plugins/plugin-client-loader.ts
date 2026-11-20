@@ -1,8 +1,12 @@
+import { hasBuiltinChannelProfileUpgrade, subscribeBuiltinPresets, syncBuiltinPresetFromModule } from "@/lib/builtin-service-presets";
 import { createBeefTVPluginHost } from "@/lib/plugins/plugin-host-runtime";
 import { getRegisteredPlugin, listRegisteredPlugins } from "@/lib/plugins/plugin-registry";
 import type { BeefTVPluginHost, PluginManifest, PluginManifestV2 } from "@/lib/plugins/plugin-types";
 import { disposePluginContributions } from "@/lib/plugins/slot-registry";
-import { reportPluginLoadError } from "@/services/api/plugins";
+import { localWorkspaceConfig } from "@/lib/user-session";
+import { reportPluginLoadError, type BackendPlugin } from "@/services/api/plugins";
+import { getCanonicalModelConfig, mutateModelConfig } from "@/services/model-config-repository";
+import { useConfigStore } from "@/stores/use-config-store";
 import {
     isPluginEffectivelyEnabled,
     onPluginStoreLifecycleChange,
@@ -25,11 +29,14 @@ const activatingPromises = new Map<string, Promise<boolean>>();
 /** 每个已激活插件加载的入口地址；从文件夹重新安装后地址变了，就要换成新代码。 */
 const loadedEntries = new Map<string, string>();
 
-/** 地址带上安装内容的指纹（没有时用版本号），同版本重新安装也会加载新模块而不是浏览器缓存里的旧模块。 */
-function clientEntryFor(pluginId: string, manifest?: PluginManifest | PluginManifestV2): string | undefined {
+/** 地址使用内容指纹路径段隔离，使入口内部相对静态导入（如 ./presets.js）自动继承当前版本路径，不会命中浏览器旧模块缓存。 */
+export function clientEntryFor(pluginId: string, manifest?: PluginManifest | PluginManifestV2): string | undefined {
     const cleanClient = manifest?.client ? manifest.client.replace(/^\.\//, "").replace(/^\/+/, "") : "";
     if (!cleanClient) return undefined;
-    const revision = manifest?.revision || manifest?.version || "";
+    const revision = (manifest?.revision || manifest?.version || "").trim();
+    if (/^[0-9a-f]{64}$/i.test(revision)) {
+        return `/api/plugins/${encodeURIComponent(pluginId)}/files/@rev-${revision.toLowerCase()}/${cleanClient}`;
+    }
     return `/api/plugins/${encodeURIComponent(pluginId)}/files/${cleanClient}?v=${encodeURIComponent(revision)}`;
 }
 
@@ -74,6 +81,48 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, pluginId: string
     });
 }
 
+export function reconcileLocalChannelsAfterPresetSync(): void {
+    const configStore = useConfigStore.getState();
+    if (!hasBuiltinChannelProfileUpgrade(configStore.config?.channels)) {
+        return;
+    }
+    const nextLocal = localWorkspaceConfig(configStore.config);
+    configStore.replaceConfig(nextLocal);
+    if (getCanonicalModelConfig() !== null) {
+        void mutateModelConfig((base) => {
+            const migrated = localWorkspaceConfig(base);
+            return { config: migrated, result: true };
+        })
+            .then(({ config }) => useConfigStore.getState().replaceConfig(localWorkspaceConfig(config)))
+            .catch(() => undefined);
+    }
+}
+
+// 无论合作伙伴模块是在激活当下同步，还是等后端权威目录到达后延迟重放，只要内置预设变化就自动升级已存渠道档案。
+subscribeBuiltinPresets(reconcileLocalChannelsAfterPresetSync);
+
+export function recoverIfRevisionChanged(
+    pluginId: string,
+    previousManifest: PluginManifest | PluginManifestV2 | undefined,
+    latest?: BackendPlugin,
+): void {
+    if (
+        !latest ||
+        latest.status !== "enabled" ||
+        !latest.manifest?.revision ||
+        latest.manifest.revision === previousManifest?.revision
+    ) {
+        return;
+    }
+    const store = usePluginStore.getState();
+    store.setError(pluginId, undefined);
+    store.setRuntimeStatuses({
+        ...store.runtimeStatuses,
+        [pluginId]: "enabled",
+    });
+    store.ensurePlugin(latest.manifest);
+}
+
 export async function activateClientPluginModule(
     pluginId: string,
     mod: ClientPluginModule,
@@ -102,6 +151,9 @@ export async function activateClientPluginModule(
             timeoutMs,
             pluginId,
         );
+        if (options?.manifest?.trusted !== false) {
+            syncBuiltinPresetFromModule(pluginId, mod);
+        }
 
         activeCleanups.set(pluginId, () => {
             try {
@@ -129,9 +181,11 @@ export async function activateClientPluginModule(
             [pluginId]: "invalid",
         });
         if (options?.reportBackendError !== false) {
-            void reportPluginLoadError(pluginId, message).catch(() => {
-                // ignore network error in offline/test environments
-            });
+            void reportPluginLoadError(pluginId, message, "activate", options?.manifest?.revision)
+                .then((res) => recoverIfRevisionChanged(pluginId, options?.manifest, res?.plugin))
+                .catch(() => {
+                    // ignore network error in offline/test environments
+                });
         }
         return false;
     }
@@ -188,7 +242,9 @@ export async function loadAndActivateClientPlugin(
                 ...state.runtimeStatuses,
                 [pluginId]: "invalid",
             });
-            void reportPluginLoadError(pluginId, message).catch(() => {});
+            void reportPluginLoadError(pluginId, message, "import", manifest?.revision)
+                .then((res) => recoverIfRevisionChanged(pluginId, manifest, res?.plugin))
+                .catch(() => {});
             return false;
         }
     })();

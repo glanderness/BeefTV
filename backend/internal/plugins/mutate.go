@@ -235,6 +235,7 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 		if stored[index].ID == record.Metadata.ID {
 			stored[index].Raw = data
 			stored[index].LoadError = ""
+			stored[index].LoadErrorStage = ""
 			stored[index].UpdatedAt = time.Now().UTC()
 		}
 	}
@@ -255,7 +256,26 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 	}, nil
 }
 
-func (c *Runtime) SetLoadError(id string, errText string) (View, error) {
+func normalizeLoadErrorStage(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "import":
+		return "import"
+	case "activate":
+		return "activate"
+	default:
+		return ""
+	}
+}
+
+func (c *Runtime) SetLoadError(id string, errText string, stageOpt ...string) (View, error) {
+	stageVal := ""
+	if len(stageOpt) > 0 {
+		stageVal = stageOpt[0]
+	}
+	return c.SetLoadErrorAtRevision(id, errText, stageVal, "")
+}
+
+func (c *Runtime) SetLoadErrorAtRevision(id string, errText string, stageRaw string, revision string) (View, error) {
 	if c == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
@@ -267,13 +287,35 @@ func (c *Runtime) SetLoadError(id string, errText string) (View, error) {
 	if !ok {
 		return View{}, fmt.Errorf("插件 %q 不存在", id)
 	}
+	reportedRev := strings.TrimSpace(revision)
+	trimmedErr := strings.TrimSpace(errText)
+	if isHotUpdatedBuiltinRecord(c.dataDir, record.Metadata.ID, record) {
+		if reportedRev == "" || !strings.EqualFold(record.PackageSHA256, reportedRev) {
+			return viewFromRecord(record), nil
+		}
+		if trimmedErr != "" {
+			if _, hasShipped := BundledSampleDir(record.Metadata.ID); hasShipped {
+				return c.rollbackHotUpdatedBuiltinLocked(record.Metadata.ID, record)
+			}
+			// 无随包副本的动态合作伙伴插件仅记录客户端加载错误状态（StatusInvalid），
+			// 不清空已校验包目录也不关闭 Metadata.Enabled，使声明式后端 HTTP 协议持续为已存渠道服务。
+		}
+	}
+	if reportedRev != "" && strings.TrimSpace(record.PackageSHA256) != "" && !strings.EqualFold(record.PackageSHA256, reportedRev) {
+		return viewFromRecord(record), nil
+	}
 	stored, err := c.currentRecords()
 	if err != nil {
 		return View{}, err
 	}
+	stageVal := ""
+	if trimmedErr != "" {
+		stageVal = normalizeLoadErrorStage(stageRaw)
+	}
 	for index := range stored {
 		if stored[index].ID == record.Metadata.ID {
-			stored[index].LoadError = strings.TrimSpace(errText)
+			stored[index].LoadError = trimmedErr
+			stored[index].LoadErrorStage = stageVal
 			stored[index].UpdatedAt = time.Now().UTC()
 		}
 	}

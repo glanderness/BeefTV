@@ -1,4 +1,4 @@
-import { Image as AntImage, Popover } from "antd";
+import { Image as AntImage, Popover, Tooltip as AntTooltip } from "antd";
 import { Fragment, useState } from "react";
 import { ArrowLeftRight, AtSign, FileText, GripVertical, ImageIcon, Link2, Maximize2, Music2, Pencil, SlidersHorizontal, UserRound, Video, X } from "lucide-react";
 
@@ -48,7 +48,7 @@ export function VideoReferenceModeSwitch({
             aria-disabled={!state.canSelectFrames}
             aria-label={state.endFrameSupported ? "首尾帧模式" : "首帧模式"}
             data-canvas-no-drag
-            className={`inline-flex h-5 items-center rounded-[var(--r-sm)] px-2 text-[var(--fs-tiny)] font-medium leading-none transition-colors ${state.canSelectFrames ? "cursor-pointer" : "cursor-not-allowed opacity-45"}`}
+            className={`inline-flex h-5 items-center rounded-[var(--r-sm)] px-2 text-[length:var(--canvas-composer-ui-fs,var(--fs-tiny))] font-medium leading-[var(--canvas-composer-ui-lh,1)] transition-colors ${state.canSelectFrames ? "cursor-pointer" : "cursor-not-allowed opacity-45"}`}
             style={{
                 background: framesActive ? theme.node.panel : "transparent",
                 color: framesActive ? theme.node.text : theme.node.muted,
@@ -72,7 +72,7 @@ export function VideoReferenceModeSwitch({
             aria-disabled={!state.canSelectAll}
             aria-label="全能参考模式"
             data-canvas-no-drag
-            className={`inline-flex h-5 items-center rounded-[var(--r-sm)] px-2 text-[var(--fs-tiny)] font-medium leading-none transition-colors ${state.canSelectAll ? "cursor-pointer" : "cursor-not-allowed opacity-45"}`}
+            className={`inline-flex h-5 items-center rounded-[var(--r-sm)] px-2 text-[length:var(--canvas-composer-ui-fs,var(--fs-tiny))] font-medium leading-[var(--canvas-composer-ui-lh,1)] transition-colors ${state.canSelectAll ? "cursor-pointer" : "cursor-not-allowed opacity-45"}`}
             style={{
                 background: allActive ? theme.node.panel : "transparent",
                 color: allActive ? theme.node.text : theme.node.muted,
@@ -103,8 +103,8 @@ export function VideoReferenceModeSwitch({
             style={{ background: theme.toolbar.itemHover }}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            {state.framesDisabledReason ? <Tooltip title={state.framesDisabledReason}>{framesButton}</Tooltip> : framesButton}
             {allButton}
+            {state.framesDisabledReason ? <Tooltip title={state.framesDisabledReason}>{framesButton}</Tooltip> : framesButton}
         </div>
     );
 }
@@ -130,8 +130,11 @@ export function ReferenceToolsPopover({
     compact: boolean;
     label?: string;
 }) {
-    return (
+    const [open, setOpen] = useState(false);
+    const picker = (
         <Popover
+            open={open}
+            onOpenChange={setOpen}
             trigger="click"
             placement="topRight"
             rootClassName="canvas-reference-tools-popover"
@@ -186,13 +189,19 @@ export function ReferenceToolsPopover({
             <button
                 type="button"
                 className={`canvas-node-composer-settings-trigger canvas-node-composer-reference-tools-trigger inline-flex shrink-0 items-center gap-1 ${compact ? "is-compact" : ""}`}
-                aria-label={label === "引用" ? "打开智能引用" : label}
-                title={label === "引用" ? "智能引用" : label}
+                aria-label="智能引用"
+                aria-expanded={open}
             >
                 <SlidersHorizontal className="size-3.5" />
                 {!compact ? <span>{label}</span> : null}
             </button>
         </Popover>
+    );
+
+    return (
+        <AntTooltip title={open ? null : "智能引用"} trigger={["hover", "focus"]} mouseEnterDelay={0.12}>
+            <span className="inline-flex shrink-0">{picker}</span>
+        </AntTooltip>
     );
 }
 

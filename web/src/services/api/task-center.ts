@@ -1,5 +1,6 @@
 import { generationErrorMessage } from "@/lib/generation-error";
 import { GENERATION_RESULT_FETCH_STAGE } from "@/lib/generation-delivery-progress";
+import { triggerSoundForCompletedTask } from "@/lib/task-completion-sound";
 import { normalizeTaskOutcome, taskOutcomeCopy, type TaskOutcome } from "@/lib/task-outcome";
 import { ApiError, http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
@@ -494,6 +495,13 @@ function extractPolledTaskText(task: GenerationTask): string {
     return "";
 }
 
+function notifyNewlyCompletedGenerationTask(task: GenerationTask, initialTask?: GenerationTask) {
+    if (initialTask?.status === "succeeded" && initialTask.resultState !== "PENDING_MATERIALIZATION" && initialTask.resultState !== "MATERIALIZING") {
+        return;
+    }
+    triggerSoundForCompletedTask(task.id);
+}
+
 export async function waitForGenerationTask(id: string, options?: WaitForGenerationTaskOptions) {
     if (shouldUseTaskTextEvents(options)) return waitForGenerationTaskTextEvents(id, options || {});
     const startedAt = Date.now();
@@ -535,6 +543,7 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             }
             const settled = settleGenerationTaskWait(task);
             if (settled.kind === "ready") {
+                notifyNewlyCompletedGenerationTask(settled.task, options?.initialTask);
                 return settled.task;
             }
             if (settled.kind === "failed") {
@@ -667,7 +676,10 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastTask = latest;
             options.onTaskUpdate?.(latest);
             const settled = settleTerminalTextEventTask(latest);
-            if (settled) return settled;
+            if (settled) {
+                notifyNewlyCompletedGenerationTask(settled, options.initialTask);
+                return settled;
+            }
             if (!terminalReceived) {
                 const prematureError = new Error("任务文本流连接提前结束");
                 lastStreamError = prematureError;

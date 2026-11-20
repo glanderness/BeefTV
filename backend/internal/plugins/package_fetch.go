@@ -117,10 +117,14 @@ func (c *Runtime) SetPackageFetcher(fetch PackageFetcher) {
 }
 
 func (s *Service) InstallPackage(source, registry string) (View, error) {
+	return s.InstallPackageContext(context.Background(), source, registry)
+}
+
+func (s *Service) InstallPackageContext(ctx context.Context, source, registry string) (View, error) {
 	if s == nil || s.runtime == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
-	view, err := s.runtime.InstallPackage(source, registry)
+	view, err := s.runtime.InstallPackageContext(ctx, source, registry)
 	if err != nil {
 		return View{}, err
 	}
@@ -151,8 +155,15 @@ func (s *Service) InstallPackageArchive(data []byte, registry string) (View, err
 // local package directory, or a local .tgz. The previous version stays live
 // until the new one is downloaded, validated and committed.
 func (c *Runtime) InstallPackage(source, registry string) (View, error) {
+	return c.InstallPackageContext(context.Background(), source, registry)
+}
+
+func (c *Runtime) InstallPackageContext(parentCtx context.Context, source, registry string) (View, error) {
 	if c == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
+	}
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
 	spec, recordedSpec, isLocalPath, err := resolvePackageSource(source)
 	if err != nil {
@@ -175,10 +186,49 @@ func (c *Runtime) InstallPackage(source, registry string) (View, error) {
 		return View{}, fmt.Errorf("创建插件暂存目录失败：%w", err)
 	}
 	defer os.RemoveAll(stageDir)
-	ctx, cancel := context.WithTimeout(context.Background(), packageInstallTimeout)
+	ctx, cancel := context.WithTimeout(parentCtx, packageInstallTimeout)
 	defer cancel()
 	cachePath := filepath.Join(pluginsRoot, "market-registry-cache.json")
-	stagedRoot, err := fetchPackageWithMirrorFallback(ctx, spec, registry, stageDir, cachePath, isLocalPath, customFetcher)
+
+	// 在发起任何网络或本地安装前先判定是否属于官方内置/动态合作伙伴插件：
+	// 一旦目标 ID 已作为内置来源安装、属于随包内置列表或出现在官方 builtins 注册表中，
+	// 必须且只能从当前官方注册表带有效 SHA-256 的 tarball 下载，绝不允许回退到 npm。
+	basePkgName, requestedVersion := splitNpmPackageSpec(spec)
+	var preExisting Record
+	var preExists bool
+	if !isLocalPath && basePkgName != "" {
+		c.mu.RLock()
+		preExisting, preExists = c.plugins[basePkgName]
+		c.mu.RUnlock()
+	}
+	curatedBuiltin, inCuratedBuiltins := lookupCuratedBuiltinEntry(ctx, basePkgName, registry, cachePath)
+	mustUseVerifiedBuiltin := (!isLocalPath && preExists && IsBuiltInSource(preExisting.Source)) ||
+		(!isLocalPath && isBundledBuiltinPlugin(basePkgName)) ||
+		(!isLocalPath && inCuratedBuiltins)
+
+	var stagedRoot string
+	if mustUseVerifiedBuiltin {
+		if spec != basePkgName || requestedVersion != "" {
+			return View{}, packageError(http.StatusConflict, "plugin_id_reserved", fmt.Sprintf("官方内置插件 %q 仅支持安装已校验的官方版本", basePkgName))
+		}
+		if !inCuratedBuiltins ||
+			(strings.TrimSpace(curatedBuiltin.Tarball) == "" && strings.TrimSpace(curatedBuiltin.MirrorTarball) == "") ||
+			!validPackageSHA256(strings.ToLower(strings.TrimSpace(curatedBuiltin.SHA256))) {
+			return View{}, packageError(http.StatusConflict, "plugin_update_unsupported",
+				fmt.Sprintf("官方内置插件 %q 未在当前官方校验目录中提供可用安装包", basePkgName))
+		}
+		fetch := customFetcher
+		if fetch == nil {
+			fetch = NpmPackageFetcher(nil)
+		}
+		tgzPath, dlErr := downloadMirroredTarball(ctx, curatedBuiltin.Tarball, curatedBuiltin.MirrorTarball, curatedBuiltin.SHA256, registry, stageDir)
+		if dlErr != nil {
+			return View{}, dlErr
+		}
+		stagedRoot, err = fetch(ctx, tgzPath, registry, stageDir)
+	} else {
+		stagedRoot, err = fetchPackageWithMirrorFallback(ctx, spec, registry, stageDir, cachePath, isLocalPath, customFetcher)
+	}
 	if err != nil {
 		return View{}, err
 	}
@@ -200,12 +250,69 @@ func (c *Runtime) InstallPackage(source, registry string) (View, error) {
 	c.mu.RLock()
 	existing, exists := c.plugins[id]
 	c.mu.RUnlock()
-	if exists && IsBuiltInSource(existing.Source) {
-		return View{}, packageError(http.StatusConflict, "plugin_id_reserved", fmt.Sprintf("内置插件 %q 不能通过安装包覆盖", id))
+	_, idInCuratedBuiltins := lookupCuratedBuiltinEntry(ctx, id, registry, cachePath)
+	if !mustUseVerifiedBuiltin || id != basePkgName {
+		if (exists && IsBuiltInSource(existing.Source)) || isBundledBuiltinPlugin(id) || idInCuratedBuiltins {
+			return View{}, packageError(http.StatusConflict, "plugin_id_reserved", fmt.Sprintf("官方内置插件 %q 不能通过非官方安装包覆盖或抢占", id))
+		}
+	}
+	if mustUseVerifiedBuiltin {
+		expectedID := strings.TrimSpace(curatedBuiltin.ID)
+		if id != basePkgName || (expectedID != "" && id != expectedID) {
+			return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid",
+				fmt.Sprintf("官方内置插件包清单 ID %q 与注册表条目 %q 不一致", id, basePkgName))
+		}
+		if !validCuratedBuiltinID(id) && !isBundledBuiltinPlugin(id) {
+			return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", fmt.Sprintf("无效的官方内置插件 ID %q", id))
+		}
+		if exists && IsBuiltInSource(existing.Source) {
+			sameVersion := strings.TrimSpace(staged.Manifest.Metadata.Version) == strings.TrimSpace(existing.Metadata.Version)
+			needsDynamicRepairOrHotfix := false
+			if sameVersion && !isBundledBuiltinPlugin(id) {
+				_, validBlob := verifyHotUpdatedBuiltinDir(c.dataDir, id, existing.PackageDir, existing.SHA256)
+				needsDynamicRepairOrHotfix = !validBlob || !strings.EqualFold(staged.SHA256, existing.SHA256)
+			}
+			if !newerVersion(staged.Manifest.Metadata.Version, existing.Metadata.Version) && !needsDynamicRepairOrHotfix {
+				return View{}, packageError(http.StatusConflict, "plugin_update_unsupported",
+					fmt.Sprintf("内置插件 %q 当前版本为 %s，无需覆盖为 %s", id, existing.Metadata.Version, staged.Manifest.Metadata.Version))
+			}
+		}
 	}
 	relRoot, err := filepath.Rel(stageDir, staged.RootDir)
 	if err != nil {
 		return View{}, err
+	}
+	if mustUseVerifiedBuiltin {
+		if exists {
+			if note := deferralFor(
+				RegistryRecord{ID: id, Raw: existing.Raw},
+				RegistryRecord{ID: id, Raw: staged.ManifestRaw},
+				c.snapshotReferences(),
+			); note != nil {
+				return View{}, packageError(http.StatusConflict, "plugin_update_deferred", strings.Join(note.Reasons, "；"))
+			}
+		}
+		installed, cleanupBlob, blobErr := stageHotUpdatedBuiltinBlob(c.dataDir, id, stageDir, relRoot, staged.SHA256)
+		if blobErr != nil {
+			return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", blobErr.Error())
+		}
+		partnerPresetID := ""
+		if isPartnerBuiltinEntry(curatedBuiltin) {
+			if derived := derivePartnerPresetID(curatedBuiltin); validPartnerPresetID(derived) {
+				partnerPresetID = derived
+			}
+		}
+		view, commitErr := c.commitBuiltinPackageRecord(installed, id, strings.ToLower(strings.TrimSpace(curatedBuiltin.SHA256)), partnerPresetID, existing, exists)
+		if commitErr != nil {
+			cleanupBlob()
+			return View{}, commitErr
+		}
+		keepPrev := 0
+		if exists {
+			keepPrev = 1
+		}
+		pruneOtherBuiltinBlobs(c.dataDir, id, installed.SHA256, keepPrev)
+		return view, nil
 	}
 
 	installRoot := filepath.Join(pluginsRoot, id)
@@ -291,6 +398,10 @@ func fetchPackageWithMirrorFallback(
 			return "", err
 		}
 		return fetch(ctx, tgzPath, registry, stageDir)
+	}
+	if _, inBuiltins := lookupCuratedBuiltinEntry(ctx, basePkgName, registry, cachePath); isBundledBuiltinPlugin(basePkgName) || inBuiltins {
+		return "", packageError(http.StatusConflict, "plugin_update_unsupported",
+			fmt.Sprintf("官方内置插件 %q 仅支持通过官方校验目录更新", basePkgName))
 	}
 
 	return fetch(ctx, spec, registry, stageDir)
@@ -541,9 +652,18 @@ func unpackTarballToDir(tgzPath, stageDir string) (string, error) {
 }
 
 func (c *Runtime) commitPackageRecord(pkg protocol.PluginPackage, spec string, existing Record, exists bool) (View, error) {
+	return c.commitPackageRecordWithOrigin(pkg, spec, "", "", existing, exists, false)
+}
+
+func (c *Runtime) commitBuiltinPackageRecord(pkg protocol.PluginPackage, spec, archiveSHA, partnerPresetID string, existing Record, exists bool) (View, error) {
+	return c.commitPackageRecordWithOrigin(pkg, spec, archiveSHA, partnerPresetID, existing, exists, true)
+}
+
+func (c *Runtime) commitPackageRecordWithOrigin(pkg protocol.PluginPackage, spec, archiveSHA, partnerPresetID string, existing Record, exists bool, officialBuiltin bool) (View, error) {
 	id := pkg.Manifest.Metadata.ID
 	manifest := pkg.Manifest
-	manifest.Metadata.Enabled = !exists || existing.Metadata.Enabled
+	wasQuarantined := exists && officialBuiltin && strings.TrimSpace(existing.PackageDir) == "" && strings.TrimSpace(existing.Error) != ""
+	manifest.Metadata.Enabled = !exists || existing.Metadata.Enabled || wasQuarantined
 	manifestData, err := json.Marshal(manifest)
 	if err != nil {
 		return View{}, err
@@ -553,16 +673,25 @@ func (c *Runtime) commitPackageRecord(pkg protocol.PluginPackage, spec string, e
 		return View{}, err
 	}
 	now := time.Now().UTC()
+	source := OriginPackage
+	if officialBuiltin {
+		source = OriginOfficial
+		if exists && IsBuiltInSource(existing.Source) {
+			source = existing.Source
+		}
+	}
 	record := RegistryRecord{
-		ID:            id,
-		Raw:           manifestData,
-		Source:        OriginPackage,
-		PackageDir:    pkg.RootDir,
-		PackageSpec:   spec,
-		PackageSHA256: pkg.SHA256,
-		SkillDirs:     pkg.SkillDirs,
-		InstalledAt:   now,
-		UpdatedAt:     now,
+		ID:              id,
+		Raw:             manifestData,
+		Source:          source,
+		PackageDir:      pkg.RootDir,
+		PackageSpec:     spec,
+		PackageSHA256:   pkg.SHA256,
+		ArchiveSHA256:   archiveSHA,
+		PartnerPresetID: firstNonBlank(partnerPresetID, existing.PartnerPresetID),
+		SkillDirs:       pkg.SkillDirs,
+		InstalledAt:     now,
+		UpdatedAt:       now,
 	}
 	replaced := false
 	for index := range stored {
@@ -619,9 +748,6 @@ func resolvePackageSource(source string) (string, string, bool, error) {
 		}
 		return abs, "", true, nil
 	}
-	if dir, ok := BundledSampleDir(source); ok {
-		return dir, source, true, nil
-	}
 	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") {
 		if strings.ContainsAny(source, " \t\r\n") {
 			return "", "", false, packageError(http.StatusBadRequest, "plugin_source_invalid", fmt.Sprintf("无效的插件地址 %q", source))
@@ -642,11 +768,15 @@ func (s *Service) UpdatePackage(id, registry string) (View, error) {
 	if s == nil || s.runtime == nil {
 		return View{}, fmt.Errorf("插件运行时未初始化")
 	}
+	trimmedID := strings.TrimSpace(id)
 	s.runtime.mu.RLock()
-	record, ok := s.runtime.plugins[strings.TrimSpace(id)]
+	record, ok := s.runtime.plugins[trimmedID]
 	s.runtime.mu.RUnlock()
 	if !ok {
 		return View{}, packageError(http.StatusNotFound, "plugin_not_found", fmt.Sprintf("插件 %q 不存在", id))
+	}
+	if IsBuiltInSource(record.Source) && isManagedBuiltinPluginID(trimmedID) {
+		return s.InstallPackage(trimmedID, registry)
 	}
 	if record.Source != OriginPackage || strings.TrimSpace(record.PackageSpec) == "" {
 		return View{}, packageError(http.StatusConflict, "plugin_update_unsupported", fmt.Sprintf("插件 %q 不能在线更新", id))

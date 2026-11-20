@@ -60,9 +60,23 @@ export async function runIsolatedPool(files, concurrency, spawnFile = defaultSpa
     return firstExitCode;
 }
 
+export function selectShard(items, shardSpec = process.env.BEEFTV_TEST_SHARD) {
+    if (!shardSpec) return items;
+    const match = /^(\d+)\/(\d+)$/.exec(shardSpec.trim());
+    if (!match) {
+        throw new Error(`Invalid BEEFTV_TEST_SHARD "${shardSpec}"; expected <index>/<total>`);
+    }
+    const shardIndex = Number(match[1]);
+    const shardTotal = Number(match[2]);
+    if (shardTotal < 1 || shardIndex < 1 || shardIndex > shardTotal) {
+        throw new Error(`Out-of-range BEEFTV_TEST_SHARD "${shardSpec}"`);
+    }
+    return items.filter((_, index) => index % shardTotal === shardIndex - 1);
+}
+
 if (import.meta.main) {
     const files = [...collectTestFiles(join(root, "test")), ...collectTestFiles(join(root, "src"))].sort();
-    const isolated = files.filter((file) => {
+    const isolatedAll = files.filter((file) => {
         // Browser suites own subprocesses and should not share a Bun worker with
         // shell-script tests or modules that replace browser globals.
         if (/\.browser\.test\.[jt]sx?$/.test(file)) return true;
@@ -71,7 +85,9 @@ if (import.meta.main) {
         if (source.includes("mock.module(")) return true;
         return source.includes("globalThis") && browserGlobalName.test(source);
     });
-    const shared = files.filter((file) => !isolated.includes(file));
+    const isolatedSet = new Set(isolatedAll);
+    const shared = selectShard(files.filter((file) => !isolatedSet.has(file)));
+    const isolated = selectShard(isolatedAll);
     const concurrency = Math.max(1, Math.min(Number(process.env.BEEFTV_TEST_CONCURRENCY) || Math.min(availableParallelism(), 4), 4));
 
     run(shared);

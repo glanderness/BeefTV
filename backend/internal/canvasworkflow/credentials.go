@@ -19,7 +19,7 @@ import (
 // uncertain submissions and successful deliveries keep their original receipt
 // and credential identity so the ordinary recovery path can reconcile them.
 func PrepareRetryCredentials(host CompileHost, run model.CanvasWorkflowRun, nodeID string, task *model.Task) (string, error) {
-	if !host.LocalMode() || task == nil || (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) || task.ProviderRequestID != "" || task.PollStage != "" || task.NextPollAt != nil || task.Stage == "submission_unknown" {
+	if !host.LocalMode() || task == nil || task.Type == model.TaskTypeCanvasMediaTransform || (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) || task.ProviderRequestID != "" || task.PollStage != "" || task.NextPollAt != nil || task.Stage == "submission_unknown" {
 		return "", nil
 	}
 	authFailure := generation.PersistedFailure(task.Error, task.ErrorCode).Category == generation.CategoryAuth

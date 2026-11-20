@@ -649,6 +649,36 @@ function createYsduiSettingsPanel(host) {
   };
 }
 
+export const BUILTIN_SERVICE_PRESET = {
+  id: YSDUI_CHANNEL_ID,
+  name: YSDUI_CHANNEL_NAME,
+  subtitle: "文本 · 多款主流图片 · 多款主流视频",
+  icon: YSDUI_CHANNEL_ICON,
+  baseUrl: DEFAULT_BASE_URL,
+  partner: true,
+  keysUrl: "https://www.ysdui.cn/",
+  websiteUrl: "https://www.ysdui.cn/",
+  protocolPrefixes: ["ysdui-"],
+  hosts: ["tokenhub.ysdui.cn", "ysdui.cn"],
+  hostSuffixes: [".ysdui.cn"],
+  candidates: { text: "chat-completion", audio: "openai-audio" },
+  models: YSDUI_PRESET_MODELS,
+  presetDescription: "文本、图像与视频",
+  providerIntro: YSDUI_PROVIDER_INTRO,
+  declaresReferenceMediaTransport: true,
+  buildChannel(args) {
+    return buildYsduiModelChannel({
+      apiKey: args.apiKey,
+      baseUrl: args.baseUrl,
+      selectedModels: args.selectedModels,
+      existingChannel: args.existingChannel,
+    });
+  },
+  upgradeProfile(profile) {
+    return upgradeYsduiModelProfile(profile);
+  },
+};
+
 export function activate(host) {
   const SettingsPanel = createYsduiSettingsPanel(host);
   const dispose = host.contribute("app.settings", {
@@ -661,4 +691,4 @@ export function activate(host) {
   };
 }
 
-export default { activate };
+export default { activate, BUILTIN_SERVICE_PRESET };

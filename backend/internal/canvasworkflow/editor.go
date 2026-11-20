@@ -99,9 +99,14 @@ func PresentOperations(host CompileHost) []Operation {
 		for i := range operations {
 			for j := range operations[i].Fields {
 				field := &operations[i].Fields[j]
-				if strings.HasPrefix(operations[i].ID, "generate.") && field.Key == "modelOption" {
+				if (strings.HasPrefix(operations[i].ID, "generate.") || operations[i].ID == CharacterReplacementOperation) && field.Key == "modelOption" {
 					raw, _ := json.Marshal(snapshot)
 					for _, candidate := range modelcatalog.ParseLocalChannelModels(raw) {
+						if operations[i].ID == CharacterReplacementOperation {
+							if _, ok := ResolveReplacementCapability(candidate.Protocol, candidate.Model, candidate.CapabilityConfig); !ok {
+								continue
+							}
+						}
 						if candidate.Enabled && generation.UpscaleMediaType(candidate.Model) == "" && candidate.Capability == operations[i].OutputType && candidate.Protocol != "" {
 							field.Options = append(field.Options, FieldOption{Label: candidate.DisplayName + " · " + candidate.ChannelID, Value: candidate.ChannelID + "::" + candidate.Model, Capabilities: candidate.CapabilityConfig})
 						}
@@ -126,8 +131,14 @@ func PresentOperations(host CompileHost) []Operation {
 	}
 	if err != nil {
 		for i := range operations {
-			if IsMediaOperation(operations[i].ID) || operations[i].ID == "video.trim" || operations[i].ID == "video.merge" {
+			if operations[i].ID == CharacterReplacementOperation || IsMediaOperation(operations[i].ID) || operations[i].ID == "video.trim" || operations[i].ID == "video.merge" {
 				operations[i].UnavailableReason = "本机媒体编码器不可用，请更新安装版后重试"
+			}
+		}
+	} else if !mediatools.SupportsH264Encode(path) {
+		for i := range operations {
+			if operations[i].ID == CharacterReplacementOperation || operations[i].ID == "video.crop" || operations[i].ID == "video.trim" || operations[i].ID == "video.merge" {
+				operations[i].UnavailableReason = "本机媒体编码器缺少 H.264 编码支持，请更新安装版后重试"
 			}
 		}
 	}

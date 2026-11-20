@@ -11,7 +11,7 @@ export function workflowDurationSources(definition: WorkflowDefinition, nodeId: 
 export function genericWorkflowNodeTitle(node: WorkflowNode, operations: WorkflowOperation[] = []) {
     const labels = { image: "图片", video: "视频", audio: "音频", text: "文本" };
     const id = workflowOperationId(node);
-    if (isWorkflowOperation(node)) return operations.find(item => item.id === id)?.name || ({ "video.depth": "深度提取", "video.trim": "视频剪辑", "video.merge": "视频拼接", "image.crop": "图片裁切", "image.resize": "调整图片尺寸", "video.crop": "视频画面裁切", "video.frame": "截取视频帧", "video.audio": "提取视频音频" } as Record<string, string>)[id] || `${id.startsWith("generate.") || node.role === "generation" ? "生成" : "处理"}${labels[node.mediaType]}`;
+    if (isWorkflowOperation(node)) return operations.find(item => item.id === id)?.name || ({ "video.depth": "深度提取", "video.trim": "视频裁剪", "video.merge": "视频拼接", "image.crop": "图片裁切", "image.resize": "调整图片尺寸", "video.crop": "视频画面裁切", "video.frame": "截取视频帧", "video.audio": "提取视频音频" } as Record<string, string>)[id] || `${id.startsWith("generate.") || node.role === "generation" ? "生成" : "处理"}${labels[node.mediaType]}`;
     return `${labels[node.mediaType]}${node.role === "input" ? "输入" : "参考"}`;
 }
 
@@ -33,7 +33,7 @@ export function abstractWorkflowDefinition(definition: WorkflowDefinition, opera
     return { ...definition, presentationVersion: 1, nodes: definition.nodes.map(node => ({ ...node, title: genericWorkflowNodeTitle(node, operations), ...(node.role === "input" && node.mediaType !== "text" ? { useDefault: false } : {}) })) };
 }
 export const workflowEditableFields = (node: WorkflowNode, operation?: WorkflowOperation) => (operation?.fields || []).filter(field => !operation?.id.startsWith("generate.") || ["prompt", "modelOption", "size"].includes(field.key) || operation.id === "generate.video" && ["vquality", "videoSeconds"].includes(field.key) || Object.hasOwn(node.config || {}, field.key));
-export const workflowOperationDefaults = (operation: WorkflowOperation) => Object.fromEntries(operation.fields.filter(f => f.type === "number" || f.type === "select" && f.options?.length).map(f => [f.key, f.type === "select" ? f.options![0].value : f.key === "longEdge" ? 2048 : ["endSeconds", "width", "height"].includes(f.key) ? 1 : f.min || 0]));
+export const workflowOperationDefaults = (operation: WorkflowOperation) => Object.fromEntries(operation.fields.filter(f => f.type === "number" || f.type === "select" && f.options?.length).map(f => [f.key, f.type === "select" ? f.options![0].value : f.key === "maxSegments" ? 12 : f.key === "longEdge" ? 2048 : ["endSeconds", "width", "height"].includes(f.key) ? 1 : f.min || 0]));
 
 export function switchWorkflowOperation(definition: WorkflowDefinition, id: string, operation: WorkflowOperation): WorkflowDefinition {
     if (operation.unavailableReason) throw new Error(operation.unavailableReason);

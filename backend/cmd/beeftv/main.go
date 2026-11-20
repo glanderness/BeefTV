@@ -78,6 +78,7 @@ func (e *cliError) machineError() map[string]any {
 
 type client struct {
 	mu           sync.Mutex
+	servingMCP   bool
 	fixedBaseURL bool
 	baseURL      string
 	clientID     string
@@ -203,6 +204,9 @@ func (c *client) do(ctx context.Context, method, path string, body any) (json.Ra
 		return nil, &cliError{code: exitUsage, reason: "bad_request", msg: err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.servingMCP {
+		req.Header.Set("X-BeefTV-MCP", "1")
+	}
 	if c.clientID != "" {
 		req.Header.Set("X-Beeftv-Client", c.clientID)
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -1030,6 +1034,7 @@ func runMCP(c *client, args []string) error {
 	}
 	_, baseSource := resolveBaseURL()
 	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", registeredTools, c.currentBaseURL(), baseSource, orNone(c.clientID))
+	c.servingMCP = true
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 

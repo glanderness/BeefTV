@@ -5,7 +5,7 @@ import { ChevronDown, Link2, Maximize2, SlidersHorizontal } from "lucide-react";
 
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { buildGenerationConfig as buildNodeConfig } from "@/lib/canvas/canvas-generation-config";
+import { buildGenerationConfig as buildNodeConfig, canvasVideoOperationPreference } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
@@ -21,11 +21,8 @@ import { autoMentionCanvasResourceReferences, buildCanvasResourceReferences, typ
 import { useAssetStore } from "@/stores/use-asset-store";
 import { getCanvasNodePromptSelection, insertCanvasResourceMentionAtSelection, setCanvasNodePromptSelection, useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
 import { resolveVideoReferenceCapabilities, resolveVideoReferenceModeState, stripPromptFirstFrameClauses } from "@/lib/canvas/video-reference-mode";
-import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { syncActiveClientPlugins } from "@/lib/plugins/plugin-client-loader";
 import { usePluginSlot } from "@/lib/plugins/slot-registry";
-import { createPluginHostContext } from "@/services/plugin-host";
-import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
 import { useCanvasReferenceCheck } from "./canvas-reference-feedback";
 import type { CanvasReferenceAction } from "@/lib/canvas/canvas-reference-issues";
@@ -89,8 +86,11 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
         syncActiveClientPlugins();
     }, []);
     const promptActionEntries = usePluginSlot("canvas.promptActions");
-    const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
-    const promptOptimizerEnabled = promptActionEntries.some((entry) => entry.pluginId === PROMPT_OPTIMIZER_PLUGIN_ID || entry.payload.id === "prompt-optimizer");
+    const promptOptimizerEntry = useMemo(
+        () => promptActionEntries.find((entry) => Boolean(entry.payload.optimizer) || entry.payload.id === "prompt-optimizer"),
+        [promptActionEntries],
+    );
+    const promptOptimizerProvider = promptOptimizerEntry?.payload.optimizer ?? null;
     const simpleMode = workspaceMode === "simple";
     const mode = defaultMode(node.type);
     const autoLinkLabel = mode === "image" || mode === "video" || mode === "audio" ? "AutoLink" : "引用";
@@ -142,17 +142,14 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
         isRunning,
     });
     const { config, requirements, priceChannel, currentModelCompatibilityError, livePreflightError } = preview;
-    const promptOptimizerProvider = useMemo(() => {
-        if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
-        return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
-    }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
     const h3Model = isH3Model(config.model);
     const isBeefTVRoute = isBeefTVModelRoute(config.model, config);
     const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
+    const preferredReferenceMode = useCreationPreferencesStore((state) => state.preferences.videoReferenceMode ?? "all");
     const effectiveVideoOperation = mode === "video" && requirements.input
-        ? resolveVideoOperation(requirements.input, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model, isBeefTVRoute)
+        ? resolveVideoOperation(requirements.input, canvasVideoOperationPreference(config, node, requirements.input, preferredReferenceMode), declaredOrOmniVideoCapability(config, config.model), config.model, isBeefTVRoute)
         : undefined;
     const { endFrameSupported, referenceVideoSupported, maxFrameAudios, middleFrameSupported } = mode === "video"
         ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"), isBeefTVRoute)
@@ -162,6 +159,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
         if (mode !== "video" || simpleMode || !hasVisualOrVideoReference || ["extend", "inpaint"].includes(effectiveVideoOperation || "")) return undefined;
         return resolveVideoReferenceModeState({
             metadata: node.metadata,
+            preferredMode: effectiveVideoOperation === "reference_to_video" ? "all" : undefined,
             references: resolvedMentionReferences,
             endFrameSupported,
             referenceVideoSupported,
@@ -312,19 +310,15 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
             isRunning={isRunning}
             isPortraitTexture={isPortraitTexture}
             activeReferences={activeReferences}
-            skillReferences={skillReferences}
             monochromeAccent={monochromeAccent}
             theme={theme}
             videoModeState={videoModeState}
-            expandedPresetOpen={expandedPresetOpen}
-            onExpandedPresetOpenChange={setExpandedPresetOpen}
             promptActionEntries={promptActionEntries}
             canOptimizePrompt={canOptimizePrompt}
             canExpandPrompt={canExpandPrompt}
             onNodeMouseDown={onNodeMouseDown}
             onConfigChange={onConfigChange}
             onSelectVideoReferenceMode={handleSelectVideoReferenceMode}
-            onSelectPreset={applyPreset}
             onUpdatePrompt={updatePrompt}
             onOpenOptimizer={() => setPromptOptimizerOpen(true)}
             onExpandPrompt={() => setExpandedPromptOpen(true)}
@@ -340,6 +334,18 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
             node={node}
             globalConfig={globalConfig}
             preview={preview}
+            presetControl={
+                <CanvasPresetPicker
+                    mode={mode}
+                    skillReferences={skillReferences}
+                    open={expanded ? expandedPresetOpen : presetOpen}
+                    onOpenChange={expanded ? setExpandedPresetOpen : setPresetOpen}
+                    onSelect={applyPreset}
+                    currentPrompt={prompt}
+                    appearance="quiet"
+                    compact
+                />
+            }
             activeReferenceCount={activeReferenceCount}
             canAutoMention={canAutoMention}
             autoLinkEnabled={autoLinkEnabled}
@@ -430,7 +436,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
             onApply={(nextPrompt) => updatePrompt(nextPrompt)}
         >
             <div
-                className="canvas-node-composer canvas-node-composer--libtv"
+                className="canvas-node-composer canvas-node-composer--libtv canvas-node-composer-type"
                 style={composerSurfaceStyle}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -446,7 +452,6 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                             <VideoReferenceModeSwitch state={videoModeState} theme={theme} onSelectMode={handleSelectVideoReferenceMode} onChange={(patch) => onConfigChange(node.id, patch)} />
                         </div>
                     ) : null}
-                    <CanvasPresetPicker mode={mode} skillReferences={skillReferences} open={presetOpen} onOpenChange={setPresetOpen} onSelect={applyPreset} currentPrompt={prompt} appearance="quiet" dense />
                     <Tooltip title={pickConnectActive ? "正在点选连线引用（点击画布节点自动连线并插入 @引用，按 Esc 退出）" : "点选连线引用（或按住 Option/Alt 点击画布节点）"}>
                         <button
                             type="button"
@@ -457,7 +462,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                             onClick={() => togglePickConnectTargetNodeId(node.id)}
                         >
                             <Link2 className="size-3" />
-                            <span className="text-[var(--fs-tiny)] font-medium">点选连线</span>
+                            <span className="font-medium">点选连线</span>
                         </button>
                     </Tooltip>
                     <CanvasPromptFontControl />
@@ -471,7 +476,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                     <div className="canvas-node-composer-parameters overflow-hidden">
                         <button
                             type="button"
-                            className="canvas-node-composer-parameters-toggle flex w-full items-center gap-1.5 rounded-[var(--r-md)] px-2 py-1 text-[var(--fs-micro)] font-medium transition-colors"
+                            className="canvas-node-composer-parameters-toggle flex w-full items-center gap-1.5 rounded-[var(--r-md)] px-2 py-1 font-medium transition-colors"
                             style={{ color: theme.node.muted }}
                             onClick={() => setParamsExpanded(!paramsExpanded)}
                             aria-expanded={paramsExpanded}
@@ -511,7 +516,7 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
                     }}
                 >
                     {expandedPromptOpen || expandedModalRendered ? (
-                        <div ref={expandedModalRef} className="relative flex min-h-0 flex-col" style={{ ...composerTokens, color: theme.node.text, maxHeight: `calc(100dvh - ${PROMPT_EDITOR_VIEWPORT_MARGIN}px)`, ...(expandedModalSize ? { height: expandedModalSize.height } : null) }}>
+                        <div ref={expandedModalRef} className="canvas-node-composer-type relative flex min-h-0 flex-col" style={{ ...composerTokens, color: theme.node.text, maxHeight: `calc(100dvh - ${PROMPT_EDITOR_VIEWPORT_MARGIN}px)`, ...(expandedModalSize ? { height: expandedModalSize.height } : null) }}>
                             <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
                                 <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
                                 {renderPromptEditor(true, Boolean(expandedModalSize))}

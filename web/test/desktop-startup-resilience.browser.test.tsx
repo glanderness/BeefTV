@@ -86,6 +86,7 @@ beforeAll(async () => {
                         resolveDir: import.meta.dir,
                         contents: `
                             import { startApplication } from "@/bootstrap-workspace";
+                            import { diagnosticsStorageForScope } from "@/lib/diagnostics-storage";
                             import { localForageStorageForScope } from "@/lib/localforage-storage";
                             import { serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
                             import { startCheckedWorkspace } from "@/services/diagnostics/startup-preflight";
@@ -140,11 +141,11 @@ beforeAll(async () => {
                                         },
                                     }),
                                 );
-                                await localForageStorageForScope("previous-workspace").removeItem("client-diagnostics-v3");
+                                await diagnosticsStorageForScope("previous-workspace").removeItem("client-diagnostics-v3");
                                 await localForageStorageForScope("canonical-win10-workspace").removeItem("infinite-canvas:canvas_store");
-                                await localForageStorageForScope("canonical-win10-workspace").removeItem("client-diagnostics-v3");
+                                await diagnosticsStorageForScope("canonical-win10-workspace").removeItem("client-diagnostics-v3");
                                 localStorage.setItem("infinite-canvas:active-user-scope", "previous-workspace");
-                                window.readDiagRaw = (scope) => localForageStorageForScope(scope).getItem("client-diagnostics-v3");
+                                window.readDiagRaw = (scope) => diagnosticsStorageForScope(scope).getItem("client-diagnostics-v3");
                                 window.readCurrentSnapshot = async () => {
                                     const { getClientDiagnosticSnapshot } = await import("@/services/diagnostics/client-diagnostics");
                                     return getClientDiagnosticSnapshot();

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, webkit, type Browser, type Page } from "playwright";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -16,22 +16,52 @@ beforeAll(async () => {
         } }],
     });
     if (!build.success) throw new Error(build.logs.join("\n"));
-    const script = await build.outputs[0].text();
+    const jsOut = build.outputs.find((item) => item.path.endsWith(".js")) ?? build.outputs[0];
+    const cssOut = build.outputs.find((item) => item.path.endsWith(".css"));
+    const script = await jsOut.text();
+    const css = cssOut ? await cssOut.text() : "";
     // 夹具不加载 Tailwind：拖动用例需要片段按 style.left 真正绝对定位（否则片段只是竖直堆叠，
     // 指针一旦离开片段盒或 DOM 顺序翻转就会落到别的片段上），这里按需补上这几个工具类。
     const dragStyles = '<style>.relative{position:relative}.absolute{position:absolute}.top-1{top:.25rem}.top-0{top:0}.bottom-0{bottom:0}.left-0{left:0}.right-0{right:0}.w-2{width:.5rem}.opacity-0{opacity:0}.pointer-events-none{pointer-events:none}.h-\\[calc\\(100%-8px\\)\\]{height:calc(100% - 8px)}</style>';
+    const mobileStyles = `${dragStyles}<link rel="stylesheet" href="/harness.css"><style>body{margin:0}.flex{display:flex}.inline-flex{display:inline-flex}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.flex-1{flex:1 1 0%}.shrink-0{flex-shrink:0}.items-center{align-items:center}.min-h-0{min-height:0}.min-h-44{min-height:11rem}.min-w-0{min-width:0}.w-24{width:6rem}.ml-auto{margin-left:auto}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.overflow-auto{overflow:auto}.touch-none{touch-action:none}.select-none{user-select:none}.hidden{display:none}.invisible{visibility:hidden}</style>`;
     server = Bun.serve({ port: 0, fetch(request) {
         const url = new URL(request.url);
-        return url.pathname === "/harness.js"
-            ? new Response(script, { headers: { "Content-Type": "text/javascript" } })
-            : new Response(`<!doctype html><meta charset="UTF-8">${url.searchParams.get("mode") === "canvas-drag" ? dragStyles : ""}<div id="root"></div><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
+        if (url.pathname === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
+        if (url.pathname === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
+        const mode = url.searchParams.get("mode");
+        const extraHead = mode === "canvas-layout" || mode === "canvas-mobile" || mode === "subtitle-theme" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
+        return new Response(`<!doctype html><meta charset="UTF-8">${extraHead}<div id="root"></div><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
-    browser = await chromium.launch({ executablePath, headless: true });
+    browser = process.env.BEEFTV_TEST_BROWSER === "webkit"
+        ? await webkit.launch({ headless: true })
+        : await chromium.launch({ executablePath, headless: true });
 }, 60_000);
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 
 const snapshot = (page: Page) => page.evaluate(() => (window as any).timelineFixture.receipt);
+
+test("CanvasTimelineDialog 桌面端预览和轨道可交互，能定位播放头并分割片段", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 800 } });
+    try {
+        await page.goto(`${server.url}?mode=canvas-layout`);
+        const preview = page.getByRole("button", { name: "播放预览" });
+        await preview.click({ trial: true, timeout: 3000 });
+        const clip = page.locator('[data-timeline-clip-id="clip-first"]');
+        await clip.click({ position: { x: 100, y: 15 }, timeout: 3000 });
+        expect(await clip.getAttribute("data-selected")).toBe("true");
+        await page.locator("[data-timeline-ruler]").click({ position: { x: 192, y: 12 } });
+        await page.getByRole("button", { name: "分割", exact: true }).click();
+        expect(await page.locator('[data-timeline-clip-kind="video"]').count()).toBe(3);
+        await page.getByRole("button", { name: /^保\s*存$/ }).click();
+        await page.waitForFunction(() => (window as any).timelineFixture.receipt.saved.length === 1);
+        const { saved } = await snapshot(page);
+        const right = saved[0].clips.find((item: { sourceStartMs?: number }) => item.sourceStartMs === 2000);
+        expect(right).toMatchObject({ startMs: 2000, durationMs: 2000, sourceDurationMs: 4000 });
+    } finally {
+        await page.close();
+    }
+}, 15_000);
 const clipLefts = async (page: Page) => page.evaluate(() => {
     const lefts: Record<string, number> = {};
     document.querySelectorAll("[data-timeline-clip-id]").forEach((element) => {
@@ -151,3 +181,109 @@ test("EditorExport default server route preserves all media, submits once and di
         expect((await snapshot(page)).downloads).toBe(0);
     } finally { await page.close(); }
 }, 15_000);
+
+test("CanvasTimelineDialog 窄屏视口保持返回与底部按钮可见，标尺和片段回拖到 0 或中断后不卡死", async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 660 } });
+    try {
+        await page.goto(`${server.url}?mode=canvas-mobile`);
+        await page.locator('[data-timeline-clip-id="clip-first"]').waitFor();
+        await page.waitForTimeout(400);
+
+        const backButton = page.getByRole("button", { name: "返回", exact: true });
+        const saveButton = page.getByRole("button", { name: /^保\s*存$/ });
+        await backButton.waitFor();
+        await saveButton.waitFor();
+        const backBox = (await backButton.boundingBox())!;
+        const saveBox = (await saveButton.boundingBox())!;
+        expect(backBox.y).toBeGreaterThanOrEqual(0);
+        expect(backBox.y + backBox.height).toBeLessThanOrEqual(660);
+        expect(saveBox.y).toBeGreaterThanOrEqual(0);
+        expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(660);
+
+        // 标尺拖动：先向右拖并触发 pointercancel，验证不会残留 scrubbing 状态，再向回拖到 0
+        const ruler = page.locator("[data-timeline-ruler]");
+        const rulerBox = (await ruler.boundingBox())!;
+        await page.mouse.move(rulerBox.x + 120, rulerBox.y + 12);
+        await page.mouse.down();
+        expect(await ruler.getAttribute("data-scrubbing")).toBe("true");
+        await ruler.dispatchEvent("pointercancel", { pointerId: 1, bubbles: true });
+        await page.mouse.up();
+        expect(await ruler.getAttribute("data-scrubbing")).toBeNull();
+
+        const playheadReadout = page.locator("button[title='回到时间线起点']");
+        const afterCancelTime = await playheadReadout.textContent();
+        expect(afterCancelTime).not.toBe("00:00.0");
+        // 未按下时移动鼠标不会继续篡改播放头
+        await page.mouse.move(rulerBox.x + 180, rulerBox.y + 12);
+        expect(await playheadReadout.textContent()).toBe(afterCancelTime);
+
+        // 将轨道向右滚动后，在标尺可见区域向回拖到左缘并停留，可把滚动条与播放头一路拉回 00:00.0
+        const scroller = page.locator(".timeline-editor-tracks [data-canvas-no-zoom]");
+        await scroller.evaluate((el) => {
+            el.scrollLeft = 240;
+        });
+        const scrollerBox = (await scroller.boundingBox())!;
+        await page.mouse.move(scrollerBox.x + 120, rulerBox.y + 12);
+        await page.mouse.down();
+        await page.mouse.move(scrollerBox.x - 4, rulerBox.y + 12, { steps: 6 });
+        await page.waitForTimeout(220);
+        await page.mouse.up();
+        expect(await playheadReadout.textContent()).toBe("00:00.0");
+        expect(await scroller.evaluate((el) => el.scrollLeft)).toBe(0);
+
+        // 片段向右拖开后再一路拖回最左侧越过 0，片段停在 0 且不卡死后续拖动
+        await dragClip(page, "clip-first", 96);
+        expect((await clipLefts(page))["clip-first"]).toBe(96);
+        await dragClip(page, "clip-first", -240);
+        expect((await clipLefts(page))["clip-first"]).toBe(0);
+
+        // 点击头部返回按钮关闭时间线弹窗
+        await backButton.click();
+        await page.waitForFunction(() => document.querySelectorAll(".canvas-timeline-dialog").length === 0);
+    } finally {
+        await page.close();
+    }
+}, 30_000);
+
+test("CanvasSubtitleDialog 跟随画布深浅主题切换，浅色下保持暗底字幕样例与可读文字", async () => {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
+    try {
+        await page.goto(`${server.url}?mode=subtitle-theme`);
+        await page.waitForSelector(".canvas-subtitle-dialog .ant-modal-container");
+        const readThemeState = () => page.evaluate(() => {
+            const modal = document.querySelector(".canvas-subtitle-dialog")!;
+            return {
+                bg: getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor,
+                paneBg: getComputedStyle(modal.querySelector(".media-editor-pane")!).backgroundColor,
+                bodyColor: getComputedStyle(modal.querySelector(".media-editor-body")!).color,
+                sampleBg: getComputedStyle(modal.querySelector(".subtitle-style-sample")!).backgroundColor,
+                textareaBg: getComputedStyle(modal.querySelector("textarea")!).backgroundColor,
+            };
+        });
+        await page.evaluate(() => (window as any).timelineFixture.setTheme("dark"));
+        await page.waitForFunction(() => getComputedStyle(document.querySelector(".canvas-subtitle-dialog .ant-modal-container")!).backgroundColor === "rgb(16, 17, 18)");
+        expect(await readThemeState()).toMatchObject({
+            bg: "rgb(16, 17, 18)",
+            paneBg: "rgb(25, 26, 28)",
+            bodyColor: "rgb(236, 238, 239)",
+            sampleBg: "rgb(16, 17, 18)",
+        });
+
+        await page.evaluate(() => (window as any).timelineFixture.setTheme("light"));
+        await page.waitForFunction(() => {
+            const modal = document.querySelector(".canvas-subtitle-dialog");
+            if (!modal) return false;
+            return getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor === "rgb(255, 255, 255)"
+                && getComputedStyle(modal.querySelector("textarea")!).backgroundColor === "rgb(255, 255, 255)";
+        });
+        expect(await readThemeState()).toEqual({
+            bg: "rgb(255, 255, 255)",
+            paneBg: "rgb(246, 248, 251)",
+            bodyColor: "rgb(17, 24, 39)",
+            sampleBg: "rgb(16, 17, 18)",
+            textareaBg: "rgb(255, 255, 255)",
+        });
+    } finally {
+        await page.close();
+    }
+}, 20_000);

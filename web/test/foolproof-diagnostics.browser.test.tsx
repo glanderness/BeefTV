@@ -19,12 +19,21 @@ import { getAntThemeConfig, getWorkspaceAntThemeConfig } from "@/lib/app-theme";
 import DiagnosticsPanel from "@/pages/settings/diagnostics-panel";
 import RouteErrorPage from "@/pages/route-error";
 import { WorkspaceStartupError } from "@/components/workspace/workspace-startup-error";
+import { updateDesktopBootSnapshot } from "@/services/workspace-startup-state";
 
 const params = new URLSearchParams(location.search);
 const mode = params.get("mode") || "panel";
 const dark = params.get("dark") === "1";
 const offlineRouteExport = params.get("offline") === "1";
 const nativeOfflineFail = params.get("nativeFail") === "1";
+const uncleanPrevious = params.get("unclean") === "1";
+
+if (uncleanPrevious) {
+    updateDesktopBootSnapshot({
+        uncleanPreviousShutdown: true,
+        lastCrashDiagnosticPath: "C:\\\\Users\\\\creator\\\\Data\\\\diagnostics\\\\beeftv-last-crash-diagnostics-001.zip",
+    });
+}
 
 document.documentElement.classList.toggle("dark", dark);
 document.documentElement.style.colorScheme = dark ? "dark" : "light";
@@ -427,6 +436,13 @@ test("RouteErrorPage and WorkspaceStartupError expose one-click 7d diagnostic ex
         if (screenshotDir) {
             await page.screenshot({ path: `${screenshotDir}/startup-error-reveal-dark.png` });
         }
+
+        await page.goto(`${server.url}?mode=panel&dark=1&unclean=1`);
+        const crashDialog = page.getByRole("dialog");
+        await crashDialog.getByText("检测到上次异常退出", { exact: true }).waitFor();
+        await crashDialog.getByText("beeftv-last-crash-diagnostics-001.zip", { exact: false }).waitFor();
+        await crashDialog.getByRole("button", { name: "打开诊断包所在文件夹", exact: true }).click();
+        expect(await page.evaluate(() => (window as any).__diagCalls.revealCount)).toBe(1);
     } finally {
         await page.close();
     }

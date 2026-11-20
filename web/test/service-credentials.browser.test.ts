@@ -83,6 +83,57 @@ async function shot(page: Page, name: string) {
     await page.screenshot({ path: `${shotDirectory}/${name}.png` });
 }
 
+test("vendor shortcuts are discoverable and async address details do not shift the connection dialog", async () => {
+    const page = await browser.newPage({ viewport: { width: 1120, height: 900 }, reducedMotion: "reduce" });
+    try {
+        const { contributes } = await Bun.file(import.meta.dir + "/../../plugin-packages/openai-chat-completions/manifest.json").json();
+        const protocol = contributes.providers[0];
+        await page.route("**/api/plugins/catalog?*", (route) => route.fulfill({ json: { code: 0, data: {
+            providers: [{ ...protocol, categories: ["text"], enabled: true }],
+        } } }));
+        await page.route("**/api/ai/request-urls", (route) => {
+            const { baseUrl } = route.request().postDataJSON();
+            return route.fulfill({ json: { code: 0, data: { catalog: baseUrl + "/models", text: {} } } });
+        });
+        await page.goto(server.url.toString() + "?scenario=new-service");
+        const sidebar = page.getByRole("complementary", { name: "选择服务商" });
+        const shortcuts = sidebar.getByRole("group", { name: "其他服务商" });
+        const more = shortcuts.getByRole("button", { name: "更多服务商" });
+        await more.waitFor();
+        expect(await more.getAttribute("aria-expanded")).toBe("false");
+        for (const viewport of [{ width: 1000, height: 560 }, { width: 390, height: 650 }, { width: 1120, height: 900 }]) {
+            await page.setViewportSize(viewport);
+            const primary = sidebar.locator(".model-service-provider");
+            expect(await primary.count()).toBe(6);
+            const clippedRows = await primary.evaluateAll((rows) => {
+                const body = rows[0].closest(".model-service-body")!.getBoundingClientRect();
+                return rows.filter((row) => {
+                    const { top, bottom } = row.getBoundingClientRect();
+                    return (row as HTMLElement).offsetHeight < 44 || top < body.top || bottom > body.bottom + 1;
+                }).map((row) => row.textContent);
+            });
+            expect(clippedRows).toEqual([]);
+        }
+        const deepSeek = shortcuts.getByRole("button", { name: "DeepSeek", exact: true });
+        expect(await deepSeek.count()).toBe(0);
+        await more.click();
+        expect(await shortcuts.locator(".model-service-vendor").count()).toBe(protocol.presets.length);
+        await deepSeek.click();
+        expect(await page.getByRole("textbox", { name: "服务地址" }).inputValue()).toBe("https://api.deepseek.com");
+        await more.click();
+        expect(await deepSeek.count()).toBe(0);
+        const frame = page.locator(".model-service-modal .ant-modal-container");
+        const before = await frame.boundingBox();
+        for (const name of ["Google Gemini", "火山方舟"]) {
+            await sidebar.getByRole("button", { name, exact: true }).click();
+            const base = await page.getByRole("textbox", { name: "服务地址" }).inputValue();
+            await page.locator(".model-service-url code").filter({ hasText: base + "/models" }).waitFor();
+            expect(await frame.boundingBox()).toEqual(before);
+            expect(await sidebar.getByRole("button", { name, exact: true }).getAttribute("aria-pressed")).toBe("true");
+        }
+    } finally { await page.close(); }
+}, 60000);
+
 test("an Ark connection without a protocol names both key kinds instead of one generic API Key", async () => {
     const page = await openConnectionStep("ark-none");
     try {

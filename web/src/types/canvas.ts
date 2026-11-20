@@ -1,13 +1,40 @@
 import type { CanvasColorGrade } from "@/lib/canvas/canvas-color-grade";
 import type { WorkflowDefinition, WorkflowMediaType, WorkflowNodeRole, WorkflowRun, WorkflowValue } from "@/services/api/canvas-workflows";
-import type { MediaConversionNodeState } from "@/lib/media-conversion/contracts";
 import type { CanvasUpscaleSettings, CanvasUpscaleBatch } from "@/lib/canvas/canvas-upscale";
 import type { AssetCategory } from "@/lib/asset-category";
 import type { PortraitTextureSettings } from "@/lib/canvas/canvas-portrait-texture";
 import type { StyleExecutionPlan } from "@/lib/canvas/style-profile";
-import type { ArtCritiqueNodeState } from "@/lib/art-critique/contracts";
 import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
+
+export type MediaConversionNodeState = {
+    schemaVersion: 1;
+    operation: "grayscale" | "edge-canny" | "lineart" | "depth" | "pose" | "cutout";
+    status: "idle" | "processing" | "completed" | "stale" | "skipped" | "unavailable" | "error";
+    sourceNodeId?: string;
+    sourceFingerprint?: string;
+    outputKind?: "image" | "video";
+    resultStorageKey?: string;
+    resultWidth?: number;
+    resultHeight?: number;
+    detectedPeople?: number;
+    errorCode?: string;
+    errorMessage?: string;
+    startedAt?: string;
+    updatedAt?: string;
+};
+
+export type ArtCritiqueNodeState = Record<string, unknown> & {
+    schemaVersion?: number;
+    status?: string;
+    sourceNodeId?: string;
+    sourceFingerprint?: string;
+    analysisStage?: string;
+    report?: Record<string, unknown>;
+    errorCode?: string;
+    errorMessage?: string;
+    updatedAt?: string;
+};
 
 export type Position = {
     x: number;
@@ -70,6 +97,7 @@ export type CanvasGenerationBatchStatus = "queued" | "running" | "partial_failed
 export type CanvasGenerationBatchItemStatus = "waiting" | "submitting" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type CanvasImageGenerationType = "generation" | "edit";
 export type CanvasWorkflowKind = "free" | "script" | "story_input" | "character" | "scene" | "storyboard" | "shot" | "final" | "styleboard" | "reference_set" | "reference_video" | "action_board" | "video_retake";
+export type CanvasVideoReferenceMode = "frames" | "all";
 export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "reference_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat" | "draft_to_final";
 export type CanvasSkillCategory = "writing" | "storyboard" | "image" | "video" | "utility";
 export type CanvasSkillOutputMode = "text" | "json" | "image_prompt" | "workflow";

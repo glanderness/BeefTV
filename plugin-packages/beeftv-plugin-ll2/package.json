@@ -1,7 +1,7 @@
 {
   "name": "beeftv-plugin-ll2",
-  "version": "1.0.2",
-  "description": "内置 LL2 (DMC) 算力与视频渠道插件，支持填写 API Key 一键同步 DeepSeek V4.1、Seedance 2.0、Vidu Q3、MiniMax H3、Super Vega 1.0 与 Auto HD 超分模型。",
+  "version": "1.1.1",
+  "description": "内置 LL2 (DMC) 算力与视频渠道插件，支持填写 API Key 一键同步 DeepSeek V4.1、Wan 3.0、Seedance 2.0/2.5、Vidu Q3、MiniMax H3、Super Vega 1.0/1.5 与 Auto HD 超分模型。",
   "type": "module",
   "main": "./client/index.js",
   "license": "Apache-2.0",
@@ -9,6 +9,7 @@
     "beeftv-plugin",
     "ll2",
     "video",
+    "wan3",
     "seedance",
     "vidu",
     "super-vega"
@@ -174,12 +175,67 @@
                           }
                         },
                         "role": {
-                          "$coalesce": [
-                            {
-                              "$ref": "media.role"
+                          "$if": {
+                            "condition": {
+                              "$and": [
+                                {
+                                  "$eq": [
+                                    {
+                                      "$ref": "request.operation"
+                                    },
+                                    "image_to_video"
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$ref": "media.role"
+                                    },
+                                    ""
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.images"
+                                      }
+                                    },
+                                    1
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.videos"
+                                      }
+                                    },
+                                    0
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.audios"
+                                      }
+                                    },
+                                    0
+                                  ]
+                                }
+                              ]
                             },
-                            "reference_image"
-                          ]
+                            "then": "first_frame",
+                            "else": {
+                              "$coalesce": [
+                                {
+                                  "$ref": "media.role"
+                                },
+                                "reference_image"
+                              ]
+                            }
+                          }
                         }
                       }
                     }
@@ -239,12 +295,193 @@
                 ]
               },
               "ratio": {
-                "$coalesce": [
-                  {
-                    "$ref": "request.aspectRatio"
+                "$if": {
+                  "condition": {
+                    "$and": [
+                      {
+                        "$eq": [
+                          {
+                            "$ref": "request.model"
+                          },
+                          "doubao-seedance-2-5"
+                        ]
+                      },
+                      {
+                        "$or": [
+                          {
+                            "$eq": [
+                              {
+                                "$ref": "request.operation"
+                              },
+                              "image_to_video"
+                            ]
+                          },
+                          {
+                            "$and": [
+                              {
+                                "$gt": [
+                                  {
+                                    "$len": {
+                                      "$ref": "request.videos"
+                                    }
+                                  },
+                                  0
+                                ]
+                              },
+                              {
+                                "$in": [
+                                  {
+                                    "$ref": "request.operation"
+                                  },
+                                  [
+                                    "extend",
+                                    "inpaint",
+                                    "replace_element",
+                                    "style_transfer"
+                                  ]
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "$in": [
+                              {
+                                "$ref": "request.extra.omni_reference_task_type"
+                              },
+                              [
+                                "edit",
+                                "extend"
+                              ]
+                            ]
+                          },
+                          {
+                            "$gt": [
+                              {
+                                "$len": {
+                                  "$filter": {
+                                    "from": {
+                                      "$ref": "request.images"
+                                    },
+                                    "as": "image",
+                                    "where": {
+                                      "$in": [
+                                        {
+                                          "$ref": "image.role"
+                                        },
+                                        [
+                                          "first_frame",
+                                          "last_frame"
+                                        ]
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
                   },
-                  "16:9"
-                ]
+                  "then": "adaptive",
+                  "else": {
+                    "$coalesce": [
+                      {
+                        "$ref": "request.aspectRatio"
+                      },
+                      "16:9"
+                    ]
+                  }
+                }
+              },
+              "omni_reference_task_type": {
+                "$omitEmpty": {
+                  "$if": {
+                    "condition": {
+                      "$eq": [
+                        {
+                          "$ref": "request.model"
+                        },
+                        "doubao-seedance-2-5"
+                      ]
+                    },
+                    "then": {
+                      "$switch": {
+                        "cases": [
+                          {
+                            "when": {
+                              "$and": [
+                                {
+                                  "$gt": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.videos"
+                                      }
+                                    },
+                                    0
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$ref": "request.operation"
+                                    },
+                                    "extend"
+                                  ]
+                                }
+                              ]
+                            },
+                            "then": "extend"
+                          },
+                          {
+                            "when": {
+                              "$and": [
+                                {
+                                  "$gt": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.videos"
+                                      }
+                                    },
+                                    0
+                                  ]
+                                },
+                                {
+                                  "$in": [
+                                    {
+                                      "$ref": "request.operation"
+                                    },
+                                    [
+                                      "inpaint",
+                                      "replace_element",
+                                      "style_transfer"
+                                    ]
+                                  ]
+                                }
+                              ]
+                            },
+                            "then": "edit"
+                          },
+                          {
+                            "when": {
+                              "$eq": [
+                                {
+                                  "$ref": "request.operation"
+                                },
+                                "reference_to_video"
+                              ]
+                            },
+                            "then": "reference"
+                          }
+                        ],
+                        "default": {
+                          "$ref": "request.extra.omni_reference_task_type"
+                        }
+                      }
+                    }
+                  }
+                }
               },
               "resolution": {
                 "$coalesce": [
@@ -259,29 +496,84 @@
               "duration": {
                 "$if": {
                   "condition": {
-                    "$or": [
-                      {
-                        "$gt": [
-                          {
-                            "$ref": "request.duration"
-                          },
-                          0
-                        ]
-                      },
+                    "$and": [
                       {
                         "$eq": [
                           {
-                            "$ref": "request.duration"
+                            "$ref": "request.model"
                           },
-                          -1
+                          "doubao-seedance-2-5"
+                        ]
+                      },
+                      {
+                        "$or": [
+                          {
+                            "$eq": [
+                              {
+                                "$ref": "request.extra.omni_reference_task_type"
+                              },
+                              "edit"
+                            ]
+                          },
+                          {
+                            "$and": [
+                              {
+                                "$gt": [
+                                  {
+                                    "$len": {
+                                      "$ref": "request.videos"
+                                    }
+                                  },
+                                  0
+                                ]
+                              },
+                              {
+                                "$in": [
+                                  {
+                                    "$ref": "request.operation"
+                                  },
+                                  [
+                                    "inpaint",
+                                    "replace_element",
+                                    "style_transfer"
+                                  ]
+                                ]
+                              }
+                            ]
+                          }
                         ]
                       }
                     ]
                   },
-                  "then": {
-                    "$ref": "request.duration"
-                  },
-                  "else": 5
+                  "then": -1,
+                  "else": {
+                    "$if": {
+                      "condition": {
+                        "$or": [
+                          {
+                            "$gt": [
+                              {
+                                "$ref": "request.duration"
+                              },
+                              0
+                            ]
+                          },
+                          {
+                            "$eq": [
+                              {
+                                "$ref": "request.duration"
+                              },
+                              -1
+                            ]
+                          }
+                        ]
+                      },
+                      "then": {
+                        "$ref": "request.duration"
+                      },
+                      "else": 5
+                    }
+                  }
                 }
               },
               "generate_audio": {
@@ -801,12 +1093,67 @@
                           }
                         },
                         "role": {
-                          "$coalesce": [
-                            {
-                              "$ref": "media.role"
+                          "$if": {
+                            "condition": {
+                              "$and": [
+                                {
+                                  "$eq": [
+                                    {
+                                      "$ref": "request.operation"
+                                    },
+                                    "image_to_video"
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$ref": "media.role"
+                                    },
+                                    ""
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.images"
+                                      }
+                                    },
+                                    1
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.videos"
+                                      }
+                                    },
+                                    0
+                                  ]
+                                },
+                                {
+                                  "$eq": [
+                                    {
+                                      "$len": {
+                                        "$ref": "request.audios"
+                                      }
+                                    },
+                                    0
+                                  ]
+                                }
+                              ]
                             },
-                            "reference_image"
-                          ]
+                            "then": "first_frame",
+                            "else": {
+                              "$coalesce": [
+                                {
+                                  "$ref": "media.role"
+                                },
+                                "reference_image"
+                              ]
+                            }
+                          }
                         }
                       }
                     }
@@ -1053,28 +1400,61 @@
               "type": "integer",
               "required": false,
               "mapping": "OutputConfig.Duration",
-              "description": "时长秒数（4-15 秒）。"
+              "description": "时长秒数（1.0 系列 4-15 秒，1.5-pro 4-30 秒，或 -1 自动时长）。"
             },
             {
               "name": "aspectRatio",
               "type": "string",
               "required": false,
               "mapping": "OutputConfig.AspectRatio",
-              "description": "画幅比例（16:9、9:16、4:3、3:4、1:1、21:9）。"
+              "description": "画幅比例（adaptive、16:9、9:16、4:3、3:4、1:1、21:9）。"
             },
             {
               "name": "resolution",
               "type": "string",
               "required": false,
               "mapping": "OutputConfig.Resolution",
-              "description": "分辨率档位（720P、768P、1080P）。"
+              "description": "分辨率档位（480P、720P、768P、1080P、2K、4K）。"
             },
             {
               "name": "generateAudio",
               "type": "boolean",
               "required": false,
               "mapping": "OutputConfig.AudioGeneration",
-              "description": "音画同出（Enabled；1.0-lite 自动省略）。"
+              "description": "音画同出（Enabled）。"
+            }
+          ],
+          "validations": [
+            {
+              "assert": {
+                "$in": [
+                  {
+                    "$upper": {
+                      "$trim": {
+                        "$ref": "request.resolution"
+                      }
+                    }
+                  },
+                  [
+                    "",
+                    "480",
+                    "480P",
+                    "720",
+                    "720P",
+                    "768",
+                    "768P",
+                    "1080",
+                    "1080P",
+                    "1440",
+                    "1440P",
+                    "2K",
+                    "2160",
+                    "2160P",
+                    "4K"
+                  ]
+                ]
+              },
+              "message": "Super Vega 分辨率仅支持 480P、720P、768P、1080P、2K、4K"
             }
           ],
           "create": {
@@ -1082,6 +1462,9 @@
             "path": "/super-vega/tasks",
             "originPath": true,
             "contentType": "application/json",
+            "headers": {
+              "User-Agent": "BeefTV"
+            },
             "body": {
               "model": {
                 "$if": {
@@ -1204,10 +1587,122 @@
               "OutputConfig": {
                 "StorageMode": "Temporary",
                 "Resolution": {
-                  "$if": {
-                    "condition": {
-                      "$and": [
-                        {
+                  "$switch": {
+                    "cases": [
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "480",
+                              "480P"
+                            ]
+                          ]
+                        },
+                        "then": "480P"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "720",
+                              "720P"
+                            ]
+                          ]
+                        },
+                        "then": "720P"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "768",
+                              "768P"
+                            ]
+                          ]
+                        },
+                        "then": "768P"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "1080",
+                              "1080P"
+                            ]
+                          ]
+                        },
+                        "then": "1080P"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "1440",
+                              "1440P",
+                              "2K"
+                            ]
+                          ]
+                        },
+                        "then": "2K"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "2160",
+                              "2160P",
+                              "4K"
+                            ]
+                          ]
+                        },
+                        "then": "4K"
+                      }
+                    ],
+                    "default": {
+                      "$if": {
+                        "condition": {
                           "$in": [
                             {
                               "$ref": "request.model"
@@ -1218,31 +1713,9 @@
                             ]
                           ]
                         },
-                        {
-                          "$in": [
-                            {
-                              "$upper": {
-                                "$ref": "request.resolution"
-                              }
-                            },
-                            [
-                              "",
-                              "720P"
-                            ]
-                          ]
-                        }
-                      ]
-                    },
-                    "then": "768P",
-                    "else": {
-                      "$coalesce": [
-                        {
-                          "$upper": {
-                            "$ref": "request.resolution"
-                          }
-                        },
-                        "720P"
-                      ]
+                        "then": "768P",
+                        "else": "720P"
+                      }
                     }
                   }
                 },
@@ -1265,24 +1738,7 @@
                 "AudioGeneration": {
                   "$if": {
                     "condition": {
-                      "$and": [
-                        {
-                          "$ref": "request.generateAudio"
-                        },
-                        {
-                          "$not": {
-                            "$in": [
-                              {
-                                "$ref": "request.model"
-                              },
-                              [
-                                "1.0-lite",
-                                "Super Vega 1.0-lite"
-                              ]
-                            ]
-                          }
-                        }
-                      ]
+                      "$ref": "request.generateAudio"
                     },
                     "then": "Enabled"
                   }
@@ -1293,7 +1749,10 @@
           "poll": {
             "method": "GET",
             "path": "/super-vega/tasks/{{taskId}}",
-            "originPath": true
+            "originPath": true,
+            "headers": {
+              "User-Agent": "BeefTV"
+            }
           },
           "response": {
             "taskId": {
@@ -1543,6 +2002,803 @@
             },
             "errorPaths": [
               "error.code"
+            ],
+            "resultEphemeral": true
+          }
+        },
+        {
+          "id": "ll2-wan3-video",
+          "label": "LL2 Wan 3.0 Video",
+          "capabilities": [
+            "video"
+          ],
+          "scopes": [
+            "admin.system-channel",
+            "user.custom-channel",
+            "canvas",
+            "creation",
+            "agent"
+          ],
+          "baseUrl": "https://api.ll2.cn",
+          "requiresPublicMediaUrls": false,
+          "mediaTransport": {
+            "image": "inline",
+            "video": "url",
+            "audio": "url"
+          },
+          "auth": {
+            "type": "bearer",
+            "field": "apiKey"
+          },
+          "parameters": [
+            {
+              "name": "model",
+              "type": "string",
+              "required": true,
+              "mapping": "model",
+              "description": "万相 3.0 模型 ID（wan3.0-video、wan3.0-video-prime）。"
+            },
+            {
+              "name": "prompt",
+              "type": "string",
+              "required": false,
+              "mapping": "input.prompt",
+              "description": "视频提示词（与 input.media 至少填一项）。"
+            },
+            {
+              "name": "images",
+              "type": "media[]",
+              "required": false,
+              "mapping": "input.media[type=first_frame|last_frame|reference_image]",
+              "description": "首帧、尾帧与参考图输入。"
+            },
+            {
+              "name": "videos",
+              "type": "media[]",
+              "required": false,
+              "mapping": "input.media[type=reference_video]",
+              "description": "参考视频 URL（最多 5 段，总时长 <= 15 秒）。"
+            },
+            {
+              "name": "audios",
+              "type": "media[]",
+              "required": false,
+              "mapping": "input.media[type=reference_audio]",
+              "description": "参考音频 URL（最多 5 段，总时长 <= 15 秒）。"
+            },
+            {
+              "name": "aspectRatio",
+              "type": "string",
+              "required": false,
+              "mapping": "parameters.ratio",
+              "description": "画幅比例（adaptive、16:9、9:16、1:1、4:3、3:4；21:9 不支持）。"
+            },
+            {
+              "name": "resolution",
+              "type": "string",
+              "required": false,
+              "mapping": "parameters.resolution",
+              "description": "输出分辨率档位（大写 480P、720P、1080P）。"
+            },
+            {
+              "name": "duration",
+              "type": "integer",
+              "required": false,
+              "mapping": "parameters.duration",
+              "description": "输出时长秒数（2-30 秒，或 -1 智能时长）。"
+            },
+            {
+              "name": "generateAudio",
+              "type": "boolean",
+              "required": false,
+              "mapping": "parameters.audio",
+              "description": "是否包含音轨。"
+            },
+            {
+              "name": "watermark",
+              "type": "boolean",
+              "required": false,
+              "mapping": "parameters.watermark",
+              "description": "是否带水印。"
+            }
+          ],
+          "validations": [
+            {
+              "assert": {
+                "$or": [
+                  {
+                    "$ne": [
+                      {
+                        "$trim": {
+                          "$ref": "request.prompt"
+                        }
+                      },
+                      ""
+                    ]
+                  },
+                  {
+                    "$gt": [
+                      {
+                        "$len": {
+                          "$ref": "request.images"
+                        }
+                      },
+                      0
+                    ]
+                  },
+                  {
+                    "$gt": [
+                      {
+                        "$len": {
+                          "$ref": "request.videos"
+                        }
+                      },
+                      0
+                    ]
+                  },
+                  {
+                    "$gt": [
+                      {
+                        "$len": {
+                          "$ref": "request.audios"
+                        }
+                      },
+                      0
+                    ]
+                  }
+                ]
+              },
+              "message": "Wan 3.0 至少需要填写提示词或上传参考素材"
+            },
+            {
+              "assert": {
+                "$in": [
+                  {
+                    "$upper": {
+                      "$trim": {
+                        "$ref": "request.resolution"
+                      }
+                    }
+                  },
+                  [
+                    "",
+                    "480",
+                    "480P",
+                    "720",
+                    "720P",
+                    "1080",
+                    "1080P"
+                  ]
+                ]
+              },
+              "message": "Wan 3.0 分辨率仅支持 480P、720P、1080P"
+            },
+            {
+              "assert": {
+                "$lte": [
+                  {
+                    "$len": {
+                      "$ref": "request.images"
+                    }
+                  },
+                  10
+                ]
+              },
+              "message": "Wan 3.0 最多支持 10 张图片"
+            },
+            {
+              "assert": {
+                "$lte": [
+                  {
+                    "$len": {
+                      "$ref": "request.videos"
+                    }
+                  },
+                  5
+                ]
+              },
+              "message": "Wan 3.0 最多支持 5 段参考视频"
+            },
+            {
+              "assert": {
+                "$lte": [
+                  {
+                    "$len": {
+                      "$ref": "request.audios"
+                    }
+                  },
+                  5
+                ]
+              },
+              "message": "Wan 3.0 最多支持 5 段参考音频"
+            },
+            {
+              "assert": {
+                "$lte": [
+                  {
+                    "$len": {
+                      "$filter": {
+                        "from": {
+                          "$ref": "request.images"
+                        },
+                        "as": "image",
+                        "where": {
+                          "$eq": [
+                            {
+                              "$ref": "image.role"
+                            },
+                            "first_frame"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  1
+                ]
+              },
+              "message": "Wan 3.0 最多只能提供 1 张首帧图片"
+            },
+            {
+              "assert": {
+                "$lte": [
+                  {
+                    "$len": {
+                      "$filter": {
+                        "from": {
+                          "$ref": "request.images"
+                        },
+                        "as": "image",
+                        "where": {
+                          "$eq": [
+                            {
+                              "$ref": "image.role"
+                            },
+                            "last_frame"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  1
+                ]
+              },
+              "message": "Wan 3.0 最多只能提供 1 张尾帧图片"
+            },
+            {
+              "assert": {
+                "$or": [
+                  {
+                    "$eq": [
+                      {
+                        "$len": {
+                          "$filter": {
+                            "from": {
+                              "$ref": "request.images"
+                            },
+                            "as": "image",
+                            "where": {
+                              "$eq": [
+                                {
+                                  "$ref": "image.role"
+                                },
+                                "last_frame"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      0
+                    ]
+                  },
+                  {
+                    "$eq": [
+                      {
+                        "$len": {
+                          "$filter": {
+                            "from": {
+                              "$ref": "request.images"
+                            },
+                            "as": "image",
+                            "where": {
+                              "$eq": [
+                                {
+                                  "$ref": "image.role"
+                                },
+                                "first_frame"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      1
+                    ]
+                  }
+                ]
+              },
+              "message": "Wan 3.0 使用尾帧时必须同时提供首帧图片"
+            },
+            {
+              "assert": {
+                "$or": [
+                  {
+                    "$eq": [
+                      {
+                        "$len": {
+                          "$filter": {
+                            "from": {
+                              "$ref": "request.images"
+                            },
+                            "as": "image",
+                            "where": {
+                              "$in": [
+                                {
+                                  "$ref": "image.role"
+                                },
+                                [
+                                  "first_frame",
+                                  "last_frame"
+                                ]
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      0
+                    ]
+                  },
+                  {
+                    "$and": [
+                      {
+                        "$eq": [
+                          {
+                            "$len": {
+                              "$filter": {
+                                "from": {
+                                  "$ref": "request.images"
+                                },
+                                "as": "image",
+                                "where": {
+                                  "$not": {
+                                    "$in": [
+                                      {
+                                        "$ref": "image.role"
+                                      },
+                                      [
+                                        "first_frame",
+                                        "last_frame"
+                                      ]
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          0
+                        ]
+                      },
+                      {
+                        "$eq": [
+                          {
+                            "$len": {
+                              "$ref": "request.videos"
+                            }
+                          },
+                          0
+                        ]
+                      },
+                      {
+                        "$eq": [
+                          {
+                            "$len": {
+                              "$ref": "request.audios"
+                            }
+                          },
+                          0
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "message": "Wan 3.0 首尾帧模式不能同时混用参考图、参考视频或参考音频"
+            }
+          ],
+          "create": {
+            "method": "POST",
+            "path": "/ali/api/v1/services/aigc/video-generation/video-synthesis",
+            "originPath": true,
+            "contentType": "application/json",
+            "headers": {
+              "X-DashScope-Async": "enable"
+            },
+            "body": {
+              "model": {
+                "$ref": "request.model"
+              },
+              "input": {
+                "prompt": {
+                  "$omitEmpty": {
+                    "$ref": "request.prompt"
+                  }
+                },
+                "media": {
+                  "$omitEmpty": {
+                    "$concatArrays": [
+                      {
+                        "$map": {
+                          "from": {
+                            "$sortByOrder": {
+                              "$ref": "request.images"
+                            }
+                          },
+                          "as": "media",
+                          "in": {
+                            "type": {
+                              "$switch": {
+                                "cases": [
+                                  {
+                                    "when": {
+                                      "$eq": [
+                                        {
+                                          "$ref": "media.role"
+                                        },
+                                        "first_frame"
+                                      ]
+                                    },
+                                    "then": "first_frame"
+                                  },
+                                  {
+                                    "when": {
+                                      "$eq": [
+                                        {
+                                          "$ref": "media.role"
+                                        },
+                                        "last_frame"
+                                      ]
+                                    },
+                                    "then": "last_frame"
+                                  },
+                                  {
+                                    "when": {
+                                      "$and": [
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$ref": "request.operation"
+                                            },
+                                            "image_to_video"
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$ref": "media.role"
+                                            },
+                                            ""
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$len": {
+                                                "$ref": "request.images"
+                                              }
+                                            },
+                                            1
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$len": {
+                                                "$ref": "request.videos"
+                                              }
+                                            },
+                                            0
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$len": {
+                                                "$ref": "request.audios"
+                                              }
+                                            },
+                                            0
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "then": "first_frame"
+                                  }
+                                ],
+                                "default": "reference_image"
+                              }
+                            },
+                            "url": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "$map": {
+                          "from": {
+                            "$sortByOrder": {
+                              "$ref": "request.videos"
+                            }
+                          },
+                          "as": "media",
+                          "in": {
+                            "type": "reference_video",
+                            "url": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "$map": {
+                          "from": {
+                            "$sortByOrder": {
+                              "$ref": "request.audios"
+                            }
+                          },
+                          "as": "media",
+                          "in": {
+                            "type": "reference_audio",
+                            "url": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "parameters": {
+                "resolution": {
+                  "$switch": {
+                    "cases": [
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "480",
+                              "480P"
+                            ]
+                          ]
+                        },
+                        "then": "480P"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "720",
+                              "720P"
+                            ]
+                          ]
+                        },
+                        "then": "720P"
+                      },
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$upper": {
+                                "$trim": {
+                                  "$ref": "request.resolution"
+                                }
+                              }
+                            },
+                            [
+                              "1080",
+                              "1080P",
+                              "1440",
+                              "1440P",
+                              "2K",
+                              "2160",
+                              "2160P",
+                              "4K"
+                            ]
+                          ]
+                        },
+                        "then": "1080P"
+                      }
+                    ],
+                    "default": "720P"
+                  }
+                },
+                "ratio": {
+                  "$if": {
+                    "condition": {
+                      "$gt": [
+                        {
+                          "$len": {
+                            "$ref": "request.videos"
+                          }
+                        },
+                        0
+                      ]
+                    },
+                    "then": "adaptive",
+                    "else": {
+                      "$if": {
+                        "condition": {
+                          "$in": [
+                            {
+                              "$ref": "request.aspectRatio"
+                            },
+                            [
+                              "adaptive",
+                              "16:9",
+                              "9:16",
+                              "1:1",
+                              "4:3",
+                              "3:4"
+                            ]
+                          ]
+                        },
+                        "then": {
+                          "$ref": "request.aspectRatio"
+                        },
+                        "else": "adaptive"
+                      }
+                    }
+                  }
+                },
+                "duration": {
+                  "$switch": {
+                    "cases": [
+                      {
+                        "when": {
+                          "$eq": [
+                            {
+                              "$ref": "request.duration"
+                            },
+                            -1
+                          ]
+                        },
+                        "then": -1
+                      },
+                      {
+                        "when": {
+                          "$gt": [
+                            {
+                              "$ref": "request.duration"
+                            },
+                            30
+                          ]
+                        },
+                        "then": 30
+                      },
+                      {
+                        "when": {
+                          "$gte": [
+                            {
+                              "$ref": "request.duration"
+                            },
+                            2
+                          ]
+                        },
+                        "then": {
+                          "$ref": "request.duration"
+                        }
+                      },
+                      {
+                        "when": {
+                          "$eq": [
+                            {
+                              "$ref": "request.duration"
+                            },
+                            1
+                          ]
+                        },
+                        "then": 2
+                      }
+                    ],
+                    "default": 5
+                  }
+                },
+                "audio": {
+                  "$ref": "request.generateAudio"
+                },
+                "watermark": {
+                  "$ref": "request.watermark"
+                }
+              }
+            }
+          },
+          "poll": {
+            "method": "GET",
+            "path": "/ali/api/v1/tasks/{{taskId}}",
+            "originPath": true
+          },
+          "response": {
+            "taskId": {
+              "$coalesce": [
+                {
+                  "$ref": "response.output.task_id"
+                },
+                {
+                  "$ref": "response.task_id"
+                },
+                {
+                  "$ref": "response.id"
+                },
+                {
+                  "$ref": "taskId"
+                }
+              ]
+            },
+            "status": {
+              "$coalesce": [
+                {
+                  "$ref": "response.output.task_status"
+                },
+                {
+                  "$ref": "response.status"
+                },
+                "pending"
+              ]
+            },
+            "message": {
+              "$coalesce": [
+                {
+                  "$ref": "response.output.message"
+                },
+                {
+                  "$ref": "response.error.message"
+                },
+                {
+                  "$ref": "response.message"
+                },
+                {
+                  "$ref": "response.fail_reason"
+                }
+              ]
+            },
+            "videos": {
+              "$coalesce": [
+                {
+                  "$ref": "response.output.video_url"
+                },
+                {
+                  "$ref": "response.video_url"
+                },
+                {
+                  "$ref": "response.url"
+                }
+              ]
+            },
+            "usage": {
+              "$ref": "response.usage"
+            },
+            "errorPaths": [
+              "code",
+              "output.code",
+              "error.code"
+            ],
+            "messagePaths": [
+              "message",
+              "output.message",
+              "error.message"
             ],
             "resultEphemeral": true
           }

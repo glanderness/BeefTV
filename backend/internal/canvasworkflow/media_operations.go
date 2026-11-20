@@ -26,6 +26,9 @@ func MediaOperations() []Operation {
 }
 
 func IsMediaOperation(id string) bool {
+	if IsReplacementLocalOperation(id) {
+		return true
+	}
 	for _, op := range MediaOperations() {
 		if op.ID == id {
 			return true
@@ -36,6 +39,14 @@ func IsMediaOperation(id string) bool {
 
 func ValidateMediaConfig(n Node) error {
 	switch n.OperationID {
+	case ReplacementPrepareOperation:
+		v := operationNumber(n.Config["maxSegments"])
+		if math.IsNaN(v) || v < 1 || v > 100 || math.Trunc(v) != v {
+			return fmt.Errorf("最多生成片段数需为1到100的整数")
+		}
+	case ReplacementFinishOperation:
+		_, err := ReplacementManifest(n)
+		return err
 	case "image.crop", "video.crop":
 		x, y, w, h := operationNumber(n.Config["x"]), operationNumber(n.Config["y"]), operationNumber(n.Config["width"]), operationNumber(n.Config["height"])
 		if x < 0 || y < 0 || w <= 0 || h <= 0 || x+w > 1.000001 || y+h > 1.000001 {
@@ -64,6 +75,9 @@ func MediaCommand(n Node, width, height int) (args []string, extension, mime str
 	}
 	if err = ValidateOperation(n); err != nil {
 		return
+	}
+	if IsReplacementLocalOperation(n.OperationID) {
+		return nil, "", "", nil
 	}
 	extension, mime = ".png", "image/png"
 	switch n.OperationID {
@@ -136,10 +150,21 @@ type MediaCommandSpec struct {
 	Mime string
 }
 
-func MediaCommandCandidates(n Node, width, height int) ([]MediaCommandSpec, error) {
+func MediaCommandCandidates(bin string, n Node, width, height int) ([]MediaCommandSpec, error) {
 	args, ext, mime, err := MediaCommand(n, width, height)
 	if err != nil {
 		return nil, err
+	}
+	if n.OperationID == "video.crop" && len(args) >= 2 && bin != "" {
+		if !mediatools.SupportsH264Encode(bin) {
+			return nil, fmt.Errorf("本机媒体编码器缺少 H.264 视频编码支持")
+		}
+		encode := append([]string{args[0], args[1]}, mediatools.PreferredH264VideoArgs(bin, "veryfast", "", "6M", "10M")...)
+		encode = append(encode, "-c:a", "aac", "-movflags", "+faststart")
+		return []MediaCommandSpec{{Args: encode, Ext: ext, Mime: mime}}, nil
+	}
+	if n.OperationID == "video.audio" && bin != "" && !mediatools.SupportsFFmpegEncoder(bin, "libmp3lame") {
+		return []MediaCommandSpec{{Args: []string{"-map", "0:a:0", "-vn", "-c:a", "pcm_s16le"}, Ext: ".wav", Mime: "audio/wav"}}, nil
 	}
 	candidates := []MediaCommandSpec{{Args: args, Ext: ext, Mime: mime}}
 	if n.OperationID == "video.audio" {

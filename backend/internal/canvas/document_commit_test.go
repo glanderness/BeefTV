@@ -121,22 +121,23 @@ func TestCommitUserCanvasDocumentHealsOwnedMediaAndAllowsEditsWithLegacyReferenc
 	if summary.Revision != stored.Revision+1 {
 		t.Fatalf("revision = %d, want %d", summary.Revision, stored.Revision+1)
 	}
-	if !strings.Contains(string(after), `"assetId":"asset-owned"`) {
-		t.Fatalf("expected unbound owned media nodes to be healed with asset-owned: %s", after)
-	}
 	if !strings.Contains(string(after), `"largeSeed":9007199254740993`) {
-		t.Fatalf("expected >2^53 integer to survive healing without float64 precision loss: %s", after)
+		t.Fatalf("expected >2^53 integer to survive commit without float64 precision loss: %s", after)
 	}
 
-	// Duplicating a broken legacy reference or adding an unowned unbound reference must still be rejected.
+	// Local-first canvas commits must not block editing when legacy or missing media references remain in the document.
 	duplicateLegacyOverlay := json.RawMessage(`{
 		"nodes":[
 			{"id":"legacy-broken","type":"image","metadata":{"assetId":"missing-asset","storageKey":"resource:missing-res","content":"/api/resources/missing-res/file"}},
 			{"id":"legacy-broken-copy","type":"image","metadata":{"assetId":"missing-asset","storageKey":"resource:missing-res","content":"/api/resources/missing-res/file"}}
 		]
 	}`)
-	if _, _, err := svc.CommitUserCanvasDocument("owner", "legacy-canvas", summary.Revision, duplicateLegacyOverlay); err == nil {
-		t.Fatal("expected duplicate broken legacy reference on new node to be rejected")
+	secondSummary, _, err := svc.CommitUserCanvasDocument("owner", "legacy-canvas", summary.Revision, duplicateLegacyOverlay)
+	if err != nil {
+		t.Fatalf("expected local canvas commit with missing media references to succeed, got: %v", err)
+	}
+	if secondSummary.Revision != summary.Revision+1 {
+		t.Fatalf("revision = %d, want %d", secondSummary.Revision, summary.Revision+1)
 	}
 
 	// ValidateSyncedPayload allows >4MB canvas payloads (up to default 64MB) while keeping 4MB limit for assets.
