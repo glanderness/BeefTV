@@ -152,6 +152,9 @@ beforeAll(async () => {
         "@/services/api/resources": `
             export const clearVideoPreviewCache = async () => { (window).__diagCalls.clearedPreviewCount += 1; return { cleared: 3 }; };
             export const uploadResourceFile = async () => ({ id: "res-1" });
+            export const getResourceBlob = async () => null;
+            export const ownedResourceIdFromMediaRef = () => "";
+            export const resourceStorageKey = (id) => "resource:" + id;
         `,
         "@/services/api/request": `
             export class ApiError extends Error {
