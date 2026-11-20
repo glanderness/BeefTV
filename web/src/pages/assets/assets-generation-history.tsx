@@ -3,7 +3,7 @@ import { Drawer, Modal } from "antd";
 import { ArrowDownUp, Check, Download, FolderOpen, FolderPlus, History, Trash2 } from "lucide-react";
 
 import { AssetMediaPreview } from "@/components/asset-media-preview";
-import { AssetGenerationPromptSection, formatAssetClock } from "@/components/assets/asset-detail-drawer";
+import { AssetGenerationPromptSection, AssetVideoPreview, formatAssetClock } from "@/components/assets/asset-detail-drawer";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { cn } from "@/lib/utils";
@@ -190,7 +190,7 @@ export function GenerationHistorySurface({
                 {pendingDelete.length === 1 ? `删除「${pendingDelete[0].title}」后将无法恢复。` : `删除已选择的 ${pendingDelete.length} 个素材后将无法恢复。`}仍被画布或任务引用的文件会保留，其余文件将同步清理。
             </Modal>
             <Drawer className="assets-generation-preview-drawer" open={Boolean(previewAsset)} title={previewAsset?.title || "生成结果预览"} onClose={() => setPreviewAsset(null)} size="default">
-                {previewAsset ? <div className="generation-history-preview space-y-4"><AssetMediaPreview asset={previewAsset} alt={previewAsset.title} className="generation-history-preview-media" fallback={<GenerationHistoryMissingPreview asset={previewAsset} />} /><div className="generation-history-preview-meta"><strong>{previewAsset.title}</strong><span>{previewAsset.kind === "video" ? "视频" : previewAsset.kind === "audio" ? "音频" : "图片"} · 本地生成</span><span>来源：{previewAsset.source || "生成任务"}</span>{typeof previewAsset.metadata?.taskId === "string" ? <span>任务 ID：{previewAsset.metadata.taskId}</span> : null}{typeof previewAsset.metadata?.generationEffectKey === "string" ? <span>生成标识：{previewAsset.metadata.generationEffectKey}</span> : null}</div><AssetGenerationPromptSection asset={previewAsset} /></div> : null}
+                {previewAsset ? <div className="generation-history-preview space-y-4">{previewAsset.kind === "video" && (previewAsset.data.url || previewAsset.data.storageKey) ? <AssetVideoPreview key={previewAsset.id} storageKey={previewAsset.data.storageKey} url={previewAsset.data.url} title={previewAsset.title} className="generation-history-preview-media" /> : <AssetMediaPreview asset={previewAsset} alt={previewAsset.title} className="generation-history-preview-media" fallback={<GenerationHistoryMissingPreview asset={previewAsset} />} />}<div className="generation-history-preview-meta"><strong>{previewAsset.title}</strong><span>{previewAsset.kind === "video" ? "视频" : previewAsset.kind === "audio" ? "音频" : "图片"} · 本地生成</span><span>来源：{previewAsset.source || "生成任务"}</span>{typeof previewAsset.metadata?.taskId === "string" ? <span>任务 ID：{previewAsset.metadata.taskId}</span> : null}{typeof previewAsset.metadata?.generationEffectKey === "string" ? <span>生成标识：{previewAsset.metadata.generationEffectKey}</span> : null}</div><AssetGenerationPromptSection asset={previewAsset} /></div> : null}
             </Drawer>
         </>
     );

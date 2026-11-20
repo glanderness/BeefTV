@@ -13,13 +13,16 @@ type CachedResourceImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src">
     fallback?: ReactNode;
     loadingFallback?: ReactNode;
     eager?: boolean;
+    onLoadError?: () => void;
 };
 
 /**
  * 资源图片优先读取按用户隔离的本地 Blob 缓存，避免刷新后再次从对象存储下载。
  * 任意本地图片 storageKey 都会自动从 LocalForage 恢复有效的 Object URL。
  */
-export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previewSize, observerRootRef, fallback = null, loadingFallback = fallback, eager = false, onError, ...props }: CachedResourceImageProps) {
+export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previewSize, observerRootRef, fallback = null, loadingFallback = fallback, eager = false, onError, onLoadError, ...props }: CachedResourceImageProps) {
+    const onLoadErrorRef = useRef(onLoadError);
+    onLoadErrorRef.current = onLoadError;
     const storageKey = ownedResourceStorageKey(rawStorageKey, src);
     const safeFallbackSrc = isProtectedResourceFileUrl(src) ? "" : src;
     const remoteResource = Boolean(resourceIdFromStorageKey(storageKey));
@@ -120,6 +123,7 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
                         const resolved = url || safeFallbackSrc;
                         setCachedSrc(resolved);
                         setCacheFailed(!resolved);
+                        if (!resolved) onLoadErrorRef.current?.();
                     }
                 })
                 .catch(() => {
@@ -127,6 +131,7 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
                         // 非受保护原始地址仍允许尝试加载；受保护资源地址不能直接交给原生 <img>。
                         setCacheFailed(!safeFallbackSrc);
                         setCachedSrc(safeFallbackSrc);
+                        if (!safeFallbackSrc) onLoadErrorRef.current?.();
                     }
                 });
             return () => {
@@ -142,12 +147,14 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
                         const resolved = url || safeFallbackSrc;
                         setCachedSrc(resolved);
                         setCacheFailed(!resolved);
+                        if (!resolved) onLoadErrorRef.current?.();
                     }
                 })
                 .catch(() => {
                     if (!cancelled) {
                         setCacheFailed(!safeFallbackSrc);
                         setCachedSrc(safeFallbackSrc);
+                        if (!safeFallbackSrc) onLoadErrorRef.current?.();
                     }
                 });
             return () => {
@@ -171,15 +178,18 @@ export function CachedResourceImage({ storageKey: rawStorageKey, src = "", previ
                     }
                     setCacheFailed(true);
                     onError?.(e);
+                    onLoadErrorRef.current?.();
                 })
                 .catch(() => {
                     setCacheFailed(true);
                     onError?.(e);
+                    onLoadErrorRef.current?.();
                 });
             return;
         }
         setCacheFailed(true);
         onError?.(e);
+        onLoadErrorRef.current?.();
     };
 
     if (!storageBackedImage) {

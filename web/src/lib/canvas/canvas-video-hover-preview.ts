@@ -3,7 +3,7 @@ let stopCurrentPreview: (() => void) | undefined;
 export const VIDEO_HOVER_DELAY_MS = 350;
 export const VIDEO_HOVER_PREVIEW_MS = 3000;
 
-export function bindCanvasVideoHoverPreview(element: HTMLElement, resolveSource: (signal: AbortSignal) => Promise<{ url: string; release: () => void }>) {
+export function bindCanvasVideoHoverPreview(element: HTMLElement, resolveSource: (signal: AbortSignal) => Promise<{ url: string; release: () => void }>, options: { delayMs?: number; className?: string } = {}) {
     let stop: (() => void) | undefined;
     const enter = (event: PointerEvent) => {
         if (event.pointerType !== "mouse" || event.buttons || document.hidden
@@ -58,7 +58,7 @@ export function bindCanvasVideoHoverPreview(element: HTMLElement, resolveSource:
                 video.playsInline = true;
                 video.preload = "metadata";
                 video.style.opacity = "0";
-                video.className = "pointer-events-none absolute inset-0 size-full rounded-[var(--node-radius)] bg-black object-contain";
+                video.className = options.className ?? "pointer-events-none absolute inset-0 size-full rounded-[var(--node-radius)] bg-black object-contain";
                 video.setAttribute("aria-hidden", "true");
                 video.dataset.canvasHoverPreview = "true";
                 video.addEventListener("ended", cancel, { signal: listeners.signal });
@@ -84,7 +84,7 @@ export function bindCanvasVideoHoverPreview(element: HTMLElement, resolveSource:
                 element.appendChild(video);
                 void video.play().catch(cancel);
             }).catch(cancel);
-        }, VIDEO_HOVER_DELAY_MS);
+        }, options.delayMs ?? VIDEO_HOVER_DELAY_MS);
         // Bound stalled network/decoder sessions as well as actual playback.
         const deadline = setTimeout(cancel, 8000);
         stop = cancel;

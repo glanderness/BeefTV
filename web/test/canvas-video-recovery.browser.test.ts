@@ -185,9 +185,17 @@ test.skipIf(!enabled)("所有视频入口按需准备预览，失败可重试，
                 await page.getByRole("button", { name, exact: true }).click();
             }
             try {
-                await page.waitForFunction(() => { const video = document.querySelector("video"); return video && video.readyState >= 2 && video.videoWidth === 64; }, undefined, { timeout: 7000 });
+                if (surface === "thumbnail") {
+                    await page.waitForFunction(() => {
+                        const img = document.querySelector("img");
+                        return Boolean(img && img.complete && img.naturalWidth === 64);
+                    }, undefined, { timeout: 7000 });
+                    expect(await page.locator("video").count()).toBe(0);
+                } else {
+                    await page.waitForFunction(() => { const video = document.querySelector("video"); return video && video.readyState >= 2 && video.videoWidth === 64; }, undefined, { timeout: 7000 });
+                }
             } catch (error) {
-                console.error({ surface, mode: env.state.mode, prepares: env.state.prepares, status: env.state.status, state: await page.evaluate(() => {const v=document.querySelector("video");return {text:document.body.innerText,video:v?.outerHTML,network:v?.networkState,error:v?.error?.code,currentSrc:v?.currentSrc};}) });
+                console.error({ surface, mode: env.state.mode, prepares: env.state.prepares, status: env.state.status, state: await page.evaluate(() => {const v=document.querySelector("video");const i=document.querySelector("img");return {text:document.body.innerText,video:v?.outerHTML,img:i?.outerHTML,network:v?.networkState,error:v?.error?.code,currentSrc:v?.currentSrc};}) });
                 throw error;
             }
             if (surface === "canvas") {
