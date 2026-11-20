@@ -207,12 +207,14 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 		if !evidenceReadable && len(collected) < want {
 			// Active candidates (queued/running/retrievable) are always prioritized first.
 			// When evidence storage is unreadable, cursor-page only failed/cancelled rows
-			// (skipping succeeded history) up to the remaining `want` budget so older
-			// evidence_unavailable tasks are not crowded out by newer completed tasks.
+			// (skipping succeeded history) with a hard page budget so older
+			// evidence_unavailable tasks are not crowded out by newer completed tasks
+			// AND degraded polling can never degenerate into a full-history scan.
+			const maxUnreadableFallbackPages = 2
 			if fallback, ok := s.store.(unreadableEvidenceFallbackStore); ok {
 				var fbCreatedAt *time.Time
 				var fbID string
-				for len(collected) < want {
+				for pages := 0; len(collected) < want && pages < maxUnreadableFallbackPages; pages++ {
 					batch, err := fallback.ListTerminalForUnreadableEvidenceAfter(userID, options.ProjectID, fbCreatedAt, fbID, pageSize)
 					if err != nil {
 						return nil, err

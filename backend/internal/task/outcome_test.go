@@ -1,6 +1,7 @@
 package task
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -354,5 +355,65 @@ func TestCanvasFailureScanRefreshesWhenProviderCancelStatusChanges(t *testing.T)
 	}
 	if scan.unchanged([]model.Task{{ID: "cancelled-task", ProviderCancelStatus: model.ProviderCancelStatusConfirmed}}, []Outcome{outcome}, 7) {
 		t.Fatal("transitioning providerCancelStatus from requested to confirmed must trigger a canvas node refresh")
+	}
+}
+
+type boundedUnreadableFallbackStore struct {
+	*memStore
+	terminalTasks []model.Task
+	fallbackCalls int
+}
+
+func (s *boundedUnreadableFallbackStore) EvidenceReadable() bool { return false }
+
+func (s *boundedUnreadableFallbackStore) ListActiveCandidatesAfter(string, string, *time.Time, string, int) ([]model.Task, error) {
+	return nil, nil
+}
+
+func (s *boundedUnreadableFallbackStore) ListTerminalForUnreadableEvidenceAfter(_ string, _ string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error) {
+	s.fallbackCalls++
+	out := make([]model.Task, 0, limit)
+	for _, task := range s.terminalTasks {
+		if beforeCreatedAt != nil {
+			if task.CreatedAt.After(*beforeCreatedAt) || (task.CreatedAt.Equal(*beforeCreatedAt) && task.ID >= beforeID) {
+				continue
+			}
+		}
+		out = append(out, task)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func TestActiveOnlyUnreadableFallbackIsHardBoundedByPageBudget(t *testing.T) {
+	now := time.Now().UTC()
+	terminal := make([]model.Task, 0, 500)
+	for i := 500; i > 0; i-- {
+		ts := now.Add(time.Duration(i) * time.Second)
+		terminal = append(terminal, model.Task{
+			ID:        fmt.Sprintf("cancelled-non-active-%03d", i),
+			UserID:    "u1",
+			Type:      "canvas_text",
+			Status:    model.TaskStatusCancelled,
+			CreatedAt: ts,
+			UpdatedAt: ts,
+		})
+	}
+	store := &boundedUnreadableFallbackStore{
+		memStore:      newMemStore(),
+		terminalTasks: terminal,
+	}
+	svc := NewService(store, Dependencies{Present: identityPresent{}})
+	got, err := svc.list("u1", ListOptions{Limit: 50, ActiveOnly: true})
+	if err != nil {
+		t.Fatalf("List(activeOnly=true) error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d active summaries, want 0", len(got))
+	}
+	if store.fallbackCalls != 2 {
+		t.Fatalf("unreadable fallback paged %d times across 500 terminal rows, want hard cap 2", store.fallbackCalls)
 	}
 }

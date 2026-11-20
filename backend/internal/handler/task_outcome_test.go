@@ -689,3 +689,85 @@ func TestActiveOnlyEvidenceProbeDetectsMissingAttemptNumberAndCallLogUserIDAndSu
 		})
 	}
 }
+
+func TestActiveOnlyImageSubmissionsUnreadableSurfacesAttemptedImageWithinBoundedFallback(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	seed := []model.Task{
+		{
+			ID:        "attempted-cancelled-image",
+			UserID:    owner.ID,
+			ProjectID: "img-sub-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusCancelled,
+			Stage:     "任务已取消",
+			RouteRun:  1,
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+	}
+	// 110 newer cancelled text tasks without route attempts sit ahead of the image task
+	// (page 1 skips 100 non-attempt rows; page 2 hits attempted-cancelled-image within the 2-page budget).
+	for i := 0; i < 110; i++ {
+		ts := base.Add(time.Duration(i+1) * time.Second)
+		seed = append(seed, model.Task{
+			ID:        fmt.Sprintf("non-attempt-text-%03d", i),
+			UserID:    owner.ID,
+			ProjectID: "img-sub-canvas",
+			Type:      "canvas_text",
+			Status:    model.TaskStatusCancelled,
+			Stage:     "任务已取消",
+			CreatedAt: ts,
+			UpdatedAt: ts,
+		})
+	}
+	if err := h.db.CreateInBatches(&seed, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Create(&model.RouteAttempt{
+		ID:            "attempt-img-1",
+		TaskID:        "attempted-cancelled-image",
+		RouteRun:      1,
+		AttemptNumber: 1,
+		Status:        "selected",
+		DispatchState: "accepted",
+		StartedAt:     base,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Drop ONLY image_submissions: tasks without route attempts do not query image_submissions,
+	// while attempted-cancelled-image does and fails closed to evidence_unavailable.
+	if err := h.db.Exec("DROP TABLE image_submissions").Error; err != nil {
+		t.Fatal(err)
+	}
+	if repository.New(h.db).EvidenceReadable() {
+		t.Fatal("EvidenceReadable() = true when image_submissions table is missing, want false")
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=img-sub-canvas&pageSize=20&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range env.Data {
+		if item.ID == "attempted-cancelled-image" {
+			found = true
+			if item.Outcome == nil || item.Outcome.Reason != "evidence_unavailable" {
+				t.Fatalf("attempted image outcome = %+v, want evidence_unavailable", item.Outcome)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected attempted-cancelled-image in activeOnly response, got %d items", len(env.Data))
+	}
+}
