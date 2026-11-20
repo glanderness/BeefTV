@@ -60,13 +60,13 @@ export function CanvasMediaViewer({ kind, testIdPrefix, title, theme, titleDetai
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [onClose]);
 
-    const overlayRoot = typeof document !== "undefined" ? document.querySelector(".app-user-overlays") || document.body : null;
+    const overlayRoot = typeof document !== "undefined" ? document.body : null;
     if (!overlayRoot) return null;
 
     return createPortal(
         <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`查看${kind}：${title}`}
             data-canvas-no-zoom data-canvas-media-viewer data-testid={`${testIdPrefix}-viewer-modal`}
-            className="fixed inset-0 z-[var(--z-modal,1100)] flex flex-col outline-none"
+            className="fixed inset-0 flex flex-col outline-none"
             style={{ background: theme.canvas.background, color: theme.node.text }}
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}

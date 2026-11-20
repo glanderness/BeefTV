@@ -1,4 +1,5 @@
 [data-canvas-media-viewer] {
+    z-index: var(--z-toast, 500);
     font: 500 13px/20px var(--font-sans, system-ui, sans-serif);
     letter-spacing: 0;
     font-variant-numeric: tabular-nums;

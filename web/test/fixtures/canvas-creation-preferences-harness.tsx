@@ -29,15 +29,15 @@ channel.modelProfiles = channel.models.map((model) => {
 });
 const second = createModelChannel({ ...channel, id: "second", name: "Second", models: ["video-c"], modelProfiles: [{ ...channel.modelProfiles[0]!, model: "video-c", displayName: "video-c" }] });
 const builtinNames: Record<string, string> = {
-    "kling-video-v3": "TokenHub 可灵 V3",
+    "seedance-2.0-fast": "Seedance 2.0 Fast",
+    "seedance-2.0-mini": "Seedance 2.0 Mini",
+    "seedance-2.0": "Seedance 2.0",
+    "seedance-2.5": "Seedance 2.5",
+    "wan3.0-video": "Wan 3.0",
     "minimax-h3": "MiniMax H3",
     "minimax-h3-max": "MiniMax H3 Max",
     "minimax-h3-max-turbo": "MiniMax H3 Max Turbo",
-    "seedance-2.0": "Seedance 2.0",
-    "seedance-2.0-fast": "Seedance 2.0 Fast",
-    "seedance-2.0-mini": "Seedance 2.0 Mini",
-    "seedance-2.5": "Seedance 2.5",
-    "wan3.0-video": "Wan 3.0",
+    "kling-video-v3": "TokenHub 可灵 V3",
 };
 const builtin = createModelChannel({
     id: "beeftv", name: "BeefTV", pinned: true, credentialRef: "beeftv", hasApiKey: true,

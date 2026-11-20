@@ -131,6 +131,16 @@ describe("public channel model catalog", () => {
         release();
         expect(await outcome).toMatchObject({ name: "BeefTVConnectionChangedError" });
     });
+    test("managed catalog refresh preserves server-delivered model order", async () => {
+        const serverOrder = ["seedance-2.0-fast", "seedance-2.0-mini", "seedance-2.0", "wan3.0-video", "minimax-h3", "kling-video-v3"];
+        apiClient.request = (async () => ({
+            status: 200,
+            data: { code: 0, data: { models: serverOrder.map((id) => ({ id, modelType: "video" })) }, msg: "" },
+        })) as typeof apiClient.request;
+        const result = await fetchChannelModels(createModelChannel({ id: "beeftv", credentialRef: "beeftv" }), true);
+        expect(result.models).toEqual(serverOrder);
+        expect(result.catalog.map((item) => item.id)).toEqual(serverOrder);
+    });
     test("managed catalog refresh persists through the trusted endpoint without accepting client credentials or prices", async () => {
         const requests: Array<{ url?: string; data?: unknown }> = [];
         apiClient.request = (async (request) => {

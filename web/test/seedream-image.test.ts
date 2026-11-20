@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { seedreamImageCapability } from "../src/lib/seedream-image";
+import { seedreamImageCapability, seedreamSizePresets } from "../src/lib/seedream-image";
 import { backendProviderConfig } from "../src/services/api/generation-task";
 import { defaultConfig } from "../src/stores/use-config-store";
 
@@ -51,5 +51,20 @@ describe("Seedream model capabilities", () => {
         expect(backendProviderConfig({ ...defaultConfig, model: "dola-seedream-5-0-pro-260628", seedreamWatermark: "true" }).seedreamWatermark).toBe("true");
         expect(backendProviderConfig({ ...defaultConfig, model: "gpt-image-2" }).seedreamWatermark).toBeUndefined();
         expect(backendProviderConfig({ ...defaultConfig, model: "gpt-image-2", seedreamWatermark: "true" }).seedreamWatermark).toBeUndefined();
+    });
+    test("Seedream size presets produce even dimensions within each family's pixel range", () => {
+        const families = [
+            { tiers: ["1K", "1.5K", "2K"], min: 921_600, max: 4_624_220 },
+            { tiers: ["2K", "3K", "4K"], min: 3_686_400, max: 16_777_216 },
+            { tiers: ["1K", "2K", "4K"], min: 921_600, max: 16_777_216 },
+        ];
+        for (const family of families) {
+            for (const preset of seedreamSizePresets(family.tiers)) {
+                expect(preset.width % 2).toBe(0);
+                expect(preset.height % 2).toBe(0);
+                expect(preset.width * preset.height).toBeGreaterThanOrEqual(family.min);
+                expect(preset.width * preset.height).toBeLessThanOrEqual(family.max);
+            }
+        }
     });
 });

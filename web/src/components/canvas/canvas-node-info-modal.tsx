@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal } from "antd";
+import { AppModal } from "@/components/ui/product/app-modal";
 import { imageQualityLabel } from "@/components/image-settings-panel";
 import { X } from "lucide-react";
 import { getNodeLabel } from "@/lib/canvas/node-registry";
@@ -7,6 +7,7 @@ import { CanvasNodeType, type CanvasImageHistoryItem, type CanvasNodeData, type 
 import { configuredModelDisplayName } from "@/lib/model-selection";
 import { formatImageRatio, formatMimeShort } from "@/lib/image-display-format";
 import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
+import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { ASSET_CATEGORY_OPTIONS, type AssetCategory } from "@/lib/asset-category";
 import { resolveActiveCanvasImageHistoryItem } from "@/lib/canvas/canvas-image-history";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
@@ -33,6 +34,7 @@ export function CanvasNodeInfoModal({
     readOnly?: boolean;
     onUnauthorized?: () => void;
 }) {
+    const activeTheme = useActiveTheme();
     const config = useConfigStore((state) => state.config);
     const [assetTags, setAssetTags] = useState<string[]>([]);
     const [assetTagInput, setAssetTagInput] = useState("");
@@ -110,7 +112,7 @@ export function CanvasNodeInfoModal({
     );
 
     return (
-        <Modal className="canvas-node-info-modal" title={title} open={open} centered footer={null} onCancel={onClose} width="min(640px, calc(100vw - 24px))">
+        <AppModal flush className={`canvas-node-info-modal ${activeTheme === "light" ? "is-light" : "is-dark"}`} title={title} open={open} footer={null} onCancel={onClose} width="min(640px, calc(100vw - 24px))">
             <div className="inspector-body thin-scrollbar" data-canvas-wheel-scroll>
                 {rows.length > 0 && (
                     <section>
@@ -187,7 +189,7 @@ export function CanvasNodeInfoModal({
                     </dl>
                 </details>
             </div>
-        </Modal>
+        </AppModal>
     );
 }
 

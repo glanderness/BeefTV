@@ -6,7 +6,7 @@ import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } from "@/lib/canvas/canvas-popover-layer";
 import { compatibleModelInGroup, configuredModelDisplayName, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel, type DisplayModelGroup, type ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
-import { isBuiltinBeefTVChannel, modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { ModelProviderMenu, modelMenuSurface } from "@/components/model-provider-menu";
 import { ModelLogo } from "@/components/model-logo";
@@ -59,9 +59,6 @@ export function ModelPicker({
         const channelGroups = config.channels
             .map((channel) => {
                 const models = options.filter((model) => resolveModelChannel(config, model).id === channel.id);
-                if (providerMenu && capability === "video" && isBuiltinBeefTVChannel(channel)) {
-                    models.sort((a, b) => builtinVideoModelRank(a) - builtinVideoModelRank(b));
-                }
                 return {
                     key: channel.id,
                     label: channel.name || "未命名渠道",
@@ -72,7 +69,7 @@ export function ModelPicker({
         // options 已由当前有效渠道重建；任何无法解析渠道的旧值都直接丢弃，
         // 不再显示“其他模型 / 未指定渠道”这种不可用入口。
         return channelGroups;
-    }, [config, options, capability, providerMenu]);
+    }, [config, options]);
     const storedCurrent = value?.trim() || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
     const selectionRequirements = requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined;
@@ -314,23 +311,6 @@ export function ModelPicker({
             </Popover> : null}
         </div>
     );
-}
-
-const builtinVideoModelOrder = [
-    "seedance-2.0-fast",
-    "seedance-2.0-mini",
-    "seedance-2.0",
-    "seedance-2.5",
-    "wan3.0-video",
-    "minimax-h3",
-    "minimax-h3-max",
-    "minimax-h3-max-turbo",
-    "kling-video-v3",
-];
-
-function builtinVideoModelRank(model: string) {
-    const index = builtinVideoModelOrder.indexOf(modelOptionName(model).toLowerCase());
-    return index < 0 ? builtinVideoModelOrder.length : index;
 }
 
 function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {

@@ -391,6 +391,17 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     expect(await downloadViewedImage()).toContain("FULL_RES_PAYLOAD");
     await page.getByRole("button", { name: "图 B" }).click();
     expect(await downloadViewedImage()).toContain("V2");
+    // Pressing Escape while the export menu is open must dismiss only the menu, not the whole viewer.
+    // Also verify the fullscreen viewer stacks above canvas overlays (--z-canvas-overlay-active=150, --z-popover=200)
+    // while remaining below AntD modals (1000) so Node Info opens on top of the viewer.
+    const viewerZIndex = await page.getByTestId("canvas-image-viewer-modal").evaluate((el) => Number(getComputedStyle(el).zIndex));
+    expect(viewerZIndex).toBeGreaterThan(200);
+    expect(viewerZIndex).toBeLessThan(1000);
+    await page.getByRole("button", { name: "下载与复制图片" }).click();
+    await page.getByRole("button", { name: "下载原图" }).waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "下载原图" }).waitFor({ state: "hidden" });
+    expect(await page.getByTestId("canvas-image-viewer-modal").isVisible()).toBe(true);
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.getByRole("button", { name: "下载与复制图片" }).click();
     await page.getByRole("button", { name: "复制图片", exact: true }).click();
@@ -499,6 +510,16 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
         sizes: [...new Set(Array.from(modal.querySelectorAll(".inspector-title span, h3, dt, dd, summary, input, form button, .inspector-text")).map((element) => getComputedStyle(element).fontSize))],
     }));
     expect(presentation).toEqual({ background: "rgb(16, 16, 16)", sizes: ["12px"] });
+    // Switching to light theme must update the node inspector surface and keep readable dark text.
+    await page.evaluate(() => window.__viewerHarness!.setColorTheme("light"));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".canvas-node-info-modal .ant-modal-container")!).backgroundColor === "rgb(255, 255, 255)");
+    const lightPresentation = await inspector.evaluate((modal) => ({
+        background: getComputedStyle(modal.querySelector(".ant-modal-container")!).backgroundColor,
+        textColor: getComputedStyle(modal.querySelector(".inspector-body")!).color,
+    }));
+    expect(lightPresentation).toEqual({ background: "rgb(255, 255, 255)", textColor: "rgb(17, 24, 39)" });
+    await page.evaluate(() => window.__viewerHarness!.setColorTheme("dark"));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".canvas-node-info-modal .ant-modal-container")!).backgroundColor === "rgb(16, 16, 16)");
     const details = inspector.locator("details");
     expect(await details.getAttribute("open")).toBeNull();
     await details.locator("summary").click();

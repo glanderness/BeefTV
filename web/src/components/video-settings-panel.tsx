@@ -286,7 +286,8 @@ function VideoDurationControl({ profile, value, locked, theme, onChange }: { pro
     const canSwitchToAuto = !locked && options.length > 0 && durations.includes(-1);
     const step = options.length > 1 ? options[1] - options[0] : 1;
     const uniform = options.every((seconds, i) => seconds === options[0] + i * step);
-    const sliderValue = uniform ? options[index] : index;
+    const thumbIndex = automatic ? 0 : index;
+    const sliderValue = uniform ? options[thumbIndex] : thumbIndex;
     const fill = automatic ? 0 : (index / Math.max(1, options.length - 1)) * 100;
 
     return (
@@ -314,6 +315,11 @@ function VideoDurationControl({ profile, value, locked, theme, onChange }: { pro
                         "--video-duration-progress": theme.toolbar.activeBg,
                         "--video-duration-thumb": theme.node.text,
                     } as CSSProperties}
+                    onClick={(event) => {
+                        if (!automatic || event.detail === 0) return;
+                        const selected = event.currentTarget.valueAsNumber;
+                        onChange(uniform ? selected : options[selected]);
+                    }}
                     onChange={(event) => {
                         const selected = event.currentTarget.valueAsNumber;
                         onChange(uniform ? selected : options[selected]);

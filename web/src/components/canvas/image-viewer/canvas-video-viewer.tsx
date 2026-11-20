@@ -8,6 +8,7 @@ import { buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatImageRatio } from "@/lib/image-display-format";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { isProtectedResourceFileUrl } from "@/services/api/resources";
 import { downloadOwnedOrBrowserMedia, isWailsNativeShell } from "@/services/desktop-media-save";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { modelDisplayName, useEffectiveConfig } from "@/stores/use-config-store";
@@ -56,10 +57,15 @@ export function CanvasVideoViewer({ node, onClose, onOpenNodeInfo }: Props) {
     ];
 
     const downloadOriginal = async () => {
+        const ext = extension || "mp4";
+        const fileName = title.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? title : `${title}.${ext}`;
+        const browserUrl = isProtectedResourceFileUrl(fallback)
+            ? ((!playback.compatible ? playback.url : "") || fallback)
+            : (fallback || playback.url);
         const result = await downloadOwnedOrBrowserMedia({
             resourceId: resourceId || undefined,
-            browserUrl: fallback || playback.url,
-            fileName: `${title}.${extension || "mp4"}`,
+            browserUrl,
+            fileName,
         });
         if (result === "saved" && isWailsNativeShell()) message.success("已保存视频");
     };

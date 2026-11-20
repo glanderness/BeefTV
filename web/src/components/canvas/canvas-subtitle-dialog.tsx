@@ -1,5 +1,5 @@
 import "./canvas-media-editors.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { App, Button, Dropdown, Input, InputNumber, Progress } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { SubtitleStylePanel } from "./canvas-subtitle-style-panel";
@@ -32,7 +32,8 @@ type CanvasSubtitleDialogProps = {
 
 export function CanvasSubtitleDialog({ node, open, projectId, config, onClose, onSave }: CanvasSubtitleDialogProps) {
     const { message, modal } = App.useApp();
-    const theme = canvasThemes[useActiveTheme()];
+    const activeTheme = useActiveTheme();
+    const theme = canvasThemes[activeTheme];
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const [entries, setEntries] = useState<SrtEntry[]>([]);
     const [highlights, setHighlights] = useState<SubtitleHighlight[]>([]);
@@ -427,7 +428,30 @@ export function CanvasSubtitleDialog({ node, open, projectId, config, onClose, o
     const cloudExt: "srt" | "vtt" = cloudSubs?.format === "vtt" ? "vtt" : "srt";
 
     return (
-        <AppModal className="canvas-subtitle-dialog" title={title} open={open} centered footer={null} width="min(1280px, calc(100vw - 32px))" destroyOnHidden onCancel={onClose} flush>
+        <AppModal
+            className="canvas-subtitle-dialog"
+            style={activeTheme === "light" ? {
+                "--editor-bg": theme.node.panel,
+                "--editor-panel": theme.timeline.trackFill,
+                "--editor-line": theme.toolbar.border,
+                "--editor-text": theme.node.text,
+                "--editor-muted": theme.node.muted,
+                "--editor-button-bg": theme.node.fill,
+                "--editor-button-line": theme.toolbar.border,
+                "--editor-entry-bg": theme.node.fill,
+                "--editor-entry-border": theme.toolbar.border,
+                "--editor-entry-active-bg": theme.timeline.entryActive,
+                "--editor-entry-active-border": theme.node.activeStroke,
+            } as CSSProperties : undefined}
+            title={title}
+            open={open}
+            centered
+            footer={null}
+            width="min(1280px, calc(100vw - 32px))"
+            destroyOnHidden
+            onCancel={onClose}
+            flush
+        >
             <div className="media-editor-body subtitle-editor-body flex flex-col text-sm" style={{ color: theme.node.text }}>
                 {cloudSubs && (cloudSubs.originText || cloudSubs.translatedText) ? (
                     <div

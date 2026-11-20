@@ -237,14 +237,19 @@ export function CanvasNodePromptFooterControls({
                 </span>
             </Button>
         );
-        if (!costDisplay) return button;
         return (
-            <div aria-busy={preview.costRefreshing || undefined} className="inline-flex h-8 shrink-0 items-center rounded-full pl-2.5" style={{ background: "var(--canvas-composer-control-surface)" }}>
-                <GenerationCostLabel
-                    display={costDisplay}
-                    className={`canvas-node-composer-submit-cost pr-1 font-medium${mode === "image" ? " canvas-image-submit-cost" : ""}`}
-                    style={{ color: isSubmitDisabled ? theme.node.muted : theme.node.text }}
-                />
+            <div
+                aria-busy={preview.costRefreshing || undefined}
+                className={costDisplay ? "inline-flex h-8 shrink-0 items-center rounded-full pl-2.5" : "inline-flex h-8 shrink-0 items-center"}
+                style={costDisplay ? { background: "var(--canvas-composer-control-surface)" } : undefined}
+            >
+                {costDisplay ? (
+                    <GenerationCostLabel
+                        display={costDisplay}
+                        className={`canvas-node-composer-submit-cost pr-1 font-medium${mode === "image" ? " canvas-image-submit-cost" : ""}`}
+                        style={{ color: isSubmitDisabled ? theme.node.muted : theme.node.text }}
+                    />
+                ) : null}
                 {button}
             </div>
         );

@@ -39,7 +39,8 @@ export function seedreamResolutionTiers(profile: ImageCapabilityConfig) {
 export function seedreamSizePresets(tiers: string[]) {
     return tiers.flatMap(tier => IMAGE_RATIOS.map(ratio => {
         const [w, h] = ratio.split(":").map(Number);
-        const unit = Math.floor(parseFloat(tier) * 1024 / Math.sqrt(w * h));
+        const rawUnit = Math.floor(parseFloat(tier) * 1024 / Math.sqrt(w * h));
+        const unit = (w % 2 !== 0 || h % 2 !== 0) ? rawUnit - (rawUnit % 2) : rawUnit;
         const width = w * unit;
         const height = h * unit;
         return { tier, ratio, width, height, size: `${width}x${height}` };

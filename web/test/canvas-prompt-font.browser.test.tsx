@@ -114,6 +114,10 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 480 
             expect(await slider.getAttribute("aria-valuetext")).toBe("4 秒");
             await settings.getByRole("button", { name: "自动", exact: true }).click();
             expect(await slider.getAttribute("aria-valuetext")).toBe("自动");
+            await slider.click({ position: { x: 6, y: 12 } });
+            expect(await slider.getAttribute("aria-valuetext")).toBe("4 秒");
+            await settings.getByRole("button", { name: "自动", exact: true }).click();
+            expect(await slider.getAttribute("aria-valuetext")).toBe("自动");
         } finally {
             await page.close();
         }
@@ -527,6 +531,7 @@ test("常规与放大生成框都把规格放在摄像机和生成按钮之间",
         const panel = page.getByTestId("node-panel");
         const verifyOrder = async (container: typeof panel) => {
             const footer = container.locator(".canvas-node-composer-footer");
+            await footer.getByTestId("generation-cost-badge").waitFor();
             const controls = [
                 footer.getByRole("button", { name: "gpt-image-2", exact: true }),
                 footer.getByRole("button", { name: "预设", exact: true }),

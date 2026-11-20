@@ -1,4 +1,4 @@
-/* Shared editor defaults; the timeline supplies its active canvas theme. */
+/* Shared editor defaults; light mode overrides via inline CSS variables. */
 .canvas-subtitle-dialog,
 .canvas-timeline-dialog {
     --editor-bg: #101112;
@@ -8,11 +8,19 @@
     --editor-muted: #9b9fa6;
     --editor-button-bg: #202225;
     --editor-button-line: #36393e;
+    --editor-entry-bg: #202124;
+    --editor-entry-border: transparent;
+    --editor-entry-active-bg: #292c30;
+    --editor-entry-active-border: #858b95;
 }
+:is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-container,
 :is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-content,
 :is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-header {
     background: var(--editor-bg) !important;
     color: var(--editor-text);
+}
+:is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-close {
+    color: var(--editor-muted);
 }
 :is(.canvas-subtitle-dialog, .canvas-timeline-dialog) .ant-modal-header {
     padding: 20px 24px !important;
@@ -125,7 +133,7 @@
     flex-shrink: 0;
     padding: 8px;
     border-radius: 8px;
-    background: var(--editor-bg);
+    background: #101112;
     line-height: 1.4;
     overflow: hidden;
 }
@@ -158,12 +166,12 @@
     color: var(--editor-text);
 }
 .subtitle-editor-entry {
-    background: #202124 !important;
-    border-color: transparent !important;
+    background: var(--editor-entry-bg) !important;
+    border-color: var(--editor-entry-border) !important;
 }
 .subtitle-editor-entry[data-active="true"] {
-    border-color: #858b95 !important;
-    background: #292c30 !important;
+    border-color: var(--editor-entry-active-border) !important;
+    background: var(--editor-entry-active-bg) !important;
 }
 .timeline-editor-tracks {
     margin: 0 20px;

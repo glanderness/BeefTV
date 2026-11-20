@@ -45,6 +45,7 @@ export function MediaExportMenu({ theme, onDownload, onCopy }: Props) {
             if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
         }} onKeyDown={(event) => {
             if (open && event.key === "Escape") {
+                event.preventDefault();
                 event.stopPropagation();
                 setOpen(false);
                 trigger.current?.focus();

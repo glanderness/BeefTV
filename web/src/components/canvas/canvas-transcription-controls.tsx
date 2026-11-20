@@ -131,11 +131,13 @@ export function CanvasTranscriptionControls({
                     自动转写字幕
                 </Button>
             </div>
-            {(!resourceId || model) && (
-                <p className="text-xs text-[var(--editor-muted)]">
-                    {resourceId ? "音频会上传至云端并按模型计费，转写将替换当前草稿。" : "素材上传完成后即可自动转写。"}
-                </p>
-            )}
+            <p className="text-xs text-[var(--editor-muted)]">
+                {!resourceId
+                    ? "素材上传完成后即可自动转写。"
+                    : model
+                        ? "音频会上传至云端并按模型计费，转写将替换当前草稿。"
+                        : "使用本地 whisper.cpp 识别，音视频不出本机；转写结果会替换当前字幕草稿。"}
+            </p>
             {status && (
                 <p role="status" className="text-xs">
                     {status}
