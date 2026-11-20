@@ -165,13 +165,20 @@ type LegacyTerminalOutcomeInput = {
 };
 
 function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId, taskType }: LegacyTerminalOutcomeInput): TaskOutcome {
+    const isDepthCapture = taskType === "depth_capture";
     if (errorCode === "result_target_unavailable") {
         return resultTargetUnavailableTaskOutcome();
     }
     if (stage === "submission_unknown") {
+        if (isDepthCapture && !providerRequestId) {
+            return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+        }
         return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
     }
     if (stage === "delivery_paused" || stage === "delivery_timed_out" || LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
+        if (isDepthCapture && !providerRequestId && (status === "cancelled" || errorCode === "submission_uncertain")) {
+            return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+        }
         return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : deliveryPendingTaskOutcome();
     }
     if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
@@ -189,7 +196,7 @@ function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId
     if (errorCode === "request_not_sent" || stage === "request_not_sent") {
         return notChargedTaskOutcome();
     }
-    if (taskType === "depth_capture") {
+    if (isDepthCapture) {
         return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
     }
     // 与后端 ComputeOutcome 一致：已持久化失败/取消/text_replay 任务在无明确未发出证据时默认要求确认重生成。
@@ -265,6 +272,9 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
         "";
 
     if (metadata.generationSubmissionState === "unknown" || taskStage === "submission_unknown") {
+        if (taskType === "depth_capture" && !providerRequestId) {
+            return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+        }
         return taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
     }
     if (metadata.status === "success" && Boolean(metadata.content || metadata.storageKey)) {

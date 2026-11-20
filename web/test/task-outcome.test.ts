@@ -58,6 +58,12 @@ describe("task-outcome", () => {
         expect(readTaskOutcome({ status: "failed" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
         expect(isRegenerateConfirm(readTaskOutcome({ status: "failed" }))).toBe(true);
         expect(readTaskOutcome({ status: "failed", type: "depth_capture" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture", stage: "submission_unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "cancelled", type: "depth_capture", stage: "submission_unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "cancelled", type: "depth_capture", stage: "delivery_paused" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "cancelled", type: "depth_capture", errorCode: "download_failed" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture", errorCode: "submission_uncertain" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture", errorCode: "download_failed" })).toEqual(deliveryPendingTaskOutcome());
         expect(readTaskOutcome({ status: "failed", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
         expect(readTaskOutcome({ status: "cancelled", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
         expect(readTaskOutcome({ status: "cancelled", stage: "request_not_sent" })).toEqual(notChargedTaskOutcome());
@@ -72,6 +78,10 @@ describe("task-outcome", () => {
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
         expect(isNodeRegenerateConfirm({ status: "loading", taskStatus: "failed" })).toBe(true);
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed", taskType: "depth_capture" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "failed", generationSubmissionState: "unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "cancelled", taskStage: "submission_unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "cancelled", generationErrorCode: "download_failed" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "failed", generationErrorCode: "download_failed" })).toEqual(deliveryPendingTaskOutcome());
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed", taskProviderRequestId: "req-1" })).toEqual({ phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" });
         expect(readNodeTaskOutcome({ status: "loading", taskStatus: "text_replay" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
         expect(readNodeTaskOutcome({ taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
