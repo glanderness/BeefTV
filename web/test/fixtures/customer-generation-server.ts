@@ -1,4 +1,5 @@
 import { customerGenerationProject, type CustomerGenerationScenario } from "./customer-generation-scenarios";
+import { applyMockCanvasPatch } from "../helpers/mock-canvas-patch";
 
 const contexts = new Map<string, { project: ReturnType<typeof customerGenerationProject>; posts: any[]; downloads: string[]; lookups: string[]; task?: any; holdCharacter?: boolean; delayReceipt?: boolean; sameOriginHang?: boolean; release: () => void; gate: Promise<void> }>();
 const json = (data: unknown) => Response.json({ code: 0, data, msg: "ok" });
@@ -42,6 +43,23 @@ export async function startCustomerScenarioServer(options: { port?: number } = {
         if (url.pathname === "/_scenario/state") return json({ project: state.project, posts: state.posts, downloads: state.downloads, lookups: state.lookups });
         if (url.pathname === "/_scenario/release") { state.release(); return json({ released: true }); }
         if (url.pathname === "/") { state.holdCharacter = url.searchParams.has("hold-character"); state.delayReceipt = url.searchParams.has("lose-receipt"); state.sameOriginHang = url.searchParams.has("same-origin-hang"); }
+        if (url.pathname === "/api/ops/canvas.document.patch") {
+            const body = await request.json();
+            const applied = applyMockCanvasPatch(state.project as unknown as Record<string, unknown>, body.params ?? {}, state.project.revision + 1);
+            state.project = applied.document as typeof state.project;
+            return json({
+                revision: state.project.revision,
+                result: {
+                    canvasId: state.project.id,
+                    revision: state.project.revision,
+                    title: state.project.title,
+                    updatedAt: state.project.updatedAt,
+                    serverAdvanced: applied.serverAdvanced,
+                    mediaPreserved: applied.mediaPreserved,
+                    ...(applied.serverAdvanced || applied.mediaPreserved ? { document: state.project } : {}),
+                },
+            });
+        }
         if (url.pathname === "/api/ops/canvas.document.commit") {
             const body = await request.json();
             state.project = { ...body.params.document, revision: state.project.revision + 1 };
