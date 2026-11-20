@@ -12,13 +12,18 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
+const localReservationDay = "local"
+
 // FileQuota owns file reservations and pending bytes. The lock also guards
 // resource promotion and other storage writes assembled by the application.
 type FileQuota struct {
 	repo           FileQuotaStore
 	policy         func() (FileQuotaPolicy, error)
 	mu             sync.Locker
+	unlimited      bool
 	pendingStorage map[string]int64
+	localMu        sync.Mutex
+	localActive    map[string]struct{}
 }
 
 type FileQuotaStore interface {
@@ -28,13 +33,68 @@ type FileQuotaStore interface {
 	ClearUploadReservation(string, string) error
 }
 
-type FileQuotaPolicy struct{ ResourceUploadMB, GeneratedFileMB, DailyUploadMB, StoredFileGB int64 }
+type FileQuotaPolicy struct {
+	ResourceUploadMB, GeneratedFileMB, DailyUploadMB, StoredFileGB int64
+	Unlimited                                                      bool
+}
 
 func NewFileQuota(repo FileQuotaStore, policy func() (FileQuotaPolicy, error), lock sync.Locker) *FileQuota {
 	if lock == nil {
 		lock = &sync.Mutex{}
 	}
 	return &FileQuota{repo: repo, policy: policy, mu: lock}
+}
+
+func (s *FileQuota) SetUnlimited(unlimited bool) *FileQuota {
+	if s != nil {
+		s.unlimited = unlimited
+	}
+	return s
+}
+
+func (s *FileQuota) LocalReservationHeld(userID, identity string) bool {
+	identity = strings.TrimSpace(identity)
+	if s == nil || identity == "" {
+		return false
+	}
+	key := pendingStorageKey(userID, identity)
+	s.localMu.Lock()
+	defer s.localMu.Unlock()
+	_, exists := s.localActive[key]
+	return exists
+}
+
+func (s *FileQuota) reserveLocalIdentity(userID, identity string) (string, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return localReservationDay, nil
+	}
+	key := pendingStorageKey(userID, identity)
+	s.localMu.Lock()
+	defer s.localMu.Unlock()
+	if s.localActive == nil {
+		s.localActive = map[string]struct{}{}
+	}
+	if _, exists := s.localActive[key]; exists {
+		return "", UploadInProgress()
+	}
+	s.localActive[key] = struct{}{}
+	return localReservationDay, nil
+}
+
+func (s *FileQuota) releaseLocalIdentity(userID, identity string) bool {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false
+	}
+	key := pendingStorageKey(userID, identity)
+	s.localMu.Lock()
+	defer s.localMu.Unlock()
+	if _, exists := s.localActive[key]; !exists {
+		return false
+	}
+	delete(s.localActive, key)
+	return true
 }
 
 func (s *FileQuota) PendingBytes(userID, identity string) (int64, bool) {
@@ -65,7 +125,7 @@ func (s *FileQuota) ReserveUpload(userID string, size int64, identity string) (s
 	if err != nil {
 		return "", err
 	}
-	return s.reserveUserStoredFileQuota(userID, size, kernel.Megabytes(policy.ResourceUploadMB), kernel.Megabytes(policy.DailyUploadMB), kernel.Gigabytes(policy.StoredFileGB), fmt.Sprintf("单个上传文件必须小于 %dMB", policy.ResourceUploadMB), identity)
+	return s.reserveUserStoredFileQuota(userID, size, kernel.Megabytes(policy.ResourceUploadMB), kernel.Megabytes(policy.DailyUploadMB), kernel.Gigabytes(policy.StoredFileGB), fmt.Sprintf("单个上传文件必须小于 %dMB", policy.ResourceUploadMB), identity, policy.Unlimited)
 }
 
 // reserveChunkedUploadQuota 用于分片上传完成时预留额度：单文件上限对分片会话不适用（每片已独立校验），
@@ -75,7 +135,7 @@ func (s *FileQuota) ReserveChunked(userID string, size int64, identity string) (
 	if err != nil {
 		return "", err
 	}
-	return s.reserveUserStoredFileQuota(userID, size, size+1, kernel.Megabytes(policy.DailyUploadMB), kernel.Gigabytes(policy.StoredFileGB), "", identity)
+	return s.reserveUserStoredFileQuota(userID, size, size+1, kernel.Megabytes(policy.DailyUploadMB), kernel.Gigabytes(policy.StoredFileGB), "", identity, policy.Unlimited)
 }
 
 func (s *FileQuota) ReserveGenerated(userID string, size int64, identity string) (string, error) {
@@ -83,7 +143,7 @@ func (s *FileQuota) ReserveGenerated(userID string, size int64, identity string)
 	if err != nil {
 		return "", err
 	}
-	return s.reserveUserStoredFileQuota(userID, size, kernel.Megabytes(policy.GeneratedFileMB)+1, kernel.Megabytes(policy.DailyUploadMB), kernel.Gigabytes(policy.StoredFileGB), fmt.Sprintf("单个生成文件不能超过 %dMB", policy.GeneratedFileMB), identity)
+	return s.reserveUserStoredFileQuota(userID, size, kernel.Megabytes(policy.GeneratedFileMB)+1, kernel.Megabytes(policy.DailyUploadMB), kernel.Gigabytes(policy.StoredFileGB), fmt.Sprintf("单个生成文件不能超过 %dMB", policy.GeneratedFileMB), identity, policy.Unlimited)
 }
 
 // 失败资源的记录已经计入账号存储用量；重试只重新预留当日上传额度，避免重复计算存储容量。
@@ -97,6 +157,9 @@ func (s *FileQuota) ReserveRetry(userID string, size int64, identity string) (st
 	}
 	if size >= kernel.Megabytes(policy.ResourceUploadMB) {
 		return "", kernel.BadAuthRequest(fmt.Sprintf("单个上传文件必须小于 %dMB", policy.ResourceUploadMB))
+	}
+	if policy.Unlimited {
+		return s.reserveLocalIdentity(userID, identity)
 	}
 	day := time.Now().UTC().Format("2006-01-02")
 	s.mu.Lock()
@@ -124,6 +187,9 @@ func (s *FileQuota) ReserveGeneratedRetry(userID string, size int64, identity st
 	if size >= kernel.Megabytes(policy.GeneratedFileMB)+1 {
 		return "", kernel.BadAuthRequest(fmt.Sprintf("单个生成文件不能超过 %dMB", policy.GeneratedFileMB))
 	}
+	if policy.Unlimited {
+		return s.reserveLocalIdentity(userID, identity)
+	}
 	day := time.Now().UTC().Format("2006-01-02")
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,12 +205,15 @@ func (s *FileQuota) ReserveGeneratedRetry(userID string, size int64, identity st
 	return day, nil
 }
 
-func (s *FileQuota) reserveUserStoredFileQuota(userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string, identity string) (string, error) {
+func (s *FileQuota) reserveUserStoredFileQuota(userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string, identity string, unlimited bool) (string, error) {
 	if size <= 0 {
 		return "", kernel.BadAuthRequest("上传文件不能为空")
 	}
 	if size >= exclusiveSingleFileLimit {
 		return "", kernel.BadAuthRequest(singleFileMessage)
+	}
+	if unlimited {
+		return s.reserveLocalIdentity(userID, identity)
 	}
 	day := time.Now().UTC().Format("2006-01-02")
 	s.mu.Lock()
@@ -185,6 +254,10 @@ func (s *FileQuota) Release(userID string, day string, size int64, identity stri
 	if day == "" || size <= 0 {
 		return
 	}
+	if day == localReservationDay {
+		s.releaseLocalIdentity(userID, identity)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
@@ -198,6 +271,10 @@ func (s *FileQuota) ReleaseRetry(userID string, day string, size int64, identity
 	if day == "" || size <= 0 {
 		return
 	}
+	if day == localReservationDay {
+		s.releaseLocalIdentity(userID, identity)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
@@ -208,6 +285,9 @@ func (s *FileQuota) ReleaseRetry(userID string, day string, size int64, identity
 
 func (s *FileQuota) Commit(userID string, size int64, identity string) {
 	if size <= 0 {
+		return
+	}
+	if s.releaseLocalIdentity(userID, identity) || s.unlimited {
 		return
 	}
 	s.mu.Lock()

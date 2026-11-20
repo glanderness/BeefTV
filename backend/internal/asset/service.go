@@ -93,6 +93,7 @@ type Service struct {
 	tickets      *MediaTicketStore
 	sessionMu    sync.Mutex
 	sessions     map[string]*chunkedUploadSession
+	deletionWake chan struct{}
 }
 
 func NewService(deps Dependencies) *Service {
@@ -107,6 +108,7 @@ func NewService(deps Dependencies) *Service {
 		previews:     newPreviewManager(dataDir),
 		tickets:      NewMediaTicketStore(),
 		sessions:     map[string]*chunkedUploadSession{},
+		deletionWake: make(chan struct{}, 1),
 	}
 	if svc.dataDir != "" {
 		svc.abandonStaleSessions()
@@ -371,6 +373,14 @@ func (s *Service) commitQuota(resource *model.Resource) {
 
 func (s *Service) finishQuota(userID string, day string, size int64, resource *model.Resource, created bool, err error, identity string) {
 	if s == nil || s.quota == nil {
+		return
+	}
+	if day == localReservationDay {
+		if resource != nil && resource.Status == model.ResourceStatusReady && created && err == nil {
+			s.quota.Commit(userID, size, identity)
+			return
+		}
+		s.quota.Release(userID, day, size, identity)
 		return
 	}
 	if resource != nil && resource.Status == model.ResourceStatusReady {

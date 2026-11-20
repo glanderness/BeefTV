@@ -59,3 +59,40 @@ func (r *Repository) RetryResourceDeletionJob(id string, owner string, lastError
 			"updated_at":       time.Now(),
 		}).Error
 }
+
+func (r *Repository) NextResourceDeletionWakeAt() (*time.Time, error) {
+	var earliest *time.Time
+	consider := func(candidate time.Time) {
+		if earliest == nil || candidate.Before(*earliest) {
+			t := candidate
+			earliest = &t
+		}
+	}
+
+	var pending model.ResourceDeletionJob
+	res := r.db.Where("status = ?", model.ResourceDeletionStatusPending).
+		Order("next_attempt_at asc").Limit(1).Find(&pending)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected > 0 {
+		consider(pending.NextAttemptAt)
+	}
+
+	var processing model.ResourceDeletionJob
+	res = r.db.Where("status = ?", model.ResourceDeletionStatusProcessing).
+		Order("CASE WHEN lease_expires_at IS NOT NULL AND lease_expires_at > next_attempt_at THEN lease_expires_at ELSE next_attempt_at END asc").
+		Limit(1).Find(&processing)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected > 0 {
+		wake := processing.NextAttemptAt
+		if processing.LeaseExpiresAt != nil && processing.LeaseExpiresAt.After(wake) {
+			wake = *processing.LeaseExpiresAt
+		}
+		consider(wake)
+	}
+
+	return earliest, nil
+}

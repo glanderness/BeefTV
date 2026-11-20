@@ -530,3 +530,99 @@ func TestUserAssetsPageAppliesPersonalFilterAndSidebarCounts(t *testing.T) {
 		t.Fatalf("personal facets = kinds %#v projects %#v", page.KindCounts, page.ProjectCounts)
 	}
 }
+
+func TestUpsertUserAssetSkipsCanvasScanOnMetadataEditAndScansOnceOnResourceSwap(t *testing.T) {
+	lib, db := newLibraryFixture(t)
+	now := time.Now().UTC()
+	for _, id := range []string{"res-keep", "res-swap"} {
+		res := model.Resource{ID: id, UserID: "owner", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: id + ".png", CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&res).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	initialRaw := json.RawMessage(`{"id":"asset-meta","kind":"image","title":"旧标题","coverUrl":"","tags":["a"],"data":{"storageKey":"resource:res-keep","dataUrl":"/api/resources/res-keep/file","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`)
+	if _, err := lib.UpsertUserAsset("owner", initialRaw); err != nil {
+		t.Fatal(err)
+	}
+	canvas := model.CanvasProject{
+		ID: "canvas-ref", UserID: "owner", Title: "引用画布", Revision: 1,
+		PayloadJSON: `{"nodes":[{"id":"n1","type":"image","metadata":{"assetId":"asset-meta","storageKey":"resource:res-keep"}}]}`,
+		CreatedAt:   now, UpdatedAt: now,
+	}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	canvasSelects := 0
+	if err := db.Callback().Query().After("gorm:query").Register("test:count_canvas_selects", func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "canvas_projects" {
+			canvasSelects++
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Metadata-only edit (title/tags changed, resource untouched) does zero canvas scans.
+	renamedRaw := json.RawMessage(`{"id":"asset-meta","kind":"image","title":"新标题","coverUrl":"","tags":["a","b"],"data":{"storageKey":"resource:res-keep","dataUrl":"/api/resources/res-keep/file","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`)
+	if _, err := lib.UpsertUserAsset("owner", renamedRaw); err != nil {
+		t.Fatalf("metadata-only UpsertUserAsset() error = %v", err)
+	}
+	if canvasSelects != 0 {
+		t.Fatalf("metadata-only asset update scanned canvas_projects %d times, want 0", canvasSelects)
+	}
+
+	// 2. Resource swap still rejects and scans canvas_projects at most once (inside TX, not twice).
+	swappedRaw := json.RawMessage(`{"id":"asset-meta","kind":"image","title":"新标题","coverUrl":"","tags":["a","b"],"data":{"storageKey":"resource:res-swap","dataUrl":"/api/resources/res-swap/file","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`)
+	err := func() error {
+		_, upsertErr := lib.UpsertUserAsset("owner", swappedRaw)
+		return upsertErr
+	}()
+	if err == nil || !strings.Contains(err.Error(), "不能替换为其他资源") {
+		t.Fatalf("resource-swap UpsertUserAsset() error = %v, want reference guard error", err)
+	}
+	if canvasSelects != 1 {
+		t.Fatalf("resource-swap asset update scanned canvas_projects %d times, want 1", canvasSelects)
+	}
+}
+
+func TestGuardCanvasReferencesProtectsQuotedAndBackslashAssetID(t *testing.T) {
+	lib, db := newLibraryFixture(t)
+	now := time.Now().UTC()
+	for _, id := range []string{"res-esc-old", "res-esc-new"} {
+		res := model.Resource{ID: id, UserID: "owner", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: id + ".png", CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&res).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	escapedID := `asset"quote\slash`
+	oldRaw := mustLibraryResourceAssetJSON(t, escapedID, "res-esc-old")
+	newRaw := mustLibraryResourceAssetJSON(t, escapedID, "res-esc-new")
+	if _, err := lib.UpsertUserAsset("owner", oldRaw); err != nil {
+		t.Fatal(err)
+	}
+	canvasPayload, err := json.Marshal(map[string]any{
+		"nodes": []map[string]any{
+			{
+				"id":   "node-1",
+				"type": "image",
+				"metadata": map[string]any{
+					"assetId":    escapedID,
+					"storageKey": "resource:res-esc-old",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canvas := model.CanvasProject{
+		ID: "canvas-escaped", UserID: "owner", Title: "特殊ID画布", Revision: 1,
+		PayloadJSON: string(canvasPayload), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.UpsertUserAsset("owner", newRaw); err == nil || !strings.Contains(err.Error(), "不能替换为其他资源") {
+		t.Fatalf("expected quote/backslash asset ID resource swap to be rejected, got %v", err)
+	}
+}

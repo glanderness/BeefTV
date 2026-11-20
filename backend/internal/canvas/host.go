@@ -21,7 +21,7 @@ type Host interface {
 	WithStorageLock(fn func() error) error
 	StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error
 	StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error
-	AdmitStructuredQuota(usage repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error
+	AdmitStructuredQuota(loadUsage func() (repository.UserStorageUsage, error), kind string, creating bool, deltaBytes int64) error
 	StructuredReplacementQuota(userID, kind string, count int, bytes int64) error
 	DeleteUserAssetWithResources(userID, assetID string, expectedStatus ...string) error
 	RecordActivity(userID, event string, count int)
@@ -45,7 +45,7 @@ func (nopHost) WithStorageLock(fn func() error) error {
 }
 func (nopHost) StructuredQuota(string, string, bool, int64) error     { return nil }
 func (nopHost) StructuredBatchQuota(string, string, int, int64) error { return nil }
-func (nopHost) AdmitStructuredQuota(repository.UserStorageUsage, string, bool, int64) error {
+func (nopHost) AdmitStructuredQuota(func() (repository.UserStorageUsage, error), string, bool, int64) error {
 	return nil
 }
 func (nopHost) StructuredReplacementQuota(string, string, int, int64) error  { return nil }
@@ -200,6 +200,9 @@ func (h configHost) StructuredQuota(userID, kind string, creating bool, deltaByt
 	if err != nil {
 		return err
 	}
+	if policy.Unlimited {
+		return nil
+	}
 	policy = ApplyDocumentLimitToPolicy(h.cfg.Repo, policy)
 	usage, err := h.cfg.Repo.UserStorageUsage(userID)
 	if err != nil {
@@ -216,6 +219,9 @@ func (h configHost) StructuredBatchQuota(userID, kind string, createdCount int, 
 	if err != nil {
 		return err
 	}
+	if policy.Unlimited {
+		return nil
+	}
 	policy = ApplyDocumentLimitToPolicy(h.cfg.Repo, policy)
 	usage, err := h.cfg.Repo.UserStorageUsage(userID)
 	if err != nil {
@@ -224,7 +230,7 @@ func (h configHost) StructuredBatchQuota(userID, kind string, createdCount int, 
 	return resource.ValidateStructuredCountQuota(usage, kind, createdCount, deltaBytes, policy)
 }
 
-func (h configHost) AdmitStructuredQuota(usage repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error {
+func (h configHost) AdmitStructuredQuota(loadUsage func() (repository.UserStorageUsage, error), kind string, creating bool, deltaBytes int64) error {
 	if h.cfg.ResourcePolicy == nil || h.cfg.Repo == nil {
 		return nil
 	}
@@ -232,7 +238,17 @@ func (h configHost) AdmitStructuredQuota(usage repository.UserStorageUsage, kind
 	if err != nil {
 		return err
 	}
+	if policy.Unlimited {
+		return nil
+	}
 	policy = ApplyDocumentLimitToPolicy(h.cfg.Repo, policy)
+	if loadUsage == nil {
+		return nil
+	}
+	usage, err := loadUsage()
+	if err != nil {
+		return err
+	}
 	return resource.ValidateStructuredStorageQuota(usage, kind, creating, deltaBytes, policy)
 }
 
@@ -243,6 +259,9 @@ func (h configHost) StructuredReplacementQuota(userID, kind string, count int, b
 	policy, err := h.cfg.ResourcePolicy(h.cfg.Repo)
 	if err != nil {
 		return err
+	}
+	if policy.Unlimited {
+		return nil
 	}
 	policy = ApplyDocumentLimitToPolicy(h.cfg.Repo, policy)
 	usage, err := h.cfg.Repo.UserStorageUsage(userID)

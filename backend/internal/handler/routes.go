@@ -44,7 +44,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		policy, available := loadRuntimePolicy(c, svc)
-		if !available || !enforceRateLimit(c, "tasks:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "tasks:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
@@ -72,7 +72,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		policy, available := loadRuntimePolicy(c, svc)
-		if !available || !enforceRateLimit(c, "timeline-ts:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "timeline-ts:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
@@ -100,7 +100,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		policy, available := loadRuntimePolicy(c, svc)
-		if !available || !enforceRateLimit(c, "timeline-render:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "timeline-render:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<20)
@@ -125,7 +125,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		policy, available := loadRuntimePolicy(c, svc)
-		if !available || !enforceRateLimit(c, "timeline-plan:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "timeline-plan:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<20)
@@ -151,7 +151,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		policy, available := loadRuntimePolicy(c, svc)
-		if !available || !enforceRateLimit(c, "depth-capture:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "depth-capture:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)

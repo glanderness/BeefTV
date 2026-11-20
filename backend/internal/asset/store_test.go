@@ -752,3 +752,53 @@ func TestNormalizeSingleByteRange(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalUnlimitedFinalizeReadyFailureRecoversViaRetry(t *testing.T) {
+	base, repo, dataDir := newTestDomain(t)
+	quota := NewFileQuota(repo, func() (FileQuotaPolicy, error) {
+		return FileQuotaPolicy{
+			ResourceUploadMB: 999,
+			GeneratedFileMB:  999,
+			DailyUploadMB:    999_999,
+			StoredFileGB:     999,
+			Unlimited:        true,
+		}, nil
+	}, nil)
+	quota.SetUnlimited(true)
+
+	failing := &readySaveFailRepo{Repository: base.repo, remaining: 2}
+	svc := NewService(Dependencies{
+		Repository: failing,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+
+	const key = "local-finalize-retry-key"
+	first, err := svc.UploadFile("local", "shot.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), key)
+	if err == nil || first == nil || first.Status != model.ResourceStatusPending {
+		t.Fatalf("first upload = %#v, err = %v; want pending + finalize error", first, err)
+	}
+	if quota.LocalReservationHeld("local", key) {
+		t.Fatalf("local reservation leaked after Store finalizeReady failure")
+	}
+
+	// Second attempt enters RetryOwned and also fails finalizeReady; must not leak localActive.
+	second, err := svc.UploadFile("local", "shot.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), key)
+	if err == nil || (second != nil && second.Status == model.ResourceStatusReady) {
+		t.Fatalf("second upload = %#v, err = %v; want retry finalize error", second, err)
+	}
+	if quota.LocalReservationHeld("local", key) {
+		t.Fatalf("local reservation leaked after RetryOwned finalizeReady failure")
+	}
+
+	// Third attempt succeeds cleanly without hitting UploadInProgress.
+	third, err := svc.UploadFile("local", "shot.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), key)
+	if err != nil || third == nil || third.Status != model.ResourceStatusReady || third.ID != first.ID {
+		t.Fatalf("third upload = %#v, err = %v; want ready resource %s", third, err, first.ID)
+	}
+	if quota.LocalReservationHeld("local", key) {
+		t.Fatalf("local reservation still held after commit")
+	}
+}

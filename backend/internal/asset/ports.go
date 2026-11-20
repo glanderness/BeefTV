@@ -45,6 +45,7 @@ type Repository interface {
 	ClaimNextResourceDeletionJob(owner string, leaseDuration time.Duration) (*model.ResourceDeletionJob, error)
 	CompleteResourceDeletionJob(id string, owner string) error
 	RetryResourceDeletionJob(id string, owner string, lastError string, nextAttemptAt time.Time) error
+	NextResourceDeletionWakeAt() (*time.Time, error)
 	CanvasHistoryReferencesObject(resource *model.Resource) (bool, error)
 	AssetForUser(userID string, assetID string) (*model.Asset, error)
 	AssetBusinessReferences(userID string, assetID string) ([]repository.ResourceDirectReference, error)

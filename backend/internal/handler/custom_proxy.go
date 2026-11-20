@@ -47,7 +47,7 @@ func RegisterCustomRelayRoutes(r *gin.RouterGroup, relays customRelays) {
 			return
 		}
 		policy, available := loadRuntimePolicy(c, relays)
-		if !available || !enforceRateLimit(c, "custom-relay:"+user.ID, policy.Request.CustomRelayPerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "custom-relay:"+user.ID, policy.Request.CustomRelayPerMinute, time.Minute) {
 			return
 		}
 		ttl := time.Duration(policy.Request.CustomRelayTimeoutMinutes+1) * time.Minute

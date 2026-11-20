@@ -833,6 +833,9 @@ func (s *Service) reconcileSessionDirsLocked() error {
 }
 
 func (s *Service) reservationHeld(userID, identity string) (bool, error) {
+	if checker, ok := s.quota.(interface{ LocalReservationHeld(string, string) bool }); ok && checker.LocalReservationHeld(userID, identity) {
+		return true, nil
+	}
 	row, err := s.lookupReservation(userID, identity)
 	if err != nil {
 		return false, err

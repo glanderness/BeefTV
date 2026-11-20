@@ -38,6 +38,7 @@ type RuntimeResourcePolicy struct {
 	TaskCount               int64 `json:"taskCount"`
 	APICallLogCount         int64 `json:"apiCallLogCount"`
 	RecycleBinRetentionDays int   `json:"recycleBinRetentionDays"`
+	Unlimited               bool  `json:"-"`
 }
 
 type RuntimeTaskPolicy struct {
@@ -68,6 +69,7 @@ type RuntimeRequestPolicy struct {
 	SystemRelayResponseMB      int64 `json:"systemRelayResponseMB"`
 	ChannelCircuitFailureCount int   `json:"channelCircuitFailureCount"`
 	ChannelCircuitOpenSeconds  int   `json:"channelCircuitOpenSeconds"`
+	Unlimited                  bool  `json:"-"`
 }
 
 type RuntimePolicySetting struct {
@@ -140,6 +142,7 @@ func selfUseRuntimePolicy() RuntimePolicySetting {
 		TaskDataGB: maxRuntimeStorageGB, AssetCount: maxRuntimeCount, CanvasCount: maxRuntimeCount,
 		TaskCount: maxRuntimeCount, APICallLogCount: maxRuntimeCount,
 		RecycleBinRetentionDays: 0,
+		Unlimited:               true,
 	}
 	value.Task = RuntimeTaskPolicy{
 		WorkerConcurrency: maxRuntimeConcurrency, ChannelConcurrency: maxRuntimeConcurrency, ActiveTaskLimit: maxRuntimeConcurrency,
@@ -156,6 +159,7 @@ func selfUseRuntimePolicy() RuntimePolicySetting {
 		CustomRelayResponseMB: maxRuntimeUploadMB, CustomRelayTimeoutMinutes: maxRuntimeTimeoutMinutes,
 		SystemRelayRequestMB: maxRuntimeUploadMB, SystemRelayResponseMB: maxRuntimeUploadMB,
 		ChannelCircuitFailureCount: maxRuntimeConcurrency, ChannelCircuitOpenSeconds: 1,
+		Unlimited: true,
 	}
 	return value
 }

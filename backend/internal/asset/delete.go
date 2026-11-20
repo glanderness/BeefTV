@@ -225,6 +225,7 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 		return fmt.Errorf("素材记录删除失败，请重试：%w", err)
 	}
 	if len(deletionJobs) > 0 {
+		s.signalDeletionWorker()
 		s.runBackground(func() { s.DrainDeletionJobs(len(deletionJobs)) })
 	}
 	return nil

@@ -65,11 +65,9 @@ func (s *Service) withWriteTx(fn func(*Service) error) error {
 
 func (s *Service) admitStructuredBytes(userID, kind string, creating bool, deltaBytes int64) error {
 	if s.repo != nil && s.repo.HoldsTransaction() {
-		usage, err := s.repo.UserStorageUsage(userID)
-		if err != nil {
-			return err
-		}
-		return s.host.AdmitStructuredQuota(usage, kind, creating, deltaBytes)
+		return s.host.AdmitStructuredQuota(func() (repository.UserStorageUsage, error) {
+			return s.repo.UserStorageUsage(userID)
+		}, kind, creating, deltaBytes)
 	}
 	return s.host.StructuredQuota(userID, kind, creating, deltaBytes)
 }
