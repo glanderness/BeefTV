@@ -101,12 +101,15 @@ export function CanvasImageViewerModal({
     useEffect(() => {
         if (!open || !rawDiscoveredItems.length) return;
         let cancelled = false;
+        const inFlightIds = new Set<string>();
         for (const entry of rawDiscoveredItems) {
             const resourceId = extractOwnedResourceId(entry.storageKey, entry.content);
             if (!resourceId || probedDiscoveredResourceIdsRef.current.has(resourceId)) continue;
             probedDiscoveredResourceIdsRef.current.add(resourceId);
+            inFlightIds.add(resourceId);
             void getResource(resourceId)
                 .then((res) => {
+                    inFlightIds.delete(resourceId);
                     if (cancelled) return;
                     if (res && (!res.status || res.status === "ready")) {
                         setReadyResourceIds((prev) => (prev.has(resourceId) ? prev : new Set(prev).add(resourceId)));
@@ -124,12 +127,16 @@ export function CanvasImageViewerModal({
                     }
                 })
                 .catch(() => {
+                    inFlightIds.delete(resourceId);
                     if (cancelled) return;
                     setMissingResourceIds((prev) => (prev.has(resourceId) ? prev : new Set(prev).add(resourceId)));
                 });
         }
         return () => {
             cancelled = true;
+            for (const resourceId of inFlightIds) {
+                probedDiscoveredResourceIdsRef.current.delete(resourceId);
+            }
         };
     }, [open, rawDiscoveredItems]);
 
