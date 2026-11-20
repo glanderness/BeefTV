@@ -32,6 +32,8 @@ describe("canvas media download", () => {
         expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "场景1.v2" }))).toBe("场景1.v2.png");
         expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "场景1.PNG" }))).toBe("场景1.png");
         expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "封面.JPEG", metadata: { mimeType: "image/jpeg" } }))).toBe("封面.jpg");
+        expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "photo.jfif", metadata: { mimeType: "image/jpeg" } }))).toBe("photo.jpg");
+        expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "photo.tif", metadata: { mimeType: "image/tiff" } }))).toBe("photo.tiff");
         const video = mediaNode({ type: CanvasNodeType.Video, title: "镜头1", metadata: { mimeType: "video/quicktime" } });
         expect(buildCanvasMediaDownloadFileName(video)).toBe("镜头1.mov");
     });

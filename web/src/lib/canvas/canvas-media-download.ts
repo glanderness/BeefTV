@@ -37,7 +37,17 @@ const MIME_EXTENSIONS: Record<string, string> = {
     "audio/x-m4a": "m4a",
 };
 
-const CONTENT_EXTENSIONS = new Set(Object.values(MIME_EXTENSIONS).concat(["jpeg", "mpg"]));
+const EXTENSION_ALIASES: Record<string, string> = {
+    jpeg: "jpg",
+    jpe: "jpg",
+    jfif: "jpg",
+    tif: "tiff",
+    mpg: "mpeg",
+    wave: "wav",
+    svgz: "svg",
+};
+
+const CONTENT_EXTENSIONS = new Set(Object.values(MIME_EXTENSIONS).concat(Object.keys(EXTENSION_ALIASES)));
 
 export function buildCanvasMediaDownloadFileName(
     node: Pick<CanvasNodeData, "type" | "title" | "metadata">,
@@ -65,7 +75,8 @@ export function sanitizeDownloadFileName(value: string, fallback = "未命名文
     const base = lastDot > 0 ? leaf.slice(0, lastDot) : leaf;
     const safeBase = safeFileNamePart(base, fallback);
     if (!extension || !/^[a-z0-9]{1,8}$/i.test(extension)) return safeBase;
-    return `${safeBase}.${extension.toLowerCase() === "jpeg" ? "jpg" : extension.toLowerCase()}`;
+    const lowerExtension = extension.toLowerCase();
+    return `${safeBase}.${EXTENSION_ALIASES[lowerExtension] ?? lowerExtension}`;
 }
 
 export function canvasMediaFileExtension(node: Pick<CanvasNodeData, "type" | "metadata">) {
@@ -94,9 +105,7 @@ function extensionFromContent(content?: string) {
 function normalizeMediaExtension(extension?: string) {
     const normalized = extension?.toLowerCase();
     if (!normalized || !CONTENT_EXTENSIONS.has(normalized)) return undefined;
-    if (normalized === "jpeg") return "jpg";
-    if (normalized === "mpg") return "mpeg";
-    return normalized;
+    return EXTENSION_ALIASES[normalized] ?? normalized;
 }
 
 function safeFileNamePart(value: string, fallback: string) {
