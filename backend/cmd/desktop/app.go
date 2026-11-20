@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"infinite-canvas/backend/internal/bootstrap"
@@ -63,7 +64,10 @@ type DesktopApp struct {
 	copyEagleMedia          func(baseURL, itemID, destPath string) error
 	emitReloadEvent         func(ctx context.Context, payload map[string]any)
 	nativeReloadFn          func(ctx context.Context)
+	showRecoveryDialog      func(ctx context.Context, repeated bool) (string, error)
 	gracefulReloadWait      time.Duration
+	nativeDialogDepth       atomic.Int32
+	nativeDialogGraceUntil  atomic.Int64
 }
 
 // Wails reflects every field type reachable from a bound object. Keeping the
@@ -273,6 +277,8 @@ func (a *DesktopApp) dialogContext() (context.Context, error) {
 }
 
 func (a *DesktopApp) promptSavePath(ctx context.Context, fileName string) (string, error) {
+	endDialog := a.beginNativeDialog()
+	defer endDialog()
 	a.mu.RLock()
 	choose := a.chooseSavePath
 	a.mu.RUnlock()

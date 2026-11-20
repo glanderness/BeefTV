@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/bootstrap"
@@ -244,15 +245,65 @@ func (a *DesktopApp) allowAutomaticRendererReload(now time.Time) bool {
 
 type rendererWatchdogState struct {
 	promptCooldownTill time.Time
+	wasModalOpen       bool
+	modalGraceUntil    time.Time
+}
+
+// beginNativeDialog tracks an active Go-owned native OS dialog (file/folder
+// picker or recovery prompt) so the watchdog suspends while the modal loop runs
+// and grants a fresh heartbeat grace window after the dialog closes.
+func (a *DesktopApp) beginNativeDialog() func() {
+	a.nativeDialogDepth.Add(1)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			graceUntil := time.Now().UTC().Add(rendererHeartbeatTimeout).UnixNano()
+			for {
+				cur := a.nativeDialogGraceUntil.Load()
+				if graceUntil <= cur || a.nativeDialogGraceUntil.CompareAndSwap(cur, graceUntil) {
+					break
+				}
+			}
+			a.nativeDialogDepth.Add(-1)
+		})
+	}
+}
+
+func (a *DesktopApp) nativeModalState() (bool, time.Time) {
+	open := a.nativeDialogDepth.Load() > 0 || platformHasNativeModalDialog()
+	var graceUntil time.Time
+	if ns := a.nativeDialogGraceUntil.Load(); ns > 0 {
+		graceUntil = time.Unix(0, ns).UTC()
+	}
+	return open, graceUntil
 }
 
 // evaluate decides whether the host should prompt the user for unresponsive
 // renderer recovery. It never silently reloads an active session: legitimate
 // long tasks (busy lease, capped at 10m to prevent leaked leases) get an
-// extended 180s ceiling, hidden windows defer prompting until visible, and
-// cooldown prevents repeated dialog spam.
-func (s *rendererWatchdogState) evaluate(now, lastBeat time.Time, hidden, busy bool, busySince time.Time) bool {
+// extended 180s ceiling, hidden windows defer prompting until visible, active
+// native OS modal dialogs (such as Windows file/folder pickers that pause
+// WebView2 JS timers) pause detection and grant a fresh grace window on close,
+// and cooldown prevents repeated dialog spam.
+func (s *rendererWatchdogState) evaluate(now, lastBeat time.Time, hidden, busy bool, busySince time.Time, modalOpen bool, modalGraceUntil time.Time) bool {
+	if modalOpen {
+		s.wasModalOpen = true
+		return false
+	}
+	if s.wasModalOpen {
+		s.wasModalOpen = false
+		grace := now.Add(rendererHeartbeatTimeout)
+		if grace.After(s.modalGraceUntil) {
+			s.modalGraceUntil = grace
+		}
+	}
+	if modalGraceUntil.After(s.modalGraceUntil) {
+		s.modalGraceUntil = modalGraceUntil
+	}
 	if lastBeat.IsZero() || hidden {
+		return false
+	}
+	if !s.modalGraceUntil.IsZero() && now.Before(s.modalGraceUntil) {
 		return false
 	}
 	effectiveBusy := busy
@@ -294,8 +345,9 @@ func (a *DesktopApp) startRendererWatchdog(rt *bootstrap.Runtime) {
 				return
 			case <-ticker.C:
 				lastBeat, hidden, busy, busySince := rt.LastClientHeartbeat()
+				modalOpen, modalGraceUntil := a.nativeModalState()
 				now := time.Now().UTC()
-				if !state.evaluate(now, lastBeat, hidden, busy, busySince) {
+				if !state.evaluate(now, lastBeat, hidden, busy, busySince, modalOpen, modalGraceUntil) {
 					continue
 				}
 				select {
@@ -357,24 +409,39 @@ func crashRecoveryDialogAction(choice string) string {
 	}
 }
 
+func windowsMessageBoxChoice(button uint32) string {
+	switch button {
+	case 6: // IDYES
+		return "Yes"
+	case 7: // IDNO
+		return "No"
+	case 2: // IDCANCEL
+		return "Cancel"
+	default:
+		return ""
+	}
+}
+
 // crashRecoveryDialogOptions builds platform-accurate native dialog options.
-// Wails v2 Windows QuestionDialog uses Win32 MB_YESNO (two buttons only,
-// DefaultButton matches "yes"/"no"), while macOS renders all three buttons.
+// On Windows, showCrashRecoveryDialog invokes Win32 MessageBoxW directly with
+// MB_YESNOCANCEL | MB_DEFBUTTON3 so Cancel, Esc, and the titlebar close button
+// all stay enabled for "continue waiting" (Wails QuestionDialog uses MB_YESNO
+// which disables the close button). macOS renders all three titled buttons.
 func crashRecoveryDialogOptions(goos string, repeated bool) wailsruntime.MessageDialogOptions {
 	title := "页面暂时无响应"
 	if repeated {
 		title = "页面多次无响应"
 	}
 	if goos == "windows" {
-		message := "检测到界面长时间未响应。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；如需继续等待请直接关闭本弹窗。"
+		message := "检测到界面长时间未响应。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」或关闭窗口继续等待。"
 		if repeated {
-			message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；如需继续等待请直接关闭本弹窗。"
+			message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」或关闭窗口继续等待。"
 		}
 		return wailsruntime.MessageDialogOptions{
 			Type:          wailsruntime.QuestionDialog,
 			Title:         title,
 			Message:       message,
-			DefaultButton: "yes",
+			DefaultButton: "cancel",
 		}
 	}
 	message := "检测到界面长时间未响应。您可以继续等待当前操作完成，或直接由后台导出诊断包、以仅缩略图安全模式重载当前页面。"
@@ -392,7 +459,15 @@ func crashRecoveryDialogOptions(goos string, repeated bool) wailsruntime.Message
 }
 
 func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated bool) {
-	choice, err := wailsruntime.MessageDialog(ctx, crashRecoveryDialogOptions(runtime.GOOS, repeated))
+	endDialog := a.beginNativeDialog()
+	defer endDialog()
+	a.mu.RLock()
+	showFn := a.showRecoveryDialog
+	a.mu.RUnlock()
+	if showFn == nil {
+		showFn = showCrashRecoveryDialog
+	}
+	choice, err := showFn(ctx, repeated)
 	if err != nil {
 		return
 	}
