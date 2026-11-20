@@ -409,25 +409,26 @@ func crashRecoveryDialogAction(choice string) string {
 	}
 }
 
-func windowsMessageBoxChoice(button uint32) string {
+const (
+	win32IDCancel int32 = 2
+	win32IDYes    int32 = 6
+	win32IDNo     int32 = 7
+)
+
+func windowsMessageBoxChoice(button int32) string {
 	switch button {
-	case 6: // IDYES
+	case win32IDYes:
 		return "Yes"
-	case 7: // IDNO
+	case win32IDNo:
 		return "No"
-	case 2: // IDCANCEL
+	case win32IDCancel:
 		return "Cancel"
 	default:
 		return ""
 	}
 }
 
-// crashRecoveryDialogOptions builds platform-accurate native dialog options.
-// On Windows, showCrashRecoveryDialog invokes Win32 MessageBoxW directly with
-// MB_YESNOCANCEL | MB_DEFBUTTON3 so Cancel, Esc, and the titlebar close button
-// all stay enabled for "continue waiting" (Wails QuestionDialog uses MB_YESNO
-// which disables the close button). macOS renders all three titled buttons.
-func crashRecoveryDialogOptions(goos string, repeated bool) wailsruntime.MessageDialogOptions {
+func crashRecoveryDialogText(goos string, repeated bool) (string, string) {
 	title := "页面暂时无响应"
 	if repeated {
 		title = "页面多次无响应"
@@ -437,17 +438,21 @@ func crashRecoveryDialogOptions(goos string, repeated bool) wailsruntime.Message
 		if repeated {
 			message = "检测到界面在短时间内多次无响应或崩溃。\n\n点击「是」立即直接导出后端诊断包到下载目录（不依赖页面）；点击「否」以仅缩略图安全模式重新加载当前页面；点击「取消」或关闭窗口继续等待。"
 		}
-		return wailsruntime.MessageDialogOptions{
-			Type:          wailsruntime.QuestionDialog,
-			Title:         title,
-			Message:       message,
-			DefaultButton: "cancel",
-		}
+		return title, message
 	}
 	message := "检测到界面长时间未响应。您可以继续等待当前操作完成，或直接由后台导出诊断包、以仅缩略图安全模式重载当前页面。"
 	if repeated {
 		message = "检测到界面在短时间内多次无响应或崩溃。建议先直接导出后端诊断包，或以仅缩略图安全模式重新加载。"
 	}
+	return title, message
+}
+
+// crashRecoveryDialogOptions builds native dialog options for non-Windows
+// platforms where Wails renders all three titled buttons. Windows invokes
+// Win32 MessageBox with MB_YESNOCANCEL | MB_DEFBUTTON3 in crash_resilience_windows.go
+// so Cancel, Esc, and the titlebar close button stay enabled for "continue waiting".
+func crashRecoveryDialogOptions(goos string, repeated bool) wailsruntime.MessageDialogOptions {
+	title, message := crashRecoveryDialogText(goos, repeated)
 	return wailsruntime.MessageDialogOptions{
 		Type:          wailsruntime.QuestionDialog,
 		Title:         title,
@@ -475,7 +480,7 @@ func (a *DesktopApp) promptCrashRecoveryDialog(ctx context.Context, repeated boo
 	case "export":
 		if path, exportErr := a.ExportRuntimeDiagnosticsToDownloads(""); exportErr != nil {
 			log.Printf("导出诊断包失败: %v", exportErr)
-		} else if path != "" {
+		} else if path != "" && ctx != nil && ctx.Value("frontend") != nil {
 			_, _ = wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
 				Type:    wailsruntime.InfoDialog,
 				Title:   "诊断包已导出",

@@ -255,15 +255,12 @@ func TestDesktopAppNativeDialogTracksDepthAndGraceWindow(t *testing.T) {
 }
 
 func TestCrashRecoveryDialogOptionsMatchPlatformCapabilities(t *testing.T) {
-	winOpts := crashRecoveryDialogOptions("windows", false)
-	if !strings.Contains(winOpts.Message, "点击「取消」") {
-		t.Fatalf("Windows MB_YESNOCANCEL copy must explain Cancel button: %q", winOpts.Message)
-	}
-	if winOpts.DefaultButton != "cancel" {
-		t.Fatalf("Windows DefaultButton = %q, want cancel (continue waiting)", winOpts.DefaultButton)
+	winTitle, winMsg := crashRecoveryDialogText("windows", false)
+	if winTitle == "" || !strings.Contains(winMsg, "点击「取消」") {
+		t.Fatalf("Windows MB_YESNOCANCEL copy must explain Cancel button: title=%q msg=%q", winTitle, winMsg)
 	}
 	for _, tc := range []struct {
-		code uint32
+		code int32
 		want string
 	}{
 		{6, "Yes"},
@@ -278,6 +275,67 @@ func TestCrashRecoveryDialogOptionsMatchPlatformCapabilities(t *testing.T) {
 	macOpts := crashRecoveryDialogOptions("darwin", false)
 	if len(macOpts.Buttons) != 3 || macOpts.DefaultButton != "继续等待" {
 		t.Fatalf("macOS dialog options mismatch: %+v", macOpts)
+	}
+}
+
+func TestPromptCrashRecoveryDialogHandlesCancelExportAndReload(t *testing.T) {
+	dataDir := t.TempDir()
+	downloadsDir := t.TempDir()
+	app := newDesktopApp(dataDir)
+	app.downloadsDir = downloadsDir
+	app.revealFile = func(string) error { return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.wailsCtx = ctx
+	if err := app.start(ctx); err != nil {
+		t.Fatalf("desktop app start failed: %v", err)
+	}
+	defer func() { _ = app.stop(context.Background()) }()
+
+	nativeReloads := 0
+	app.nativeReloadFn = func(context.Context) { nativeReloads++ }
+
+	// 1. Cancel ("continue waiting"): must track modal open while shown, set grace window, and neither reload nor export.
+	sawOpen := false
+	app.showRecoveryDialog = func(_ context.Context, _ bool) (string, error) {
+		open, _ := app.nativeModalState()
+		sawOpen = open
+		return "Cancel", nil
+	}
+	app.promptCrashRecoveryDialog(ctx, false)
+	if !sawOpen {
+		t.Fatal("expected nativeModalState open=true while recovery dialog is displayed")
+	}
+	if open, grace := app.nativeModalState(); open || time.Until(grace) <= 0 {
+		t.Fatalf("expected open=false and future grace after Cancel, got open=%v grace=%v", open, grace)
+	}
+	if nativeReloads != 0 {
+		t.Fatalf("Cancel must not trigger reload, got %d", nativeReloads)
+	}
+	if entries, _ := os.ReadDir(downloadsDir); len(entries) != 0 {
+		t.Fatalf("Cancel must not export diagnostics, got %d files", len(entries))
+	}
+
+	// 2. No ("safe-reload"): triggers native safe-mode reload when heartbeat is stale/absent.
+	app.showRecoveryDialog = func(_ context.Context, _ bool) (string, error) {
+		return "No", nil
+	}
+	app.promptCrashRecoveryDialog(ctx, false)
+	if nativeReloads != 1 {
+		t.Fatalf("expected 1 native safe-mode reload on No, got %d", nativeReloads)
+	}
+
+	// 3. Yes ("export"): directly writes diagnostic zip to Downloads without reloading.
+	app.showRecoveryDialog = func(_ context.Context, _ bool) (string, error) {
+		return "Yes", nil
+	}
+	app.promptCrashRecoveryDialog(ctx, false)
+	entries, err := os.ReadDir(downloadsDir)
+	if err != nil || len(entries) != 1 || !strings.HasSuffix(entries[0].Name(), ".zip") {
+		t.Fatalf("expected 1 exported diagnostic zip on Yes, got %v (err=%v)", entries, err)
+	}
+	if nativeReloads != 1 {
+		t.Fatalf("Yes export must not trigger extra reload, got %d", nativeReloads)
 	}
 }
 
