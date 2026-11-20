@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildImageGenerationNodeTitle } from "@/lib/canvas/canvas-generation-title";
-import { buildCanvasMediaDownloadFileName, canvasMediaFileExtension, mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { buildBatchDownloadFilename } from "@/lib/canvas/canvas-batch-download";
+import { buildCanvasMediaDownloadFileName, canvasMediaFileExtension, firstKnownMediaMimeType, mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function mediaNode(overrides: Partial<CanvasNodeData> = {}): CanvasNodeData {
@@ -68,6 +69,24 @@ describe("canvas media download", () => {
             expect(canvasMediaFileExtension(node)).toBe("wav");
             expect(buildCanvasMediaDownloadFileName(node)).toBe("旁白.wav");
         }
+    });
+
+    test("支持 video/x-m4v、image/jpg、image/heic，并优先选首个可识别的 MIME 候选", () => {
+        expect(buildCanvasMediaDownloadFileName(mediaNode({ type: CanvasNodeType.Video, title: "clip.v2", metadata: { mimeType: "video/x-m4v" } }))).toBe("clip.v2.m4v");
+        expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "照片", metadata: { mimeType: "image/jpg" } }))).toBe("照片.jpg");
+        expect(buildCanvasMediaDownloadFileName(mediaNode({ title: "实况", metadata: { mimeType: "image/heic" } }))).toBe("实况.heic");
+        expect(firstKnownMediaMimeType("image/jpeg", "image/*", "image/png")).toBe("image/jpeg");
+        expect(firstKnownMediaMimeType("application/octet-stream", "image/*", "image/webp")).toBe("image/webp");
+        expect(buildCanvasMediaDownloadFileName(mediaNode({
+            title: "照片",
+            metadata: { mimeType: firstKnownMediaMimeType("image/jpeg", "image/*"), content: "/api/resources/res-1/file" },
+        }))).toBe("照片.jpg");
+    });
+
+    test("单张下载与批量下载共用同一扩展名剥离和清理规则", () => {
+        const jpegNode = mediaNode({ title: "封面.jpeg", metadata: { content: "/api/resources/res-1/file", mimeType: "image/jpeg" } });
+        expect(buildCanvasMediaDownloadFileName(jpegNode)).toBe("封面.jpg");
+        expect(buildBatchDownloadFilename(jpegNode, 0, 3)).toBe("01_封面.jpg");
     });
 });
 

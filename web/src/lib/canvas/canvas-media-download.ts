@@ -5,13 +5,17 @@ const FILE_NAME_PART_LIMIT = 80;
 const MIME_EXTENSIONS: Record<string, string> = {
     "image/png": "png",
     "image/jpeg": "jpg",
+    "image/jpg": "jpg",
     "image/webp": "webp",
     "image/gif": "gif",
     "image/svg+xml": "svg",
     "image/avif": "avif",
     "image/bmp": "bmp",
     "image/tiff": "tiff",
+    "image/heic": "heic",
+    "image/heif": "heif",
     "video/mp4": "mp4",
+    "video/x-m4v": "m4v",
     "video/webm": "webm",
     "video/quicktime": "mov",
     "video/ogg": "ogv",
@@ -35,12 +39,23 @@ const MIME_EXTENSIONS: Record<string, string> = {
 
 const CONTENT_EXTENSIONS = new Set(Object.values(MIME_EXTENSIONS).concat(["jpeg", "mpg"]));
 
-export function buildCanvasMediaDownloadFileName(node: Pick<CanvasNodeData, "type" | "title" | "metadata">) {
+export function buildCanvasMediaDownloadFileName(
+    node: Pick<CanvasNodeData, "type" | "title" | "metadata">,
+    options?: { fallbackName?: string },
+) {
     const extension = canvasMediaFileExtension(node);
     const title = node.title.trim();
     const dot = title.lastIndexOf(".");
     const stem = dot > 0 && normalizeMediaExtension(title.slice(dot + 1)) === extension ? title.slice(0, dot) : title;
-    return `${safeFileNamePart(stem, defaultNodeName(node.type))}.${extension}`;
+    return `${safeFileNamePart(stem, options?.fallbackName ?? defaultNodeName(node.type))}.${extension}`;
+}
+
+export function firstKnownMediaMimeType(...candidates: Array<string | undefined>) {
+    return candidates.find((candidate) => Boolean(extensionFromMimeType(candidate)));
+}
+
+export function isKnownMediaExtension(extension?: string) {
+    return Boolean(normalizeMediaExtension(extension));
 }
 
 export function sanitizeDownloadFileName(value: string, fallback = "未命名文件") {

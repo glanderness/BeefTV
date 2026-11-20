@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { CanvasHistoryStackFrame } from "../../src/components/canvas/canvas-node-history-stack";
 import { CanvasNodeInfoModal } from "../../src/components/canvas/canvas-node-toolbar";
 import { CanvasImageViewerModal } from "../../src/components/canvas/image-viewer/canvas-image-viewer-modal";
+import { CanvasVideoViewer } from "../../src/components/canvas/image-viewer/canvas-video-viewer";
 import { getAntThemeConfig } from "../../src/lib/app-theme";
 import { canvasThemes } from "../../src/lib/canvas-theme";
 import {
@@ -151,6 +152,7 @@ declare global {
             load50VersionColdNode: () => void;
             load50VersionNodeWithPrimedPreviews: () => Promise<void>;
             loadPrimedPreviewPermFailNode: (resId?: string) => Promise<void>;
+            openVideoViewer: () => void;
             reopen: () => void;
         };
     }
@@ -158,6 +160,7 @@ declare global {
 
 function HarnessApp() {
     const [node, setNode] = useState<CanvasNodeData>(initialNode);
+    const [videoNode, setVideoNode] = useState<CanvasNodeData | null>(null);
     const nodeRef = useRef<CanvasNodeData>(initialNode);
     nodeRef.current = node;
     const assetsRef = useRef<Asset[]>([...initialAssets]);
@@ -427,7 +430,28 @@ function HarnessApp() {
             setNode(permFailNode);
             setOpen(true);
         },
-        reopen: () => setOpen(true),
+        openVideoViewer: () => {
+            setOpen(false);
+            setVideoNode({
+                id: "node-video-viewer-test",
+                type: CanvasNodeType.Video,
+                title: "镜头1.v2",
+                position: { x: 0, y: 0 },
+                width: 480,
+                height: 270,
+                metadata: {
+                    status: "success",
+                    content: "/video/shot.mov",
+                    mimeType: "video/quicktime",
+                    naturalWidth: 1920,
+                    naturalHeight: 1080,
+                },
+            });
+        },
+        reopen: () => {
+            setVideoNode(null);
+            setOpen(true);
+        },
         setNodeStatus: (mode) => {
             setNode((prev) => {
                 let next: CanvasNodeData;
@@ -547,6 +571,7 @@ function HarnessApp() {
                             });
                         }}
                     />
+                    {videoNode ? <CanvasVideoViewer node={videoNode} onClose={() => setVideoNode(null)} /> : null}
                     <CanvasNodeInfoModal
                         node={openedNodeInfoId ? node : null}
                         open={Boolean(openedNodeInfoId)}

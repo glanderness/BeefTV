@@ -7,7 +7,7 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { activeImageHistoryIndex, getPrimarySwitchBlockReason, isActiveImageHistoryItem, resolveCanvasNodeImageHistory } from "@/lib/canvas/canvas-image-history";
 import { discoverNodeImageHistoryFromTasks, filterPersistableDiscoveredHistoryItems } from "@/lib/canvas/canvas-image-history-tasks";
-import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName, firstKnownMediaMimeType } from "@/lib/canvas/canvas-media-download";
 import { extractOwnedResourceId } from "@/lib/canvas/canvas-resource-id";
 import { getResource, isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
 import { listGenerationTasks } from "@/services/api/task-center";
@@ -544,7 +544,7 @@ export function CanvasImageViewerModal({
         const fileName = buildCanvasMediaDownloadFileName({
             type: CanvasNodeType.Image,
             title: node?.title || alt,
-            metadata: { mimeType: target.mimeType || metricsById[target.id]?.mimeType || blob?.type, content: target.content },
+            metadata: { mimeType: firstKnownMediaMimeType(blob?.type, target.mimeType, metricsById[target.id]?.mimeType), content: target.content },
         });
         const status = blob ? await saveOwnedOrBrowserBlob(fileName, blob) : await downloadOwnedOrBrowserMedia({ fileName, resourceId });
         if (status === "saved" && isWailsNativeShell()) message.success("已保存原图");

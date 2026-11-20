@@ -11,6 +11,7 @@ import {
     stripStaleFileUploadMetadata,
     UPLOAD_REPLACEMENT_RESET_KEYS,
 } from "@/lib/canvas/canvas-node-metadata-contract";
+import { isKnownMediaExtension } from "@/lib/canvas/canvas-media-download";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { isCanvasMediaNode, mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
@@ -52,7 +53,9 @@ export function createFileUploadAttemptId(): string {
 
 function uploadNodeTitle(fileName: string): string {
     const extensionStart = fileName.lastIndexOf(".");
-    return extensionStart > 0 && extensionStart < fileName.length - 1
+    if (extensionStart <= 0 || extensionStart >= fileName.length - 1) return fileName;
+    const extension = fileName.slice(extensionStart + 1);
+    return isKnownMediaExtension(extension) || /^(txt|md|markdown|docx)$/i.test(extension)
         ? fileName.slice(0, extensionStart)
         : fileName;
 }

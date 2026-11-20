@@ -177,6 +177,9 @@ beforeAll(async () => {
             if (url.pathname.startsWith("/api/tasks")) {
                 return Response.json({ code: 0, data: mockTasks, msg: "ok" });
             }
+            if (url.pathname === "/video/shot.mov") {
+                return new Response("MOCK_MOV_BYTES", { headers: { "Content-Type": "video/quicktime" } });
+            }
             if (url.pathname.startsWith("/api/resources/")) {
                 if (url.pathname.includes("res-deleted")) {
                     return Response.json({ code: 404, data: null, msg: "not found" }, { status: 404 });
@@ -388,9 +391,13 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     // Export the inspected version in compare mode, even when single mode last displayed a different version.
     await page.getByTestId("canvas-image-mode-side-by-side").click();
     await page.getByRole("button", { name: "图 A" }).click();
-    expect((await downloadViewedImage()).payload).toContain("FULL_RES_PAYLOAD");
+    const downloadA = await downloadViewedImage();
+    expect(downloadA.fileName).toBe("测试分镜图.svg");
+    expect(downloadA.payload).toContain("FULL_RES_PAYLOAD");
     await page.getByRole("button", { name: "图 B" }).click();
-    expect((await downloadViewedImage()).payload).toContain("V2");
+    const downloadB = await downloadViewedImage();
+    expect(downloadB.fileName).toBe("测试分镜图.svg");
+    expect(downloadB.payload).toContain("V2");
     // Pressing Escape while the export menu is open must dismiss only the menu, not the whole viewer.
     // Also verify the fullscreen viewer stacks above canvas overlays (--z-canvas-overlay-active=150, --z-popover=200)
     // while remaining below AntD modals (1000) so Node Info opens on top of the viewer.
@@ -553,10 +560,11 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     await new Promise((r) => setTimeout(r, 350));
     expect(perfFileRequests.length).toBeLessThanOrEqual(1);
 
-    // Download action must fetch full-resolution /file blob rather than saving the 128px preview fallback
+    // Download action must fetch full-resolution /file blob rather than saving the 128px preview fallback,
+    // and prefer the fetched blob Content-Type (image/svg+xml) over stale fixture metadata (image/png).
     await page.getByTestId("canvas-image-filmstrip-item-1").click();
     const download = await downloadViewedImage();
-    expect(download.fileName).toBe("50版性能测试节点.png");
+    expect(download.fileName).toBe("50版性能测试节点.svg");
     expect(download.payload).toContain("FULL_RES_PAYLOAD");
 }, 20000);
 
@@ -674,4 +682,12 @@ test("resolves standalone protected /api/resources URLs without a node, enforces
         const img = document.querySelector("[data-testid='canvas-image-stage-single'] img");
         return !err && Boolean(img && !img.classList.contains("opacity-35"));
     }, { timeout: 3000 });
+    // (7) Video fullscreen viewer downloads using the shared node-name builder with real MIME extension.
+    await page.evaluate(() => window.__viewerHarness!.openVideoViewer());
+    await page.waitForSelector("[data-testid='canvas-video-viewer-modal']", { timeout: 5000 });
+    const [videoDownload] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("button", { name: "下载视频" }).click(),
+    ]);
+    expect(videoDownload.suggestedFilename()).toBe("镜头1.v2.mov");
 }, 20000);

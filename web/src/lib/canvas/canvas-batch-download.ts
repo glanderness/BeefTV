@@ -1,7 +1,6 @@
-import { canvasMediaFileExtension } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
 
-const BATCH_FILENAME_PART_LIMIT = 80;
 const ROW_BAND_THRESHOLD_PX = 48;
 const DEFAULT_BATCH_DOWNLOAD_STAGGER_MS = 120;
 
@@ -46,10 +45,7 @@ export function buildBatchDownloadFilename(
 ): string {
     const padWidth = Math.max(2, String(Math.max(total, index + 1)).length);
     const prefix = String(Math.max(1, index + 1)).padStart(padWidth, "0");
-    const extension = canvasMediaFileExtension(node);
-    const rawTitle = stripMatchingExtension(node.title || "", extension);
-    const baseName = sanitizeBatchTitle(rawTitle, defaultBatchMediaLabel(node.type));
-    return `${prefix}_${baseName}.${extension}`;
+    return `${prefix}_${buildCanvasMediaDownloadFileName(node, { fallbackName: defaultBatchMediaLabel(node.type) })}`;
 }
 
 export async function batchDownloadCanvasMediaNodes(
@@ -156,28 +152,6 @@ function defaultBatchMediaLabel(type: CanvasNodeTypeId): string {
     if (type === CanvasNodeType.Video) return "视频";
     if (type === CanvasNodeType.Audio) return "音频";
     return "图片";
-}
-
-function stripMatchingExtension(title: string, extension: string): string {
-    const trimmed = title.trim();
-    const suffix = `.${extension}`.toLowerCase();
-    if (trimmed.toLowerCase().endsWith(suffix) && trimmed.length > suffix.length) {
-        return trimmed.slice(0, -suffix.length);
-    }
-    return trimmed;
-}
-
-function sanitizeBatchTitle(value: string, fallback: string): string {
-    const normalized = value
-        .trim()
-        .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
-        .replace(/_+/g, "_")
-        .replace(/\s+/g, " ")
-        .replace(/^_+|_+$/g, "")
-        .slice(0, BATCH_FILENAME_PART_LIMIT)
-        .replace(/[. ]+$/g, "");
-    if (!normalized) return fallback;
-    return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(normalized) ? `_${normalized}` : normalized;
 }
 
 function delay(ms: number): Promise<void> {

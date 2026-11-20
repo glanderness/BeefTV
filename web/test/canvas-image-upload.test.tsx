@@ -30,7 +30,7 @@ const placeholder = () => createImageUploadPlaceholder("upload", file, { x: 100,
 
 describe("图片上传占位", () => {
     test("使用文件主名作为节点标题，保留名称里的点", () => {
-        for (const [name, title] of [["场景1.png", "场景1"], ["场景1.v2.PNG", "场景1.v2"], ["场景1", "场景1"], [".场景1", ".场景1"]]) {
+        for (const [name, title] of [["场景1.png", "场景1"], ["场景1.v2.PNG", "场景1.v2"], ["clip.v2.m4v", "clip.v2"], ["clip.final", "clip.final"], ["场景1", "场景1"], [".场景1", ".场景1"]]) {
             const node = createImageUploadPlaceholder("upload", { ...file, name }, { x: 0, y: 0 }, { width: 1, height: 1 });
             expect(node.title).toBe(title);
         }
