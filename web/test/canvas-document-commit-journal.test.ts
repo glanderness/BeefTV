@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { applyMockCanvasPatch, type MockCanvasPatchParams } from "./helpers/mock-canvas-patch";
 
 type Stored = Map<string, string>;
 const stored: Stored = new Map();
@@ -99,7 +100,7 @@ mock.module("@/services/api/request", () => ({
             if (server.missingCreateReceipt) return {};
             return { project: { id: "c1", revision: 1 } };
         },
-        post: async (_path: string, body: { opId: string; params: { expectedRevision: number; document: { title: string; nodes?: Array<{ id: string }> } } }) => {
+        post: async (path: string, body: { opId: string; params: MockCanvasPatchParams & { expectedRevision?: number; document?: { title: string; nodes?: Array<{ id: string }> } } }) => {
             if (server.holdDispatch) {
                 server.dispatchWaiting = true;
                 await server.holdDispatch;
@@ -118,10 +119,11 @@ mock.module("@/services/api/request", () => ({
                 if (failure.retryable !== undefined) options.retryable = failure.retryable;
                 throw new ApiError("保存失败", options);
             }
+            const isPatch = path === "/ops/canvas.document.patch";
             const existing = server.receipts.get(body.opId);
             if (existing) {
                 return {
-                    op: "canvas.document.commit",
+                    op: isPatch ? "canvas.document.patch" : "canvas.document.commit",
                     opId: body.opId,
                     replayed: true,
                     caller: "manual",
@@ -129,14 +131,47 @@ mock.module("@/services/api/request", () => ({
                     result: { canvasId: "c1", revision: existing.revision, updatedAt: "2026-01-01T00:00:00.000Z" },
                 };
             }
-            if (server.enforceRevision && body.params.expectedRevision !== server.revision) {
+            if (isPatch) {
+                const baseRevision = body.params.baseRevision ?? 0;
+                server.revision += 1;
+                const { document, serverAdvanced } = applyMockCanvasPatch(server.document, body.params, server.revision);
+                const docTyped = document as { title?: string; nodes?: Array<{ id: string }> };
+                server.commits.push({
+                    opId: body.opId,
+                    expectedRevision: baseRevision,
+                    title: String(docTyped.title ?? ""),
+                    nodeIds: (docTyped.nodes ?? []).map((node) => node.id),
+                });
+                server.receipts.set(body.opId, { revision: server.revision, title: String(docTyped.title ?? "") });
+                server.document = document;
+                if (server.abortAfterCommit) {
+                    server.abortAfterCommit = false;
+                    throw new DOMException("The operation was aborted", "AbortError");
+                }
+                return {
+                    op: "canvas.document.patch",
+                    opId: body.opId,
+                    replayed: false,
+                    caller: "manual",
+                    revision: server.revision,
+                    result: {
+                        canvasId: "c1",
+                        revision: server.revision,
+                        updatedAt: "2026-01-01T00:00:00.000Z",
+                        serverAdvanced,
+                        ...(serverAdvanced ? { document: structuredClone(document) } : {}),
+                    },
+                };
+            }
+            const expectedRevision = body.params.expectedRevision ?? 0;
+            if (server.enforceRevision && expectedRevision !== server.revision) {
                 throw new ApiError("画布已被其他入口修改", { status: 409, reason: "stale_revision" });
             }
             server.revision += 1;
-            const document = body.params.document as { title: string; nodes?: Array<{ id: string }> };
+            const document = (body.params.document ?? { title: "" }) as { title: string; nodes?: Array<{ id: string }> };
             server.commits.push({
                 opId: body.opId,
-                expectedRevision: body.params.expectedRevision,
+                expectedRevision,
                 title: document.title,
                 nodeIds: (document.nodes ?? []).map((node) => node.id),
             });
@@ -725,7 +760,7 @@ describe("画布文档提交日记", () => {
         expect(journal.confirmedRevision).toBe(6);
     });
 
-    test("丢失响应后外部写入再回放：原操作按回执确认，后来的编辑与远端同字段冲突时保留本地并暂停", async () => {
+    test("丢失响应后外部写入再回放：原操作按回执确认，后来的编辑以增量 patch 收敛保存且不暂停", async () => {
         server.enforceRevision = true;
         await saveCanvasOperationJournal({
             userScope: "guest",
@@ -751,20 +786,19 @@ describe("画布文档提交日记", () => {
         expect(canvasBackendSubmitPaused("c1")).toBe(false);
         expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
 
-        // 重放拿到原回执；后来的编辑按 revision 2 提交被拒，读回 revision 5 后标题两边都改过：保留本地并暂停。
-        await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toThrow();
+        // 重放拿到原回执；后来的编辑通过增量 patch 在服务端原子合并成功，不锁死自动保存。
+        await syncLocalCanvasProjectToBackend("c1");
         const journal = await loadCanvasOperationJournal("c1");
         expect(journal.inFlight).toBeNull();
-        expect(journal.confirmedRevision).toBe(2);
-        expect(journal.confirmedSnapshot?.title).toBe("第一次");
+        expect(journal.confirmedRevision).toBe(6);
         expect(useCanvasStore.getState().projects[0].title).toBe("后来的编辑");
-        expect(canvasBackendSubmitPaused("c1")).toBe(true);
-        expect(canvasExternalRevisionConflict("guest", "c1")?.remoteRevision).toBe(5);
-        await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toBeInstanceOf(CanvasBackendSubmitPausedError);
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
         expect(server.commits).toEqual([
             expect.objectContaining({ opId: firstId, title: "第一次" }),
+            expect.objectContaining({ title: "后来的编辑" }),
         ]);
-        expect((server.document as { title: string }).title).toBe("助手改过");
+        expect((server.document as { title: string }).title).toBe("后来的编辑");
     });
 
     test("外部新增节点时本地改了另一节点：刷新三路合并两边都保留，并按最新 revision 提交", async () => {
@@ -1090,7 +1124,7 @@ describe("画布文档提交日记", () => {
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
-    test("同一节点人类改过生成内容时保留本地值并说明冲突，不伪装成功", async () => {
+    test("同一节点人类改过生成内容时保留本地值，且不锁死自动保存", async () => {
         const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
         await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
         useCanvasStore.getState().updateProject("c1", {
@@ -1104,9 +1138,8 @@ describe("画布文档提交日记", () => {
         const live = useCanvasStore.getState().projects[0];
         expect(live.nodes[0].metadata?.content).toBe("人类改过的内容");
         expect(live.nodes[0].metadata?.status).not.toBe("success");
-        expect(canvasBackendSubmitPaused("c1")).toBe(true);
-        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.content).toBe("https://media/gen");
-        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.storageKey).toBe("res-gen");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
@@ -1190,7 +1223,7 @@ describe("画布文档提交日记", () => {
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
-    test("人类已把节点改成 success 时 settle 不覆盖，本地媒体保留", async () => {
+    test("人类已把节点改成 success 时 settle 不覆盖，本地媒体保留且不暂停自动保存", async () => {
         const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
         await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
         useCanvasStore.getState().updateProject("c1", {
@@ -1204,12 +1237,12 @@ describe("画布文档提交日记", () => {
         const live = useCanvasStore.getState().projects[0];
         expect(live.nodes).toEqual(adopted.nodes);
         expect(live.nodes[0].metadata?.content).toBe("人类留下的图");
-        expect(canvasBackendSubmitPaused("c1")).toBe(true);
-        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
-    test("同一字段本地元数据与服务端元数据冲突时暂停，不猜胜者", async () => {
+    test("同一字段本地元数据与服务端元数据重叠时确定性保留本地值且不暂停", async () => {
         const baseNode = node("n1", "镜头1", { metadata: { prompt: "基线提示" } });
         await seedConfirmed(canvas("基线", 1, { nodes: [baseNode] }));
         useCanvasStore.getState().updateProject("c1", {
@@ -1222,13 +1255,12 @@ describe("画布文档提交日记", () => {
 
         const live = useCanvasStore.getState().projects[0];
         expect(live.nodes[0].metadata?.prompt).toBe("本地提示");
-        expect(canvasBackendSubmitPaused("c1")).toBe(true);
-        expect(canvasExternalRevisionConflict("guest", "c1")?.remoteRevision).toBe(4);
-        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.prompt).toBe("服务端提示");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
     });
 
-    test("无已确认快照时不把生成结果静默并进草稿", async () => {
+    test("无已确认快照时确定性合并生成结果与本地节点，不丢任何一方且不暂停", async () => {
         resetCanvasOperationJournalMemory();
         clearCanvasDocumentBase("c1");
         const localOnly = node("n-local", "本地节点");
@@ -1236,11 +1268,11 @@ describe("画布文档提交日记", () => {
 
         const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }));
 
-        expect(adopted.nodes.map((item) => item.id)).toEqual(["n-local"]);
-        expect(useCanvasStore.getState().projects[0].nodes.map((item) => item.id)).toEqual(["n-local"]);
-        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(0);
-        expect(canvasDocumentBase("c1")).toBeUndefined();
-        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        expect(adopted?.nodes.map((item) => item.id).sort()).toEqual(["n-gen", "n-local"]);
+        expect(useCanvasStore.getState().projects[0].nodes.map((item) => item.id).sort()).toEqual(["n-gen", "n-local"]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
+        expect(canvasDocumentBase("c1")?.revision).toBe(4);
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
     });
 
     test("日记写入等待期间的手工编辑在生成回写后仍在", async () => {
@@ -1425,6 +1457,8 @@ describe("画布文档提交日记", () => {
         resetCanvasOperationJournalMemory();
         resetLocalCanvasBackendSaveState();
         clearCanvasDocumentBase("c1");
+        server.revision = 4;
+        server.document = structuredClone(remote) as never;
         useCanvasStore.setState({ projects: [draft as never] });
 
         await loadCanvasOperationJournal("c1");
@@ -1495,6 +1529,8 @@ describe("画布文档提交日记", () => {
         resetCanvasOperationJournalMemory();
         resetLocalCanvasBackendSaveState();
         clearCanvasDocumentBase("c1");
+        server.revision = 5;
+        server.document = structuredClone(remote5) as never;
         useCanvasStore.setState({ projects: [draft as never] });
         await loadCanvasOperationJournal("c1");
         await syncLocalCanvasProjectToBackend("c1");

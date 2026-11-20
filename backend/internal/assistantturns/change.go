@@ -119,7 +119,7 @@ func changeFromReceipts(record Record, receipts []model.AgentOpRecord) (*Change,
 				}
 				change.CreatedEdgeIDs = uniqueSorted(append(change.CreatedEdgeIDs, stringItems(item.payload["createdEdgeIds"])...))
 			}
-		case "canvas.document.commit":
+		case "canvas.document.commit", "canvas.document.patch":
 			change.DocumentUpdated = true
 		case "canvas.node.delete", "canvas.edge.delete":
 			change.DeletedNodeIDs = uniqueSorted(append(change.DeletedNodeIDs, stringItems(item.payload["deletedNodeIds"])...))

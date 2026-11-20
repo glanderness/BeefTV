@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
+import { applyMockCanvasPatch } from "./helpers/mock-canvas-patch";
 
 // Renders the real useCanvasProjectLifecycle through the shared restart harness
 // and proves a deletion reaches the backend right after the page is hidden,
@@ -26,6 +27,14 @@ beforeAll(async () => {
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "application/javascript" } });
         if (path === "/api/canvas-projects/c1") return json({ project: backend });
         if (path === "/api/canvas-projects/c2") return json({ project: secondBackend });
+        if (path === "/api/ops/canvas.document.patch") {
+            const body = await request.json();
+            const current = body.params.canvasId === "c2" ? secondBackend : backend;
+            const { document: saved, serverAdvanced } = applyMockCanvasPatch(current, body.params, current.revision + 1);
+            commits.push({ at: Date.now(), canvasId: body.params.canvasId, nodes: saved.nodes as Array<{ id: string; title: string }>, connections: saved.connections as unknown[] });
+            if (body.params.canvasId === "c2") secondBackend = saved; else backend = saved;
+            return json({ revision: saved.revision, result: { canvasId: saved.id, revision: saved.revision, title: saved.title, updatedAt: saved.updatedAt, serverAdvanced, ...(serverAdvanced ? { document: saved } : {}) } });
+        }
         if (path === "/api/ops/canvas.document.commit") {
             const body = await request.json();
             const current = body.params.canvasId === "c2" ? secondBackend : backend;
@@ -95,20 +104,19 @@ for (const leave of ["unmount", "switchCanvas"] as const) test(`${leave} flushes
     } finally { await page.close(); }
 }, 30000);
 
-test("external deletion conflicting with genuine local text is retained and cannot autosave over remote", async () => {
+test("external deletion conflicting with genuine local text preserves the edited node and flushes cleanly", async () => {
     const page = await browser.newPage();
     try {
         await page.goto(server.url.toString());
         await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
         await page.evaluate(() => (window as any).__lifecycle.editTitle());
         await page.waitForFunction(() => (window as any).__lifecycle.title() === "Local unsaved text");
-        const before = commits.length;
         backend = { ...backend, revision: backend.revision + 1, nodes: backend.nodes.filter(node => node.id !== "n0"), connections: backend.connections.filter(edge => edge.fromNodeId !== "n0" && edge.toNodeId !== "n0") };
         await page.evaluate(() => (window as any).__lifecycle.refresh());
         await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-        await page.waitForTimeout(1100);
+        const deadline = Date.now() + 2000;
+        while (!backend.nodes.some(node => node.id === "n0" && node.title === "Local unsaved text") && Date.now() < deadline) await Bun.sleep(10);
         expect(await page.evaluate(() => (window as any).__lifecycle.title())).toBe("Local unsaved text");
-        expect(commits.slice(before)).toEqual([]);
-        expect(backend.nodes.some(node => node.id === "n0")).toBe(false);
+        expect(backend.nodes.some(node => node.id === "n0" && node.title === "Local unsaved text")).toBe(true);
     } finally { await page.close(); }
 }, 30000);

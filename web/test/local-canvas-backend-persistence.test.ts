@@ -146,6 +146,28 @@ mock.module("@/services/api/operations", () => ({
             },
         };
     },
+    patchCanvasDocument: async (input: any) => {
+        commitStarted += 1;
+        await commitGate;
+        commits.push({
+            opId: input.operationId,
+            expectedRevision: input.baseRevision,
+            document: structuredClone(input),
+        });
+        const revision = (input.baseRevision ?? 0) + 1;
+        return {
+            op: "canvas.document.patch",
+            opId: input.operationId,
+            replayed: false,
+            caller: "manual",
+            revision,
+            result: {
+                canvasId: input.canvasId,
+                revision,
+                updatedAt: "2026-09-24T09:00:00.000Z",
+            },
+        };
+    },
 }));
 
 class MockCanvasJournalError extends Error {

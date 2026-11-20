@@ -187,6 +187,22 @@ mock.module("@/services/api/operations", () => ({
             result: { canvasId: proj.id, revision, updatedAt: proj.updatedAt },
         };
     },
+    patchCanvasDocument: async (input: any) => {
+        const live = projects.find((item) => item.id === input.canvasId) ?? { id: input.canvasId, revision: input.baseRevision ?? 0 };
+        const proj = await writeOp("/ops/canvas.document.patch", {
+            opId: input.operationId,
+            params: { ...input, document: live },
+        });
+        const revision = (proj.revision ?? 0) + 1;
+        return {
+            op: "canvas.document.patch",
+            opId: input.operationId,
+            replayed: false,
+            caller: "manual",
+            revision,
+            result: { canvasId: input.canvasId, revision, updatedAt: proj.updatedAt },
+        };
+    },
 }));
 
 const updateJournal = async (id: string, _scope: string, updater: (cur: any) => any) => {

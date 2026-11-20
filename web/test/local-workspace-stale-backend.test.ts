@@ -200,6 +200,7 @@ mock.module("@/services/api/request", () => ({
 
 mock.module("@/services/api/operations", () => ({
     commitCanvasDocument: async () => ({ revision: 1, result: {} }),
+    patchCanvasDocument: async () => ({ revision: 1, result: {} }),
 }));
 
 class MockCanvasJournalError extends Error {

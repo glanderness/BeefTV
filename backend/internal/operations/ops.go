@@ -83,6 +83,9 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ReplaySafe: true, ID: "canvas.document.commit", Summary: "按 revision 提交整份画布文档", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})
+	r.Register(Op{ReplaySafe: true, ID: "canvas.document.patch", Summary: "按节点/连线增量提交画布改动并在服务端原子合并", Scope: ScopeCanvas,
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"baseRevision":{"type":"integer"},"upsertNodes":{"type":"array"},"deleteNodeIds":{"type":"array"},"upsertConnections":{"type":"array"},"deleteConnectionIds":{"type":"array"},"upsertChatSessions":{"type":"array"},"deleteChatSessionIds":{"type":"array"},"fields":{"type":"object"}},"required":["canvasId","baseRevision"]}`),
+		Handler: opCanvasDocumentPatch})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止", ReadOnly: true, Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]},"productionNodeIds":{"type":"array","items":{"type":"string"},"maxItems":24,"description":"本批生成的节点（每批≤24，超出分批提案）；nodeIds 只列已就绪首批"},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
@@ -716,6 +719,56 @@ func opCanvasDocumentCommit(ctx *Context, params json.RawMessage) (any, error) {
 		"title":     summary.Title,
 		"updatedAt": summary.UpdatedAt,
 	}, nil
+}
+
+func opCanvasDocumentPatch(ctx *Context, params json.RawMessage) (any, error) {
+	var args struct {
+		CanvasID             string           `json:"canvasId"`
+		BaseRevision         *int64           `json:"baseRevision"`
+		UpsertNodes          []map[string]any `json:"upsertNodes"`
+		DeleteNodeIDs        []string         `json:"deleteNodeIds"`
+		UpsertConnections    []map[string]any `json:"upsertConnections"`
+		DeleteConnectionIDs  []string         `json:"deleteConnectionIds"`
+		UpsertChatSessions   []map[string]any `json:"upsertChatSessions"`
+		DeleteChatSessionIDs []string         `json:"deleteChatSessionIds"`
+		Fields               map[string]any   `json:"fields"`
+	}
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.CanvasID) == "" || args.BaseRevision == nil || *args.BaseRevision < 0 {
+		return nil, InvalidArg("invalid_params", "canvasId 和有效 baseRevision 必填")
+	}
+	result, err := ctx.Domain.PatchUserCanvasDocument(ctx.UserID, args.CanvasID, canvas.DocumentPatch{
+		BaseRevision:         *args.BaseRevision,
+		UpsertNodes:          args.UpsertNodes,
+		DeleteNodeIDs:        args.DeleteNodeIDs,
+		UpsertConnections:    args.UpsertConnections,
+		DeleteConnectionIDs:  args.DeleteConnectionIDs,
+		UpsertChatSessions:   args.UpsertChatSessions,
+		DeleteChatSessionIDs: args.DeleteChatSessionIDs,
+		Fields:               args.Fields,
+	})
+	if err != nil {
+		return nil, mapDomainError(err)
+	}
+	out := map[string]any{
+		"canvasId":           args.CanvasID,
+		"revision":           result.Summary.Revision,
+		"title":              result.Summary.Title,
+		"updatedAt":          result.Summary.UpdatedAt,
+		"serverAdvanced":     result.ServerAdvanced,
+		"mediaPreserved":     result.MediaPreserved,
+		"snapshotCaptured":   result.SnapshotCaptured,
+		"mergedFromRevision": result.MergedFromRevision,
+	}
+	if len(result.Document) > 0 {
+		var doc any
+		if json.Unmarshal(result.Document, &doc) == nil {
+			out["document"] = doc
+		}
+	}
+	return out, nil
 }
 
 func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {

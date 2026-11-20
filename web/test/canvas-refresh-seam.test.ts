@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { applyMockCanvasPatch, type MockCanvasPatchParams } from "./helpers/mock-canvas-patch";
 
 type Stored = Map<string, string>;
 const stored: Stored = new Map();
@@ -9,7 +10,7 @@ type ServerState = {
     revision: number;
     gets: number;
     puts: Array<{ id: string; revision: number }>;
-    posts: Array<{ path: string; opId?: string; expectedRevision?: number }>;
+    posts: Array<{ path: string; opId?: string; expectedRevision?: number; baseRevision?: number }>;
     releaseGet: (() => void) | null;
     rejectNextWrite: { status: number } | null;
 };
@@ -67,13 +68,33 @@ mock.module("@/services/api/request", () => ({
             server.document = { ...body.project, revision: server.revision };
             return { project: { id, revision: server.revision, updatedAt: "2026-01-01T00:00:00.000Z" } };
         },
-        post: async (path: string, body: { opId?: string; params?: { canvasId?: string; expectedRevision?: number; document?: Record<string, unknown> } }) => {
+        post: async (path: string, body: { opId?: string; params?: MockCanvasPatchParams & { expectedRevision?: number; document?: Record<string, unknown> } }) => {
             if (server.rejectNextWrite) {
                 const status = server.rejectNextWrite.status;
                 server.rejectNextWrite = null;
                 throw new ApiError("画布已被其他入口修改", { status, reason: "stale_revision" });
             }
             server.revision += 1;
+            if (path === "/ops/canvas.document.patch") {
+                const id = String(body.params?.canvasId || "c1");
+                const { document, serverAdvanced } = applyMockCanvasPatch(server.document, body.params ?? {}, server.revision);
+                server.posts.push({ path, opId: body.opId, baseRevision: body.params?.baseRevision });
+                server.document = document;
+                return {
+                    op: "canvas.document.patch",
+                    opId: body.opId,
+                    replayed: false,
+                    caller: "manual",
+                    revision: server.revision,
+                    result: {
+                        canvasId: id,
+                        revision: server.revision,
+                        updatedAt: "2026-01-01T00:00:00.000Z",
+                        serverAdvanced,
+                        ...(serverAdvanced ? { document } : {}),
+                    },
+                };
+            }
             const document = body.params?.document ?? {};
             const id = String(body.params?.canvasId || document.id || "c1");
             server.posts.push({ path, opId: body.opId, expectedRevision: body.params?.expectedRevision });
@@ -119,6 +140,7 @@ mock.module("@/services/api/resources", () => ({
 const {
     acceptExternalCanvasRevision,
     hasUnconfirmedCanvasEdits,
+    holdExternalCanvasRevisionForEditor,
     refreshLocalCanvasProjectIfChanged,
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
@@ -202,18 +224,18 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(notifications.map((item) => item.id)).toContain("c1");
     });
 
-    test("外部刷新落地后，后续手工提交使用新的 expectedRevision", async () => {
+    test("外部刷新落地后，后续手工提交通过增量 patch 带上最新 baseRevision", async () => {
         await establishConfirmedBaseline();
         replaceServerDocument(canvas(2, { title: "助手改过" }));
         await refreshLocalCanvasProjectIfChanged("c1");
         useCanvasStore.getState().updateProject("c1", { title: "手工再改" });
         await syncLocalCanvasProjectToBackend("c1");
-        expect(server.posts).toEqual([expect.objectContaining({ path: "/ops/canvas.document.commit", expectedRevision: 2 })]);
+        expect(server.posts).toEqual([expect.objectContaining({ path: "/ops/canvas.document.patch", baseRevision: 2 })]);
         expect(useCanvasStore.getState().projects[0].title).toBe("手工再改");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
     });
 
-    test("GET 返回后用户又编辑：再检查一次，保留用户值并把远端留作候选", async () => {
+    test("GET 返回后用户又编辑：确定性保留用户刚改的标题且不进入版本冲突暂停", async () => {
         await establishConfirmedBaseline();
         // 挂起这次 GET，模拟「请求在途时用户继续编辑」。
         server.releaseGet = () => {};
@@ -226,11 +248,10 @@ describe("画布刷新接缝（服务端基线）", () => {
         server.releaseGet = null;
         const applied = await pending;
 
-        expect(applied).toBeUndefined();
+        expect(applied?.title).toBe("用户刚改的标题");
         const live = useCanvasStore.getState().projects[0];
         expect(live.title).toBe("用户刚改的标题");
-        expect(canvasExternalRevisionConflict(scope, "c1")?.remoteRevision).toBe(3);
-        expect(canvasExternalRevisionConflict(scope, "c1")?.candidate.title).toBe("外部改名");
+        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
     });
 
     test("HTTP 提交尚未落地时不会被判成可安全刷新", async () => {
@@ -241,12 +262,12 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
     });
 
-    test("用户显式以最新为准：采用候选，本地回到已确认状态且不重复回写", async () => {
+    test("显式持有候选并选择以最新为准：采用候选，本地回到已确认状态且不重复回写", async () => {
         await establishConfirmedBaseline();
         useCanvasStore.getState().updateProject("c1", { title: "本地新标题" });
-        replaceServerDocument(canvas(4, { title: "外部改名" }));
-        useSyncProgressStore.getState().setProjectProgress("c1", { phase: "conflict", message: "旧提交已暂停" });
-        await refreshLocalCanvasProjectIfChanged("c1");
+        const candidate = canvas(4, { title: "外部改名" });
+        replaceServerDocument(candidate);
+        holdExternalCanvasRevisionForEditor(candidate);
         expect(canvasExternalRevisionConflict(scope, "c1")?.candidate.title).toBe("外部改名");
 
         const accepted = await acceptExternalCanvasRevision("c1");
@@ -258,29 +279,33 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(server.puts.length).toBe(1);
     });
 
-    test("本地编辑的是旧白名单之外的字段时，外部刷新同样不得静默覆盖", async () => {
+    test("本地编辑的是旧白名单之外的字段时，外部刷新保留本地字段并合并其余服务端字段", async () => {
         await establishConfirmedBaseline();
-        // folderId 不在旧的七字段白名单里：编辑它曾会被判成「本地干净」而直接被外部内容覆盖。
+        // folderId 不在旧的七字段白名单里：编辑它同样不得被外部内容静默覆盖。
         useCanvasStore.getState().updateProject("c1", { folderId: "folder-keep-me" });
         replaceServerDocument(canvas(5, { title: "外部改名", folderId: "folder-from-external" }));
 
         const applied = await refreshLocalCanvasProjectIfChanged("c1");
 
-        expect(applied).toBeUndefined();
+        expect(applied?.folderId).toBe("folder-keep-me");
         const live = useCanvasStore.getState().projects[0];
         expect(live.folderId).toBe("folder-keep-me");
-        expect(live.title).toBe("画布");
-        expect(canvasExternalRevisionConflict(scope, "c1")?.remoteRevision).toBe(5);
+        expect(live.title).toBe("外部改名");
+        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.document?.folderId).toBe("folder-keep-me");
+        expect(server.document?.title).toBe("外部改名");
     });
 
-    test("提交被服务端按 revision 拒绝：暂停自动提交，且不改写本地内容", async () => {
+    test("偶发 409 且服务端已推进时自动读回合并并重试成功；服务端未推进时转为可重试失败且不改写本地内容", async () => {
         await establishConfirmedBaseline();
         useCanvasStore.getState().updateProject("c1", { title: "本地新标题" });
         server.rejectNextWrite = { status: 409 };
 
         await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toThrow();
 
-        expect(projectSyncProgress("c1")?.phase).toBe("conflict");
+        expect(projectSyncProgress("c1")?.phase).toBe("error");
         expect(useCanvasStore.getState().projects[0].title).toBe("本地新标题");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
     });

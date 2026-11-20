@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import type { CanvasDocumentPatchPayload } from "@/services/api/operations";
 import { recordCanvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 const JOURNAL_PREFIX = "canvas-document-journal";
@@ -11,6 +12,7 @@ export type CanvasCommitPayload = {
     canvasId: string;
     expectedRevision: number;
     document: CanvasProject;
+    patch?: CanvasDocumentPatchPayload;
 };
 
 export type CanvasInFlightCommit = {
@@ -121,6 +123,7 @@ function parseInFlight(value: unknown, canvasId: string): CanvasInFlightCommit |
             canvasId,
             expectedRevision: payloadExpected,
             document: payload.document as unknown as CanvasProject,
+            ...(isPlainObject(payload.patch) ? { patch: payload.patch as unknown as CanvasDocumentPatchPayload } : {}),
         },
     };
 }

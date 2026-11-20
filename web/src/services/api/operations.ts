@@ -19,6 +19,51 @@ export type CanvasDocumentCommitResult = {
     updatedAt?: string;
 };
 
+export type CanvasDocumentPatchPayload = {
+    canvasId: string;
+    baseRevision: number;
+    upsertNodes?: unknown[];
+    deleteNodeIds?: string[];
+    upsertConnections?: unknown[];
+    deleteConnectionIds?: string[];
+    upsertChatSessions?: unknown[];
+    deleteChatSessionIds?: string[];
+    fields?: Record<string, unknown>;
+};
+
+export type CanvasDocumentPatchInput = CanvasDocumentPatchPayload & {
+    operationId: string;
+};
+
+export type CanvasDocumentPatchResult = {
+    canvasId: string;
+    revision: number;
+    title?: string;
+    updatedAt?: string;
+    serverAdvanced?: boolean;
+    mediaPreserved?: boolean;
+    snapshotCaptured?: boolean;
+    mergedFromRevision?: number;
+    document?: Record<string, unknown>;
+};
+
+export async function patchCanvasDocument(input: CanvasDocumentPatchInput) {
+    return executeWorkspaceOperation<CanvasDocumentPatchResult>("canvas.document.patch", {
+        opId: input.operationId,
+        params: {
+            canvasId: input.canvasId,
+            baseRevision: input.baseRevision,
+            ...(input.upsertNodes?.length ? { upsertNodes: input.upsertNodes } : {}),
+            ...(input.deleteNodeIds?.length ? { deleteNodeIds: input.deleteNodeIds } : {}),
+            ...(input.upsertConnections?.length ? { upsertConnections: input.upsertConnections } : {}),
+            ...(input.deleteConnectionIds?.length ? { deleteConnectionIds: input.deleteConnectionIds } : {}),
+            ...(input.upsertChatSessions?.length ? { upsertChatSessions: input.upsertChatSessions } : {}),
+            ...(input.deleteChatSessionIds?.length ? { deleteChatSessionIds: input.deleteChatSessionIds } : {}),
+            ...(input.fields && Object.keys(input.fields).length ? { fields: input.fields } : {}),
+        },
+    });
+}
+
 export async function executeWorkspaceOperation<T>(
     op: string,
     body: { opId?: string; params: unknown },

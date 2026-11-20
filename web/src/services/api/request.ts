@@ -155,7 +155,7 @@ const HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS = 180_000;
 
 function isHeavyCanvasDocumentWrite(method: string, url: string) {
     if (method === "get" || method === "delete") return false;
-    return url === "/ops/canvas.document.commit" || /^\/canvas-projects\/[^/?#]+$/.test(url);
+    return url === "/ops/canvas.document.commit" || url === "/ops/canvas.document.patch" || /^\/canvas-projects\/[^/?#]+$/.test(url);
 }
 
 function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {

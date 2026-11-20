@@ -27,15 +27,6 @@ export function canvasSyncStatusView(localOnly: boolean, progress: Pick<SyncProj
     const phase = progress?.phase;
     const saving = phase === "pending" || phase === "saving" || phase === "uploading";
     if (localOnly) {
-        if (phase === "conflict") {
-            return {
-                label: "版本冲突 · 未保存",
-                tone: "failed",
-                detail: "画布已在别处更新，这次修改还没保存。",
-                note: "自动保存已暂停。使用最新版本前，会先存一份本地草稿。",
-                action: "use-latest",
-            };
-        }
         if (phase === "error") return { label: "保存失败", tone: "failed", detail: "保存没有完成，修改仍保留在本机。", action: "retry-save" };
         if (saving) return { label: "正在保存", tone: "saving", detail: "正在保存到本机。" };
         return { label: "已保存在本地", tone: "saved", detail: "画布已保存在本机。" };
@@ -179,7 +170,7 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { 
 
     return (
         <>
-            {externalConflict ? (
+            {!localOnly && externalConflict ? (
                 <Button
                     size="small"
                     type="text"

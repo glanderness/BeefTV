@@ -27,7 +27,7 @@ func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasPr
 
 func SaveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, items []model.Asset, reason string) error {
 	cutoff := after.UpdatedAt.Add(-canvasHistoryInterval)
-	force := reason == "before_restore"
+	force := reason == "before_restore" || reason == "before_merge"
 	var snapshot *model.CanvasSnapshot
 	var resourceIDs []string
 	if before != nil {

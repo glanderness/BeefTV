@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
 import { canvasAppearanceForTheme } from "../src/lib/canvas/canvas-appearance";
+import { applyMockCanvasPatch } from "./helpers/mock-canvas-patch";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
@@ -37,6 +38,30 @@ beforeAll(async () => {
         }
         if (path === "/api/tasks/synthetic-image-task") return json({ id: "synthetic-image-task", type: "canvas_image", status: "failed", error: "Synthetic terminal task; no model called", attempts: 1, createdAt: "2026-10-18", updatedAt: "2026-10-18" });
         if (path === "/api/canvas-projects/c1") { await gate; return json({ project: backend }); }
+        if (path === "/api/ops/canvas.document.patch") {
+            const body = await request.json();
+            const { document: saved, serverAdvanced } = applyMockCanvasPatch(backend, body.params, backend.revision + 1);
+            backend = saved;
+            commits.push({
+                ...body,
+                params: {
+                    ...body.params,
+                    expectedRevision: body.params.baseRevision,
+                    document: structuredClone(saved),
+                },
+            });
+            return json({
+                revision: backend.revision,
+                result: {
+                    canvasId: "c1",
+                    revision: backend.revision,
+                    title: backend.title,
+                    updatedAt: backend.updatedAt,
+                    serverAdvanced,
+                    ...(serverAdvanced ? { document: saved } : {}),
+                },
+            });
+        }
         if (path === "/api/ops/canvas.document.commit") {
             const body = await request.json();
             if (body.params.expectedRevision !== backend.revision) return Response.json({ code: 409, data: null, msg: "Revision conflict", reason: "canvas_revision_conflict" }, { status: 409 });
@@ -192,7 +217,7 @@ test("an edit made while the opened backend graph is landing is merged, not repl
     await page.close();
 }, 30000);
 
-test("the same node edited locally while the opened backend graph lands is kept, held and never written over the server", async () => {
+test("the same node edited locally while the opened backend graph lands keeps local edit and server edges without pausing", async () => {
     backend = { ...backend, nodes: backend.nodes.map((node, i) => i === 0 ? { ...node, title: "Remote title" } : node) };
     const page = await browser.newPage();
     const errors: string[] = [];
@@ -201,15 +226,13 @@ test("the same node edited locally while the opened backend graph lands is kept,
     await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:0");
     await page.evaluate(() => (window as any).__lifecycle.editWhenBackendProjects());
     release();
-    await page.waitForFunction(() => (window as any).__lifecycle.held().paused === true);
+    await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
     await page.evaluate(() => (window as any).__lifecycle.pulse());
     expect(await page.evaluate(() => (window as any).__lifecycle.title())).toBe("Local unsaved text");
-    expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: true, candidateTitle: "Remote title" });
-    const saved = await page.evaluate(() => (window as any).__lifecycle.save().then(() => "saved", (error: Error) => error.name));
-    expect(saved).not.toBe("saved");
-    expect(commits).toEqual([]);
-    expect(backend.revision).toBe(111);
-    expect(backend.nodes[0].title).toBe("Remote title");
+    expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: false, candidateTitle: null });
+    await page.evaluate(() => (window as any).__lifecycle.save());
+    expect(backend.connections).toHaveLength(6);
+    expect(backend.nodes[0].title).toBe("Local unsaved text");
     expect(errors).toEqual([]);
     await page.close();
 }, 30000);
@@ -365,20 +388,18 @@ test("a refresh before the first write-back keeps the local edit and takes finis
     await page.close();
 }, 30000);
 
-test("a real same-field conflict in a refresh before the first write-back is still held", async () => {
+test("a same-field overlap in a refresh before the first write-back keeps local title, adopts finished upload, and saves cleanly", async () => {
     const { page, errors } = await openMidWorkAndEditUnsaved();
     backend = { ...backend, revision: 112, nodes: backend.nodes.map((node, i) => i === 0 ? { ...node, title: "Remote title" }
         : i === 3 ? { ...node, metadata: { content: "https://example.test/n3.png" } } : node) };
     await page.evaluate(() => (window as any).__lifecycle.refresh());
-    expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: true, candidateTitle: "Remote title" });
+    expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: false, candidateTitle: null });
     await page.evaluate(() => { (window as any).__lifecycle.pauseHistory(false); (window as any).__lifecycle.media(); });
     await page.evaluate(() => (window as any).__lifecycle.pulse());
     expect(await page.evaluate(() => (window as any).__lifecycle.title())).toBe("Local unsaved text");
-    const saved = await page.evaluate(() => (window as any).__lifecycle.save().then(() => "saved", (error: Error) => error.name));
-    expect(saved).not.toBe("saved");
-    expect(commits).toEqual([]);
-    expect(backend.revision).toBe(112);
-    expect(backend.nodes[0]!.title).toBe("Remote title");
+    await page.evaluate(() => (window as any).__lifecycle.save());
+    expect(backend.nodes[0]!.title).toBe("Local unsaved text");
+    expect((backend.nodes[3]!.metadata as any).content).toBe("https://example.test/n3.png");
     expect(errors).toEqual([]);
     await page.close();
 }, 30000);

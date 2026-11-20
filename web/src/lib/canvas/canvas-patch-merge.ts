@@ -113,11 +113,10 @@ export function applyCanvasPatch(project: CanvasProject, patch: CanvasPatch): Ca
 }
 
 export function mergeCanvasRefreshPatch(previous: CanvasProject, incoming: CanvasProject, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    // Refreshes include our own task overlays; they are not explicit Agent patches.
-    // Share the repository's task-aware merge so an old receipt cannot block a retry.
+    // Deterministic merge: adopt untouched remote changes and bound outputs,
+    // keep local edits on overlapping fields, and never halt autosave.
     const local = settleInFlightGenerationOverlay({ base: previous, local: { ...previous, nodes, connections }, remote: incoming });
     const merged = rebaseCanvasDocumentThreeWay({ base: previous, local, remote: { ...previous, nodes: incoming.nodes, connections: incoming.connections } });
-    if (merged.conflict) throw new Error("画布更新与本地内容冲突，已保留本地编辑");
     const reuse = <T extends { id: string }>(before: T[], after: T[]): T[] => {
         const byId = new Map(before.map(item => [item.id, item]));
         const result = after.map(item => equal(item, byId.get(item.id)) ? byId.get(item.id)! : item);

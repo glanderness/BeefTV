@@ -28,6 +28,7 @@ type Domain interface {
 	RemoveUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, rowIDs []string, expectedRevision int64) (canvas.UserDataSummary, int, error)
 	ConnectUserCanvasNodesAtRevision(userID string, canvasID string, fromNodeID string, toNodeID string, expectedRevision int64) (canvas.UserDataSummary, error)
 	CommitUserCanvasDocument(userID string, canvasID string, expectedRevision int64, document json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error)
+	PatchUserCanvasDocument(userID string, canvasID string, patch canvas.DocumentPatch) (canvas.DocumentPatchResult, error)
 	WorkspaceTask(userID string, id string) (*model.Task, error)
 	GenerationOutputs(taskID string) ([]localtask.CanonicalOutput, error)
 	OwnedReadyResource(userID, resourceID string) (*model.Resource, error)

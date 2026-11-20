@@ -177,7 +177,7 @@ func BuildCanvasWriteRecord(opID, opName, canvasID, turnID string, caller Caller
 		CreatedEdgeIDs:  createdEdges,
 		DeletedEdgeIDs:  deletedEdges,
 		TimelineUpdated: timelineUpdated,
-		DocumentUpdated: opName == "canvas.document.commit",
+		DocumentUpdated: opName == "canvas.document.commit" || opName == "canvas.document.patch",
 		ModifiedNodes:   modifiedNodes,
 		BeforeDocument:  append(json.RawMessage(nil), beforeRaw...),
 		AfterDocument:   append(json.RawMessage(nil), afterRaw...),
