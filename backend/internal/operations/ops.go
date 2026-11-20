@@ -83,8 +83,8 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ReplaySafe: true, ID: "canvas.document.commit", Summary: "按 revision 提交整份画布文档", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})
-	r.Register(Op{ReplaySafe: true, ID: "canvas.document.patch", Summary: "按节点/连线增量提交画布改动并在服务端原子合并", Scope: ScopeCanvas,
-		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"baseRevision":{"type":"integer"},"upsertNodes":{"type":"array"},"deleteNodeIds":{"type":"array"},"upsertConnections":{"type":"array"},"deleteConnectionIds":{"type":"array"},"upsertChatSessions":{"type":"array"},"deleteChatSessionIds":{"type":"array"},"fields":{"type":"object"}},"required":["canvasId","baseRevision"]}`),
+	r.Register(Op{ExternalOnly: true, ReplaySafe: true, ID: "canvas.document.patch", Summary: "按节点/连线增量提交画布改动并在服务端原子合并", Scope: ScopeCanvas,
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"baseRevision":{"type":"integer"},"upsertNodes":{"type":"array"},"deleteNodeIds":{"type":"array"},"upsertConnections":{"type":"array"},"deleteConnectionIds":{"type":"array"},"upsertChatSessions":{"type":"array"},"deleteChatSessionIds":{"type":"array"},"fields":{"type":"object"},"expectedNodes":{"type":"object"},"expectedFields":{"type":"object"},"forceHistorySnapshot":{"type":"boolean"}},"required":["canvasId","baseRevision"]}`),
 		Handler: opCanvasDocumentPatch})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止", ReadOnly: true, Scope: ScopeCanvas,
@@ -723,15 +723,18 @@ func opCanvasDocumentCommit(ctx *Context, params json.RawMessage) (any, error) {
 
 func opCanvasDocumentPatch(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
-		CanvasID             string           `json:"canvasId"`
-		BaseRevision         *int64           `json:"baseRevision"`
-		UpsertNodes          []map[string]any `json:"upsertNodes"`
-		DeleteNodeIDs        []string         `json:"deleteNodeIds"`
-		UpsertConnections    []map[string]any `json:"upsertConnections"`
-		DeleteConnectionIDs  []string         `json:"deleteConnectionIds"`
-		UpsertChatSessions   []map[string]any `json:"upsertChatSessions"`
-		DeleteChatSessionIDs []string         `json:"deleteChatSessionIds"`
-		Fields               map[string]any   `json:"fields"`
+		CanvasID             string                    `json:"canvasId"`
+		BaseRevision         *int64                    `json:"baseRevision"`
+		UpsertNodes          []map[string]any          `json:"upsertNodes"`
+		DeleteNodeIDs        []string                  `json:"deleteNodeIds"`
+		UpsertConnections    []map[string]any          `json:"upsertConnections"`
+		DeleteConnectionIDs  []string                  `json:"deleteConnectionIds"`
+		UpsertChatSessions   []map[string]any          `json:"upsertChatSessions"`
+		DeleteChatSessionIDs []string                  `json:"deleteChatSessionIds"`
+		Fields               map[string]any            `json:"fields"`
+		ExpectedNodes        map[string]map[string]any `json:"expectedNodes"`
+		ExpectedFields       map[string]any            `json:"expectedFields"`
+		ForceHistorySnapshot bool                      `json:"forceHistorySnapshot"`
 	}
 	if err := decodeParams(params, &args); err != nil {
 		return nil, err
@@ -748,6 +751,9 @@ func opCanvasDocumentPatch(ctx *Context, params json.RawMessage) (any, error) {
 		UpsertChatSessions:   args.UpsertChatSessions,
 		DeleteChatSessionIDs: args.DeleteChatSessionIDs,
 		Fields:               args.Fields,
+		ExpectedNodes:        args.ExpectedNodes,
+		ExpectedFields:       args.ExpectedFields,
+		ForceHistorySnapshot: args.ForceHistorySnapshot,
 	})
 	if err != nil {
 		return nil, mapDomainError(err)

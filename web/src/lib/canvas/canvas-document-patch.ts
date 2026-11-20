@@ -1,9 +1,8 @@
 import { canonicalize } from "json-canonicalize";
+import { stripCanvasNodeBookkeeping } from "@/lib/canvas/canvas-content";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasDocumentPatchPayload } from "@/services/api/operations";
 import type { CanvasNodeData } from "@/types/canvas";
-
-const OPEN_RECOVERY_PLACEHOLDER_ERROR = "正在从任务中心恢复生成状态...";
 
 const NON_PATCHABLE_DOC_FIELDS = new Set<string>([
     "id",
@@ -31,56 +30,49 @@ function isEmptyDefault(value: unknown): boolean {
     return false;
 }
 
-/**
- * Strip editor-only open/bookkeeping decorations before comparing or emitting
- * a node delta so untouched nodes never bloat or pollute a node-level patch.
- */
-function stripOpenBookkeepingFromNode(node: CanvasNodeData): CanvasNodeData {
-    const { createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = node as CanvasNodeData & {
-        createdAt?: string;
-        updatedAt?: string;
-    };
-    const meta = rest.metadata;
-    if (meta && meta.status === "loading" && meta.errorDetails === OPEN_RECOVERY_PLACEHOLDER_ERROR) {
-        const { errorDetails: _placeholder, ...cleanMeta } = meta;
-        return { ...rest, metadata: cleanMeta } as CanvasNodeData;
-    }
-    return rest as CanvasNodeData;
-}
-
 function diffEntityList<T extends { id: string }>(
     baseItems: readonly T[] | undefined,
     liveItems: readonly T[] | undefined,
     normalize: (item: T) => T = (item) => item,
-): { upserts: T[]; deletedIds: string[] } {
+): { upserts: T[]; deletedIds: string[]; expectedById: Record<string, T> } {
     const baseById = new Map((baseItems || []).map((item) => [item.id, item]));
     const liveById = new Map((liveItems || []).map((item) => [item.id, item]));
     const upserts: T[] = [];
     const deletedIds: string[] = [];
+    const expectedById: Record<string, T> = {};
     for (const item of liveItems || []) {
         const prev = baseById.get(item.id);
         const normalizedLive = normalize(item);
-        if (!prev || !sameSerialized(normalize(prev), normalizedLive)) {
+        const normalizedPrev = prev ? normalize(prev) : undefined;
+        if (!normalizedPrev || !sameSerialized(normalizedPrev, normalizedLive)) {
             upserts.push(normalizedLive);
+            if (normalizedPrev) expectedById[item.id] = normalizedPrev;
         }
     }
-    for (const id of baseById.keys()) {
+    for (const [id, prev] of baseById.entries()) {
         if (!liveById.has(id)) {
             deletedIds.push(id);
+            expectedById[id] = normalize(prev);
         }
     }
-    return { upserts, deletedIds };
+    return { upserts, deletedIds, expectedById };
 }
 
 /**
  * Compute a minimal node/edge/field delta between the last confirmed server
- * snapshot (`base`) and the current live canvas (`live`).
+ * snapshot (`base`) and the current live canvas (`live`), including per-entity
+ * expected base snapshots so the server can detect genuine overlaps accurately.
  */
-export function buildCanvasDocumentPatch(base: CanvasProject, live: CanvasProject): CanvasDocumentPatchPayload | null {
-    const nodesDiff = diffEntityList(base.nodes, live.nodes, stripOpenBookkeepingFromNode);
+export function buildCanvasDocumentPatch(
+    base: CanvasProject,
+    live: CanvasProject,
+    options: { forceHistorySnapshot?: boolean } = {},
+): CanvasDocumentPatchPayload | null {
+    const nodesDiff = diffEntityList(base.nodes, live.nodes, stripCanvasNodeBookkeeping);
     const connDiff = diffEntityList(base.connections, live.connections);
     const chatDiff = diffEntityList(base.chatSessions, live.chatSessions);
     const fields: Record<string, unknown> = {};
+    const expectedFields: Record<string, unknown> = {};
     const baseRecord = base as unknown as Record<string, unknown>;
     const liveRecord = live as unknown as Record<string, unknown>;
     for (const key of new Set([...Object.keys(baseRecord), ...Object.keys(liveRecord)])) {
@@ -92,6 +84,7 @@ export function buildCanvasDocumentPatch(base: CanvasProject, live: CanvasProjec
         if (next === undefined && isEmptyDefault(prev)) continue;
         if (!sameSerialized(prev, next)) {
             fields[key] = next ?? null;
+            expectedFields[key] = prev ?? null;
         }
     }
     const hasChanges =
@@ -103,6 +96,7 @@ export function buildCanvasDocumentPatch(base: CanvasProject, live: CanvasProjec
         chatDiff.deletedIds.length > 0 ||
         Object.keys(fields).length > 0;
     if (!hasChanges) return null;
+    const expectedNodes = nodesDiff.expectedById;
     return {
         canvasId: live.id,
         baseRevision: base.revision ?? 0,
@@ -113,6 +107,9 @@ export function buildCanvasDocumentPatch(base: CanvasProject, live: CanvasProjec
         ...(chatDiff.upserts.length ? { upsertChatSessions: chatDiff.upserts } : {}),
         ...(chatDiff.deletedIds.length ? { deleteChatSessionIds: chatDiff.deletedIds } : {}),
         ...(Object.keys(fields).length ? { fields } : {}),
+        ...(Object.keys(expectedNodes).length ? { expectedNodes } : {}),
+        ...(Object.keys(expectedFields).length ? { expectedFields } : {}),
+        ...(options.forceHistorySnapshot ? { forceHistorySnapshot: true } : {}),
     };
 }
 

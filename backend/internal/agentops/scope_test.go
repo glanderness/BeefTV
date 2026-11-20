@@ -174,7 +174,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for mode, want := range map[string]int{"read-only": 20, "canvas": 38, "full-access": 43} {
+	for mode, want := range map[string]int{"read-only": 20, "canvas": 38, "full-access": 42} {
 		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
 		if len(descriptors) != want {
 			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)

@@ -38,7 +38,9 @@ import {
     getUnconfirmedCanvasDiagnostic,
     hasUnconfirmedCanvasEdits,
     incompleteCanvasProjection,
+    markCanvasMergeOverlap,
     openLocalCanvasProject,
+    pendingForceHistorySnapshot,
     publishCanvasSaveProgress,
     recordServerConfirmedCanvas,
     saveKey,
@@ -57,6 +59,7 @@ export {
     hasUnconfirmedCanvasEdits,
     holdExternalCanvasRevisionForEditor,
     hydrateLocalCanvasProjectsFromBackend,
+    markCanvasMergeOverlap,
     openLocalCanvasProject,
     openLocalCanvasProjectFromBackend,
     readLocalCanvasProjectFromBackend,
@@ -126,6 +129,7 @@ async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, sav
     const pendingExternal = canvasExternalRevisionConflict(scope, id);
     const journal = await recordConfirmedCanvasCommit(confirmed, scope, ackOperationId ? { ackOperationId } : {});
     recordServerConfirmedCanvas(journal.confirmedSnapshot ?? confirmed, scope);
+    pendingForceHistorySnapshot.delete(saveKey(scope, id));
     useCanvasStore.setState((state) => ({
         projects: state.projects.map((current) => current.id === id
             ? {
@@ -222,7 +226,8 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
         if (current.inFlight) return;
         if (current.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, settled) && !current.inFlight) return;
         const expectedRevision = current.confirmedRevision || settled.revision || 0;
-        const patch = current.confirmedSnapshot ? buildCanvasDocumentPatch(current.confirmedSnapshot, settled) : null;
+        const forceHistorySnapshot = pendingForceHistorySnapshot.has(saveKey(scope, id));
+        const patch = current.confirmedSnapshot ? buildCanvasDocumentPatch(current.confirmedSnapshot, settled, { forceHistorySnapshot }) : null;
         if (current.confirmedSnapshot && !patch) return;
         const operationId = newCanvasCommitOperationId();
         return {
@@ -490,6 +495,7 @@ export function resetLocalCanvasBackendSaveState() {
     backendSaveTails.clear();
     canvasProjectionLocks.clear();
     canvasDeleting.clear();
+    pendingForceHistorySnapshot.clear();
     serverConfirmedCanvasSnapshots.clear();
     setCanvasProjectionStoreFlushForTest(null);
 }
@@ -645,6 +651,7 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
                 await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
                 await clearCanvasOperationJournal(id, scope);
                 clearCanvasDocumentBase(id, scope);
+                pendingForceHistorySnapshot.delete(saveKey(scope, id));
                 serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
                 clearCanvasBackendSaveProgress(id, scope);
                 deleted.push(id);

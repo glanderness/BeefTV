@@ -26,6 +26,7 @@ import {
 export async function hydrateLocalCanvasProjectsFromBackend() {
     const scope = getActiveUserScope();
     const attempt = beginCanvasHydration();
+    const previouslyLoadedIds = new Set(useCanvasStore.getState().projects.map((project) => project.id));
     let failure = "";
     try {
         const summaries: Array<Pick<CanvasProject, "id">> = [];
@@ -48,7 +49,6 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             return normalizeCanvasProjectGraph(detail.project);
         }))).filter((project): project is CanvasProject => Boolean(project));
         if (projects.length === 0) return false;
-        const previouslyLoadedIds = new Set(useCanvasStore.getState().projects.map((project) => project.id));
         for (const [index, project] of projects.entries()) {
             // Warm journals can resolve entirely in microtasks. Give React a
             // render turn between batches so large libraries cannot exhaust

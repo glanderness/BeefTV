@@ -12,19 +12,25 @@ import (
 	"gorm.io/gorm"
 )
 
+const interruptedFileUploadMessage = "上传已中断，请重新选择文件上传"
+const openRecoveryPlaceholderError = "正在从任务中心恢复生成状态..."
+
 // DocumentPatch is a node/edge-level delta commit from the local desktop UI.
 // Applying only touched entities on top of the latest SQLite document avoids
 // whole-document revision collisions with parallel background task bindings
 // and external agent writes.
 type DocumentPatch struct {
-	BaseRevision         int64            `json:"baseRevision"`
-	UpsertNodes          []map[string]any `json:"upsertNodes,omitempty"`
-	DeleteNodeIDs        []string         `json:"deleteNodeIds,omitempty"`
-	UpsertConnections    []map[string]any `json:"upsertConnections,omitempty"`
-	DeleteConnectionIDs  []string         `json:"deleteConnectionIds,omitempty"`
-	UpsertChatSessions   []map[string]any `json:"upsertChatSessions,omitempty"`
-	DeleteChatSessionIDs []string         `json:"deleteChatSessionIds,omitempty"`
-	Fields               map[string]any   `json:"fields,omitempty"`
+	BaseRevision         int64                     `json:"baseRevision"`
+	UpsertNodes          []map[string]any          `json:"upsertNodes,omitempty"`
+	DeleteNodeIDs        []string                  `json:"deleteNodeIds,omitempty"`
+	UpsertConnections    []map[string]any          `json:"upsertConnections,omitempty"`
+	DeleteConnectionIDs  []string                  `json:"deleteConnectionIds,omitempty"`
+	UpsertChatSessions   []map[string]any          `json:"upsertChatSessions,omitempty"`
+	DeleteChatSessionIDs []string                  `json:"deleteChatSessionIds,omitempty"`
+	Fields               map[string]any            `json:"fields,omitempty"`
+	ExpectedNodes        map[string]map[string]any `json:"expectedNodes,omitempty"`
+	ExpectedFields       map[string]any            `json:"expectedFields,omitempty"`
+	ForceHistorySnapshot bool                      `json:"forceHistorySnapshot,omitempty"`
 }
 
 // DocumentPatchResult reports the authoritative saved state after applying a delta.
@@ -37,31 +43,48 @@ type DocumentPatchResult struct {
 	Document           json.RawMessage `json:"document,omitempty"`
 }
 
+// Matches web/src/lib/canvas/canvas-node-metadata-contract.ts GENERATION_BIND_METADATA_KEYS
+// plus canvas-level output metadata (hasAudio, videoPreview, outputParameterWarning,
+// smartEraseSubtitles, storyboard).
 var boundGenerationOutputFields = []string{
-	"content", "storageKey", "assetId", "mimeType", "bytes",
+	"content", "storageKey", "assetId",
+	"imageHistory", "mimeType", "bytes",
 	"naturalWidth", "naturalHeight", "durationMs", "hasAudio", "videoPreview",
-	"imageHistory", "status", "taskStatus", "taskProgress", "taskOutcome",
-	"generationEffectKeys", "nodeRole", "resultOrigin", "smartEraseSubtitles",
-	"storyboard",
+	"outputParameterWarning", "nodeRole", "resultOrigin", "status",
+	"smartEraseSubtitles", "storyboard",
+	"taskType", "taskOutcome",
+	"taskClientOperationId", "taskClientOperationInput", "taskClientOperationTerminal",
+	"generationSubmissionState", "retryOf", "attemptGroupId",
+	"taskProvider", "taskStatus", "taskProgress", "taskStage",
+	"taskCreatedAt", "taskStartedAt", "taskCompletedAt", "taskDurationMs",
+	"taskErrorCode", "taskProviderRequestId", "taskOfficialStatus",
+	"taskReceiptRecorded", "taskUpdatedAt", "generationEffectKeys",
 }
 
+// Matches web/src/lib/canvas/canvas-node-metadata-contract.ts GENERATION_ERROR_METADATA_KEYS
+// plus legacy "error" and upload overlay flags.
 var boundGenerationClearedErrorFields = []string{
-	"error", "errorDetails", "generationErrorCode", "generationErrorSummary",
-	"generationProviderCode", "generationFailure", "generationPreflightError",
-	"taskOutcomeSource", "taskStage", "failedPromptFingerprint", "failedInputFingerprint",
+	"error", "errorDetails",
+	"generationErrorCode", "generationErrorSummary", "generationProviderCode",
+	"taskFailureDiagnostics", "generationFailure", "generationPreflightError",
+	"taskOutcomeSource", "resourceReloadAvailable",
+	"failedPromptFingerprint", "failedInputFingerprint", "processingLabel",
 	"fileUpload", "fileUploadProgress",
 }
 
+// Matches web/src/lib/canvas/canvas-node-metadata-contract.ts UPLOAD_SETTLEMENT_METADATA_KEYS
+// (excluding transient upload overlay keys cleared on settlement).
 var settledUploadOutputFields = []string{
-	"content", "storageKey", "assetId", "mimeType", "bytes",
-	"naturalWidth", "naturalHeight", "durationMs", "hasAudio", "videoPreview",
-	"status", "nodeRole", "resultOrigin", "fileUploadAttemptId",
+	"content", "storageKey", "assetId", "status",
+	"bytes", "mimeType", "naturalWidth", "naturalHeight",
+	"durationMs", "hasAudio", "videoPreview", "outputParameterWarning",
+	"nodeRole", "resultOrigin", "fileUploadAttemptId",
 }
 
 // PatchUserCanvasDocument merges an entity-level UI delta onto the latest SQLite
 // canvas document. Retries internal CAS contention atomically so disjoint edits
 // never return 409 to the UI, and forces a recoverable history snapshot whenever
-// an edit overlaps an entity changed on the server since baseRevision.
+// an edit genuinely overlaps an entity changed on the server.
 func (s *Service) PatchUserCanvasDocument(userID, canvasID string, patch DocumentPatch) (DocumentPatchResult, error) {
 	canvasID = strings.TrimSpace(canvasID)
 	if canvasID == "" {
@@ -99,6 +122,13 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 	if err != nil {
 		return DocumentPatchResult{}, err
 	}
+	var currentDoc map[string]any
+	if err := json.Unmarshal(currentRaw, &currentDoc); err != nil {
+		return DocumentPatchResult{}, kernel.BadAuthRequest("画布数据格式错误")
+	}
+	if currentDoc == nil {
+		currentDoc = map[string]any{}
+	}
 	var doc map[string]any
 	if err := json.Unmarshal(currentRaw, &doc); err != nil {
 		return DocumentPatchResult{}, kernel.BadAuthRequest("画布数据格式错误")
@@ -109,7 +139,7 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 
 	serverAdvanced := existing.Revision > patch.BaseRevision
 	mediaPreserved := false
-	overlapped := false
+	overlapped := patch.ForceHistorySnapshot
 
 	// 1. Nodes: apply explicit deletions and upserts by ID while keeping untouched server nodes.
 	deleteNodeSet := toIDSet(patch.DeleteNodeIDs)
@@ -126,7 +156,11 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 			continue
 		}
 		if deleteNodeSet[id] {
-			if serverAdvanced && nodeHasBoundOutput(item) {
+			if expectedBase, hasExpected := patch.ExpectedNodes[id]; hasExpected {
+				if !sameNormalizedNode(item, expectedBase) {
+					overlapped = true
+				}
+			} else if serverAdvanced && nodeHasBoundOutput(item) {
 				overlapped = true
 			}
 			continue
@@ -145,9 +179,6 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 		cloned := cloneNode(incoming)
 		prev, exists := existingByID[id]
 		if !exists {
-			if serverAdvanced {
-				overlapped = true
-			}
 			existingByID[id] = cloned
 			orderedIDs = append(orderedIDs, id)
 			continue
@@ -155,8 +186,12 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 		mergedNode, preserved := mergePatchedNode(prev, cloned)
 		if preserved {
 			mediaPreserved = true
-		}
-		if serverAdvanced && !reflect.DeepEqual(prev, mergedNode) {
+			overlapped = true
+		} else if expectedBase, hasExpected := patch.ExpectedNodes[id]; hasExpected {
+			if !sameNormalizedNode(prev, expectedBase) && !sameNormalizedNode(prev, mergedNode) {
+				overlapped = true
+			}
+		} else if serverAdvanced && !reflect.DeepEqual(prev, mergedNode) {
 			overlapped = true
 		}
 		existingByID[id] = mergedNode
@@ -194,7 +229,11 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 		case "id", "revision", "createdAt", "updatedAt", "remoteContentHash", "viewport", "nodes", "connections", "chatSessions":
 			continue
 		default:
-			if serverAdvanced && !reflect.DeepEqual(doc[key], value) {
+			if expectedVal, hasExpected := patch.ExpectedFields[key]; hasExpected {
+				if !samePatchValue(doc[key], expectedVal) && !samePatchValue(doc[key], value) {
+					overlapped = true
+				}
+			} else if serverAdvanced && !samePatchValue(doc[key], value) {
 				overlapped = true
 			}
 			if value == nil && key != "activeChatId" {
@@ -208,6 +247,29 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 	doc["id"] = canvasID
 	doc["revision"] = existing.Revision
 	delete(doc, "remoteContentHash")
+
+	// Skip no-op patches (empty or filtered-only fields like viewport) without bumping revision.
+	if sameEffectiveCanvasDoc(currentDoc, doc) {
+		summary := UserDataSummary{
+			ID:        existing.ID,
+			Title:     existing.Title,
+			CreatedAt: existing.CreatedAt,
+			UpdatedAt: existing.UpdatedAt,
+			Revision:  existing.Revision,
+		}
+		var docPayload json.RawMessage
+		if serverAdvanced || mediaPreserved {
+			docPayload = currentRaw
+		}
+		return DocumentPatchResult{
+			Summary:            summary,
+			ServerAdvanced:     serverAdvanced,
+			MediaPreserved:     mediaPreserved,
+			SnapshotCaptured:   false,
+			MergedFromRevision: existing.Revision,
+			Document:           docPayload,
+		}, nil
+	}
 
 	mergedRaw, err := json.Marshal(doc)
 	if err != nil {
@@ -223,7 +285,7 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 	if overlapped {
 		reason = "before_merge"
 	}
-	summary, savedPayload, err := s.upsertUserCanvasProjectAndPayload(userID, mergedRaw, nil, reason, serverAdvanced || mediaPreserved)
+	summary, savedPayload, snapshotCaptured, err := s.upsertUserCanvasProjectAndPayloadWithCapture(userID, mergedRaw, nil, reason, serverAdvanced || mediaPreserved)
 	if err != nil {
 		return DocumentPatchResult{}, err
 	}
@@ -231,7 +293,7 @@ func (s *Service) patchUserCanvasDocumentOnce(userID, canvasID string, patch Doc
 		Summary:            summary,
 		ServerAdvanced:     serverAdvanced,
 		MediaPreserved:     mediaPreserved,
-		SnapshotCaptured:   overlapped,
+		SnapshotCaptured:   snapshotCaptured,
 		MergedFromRevision: existing.Revision,
 		Document:           savedPayload,
 	}, nil
@@ -254,16 +316,27 @@ func nodeHasBoundOutput(node map[string]any) bool {
 	return false
 }
 
+// nodeUploadInProgress recognizes both the production string metadata.fileUpload
+// ("uploading", or "error" with interrupted upload overlay) and legacy map shapes.
 func nodeUploadInProgress(meta map[string]any) bool {
 	if meta == nil {
 		return false
 	}
-	raw, ok := meta["fileUpload"].(map[string]any)
-	if !ok || raw == nil {
+	if rawStr, ok := meta["fileUpload"].(string); ok {
+		status := strings.ToLower(strings.TrimSpace(rawStr))
+		if status == "uploading" || status == "pending" || status == "processing" {
+			return true
+		}
+		if status == "error" && strings.TrimSpace(nodeString(meta, "errorDetails")) == interruptedFileUploadMessage {
+			return true
+		}
 		return false
 	}
-	status := strings.ToLower(strings.TrimSpace(nodeString(raw, "status")))
-	return status == "uploading" || status == "pending" || status == "processing"
+	if rawMap, ok := meta["fileUpload"].(map[string]any); ok && rawMap != nil {
+		status := strings.ToLower(strings.TrimSpace(nodeString(rawMap, "status")))
+		return status == "uploading" || status == "pending" || status == "processing"
+	}
+	return false
 }
 
 // mergePatchedNode protects server-bound generation outputs (media, text, or
@@ -286,6 +359,8 @@ func mergePatchedNode(existing, incoming map[string]any) (map[string]any, bool) 
 		for _, key := range boundGenerationOutputFields {
 			if value, ok := existingMeta[key]; ok {
 				meta[key] = value
+			} else {
+				delete(meta, key)
 			}
 		}
 		for _, key := range boundGenerationClearedErrorFields {
@@ -295,8 +370,10 @@ func mergePatchedNode(existing, incoming map[string]any) (map[string]any, bool) 
 		return merged, true
 	}
 
-	// 2. Protect settled file upload against an older uploading placeholder.
-	if nodeString(existingMeta, "status") == "success" && NodeHasMedia(existing) && !nodeUploadInProgress(existingMeta) && nodeUploadInProgress(incomingMeta) {
+	// 2. Protect settled file upload against an older uploading/interrupted placeholder.
+	// Note: settled uploaded images/videos do not always set status:"success" (buildSettledUploadNodeMetadata).
+	existingSettledUpload := NodeHasMedia(existing) && !nodeUploadInProgress(existingMeta) && nodeString(existingMeta, "status") != "loading"
+	if existingSettledUpload && nodeUploadInProgress(incomingMeta) {
 		existingAttempt := nodeString(existingMeta, "fileUploadAttemptId")
 		incomingAttempt := nodeString(incomingMeta, "fileUploadAttemptId")
 		sameUpload := (existingAttempt != "" && existingAttempt == incomingAttempt) || (!NodeHasMedia(incoming) && incomingAttempt == "")
@@ -308,15 +385,84 @@ func mergePatchedNode(existing, incoming map[string]any) (map[string]any, bool) 
 					meta[key] = value
 				}
 			}
-			delete(meta, "fileUpload")
-			delete(meta, "fileUploadProgress")
-			delete(meta, "errorDetails")
+			for _, key := range boundGenerationClearedErrorFields {
+				delete(meta, key)
+			}
 			merged["metadata"] = meta
 			return merged, true
 		}
 	}
 
 	return incoming, false
+}
+
+func stripNodeBookkeeping(node map[string]any) map[string]any {
+	if node == nil {
+		return nil
+	}
+	cleaned := cloneNode(node)
+	delete(cleaned, "createdAt")
+	delete(cleaned, "updatedAt")
+	meta := nodeMetadata(cleaned)
+	if meta != nil && nodeString(meta, "status") == "loading" && nodeString(meta, "errorDetails") == openRecoveryPlaceholderError {
+		delete(meta, "errorDetails")
+		cleaned["metadata"] = meta
+	}
+	return cleaned
+}
+
+func sameNormalizedNode(left, right map[string]any) bool {
+	return reflect.DeepEqual(stripNodeBookkeeping(left), stripNodeBookkeeping(right))
+}
+
+func samePatchValue(left, right any) bool {
+	if isPatchEmpty(left) && isPatchEmpty(right) {
+		return true
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func isPatchEmpty(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch x := v.(type) {
+	case string:
+		return x == ""
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	default:
+		return false
+	}
+}
+
+func sameEffectiveCanvasDoc(left, right map[string]any) bool {
+	ignored := map[string]bool{
+		"revision":          true,
+		"createdAt":         true,
+		"updatedAt":         true,
+		"viewport":          true,
+		"remoteContentHash": true,
+	}
+	keys := make(map[string]struct{}, len(left)+len(right))
+	for k := range left {
+		if !ignored[k] {
+			keys[k] = struct{}{}
+		}
+	}
+	for k := range right {
+		if !ignored[k] {
+			keys[k] = struct{}{}
+		}
+	}
+	for k := range keys {
+		if !samePatchValue(left[k], right[k]) {
+			return false
+		}
+	}
+	return true
 }
 
 func mergeEntitySlice(raw any, upserts []map[string]any, shouldDrop func(map[string]any) bool) []any {

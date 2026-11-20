@@ -20,7 +20,7 @@ import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { hasUnconfirmedCanvasEdits, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { hasUnconfirmedCanvasEdits, markCanvasMergeOverlap, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
@@ -122,17 +122,24 @@ function sameEditorDocument(left: EditorDocument, right: EditorDocument) {
 }
 
 /** 助手会话按会话确定性三路合并；同一会话两边都改过时保留本地会话，同时合并另一侧的其余会话。 */
-function mergeIncomingChatSessions(project: CanvasProject, base: CanvasAssistantSession[], incoming: CanvasAssistantSession[], live: CanvasAssistantSession[]) {
+function mergeIncomingChatSessions(
+    project: CanvasProject,
+    base: CanvasAssistantSession[],
+    incoming: CanvasAssistantSession[],
+    live: CanvasAssistantSession[],
+    onConflict?: () => void,
+) {
     if (sameJson(base, incoming) || sameJson(live, incoming)) return live;
     if (sameJson(live, base)) return incoming;
     const document = (chatSessions: CanvasAssistantSession[]): CanvasProject => ({ ...project, nodes: [], connections: [], chatSessions });
     const merged = rebaseCanvasDocumentThreeWay({ base: document(base), local: document(live), remote: document(incoming) });
+    if (merged.conflict) onConflict?.();
     return merged.project.chatSessions || [];
 }
 
 /**
  * 把 base→incoming 这段别处写入的变化并到编辑器内容上：节点和连线逐个三路合并，
- * 助手会话逐个合并，当前会话只在编辑器没换过时跟随。同一处两边都改过时抛错，调用方保留编辑器内容。
+ * 助手会话逐个合并，当前会话只在编辑器没换过时跟随。同一处两边都改过时确定性保留本地编辑并通知记录合并前快照。
  * `observed` 是编辑器对 base 的那份节点，用来判断本地真改动；`adopted` 是要采用的 incoming 节点（默认原样）。
  */
 function mergeIncomingEditorDocument(
@@ -140,7 +147,7 @@ function mergeIncomingEditorDocument(
     base: EditorDocument,
     incoming: EditorDocument,
     live: EditorDocument,
-    options: { observed?: CanvasNodeData[] | null; adopted?: CanvasNodeData[] } = {},
+    options: { observed?: CanvasNodeData[] | null; adopted?: CanvasNodeData[]; onConflict?: () => void } = {},
 ): EditorDocument {
     const adopted = options.adopted ?? incoming.nodes;
     const graph = mergeCanvasRefreshPatch(
@@ -148,11 +155,12 @@ function mergeIncomingEditorDocument(
         { ...project, nodes: adopted, connections: incoming.connections },
         live.nodes,
         live.connections,
+        { onConflict: options.onConflict },
     );
     return {
         nodes: carryGenerationRecoveryRestore(graph.nodes, adopted),
         connections: graph.connections,
-        chatSessions: mergeIncomingChatSessions(project, base.chatSessions, incoming.chatSessions, live.chatSessions),
+        chatSessions: mergeIncomingChatSessions(project, base.chatSessions, incoming.chatSessions, live.chatSessions, options.onConflict),
         activeChatId: live.activeChatId === base.activeChatId ? incoming.activeChatId : live.activeChatId,
     };
 }
@@ -327,7 +335,10 @@ export function useCanvasProjectLifecycle({
                 observed: base === observedStoreRef.current ? observed?.nodes ?? null : null,
                 adopted: options.openRules ? openCanvasNodes(incoming).nodes : incoming.nodes,
             };
-            merged = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, live, nodes);
+            merged = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, live, {
+                ...nodes,
+                onConflict: () => markCanvasMergeOverlap(projectId),
+            });
             // Advance only the observed incoming fields; edits in live refs still
             // differ from this baseline and must be persisted by the autosave effect.
             if (observed) baseline = mergeIncomingEditorDocument(incoming, baseDocument, incomingDocument, editorDocumentOf(observed), nodes);
@@ -360,7 +371,10 @@ export function useCanvasProjectLifecycle({
         }
         const live = liveEditorDocument();
         // Local edits are told apart against the editor's own copy of the base.
-        const merged = mergeIncomingEditorDocument(stored, baseDocument, storedDocument, live, { observed: observedContentRef.current?.nodes ?? null });
+        const merged = mergeIncomingEditorDocument(stored, baseDocument, storedDocument, live, {
+            observed: observedContentRef.current?.nodes ?? null,
+            onConflict: () => markCanvasMergeOverlap(projectId),
+        });
         observedStoreRef.current = stored;
         if (sameEditorDocument(merged, snapshot)) return { next: snapshot, merged: false };
         traceCanvasGraph("editor.write.rebase", { previous: base, incoming: stored, live: { id: projectId, nodes: live.nodes, connections: live.connections }, merged: { id: projectId, nodes: merged.nodes, connections: merged.connections } });

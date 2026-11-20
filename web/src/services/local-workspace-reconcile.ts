@@ -14,6 +14,7 @@ import {
     incompleteCanvasProjection,
     invokeProjectionListener,
     openLocalCanvasProject,
+    pendingForceHistorySnapshot,
     runProjectionStoreFlush,
     saveKey,
     withCanvasProjection,
@@ -50,6 +51,7 @@ export function alignLiveAfterConfirmedRemote(input: {
         const emptyBase: CanvasProject = { ...input.remote, nodes: [], connections: [], chatSessions: [] };
         const settled = settleInFlightGenerationOverlay({ base: emptyBase, local: live, remote: input.remote });
         const rebased = rebaseCanvasDocumentThreeWay({ base: emptyBase, local: settled, remote: input.remote });
+        if (rebased.conflict) pendingForceHistorySnapshot.add(saveKey(input.scope, input.id));
         applyLiveCanvasProject(input.id, rebased.project, false);
         clearCanvasExternalRevisionConflict(input.scope, input.id);
         resumeCanvasBackendSubmit(input.id, input.scope);
@@ -58,6 +60,7 @@ export function alignLiveAfterConfirmedRemote(input: {
     }
     const settled = settleInFlightGenerationOverlay({ base: input.base, local: live, remote: input.remote });
     const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: settled, remote: input.remote });
+    if (rebased.conflict) pendingForceHistorySnapshot.add(saveKey(input.scope, input.id));
     applyLiveCanvasProject(input.id, rebased.project, false);
     clearCanvasExternalRevisionConflict(input.scope, input.id);
     resumeCanvasBackendSubmit(input.id, input.scope);

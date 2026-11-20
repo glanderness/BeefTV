@@ -40,6 +40,11 @@ export const backendSaveTails = new Map<string, Promise<void>>();
 export const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const canvasProjectionLocks = new Map<string, Promise<void>>();
 export const canvasDeleting = new Set<string>();
+export const pendingForceHistorySnapshot = new Set<string>();
+
+export function markCanvasMergeOverlap(id: string, scope = getActiveUserScope()) {
+    pendingForceHistorySnapshot.add(saveKey(scope, id));
+}
 let projectionStoreFlush: () => Promise<void> = () => flushCanvasStorePersistence();
 
 export function setCanvasProjectionStoreFlushForTest(flush: (() => Promise<void>) | null) {

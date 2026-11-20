@@ -95,13 +95,14 @@ mock.module("@/services/api/request", () => ({
             if (isPatch) {
                 const baseRevision = body.params.baseRevision ?? 0;
                 server.revision += 1;
-                const { document, serverAdvanced } = applyMockCanvasPatch(server.document, body.params, server.revision);
+                const { document, serverAdvanced, mediaPreserved } = applyMockCanvasPatch(server.document, body.params, server.revision);
                 server.document = document as Doc;
                 server.receipts.set(body.opId, server.revision);
                 server.attempts.push({ opId: body.opId, expectedRevision: baseRevision, accepted: true });
                 return reply(server.revision, false, {
                     serverAdvanced,
-                    ...(serverAdvanced ? { document: structuredClone(document) } : {}),
+                    mediaPreserved,
+                    ...(serverAdvanced || mediaPreserved ? { document: structuredClone(document) } : {}),
                 });
             }
             const expectedRevision = body.params.expectedRevision ?? 0;

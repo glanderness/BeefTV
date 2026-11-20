@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/operations"
 )
 
@@ -70,9 +71,19 @@ func TestCanvasDocumentPatchOpReplayAndDisjointMerge(t *testing.T) {
 		t.Fatalf("expected idempotent replay at rev %d, got %+v", first.Revision, replayed)
 	}
 
-	// Assistant callers cannot invoke canvas.document.patch (manual UI only).
+	// Built-in assistant callers (canvas and full-access) cannot invoke canvas.document.patch (ExternalOnly).
 	if _, err := h.execute(t, h.assistant(), "canvas.document.patch", "assistant-patch", params); err == nil {
-		t.Fatal("assistant should not be allowed to invoke canvas.document.patch")
+		t.Fatal("canvas assistant should not be allowed to invoke canvas.document.patch")
+	}
+	fullAccessAssistant := operations.AssistantCaller(&agentops.AssistantScope{
+		PermissionMode: "full-access",
+		CanvasID:       h.canvasID,
+		AssetIDs:       map[string]bool{},
+		CanvasIDs:      map[string]bool{},
+		TaskIDs:        map[string]bool{},
+	}, false)
+	if _, err := h.execute(t, fullAccessAssistant, "canvas.document.patch", "assistant-full-access-patch", params); err == nil {
+		t.Fatal("full-access assistant should not be allowed to invoke canvas.document.patch")
 	}
 
 	// Verify both n1 assistant edit and n2 user edit persisted in SQLite.

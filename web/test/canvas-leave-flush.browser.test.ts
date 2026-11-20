@@ -9,7 +9,7 @@ import { applyMockCanvasPatch } from "./helpers/mock-canvas-patch";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
-let commits: Array<{ at: number; canvasId: string; nodes: Array<{ id: string; title: string }>; connections: unknown[] }> = [];
+let commits: Array<{ at: number; canvasId: string; nodes: Array<{ id: string; title: string }>; connections: unknown[]; upsertNodeIds?: string[] }> = [];
 const remote = { id: "c1", revision: 111, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` })), chatSessions: [], activeChatId: null, backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 let backend = structuredClone(remote);
 let secondBackend = { ...structuredClone(remote), id: "c2", title: "Second canvas", nodes: remote.nodes.slice(0, 2), connections: remote.connections.slice(0, 1) };
@@ -30,10 +30,27 @@ beforeAll(async () => {
         if (path === "/api/ops/canvas.document.patch") {
             const body = await request.json();
             const current = body.params.canvasId === "c2" ? secondBackend : backend;
-            const { document: saved, serverAdvanced } = applyMockCanvasPatch(current, body.params, current.revision + 1);
-            commits.push({ at: Date.now(), canvasId: body.params.canvasId, nodes: saved.nodes as Array<{ id: string; title: string }>, connections: saved.connections as unknown[] });
+            const { document: saved, serverAdvanced, mediaPreserved } = applyMockCanvasPatch(current, body.params, current.revision + 1);
+            commits.push({
+                at: Date.now(),
+                canvasId: body.params.canvasId,
+                nodes: saved.nodes as Array<{ id: string; title: string }>,
+                connections: saved.connections as unknown[],
+                upsertNodeIds: (body.params.upsertNodes ?? []).map((n: { id: string }) => n.id),
+            });
             if (body.params.canvasId === "c2") secondBackend = saved; else backend = saved;
-            return json({ revision: saved.revision, result: { canvasId: saved.id, revision: saved.revision, title: saved.title, updatedAt: saved.updatedAt, serverAdvanced, ...(serverAdvanced ? { document: saved } : {}) } });
+            return json({
+                revision: saved.revision,
+                result: {
+                    canvasId: saved.id,
+                    revision: saved.revision,
+                    title: saved.title,
+                    updatedAt: saved.updatedAt,
+                    serverAdvanced,
+                    mediaPreserved,
+                    ...(serverAdvanced || mediaPreserved ? { document: saved } : {}),
+                },
+            });
         }
         if (path === "/api/ops/canvas.document.commit") {
             const body = await request.json();
@@ -118,5 +135,22 @@ test("external deletion conflicting with genuine local text preserves the edited
         while (!backend.nodes.some(node => node.id === "n0" && node.title === "Local unsaved text") && Date.now() < deadline) await Bun.sleep(10);
         expect(await page.evaluate(() => (window as any).__lifecycle.title())).toBe("Local unsaved text");
         expect(backend.nodes.some(node => node.id === "n0" && node.title === "Local unsaved text")).toBe(true);
+    } finally { await page.close(); }
+}, 30000);
+
+test("leave flush patches only the edited node without sending untouched open-stamped nodes", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url.toString());
+        await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
+        await page.evaluate(() => (window as any).__lifecycle.editTitle());
+        await page.waitForFunction(() => (window as any).__lifecycle.title() === "Local unsaved text");
+        await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+        const deadline = Date.now() + 2000;
+        while (!backend.nodes.some(node => node.id === "n0" && node.title === "Local unsaved text") && Date.now() < deadline) await Bun.sleep(10);
+        const lastPatch = commits.at(-1);
+        expect(lastPatch?.upsertNodeIds).toEqual(["n0"]);
+        expect(backend.nodes).toHaveLength(10);
+        expect(backend.nodes[0]!.title).toBe("Local unsaved text");
     } finally { await page.close(); }
 }, 30000);

@@ -134,7 +134,7 @@ mock.module("@/services/api/request", () => ({
             if (isPatch) {
                 const baseRevision = body.params.baseRevision ?? 0;
                 server.revision += 1;
-                const { document, serverAdvanced } = applyMockCanvasPatch(server.document, body.params, server.revision);
+                const { document, serverAdvanced, mediaPreserved } = applyMockCanvasPatch(server.document, body.params, server.revision);
                 const docTyped = document as { title?: string; nodes?: Array<{ id: string }> };
                 server.commits.push({
                     opId: body.opId,
@@ -159,7 +159,8 @@ mock.module("@/services/api/request", () => ({
                         revision: server.revision,
                         updatedAt: "2026-01-01T00:00:00.000Z",
                         serverAdvanced,
-                        ...(serverAdvanced ? { document: structuredClone(document) } : {}),
+                        mediaPreserved,
+                        ...(serverAdvanced || mediaPreserved ? { document: structuredClone(document) } : {}),
                     },
                 };
             }

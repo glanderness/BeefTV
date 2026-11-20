@@ -170,8 +170,17 @@
         "deleteNodeIds": {
           "type": "array"
         },
+        "expectedFields": {
+          "type": "object"
+        },
+        "expectedNodes": {
+          "type": "object"
+        },
         "fields": {
           "type": "object"
+        },
+        "forceHistorySnapshot": {
+          "type": "boolean"
         },
         "operationId": {
           "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
@@ -194,9 +203,7 @@
       ],
       "type": "object"
     },
-    "assistantModes": [
-      "full-access"
-    ],
+    "assistantModes": [],
     "replay": "safe"
   },
   {

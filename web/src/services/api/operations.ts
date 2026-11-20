@@ -29,6 +29,9 @@ export type CanvasDocumentPatchPayload = {
     upsertChatSessions?: unknown[];
     deleteChatSessionIds?: string[];
     fields?: Record<string, unknown>;
+    expectedNodes?: Record<string, unknown>;
+    expectedFields?: Record<string, unknown>;
+    forceHistorySnapshot?: boolean;
 };
 
 export type CanvasDocumentPatchInput = CanvasDocumentPatchPayload & {
@@ -60,6 +63,9 @@ export async function patchCanvasDocument(input: CanvasDocumentPatchInput) {
             ...(input.upsertChatSessions?.length ? { upsertChatSessions: input.upsertChatSessions } : {}),
             ...(input.deleteChatSessionIds?.length ? { deleteChatSessionIds: input.deleteChatSessionIds } : {}),
             ...(input.fields && Object.keys(input.fields).length ? { fields: input.fields } : {}),
+            ...(input.expectedNodes && Object.keys(input.expectedNodes).length ? { expectedNodes: input.expectedNodes } : {}),
+            ...(input.expectedFields && Object.keys(input.expectedFields).length ? { expectedFields: input.expectedFields } : {}),
+            ...(input.forceHistorySnapshot ? { forceHistorySnapshot: true } : {}),
         },
     });
 }

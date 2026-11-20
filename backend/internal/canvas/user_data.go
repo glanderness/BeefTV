@@ -286,27 +286,33 @@ func (s *Service) upsertUserCanvasProjectWithAssets(userID string, raw json.RawM
 }
 
 func (s *Service) upsertUserCanvasProjectAndPayload(userID string, raw json.RawMessage, candidateAssets []model.Asset, reason string, includePayload bool) (UserDataSummary, json.RawMessage, error) {
+	summary, payload, _, err := s.upsertUserCanvasProjectAndPayloadWithCapture(userID, raw, candidateAssets, reason, includePayload)
+	return summary, payload, err
+}
+
+func (s *Service) upsertUserCanvasProjectAndPayloadWithCapture(userID string, raw json.RawMessage, candidateAssets []model.Asset, reason string, includePayload bool) (UserDataSummary, json.RawMessage, bool, error) {
 	var version struct {
 		Revision *int64 `json:"revision"`
 	}
 	if err := json.Unmarshal(raw, &version); err != nil {
-		return UserDataSummary{}, nil, kernel.BadAuthRequest("画布版本格式错误")
+		return UserDataSummary{}, nil, false, kernel.BadAuthRequest("画布版本格式错误")
 	}
 	if version.Revision == nil {
-		return UserDataSummary{}, nil, kernel.NewAppError(http.StatusPreconditionRequired, "缺少画布版本，请保留本地草稿后重新加载画布")
+		return UserDataSummary{}, nil, false, kernel.NewAppError(http.StatusPreconditionRequired, "缺少画布版本，请保留本地草稿后重新加载画布")
 	}
 	if *version.Revision < 0 || *version.Revision >= 9007199254740991 {
-		return UserDataSummary{}, nil, kernel.BadAuthRequest("画布版本无效")
+		return UserDataSummary{}, nil, false, kernel.BadAuthRequest("画布版本无效")
 	}
 	_ = s.CanvasDocumentLimitMB()
 	project, err := canvasProjectFromJSON(userID, raw)
 	if err != nil {
-		return UserDataSummary{}, nil, err
+		return UserDataSummary{}, nil, false, err
 	}
 	var audit CanvasSaveAudit
 	var payload map[string]json.RawMessage
 	var afterPayload json.RawMessage
 	createdAssets := 0
+	snapshotCaptured := false
 	err = s.host.WithStorageLock(func() error {
 		existing, existingErr := s.repo.CanvasProjectForUser(userID, project.ID)
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
@@ -370,7 +376,8 @@ func (s *Service) upsertUserCanvasProjectAndPayload(userID string, raw json.RawM
 					return err
 				}
 			}
-			if err := SaveDocumentWithHistory(tx, existing, &project, reason); err != nil {
+			captured, err := saveDocumentWithHistoryAndAssets(tx, existing, &project, nil, reason)
+			if err != nil {
 				if errors.Is(err, repository.ErrCanvasRevisionConflict) {
 					return canvasRevisionConflict()
 				}
@@ -382,6 +389,7 @@ func (s *Service) upsertUserCanvasProjectAndPayload(userID string, raw json.RawM
 				}
 				return err
 			}
+			snapshotCaptured = captured
 			audit.NodesAfter = nodesAfter
 			audit.NodesBefore = nodesBefore
 			if existingErr != nil || existing.PayloadJSON != project.PayloadJSON || existing.Title != project.Title {
@@ -394,25 +402,25 @@ func (s *Service) upsertUserCanvasProjectAndPayload(userID string, raw json.RawM
 		return nil
 	})
 	if err != nil {
-		return UserDataSummary{}, nil, err
+		return UserDataSummary{}, nil, false, err
 	}
 	if includePayload {
 		for key, value := range map[string]any{"id": project.ID, "title": project.Title, "projectId": project.ProjectID, "folderId": project.LibraryFolderID, "revision": project.Revision, "createdAt": project.CreatedAt, "updatedAt": project.UpdatedAt} {
 			encoded, err := json.Marshal(value)
 			if err != nil {
-				return UserDataSummary{}, nil, err
+				return UserDataSummary{}, nil, false, err
 			}
 			payload[key] = encoded
 		}
 		afterPayload, err = json.Marshal(payload)
 		if err != nil {
-			return UserDataSummary{}, nil, err
+			return UserDataSummary{}, nil, false, err
 		}
 	}
 	if createdAssets > 0 {
 		s.host.RecordActivity(userID, "asset", createdAssets)
 	}
-	return UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision, SaveAudit: &audit}, afterPayload, nil
+	return UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision, SaveAudit: &audit}, afterPayload, snapshotCaptured, nil
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {

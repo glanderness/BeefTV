@@ -160,6 +160,7 @@ mock.module("@/lib/user-scope", () => ({
 }));
 
 mock.module("@/lib/canvas/canvas-content", () => ({
+    stripCanvasNodeBookkeeping: (node: any) => node,
     normalizeCanvasProjectGraph: (proj: any) => ({
         ...proj,
         nodes: Array.isArray(proj?.nodes) ? proj.nodes : [],

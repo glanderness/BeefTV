@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { buildCanvasDocumentPatch, preserveUntouchedStoredNodes } from "@/lib/canvas/canvas-document-patch";
+import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { applyMockCanvasPatch, type MockCanvasPatchParams } from "./helpers/mock-canvas-patch";
@@ -10,6 +12,8 @@ const server = {
     patches: [] as Array<{ opId?: string; params: MockCanvasPatchParams }>,
     commits: [] as Array<{ opId?: string; params: Record<string, unknown> }>,
     puts: 0,
+    getGates: new Map<string, Promise<void>>(),
+    onGetStarted: null as ((id: string) => void) | null,
 };
 
 class ApiError extends Error {
@@ -44,6 +48,9 @@ mock.module("@/services/api/request", () => ({
                 return { projects: [...server.projects.values()].map((p) => ({ id: p.id })), hasMore: false };
             }
             const id = decodeURIComponent(path.split("/").pop() ?? "");
+            server.onGetStarted?.(id);
+            const gate = server.getGates.get(id);
+            if (gate) await gate;
             return { project: structuredClone(server.projects.get(id)) };
         },
         put: async (_path: string, body: { project: Record<string, unknown> }) => {
@@ -61,7 +68,7 @@ mock.module("@/services/api/request", () => ({
             const nextRev = ((current?.revision as number) ?? 0) + 1;
             if (path === "/ops/canvas.document.patch") {
                 server.patches.push({ opId: body.opId, params: structuredClone(body.params ?? {}) });
-                const { document, serverAdvanced } = applyMockCanvasPatch(current, body.params ?? {}, nextRev);
+                const { document, serverAdvanced, mediaPreserved } = applyMockCanvasPatch(current, body.params ?? {}, nextRev);
                 server.projects.set(id, document);
                 return {
                     op: "canvas.document.patch",
@@ -74,7 +81,8 @@ mock.module("@/services/api/request", () => ({
                         revision: nextRev,
                         updatedAt: "2026-01-01T00:00:00.000Z",
                         serverAdvanced,
-                        ...(serverAdvanced ? { document: structuredClone(document) } : {}),
+                        mediaPreserved,
+                        ...(serverAdvanced || mediaPreserved ? { document: structuredClone(document) } : {}),
                     },
                 };
             }
@@ -114,7 +122,9 @@ mock.module("@/services/api/resources", () => ({
 
 const {
     adoptServerConfirmedGenerationPatch,
+    hasUnconfirmedCanvasEdits,
     hydrateLocalCanvasProjectsFromBackend,
+    refreshLocalCanvasProjectIfChanged,
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
@@ -164,18 +174,20 @@ beforeEach(() => {
     server.patches = [];
     server.commits = [];
     server.puts = 0;
+    server.getGates.clear();
+    server.onGetStarted = null;
     resetCanvasOperationJournalMemory();
     resetLocalCanvasBackendSaveState();
     useSyncProgressStore.getState().clearAll();
-    clearCanvasExternalRevisionConflict(scope, "c1");
-    clearCanvasExternalRevisionConflict(scope, "c2");
-    clearCanvasDocumentBase("c1", scope);
-    clearCanvasDocumentBase("c2", scope);
+    for (const id of ["c1", "c2", "c3", "c4"]) {
+        clearCanvasExternalRevisionConflict(scope, id);
+        clearCanvasDocumentBase(id, scope);
+    }
     useCanvasStore.setState({ projects: [] });
 });
 
 describe("canvas-document-patch 单元测试", () => {
-    test("拖动单个节点只发送该节点的增量，且过滤打开时的时间戳与恢复占位文案", () => {
+    test("拖动单个节点只发送该节点的增量与 expectedNodes，过滤打开时的时间戳与恢复占位文案", () => {
         const loadingNode = makeNode("n-load", "生成中", { metadata: { status: "loading", taskId: "t1" } });
         const dragNode = makeNode("n-drag", "图片", { position: { x: 10, y: 20 } });
         const base = makeCanvas("c1", 5, { nodes: [loadingNode, dragNode] });
@@ -199,9 +211,11 @@ describe("canvas-document-patch 单元测试", () => {
         const patch = buildCanvasDocumentPatch(base, live);
         expect(patch).not.toBeNull();
         expect(patch?.baseRevision).toBe(5);
-        expect(patch?.upsertNodes?.map((n) => n.id)).toEqual(["n-drag"]);
+        expect(patch?.upsertNodes?.map((n) => (n as { id: string }).id)).toEqual(["n-drag"]);
         expect((patch?.upsertNodes?.[0] as { position?: unknown }).position).toEqual({ x: 300, y: 400 });
-        expect("createdAt" in (patch?.upsertNodes?.[0] ?? {})).toBe(false);
+        expect("createdAt" in ((patch?.upsertNodes?.[0] ?? {}) as Record<string, unknown>)).toBe(false);
+        expect(patch?.expectedNodes && Object.keys(patch.expectedNodes)).toEqual(["n-drag"]);
+        expect((patch?.expectedNodes?.["n-drag"] as { position?: unknown }).position).toEqual({ x: 10, y: 20 });
         expect(patch?.deleteNodeIds).toBeUndefined();
         expect(patch?.fields).toBeUndefined();
     });
@@ -216,6 +230,43 @@ describe("canvas-document-patch 单元测试", () => {
         const result = preserveUntouchedStoredNodes([observedA, observedB], [storedA, storedB], [draggedA, observedB]);
         expect(result[0]).toBe(draggedA);
         expect(result[1]).toBe(storedB);
+    });
+
+    test("sameCanvasDocument 与 buildCanvasDocumentPatch 共享节点 bookkeeping 规则，编辑器节点时间戳不会导致永久未确认", async () => {
+        const rawNode = makeNode("n1", "图片", { position: { x: 10, y: 20 } });
+        const serverDoc = makeCanvas("c1", 2, { nodes: [rawNode] });
+        const stampedNodes = normalizeCanvasNodeTimestamps([rawNode], {
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-02T00:00:00.000Z",
+        });
+        const liveWithTimestamps = makeCanvas("c1", 2, { nodes: stampedNodes });
+
+        expect(sameCanvasDocument(serverDoc, liveWithTimestamps)).toBe(true);
+        expect(buildCanvasDocumentPatch(serverDoc, liveWithTimestamps)).toBeNull();
+
+        server.projects.set("c1", structuredClone(serverDoc) as unknown as Record<string, unknown>);
+        await saveCanvasOperationJournal({
+            userScope: scope,
+            canvasId: "c1",
+            confirmedRevision: 2,
+            confirmedSnapshot: structuredClone(serverDoc),
+            inFlight: null,
+        });
+        recordCanvasDocumentBase(structuredClone(serverDoc), scope);
+        useCanvasStore.setState({ projects: [liveWithTimestamps] });
+        expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
+
+        // User drags a stamped node while another task completes on server (returned server doc has no node timestamps).
+        const serverAfterTask = makeCanvas("c1", 3, {
+            nodes: [rawNode, makeNode("n-agent", "助手新增")],
+        });
+        server.projects.set("c1", structuredClone(serverAfterTask) as unknown as Record<string, unknown>);
+        const movedStamped = [{ ...stampedNodes[0]!, position: { x: 200, y: 300 }, updatedAt: "2026-01-03T00:00:00.000Z" } as CanvasNodeData];
+        useCanvasStore.getState().updateProject("c1", { nodes: movedStamped });
+        await syncLocalCanvasProjectToBackend("c1");
+
+        expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).toBe("done");
     });
 });
 
@@ -236,7 +287,6 @@ describe("单用户版本冲突五类根因回归测试", () => {
         recordCanvasDocumentBase(structuredClone(initial), scope);
         useCanvasStore.setState({ projects: [structuredClone(initial)] });
 
-        // 后端两个生成任务并行写回（rev 1 -> 2 -> 3）。
         const afterTasks = makeCanvas("c1", 3, {
             nodes: [
                 makeNode("n1", "任务1", { metadata: { status: "success", taskId: "t1", content: "/res/1.png", storageKey: "resource:1" } }),
@@ -246,7 +296,6 @@ describe("单用户版本冲突五类根因回归测试", () => {
         });
         server.projects.set("c1", structuredClone(afterTasks) as unknown as Record<string, unknown>);
 
-        // 同时用户拖动 n-drag。
         useCanvasStore.getState().updateProject("c1", {
             nodes: [n1, n2, { ...nDrag, position: { x: 520, y: 310 } }],
         });
@@ -263,6 +312,37 @@ describe("单用户版本冲突五类根因回归测试", () => {
         expect(liveNodes.find((n) => n.id === "n-drag")?.position).toEqual({ x: 520, y: 310 });
     });
 
+    test("刷新同字段本地胜出后，后续同 revision patch 携带 forceHistorySnapshot=true 触发后端合并前快照", async () => {
+        const baseNode = makeNode("n1", "标题", { type: "text" as never, metadata: { content: "原文本", status: "success" } });
+        const initial = makeCanvas("c1", 1, { nodes: [baseNode] });
+        server.projects.set("c1", structuredClone(initial) as unknown as Record<string, unknown>);
+        await saveCanvasOperationJournal({
+            userScope: scope,
+            canvasId: "c1",
+            confirmedRevision: 1,
+            confirmedSnapshot: structuredClone(initial),
+            inFlight: null,
+        });
+        recordCanvasDocumentBase(structuredClone(initial), scope);
+        useCanvasStore.setState({ projects: [structuredClone(initial)] });
+
+        // User edits n1 content locally while Agent also edits n1 content on server (rev 2).
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...baseNode, metadata: { content: "用户本地文本", status: "success" } }],
+        });
+        server.projects.set("c1", structuredClone(makeCanvas("c1", 2, {
+            nodes: [{ ...baseNode, metadata: { content: "Agent 文本", status: "success" } }],
+        })) as unknown as Record<string, unknown>);
+
+        await refreshLocalCanvasProjectIfChanged("c1");
+        expect(useCanvasStore.getState().openProject("c1")?.nodes[0]?.metadata?.content).toBe("用户本地文本");
+
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.patches).toHaveLength(1);
+        expect(server.patches[0].params.baseRevision).toBe(2);
+        expect(server.patches[0].params.forceHistorySnapshot).toBe(true);
+    });
+
     test("冷缓存无基线时收到生成结果：合并本地节点与服务端产物，不触发暂停冲突", async () => {
         const localNode = makeNode("n-local", "本地刚建");
         useCanvasStore.setState({ projects: [makeCanvas("c1", 1, { nodes: [localNode] })] });
@@ -274,24 +354,47 @@ describe("单用户版本冲突五类根因回归测试", () => {
         expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
     });
 
-    test("多画布 hydration 并发进行时，期间对其中一张画布的编辑不会被旧快照覆盖", async () => {
-        const c1Server = makeCanvas("c1", 2, { nodes: [makeNode("a", "A")] });
-        const c2Server = makeCanvas("c2", 2, { nodes: [makeNode("b", "B")] });
-        server.projects.set("c1", structuredClone(c1Server) as unknown as Record<string, unknown>);
-        server.projects.set("c2", structuredClone(c2Server) as unknown as Record<string, unknown>);
-        useCanvasStore.setState({
-            projects: [
-                makeCanvas("c1", 2, { nodes: [makeNode("a", "A"), makeNode("local-new", "用户新建")] }),
-                makeCanvas("c2", 1, { nodes: [] }),
-            ],
-        });
-        recordCanvasDocumentBase(makeCanvas("c1", 2, { nodes: [makeNode("a", "A")] }), scope);
-        recordCanvasDocumentBase(makeCanvas("c2", 1, { nodes: [] }), scope);
+    test("多画布 hydration 在 GET 挂起期间发生并发编辑、新建与删除时，不以旧快照覆盖实时状态", async () => {
+        const c1Base = makeCanvas("c1", 1, { nodes: [makeNode("a", "A")] });
+        const c2Base = makeCanvas("c2", 1, { nodes: [] });
+        const c4Base = makeCanvas("c4", 1, { nodes: [makeNode("d", "D")] });
+        server.projects.set("c1", structuredClone(makeCanvas("c1", 2, { nodes: [makeNode("a", "A"), makeNode("a-remote", "远端A")] })) as unknown as Record<string, unknown>);
+        server.projects.set("c2", structuredClone(makeCanvas("c2", 2, { nodes: [makeNode("b", "B")] })) as unknown as Record<string, unknown>);
+        server.projects.set("c4", structuredClone(c4Base) as unknown as Record<string, unknown>);
 
-        expect(await hydrateLocalCanvasProjectsFromBackend()).toBe(true);
-        const liveC1 = useCanvasStore.getState().openProject("c1");
-        const liveC2 = useCanvasStore.getState().openProject("c2");
-        expect(liveC1?.nodes.map((n) => n.id)).toEqual(["a", "local-new"]);
+        useCanvasStore.setState({ projects: [structuredClone(c1Base), structuredClone(c2Base), structuredClone(c4Base)] });
+        recordCanvasDocumentBase(structuredClone(c1Base), scope);
+        recordCanvasDocumentBase(structuredClone(c2Base), scope);
+        recordCanvasDocumentBase(structuredClone(c4Base), scope);
+
+        let releaseC1!: () => void;
+        let c1Started!: () => void;
+        const c1StartedPromise = new Promise<void>((resolve) => { c1Started = resolve; });
+        server.getGates.set("c1", new Promise<void>((resolve) => { releaseC1 = resolve; }));
+        server.onGetStarted = (id) => { if (id === "c1") c1Started(); };
+
+        const hydrating = hydrateLocalCanvasProjectsFromBackend();
+        await c1StartedPromise;
+
+        // While c1 detail GET is in flight: edit c1, create brand-new c3, and delete c4!
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [makeNode("a", "A"), makeNode("local-mid-flight", "挂起期间编辑")],
+        });
+        useCanvasStore.setState((state) => ({
+            projects: [...state.projects.filter((p) => p.id !== "c4"), makeCanvas("c3", 0, { nodes: [makeNode("n3", "新建画布")] })],
+        }));
+
+        releaseC1();
+        expect(await hydrating).toBe(true);
+
+        const liveProjects = useCanvasStore.getState().projects;
+        const liveC1 = liveProjects.find((p) => p.id === "c1");
+        const liveC2 = liveProjects.find((p) => p.id === "c2");
+        const liveC3 = liveProjects.find((p) => p.id === "c3");
+        const liveC4 = liveProjects.find((p) => p.id === "c4");
+        expect(liveC1?.nodes.map((n) => n.id).sort()).toEqual(["a", "a-remote", "local-mid-flight"]);
         expect(liveC2?.nodes.map((n) => n.id)).toEqual(["b"]);
+        expect(liveC3?.nodes.map((n) => n.id)).toEqual(["n3"]);
+        expect(liveC4).toBeUndefined();
     });
 });

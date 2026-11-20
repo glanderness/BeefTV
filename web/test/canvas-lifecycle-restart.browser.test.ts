@@ -40,7 +40,7 @@ beforeAll(async () => {
         if (path === "/api/canvas-projects/c1") { await gate; return json({ project: backend }); }
         if (path === "/api/ops/canvas.document.patch") {
             const body = await request.json();
-            const { document: saved, serverAdvanced } = applyMockCanvasPatch(backend, body.params, backend.revision + 1);
+            const { document: saved, serverAdvanced, mediaPreserved } = applyMockCanvasPatch(backend, body.params, backend.revision + 1);
             backend = saved;
             commits.push({
                 ...body,
@@ -58,7 +58,8 @@ beforeAll(async () => {
                     title: backend.title,
                     updatedAt: backend.updatedAt,
                     serverAdvanced,
-                    ...(serverAdvanced ? { document: saved } : {}),
+                    mediaPreserved,
+                    ...(serverAdvanced || mediaPreserved ? { document: saved } : {}),
                 },
             });
         }
